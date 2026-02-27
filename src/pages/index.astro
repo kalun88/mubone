@@ -1,0 +1,212 @@
+---
+import Base from "@/layouts/Base.astro";
+
+// Phase 1: Static placeholder content
+// Phase 2: This will fetch from Notion database
+
+// Placeholder posts for layout development
+const posts = [
+  {
+    slug: "garcia-performance",
+    title: "garcia — solo movement and sound performance",
+    date: "2024-11-15",
+    type: "project",
+    excerpt: "planting trombone sounds in pre-determined zones such as ground, horizon, sky. each zone processes the recorded sound in different ways.",
+    image: null,
+  },
+  {
+    slug: "conversations-with-space-and-architecture",
+    title: "conversations with space and architecture",
+    date: "2024-09-20",
+    type: "project",
+    excerpt: "the environment becomes a source of inspiration both acoustically and visually. the frame of a building can be used as a graphic score for the mubone to trace.",
+    image: null,
+  },
+  {
+    slug: "nime-2022-paper",
+    title: "early prototypes and artistic practice with the mubone — nime 2022",
+    date: "2022-06-28",
+    type: "blog",
+    excerpt: "peer-reviewed paper presented at new interfaces for musical expression. documenting the design evolution and creative applications of the mubone.",
+  },
+  {
+    slug: "ircam-manifeste-2022",
+    title: "ircam manifeste — paris residency",
+    date: "2022-06-10",
+    type: "blog",
+    excerpt: "performing and presenting the mubone at ircam forum and manifeste festival in paris.",
+  },
+  {
+    slug: "moco-2019-paper",
+    title: "mubone: an augmented trombone — moco 2019",
+    date: "2019-10-15",
+    type: "blog",
+    excerpt: "paper and demo presented at the international conference on movement and computing. introducing the mubone as a movement-based granular synthesizer.",
+  },
+];
+
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }).toLowerCase();
+}
+---
+
+<Base>
+  <div class="homepage">
+    <div class="tagline">
+      <p>sound machines for<br />the exploration of time<br />and space</p>
+    </div>
+
+    <hr />
+
+    <div class="posts-list">
+      {posts.map((post) => (
+        <article class={`post-item ${post.type}`}>
+          {post.type === "project" ? (
+            <a href={`/posts/${post.slug}/`} class="project-card">
+              <div class="project-placeholder-image">
+                <span class="project-type-label">project</span>
+              </div>
+              <div class="project-info">
+                <h2 class="post-title">{post.title}</h2>
+                <time class="post-date">{formatDate(post.date)}</time>
+                {post.excerpt && <p class="post-excerpt">{post.excerpt}</p>}
+              </div>
+            </a>
+          ) : (
+            <a href={`/posts/${post.slug}/`} class="blog-entry">
+              <div class="blog-meta">
+                <time class="post-date">{formatDate(post.date)}</time>
+              </div>
+              <div class="blog-content">
+                <h2 class="post-title">{post.title}</h2>
+                {post.excerpt && <p class="post-excerpt">{post.excerpt}</p>}
+              </div>
+            </a>
+          )}
+          <hr />
+        </article>
+      ))}
+    </div>
+  </div>
+</Base>
+
+<style>
+  .homepage {
+    max-width: 720px;
+  }
+
+  .tagline {
+    margin: 2rem 0 0;
+  }
+  .tagline p {
+    color: var(--color-text-muted);
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  .posts-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .post-item {
+    margin: 0;
+  }
+  .post-item hr {
+    margin: 1.5rem 0;
+  }
+
+  /* Project cards — visual */
+  .project-card {
+    display: block;
+    color: var(--color-text);
+    text-decoration: none;
+  }
+  .project-card:hover {
+    color: var(--color-text);
+  }
+  .project-card:hover .post-title {
+    color: var(--color-accent);
+  }
+
+  .project-placeholder-image {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background-color: var(--color-bg-surface);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: flex-end;
+    padding: 0.75rem;
+    position: relative;
+  }
+
+  .project-type-label {
+    font-size: 10px;
+    color: var(--color-text-dim);
+    letter-spacing: 0.08em;
+  }
+
+  .project-info {
+    /* padding below image */
+  }
+
+  /* Blog entries — text-forward */
+  .blog-entry {
+    display: flex;
+    gap: 1.5rem;
+    color: var(--color-text);
+    text-decoration: none;
+    align-items: flex-start;
+  }
+  .blog-entry:hover {
+    color: var(--color-text);
+  }
+  .blog-entry:hover .post-title {
+    color: var(--color-accent);
+  }
+
+  .blog-meta {
+    flex-shrink: 0;
+    width: 100px;
+    padding-top: 0.1rem;
+  }
+
+  .blog-content {
+    flex: 1;
+  }
+
+  /* Shared */
+  .post-title {
+    font-size: 13px;
+    font-weight: 400;
+    margin: 0 0 0.35rem;
+    line-height: 1.5;
+    transition: color 0.15s ease;
+  }
+
+  .post-date {
+    font-size: 11px;
+    color: var(--color-text-dim);
+    letter-spacing: 0.02em;
+  }
+
+  .post-excerpt {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    margin: 0.35rem 0 0;
+    line-height: 1.6;
+  }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .blog-entry {
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .blog-meta {
+      width: auto;
+    }
+  }
+</style>
