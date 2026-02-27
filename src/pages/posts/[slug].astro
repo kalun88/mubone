@@ -1,0 +1,143 @@
+---
+import Base from "@/layouts/Base.astro";
+import NotionBlocks from "@/components/NotionBlocks.astro";
+import { getAllPosts, getPostBySlug, getPostContent } from "@/lib/notion";
+
+export async function getStaticPaths() {
+  const posts = await getAllPosts();
+
+  return posts.map((post) => ({
+    params: { slug: post.Slug },
+    props: { post },
+  }));
+}
+
+interface Props {
+  post: any;
+}
+
+const { post } = Astro.props;
+
+// Fetch the post content
+const blocks = await getPostContent(post.PageId);
+
+// Format date
+function formatDate(dateStr: string): string {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T12:00:00");
+  return d
+    .toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    })
+    .toLowerCase();
+}
+---
+
+<Base title={post.Title} description={post.Excerpt}>
+  <article class="post-page">
+    <header class="post-header">
+      <h1 class="post-title">{post.Title}</h1>
+
+      <div class="post-metadata">
+        <time class="post-date">{formatDate(post.Date)}</time>
+        {post.Type && <span class="post-type">{post.Type}</span>}
+      </div>
+
+      {post.Tags && post.Tags.length > 0 && (
+        <div class="post-tags">
+          {post.Tags.map((tag: any) => (
+            <span class="tag" data-color={tag.color}>
+              {tag.name}
+            </span>
+          ))}
+        </div>
+      )}
+    </header>
+
+    <div class="post-content">
+      <NotionBlocks blocks={blocks} />
+    </div>
+
+    <footer class="post-footer">
+      <a href="/" class="back-link">← back</a>
+    </footer>
+  </article>
+</Base>
+
+<style>
+  .post-page {
+    max-width: 720px;
+  }
+
+  .post-header {
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px dashed var(--color-rule);
+  }
+
+  .post-title {
+    font-size: 24px;
+    font-weight: 400;
+    line-height: 1.4;
+    margin: 0 0 1rem;
+  }
+
+  .post-metadata {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 0.75rem;
+  }
+
+  .post-date {
+    font-size: 11px;
+    color: var(--color-text-dim);
+    letter-spacing: 0.02em;
+  }
+
+  .post-type {
+    font-size: 10px;
+    color: var(--color-text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .post-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+
+  .tag {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    background-color: var(--color-bg-surface);
+    border-radius: 3px;
+    font-size: 11px;
+    letter-spacing: 0.02em;
+  }
+
+  .post-content {
+    margin: 2rem 0;
+  }
+
+  .post-footer {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px dashed var(--color-rule);
+  }
+
+  .back-link {
+    font-size: 12px;
+    color: var(--color-link);
+    text-decoration: none;
+    transition: color 0.15s ease;
+  }
+
+  .back-link:hover {
+    color: var(--color-link-hover);
+  }
+</style>

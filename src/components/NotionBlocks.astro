@@ -1,0 +1,747 @@
+---
+import type { Block, BlockTypes } from "@/lib/interfaces";
+import RichTexts from "./RichTexts.astro";
+
+interface Props {
+  blocks: Block[];
+}
+
+const { blocks } = Astro.props;
+
+// Helper to generate heading ID from text
+function generateHeadingId(plainText: string): string {
+  return plainText
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
+}
+
+// Helper to group consecutive list items
+function groupListItems(blocks: Block[]): (Block | Block[])[] {
+  const grouped: (Block | Block[])[] = [];
+  let currentList: Block[] = [];
+  let currentListType: "bulleted" | "numbered" | null = null;
+
+  for (const block of blocks) {
+    const isBulleted =
+      block.Type === "bulleted_list_item";
+    const isNumbered =
+      block.Type === "numbered_list_item";
+
+    if (isBulleted && currentListType === "bulleted") {
+      currentList.push(block);
+    } else if (isNumbered && currentListType === "numbered") {
+      currentList.push(block);
+    } else {
+      if (currentList.length > 0) {
+        grouped.push(currentList);
+        currentList = [];
+        currentListType = null;
+      }
+
+      if (isBulleted) {
+        currentList.push(block);
+        currentListType = "bulleted";
+      } else if (isNumbered) {
+        currentList.push(block);
+        currentListType = "numbered";
+      } else {
+        grouped.push(block);
+      }
+    }
+  }
+
+  if (currentList.length > 0) {
+    grouped.push(currentList);
+  }
+
+  return grouped;
+}
+
+// Helper to detect video URL type
+function getVideoEmbedUrl(url: string): { type: "youtube" | "vimeo" | null; embedUrl: string } {
+  const youtubeRegex = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]+)/;
+  const vimeoRegex = /(?:vimeo\.com\/)(\d+)/;
+
+  const youtubeMatch = url.match(youtubeRegex);
+  if (youtubeMatch) {
+    return {
+      type: "youtube",
+      embedUrl: `https://www.youtube.com/embed/${youtubeMatch[1]}`,
+    };
+  }
+
+  const vimeoMatch = url.match(vimeoRegex);
+  if (vimeoMatch) {
+    return {
+      type: "vimeo",
+      embedUrl: `https://player.vimeo.com/video/${vimeoMatch[1]}`,
+    };
+  }
+
+  return { type: null, embedUrl: "" };
+}
+
+const groupedBlocks = groupListItems(blocks);
+---
+
+{
+  groupedBlocks.map((item) => {
+    if (Array.isArray(item)) {
+      // List group
+      const firstBlock = item[0];
+      const isBulleted = firstBlock.Type === "bulleted_list_item";
+
+      return isBulleted ? (
+        <ul class="notion-list bulleted-list">
+          {item.map((block) => (
+            <li class="list-item">
+              <RichTexts richTexts={block.BulletedListItem?.RichTexts || []} />
+              {block.BulletedListItem?.Children && (
+                block.BulletedListItem.Children.length > 0 && (
+                  <Astro.self blocks={block.BulletedListItem.Children} />
+                )
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <ol class="notion-list numbered-list">
+          {item.map((block) => (
+            <li class="list-item">
+              <RichTexts richTexts={block.NumberedListItem?.RichTexts || []} />
+              {block.NumberedListItem?.Children && (
+                block.NumberedListItem.Children.length > 0 && (
+                  <Astro.self blocks={block.NumberedListItem.Children} />
+                )
+              )}
+            </li>
+          ))}
+        </ol>
+      );
+    }
+
+    const block = item;
+
+    switch (block.Type) {
+      case "paragraph":
+        return (
+          <p class="notion-paragraph">
+            <RichTexts richTexts={block.Paragraph?.RichTexts || []} />
+            {block.Paragraph?.Children && block.Paragraph.Children.length > 0 && (
+              <Astro.self blocks={block.Paragraph.Children} />
+            )}
+          </p>
+        );
+
+      case "heading_1":
+        const h1Id =
+          block.Heading1?.RichTexts.map((rt) => rt.PlainText).join("") || "";
+        const h1HeadingId = generateHeadingId(h1Id);
+        return (
+          <h1 class="notion-heading-1" id={h1HeadingId}>
+            <RichTexts richTexts={block.Heading1?.RichTexts || []} />
+            {block.Heading1?.Children && block.Heading1.Children.length > 0 && (
+              <Astro.self blocks={block.Heading1.Children} />
+            )}
+          </h1>
+        );
+
+      case "heading_2":
+        const h2Id =
+          block.Heading2?.RichTexts.map((rt) => rt.PlainText).join("") || "";
+        const h2HeadingId = generateHeadingId(h2Id);
+        return (
+          <h2 class="notion-heading-2" id={h2HeadingId}>
+            <RichTexts richTexts={block.Heading2?.RichTexts || []} />
+            {block.Heading2?.Children && block.Heading2.Children.length > 0 && (
+              <Astro.self blocks={block.Heading2.Children} />
+            )}
+          </h2>
+        );
+
+      case "heading_3":
+        const h3Id =
+          block.Heading3?.RichTexts.map((rt) => rt.PlainText).join("") || "";
+        const h3HeadingId = generateHeadingId(h3Id);
+        return (
+          <h3 class="notion-heading-3" id={h3HeadingId}>
+            <RichTexts richTexts={block.Heading3?.RichTexts || []} />
+            {block.Heading3?.Children && block.Heading3.Children.length > 0 && (
+              <Astro.self blocks={block.Heading3.Children} />
+            )}
+          </h3>
+        );
+
+      case "to_do":
+        return (
+          <div class="notion-todo">
+            <input
+              type="checkbox"
+              checked={block.ToDo?.Checked || false}
+              disabled
+            />
+            <label>
+              <RichTexts richTexts={block.ToDo?.RichTexts || []} />
+            </label>
+            {block.ToDo?.Children && block.ToDo.Children.length > 0 && (
+              <Astro.self blocks={block.ToDo.Children} />
+            )}
+          </div>
+        );
+
+      case "image":
+        return (
+          <figure class="notion-image">
+            <img src={block.NImage?.File?.Url || block.NImage?.External?.Url || ""} alt="" />
+            {block.NImage?.Caption && block.NImage.Caption.length > 0 && (
+              <figcaption>
+                <RichTexts richTexts={block.NImage.Caption} />
+              </figcaption>
+            )}
+          </figure>
+        );
+
+      case "video":
+        {
+          const videoUrl =
+            block.Video?.External?.Url || block.Video?.File?.Url || "";
+          const { type: videoType, embedUrl } = getVideoEmbedUrl(videoUrl);
+
+          if (videoType === "youtube" || videoType === "vimeo") {
+            return (
+              <div class="notion-video embed-container">
+                <iframe
+                  src={embedUrl}
+                  title="Video"
+                  frameborder="0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowfullscreen
+                ></iframe>
+                {block.Video?.Caption && block.Video.Caption.length > 0 && (
+                  <p class="video-caption">
+                    <RichTexts richTexts={block.Video.Caption} />
+                  </p>
+                )}
+              </div>
+            );
+          } else if (block.Video?.File?.Url) {
+            return (
+              <figure class="notion-video">
+                <video controls>
+                  <source src={block.Video.File.Url} />
+                  Your browser does not support the video tag.
+                </video>
+                {block.Video?.Caption && block.Video.Caption.length > 0 && (
+                  <figcaption>
+                    <RichTexts richTexts={block.Video.Caption} />
+                  </figcaption>
+                )}
+              </figure>
+            );
+          }
+          break;
+        }
+
+      case "audio":
+        return (
+          <figure class="notion-audio">
+            <audio controls>
+              <source
+                src={block.NAudio?.File?.Url || block.NAudio?.External?.Url || ""}
+              />
+              Your browser does not support the audio element.
+            </audio>
+            {block.NAudio?.Caption && block.NAudio.Caption.length > 0 && (
+              <figcaption>
+                <RichTexts richTexts={block.NAudio.Caption} />
+              </figcaption>
+            )}
+          </figure>
+        );
+
+      case "file":
+        const fileName = block.File?.File?.Url?.split("/").pop() || "Download";
+        return (
+          <div class="notion-file">
+            <a
+              href={block.File?.File?.Url || block.File?.External?.Url || "#"}
+              download
+              class="file-link"
+            >
+              {fileName}
+            </a>
+            {block.File?.Caption && block.File.Caption.length > 0 && (
+              <p class="file-caption">
+                <RichTexts richTexts={block.File.Caption} />
+              </p>
+            )}
+          </div>
+        );
+
+      case "code":
+        return (
+          <pre class={`notion-code language-${block.Code?.Language || "plaintext"}`}>
+            <code>
+              {block.Code?.RichTexts.map((rt) => rt.PlainText).join("")}
+            </code>
+          </pre>
+        );
+
+      case "quote":
+        return (
+          <blockquote class="notion-quote">
+            <RichTexts richTexts={block.Quote?.RichTexts || []} />
+            {block.Quote?.Children && block.Quote.Children.length > 0 && (
+              <Astro.self blocks={block.Quote.Children} />
+            )}
+          </blockquote>
+        );
+
+      case "callout":
+        return (
+          <div class="notion-callout">
+            {block.Callout?.Icon && (
+              <span class="callout-icon">
+                {block.Callout.Icon.Type === "emoji" ? (
+                  (block.Callout.Icon as any).Emoji
+                ) : (
+                  <img src={block.Callout.Icon.Url} alt="" />
+                )}
+              </span>
+            )}
+            <div class="callout-content">
+              <RichTexts richTexts={block.Callout?.RichTexts || []} />
+              {block.Callout?.Children && block.Callout.Children.length > 0 && (
+                <Astro.self blocks={block.Callout.Children} />
+              )}
+            </div>
+          </div>
+        );
+
+      case "divider":
+        return <hr class="notion-divider" />;
+
+      case "toggle":
+        return (
+          <details class="notion-toggle">
+            <summary>
+              <RichTexts richTexts={block.Toggle?.RichTexts || []} />
+            </summary>
+            <div class="toggle-content">
+              {block.Toggle?.Children && block.Toggle.Children.length > 0 && (
+                <Astro.self blocks={block.Toggle.Children} />
+              )}
+            </div>
+          </details>
+        );
+
+      case "bookmark":
+        return (
+          <a href={block.Bookmark?.Url || "#"} class="notion-bookmark" target="_blank">
+            <div class="bookmark-card">
+              {block.Bookmark?.Caption && block.Bookmark.Caption.length > 0 && (
+                <p class="bookmark-title">
+                  <RichTexts richTexts={block.Bookmark.Caption} />
+                </p>
+              )}
+              <p class="bookmark-url">{block.Bookmark?.Url}</p>
+            </div>
+          </a>
+        );
+
+      case "embed":
+        return (
+          <div class="notion-embed embed-container">
+            <iframe src={block.Embed?.Url || ""} frameborder="0" allowfullscreen></iframe>
+            {block.Embed?.Caption && block.Embed.Caption.length > 0 && (
+              <p class="embed-caption">
+                <RichTexts richTexts={block.Embed.Caption} />
+              </p>
+            )}
+          </div>
+        );
+
+      case "table":
+        return (
+          <table class="notion-table">
+            <tbody>
+              {block.Table?.Rows.map((row) => (
+                <tr>
+                  {row.Cells.map((cell) => (
+                    <td>
+                      <RichTexts richTexts={cell.RichTexts} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        );
+
+      case "column_list":
+        return (
+          <div class="notion-column-list">
+            {block.ColumnList?.Columns.map((col) => (
+              <div class="notion-column">
+                {col.Children && col.Children.length > 0 && (
+                  <Astro.self blocks={col.Children} />
+                )}
+              </div>
+            ))}
+          </div>
+        );
+
+      case "equation":
+        return (
+          <div class="notion-equation">
+            <code>{block.Equation?.Expression}</code>
+          </div>
+        );
+
+      case "link_to_page":
+        return (
+          <a href={`/posts/${block.LinkToPage?.PageId}/`} class="notion-link-to-page">
+            Link to page
+          </a>
+        );
+
+      default:
+        return null;
+    }
+  })
+}
+
+<style>
+  /* Paragraph */
+  .notion-paragraph {
+    margin: 1rem 0;
+    line-height: 1.7;
+  }
+
+  /* Headings */
+  .notion-heading-1 {
+    font-size: 24px;
+    font-weight: 600;
+    margin: 1.5rem 0 0.75rem;
+    line-height: 1.3;
+  }
+
+  .notion-heading-2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 1.25rem 0 0.6rem;
+    line-height: 1.3;
+  }
+
+  .notion-heading-3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 1rem 0 0.5rem;
+    line-height: 1.3;
+  }
+
+  /* Lists */
+  .notion-list {
+    margin: 1rem 0;
+    padding-left: 1.5rem;
+  }
+
+  .notion-list.bulleted-list {
+    list-style-type: disc;
+  }
+
+  .notion-list.numbered-list {
+    list-style-type: decimal;
+  }
+
+  .list-item {
+    margin: 0.5rem 0;
+    line-height: 1.6;
+  }
+
+  /* To-do */
+  .notion-todo {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin: 0.75rem 0;
+  }
+
+  .notion-todo input[type="checkbox"] {
+    margin-top: 0.25rem;
+    cursor: pointer;
+  }
+
+  .notion-todo label {
+    flex: 1;
+    cursor: pointer;
+    line-height: 1.6;
+  }
+
+  /* Images */
+  .notion-image {
+    margin: 1.5rem 0;
+    text-align: center;
+  }
+
+  .notion-image img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+  }
+
+  .notion-image figcaption {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    margin-top: 0.5rem;
+    text-align: center;
+  }
+
+  /* Video */
+  .notion-video {
+    margin: 1.5rem 0;
+  }
+
+  .notion-video video {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .notion-video.embed-container {
+    position: relative;
+    width: 100%;
+    padding-bottom: 56.25%;
+    height: 0;
+    overflow: hidden;
+  }
+
+  .embed-container iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+  }
+
+  .video-caption {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    margin-top: 0.5rem;
+    text-align: center;
+  }
+
+  /* Audio */
+  .notion-audio {
+    margin: 1rem 0;
+  }
+
+  .notion-audio audio {
+    width: 100%;
+  }
+
+  .notion-audio figcaption {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    margin-top: 0.5rem;
+  }
+
+  /* File */
+  .notion-file {
+    margin: 1rem 0;
+    padding: 0.75rem;
+    background-color: var(--color-bg-surface);
+    border-radius: 4px;
+  }
+
+  .file-link {
+    display: inline-block;
+    color: var(--color-accent);
+    text-decoration: none;
+    font-weight: 500;
+  }
+
+  .file-link:hover {
+    color: var(--color-text);
+  }
+
+  .file-caption {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    margin: 0.5rem 0 0;
+  }
+
+  /* Code */
+  .notion-code {
+    background-color: var(--color-bg-surface);
+    border: 1px solid var(--color-rule);
+    border-radius: 4px;
+    padding: 1rem;
+    overflow-x: auto;
+    margin: 1rem 0;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .notion-code code {
+    color: var(--color-text);
+    font-family: var(--font-mono);
+  }
+
+  /* Quote */
+  .notion-quote {
+    border-left: 3px solid var(--color-accent);
+    padding-left: 1rem;
+    margin: 1rem 0;
+    color: var(--color-text-muted);
+    font-style: italic;
+  }
+
+  /* Callout */
+  .notion-callout {
+    display: flex;
+    gap: 0.75rem;
+    padding: 1rem;
+    background-color: var(--color-bg-surface);
+    border-left: 3px solid var(--color-accent);
+    border-radius: 4px;
+    margin: 1rem 0;
+  }
+
+  .callout-icon {
+    flex-shrink: 0;
+    font-size: 20px;
+  }
+
+  .callout-content {
+    flex: 1;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  /* Divider */
+  .notion-divider {
+    border: none;
+    border-top: 1px dashed var(--color-rule);
+    margin: 1.5rem 0;
+  }
+
+  /* Toggle */
+  .notion-toggle {
+    margin: 1rem 0;
+  }
+
+  .notion-toggle summary {
+    cursor: pointer;
+    font-weight: 500;
+    padding: 0.5rem 0;
+    user-select: none;
+  }
+
+  .notion-toggle summary:hover {
+    color: var(--color-accent);
+  }
+
+  .toggle-content {
+    padding-left: 1rem;
+    padding-top: 0.5rem;
+    border-left: 1px dashed var(--color-rule);
+  }
+
+  /* Bookmark */
+  .notion-bookmark {
+    display: block;
+    margin: 1rem 0;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .bookmark-card {
+    padding: 1rem;
+    border: 1px solid var(--color-rule);
+    border-radius: 4px;
+    transition: border-color 0.15s ease;
+  }
+
+  .notion-bookmark:hover .bookmark-card {
+    border-color: var(--color-accent);
+  }
+
+  .bookmark-title {
+    margin: 0;
+    font-weight: 500;
+    font-size: 13px;
+  }
+
+  .bookmark-url {
+    margin: 0.5rem 0 0;
+    font-size: 11px;
+    color: var(--color-text-muted);
+    word-break: break-all;
+  }
+
+  /* Embed */
+  .notion-embed {
+    margin: 1.5rem 0;
+  }
+
+  .embed-caption {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    margin-top: 0.5rem;
+    text-align: center;
+  }
+
+  /* Table */
+  .notion-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.5rem 0;
+    font-size: 13px;
+  }
+
+  .notion-table td {
+    border: 1px solid var(--color-rule);
+    padding: 0.75rem;
+    vertical-align: top;
+  }
+
+  /* Column List */
+  .notion-column-list {
+    display: flex;
+    gap: 1rem;
+    margin: 1rem 0;
+  }
+
+  .notion-column {
+    flex: 1;
+  }
+
+  /* Equation */
+  .notion-equation {
+    margin: 1rem 0;
+    padding: 0.75rem;
+    background-color: var(--color-bg-surface);
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    overflow-x: auto;
+  }
+
+  /* Link to page */
+  .notion-link-to-page {
+    display: inline-block;
+    padding: 0.5rem 0.75rem;
+    background-color: var(--color-bg-surface);
+    border: 1px solid var(--color-rule);
+    border-radius: 4px;
+    margin: 0.5rem 0;
+    font-size: 12px;
+  }
+
+  .notion-link-to-page:hover {
+    border-color: var(--color-accent);
+  }
+</style>

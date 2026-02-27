@@ -1,49 +1,62 @@
 ---
 import Base from "@/layouts/Base.astro";
+import { getAllPosts } from "@/lib/notion";
 
-// Phase 1: Static placeholder content
-// Phase 2: This will fetch from Notion database
+// Fetch posts from Notion
+let posts = await getAllPosts();
 
-// Placeholder posts for layout development
-const posts = [
+// Filter by ShowOnHomepage and sort by date descending
+posts = posts
+  .filter((post) => post.ShowOnHomepage)
+  .sort(
+    (a, b) =>
+      new Date(b.Date).getTime() - new Date(a.Date).getTime()
+  );
+
+// Fallback to placeholder data if Notion is not configured
+const placeholderPosts = [
   {
-    slug: "garcia-performance",
-    title: "garcia — solo movement and sound performance",
-    date: "2024-11-15",
-    type: "project",
-    excerpt: "planting trombone sounds in pre-determined zones such as ground, horizon, sky. each zone processes the recorded sound in different ways.",
-    image: null,
+    Slug: "garcia-performance",
+    Title: "garcia — solo movement and sound performance",
+    Date: "2024-11-15",
+    Type: "project",
+    Excerpt: "planting trombone sounds in pre-determined zones such as ground, horizon, sky. each zone processes the recorded sound in different ways.",
+    FeaturedImage: null,
   },
   {
-    slug: "conversations-with-space-and-architecture",
-    title: "conversations with space and architecture",
-    date: "2024-09-20",
-    type: "project",
-    excerpt: "the environment becomes a source of inspiration both acoustically and visually. the frame of a building can be used as a graphic score for the mubone to trace.",
-    image: null,
+    Slug: "conversations-with-space-and-architecture",
+    Title: "conversations with space and architecture",
+    Date: "2024-09-20",
+    Type: "project",
+    Excerpt: "the environment becomes a source of inspiration both acoustically and visually. the frame of a building can be used as a graphic score for the mubone to trace.",
+    FeaturedImage: null,
   },
   {
-    slug: "nime-2022-paper",
-    title: "early prototypes and artistic practice with the mubone — nime 2022",
-    date: "2022-06-28",
-    type: "blog",
-    excerpt: "peer-reviewed paper presented at new interfaces for musical expression. documenting the design evolution and creative applications of the mubone.",
+    Slug: "nime-2022-paper",
+    Title: "early prototypes and artistic practice with the mubone — nime 2022",
+    Date: "2022-06-28",
+    Type: "blog",
+    Excerpt: "peer-reviewed paper presented at new interfaces for musical expression. documenting the design evolution and creative applications of the mubone.",
   },
   {
-    slug: "ircam-manifeste-2022",
-    title: "ircam manifeste — paris residency",
-    date: "2022-06-10",
-    type: "blog",
-    excerpt: "performing and presenting the mubone at ircam forum and manifeste festival in paris.",
+    Slug: "ircam-manifeste-2022",
+    Title: "ircam manifeste — paris residency",
+    Date: "2022-06-10",
+    Type: "blog",
+    Excerpt: "performing and presenting the mubone at ircam forum and manifeste festival in paris.",
   },
   {
-    slug: "moco-2019-paper",
-    title: "mubone: an augmented trombone — moco 2019",
-    date: "2019-10-15",
-    type: "blog",
-    excerpt: "paper and demo presented at the international conference on movement and computing. introducing the mubone as a movement-based granular synthesizer.",
+    Slug: "moco-2019-paper",
+    Title: "mubone: an augmented trombone — moco 2019",
+    Date: "2019-10-15",
+    Type: "blog",
+    Excerpt: "paper and demo presented at the international conference on movement and computing. introducing the mubone as a movement-based granular synthesizer.",
   },
 ];
+
+if (posts.length === 0) {
+  posts = placeholderPosts;
+}
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr + "T12:00:00");
@@ -54,33 +67,33 @@ function formatDate(dateStr: string): string {
 <Base>
   <div class="homepage">
     <div class="tagline">
-      <p>sound machines for<br />the exploration of time<br />and space</p>
+      <p>sonifying the space within</p>
     </div>
 
     <hr />
 
     <div class="posts-list">
       {posts.map((post) => (
-        <article class={`post-item ${post.type}`}>
-          {post.type === "project" ? (
-            <a href={`/posts/${post.slug}/`} class="project-card">
+        <article class={`post-item ${post.Type}`}>
+          {post.Type === "project" ? (
+            <a href={`/posts/${post.Slug}/`} class="project-card">
               <div class="project-placeholder-image">
                 <span class="project-type-label">project</span>
               </div>
               <div class="project-info">
-                <h2 class="post-title">{post.title}</h2>
-                <time class="post-date">{formatDate(post.date)}</time>
-                {post.excerpt && <p class="post-excerpt">{post.excerpt}</p>}
+                <h2 class="post-title">{post.Title}</h2>
+                <time class="post-date">{formatDate(post.Date)}</time>
+                {post.Excerpt && <p class="post-excerpt">{post.Excerpt}</p>}
               </div>
             </a>
           ) : (
-            <a href={`/posts/${post.slug}/`} class="blog-entry">
+            <a href={`/posts/${post.Slug}/`} class="blog-entry">
               <div class="blog-meta">
-                <time class="post-date">{formatDate(post.date)}</time>
+                <time class="post-date">{formatDate(post.Date)}</time>
               </div>
               <div class="blog-content">
-                <h2 class="post-title">{post.title}</h2>
-                {post.excerpt && <p class="post-excerpt">{post.excerpt}</p>}
+                <h2 class="post-title">{post.Title}</h2>
+                {post.Excerpt && <p class="post-excerpt">{post.Excerpt}</p>}
               </div>
             </a>
           )}
