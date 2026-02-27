@@ -7,6 +7,7 @@ export interface Post {
   Date: string;
   Type: string; // "blog" or "project"
   ShowOnHomepage: boolean;
+  PinOrder: number | null; // 1 = top, 2 = second, etc. null = unpinned
   Excerpt: string;
   FeaturedImage: string | null; // URL string
   Tags: SelectProperty[];

@@ -631,6 +631,7 @@ function _buildPost(pageObj: any): Post | null {
   const dateProp = properties.Date;
   const typeProp = properties.Type;
   const showProp = properties["Show on Homepage"];
+  const pinOrderProp = properties["Pin Order"];
   const excerptProp = properties.Excerpt;
   const imageProp = properties["Featured Image"];
   const tagsProp = properties.Tags;
@@ -660,6 +661,9 @@ function _buildPost(pageObj: any): Post | null {
 
   // Extract show on homepage
   const showOnHomepage = showProp?.checkbox || false;
+
+  // Extract pin order (null = unpinned)
+  const pinOrder: number | null = pinOrderProp?.number ?? null;
 
   // Extract excerpt
   const excerpt =
@@ -698,6 +702,7 @@ function _buildPost(pageObj: any): Post | null {
     Date: date,
     Type: type,
     ShowOnHomepage: showOnHomepage,
+    PinOrder: pinOrder,
     Excerpt: excerpt,
     FeaturedImage: featuredImage,
     Tags: tags,

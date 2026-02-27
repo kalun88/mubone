@@ -5,13 +5,20 @@ import { getAllPosts } from "@/lib/notion";
 // Fetch posts from Notion
 let posts = await getAllPosts();
 
-// Filter by ShowOnHomepage and sort by date descending
+// Filter by ShowOnHomepage, then sort: pinned first (by pin order), then by date
 posts = posts
   .filter((post) => post.ShowOnHomepage)
-  .sort(
-    (a, b) =>
-      new Date(b.Date).getTime() - new Date(a.Date).getTime()
-  );
+  .sort((a, b) => {
+    const aPinned = a.PinOrder !== null && a.PinOrder !== undefined;
+    const bPinned = b.PinOrder !== null && b.PinOrder !== undefined;
+    // Pinned posts come first
+    if (aPinned && !bPinned) return -1;
+    if (!aPinned && bPinned) return 1;
+    // Both pinned: sort by pin order ascending (1 = top)
+    if (aPinned && bPinned) return (a.PinOrder as number) - (b.PinOrder as number);
+    // Both unpinned: sort by date descending
+    return new Date(b.Date).getTime() - new Date(a.Date).getTime();
+  });
 
 // Fallback to placeholder data if Notion is not configured
 const placeholderPosts = [
