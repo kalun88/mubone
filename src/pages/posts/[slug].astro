@@ -6,10 +6,12 @@ import { getAllPosts, getPostBySlug, getPostContent } from "@/lib/notion";
 export async function getStaticPaths() {
   const posts = await getAllPosts();
 
-  return posts.map((post) => ({
-    params: { slug: post.Slug },
-    props: { post },
-  }));
+  return posts
+    .filter((post) => post.Slug && post.Slug.trim() !== "")
+    .map((post) => ({
+      params: { slug: post.Slug },
+      props: { post },
+    }));
 }
 
 interface Props {
