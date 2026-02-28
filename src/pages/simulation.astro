@@ -31,7 +31,7 @@ const description = "Interactive browser-based mubone sound composition with a 3
     </div>
 
     <div class="instructions">
-      drag to rotate · tap to paint · 1-9 select sound
+      move mouse to look · click to paint · 1-9 select sound
     </div>
   </div>
 </Base>
@@ -63,11 +63,12 @@ const description = "Interactive browser-based mubone sound composition with a 3
   .canvas-wrapper {
     position: relative;
     width: 100%;
-    background: var(--color-bg-surface);
+    background: #1a2a2a;
     border: 1px solid var(--color-rule);
-    aspect-ratio: 4 / 3;
+    aspect-ratio: 16 / 10;
     border-radius: 4px;
     overflow: hidden;
+    cursor: crosshair;
   }
 
   #sphereCanvas {
@@ -167,14 +168,17 @@ const description = "Interactive browser-based mubone sound composition with a 3
   // CONSTANTS & CONFIGURATION
   // ============================================================================
 
-  const SPHERE_SEGMENTS = 24; // longitude segments
-  const SPHERE_RINGS = 12;    // latitude rings
-  const DOT_BASE_RADIUS = 2;
-  const FOV = 500;
-  const AUTO_ROTATION_SPEED = 0.0003; // radians per frame
-  const MOMENTUM_DECAY = 0.95;
-  const DRAG_SENSITIVITY = 0.005;
-  const TAP_THRESHOLD = 10; // pixels
+  const SPHERE_RADIUS = 500;       // radius of the sphere we're inside
+  const GRID_SEGMENTS_LON = 24;    // longitude lines
+  const GRID_SEGMENTS_LAT = 12;    // latitude rings
+  const GRID_LINE_ALPHA = 0.12;    // grid line opacity
+  const CURSOR_RADIUS = 5;         // white dot cursor size
+  const CURSOR_SELECT_ANGLE = 0.08; // radians — how close cursor must be to select a particle
+  const MOUSE_SENSITIVITY = 0.003; // how much mouse offset rotates camera
+  const PAINTED_DOT_BASE_SIZE = 6; // base size of painted particles
+  const PAINTED_DOT_MAX_SIZE = 28; // max size when close to camera
+  const AUTO_ROTATION_SPEED = 0.0001; // slow ambient drift
+  const FOV_DEG = 90;              // field of view in degrees
 
   // Sound frequencies (Hz)
   const SOUND_FREQS = [
@@ -201,31 +205,20 @@ const description = "Interactive browser-based mubone sound composition with a 3
     '#d06bff'  // 9: magenta
   ];
 
+  // Background color — dark teal to match the reference
+  const BG_COLOR = '#1a2a2a';
+  const GRID_COLOR = '#4a8a8a';
+
   // ============================================================================
   // TYPES
   // ============================================================================
 
-  interface Dot3D {
-    lon: number;
-    lat: number;
-    x: number;
-    y: number;
-    z: number;
-  }
-
   interface PaintedDot {
-    lon: number;
-    lat: number;
+    lon: number;       // longitude on sphere (radians)
+    lat: number;       // latitude on sphere (radians)
     soundIndex: number;
     color: string;
-  }
-
-  interface Particle {
-    x: number;
-    y: number;
-    z: number;
-    lon: number;
-    lat: number;
+    selected: boolean;
   }
 
   // ============================================================================
@@ -235,26 +228,24 @@ const description = "Interactive browser-based mubone sound composition with a 3
   let canvas: HTMLCanvasElement;
   let ctx: CanvasRenderingContext2D;
   let audioContext: AudioContext | null = null;
-  let currentSoundIndex = 0; // 0-8 (displays as 1-9)
+  let currentSoundIndex = 0;
 
-  let rotX = 0;
-  let rotY = 0;
-  let rotXVelocity = 0;
-  let rotYVelocity = 0;
+  // Camera look direction (euler angles — where we're looking from center)
+  let camYaw = 0;    // left-right rotation
+  let camPitch = 0;  // up-down rotation
 
-  let isDragging = false;
-  let dragStartX = 0;
-  let dragStartY = 0;
-  let lastMouseX = 0;
-  let lastMouseY = 0;
+  // Mouse state
+  let mouseX = 0;   // mouse position relative to canvas center (-1 to 1)
+  let mouseY = 0;
+  let mouseInCanvas = false;
 
-  let dots: Dot3D[] = [];
   let paintedDots: PaintedDot[] = [];
-  let triggeredDots = new Set<number>();
+  let animationFrameId: number;
+
+  // Playhead state
   let playheadLon = 0;
   let lastPlayheadPos = 0;
-
-  let animationFrameId: number;
+  let triggeredDots = new Set<number>();
 
   // ============================================================================
   // INITIALIZATION
@@ -265,7 +256,6 @@ const description = "Interactive browser-based mubone sound composition with a 3
     ctx = canvas.getContext('2d')!;
 
     resizeCanvas();
-    generateSphereDots();
     setupEventListeners();
     animate();
   }
@@ -276,70 +266,78 @@ const description = "Interactive browser-based mubone sound composition with a 3
     canvas.height = rect.height;
   }
 
-  function generateSphereDots() {
-    dots = [];
-    for (let ring = 0; ring < SPHERE_RINGS; ring++) {
-      const lat = (Math.PI / SPHERE_RINGS) * (ring + 0.5) - Math.PI / 2;
-      for (let seg = 0; seg < SPHERE_SEGMENTS; seg++) {
-        const lon = (Math.PI * 2 / SPHERE_SEGMENTS) * seg;
-        dots.push({
-          lon,
-          lat,
-          x: 0,
-          y: 0,
-          z: 0
-        });
-      }
-    }
-  }
-
   // ============================================================================
-  // 3D MATH
+  // 3D MATH — INSIDE-SPHERE CAMERA
   // ============================================================================
 
-  function sphericalToCartesian(lon: number, lat: number, radius: number = 100) {
-    return {
-      x: radius * Math.cos(lat) * Math.cos(lon),
-      y: radius * Math.sin(lat),
-      z: radius * Math.cos(lat) * Math.sin(lon)
-    };
+  // Convert spherical coords on the sphere surface to a 3D point
+  function spherePoint(lon: number, lat: number): [number, number, number] {
+    const x = SPHERE_RADIUS * Math.cos(lat) * Math.cos(lon);
+    const y = SPHERE_RADIUS * Math.sin(lat);
+    const z = SPHERE_RADIUS * Math.cos(lat) * Math.sin(lon);
+    return [x, y, z];
   }
 
-  function cartesianToSpherical(x: number, y: number, z: number) {
-    const radius = Math.sqrt(x * x + y * y + z * z);
-    const lat = Math.asin(y / radius);
-    const lon = Math.atan2(z, x);
-    return { lon, lat, radius };
+  // Rotate a point by camera yaw and pitch (camera is at origin looking outward)
+  function cameraTransform(x: number, y: number, z: number): [number, number, number] {
+    // Yaw rotation (around Y axis)
+    const cosY = Math.cos(-camYaw);
+    const sinY = Math.sin(-camYaw);
+    let x1 = x * cosY + z * sinY;
+    let y1 = y;
+    let z1 = -x * sinY + z * cosY;
+
+    // Pitch rotation (around X axis)
+    const cosP = Math.cos(-camPitch);
+    const sinP = Math.sin(-camPitch);
+    let x2 = x1;
+    let y2 = y1 * cosP - z1 * sinP;
+    let z2 = y1 * sinP + z1 * cosP;
+
+    return [x2, y2, z2];
   }
 
-  function applyRotationX(p: { x: number; y: number; z: number }, angle: number) {
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    return {
-      x: p.x,
-      y: p.y * cos - p.z * sin,
-      z: p.y * sin + p.z * cos
-    };
+  // Project a 3D point (in camera space) to 2D screen coords
+  // Returns null if behind camera
+  function project(x: number, y: number, z: number): { sx: number; sy: number; depth: number } | null {
+    if (z <= 0.1) return null; // behind camera
+
+    const fovRad = (FOV_DEG * Math.PI) / 180;
+    const focalLen = (canvas.width / 2) / Math.tan(fovRad / 2);
+
+    const sx = canvas.width / 2 + (x / z) * focalLen;
+    const sy = canvas.height / 2 - (y / z) * focalLen;
+
+    return { sx, sy, depth: z };
   }
 
-  function applyRotationY(p: { x: number; y: number; z: number }, angle: number) {
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
-    return {
-      x: p.x * cos + p.z * sin,
-      y: p.y,
-      z: -p.x * sin + p.z * cos
-    };
+  // Get the look direction as a unit vector (what the cursor center points at)
+  function getCursorRayDir(): [number, number, number] {
+    // Camera looks along +Z in camera space, so in world space
+    // we rotate [0,0,1] by camYaw and camPitch
+    const cosY = Math.cos(camYaw);
+    const sinY = Math.sin(camYaw);
+    const cosP = Math.cos(camPitch);
+    const sinP = Math.sin(camPitch);
+
+    return [
+      sinY * cosP,
+      sinP,
+      cosY * cosP
+    ];
   }
 
-  function projectTo2D(p: { x: number; y: number; z: number }, centerX: number, centerY: number) {
-    const scale = FOV / (FOV + p.z);
-    return {
-      x: centerX + p.x * scale,
-      y: centerY - p.y * scale,
-      scale,
-      z: p.z
-    };
+  // Angle between two unit-ish directions on the sphere
+  function angleBetween(
+    lon1: number, lat1: number,
+    lon2: number, lat2: number
+  ): number {
+    const [x1, y1, z1] = spherePoint(lon1, lat1);
+    const [x2, y2, z2] = spherePoint(lon2, lat2);
+    const dot = x1 * x2 + y1 * y2 + z1 * z2;
+    const mag1 = Math.sqrt(x1*x1 + y1*y1 + z1*z1);
+    const mag2 = Math.sqrt(x2*x2 + y2*y2 + z2*z2);
+    return Math.acos(Math.max(-1, Math.min(1, dot / (mag1 * mag2))));
   }
 
   // ============================================================================
@@ -347,102 +345,226 @@ const description = "Interactive browser-based mubone sound composition with a 3
   // ============================================================================
 
   function drawFrame() {
-    // Clear canvas
-    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--color-bg-surface').trim();
+    ctx.fillStyle = BG_COLOR;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const centerX = canvas.width / 2;
-    const centerY = canvas.height / 2;
+    drawGridLines();
+    drawPaintedDots();
+    drawPlayhead();
+    drawCursor();
+  }
 
-    // Transform and project all dots
-    const projectedDots = dots.map(dot => {
-      let p = sphericalToCartesian(dot.lon, dot.lat, 100);
-      p = applyRotationX(p, rotX);
-      p = applyRotationY(p, rotY);
-      dot.x = p.x;
-      dot.y = p.y;
-      dot.z = p.z;
+  function drawGridLines() {
+    ctx.strokeStyle = GRID_COLOR;
+    ctx.lineWidth = 0.8;
+    ctx.globalAlpha = GRID_LINE_ALPHA;
 
-      const proj = projectTo2D(p, centerX, centerY);
-      return { ...proj, lon: dot.lon, lat: dot.lat, index: dots.indexOf(dot) };
-    });
+    // Longitude lines (vertical arcs)
+    for (let i = 0; i < GRID_SEGMENTS_LON; i++) {
+      const lon = (i / GRID_SEGMENTS_LON) * Math.PI * 2;
+      drawArc(lon, 'lon');
+    }
 
-    // Transform and project painted dots
-    const projectedPainted = paintedDots.map(pd => {
-      let p = sphericalToCartesian(pd.lon, pd.lat, 100);
-      p = applyRotationX(p, rotX);
-      p = applyRotationY(p, rotY);
+    // Latitude lines (horizontal rings)
+    for (let i = 1; i < GRID_SEGMENTS_LAT; i++) {
+      const lat = (i / GRID_SEGMENTS_LAT) * Math.PI - Math.PI / 2;
+      drawArc(lat, 'lat');
+    }
 
-      const proj = projectTo2D(p, centerX, centerY);
-      return { ...proj, color: pd.color, soundIndex: pd.soundIndex };
-    });
+    ctx.globalAlpha = 1;
+  }
 
-    // Draw playhead (vertical arc at current playhead longitude)
-    drawPlayhead(centerX, centerY);
+  function drawArc(angle: number, type: 'lon' | 'lat') {
+    const steps = 64;
+    let started = false;
 
-    // Draw grid dots (background)
-    projectedDots.forEach(dot => {
-      if (dot.z > -100) { // Only draw front-facing dots
-        const brightness = Math.max(0, (1 + dot.z / 200)); // depth-based brightness
-        const alpha = Math.max(0.1, brightness);
-        const radius = DOT_BASE_RADIUS * dot.scale;
+    ctx.beginPath();
 
-        ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.5})`;
-        ctx.beginPath();
-        ctx.arc(dot.x, dot.y, radius, 0, Math.PI * 2);
-        ctx.fill();
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      let lon: number, lat: number;
+
+      if (type === 'lon') {
+        lon = angle;
+        lat = t * Math.PI - Math.PI / 2;
+      } else {
+        lon = t * Math.PI * 2;
+        lat = angle;
+      }
+
+      const [wx, wy, wz] = spherePoint(lon, lat);
+      const [cx, cy, cz] = cameraTransform(wx, wy, wz);
+      const proj = project(cx, cy, cz);
+
+      if (proj) {
+        if (!started) {
+          ctx.moveTo(proj.sx, proj.sy);
+          started = true;
+        } else {
+          ctx.lineTo(proj.sx, proj.sy);
+        }
+      } else {
+        started = false; // break the line if point is behind camera
+      }
+    }
+
+    ctx.stroke();
+  }
+
+  function drawPaintedDots() {
+    // Get cursor direction for selection check
+    const [rx, ry, rz] = getCursorRayDir();
+    const cursorLon = Math.atan2(rx, rz);
+    const cursorLat = Math.asin(Math.max(-1, Math.min(1, ry)));
+
+    // Sort by depth (furthest first) for proper overlap
+    const dotsWithProj: Array<{
+      dot: PaintedDot;
+      sx: number;
+      sy: number;
+      depth: number;
+      selected: boolean;
+    }> = [];
+
+    paintedDots.forEach(dot => {
+      const [wx, wy, wz] = spherePoint(dot.lon, dot.lat);
+      const [cx, cy, cz] = cameraTransform(wx, wy, wz);
+      const proj = project(cx, cy, cz);
+
+      if (proj) {
+        // Check selection
+        const ang = angleBetween(dot.lon, dot.lat, cursorLon, cursorLat);
+        const selected = ang < CURSOR_SELECT_ANGLE;
+        dot.selected = selected;
+
+        dotsWithProj.push({
+          dot,
+          sx: proj.sx,
+          sy: proj.sy,
+          depth: proj.depth,
+          selected
+        });
       }
     });
 
-    // Draw painted dots (foreground)
-    projectedPainted.forEach(pd => {
-      if (pd.z > -100) {
-        const brightness = Math.max(0, (1 + pd.z / 200));
-        const alpha = Math.max(0.2, brightness);
-        const radius = DOT_BASE_RADIUS * pd.scale * 1.5;
+    // Sort: furthest first
+    dotsWithProj.sort((a, b) => b.depth - a.depth);
 
-        ctx.fillStyle = pd.color;
-        ctx.globalAlpha = alpha;
+    dotsWithProj.forEach(({ dot, sx, sy, depth, selected }) => {
+      // Size based on distance — closer = bigger (like the reference)
+      const distanceFactor = 1 - (depth / (SPHERE_RADIUS * 2));
+      const size = PAINTED_DOT_BASE_SIZE + (PAINTED_DOT_MAX_SIZE - PAINTED_DOT_BASE_SIZE) * Math.max(0, distanceFactor);
+
+      // Alpha based on depth
+      const alpha = 0.4 + 0.6 * Math.max(0, distanceFactor);
+
+      // Draw the particle (slightly elliptical for depth feel)
+      ctx.save();
+      ctx.globalAlpha = alpha;
+
+      if (selected) {
+        // Selection glow
+        ctx.shadowColor = dot.color;
+        ctx.shadowBlur = 20;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(pd.x, pd.y, radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.globalAlpha = 1;
+        ctx.arc(sx, sy, size + 4, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
       }
+
+      // Main dot
+      ctx.fillStyle = dot.color;
+      ctx.beginPath();
+      ctx.arc(sx, sy, size, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Slight highlight on top for 3D feel
+      const grad = ctx.createRadialGradient(sx - size * 0.3, sy - size * 0.3, 0, sx, sy, size);
+      grad.addColorStop(0, 'rgba(255,255,255,0.25)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, size, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
     });
   }
 
-  function drawPlayhead(centerX: number, centerY: number) {
-    // Draw a vertical line on the sphere at playhead longitude
-    const steps = 20;
-    const segments = [];
+  function drawPlayhead() {
+    // Draw a vertical arc at the playhead longitude
+    const steps = 40;
+    let started = false;
+
+    ctx.strokeStyle = 'rgba(255, 220, 100, 0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
 
     for (let i = 0; i <= steps; i++) {
-      const lat = (i / steps) * Math.PI - Math.PI / 2;
-      let p = sphericalToCartesian(playheadLon, lat, 100);
-      p = applyRotationX(p, rotX);
-      p = applyRotationY(p, rotY);
+      const t = i / steps;
+      const lat = t * Math.PI - Math.PI / 2;
 
-      const proj = projectTo2D(p, centerX, centerY);
-      if (proj.z > -100) {
-        segments.push(proj);
+      const [wx, wy, wz] = spherePoint(playheadLon, lat);
+      const [cx, cy, cz] = cameraTransform(wx, wy, wz);
+      const proj = project(cx, cy, cz);
+
+      if (proj) {
+        if (!started) {
+          ctx.moveTo(proj.sx, proj.sy);
+          started = true;
+        } else {
+          ctx.lineTo(proj.sx, proj.sy);
+        }
+      } else {
+        started = false;
       }
     }
 
-    // Draw playhead line
-    if (segments.length > 1) {
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(segments[0].x, segments[0].y);
-      for (let i = 1; i < segments.length; i++) {
-        ctx.lineTo(segments[i].x, segments[i].y);
-      }
-      ctx.stroke();
-    }
+    ctx.stroke();
+  }
+
+  function drawCursor() {
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+
+    // Outer ring
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, CURSOR_RADIUS + 2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Inner dot
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, CURSOR_RADIUS * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Small crosshair lines
+    const len = 12;
+    const gap = CURSOR_RADIUS + 5;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    // right
+    ctx.moveTo(cx + gap, cy);
+    ctx.lineTo(cx + gap + len, cy);
+    // left
+    ctx.moveTo(cx - gap, cy);
+    ctx.lineTo(cx - gap - len, cy);
+    // top
+    ctx.moveTo(cx, cy - gap);
+    ctx.lineTo(cx, cy - gap - len);
+    // bottom
+    ctx.moveTo(cx, cy + gap);
+    ctx.lineTo(cx, cy + gap + len);
+    ctx.stroke();
   }
 
   // ============================================================================
-  // INTERACTION
+  // AUDIO
   // ============================================================================
 
   function initAudioContext() {
@@ -457,7 +579,7 @@ const description = "Interactive browser-based mubone sound composition with a 3
 
     const { freq, waveform } = SOUND_FREQS[soundIndex];
     const now = audioContext.currentTime;
-    const duration = 0.21; // 10ms attack + 200ms decay
+    const duration = 0.21;
 
     const osc = audioContext.createOscillator();
     const gain = audioContext.createGain();
@@ -465,12 +587,10 @@ const description = "Interactive browser-based mubone sound composition with a 3
     osc.type = waveform as OscillatorType;
     osc.frequency.value = freq;
 
-    // Attack and decay envelope
     gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(1, now + 0.01); // 10ms attack
+    gain.gain.linearRampToValueAtTime(1, now + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.01, now + duration);
 
-    // For sawtooth, add a lowpass filter
     if (waveform === 'sawtooth') {
       const filter = audioContext.createBiquadFilter();
       filter.type = 'lowpass';
@@ -486,40 +606,47 @@ const description = "Interactive browser-based mubone sound composition with a 3
     osc.stop(now + duration);
   }
 
-  function screenToSphere(screenX: number, screenY: number): { lon: number; lat: number } | null {
-    const centerX = canvas.width / 2;
-    const centerY = canvas.height / 2;
+  // ============================================================================
+  // INTERACTION
+  // ============================================================================
 
-    const relX = screenX - centerX;
-    const relY = centerY - screenY;
-
-    const distFromCenter = Math.sqrt(relX * relX + relY * relY);
-    const radius = Math.min(canvas.width, canvas.height) * 0.35; // ~60-70% fill
-
-    if (distFromCenter > radius) {
-      return null; // Outside sphere
-    }
-
-    // Estimate 3D position on sphere surface
-    const lat = Math.asin(Math.max(-1, Math.min(1, relY / radius)));
-    const lon = Math.atan2(relX, radius * Math.cos(lat));
-
-    return { lon, lat };
-  }
-
-  function updateHUD(lon: number | null, lat: number | null) {
+  function updateHUD() {
     const coordDiv = document.getElementById('coordinates');
     const soundDiv = document.getElementById('soundNumber');
 
-    if (lon !== null && lat !== null) {
-      const lonDeg = (lon * 180 / Math.PI).toFixed(1);
-      const latDeg = (lat * 180 / Math.PI).toFixed(1);
-      coordDiv!.textContent = `${lonDeg},${latDeg}`;
-    } else {
-      coordDiv!.textContent = '--,--';
-    }
-
+    const yawDeg = ((camYaw * 180 / Math.PI) % 360).toFixed(1);
+    const pitchDeg = (camPitch * 180 / Math.PI).toFixed(1);
+    coordDiv!.textContent = `${yawDeg},${pitchDeg}`;
     soundDiv!.textContent = String(currentSoundIndex + 1);
+  }
+
+  // Paint a dot where the cursor center is pointing
+  function paintAtCursor() {
+    const [rx, ry, rz] = getCursorRayDir();
+    const lon = Math.atan2(rx, rz);
+    const lat = Math.asin(Math.max(-1, Math.min(1, ry)));
+
+    paintedDots.push({
+      lon,
+      lat,
+      soundIndex: currentSoundIndex,
+      color: SOUND_COLORS[currentSoundIndex],
+      selected: false
+    });
+
+    playSound(currentSoundIndex);
+  }
+
+  function selectSound(soundIndex: number) {
+    currentSoundIndex = soundIndex;
+    playSound(soundIndex);
+
+    // Highlight active button
+    document.querySelectorAll('.numberpad-btn').forEach(btn => {
+      (btn as HTMLButtonElement).style.opacity = '';
+    });
+    const activeBtn = document.querySelector(`.btn-${soundIndex + 1}`) as HTMLButtonElement;
+    if (activeBtn) activeBtn.style.opacity = '1';
   }
 
   // ============================================================================
@@ -527,19 +654,57 @@ const description = "Interactive browser-based mubone sound composition with a 3
   // ============================================================================
 
   function setupEventListeners() {
-    // Mouse events
-    canvas.addEventListener('mousedown', handleMouseDown);
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    canvas.addEventListener('mousemove', handleMouseMoveHUD);
+    // Mouse move — controls camera look direction
+    canvas.addEventListener('mousemove', (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      // Normalize mouse position to -1..1 from canvas center
+      mouseX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+      mouseY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+      mouseInCanvas = true;
+    });
 
-    // Touch events
-    canvas.addEventListener('touchstart', handleTouchStart);
-    document.addEventListener('touchmove', handleTouchMove);
-    document.addEventListener('touchend', handleTouchEnd);
+    canvas.addEventListener('mouseleave', () => {
+      mouseInCanvas = false;
+    });
 
-    // Keyboard
-    document.addEventListener('keydown', handleKeyDown);
+    // Click — paint a dot
+    canvas.addEventListener('click', (e: MouseEvent) => {
+      initAudioContext();
+      paintAtCursor();
+    });
+
+    // Touch support
+    canvas.addEventListener('touchstart', (e: TouchEvent) => {
+      e.preventDefault();
+      initAudioContext();
+      const rect = canvas.getBoundingClientRect();
+      const touch = e.touches[0];
+      mouseX = ((touch.clientX - rect.left) / rect.width - 0.5) * 2;
+      mouseY = ((touch.clientY - rect.top) / rect.height - 0.5) * 2;
+      mouseInCanvas = true;
+    });
+
+    canvas.addEventListener('touchmove', (e: TouchEvent) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const touch = e.touches[0];
+      mouseX = ((touch.clientX - rect.left) / rect.width - 0.5) * 2;
+      mouseY = ((touch.clientY - rect.top) / rect.height - 0.5) * 2;
+    });
+
+    canvas.addEventListener('touchend', (e: TouchEvent) => {
+      e.preventDefault();
+      paintAtCursor();
+    });
+
+    // Keyboard 1-9
+    document.addEventListener('keydown', (e: KeyboardEvent) => {
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= 9) {
+        initAudioContext();
+        selectSound(num - 1);
+      }
+    });
 
     // Number pad buttons
     document.querySelectorAll('.numberpad-btn').forEach(btn => {
@@ -549,178 +714,48 @@ const description = "Interactive browser-based mubone sound composition with a 3
       });
     });
 
-    // Window resize
     window.addEventListener('resize', resizeCanvas);
-  }
-
-  function handleMouseDown(e: MouseEvent) {
-    initAudioContext();
-    isDragging = true;
-    dragStartX = e.clientX;
-    dragStartY = e.clientY;
-    lastMouseX = e.clientX;
-    lastMouseY = e.clientY;
-  }
-
-  function handleMouseMove(e: MouseEvent) {
-    if (!isDragging) return;
-
-    const dx = e.clientX - lastMouseX;
-    const dy = e.clientY - lastMouseY;
-
-    rotYVelocity = dx * DRAG_SENSITIVITY;
-    rotXVelocity = dy * DRAG_SENSITIVITY;
-
-    rotY += rotYVelocity;
-    rotX += rotXVelocity;
-
-    lastMouseX = e.clientX;
-    lastMouseY = e.clientY;
-  }
-
-  function handleMouseUp(e: MouseEvent) {
-    if (!isDragging) return;
-
-    const totalDrag = Math.sqrt(
-      Math.pow(e.clientX - dragStartX, 2) +
-      Math.pow(e.clientY - dragStartY, 2)
-    );
-
-    // If tap (very small drag), paint a dot
-    if (totalDrag < TAP_THRESHOLD) {
-      const spherePos = screenToSphere(e.clientX, e.clientY);
-      if (spherePos) {
-        paintDot(spherePos.lon, spherePos.lat, currentSoundIndex);
-        playSound(currentSoundIndex);
-      }
-    }
-
-    isDragging = false;
-    // Momentum continues via rotXVelocity and rotYVelocity
-  }
-
-  function handleMouseMoveHUD(e: MouseEvent) {
-    if (isDragging) return;
-
-    const spherePos = screenToSphere(e.clientX, e.clientY);
-    if (spherePos) {
-      updateHUD(spherePos.lon, spherePos.lat);
-    } else {
-      updateHUD(null, null);
-    }
-  }
-
-  function handleTouchStart(e: TouchEvent) {
-    initAudioContext();
-    isDragging = true;
-    dragStartX = e.touches[0].clientX;
-    dragStartY = e.touches[0].clientY;
-    lastMouseX = dragStartX;
-    lastMouseY = dragStartY;
-  }
-
-  function handleTouchMove(e: TouchEvent) {
-    if (!isDragging) return;
-
-    const dx = e.touches[0].clientX - lastMouseX;
-    const dy = e.touches[0].clientY - lastMouseY;
-
-    rotYVelocity = dx * DRAG_SENSITIVITY;
-    rotXVelocity = dy * DRAG_SENSITIVITY;
-
-    rotY += rotYVelocity;
-    rotX += rotXVelocity;
-
-    lastMouseX = e.touches[0].clientX;
-    lastMouseY = e.touches[0].clientY;
-  }
-
-  function handleTouchEnd(e: TouchEvent) {
-    if (!isDragging) return;
-
-    const totalDrag = Math.sqrt(
-      Math.pow(e.changedTouches[0].clientX - dragStartX, 2) +
-      Math.pow(e.changedTouches[0].clientY - dragStartY, 2)
-    );
-
-    if (totalDrag < TAP_THRESHOLD) {
-      const spherePos = screenToSphere(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
-      if (spherePos) {
-        paintDot(spherePos.lon, spherePos.lat, currentSoundIndex);
-        playSound(currentSoundIndex);
-      }
-    }
-
-    isDragging = false;
-  }
-
-  function handleKeyDown(e: KeyboardEvent) {
-    const num = parseInt(e.key);
-    if (num >= 1 && num <= 9) {
-      initAudioContext();
-      const soundIndex = num - 1;
-      selectSound(soundIndex);
-    }
-  }
-
-  function selectSound(soundIndex: number) {
-    currentSoundIndex = soundIndex;
-    playSound(soundIndex);
-    updateHUD(null, null); // Force HUD update
-  }
-
-  function paintDot(lon: number, lat: number, soundIndex: number) {
-    paintedDots.push({
-      lon,
-      lat,
-      soundIndex,
-      color: SOUND_COLORS[soundIndex]
-    });
   }
 
   // ============================================================================
   // PLAYHEAD & TRIGGERING
   // ============================================================================
 
-  function checkAndTriggerDots() {
-    // Advance playhead with auto-rotation
+  function updatePlayhead() {
     playheadLon += AUTO_ROTATION_SPEED;
-    if (playheadLon > Math.PI * 2) {
+    if (playheadLon > Math.PI) {
       playheadLon -= Math.PI * 2;
     }
 
     // Check if any painted dots cross the playhead
-    paintedDots.forEach((pd, idx) => {
-      const normalizedLon = pd.lon % (Math.PI * 2);
-      const normalizedPlayhead = playheadLon % (Math.PI * 2);
+    const normalizedPlayhead = ((playheadLon % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    const normalizedLast = ((lastPlayheadPos % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
 
-      // Detect crossing
-      let crossedPlayhead = false;
-      if (lastPlayheadPos < normalizedPlayhead) {
-        // Normal case: playhead moved forward
-        if (normalizedLon > lastPlayheadPos && normalizedLon <= normalizedPlayhead) {
-          crossedPlayhead = true;
+    paintedDots.forEach((pd, idx) => {
+      const normalizedLon = ((pd.lon % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+
+      let crossed = false;
+      if (normalizedLast < normalizedPlayhead) {
+        if (normalizedLon > normalizedLast && normalizedLon <= normalizedPlayhead) {
+          crossed = true;
         }
-      } else {
-        // Wrapped around
-        if (normalizedLon > lastPlayheadPos || normalizedLon <= normalizedPlayhead) {
-          crossedPlayhead = true;
+      } else if (normalizedLast > normalizedPlayhead) {
+        if (normalizedLon > normalizedLast || normalizedLon <= normalizedPlayhead) {
+          crossed = true;
         }
       }
 
-      if (crossedPlayhead && !triggeredDots.has(idx)) {
+      if (crossed && !triggeredDots.has(idx)) {
         triggeredDots.add(idx);
         playSound(pd.soundIndex);
       }
     });
 
-    lastPlayheadPos = playheadLon % (Math.PI * 2);
+    lastPlayheadPos = playheadLon;
 
-    // Reset triggered dots when playhead completes a full rotation
-    if (playheadLon > Math.PI * 2) {
+    // Reset triggered dots when playhead wraps
+    if (normalizedPlayhead < normalizedLast - Math.PI) {
       triggeredDots.clear();
-      playheadLon -= Math.PI * 2;
-      lastPlayheadPos = 0;
     }
   }
 
@@ -729,24 +764,26 @@ const description = "Interactive browser-based mubone sound composition with a 3
   // ============================================================================
 
   function animate() {
-    // Update rotation with momentum and decay
-    if (!isDragging) {
-      rotY += rotYVelocity;
-      rotX += rotXVelocity;
-      rotYVelocity *= MOMENTUM_DECAY;
-      rotXVelocity *= MOMENTUM_DECAY;
+    // Update camera from mouse position
+    if (mouseInCanvas) {
+      // Smoothly move camera toward where mouse is pointing
+      const targetYaw = mouseX * Math.PI * 0.8;   // ±~144 degrees horizontal range
+      const targetPitch = -mouseY * Math.PI * 0.4; // ±~72 degrees vertical range
 
-      // Auto-rotation
-      if (!isDragging) {
-        rotY += AUTO_ROTATION_SPEED;
-      }
+      // Smooth interpolation
+      camYaw += (targetYaw - camYaw) * 0.08;
+      camPitch += (targetPitch - camPitch) * 0.08;
+    } else {
+      // Gentle auto drift when mouse is outside
+      camYaw += AUTO_ROTATION_SPEED;
     }
 
-    // Check for playhead triggers
-    checkAndTriggerDots();
+    // Clamp pitch
+    camPitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, camPitch));
 
-    // Render
+    updatePlayhead();
     drawFrame();
+    updateHUD();
 
     animationFrameId = requestAnimationFrame(animate);
   }

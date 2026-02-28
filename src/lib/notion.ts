@@ -1,4 +1,5 @@
 import { Client } from "@notionhq/client";
+import { downloadNotionImage } from "./image-downloader";
 import type {
   Post,
   Block,
@@ -73,7 +74,7 @@ export async function getAllPosts(): Promise<Post[]> {
 
     const posts: Post[] = [];
     for (const page of response.results) {
-      const post = _buildPost(page as any);
+      const post = await _buildPost(page as any);
       if (post) {
         posts.push(post);
       }
@@ -116,7 +117,7 @@ export async function getPostBySlug(slug: string): Promise<Post | null> {
       return null;
     }
 
-    return _buildPost(response.results[0] as any);
+    return await _buildPost(response.results[0] as any);
   } catch (error) {
     console.error("Error fetching post by slug:", error);
     return null;
@@ -253,19 +254,19 @@ async function _buildBlock(blockObj: any): Promise<Block | null> {
       break;
 
     case "image":
-      block.NImage = _buildImage(blockData);
+      block.NImage = await _buildImage(blockData);
       break;
 
     case "video":
-      block.Video = _buildVideo(blockData);
+      block.Video = await _buildVideo(blockData);
       break;
 
     case "audio":
-      block.NAudio = _buildAudio(blockData);
+      block.NAudio = await _buildAudio(blockData);
       break;
 
     case "file":
-      block.File = _buildFile(blockData);
+      block.File = await _buildFile(blockData);
       break;
 
     case "code":
@@ -476,78 +477,93 @@ function _buildIcon(icon: any): FileObject | Emoji | null {
   return null;
 }
 
-function _buildImage(imageData: any): NImage {
+async function _buildImage(imageData: any): Promise<NImage> {
+  let fileObj: FileObject | undefined;
+  let externalObj: External | undefined;
+
+  if (imageData.file) {
+    // Download Notion-hosted image to local file
+    const localUrl = await downloadNotionImage(imageData.file.url);
+    fileObj = {
+      Type: "file",
+      Url: localUrl,
+      ExpiryTime: imageData.file.expiry_time,
+    };
+  }
+
+  if (imageData.external) {
+    externalObj = {
+      Url: imageData.external.url,
+    };
+  }
+
   return {
     Caption: _buildRichTexts(imageData.caption),
     Type: imageData.type,
-    File: imageData.file
-      ? {
-          Type: "file",
-          Url: imageData.file.url,
-          ExpiryTime: imageData.file.expiry_time,
-        }
-      : undefined,
-    External: imageData.external
-      ? {
-          Url: imageData.external.url,
-        }
-      : undefined,
+    File: fileObj,
+    External: externalObj,
   };
 }
 
-function _buildVideo(videoData: any): Video {
+async function _buildVideo(videoData: any): Promise<Video> {
+  let fileObj: FileObject | undefined;
+  if (videoData.file) {
+    const localUrl = await downloadNotionImage(videoData.file.url);
+    fileObj = {
+      Type: "file",
+      Url: localUrl,
+      ExpiryTime: videoData.file.expiry_time,
+    };
+  }
+
   return {
     Caption: _buildRichTexts(videoData.caption),
     Type: videoData.type,
     External: videoData.external
-      ? {
-          Url: videoData.external.url,
-        }
+      ? { Url: videoData.external.url }
       : undefined,
-    File: videoData.file
-      ? {
-          Type: "file",
-          Url: videoData.file.url,
-          ExpiryTime: videoData.file.expiry_time,
-        }
-      : undefined,
+    File: fileObj,
   };
 }
 
-function _buildAudio(audioData: any): NAudio {
+async function _buildAudio(audioData: any): Promise<NAudio> {
+  let fileObj: FileObject | undefined;
+  if (audioData.file) {
+    const localUrl = await downloadNotionImage(audioData.file.url);
+    fileObj = {
+      Type: "file",
+      Url: localUrl,
+      ExpiryTime: audioData.file.expiry_time,
+    };
+  }
+
   return {
     Caption: _buildRichTexts(audioData.caption),
     Type: audioData.type,
     External: audioData.external
-      ? {
-          Url: audioData.external.url,
-        }
+      ? { Url: audioData.external.url }
       : undefined,
-    File: audioData.file
-      ? {
-          Type: "file",
-          Url: audioData.file.url,
-          ExpiryTime: audioData.file.expiry_time,
-        }
-      : undefined,
+    File: fileObj,
   };
 }
 
-function _buildFile(fileData: any): File {
+async function _buildFile(fileData: any): Promise<File> {
+  let fileObj: FileObject | undefined;
+  if (fileData.file) {
+    const localUrl = await downloadNotionImage(fileData.file.url);
+    fileObj = {
+      Type: "file",
+      Url: localUrl,
+      ExpiryTime: fileData.file.expiry_time,
+    };
+  }
+
   return {
     Caption: _buildRichTexts(fileData.caption),
     Type: fileData.type,
-    File: fileData.file
-      ? {
-          Type: "file",
-          Url: fileData.file.url,
-          ExpiryTime: fileData.file.expiry_time,
-        }
-      : undefined,
+    File: fileObj,
     External: fileData.external
-      ? {
-          Url: fileData.external.url,
-        }
+      ? { Url: fileData.external.url }
       : undefined,
   };
 }
@@ -622,7 +638,7 @@ async function _buildColumnList(blockId: string): Promise<ColumnList> {
   };
 }
 
-function _buildPost(pageObj: any): Post | null {
+async function _buildPost(pageObj: any): Promise<Post | null> {
   const properties = pageObj.properties;
 
   // Extract properties
@@ -671,12 +687,12 @@ function _buildPost(pageObj: any): Post | null {
       ? excerptProp.rich_text[0].plain_text
       : "";
 
-  // Extract featured image
+  // Extract featured image (download Notion-hosted files locally)
   let featuredImage: string | null = null;
   if (imageProp?.files && imageProp.files.length > 0) {
     const file = imageProp.files[0];
     if (file.type === "file") {
-      featuredImage = file.file.url;
+      featuredImage = await downloadNotionImage(file.file.url);
     } else if (file.type === "external") {
       featuredImage = file.external.url;
     }

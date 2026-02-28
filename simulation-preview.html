@@ -1,0 +1,1318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mubone — simulation (preview)</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #222;
+    color: #fff;
+    font-family: 'Roboto Mono', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 1.5rem;
+    gap: 1rem;
+  }
+  h1 {
+    font-size: 1rem;
+    font-weight: normal;
+    color: #aaa;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid #555;
+    padding-bottom: 0.75rem;
+    width: 100%;
+    max-width: 1000px;
+  }
+  .canvas-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 1000px;
+    aspect-ratio: 16/10;
+    background: #1a2a2a;
+    border: 1px solid #555;
+    border-radius: 4px;
+    overflow: hidden;
+    cursor: crosshair;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .hud {
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    font-size: 0.75rem;
+    color: #aaa;
+    pointer-events: none;
+    display: flex;
+    gap: 1.5rem;
+  }
+  #paintIndicator {
+    color: #555;
+    transition: color 0.15s;
+  }
+  #paintIndicator.active {
+    color: #fff;
+  }
+  .instructions {
+    font-size: 0.7rem;
+    color: #555;
+    letter-spacing: 0.05em;
+  }
+
+  /* Drop zone overlay */
+  .drop-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(26, 42, 42, 0.92);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 10;
+  }
+  .drop-overlay.visible {
+    opacity: 1;
+  }
+  .drop-overlay .drop-icon {
+    font-size: 2rem;
+    color: #7abcbc;
+  }
+  .drop-overlay .drop-text {
+    font-size: 0.85rem;
+    color: #aaa;
+    letter-spacing: 0.05em;
+  }
+
+  /* Sample list */
+  .sample-list {
+    width: 100%;
+    max-width: 1000px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .sample-slot {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.7rem;
+    color: #555;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    user-select: none;
+    min-height: 28px;
+  }
+  .sample-slot:hover {
+    background: #2a3a3a;
+  }
+  .sample-slot.active {
+    border-color: #7abcbc;
+    background: #2a3a3a;
+  }
+  .sample-slot.loaded {
+    color: #aaa;
+  }
+  .sample-slot.drag-over {
+    border-color: #7abcbc;
+    background: #2a3a3a;
+  }
+  .sample-slot .slot-drag-handle {
+    color: #444;
+    cursor: grab;
+    font-size: 0.8rem;
+    line-height: 1;
+    padding: 0 2px;
+    visibility: hidden;
+  }
+  .sample-slot.loaded .slot-drag-handle {
+    visibility: visible;
+  }
+  .sample-slot.loaded .slot-drag-handle:hover {
+    color: #888;
+  }
+  .sample-slot .slot-key {
+    color: #555;
+    min-width: 1.2em;
+    text-align: center;
+  }
+  .sample-slot.active .slot-key {
+    color: #7abcbc;
+  }
+  .sample-slot .slot-name {
+    color: #aaa;
+    flex-shrink: 0;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sample-slot.empty .slot-name {
+    color: #444;
+  }
+  .sample-slot .slot-duration {
+    color: #666;
+    flex-shrink: 0;
+  }
+  .sample-slot .slot-waveform {
+    flex: 1;
+    height: 18px;
+    background: #303030;
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+    min-width: 60px;
+  }
+  .sample-slot .slot-waveform canvas {
+    width: 100%;
+    height: 100%;
+  }
+  .sample-slot.empty .slot-waveform {
+    background: #282828;
+    opacity: 0.4;
+  }
+  .sample-slot .slot-delete {
+    color: #555;
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 0 4px;
+    cursor: pointer;
+    visibility: hidden;
+    border: none;
+    background: none;
+    font-family: inherit;
+  }
+  .sample-slot.loaded .slot-delete {
+    visibility: visible;
+  }
+  .sample-slot.loaded .slot-delete:hover {
+    color: #e06060;
+  }
+</style>
+</head>
+<body>
+  <h1>simulation</h1>
+  <div class="canvas-wrapper" id="canvasWrapper">
+    <canvas id="sphereCanvas"></canvas>
+    <div class="hud">
+      <div id="coordinates">--,--</div>
+      <div id="paintIndicator">paint: off</div>
+      <div id="sampleIndicator" style="color:#555">no sample</div>
+      <div id="radiusIndicator" style="color:#7abcbc">r: 10°</div>
+    </div>
+    <div class="drop-overlay" id="dropOverlay">
+      <div class="drop-icon">↓</div>
+      <div class="drop-text">drop audio file (.wav, .mp3, .ogg)</div>
+    </div>
+  </div>
+  <div class="sample-list" id="sampleList"></div>
+  <div class="instructions">mouse to rotate · hold space to paint · drop audio to load · 1-9 switch sample · [ ] adjust radius · colors cycle each session</div>
+
+<script>
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const SPHERE_RADIUS = 500;
+const GRID_SEGMENTS_LON = 24;
+const GRID_SEGMENTS_LAT = 12;
+const GRID_LINE_ALPHA = 0.45;
+const CURSOR_RADIUS = 5;
+const SEARCH_RADIUS_MIN = 1;    // degrees
+const SEARCH_RADIUS_MAX = 180;  // degrees
+const SEARCH_RADIUS_STEP = 2;   // degrees per key press
+const AUTO_ROTATION_SPEED = 0.0001;
+const ROTATION_SPEED = 0.06;
+const FOV_DEG = 90;
+const PAINT_INTERVAL = 3;
+const PARTICLE_BASE_SIZE = 4;
+const PARTICLE_MAX_SIZE = 20;
+const MAX_SAMPLES = 9;
+
+const BG_COLOR = '#1a2a2a';
+const GRID_COLOR = '#7abcbc';
+
+const PAINT_COLORS = [
+  '#ff6b6b', '#ffa06b', '#ffd06b',
+  '#a0ff6b', '#6bffa0', '#6bffd0',
+  '#6ba0ff', '#6b6bff', '#d06bff'
+];
+
+// Grain constants
+const GRAIN_DURATION = 0.25;
+const GRAIN_DUR_JITTER = 0.15;
+const GRAIN_OVERLAP = 0.06;
+const GRAIN_FADE = 0.04;
+const GRAIN_RETRIGGER_MS = 80;
+const GRAIN_START_JITTER = 0.08;
+const GRAIN_SPRAY_COUNT = 3;
+const GRAIN_SPRAY_SPREAD = 0.04;
+const GRAIN_PITCH_JITTER = 0;
+const GRAIN_PAN_SPREAD = 0.7;
+const GRAIN_VOLUME = 0.5;
+
+// ============================================================================
+// STATE
+// ============================================================================
+
+let canvas, ctx;
+// Camera orientation as a quaternion [w, x, y, z] — no gimbal lock, free rotation
+let camQ = [1, 0, 0, 0]; // identity
+let mouseX = 0;
+let mouseY = 0;
+let mousePixelX = 0;
+let mousePixelY = 0;
+let mouseInCanvas = false;
+
+// Search radius
+let searchRadiusDeg = 10;  // degrees, adjustable
+
+// Painting
+let isPainting = false;
+let paintFrameCount = 0;
+let currentColorIndex = 0;
+let particles = [];
+
+// Audio — each slot: { buffer, name, duration, grainCursor }
+let audioCtx = null;
+let samples = [];          // up to 9, each { buffer, name, duration, grainCursor }
+let currentSampleIndex = -1;  // which slot is active (-1 = none)
+
+// ============================================================================
+// AUDIO SYSTEM
+// ============================================================================
+
+function ensureAudioContext() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+async function loadAudioFile(file) {
+  if (samples.length >= MAX_SAMPLES) {
+    console.warn('Max 9 samples loaded');
+    return;
+  }
+
+  const actx = ensureAudioContext();
+  const arrayBuffer = await file.arrayBuffer();
+  const audioBuffer = await actx.decodeAudioData(arrayBuffer);
+
+  const slot = {
+    buffer: audioBuffer,
+    name: file.name,
+    duration: audioBuffer.duration,
+    grainCursor: 0
+  };
+
+  samples.push(slot);
+  const newIndex = samples.length - 1;
+  switchToSample(newIndex);
+  rebuildSampleListUI();
+
+  console.log(`Loaded sample ${newIndex + 1}: ${file.name} (${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.sampleRate}Hz, ${audioBuffer.numberOfChannels}ch)`);
+}
+
+function switchToSample(index) {
+  if (index < 0 || index >= samples.length) return;
+  const wasActive = currentSampleIndex;
+  currentSampleIndex = index;
+
+  // If switching mid-paint, cycle color so new sample gets a fresh color
+  if (isPainting && wasActive !== index && wasActive >= 0) {
+    currentColorIndex = (currentColorIndex + 1) % PAINT_COLORS.length;
+    document.getElementById('paintIndicator').textContent = `paint: ${PAINT_COLORS[currentColorIndex]}`;
+    document.getElementById('paintIndicator').style.color = PAINT_COLORS[currentColorIndex];
+  }
+
+  // Reset this sample's grain cursor when switching to it
+  samples[index].grainCursor = 0;
+
+  // Update HUD
+  const indicator = document.getElementById('sampleIndicator');
+  indicator.textContent = `[${index + 1}] ${samples[index].name.slice(0, 18)}`;
+  indicator.style.color = '#7abcbc';
+
+  // Update active state in UI
+  updateSampleListActiveState();
+}
+
+// ============================================================================
+// SAMPLE LIST UI
+// ============================================================================
+
+let dragSrcIndex = -1;
+
+function rebuildSampleListUI() {
+  const list = document.getElementById('sampleList');
+  list.innerHTML = '';
+
+  for (let i = 0; i < MAX_SAMPLES; i++) {
+    const s = i < samples.length ? samples[i] : null;
+    const isLoaded = s !== null;
+
+    const slot = document.createElement('div');
+    slot.className = 'sample-slot' + (isLoaded ? ' loaded' : ' empty') +
+                     (i === currentSampleIndex && isLoaded ? ' active' : '');
+    slot.dataset.index = i;
+
+    // Click to select (only if loaded)
+    slot.addEventListener('click', (e) => {
+      if (e.target.closest('.slot-delete') || e.target.closest('.slot-drag-handle')) return;
+      if (isLoaded) switchToSample(i);
+    });
+
+    // Drag handle (hamburger icon)
+    const handle = document.createElement('span');
+    handle.className = 'slot-drag-handle';
+    handle.textContent = '☰';
+    handle.draggable = isLoaded;
+    if (isLoaded) {
+      handle.addEventListener('dragstart', (e) => {
+        dragSrcIndex = i;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(i));
+        slot.style.opacity = '0.4';
+      });
+      handle.addEventListener('dragend', () => {
+        slot.style.opacity = '';
+        dragSrcIndex = -1;
+        // Clean up any lingering drag-over classes
+        list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+      });
+    }
+
+    // Drop targets on the slot itself
+    slot.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      slot.classList.add('drag-over');
+    });
+    slot.addEventListener('dragleave', () => {
+      slot.classList.remove('drag-over');
+    });
+    slot.addEventListener('drop', (e) => {
+      e.preventDefault();
+      slot.classList.remove('drag-over');
+      const fromIdx = dragSrcIndex;
+      const toIdx = i;
+      if (fromIdx >= 0 && fromIdx !== toIdx && fromIdx < samples.length) {
+        reorderSample(fromIdx, toIdx);
+      }
+    });
+
+    // Key number
+    const key = document.createElement('span');
+    key.className = 'slot-key';
+    key.textContent = i + 1;
+
+    // Name
+    const name = document.createElement('span');
+    name.className = 'slot-name';
+    if (isLoaded) {
+      name.textContent = s.name.length > 24 ? s.name.slice(0, 22) + '…' : s.name;
+    } else {
+      name.textContent = i === samples.length ? 'drop audio to add…' : '—';
+    }
+
+    // Duration
+    const dur = document.createElement('span');
+    dur.className = 'slot-duration';
+    dur.textContent = isLoaded ? s.duration.toFixed(1) + 's' : '';
+
+    // Waveform
+    const waveDiv = document.createElement('div');
+    waveDiv.className = 'slot-waveform';
+    const wc = document.createElement('canvas');
+    waveDiv.appendChild(wc);
+
+    // Delete button
+    const del = document.createElement('button');
+    del.className = 'slot-delete';
+    del.textContent = '×';
+    del.title = 'Remove sample';
+    if (isLoaded) {
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteSample(i);
+      });
+    }
+
+    slot.appendChild(handle);
+    slot.appendChild(key);
+    slot.appendChild(name);
+    slot.appendChild(dur);
+    slot.appendChild(waveDiv);
+    slot.appendChild(del);
+    list.appendChild(slot);
+
+    // Draw waveform after append so it has dimensions
+    if (isLoaded) {
+      requestAnimationFrame(() => drawSlotWaveform(wc, s.buffer));
+    }
+  }
+}
+
+function deleteSample(index) {
+  if (index < 0 || index >= samples.length) return;
+
+  // Remove the sample
+  samples.splice(index, 1);
+
+  // Remap particle sampleIndex references
+  particles.forEach(p => {
+    if (p.sampleIndex === index) {
+      p.sampleIndex = -1; // orphaned — won't play
+    } else if (p.sampleIndex > index) {
+      p.sampleIndex--;
+    }
+  });
+
+  // Adjust currentSampleIndex
+  if (samples.length === 0) {
+    currentSampleIndex = -1;
+  } else if (currentSampleIndex === index) {
+    currentSampleIndex = Math.min(index, samples.length - 1);
+  } else if (currentSampleIndex > index) {
+    currentSampleIndex--;
+  }
+
+  rebuildSampleListUI();
+}
+
+function reorderSample(fromIdx, toIdx) {
+  // If dropping onto an empty slot beyond samples.length, cap to end
+  const targetIdx = Math.min(toIdx, samples.length - 1);
+  if (fromIdx === targetIdx || fromIdx < 0 || fromIdx >= samples.length) return;
+
+  // Remove from old position and insert at new
+  const [moved] = samples.splice(fromIdx, 1);
+  samples.splice(targetIdx, 0, moved);
+
+  // Build remap: old index -> new index
+  // After splice, we need to update all particle references
+  // Simple approach: rebuild a mapping from the move
+  particles.forEach(p => {
+    if (p.sampleIndex < 0) return;
+    if (p.sampleIndex === fromIdx) {
+      p.sampleIndex = targetIdx;
+    } else if (fromIdx < targetIdx) {
+      // Moved forward: indices between (fromIdx, targetIdx] shift down by 1
+      if (p.sampleIndex > fromIdx && p.sampleIndex <= targetIdx) {
+        p.sampleIndex--;
+      }
+    } else {
+      // Moved backward: indices between [targetIdx, fromIdx) shift up by 1
+      if (p.sampleIndex >= targetIdx && p.sampleIndex < fromIdx) {
+        p.sampleIndex++;
+      }
+    }
+  });
+
+  // Adjust currentSampleIndex
+  if (currentSampleIndex === fromIdx) {
+    currentSampleIndex = targetIdx;
+  } else if (fromIdx < targetIdx) {
+    if (currentSampleIndex > fromIdx && currentSampleIndex <= targetIdx) currentSampleIndex--;
+  } else {
+    if (currentSampleIndex >= targetIdx && currentSampleIndex < fromIdx) currentSampleIndex++;
+  }
+
+  rebuildSampleListUI();
+}
+
+function updateSampleListActiveState() {
+  const slots = document.querySelectorAll('.sample-slot');
+  slots.forEach(slot => {
+    const idx = parseInt(slot.dataset.index);
+    if (!isNaN(idx)) {
+      slot.classList.toggle('active', idx === currentSampleIndex && idx < samples.length);
+    }
+  });
+}
+
+function drawSlotWaveform(wc, buffer) {
+  const rect = wc.parentElement.getBoundingClientRect();
+  if (rect.width === 0) return;
+  wc.width = rect.width * 2;
+  wc.height = rect.height * 2;
+  const wctx = wc.getContext('2d');
+
+  const data = buffer.getChannelData(0);
+  const step = Math.max(1, Math.floor(data.length / wc.width));
+  const mid = wc.height / 2;
+
+  wctx.clearRect(0, 0, wc.width, wc.height);
+  wctx.strokeStyle = '#7abcbc';
+  wctx.lineWidth = 1;
+  wctx.beginPath();
+
+  for (let i = 0; i < wc.width; i++) {
+    const idx = i * step;
+    let min = 0, max = 0;
+    for (let j = 0; j < step && idx + j < data.length; j++) {
+      const v = data[idx + j];
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    wctx.moveTo(i, mid + min * mid);
+    wctx.lineTo(i, mid + max * mid);
+  }
+  wctx.stroke();
+}
+
+// ============================================================================
+// GRAIN PLAYBACK
+// ============================================================================
+
+function updateRadiusHUD() {
+  document.getElementById('radiusIndicator').textContent = `r: ${searchRadiusDeg}°`;
+}
+
+function rand(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function playGrain(particle) {
+  if (particle.sampleIndex < 0 || particle.sampleIndex >= samples.length) return;
+  const actx = ensureAudioContext();
+  const buffer = samples[particle.sampleIndex].buffer;
+  if (!buffer) return;
+
+  const now = performance.now();
+  if (particle.lastTriggered && now - particle.lastTriggered < GRAIN_RETRIGGER_MS) return;
+  particle.lastTriggered = now;
+
+  const sampleDur = buffer.duration;
+  const baseTime = actx.currentTime;
+
+  for (let i = 0; i < GRAIN_SPRAY_COUNT; i++) {
+    const timeOffset = i * GRAIN_SPRAY_SPREAD * rand(0.5, 1.5);
+    const t = baseTime + timeOffset;
+
+    let startPos = particle.grainStart + rand(-GRAIN_START_JITTER, GRAIN_START_JITTER);
+    startPos = Math.max(0, startPos % sampleDur);
+
+    const dur = Math.max(0.03, particle.grainDuration + rand(-GRAIN_DUR_JITTER, GRAIN_DUR_JITTER));
+    const actualDur = Math.min(dur, sampleDur - startPos);
+    if (actualDur < 0.02) continue;
+
+    const fade = Math.min(GRAIN_FADE, actualDur / 3);
+
+    const source = actx.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.value = 1 + rand(-GRAIN_PITCH_JITTER, GRAIN_PITCH_JITTER);
+
+    const gain = actx.createGain();
+    const peakVol = GRAIN_VOLUME * rand(0.5, 1.0);
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(peakVol, t + fade);
+    gain.gain.setValueAtTime(peakVol, t + actualDur - fade);
+    gain.gain.linearRampToValueAtTime(0, t + actualDur);
+
+    const panner = actx.createStereoPanner();
+    panner.pan.value = rand(-GRAIN_PAN_SPREAD, GRAIN_PAN_SPREAD);
+
+    source.connect(gain);
+    gain.connect(panner);
+    panner.connect(actx.destination);
+
+    source.start(t, startPos, actualDur + 0.01);
+    source.stop(t + actualDur + 0.02);
+  }
+}
+
+// ============================================================================
+// DRAG AND DROP
+// ============================================================================
+
+function setupDragDrop() {
+  const wrapper = document.getElementById('canvasWrapper');
+  const overlay = document.getElementById('dropOverlay');
+
+  let dragCounter = 0;
+
+  // Also accept drops on the whole body so you can drop onto the sample list area
+  const targets = [wrapper, document.body];
+  targets.forEach(target => {
+    target.addEventListener('dragenter', e => {
+      e.preventDefault();
+      dragCounter++;
+      overlay.classList.add('visible');
+    });
+
+    target.addEventListener('dragleave', e => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
+        overlay.classList.remove('visible');
+      }
+    });
+
+    target.addEventListener('dragover', e => {
+      e.preventDefault();
+    });
+
+    target.addEventListener('drop', e => {
+      e.preventDefault();
+      dragCounter = 0;
+      overlay.classList.remove('visible');
+
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        const file = files[0];
+        if (file.type.startsWith('audio/') || /\.(wav|mp3|ogg|m4a|flac|aac|webm)$/i.test(file.name)) {
+          loadAudioFile(file);
+        }
+      }
+    });
+  });
+}
+
+// ============================================================================
+// INIT
+// ============================================================================
+
+function init() {
+  canvas = document.getElementById('sphereCanvas');
+  ctx = canvas.getContext('2d');
+  resizeCanvas();
+  setupEvents();
+  setupDragDrop();
+  rebuildSampleListUI(); // show initial empty slot
+  animate();
+}
+
+function resizeCanvas() {
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width;
+  canvas.height = rect.height;
+}
+
+// ============================================================================
+// QUATERNION MATH
+// ============================================================================
+
+function qMul(a, b) {
+  return [
+    a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3],
+    a[0]*b[1] + a[1]*b[0] + a[2]*b[3] - a[3]*b[2],
+    a[0]*b[2] - a[1]*b[3] + a[2]*b[0] + a[3]*b[1],
+    a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + a[3]*b[0]
+  ];
+}
+
+function qNormalize(q) {
+  const len = Math.sqrt(q[0]*q[0] + q[1]*q[1] + q[2]*q[2] + q[3]*q[3]);
+  return [q[0]/len, q[1]/len, q[2]/len, q[3]/len];
+}
+
+function qFromAxisAngle(ax, ay, az, angle) {
+  const half = angle / 2;
+  const s = Math.sin(half);
+  return [Math.cos(half), ax * s, ay * s, az * s];
+}
+
+function qConjugate(q) {
+  return [q[0], -q[1], -q[2], -q[3]];
+}
+
+// Rotate a vector [x, y, z] by quaternion q
+function qRotateVec(q, v) {
+  const vq = [0, v[0], v[1], v[2]];
+  const r = qMul(qMul(q, vq), qConjugate(q));
+  return [r[1], r[2], r[3]];
+}
+
+// Remove roll from camera quaternion so horizon stays flat.
+// Reconstructs the quaternion from its forward and world-up directions.
+function qRemoveRoll(q) {
+  // Camera forward in world space
+  const fwd = qRotateVec(q, [0, 0, 1]);
+  // Camera right = world up × forward (then normalize)
+  // world up = [0, 1, 0]
+  let rx = -fwd[2];       // cross(Y, fwd).x = 0*fwd[2] - 1*fwd[2]... let me just do it properly
+  // right = normalize(cross([0,1,0], fwd))
+  rx = fwd[2];  // 1*fwd[2] - 0*fwd[1] ... wait:
+  // cross(a, b) = [a1*b2 - a2*b1, a2*b0 - a0*b2, a0*b1 - a1*b0]
+  // cross([0,1,0], [fx,fy,fz]) = [1*fz - 0*fy, 0*fx - 0*fz, 0*fy - 1*fx] = [fz, 0, -fx]
+  rx = fwd[2];
+  let ry = 0;
+  let rz = -fwd[0];
+  const rlen = Math.sqrt(rx*rx + ry*ry + rz*rz);
+  if (rlen < 0.0001) return q; // looking straight up/down, can't remove roll
+  rx /= rlen; ry /= rlen; rz /= rlen;
+
+  // Recompute up = cross(forward, right)
+  const ux = fwd[1]*rz - fwd[2]*ry;
+  const uy = fwd[2]*rx - fwd[0]*rz;
+  const uz = fwd[0]*ry - fwd[1]*rx;
+
+  // Build rotation matrix from [right, up, forward] and convert to quaternion
+  // Matrix columns: right=X, up=Y, forward=Z
+  // m00=rx m01=ux m02=fx
+  // m10=ry m11=uy m12=fy
+  // m20=rz m21=uz m22=fz
+  const m00 = rx, m01 = ux, m02 = fwd[0];
+  const m10 = ry, m11 = uy, m12 = fwd[1];
+  const m20 = rz, m21 = uz, m22 = fwd[2];
+
+  const trace = m00 + m11 + m22;
+  let w, x, y, z;
+  if (trace > 0) {
+    const s = 0.5 / Math.sqrt(trace + 1);
+    w = 0.25 / s;
+    x = (m21 - m12) * s;
+    y = (m02 - m20) * s;
+    z = (m10 - m01) * s;
+  } else if (m00 > m11 && m00 > m22) {
+    const s = 2 * Math.sqrt(1 + m00 - m11 - m22);
+    w = (m21 - m12) / s;
+    x = 0.25 * s;
+    y = (m01 + m10) / s;
+    z = (m02 + m20) / s;
+  } else if (m11 > m22) {
+    const s = 2 * Math.sqrt(1 + m11 - m00 - m22);
+    w = (m02 - m20) / s;
+    x = (m01 + m10) / s;
+    y = 0.25 * s;
+    z = (m12 + m21) / s;
+  } else {
+    const s = 2 * Math.sqrt(1 + m22 - m00 - m11);
+    w = (m10 - m01) / s;
+    x = (m02 + m20) / s;
+    y = (m12 + m21) / s;
+    z = 0.25 * s;
+  }
+  return qNormalize([w, x, y, z]);
+}
+
+// ============================================================================
+// 3D MATH — INSIDE-SPHERE CAMERA
+// ============================================================================
+
+function spherePoint(lon, lat) {
+  return [
+    SPHERE_RADIUS * Math.cos(lat) * Math.cos(lon),
+    SPHERE_RADIUS * Math.sin(lat),
+    SPHERE_RADIUS * Math.cos(lat) * Math.sin(lon)
+  ];
+}
+
+// Transform world point into camera space using inverse of camera quaternion
+function cameraTransform(x, y, z) {
+  const invQ = qConjugate(camQ);
+  return qRotateVec(invQ, [x, y, z]);
+}
+
+function project(x, y, z) {
+  if (z <= 0.1) return null;
+  const fovRad = (FOV_DEG * Math.PI) / 180;
+  const focalLen = (canvas.width / 2) / Math.tan(fovRad / 2);
+  return {
+    sx: canvas.width / 2 + (x / z) * focalLen,
+    sy: canvas.height / 2 - (y / z) * focalLen,
+    depth: z
+  };
+}
+
+// Get the world-space direction the camera is looking, then convert to lon/lat
+function getCursorLonLat() {
+  // Camera looks along +Z in camera space → transform to world space
+  const forward = qRotateVec(camQ, [0, 0, 1]);
+  const rx = forward[0], ry = forward[1], rz = forward[2];
+  const lon = Math.atan2(rz, rx);
+  const lat = Math.asin(Math.max(-1, Math.min(1, ry)));
+  return { lon, lat };
+}
+
+// ============================================================================
+// RENDERING
+// ============================================================================
+
+function drawFrame() {
+  ctx.fillStyle = BG_COLOR;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawGridLines();
+  drawParticles();
+  drawTetherLine();
+  drawCursor();
+}
+
+function drawTetherLine() {
+  if (!mouseInCanvas) return;
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const dx = mousePixelX - cx;
+  const dy = mousePixelY - cy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist < 20) return;
+
+  const maxDist = Math.min(canvas.width, canvas.height) * 0.5;
+  const alpha = Math.min(0.5, 0.1 + 0.4 * (dist / maxDist));
+
+  ctx.save();
+  ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 8]);
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(mousePixelX, mousePixelY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+function drawGridLines() {
+  for (let i = 0; i < GRID_SEGMENTS_LON; i++) {
+    const lon = (i / GRID_SEGMENTS_LON) * Math.PI * 2;
+    ctx.strokeStyle = GRID_COLOR;
+    ctx.lineWidth = 0.8;
+    ctx.globalAlpha = 0.2;
+    drawArc(lon, 'lon');
+  }
+
+  for (let i = 1; i < GRID_SEGMENTS_LAT; i++) {
+    const lat = (i / GRID_SEGMENTS_LAT) * Math.PI - Math.PI / 2;
+    const distFromEquator = Math.abs(lat) / (Math.PI / 2);
+    const isNorth = lat > 0;
+
+    // Tint: warm amber in north, cool blue in south — orientation cue
+    const gridTint = isNorth ? '#c8a060' : '#60a0c8';
+
+    if (distFromEquator < 0.05) {
+      ctx.strokeStyle = '#a0dede';
+      ctx.lineWidth = 2.5;
+      ctx.globalAlpha = 0.7;
+    } else if (distFromEquator < 0.4) {
+      ctx.strokeStyle = gridTint;
+      ctx.lineWidth = 1.2;
+      ctx.globalAlpha = 0.35;
+    } else if (distFromEquator < 0.7) {
+      ctx.strokeStyle = gridTint;
+      ctx.lineWidth = 0.8;
+      ctx.globalAlpha = 0.2;
+    } else {
+      ctx.strokeStyle = gridTint;
+      ctx.lineWidth = 0.5;
+      ctx.globalAlpha = 0.1;
+    }
+
+    drawArc(lat, 'lat');
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawArc(angle, type) {
+  const steps = 64;
+  let started = false;
+  ctx.beginPath();
+
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    let lon, lat;
+    if (type === 'lon') { lon = angle; lat = t * Math.PI - Math.PI / 2; }
+    else { lon = t * Math.PI * 2; lat = angle; }
+
+    const [wx, wy, wz] = spherePoint(lon, lat);
+    const [cx, cy, cz] = cameraTransform(wx, wy, wz);
+    const proj = project(cx, cy, cz);
+
+    if (proj) {
+      if (!started) { ctx.moveTo(proj.sx, proj.sy); started = true; }
+      else ctx.lineTo(proj.sx, proj.sy);
+    } else {
+      started = false;
+    }
+  }
+  ctx.stroke();
+}
+
+function drawParticles() {
+  const { lon: cursorLon, lat: cursorLat } = getCursorLonLat();
+
+  const projected = [];
+
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    const [wx, wy, wz] = spherePoint(p.lon, p.lat);
+    const [cx, cy, cz] = cameraTransform(wx, wy, wz);
+    const proj = project(cx, cy, cz);
+    if (!proj) continue;
+
+    const mag = Math.sqrt(cx*cx + cy*cy + cz*cz);
+    const nx = cx / mag, ny = cy / mag, nz = cz / mag;
+    const facing = Math.max(0, nz);
+
+    const squash = 0.3 + 0.7 * facing;
+    const dx = proj.sx - canvas.width / 2;
+    const dy = proj.sy - canvas.height / 2;
+    const squashAngle = Math.atan2(dy, dx);
+
+    const ang = angleBetweenSphere(p.lon, p.lat, cursorLon, cursorLat);
+    const searchRadiusRad = searchRadiusDeg * Math.PI / 180;
+    const selected = ang < searchRadiusRad;
+
+    if (selected && p.sampleIndex >= 0) {
+      playGrain(p);
+    }
+
+    projected.push({
+      ...proj, color: p.color, selected,
+      facing, squash, squashAngle,
+      hasAudio: p.sampleIndex >= 0
+    });
+  }
+
+  projected.sort((a, b) => b.depth - a.depth);
+
+  for (const p of projected) {
+    const distFactor = 1 - (p.depth / (SPHERE_RADIUS * 2));
+    const size = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * Math.max(0, distFactor);
+    const alpha = (0.3 + 0.7 * Math.max(0, distFactor)) * (0.5 + 0.5 * p.facing);
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    ctx.translate(p.sx, p.sy);
+    ctx.rotate(p.squashAngle);
+    ctx.scale(1, p.squash);
+
+    if (p.selected) {
+      ctx.globalAlpha = 1;
+      ctx.shadowColor = p.color;
+      ctx.shadowBlur = 25;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, size + 5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = alpha;
+    }
+
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(0, 0, size, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (p.hasAudio) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.beginPath();
+      ctx.arc(0, 0, size * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+}
+
+function angleBetweenSphere(lon1, lat1, lon2, lat2) {
+  const x1 = Math.cos(lat1) * Math.cos(lon1);
+  const y1 = Math.sin(lat1);
+  const z1 = Math.cos(lat1) * Math.sin(lon1);
+  const x2 = Math.cos(lat2) * Math.cos(lon2);
+  const y2 = Math.sin(lat2);
+  const z2 = Math.cos(lat2) * Math.sin(lon2);
+  const dot = x1*x2 + y1*y2 + z1*z2;
+  return Math.acos(Math.max(-1, Math.min(1, dot)));
+}
+
+function drawCursor() {
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+
+  // Search radius halo — project angular radius to screen pixels
+  const searchRadiusRad = searchRadiusDeg * Math.PI / 180;
+  const fovRad = (FOV_DEG * Math.PI) / 180;
+  const focalLen = (canvas.width / 2) / Math.tan(fovRad / 2);
+
+  if (searchRadiusRad < Math.PI / 2) {
+    // Normal case: radius fits on screen as a circle
+    const haloScreenR = focalLen * Math.tan(searchRadiusRad);
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(122, 188, 188, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, haloScreenR, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Subtle filled area
+    ctx.fillStyle = 'rgba(122, 188, 188, 0.03)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, haloScreenR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  } else {
+    // Radius > 90°: the halo covers more than the visible hemisphere
+    // Show an inverted ring — the EXCLUDED area is outside the halo
+    // Project the complement angle from the opposite side
+    const complementRad = Math.PI - searchRadiusRad;
+    if (complementRad > 0.01) {
+      // Draw the "exclusion zone" as a ring at the edges
+      const excludeR = focalLen * Math.tan(complementRad);
+      const bigR = Math.max(canvas.width, canvas.height);
+
+      ctx.save();
+      // Fill the whole screen with tint, then cut out the exclude zone
+      ctx.fillStyle = 'rgba(122, 188, 188, 0.03)';
+      ctx.beginPath();
+      ctx.rect(0, 0, canvas.width, canvas.height);
+      ctx.arc(cx, cy, excludeR, 0, Math.PI * 2, true); // cut out center = excluded
+      // Actually this is the wrong way — for >90° the selection covers the center
+      // So tint the whole screen (since most is selected)
+      ctx.fill();
+
+      // Dashed ring showing the boundary (from behind — things outside this ring are NOT selected)
+      ctx.strokeStyle = 'rgba(122, 188, 188, 0.2)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 6]);
+      // The boundary is at the complement angle from the edge of the view
+      // We can't easily show this as a simple circle, so just tint + label
+      ctx.restore();
+    } else {
+      // Basically 180°, everything selected
+      ctx.save();
+      ctx.fillStyle = 'rgba(122, 188, 188, 0.04)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+  }
+
+  // Paint glow
+  if (isPainting) {
+    const color = PAINT_COLORS[currentColorIndex];
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 15;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, CURSOR_RADIUS + 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  // Outer ring
+  ctx.strokeStyle = isPainting ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.6)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, CURSOR_RADIUS + 2, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Inner dot
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(cx, cy, CURSOR_RADIUS * 0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Crosshair lines
+  const len = 12, gap = CURSOR_RADIUS + 5;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx + gap, cy); ctx.lineTo(cx + gap + len, cy);
+  ctx.moveTo(cx - gap, cy); ctx.lineTo(cx - gap - len, cy);
+  ctx.moveTo(cx, cy - gap); ctx.lineTo(cx, cy - gap - len);
+  ctx.moveTo(cx, cy + gap); ctx.lineTo(cx, cy + gap + len);
+  ctx.stroke();
+}
+
+// ============================================================================
+// EVENTS
+// ============================================================================
+
+function setupEvents() {
+  canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    mouseX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+    mouseY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+    mousePixelX = (e.clientX - rect.left) * (canvas.width / rect.width);
+    mousePixelY = (e.clientY - rect.top) * (canvas.height / rect.height);
+    mouseInCanvas = true;
+  });
+
+  canvas.addEventListener('mouseleave', () => { mouseInCanvas = false; });
+
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches[0];
+    mouseX = ((t.clientX - rect.left) / rect.width - 0.5) * 2;
+    mouseY = ((t.clientY - rect.top) / rect.height - 0.5) * 2;
+    mouseInCanvas = true;
+  });
+
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches[0];
+    mouseX = ((t.clientX - rect.left) / rect.width - 0.5) * 2;
+    mouseY = ((t.clientY - rect.top) / rect.height - 0.5) * 2;
+  });
+
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    mouseInCanvas = false;
+  });
+
+  document.addEventListener('keydown', e => {
+    // Spacebar hold = paint
+    if (e.code === 'Space' && !e.repeat) {
+      e.preventDefault();
+      ensureAudioContext();
+      isPainting = true;
+      paintFrameCount = 0;
+
+      // Reset active sample's grain cursor for fresh walk
+      if (currentSampleIndex >= 0 && samples[currentSampleIndex]) {
+        samples[currentSampleIndex].grainCursor = 0;
+      }
+
+      document.getElementById('paintIndicator').classList.add('active');
+      document.getElementById('paintIndicator').textContent = `paint: ${PAINT_COLORS[currentColorIndex]}`;
+      document.getElementById('paintIndicator').style.color = PAINT_COLORS[currentColorIndex];
+    }
+
+    // Number keys 1-9 = switch sample
+    const num = parseInt(e.key);
+    if (num >= 1 && num <= 9 && !e.repeat) {
+      const idx = num - 1;
+      if (idx < samples.length) {
+        switchToSample(idx);
+      }
+    }
+
+    // [ and ] = adjust search radius
+    if (e.key === '[' || e.key === ']') {
+      e.preventDefault();
+      if (e.key === '[') searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, searchRadiusDeg - SEARCH_RADIUS_STEP);
+      if (e.key === ']') searchRadiusDeg = Math.min(SEARCH_RADIUS_MAX, searchRadiusDeg + SEARCH_RADIUS_STEP);
+      updateRadiusHUD();
+    }
+  });
+
+  document.addEventListener('keyup', e => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      isPainting = false;
+      currentColorIndex = (currentColorIndex + 1) % PAINT_COLORS.length;
+      document.getElementById('paintIndicator').classList.remove('active');
+      document.getElementById('paintIndicator').textContent = 'paint: off';
+      document.getElementById('paintIndicator').style.color = '';
+    }
+  });
+
+  window.addEventListener('resize', resizeCanvas);
+}
+
+// ============================================================================
+// ANIMATION LOOP
+// ============================================================================
+
+function animate() {
+  if (mouseInCanvas) {
+    const dist = Math.sqrt(mouseX * mouseX + mouseY * mouseY);
+
+    if (dist > 0.02) {
+      const t = Math.min(dist, 1);
+      const curve = t * t;
+      const speed = curve * ROTATION_SPEED;
+      const nx = mouseX / dist;
+      const ny = mouseY / dist;
+
+      // Yaw around WORLD Y (left multiply) — keeps horizon flat naturally
+      // Pitch around camera-LOCAL X (right multiply) — free to glide past poles
+      // Flip yaw when camera is upside down so screen-left always = turn-left
+      if (Math.abs(nx) > 0.001) {
+        const camUp = qRotateVec(camQ, [0, 1, 0]);
+        const yawSign = camUp[1] < 0 ? -1 : 1;
+        const qYaw = qFromAxisAngle(0, 1, 0, nx * speed * yawSign);
+        camQ = qNormalize(qMul(qYaw, camQ)); // left = world axis
+      }
+      if (Math.abs(ny) > 0.001) {
+        const qPitch = qFromAxisAngle(1, 0, 0, ny * speed);
+        camQ = qNormalize(qMul(camQ, qPitch)); // right = local axis
+      }
+    }
+  } else {
+    // Gentle auto-rotation around world Y axis
+    const qAuto = qFromAxisAngle(0, 1, 0, AUTO_ROTATION_SPEED);
+    camQ = qNormalize(qMul(qAuto, camQ));
+  }
+
+  // Drop particles while painting
+  if (isPainting) {
+    paintFrameCount++;
+    if (paintFrameCount % PAINT_INTERVAL === 0) {
+      const { lon, lat } = getCursorLonLat();
+
+      const durVariation = rand(-GRAIN_DUR_JITTER * 0.5, GRAIN_DUR_JITTER * 0.5);
+      const particle = {
+        lon,
+        lat,
+        color: PAINT_COLORS[currentColorIndex],
+        sampleIndex: -1,
+        grainStart: 0,
+        grainDuration: Math.max(0.05, GRAIN_DURATION + durVariation),
+        lastTriggered: 0
+      };
+
+      // Attach grain from active sample
+      if (currentSampleIndex >= 0 && samples[currentSampleIndex]) {
+        const s = samples[currentSampleIndex];
+        const sampleDur = s.duration;
+
+        const startJitter = rand(-GRAIN_START_JITTER * 0.3, GRAIN_START_JITTER * 0.3);
+        const rawStart = s.grainCursor + startJitter;
+
+        particle.sampleIndex = currentSampleIndex;
+        particle.grainStart = Math.max(0, rawStart % sampleDur);
+        particle.grainDuration = Math.min(particle.grainDuration, sampleDur - particle.grainStart);
+
+        const stride = (GRAIN_DURATION - GRAIN_OVERLAP) * rand(0.8, 1.2);
+        s.grainCursor += stride;
+      }
+
+      particles.push(particle);
+    }
+  }
+
+  drawFrame();
+
+  const coordDiv = document.getElementById('coordinates');
+  const { lon, lat } = getCursorLonLat();
+  coordDiv.textContent = `${(lon * 180 / Math.PI).toFixed(1)},${(lat * 180 / Math.PI).toFixed(1)}`;
+
+  requestAnimationFrame(animate);
+}
+
+// ============================================================================
+// START
+// ============================================================================
+
+init();
+</script>
+</body>
+</html>
