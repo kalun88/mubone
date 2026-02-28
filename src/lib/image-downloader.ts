@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, extname } from "node:path";
 
-const IMAGE_DIR = "public/notion-images";
+const IMAGE_DIR = "dist/notion-images";
 
 // Ensure the output directory exists
 if (!existsSync(IMAGE_DIR)) {
@@ -10,8 +10,13 @@ if (!existsSync(IMAGE_DIR)) {
 }
 
 /**
- * Given a Notion S3 URL (which expires), download it to public/notion-images/
+ * Given a Notion S3 URL (which expires), download it to dist/notion-images/
  * and return the local path (e.g. "/notion-images/abc123.jpg").
+ *
+ * NOTE: We write directly to dist/ rather than public/ because Astro scans
+ * the public/ folder before page rendering begins, so anything downloaded
+ * during rendering would be missed. Writing to dist/ during rendering works
+ * because Astro has already created dist/ by that point.
  *
  * Uses a hash of the URL path (without query params / auth tokens) as the
  * filename so the same image isn't downloaded twice across rebuilds.

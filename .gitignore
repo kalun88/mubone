@@ -4,4 +4,4 @@ dist/
 tmp/
 .env
 .DS_Store
-public/notion-images/
+dist/notion-images/
