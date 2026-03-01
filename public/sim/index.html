@@ -2882,10 +2882,12 @@ function drawClouds() {
 
     const isNearest = i === nearestSlot;
     const rRad = cloud.searchRadiusDeg * Math.PI / 180;
-    const edgeProj = project(...cameraTransform(...spherePoint(cloud.lon + rRad, cloud.lat)));
-    const screenR = edgeProj
-      ? Math.sqrt((edgeProj.sx - proj.sx)**2 + (edgeProj.sy - proj.sy)**2)
-      : 40;
+    // Compute screen radius from angular size + cloud depth, not from a
+    // single offset point (which rotates with the camera and fluctuates).
+    const fovRad   = (FOV_DEG * Math.PI) / 180;
+    const focalLen = (canvas.width / 2) / Math.tan(fovRad / 2);
+    // proj.depth is the z distance in camera space; use it to get px/rad
+    const screenR  = focalLen * Math.tan(rRad) / (proj.depth / SPHERE_RADIUS);
 
     ctx.save();
     ctx.globalAlpha = isNearest ? 0.7 : 0.4;
