@@ -981,6 +981,32 @@
     <div class="meter-clip-dot" id="meterClipDotBottom"></div>
   </div>
 
+<!-- ── MIDI / Keyboard mapping modal ──────────────────────────────────────── -->
+<div id="mappingModal">
+  <div class="mapping-dialog">
+    <h2>
+      midi + keyboard map
+      <button class="close-btn" id="mappingClose">✕</button>
+    </h2>
+    <div class="mapping-status" id="mappingStatus"></div>
+    <table class="mapping-table">
+      <thead>
+        <tr>
+          <th>function</th>
+          <th>keyboard</th>
+          <th>midi</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="mappingTableBody"></tbody>
+    </table>
+    <div class="mapping-footer">
+      <span>midi in: <span id="midiPortName">—</span></span>
+      <button id="clearAllMidi">clear all midi</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ============================================================================
 // CONSTANTS
@@ -1217,10 +1243,11 @@ let recencyN = 3;               // how many most-recent buffers to allow
 // ── Cloud drop system ─────────────────────────────────────────────────────
 // Up to 8 frozen granulating clouds, each locked to a sphere position.
 // ↓ = drop cloud at cursor, ↑ = pick up (delete) nearest cloud.
-// Each cloud: { id, lon, lat, color, searchRadiusDeg }
+// cloudSlots is a FIXED-LENGTH array (MAX_CLOUDS). null = empty slot.
+// Each cloud: { slotIndex, lon, lat, color, searchRadiusDeg }
+// Slot indices never shift — picking up slot 0 leaves slots 1–7 unchanged.
 const MAX_CLOUDS = 8;
-let clouds = [];
-let cloudIdCounter = 0;
+let cloudSlots = new Array(MAX_CLOUDS).fill(null); // fixed positions
 const CLOUD_COLORS = [
   '#4fc3f7', '#81c784', '#ffb74d', '#e57373',
   '#ce93d8', '#fff176', '#80cbc4', '#ff8a65'
@@ -2048,44 +2075,47 @@ function toggleNearestMode() {
 
 // ── Cloud drop / pickup ───────────────────────────────────────────────────
 function dropCloud() {
-  if (clouds.length >= MAX_CLOUDS) return;
+  // Find the first empty slot
+  const slotIndex = cloudSlots.indexOf(null);
+  if (slotIndex === -1) return; // all 8 slots occupied
   const { lon, lat } = mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  const id = cloudIdCounter++;
-  // Pick next unused CLOUD_COLOR slot by id index
-  const color = CLOUD_COLORS[id % CLOUD_COLORS.length];
-  clouds.push({ id, lon, lat, color, searchRadiusDeg });
+  const color = CLOUD_COLORS[slotIndex]; // color is fixed to slot position
+  cloudSlots[slotIndex] = { slotIndex, lon, lat, color, searchRadiusDeg };
   updateCloudBanksUI();
 }
 
 function pickupNearestCloud() {
-  if (!clouds.length) return;
   const { lon, lat } = mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  // Find nearest cloud by sphere angle
-  let nearestIdx = 0;
+  // Find the nearest occupied slot by sphere angle
+  let nearestSlot = -1;
   let nearestAng = Infinity;
-  for (let i = 0; i < clouds.length; i++) {
-    const ang = angleBetweenSphere(clouds[i].lon, clouds[i].lat, lon, lat);
-    if (ang < nearestAng) { nearestAng = ang; nearestIdx = i; }
+  for (let i = 0; i < MAX_CLOUDS; i++) {
+    if (!cloudSlots[i]) continue;
+    const ang = angleBetweenSphere(cloudSlots[i].lon, cloudSlots[i].lat, lon, lat);
+    if (ang < nearestAng) { nearestAng = ang; nearestSlot = i; }
   }
-  clouds.splice(nearestIdx, 1);
+  if (nearestSlot === -1) return;
+  cloudSlots[nearestSlot] = null; // null the slot — index stays, others unaffected
   updateCloudBanksUI();
 }
 
 function updateCloudBanksUI() {
-  // Called only on cloud add/remove — not every frame
-  const slots = document.querySelectorAll('.cloud-slot');
+  // Each DOM slot maps 1-to-1 with cloudSlots[i] — indices never shift.
+  const domSlots = document.querySelectorAll('.cloud-slot');
   const { lon: curLon, lat: curLat } = mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  const nearestId = findNearestCloudId(curLon, curLat);
+  const nearestSlot = findNearestCloudSlot(curLon, curLat);
 
-  slots.forEach((slot, i) => {
-    const cloud = clouds[i] || null;
-    slot.className = 'cloud-slot';
+  domSlots.forEach((domSlot, i) => {
+    const cloud = cloudSlots[i];
+    // Show slot number label always
+    domSlot.textContent = i + 1;
+    domSlot.className = 'cloud-slot';
     if (cloud) {
-      slot.style.cssText = `background:${cloud.color}33;border-color:${cloud.color};color:${cloud.color}`;
-      slot.classList.add(cloud.id === nearestId ? 'cloud-slot--nearest' : 'cloud-slot--active');
+      domSlot.style.cssText = `background:${cloud.color}33;border-color:${cloud.color};color:${cloud.color}`;
+      domSlot.classList.add(i === nearestSlot ? 'cloud-slot--nearest' : 'cloud-slot--active');
     } else {
-      slot.style.cssText = '';
-      slot.classList.add('cloud-slot--empty');
+      domSlot.style.cssText = '';
+      domSlot.classList.add('cloud-slot--empty');
     }
   });
 }
@@ -2838,17 +2868,19 @@ function drawFrame() {
 }
 
 function drawClouds() {
-  if (!clouds.length) return;
   const { lon: curLon, lat: curLat } = mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  const nearestId = findNearestCloudId(curLon, curLat);
+  const nearestSlot = findNearestCloudSlot(curLon, curLat);
 
-  for (const cloud of clouds) {
+  for (let i = 0; i < MAX_CLOUDS; i++) {
+    const cloud = cloudSlots[i];
+    if (!cloud) continue;
+
     const [wx, wy, wz] = spherePoint(cloud.lon, cloud.lat);
     const [cx, cy, cz] = cameraTransform(wx, wy, wz);
     const proj = project(cx, cy, cz);
     if (!proj) continue;
 
-    const isNearest = cloud.id === nearestId;
+    const isNearest = i === nearestSlot;
     const rRad = cloud.searchRadiusDeg * Math.PI / 180;
     const edgeProj = project(...cameraTransform(...spherePoint(cloud.lon + rRad, cloud.lat)));
     const screenR = edgeProj
@@ -2868,7 +2900,14 @@ function drawClouds() {
     ctx.fillStyle = cloud.color;
     if (isNearest) { ctx.shadowColor = cloud.color; ctx.shadowBlur = 10; }
     ctx.beginPath(); ctx.arc(proj.sx, proj.sy, 4, 0, Math.PI * 2); ctx.fill();
+    // Slot number label on sphere
     ctx.shadowBlur = 0;
+    ctx.globalAlpha = isNearest ? 0.9 : 0.5;
+    ctx.fillStyle = cloud.color;
+    ctx.font = `10px "Roboto Mono", monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(i + 1, proj.sx, proj.sy - 12);
     ctx.restore();
   }
 }
@@ -2964,13 +3003,14 @@ function applyRecencyFilter(candidates) {
   return candidates.filter(({ p }) => allowed.has(getBufferKey(p)));
 }
 
-function findNearestCloudId(refLon, refLat) {
-  let nearestId = -1, nearestAng = Infinity;
-  for (const c of clouds) {
-    const ang = angleBetweenSphere(c.lon, c.lat, refLon, refLat);
-    if (ang < nearestAng) { nearestAng = ang; nearestId = c.id; }
+function findNearestCloudSlot(refLon, refLat) {
+  let nearestSlot = -1, nearestAng = Infinity;
+  for (let i = 0; i < MAX_CLOUDS; i++) {
+    if (!cloudSlots[i]) continue;
+    const ang = angleBetweenSphere(cloudSlots[i].lon, cloudSlots[i].lat, refLon, refLat);
+    if (ang < nearestAng) { nearestAng = ang; nearestSlot = i; }
   }
-  return nearestId;
+  return nearestSlot;
 }
 
 let _schedLastAt = 0;
@@ -2980,38 +3020,43 @@ function scheduleGrains() {
   if (_schedLastAt > 0) perf.schedulerDrift = Math.max(0, (now - _schedLastAt) - 15);
   _schedLastAt = now;
 
-  if (!particles.length) return;
   const { lon: cursorLon, lat: cursorLat } =
     mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
   const k = gp().k;
   const searchRadiusRad = searchRadiusDeg * Math.PI / 180;
 
-  // Compute angular distances — no projection needed for scheduling
-  const withAng = particles.map(p => ({
-    p,
-    ang: angleBetweenSphere(p.lon, p.lat, cursorLon, cursorLat)
-  }));
-
-  let toGranulate = [];
-  if (nearestMode) {
-    withAng.sort((a, b) => a.ang - b.ang);
-    if (withAng.length > 0) toGranulate = [withAng[0].p];
-  } else {
-    const inRadius = withAng.filter(c => c.ang < searchRadiusRad);
-    toGranulate = shuffleInPlace(applyRecencyFilter(inRadius)).slice(0, k).map(c => c.p);
-  }
-
-  selectedGrainSet = new Set(toGranulate);
+  selectedGrainSet = new Set();
   liveGranulatingThisFrame = false;
   perf.grainsFired = 0;
-  for (const p of toGranulate) {
-    playGrain(p);
-    perf.grainsFired++;
-    if (p.source === 'live') liveGranulatingThisFrame = true;
+
+  // ── Cursor grains (only when particles exist) ─────────────────────────────
+  if (particles.length) {
+    const withAng = particles.map(p => ({
+      p,
+      ang: angleBetweenSphere(p.lon, p.lat, cursorLon, cursorLat)
+    }));
+
+    let toGranulate = [];
+    if (nearestMode) {
+      withAng.sort((a, b) => a.ang - b.ang);
+      if (withAng.length > 0) toGranulate = [withAng[0].p];
+    } else {
+      const inRadius = withAng.filter(c => c.ang < searchRadiusRad);
+      toGranulate = shuffleInPlace(applyRecencyFilter(inRadius)).slice(0, k).map(c => c.p);
+    }
+
+    for (const p of toGranulate) {
+      selectedGrainSet.add(p);
+      playGrain(p);
+      perf.grainsFired++;
+      if (p.source === 'live') liveGranulatingThisFrame = true;
+    }
   }
 
-  // ── Cloud grains ──────────────────────────────────────────────────────────
-  for (const cloud of clouds) {
+  // ── Cloud grains — always run, picks up particles painted after drop ──────
+  for (let i = 0; i < MAX_CLOUDS; i++) {
+    const cloud = cloudSlots[i];
+    if (!cloud) continue;
     const cloudRadiusRad = cloud.searchRadiusDeg * Math.PI / 180;
     const cloudCandidates = particles
       .map(p => ({ p, ang: angleBetweenSphere(p.lon, p.lat, cloud.lon, cloud.lat) }))
@@ -3842,31 +3887,5 @@ function setupMappingModal() {
 
 init();
 </script>
-
-<!-- ── MIDI / Keyboard mapping modal ──────────────────────────────────────── -->
-<div id="mappingModal">
-  <div class="mapping-dialog">
-    <h2>
-      midi + keyboard map
-      <button class="close-btn" id="mappingClose">✕</button>
-    </h2>
-    <div class="mapping-status" id="mappingStatus"></div>
-    <table class="mapping-table">
-      <thead>
-        <tr>
-          <th>function</th>
-          <th>keyboard</th>
-          <th>midi</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody id="mappingTableBody"></tbody>
-    </table>
-    <div class="mapping-footer">
-      <span>midi in: <span id="midiPortName">—</span></span>
-      <button id="clearAllMidi">clear all midi</button>
-    </div>
-  </div>
-</div>
 </body>
 </html>
