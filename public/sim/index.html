@@ -67,16 +67,6 @@
     min-height: 0;
     overflow: hidden;
   }
-  /* ── Right column: clouds + samples stacked ─────────────────────────────── */
-  .right-panel {
-    width: 280px;
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-    min-height: 0;
-    overflow: hidden;
-  }
   .canvas-wrapper {
     position: relative;
     flex: 1;
@@ -361,14 +351,6 @@
   #outputMeterCanvasBottom { display: none; }
 
   /* ── Right panel: clouds + samples ──────────────────────────────────────── */
-  .panel-label {
-    font-size: 0.55rem;
-    color: #444;
-    letter-spacing: 0.08em;
-    border-bottom: 1px solid #2a2a2a;
-    padding-bottom: 0.2rem;
-    margin-bottom: 0.2rem;
-  }
   /* ── Drop zone overlay ───────────────────────────────────────────────────── */
   .drop-overlay {
     position: absolute;
@@ -388,33 +370,7 @@
   .drop-overlay .drop-icon { font-size: 2rem; color: #7abcbc; }
   .drop-overlay .drop-text { font-size: 0.85rem; color: #aaa; letter-spacing: 0.05em; }
 
-  /* ── Loaded sample list ─────────────────────────────────────────────────── */
-  .sample-list-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-  }
-  .sample-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    overflow: visible;
-  }
-  .sample-slot {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.3rem 0.25rem 0.3rem 0;
-    font-size: 0.7rem;
-    color: #555;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-    user-select: none;
-    min-height: 28px;
-  }
+  /* .sample-slot removed — sample list replaced by full-width sample viewer */
   .sample-slot:hover { background: #2a3a3a; }
   .sample-slot.active {
     border-color: #7abcbc;
@@ -505,6 +461,98 @@
   .sample-slot.loaded .slot-delete:hover { color: #e06060; }
 
   /* Cloud banks removed — spatial tracking via canvas edge indicators */
+
+  /* ── Sample viewer (full-width, below device strip) ─────────────────────── */
+  .sample-viewer {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    height: 140px;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .sv-tabs {
+    display: flex;
+    flex-direction: row;
+    flex-shrink: 0;
+    height: 22px;
+    background: #252525;
+    border-bottom: 1px solid #2e2e2e;
+    gap: 0;
+  }
+  .sv-tab {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 100%;
+    font-size: 0.58rem;
+    color: #333;
+    cursor: pointer;
+    border-right: 1px solid #2a2a2a;
+    transition: color 0.1s, background 0.1s;
+    user-select: none;
+    letter-spacing: 0.02em;
+    flex-shrink: 0;
+  }
+  .sv-tab:hover { color: #555; background: #2a2a2a; }
+  .sv-tab.loaded { color: #666; }
+  .sv-tab.active-tab { background: #1e1e1e; border-bottom: 1px solid #1e1e1e; margin-bottom: -1px; }
+  .sv-tab.painting { color: var(--tab-color, #7abcbc); }
+  .sv-tab.active-tab.loaded { color: #aaa; }
+  .sv-tab.active-tab.painting { color: var(--tab-color, #7abcbc); }
+  .sv-display {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: #1a1a1a;
+    overflow: hidden;
+  }
+  .sv-waveform, .sv-crop, .sv-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .sv-info {
+    position: absolute;
+    bottom: 4px;
+    left: 8px;
+    font-size: 0.55rem;
+    color: #555;
+    pointer-events: none;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Input meter: vertical ───────────────────────────────────────────────── */
+  .input-vmeter-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    flex: 1;
+    min-width: 0;
+  }
+  #inputMeterCanvas {
+    display: block;
+    width: 8px;
+    flex: 1;
+    min-height: 0;
+    border-radius: 2px;
+    background: #1c1c1c;
+  }
+  .input-clip-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #333;
+    flex-shrink: 0;
+    transition: background 0.05s, box-shadow 0.05s;
+  }
+  .input-clip-dot.clipping { background: #e06060; box-shadow: 0 0 4px #e06060; }
 
   /* ── Fullscreen button ───────────────────────────────────────────────────── */
   #fullscreenBtn {
@@ -689,13 +737,6 @@
       </div>
     </div>
 
-    <!-- Right panel: samples only (clouds tracked via canvas edge indicators) -->
-    <div class="right-panel">
-      <div class="sample-list-panel">
-        <div class="panel-label">samples</div>
-        <div class="sample-list" id="sampleList"></div>
-      </div>
-    </div>
 
   </div><!-- end .main-layout -->
 
@@ -717,19 +758,14 @@
     <!-- 2. Input -->
     <div class="device device--input">
       <div class="device-label">input</div>
-      <div class="device-body">
-        <div class="input-gain-knob-row">
-          <div class="knob-wrap">
-            <canvas id="inputGainKnob" width="36" height="36"></canvas>
-            <span class="knob-label">gain</span>
-          </div>
-          <span class="knob-val" id="inputGainVal">1.00×</span>
+      <div class="device-body" style="flex-direction:row;align-items:flex-end;gap:0.3rem;">
+        <div class="knob-wrap" style="flex-shrink:0;">
+          <canvas id="inputGainKnob" width="36" height="36"></canvas>
+          <span class="knob-label">gain</span>
+          <span class="knob-val" id="inputGainVal" style="font-size:0.5rem;color:#7abcbc;">1.00×</span>
         </div>
-        <div class="input-meter-row">
-          <span class="input-meter-label">in</span>
-          <div class="input-meter-wrap">
-            <canvas id="inputMeterCanvas"></canvas>
-          </div>
+        <div class="input-vmeter-wrap">
+          <canvas id="inputMeterCanvas"></canvas>
           <div class="input-clip-dot" id="inputClipDot"></div>
         </div>
       </div>
@@ -781,6 +817,17 @@
     </div>
 
   </div><!-- end .device-strip -->
+
+  <!-- Sample viewer: full-width waveform with tab per slot -->
+  <div class="sample-viewer" id="sampleViewer">
+    <div class="sv-tabs" id="svTabs"></div>
+    <div class="sv-display" id="svDisplay">
+      <canvas class="sv-waveform" id="svWaveform"></canvas>
+      <canvas class="sv-crop" id="svCrop"></canvas>
+      <canvas class="sv-overlay" id="svOverlay"></canvas>
+      <div class="sv-info" id="svInfo"></div>
+    </div>
+  </div>
 
   <!-- Hidden compat canvases (JS still draws to these IDs) -->
   <canvas id="outputMeterCanvasBottom" style="display:none;"></canvas>
@@ -1504,6 +1551,245 @@ async function loadAudioFile(file) {
 
 // (Sample paint is now purely momentary via number key hold — no toggle function needed)
 
+// ── Sample Viewer ─────────────────────────────────────────────────────────────
+// Shows a large waveform for the active sample tab, with crop handles.
+// Tab auto-switches when a number key is pressed to paint a sample.
+
+let svActiveTab = -1;          // which tab is showing (-1 = none / live placeholder)
+let svCropSetup = [];          // per-slot crop interaction cleanup refs (not used for teardown yet)
+
+function buildSvTabs() {
+  const tabsEl = document.getElementById('svTabs');
+  if (!tabsEl) return;
+  tabsEl.innerHTML = '';
+  for (let i = 0; i < MAX_SAMPLES; i++) {
+    const tab = document.createElement('div');
+    tab.className = 'sv-tab';
+    tab.dataset.index = i;
+    tab.textContent = i + 1;
+    const color = SAMPLE_PAINT_COLORS[i % SAMPLE_PAINT_COLORS.length];
+    tab.style.setProperty('--tab-color', color);
+    if (i < samples.length) tab.classList.add('loaded');
+    if (i === activeSampleIndex) tab.classList.add('painting');
+    if (i === svActiveTab) tab.classList.add('active-tab');
+    tab.addEventListener('click', () => switchSvTab(i));
+    tabsEl.appendChild(tab);
+  }
+}
+
+function updateSvTabStates() {
+  const tabsEl = document.getElementById('svTabs');
+  if (!tabsEl) return;
+  tabsEl.querySelectorAll('.sv-tab').forEach(tab => {
+    const i = parseInt(tab.dataset.index);
+    tab.classList.toggle('loaded',      i < samples.length);
+    tab.classList.toggle('painting',    i === activeSampleIndex);
+    tab.classList.toggle('active-tab',  i === svActiveTab);
+  });
+}
+
+function switchSvTab(idx) {
+  svActiveTab = idx;
+  updateSvTabStates();
+  drawSvWaveform();
+  setupSvCropInteraction();
+}
+
+function drawSvWaveform() {
+  const wc      = document.getElementById('svWaveform');
+  const cropC   = document.getElementById('svCrop');
+  const infoEl  = document.getElementById('svInfo');
+  if (!wc) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const rect = wc.parentElement.getBoundingClientRect();
+  if (rect.width === 0) return;
+  const W = rect.width, H = rect.height;
+  wc.width     = W * dpr; wc.height     = H * dpr;
+  cropC.width  = W * dpr; cropC.height  = H * dpr;
+
+  const ctx = wc.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  const s = svActiveTab >= 0 && svActiveTab < samples.length ? samples[svActiveTab] : null;
+
+  if (!s) {
+    // Empty tab — show placeholder
+    ctx.fillStyle = '#252525';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#333';
+    ctx.font = '0.6rem "Roboto Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(svActiveTab >= 0 ? `slot ${svActiveTab + 1} — drop audio here` : 'no sample loaded', W/2, H/2);
+    if (infoEl) infoEl.textContent = '';
+    drawSvCrop();
+    return;
+  }
+
+  // Draw waveform
+  const data = s.buffer.getChannelData(0);
+  const step = Math.max(1, Math.floor(data.length / (W * dpr)));
+  const mid  = H / 2;
+  ctx.strokeStyle = '#5a9090';
+  ctx.lineWidth   = 1 / dpr;
+  ctx.beginPath();
+  for (let i = 0; i < W * dpr; i++) {
+    const idx = i * step;
+    let mn = 0, mx = 0;
+    for (let j = 0; j < step && idx + j < data.length; j++) {
+      const v = data[idx + j]; if (v < mn) mn = v; if (v > mx) mx = v;
+    }
+    const x = i / dpr;
+    ctx.moveTo(x, mid + mn * mid * 0.9);
+    ctx.lineTo(x, mid + mx * mid * 0.9);
+  }
+  ctx.stroke();
+
+  if (infoEl) {
+    const cropDur = ((s.cropEnd - s.cropStart) * s.duration).toFixed(2);
+    infoEl.textContent = `${s.name}   ${cropDur}s / ${s.duration.toFixed(2)}s`;
+  }
+
+  drawSvCrop();
+}
+
+function drawSvCrop() {
+  const cropC = document.getElementById('svCrop');
+  if (!cropC) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = cropC.width / dpr, H = cropC.height / dpr;
+  const cctx = cropC.getContext('2d');
+  cctx.clearRect(0, 0, cropC.width, cropC.height);
+
+  const s = svActiveTab >= 0 && svActiveTab < samples.length ? samples[svActiveTab] : null;
+  if (!s) return;
+
+  const xS = s.cropStart * W * dpr;
+  const xE = s.cropEnd   * W * dpr;
+
+  // Dim regions outside crop
+  cctx.fillStyle = 'rgba(0,0,0,0.55)';
+  if (xS > 0)         cctx.fillRect(0,   0, xS,             cropC.height);
+  if (xE < W * dpr)   cctx.fillRect(xE,  0, W * dpr - xE,  cropC.height);
+
+  // Handles
+  const hw = 8;
+  cctx.fillStyle = '#e0c860';
+  cctx.fillRect(xS - hw/2, 0, hw, cropC.height);
+  cctx.fillRect(xE - hw/2, 0, hw, cropC.height);
+
+  // Crop bracket lines top+bottom
+  cctx.fillStyle = 'rgba(224,200,96,0.5)';
+  cctx.fillRect(xS, 0, xE - xS, 2 * dpr);
+  cctx.fillRect(xS, cropC.height - 2 * dpr, xE - xS, 2 * dpr);
+}
+
+function setupSvCropInteraction() {
+  const display = document.getElementById('svDisplay');
+  if (!display) return;
+
+  // Remove old listeners by cloning (simple teardown)
+  const fresh = display.cloneNode(true);
+  display.parentNode.replaceChild(fresh, display);
+
+  // Re-grab canvas refs after clone
+  const wc     = fresh.querySelector('#svWaveform');
+  const cropC  = fresh.querySelector('#svCrop');
+  const ovC    = fresh.querySelector('#svOverlay');
+
+  if (!wc || !cropC) return;
+
+  let dragging = null;
+  const HANDLE_HIT = 10;
+
+  function getHit(e) {
+    const rect = fresh.getBoundingClientRect();
+    const x    = e.clientX - rect.left;
+    const W    = rect.width;
+    const s    = svActiveTab >= 0 ? samples[svActiveTab] : null;
+    if (!s) return null;
+    if (Math.abs(x - s.cropStart * W) <= HANDLE_HIT) return 'start';
+    if (Math.abs(x - s.cropEnd   * W) <= HANDLE_HIT) return 'end';
+    return null;
+  }
+
+  fresh.addEventListener('mousemove', e => {
+    if (dragging) return;
+    const hit = getHit(e);
+    fresh.style.cursor = hit ? 'col-resize' : '';
+  });
+  fresh.addEventListener('mouseleave', () => { if (!dragging) fresh.style.cursor = ''; });
+
+  fresh.addEventListener('mousedown', e => {
+    const hit = getHit(e);
+    if (!hit) return;
+    e.preventDefault();
+    dragging = hit;
+    document.body.style.cursor = 'col-resize';
+  });
+
+  document.addEventListener('mousemove', function svMove(e) {
+    if (!dragging) return;
+    const rect = fresh.getBoundingClientRect();
+    const x    = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const norm = x / rect.width;
+    const s    = svActiveTab >= 0 ? samples[svActiveTab] : null;
+    if (!s) return;
+    const minSpan = 0.01;
+    if (dragging === 'start') s.cropStart = Math.max(0, Math.min(norm, s.cropEnd   - minSpan));
+    else                      s.cropEnd   = Math.min(1, Math.max(norm, s.cropStart + minSpan));
+    drawSvCrop();
+    // also update duration in info bar
+    const infoEl = fresh.querySelector('#svInfo');
+    if (infoEl && s) {
+      const cropDur = ((s.cropEnd - s.cropStart) * s.duration).toFixed(2);
+      infoEl.textContent = `${s.name}   ${cropDur}s / ${s.duration.toFixed(2)}s`;
+    }
+    // sync the old per-slot drawCropOverlay if it exists
+    drawCropOverlay(svActiveTab);
+  });
+
+  document.addEventListener('mouseup', function svUp() {
+    if (!dragging) return;
+    dragging = null;
+    document.body.style.cursor = '';
+    const s = svActiveTab >= 0 ? samples[svActiveTab] : null;
+    if (s) s.grainCursor = s.cropStart * s.duration;
+  });
+}
+
+// Draw the live grain position overlay onto svOverlay (called from render loop)
+function drawSvLiveOverlay() {
+  const ovC = document.getElementById('svOverlay');
+  if (!ovC) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W   = ovC.parentElement.clientWidth;
+  const H   = ovC.parentElement.clientHeight;
+  if (!W || !H) return;
+  if (ovC.width !== W * dpr)  ovC.width  = W * dpr;
+  if (ovC.height !== H * dpr) ovC.height = H * dpr;
+
+  const oct = ovC.getContext('2d');
+  oct.clearRect(0, 0, ovC.width, ovC.height);
+
+  const s = svActiveTab >= 0 && svActiveTab < samples.length ? samples[svActiveTab] : null;
+  if (!s || !s.buffer) return;
+
+  const dur  = s.buffer.duration;
+  const norm = s.grainCursor / dur;  // 0..1 within full buffer
+
+  // Position line (red, like Granulator III)
+  const px = norm * W * dpr;
+  oct.strokeStyle = '#cc3333';
+  oct.lineWidth   = 1.5;
+  oct.beginPath();
+  oct.moveTo(px, 0);
+  oct.lineTo(px, ovC.height);
+  oct.stroke();
+}
+
 function updateSamplePaintIndicator() { updatePaintIndicator(); } // alias kept for call sites
 function updatePaintIndicator() {
   const indicator = document.getElementById('sampleIndicator');
@@ -1820,6 +2106,11 @@ function rebuildSampleListUI() {
       });
     }
   }
+  // After rebuild, refresh the viewer tabs and redraw active slot
+  buildSvTabs();
+  if (svActiveTab >= samples.length) svActiveTab = samples.length - 1;
+  drawSvWaveform();
+  setupSvCropInteraction();
 }
 
 function updateSampleListActiveState() {
@@ -2547,7 +2838,7 @@ function init() {
   setupMappingModal();
   initMidi();
   // Re-size after first layout pass in case dimensions weren't settled yet
-  requestAnimationFrame(() => { resizeCanvas(); drawPresetWaveform(); updatePlaybackControls(); animate(); });
+  requestAnimationFrame(() => { resizeCanvas(); drawPresetWaveform(); updatePlaybackControls(); buildSvTabs(); animate(); });
 
   // Grain scheduler — independent of render loop so slow frames don't delay grains.
   // 30ms interval = ~33 ticks/sec. Grains are 25ms–2000ms so 30ms scheduling
@@ -2651,7 +2942,6 @@ function drawInputMeter() {
   const meterCanvas = document.getElementById('inputMeterCanvas');
   const clipDot     = document.getElementById('inputClipDot');
   if (!meterCanvas || !inputAnalyser) {
-    // No active recording — clear meter
     if (meterCanvas) {
       const mc = meterCanvas.getContext('2d');
       mc.clearRect(0, 0, meterCanvas.width, meterCanvas.height);
@@ -2677,24 +2967,26 @@ function drawInputMeter() {
   const peakDb = peak > 0 ? 20 * Math.log10(peak) : DB_FLOOR;
   const level  = Math.max(0, Math.min(1, (rmsDb - DB_FLOOR) / -DB_FLOOR));
 
-  const w = meterCanvas.offsetWidth  || meterCanvas.parentElement.clientWidth || 60;
-  const h = meterCanvas.offsetHeight || 4;
+  // Vertical meter: fixed pixel size set from CSS (8px wide, flex height)
+  const w = 8;
+  const h = meterCanvas.offsetHeight || meterCanvas.parentElement.clientHeight || 64;
   if (meterCanvas.width  !== w) meterCanvas.width  = w;
   if (meterCanvas.height !== h) meterCanvas.height = h;
 
   const mc = meterCanvas.getContext('2d');
   mc.clearRect(0, 0, w, h);
 
-  const fillW = Math.round(level * w);
-  if (fillW > 0) {
-    const grad = mc.createLinearGradient(0, 0, w, 0);
+  // Fill from bottom up
+  const fillH = Math.round(level * h);
+  if (fillH > 0) {
+    const grad = mc.createLinearGradient(0, h, 0, 0); // bottom → top = quiet → loud
     grad.addColorStop(0,    '#3a7a50');
     grad.addColorStop(0.6,  '#5ab870');
     grad.addColorStop(0.78, '#c8b840');
     grad.addColorStop(0.9,  '#d06030');
     grad.addColorStop(1.0,  '#c03030');
     mc.fillStyle = grad;
-    mc.fillRect(0, 0, fillW, h);
+    mc.fillRect(0, h - fillH, w, fillH);
   }
 
   const now = performance.now() / 1000;
@@ -2730,26 +3022,26 @@ function drawOutputMeter() {
   const peakDb = peak > 0 ? 20 * Math.log10(peak) : DB_FLOOR;
   const level  = Math.max(0, Math.min(1, (rmsDb  - DB_FLOOR) / -DB_FLOOR));
 
-  // Draw bar
-  const w = meterCanvas.offsetWidth  || meterCanvas.parentElement.clientWidth  || 80;
-  const h = meterCanvas.offsetHeight || 8;
-  if (meterCanvas.width !== w)  meterCanvas.width  = w;
+  // Draw bar — vertical, fill from bottom
+  const w = meterCanvas.offsetWidth  || 14;
+  const h = meterCanvas.offsetHeight || meterCanvas.parentElement.clientHeight || 64;
+  if (meterCanvas.width  !== w) meterCanvas.width  = w;
   if (meterCanvas.height !== h) meterCanvas.height = h;
 
   const mc = meterCanvas.getContext('2d');
   mc.clearRect(0, 0, w, h);
 
-  const fillW = Math.round(level * w);
-  if (fillW > 0) {
-    // gradient: green → yellow → red
-    const grad = mc.createLinearGradient(0, 0, w, 0);
-    grad.addColorStop(0,    '#3a7a50'); // dark green
-    grad.addColorStop(0.6,  '#5ab870'); // green
-    grad.addColorStop(0.78, '#c8b840'); // yellow
-    grad.addColorStop(0.9,  '#d06030'); // orange
-    grad.addColorStop(1.0,  '#c03030'); // red
+  const fillH = Math.round(level * h);
+  if (fillH > 0) {
+    // gradient: bottom = green (quiet), top = red (loud)
+    const grad = mc.createLinearGradient(0, h, 0, 0);
+    grad.addColorStop(0,    '#3a7a50');
+    grad.addColorStop(0.6,  '#5ab870');
+    grad.addColorStop(0.78, '#c8b840');
+    grad.addColorStop(0.9,  '#d06030');
+    grad.addColorStop(1.0,  '#c03030');
     mc.fillStyle = grad;
-    mc.fillRect(0, 0, fillW, h);
+    mc.fillRect(0, h - fillH, w, fillH);
   }
 
   // Clip detection (peak >= 0 dBFS)
@@ -2792,6 +3084,7 @@ function drawFrame() {
   drawTetherLine();
   drawCursor();
   drawClouds();
+  drawSvLiveOverlay();
   drawRadiusTooltip();
   drawOutputMeter();
   drawInputMeter();
@@ -3322,8 +3615,9 @@ function setupEvents() {
         recordStrokeStart('sample');
         isPainting      = true;
         paintFrameCount = 0;
-
+        switchSvTab(idx);
         updateSampleListActiveState();
+        updateSvTabStates();
         updateSamplePaintIndicator();
       }
     }
