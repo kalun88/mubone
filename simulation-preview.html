@@ -489,7 +489,7 @@
     width: 28px;
     height: 100%;
     font-size: 0.58rem;
-    color: #333;
+    color: #555;
     cursor: pointer;
     border-right: 1px solid #2a2a2a;
     transition: color 0.1s, background 0.1s;
@@ -497,12 +497,12 @@
     letter-spacing: 0.02em;
     flex-shrink: 0;
   }
-  .sv-tab:hover { color: #555; background: #2a2a2a; }
-  .sv-tab.loaded { color: #666; }
+  .sv-tab:hover { color: #999; background: #2a2a2a; }
+  .sv-tab.loaded { color: #888; }
   .sv-tab.active-tab { background: #1e1e1e; border-bottom: 1px solid #1e1e1e; margin-bottom: -1px; }
   .sv-tab.painting { color: var(--tab-color, #7abcbc); }
-  .sv-tab.active-tab.loaded { color: #aaa; }
-  .sv-tab.active-tab.painting { color: var(--tab-color, #7abcbc); }
+  .sv-tab.active-tab.loaded { color: #ddd; font-weight: bold; }
+  .sv-tab.active-tab.painting { color: var(--tab-color, #7abcbc); font-weight: bold; }
   .sv-display {
     position: relative;
     flex: 1;
@@ -522,7 +522,7 @@
     bottom: 4px;
     left: 8px;
     font-size: 0.55rem;
-    color: #555;
+    color: #888;
     pointer-events: none;
     letter-spacing: 0.04em;
   }
@@ -1616,9 +1616,9 @@ function drawSvWaveform() {
 
   if (!s) {
     // Empty tab — show placeholder
-    ctx.fillStyle = '#252525';
+    ctx.fillStyle = '#1a1a1a';
     ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = '#333';
+    ctx.fillStyle = '#555';
     ctx.font = '0.6rem "Roboto Mono", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -1632,8 +1632,8 @@ function drawSvWaveform() {
   const data = s.buffer.getChannelData(0);
   const step = Math.max(1, Math.floor(data.length / (W * dpr)));
   const mid  = H / 2;
-  ctx.strokeStyle = '#5a9090';
-  ctx.lineWidth   = 1 / dpr;
+  ctx.strokeStyle = '#7abcbc';
+  ctx.lineWidth   = 1.5 / dpr;
   ctx.beginPath();
   for (let i = 0; i < W * dpr; i++) {
     const idx = i * step;
