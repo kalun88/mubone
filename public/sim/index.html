@@ -116,13 +116,6 @@
     display: flex;
     gap: 1.5rem;
   }
-  #paintIndicator {
-    color: #555;
-    transition: color 0.15s;
-  }
-  #paintIndicator.active {
-    color: #fff;
-  }
   /* ── Bottom-of-canvas status bar ─────────────────────────────────────────── */
   .canvas-bottom-bar {
     position: absolute;
@@ -681,9 +674,7 @@
       <canvas id="sphereCanvas"></canvas>
       <div class="hud">
         <div id="coordinates">--,--</div>
-        <div id="paintIndicator">paint: off</div>
         <div id="sampleIndicator" style="color:#555">no sample</div>
-        <div id="radiusIndicator" style="color:#7abcbc">r: 10°</div>
         <div id="altLockIndicator" style="display:none;color:#f0c060">alt: locked</div>
         <div id="loadIndicator" style="color:#555">● cpu ok</div>
       </div>
@@ -1042,6 +1033,7 @@ let altFrozenMousePixelX = 0;
 let altFrozenMousePixelY = 0;
 let searchRadiusDeg = 10;
 let nearestMode = false;   // when true: ignore radius, always pick closest particle
+let radiusTooltipUntil = 0; // performance.now() — show transient radius label until this time
 
 // ── Painting ─────────────────────────────────────────────────────────────────
 let isPainting = false;          // true while mouse-move painting is active
@@ -1980,6 +1972,7 @@ function setupPresets() {
 function toggleNearestMode() {
   nearestMode = !nearestMode;
   updatePlaybackControls();
+  flashRadiusTooltip();
 }
 
 // ── Cloud drop / pickup ───────────────────────────────────────────────────
@@ -2036,16 +2029,6 @@ function updatePlaybackControls() {
   }
   // Radius canvas
   drawRadiusViz();
-  // HUD indicator (kept small, just shows mode)
-  const el = document.getElementById('radiusIndicator');
-  if (!el) return;
-  if (nearestMode) {
-    el.textContent = 'snap';
-    el.style.color = '#e8a030';
-  } else {
-    el.textContent = `r: ${searchRadiusDeg}°`;
-    el.style.color = '#7abcbc';
-  }
 }
 
 function drawRadiusViz() {
@@ -2118,6 +2101,48 @@ function drawRadiusViz() {
     c.textBaseline = 'bottom';
     c.fillText(`${searchRadiusDeg}°`, cx, h - 3);
   }
+}
+
+// Transient radius label drawn near the cursor, briefly visible on scroll
+function drawRadiusTooltip() {
+  const now = performance.now();
+  if (now >= radiusTooltipUntil) return; // nothing to show
+
+  const fadeMs  = 300; // fade-out duration
+  const elapsed = radiusTooltipUntil - now;
+  const alpha   = Math.min(1, elapsed / fadeMs);
+
+  // Position: slightly above+right of cursor (or canvas centre when no mouse)
+  const mx = mouseInCanvas ? mousePixelX : canvas.width  / 2;
+  const my = mouseInCanvas ? mousePixelY : canvas.height / 2;
+  const ox = 14, oy = -20; // offset from cursor tip
+
+  const label = nearestMode ? 'snap' : `${searchRadiusDeg}°`;
+  const fs    = 11; // font size px
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font        = `${fs}px "Roboto Mono", monospace`;
+  ctx.textAlign   = 'left';
+  ctx.textBaseline = 'middle';
+
+  // Subtle background pill
+  const tw = ctx.measureText(label).width;
+  const px = 5, py = 3;
+  ctx.fillStyle = 'rgba(30,30,30,0.75)';
+  ctx.beginPath();
+  ctx.roundRect(mx + ox - px, my + oy - fs/2 - py, tw + px*2, fs + py*2, 3);
+  ctx.fill();
+
+  // Text
+  ctx.fillStyle = nearestMode ? '#e8a030' : '#7abcbc';
+  ctx.fillText(label, mx + ox, my + oy);
+  ctx.restore();
+}
+
+// Call this whenever searchRadiusDeg or nearestMode changes to flash the tooltip
+function flashRadiusTooltip() {
+  radiusTooltipUntil = performance.now() + 1200; // visible for 1.2 s, fades over last 300 ms
 }
 
 function drawPresetWaveform() {
@@ -2758,6 +2783,7 @@ function drawFrame() {
   drawTetherLine();
   drawCursor();
   drawClouds();
+  drawRadiusTooltip();
   drawOutputMeter();
   drawInputMeter();
 }
@@ -3271,11 +3297,6 @@ function setupEvents() {
       recordStrokeStart('live', currentLiveBufferIdx);
       isPainting      = true;
       paintFrameCount = 0;
-
-      const paint = document.getElementById('paintIndicator');
-      paint.textContent = '● rec+paint';
-      paint.style.color = LIVE_PAINT_COLORS[liveColorIndex % LIVE_PAINT_COLORS.length];
-      paint.classList.add('active');
       updateLiveRecUI();
     }
 
@@ -3292,12 +3313,6 @@ function setupEvents() {
         recordStrokeStart('sample');
         isPainting      = true;
         paintFrameCount = 0;
-
-        const color = SAMPLE_PAINT_COLORS[idx % SAMPLE_PAINT_COLORS.length];
-        const paint = document.getElementById('paintIndicator');
-        paint.textContent = `paint [${num}]`;
-        paint.style.color = color;
-        paint.classList.add('active');
 
         updateSampleListActiveState();
         updateSamplePaintIndicator();
@@ -3324,6 +3339,7 @@ function setupEvents() {
       if (e.key === '[') searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, searchRadiusDeg - SEARCH_RADIUS_STEP);
       if (e.key === ']') searchRadiusDeg = Math.min(SEARCH_RADIUS_MAX, searchRadiusDeg + SEARCH_RADIUS_STEP);
       updatePlaybackControls();
+      flashRadiusTooltip();
     }
 
     // ── Cmd/Ctrl+Z: undo last stroke ─────────────────────────────────────────
@@ -3373,12 +3389,6 @@ function setupEvents() {
 
       if (isRecording) stopLiveRecording();
       liveColorIndex = (liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-
-      const paint = document.getElementById('paintIndicator');
-      paint.textContent = 'paint: off';
-      paint.style.color = '';
-      paint.classList.remove('active');
-
       updateLiveRecUI();
     }
 
@@ -3390,11 +3400,6 @@ function setupEvents() {
         isPainting      = false;
         currentStrokeId = -1;
         activeSampleIndex = -1;
-
-        const paint = document.getElementById('paintIndicator');
-        paint.textContent = 'paint: off';
-        paint.style.color = '';
-        paint.classList.remove('active');
 
         updateSampleListActiveState();
         updateSamplePaintIndicator();
@@ -3414,6 +3419,7 @@ function setupEvents() {
       const delta = raw > 0 ? SEARCH_RADIUS_STEP : -SEARCH_RADIUS_STEP;
       searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, Math.min(SEARCH_RADIUS_MAX, searchRadiusDeg + delta));
       updatePlaybackControls();
+      flashRadiusTooltip();
     } else {
       // Plain scroll: cycle presets
       const dir  = raw > 0 ? 1 : -1;
@@ -3432,10 +3438,6 @@ function setupEvents() {
     recordStrokeStart('live', currentLiveBufferIdx);
     isPainting      = true;
     paintFrameCount = 0;
-    const paint = document.getElementById('paintIndicator');
-    paint.textContent = '● rec+paint';
-    paint.style.color = LIVE_PAINT_COLORS[liveColorIndex % LIVE_PAINT_COLORS.length];
-    paint.classList.add('active');
     updateLiveRecUI();
   });
   canvas.addEventListener('mouseup', e => {
@@ -3444,10 +3446,6 @@ function setupEvents() {
     currentStrokeId = -1;
     if (isRecording) stopLiveRecording();
     liveColorIndex = (liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-    const paint = document.getElementById('paintIndicator');
-    paint.textContent = 'paint: off';
-    paint.style.color = '';
-    paint.classList.remove('active');
     updateLiveRecUI();
   });
 
@@ -3698,7 +3696,7 @@ const ACTIONS = [
   { id: 'radius_dec',  label: 'radius decrease',      key: 'scroll down / [', type: 'trigger' },
   { id: 'radius_inc',  label: 'radius increase',      key: 'scroll up / ]', type: 'trigger' },
   { id: 'radius_cc',   label: 'radius (continuous)',  key: '—', type: 'cc',
-    ccFn: v => { searchRadiusDeg = SEARCH_RADIUS_MIN + (v / 127) * (SEARCH_RADIUS_MAX - SEARCH_RADIUS_MIN); updatePlaybackControls(); } },
+    ccFn: v => { searchRadiusDeg = SEARCH_RADIUS_MIN + (v / 127) * (SEARCH_RADIUS_MAX - SEARCH_RADIUS_MIN); updatePlaybackControls(); flashRadiusTooltip(); } },
   { id: 'recency_cc',  label: 'recency N (continuous)', key: '—', type: 'cc',
     ccFn: v => { recencyN = 1 + Math.round((v / 127) * 15); document.getElementById('recencyVal').textContent = recencyN; } },
   { id: 'preset_cc',   label: 'preset select (CC)',   key: '—', type: 'cc',
@@ -3779,8 +3777,8 @@ function dispatchAction(id, midiVal) {
     case 'pickup_cloud':pickupNearestCloud(); break;
     case 'snap':        toggleNearestMode(); break;
     case 'perf':        perfMonitorVisible = !perfMonitorVisible; { const el = document.getElementById('perfMonitor'); if (el) el.style.display = perfMonitorVisible ? 'block' : 'none'; } break;
-    case 'radius_dec':  searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, searchRadiusDeg - SEARCH_RADIUS_STEP); updatePlaybackControls(); break;
-    case 'radius_inc':  searchRadiusDeg = Math.min(SEARCH_RADIUS_MAX, searchRadiusDeg + SEARCH_RADIUS_STEP); updatePlaybackControls(); break;
+    case 'radius_dec':  searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, searchRadiusDeg - SEARCH_RADIUS_STEP); updatePlaybackControls(); flashRadiusTooltip(); break;
+    case 'radius_inc':  searchRadiusDeg = Math.min(SEARCH_RADIUS_MAX, searchRadiusDeg + SEARCH_RADIUS_STEP); updatePlaybackControls(); flashRadiusTooltip(); break;
     case 'mapping':     openMappingModal(); break;
     default:
       if (id.startsWith('paint')) {
