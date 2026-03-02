@@ -7,6 +7,8 @@
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  button { outline: none; }
+  button:focus-visible { outline: none; }
   html, body {
     height: 100dvh;
     max-height: 100dvh;
@@ -43,7 +45,12 @@
     margin: 0;
     flex-shrink: 0;
   }
-  #helpBtn {
+  .top-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .top-bar-btn {
     background: #2a2a2a;
     border: 1px solid #3a3a3a;
     border-bottom-width: 2px;
@@ -56,7 +63,8 @@
     letter-spacing: 0.05em;
     transition: color 0.15s, border-color 0.15s;
   }
-  #helpBtn:hover { color: #aaa; border-color: #555; }
+  .top-bar-btn:hover { color: #aaa; border-color: #555; }
+  .top-bar-btn.active { color: #7abcbc; border-color: #7abcbc; }
   /* ── Main area: canvas + right panel side by side ─────────────────────── */
   .main-layout {
     display: flex;
@@ -146,7 +154,7 @@
     align-items: stretch;
     gap: 0;
     flex-shrink: 0;
-    height: 112px;
+    height: 110px;
     background: #252525;
     border: 1px solid #333;
     border-radius: 4px;
@@ -182,51 +190,98 @@
     overflow: hidden;
   }
 
-  /* ── Device: live rec ────────────────────────────────────────────────────── */
-  .device--liverec { width: 130px; }
-  /* Ableton-style rec enable button */
+  /* ── Device: live input ─────────────────────────────────────────────────── */
+  .device--liveinput { width: 160px; }
+  /* device body is row: mic button left, fader+meter right */
+  .device--liveinput .device-body {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0.4rem;
+  }
+  /* mic button fills height, fixed width */
+  .device--liveinput #micEnableBtn {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+  }
+  /* right side: narrow column, canvas fills full height */
+  .liveinput-body {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    width: 38px;
+    flex-shrink: 0;
+  }
+  #inputGainVal {
+    display: none; /* dB label drawn inside canvas instead */
+  }
+  /* combined fader+meter canvas — full remaining height */
+  #inputFaderMeter {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    display: block;
+    cursor: ns-resize;
+    touch-action: none;
+    border-radius: 2px;
+  }
   #micEnableBtn {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 0.35rem;
-    background: #2e2e2e;
+    justify-content: center;
+    gap: 0.3rem;
+    background: #252525;
     border: 1px solid #3a3a3a;
-    border-radius: 3px;
-    color: #666;
+    border-radius: 4px;
+    color: #555;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.6rem;
-    padding: 0.22rem 0.5rem;
+    font-size: 0.52rem;
+    padding: 0.3rem 0.4rem 0.25rem;
     cursor: pointer;
-    letter-spacing: 0.03em;
-    transition: all 0.15s;
+    letter-spacing: 0.04em;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
     width: 100%;
-    text-align: left;
+    position: relative;
   }
-  #micEnableBtn::before {
-    content: '';
-    display: block;
-    width: 9px;
-    height: 9px;
+  #micEnableBtn:hover { border-color: #555; color: #888; background: #2a2a2a; }
+  /* mic SVG icon */
+  #micEnableBtn .mic-icon {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    opacity: 0.4;
+    transition: opacity 0.15s;
+  }
+  #micEnableBtn:hover .mic-icon { opacity: 0.65; }
+  #micEnableBtn.mic-ready .mic-icon { opacity: 0.9; }
+  #micEnableBtn.mic-denied .mic-icon { opacity: 0.2; }
+  /* red status dot — top-right corner */
+  #micEnableBtn .mic-dot {
+    position: absolute;
+    top: 5px;
+    right: 6px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     background: #5a2a2a;
     border: 1px solid #7a3a3a;
-    flex-shrink: 0;
     transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
   }
-  #micEnableBtn:hover::before { background: #8a3a3a; border-color: #aa4a4a; }
-  #micEnableBtn.mic-ready::before {
+  #micEnableBtn:hover .mic-dot { background: #8a3a3a; border-color: #aa4a4a; }
+  #micEnableBtn.mic-ready .mic-dot {
     background: #cc2222;
     border-color: #ee3333;
-    box-shadow: 0 0 6px #cc222288;
+    animation: rec-glow 1.5s ease-in-out infinite;
   }
-  #micEnableBtn.mic-ready { color: #cc4444; border-color: #5a2a2a; cursor: default; }
-  #micEnableBtn.mic-denied::before { background: #444; border-color: #555; }
-  #micEnableBtn.mic-denied { color: #555; cursor: default; }
+  #micEnableBtn.mic-denied .mic-dot { background: #333; border-color: #444; }
+  #micEnableBtn.mic-ready { color: #cc5555; border-color: #5a2a2a; cursor: default; }
+  #micEnableBtn.mic-denied { color: #444; cursor: default; }
   @keyframes rec-glow {
-    0%, 100% { box-shadow: 0 0 6px #cc222288; }
-    50%       { box-shadow: 0 0 12px #ee3333cc; }
+    0%, 100% { box-shadow: 0 0 5px #cc222288; }
+    50%       { box-shadow: 0 0 10px #ee3333cc; }
   }
-  #micEnableBtn.mic-ready::before { animation: rec-glow 1.5s ease-in-out infinite; }
   .live-count { font-size: 0.58rem; color: #444; }
   .live-count span { color: #e8a030; }
   .live-granulating {
@@ -239,78 +294,202 @@
     background: #444; flex-shrink: 0; transition: background 0.1s, box-shadow 0.1s;
   }
   .live-granulating.active .gran-dot { background: #e8a030; box-shadow: 0 0 5px #e8a030; }
+  .input-clip-dot { display: none; } /* clip now shown inside fader canvas */
 
-  /* ── Device: input ───────────────────────────────────────────────────────── */
-  .device--input { width: 110px; }
-  .input-gain-knob-row {
-    display: flex; align-items: center; gap: 0.4rem;
+  /* ── Device: search params ───────────────────────────────────────────────── */
+  .device--search { width: 230px; }
+  .search-body {
+    flex-direction: row !important;
+    gap: 0.35rem;
+    align-items: stretch;
   }
-  .knob-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.1rem; flex-shrink: 0; }
-  #inputGainKnob { display: block; cursor: ns-resize; touch-action: none; }
-  .knob-label { font-size: 0.52rem; color: #444; letter-spacing: 0.03em; }
-  .knob-val { font-size: 0.58rem; color: #7abcbc; min-width: 2.4rem; }
-  .input-meter-row { display: flex; align-items: center; gap: 0.3rem; }
-  .input-meter-label { font-size: 0.55rem; color: #444; flex-shrink: 0; }
-  .input-meter-wrap { flex: 1; height: 4px; background: #1c1c1c; border-radius: 2px; overflow: hidden; }
-  #inputMeterCanvas { display: block; width: 100%; height: 100%; }
-  .input-clip-dot { width: 5px; height: 5px; border-radius: 50%; background: #333; flex-shrink: 0; transition: background 0.05s, box-shadow 0.05s; }
-  .input-clip-dot.clipping { background: #e06060; box-shadow: 0 0 4px #e06060; }
-
-  /* ── Device: playback (snap + radius + recency) ──────────────────────────── */
-  .device--playback { width: 190px; }
-  /* snap + recency sit side by side in one row */
-  .playback-top-row {
-    display: flex; align-items: center; gap: 0.4rem;
-  }
+  /* Snap button: full-height standalone column on the left */
   #snapToggleBtn {
-    background: transparent;
-    border: 1px solid #3a3a3a;
-    color: #555;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.05rem;
+    background: #1e1e1e;
+    border: 1px solid #2e2e2e;
+    border-radius: 4px;
+    color: #3a3a3a;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.6rem;
-    padding: 0.2rem 0.4rem;
-    border-radius: 3px;
+    font-size: 0.46rem;
+    padding: 0.3rem 0.35rem;
     cursor: pointer;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
     transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
-    text-align: left;
+    flex-shrink: 0;
+    width: 46px;
+  }
+  #snapToggleBtn:hover { border-color: #e8a030; color: #666; }
+  #snapToggleBtn.active {
+    border-color: #e8a030;
+    color: #e8a030;
+    box-shadow: 0 0 5px #e8a03044;
+  }
+  #snapToggleBtn .snap-label-text { line-height: 1.3; }
+  #snapToggleBtn .snap-state-text {
+    color: #444;
+    margin-top: 0.2rem;
+    font-size: 0.5rem;
+  }
+  #snapToggleBtn.active .snap-state-text { color: #e8a030; }
+  /* Each viz box: label on top, canvas fills middle, value at bottom */
+  .search-viz-box {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.15rem;
+    min-width: 0;
+    background: #1e1e1e;
+    border: 1px solid #2e2e2e;
+    border-radius: 4px;
+    padding: 0.25rem 0.3rem 0.2rem;
   }
-  #snapToggleBtn:hover { border-color: #e8a030; color: #888; }
-  #snapToggleBtn.active { border-color: #e8a030; color: #e8a030; box-shadow: 0 0 5px #e8a03044; }
-  /* Recency dial inline with snap */
-  .recency-group {
-    display: flex; flex-direction: column; align-items: center; gap: 0.1rem; flex-shrink: 0;
+  .search-viz-label {
+    font-size: 0.46rem;
+    color: #3a3a3a;
+    letter-spacing: 0.06em;
+    text-align: center;
+    flex-shrink: 0;
   }
-  #recencyDial { display: block; cursor: ns-resize; touch-action: none; }
-  .recency-val-label { font-size: 0.52rem; color: #7abcbc; text-align: center; }
-  .recency-group-label { font-size: 0.48rem; color: #3a3a3a; letter-spacing: 0.05em; }
-  /* Radius viz fills remaining vertical space */
+  /* radius canvas wrapper fills remaining height */
   .radius-viz-wrap {
-    width: 100%;
     flex: 1;
     min-height: 0;
-    background: #1c1c1c;
-    border-radius: 2px;
-    overflow: hidden;
     position: relative;
+    overflow: hidden;
   }
   #radiusViz { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .radius-val-label {
+    font-size: 0.46rem;
+    color: #7abcbc;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  /* recency canvas fills middle of its box */
+  #recencyDial {
+    display: block;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    cursor: ns-resize;
+    touch-action: none;
+  }
+  .recency-val-label {
+    font-size: 0.46rem;
+    color: #7abcbc;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  /* ── Device: monitor ─────────────────────────────────────────────────────── */
+  .device--monitor { width: 220px; }
+  .monitor-body {
+    flex-direction: row !important;
+    gap: 0.35rem;
+    align-items: stretch;
+  }
+  /* shared box style matching search-viz-box */
+  .monitor-viz-box {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.15rem;
+    background: #1e1e1e;
+    border: 1px solid #2e2e2e;
+    border-radius: 4px;
+    padding: 0.25rem 0.3rem 0.2rem;
+    min-width: 0;
+  }
+  .monitor-viz-label {
+    font-size: 0.46rem;
+    color: #3a3a3a;
+    letter-spacing: 0.06em;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  /* clouds box: fixed width so 2-col grid stays squarish */
+  .monitor-clouds-box { flex: 0 0 auto; width: 110px; }
+  .clouds-inner {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0.3rem;
+  }
+  /* cloud slots drawn on canvas for perfect circles */
+  #cloudSlotsCanvas {
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    display: block;
+  }
+  /* big count number beside the grid */
+  .monitor-big-num {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #7abcbc;
+    letter-spacing: -0.02em;
+    flex-shrink: 0;
+    width: 2ch;
+    line-height: 1;
+  }
+  /* buffers box: same width as mic box feel */
+  .monitor-buffers-box {
+    flex: 1;
+    justify-content: space-between;
+  }
+  .monitor-big-num--buf {
+    flex: 1;
+    width: auto;
+    font-size: 2rem;
+    color: #7abcbc;
+  }
+  .monitor-sub-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.2rem;
+    flex-shrink: 0;
+  }
+  #loadIndicator {
+    font-size: 0.44rem;
+    color: #3a3a3a;
+    letter-spacing: 0.03em;
+  }
+  #loadIndicator.warn { color: #c86020; }
+  #loadIndicator.crit { color: #cc2222; }
 
   /* ── Device: grain preset ────────────────────────────────────────────────── */
-  .device--preset { flex: 1; min-width: 200px; }
+  .device--preset { flex: 1; min-width: 260px; }
+  .preset-body {
+    flex-direction: row !important;
+    gap: 0.35rem;
+    align-items: stretch;
+  }
+  /* 2-col × 4-row grid of preset buttons — cloud-box style */
   .preset-buttons {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 2px;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: repeat(4, 1fr);
+    gap: 3px;
+    flex-shrink: 0;
   }
   .preset-btn {
-    background: transparent;
-    border: 1px solid #3a3a3a;
-    color: #555;
+    background: #1e1e1e;
+    border: 1px solid #2a2a2a;
+    color: #444;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.58rem;
-    padding: 0.2rem 0.2rem;
+    font-size: 0.52rem;
+    padding: 0.15rem 0.2rem;
     border-radius: 2px;
     cursor: pointer;
     transition: border-color 0.15s, color 0.15s;
@@ -320,27 +499,40 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .preset-btn:hover { border-color: #7abcbc; color: #888; }
-  .preset-btn.active { border-color: #7abcbc; color: #7abcbc; }
+  .preset-btn:hover { border-color: #555; color: #777; }
+  .preset-btn.active {
+    border-color: #7abcbc;
+    color: #7abcbc;
+    background: #1a2a2a;
+    box-shadow: 0 0 4px #7abcbc44;
+  }
+  /* right side: waveform fills full box height, stats drawn inside canvas */
+  .preset-right-box {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: #1e1e1e;
+    border: 1px solid #2e2e2e;
+    border-radius: 4px;
+    padding: 0.25rem 0.3rem 0.2rem;
+  }
   .preset-waveform-wrap {
     position: relative;
-    width: 100%;
     flex: 1;
     min-height: 0;
-    background: #1c1c1c;
+    background: #141414;
     border-radius: 2px;
     overflow: hidden;
   }
   #presetWaveform { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
-  .preset-stats {
-    display: flex; gap: 0.6rem; font-size: 0.55rem; color: #444; flex-shrink: 0;
-  }
-  .preset-stats .stat-item { display: flex; gap: 0.2rem; }
-  .preset-stats .stat-label { color: #3a3a3a; }
-  .preset-stats span { color: #7abcbc; }
+  .preset-stats { display: none; } /* stats drawn inside canvas */
+
+  /* ── Device: spacer ─────────────────────────────────────────────────────── */
+  .device--spacer { flex: 1; border-right: none; background: transparent; }
 
   /* ── Device: output ──────────────────────────────────────────────────────── */
-  .device--output { width: 72px; }
+  .device--output { width: 90px; border-left: 1px solid #333; border-right: none; }
   .meter-row { display: flex; align-items: center; gap: 0.3rem; }
   .meter-label { font-size: 0.55rem; color: #444; flex-shrink: 0; }
   .meter-wrap { flex: 1; height: 8px; background: #1c1c1c; border-radius: 2px; overflow: hidden; position: relative; }
@@ -370,7 +562,18 @@
   .drop-overlay .drop-icon { font-size: 2rem; color: #7abcbc; }
   .drop-overlay .drop-text { font-size: 0.85rem; color: #aaa; letter-spacing: 0.05em; }
 
-  /* .sample-slot removed — sample list replaced by full-width sample viewer */
+  /* ── Sample slots (in bottom panel sample instrument) ───────────────────── */
+  .sample-slot {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.18rem 0.5rem;
+    border-bottom: 1px solid #242424;
+    font-size: 0.6rem;
+    color: #555;
+    user-select: none;
+    transition: background 0.1s;
+  }
   .sample-slot:hover { background: #2a3a3a; }
   .sample-slot.active {
     border-color: #7abcbc;
@@ -462,47 +665,77 @@
 
   /* Cloud banks removed — spatial tracking via canvas edge indicators */
 
-  /* ── Sample viewer (full-width, below device strip) ─────────────────────── */
-  .sample-viewer {
+  /* ── Bottom panel (sample instrument + buttons) ───────────────────────────── */
+  .bottom-panel {
+    display: flex;
+    flex-direction: row;
+    gap: 0.5rem;
+    flex-shrink: 0;
+    align-items: stretch;
+    min-height: 120px;
+    max-height: 200px;
+  }
+  /* sample instrument block */
+  .sample-instrument {
     display: flex;
     flex-direction: column;
-    flex-shrink: 0;
-    height: 140px;
+    flex: 1;
+    min-width: 0;
     background: #1e1e1e;
     border: 1px solid #333;
     border-radius: 4px;
     overflow: hidden;
   }
-  .sv-tabs {
-    display: flex;
-    flex-direction: row;
+  .panel-label {
+    font-size: 0.55rem;
+    letter-spacing: 0.08em;
+    color: #444;
+    text-transform: lowercase;
+    padding: 0.25rem 0.5rem 0.2rem;
+    border-bottom: 1px solid #2a2a2a;
     flex-shrink: 0;
-    height: 22px;
+  }
+  /* sample list scrollable area */
+  .sample-list-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .sample-list-wrap::-webkit-scrollbar { width: 4px; }
+  .sample-list-wrap::-webkit-scrollbar-track { background: #1a1a1a; }
+  .sample-list-wrap::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  /* right side: action buttons */
+  .panel-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    flex-shrink: 0;
+    width: 170px;
+    justify-content: flex-start;
+    padding: 0.25rem 0;
+  }
+  .panel-btn {
     background: #252525;
-    border-bottom: 1px solid #2e2e2e;
-    gap: 0;
-  }
-  .sv-tab {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 100%;
-    font-size: 0.58rem;
+    border: 1px solid #333;
+    border-radius: 3px;
     color: #555;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.6rem;
+    padding: 0.3rem 0.6rem;
     cursor: pointer;
-    border-right: 1px solid #2a2a2a;
-    transition: color 0.1s, background 0.1s;
-    user-select: none;
-    letter-spacing: 0.02em;
-    flex-shrink: 0;
+    letter-spacing: 0.04em;
+    text-align: left;
+    transition: color 0.15s, border-color 0.15s;
+    width: 100%;
   }
-  .sv-tab:hover { color: #999; background: #2a2a2a; }
-  .sv-tab.loaded { color: #888; }
-  .sv-tab.active-tab { background: #1e1e1e; border-bottom: 1px solid #1e1e1e; margin-bottom: -1px; }
-  .sv-tab.painting { color: var(--tab-color, #7abcbc); }
-  .sv-tab.active-tab.loaded { color: #ddd; font-weight: bold; }
-  .sv-tab.active-tab.painting { color: var(--tab-color, #7abcbc); font-weight: bold; }
+  .panel-btn:hover { color: #aaa; border-color: #555; }
+  .panel-btn.active { color: #7abcbc; border-color: #7abcbc; }
+
+  /* ── Sample viewer (kept for backward-compat JS refs) ────────────────────── */
+  .sample-viewer {
+    display: none; /* replaced by bottom-panel */
+  }
   .sv-display {
     position: relative;
     flex: 1;
@@ -544,15 +777,6 @@
     border-radius: 2px;
     background: #1c1c1c;
   }
-  .input-clip-dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: #333;
-    flex-shrink: 0;
-    transition: background 0.05s, box-shadow 0.05s;
-  }
-  .input-clip-dot.clipping { background: #e06060; box-shadow: 0 0 4px #e06060; }
 
   /* ── Fullscreen button ───────────────────────────────────────────────────── */
   #fullscreenBtn {
@@ -711,7 +935,11 @@
   <!-- Top bar -->
   <div class="top-bar">
     <h1>simulation</h1>
-    <button id="helpBtn">? keys / midi</button>
+    <div class="top-bar-right">
+      <button id="perfMonBtn" class="top-bar-btn">perf</button>
+      <button id="fullscreenBtn2" class="top-bar-btn">⛶ fullscreen</button>
+      <button id="helpBtn" class="top-bar-btn">? keys / midi</button>
+    </div>
   </div>
 
   <!-- Main: canvas (left) + right panel (clouds + samples) -->
@@ -724,7 +952,7 @@
         <div id="coordinates">--,--</div>
         <div id="sampleIndicator" style="color:#555">no sample</div>
         <div id="altLockIndicator" style="display:none;color:#f0c060">alt: locked</div>
-        <div id="loadIndicator" style="color:#555">● cpu ok</div>
+        <div id="loadIndicatorHud" style="color:#555;display:none;">● cpu ok</div>
       </div>
       <div class="canvas-bottom-bar">
         <div id="liveRecStatus">click / space: rec+paint</div>
@@ -743,69 +971,111 @@
   <!-- Device strip: signal path left → right -->
   <div class="device-strip">
 
-    <!-- 1. Live rec -->
-    <div class="device device--liverec">
-      <div class="device-label">live rec</div>
+    <!-- 1. Live input -->
+    <div class="device device--liveinput">
+      <div class="device-label">live input</div>
       <div class="device-body">
-        <button id="micEnableBtn">enable mic</button>
-        <div class="live-count" id="liveRecCount">buffers: <span>0</span></div>
-        <div class="live-granulating" id="liveGranulating">
-          <span class="gran-dot"></span>granulating
+        <button id="micEnableBtn">
+          <span class="mic-dot"></span>
+          <svg class="mic-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="8" y="2" width="8" height="13" rx="4" fill="#7abcbc"/>
+            <path d="M5 11a7 7 0 0 0 14 0" stroke="#7abcbc" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+            <line x1="12" y1="18" x2="12" y2="22" stroke="#7abcbc" stroke-width="1.8" stroke-linecap="round"/>
+            <line x1="8" y1="22" x2="16" y2="22" stroke="#7abcbc" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+          <span>enable mic</span>
+        </button>
+        <div class="liveinput-body">
+          <span id="inputGainVal">0.0 dB</span>
+          <canvas id="inputFaderMeter"></canvas>
+          <!-- hidden compat elements: JS still references these IDs -->
+          <canvas id="inputGainKnob" width="1" height="1" style="display:none;"></canvas>
+          <canvas id="inputMeterCanvas" width="1" height="1" style="display:none;"></canvas>
+          <div class="input-clip-dot" id="inputClipDot" style="display:none;"></div>
         </div>
       </div>
     </div>
 
-    <!-- 2. Input -->
-    <div class="device device--input">
-      <div class="device-label">input</div>
-      <div class="device-body" style="flex-direction:row;align-items:flex-end;gap:0.3rem;">
-        <div class="knob-wrap" style="flex-shrink:0;">
-          <canvas id="inputGainKnob" width="36" height="36"></canvas>
-          <span class="knob-label">gain</span>
-          <span class="knob-val" id="inputGainVal" style="font-size:0.5rem;color:#7abcbc;">1.00×</span>
+    <!-- 2. Search params -->
+    <div class="device device--search">
+      <div class="device-label">search params</div>
+      <div class="device-body search-body">
+        <!-- snap: standalone full-height button on the left -->
+        <button id="snapToggleBtn">
+          <span class="snap-label-text">nearest</span>
+          <span class="snap-label-text">lock</span>
+          <span class="snap-state-text">OFF</span>
+        </button>
+        <!-- radius viz box -->
+        <div class="search-viz-box">
+          <span class="search-viz-label">radius</span>
+          <div class="radius-viz-wrap">
+            <canvas id="radiusViz"></canvas>
+          </div>
+          <span class="radius-val-label" id="radiusVal">10°</span>
         </div>
-        <div class="input-vmeter-wrap">
-          <canvas id="inputMeterCanvas"></canvas>
-          <div class="input-clip-dot" id="inputClipDot"></div>
+        <!-- recency viz box -->
+        <div class="search-viz-box">
+          <span class="search-viz-label">recency</span>
+          <canvas id="recencyDial"></canvas>
+          <span class="recency-val-label" id="recencyVal">3</span>
         </div>
       </div>
     </div>
 
-    <!-- 3. Playback: snap + radius + recency -->
-    <div class="device device--playback">
-      <div class="device-label">playback</div>
-      <div class="device-body">
-        <div class="playback-top-row">
-          <button id="snapToggleBtn">snap: off</button>
-          <div class="recency-group">
-            <span class="recency-group-label">recency</span>
-            <canvas id="recencyDial" width="28" height="28"></canvas>
-            <span class="recency-val-label" id="recencyVal">3</span>
+    <!-- 3. Monitor -->
+    <div class="device device--monitor">
+      <div class="device-label">monitor</div>
+      <div class="device-body monitor-body">
+
+        <!-- clouds panel: 2×4 grid + big count -->
+        <div class="monitor-viz-box monitor-clouds-box">
+          <span class="monitor-viz-label">clouds</span>
+          <div class="clouds-inner">
+            <canvas id="cloudSlotsCanvas"></canvas>
+            <div class="monitor-big-num" id="cloudsPlantedCount">0</div>
           </div>
         </div>
-        <div class="radius-viz-wrap">
-          <canvas id="radiusViz"></canvas>
+
+        <!-- buffers big-number box -->
+        <div class="monitor-viz-box monitor-buffers-box">
+          <span class="monitor-viz-label">buffers</span>
+          <div class="monitor-big-num monitor-big-num--buf" id="liveRecCount">0</div>
+          <div class="monitor-sub-row">
+            <div class="live-granulating" id="liveGranulating">
+              <span class="gran-dot"></span><span id="granulatingCount">0</span>
+            </div>
+            <div id="loadIndicator" style="">● ok</div>
+          </div>
         </div>
+
       </div>
     </div>
 
     <!-- 4. Grain preset -->
     <div class="device device--preset">
-      <div class="device-label">grain preset</div>
-      <div class="device-body">
+      <div class="device-label">granular presets</div>
+      <div class="device-body preset-body">
+        <!-- 2×4 grid of preset buttons -->
         <div class="preset-buttons" id="presetButtons"></div>
-        <div class="preset-waveform-wrap">
-          <canvas id="presetWaveform"></canvas>
-        </div>
-        <div class="preset-stats">
-          <div class="stat-item"><span class="stat-label">dur</span><span id="psDur">—</span></div>
-          <div class="stat-item"><span class="stat-label">k</span><span id="psK">—</span></div>
-          <div class="stat-item"><span class="stat-label">pan</span><span id="psPan">—</span></div>
+        <!-- waveform + stats box -->
+        <div class="preset-right-box">
+          <div class="preset-waveform-wrap">
+            <canvas id="presetWaveform"></canvas>
+          </div>
+          <div class="preset-stats">
+            <div class="stat-item"><span class="stat-label">dur</span><span id="psDur">—</span></div>
+            <div class="stat-item"><span class="stat-label">k</span><span id="psK">—</span></div>
+            <div class="stat-item"><span class="stat-label">pan</span><span id="psPan">—</span></div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- 5. Output -->
+    <!-- 5. Spacer -->
+    <div class="device device--spacer"></div>
+
+    <!-- 6. Output -->
     <div class="device device--output">
       <div class="device-label">output</div>
       <div class="device-body" style="flex-direction:row;align-items:flex-end;gap:0.3rem;">
@@ -818,8 +1088,21 @@
 
   </div><!-- end .device-strip -->
 
-  <!-- Sample viewer: full-width waveform with tab per slot -->
-  <div class="sample-viewer" id="sampleViewer">
+  <!-- Bottom panel: sample instrument + action buttons -->
+  <div class="bottom-panel">
+
+    <div class="sample-instrument">
+      <div class="panel-label">sample instrument</div>
+      <div class="sample-list-wrap">
+        <div id="sampleList"></div>
+      </div>
+    </div>
+
+
+  </div><!-- end .bottom-panel -->
+
+  <!-- Hidden compat: sample viewer canvases kept for JS refs (display:none) -->
+  <div class="sample-viewer" id="sampleViewer" style="display:none;">
     <div class="sv-tabs" id="svTabs"></div>
     <div class="sv-display" id="svDisplay">
       <canvas class="sv-waveform" id="svWaveform"></canvas>
@@ -873,7 +1156,7 @@ const FOV_DEG             = 80;
 const PAINT_INTERVAL      = 3;
 const PARTICLE_BASE_SIZE  = 4;
 const PARTICLE_MAX_SIZE   = 20;
-const MAX_SAMPLES         = 9;
+const MAX_SAMPLES         = 10;
 
 const SEARCH_RADIUS_MIN  = 1;
 const SEARCH_RADIUS_MAX  = 180;
@@ -1356,7 +1639,7 @@ async function requestMicAccess() {
     // Reflect ready state on the button (however mic was granted)
     const micBtn = document.getElementById('micEnableBtn');
     if (micBtn) {
-      micBtn.textContent = 'mic ready';
+      setMicBtnLabel('mic ready');
       micBtn.classList.remove('mic-denied');
       micBtn.classList.add('mic-ready');
       micBtn.disabled = false;
@@ -1367,7 +1650,7 @@ async function requestMicAccess() {
     console.warn('Mic access denied:', e);
     const micBtn = document.getElementById('micEnableBtn');
     if (micBtn) {
-      micBtn.textContent = 'mic denied';
+      setMicBtnLabel('mic denied');
       micBtn.classList.add('mic-denied');
       micBtn.disabled = false;
     }
@@ -2175,6 +2458,15 @@ function reorderSample(fromIdx, toIdx) {
   updateSamplePaintIndicator();
 }
 
+// ── Mic button label helper ───────────────────────────────────────────────────
+function setMicBtnLabel(text) {
+  // Updates only the label span, preserving SVG icon and dot
+  const btn = document.getElementById('micEnableBtn');
+  if (!btn) return;
+  const span = btn.querySelector('span:last-child');
+  if (span) span.textContent = text;
+}
+
 // ── Grain presets UI ─────────────────────────────────────────────────────────
 
 function setupPresets() {
@@ -2200,24 +2492,49 @@ function setupPresets() {
 
   drawRecencyDial = function() {
     if (!recencyDialEl) return;
-    const dc  = recencyDialEl.getContext('2d');
-    const W = recencyDialEl.width, H = recencyDialEl.height;
-    const cx = W / 2, cy = H / 2, r = W * 0.42;
+    // Size canvas to CSS layout dimensions
+    const dpr  = window.devicePixelRatio || 1;
+    const rect = recencyDialEl.getBoundingClientRect();
+    const W = Math.round(rect.width  || 50);
+    const H = Math.round(rect.height || 60);
+    if (recencyDialEl.width !== W * dpr || recencyDialEl.height !== H * dpr) {
+      recencyDialEl.width  = W * dpr;
+      recencyDialEl.height = H * dpr;
+    }
+    const dc = recencyDialEl.getContext('2d');
+    dc.save();
+    dc.scale(dpr, dpr);
     dc.clearRect(0, 0, W, H);
-    // Track
-    const startA = Math.PI * 0.75, endA = Math.PI * 2.25;
-    dc.beginPath(); dc.arc(cx, cy, r, startA, endA);
-    dc.strokeStyle = '#2e2e2e'; dc.lineWidth = 3; dc.lineCap = 'round'; dc.stroke();
-    // Fill arc
-    const t = (recencyN - RECENCY_MIN) / (RECENCY_MAX - RECENCY_MIN);
-    const fillEnd = startA + t * (endA - startA);
-    dc.beginPath(); dc.arc(cx, cy, r, startA, fillEnd);
-    dc.strokeStyle = '#7abcbc'; dc.lineWidth = 3; dc.stroke();
-    // Indicator dot
-    dc.beginPath(); dc.arc(
-      cx + Math.cos(fillEnd) * r, cy + Math.sin(fillEnd) * r, 2.5, 0, Math.PI * 2
-    );
-    dc.fillStyle = '#aadddd'; dc.fill();
+
+    // Draw 5 horizontal lines stacked top-to-bottom.
+    // Line 1 = top = most recent layer. recencyN lines from the top are highlighted.
+    const NUM_LINES = 5;
+    const PAD_X = 4, PAD_T = 4, PAD_B = 4;
+    const totalH = H - PAD_T - PAD_B;
+    const gap    = totalH / (NUM_LINES - 1); // spacing between lines
+
+    for (let i = 0; i < NUM_LINES; i++) {
+      const y = PAD_T + i * gap;
+      const lit = i < Math.min(recencyN, NUM_LINES); // top N lines highlighted
+      dc.beginPath();
+      dc.moveTo(PAD_X, y);
+      dc.lineTo(W - PAD_X, y);
+      dc.strokeStyle = lit ? '#7abcbc' : '#2a2a2a';
+      dc.lineWidth   = lit ? (i === 0 ? 2.5 : 1.8) : 1;
+      dc.lineCap = 'round';
+      dc.stroke();
+    }
+
+    // If recencyN > NUM_LINES, show a small "+" indicator at the bottom
+    if (recencyN > NUM_LINES) {
+      dc.fillStyle = '#7abcbc88';
+      dc.font = `${Math.max(6, Math.round(6 * dpr) / dpr)}px 'Roboto Mono', monospace`;
+      dc.textAlign = 'right';
+      dc.textBaseline = 'bottom';
+      dc.fillText(`+${recencyN - NUM_LINES}`, W - PAD_X, H - 1);
+    }
+
+    dc.restore();
   }
 
   setRecency = function(n) {
@@ -2234,14 +2551,14 @@ function setupPresets() {
     });
     window.addEventListener('mousemove', e => {
       if (_recDragY === null) return;
-      const dy = _recDragY - e.clientY; // up = increase
+      const dy = e.clientY - _recDragY; // down = increase (follows visual stacking)
       setRecency(Math.round(_recDragStart + dy / 6));
     });
     window.addEventListener('mouseup', () => { _recDragY = null; });
     // Scroll on dial
     recencyDialEl.addEventListener('wheel', e => {
       e.preventDefault(); e.stopPropagation();
-      setRecency(recencyN + (e.deltaY < 0 ? 1 : -1));
+      setRecency(recencyN + (e.deltaY > 0 ? 1 : -1)); // scroll down = more layers
     }, { passive: false });
     drawRecencyDial();
   }
@@ -2249,22 +2566,38 @@ function setupPresets() {
   // ? button opens mapping modal
   document.getElementById('helpBtn')?.addEventListener('click', openMappingModal);
 
+  // Perf monitor button
+  document.getElementById('perfMonBtn')?.addEventListener('click', () => {
+    perfMonitorVisible = !perfMonitorVisible;
+    const el = document.getElementById('perfMonitor');
+    if (el) el.style.display = perfMonitorVisible ? 'block' : 'none';
+    const btn = document.getElementById('perfMonBtn');
+    if (btn) btn.classList.toggle('active', perfMonitorVisible);
+  });
+
+  // Fullscreen button 2
+  document.getElementById('fullscreenBtn2')?.addEventListener('click', () => {
+    const wrapper = document.getElementById('canvasWrapper');
+    if (!document.fullscreenElement) wrapper.requestFullscreen().catch(() => {});
+    else document.exitFullscreen();
+  });
+
   // Mic enable button — request permission early so the first recording isn't clippy
   const micBtn = document.getElementById('micEnableBtn');
   if (micBtn) {
     micBtn.addEventListener('click', async () => {
       if (micPermissionGranted) return; // already enabled
-      micBtn.textContent = 'enabling…';
+      setMicBtnLabel('enabling…');
       micBtn.disabled = true;
       ensureAudioContext();
       const ok = await requestMicAccess();
       if (ok) {
-        micBtn.textContent = 'mic ready';
+        setMicBtnLabel('mic ready');
         micBtn.classList.add('mic-ready');
         // Hold here briefly — let the audio engine fully settle before user records
         // (warmUpAudioEngine already fired inside requestMicAccess)
       } else {
-        micBtn.textContent = 'mic denied';
+        setMicBtnLabel('mic denied');
         micBtn.classList.add('mic-denied');
       }
       micBtn.disabled = false;
@@ -2307,8 +2640,66 @@ function pickupNearestCloud() {
 }
 
 function updateCloudBanksUI() {
-  // Cloud grid removed — spatial position tracked via canvas edge indicators in drawClouds().
-  // This function is kept as a no-op so existing call sites don't error.
+  const count = cloudSlots.filter(c => c !== null).length;
+  const cloudsEl = document.getElementById('cloudsPlantedCount');
+  if (cloudsEl) cloudsEl.textContent = count;
+
+  const canvas = document.getElementById('cloudSlotsCanvas');
+  if (!canvas) return;
+
+  const dpr  = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const W = Math.round(rect.width  || 50);
+  const H = Math.round(rect.height || 60);
+  if (canvas.width !== W * dpr || canvas.height !== H * dpr) {
+    canvas.width  = W * dpr;
+    canvas.height = H * dpr;
+  }
+  const c = canvas.getContext('2d');
+  c.save();
+  c.scale(dpr, dpr);
+  c.clearRect(0, 0, W, H);
+
+  // 2 cols × 4 rows, perfect circles: radius = half the smaller cell dimension
+  const COLS = 2, ROWS = 4, GAP = 4, PAD = 2;
+  const cellW = (W - PAD * 2 - GAP * (COLS - 1)) / COLS;
+  const cellH = (H - PAD * 2 - GAP * (ROWS - 1)) / ROWS;
+  const r     = Math.min(cellW, cellH) / 2; // perfect circle radius
+
+  for (let i = 0; i < MAX_CLOUDS; i++) {
+    const col = i % COLS;
+    const row = Math.floor(i / COLS);
+    // Centre each circle in its cell
+    const cx = PAD + col * (cellW + GAP) + cellW / 2;
+    const cy = PAD + row * (cellH + GAP) + cellH / 2;
+    const cloud = cloudSlots[i];
+
+    c.beginPath();
+    c.arc(cx, cy, r, 0, Math.PI * 2);
+
+    if (cloud) {
+      c.fillStyle   = cloud.color + '44';
+      c.fill();
+      c.strokeStyle = cloud.color;
+      c.lineWidth   = 1.5;
+      c.stroke();
+      // glow
+      c.shadowColor = cloud.color;
+      c.shadowBlur  = 6;
+      c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2);
+      c.strokeStyle = cloud.color;
+      c.lineWidth   = 1.5;
+      c.stroke();
+      c.shadowBlur  = 0;
+    } else {
+      c.fillStyle   = '#1a1a1a';
+      c.fill();
+      c.strokeStyle = '#2a2a2a';
+      c.lineWidth   = 1;
+      c.stroke();
+    }
+  }
+  c.restore();
 }
 
 function selectPreset(index) {
@@ -2328,7 +2719,8 @@ function updatePlaybackControls() {
   const snapBtn = document.getElementById('snapToggleBtn');
   if (snapBtn) {
     snapBtn.classList.toggle('active', nearestMode);
-    snapBtn.textContent = nearestMode ? 'snap: on' : 'snap: off';
+    const stateSpan = snapBtn.querySelector('.snap-state-text');
+    if (stateSpan) stateSpan.textContent = nearestMode ? 'ON' : 'OFF';
   }
   // Radius canvas
   drawRadiusViz();
@@ -2348,9 +2740,13 @@ function drawRadiusViz() {
 
   const cx = w / 2, cy = h / 2;
 
+  // Update the HTML degree label below the canvas
+  const radValEl = document.getElementById('radiusVal');
+  if (radValEl) radValEl.textContent = `${searchRadiusDeg}°`;
+
   if (nearestMode) {
-    // Snap mode — draw a diamond + "snap" label
-    const d = Math.min(w, h) * 0.28;
+    // Snap mode — draw a diamond centred in canvas
+    const d = Math.min(w, h) * 0.36;
     c.strokeStyle = '#e8a030';
     c.lineWidth = 1.5;
     c.shadowColor = '#e8a030';
@@ -2363,29 +2759,21 @@ function drawRadiusViz() {
     c.closePath();
     c.stroke();
     c.shadowBlur = 0;
-    // centre dot
     c.fillStyle = '#e8a030';
     c.beginPath(); c.arc(cx, cy, 2.5, 0, Math.PI * 2); c.fill();
-    // label
-    c.fillStyle = '#e8a03088';
-    c.font = `${Math.round(h * 0.22)}px "Roboto Mono", monospace`;
-    c.textAlign = 'center';
-    c.textBaseline = 'bottom';
-    c.fillText('nearest', cx, h - 3);
   } else {
-    // Radius mode — draw an arc whose angular size represents the radius
-    // Map searchRadiusDeg (1–180) to a visual circle radius (min=6px, max fills canvas)
-    const maxR = Math.min(cx, cy) - 4;
-    const minR = 5;
+    // Radius mode — circle grows with searchRadiusDeg, fills full canvas height
+    const maxR = Math.min(cx, cy) - 3;
+    const minR = 4;
     const t = (searchRadiusDeg - 1) / (180 - 1);
     const r = minR + t * (maxR - minR);
 
-    // Faint full circle guide
-    c.strokeStyle = '#333';
+    // Faint outer guide ring
+    c.strokeStyle = '#2a2a2a';
     c.lineWidth = 1;
     c.beginPath(); c.arc(cx, cy, maxR, 0, Math.PI * 2); c.stroke();
 
-    // Radius arc (teal)
+    // Radius circle (teal)
     c.strokeStyle = '#7abcbc';
     c.lineWidth = 1.5;
     c.shadowColor = '#7abcbc';
@@ -2394,15 +2782,8 @@ function drawRadiusViz() {
     c.shadowBlur = 0;
 
     // Centre dot
-    c.fillStyle = 'rgba(255,255,255,0.4)';
+    c.fillStyle = 'rgba(255,255,255,0.35)';
     c.beginPath(); c.arc(cx, cy, 2, 0, Math.PI * 2); c.fill();
-
-    // Degree label inside or below
-    c.fillStyle = '#7abcbc99';
-    c.font = `${Math.round(h * 0.22)}px "Roboto Mono", monospace`;
-    c.textAlign = 'center';
-    c.textBaseline = 'bottom';
-    c.fillText(`${searchRadiusDeg}°`, cx, h - 3);
   }
 }
 
@@ -2462,69 +2843,97 @@ function drawPresetWaveform() {
 
   const pr = PRESETS[activePresetIndex];
 
+  // Reserve bottom strip for stats text
+  const STATS_H  = 11;
+  const drawH    = h - STATS_H;
+
   // Draw overlapping grain envelopes as smooth Hann (raised cosine) bumps
   // Period = duration - overlap (stride between grain onsets)
   const period   = Math.max(pr.duration - pr.overlap, 0.005);
   const viewSec  = 0.8;
   const pxPerSec = w / viewSec;
   const grainW   = pr.duration * pxPerSec;
-  const midY     = h / 2;
-  const maxAmp   = h * 0.38;
+  // Baseline at bottom, amplitude fills full draw height
+  const baseY  = drawH;
+  const maxAmp = drawH;
+  const PAD    = 2; // tiny top padding so stroke doesn't clip
 
   // Colour: active preset tint
   const tints = ['#7abcbc', '#6090e0', '#e07060'];
   const tint  = tints[activePresetIndex] || '#7abcbc';
 
-  // Draw multiple grains staggered in time, randomise slightly
-  const count  = Math.ceil(viewSec / period) + 2;
-  const STEPS  = 64; // curve resolution
+  // Draw multiple grains staggered in time
+  const count = Math.ceil(viewSec / period) + 2;
+  const STEPS = 64;
 
   for (let i = -1; i < count; i++) {
     const jit    = (Math.sin(i * 7.3) * 0.5 + 0.5) * pr.startJitter * pxPerSec * 0.4;
     const xStart = i * period * pxPerSec - grainW * 0.15 + jit;
 
-    // Build Hann curve path: y = 0.5*(1 - cos(π*t)) for t in [0,1]
-    c.beginPath();
+    // Hann envelope: rises from 0 → 1 → 0, drawn upward from baseline
+    const pts = [];
     for (let s = 0; s <= STEPS; s++) {
       const t    = s / STEPS;
       const hann = 0.5 * (1 - Math.cos(Math.PI * t));
-      const x    = xStart + t * grainW;
-      const y    = midY - hann * maxAmp;
-      if (s === 0) c.moveTo(x, y); else c.lineTo(x, y);
+      pts.push({ x: xStart + t * grainW, y: baseY - PAD - hann * (maxAmp - PAD * 2) });
     }
-    // Close path back along baseline for fill
-    c.lineTo(xStart + grainW, midY);
-    c.lineTo(xStart, midY);
-    c.closePath();
 
-    c.globalAlpha = 0.08;
+    // Fill
+    c.beginPath();
+    c.moveTo(pts[0].x, baseY);
+    for (const p of pts) c.lineTo(p.x, p.y);
+    c.lineTo(pts[pts.length - 1].x, baseY);
+    c.closePath();
+    c.globalAlpha = 0.1;
     c.fillStyle = tint;
     c.fill();
 
-    // Stroke just the curve (not the baseline)
+    // Stroke curve only
     c.beginPath();
-    for (let s = 0; s <= STEPS; s++) {
-      const t    = s / STEPS;
-      const hann = 0.5 * (1 - Math.cos(Math.PI * t));
-      const x    = xStart + t * grainW;
-      const y    = midY - hann * maxAmp;
-      if (s === 0) c.moveTo(x, y); else c.lineTo(x, y);
-    }
-    c.globalAlpha = 0.6;
+    pts.forEach((p, idx) => idx === 0 ? c.moveTo(p.x, p.y) : c.lineTo(p.x, p.y));
+    c.globalAlpha = 0.65;
     c.strokeStyle = tint;
     c.lineWidth = 1.5;
     c.stroke();
   }
   c.globalAlpha = 1;
 
-  // Centre line
-  c.globalAlpha = 0.2;
+  // Baseline
+  c.globalAlpha = 0.15;
   c.strokeStyle = '#ffffff';
   c.lineWidth = 0.5;
   c.beginPath();
-  c.moveTo(0, midY); c.lineTo(w, midY);
+  c.moveTo(0, baseY); c.lineTo(w, baseY);
   c.stroke();
   c.globalAlpha = 1;
+
+  // ── Stats text drawn at bottom of canvas ───────────────────────────────────
+  const durStr = Math.round(pr.duration * 1000) + 'ms';
+  const kStr   = pr.k === 0 ? 'near' : String(pr.k);
+  const panStr = Math.round(pr.panSpread * 100) + '%';
+  const statY  = h - 2;
+  const fs     = Math.max(7, Math.round(7.5 * window.devicePixelRatio) / window.devicePixelRatio);
+  c.font = `${fs}px 'Roboto Mono', monospace`;
+  c.textBaseline = 'bottom';
+
+  // thin separator line
+  c.globalAlpha = 0.12;
+  c.strokeStyle = '#ffffff';
+  c.lineWidth = 0.5;
+  c.beginPath(); c.moveTo(0, drawH); c.lineTo(w, drawH); c.stroke();
+  c.globalAlpha = 1;
+
+  // label + value pairs, evenly spread
+  const pairs = [['dur', durStr], ['k', kStr], ['pan', panStr]];
+  const segW  = w / pairs.length;
+  pairs.forEach(([label, val], i) => {
+    const x = segW * i + segW / 2;
+    c.textAlign = 'center';
+    c.fillStyle = '#2e2e2e';
+    c.fillText(label, x - 1, statY);
+    c.fillStyle = '#7abcbc';
+    c.fillText(val, x + (label.length * fs * 0.38), statY);
+  });
 }
 
 function updatePresetStats() {
@@ -2550,17 +2959,19 @@ function updateLiveGranulatingIndicator() {
 }
 
 function updateLiveRecUI() {
+  // Big buffer count number
   const countEl = document.getElementById('liveRecCount');
-  const span    = countEl.querySelector('span');
-  if (span) span.textContent = liveRecBuffers.filter(b => b.buffer !== null).length;
+  if (countEl) countEl.textContent = liveRecBuffers.filter(b => b.buffer !== null).length;
 
   const status  = document.getElementById('liveRecStatus');
-  if (isRecording) {
-    status.className = 'recording';
-    status.innerHTML = '<span class="rec-dot"></span>recording…';
-  } else {
-    status.className = '';
-    status.textContent = 'space: rec+paint';
+  if (status) {
+    if (isRecording) {
+      status.className = 'recording';
+      status.innerHTML = '<span class="rec-dot"></span>recording…';
+    } else {
+      status.className = '';
+      status.textContent = 'space: rec+paint';
+    }
   }
 
   updatePaintIndicator();
@@ -2943,66 +3354,171 @@ function getMouseLonLat() { return screenToLonLat(mousePixelX, mousePixelY); }
 // RENDERING
 // ============================================================================
 
-// ── Input level meter ─────────────────────────────────────────────────────────
+// ── Input fader+meter (Ableton-style combined canvas) ─────────────────────────
 let inputClipHoldUntil = 0;
 const INPUT_CLIP_HOLD_S = 1.5;
-// Preallocated read buffer for analyser — avoids new Float32Array every frame
-const ANALYSER_BUF = new Float32Array(128); // fftSize=256 → frequencyBinCount=128
+const ANALYSER_BUF = new Float32Array(128);
+
+// Gain range: -inf (0×) to +6dB (2×). Unity = 0dB (1×).
+// Fader position: 0 = bottom (silence), 1 = top (+6dB)
+// We map inputGainValue (linear 0–2) to fader pos (0–1):
+//   silence (0)    → pos 0
+//   unity (1×)     → pos ~0.75 (like Ableton: unity isn't at top)
+//   +6dB (2×)      → pos 1
+function gainToFaderPos(gain) {
+  // Map 0–2 linear to 0–1 fader position with unity at 75%
+  if (gain <= 0) return 0;
+  const db = 20 * Math.log10(gain); // -inf to +6
+  const DB_MIN = -60, DB_MAX = 6;
+  return Math.max(0, Math.min(1, (db - DB_MIN) / (DB_MAX - DB_MIN)));
+}
+function faderPosToGain(pos) {
+  const DB_MIN = -60, DB_MAX = 6;
+  const db = DB_MIN + pos * (DB_MAX - DB_MIN);
+  return Math.pow(10, db / 20);
+}
+function gainToDb(gain) {
+  if (gain <= 0) return -Infinity;
+  return 20 * Math.log10(gain);
+}
+
+let _faderInputLevel = 0; // smoothed RMS level 0–1 for meter drawing
 
 function drawInputMeter() {
-  const meterCanvas = document.getElementById('inputMeterCanvas');
-  const clipDot     = document.getElementById('inputClipDot');
-  if (!meterCanvas || !inputAnalyser) {
-    if (meterCanvas) {
-      const mc = meterCanvas.getContext('2d');
-      mc.clearRect(0, 0, meterCanvas.width, meterCanvas.height);
+  const fc = document.getElementById('inputFaderMeter');
+  if (!fc) return;
+
+  // Size canvas to its CSS layout size
+  const dpr  = window.devicePixelRatio || 1;
+  const rect  = fc.getBoundingClientRect();
+  const W = Math.round(rect.width  || 40);
+  const H = Math.round(rect.height || 64);
+  if (fc.width !== W * dpr || fc.height !== H * dpr) {
+    fc.width  = W * dpr;
+    fc.height = H * dpr;
+  }
+
+  const c = fc.getContext('2d');
+  c.save();
+  c.scale(dpr, dpr);
+  c.clearRect(0, 0, W, H);
+
+  // ── Measure input level ─────────────────────────────────────────────────────
+  let rmsDb = -60, peakDb = -60;
+  if (inputAnalyser) {
+    inputAnalyser.getFloatTimeDomainData(ANALYSER_BUF);
+    let sumSq = 0, peak = 0;
+    for (let i = 0; i < ANALYSER_BUF.length; i++) {
+      const v = Math.abs(ANALYSER_BUF[i]);
+      sumSq += v * v;
+      if (v > peak) peak = v;
     }
-    if (clipDot) clipDot.classList.remove('clipping');
-    return;
+    const rms = Math.sqrt(sumSq / ANALYSER_BUF.length);
+    rmsDb  = rms  > 0 ? 20 * Math.log10(rms)  : -60;
+    peakDb = peak > 0 ? 20 * Math.log10(peak) : -60;
   }
-
-  inputAnalyser.getFloatTimeDomainData(ANALYSER_BUF);
-  const buf = ANALYSER_BUF;
-  const bufLen = buf.length;
-
-  let sumSq = 0, peak = 0;
-  for (let i = 0; i < bufLen; i++) {
-    const v = Math.abs(buf[i]);
-    sumSq += v * v;
-    if (v > peak) peak = v;
-  }
-  const rms = Math.sqrt(sumSq / bufLen);
 
   const DB_FLOOR = -60;
-  const rmsDb  = rms  > 0 ? 20 * Math.log10(rms)  : DB_FLOOR;
-  const peakDb = peak > 0 ? 20 * Math.log10(peak) : DB_FLOOR;
-  const level  = Math.max(0, Math.min(1, (rmsDb - DB_FLOOR) / -DB_FLOOR));
+  const rawLevel = Math.max(0, Math.min(1, (rmsDb - DB_FLOOR) / -DB_FLOOR));
+  // Smooth for visual: fast attack, slow release
+  _faderInputLevel += rawLevel > _faderInputLevel
+    ? (rawLevel - _faderInputLevel) * 0.6
+    : (rawLevel - _faderInputLevel) * 0.08;
 
-  // Vertical meter: fixed pixel size set from CSS (8px wide, flex height)
-  const w = 8;
-  const h = meterCanvas.offsetHeight || meterCanvas.parentElement.clientHeight || 64;
-  if (meterCanvas.width  !== w) meterCanvas.width  = w;
-  if (meterCanvas.height !== h) meterCanvas.height = h;
+  // ── Layout ─────────────────────────────────────────────────────────────────
+  // Like Ableton: [arrow on left] [meter bar] [dB labels on right]
+  // Fader/meter range: -60 dB (bottom) to 0 dB (top) for the meter display.
+  // Fader gain range: -60 to +6 dB (gainToFaderPos handles this).
+  const ARROW_W  = 6;   // triangle arrow column width
+  const LABEL_W  = 14;  // dB text labels column on right
+  const METER_X  = ARROW_W + 1;        // meter bar starts here
+  const METER_W  = W - ARROW_W - 1 - LABEL_W - 1; // meter bar width
+  const PAD_T    = 3;
+  const PAD_B    = 3;
+  const trackH   = H - PAD_T - PAD_B;
 
-  const mc = meterCanvas.getContext('2d');
-  mc.clearRect(0, 0, w, h);
-
-  // Fill from bottom up
-  const fillH = Math.round(level * h);
-  if (fillH > 0) {
-    const grad = mc.createLinearGradient(0, h, 0, 0); // bottom → top = quiet → loud
-    grad.addColorStop(0,    '#3a7a50');
-    grad.addColorStop(0.6,  '#5ab870');
-    grad.addColorStop(0.78, '#c8b840');
-    grad.addColorStop(0.9,  '#d06030');
-    grad.addColorStop(1.0,  '#c03030');
-    mc.fillStyle = grad;
-    mc.fillRect(0, h - fillH, w, fillH);
+  // dB → Y within the track. Meter shows -60 (bottom) to +6 dB (top).
+  const METER_DB_MIN = -60, METER_DB_MAX = 6;
+  function meterDbToY(db) {
+    const t = (db - METER_DB_MIN) / (METER_DB_MAX - METER_DB_MIN);
+    return PAD_T + trackH - t * trackH;
   }
 
+  // ── Meter bar ───────────────────────────────────────────────────────────────
+  c.fillStyle = '#111';
+  c.fillRect(METER_X, PAD_T, METER_W, trackH);
+
+  const fillH = Math.round(_faderInputLevel * trackH);
+  if (fillH > 0) {
+    const grad = c.createLinearGradient(0, PAD_T + trackH, 0, PAD_T);
+    grad.addColorStop(0,    '#1a5c2e');
+    grad.addColorStop(0.60, '#3daa55');
+    grad.addColorStop(0.78, '#a8a820');
+    grad.addColorStop(0.90, '#c85818');
+    grad.addColorStop(1.0,  '#aa1818');
+    c.fillStyle = grad;
+    c.fillRect(METER_X, PAD_T + trackH - fillH, METER_W, fillH);
+  }
+
+  // Clip flash at very top
   const now = performance.now() / 1000;
   if (peakDb >= 0) inputClipHoldUntil = now + INPUT_CLIP_HOLD_S;
-  if (clipDot) clipDot.classList.toggle('clipping', now < inputClipHoldUntil);
+  if (now < inputClipHoldUntil) {
+    c.fillStyle = '#dd2222';
+    c.fillRect(METER_X, PAD_T, METER_W, 3);
+  }
+
+  // ── dB notch lines + labels (0, 12, 24, 36, 48, 60) ───────────────────────
+  const notchDbs = [0, -12, -24, -36, -48, -60];
+  const fontSize = Math.round(Math.max(5, Math.min(7, trackH / notchDbs.length - 1)));
+  c.font = `${fontSize}px 'Roboto Mono', monospace`;
+  c.textAlign = 'left';
+
+  notchDbs.forEach(db => {
+    const ny = meterDbToY(db);
+    const isZero = db === 0;
+
+    c.strokeStyle = isZero ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.2)';
+    c.lineWidth   = isZero ? 1 : 0.75;
+    c.beginPath();
+    c.moveTo(METER_X, ny);
+    c.lineTo(METER_X + METER_W, ny);
+    c.stroke();
+
+    c.fillStyle = isZero ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.28)';
+    c.textBaseline = db === METER_DB_MIN ? 'bottom' : (isZero ? 'top' : 'middle');
+    const labelY = db === METER_DB_MIN ? ny + 1 : (isZero ? ny + 0.5 : ny);
+    c.fillText(String(Math.abs(db)), METER_X + METER_W + 2, labelY);
+  });
+
+  // ── 0 dB marker — thick white line across meter (unity / default gain) ──────
+  const defaultY = meterDbToY(0);
+  c.strokeStyle = 'rgba(255,255,255,0.85)';
+  c.lineWidth   = 2;
+  c.beginPath();
+  c.moveTo(METER_X, defaultY);
+  c.lineTo(METER_X + METER_W, defaultY);
+  c.stroke();
+
+  // ── Fader arrow — left-pointing triangle on the LEFT of the meter ───────────
+  // Tip points RIGHT (→) toward the meter. Flat edge on the left.
+  // Position maps gainToFaderPos over the same trackH.
+  const fPos     = gainToFaderPos(inputGainValue);
+  const fY       = PAD_T + trackH - fPos * trackH;
+  const isOver   = inputGainValue > 1.0;
+  const arrowColor = isOver ? '#e8a030' : '#c8c8c8';
+  const TH = 8;  // triangle height (vertical span)
+  const TW = ARROW_W; // triangle depth (→)
+
+  c.fillStyle = arrowColor;
+  c.beginPath();
+  c.moveTo(0,    fY - TH / 2); // top-left (flat side)
+  c.lineTo(TW,   fY);           // tip pointing right into meter
+  c.lineTo(0,    fY + TH / 2); // bottom-left
+  c.closePath();
+  c.fill();
+
+  c.restore();
 }
 
 // ── Output level meter ────────────────────────────────────────────────────────
@@ -3099,6 +3615,9 @@ function drawFrame() {
   drawRadiusTooltip();
   drawOutputMeter();
   drawInputMeter();
+  if (typeof drawRecencyDial === 'function') drawRecencyDial();
+  drawRadiusViz();
+  updateCloudBanksUI();
 }
 
 function drawClouds() {
@@ -3349,6 +3868,7 @@ function scheduleGrains() {
   selectedGrainSet = new Set();
   liveGranulatingThisFrame = false;
   perf.grainsFired = 0;
+  let _granulatingCount = 0;
 
   // No shared budget/pressure scaling — each cloud and the cursor are independent.
   // The retrigger guard on each particle is the natural throttle: a cloud with k=8
@@ -3375,6 +3895,7 @@ function scheduleGrains() {
       selectedGrainSet.add(p);
       playGrain(p);
       perf.grainsFired++;
+      _granulatingCount++;
       if (p.source === 'live') liveGranulatingThisFrame = true;
     }
   }
@@ -3391,10 +3912,14 @@ function scheduleGrains() {
     for (const p of cloudGrains) {
       playGrain(p, cloud.grainParams);
       perf.grainsFired++;
+      _granulatingCount++;
       if (p.source === 'live') liveGranulatingThisFrame = true;
       selectedGrainSet.add(p);
     }
   }
+  // Update granulating count display
+  const gcEl = document.getElementById('granulatingCount');
+  if (gcEl) gcEl.textContent = selectedGrainSet.size;
 }
 
 function drawParticles() {
@@ -3723,22 +4248,22 @@ function setupEvents() {
 
   window.addEventListener('resize', resizeCanvas);
 
-  // ── Scroll: adjust search radius ────────────────────────────────────────────
+  // ── Scroll: radius | Shift+scroll: cycle presets ─────────────────────────
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     // Use dominant axis (Shift+scroll swaps deltaY into deltaX on some browsers)
     const raw = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
     if (e.shiftKey) {
-      // Shift+scroll: adjust search radius
+      // Shift+scroll: cycle granular presets
+      const dir  = raw > 0 ? 1 : -1;
+      const next = (activePresetIndex + dir + PRESETS.length) % PRESETS.length;
+      selectPreset(next);
+    } else {
+      // Plain scroll: adjust search radius
       const delta = raw > 0 ? SEARCH_RADIUS_STEP : -SEARCH_RADIUS_STEP;
       searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, Math.min(SEARCH_RADIUS_MAX, searchRadiusDeg + delta));
       updatePlaybackControls();
       flashRadiusTooltip();
-    } else {
-      // Plain scroll: cycle presets
-      const dir  = raw > 0 ? 1 : -1;
-      const next = (activePresetIndex + dir + PRESETS.length) % PRESETS.length;
-      selectPreset(next);
     }
   }, { passive: false });
 
@@ -3771,90 +4296,41 @@ function setupEvents() {
 
   canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
-  // ── Input gain knob ────────────────────────────────────────────────────────
-  // Canvas knob: drag up to increase, drag down to decrease (standard DAW feel)
-  // Range: 0–2×, drawn as an arc from ~210° to ~330° (300° sweep, start at bottom-left)
-  const knobCanvas  = document.getElementById('inputGainKnob');
-  const inputGainValEl = document.getElementById('inputGainVal');
-  const KNOB_MIN    = 0;
-  const KNOB_MAX    = 2;
-  const KNOB_START  = Math.PI * 0.75;          // 135° — bottom-left
-  const KNOB_SWEEP  = Math.PI * 1.5;           // 270° total sweep
-  const KNOB_PX_PER_UNIT = 80;                 // pixels of drag per full unit (0→1)
+  // ── Input gain fader (Ableton-style) ─────────────────────────────────────────
+  // Drag the arrow handle up/down to set gain. Double-click to reset to unity (0 dB).
+  const faderCanvas = document.getElementById('inputFaderMeter');
 
-  function drawKnob() {
-    const kc   = knobCanvas.getContext('2d');
-    const W    = knobCanvas.width;
-    const H    = knobCanvas.height;
-    const cx   = W / 2;
-    const cy   = H / 2;
-    const r    = W / 2 - 4;
-    const t    = (inputGainValue - KNOB_MIN) / (KNOB_MAX - KNOB_MIN); // 0–1
-    const endA = KNOB_START + t * KNOB_SWEEP;
-
-    kc.clearRect(0, 0, W, H);
-
-    // Track (full arc, dim)
-    kc.beginPath();
-    kc.arc(cx, cy, r, KNOB_START, KNOB_START + KNOB_SWEEP);
-    kc.strokeStyle = '#2a3a3a';
-    kc.lineWidth   = 3;
-    kc.lineCap     = 'round';
-    kc.stroke();
-
-    // Value arc (teal fill)
-    if (t > 0) {
-      kc.beginPath();
-      kc.arc(cx, cy, r, KNOB_START, endA);
-      kc.strokeStyle = inputGainValue > 1.0 ? '#e8a030' : '#7abcbc';
-      kc.lineWidth   = 3;
-      kc.stroke();
-    }
-
-    // Pointer line
-    kc.beginPath();
-    kc.moveTo(cx, cy);
-    kc.lineTo(cx + Math.cos(endA) * (r - 2), cy + Math.sin(endA) * (r - 2));
-    kc.strokeStyle = '#ffffff';
-    kc.lineWidth   = 1.5;
-    kc.stroke();
-
-    // Centre dot
-    kc.beginPath();
-    kc.arc(cx, cy, 2, 0, Math.PI * 2);
-    kc.fillStyle = '#444';
-    kc.fill();
-  }
-
-  function setInputGain(val) {
-    inputGainValue = Math.max(KNOB_MIN, Math.min(KNOB_MAX, val));
-    const label = inputGainValue.toFixed(2) + '×';
-    inputGainValEl.textContent = label;
+  function setInputGain(linearVal) {
+    inputGainValue = Math.max(0, Math.min(2, linearVal));
     if (inputGainNode) inputGainNode.gain.setTargetAtTime(inputGainValue, ensureAudioContext().currentTime, 0.01);
-    drawKnob();
+    // Label + redraw happen inside drawInputMeter() called each frame
   }
 
-  // Drag interaction — pointer events for both mouse and touch
-  let knobDragStart = null;
-  knobCanvas.addEventListener('pointerdown', e => {
-    e.preventDefault();
-    knobCanvas.setPointerCapture(e.pointerId);
-    knobDragStart = { y: e.clientY, val: inputGainValue };
-  });
-  knobCanvas.addEventListener('pointermove', e => {
-    if (!knobDragStart) return;
-    const dy   = knobDragStart.y - e.clientY; // up = positive
-    const delta = dy / KNOB_PX_PER_UNIT;
-    setInputGain(knobDragStart.val + delta);
-  });
-  knobCanvas.addEventListener('pointerup',    () => { knobDragStart = null; });
-  knobCanvas.addEventListener('pointercancel',() => { knobDragStart = null; });
-
-  // Double-click to reset to unity
-  knobCanvas.addEventListener('dblclick', () => setInputGain(1.0));
-
-  // Draw initial state
-  drawKnob();
+  let faderDragStart = null;
+  if (faderCanvas) {
+    faderCanvas.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      faderCanvas.setPointerCapture(e.pointerId);
+      const rect = faderCanvas.getBoundingClientRect();
+      // Convert click Y to fader position and start drag from there
+      // Must match drawInputMeter: PAD_T=3, PAD_B=3
+      const PAD_T = 3, PAD_B = 3, trackH = rect.height - PAD_T - PAD_B;
+      const clickPos = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top - PAD_T) / trackH));
+      setInputGain(faderPosToGain(clickPos));
+      faderDragStart = { startY: e.clientY, startPos: gainToFaderPos(inputGainValue), trackH };
+    });
+    faderCanvas.addEventListener('pointermove', e => {
+      if (!faderDragStart) return;
+      const dy    = faderDragStart.startY - e.clientY; // up = positive
+      const delta = dy / faderDragStart.trackH;
+      const newPos = Math.max(0, Math.min(1, faderDragStart.startPos + delta));
+      setInputGain(faderPosToGain(newPos));
+    });
+    faderCanvas.addEventListener('pointerup',     () => { faderDragStart = null; });
+    faderCanvas.addEventListener('pointercancel', () => { faderDragStart = null; });
+    // Double-click → reset to unity (0 dB = 1×)
+    faderCanvas.addEventListener('dblclick', () => setInputGain(1.0)); // reset to 0 dB (unity)
+  }
 
   // Fullscreen
   document.getElementById('fullscreenBtn').addEventListener('click', () => {
@@ -4007,8 +4483,8 @@ const ACTIONS = [
   { id: 'paint7',      label: 'paint sample 7',       key: '7', type: 'trigger' },
   { id: 'paint8',      label: 'paint sample 8',       key: '8', type: 'trigger' },
   { id: 'paint9',      label: 'paint sample 9',       key: '9', type: 'trigger' },
-  { id: 'radius_dec',  label: 'radius decrease',      key: 'scroll down / [', type: 'trigger' },
-  { id: 'radius_inc',  label: 'radius increase',      key: 'scroll up / ]', type: 'trigger' },
+  { id: 'radius_dec',  label: 'radius decrease',      key: 'scroll down / [',       type: 'trigger' },
+  { id: 'radius_inc',  label: 'radius increase',      key: 'scroll up / ]',         type: 'trigger' },
   { id: 'radius_cc',   label: 'radius (continuous)',  key: '—', type: 'cc',
     ccFn: v => { searchRadiusDeg = SEARCH_RADIUS_MIN + (v / 127) * (SEARCH_RADIUS_MAX - SEARCH_RADIUS_MIN); updatePlaybackControls(); flashRadiusTooltip(); } },
   { id: 'recency_cc',  label: 'recency N (continuous)', key: '—', type: 'cc',
