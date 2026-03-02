@@ -511,29 +511,7 @@
   .sample-slot.loaded .slot-delete { visibility: visible; }
   .sample-slot.loaded .slot-delete:hover { color: #e06060; }
 
-  /* ── Cloud banks ─────────────────────────────────────────────────────────── */
-  .cloud-slots {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 3px;
-    margin-bottom: 0.4rem;
-  }
-  .cloud-slot {
-    aspect-ratio: 1;
-    border-radius: 3px;
-    border: 1px solid #2e2e2e;
-    font-size: 0.55rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: border-color 0.2s, box-shadow 0.2s;
-  }
-  .cloud-slot--empty { color: #333; background: transparent; }
-  .cloud-slot--active { }
-  .cloud-slot--nearest {
-    box-shadow: 0 0 6px currentColor;
-    border-width: 2px;
-  }
+  /* Cloud banks removed — spatial tracking via canvas edge indicators */
 
   /* ── Fullscreen button ───────────────────────────────────────────────────── */
   #fullscreenBtn {
@@ -720,21 +698,8 @@
       </div>
     </div>
 
-    <!-- Right panel: clouds + samples -->
+    <!-- Right panel: samples only (clouds tracked via canvas edge indicators) -->
     <div class="right-panel">
-      <div style="flex-shrink:0">
-        <div class="panel-label">clouds</div>
-        <div class="cloud-slots" id="cloudSlots">
-          <div class="cloud-slot cloud-slot--empty">1</div>
-          <div class="cloud-slot cloud-slot--empty">2</div>
-          <div class="cloud-slot cloud-slot--empty">3</div>
-          <div class="cloud-slot cloud-slot--empty">4</div>
-          <div class="cloud-slot cloud-slot--empty">5</div>
-          <div class="cloud-slot cloud-slot--empty">6</div>
-          <div class="cloud-slot cloud-slot--empty">7</div>
-          <div class="cloud-slot cloud-slot--empty">8</div>
-        </div>
-      </div>
       <div class="sample-list-panel">
         <div class="panel-label">samples</div>
         <div class="sample-list" id="sampleList"></div>
@@ -2046,24 +2011,8 @@ function pickupNearestCloud() {
 }
 
 function updateCloudBanksUI() {
-  // Each DOM slot maps 1-to-1 with cloudSlots[i] — indices never shift.
-  const domSlots = document.querySelectorAll('.cloud-slot');
-  const { lon: curLon, lat: curLat } = mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  const nearestSlot = findNearestCloudSlot(curLon, curLat);
-
-  domSlots.forEach((domSlot, i) => {
-    const cloud = cloudSlots[i];
-    // Show slot number label always
-    domSlot.textContent = i + 1;
-    domSlot.className = 'cloud-slot';
-    if (cloud) {
-      domSlot.style.cssText = `background:${cloud.color}33;border-color:${cloud.color};color:${cloud.color}`;
-      domSlot.classList.add(i === nearestSlot ? 'cloud-slot--nearest' : 'cloud-slot--active');
-    } else {
-      domSlot.style.cssText = '';
-      domSlot.classList.add('cloud-slot--empty');
-    }
-  });
+  // Cloud grid removed — spatial position tracked via canvas edge indicators in drawClouds().
+  // This function is kept as a no-op so existing call sites don't error.
 }
 
 function selectPreset(index) {
@@ -2816,6 +2765,8 @@ function drawFrame() {
 function drawClouds() {
   const { lon: curLon, lat: curLat } = mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
   const nearestSlot = findNearestCloudSlot(curLon, curLat);
+  const W = canvas.width, H = canvas.height;
+  const margin = 14; // px inset from canvas edge for indicator dots
 
   for (let i = 0; i < MAX_CLOUDS; i++) {
     const cloud = cloudSlots[i];
@@ -2824,39 +2775,108 @@ function drawClouds() {
     const [wx, wy, wz] = spherePoint(cloud.lon, cloud.lat);
     const [cx, cy, cz] = cameraTransform(wx, wy, wz);
     const proj = project(cx, cy, cz);
-    if (!proj) continue;
-
     const isNearest = i === nearestSlot;
-    const rRad = cloud.searchRadiusDeg * Math.PI / 180;
-    // Compute screen radius from angular size + cloud depth, not from a
-    // single offset point (which rotates with the camera and fluctuates).
-    const fovRad   = (FOV_DEG * Math.PI) / 180;
-    const focalLen = (canvas.width / 2) / Math.tan(fovRad / 2);
-    // proj.depth is the z distance in camera space; use it to get px/rad
-    const screenR  = focalLen * Math.tan(rRad) / (proj.depth / SPHERE_RADIUS);
+    const isBehind  = cz <= 0.1;
 
-    ctx.save();
-    ctx.globalAlpha = isNearest ? 0.7 : 0.4;
-    ctx.strokeStyle = cloud.color;
-    ctx.lineWidth = isNearest ? 2 : 1;
-    ctx.setLineDash([4, 6]);
-    ctx.beginPath();
-    ctx.arc(proj.sx, proj.sy, Math.max(12, screenR), 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.globalAlpha = isNearest ? 1 : 0.6;
-    ctx.fillStyle = cloud.color;
-    if (isNearest) { ctx.shadowColor = cloud.color; ctx.shadowBlur = 10; }
-    ctx.beginPath(); ctx.arc(proj.sx, proj.sy, 4, 0, Math.PI * 2); ctx.fill();
-    // Slot number label on sphere
-    ctx.shadowBlur = 0;
-    ctx.globalAlpha = isNearest ? 0.9 : 0.5;
-    ctx.fillStyle = cloud.color;
-    ctx.font = `10px "Roboto Mono", monospace`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(i + 1, proj.sx, proj.sy - 12);
-    ctx.restore();
+    // ── On-screen circle + dot ───────────────────────────────────────────
+    if (proj) {
+      const rRad    = cloud.searchRadiusDeg * Math.PI / 180;
+      const fovRad  = (FOV_DEG * Math.PI) / 180;
+      const focalLen = (W / 2) / Math.tan(fovRad / 2);
+      const screenR  = focalLen * Math.tan(rRad) / (proj.depth / SPHERE_RADIUS);
+
+      ctx.save();
+      ctx.globalAlpha = isNearest ? 0.7 : 0.4;
+      ctx.strokeStyle = cloud.color;
+      ctx.lineWidth = isNearest ? 2 : 1;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      ctx.arc(proj.sx, proj.sy, Math.max(12, screenR), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = isNearest ? 1 : 0.6;
+      ctx.fillStyle = cloud.color;
+      if (isNearest) { ctx.shadowColor = cloud.color; ctx.shadowBlur = 10; }
+      ctx.beginPath(); ctx.arc(proj.sx, proj.sy, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = isNearest ? 0.9 : 0.5;
+      ctx.fillStyle = cloud.color;
+      ctx.font = `10px "Roboto Mono", monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(i + 1, proj.sx, proj.sy - 12);
+      ctx.restore();
+    }
+
+    // ── Edge indicator ───────────────────────────────────────────────────
+    // Always draw a perimeter dot so the performer knows where every cloud
+    // sits relative to their current view — especially important when behind.
+    // azimuth: atan2(cx, cz)  → negative = left, positive = right
+    // elevation: atan2(cy, horiz)  → positive = up
+    {
+      const horiz = Math.sqrt(cx * cx + cz * cz);
+      const az    = Math.atan2(cx, Math.max(0.0001, horiz)); // –π/2..+π/2 (left..right)
+      const el    = Math.atan2(cy, horiz);                   // –π/2..+π/2 (down..up)
+
+      // Map az → normalised horizontal position [0..1], centre = 0.5 (ahead)
+      // Clamp to [0,1]; values outside mean it's very far left/right in camera space
+      const azMax = Math.PI * 0.75; // field of awareness ±135° maps to edges
+      const tx    = 0.5 + (az / azMax) * 0.5;              // horiz t [0..1]
+      const ty    = 0.5 - (el / (Math.PI * 0.5)) * 0.5;   // vert  t [0..1]
+
+      // Project t onto canvas perimeter:
+      // pick whichever edge is hit first by the ray from centre (tx,ty)
+      const dx = tx - 0.5, dy = ty - 0.5;
+      let ex, ey; // edge point in canvas px
+      if (Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001) {
+        // Straight ahead — put dot at top centre
+        ex = W / 2; ey = margin;
+      } else {
+        // How far to each edge from centre along (dx,dy) direction
+        const scaleX = dx !== 0 ? Math.abs(0.5 / dx) : Infinity;
+        const scaleY = dy !== 0 ? Math.abs(0.5 / dy) : Infinity;
+        const scale  = Math.min(scaleX, scaleY);
+        ex = (0.5 + dx * scale) * W;
+        ey = (0.5 + dy * scale) * H;
+        // Clamp to canvas bounds
+        ex = Math.max(0, Math.min(W, ex));
+        ey = Math.max(0, Math.min(H, ey));
+        // Inset slightly from the very edge
+        const fromCX = ex - W/2, fromCY = ey - H/2;
+        const dist   = Math.sqrt(fromCX*fromCX + fromCY*fromCY);
+        if (dist > 0) {
+          const inset = margin;
+          ex = W/2 + fromCX * (1 - inset / dist);
+          ey = H/2 + fromCY * (1 - inset / dist);
+        }
+      }
+
+      const dotR   = isBehind ? (isNearest ? 6 : 4) : (isNearest ? 4 : 2.5);
+      const alpha  = isBehind ? (isNearest ? 1.0 : 0.75) : (isNearest ? 0.55 : 0.3);
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle   = cloud.color;
+      if (isBehind && isNearest) { ctx.shadowColor = cloud.color; ctx.shadowBlur = 12; }
+      ctx.beginPath();
+      ctx.arc(ex, ey, dotR, 0, Math.PI * 2);
+      ctx.fill();
+      // Tiny slot number beside the dot when behind
+      if (isBehind) {
+        ctx.shadowBlur  = 0;
+        ctx.globalAlpha = alpha * 0.85;
+        ctx.fillStyle   = cloud.color;
+        ctx.font        = `8px "Roboto Mono", monospace`;
+        ctx.textAlign   = 'center';
+        ctx.textBaseline = 'middle';
+        const labelOff = dotR + 6;
+        // Push label inward so it doesn't go off-canvas
+        const lx = ex + (ex < W/2 ? labelOff : -labelOff);
+        const ly = ey + (ey < H/2 ? labelOff : -labelOff);
+        ctx.fillText(i + 1, lx, ly);
+      }
+      ctx.restore();
+    }
   }
 }
 
