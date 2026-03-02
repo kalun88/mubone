@@ -13,35 +13,69 @@
     overflow: hidden;
   }
   body {
-    background: #222;
+    background: #1a1a1a;
     color: #fff;
     font-family: 'Roboto Mono', monospace;
     display: flex;
     flex-direction: column;
-    padding: 1rem 1.5rem;
-    gap: 0.5rem;
+    padding: 0.5rem 0.75rem 0.5rem 0.75rem;
+    gap: 0.4rem;
     height: 100dvh;
     overflow: hidden;
     overscroll-behavior: none;
   }
+  /* ── Top bar (title + ? button) ─────────────────────────────────────────── */
+  .top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    border-bottom: 1px solid #333;
+    padding-bottom: 0.3rem;
+  }
+  h1 {
+    font-size: 0.8rem;
+    font-weight: normal;
+    color: #555;
+    letter-spacing: 0.08em;
+    border: none;
+    padding: 0;
+    margin: 0;
+    flex-shrink: 0;
+  }
+  #helpBtn {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    color: #555;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.65rem;
+    padding: 0.15rem 0.55rem;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  #helpBtn:hover { color: #aaa; border-color: #555; }
+  /* ── Main area: canvas + right panel side by side ─────────────────────── */
   .main-layout {
     display: flex;
     flex-direction: row;
-    gap: 1rem;
+    gap: 0.5rem;
     align-items: stretch;
     flex: 1;
     min-height: 0;
     overflow: hidden;
   }
-  h1 {
-    font-size: 1rem;
-    font-weight: normal;
-    color: #aaa;
-    letter-spacing: 0.05em;
-    border-bottom: 1px solid #555;
-    padding-bottom: 0.4rem;
+  /* ── Right column: clouds + samples stacked ─────────────────────────────── */
+  .right-panel {
+    width: 280px;
     flex-shrink: 0;
-    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-height: 0;
+    overflow: hidden;
   }
   .canvas-wrapper {
     position: relative;
@@ -122,73 +156,225 @@
     0%, 100% { opacity: 1; }
     50%       { opacity: 0.3; }
   }
-  .instructions {
-    font-size: 0.7rem;
-    color: #555;
-    letter-spacing: 0.05em;
+  /* ── Device strip (Ableton-style bottom bar) ─────────────────────────────── */
+  .device-strip {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.3rem 0.5rem;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0;
     flex-shrink: 0;
-  }
-  .instructions .sep {
-    color: #333;
-  }
-  .key {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: #2a2a2a;
-    border: 1px solid #444;
-    border-bottom-width: 2px;
+    height: 112px;
+    background: #252525;
+    border: 1px solid #333;
     border-radius: 4px;
-    color: #888;
-    font-family: 'Roboto Mono', monospace;
-    font-size: 0.65rem;
-    padding: 0.1rem 0.4rem;
-    white-space: nowrap;
-    line-height: 1.4;
+    overflow: hidden;
   }
-  /* ── Bottom output meter bar ─────────────────────────────────────────────── */
-  .output-meter-bar {
+  /* Each device block */
+  .device {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    border-right: 1px solid #333;
+    padding: 0.3rem 0.5rem 0.25rem;
+    min-width: 0;
+    position: relative;
+  }
+  .device:last-child { border-right: none; }
+  .device-label {
+    font-size: 0.55rem;
+    letter-spacing: 0.08em;
+    color: #444;
+    text-transform: lowercase;
+    margin-bottom: 0.3rem;
+    flex-shrink: 0;
+  }
+  .device-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1;
+    min-height: 0;
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+
+  /* ── Device: live rec ────────────────────────────────────────────────────── */
+  .device--liverec { width: 130px; }
+  /* Ableton-style rec enable button */
+  #micEnableBtn {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    width: 100%;
-    padding: 0.15rem 0;
-    flex-shrink: 0;
-  }
-  .output-meter-bar .meter-label {
+    gap: 0.35rem;
+    background: #2e2e2e;
+    border: 1px solid #3a3a3a;
+    border-radius: 3px;
+    color: #666;
+    font-family: 'Roboto Mono', monospace;
     font-size: 0.6rem;
-    color: #444;
-    white-space: nowrap;
-    flex-shrink: 0;
+    padding: 0.22rem 0.5rem;
+    cursor: pointer;
+    letter-spacing: 0.03em;
+    transition: all 0.15s;
+    width: 100%;
+    text-align: left;
   }
-  .output-meter-bar .meter-wrap {
+  #micEnableBtn::before {
+    content: '';
+    display: block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #5a2a2a;
+    border: 1px solid #7a3a3a;
+    flex-shrink: 0;
+    transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
+  }
+  #micEnableBtn:hover::before { background: #8a3a3a; border-color: #aa4a4a; }
+  #micEnableBtn.mic-ready::before {
+    background: #cc2222;
+    border-color: #ee3333;
+    box-shadow: 0 0 6px #cc222288;
+  }
+  #micEnableBtn.mic-ready { color: #cc4444; border-color: #5a2a2a; cursor: default; }
+  #micEnableBtn.mic-denied::before { background: #444; border-color: #555; }
+  #micEnableBtn.mic-denied { color: #555; cursor: default; }
+  @keyframes rec-glow {
+    0%, 100% { box-shadow: 0 0 6px #cc222288; }
+    50%       { box-shadow: 0 0 12px #ee3333cc; }
+  }
+  #micEnableBtn.mic-ready::before { animation: rec-glow 1.5s ease-in-out infinite; }
+  .live-count { font-size: 0.58rem; color: #444; }
+  .live-count span { color: #e8a030; }
+  .live-granulating {
+    display: flex; align-items: center; gap: 0.3rem;
+    font-size: 0.58rem; color: #444; transition: color 0.1s;
+  }
+  .live-granulating.active { color: #e8a030; }
+  .live-granulating .gran-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: #444; flex-shrink: 0; transition: background 0.1s, box-shadow 0.1s;
+  }
+  .live-granulating.active .gran-dot { background: #e8a030; box-shadow: 0 0 5px #e8a030; }
+
+  /* ── Device: input ───────────────────────────────────────────────────────── */
+  .device--input { width: 110px; }
+  .input-gain-knob-row {
+    display: flex; align-items: center; gap: 0.4rem;
+  }
+  .knob-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.1rem; flex-shrink: 0; }
+  #inputGainKnob { display: block; cursor: ns-resize; touch-action: none; }
+  .knob-label { font-size: 0.52rem; color: #444; letter-spacing: 0.03em; }
+  .knob-val { font-size: 0.58rem; color: #7abcbc; min-width: 2.4rem; }
+  .input-meter-row { display: flex; align-items: center; gap: 0.3rem; }
+  .input-meter-label { font-size: 0.55rem; color: #444; flex-shrink: 0; }
+  .input-meter-wrap { flex: 1; height: 4px; background: #1c1c1c; border-radius: 2px; overflow: hidden; }
+  #inputMeterCanvas { display: block; width: 100%; height: 100%; }
+  .input-clip-dot { width: 5px; height: 5px; border-radius: 50%; background: #333; flex-shrink: 0; transition: background 0.05s, box-shadow 0.05s; }
+  .input-clip-dot.clipping { background: #e06060; box-shadow: 0 0 4px #e06060; }
+
+  /* ── Device: playback (snap + radius + recency) ──────────────────────────── */
+  .device--playback { width: 190px; }
+  /* snap + recency sit side by side in one row */
+  .playback-top-row {
+    display: flex; align-items: center; gap: 0.4rem;
+  }
+  #snapToggleBtn {
+    background: transparent;
+    border: 1px solid #3a3a3a;
+    color: #555;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.6rem;
+    padding: 0.2rem 0.4rem;
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 0.03em;
+    transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
+    text-align: left;
     flex: 1;
-    height: 6px;
-    background: #1c2a2a;
+  }
+  #snapToggleBtn:hover { border-color: #e8a030; color: #888; }
+  #snapToggleBtn.active { border-color: #e8a030; color: #e8a030; box-shadow: 0 0 5px #e8a03044; }
+  /* Recency dial inline with snap */
+  .recency-group {
+    display: flex; flex-direction: column; align-items: center; gap: 0.1rem; flex-shrink: 0;
+  }
+  #recencyDial { display: block; cursor: ns-resize; touch-action: none; }
+  .recency-val-label { font-size: 0.52rem; color: #7abcbc; text-align: center; }
+  .recency-group-label { font-size: 0.48rem; color: #3a3a3a; letter-spacing: 0.05em; }
+  /* Radius viz fills remaining vertical space */
+  .radius-viz-wrap {
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    background: #1c1c1c;
     border-radius: 2px;
     overflow: hidden;
     position: relative;
   }
-  #outputMeterCanvasBottom {
-    display: block;
+  #radiusViz { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  /* ── Device: grain preset ────────────────────────────────────────────────── */
+  .device--preset { flex: 1; min-width: 200px; }
+  .preset-buttons {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 2px;
+  }
+  .preset-btn {
+    background: transparent;
+    border: 1px solid #3a3a3a;
+    color: #555;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.58rem;
+    padding: 0.2rem 0.2rem;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+    letter-spacing: 0.02em;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .preset-btn:hover { border-color: #7abcbc; color: #888; }
+  .preset-btn.active { border-color: #7abcbc; color: #7abcbc; }
+  .preset-waveform-wrap {
+    position: relative;
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
+    background: #1c1c1c;
+    border-radius: 2px;
+    overflow: hidden;
   }
-  .output-meter-bar .meter-clip-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #333;
-    flex-shrink: 0;
-    transition: background 0.05s, box-shadow 0.05s;
+  #presetWaveform { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+  .preset-stats {
+    display: flex; gap: 0.6rem; font-size: 0.55rem; color: #444; flex-shrink: 0;
   }
-  .output-meter-bar .meter-clip-dot.clipping {
-    background: #e06060;
-    box-shadow: 0 0 5px #e06060;
+  .preset-stats .stat-item { display: flex; gap: 0.2rem; }
+  .preset-stats .stat-label { color: #3a3a3a; }
+  .preset-stats span { color: #7abcbc; }
+
+  /* ── Device: output ──────────────────────────────────────────────────────── */
+  .device--output { width: 72px; }
+  .meter-row { display: flex; align-items: center; gap: 0.3rem; }
+  .meter-label { font-size: 0.55rem; color: #444; flex-shrink: 0; }
+  .meter-wrap { flex: 1; height: 8px; background: #1c1c1c; border-radius: 2px; overflow: hidden; position: relative; }
+  #outputMeterCanvas { display: block; width: 100%; height: 100%; }
+  .meter-clip-dot { width: 6px; height: 6px; border-radius: 50%; background: #333; flex-shrink: 0; transition: background 0.05s, box-shadow 0.05s; }
+  .meter-clip-dot.clipping { background: #e06060; box-shadow: 0 0 5px #e06060; }
+  /* hidden compat canvas — JS still references this ID for the second draw path */
+  #outputMeterCanvasBottom { display: none; }
+
+  /* ── Right panel: clouds + samples ──────────────────────────────────────── */
+  .panel-label {
+    font-size: 0.55rem;
+    color: #444;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid #2a2a2a;
+    padding-bottom: 0.2rem;
+    margin-bottom: 0.2rem;
   }
   /* ── Drop zone overlay ───────────────────────────────────────────────────── */
   .drop-overlay {
@@ -209,50 +395,17 @@
   .drop-overlay .drop-icon { font-size: 2rem; color: #7abcbc; }
   .drop-overlay .drop-text { font-size: 0.85rem; color: #aaa; letter-spacing: 0.05em; }
 
-  /* ── Right sidebar panel ─────────────────────────────────────────────────── */
-  .bottom-panel {
-    width: 240px;
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    align-items: stretch;
-    overflow: hidden;
-    align-self: stretch;
-    justify-content: space-between;
-    min-height: 0;
-  }
-
-  /* ── Loaded sample list (left column) ───────────────────────────────────── */
+  /* ── Loaded sample list ─────────────────────────────────────────────────── */
   .sample-list-panel {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
-  }
-  .sample-list-panel--full {
-    width: 100%;
-    flex-shrink: 0;
-  }
-  .sample-list-panel--full .sample-list {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 2px;
-  }
-  .sample-list-panel--full .slot-name {
-    max-width: 100px;
-  }
-  .sample-list-panel .panel-label {
-    color: #444;
-    font-size: 0.7rem;
-    letter-spacing: 0.05em;
-    border-bottom: 1px solid #333;
-    padding-bottom: 0.25rem;
-    margin-bottom: 0.1rem;
+    gap: 0.3rem;
   }
   .sample-list {
     display: flex;
     flex-direction: column;
     gap: 2px;
+    overflow: visible;
   }
   .sample-slot {
     display: flex;
@@ -358,109 +511,17 @@
   .sample-slot.loaded .slot-delete { visibility: visible; }
   .sample-slot.loaded .slot-delete:hover { color: #e06060; }
 
-  /* ── Grain presets panel ─────────────────────────────────────────────────── */
-  .preset-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-  .preset-panel .panel-label {
-    color: #444;
-    font-size: 0.7rem;
-    letter-spacing: 0.05em;
-    border-bottom: 1px solid #333;
-    padding-bottom: 0.25rem;
-    margin-bottom: 0.1rem;
-  }
-  .preset-buttons {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 3px;
-  }
-  .preset-btn {
-    background: transparent;
-    border: 1px solid #444;
-    color: #666;
-    font-family: 'Roboto Mono', monospace;
-    font-size: 0.65rem;
-    padding: 0.25rem 0.3rem;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: border-color 0.15s, color 0.15s;
-    letter-spacing: 0.03em;
-  }
-  .preset-btn:hover {
-    border-color: #7abcbc;
-    color: #aaa;
-  }
-  .preset-btn.active {
-    border-color: #7abcbc;
-    color: #7abcbc;
-  }
-  .preset-waveform-wrap {
-    position: relative;
-    width: 100%;
-    height: 48px;
-    background: #1c2a2a;
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  #presetWaveform {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-  .preset-stats {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 0.1rem 0.5rem;
-    font-size: 0.6rem;
-    color: #555;
-  }
-  .preset-stats .stat-label { color: #555; white-space: nowrap; }
-  .preset-stats span { color: #7abcbc; }
-  .recency-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: 0.6rem;
-    color: #555;
-    margin-top: 0.3rem;
-  }
-  .recency-ctrl {
-    display: flex;
-    align-items: center;
-    gap: 0.25rem;
-  }
-  .recency-ctrl span { color: #7abcbc; min-width: 1rem; text-align: center; }
-  .recency-btn {
-    background: #2a2a2a;
-    border: 1px solid #444;
-    border-bottom-width: 2px;
-    border-radius: 3px;
-    color: #777;
-    font-size: 0.65rem;
-    line-height: 1;
-    padding: 0.1rem 0.35rem;
-    cursor: pointer;
-  }
-  .recency-btn:hover { color: #fff; border-color: #666; }
-
-  /* ── Cloud banks panel ───────────────────────────────────────────────────── */
-  .cloud-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-  }
+  /* ── Cloud banks ─────────────────────────────────────────────────────────── */
   .cloud-slots {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 3px;
+    margin-bottom: 0.4rem;
   }
   .cloud-slot {
     aspect-ratio: 1;
     border-radius: 3px;
-    border: 1px solid #333;
+    border: 1px solid #2e2e2e;
     font-size: 0.55rem;
     display: flex;
     align-items: center;
@@ -472,94 +533,6 @@
   .cloud-slot--nearest {
     box-shadow: 0 0 6px currentColor;
     border-width: 2px;
-  }
-
-  /* ── Playback controls panel ─────────────────────────────────────────────── */
-  .playback-panel {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-  .playback-panel .panel-label {
-    color: #444;
-    font-size: 0.7rem;
-    letter-spacing: 0.05em;
-    border-bottom: 1px solid #333;
-    padding-bottom: 0.25rem;
-    margin-bottom: 0.1rem;
-  }
-  #snapToggleBtn {
-    background: transparent;
-    border: 1px solid #444;
-    color: #666;
-    font-family: 'Roboto Mono', monospace;
-    font-size: 0.7rem;
-    padding: 0.3rem 0.5rem;
-    border-radius: 3px;
-    cursor: pointer;
-    letter-spacing: 0.03em;
-    transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
-    width: 100%;
-    text-align: left;
-  }
-  #snapToggleBtn:hover {
-    border-color: #e8a030;
-    color: #aaa;
-  }
-  #snapToggleBtn.active {
-    border-color: #e8a030;
-    color: #e8a030;
-    box-shadow: 0 0 6px #e8a03044;
-  }
-  .radius-viz-wrap {
-    position: relative;
-    width: 100%;
-    height: 60px;
-    background: #1c2a2a;
-    border-radius: 3px;
-    overflow: hidden;
-  }
-  #radiusViz {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-  /* ── Output level meter ─────────────────────────────────────────────────── */
-  .meter-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-  .meter-label {
-    font-size: 0.6rem;
-    color: #444;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-  .meter-wrap {
-    flex: 1;
-    height: 8px;
-    background: #1c2a2a;
-    border-radius: 2px;
-    overflow: hidden;
-    position: relative;
-  }
-  #outputMeterCanvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-  .meter-clip-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #444;
-    flex-shrink: 0;
-    transition: background 0.05s, box-shadow 0.05s;
-  }
-  .meter-clip-dot.clipping {
-    background: #e06060;
-    box-shadow: 0 0 5px #e06060;
   }
 
   /* ── Fullscreen button ───────────────────────────────────────────────────── */
@@ -584,123 +557,6 @@
     opacity: 1;
     border-color: #aaa;
     color: #fff;
-  }
-
-  /* ── Live rec panel (right column) ──────────────────────────────────────── */
-  .live-rec-panel {
-    font-size: 0.7rem;
-    color: #555;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-  .live-rec-panel .panel-label {
-    color: #444;
-    letter-spacing: 0.05em;
-    border-bottom: 1px solid #333;
-    padding-bottom: 0.25rem;
-    margin-bottom: 0.1rem;
-  }
-  .live-rec-panel .live-count {
-    color: #aaa;
-  }
-  .live-rec-panel .live-count span {
-    color: #e8a030;
-  }
-  .live-rec-panel .undo-hint {
-    color: #444;
-    font-size: 0.65rem;
-  }
-  #micEnableBtn.mic-ready  { color: #7abcbc; border-color: #7abcbc; cursor: default; }
-  #micEnableBtn.mic-denied { color: #e06060; border-color: #e06060; cursor: default; }
-  .live-rec-panel .live-granulating {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    color: #444;
-    font-size: 0.65rem;
-    transition: color 0.1s;
-  }
-  .live-rec-panel .live-granulating.active {
-    color: #e8a030;
-  }
-  .live-rec-panel .live-granulating .gran-dot {
-    display: inline-block;
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: #444;
-    transition: background 0.1s, box-shadow 0.1s;
-    flex-shrink: 0;
-  }
-  .live-rec-panel .live-granulating.active .gran-dot {
-    background: #e8a030;
-    box-shadow: 0 0 6px #e8a030;
-  }
-  /* ── Input gain knob + input meter ────────────────────────────────────── */
-  .input-gain-knob-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.4rem;
-  }
-  .knob-wrap {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.15rem;
-    flex-shrink: 0;
-  }
-  #inputGainKnob {
-    display: block;
-    cursor: ns-resize; /* drag up/down — standard DAW convention */
-    touch-action: none;
-  }
-  .knob-label {
-    font-size: 0.58rem;
-    color: #555;
-    letter-spacing: 0.03em;
-  }
-  .knob-val {
-    font-size: 0.58rem;
-    color: #7abcbc;
-    min-width: 2.8rem;
-    text-align: left;
-  }
-  .input-meter-row {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-  .input-meter-label {
-    font-size: 0.6rem;
-    color: #444;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-  .input-meter-wrap {
-    flex: 1;
-    height: 4px;
-    background: #1c2a2a;
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  #inputMeterCanvas {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-  .input-clip-dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: #333;
-    flex-shrink: 0;
-    transition: background 0.05s, box-shadow 0.05s;
-  }
-  .input-clip-dot.clipping {
-    background: #e06060;
-    box-shadow: 0 0 5px #e06060;
   }
 
   /* ── MIDI / Keyboard mapping modal ──────────────────────────────────────── */
@@ -833,153 +689,146 @@
 </style>
 </head>
 <body>
-  <h1>simulation</h1>
-  <div class="main-layout">
-  <div class="canvas-wrapper" id="canvasWrapper">
-    <canvas id="sphereCanvas"></canvas>
-    <div class="hud">
-      <div id="coordinates">--,--</div>
-      <div id="paintIndicator">paint: off</div>
-      <div id="sampleIndicator" style="color:#555">no sample</div>
-      <div id="radiusIndicator" style="color:#7abcbc">r: 10°</div>
-    </div>
-    <!-- Live recording status inside canvas (bottom bar) -->
-    <div class="canvas-bottom-bar">
-      <div id="liveRecStatus">space: rec+paint</div>
-    </div>
-    <!-- Performance monitor overlay (toggle with P) -->
-    <div id="perfMonitor" style="display:none;position:absolute;top:2.5rem;left:1rem;font-family:'Roboto Mono',monospace;font-size:0.6rem;color:#aaa;pointer-events:none;line-height:1.7;background:rgba(0,0,0,0.55);padding:0.35rem 0.5rem;border-radius:3px;"></div>
-    <button id="fullscreenBtn" title="fullscreen">⛶</button>
-    <div class="drop-overlay" id="dropOverlay">
-      <div class="drop-icon">↓</div>
-      <div class="drop-text">drop audio file (.wav, .mp3, .ogg)</div>
-    </div>
+  <!-- Top bar -->
+  <div class="top-bar">
+    <h1>simulation</h1>
+    <button id="helpBtn">? keys / midi</button>
   </div>
 
-  <!-- Right sidebar: signal path order — live rec → input → samples → grain → playback -->
-  <div class="bottom-panel">
+  <!-- Main: canvas (left) + right panel (clouds + samples) -->
+  <div class="main-layout">
 
-    <!-- 1. Live rec -->
-    <div class="live-rec-panel">
-      <div class="panel-label">live rec</div>
-      <button id="micEnableBtn">enable mic</button>
-      <div class="live-count" id="liveRecCount">buffers: <span>0</span></div>
-      <div class="live-granulating" id="liveGranulating">
-        <span class="gran-dot"></span>granulating
+    <!-- Canvas -->
+    <div class="canvas-wrapper" id="canvasWrapper">
+      <canvas id="sphereCanvas"></canvas>
+      <div class="hud">
+        <div id="coordinates">--,--</div>
+        <div id="paintIndicator">paint: off</div>
+        <div id="sampleIndicator" style="color:#555">no sample</div>
+        <div id="radiusIndicator" style="color:#7abcbc">r: 10°</div>
+        <div id="altLockIndicator" style="display:none;color:#f0c060">alt: locked</div>
+        <div id="loadIndicator" style="color:#555">● cpu ok</div>
       </div>
-      <div class="undo-hint">⌘Z / ctrl+Z — undo last stroke</div>
+      <div class="canvas-bottom-bar">
+        <div id="liveRecStatus">click / space: rec+paint</div>
+      </div>
+      <div id="perfMonitor" style="display:none;position:absolute;top:2.5rem;left:1rem;font-family:'Roboto Mono',monospace;font-size:0.6rem;color:#aaa;pointer-events:none;line-height:1.7;background:rgba(0,0,0,0.55);padding:0.35rem 0.5rem;border-radius:3px;"></div>
+      <button id="fullscreenBtn" title="fullscreen">⛶</button>
+      <div class="drop-overlay" id="dropOverlay">
+        <div class="drop-icon">↓</div>
+        <div class="drop-text">drop audio file (.wav, .mp3, .ogg)</div>
+      </div>
     </div>
 
-    <!-- 2. Input gain + level meter -->
-    <div class="playback-panel">
-      <div class="panel-label">input</div>
-      <div class="input-gain-knob-row">
-        <div class="knob-wrap">
-          <canvas id="inputGainKnob" width="36" height="36"></canvas>
-          <span class="knob-label">in gain</span>
+    <!-- Right panel: clouds + samples -->
+    <div class="right-panel">
+      <div style="flex-shrink:0">
+        <div class="panel-label">clouds</div>
+        <div class="cloud-slots" id="cloudSlots">
+          <div class="cloud-slot cloud-slot--empty">1</div>
+          <div class="cloud-slot cloud-slot--empty">2</div>
+          <div class="cloud-slot cloud-slot--empty">3</div>
+          <div class="cloud-slot cloud-slot--empty">4</div>
+          <div class="cloud-slot cloud-slot--empty">5</div>
+          <div class="cloud-slot cloud-slot--empty">6</div>
+          <div class="cloud-slot cloud-slot--empty">7</div>
+          <div class="cloud-slot cloud-slot--empty">8</div>
         </div>
-        <span class="knob-val" id="inputGainVal">1.00×</span>
       </div>
-      <div class="input-meter-row">
-        <span class="input-meter-label">in</span>
-        <div class="input-meter-wrap">
-          <canvas id="inputMeterCanvas"></canvas>
+      <div class="sample-list-panel">
+        <div class="panel-label">samples</div>
+        <div class="sample-list" id="sampleList"></div>
+      </div>
+    </div>
+
+  </div><!-- end .main-layout -->
+
+  <!-- Device strip: signal path left → right -->
+  <div class="device-strip">
+
+    <!-- 1. Live rec -->
+    <div class="device device--liverec">
+      <div class="device-label">live rec</div>
+      <div class="device-body">
+        <button id="micEnableBtn">enable mic</button>
+        <div class="live-count" id="liveRecCount">buffers: <span>0</span></div>
+        <div class="live-granulating" id="liveGranulating">
+          <span class="gran-dot"></span>granulating
         </div>
-        <div class="input-clip-dot" id="inputClipDot"></div>
+      </div>
+    </div>
+
+    <!-- 2. Input -->
+    <div class="device device--input">
+      <div class="device-label">input</div>
+      <div class="device-body">
+        <div class="input-gain-knob-row">
+          <div class="knob-wrap">
+            <canvas id="inputGainKnob" width="36" height="36"></canvas>
+            <span class="knob-label">gain</span>
+          </div>
+          <span class="knob-val" id="inputGainVal">1.00×</span>
+        </div>
+        <div class="input-meter-row">
+          <span class="input-meter-label">in</span>
+          <div class="input-meter-wrap">
+            <canvas id="inputMeterCanvas"></canvas>
+          </div>
+          <div class="input-clip-dot" id="inputClipDot"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Playback: snap + radius + recency -->
+    <div class="device device--playback">
+      <div class="device-label">playback</div>
+      <div class="device-body">
+        <div class="playback-top-row">
+          <button id="snapToggleBtn">snap: off</button>
+          <div class="recency-group">
+            <span class="recency-group-label">recency</span>
+            <canvas id="recencyDial" width="28" height="28"></canvas>
+            <span class="recency-val-label" id="recencyVal">3</span>
+          </div>
+        </div>
+        <div class="radius-viz-wrap">
+          <canvas id="radiusViz"></canvas>
+        </div>
       </div>
     </div>
 
     <!-- 4. Grain preset -->
-    <div class="preset-panel">
-      <div class="panel-label">grain preset</div>
-      <div class="preset-buttons" id="presetButtons"></div>
-      <div class="preset-waveform-wrap">
-        <canvas id="presetWaveform"></canvas>
-      </div>
-      <div class="preset-stats">
-        <span class="stat-label">dur</span><span id="psDur">—</span>
-        <span class="stat-label">k</span><span id="psK">—</span>
-        <span class="stat-label">pan</span><span id="psPan">—</span>
-      </div>
-      <div class="recency-row">
-        <span class="stat-label">recency</span>
-        <div class="recency-ctrl">
-          <button class="recency-btn" id="recencyDec">−</button>
-          <span id="recencyVal">3</span>
-          <button class="recency-btn" id="recencyInc">+</button>
+    <div class="device device--preset">
+      <div class="device-label">grain preset</div>
+      <div class="device-body">
+        <div class="preset-buttons" id="presetButtons"></div>
+        <div class="preset-waveform-wrap">
+          <canvas id="presetWaveform"></canvas>
+        </div>
+        <div class="preset-stats">
+          <div class="stat-item"><span class="stat-label">dur</span><span id="psDur">—</span></div>
+          <div class="stat-item"><span class="stat-label">k</span><span id="psK">—</span></div>
+          <div class="stat-item"><span class="stat-label">pan</span><span id="psPan">—</span></div>
         </div>
       </div>
     </div>
 
-    <!-- 5. Cloud banks -->
-    <div class="cloud-panel">
-      <div class="panel-label">clouds</div>
-      <div class="cloud-slots" id="cloudSlots">
-        <div class="cloud-slot cloud-slot--empty">1</div>
-        <div class="cloud-slot cloud-slot--empty">2</div>
-        <div class="cloud-slot cloud-slot--empty">3</div>
-        <div class="cloud-slot cloud-slot--empty">4</div>
-        <div class="cloud-slot cloud-slot--empty">5</div>
-        <div class="cloud-slot cloud-slot--empty">6</div>
-        <div class="cloud-slot cloud-slot--empty">7</div>
-        <div class="cloud-slot cloud-slot--empty">8</div>
-      </div>
-    </div>
-
-    <!-- 6. Playback (output) -->
-    <div class="playback-panel">
-      <div class="panel-label">playback</div>
-      <button id="snapToggleBtn">snap: off</button>
-      <div class="radius-viz-wrap">
-        <canvas id="radiusViz"></canvas>
-      </div>
-      <div class="meter-row">
-        <span class="meter-label">out</span>
-        <div class="meter-wrap">
-          <canvas id="outputMeterCanvas"></canvas>
+    <!-- 5. Output -->
+    <div class="device device--output">
+      <div class="device-label">output</div>
+      <div class="device-body" style="flex-direction:row;align-items:flex-end;gap:0.3rem;">
+        <div class="meter-wrap" style="width:14px;flex:none;height:64px;background:#1c1c1c;border-radius:2px;overflow:hidden;">
+          <canvas id="outputMeterCanvas" style="display:block;width:100%;height:100%;"></canvas>
         </div>
         <div class="meter-clip-dot" id="meterClipDot"></div>
       </div>
     </div>
 
-  </div>
-  </div><!-- end .main-layout -->
+  </div><!-- end .device-strip -->
 
-  <!-- Loaded samples — full width below sphere -->
-  <div class="sample-list-panel sample-list-panel--full">
-    <div class="panel-label">loaded samples</div>
-    <div class="sample-list" id="sampleList"></div>
-  </div>
-
-  <div class="instructions">
-    <span class="key">mouse</span> rotate
-    <span class="sep">·</span>
-    <span class="key">click</span> / <span class="key">space</span> rec+paint
-    <span class="sep">·</span>
-    <span class="key">1–9</span> paint sample
-    <span class="sep">·</span>
-    <span class="key">scroll</span> / <span class="key">[ ]</span> radius
-    <span class="sep">·</span>
-    <span class="key">right click</span> / <span class="key">⌘Z</span> undo
-    <span class="sep">·</span>
-    <span class="key">↓</span> drop cloud
-    <span class="sep">·</span>
-    <span class="key">↑</span> pick up cloud
-    <span class="sep">·</span>
-    <span class="key">N</span> snap
-    <span class="sep">·</span>
-    <span class="key">M</span> midi map
-    <span class="sep">·</span>
-    <span class="key">P</span> perf
-  </div>
-
-  <div class="output-meter-bar">
-    <span class="meter-label">out</span>
-    <div class="meter-wrap">
-      <canvas id="outputMeterCanvasBottom"></canvas>
-    </div>
-    <div class="meter-clip-dot" id="meterClipDotBottom"></div>
-  </div>
+  <!-- Hidden compat canvases (JS still draws to these IDs) -->
+  <canvas id="outputMeterCanvasBottom" style="display:none;"></canvas>
+  <div id="meterClipDotBottom" style="display:none;"></div>
 
 <!-- ── MIDI / Keyboard mapping modal ──────────────────────────────────────── -->
 <div id="mappingModal">
@@ -1093,18 +942,18 @@ const PRESETS = [
   {
     name:         'cloud',
     // long grains, high k, lots of overlap → thick, washy texture (Mutable Instruments Clouds)
-    k:            24,
+    k:            8,      // was 24 — wash comes from duration/overlap, not particle count
     duration:     0.8,    // 800ms
     durJitter:    0.3,
     overlap:      0.5,
     fade:         0.22,
-    retriggerMs:  50,
+    retriggerMs:  400,    // was 50 — must be ~half duration to prevent same-particle node stacking
     startJitter:  0.25,
-    sprayCount:   4,
+    sprayCount:   1,      // was 4 — spray adds nodes with no benefit for cloud texture
     spraySpread:  0.15,
     pitchJitter:  0.02,
     panSpread:    1.0,
-    volume:       0.006,  // k=24, spray=4 → up to 96 voices × 0.006 = 0.58 sum
+    volume:       0.025,  // k=8, spray=1 → up to 8 voices × 0.025 = 0.2 sum (boosted since fewer voices)
   },
   {
     name:         'crackle',
@@ -1157,34 +1006,34 @@ const PRESETS = [
   {
     name:         'freeze',
     // extremely long overlapping grains, stays glued to one position → frozen sustain (Strymon Cloudburst)
-    k:            30,
+    k:            10,     // was 30 — the long duration already creates the wash
     duration:     2.0,    // 2s — very long
     durJitter:    0.4,
     overlap:      0.8,    // heavy overlap → permanent wash
     fade:         0.5,
-    retriggerMs:  30,
+    retriggerMs:  1000,   // was 30 — 2s grains need 1s retrigger minimum to not stack
     startJitter:  0.005,  // almost zero — freezes on same region
-    sprayCount:   5,
+    sprayCount:   1,      // was 5 — 2s × 5 spray = 10s of nodes per particle, devastating
     spraySpread:  0.05,
     pitchJitter:  0.005,
     panSpread:    0.9,
-    volume:       0.003,  // k=30, spray=5 → up to 150 voices × 0.003 = 0.45 sum
+    volume:       0.012,  // k=10, spray=1 → up to 10 voices × 0.012 = 0.12 sum
   },
   {
     name:         'shimmer',
     // pitch-shifted upward texture with high overlap → ethereal shimmer (Mutable Instruments Beads)
-    k:            16,
+    k:            8,      // was 16
     duration:     0.45,   // 450ms
     durJitter:    0.15,
     overlap:      0.45,
     fade:         0.15,
-    retriggerMs:  40,
+    retriggerMs:  200,    // was 40 — ~half duration
     startJitter:  0.12,
-    sprayCount:   3,
+    sprayCount:   2,      // was 3 — keep a little spray for shimmer texture
     spraySpread:  0.1,
     pitchJitter:  0.18,   // higher pitch jitter → shimmery octave-ish spread
     panSpread:    0.85,
-    volume:       0.008,  // k=16, spray=3 → up to 48 voices × 0.008 = 0.38 sum
+    volume:       0.018,  // k=8, spray=2 → up to 16 voices × 0.018 = 0.29 sum
   },
   {
     name:         'gravel',
@@ -1194,13 +1043,13 @@ const PRESETS = [
     durJitter:    0.04,
     overlap:      0.15,
     fade:         0.015,
-    retriggerMs:  25,     // fast retrigger → dense
+    retriggerMs:  50,     // was 25 — must be > duration to prevent stacking (65ms grain → 50ms min)
     startJitter:  0.2,
-    sprayCount:   4,
+    sprayCount:   2,      // was 4 — short grains × 4 spray = nodes expire before next tick
     spraySpread:  0.07,
     pitchJitter:  0.06,
     panSpread:    0.7,
-    volume:       0.012,  // k=12, spray=4 → up to 48 voices × 0.012 = 0.58 sum
+    volume:       0.022,  // k=12, spray=2 → up to 24 voices × 0.022 = 0.53 sum
   },
 ];
 
@@ -1221,6 +1070,11 @@ let camQ = [1, 0, 0, 0];       // camera orientation quaternion
 let mouseX = 0, mouseY = 0;
 let mousePixelX = 0, mousePixelY = 0;
 let mouseInCanvas = false;
+let altLocked          = false;  // true while Alt held — sphere position frozen
+let altFrozenMouseX      = 0;    // mouse coords snapshotted at Alt press
+let altFrozenMouseY      = 0;
+let altFrozenMousePixelX = 0;
+let altFrozenMousePixelY = 0;
 let searchRadiusDeg = 10;
 let nearestMode = false;   // when true: ignore radius, always pick closest particle
 
@@ -1239,6 +1093,8 @@ let currentStrokeId = -1;       // the stroke being painted right now
 // Only granulate the N most recently recorded buffers present in radius.
 // A "buffer" = unique (source, liveBufferIdx|sampleIndex) combination.
 let recencyN = 3;               // how many most-recent buffers to allow
+let drawRecencyDial = null;     // set during setup — module-level so MIDI CC can call it
+let setRecency      = null;     // same
 
 // ── Cloud drop system ─────────────────────────────────────────────────────
 // Up to 8 frozen granulating clouds, each locked to a sphere position.
@@ -1296,7 +1152,7 @@ const perf = {
   frameMs:        0,    // last frame duration ms
   frameMsMax:     0,    // rolling max (resets every 2s)
   frameMsMaxAt:   0,
-  schedulerDrift: 0,    // how late scheduleGrains fired vs 15ms target
+  schedulerDrift: 0,    // how late scheduleGrains fired vs 30ms target
   schedulerMax:   0,
   schedulerMaxAt: 0,
   grainsFired:    0,    // grains fired in last scheduler tick
@@ -1320,12 +1176,12 @@ function perfTick() {
   perf.schedulerMax = Math.max(perf.schedulerMax, perf.schedulerDrift);
   perf.activeNodes  = _grainSourceCount;
 
-  // Audio clock health — if audioCtx exists check it advances with wall clock
-  if (audioCtx) {
+  // Audio clock health — skip first 3s while AudioContext warms up
+  if (audioCtx && now > 3000) {
     const wallElapsed  = (now - perf.audioClockWall) / 1000;
     const audioElapsed = audioCtx.currentTime - perf.audioClockLast;
-    if (perf.audioClockWall > 0 && wallElapsed > 0.1) {
-      if (audioElapsed < wallElapsed * 0.85) perf.underruns++; // clock lagging >15%
+    if (perf.audioClockWall > 0 && wallElapsed > 0.2) {
+      if (audioElapsed < wallElapsed * 0.70) perf.underruns++; // clock lagging >30%
       perf.audioClockLast = audioCtx.currentTime;
       perf.audioClockWall = now;
     } else if (perf.audioClockWall === 0) {
@@ -1334,12 +1190,31 @@ function perfTick() {
     }
   }
 
+  // ── Always-visible load indicator ────────────────────────────────────────
+  const loadEl = document.getElementById('loadIndicator');
+  if (loadEl) {
+    const frameBad = perf.frameMs > 25;        // >25ms = dropped frame
+    const schedBad = perf.schedulerDrift > 20; // >20ms late on 30ms interval = likely glitch
+    const nodesBad = perf.activeNodes > MAX_GRAIN_NODES * 0.75; // approaching cap
+    if (frameBad || schedBad || nodesBad) {
+      const reasons = [];
+      if (nodesBad) reasons.push(`${perf.activeNodes} grains`);
+      if (schedBad) reasons.push(`sched +${perf.schedulerDrift.toFixed(0)}ms`);
+      if (frameBad) reasons.push(`frame ${perf.frameMs.toFixed(0)}ms`);
+      loadEl.style.color = frameBad ? '#e06060' : '#e8a030';
+      loadEl.textContent = `● overload: ${reasons.join(', ')}`;
+    } else {
+      loadEl.style.color = '#555';
+      loadEl.textContent = `● ${perf.activeNodes} grains`;
+    }
+  }
+
   if (!perfMonitorVisible) return;
   const el = document.getElementById('perfMonitor');
   if (!el) return;
 
-  const frameColor   = perf.frameMs   > 20 ? '#e06060' : perf.frameMs   > 12 ? '#e8a030' : '#7abcbc';
-  const schedColor   = perf.schedulerDrift > 10 ? '#e06060' : perf.schedulerDrift > 5 ? '#e8a030' : '#7abcbc';
+  const frameColor    = perf.frameMs   > 20 ? '#e06060' : perf.frameMs   > 12 ? '#e8a030' : '#7abcbc';
+  const schedColor    = perf.schedulerDrift > 20 ? '#e06060' : perf.schedulerDrift > 10 ? '#e8a030' : '#7abcbc';
   const underrunColor = perf.underruns > 0 ? '#e06060' : '#555';
 
   el.innerHTML =
@@ -1514,16 +1389,11 @@ function startLiveRecording() {
 
   // 8192-sample buffer (~372ms at 22050 Hz) — very safe headroom at the lower sample rate.
   // Recording latency is irrelevant since we don't do live monitoring through the chain.
-  recordingNode = actx.createScriptProcessor(8192, 1, 1);
+  recordingNode = actx.createScriptProcessor(2048, 1, 1);
 
-  let recordingArmed = false;
-  setTimeout(() => {
-    recordingArmed = true;
-    recordingStartTime = performance.now();
-  }, 80); // tiny delay to avoid capturing the key-press click
+  recordingStartTime = performance.now();
 
   recordingNode.onaudioprocess = (e) => {
-    if (!recordingArmed) return;
     const input = e.inputBuffer.getChannelData(0);
     if (recordingWritePos + input.length > recordingRaw.length) {
       const grown = new Float32Array(recordingRaw.length * 2);
@@ -1731,7 +1601,7 @@ function undoLastStroke() {
 
 function rand(min, max) { return min + Math.random() * (max - min); }
 
-function playGrain(particle) {
+function playGrain(particle, customParams) {
   const actx   = ensureAudioContext();
   let   buffer = null;
 
@@ -1745,22 +1615,41 @@ function playGrain(particle) {
   }
   if (!buffer) return;
 
-  // Retrigger guard in audio-clock seconds (more precise than wall clock)
+  // Use cloud's own snapshotted params if provided, otherwise use live cursor params
+  const p = customParams || gp();
+
+  // Retrigger guard — keyed per (particle, params source) so cursor and clouds
+  // don't share the same lastTriggeredAt and block each other
   const audioNow = actx.currentTime;
-  const retriggerSec = gp().retriggerMs / 1000;
-  if (particle.lastTriggeredAt !== undefined && audioNow - particle.lastTriggeredAt < retriggerSec) return;
-  particle.lastTriggeredAt = audioNow;
+  const retriggerSec = p.retriggerMs / 1000;
+  const triggerKey = customParams ? 'cloudTriggeredAt' : 'lastTriggeredAt';
+  if (particle[triggerKey] !== undefined && audioNow - particle[triggerKey] < retriggerSec) return;
+  particle[triggerKey] = audioNow;
 
   const sampleDur    = buffer.duration;
   const cropStartSec = particle.source === 'sample'
     ? (samples[particle.sampleIndex].cropStart * sampleDur) : 0;
   const cropEndSec   = particle.source === 'sample'
     ? (samples[particle.sampleIndex].cropEnd   * sampleDur) : sampleDur;
-  // Small lookahead so grains are never scheduled in the past
   const LOOKAHEAD = 0.015;
   const baseTime  = actx.currentTime + LOOKAHEAD;
 
-  const p = gp();
+  // Build Hann curves for this params set.
+  // Cursor path reuses the precomputed global pair (no allocation).
+  // Cloud path builds fresh curves from its snapshotted volume.
+  let attackCurve, releaseCurve;
+  if (customParams) {
+    attackCurve  = new Float32Array(HANN_LEN);
+    releaseCurve = new Float32Array(HANN_LEN);
+    for (let j = 0; j < HANN_LEN; j++) {
+      attackCurve[j]  = HANN_ATTACK[j]  * p.volume;
+      releaseCurve[j] = HANN_RELEASE[j] * p.volume;
+    }
+  } else {
+    attackCurve  = GRAIN_ATTACK_CURVE;
+    releaseCurve = GRAIN_RELEASE_CURVE;
+  }
+
   for (let i = 0; i < p.sprayCount; i++) {
     const timeOffset = i * p.spraySpread * rand(0.5, 1.5);
     const t          = baseTime + timeOffset;
@@ -1768,40 +1657,50 @@ function playGrain(particle) {
     let startPos = particle.grainStart + rand(-p.startJitter, p.startJitter);
     const dur = Math.max(0.02, particle.grainDuration + rand(-p.durJitter, p.durJitter));
 
-    // Ensure the grain window fits entirely within [cropStartSec, cropEndSec].
-    // If near the start, push startPos forward so the full grain fits rather than truncating.
-    // If near the end, pull startPos back so the grain isn't cut short there either.
     const cropLen = cropEndSec - cropStartSec;
     if (cropLen < dur) {
-      // Buffer shorter than one grain — play whatever we have
       startPos = cropStartSec;
     } else {
       startPos = Math.max(cropStartSec, Math.min(startPos, cropEndSec - dur));
     }
 
     const actualDur = Math.min(dur, cropEndSec - startPos);
-    // Skip grains too short to envelope cleanly
     if (actualDur < 0.015) continue;
 
-    // Fade: at least 4ms, at most a third of grain duration
     const fade   = Math.max(0.004, Math.min(p.fade, actualDur / 3));
     const source = actx.createBufferSource();
     source.buffer = buffer;
     source.playbackRate.value = 1 + rand(-p.pitchJitter, p.pitchJitter);
 
-    const gain    = actx.createGain();
-
-    // ── Hann window envelope ─────────────────────────────────────────────────
-    // Reuse precomputed scaled curves (rebuilt on preset change) — no per-grain allocation.
+    const gain = actx.createGain();
     gain.gain.setValueAtTime(0, t);
-    gain.gain.setValueCurveAtTime(GRAIN_ATTACK_CURVE,  t,               fade);
-    gain.gain.setValueCurveAtTime(GRAIN_RELEASE_CURVE, t + actualDur - fade, fade);
+    gain.gain.setValueCurveAtTime(attackCurve,  t,               fade);
+    gain.gain.setValueCurveAtTime(releaseCurve, t + actualDur - fade, fade);
 
     const panner = actx.createStereoPanner();
-    panner.pan.value = rand(-p.panSpread, p.panSpread);
+    // Spatial pan: transform particle lon/lat into camera space to get true azimuth.
+    // Both cursor and cloud grains use live camQ — pan moves as you look around.
+    const [wx, wy, wz] = spherePoint(particle.lon, particle.lat);
+    const [cx, cy, cz] = qRotateVec(qConjugate(camQ), [wx, wy, wz]);
+    // cx/cz = horizontal azimuth in camera space (right = +1, left = -1)
+    // cz > 0 means particle is in front hemisphere; behind wraps via sign flip
+    const azimuthPan = cz !== 0
+      ? Math.max(-1, Math.min(1, cx / Math.abs(cz)))
+      : 0;
+    // panSpread is now a small jitter around the true azimuth position
+    const jitter = rand(-p.panSpread * 0.4, p.panSpread * 0.4);
+    panner.pan.value = Math.max(-1, Math.min(1, azimuthPan + jitter));
+    // Elevation attenuation: particles above/below center lose a little presence
+    const elevNorm    = cz !== 0 ? Math.min(1, Math.abs(cy / Math.abs(cz))) : 0;
+    const elevScale   = 1 - elevNorm * 0.35;
+
+    // elevation pre-gain node
+    const elevGain = actx.createGain();
+    elevGain.gain.value = elevScale;
 
     source.connect(gain);
-    gain.connect(panner);
+    gain.connect(elevGain);
+    elevGain.connect(panner);
     panner.connect(getMasterBus());
 
     // Use only source.start duration — don't also call stop(), double-stop causes clicks
@@ -1809,7 +1708,7 @@ function playGrain(particle) {
     _grainSourceCount++;
     source.addEventListener('ended', () => {
       _grainSourceCount = Math.max(0, _grainSourceCount - 1);
-      try { source.disconnect(); gain.disconnect(); panner.disconnect(); } catch(_){}
+      try { source.disconnect(); gain.disconnect(); elevGain.disconnect(); panner.disconnect(); } catch(_){}
     });
 
     // Track for waveform playhead (loaded samples only)
@@ -2034,16 +1933,61 @@ function setupPresets() {
   const snapBtn = document.getElementById('snapToggleBtn');
   if (snapBtn) snapBtn.addEventListener('click', toggleNearestMode);
 
-  // Recency filter +/- buttons
-  const recencyValEl = document.getElementById('recencyVal');
-  document.getElementById('recencyDec')?.addEventListener('click', () => {
-    recencyN = Math.max(1, recencyN - 1);
+  // ── Recency dial (rotary knob, drag up/down) ─────────────────────────────
+  const recencyValEl  = document.getElementById('recencyVal');
+  const recencyDialEl = document.getElementById('recencyDial');
+  const RECENCY_MIN = 1, RECENCY_MAX = 16;
+
+  drawRecencyDial = function() {
+    if (!recencyDialEl) return;
+    const dc  = recencyDialEl.getContext('2d');
+    const W = recencyDialEl.width, H = recencyDialEl.height;
+    const cx = W / 2, cy = H / 2, r = W * 0.42;
+    dc.clearRect(0, 0, W, H);
+    // Track
+    const startA = Math.PI * 0.75, endA = Math.PI * 2.25;
+    dc.beginPath(); dc.arc(cx, cy, r, startA, endA);
+    dc.strokeStyle = '#2e2e2e'; dc.lineWidth = 3; dc.lineCap = 'round'; dc.stroke();
+    // Fill arc
+    const t = (recencyN - RECENCY_MIN) / (RECENCY_MAX - RECENCY_MIN);
+    const fillEnd = startA + t * (endA - startA);
+    dc.beginPath(); dc.arc(cx, cy, r, startA, fillEnd);
+    dc.strokeStyle = '#7abcbc'; dc.lineWidth = 3; dc.stroke();
+    // Indicator dot
+    dc.beginPath(); dc.arc(
+      cx + Math.cos(fillEnd) * r, cy + Math.sin(fillEnd) * r, 2.5, 0, Math.PI * 2
+    );
+    dc.fillStyle = '#aadddd'; dc.fill();
+  }
+
+  setRecency = function(n) {
+    recencyN = Math.max(RECENCY_MIN, Math.min(RECENCY_MAX, n));
     if (recencyValEl) recencyValEl.textContent = recencyN;
-  });
-  document.getElementById('recencyInc')?.addEventListener('click', () => {
-    recencyN = Math.min(16, recencyN + 1);
-    if (recencyValEl) recencyValEl.textContent = recencyN;
-  });
+    drawRecencyDial();
+  }
+
+  if (recencyDialEl) {
+    let _recDragY = null, _recDragStart = 0;
+    recencyDialEl.addEventListener('mousedown', e => {
+      _recDragY = e.clientY; _recDragStart = recencyN;
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', e => {
+      if (_recDragY === null) return;
+      const dy = _recDragY - e.clientY; // up = increase
+      setRecency(Math.round(_recDragStart + dy / 6));
+    });
+    window.addEventListener('mouseup', () => { _recDragY = null; });
+    // Scroll on dial
+    recencyDialEl.addEventListener('wheel', e => {
+      e.preventDefault(); e.stopPropagation();
+      setRecency(recencyN + (e.deltaY < 0 ? 1 : -1));
+    }, { passive: false });
+    drawRecencyDial();
+  }
+
+  // ? button opens mapping modal
+  document.getElementById('helpBtn')?.addEventListener('click', openMappingModal);
 
   // Mic enable button — request permission early so the first recording isn't clippy
   const micBtn = document.getElementById('micEnableBtn');
@@ -2080,7 +2024,9 @@ function dropCloud() {
   if (slotIndex === -1) return; // all 8 slots occupied
   const { lon, lat } = mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
   const color = CLOUD_COLORS[slotIndex]; // color is fixed to slot position
-  cloudSlots[slotIndex] = { slotIndex, lon, lat, color, searchRadiusDeg };
+  // Snapshot current grain params so this cloud is independent of future preset changes
+  // Snapshot camQ so this cloud's spatial pan stays fixed to drop-time orientation
+  cloudSlots[slotIndex] = { slotIndex, lon, lat, color, searchRadiusDeg, grainParams: { ...grainParams } };
   updateCloudBanksUI();
 }
 
@@ -2621,9 +2567,9 @@ function init() {
   requestAnimationFrame(() => { resizeCanvas(); drawPresetWaveform(); updatePlaybackControls(); animate(); });
 
   // Grain scheduler — independent of render loop so slow frames don't delay grains.
-  // 15ms interval = ~67 "ticks"/sec. The retriggerMs guard inside playGrain
-  // prevents over-triggering; this just ensures scheduling is never frame-starved.
-  setInterval(scheduleGrains, 15);
+  // 30ms interval = ~33 ticks/sec. Grains are 25ms–2000ms so 30ms scheduling
+  // resolution is inaudible. Halves background CPU vs the old 15ms interval.
+  setInterval(scheduleGrains, 30);
 }
 
 
@@ -3016,20 +2962,30 @@ function findNearestCloudSlot(refLon, refLat) {
 }
 
 let _schedLastAt = 0;
+const MAX_GRAIN_NODES = 250; // hard cap on concurrent AudioBufferSourceNodes
+
 function scheduleGrains() {
   // Measure scheduler drift — how late this tick fired vs 15ms target
   const now = performance.now();
-  if (_schedLastAt > 0) perf.schedulerDrift = Math.max(0, (now - _schedLastAt) - 15);
+  if (_schedLastAt > 0) perf.schedulerDrift = Math.max(0, (now - _schedLastAt) - 30);
   _schedLastAt = now;
 
+  // Hard cap — skip tick entirely if saturated, let nodes expire first
+  if (_grainSourceCount >= MAX_GRAIN_NODES) return;
+
   const { lon: cursorLon, lat: cursorLat } =
-    mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+    (mouseInCanvas || altLocked) ? getMouseLonLat() : getCursorLonLat();
   const k = gp().k;
   const searchRadiusRad = searchRadiusDeg * Math.PI / 180;
 
   selectedGrainSet = new Set();
   liveGranulatingThisFrame = false;
   perf.grainsFired = 0;
+
+  // No shared budget/pressure scaling — each cloud and the cursor are independent.
+  // The retrigger guard on each particle is the natural throttle: a cloud with k=8
+  // and retriggerMs=400 can only ever have ~8 grains alive at once regardless of
+  // what other clouds are doing. The cap above is a safety ceiling only.
 
   // ── Cursor grains (only when particles exist) ─────────────────────────────
   if (particles.length) {
@@ -3063,9 +3019,9 @@ function scheduleGrains() {
     const cloudCandidates = particles
       .map(p => ({ p, ang: angleBetweenSphere(p.lon, p.lat, cloud.lon, cloud.lat) }))
       .filter(c => c.ang < cloudRadiusRad);
-    const cloudGrains = shuffleInPlace(applyRecencyFilter(cloudCandidates)).slice(0, k).map(c => c.p);
+    const cloudGrains = shuffleInPlace(applyRecencyFilter(cloudCandidates)).slice(0, cloud.grainParams.k).map(c => c.p);
     for (const p of cloudGrains) {
-      playGrain(p);
+      playGrain(p, cloud.grainParams);
       perf.grainsFired++;
       if (p.source === 'live') liveGranulatingThisFrame = true;
       selectedGrainSet.add(p);
@@ -3145,8 +3101,8 @@ function angleBetweenSphere(lon1, lat1, lon2, lat2) {
 
 function drawCursor() {
   const cx = canvas.width / 2, cy = canvas.height / 2;
-  const mx = mouseInCanvas ? mousePixelX : cx;
-  const my = mouseInCanvas ? mousePixelY : cy;
+  const mx = (mouseInCanvas || altLocked) ? mousePixelX : cx;
+  const my = (mouseInCanvas || altLocked) ? mousePixelY : cy;
 
   const searchRadiusRad = searchRadiusDeg * Math.PI / 180;
   const fovRad   = (FOV_DEG * Math.PI) / 180;
@@ -3161,7 +3117,7 @@ function drawCursor() {
   ctx.fillStyle = 'rgba(255,255,255,0.25)';
   ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); ctx.fill();
 
-  if (!mouseInCanvas) { ctx.restore(); return; }
+  if (!mouseInCanvas && !altLocked) { ctx.restore(); return; }
 
   // Determine painting colour (live-rec overrides sample colour)
   const painting = isPainting;
@@ -3225,14 +3181,17 @@ function drawCursor() {
 
 function setupEvents() {
   canvas.addEventListener('mousemove', e => {
-    const rect   = canvas.getBoundingClientRect();
-    mouseX       = ((e.clientX - rect.left) / rect.width  - 0.5) * 2;
-    mouseY       = ((e.clientY - rect.top)  / rect.height - 0.5) * 2;
-    mousePixelX  = (e.clientX - rect.left) * (canvas.width  / rect.width);
-    mousePixelY  = (e.clientY - rect.top)  * (canvas.height / rect.height);
-    mouseInCanvas = true;
+    if (!altLocked) {
+      const rect  = canvas.getBoundingClientRect();
+      mouseX      = ((e.clientX - rect.left) / rect.width  - 0.5) * 2;
+      mouseY      = ((e.clientY - rect.top)  / rect.height - 0.5) * 2;
+      mousePixelX = (e.clientX - rect.left) * (canvas.width  / rect.width);
+      mousePixelY = (e.clientY - rect.top)  * (canvas.height / rect.height);
+      mouseInCanvas = true;
+    }
+    // When altLocked: ignore all mouse movement — coords stay frozen
   });
-  canvas.addEventListener('mouseleave', () => { mouseInCanvas = false; });
+  canvas.addEventListener('mouseleave', () => { if (!altLocked) mouseInCanvas = false; });
 
   canvas.addEventListener('touchstart', e => {
     e.preventDefault();
@@ -3251,6 +3210,24 @@ function setupEvents() {
 
   // ── Keyboard ────────────────────────────────────────────────────────────────
   document.addEventListener('keydown', async e => {
+
+    // ── Alt: freeze sphere at current position so real mouse can reach UI ──────
+    if (e.code === 'AltLeft' || e.code === 'AltRight') {
+      e.preventDefault();
+      if (!altLocked) {
+        altLocked            = true;
+        altFrozenMouseX      = mouseX;
+        altFrozenMouseY      = mouseY;
+        altFrozenMousePixelX = mousePixelX;
+        altFrozenMousePixelY = mousePixelY;
+        // Show OS cursor so user can reach panel controls
+        const wrapper = document.getElementById('canvasWrapper');
+        if (wrapper) { wrapper.style.cursor = 'auto'; canvas.style.cursor = 'auto'; }
+        const ind = document.getElementById('altLockIndicator');
+        if (ind) ind.style.display = '';
+      }
+      return;
+    }
 
     // ── Spacebar: live recording + painting ──────────────────────────────────
     if (e.code === 'Space' && !e.repeat) {
@@ -3281,7 +3258,7 @@ function setupEvents() {
         ensureAudioContext();
         activeSampleIndex = idx;
         const s = samples[idx];
-        s.grainCursor = s.cropStart * s.duration;
+        // Don't reset grainCursor — let it continue scanning through the sample
 
         recordStrokeStart('sample');
         isPainting      = true;
@@ -3348,6 +3325,17 @@ function setupEvents() {
   });
 
   document.addEventListener('keyup', e => {
+    // ── Alt release: restore sphere mouse interaction ─────────────────────────
+    if (e.code === 'AltLeft' || e.code === 'AltRight') {
+      altLocked = false;
+      // Restore hidden cursor on canvas
+      const wrapper = document.getElementById('canvasWrapper');
+      if (wrapper) { wrapper.style.cursor = ''; canvas.style.cursor = ''; }
+      const ind = document.getElementById('altLockIndicator');
+      if (ind) ind.style.display = 'none';
+      return;
+    }
+
     // ── Spacebar release: stop recording, end live paint stroke ──────────────
     if (e.code === 'Space') {
       e.preventDefault();
@@ -3390,9 +3378,19 @@ function setupEvents() {
   // ── Scroll: adjust search radius ────────────────────────────────────────────
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
-    const delta = e.deltaY > 0 ? SEARCH_RADIUS_STEP : -SEARCH_RADIUS_STEP;
-    searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, Math.min(SEARCH_RADIUS_MAX, searchRadiusDeg + delta));
-    updatePlaybackControls();
+    // Use dominant axis (Shift+scroll swaps deltaY into deltaX on some browsers)
+    const raw = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    if (e.shiftKey) {
+      // Shift+scroll: adjust search radius
+      const delta = raw > 0 ? SEARCH_RADIUS_STEP : -SEARCH_RADIUS_STEP;
+      searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, Math.min(SEARCH_RADIUS_MAX, searchRadiusDeg + delta));
+      updatePlaybackControls();
+    } else {
+      // Plain scroll: cycle presets
+      const dir  = raw > 0 ? 1 : -1;
+      const next = (activePresetIndex + dir + PRESETS.length) % PRESETS.length;
+      selectPreset(next);
+    }
   }, { passive: false });
 
   // ── Left click: same as spacebar (rec+paint) ─────────────────────────────────
@@ -3542,7 +3540,7 @@ function animate() {
   perfTick();
 
   // ── Camera rotation ──────────────────────────────────────────────────────
-  if (mouseInCanvas) {
+  if (mouseInCanvas && !altLocked) {
     const dist = Math.sqrt(mouseX*mouseX + mouseY*mouseY);
     const DEAD_ZONE = 0.30;
     if (dist > DEAD_ZONE) {
@@ -3562,13 +3560,13 @@ function animate() {
         camQ = qNormalize(qMul(camQ, qPitch));
       }
     }
-  } else {
+  } else if (!altLocked) {
     const qAuto = qFromAxisAngle(0, 1, 0, AUTO_ROTATION_SPEED);
     camQ = qNormalize(qMul(qAuto, camQ));
   }
 
   // ── Drop particles while painting ────────────────────────────────────────
-  if (isPainting) {
+  if (isPainting && !altLocked) {
     paintFrameCount++;
     if (paintFrameCount % PAINT_INTERVAL === 0) {
       const { lon, lat } = getMouseLonLat();
@@ -3871,6 +3869,12 @@ function renderMappingTable() {
 // ── Modal open/close wiring (done after DOM ready, called from init) ──────────
 function setupMappingModal() {
   loadMidiMappings();
+  // Patch recency CC fn to also redraw the dial
+  const recEntry = ACTIONS.find(a => a.id === 'recency_cc');
+  if (recEntry) {
+    const orig = recEntry.ccFn;
+    recEntry.ccFn = v => { orig(v); if (typeof drawRecencyDial === 'function') drawRecencyDial(); };
+  }
   document.getElementById('mappingClose')?.addEventListener('click', closeMappingModal);
   document.getElementById('mappingModal')?.addEventListener('click', e => {
     if (e.target === document.getElementById('mappingModal')) closeMappingModal();
