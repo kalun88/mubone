@@ -1545,7 +1545,11 @@ async function loadAudioFile(file) {
     cropEnd:    1
   });
 
+  // Auto-switch viewer to the newly loaded sample if none is showing yet
+  if (svActiveTab < 0) svActiveTab = samples.length - 1;
   rebuildSampleListUI();
+  // Defer waveform draw to next frame so layout is fully settled
+  requestAnimationFrame(drawSvWaveform);
   console.log(`Loaded sample ${samples.length}: ${file.name} (${audioBuffer.duration.toFixed(2)}s)`);
 }
 
@@ -2108,6 +2112,7 @@ function rebuildSampleListUI() {
   }
   // After rebuild, refresh the viewer tabs and redraw active slot
   buildSvTabs();
+  if (svActiveTab < 0 && samples.length > 0) svActiveTab = 0;
   if (svActiveTab >= samples.length) svActiveTab = samples.length - 1;
   drawSvWaveform();
   setupSvCropInteraction();
@@ -2838,7 +2843,13 @@ function init() {
   setupMappingModal();
   initMidi();
   // Re-size after first layout pass in case dimensions weren't settled yet
-  requestAnimationFrame(() => { resizeCanvas(); drawPresetWaveform(); updatePlaybackControls(); buildSvTabs(); animate(); });
+  requestAnimationFrame(() => { resizeCanvas(); drawPresetWaveform(); updatePlaybackControls(); buildSvTabs(); drawSvWaveform(); animate(); });
+
+  // Redraw waveform if the viewer is resized (e.g. window resize)
+  const svDisplayEl = document.getElementById('svDisplay');
+  if (svDisplayEl) {
+    new ResizeObserver(() => drawSvWaveform()).observe(svDisplayEl);
+  }
 
   // Grain scheduler — independent of render loop so slow frames don't delay grains.
   // 30ms interval = ~33 ticks/sec. Grains are 25ms–2000ms so 30ms scheduling
