@@ -1504,16 +1504,23 @@ async function loadAudioFile(file) {
 
 // (Sample paint is now purely momentary via number key hold — no toggle function needed)
 
-function updateSamplePaintIndicator() {
+function updateSamplePaintIndicator() { updatePaintIndicator(); } // alias kept for call sites
+function updatePaintIndicator() {
   const indicator = document.getElementById('sampleIndicator');
-  if (activeSampleIndex >= 0 && activeSampleIndex < samples.length) {
+  if (!indicator) return;
+  if (isRecording) {
+    // Live mic input is active — show what's being painted
+    const color = LIVE_PAINT_COLORS[liveColorIndex % LIVE_PAINT_COLORS.length];
+    indicator.textContent = '● live';
+    indicator.style.color = color;
+  } else if (activeSampleIndex >= 0 && activeSampleIndex < samples.length) {
     const s     = samples[activeSampleIndex];
     const color = SAMPLE_PAINT_COLORS[activeSampleIndex % SAMPLE_PAINT_COLORS.length];
     indicator.textContent = `[${activeSampleIndex + 1}] ${s.name.slice(0, 18)}`;
     indicator.style.color = color;
   } else {
-    indicator.textContent = 'no sample';
-    indicator.style.color = '#555';
+    indicator.textContent = '—';
+    indicator.style.color = '#333';
   }
 }
 
@@ -2259,6 +2266,8 @@ function updateLiveRecUI() {
     status.className = '';
     status.textContent = 'space: rec+paint';
   }
+
+  updatePaintIndicator();
 }
 
 // ============================================================================
