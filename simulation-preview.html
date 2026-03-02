@@ -2809,68 +2809,77 @@ function drawClouds() {
     }
 
     // ── Edge indicator ───────────────────────────────────────────────────
-    // Always draw a perimeter dot so the performer knows where every cloud
-    // sits relative to their current view — especially important when behind.
-    // azimuth: atan2(cx, cz)  → negative = left, positive = right
-    // elevation: atan2(cy, horiz)  → positive = up
+    // Invisible when cloud is comfortably in view (centre of screen).
+    // Fades in as cloud approaches the screen boundary, fully opaque when
+    // off-screen or behind the camera — so the dot "arrives" at the edge
+    // just as the in-scene circle disappears.
     {
+      // Measure how close to the screen edge the cloud is.
+      // edgeness 0 = dead centre, 1 = at canvas boundary, >1 = off-screen.
+      let edgeness;
+      if (!proj) {
+        edgeness = 1; // behind camera — treat as fully off-screen
+      } else {
+        const nx = Math.abs(proj.sx - W / 2) / (W / 2);
+        const ny = Math.abs(proj.sy - H / 2) / (H / 2);
+        edgeness = Math.max(nx, ny); // Chebyshev: whichever axis hits edge first
+      }
+
+      // Fade zone: 0 below innerThresh (invisible), ramps to 1 at outerThresh
+      const innerThresh = 0.6;  // clearly in view — no indicator
+      const outerThresh = 0.88; // near/past edge — full indicator
+      const fadeT = Math.max(0, Math.min(1, (edgeness - innerThresh) / (outerThresh - innerThresh)));
+
+      if (fadeT <= 0) continue; // fully in view — nothing to draw
+
+      // Perimeter position from camera-space azimuth + elevation
       const horiz = Math.sqrt(cx * cx + cz * cz);
-      const az    = Math.atan2(cx, Math.max(0.0001, horiz)); // –π/2..+π/2 (left..right)
-      const el    = Math.atan2(cy, horiz);                   // –π/2..+π/2 (down..up)
+      const az    = Math.atan2(cx, Math.max(0.0001, horiz)); // –=left, +=right
+      const el    = Math.atan2(cy, horiz);                   // +=up
 
-      // Map az → normalised horizontal position [0..1], centre = 0.5 (ahead)
-      // Clamp to [0,1]; values outside mean it's very far left/right in camera space
-      const azMax = Math.PI * 0.75; // field of awareness ±135° maps to edges
-      const tx    = 0.5 + (az / azMax) * 0.5;              // horiz t [0..1]
-      const ty    = 0.5 - (el / (Math.PI * 0.5)) * 0.5;   // vert  t [0..1]
+      const azMax = Math.PI * 0.75; // ±135° → [0,1] horizontal
+      const tx    = 0.5 + (az / azMax) * 0.5;
+      const ty    = 0.5 - (el / (Math.PI * 0.5)) * 0.5;
 
-      // Project t onto canvas perimeter:
-      // pick whichever edge is hit first by the ray from centre (tx,ty)
+      // Ray-cast from canvas centre to perimeter
       const dx = tx - 0.5, dy = ty - 0.5;
-      let ex, ey; // edge point in canvas px
+      let ex, ey;
       if (Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001) {
-        // Straight ahead — put dot at top centre
         ex = W / 2; ey = margin;
       } else {
-        // How far to each edge from centre along (dx,dy) direction
         const scaleX = dx !== 0 ? Math.abs(0.5 / dx) : Infinity;
         const scaleY = dy !== 0 ? Math.abs(0.5 / dy) : Infinity;
         const scale  = Math.min(scaleX, scaleY);
-        ex = (0.5 + dx * scale) * W;
-        ey = (0.5 + dy * scale) * H;
-        // Clamp to canvas bounds
-        ex = Math.max(0, Math.min(W, ex));
-        ey = Math.max(0, Math.min(H, ey));
-        // Inset slightly from the very edge
+        ex = Math.max(0, Math.min(W, (0.5 + dx * scale) * W));
+        ey = Math.max(0, Math.min(H, (0.5 + dy * scale) * H));
         const fromCX = ex - W/2, fromCY = ey - H/2;
         const dist   = Math.sqrt(fromCX*fromCX + fromCY*fromCY);
         if (dist > 0) {
-          const inset = margin;
-          ex = W/2 + fromCX * (1 - inset / dist);
-          ey = H/2 + fromCY * (1 - inset / dist);
+          ex = W/2 + fromCX * (1 - margin / dist);
+          ey = H/2 + fromCY * (1 - margin / dist);
         }
       }
 
-      const dotR   = isBehind ? (isNearest ? 6 : 4) : (isNearest ? 4 : 2.5);
-      const alpha  = isBehind ? (isNearest ? 1.0 : 0.75) : (isNearest ? 0.55 : 0.3);
+      const baseAlpha = isNearest ? 0.9 : 0.65;
+      const alpha     = baseAlpha * fadeT;
+      const dotR      = isNearest ? 5 : 3.5;
 
       ctx.save();
       ctx.globalAlpha = alpha;
       ctx.fillStyle   = cloud.color;
-      if (isBehind && isNearest) { ctx.shadowColor = cloud.color; ctx.shadowBlur = 12; }
+      if (isNearest && isBehind) { ctx.shadowColor = cloud.color; ctx.shadowBlur = 10; }
       ctx.beginPath();
       ctx.arc(ex, ey, dotR, 0, Math.PI * 2);
       ctx.fill();
-      // Tiny slot number beside the dot when behind
-      if (isBehind) {
-        ctx.shadowBlur  = 0;
-        ctx.globalAlpha = alpha * 0.85;
-        ctx.fillStyle   = cloud.color;
-        ctx.font        = `8px "Roboto Mono", monospace`;
-        ctx.textAlign   = 'center';
+      // Slot number label — appears once clearly off-screen
+      if (fadeT > 0.6) {
+        ctx.shadowBlur   = 0;
+        ctx.globalAlpha  = alpha * 0.8;
+        ctx.fillStyle    = cloud.color;
+        ctx.font         = `8px "Roboto Mono", monospace`;
+        ctx.textAlign    = 'center';
         ctx.textBaseline = 'middle';
-        const labelOff = dotR + 6;
-        // Push label inward so it doesn't go off-canvas
+        const labelOff   = dotR + 6;
         const lx = ex + (ex < W/2 ? labelOff : -labelOff);
         const ly = ey + (ey < H/2 ? labelOff : -labelOff);
         ctx.fillText(i + 1, lx, ly);
