@@ -416,6 +416,40 @@
     cursor: ns-resize;
     touch-action: none;
   }
+  /* k box in search params */
+  .k-display-wrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .k-big-num {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #7abcbc;
+    line-height: 1;
+    cursor: ns-resize;
+    user-select: none;
+  }
+  .k-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 3px;
+    background: #2a2a2a;
+    border-radius: 2px;
+    outline: none;
+    flex-shrink: 0;
+  }
+  .k-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #7abcbc;
+    cursor: pointer;
+  }
   .recency-val-label {
     font-size: 0.68rem;
     color: #7abcbc;
@@ -434,11 +468,11 @@
     gap: 0.35rem;
     align-items: stretch;
   }
-  /* 2-col × 4-row grid of preset buttons — cloud-box style */
+  /* 2-col × 5-row grid of preset buttons */
   .preset-buttons {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    grid-template-rows: repeat(4, 1fr);
+    grid-template-rows: repeat(5, 1fr);
     gap: 3px;
     flex-shrink: 0;
   }
@@ -488,7 +522,7 @@
   .preset-stats { display: none; } /* stats drawn inside canvas */
 
   /* ── Device: grain controls ─────────────────────────────────────────────── */
-  .device--grain { flex: 1; min-width: clamp(340px, 28vw, 520px); }
+  .device--grain { flex: 2; min-width: clamp(480px, 40vw, 700px); }
   .grain-body {
     flex-direction: row !important;
     gap: 0.6rem;
@@ -543,6 +577,20 @@
     transition: background 0.1s;
   }
   .grain-slider:hover::-webkit-slider-thumb { background: #9adcdc; }
+  /* Log-mapped sliders: tick marks at log decade positions.
+     Positions: 10ms=8.3%, 50ms=29.8%, 100ms=45.1%, 500ms=68.8%, 1s=77.1%, 2s=85.4% */
+  .grain-slider--log {
+    background: linear-gradient(90deg,
+      #2a2a2a 0%,
+      #2a2a2a calc(8.3%  - 1px), #3a6060 8.3%,  #2a2a2a calc(8.3%  + 1px),
+      #2a2a2a calc(29.8% - 1px), #3a6060 29.8%, #2a2a2a calc(29.8% + 1px),
+      #2a2a2a calc(45.1% - 1px), #3a6060 45.1%, #2a2a2a calc(45.1% + 1px),
+      #2a2a2a calc(68.8% - 1px), #3a6060 68.8%, #2a2a2a calc(68.8% + 1px),
+      #2a2a2a calc(77.1% - 1px), #3a6060 77.1%, #2a2a2a calc(77.1% + 1px),
+      #2a2a2a calc(85.4% - 1px), #3a6060 85.4%, #2a2a2a calc(85.4% + 1px),
+      #2a2a2a 100%
+    );
+  }
   /* Numbox: click-and-drag number editor */
   .grain-numbox {
     font-family: 'Roboto Mono', monospace;
@@ -1119,9 +1167,29 @@
       </div>
     </div>
 
-    <!-- 2. Search params -->
+    <!-- 2. Granular presets -->
+    <div class="device device--preset">
+      <div class="device-label">presets</div>
+      <div class="device-body preset-body">
+        <!-- 2×5 grid of preset buttons -->
+        <div class="preset-buttons" id="presetButtons"></div>
+        <!-- waveform diagram -->
+        <div class="preset-right-box">
+          <div class="preset-waveform-wrap">
+            <canvas id="presetWaveform"></canvas>
+          </div>
+          <div class="preset-stats">
+            <div class="stat-item"><span class="stat-label">dur</span><span id="psDur">—</span></div>
+            <div class="stat-item"><span class="stat-label">k</span><span id="psK">—</span></div>
+            <div class="stat-item"><span class="stat-label">pan</span><span id="psPan">—</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Search params -->
     <div class="device device--search">
-      <div class="device-label">search params</div>
+      <div class="device-label">search</div>
       <div class="device-body search-body">
         <!-- snap: standalone full-height button on the left -->
         <button id="snapToggleBtn">
@@ -1142,50 +1210,31 @@
           <canvas id="recencyDial"></canvas>
           <span class="recency-val-label" id="recencyVal">3</span>
         </div>
-      </div>
-    </div>
-
-    <!-- 3. Monitor -->
-
-    <!-- 4. Grain preset -->
-    <div class="device device--preset">
-      <div class="device-label">granular presets</div>
-      <div class="device-body preset-body">
-        <!-- 2×4 grid of preset buttons -->
-        <div class="preset-buttons" id="presetButtons"></div>
-        <!-- waveform + stats box -->
-        <div class="preset-right-box">
-          <div class="preset-waveform-wrap">
-            <canvas id="presetWaveform"></canvas>
+        <!-- k viz box -->
+        <div class="search-viz-box">
+          <span class="search-viz-label">k</span>
+          <div class="k-display-wrap">
+            <span class="k-big-num" id="kBigNum">5</span>
           </div>
-          <div class="preset-stats">
-            <div class="stat-item"><span class="stat-label">dur</span><span id="psDur">—</span></div>
-            <div class="stat-item"><span class="stat-label">k</span><span id="psK">—</span></div>
-            <div class="stat-item"><span class="stat-label">pan</span><span id="psPan">—</span></div>
-          </div>
+          <input class="k-slider" type="range" id="searchKSlider" min="1" max="20" step="1" value="5">
         </div>
       </div>
     </div>
 
-    <!-- 5. Grain controls -->
+    <!-- 4. Grain controls -->
     <div class="device device--grain">
       <div class="device-label">grain controls</div>
       <div class="device-body grain-body">
 
-        <!-- Col 1: k, dur, dur var -->
+        <!-- Col 1: dur, dur var -->
         <div class="grain-col">
           <div class="grain-row">
-            <span class="grain-label">k</span>
-            <input class="grain-slider" type="range" id="gcKSlider" min="1" max="20" step="1" value="5">
-            <span class="grain-numbox" id="gcKNum" data-param="k">5</span>
-          </div>
-          <div class="grain-row">
             <span class="grain-label">dur</span>
-            <input class="grain-slider" type="range" id="gcDurSlider" min="10" max="4000" step="1" value="180">
+            <input class="grain-slider grain-slider--log" type="range" id="gcDurSlider" min="0" max="1000" step="1" value="432">
             <span class="grain-numbox" id="gcDurNum" data-param="duration">180ms</span>
           </div>
           <div class="grain-row">
-            <span class="grain-label">dur var</span>
+            <span class="grain-label">dur ±</span>
             <input class="grain-slider" type="range" id="gcDurVarSlider" min="0" max="500" step="1" value="0">
             <span class="grain-numbox" id="gcDurVarNum" data-param="durVar">0ms</span>
           </div>
@@ -1195,11 +1244,11 @@
         <div class="grain-col">
           <div class="grain-row">
             <span class="grain-label">period</span>
-            <input class="grain-slider" type="range" id="gcPeriodSlider" min="5" max="4000" step="1" value="140">
-            <span class="grain-numbox" id="gcPeriodNum" data-param="period">140ms</span>
+            <input class="grain-slider grain-slider--log" type="range" id="gcPeriodSlider" min="0" max="1000" step="1" value="389">
+            <span class="grain-numbox" id="gcPeriodNum" data-param="period">160ms</span>
           </div>
           <div class="grain-row">
-            <span class="grain-label">per var</span>
+            <span class="grain-label">per ±</span>
             <input class="grain-slider" type="range" id="gcPeriodVarSlider" min="0" max="500" step="1" value="0">
             <span class="grain-numbox" id="gcPeriodVarNum" data-param="periodVar">0ms</span>
           </div>
@@ -1230,17 +1279,17 @@
           <div class="grain-row">
             <span class="grain-label">dir</span>
             <div class="grain-seg" id="gcDirSeg">
-              <button class="grain-seg-btn active" data-dir="fwd">fwd</button>
-              <button class="grain-seg-btn" data-dir="rev">rev</button>
-              <button class="grain-seg-btn" data-dir="rnd">rnd</button>
+              <button class="grain-seg-btn active" data-dir="fwd" title="forward">▶</button>
+              <button class="grain-seg-btn" data-dir="rev" title="reverse">◀</button>
+              <button class="grain-seg-btn" data-dir="rnd" title="random">⇄</button>
             </div>
           </div>
           <div class="grain-row">
             <span class="grain-label">curve</span>
             <div class="grain-seg" id="gcCurveSeg">
-              <button class="grain-seg-btn active" data-curve="hann">hann</button>
-              <button class="grain-seg-btn" data-curve="tri">tri</button>
-              <button class="grain-seg-btn" data-curve="rect">rect</button>
+              <button class="grain-seg-btn active" data-curve="hann" title="hann">∿</button>
+              <button class="grain-seg-btn" data-curve="tri" title="triangle">⋀</button>
+              <button class="grain-seg-btn" data-curve="rect" title="rectangular">⊓</button>
             </div>
           </div>
         </div>
@@ -1248,10 +1297,7 @@
       </div>
     </div>
 
-    <!-- 6. Spacer -->
-    <div class="device device--spacer"></div>
-
-    <!-- 6. Output -->
+    <!-- 5. Output -->
     <div class="device device--output">
       <div class="device-label">output</div>
       <div class="device-body device-body--output">
@@ -1402,125 +1448,245 @@ const LIVE_PAINT_COLORS = [
 //   period < duration → grains overlap in time (dense/washy feel)
 // retriggerMs = per-particle debounce for cloud mode only (not cursor).
 const PRESETS = [
+  // ── 1. vinyl ─ lock+recency1: scrubbing a record, exact position tracking ──
   {
-    name:         'default',
-    k:            5,
-    duration:     0.18,   // 180ms grain
-    durJitter:    0.06,
-    period:       0.16,   // 160ms → slight overlap, continuous feel
-    fade:         0.04,
-    retriggerMs:  120,
-    startJitter:  0.06,
-    sprayCount:   2,
-    spraySpread:  0.03,
-    pitchJitter:  0,
-    panSpread:    0.6,
-    volume:       0.06,
+    name:          'vinyl',
+    nearestMode:   true,
+    searchRadiusDeg: 12,
+    recencyN:      1,
+    k:             1,
+    duration:      0.14,   // 140ms — tight grain
+    durJitter:     0.04,
+    durVar:        0.02,   // slight flutter ±20ms
+    period:        0.10,   // 100ms → near-continuous
+    periodVar:     0.01,
+    fade:          0.03,
+    retriggerMs:   80,
+    startJitter:   0.01,
+    sprayCount:    1,
+    spraySpread:   0.01,
+    pitchJitter:   0.015,
+    panSpread:     0.2,
+    volume:        0.07,
+    probability:   1.0,
+    direction:     'fwd',
+    curveType:     'hann',
   },
+  // ── 2. cloud ─ wide radius, long overlapping grains, atmospheric wash ──
   {
-    name:         'cloud',
-    k:            8,
-    duration:     0.8,    // 800ms grain — long, overlapping
-    durJitter:    0.3,
-    period:       0.3,    // 300ms → each new grain starts before the last ends
-    fade:         0.22,
-    retriggerMs:  400,
-    startJitter:  0.25,
-    sprayCount:   1,
-    spraySpread:  0.15,
-    pitchJitter:  0.02,
-    panSpread:    1.0,
-    volume:       0.025,
+    name:          'cloud',
+    nearestMode:   false,
+    searchRadiusDeg: 55,
+    recencyN:      4,
+    k:             8,
+    duration:      0.85,   // 850ms — very long, overlapping
+    durJitter:     0.3,
+    durVar:        0.12,
+    period:        0.28,   // 280ms → density
+    periodVar:     0.04,
+    fade:          0.24,
+    retriggerMs:   400,
+    startJitter:   0.28,
+    sprayCount:    1,
+    spraySpread:   0.18,
+    pitchJitter:   0.02,
+    panSpread:     1.0,
+    volume:        0.025,
+    probability:   0.9,
+    direction:     'fwd',
+    curveType:     'hann',
   },
+  // ── 3. freeze ─ lock+wide: drone, holds position in a wide halo ──
   {
-    name:         'crackle',
-    k:            4,
-    duration:     0.025,  // 25ms — very short snap
-    durJitter:    0.01,
-    period:       0.08,   // 80ms → sparse clicks, gap between each
-    fade:         0.005,
-    retriggerMs:  35,
-    startJitter:  0.3,
-    sprayCount:   1,
-    spraySpread:  0.008,
-    pitchJitter:  0.08,
-    panSpread:    0.25,
-    volume:       0.25,
+    name:          'freeze',
+    nearestMode:   true,
+    searchRadiusDeg: 40,
+    recencyN:      5,
+    k:             10,
+    duration:      2.0,    // 2s — very long
+    durJitter:     0.35,
+    durVar:        0.25,
+    period:        1.1,    // 1100ms
+    periodVar:     0.08,
+    fade:          0.5,
+    retriggerMs:   900,
+    startJitter:   0.01,
+    sprayCount:    1,
+    spraySpread:   0.06,
+    pitchJitter:   0.004,
+    panSpread:     0.85,
+    volume:        0.012,
+    probability:   1.0,
+    direction:     'fwd',
+    curveType:     'hann',
   },
+  // ── 4. pulse ─ rhythmic, medium grains with tight period, forward drive ──
   {
-    name:         'tape',
-    k:            6,
-    duration:     0.55,   // 550ms
-    durJitter:    0.18,
-    period:       0.25,   // 250ms → grains overlap, buttery tape feel
-    fade:         0.18,
-    retriggerMs:  80,
-    startJitter:  0.02,
-    sprayCount:   2,
-    spraySpread:  0.04,
-    pitchJitter:  0.04,
-    panSpread:    0.35,
-    volume:       0.05,
+    name:          'pulse',
+    nearestMode:   false,
+    searchRadiusDeg: 18,
+    recencyN:      2,
+    k:             4,
+    duration:      0.22,   // 220ms
+    durJitter:     0.05,
+    durVar:        0.03,
+    period:        0.40,   // 400ms → 2.5Hz beat
+    periodVar:     0.02,
+    fade:          0.05,
+    retriggerMs:   100,
+    startJitter:   0.04,
+    sprayCount:    1,
+    spraySpread:   0.04,
+    pitchJitter:   0.0,
+    panSpread:     0.4,
+    volume:        0.08,
+    probability:   1.0,
+    direction:     'fwd',
+    curveType:     'tri',
   },
+  // ── 5. shimmer ─ dense rapid onsets, heavy pitch scatter, stereo spread ──
   {
-    name:         'scatter',
-    k:            8,
-    duration:     0.12,   // 120ms
-    durJitter:    0.08,
-    period:       0.18,   // 180ms → small gap, random pool keeps it unpredictable
-    fade:         0.02,
-    retriggerMs:  200,
-    startJitter:  0.45,
-    sprayCount:   3,
-    spraySpread:  0.25,
-    pitchJitter:  0.12,
-    panSpread:    1.0,
-    volume:       0.07,
+    name:          'shimmer',
+    nearestMode:   false,
+    searchRadiusDeg: 35,
+    recencyN:      3,
+    k:             8,
+    duration:      0.42,   // 420ms
+    durJitter:     0.18,
+    durVar:        0.08,
+    period:        0.055,  // 55ms → rapid shimmer
+    periodVar:     0.01,
+    fade:          0.14,
+    retriggerMs:   180,
+    startJitter:   0.14,
+    sprayCount:    2,
+    spraySpread:   0.12,
+    pitchJitter:   0.20,
+    panSpread:     1.0,
+    volume:        0.018,
+    probability:   0.85,
+    direction:     'fwd',
+    curveType:     'hann',
   },
+  // ── 6. ghost ─ reverse, sparse, eerie smear from far-flung particles ──
   {
-    name:         'freeze',
-    k:            10,
-    duration:     2.0,    // 2s — very long grains
-    durJitter:    0.4,
-    period:       1.2,    // 1200ms → new grain every 1.2s, overlaps previous
-    fade:         0.5,
-    retriggerMs:  1000,
-    startJitter:  0.005,
-    sprayCount:   1,
-    spraySpread:  0.05,
-    pitchJitter:  0.005,
-    panSpread:    0.9,
-    volume:       0.012,
+    name:          'ghost',
+    nearestMode:   false,
+    searchRadiusDeg: 70,
+    recencyN:      6,
+    k:             6,
+    duration:      0.70,   // 700ms — long reverse grains
+    durJitter:     0.25,
+    durVar:        0.15,
+    period:        0.65,   // 650ms → sparse
+    periodVar:     0.10,
+    fade:          0.22,
+    retriggerMs:   350,
+    startJitter:   0.35,
+    sprayCount:    1,
+    spraySpread:   0.20,
+    pitchJitter:   0.06,
+    panSpread:     0.9,
+    volume:        0.030,
+    probability:   0.6,
+    direction:     'rev',
+    curveType:     'hann',
   },
+  // ── 7. glitch ─ ultra-short random bursts, dropout probability, wide pitch ──
   {
-    name:         'shimmer',
-    k:            8,
-    duration:     0.45,   // 450ms grain
-    durJitter:    0.15,
-    period:       0.06,   // 60ms → rapid onsets, heavy overlap = shimmer wash
-    fade:         0.15,
-    retriggerMs:  200,
-    startJitter:  0.12,
-    sprayCount:   2,
-    spraySpread:  0.1,
-    pitchJitter:  0.18,
-    panSpread:    0.85,
-    volume:       0.018,
+    name:          'glitch',
+    nearestMode:   false,
+    searchRadiusDeg: 80,
+    recencyN:      8,
+    k:             12,
+    duration:      0.018,  // 18ms — micro grains
+    durJitter:     0.5,
+    durVar:        0.01,
+    period:        0.04,   // 40ms
+    periodVar:     0.03,
+    fade:          0.004,
+    retriggerMs:   20,
+    startJitter:   0.9,
+    sprayCount:    3,
+    spraySpread:   0.35,
+    pitchJitter:   0.45,
+    panSpread:     1.0,
+    volume:        0.18,
+    probability:   0.55,
+    direction:     'rnd',
+    curveType:     'rect',
   },
+  // ── 8. chop ─ mechanical, short exact grains with long gap, no jitter ──
   {
-    name:         'gravel',
-    k:            6,
-    duration:     0.065,  // 65ms
-    durJitter:    0.04,
-    period:       0.05,   // 50ms → slight overlap, rough gritty texture
-    fade:         0.015,
-    retriggerMs:  50,
-    startJitter:  0.2,
-    sprayCount:   2,
-    spraySpread:  0.07,
-    pitchJitter:  0.06,
-    panSpread:    0.7,
-    volume:       0.022,
+    name:          'chop',
+    nearestMode:   false,
+    searchRadiusDeg: 15,
+    recencyN:      2,
+    k:             3,
+    duration:      0.095,  // 95ms — consistent short chop
+    durJitter:     0.01,
+    durVar:        0.0,
+    period:        0.20,   // 200ms → choppy rhythm
+    periodVar:     0.0,
+    fade:          0.008,
+    retriggerMs:   60,
+    startJitter:   0.02,
+    sprayCount:    1,
+    spraySpread:   0.01,
+    pitchJitter:   0.0,
+    panSpread:     0.5,
+    volume:        0.10,
+    probability:   1.0,
+    direction:     'fwd',
+    curveType:     'rect',
+  },
+  // ── 9. stutter ─ CD-skip: lock, very fast repeat of nearly the same point ──
+  {
+    name:          'stutter',
+    nearestMode:   true,
+    searchRadiusDeg: 6,
+    recencyN:      1,
+    k:             2,
+    duration:      0.065,  // 65ms
+    durJitter:     0.02,
+    durVar:        0.005,
+    period:        0.060,  // 60ms → rapid fire repeat
+    periodVar:     0.005,
+    fade:          0.01,
+    retriggerMs:   40,
+    startJitter:   0.005,
+    sprayCount:    1,
+    spraySpread:   0.005,
+    pitchJitter:   0.01,
+    panSpread:     0.15,
+    volume:        0.09,
+    probability:   1.0,
+    direction:     'fwd',
+    curveType:     'tri',
+  },
+  // ── 10. wobble ─ warped tape: slow period with heavy dur+period variation ──
+  {
+    name:          'wobble',
+    nearestMode:   false,
+    searchRadiusDeg: 25,
+    recencyN:      3,
+    k:             5,
+    duration:      0.48,   // 480ms — medium grain
+    durJitter:     0.12,
+    durVar:        0.18,   // heavy variation = tape wobble
+    period:        0.38,   // 380ms
+    periodVar:     0.15,   // period drifts wildly
+    fade:          0.12,
+    retriggerMs:   150,
+    startJitter:   0.08,
+    sprayCount:    2,
+    spraySpread:   0.08,
+    pitchJitter:   0.08,
+    panSpread:     0.65,
+    volume:        0.045,
+    probability:   0.88,
+    direction:     'fwd',
+    curveType:     'hann',
   },
 ];
 
@@ -1621,6 +1787,7 @@ let currentStrokeId = -1;       // the stroke being painted right now
 let recencyN = 3;               // how many most-recent buffers to allow
 let drawRecencyDial = null;     // set during setup — module-level so MIDI CC can call it
 let setRecency      = null;     // same
+let setSearchK      = null;     // set during setup — module-level so selectPreset can call it
 
 // ── Cloud drop system ─────────────────────────────────────────────────────
 // Up to 8 frozen granulating clouds, each locked to a sphere position.
@@ -2856,6 +3023,42 @@ function setupPresets() {
     drawRecencyDial();
   }
 
+  // ── k control in search params ───────────────────────────────────────────
+  setSearchK = function(v) {
+    const k = Math.max(1, Math.min(20, Math.round(v)));
+    grainOverrides.k = k;
+    const slider = document.getElementById('searchKSlider');
+    if (slider) slider.value = k;
+    const bigNum = document.getElementById('kBigNum');
+    if (bigNum) bigNum.textContent = k;
+  };
+
+  const searchKSlider = document.getElementById('searchKSlider');
+  if (searchKSlider) {
+    searchKSlider.value = grainOverrides.k ?? gp().k;
+    searchKSlider.addEventListener('input', () => setSearchK(parseInt(searchKSlider.value)));
+  }
+
+  const kBigNum = document.getElementById('kBigNum');
+  if (kBigNum) {
+    kBigNum.textContent = grainOverrides.k ?? gp().k;
+    let _kDragY = null, _kDragStart = 0;
+    kBigNum.addEventListener('mousedown', e => {
+      _kDragY = e.clientY; _kDragStart = grainOverrides.k ?? gp().k;
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', e => {
+      if (_kDragY === null) return;
+      const dy = _kDragY - e.clientY; // drag up = increase
+      setSearchK(_kDragStart + Math.round(dy / 8));
+    });
+    window.addEventListener('mouseup', () => { _kDragY = null; });
+    kBigNum.addEventListener('wheel', e => {
+      e.preventDefault();
+      setSearchK((grainOverrides.k ?? gp().k) + (e.deltaY < 0 ? 1 : -1));
+    }, { passive: false });
+  }
+
   // ? button opens mapping modal
   document.getElementById('helpBtn')?.addEventListener('click', openMappingModal);
 
@@ -2999,10 +3202,43 @@ function updateCloudBanksUI() {
 
 function selectPreset(index) {
   activePresetIndex = index;
-  grainParams = { ...PRESETS[index] };
+  const preset = PRESETS[index];
+  grainParams = { ...preset };
   // Clear any overrides so preset values take effect, then rebuild curves
   Object.keys(grainOverrides).forEach(k => grainOverrides[k] = null);
   rebuildGrainCurves();
+
+  // ── Apply search params from preset ──────────────────────────────────────
+  // nearestMode
+  if (typeof preset.nearestMode === 'boolean') {
+    nearestMode = preset.nearestMode;
+  }
+  // searchRadiusDeg
+  if (typeof preset.searchRadiusDeg === 'number') {
+    searchRadiusDeg = preset.searchRadiusDeg;
+  }
+  // recencyN — use setter if available (wired up after search panel IIFE)
+  if (typeof preset.recencyN === 'number') {
+    if (typeof setRecency === 'function') {
+      setRecency(preset.recencyN);
+    } else {
+      recencyN = preset.recencyN;
+    }
+  }
+  // k — use setter if available
+  if (typeof preset.k === 'number') {
+    if (typeof setSearchK === 'function') {
+      setSearchK(preset.k);
+    } else {
+      grainOverrides.k = preset.k;
+    }
+  }
+  // direction + curveType
+  if (preset.direction)  grainDirection  = preset.direction;
+  if (preset.curveType)  grainCurveType  = preset.curveType;
+  // probability
+  if (typeof preset.probability === 'number') grainProbability = preset.probability;
+
   document.querySelectorAll('.preset-btn').forEach((btn, i) => {
     btn.classList.toggle('active', i === index);
   });
@@ -4761,41 +4997,37 @@ function setupEvents() {
   (function initGrainControls() {
     // ── Slider + numbox pairs ────────────────────────────────────────────────
     // Each entry: { sliderId, numId, param, min, max, decimals, unit, toDisplay, fromDisplay }
+    // Log mapping for dur + period: slider 0–1000 → 5ms–4000ms exponentially.
+    // Fine control in the 5–500ms granular sweet spot, coarser above.
+    const _LOG_MIN = Math.log(5), _LOG_MAX = Math.log(4000);
+    const _sliderToMs = sv => Math.exp(_LOG_MIN + (parseFloat(sv) / 1000) * (_LOG_MAX - _LOG_MIN));
+    const _msToSlider = ms => Math.round(((Math.log(Math.max(5, ms)) - _LOG_MIN) / (_LOG_MAX - _LOG_MIN)) * 1000);
+    const _fmtMs = v => { const ms = Math.round(v * 1000); return ms >= 1000 ? (ms/1000).toFixed(2)+'s' : ms+'ms'; };
+
     const SLIDER_DEFS = [
       {
         sliderId: 'gcDurSlider', numId: 'gcDurNum', param: 'duration',
-        min: 0.01, max: 4.0,
-        toDisplay: v => Math.round(v * 1000) + 'ms',
-        sliderToInternal: sv => parseFloat(sv) / 1000,
-        internalToSlider: v => Math.round(v * 1000),
+        toDisplay: _fmtMs,
+        sliderToInternal: sv => _sliderToMs(sv) / 1000,
+        internalToSlider: v  => _msToSlider(v * 1000),
       },
       {
         sliderId: 'gcDurVarSlider', numId: 'gcDurVarNum', param: 'durVar',
-        min: 0, max: 0.5,
         toDisplay: v => Math.round(v * 1000) + 'ms',
         sliderToInternal: sv => parseFloat(sv) / 1000,
-        internalToSlider: v => Math.round(v * 1000),
-      },
-      {
-        sliderId: 'gcKSlider', numId: 'gcKNum', param: 'k',
-        min: 1, max: 20,
-        toDisplay: v => Math.round(v),
-        sliderToInternal: sv => parseInt(sv),
-        internalToSlider: v => Math.round(v),
+        internalToSlider: v  => Math.round(v * 1000),
       },
       {
         sliderId: 'gcPeriodSlider', numId: 'gcPeriodNum', param: 'period',
-        min: 0.005, max: 4.0,
-        toDisplay: v => Math.round(v * 1000) + 'ms',
-        sliderToInternal: sv => parseFloat(sv) / 1000,
-        internalToSlider: v => Math.round(v * 1000),
+        toDisplay: _fmtMs,
+        sliderToInternal: sv => _sliderToMs(sv) / 1000,
+        internalToSlider: v  => _msToSlider(v * 1000),
       },
       {
         sliderId: 'gcPeriodVarSlider', numId: 'gcPeriodVarNum', param: 'periodVar',
-        min: 0, max: 0.5,
         toDisplay: v => Math.round(v * 1000) + 'ms',
         sliderToInternal: sv => parseFloat(sv) / 1000,
-        internalToSlider: v => Math.round(v * 1000),
+        internalToSlider: v  => Math.round(v * 1000),
       },
       {
         sliderId: 'gcPitchSlider', numId: 'gcPitchNum', param: 'pitchJitter',
@@ -4844,11 +5076,8 @@ function setupEvents() {
       const slider = document.getElementById(def.sliderId);
       const numbox = document.getElementById(def.numId);
       if (!slider || !numbox) return;
-      // durVar / periodVar are UI-only — presets don't carry them, so default to 0.
       const val = def.param === 'probability' ? grainProbability
-                : (def.param === 'durVar' || def.param === 'periodVar')
-                  ? (grainOverrides[def.param] ?? 0)
-                  : (grainOverrides[def.param] ?? gp()[def.param]);
+                : (grainOverrides[def.param] ?? gp()[def.param] ?? 0);
       slider.value = def.internalToSlider(val);
       numbox.textContent = def.toDisplay(val);
     }
@@ -4918,11 +5147,32 @@ function setupEvents() {
     // Called by selectPreset() after loading a new preset
     window.syncGrainControlsUI = function() {
       SLIDER_DEFS.forEach(syncSliderFromInternal);
-      // Reset dir + curve to defaults on preset change
-      grainDirection = 'fwd';
-      grainCurveType = 'hann';
-      if (dirSeg)   dirSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.dir === 'fwd'));
-      if (curveSeg) curveSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.curve === 'hann'));
+      // Sync dir buttons to current grainDirection (set by selectPreset)
+      if (dirSeg)   dirSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.dir   === grainDirection));
+      // Sync curve buttons to current grainCurveType
+      if (curveSeg) curveSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.curve === grainCurveType));
+      // Sync probability slider/numbox
+      const probDef = SLIDER_DEFS.find(d => d.key === 'probability');
+      if (!probDef) {
+        // probability is not in SLIDER_DEFS — update directly
+        const probSlider = document.getElementById('gcProbSlider');
+        const probNum    = document.getElementById('gcProbNum');
+        if (probSlider) probSlider.value = Math.round(grainProbability * 100);
+        if (probNum)    probNum.value    = grainProbability.toFixed(2);
+      }
+      // Sync k display in search params — k override cleared on preset change,
+      // so show the preset's default k value.
+      const kVal = grainOverrides.k ?? gp().k;
+      const skSlider = document.getElementById('searchKSlider');
+      if (skSlider) skSlider.value = kVal;
+      const kNum = document.getElementById('kBigNum');
+      if (kNum) kNum.textContent = kVal;
+      // Sync recency display
+      const recValEl = document.getElementById('recencyVal');
+      if (recValEl) recValEl.textContent = recencyN;
+      // Redraw radius viz to reflect updated nearestMode / searchRadiusDeg
+      drawRadiusViz();
+      updatePresetStats();
     };
 
     // Init display from default preset
