@@ -14,6 +14,10 @@
     max-height: 100dvh;
     overflow: hidden;
   }
+  /* Base font-size scales with viewport width so everything grows when the window widens.
+     clamp(min, preferred, max) — at 1400px wide: 1vw = 14px → font-size ≈ 14px (0.875rem equiv).
+     All rem-based children scale automatically. */
+  html { font-size: clamp(15px, 1.2vw, 20px); }
   body {
     background: #1a1a1a;
     color: #fff;
@@ -114,6 +118,39 @@
     display: flex;
     gap: 1.5rem;
   }
+  /* ── Viewer monitor overlay (bottom-left of canvas) ─────────────────────── */
+  #viewerMonitor {
+    position: absolute;
+    bottom: 2rem;
+    left: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.68rem;
+    color: #555;
+    pointer-events: none;
+    line-height: 1;
+  }
+  #viewerMonitor .vm-grain-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  #viewerMonitor .vm-dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: #333;
+    border: 1px solid #444;
+    transition: background 0.08s, box-shadow 0.08s;
+    flex-shrink: 0;
+  }
+  #viewerMonitor .vm-dot.active {
+    background: #e8a030;
+    box-shadow: 0 0 5px #e8a030;
+  }
+
   /* ── Bottom-of-canvas status bar ─────────────────────────────────────────── */
   .canvas-bottom-bar {
     position: absolute;
@@ -154,7 +191,7 @@
     align-items: stretch;
     gap: 0;
     flex-shrink: 0;
-    height: 110px;
+    height: clamp(110px, 9.5vw, 155px);
     background: #252525;
     border: 1px solid #333;
     border-radius: 4px;
@@ -173,9 +210,9 @@
   }
   .device:last-child { border-right: none; }
   .device-label {
-    font-size: 0.55rem;
+    font-size: 0.75rem;
     letter-spacing: 0.08em;
-    color: #444;
+    color: #666;
     text-transform: lowercase;
     margin-bottom: 0.3rem;
     flex-shrink: 0;
@@ -191,7 +228,7 @@
   }
 
   /* ── Device: live input ─────────────────────────────────────────────────── */
-  .device--liveinput { width: 160px; }
+  .device--liveinput { width: clamp(130px, 12vw, 190px); }
   /* device body is row: mic button left, fader+meter right */
   .device--liveinput .device-body {
     flex-direction: row;
@@ -235,9 +272,9 @@
     background: #252525;
     border: 1px solid #3a3a3a;
     border-radius: 4px;
-    color: #555;
+    color: #777;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.52rem;
+    font-size: 0.72rem;
     padding: 0.3rem 0.4rem 0.25rem;
     cursor: pointer;
     letter-spacing: 0.04em;
@@ -282,11 +319,11 @@
     0%, 100% { box-shadow: 0 0 5px #cc222288; }
     50%       { box-shadow: 0 0 10px #ee3333cc; }
   }
-  .live-count { font-size: 0.58rem; color: #444; }
+  .live-count { font-size: 0.75rem; color: #444; }
   .live-count span { color: #e8a030; }
   .live-granulating {
     display: flex; align-items: center; gap: 0.3rem;
-    font-size: 0.58rem; color: #444; transition: color 0.1s;
+    font-size: 0.75rem; color: #444; transition: color 0.1s;
   }
   .live-granulating.active { color: #e8a030; }
   .live-granulating .gran-dot {
@@ -297,7 +334,7 @@
   .input-clip-dot { display: none; } /* clip now shown inside fader canvas */
 
   /* ── Device: search params ───────────────────────────────────────────────── */
-  .device--search { width: 230px; }
+  .device--search { width: clamp(190px, 17vw, 280px); }
   .search-body {
     flex-direction: row !important;
     gap: 0.35rem;
@@ -313,9 +350,9 @@
     background: #1e1e1e;
     border: 1px solid #2e2e2e;
     border-radius: 4px;
-    color: #3a3a3a;
+    color: #666;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.46rem;
+    font-size: 0.68rem;
     padding: 0.3rem 0.35rem;
     cursor: pointer;
     letter-spacing: 0.04em;
@@ -331,7 +368,7 @@
   }
   #snapToggleBtn .snap-label-text { line-height: 1.3; }
   #snapToggleBtn .snap-state-text {
-    color: #444;
+    color: #666;
     margin-top: 0.2rem;
     font-size: 0.5rem;
   }
@@ -350,8 +387,8 @@
     padding: 0.25rem 0.3rem 0.2rem;
   }
   .search-viz-label {
-    font-size: 0.46rem;
-    color: #3a3a3a;
+    font-size: 0.68rem;
+    color: #606060;
     letter-spacing: 0.06em;
     text-align: center;
     flex-shrink: 0;
@@ -365,7 +402,7 @@
   }
   #radiusViz { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .radius-val-label {
-    font-size: 0.46rem;
+    font-size: 0.68rem;
     color: #7abcbc;
     text-align: center;
     flex-shrink: 0;
@@ -380,96 +417,18 @@
     touch-action: none;
   }
   .recency-val-label {
-    font-size: 0.46rem;
+    font-size: 0.68rem;
     color: #7abcbc;
     text-align: center;
     flex-shrink: 0;
   }
 
-  /* ── Device: monitor ─────────────────────────────────────────────────────── */
-  .device--monitor { width: 220px; }
-  .monitor-body {
-    flex-direction: row !important;
-    gap: 0.35rem;
-    align-items: stretch;
-  }
-  /* shared box style matching search-viz-box */
-  .monitor-viz-box {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.15rem;
-    background: #1e1e1e;
-    border: 1px solid #2e2e2e;
-    border-radius: 4px;
-    padding: 0.25rem 0.3rem 0.2rem;
-    min-width: 0;
-  }
-  .monitor-viz-label {
-    font-size: 0.46rem;
-    color: #3a3a3a;
-    letter-spacing: 0.06em;
-    text-align: center;
-    flex-shrink: 0;
-  }
-  /* clouds box: fixed width so 2-col grid stays squarish */
-  .monitor-clouds-box { flex: 0 0 auto; width: 110px; }
-  .clouds-inner {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: row;
-    align-items: stretch;
-    gap: 0.3rem;
-  }
-  /* cloud slots drawn on canvas for perfect circles */
-  #cloudSlotsCanvas {
-    flex: 1;
-    min-height: 0;
-    min-width: 0;
-    display: block;
-  }
-  /* big count number beside the grid */
-  .monitor-big-num {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.6rem;
-    font-weight: 700;
-    color: #7abcbc;
-    letter-spacing: -0.02em;
-    flex-shrink: 0;
-    width: 2ch;
-    line-height: 1;
-  }
-  /* buffers box: same width as mic box feel */
-  .monitor-buffers-box {
-    flex: 1;
-    justify-content: space-between;
-  }
-  .monitor-big-num--buf {
-    flex: 1;
-    width: auto;
-    font-size: 2rem;
-    color: #7abcbc;
-  }
-  .monitor-sub-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.2rem;
-    flex-shrink: 0;
-  }
-  #loadIndicator {
-    font-size: 0.44rem;
-    color: #3a3a3a;
-    letter-spacing: 0.03em;
-  }
+  #loadIndicator { font-size: 0.68rem; color: #606060; letter-spacing: 0.03em; }
   #loadIndicator.warn { color: #c86020; }
   #loadIndicator.crit { color: #cc2222; }
 
   /* ── Device: grain preset ────────────────────────────────────────────────── */
-  .device--preset { flex: 1; min-width: 260px; }
+  .device--preset { flex: 1; min-width: clamp(280px, 22vw, 420px); }
   .preset-body {
     flex-direction: row !important;
     gap: 0.35rem;
@@ -486,9 +445,9 @@
   .preset-btn {
     background: #1e1e1e;
     border: 1px solid #2a2a2a;
-    color: #444;
+    color: #777;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.52rem;
+    font-size: 0.72rem;
     padding: 0.15rem 0.2rem;
     border-radius: 2px;
     cursor: pointer;
@@ -499,7 +458,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .preset-btn:hover { border-color: #555; color: #777; }
+  .preset-btn:hover { border-color: #555; color: #999; }
   .preset-btn.active {
     border-color: #7abcbc;
     color: #7abcbc;
@@ -508,7 +467,7 @@
   }
   /* right side: waveform fills full box height, stats drawn inside canvas */
   .preset-right-box {
-    flex: 1;
+    flex: 2;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -528,19 +487,176 @@
   #presetWaveform { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
   .preset-stats { display: none; } /* stats drawn inside canvas */
 
+  /* ── Device: grain controls ─────────────────────────────────────────────── */
+  .device--grain { flex: 1; min-width: clamp(340px, 28vw, 520px); }
+  .grain-body {
+    flex-direction: row !important;
+    gap: 0.6rem;
+    align-items: stretch;
+    overflow: hidden;
+  }
+  /* Three columns of sliders */
+  .grain-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.28rem;
+    min-width: 0;
+  }
+  .grain-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.35rem;
+    flex: 1;
+    min-height: 0;
+  }
+  .grain-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.68rem;
+    color: #777;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    width: 44px;
+    flex-shrink: 0;
+    text-align: right;
+  }
+  /* Slider track */
+  .grain-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 3px;
+    background: #2a2a2a;
+    border-radius: 2px;
+    outline: none;
+    cursor: ew-resize;
+    min-width: 0;
+  }
+  .grain-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: #7abcbc;
+    cursor: ew-resize;
+    border: none;
+    transition: background 0.1s;
+  }
+  .grain-slider:hover::-webkit-slider-thumb { background: #9adcdc; }
+  /* Numbox: click-and-drag number editor */
+  .grain-numbox {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.70rem;
+    color: #7abcbc;
+    background: #1a1a1a;
+    border: 1px solid #2e2e2e;
+    border-radius: 2px;
+    padding: 1px 4px;
+    width: 58px;
+    text-align: right;
+    cursor: ns-resize;
+    user-select: none;
+    flex-shrink: 0;
+    line-height: 1.6;
+  }
+  .grain-numbox:hover { border-color: #3e3e3e; color: #9adcdc; }
+  /* Direction and curve type: small segmented buttons */
+  .grain-seg {
+    display: flex;
+    flex: 1;
+    gap: 2px;
+    min-width: 0;
+  }
+  .grain-seg-btn {
+    flex: 1;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.68rem;
+    color: #666;
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 2px;
+    padding: 2px 4px;
+    cursor: pointer;
+    text-align: center;
+    letter-spacing: 0.02em;
+    transition: color 0.1s, border-color 0.1s, background 0.1s;
+    white-space: nowrap;
+  }
+  .grain-seg-btn:hover { color: #999; border-color: #4a4a4a; }
+  .grain-seg-btn.active { color: #7abcbc; border-color: #4a7a7a; background: #1e2e2e; }
+
   /* ── Device: spacer ─────────────────────────────────────────────────────── */
   .device--spacer { flex: 1; border-right: none; background: transparent; }
 
   /* ── Device: output ──────────────────────────────────────────────────────── */
-  .device--output { width: 90px; border-left: 1px solid #333; border-right: none; }
-  .meter-row { display: flex; align-items: center; gap: 0.3rem; }
-  .meter-label { font-size: 0.55rem; color: #444; flex-shrink: 0; }
-  .meter-wrap { flex: 1; height: 8px; background: #1c1c1c; border-radius: 2px; overflow: hidden; position: relative; }
-  #outputMeterCanvas { display: block; width: 100%; height: 100%; }
-  .meter-clip-dot { width: 6px; height: 6px; border-radius: 50%; background: #333; flex-shrink: 0; transition: background 0.05s, box-shadow 0.05s; }
-  .meter-clip-dot.clipping { background: #e06060; box-shadow: 0 0 5px #e06060; }
-  /* hidden compat canvas — JS still references this ID for the second draw path */
-  #outputMeterCanvasBottom { display: none; }
+  .device--output { width: clamp(130px, 12vw, 190px); border-left: 1px solid #333; border-right: none; }
+  .device-body--output {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0.4rem;
+  }
+  /* mute button — mirrors mic button exactly */
+  #muteBtn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    background: #252525;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    color: #777;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.72rem;
+    padding: 0.3rem 0.4rem 0.25rem;
+    cursor: pointer;
+    letter-spacing: 0.04em;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    position: relative;
+    width: auto;
+    min-width: 0;
+  }
+  #muteBtn:hover { border-color: #555; color: #888; background: #2a2a2a; }
+  #muteBtn .mute-icon {
+    width: 26px; height: 26px; flex-shrink: 0; opacity: 0.4;
+    transition: opacity 0.15s, display 0s;
+  }
+  #muteBtn:hover .mute-icon { opacity: 0.65; }
+  #muteBtn.muted .mute-icon-off { opacity: 0.9; }
+  #muteBtn.muted {
+    background: #2a1e0a;
+    border-color: #7a5a1a;
+    color: #e8a030;
+  }
+  #muteBtn.muted .mute-icon { opacity: 0.9; }
+  /* show/hide speaker icons based on mute state */
+  #muteBtn .mute-icon-on  { display: block; }
+  #muteBtn .mute-icon-off { display: none; }
+  #muteBtn.muted .mute-icon-on  { display: none; }
+  #muteBtn.muted .mute-icon-off { display: block; }
+  .mute-dot {
+    position: absolute; top: 5px; right: 6px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #2a4a2a; border: 1px solid #3a6a3a;
+    transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
+  }
+  #muteBtn.muted .mute-dot {
+    background: #e8a030; border-color: #f0b84a;
+    box-shadow: 0 0 8px #e8a03099;
+  }
+  /* output fader+meter column — mirrors liveinput-body */
+  .output-meter-body {
+    display: flex; flex-direction: column;
+    align-items: stretch; gap: 0; width: 38px; flex-shrink: 0;
+  }
+  #outputFaderMeter {
+    flex: 1; min-height: 0; width: 100%; display: block;
+    cursor: ns-resize; touch-action: none; border-radius: 2px;
+  }
+  /* compat — old IDs hidden */
+  #outputMeterCanvas, #outputMeterCanvasBottom,
+  .meter-row, .meter-wrap, .meter-clip-dot, #meterClipDot { display: none; }
 
   /* ── Right panel: clouds + samples ──────────────────────────────────────── */
   /* ── Drop zone overlay ───────────────────────────────────────────────────── */
@@ -672,8 +788,8 @@
     gap: 0.5rem;
     flex-shrink: 0;
     align-items: stretch;
-    min-height: 120px;
-    max-height: 200px;
+    min-height: clamp(100px, 9vw, 160px);
+    max-height: clamp(140px, 14vw, 220px);
   }
   /* sample instrument block */
   .sample-instrument {
@@ -687,9 +803,9 @@
     overflow: hidden;
   }
   .panel-label {
-    font-size: 0.55rem;
+    font-size: 0.75rem;
     letter-spacing: 0.08em;
-    color: #444;
+    color: #666;
     text-transform: lowercase;
     padding: 0.25rem 0.5rem 0.2rem;
     border-bottom: 1px solid #2a2a2a;
@@ -754,7 +870,7 @@
     position: absolute;
     bottom: 4px;
     left: 8px;
-    font-size: 0.55rem;
+    font-size: 0.75rem;
     color: #888;
     pointer-events: none;
     letter-spacing: 0.04em;
@@ -954,6 +1070,13 @@
         <div id="altLockIndicator" style="display:none;color:#f0c060">alt: locked</div>
         <div id="loadIndicatorHud" style="color:#555;display:none;">● cpu ok</div>
       </div>
+      <!-- Monitor stats overlaid in bottom-left of viewer -->
+      <div id="viewerMonitor">
+        <span id="vmClouds">clouds: 0</span>
+        <span id="vmBuffers">buf: 0</span>
+        <span class="vm-grain-wrap"><span class="vm-dot" id="vmDot"></span><span id="vmGrains">0 grains</span></span>
+        <span id="loadIndicator" style="color:#555">● ok</span>
+      </div>
       <div class="canvas-bottom-bar">
         <div id="liveRecStatus">click / space: rec+paint</div>
       </div>
@@ -1002,7 +1125,6 @@
       <div class="device-body search-body">
         <!-- snap: standalone full-height button on the left -->
         <button id="snapToggleBtn">
-          <span class="snap-label-text">nearest</span>
           <span class="snap-label-text">lock</span>
           <span class="snap-state-text">OFF</span>
         </button>
@@ -1024,33 +1146,6 @@
     </div>
 
     <!-- 3. Monitor -->
-    <div class="device device--monitor">
-      <div class="device-label">monitor</div>
-      <div class="device-body monitor-body">
-
-        <!-- clouds panel: 2×4 grid + big count -->
-        <div class="monitor-viz-box monitor-clouds-box">
-          <span class="monitor-viz-label">clouds</span>
-          <div class="clouds-inner">
-            <canvas id="cloudSlotsCanvas"></canvas>
-            <div class="monitor-big-num" id="cloudsPlantedCount">0</div>
-          </div>
-        </div>
-
-        <!-- buffers big-number box -->
-        <div class="monitor-viz-box monitor-buffers-box">
-          <span class="monitor-viz-label">buffers</span>
-          <div class="monitor-big-num monitor-big-num--buf" id="liveRecCount">0</div>
-          <div class="monitor-sub-row">
-            <div class="live-granulating" id="liveGranulating">
-              <span class="gran-dot"></span><span id="granulatingCount">0</span>
-            </div>
-            <div id="loadIndicator" style="">● ok</div>
-          </div>
-        </div>
-
-      </div>
-    </div>
 
     <!-- 4. Grain preset -->
     <div class="device device--preset">
@@ -1072,17 +1167,112 @@
       </div>
     </div>
 
-    <!-- 5. Spacer -->
+    <!-- 5. Grain controls -->
+    <div class="device device--grain">
+      <div class="device-label">grain controls</div>
+      <div class="device-body grain-body">
+
+        <!-- Col 1: k, dur, dur var -->
+        <div class="grain-col">
+          <div class="grain-row">
+            <span class="grain-label">k</span>
+            <input class="grain-slider" type="range" id="gcKSlider" min="1" max="20" step="1" value="5">
+            <span class="grain-numbox" id="gcKNum" data-param="k">5</span>
+          </div>
+          <div class="grain-row">
+            <span class="grain-label">dur</span>
+            <input class="grain-slider" type="range" id="gcDurSlider" min="10" max="4000" step="1" value="180">
+            <span class="grain-numbox" id="gcDurNum" data-param="duration">180ms</span>
+          </div>
+          <div class="grain-row">
+            <span class="grain-label">dur var</span>
+            <input class="grain-slider" type="range" id="gcDurVarSlider" min="0" max="500" step="1" value="0">
+            <span class="grain-numbox" id="gcDurVarNum" data-param="durVar">0ms</span>
+          </div>
+        </div>
+
+        <!-- Col 2: period, per var, pitch -->
+        <div class="grain-col">
+          <div class="grain-row">
+            <span class="grain-label">period</span>
+            <input class="grain-slider" type="range" id="gcPeriodSlider" min="5" max="4000" step="1" value="140">
+            <span class="grain-numbox" id="gcPeriodNum" data-param="period">140ms</span>
+          </div>
+          <div class="grain-row">
+            <span class="grain-label">per var</span>
+            <input class="grain-slider" type="range" id="gcPeriodVarSlider" min="0" max="500" step="1" value="0">
+            <span class="grain-numbox" id="gcPeriodVarNum" data-param="periodVar">0ms</span>
+          </div>
+          <div class="grain-row">
+            <span class="grain-label">pitch</span>
+            <input class="grain-slider" type="range" id="gcPitchSlider" min="0" max="0.5" step="0.01" value="0">
+            <span class="grain-numbox" id="gcPitchNum" data-param="pitchJitter">0.00</span>
+          </div>
+        </div>
+
+        <!-- Col 3: prob, pan, vol, dir, curve -->
+        <div class="grain-col">
+          <div class="grain-row">
+            <span class="grain-label">prob</span>
+            <input class="grain-slider" type="range" id="gcProbSlider" min="0" max="1" step="0.01" value="1">
+            <span class="grain-numbox" id="gcProbNum" data-param="probability">1.00</span>
+          </div>
+          <div class="grain-row">
+            <span class="grain-label">pan</span>
+            <input class="grain-slider" type="range" id="gcPanSlider" min="0" max="1" step="0.01" value="0.6">
+            <span class="grain-numbox" id="gcPanNum" data-param="panSpread">0.60</span>
+          </div>
+          <div class="grain-row">
+            <span class="grain-label">vol</span>
+            <input class="grain-slider" type="range" id="gcVolSlider" min="0.001" max="0.5" step="0.001" value="0.06">
+            <span class="grain-numbox" id="gcVolNum" data-param="volume">0.06</span>
+          </div>
+          <div class="grain-row">
+            <span class="grain-label">dir</span>
+            <div class="grain-seg" id="gcDirSeg">
+              <button class="grain-seg-btn active" data-dir="fwd">fwd</button>
+              <button class="grain-seg-btn" data-dir="rev">rev</button>
+              <button class="grain-seg-btn" data-dir="rnd">rnd</button>
+            </div>
+          </div>
+          <div class="grain-row">
+            <span class="grain-label">curve</span>
+            <div class="grain-seg" id="gcCurveSeg">
+              <button class="grain-seg-btn active" data-curve="hann">hann</button>
+              <button class="grain-seg-btn" data-curve="tri">tri</button>
+              <button class="grain-seg-btn" data-curve="rect">rect</button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- 6. Spacer -->
     <div class="device device--spacer"></div>
 
     <!-- 6. Output -->
     <div class="device device--output">
       <div class="device-label">output</div>
-      <div class="device-body" style="flex-direction:row;align-items:flex-end;gap:0.3rem;">
-        <div class="meter-wrap" style="width:14px;flex:none;height:64px;background:#1c1c1c;border-radius:2px;overflow:hidden;">
-          <canvas id="outputMeterCanvas" style="display:block;width:100%;height:100%;"></canvas>
+      <div class="device-body device-body--output">
+        <div class="output-meter-body">
+          <canvas id="outputFaderMeter"></canvas>
         </div>
-        <div class="meter-clip-dot" id="meterClipDot"></div>
+        <button id="muteBtn">
+          <span class="mute-dot"></span>
+          <!-- speaker ON (unmuted state) -->
+          <svg class="mute-icon mute-icon-on" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <polygon points="3,8 9,8 15,3 15,21 9,16 3,16" fill="#7abcbc"/>
+            <path d="M18 9a5 5 0 0 1 0 6" stroke="#7abcbc" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+          </svg>
+          <!-- speaker MUTED (crossed-out) -->
+          <svg class="mute-icon mute-icon-off" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <polygon points="3,8 9,8 15,3 15,21 9,16 3,16" fill="#e8a030"/>
+            <line x1="17" y1="8" x2="23" y2="16" stroke="#e8a030" stroke-width="1.8" stroke-linecap="round"/>
+            <line x1="23" y1="8" x2="17" y2="16" stroke="#e8a030" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+          <span>mute</span>
+        </button>
       </div>
     </div>
 
@@ -1205,17 +1395,19 @@ const LIVE_PAINT_COLORS = [
 ];
 
 // ── Grain presets ─────────────────────────────────────────────────────────
-// k = max particles selected per frame (MuBu-style k-nearest cap).
-// Without this, a large brush radius selects many particles and all fire
-// simultaneously → everything sounds washed regardless of other params.
+// k    = neighbourhood pool size — how many nearest particles are candidates.
+//        One grain fires per cursor onset, chosen randomly from the k pool.
+// period = seconds between cursor onsets (global clock, independent of duration).
+//   period > duration → silence gap between grains (sparse/pulsed feel)
+//   period < duration → grains overlap in time (dense/washy feel)
+// retriggerMs = per-particle debounce for cloud mode only (not cursor).
 const PRESETS = [
   {
     name:         'default',
-    // medium grains, moderate k — clear individual grains
     k:            5,
-    duration:     0.18,   // 180ms
+    duration:     0.18,   // 180ms grain
     durJitter:    0.06,
-    overlap:      0.04,
+    period:       0.16,   // 160ms → slight overlap, continuous feel
     fade:         0.04,
     retriggerMs:  120,
     startJitter:  0.06,
@@ -1223,31 +1415,29 @@ const PRESETS = [
     spraySpread:  0.03,
     pitchJitter:  0,
     panSpread:    0.6,
-    volume:       0.06,   // k=5, spray=2 → up to 10 voices × 0.06 = 0.6 sum
+    volume:       0.06,
   },
   {
     name:         'cloud',
-    // long grains, high k, lots of overlap → thick, washy texture (Mutable Instruments Clouds)
-    k:            8,      // was 24 — wash comes from duration/overlap, not particle count
-    duration:     0.8,    // 800ms
+    k:            8,
+    duration:     0.8,    // 800ms grain — long, overlapping
     durJitter:    0.3,
-    overlap:      0.5,
+    period:       0.3,    // 300ms → each new grain starts before the last ends
     fade:         0.22,
-    retriggerMs:  400,    // was 50 — must be ~half duration to prevent same-particle node stacking
+    retriggerMs:  400,
     startJitter:  0.25,
-    sprayCount:   1,      // was 4 — spray adds nodes with no benefit for cloud texture
+    sprayCount:   1,
     spraySpread:  0.15,
     pitchJitter:  0.02,
     panSpread:    1.0,
-    volume:       0.025,  // k=8, spray=1 → up to 8 voices × 0.025 = 0.2 sum (boosted since fewer voices)
+    volume:       0.025,
   },
   {
     name:         'crackle',
-    // very short grains, low k, sparse → stuttery individual snaps (Afterneath-inspired)
-    k:            2,
-    duration:     0.025,  // 25ms
+    k:            4,
+    duration:     0.025,  // 25ms — very short snap
     durJitter:    0.01,
-    overlap:      0.002,
+    period:       0.08,   // 80ms → sparse clicks, gap between each
     fade:         0.005,
     retriggerMs:  35,
     startJitter:  0.3,
@@ -1255,97 +1445,146 @@ const PRESETS = [
     spraySpread:  0.008,
     pitchJitter:  0.08,
     panSpread:    0.25,
-    volume:       0.25,   // k=2, spray=1 → up to 2 voices × 0.25 = 0.5 sum
+    volume:       0.25,
   },
   {
     name:         'tape',
-    // slow, sluggish playback position, pitch-warped, slight wow/flutter (Red Panda Tensor)
     k:            6,
-    duration:     0.55,   // 550ms — long enough to feel sluggish
+    duration:     0.55,   // 550ms
     durJitter:    0.18,
-    overlap:      0.3,
+    period:       0.25,   // 250ms → grains overlap, buttery tape feel
     fade:         0.18,
     retriggerMs:  80,
-    startJitter:  0.02,   // very small jitter — stays near same tape position
+    startJitter:  0.02,
     sprayCount:   2,
     spraySpread:  0.04,
-    pitchJitter:  0.04,   // flutter
+    pitchJitter:  0.04,
     panSpread:    0.35,
-    volume:       0.05,   // k=6, spray=2 → up to 12 voices × 0.05 = 0.6 sum
+    volume:       0.05,
   },
   {
     name:         'scatter',
-    // random sparse bursts across wide area, unpredictable (Hologram Microcosm)
     k:            8,
-    duration:     0.12,   // 120ms — snappy but not tiny
+    duration:     0.12,   // 120ms
     durJitter:    0.08,
-    overlap:      0.01,
+    period:       0.18,   // 180ms → small gap, random pool keeps it unpredictable
     fade:         0.02,
-    retriggerMs:  200,    // slow retrigger → sparse bursts
-    startJitter:  0.45,   // wide random position scatter
+    retriggerMs:  200,
+    startJitter:  0.45,
     sprayCount:   3,
-    spraySpread:  0.25,   // wide spray spread
-    pitchJitter:  0.12,   // noticeable pitch scatter
+    spraySpread:  0.25,
+    pitchJitter:  0.12,
     panSpread:    1.0,
-    volume:       0.07,   // k=8, spray=3 → up to 24 voices × 0.07 = 1.68 → keep sparse
+    volume:       0.07,
   },
   {
     name:         'freeze',
-    // extremely long overlapping grains, stays glued to one position → frozen sustain (Strymon Cloudburst)
-    k:            10,     // was 30 — the long duration already creates the wash
-    duration:     2.0,    // 2s — very long
+    k:            10,
+    duration:     2.0,    // 2s — very long grains
     durJitter:    0.4,
-    overlap:      0.8,    // heavy overlap → permanent wash
+    period:       1.2,    // 1200ms → new grain every 1.2s, overlaps previous
     fade:         0.5,
-    retriggerMs:  1000,   // was 30 — 2s grains need 1s retrigger minimum to not stack
-    startJitter:  0.005,  // almost zero — freezes on same region
-    sprayCount:   1,      // was 5 — 2s × 5 spray = 10s of nodes per particle, devastating
+    retriggerMs:  1000,
+    startJitter:  0.005,
+    sprayCount:   1,
     spraySpread:  0.05,
     pitchJitter:  0.005,
     panSpread:    0.9,
-    volume:       0.012,  // k=10, spray=1 → up to 10 voices × 0.012 = 0.12 sum
+    volume:       0.012,
   },
   {
     name:         'shimmer',
-    // pitch-shifted upward texture with high overlap → ethereal shimmer (Mutable Instruments Beads)
-    k:            8,      // was 16
-    duration:     0.45,   // 450ms
+    k:            8,
+    duration:     0.45,   // 450ms grain
     durJitter:    0.15,
-    overlap:      0.45,
+    period:       0.06,   // 60ms → rapid onsets, heavy overlap = shimmer wash
     fade:         0.15,
-    retriggerMs:  200,    // was 40 — ~half duration
+    retriggerMs:  200,
     startJitter:  0.12,
-    sprayCount:   2,      // was 3 — keep a little spray for shimmer texture
+    sprayCount:   2,
     spraySpread:  0.1,
-    pitchJitter:  0.18,   // higher pitch jitter → shimmery octave-ish spread
+    pitchJitter:  0.18,
     panSpread:    0.85,
-    volume:       0.018,  // k=8, spray=2 → up to 16 voices × 0.018 = 0.29 sum
+    volume:       0.018,
   },
   {
     name:         'gravel',
-    // dense, gritty, medium-short grains — lots of voices, rough texture (Empress Zoia granular)
-    k:            12,
-    duration:     0.065,  // 65ms — short but not micro
+    k:            6,
+    duration:     0.065,  // 65ms
     durJitter:    0.04,
-    overlap:      0.15,
+    period:       0.05,   // 50ms → slight overlap, rough gritty texture
     fade:         0.015,
-    retriggerMs:  50,     // was 25 — must be > duration to prevent stacking (65ms grain → 50ms min)
+    retriggerMs:  50,
     startJitter:  0.2,
-    sprayCount:   2,      // was 4 — short grains × 4 spray = nodes expire before next tick
+    sprayCount:   2,
     spraySpread:  0.07,
     pitchJitter:  0.06,
     panSpread:    0.7,
-    volume:       0.022,  // k=12, spray=2 → up to 24 voices × 0.022 = 0.53 sum
+    volume:       0.022,
   },
 ];
 
 // Active grain params — updated when a preset is selected
 let grainParams = { ...PRESETS[0] };
 let activePresetIndex = 0;
-rebuildHannCurves(grainParams.volume); // init scaled curves for default preset
+rebuildHannCurves(grainParams.volume); // init scaled Hann curves (rebuildGrainCurves called after grainOverrides defined below)
+
+// ── Grain controls overrides ──────────────────────────────────────────────
+// These live on top of the preset values and are set by the grain controls panel.
+// null = use preset value; non-null = override.
+const grainOverrides = {
+  duration:    null,
+  durVar:      null,   // ± seconds of duration randomisation per grain
+  k:           null,
+  period:      null,
+  periodVar:   null,   // ± seconds of period randomisation per onset
+  pitchJitter: null,
+  panSpread:   null,
+  volume:      null,
+};
+let grainProbability = 1.0;   // 0–1: probability each candidate grain fires per tick
+let grainDirection   = 'fwd'; // 'fwd' | 'rev' | 'rnd'
+let grainCurveType   = 'hann'; // 'hann' | 'tri' | 'rect'
+
+// Build envelope attack/release arrays for a given curve type and volume
+function buildEnvelopeCurves(curveType, volume) {
+  const atk = new Float32Array(HANN_LEN);
+  const rel = new Float32Array(HANN_LEN);
+  for (let i = 0; i < HANN_LEN; i++) {
+    const t = i / (HANN_LEN - 1); // 0→1
+    let a, r;
+    if (curveType === 'tri') {
+      // Linear trapezoid (Henke Granulator III style): linear up then linear down
+      a = t;
+      r = 1 - t;
+    } else if (curveType === 'rect') {
+      // Rectangular: instant on, instant off (hard cut)
+      a = i === 0 ? 0 : 1;
+      r = i === HANN_LEN - 1 ? 0 : 1;
+    } else {
+      // Hann (default)
+      a = HANN_ATTACK[i];
+      r = HANN_RELEASE[i];
+    }
+    atk[i] = a * volume;
+    rel[i] = r * volume;
+  }
+  return { atk, rel };
+}
+
+// Rebuild global cached curves (called when curve type or volume changes)
+function rebuildGrainCurves() {
+  const vol = grainOverrides.volume ?? grainParams.volume;
+  const { atk, rel } = buildEnvelopeCurves(grainCurveType, vol);
+  GRAIN_ATTACK_CURVE  = atk;
+  GRAIN_RELEASE_CURVE = rel;
+}
 
 // Shorthand aliases (used throughout playback code)
 const gp = () => grainParams;
+
+// Init grain curves with correct type (hann by default)
+rebuildGrainCurves();
 
 // ============================================================================
 // STATE
@@ -1549,11 +1788,6 @@ function ensureAudioContext() {
     const masterGain = audioCtx.createGain();
     masterGain.gain.value = 0.9;
 
-    // Analyser tap — post-gain, pre-clipper, for output meter
-    masterAnalyser = audioCtx.createAnalyser();
-    masterAnalyser.fftSize = 256;
-    masterAnalyser.smoothingTimeConstant = 0.75;
-
     // Soft clipper (WaveShaper with tanh curve) — sample-accurate, no attack time,
     // frequency-transparent. Replaces DynamicsCompressor which was too slow for
     // transient whistle peaks and introduced frequency-dependent distortion.
@@ -1561,11 +1795,22 @@ function ensureAudioContext() {
     softClipper.curve     = makeSoftClipCurve(4);
     softClipper.oversample = '2x'; // at 22050 Hz, 2x gives 44100 Hz internal — enough to avoid aliasing
 
-    // Chain: masterGain → analyser → softClipper → destination
-    masterGain.connect(masterAnalyser);
-    masterAnalyser.connect(softClipper);
-    softClipper.connect(audioCtx.destination);
+    // Analyser tap — post-clipper, pre-mute, so meter stays active even when muted
+    masterAnalyser = audioCtx.createAnalyser();
+    masterAnalyser.fftSize = 256;
+    masterAnalyser.smoothingTimeConstant = 0.75;
+
+    // Mute gain — final stage, zeroed by mute button; output meter reads upstream of this
+    const muteGain = audioCtx.createGain();
+    muteGain.gain.value = 1;
+
+    // Chain: masterGain → softClipper → analyser → muteGain → destination
+    masterGain.connect(softClipper);
+    softClipper.connect(masterAnalyser);
+    masterAnalyser.connect(muteGain);
+    muteGain.connect(audioCtx.destination);
     masterBus = masterGain;
+    window._muteGain = muteGain; // expose for setMuted
   }
   if (audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
@@ -2155,13 +2400,26 @@ function playGrain(particle, customParams) {
   // Use cloud's own snapshotted params if provided, otherwise use live cursor params
   const p = customParams || gp();
 
-  // Retrigger guard — keyed per (particle, params source) so cursor and clouds
-  // don't share the same lastTriggeredAt and block each other
+  // Apply grain controls overrides on top of preset params (cursor path only).
+  // Must happen before the retrigger guard so period override is respected.
+  const ep = customParams ? p : {
+    ...p,
+    duration:    grainOverrides.duration    ?? p.duration,
+    k:           grainOverrides.k           ?? p.k,
+    period:      grainOverrides.period      ?? p.period,
+    pitchJitter: grainOverrides.pitchJitter ?? p.pitchJitter,
+    panSpread:   grainOverrides.panSpread   ?? p.panSpread,
+    volume:      grainOverrides.volume      ?? p.volume,
+  };
+
+  // Retrigger guard for clouds only — cursor timing is handled by the global
+  // onset clock in scheduleGrains(), so no per-particle guard needed there.
   const audioNow = actx.currentTime;
-  const retriggerSec = p.retriggerMs / 1000;
-  const triggerKey = customParams ? 'cloudTriggeredAt' : 'lastTriggeredAt';
-  if (particle[triggerKey] !== undefined && audioNow - particle[triggerKey] < retriggerSec) return;
-  particle[triggerKey] = audioNow;
+  if (customParams) {
+    const retriggerSec = ep.retriggerMs / 1000;
+    if (particle.cloudTriggeredAt !== undefined && audioNow - particle.cloudTriggeredAt < retriggerSec) return;
+    particle.cloudTriggeredAt = audioNow;
+  }
 
   const sampleDur    = buffer.duration;
   const cropStartSec = particle.source === 'sample'
@@ -2171,28 +2429,37 @@ function playGrain(particle, customParams) {
   const LOOKAHEAD = 0.015;
   const baseTime  = actx.currentTime + LOOKAHEAD;
 
-  // Build Hann curves for this params set.
-  // Cursor path reuses the precomputed global pair (no allocation).
-  // Cloud path builds fresh curves from its snapshotted volume.
+  // Build envelope curves for this grain.
+  // Cursor path uses the precomputed global pair (correct curve type + volume).
+  // Cloud path builds fresh Hann curves from its snapshotted volume.
   let attackCurve, releaseCurve;
   if (customParams) {
     attackCurve  = new Float32Array(HANN_LEN);
     releaseCurve = new Float32Array(HANN_LEN);
     for (let j = 0; j < HANN_LEN; j++) {
-      attackCurve[j]  = HANN_ATTACK[j]  * p.volume;
-      releaseCurve[j] = HANN_RELEASE[j] * p.volume;
+      attackCurve[j]  = HANN_ATTACK[j]  * ep.volume;
+      releaseCurve[j] = HANN_RELEASE[j] * ep.volume;
     }
   } else {
     attackCurve  = GRAIN_ATTACK_CURVE;
     releaseCurve = GRAIN_RELEASE_CURVE;
   }
 
-  for (let i = 0; i < p.sprayCount; i++) {
-    const timeOffset = i * p.spraySpread * rand(0.5, 1.5);
+  // Resolve playback direction (clouds always play forward)
+  const dir = customParams ? 'fwd' : grainDirection;
+
+  for (let i = 0; i < ep.sprayCount; i++) {
+    const timeOffset = i * ep.spraySpread * rand(0.5, 1.5);
     const t          = baseTime + timeOffset;
 
-    let startPos = particle.grainStart + rand(-p.startJitter, p.startJitter);
-    const dur = Math.max(0.02, particle.grainDuration + rand(-p.durJitter, p.durJitter));
+    let startPos = particle.grainStart + rand(-ep.startJitter, ep.startJitter);
+    // Duration: start from ep.duration (which picks up any override), then apply
+    // durVar (absolute ± ms deviation from controls) on top of the preset durJitter.
+    const durVarSec = customParams ? 0 : (grainOverrides.durVar ?? 0);
+    const dur = Math.max(0.02,
+      ep.duration * (1 + rand(-ep.durJitter, ep.durJitter))
+      + rand(-durVarSec, durVarSec)
+    );
 
     const cropLen = cropEndSec - cropStartSec;
     if (cropLen < dur) {
@@ -2204,10 +2471,36 @@ function playGrain(particle, customParams) {
     const actualDur = Math.min(dur, cropEndSec - startPos);
     if (actualDur < 0.015) continue;
 
-    const fade   = Math.max(0.004, Math.min(p.fade, actualDur / 3));
+    // Per-grain direction resolve (rnd picks randomly each grain)
+    const goReverse = dir === 'rev' || (dir === 'rnd' && Math.random() < 0.5);
+
+    const fade   = Math.max(0.004, Math.min(ep.fade, actualDur / 3));
     const source = actx.createBufferSource();
-    source.buffer = buffer;
-    source.playbackRate.value = 1 + rand(-p.pitchJitter, p.pitchJitter);
+
+    // Web Audio doesn't support negative playbackRate. For reverse, extract the
+    // grain slice into a small temporary buffer and flip each channel in place.
+    if (goReverse) {
+      const sr         = buffer.sampleRate;
+      const frameStart = Math.floor(startPos   * sr);
+      const frameCount = Math.ceil(actualDur   * sr);
+      const safeFc     = Math.min(frameCount, buffer.length - frameStart);
+      if (safeFc < 2) continue;
+      const revBuf = actx.createBuffer(buffer.numberOfChannels, safeFc, sr);
+      for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+        const src = buffer.getChannelData(ch).subarray(frameStart, frameStart + safeFc);
+        const dst = revBuf.getChannelData(ch);
+        for (let f = 0; f < safeFc; f++) dst[f] = src[safeFc - 1 - f];
+      }
+      source.buffer = revBuf;
+    } else {
+      source.buffer = buffer;
+    }
+
+    const pitchRate = 1 + rand(-ep.pitchJitter, ep.pitchJitter);
+    source.playbackRate.value = pitchRate;
+    // For forward, start at startPos inside the full buffer; for reverse the
+    // revBuf already begins at the right position so start from 0.
+    const bufferStartPos = goReverse ? 0 : startPos;
 
     const gain = actx.createGain();
     gain.gain.setValueAtTime(0, t);
@@ -2225,7 +2518,7 @@ function playGrain(particle, customParams) {
       ? Math.max(-1, Math.min(1, cx / Math.abs(cz)))
       : 0;
     // panSpread is now a small jitter around the true azimuth position
-    const jitter = rand(-p.panSpread * 0.4, p.panSpread * 0.4);
+    const jitter = rand(-ep.panSpread * 0.4, ep.panSpread * 0.4);
     panner.pan.value = Math.max(-1, Math.min(1, azimuthPan + jitter));
     // Elevation attenuation: particles above/below center lose a little presence
     const elevNorm    = cz !== 0 ? Math.min(1, Math.abs(cy / Math.abs(cz))) : 0;
@@ -2241,7 +2534,7 @@ function playGrain(particle, customParams) {
     panner.connect(getMasterBus());
 
     // Use only source.start duration — don't also call stop(), double-stop causes clicks
-    source.start(t, startPos, actualDur);
+    source.start(t, bufferStartPos, actualDur);
     _grainSourceCount++;
     source.addEventListener('ended', () => {
       _grainSourceCount = Math.max(0, _grainSourceCount - 1);
@@ -2643,6 +2936,8 @@ function updateCloudBanksUI() {
   const count = cloudSlots.filter(c => c !== null).length;
   const cloudsEl = document.getElementById('cloudsPlantedCount');
   if (cloudsEl) cloudsEl.textContent = count;
+  const vmClouds = document.getElementById('vmClouds');
+  if (vmClouds) vmClouds.textContent = `clouds: ${count}`;
 
   const canvas = document.getElementById('cloudSlotsCanvas');
   if (!canvas) return;
@@ -2705,10 +3000,13 @@ function updateCloudBanksUI() {
 function selectPreset(index) {
   activePresetIndex = index;
   grainParams = { ...PRESETS[index] };
-  rebuildHannCurves(grainParams.volume); // rebuild scaled Hann curves for new volume
+  // Clear any overrides so preset values take effect, then rebuild curves
+  Object.keys(grainOverrides).forEach(k => grainOverrides[k] = null);
+  rebuildGrainCurves();
   document.querySelectorAll('.preset-btn').forEach((btn, i) => {
     btn.classList.toggle('active', i === index);
   });
+  if (typeof window.syncGrainControlsUI === 'function') window.syncGrainControlsUI();
   drawPresetWaveform();
   updatePresetStats();
   updatePlaybackControls();
@@ -2843,42 +3141,57 @@ function drawPresetWaveform() {
 
   const pr = PRESETS[activePresetIndex];
 
+  // Live values: reflect grain controls overrides so the diagram matches what's actually playing
+  const liveDur    = grainOverrides.duration ?? pr.duration;
+  const livePeriod = grainOverrides.period   ?? pr.period;
+
   // Reserve bottom strip for stats text
-  const STATS_H  = 11;
-  const drawH    = h - STATS_H;
+  const STATS_H = 11;
+  const drawH   = h - STATS_H;
+  const PAD     = 2;
+  const baseY   = drawH;
+  const maxAmp  = drawH;
 
-  // Draw overlapping grain envelopes as smooth Hann (raised cosine) bumps
-  // Period = duration - overlap (stride between grain onsets)
-  const period   = Math.max(pr.duration - pr.overlap, 0.005);
-  const viewSec  = 0.8;
+  // Period is the onset interval directly — no derivation needed.
+  // Clamp to at least 2px worth of time so the diagram stays readable even at extreme settings.
+  const minPeriod = 2 / ((w / (livePeriod * 5 + liveDur)));
+  const stride    = Math.max(minPeriod, livePeriod);
+
+  // Scale view so we always see ~4-5 grains worth of content
+  const viewSec  = stride * 4.5 + liveDur;
   const pxPerSec = w / viewSec;
-  const grainW   = pr.duration * pxPerSec;
-  // Baseline at bottom, amplitude fills full draw height
-  const baseY  = drawH;
-  const maxAmp = drawH;
-  const PAD    = 2; // tiny top padding so stroke doesn't clip
+  const grainW   = liveDur * pxPerSec;
 
-  // Colour: active preset tint
-  const tints = ['#7abcbc', '#6090e0', '#e07060'];
-  const tint  = tints[activePresetIndex] || '#7abcbc';
+  // Envelope shape based on live grainCurveType
+  const envShape = (t) => {
+    if (grainCurveType === 'tri') {
+      return t < 0.5 ? t * 2 : (1 - t) * 2;
+    } else if (grainCurveType === 'rect') {
+      return (t <= 0 || t >= 1) ? 0 : 1;
+    } else {
+      return 0.5 * (1 - Math.cos(Math.PI * t * 2));
+    }
+  };
 
-  // Draw multiple grains staggered in time
-  const count = Math.ceil(viewSec / period) + 2;
-  const STEPS = 64;
+  // Colour: per-preset tint
+  const tints = ['#7abcbc', '#6090e0', '#e07060', '#a0c060', '#c060a0', '#e0a030', '#60a0e0', '#e06060'];
+  const tint  = tints[activePresetIndex % tints.length] || '#7abcbc';
+
+  const count = Math.ceil(viewSec / stride) + 2;
+  const STEPS = 80;
 
   for (let i = -1; i < count; i++) {
     const jit    = (Math.sin(i * 7.3) * 0.5 + 0.5) * pr.startJitter * pxPerSec * 0.4;
-    const xStart = i * period * pxPerSec - grainW * 0.15 + jit;
+    const xStart = i * stride * pxPerSec - grainW * 0.05 + jit;
 
-    // Hann envelope: rises from 0 → 1 → 0, drawn upward from baseline
     const pts = [];
     for (let s = 0; s <= STEPS; s++) {
-      const t    = s / STEPS;
-      const hann = 0.5 * (1 - Math.cos(Math.PI * t));
-      pts.push({ x: xStart + t * grainW, y: baseY - PAD - hann * (maxAmp - PAD * 2) });
+      const t   = s / STEPS;
+      const amp = envShape(t);
+      pts.push({ x: xStart + t * grainW, y: baseY - PAD - amp * (maxAmp - PAD * 2) });
     }
 
-    // Fill
+    // Filled area
     c.beginPath();
     c.moveTo(pts[0].x, baseY);
     for (const p of pts) c.lineTo(p.x, p.y);
@@ -2888,7 +3201,7 @@ function drawPresetWaveform() {
     c.fillStyle = tint;
     c.fill();
 
-    // Stroke curve only
+    // Curve outline
     c.beginPath();
     pts.forEach((p, idx) => idx === 0 ? c.moveTo(p.x, p.y) : c.lineTo(p.x, p.y));
     c.globalAlpha = 0.65;
@@ -2907,12 +3220,12 @@ function drawPresetWaveform() {
   c.stroke();
   c.globalAlpha = 1;
 
-  // ── Stats text drawn at bottom of canvas ───────────────────────────────────
-  const durStr = Math.round(pr.duration * 1000) + 'ms';
-  const kStr   = pr.k === 0 ? 'near' : String(pr.k);
-  const panStr = Math.round(pr.panSpread * 100) + '%';
-  const statY  = h - 2;
-  const fs     = Math.max(7, Math.round(7.5 * window.devicePixelRatio) / window.devicePixelRatio);
+  // ── Stats: dur, period in ms, curve type ───────────────────────────────────
+  const durStr   = Math.round(liveDur * 1000) + 'ms';
+  const perStr   = Math.round(livePeriod * 1000) + 'ms';
+  const curveStr = (grainCurveType || 'hann').slice(0, 4);
+  const statY = h - 2;
+  const fs    = Math.max(7, Math.round(7.5 * window.devicePixelRatio) / window.devicePixelRatio);
   c.font = `${fs}px 'Roboto Mono', monospace`;
   c.textBaseline = 'bottom';
 
@@ -2923,8 +3236,7 @@ function drawPresetWaveform() {
   c.beginPath(); c.moveTo(0, drawH); c.lineTo(w, drawH); c.stroke();
   c.globalAlpha = 1;
 
-  // label + value pairs, evenly spread
-  const pairs = [['dur', durStr], ['k', kStr], ['pan', panStr]];
+  const pairs = [['dur', durStr], ['per', perStr], ['env', curveStr]];
   const segW  = w / pairs.length;
   pairs.forEach(([label, val], i) => {
     const x = segW * i + segW / 2;
@@ -2950,18 +3262,24 @@ function updatePresetStats() {
 
 function updateLiveGranulatingIndicator() {
   const el = document.getElementById('liveGranulating');
-  if (!el) return;
-  if (liveGranulatingThisFrame) {
-    el.classList.add('active');
-  } else {
-    el.classList.remove('active');
+  if (el) {
+    if (liveGranulatingThisFrame) el.classList.add('active');
+    else el.classList.remove('active');
+  }
+  const dot = document.getElementById('vmDot');
+  if (dot) {
+    if (liveGranulatingThisFrame) dot.classList.add('active');
+    else dot.classList.remove('active');
   }
 }
 
 function updateLiveRecUI() {
   // Big buffer count number
+  const bufCount = liveRecBuffers.filter(b => b.buffer !== null).length;
   const countEl = document.getElementById('liveRecCount');
-  if (countEl) countEl.textContent = liveRecBuffers.filter(b => b.buffer !== null).length;
+  if (countEl) countEl.textContent = bufCount;
+  const vmBuffers = document.getElementById('vmBuffers');
+  if (vmBuffers) vmBuffers.textContent = `buf: ${bufCount}`;
 
   const status  = document.getElementById('liveRecStatus');
   if (status) {
@@ -3256,10 +3574,14 @@ function init() {
   // Re-size after first layout pass in case dimensions weren't settled yet
   requestAnimationFrame(() => { resizeCanvas(); drawPresetWaveform(); updatePlaybackControls(); buildSvTabs(); drawSvWaveform(); animate(); });
 
-  // Redraw waveform if the viewer is resized (e.g. window resize)
+  // Redraw waveforms when their containers resize (e.g. window resize or flex relayout)
   const svDisplayEl = document.getElementById('svDisplay');
   if (svDisplayEl) {
     new ResizeObserver(() => drawSvWaveform()).observe(svDisplayEl);
+  }
+  const presetWaveformWrap = document.querySelector('.preset-waveform-wrap');
+  if (presetWaveformWrap) {
+    new ResizeObserver(() => drawPresetWaveform()).observe(presetWaveformWrap);
   }
 
   // Grain scheduler — independent of render loop so slow frames don't delay grains.
@@ -3382,7 +3704,11 @@ function gainToDb(gain) {
   return 20 * Math.log10(gain);
 }
 
-let _faderInputLevel = 0; // smoothed RMS level 0–1 for meter drawing
+let _faderInputLevel  = 0; // smoothed RMS level 0–1 for input meter
+let _faderOutputLevel = 0; // smoothed RMS level 0–1 for output meter
+let outputGainValue   = 0.9; // linear gain, matches masterGain initial value
+let isMuted           = false;
+let outputClipHoldUntil = 0;
 
 function drawInputMeter() {
   const fc = document.getElementById('inputFaderMeter');
@@ -3526,80 +3852,121 @@ let meterClipHoldUntil = 0;
 const METER_CLIP_HOLD_S = 1.5; // seconds to keep clip dot lit
 
 function drawOutputMeter() {
-  const meterCanvas = document.getElementById('outputMeterCanvas');
-  const clipDot     = document.getElementById('meterClipDot');
-  if (!meterCanvas || !masterAnalyser) return;
+  const fc = document.getElementById('outputFaderMeter');
+  if (!fc) return;
 
-  masterAnalyser.getFloatTimeDomainData(ANALYSER_BUF);
-  const buf = ANALYSER_BUF;
-  const bufLen = buf.length;
-
-  // RMS + peak
-  let sumSq = 0, peak = 0;
-  for (let i = 0; i < bufLen; i++) {
-    const v = Math.abs(buf[i]);
-    sumSq += v * v;
-    if (v > peak) peak = v;
-  }
-  const rms = Math.sqrt(sumSq / bufLen);
-
-  // Convert to dBFS then normalise to 0-1 for display (floor -60 dBFS)
-  const DB_FLOOR = -60;
-  const rmsDb  = rms  > 0 ? 20 * Math.log10(rms)  : DB_FLOOR;
-  const peakDb = peak > 0 ? 20 * Math.log10(peak) : DB_FLOOR;
-  const level  = Math.max(0, Math.min(1, (rmsDb  - DB_FLOOR) / -DB_FLOOR));
-
-  // Draw bar — vertical, fill from bottom
-  const w = meterCanvas.offsetWidth  || 14;
-  const h = meterCanvas.offsetHeight || meterCanvas.parentElement.clientHeight || 64;
-  if (meterCanvas.width  !== w) meterCanvas.width  = w;
-  if (meterCanvas.height !== h) meterCanvas.height = h;
-
-  const mc = meterCanvas.getContext('2d');
-  mc.clearRect(0, 0, w, h);
-
-  const fillH = Math.round(level * h);
-  if (fillH > 0) {
-    // gradient: bottom = green (quiet), top = red (loud)
-    const grad = mc.createLinearGradient(0, h, 0, 0);
-    grad.addColorStop(0,    '#3a7a50');
-    grad.addColorStop(0.6,  '#5ab870');
-    grad.addColorStop(0.78, '#c8b840');
-    grad.addColorStop(0.9,  '#d06030');
-    grad.addColorStop(1.0,  '#c03030');
-    mc.fillStyle = grad;
-    mc.fillRect(0, h - fillH, w, fillH);
-  }
-
-  // Clip detection (peak >= 0 dBFS)
-  const now = performance.now() / 1000;
-  if (peakDb >= 0) meterClipHoldUntil = now + METER_CLIP_HOLD_S;
-  const clipping = now < meterClipHoldUntil;
-  if (clipDot) clipDot.classList.toggle('clipping', clipping);
-
-  // ── Also draw to bottom meter bar ─────────────────────────────────────────
-  const meterCanvasB = document.getElementById('outputMeterCanvasBottom');
-  const clipDotB     = document.getElementById('meterClipDotBottom');
-  if (meterCanvasB) {
-    const wb = meterCanvasB.offsetWidth  || meterCanvasB.parentElement.clientWidth || 200;
-    const hb = meterCanvasB.offsetHeight || 6;
-    if (meterCanvasB.width  !== wb) meterCanvasB.width  = wb;
-    if (meterCanvasB.height !== hb) meterCanvasB.height = hb;
-    const mcb = meterCanvasB.getContext('2d');
-    mcb.clearRect(0, 0, wb, hb);
-    const fillWb = Math.round(level * wb);
-    if (fillWb > 0) {
-      const gradb = mcb.createLinearGradient(0, 0, wb, 0);
-      gradb.addColorStop(0,    '#3a7a50');
-      gradb.addColorStop(0.6,  '#5ab870');
-      gradb.addColorStop(0.78, '#c8b840');
-      gradb.addColorStop(0.9,  '#d06030');
-      gradb.addColorStop(1.0,  '#c03030');
-      mcb.fillStyle = gradb;
-      mcb.fillRect(0, 0, fillWb, hb);
+  // ── Measure output level ───────────────────────────────────────────────────
+  let rmsDb = -60, peakDb = -60;
+  if (masterAnalyser) {
+    masterAnalyser.getFloatTimeDomainData(ANALYSER_BUF);
+    let sumSq = 0, peak = 0;
+    for (let i = 0; i < ANALYSER_BUF.length; i++) {
+      const v = Math.abs(ANALYSER_BUF[i]);
+      sumSq += v * v;
+      if (v > peak) peak = v;
     }
-    if (clipDotB) clipDotB.classList.toggle('clipping', clipping);
+    const rms = Math.sqrt(sumSq / ANALYSER_BUF.length);
+    rmsDb  = rms  > 0 ? 20 * Math.log10(rms)  : -60;
+    peakDb = peak > 0 ? 20 * Math.log10(peak) : -60;
   }
+
+  // Smooth level
+  const DB_FLOOR = -60;
+  const rawLevel = Math.max(0, Math.min(1, (rmsDb - DB_FLOOR) / -DB_FLOOR));
+  _faderOutputLevel += rawLevel > _faderOutputLevel
+    ? (rawLevel - _faderOutputLevel) * 0.6
+    : (rawLevel - _faderOutputLevel) * 0.08;
+
+  // ── Size canvas ────────────────────────────────────────────────────────────
+  const dpr  = window.devicePixelRatio || 1;
+  const rect  = fc.getBoundingClientRect();
+  const W = Math.round(rect.width  || 38);
+  const H = Math.round(rect.height || 64);
+  if (fc.width !== W * dpr || fc.height !== H * dpr) {
+    fc.width  = W * dpr;
+    fc.height = H * dpr;
+  }
+  const c = fc.getContext('2d');
+  c.save();
+  c.scale(dpr, dpr);
+  c.clearRect(0, 0, W, H);
+
+  // ── Layout (identical to drawInputMeter) ───────────────────────────────────
+  const ARROW_W  = 6;
+  const LABEL_W  = 14;
+  const METER_X  = ARROW_W + 1;
+  const METER_W  = W - ARROW_W - 1 - LABEL_W - 1;
+  const PAD_T    = 3, PAD_B = 3;
+  const trackH   = H - PAD_T - PAD_B;
+  const METER_DB_MIN = -60, METER_DB_MAX = 6;
+
+  function meterDbToY(db) {
+    const t = (db - METER_DB_MIN) / (METER_DB_MAX - METER_DB_MIN);
+    return PAD_T + trackH - t * trackH;
+  }
+
+  // ── Meter bar ──────────────────────────────────────────────────────────────
+  c.fillStyle = '#111';
+  c.fillRect(METER_X, PAD_T, METER_W, trackH);
+
+  const fillH = Math.round(_faderOutputLevel * trackH);
+  if (fillH > 0) {
+    const grad = c.createLinearGradient(0, PAD_T + trackH, 0, PAD_T);
+    grad.addColorStop(0,    '#1a5c2e');
+    grad.addColorStop(0.60, '#3daa55');
+    grad.addColorStop(0.78, '#a8a820');
+    grad.addColorStop(0.90, '#c85818');
+    grad.addColorStop(1.0,  '#aa1818');
+    c.fillStyle = grad;
+    c.fillRect(METER_X, PAD_T + trackH - fillH, METER_W, fillH);
+  }
+
+  // Clip flash
+  const now = performance.now() / 1000;
+  if (peakDb >= 0) outputClipHoldUntil = now + METER_CLIP_HOLD_S;
+  if (now < outputClipHoldUntil) {
+    c.fillStyle = '#dd2222';
+    c.fillRect(METER_X, PAD_T, METER_W, 3);
+  }
+
+  // ── Notch lines + labels ───────────────────────────────────────────────────
+  const notchDbs = [0, -12, -24, -36, -48, -60];
+  const fontSize = Math.round(Math.max(5, Math.min(7, trackH / notchDbs.length - 1)));
+  c.font = `${fontSize}px 'Roboto Mono', monospace`;
+  c.textAlign = 'left';
+  notchDbs.forEach(db => {
+    const ny = meterDbToY(db);
+    const isZero = db === 0;
+    c.strokeStyle = isZero ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.2)';
+    c.lineWidth   = isZero ? 1 : 0.75;
+    c.beginPath(); c.moveTo(METER_X, ny); c.lineTo(METER_X + METER_W, ny); c.stroke();
+    c.fillStyle = isZero ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.28)';
+    c.textBaseline = db === METER_DB_MIN ? 'bottom' : (isZero ? 'top' : 'middle');
+    const labelY = db === METER_DB_MIN ? ny + 1 : (isZero ? ny + 0.5 : ny);
+    c.fillText(String(Math.abs(db)), METER_X + METER_W + 2, labelY);
+  });
+
+  // ── 0 dB marker ───────────────────────────────────────────────────────────
+  const zeroY = meterDbToY(0);
+  c.strokeStyle = 'rgba(255,255,255,0.85)';
+  c.lineWidth   = 2;
+  c.beginPath(); c.moveTo(METER_X, zeroY); c.lineTo(METER_X + METER_W, zeroY); c.stroke();
+
+  // ── Fader arrow — muted state greys it out ─────────────────────────────────
+  // Map outputGainValue (0–2 linear) using same gainToFaderPos helper
+  const fPos  = gainToFaderPos(outputGainValue);
+  const fY    = PAD_T + trackH - fPos * trackH;
+  const arrowColor = isMuted ? '#553333' : (outputGainValue > 1.0 ? '#e8a030' : '#c8c8c8');
+  const TH = 8, TW = ARROW_W;
+  c.fillStyle = arrowColor;
+  c.beginPath();
+  c.moveTo(0,  fY - TH / 2);
+  c.lineTo(TW, fY);
+  c.lineTo(0,  fY + TH / 2);
+  c.closePath();
+  c.fill();
+
+  c.restore();
 }
 
 function drawFrame() {
@@ -3808,7 +4175,10 @@ function drawArc(angle, type) {
 }
 
 // ── Grain scheduler — runs on its own interval, independent of render loop ──
-// selectedGrainSet is shared with drawParticles for visual highlight only.
+// activeGrainMap: particle → performance.now() expiry, so glow lasts full grain duration.
+let activeGrainMap = new Map();
+// Legacy alias — drawParticles checks this for the selected ring/glow.
+// We keep selectedGrainSet as a computed view of activeGrainMap for cloud grains.
 let selectedGrainSet = new Set();
 
 // ── Scheduling helpers ────────────────────────────────────────────────────────
@@ -3849,6 +4219,8 @@ function findNearestCloudSlot(refLon, refLat) {
 }
 
 let _schedLastAt = 0;
+let _cursorLastFiredAt  = -Infinity; // performance.now() of last cursor grain onset
+let _cursorNextPeriodMs = null;      // randomised wait until next onset (set at each firing)
 const MAX_GRAIN_NODES = 250; // hard cap on concurrent AudioBufferSourceNodes
 
 function scheduleGrains() {
@@ -3862,41 +4234,75 @@ function scheduleGrains() {
 
   const { lon: cursorLon, lat: cursorLat } =
     (mouseInCanvas || altLocked) ? getMouseLonLat() : getCursorLonLat();
-  const k = gp().k;
+  const k = grainOverrides.k ?? gp().k;
   const searchRadiusRad = searchRadiusDeg * Math.PI / 180;
 
-  selectedGrainSet = new Set();
+  // Expire old entries from activeGrainMap so glow fades after grain duration.
+  for (const [particle, expiresAt] of activeGrainMap) {
+    if (now > expiresAt) activeGrainMap.delete(particle);
+  }
+
   liveGranulatingThisFrame = false;
   perf.grainsFired = 0;
   let _granulatingCount = 0;
 
-  // No shared budget/pressure scaling — each cloud and the cursor are independent.
-  // The retrigger guard on each particle is the natural throttle: a cloud with k=8
-  // and retriggerMs=400 can only ever have ~8 grains alive at once regardless of
-  // what other clouds are doing. The cap above is a safety ceiling only.
-
   // ── Cursor grains (only when particles exist) ─────────────────────────────
+  // Period is a global onset clock — one grain fires per period, chosen randomly
+  // from the k nearest candidates. k is a pool size, not a voice count.
   if (particles.length) {
-    const withAng = particles.map(p => ({
-      p,
-      ang: angleBetweenSphere(p.lon, p.lat, cursorLon, cursorLat)
-    }));
+    const basePeriodMs  = (grainOverrides.period ?? gp().period) * 1000;
+    const periodVarMs   = (grainOverrides.periodVar ?? 0) * 1000;
+    // _cursorNextPeriodMs is set at each onset to include this onset's variation.
+    // On the very first tick it defaults to basePeriodMs with no variation.
+    const livePeriodMs  = _cursorNextPeriodMs ?? basePeriodMs;
+    const liveDurMs     = (grainOverrides.duration ?? gp().duration) * 1000;
+    const sinceLastMs   = now - _cursorLastFiredAt;
 
-    let toGranulate = [];
-    if (nearestMode) {
-      withAng.sort((a, b) => a.ang - b.ang);
-      if (withAng.length > 0) toGranulate = [withAng[0].p];
-    } else {
-      const inRadius = withAng.filter(c => c.ang < searchRadiusRad);
-      toGranulate = shuffleInPlace(applyRecencyFilter(inRadius)).slice(0, k).map(c => c.p);
+    if (sinceLastMs >= livePeriodMs) {
+      _cursorLastFiredAt   = now;
+      // Randomise the *next* wait now so each inter-onset gap is independently varied.
+      _cursorNextPeriodMs  = Math.max(20, basePeriodMs + rand(-periodVarMs, periodVarMs));
+
+      const withAng = particles.map(p => ({
+        p,
+        ang: angleBetweenSphere(p.lon, p.lat, cursorLon, cursorLat)
+      }));
+
+      let toGranulate = [];
+      if (nearestMode) {
+        withAng.sort((a, b) => a.ang - b.ang);
+        toGranulate = applyRecencyFilter(withAng).slice(0, k).map(c => c.p);
+      } else {
+        const inRadius = withAng.filter(c => c.ang < searchRadiusRad);
+        toGranulate = shuffleInPlace(applyRecencyFilter(inRadius)).slice(0, k).map(c => c.p);
+      }
+
+      // Pick one at random from the pool each period — cycles through particles.
+      if (toGranulate.length > 0) {
+        if (!(grainProbability < 1.0 && Math.random() > grainProbability)) {
+          const p = toGranulate[Math.floor(Math.random() * toGranulate.length)];
+          // Register glow for the full grain duration so visual matches audio.
+          activeGrainMap.set(p, now + liveDurMs);
+          playGrain(p);
+          perf.grainsFired++;
+          _granulatingCount++;
+          if (p.source === 'live') liveGranulatingThisFrame = true;
+        }
+      }
     }
 
-    for (const p of toGranulate) {
-      selectedGrainSet.add(p);
-      playGrain(p);
-      perf.grainsFired++;
-      _granulatingCount++;
-      if (p.source === 'live') liveGranulatingThisFrame = true;
+    // In nearest mode, also keep the k pool lit in activeGrainMap even between
+    // onsets — so the glow stays on continuously (snap = always playing).
+    if (nearestMode) {
+      const withAng = particles.map(p => ({
+        p, ang: angleBetweenSphere(p.lon, p.lat, cursorLon, cursorLat)
+      }));
+      withAng.sort((a, b) => a.ang - b.ang);
+      const pool = applyRecencyFilter(withAng).slice(0, k).map(c => c.p);
+      for (const p of pool) {
+        // Extend expiry so the glow doesn't flicker between scheduler ticks.
+        activeGrainMap.set(p, now + 60); // 60ms = 2 scheduler ticks of headroom
+      }
     }
   }
 
@@ -3914,12 +4320,19 @@ function scheduleGrains() {
       perf.grainsFired++;
       _granulatingCount++;
       if (p.source === 'live') liveGranulatingThisFrame = true;
-      selectedGrainSet.add(p);
+      // Cloud grains: extend glow by cloud duration each tick they fire.
+      activeGrainMap.set(p, now + cloud.grainParams.duration * 1000);
     }
   }
+
+  // Rebuild selectedGrainSet as a live view of activeGrainMap for drawParticles.
+  selectedGrainSet = new Set(activeGrainMap.keys());
+
   // Update granulating count display
   const gcEl = document.getElementById('granulatingCount');
   if (gcEl) gcEl.textContent = selectedGrainSet.size;
+  const vmGrains = document.getElementById('vmGrains');
+  if (vmGrains) vmGrains.textContent = `${selectedGrainSet.size} grains`;
 }
 
 function drawParticles() {
@@ -4246,7 +4659,7 @@ function setupEvents() {
     }
   });
 
-  window.addEventListener('resize', resizeCanvas);
+  window.addEventListener('resize', () => { resizeCanvas(); drawPresetWaveform(); });
 
   // ── Scroll: radius | Shift+scroll: cycle presets ─────────────────────────
   canvas.addEventListener('wheel', e => {
@@ -4343,6 +4756,225 @@ function setupEvents() {
       document.fullscreenElement ? '✕' : '⛶';
     resizeCanvas();
   });
+
+  // ── Grain controls panel ─────────────────────────────────────────────────────
+  (function initGrainControls() {
+    // ── Slider + numbox pairs ────────────────────────────────────────────────
+    // Each entry: { sliderId, numId, param, min, max, decimals, unit, toDisplay, fromDisplay }
+    const SLIDER_DEFS = [
+      {
+        sliderId: 'gcDurSlider', numId: 'gcDurNum', param: 'duration',
+        min: 0.01, max: 4.0,
+        toDisplay: v => Math.round(v * 1000) + 'ms',
+        sliderToInternal: sv => parseFloat(sv) / 1000,
+        internalToSlider: v => Math.round(v * 1000),
+      },
+      {
+        sliderId: 'gcDurVarSlider', numId: 'gcDurVarNum', param: 'durVar',
+        min: 0, max: 0.5,
+        toDisplay: v => Math.round(v * 1000) + 'ms',
+        sliderToInternal: sv => parseFloat(sv) / 1000,
+        internalToSlider: v => Math.round(v * 1000),
+      },
+      {
+        sliderId: 'gcKSlider', numId: 'gcKNum', param: 'k',
+        min: 1, max: 20,
+        toDisplay: v => Math.round(v),
+        sliderToInternal: sv => parseInt(sv),
+        internalToSlider: v => Math.round(v),
+      },
+      {
+        sliderId: 'gcPeriodSlider', numId: 'gcPeriodNum', param: 'period',
+        min: 0.005, max: 4.0,
+        toDisplay: v => Math.round(v * 1000) + 'ms',
+        sliderToInternal: sv => parseFloat(sv) / 1000,
+        internalToSlider: v => Math.round(v * 1000),
+      },
+      {
+        sliderId: 'gcPeriodVarSlider', numId: 'gcPeriodVarNum', param: 'periodVar',
+        min: 0, max: 0.5,
+        toDisplay: v => Math.round(v * 1000) + 'ms',
+        sliderToInternal: sv => parseFloat(sv) / 1000,
+        internalToSlider: v => Math.round(v * 1000),
+      },
+      {
+        sliderId: 'gcPitchSlider', numId: 'gcPitchNum', param: 'pitchJitter',
+        min: 0, max: 0.5,
+        toDisplay: v => v.toFixed(2),
+        sliderToInternal: sv => parseFloat(sv),
+        internalToSlider: v => v,
+      },
+      {
+        sliderId: 'gcProbSlider', numId: 'gcProbNum', param: 'probability',
+        min: 0, max: 1,
+        toDisplay: v => v.toFixed(2),
+        sliderToInternal: sv => parseFloat(sv),
+        internalToSlider: v => v,
+      },
+      {
+        sliderId: 'gcPanSlider', numId: 'gcPanNum', param: 'panSpread',
+        min: 0, max: 1,
+        toDisplay: v => v.toFixed(2),
+        sliderToInternal: sv => parseFloat(sv),
+        internalToSlider: v => v,
+      },
+      {
+        sliderId: 'gcVolSlider', numId: 'gcVolNum', param: 'volume',
+        min: 0.001, max: 0.5,
+        toDisplay: v => v.toFixed(3),
+        sliderToInternal: sv => parseFloat(sv),
+        internalToSlider: v => v,
+      },
+    ];
+
+    function setGrainParam(param, internalVal) {
+      if (param === 'probability') {
+        grainProbability = Math.max(0, Math.min(1, internalVal));
+      } else {
+        grainOverrides[param] = internalVal;
+        if (param === 'volume') rebuildGrainCurves();
+        // Redraw diagram when duration or period changes — they affect spacing
+        if (param === 'duration' || param === 'period') drawPresetWaveform();
+        // Reset onset timing so new period/variation takes effect immediately
+        if (param === 'period' || param === 'periodVar') _cursorNextPeriodMs = null;
+      }
+    }
+
+    function syncSliderFromInternal(def) {
+      const slider = document.getElementById(def.sliderId);
+      const numbox = document.getElementById(def.numId);
+      if (!slider || !numbox) return;
+      // durVar / periodVar are UI-only — presets don't carry them, so default to 0.
+      const val = def.param === 'probability' ? grainProbability
+                : (def.param === 'durVar' || def.param === 'periodVar')
+                  ? (grainOverrides[def.param] ?? 0)
+                  : (grainOverrides[def.param] ?? gp()[def.param]);
+      slider.value = def.internalToSlider(val);
+      numbox.textContent = def.toDisplay(val);
+    }
+
+    SLIDER_DEFS.forEach(def => {
+      const slider = document.getElementById(def.sliderId);
+      const numbox = document.getElementById(def.numId);
+      if (!slider || !numbox) return;
+
+      // Slider → param
+      slider.addEventListener('input', () => {
+        const internal = def.sliderToInternal(slider.value);
+        setGrainParam(def.param, internal);
+        numbox.textContent = def.toDisplay(internal);
+      });
+
+      // Numbox: drag up/down to change value
+      let nbDrag = null;
+      numbox.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        numbox.setPointerCapture(e.pointerId);
+        const current = def.param === 'probability' ? grainProbability
+                      : (grainOverrides[def.param] ?? gp()[def.param]);
+        nbDrag = { startY: e.clientY, startVal: current };
+      });
+      numbox.addEventListener('pointermove', e => {
+        if (!nbDrag) return;
+        const sliderEl = document.getElementById(def.sliderId);
+        const range = parseFloat(sliderEl.max) - parseFloat(sliderEl.min);
+        const delta = -(e.clientY - nbDrag.startY) / 120 * range;
+        const newVal = Math.max(parseFloat(sliderEl.min),
+                       Math.min(parseFloat(sliderEl.max), nbDrag.startVal + delta));
+        const internal = def.sliderToInternal(String(def.internalToSlider(newVal)));
+        setGrainParam(def.param, internal);
+        numbox.textContent = def.toDisplay(internal);
+        sliderEl.value = def.internalToSlider(internal);
+      });
+      numbox.addEventListener('pointerup', () => { nbDrag = null; });
+      numbox.addEventListener('pointercancel', () => { nbDrag = null; });
+    });
+
+    // ── Direction segmented control ──────────────────────────────────────────
+    const dirSeg = document.getElementById('gcDirSeg');
+    if (dirSeg) {
+      dirSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          grainDirection = btn.dataset.dir;
+          dirSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+        });
+      });
+    }
+
+    // ── Curve type segmented control ─────────────────────────────────────────
+    const curveSeg = document.getElementById('gcCurveSeg');
+    if (curveSeg) {
+      curveSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          grainCurveType = btn.dataset.curve;
+          curveSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+          rebuildGrainCurves();
+          drawPresetWaveform();
+        });
+      });
+    }
+
+    // ── syncGrainControlsUI: update all sliders/numboxes from current params ──
+    // Called by selectPreset() after loading a new preset
+    window.syncGrainControlsUI = function() {
+      SLIDER_DEFS.forEach(syncSliderFromInternal);
+      // Reset dir + curve to defaults on preset change
+      grainDirection = 'fwd';
+      grainCurveType = 'hann';
+      if (dirSeg)   dirSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.dir === 'fwd'));
+      if (curveSeg) curveSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.curve === 'hann'));
+    };
+
+    // Init display from default preset
+    window.syncGrainControlsUI();
+  })();
+
+  // ── Mute button ──────────────────────────────────────────────────────────────
+  const muteBtn = document.getElementById('muteBtn');
+  function setMuted(muted) {
+    isMuted = muted;
+    ensureAudioContext();                   // ensures muteGain is created
+    const mg = window._muteGain;
+    if (mg) mg.gain.setTargetAtTime(
+      isMuted ? 0 : 1,
+      audioCtx.currentTime, 0.01
+    );
+    if (muteBtn) {
+      muteBtn.classList.toggle('muted', isMuted);
+      const span = muteBtn.querySelector('span:last-child');
+      if (span) span.textContent = isMuted ? 'unmute' : 'mute';
+    }
+  }
+  if (muteBtn) muteBtn.addEventListener('click', () => setMuted(!isMuted));
+
+  // ── Output fader drag ────────────────────────────────────────────────────────
+  const outputFaderCanvas = document.getElementById('outputFaderMeter');
+  function setOutputGain(linearVal) {
+    outputGainValue = Math.max(0, Math.min(2, linearVal));
+    if (masterBus)
+      masterBus.gain.setTargetAtTime(outputGainValue, audioCtx.currentTime, 0.01);
+  }
+  let outputFaderDrag = null;
+  if (outputFaderCanvas) {
+    outputFaderCanvas.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      outputFaderCanvas.setPointerCapture(e.pointerId);
+      const rect = outputFaderCanvas.getBoundingClientRect();
+      const PAD_T = 3, PAD_B = 3, trackH = rect.height - PAD_T - PAD_B;
+      const clickPos = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top - PAD_T) / trackH));
+      setOutputGain(faderPosToGain(clickPos));
+      outputFaderDrag = { startY: e.clientY, startPos: gainToFaderPos(outputGainValue), trackH };
+    });
+    outputFaderCanvas.addEventListener('pointermove', e => {
+      if (!outputFaderDrag) return;
+      const dy    = outputFaderDrag.startY - e.clientY;
+      const delta = dy / outputFaderDrag.trackH;
+      setOutputGain(faderPosToGain(Math.max(0, Math.min(1, outputFaderDrag.startPos + delta))));
+    });
+    outputFaderCanvas.addEventListener('pointerup',     () => { outputFaderDrag = null; });
+    outputFaderCanvas.addEventListener('pointercancel', () => { outputFaderDrag = null; });
+    outputFaderCanvas.addEventListener('dblclick', () => setOutputGain(1.0)); // reset to 0 dB
+  }
 }
 
 // ============================================================================
@@ -4431,7 +5063,7 @@ function animate() {
           color:         SAMPLE_PAINT_COLORS[activeSampleIndex % SAMPLE_PAINT_COLORS.length]
         };
 
-        const stride = (gpr.duration - gpr.overlap) * rand(0.8, 1.2);
+        const stride = gpr.period * rand(0.8, 1.2);
         s.grainCursor += stride;
         if (s.grainCursor > cropEnd) s.grainCursor = cropStart + ((s.grainCursor - cropStart) % cropLen);
       }
