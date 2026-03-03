@@ -630,13 +630,21 @@
     padding: 0 0 0 4px;
     width: 46px;
     text-align: right;
-    cursor: ns-resize;
-    user-select: none;
+    cursor: text;
     flex-shrink: 0;
     line-height: 1.6;
     transition: color 0.1s, border-color 0.1s;
+    outline: none;
+    -moz-appearance: textfield;
   }
+  .grain-numbox::-webkit-outer-spin-button,
+  .grain-numbox::-webkit-inner-spin-button { -webkit-appearance: none; }
   .grain-numbox:hover { border-color: #3a3a3a; color: #9adcdc; }
+  .grain-numbox:focus {
+    color: #fff;
+    border-color: #5a9a9a;
+    background: rgba(20,50,50,0.5);
+  }
   /* Segmented buttons (dir / curve) */
   .grain-seg {
     display: flex;
@@ -1005,25 +1013,21 @@
 
   /* ── Fullscreen button ───────────────────────────────────────────────────── */
   #fullscreenBtn {
-    position: absolute;
-    bottom: 0.75rem;
-    right: 0.75rem;
-    background: rgba(34,34,34,0.7);
-    border: 1px solid #666;
-    color: #ccc;
+    background: none;
+    border: none;
+    color: #888;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.75rem;
-    padding: 0.4rem 0.6rem;
-    border-radius: 4px;
+    font-size: 0.85rem;
+    padding: 0;
     cursor: pointer;
+    pointer-events: all;
     opacity: 0.7;
-    transition: opacity 0.2s, border-color 0.2s, color 0.2s;
-    z-index: 10;
+    transition: opacity 0.2s, color 0.2s;
     line-height: 1;
+    flex-shrink: 0;
   }
   #fullscreenBtn:hover {
     opacity: 1;
-    border-color: #aaa;
     color: #fff;
   }
 
@@ -1190,6 +1194,7 @@
     <div class="canvas-wrapper" id="canvasWrapper">
       <canvas id="sphereCanvas"></canvas>
       <div class="hud">
+        <button id="fullscreenBtn" title="fullscreen">⛶</button>
         <div id="coordinates">--,--</div>
         <div id="sampleIndicator" style="color:#555">no sample</div>
         <div id="altLockIndicator" style="display:none;color:#f0c060">alt: locked</div>
@@ -1203,7 +1208,6 @@
       </div>
 
       <div id="perfMonitor" style="display:none;position:absolute;top:2.5rem;left:1rem;font-family:'Roboto Mono',monospace;font-size:0.75rem;color:#aaa;pointer-events:none;line-height:1.7;background:rgba(0,0,0,0.55);padding:0.35rem 0.5rem;border-radius:3px;"></div>
-      <button id="fullscreenBtn" title="fullscreen">⛶</button>
       <div class="drop-overlay" id="dropOverlay">
         <div class="drop-icon">↓</div>
         <div class="drop-text">drop audio file (.wav, .mp3, .ogg)</div>
@@ -1265,42 +1269,42 @@
           <div class="grain-row">
             <span class="grain-label">dur</span>
             <input class="grain-slider grain-slider--log" type="range" id="gcDurSlider" min="0" max="1000" step="1" value="432">
-            <span class="grain-numbox" id="gcDurNum" data-param="duration">180ms</span>
+            <input type="text" class="grain-numbox" id="gcDurNum" data-param="duration" value="180ms">
           </div>
           <div class="grain-row">
             <span class="grain-label">dur ±</span>
             <input class="grain-slider" type="range" id="gcDurVarSlider" min="0" max="500" step="1" value="0">
-            <span class="grain-numbox" id="gcDurVarNum" data-param="durVar">0ms</span>
+            <input type="text" class="grain-numbox" id="gcDurVarNum" data-param="durVar" value="0ms">
           </div>
           <div class="grain-row">
             <span class="grain-label">period</span>
             <input class="grain-slider grain-slider--log" type="range" id="gcPeriodSlider" min="0" max="1000" step="1" value="389">
-            <span class="grain-numbox" id="gcPeriodNum" data-param="period">160ms</span>
+            <input type="text" class="grain-numbox" id="gcPeriodNum" data-param="period" value="160ms">
           </div>
           <div class="grain-row">
             <span class="grain-label">per ±</span>
             <input class="grain-slider" type="range" id="gcPeriodVarSlider" min="0" max="500" step="1" value="0">
-            <span class="grain-numbox" id="gcPeriodVarNum" data-param="periodVar">0ms</span>
+            <input type="text" class="grain-numbox" id="gcPeriodVarNum" data-param="periodVar" value="0ms">
           </div>
           <div class="grain-row">
             <span class="grain-label">pitch</span>
             <input class="grain-slider" type="range" id="gcPitchSlider" min="0" max="0.5" step="0.01" value="0">
-            <span class="grain-numbox" id="gcPitchNum" data-param="pitchJitter">0.00</span>
+            <input type="text" class="grain-numbox" id="gcPitchNum" data-param="pitchJitter" value="0.00">
           </div>
           <div class="grain-row">
             <span class="grain-label">prob</span>
             <input class="grain-slider" type="range" id="gcProbSlider" min="0" max="1" step="0.01" value="1">
-            <span class="grain-numbox" id="gcProbNum" data-param="probability">1.00</span>
+            <input type="text" class="grain-numbox" id="gcProbNum" data-param="probability" value="1.00">
           </div>
           <div class="grain-row">
             <span class="grain-label">pan</span>
             <input class="grain-slider" type="range" id="gcPanSlider" min="0" max="1" step="0.01" value="0.6">
-            <span class="grain-numbox" id="gcPanNum" data-param="panSpread">0.60</span>
+            <input type="text" class="grain-numbox" id="gcPanNum" data-param="panSpread" value="0.60">
           </div>
           <div class="grain-row">
             <span class="grain-label">vol</span>
             <input class="grain-slider" type="range" id="gcVolSlider" min="0.001" max="0.5" step="0.001" value="0.06">
-            <span class="grain-numbox" id="gcVolNum" data-param="volume">0.06</span>
+            <input type="text" class="grain-numbox" id="gcVolNum" data-param="volume" value="0.06">
           </div>
           <div class="grain-row">
             <span class="grain-label">dir</span>
@@ -2027,8 +2031,12 @@ function warmUpAudioEngine() {
 
 let audioEngineWarmedUp = false;
 
+let _micAccessPromise = null;  // guard against concurrent getUserMedia calls
+
 async function requestMicAccess() {
   if (micPermissionGranted && recordingStream) return true;
+  if (_micAccessPromise) return _micAccessPromise;   // already asking — wait for it
+  _micAccessPromise = (async () => {
   try {
     recordingStream = await navigator.mediaDevices.getUserMedia({
       audio: {
@@ -2087,7 +2095,11 @@ async function requestMicAccess() {
       micBtn.disabled = false;
     }
     return false;
+  } finally {
+    _micAccessPromise = null;
   }
+  })();
+  return _micAccessPromise;
 }
 
 // ── Live recording ──────────────────────────────────────────────────────────
@@ -3418,33 +3430,52 @@ function drawPresetWaveform() {
   const pxPerSec = w / viewSec;
   const grainW   = liveDur * pxPerSec;
 
-  // Envelope shape based on live grainCurveType
-  const envShape = (t) => {
-    if (grainCurveType === 'tri') {
-      return t < 0.5 ? t * 2 : (1 - t) * 2;
-    } else if (grainCurveType === 'rect') {
-      return (t <= 0 || t >= 1) ? 0 : 1;
-    } else {
-      return 0.5 * (1 - Math.cos(Math.PI * t * 2));
-    }
+  // Envelope shape: attack/release curves from 0→1 (t = 0..1)
+  // These match the actual HANN_ATTACK / HANN_RELEASE used by the audio engine.
+  const atkShape = (t) => {
+    if (grainCurveType === 'tri')  return t;
+    if (grainCurveType === 'rect') return t <= 0 ? 0 : 1;
+    return 0.5 * (1 - Math.cos(Math.PI * t));   // Hann attack
   };
+  const relShape = (t) => {
+    if (grainCurveType === 'tri')  return 1 - t;
+    if (grainCurveType === 'rect') return t >= 1 ? 0 : 1;
+    return 0.5 * (1 + Math.cos(Math.PI * t));   // Hann release
+  };
+
+  // Fade duration: matches audio engine logic (ep.fade capped at dur/3)
+  const liveFade = Math.max(0.004, Math.min(pr.fade, liveDur / 3));
 
   // Colour: per-preset tint
   const tints = ['#7abcbc', '#6090e0', '#e07060', '#a0c060', '#c060a0', '#e0a030', '#60a0e0', '#e06060'];
   const tint  = tints[activePresetIndex % tints.length] || '#7abcbc';
 
-  const count = Math.ceil(viewSec / stride) + 2;
-  const STEPS = 80;
+  const count  = Math.ceil(viewSec / stride) + 2;
+  const STEPS  = 40;  // steps per fade region
+  const fadeW  = liveFade * pxPerSec;
+  const sustW  = Math.max(0, grainW - fadeW * 2);
+  const ampH   = maxAmp - PAD * 2;
 
   for (let i = -1; i < count; i++) {
-    const jit    = (Math.sin(i * 7.3) * 0.5 + 0.5) * pr.startJitter * pxPerSec * 0.4;
-    const xStart = i * stride * pxPerSec - grainW * 0.05 + jit;
+    // Bilateral jitter: alternates ± using sin so grains spread naturally
+    const jit    = Math.sin(i * 7.3) * pr.startJitter * pxPerSec;
+    const xStart = i * stride * pxPerSec + jit;
 
+    // Build trapezoidal envelope: attack → sustain plateau → release
     const pts = [];
+    // Attack region
     for (let s = 0; s <= STEPS; s++) {
-      const t   = s / STEPS;
-      const amp = envShape(t);
-      pts.push({ x: xStart + t * grainW, y: baseY - PAD - amp * (maxAmp - PAD * 2) });
+      const t = s / STEPS;
+      pts.push({ x: xStart + t * fadeW, y: baseY - PAD - atkShape(t) * ampH });
+    }
+    // Sustain plateau (flat top)
+    if (sustW > 0) {
+      pts.push({ x: xStart + fadeW + sustW, y: baseY - PAD - ampH });
+    }
+    // Release region
+    for (let s = 0; s <= STEPS; s++) {
+      const t = s / STEPS;
+      pts.push({ x: xStart + fadeW + sustW + t * fadeW, y: baseY - PAD - relShape(t) * ampH });
     }
 
     // Filled area
@@ -3495,12 +3526,13 @@ function drawPresetWaveform() {
   const pairs = [['dur', durStr], ['per', perStr], ['env', curveStr]];
   const segW  = w / pairs.length;
   pairs.forEach(([label, val], i) => {
-    const x = segW * i + segW / 2;
-    c.textAlign = 'center';
-    c.fillStyle = '#2e2e2e';
-    c.fillText(label, x - 1, statY);
+    const x = segW * i + 4;
+    c.textAlign = 'left';
+    c.fillStyle = '#444';
+    c.fillText(label + ' ', x, statY);
+    const labelW = c.measureText(label + ' ').width;
     c.fillStyle = '#7abcbc';
-    c.fillText(val, x + (label.length * fs * 0.38), statY);
+    c.fillText(val, x + labelW, statY);
   });
 }
 
@@ -4918,6 +4950,7 @@ function setupEvents() {
 
   // ── Left click: same as spacebar (rec+paint) ─────────────────────────────────
   canvas.addEventListener('mousedown', async e => {
+    if (altLocked) return;
     if (e.button !== 0) return;
     e.preventDefault();
     ensureAudioContext();
@@ -4929,6 +4962,7 @@ function setupEvents() {
     updateLiveRecUI();
   });
   canvas.addEventListener('mouseup', e => {
+    if (altLocked) return;
     if (e.button !== 0) return;
     isPainting      = false;
     currentStrokeId = -1;
@@ -4940,6 +4974,7 @@ function setupEvents() {
   // ── Right click: undo last stroke ────────────────────────────────────────────
   canvas.addEventListener('contextmenu', e => {
     e.preventDefault();
+    if (altLocked) return;
     undoLastStroke();
   });
 
@@ -4994,12 +5029,27 @@ function setupEvents() {
   (function initGrainControls() {
     // ── Slider + numbox pairs ────────────────────────────────────────────────
     // Each entry: { sliderId, numId, param, min, max, decimals, unit, toDisplay, fromDisplay }
-    // Log mapping for dur + period: slider 0–1000 → 5ms–4000ms exponentially.
-    // Fine control in the 5–500ms granular sweet spot, coarser above.
-    const _LOG_MIN = Math.log(5), _LOG_MAX = Math.log(4000);
+    // Log mapping for dur + period: slider 0–1000 → 0.01ms–4000ms.
+    // Sub-ms range covers pitch/noise territory; audio engine has its own safeguards.
+    const _LOG_MIN_MS = 0.01;  // 0.01ms — just enough to keep Math.log() defined
+    const _LOG_MIN = Math.log(_LOG_MIN_MS), _LOG_MAX = Math.log(4000);
     const _sliderToMs = sv => Math.exp(_LOG_MIN + (parseFloat(sv) / 1000) * (_LOG_MAX - _LOG_MIN));
-    const _msToSlider = ms => Math.round(((Math.log(Math.max(5, ms)) - _LOG_MIN) / (_LOG_MAX - _LOG_MIN)) * 1000);
-    const _fmtMs = v => { const ms = Math.round(v * 1000); return ms >= 1000 ? (ms/1000).toFixed(2)+'s' : ms+'ms'; };
+    const _msToSlider = ms => Math.round(((Math.log(Math.max(_LOG_MIN_MS, ms)) - _LOG_MIN) / (_LOG_MAX - _LOG_MIN)) * 1000);
+    const _fmtMs = v => {
+      const ms = v * 1000;
+      if (ms >= 1000)  return (ms / 1000).toFixed(2) + 's';
+      if (ms < 0.1)    return ms.toFixed(3) + 'ms';
+      if (ms < 10)     return ms.toFixed(2) + 'ms';
+      return Math.round(ms) + 'ms';
+    };
+
+    // Parse a typed ms value: "200", "200ms", "0.2s" → seconds
+    const _parseMs = str => {
+      const s = str.trim();
+      if (s.endsWith('ms')) return parseFloat(s) / 1000;
+      if (s.endsWith('s'))  return parseFloat(s);
+      return parseFloat(s) / 1000;  // bare number → assume ms
+    };
 
     const SLIDER_DEFS = [
       {
@@ -5007,24 +5057,28 @@ function setupEvents() {
         toDisplay: _fmtMs,
         sliderToInternal: sv => _sliderToMs(sv) / 1000,
         internalToSlider: v  => _msToSlider(v * 1000),
+        fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(0.00001, Math.min(4, v)); },
       },
       {
         sliderId: 'gcDurVarSlider', numId: 'gcDurVarNum', param: 'durVar',
         toDisplay: v => Math.round(v * 1000) + 'ms',
         sliderToInternal: sv => parseFloat(sv) / 1000,
         internalToSlider: v  => Math.round(v * 1000),
+        fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(0, Math.min(0.5, v)); },
       },
       {
         sliderId: 'gcPeriodSlider', numId: 'gcPeriodNum', param: 'period',
         toDisplay: _fmtMs,
         sliderToInternal: sv => _sliderToMs(sv) / 1000,
         internalToSlider: v  => _msToSlider(v * 1000),
+        fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(0.00001, Math.min(4, v)); },
       },
       {
         sliderId: 'gcPeriodVarSlider', numId: 'gcPeriodVarNum', param: 'periodVar',
         toDisplay: v => Math.round(v * 1000) + 'ms',
         sliderToInternal: sv => parseFloat(sv) / 1000,
         internalToSlider: v  => Math.round(v * 1000),
+        fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(0, Math.min(0.5, v)); },
       },
       {
         sliderId: 'gcPitchSlider', numId: 'gcPitchNum', param: 'pitchJitter',
@@ -5032,6 +5086,7 @@ function setupEvents() {
         toDisplay: v => v.toFixed(2),
         sliderToInternal: sv => parseFloat(sv),
         internalToSlider: v => v,
+        fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0, Math.min(0.5, v)); },
       },
       {
         sliderId: 'gcProbSlider', numId: 'gcProbNum', param: 'probability',
@@ -5039,6 +5094,7 @@ function setupEvents() {
         toDisplay: v => v.toFixed(2),
         sliderToInternal: sv => parseFloat(sv),
         internalToSlider: v => v,
+        fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
       },
       {
         sliderId: 'gcPanSlider', numId: 'gcPanNum', param: 'panSpread',
@@ -5046,6 +5102,7 @@ function setupEvents() {
         toDisplay: v => v.toFixed(2),
         sliderToInternal: sv => parseFloat(sv),
         internalToSlider: v => v,
+        fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
       },
       {
         sliderId: 'gcVolSlider', numId: 'gcVolNum', param: 'volume',
@@ -5053,6 +5110,7 @@ function setupEvents() {
         toDisplay: v => v.toFixed(3),
         sliderToInternal: sv => parseFloat(sv),
         internalToSlider: v => v,
+        fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.001, Math.min(0.5, v)); },
       },
     ];
 
@@ -5076,7 +5134,7 @@ function setupEvents() {
       const val = def.param === 'probability' ? grainProbability
                 : (grainOverrides[def.param] ?? gp()[def.param] ?? 0);
       slider.value = def.internalToSlider(val);
-      numbox.textContent = def.toDisplay(val);
+      if (document.activeElement !== numbox) numbox.value = def.toDisplay(val);
     }
 
     SLIDER_DEFS.forEach(def => {
@@ -5088,32 +5146,26 @@ function setupEvents() {
       slider.addEventListener('input', () => {
         const internal = def.sliderToInternal(slider.value);
         setGrainParam(def.param, internal);
-        numbox.textContent = def.toDisplay(internal);
+        if (document.activeElement !== numbox) numbox.value = def.toDisplay(internal);
       });
 
-      // Numbox: drag up/down to change value
-      let nbDrag = null;
-      numbox.addEventListener('pointerdown', e => {
-        e.preventDefault();
-        numbox.setPointerCapture(e.pointerId);
-        const current = def.param === 'probability' ? grainProbability
-                      : (grainOverrides[def.param] ?? gp()[def.param]);
-        nbDrag = { startY: e.clientY, startVal: current };
+      // Numbox: click to type, Enter/blur to commit
+      const commitNumbox = () => {
+        const internal = def.fromDisplay(numbox.value);
+        if (internal !== null) {
+          setGrainParam(def.param, internal);
+          slider.value = def.internalToSlider(internal);
+          numbox.value = def.toDisplay(internal);
+        } else {
+          syncSliderFromInternal(def);
+        }
+      };
+
+      numbox.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); commitNumbox(); numbox.blur(); }
+        if (e.key === 'Escape') { syncSliderFromInternal(def); numbox.blur(); }
       });
-      numbox.addEventListener('pointermove', e => {
-        if (!nbDrag) return;
-        const sliderEl = document.getElementById(def.sliderId);
-        const range = parseFloat(sliderEl.max) - parseFloat(sliderEl.min);
-        const delta = -(e.clientY - nbDrag.startY) / 120 * range;
-        const newVal = Math.max(parseFloat(sliderEl.min),
-                       Math.min(parseFloat(sliderEl.max), nbDrag.startVal + delta));
-        const internal = def.sliderToInternal(String(def.internalToSlider(newVal)));
-        setGrainParam(def.param, internal);
-        numbox.textContent = def.toDisplay(internal);
-        sliderEl.value = def.internalToSlider(internal);
-      });
-      numbox.addEventListener('pointerup', () => { nbDrag = null; });
-      numbox.addEventListener('pointercancel', () => { nbDrag = null; });
+      numbox.addEventListener('blur', commitNumbox);
     });
 
     // ── Direction segmented control ──────────────────────────────────────────
