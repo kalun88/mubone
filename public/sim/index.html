@@ -17,7 +17,7 @@
   /* Base font-size scales with viewport width so everything grows when the window widens.
      clamp(min, preferred, max) — at 1400px wide: 1vw = 14px → font-size ≈ 14px (0.875rem equiv).
      All rem-based children scale automatically. */
-  html { font-size: clamp(15px, 1.2vw, 20px); }
+  html { font-size: clamp(11px, 0.9vw, 15px); }
   body {
     background: #1a1a1a;
     color: #fff;
@@ -40,7 +40,7 @@
     padding-bottom: 0.3rem;
   }
   h1 {
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     font-weight: normal;
     color: #555;
     letter-spacing: 0.08em;
@@ -61,7 +61,7 @@
     border-radius: 3px;
     color: #555;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.65rem;
+    font-size: 0.75rem;
     padding: 0.15rem 0.55rem;
     cursor: pointer;
     letter-spacing: 0.05em;
@@ -69,6 +69,54 @@
   }
   .top-bar-btn:hover { color: #aaa; border-color: #555; }
   .top-bar-btn.active { color: #7abcbc; border-color: #7abcbc; }
+  /* ── mic + mute as inline top-bar buttons ─────────────────────────────── */
+  .top-bar #micEnableBtn,
+  .top-bar #muteBtn {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.3rem;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    color: #555;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.55rem;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    width: auto;
+    position: static;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .top-bar #micEnableBtn:hover { color: #aaa; border-color: #555; background: #2a2a2a; }
+  .top-bar #muteBtn:hover     { color: #aaa; border-color: #555; background: #2a2a2a; }
+  /* mic-dot: inline red circle */
+  .top-bar #micEnableBtn .mic-dot {
+    position: static;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #5a2a2a;
+    border: 1px solid #7a3a3a;
+    flex-shrink: 0;
+    transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
+  }
+  /* mic ready (permission granted) */
+  .top-bar #micEnableBtn.mic-ready { color: #cc5555; border-color: #5a2a2a; cursor: default; }
+  .top-bar #micEnableBtn.mic-ready .mic-dot {
+    background: #cc2222; border-color: #ee3333;
+    animation: rec-glow 1.5s ease-in-out infinite;
+  }
+  /* mic denied */
+  .top-bar #micEnableBtn.mic-denied { color: #444; border-color: #333; cursor: default; }
+  .top-bar #micEnableBtn.mic-denied .mic-dot { background: #333; border-color: #444; }
+  /* mute icon: small inline */
+  .top-bar #muteBtn .mute-dot { display: none; }
+  .top-bar #muteBtn .mute-icon { width: 13px; height: 13px; flex-shrink: 0; opacity: 1; }
+  /* muted state */
+  .top-bar #muteBtn.muted { color: #e8a030; border-color: #7a5a1a; background: #2a1e0a; }
+  /* inputFaderMeter lives in right-panel levels device now */
   /* ── Main area: canvas + right panel side by side ─────────────────────── */
   .main-layout {
     display: flex;
@@ -98,10 +146,7 @@
     border: none;
     border-radius: 0;
   }
-  body:has(.canvas-wrapper:fullscreen) > *:not(.canvas-wrapper),
-  body:has(.canvas-wrapper:-webkit-full-screen) > *:not(.canvas-wrapper) {
-    display: none !important;
-  }
+  /* no hide rule needed — fullscreen overlay already covers other elements */
   canvas {
     display: block;
     width: 100%;
@@ -110,27 +155,24 @@
   }
   .hud {
     position: absolute;
-    top: 1rem;
+    top: 0.75rem;
     left: 1rem;
-    font-size: 0.75rem;
-    color: #aaa;
+    right: 3rem;
+    font-size: 0.85rem;
+    color: #ccc;
     pointer-events: none;
     display: flex;
+    align-items: center;
     gap: 1.5rem;
+    line-height: 1;
   }
-  /* ── Viewer monitor overlay (bottom-left of canvas) ─────────────────────── */
+  #coordinates { white-space: pre; font-variant-numeric: tabular-nums; }
+  /* ── Viewer monitor — now inline inside .hud ─────────────────────────────── */
   #viewerMonitor {
-    position: absolute;
-    bottom: 2rem;
-    left: 0.75rem;
     display: flex;
     align-items: center;
     gap: 0.9rem;
-    font-family: 'Roboto Mono', monospace;
-    font-size: 0.68rem;
-    color: #555;
-    pointer-events: none;
-    line-height: 1;
+    color: #ccc;
   }
   #viewerMonitor .vm-grain-wrap {
     display: flex;
@@ -151,39 +193,6 @@
     box-shadow: 0 0 5px #e8a030;
   }
 
-  /* ── Bottom-of-canvas status bar ─────────────────────────────────────────── */
-  .canvas-bottom-bar {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    display: flex;
-    align-items: center;
-    gap: 1.2rem;
-    padding: 0.4rem 0.75rem;
-    font-size: 0.65rem;
-    color: #555;
-    pointer-events: none;
-  }
-  #liveRecStatus {
-    color: #555;
-  }
-  #liveRecStatus.recording {
-    color: #e06060;
-  }
-  #liveRecStatus .rec-dot {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: #e06060;
-    margin-right: 4px;
-    animation: rec-pulse 1s ease-in-out infinite;
-  }
-  @keyframes rec-pulse {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.3; }
-  }
   /* ── Device strip (Ableton-style bottom bar) ─────────────────────────────── */
   .device-strip {
     display: flex;
@@ -274,7 +283,7 @@
     border-radius: 4px;
     color: #777;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     padding: 0.3rem 0.4rem 0.25rem;
     cursor: pointer;
     letter-spacing: 0.04em;
@@ -352,7 +361,7 @@
     border-radius: 4px;
     color: #666;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     padding: 0.3rem 0.35rem;
     cursor: pointer;
     letter-spacing: 0.04em;
@@ -370,7 +379,7 @@
   #snapToggleBtn .snap-state-text {
     color: #666;
     margin-top: 0.2rem;
-    font-size: 0.5rem;
+    font-size: 0.75rem;
   }
   #snapToggleBtn.active .snap-state-text { color: #e8a030; }
   /* Each viz box: label on top, canvas fills middle, value at bottom */
@@ -387,7 +396,7 @@
     padding: 0.25rem 0.3rem 0.2rem;
   }
   .search-viz-label {
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     color: #606060;
     letter-spacing: 0.06em;
     text-align: center;
@@ -402,7 +411,7 @@
   }
   #radiusViz { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
   .radius-val-label {
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     color: #7abcbc;
     text-align: center;
     flex-shrink: 0;
@@ -451,28 +460,50 @@
     cursor: pointer;
   }
   .recency-val-label {
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     color: #7abcbc;
     text-align: center;
     flex-shrink: 0;
   }
 
-  #loadIndicator { font-size: 0.68rem; color: #606060; letter-spacing: 0.03em; }
+  #loadIndicator { font-size: 0.75rem; color: #606060; letter-spacing: 0.03em; }
   #loadIndicator.warn { color: #c86020; }
   #loadIndicator.crit { color: #cc2222; }
 
   /* ── Device: grain preset ────────────────────────────────────────────────── */
   .device--preset { flex: 1; min-width: clamp(280px, 22vw, 420px); }
+  /* ── Right panel: presets + search + grain stacked beside viewer ──────── */
+  .right-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    width: clamp(260px, 20vw, 360px);
+    flex-shrink: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .right-panel .device {
+    width: 100%;
+    min-width: 0;
+    flex-shrink: 0;
+    border: 1px solid #333;
+    border-right: 1px solid #333;
+    border-radius: 4px;
+  }
+  .right-panel .device:last-child { border-right: 1px solid #333; }
+  .right-panel .device--preset { flex: none; }
+  .right-panel .device--search  { flex: none; }
+  .right-panel .device--grain   { flex: 1; min-width: 0; }
   .preset-body {
-    flex-direction: row !important;
-    gap: 0.35rem;
+    flex-direction: column !important;
+    gap: 0.3rem;
     align-items: stretch;
   }
-  /* 2-col × 5-row grid of preset buttons */
+  /* 5-col × 2-row grid of preset buttons — full width */
   .preset-buttons {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: repeat(5, 1fr);
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(2, 1fr);
     gap: 3px;
     flex-shrink: 0;
   }
@@ -481,7 +512,7 @@
     border: 1px solid #2a2a2a;
     color: #777;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     padding: 0.15rem 0.2rem;
     border-radius: 2px;
     cursor: pointer;
@@ -499,16 +530,16 @@
     background: #1a2a2a;
     box-shadow: 0 0 4px #7abcbc44;
   }
-  /* right side: waveform fills full box height, stats drawn inside canvas */
+  /* full-width waveform row below preset buttons */
   .preset-right-box {
-    flex: 2;
-    min-width: 0;
+    flex-shrink: 0;
     display: flex;
     flex-direction: column;
     background: #1e1e1e;
     border: 1px solid #2e2e2e;
     border-radius: 4px;
-    padding: 0.25rem 0.3rem 0.2rem;
+    padding: 0.2rem 0.3rem;
+    height: clamp(64px, 7vw, 96px);
   }
   .preset-waveform-wrap {
     position: relative;
@@ -524,34 +555,29 @@
   /* ── Device: grain controls ─────────────────────────────────────────────── */
   .device--grain { flex: 2; min-width: clamp(480px, 40vw, 700px); }
   .grain-body {
-    flex-direction: row !important;
-    gap: 0.6rem;
-    align-items: stretch;
-    overflow: hidden;
+    flex-direction: column !important;
+    gap: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
-  /* Three columns of sliders */
-  .grain-col {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.28rem;
-    min-width: 0;
-  }
+  .grain-col { display: contents; } /* flatten cols — rows become direct children */
   .grain-row {
     display: flex;
     flex-direction: row;
     align-items: center;
     gap: 0.35rem;
-    flex: 1;
-    min-height: 0;
+    padding: 0.15rem 0;
+    border-bottom: 1px solid #1e1e1e;
+    flex-shrink: 0;
   }
+  .grain-row:last-child { border-bottom: none; }
   .grain-label {
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.68rem;
-    color: #777;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    width: 44px;
+    font-size: 0.75rem;
+    color: #505050;
+    letter-spacing: 0.03em;
+    text-transform: none;
+    width: 36px;
     flex-shrink: 0;
     text-align: right;
   }
@@ -560,78 +586,80 @@
     -webkit-appearance: none;
     appearance: none;
     flex: 1;
-    height: 3px;
-    background: #2a2a2a;
-    border-radius: 2px;
+    height: 2px;
+    background: #2e2e2e;
+    border-radius: 0;
     outline: none;
     cursor: ew-resize;
     min-width: 0;
   }
+  /* Ableton-style thumb: thin vertical bar */
   .grain-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 9px; height: 9px;
-    border-radius: 50%;
+    width: 3px;
+    height: 12px;
+    border-radius: 1px;
     background: #7abcbc;
     cursor: ew-resize;
     border: none;
-    transition: background 0.1s;
+    transition: background 0.1s, height 0.1s;
   }
-  .grain-slider:hover::-webkit-slider-thumb { background: #9adcdc; }
-  /* Log-mapped sliders: tick marks at log decade positions.
-     Positions: 10ms=8.3%, 50ms=29.8%, 100ms=45.1%, 500ms=68.8%, 1s=77.1%, 2s=85.4% */
+  .grain-slider:hover::-webkit-slider-thumb { background: #9adcdc; height: 14px; }
+  /* Log-mapped sliders: subtle tick marks */
   .grain-slider--log {
     background: linear-gradient(90deg,
-      #2a2a2a 0%,
-      #2a2a2a calc(8.3%  - 1px), #3a6060 8.3%,  #2a2a2a calc(8.3%  + 1px),
-      #2a2a2a calc(29.8% - 1px), #3a6060 29.8%, #2a2a2a calc(29.8% + 1px),
-      #2a2a2a calc(45.1% - 1px), #3a6060 45.1%, #2a2a2a calc(45.1% + 1px),
-      #2a2a2a calc(68.8% - 1px), #3a6060 68.8%, #2a2a2a calc(68.8% + 1px),
-      #2a2a2a calc(77.1% - 1px), #3a6060 77.1%, #2a2a2a calc(77.1% + 1px),
-      #2a2a2a calc(85.4% - 1px), #3a6060 85.4%, #2a2a2a calc(85.4% + 1px),
-      #2a2a2a 100%
+      #2e2e2e 0%,
+      #2e2e2e calc(8.3%  - 1px), #3a5858 8.3%,  #2e2e2e calc(8.3%  + 1px),
+      #2e2e2e calc(29.8% - 1px), #3a5858 29.8%, #2e2e2e calc(29.8% + 1px),
+      #2e2e2e calc(45.1% - 1px), #3a5858 45.1%, #2e2e2e calc(45.1% + 1px),
+      #2e2e2e calc(68.8% - 1px), #3a5858 68.8%, #2e2e2e calc(68.8% + 1px),
+      #2e2e2e calc(77.1% - 1px), #3a5858 77.1%, #2e2e2e calc(77.1% + 1px),
+      #2e2e2e calc(85.4% - 1px), #3a5858 85.4%, #2e2e2e calc(85.4% + 1px),
+      #2e2e2e 100%
     );
   }
-  /* Numbox: click-and-drag number editor */
+  /* Numbox */
   .grain-numbox {
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.70rem;
-    color: #7abcbc;
-    background: #1a1a1a;
-    border: 1px solid #2e2e2e;
-    border-radius: 2px;
-    padding: 1px 4px;
-    width: 58px;
+    font-size: 0.75rem;
+    color: #6aacac;
+    background: transparent;
+    border: none;
+    border-left: 1px solid #2a2a2a;
+    border-radius: 0;
+    padding: 0 0 0 4px;
+    width: 46px;
     text-align: right;
     cursor: ns-resize;
     user-select: none;
     flex-shrink: 0;
     line-height: 1.6;
+    transition: color 0.1s, border-color 0.1s;
   }
-  .grain-numbox:hover { border-color: #3e3e3e; color: #9adcdc; }
-  /* Direction and curve type: small segmented buttons */
+  .grain-numbox:hover { border-color: #3a3a3a; color: #9adcdc; }
+  /* Segmented buttons (dir / curve) */
   .grain-seg {
     display: flex;
     flex: 1;
-    gap: 2px;
+    gap: 1px;
     min-width: 0;
   }
   .grain-seg-btn {
     flex: 1;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.68rem;
-    color: #666;
-    background: #1a1a1a;
-    border: 1px solid #2a2a2a;
-    border-radius: 2px;
-    padding: 2px 4px;
+    font-size: 0.75rem;
+    color: #484848;
+    background: #1e1e1e;
+    border: 1px solid #272727;
+    border-radius: 1px;
+    padding: 1px 2px;
     cursor: pointer;
     text-align: center;
-    letter-spacing: 0.02em;
-    transition: color 0.1s, border-color 0.1s, background 0.1s;
+    transition: color 0.1s, background 0.1s, border-color 0.1s;
     white-space: nowrap;
   }
-  .grain-seg-btn:hover { color: #999; border-color: #4a4a4a; }
-  .grain-seg-btn.active { color: #7abcbc; border-color: #4a7a7a; background: #1e2e2e; }
+  .grain-seg-btn:hover { color: #7abcbc; background: #222; border-color: #3a3a3a; }
+  .grain-seg-btn.active { color: #7abcbc; background: #1a2828; border-color: #3a6060; }
 
   /* ── Device: spacer ─────────────────────────────────────────────────────── */
   .device--spacer { flex: 1; border-right: none; background: transparent; }
@@ -656,7 +684,7 @@
     border-radius: 4px;
     color: #777;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     padding: 0.3rem 0.4rem 0.25rem;
     cursor: pointer;
     letter-spacing: 0.04em;
@@ -706,6 +734,39 @@
   #outputMeterCanvas, #outputMeterCanvasBottom,
   .meter-row, .meter-wrap, .meter-clip-dot, #meterClipDot { display: none; }
 
+  /* ── Levels device (right panel) ────────────────────────────────────────── */
+  .right-panel .device--meters { flex: 0 0 125px; overflow: hidden; }
+  .meters-body {
+    flex-direction: row !important;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.1rem 0;
+  }
+  .meter-channel {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    flex: 0 0 clamp(32px, 3.5vw, 46px);
+    min-height: 0;
+    gap: 0.15rem;
+  }
+  .meter-ch-label {
+    color: #505050;
+    font-size: 0.75rem;
+    text-align: center;
+    flex-shrink: 0;
+    letter-spacing: 0.06em;
+  }
+  .meter-channel canvas {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    display: block;
+    cursor: ns-resize;
+    touch-action: none;
+    border-radius: 2px;
+  }
+
   /* ── Right panel: clouds + samples ──────────────────────────────────────── */
   /* ── Drop zone overlay ───────────────────────────────────────────────────── */
   .drop-overlay {
@@ -724,7 +785,7 @@
   }
   .drop-overlay.visible { opacity: 1; }
   .drop-overlay .drop-icon { font-size: 2rem; color: #7abcbc; }
-  .drop-overlay .drop-text { font-size: 0.85rem; color: #aaa; letter-spacing: 0.05em; }
+  .drop-overlay .drop-text { font-size: 0.75rem; color: #aaa; letter-spacing: 0.05em; }
 
   /* ── Sample slots (in bottom panel sample instrument) ───────────────────── */
   .sample-slot {
@@ -733,7 +794,7 @@
     gap: 0.35rem;
     padding: 0.18rem 0.5rem;
     border-bottom: 1px solid #242424;
-    font-size: 0.6rem;
+    font-size: 0.75rem;
     color: #555;
     user-select: none;
     transition: background 0.1s;
@@ -754,7 +815,7 @@
   .sample-slot .slot-drag-handle {
     color: #444;
     cursor: grab;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     line-height: 1;
     padding: 0 2px;
     visibility: hidden;
@@ -815,7 +876,7 @@
   .sample-slot.loaded .slot-play.playing { color: #e0c860; }
   .sample-slot .slot-delete {
     color: #555;
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     line-height: 1;
     padding: 0 4px;
     cursor: pointer;
@@ -885,7 +946,7 @@
     border-radius: 3px;
     color: #555;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.6rem;
+    font-size: 0.75rem;
     padding: 0.3rem 0.6rem;
     cursor: pointer;
     letter-spacing: 0.04em;
@@ -951,7 +1012,7 @@
     border: 1px solid #666;
     color: #ccc;
     font-family: 'Roboto Mono', monospace;
-    font-size: 1rem;
+    font-size: 0.75rem;
     padding: 0.4rem 0.6rem;
     border-radius: 4px;
     cursor: pointer;
@@ -986,11 +1047,11 @@
     max-height: 85vh;
     overflow-y: auto;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     color: #aaa;
   }
   .mapping-dialog h2 {
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     color: #fff;
     margin: 0 0 0.8rem 0;
     letter-spacing: 0.06em;
@@ -1002,13 +1063,13 @@
     background: none;
     border: none;
     color: #666;
-    font-size: 1rem;
+    font-size: 0.75rem;
     cursor: pointer;
     padding: 0;
   }
   .mapping-dialog h2 .close-btn:hover { color: #fff; }
   .mapping-status {
-    font-size: 0.65rem;
+    font-size: 0.75rem;
     color: #e8a030;
     min-height: 1.2rem;
     margin-bottom: 0.5rem;
@@ -1023,7 +1084,7 @@
     text-align: left;
     padding: 0.2rem 0.4rem;
     border-bottom: 1px solid #333;
-    font-size: 0.6rem;
+    font-size: 0.75rem;
     letter-spacing: 0.05em;
   }
   .mapping-table td {
@@ -1042,7 +1103,7 @@
     border-bottom-width: 2px;
     border-radius: 3px;
     color: #888;
-    font-size: 0.6rem;
+    font-size: 0.75rem;
     padding: 0.05rem 0.3rem;
   }
   .mapping-table .midi-cell { color: #7abcbc; }
@@ -1053,7 +1114,7 @@
     border-radius: 3px;
     color: #666;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.6rem;
+    font-size: 0.75rem;
     padding: 0.15rem 0.4rem;
     cursor: pointer;
     white-space: nowrap;
@@ -1069,14 +1130,14 @@
     background: none;
     border: none;
     color: #444;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     cursor: pointer;
     padding: 0 0.2rem;
   }
   .clear-midi-btn:hover { color: #e06060; }
   .mapping-footer {
     margin-top: 0.8rem;
-    font-size: 0.6rem;
+    font-size: 0.75rem;
     color: #444;
     display: flex;
     justify-content: space-between;
@@ -1088,7 +1149,7 @@
     border-radius: 3px;
     color: #666;
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.6rem;
+    font-size: 0.75rem;
     padding: 0.2rem 0.6rem;
     cursor: pointer;
   }
@@ -1100,6 +1161,22 @@
   <div class="top-bar">
     <h1>simulation</h1>
     <div class="top-bar-right">
+      <button id="micEnableBtn">
+        <span class="mic-dot"></span>
+        <span class="mic-label">enable mic</span>
+      </button>
+      <button id="muteBtn">
+        <svg class="mute-icon mute-icon-on" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="3,8 9,8 15,3 15,21 9,16 3,16" fill="#7abcbc"/>
+          <path d="M18 9a5 5 0 0 1 0 6" stroke="#7abcbc" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+        </svg>
+        <svg class="mute-icon mute-icon-off" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="3,8 9,8 15,3 15,21 9,16 3,16" fill="#e8a030"/>
+          <line x1="17" y1="8" x2="23" y2="16" stroke="#e8a030" stroke-width="1.8" stroke-linecap="round"/>
+          <line x1="23" y1="8" x2="17" y2="16" stroke="#e8a030" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+        mute
+      </button>
       <button id="perfMonBtn" class="top-bar-btn">perf</button>
       <button id="fullscreenBtn2" class="top-bar-btn">⛶ fullscreen</button>
       <button id="helpBtn" class="top-bar-btn">? keys / midi</button>
@@ -1117,18 +1194,15 @@
         <div id="sampleIndicator" style="color:#555">no sample</div>
         <div id="altLockIndicator" style="display:none;color:#f0c060">alt: locked</div>
         <div id="loadIndicatorHud" style="color:#555;display:none;">● cpu ok</div>
+        <div id="viewerMonitor">
+          <span id="vmClouds">clouds: 0</span>
+          <span id="vmBuffers">buf: 0</span>
+          <span class="vm-grain-wrap"><span class="vm-dot" id="vmDot"></span><span id="loadIndicator" style="color:#555">ok</span></span>
+          <span id="vmGrains" style="display:none">0 grains</span>
+        </div>
       </div>
-      <!-- Monitor stats overlaid in bottom-left of viewer -->
-      <div id="viewerMonitor">
-        <span id="vmClouds">clouds: 0</span>
-        <span id="vmBuffers">buf: 0</span>
-        <span class="vm-grain-wrap"><span class="vm-dot" id="vmDot"></span><span id="vmGrains">0 grains</span></span>
-        <span id="loadIndicator" style="color:#555">● ok</span>
-      </div>
-      <div class="canvas-bottom-bar">
-        <div id="liveRecStatus">click / space: rec+paint</div>
-      </div>
-      <div id="perfMonitor" style="display:none;position:absolute;top:2.5rem;left:1rem;font-family:'Roboto Mono',monospace;font-size:0.6rem;color:#aaa;pointer-events:none;line-height:1.7;background:rgba(0,0,0,0.55);padding:0.35rem 0.5rem;border-radius:3px;"></div>
+
+      <div id="perfMonitor" style="display:none;position:absolute;top:2.5rem;left:1rem;font-family:'Roboto Mono',monospace;font-size:0.75rem;color:#aaa;pointer-events:none;line-height:1.7;background:rgba(0,0,0,0.55);padding:0.35rem 0.5rem;border-radius:3px;"></div>
       <button id="fullscreenBtn" title="fullscreen">⛶</button>
       <div class="drop-overlay" id="dropOverlay">
         <div class="drop-icon">↓</div>
@@ -1136,98 +1210,58 @@
       </div>
     </div>
 
+    <!-- Right panel: presets + search + grain stacked -->
+    <div class="right-panel">
 
-  </div><!-- end .main-layout -->
-
-  <!-- Device strip: signal path left → right -->
-  <div class="device-strip">
-
-    <!-- 1. Live input -->
-    <div class="device device--liveinput">
-      <div class="device-label">live input</div>
-      <div class="device-body">
-        <button id="micEnableBtn">
-          <span class="mic-dot"></span>
-          <svg class="mic-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect x="8" y="2" width="8" height="13" rx="4" fill="#7abcbc"/>
-            <path d="M5 11a7 7 0 0 0 14 0" stroke="#7abcbc" stroke-width="1.8" stroke-linecap="round" fill="none"/>
-            <line x1="12" y1="18" x2="12" y2="22" stroke="#7abcbc" stroke-width="1.8" stroke-linecap="round"/>
-            <line x1="8" y1="22" x2="16" y2="22" stroke="#7abcbc" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-          <span>enable mic</span>
-        </button>
-        <div class="liveinput-body">
-          <span id="inputGainVal">0.0 dB</span>
-          <canvas id="inputFaderMeter"></canvas>
-          <!-- hidden compat elements: JS still references these IDs -->
-          <canvas id="inputGainKnob" width="1" height="1" style="display:none;"></canvas>
-          <canvas id="inputMeterCanvas" width="1" height="1" style="display:none;"></canvas>
-          <div class="input-clip-dot" id="inputClipDot" style="display:none;"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 2. Granular presets -->
-    <div class="device device--preset">
-      <div class="device-label">presets</div>
-      <div class="device-body preset-body">
-        <!-- 2×5 grid of preset buttons -->
-        <div class="preset-buttons" id="presetButtons"></div>
-        <!-- waveform diagram -->
-        <div class="preset-right-box">
-          <div class="preset-waveform-wrap">
-            <canvas id="presetWaveform"></canvas>
-          </div>
-          <div class="preset-stats">
-            <div class="stat-item"><span class="stat-label">dur</span><span id="psDur">—</span></div>
-            <div class="stat-item"><span class="stat-label">k</span><span id="psK">—</span></div>
-            <div class="stat-item"><span class="stat-label">pan</span><span id="psPan">—</span></div>
+      <div class="device device--preset">
+        <div class="device-label">presets</div>
+        <div class="device-body preset-body">
+          <div class="preset-buttons" id="presetButtons"></div>
+          <div class="preset-right-box">
+            <div class="preset-waveform-wrap">
+              <canvas id="presetWaveform"></canvas>
+            </div>
+            <div class="preset-stats">
+              <div class="stat-item"><span class="stat-label">dur</span><span id="psDur">—</span></div>
+              <div class="stat-item"><span class="stat-label">k</span><span id="psK">—</span></div>
+              <div class="stat-item"><span class="stat-label">pan</span><span id="psPan">—</span></div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- 3. Search params -->
-    <div class="device device--search">
-      <div class="device-label">search</div>
-      <div class="device-body search-body">
-        <!-- snap: standalone full-height button on the left -->
-        <button id="snapToggleBtn">
-          <span class="snap-label-text">lock</span>
-          <span class="snap-state-text">OFF</span>
-        </button>
-        <!-- radius viz box -->
-        <div class="search-viz-box">
-          <span class="search-viz-label">radius</span>
-          <div class="radius-viz-wrap">
-            <canvas id="radiusViz"></canvas>
+      <div class="device device--search">
+        <div class="device-label">search</div>
+        <div class="device-body search-body">
+          <button id="snapToggleBtn">
+            <span class="snap-label-text">lock</span>
+            <span class="snap-state-text">OFF</span>
+          </button>
+          <div class="search-viz-box">
+            <span class="search-viz-label">radius</span>
+            <div class="radius-viz-wrap">
+              <canvas id="radiusViz"></canvas>
+            </div>
+            <span class="radius-val-label" id="radiusVal">10°</span>
           </div>
-          <span class="radius-val-label" id="radiusVal">10°</span>
-        </div>
-        <!-- recency viz box -->
-        <div class="search-viz-box">
-          <span class="search-viz-label">recency</span>
-          <canvas id="recencyDial"></canvas>
-          <span class="recency-val-label" id="recencyVal">3</span>
-        </div>
-        <!-- k viz box -->
-        <div class="search-viz-box">
-          <span class="search-viz-label">k</span>
-          <div class="k-display-wrap">
-            <span class="k-big-num" id="kBigNum">5</span>
+          <div class="search-viz-box">
+            <span class="search-viz-label">recency</span>
+            <canvas id="recencyDial"></canvas>
+            <span class="recency-val-label" id="recencyVal">3</span>
           </div>
-          <input class="k-slider" type="range" id="searchKSlider" min="1" max="20" step="1" value="5">
+          <div class="search-viz-box">
+            <span class="search-viz-label">k</span>
+            <div class="k-display-wrap">
+              <span class="k-big-num" id="kBigNum">5</span>
+            </div>
+            <input class="k-slider" type="range" id="searchKSlider" min="1" max="20" step="1" value="5">
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- 4. Grain controls -->
-    <div class="device device--grain">
-      <div class="device-label">grain controls</div>
-      <div class="device-body grain-body">
-
-        <!-- Col 1: dur, dur var -->
-        <div class="grain-col">
+      <div class="device device--grain">
+        <div class="device-label">grain</div>
+        <div class="device-body grain-body">
           <div class="grain-row">
             <span class="grain-label">dur</span>
             <input class="grain-slider grain-slider--log" type="range" id="gcDurSlider" min="0" max="1000" step="1" value="432">
@@ -1238,10 +1272,6 @@
             <input class="grain-slider" type="range" id="gcDurVarSlider" min="0" max="500" step="1" value="0">
             <span class="grain-numbox" id="gcDurVarNum" data-param="durVar">0ms</span>
           </div>
-        </div>
-
-        <!-- Col 2: period, per var, pitch -->
-        <div class="grain-col">
           <div class="grain-row">
             <span class="grain-label">period</span>
             <input class="grain-slider grain-slider--log" type="range" id="gcPeriodSlider" min="0" max="1000" step="1" value="389">
@@ -1257,10 +1287,6 @@
             <input class="grain-slider" type="range" id="gcPitchSlider" min="0" max="0.5" step="0.01" value="0">
             <span class="grain-numbox" id="gcPitchNum" data-param="pitchJitter">0.00</span>
           </div>
-        </div>
-
-        <!-- Col 3: prob, pan, vol, dir, curve -->
-        <div class="grain-col">
           <div class="grain-row">
             <span class="grain-label">prob</span>
             <input class="grain-slider" type="range" id="gcProbSlider" min="0" max="1" step="0.01" value="1">
@@ -1293,36 +1319,26 @@
             </div>
           </div>
         </div>
-
       </div>
-    </div>
 
-    <!-- 5. Output -->
-    <div class="device device--output">
-      <div class="device-label">output</div>
-      <div class="device-body device-body--output">
-        <div class="output-meter-body">
-          <canvas id="outputFaderMeter"></canvas>
+      <!-- Levels: input + output meters side by side -->
+      <div class="device device--meters">
+        <div class="device-label">levels</div>
+        <div class="device-body meters-body">
+          <div class="meter-channel">
+            <span class="meter-ch-label">in</span>
+            <canvas id="inputFaderMeter"></canvas>
+          </div>
+          <div class="meter-channel">
+            <span class="meter-ch-label">out</span>
+            <canvas id="outputFaderMeter"></canvas>
+          </div>
         </div>
-        <button id="muteBtn">
-          <span class="mute-dot"></span>
-          <!-- speaker ON (unmuted state) -->
-          <svg class="mute-icon mute-icon-on" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <polygon points="3,8 9,8 15,3 15,21 9,16 3,16" fill="#7abcbc"/>
-            <path d="M18 9a5 5 0 0 1 0 6" stroke="#7abcbc" stroke-width="1.8" stroke-linecap="round" fill="none"/>
-          </svg>
-          <!-- speaker MUTED (crossed-out) -->
-          <svg class="mute-icon mute-icon-off" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <polygon points="3,8 9,8 15,3 15,21 9,16 3,16" fill="#e8a030"/>
-            <line x1="17" y1="8" x2="23" y2="16" stroke="#e8a030" stroke-width="1.8" stroke-linecap="round"/>
-            <line x1="23" y1="8" x2="17" y2="16" stroke="#e8a030" stroke-width="1.8" stroke-linecap="round"/>
-          </svg>
-          <span>mute</span>
-        </button>
       </div>
-    </div>
 
-  </div><!-- end .device-strip -->
+    </div><!-- end .right-panel -->
+
+  </div><!-- end .main-layout -->
 
   <!-- Bottom panel: sample instrument + action buttons -->
   <div class="bottom-panel">
@@ -1348,7 +1364,11 @@
     </div>
   </div>
 
-  <!-- Hidden compat canvases (JS still draws to these IDs) -->
+  <!-- Hidden compat canvases -->
+  <!-- inputFaderMeter + outputFaderMeter now live in right-panel levels device -->
+  <canvas id="inputGainKnob" width="1" height="1" style="display:none;"></canvas>
+  <canvas id="inputMeterCanvas" width="1" height="1" style="display:none;"></canvas>
+  <div class="input-clip-dot" id="inputClipDot" style="display:none;"></div>
   <canvas id="outputMeterCanvasBottom" style="display:none;"></canvas>
   <div id="meterClipDotBottom" style="display:none;"></div>
 
@@ -1895,10 +1915,10 @@ function perfTick() {
       if (schedBad) reasons.push(`sched +${perf.schedulerDrift.toFixed(0)}ms`);
       if (frameBad) reasons.push(`frame ${perf.frameMs.toFixed(0)}ms`);
       loadEl.style.color = frameBad ? '#e06060' : '#e8a030';
-      loadEl.textContent = `● overload: ${reasons.join(', ')}`;
+      loadEl.textContent = `overload: ${reasons.join(', ')}`;
     } else {
       loadEl.style.color = '#555';
-      loadEl.textContent = `● ${perf.activeNodes} grains`;
+      loadEl.textContent = `${perf.activeNodes} grains`;
     }
   }
 
@@ -3517,16 +3537,6 @@ function updateLiveRecUI() {
   const vmBuffers = document.getElementById('vmBuffers');
   if (vmBuffers) vmBuffers.textContent = `buf: ${bufCount}`;
 
-  const status  = document.getElementById('liveRecStatus');
-  if (status) {
-    if (isRecording) {
-      status.className = 'recording';
-      status.innerHTML = '<span class="rec-dot"></span>recording…';
-    } else {
-      status.className = '';
-      status.textContent = 'space: rec+paint';
-    }
-  }
 
   updatePaintIndicator();
 }
@@ -3987,26 +3997,21 @@ function drawInputMeter() {
     ? (rawLevel - _faderInputLevel) * 0.6
     : (rawLevel - _faderInputLevel) * 0.08;
 
-  // ── Layout ─────────────────────────────────────────────────────────────────
-  // Like Ableton: [arrow on left] [meter bar] [dB labels on right]
-  // Fader/meter range: -60 dB (bottom) to 0 dB (top) for the meter display.
-  // Fader gain range: -60 to +6 dB (gainToFaderPos handles this).
-  const ARROW_W  = 6;   // triangle arrow column width
-  const LABEL_W  = 14;  // dB text labels column on right
-  const METER_X  = ARROW_W + 1;        // meter bar starts here
-  const METER_W  = W - ARROW_W - 1 - LABEL_W - 1; // meter bar width
+  // ── Vertical mode ────────────────────────────────────────────────────────────
+  const ARROW_W  = 4;
+  const LABEL_W  = 14;
+  const METER_X  = ARROW_W + 1;
+  const METER_W  = W - ARROW_W - 1 - LABEL_W - 1;
   const PAD_T    = 3;
   const PAD_B    = 3;
   const trackH   = H - PAD_T - PAD_B;
 
-  // dB → Y within the track. Meter shows -60 (bottom) to +6 dB (top).
   const METER_DB_MIN = -60, METER_DB_MAX = 6;
-  function meterDbToY(db) {
+  const meterDbToY = (db) => {
     const t = (db - METER_DB_MIN) / (METER_DB_MAX - METER_DB_MIN);
     return PAD_T + trackH - t * trackH;
-  }
+  };
 
-  // ── Meter bar ───────────────────────────────────────────────────────────────
   c.fillStyle = '#111';
   c.fillRect(METER_X, PAD_T, METER_W, trackH);
 
@@ -4022,61 +4027,51 @@ function drawInputMeter() {
     c.fillRect(METER_X, PAD_T + trackH - fillH, METER_W, fillH);
   }
 
-  // Clip flash at very top
   const now = performance.now() / 1000;
   if (peakDb >= 0) inputClipHoldUntil = now + INPUT_CLIP_HOLD_S;
-  if (now < inputClipHoldUntil) {
+
+  // Notches — all uniform grey; +6 only goes red when actively clipping
+  const notchDbs = [6, 0, -12, -24, -36, -48, -60];
+  const isClipping = now < inputClipHoldUntil;
+  const fontSize = Math.round(Math.max(5, Math.min(7, trackH / notchDbs.length - 1)));
+  c.font = `${fontSize}px 'Roboto Mono', monospace`;
+  c.textAlign = 'left';
+  notchDbs.forEach(db => {
+    const ny = meterDbToY(db);
+    const isTop = db === 6;
+    c.strokeStyle = (isTop && isClipping) ? 'rgba(220,80,80,0.9)' : 'rgba(255,255,255,0.2)';
+    c.lineWidth   = isTop ? 1.5 : 0.75;
+    c.beginPath(); c.moveTo(METER_X, ny); c.lineTo(METER_X + METER_W, ny); c.stroke();
+    c.fillStyle    = 'rgba(255,255,255,0.28)';
+    c.textBaseline = db === METER_DB_MIN ? 'bottom' : db === 6 ? 'top' : 'middle';
+    const label    = db > 0 ? '+' + db : String(db);
+    const labelY   = db === METER_DB_MIN ? ny + 1 : db === 6 ? ny + 0.5 : ny;
+    c.fillText(label, METER_X + METER_W + 2, labelY);
+  });
+
+  // Clip flash — only when peaking
+  if (isClipping) {
     c.fillStyle = '#dd2222';
     c.fillRect(METER_X, PAD_T, METER_W, 3);
   }
 
-  // ── dB notch lines + labels (0, 12, 24, 36, 48, 60) ───────────────────────
-  const notchDbs = [0, -12, -24, -36, -48, -60];
-  const fontSize = Math.round(Math.max(5, Math.min(7, trackH / notchDbs.length - 1)));
-  c.font = `${fontSize}px 'Roboto Mono', monospace`;
-  c.textAlign = 'left';
-
-  notchDbs.forEach(db => {
-    const ny = meterDbToY(db);
-    const isZero = db === 0;
-
-    c.strokeStyle = isZero ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.2)';
-    c.lineWidth   = isZero ? 1 : 0.75;
-    c.beginPath();
-    c.moveTo(METER_X, ny);
-    c.lineTo(METER_X + METER_W, ny);
-    c.stroke();
-
-    c.fillStyle = isZero ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.28)';
-    c.textBaseline = db === METER_DB_MIN ? 'bottom' : (isZero ? 'top' : 'middle');
-    const labelY = db === METER_DB_MIN ? ny + 1 : (isZero ? ny + 0.5 : ny);
-    c.fillText(String(Math.abs(db)), METER_X + METER_W + 2, labelY);
-  });
-
-  // ── 0 dB marker — thick white line across meter (unity / default gain) ──────
-  const defaultY = meterDbToY(0);
-  c.strokeStyle = 'rgba(255,255,255,0.85)';
-  c.lineWidth   = 2;
-  c.beginPath();
-  c.moveTo(METER_X, defaultY);
-  c.lineTo(METER_X + METER_W, defaultY);
-  c.stroke();
-
-  // ── Fader arrow — left-pointing triangle on the LEFT of the meter ───────────
-  // Tip points RIGHT (→) toward the meter. Flat edge on the left.
-  // Position maps gainToFaderPos over the same trackH.
   const fPos     = gainToFaderPos(inputGainValue);
   const fY       = PAD_T + trackH - fPos * trackH;
   const isOver   = inputGainValue > 1.0;
   const arrowColor = isOver ? '#e8a030' : '#c8c8c8';
-  const TH = 8;  // triangle height (vertical span)
-  const TW = ARROW_W; // triangle depth (→)
 
+  // White line across meter at fader position
+  c.strokeStyle = arrowColor;
+  c.lineWidth   = 1;
+  c.beginPath(); c.moveTo(METER_X, fY); c.lineTo(METER_X + METER_W, fY); c.stroke();
+
+  // Arrow triangle pointing into meter
+  const TH = 8;
   c.fillStyle = arrowColor;
   c.beginPath();
-  c.moveTo(0,    fY - TH / 2); // top-left (flat side)
-  c.lineTo(TW,   fY);           // tip pointing right into meter
-  c.lineTo(0,    fY + TH / 2); // bottom-left
+  c.moveTo(0,       fY - TH / 2);
+  c.lineTo(ARROW_W, fY);
+  c.lineTo(0,       fY + TH / 2);
   c.closePath();
   c.fill();
 
@@ -4127,8 +4122,8 @@ function drawOutputMeter() {
   c.scale(dpr, dpr);
   c.clearRect(0, 0, W, H);
 
-  // ── Layout (identical to drawInputMeter) ───────────────────────────────────
-  const ARROW_W  = 6;
+  // ── Layout ─────────────────────────────────────────────────────────────────
+  const ARROW_W  = 4;
   const LABEL_W  = 14;
   const METER_X  = ARROW_W + 1;
   const METER_W  = W - ARROW_W - 1 - LABEL_W - 1;
@@ -4157,48 +4152,51 @@ function drawOutputMeter() {
     c.fillRect(METER_X, PAD_T + trackH - fillH, METER_W, fillH);
   }
 
-  // Clip flash
   const now = performance.now() / 1000;
   if (peakDb >= 0) outputClipHoldUntil = now + METER_CLIP_HOLD_S;
-  if (now < outputClipHoldUntil) {
-    c.fillStyle = '#dd2222';
-    c.fillRect(METER_X, PAD_T, METER_W, 3);
-  }
 
-  // ── Notch lines + labels ───────────────────────────────────────────────────
-  const notchDbs = [0, -12, -24, -36, -48, -60];
+  // Notches — all uniform grey; +6 only goes red when clipping
+  const notchDbs = [6, 0, -12, -24, -36, -48, -60];
+  const isClipping = now < outputClipHoldUntil;
   const fontSize = Math.round(Math.max(5, Math.min(7, trackH / notchDbs.length - 1)));
   c.font = `${fontSize}px 'Roboto Mono', monospace`;
   c.textAlign = 'left';
   notchDbs.forEach(db => {
     const ny = meterDbToY(db);
-    const isZero = db === 0;
-    c.strokeStyle = isZero ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.2)';
-    c.lineWidth   = isZero ? 1 : 0.75;
+    const isTop = db === 6;
+    c.strokeStyle = (isTop && isClipping) ? 'rgba(220,80,80,0.9)' : 'rgba(255,255,255,0.2)';
+    c.lineWidth   = isTop ? 1.5 : 0.75;
     c.beginPath(); c.moveTo(METER_X, ny); c.lineTo(METER_X + METER_W, ny); c.stroke();
-    c.fillStyle = isZero ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.28)';
-    c.textBaseline = db === METER_DB_MIN ? 'bottom' : (isZero ? 'top' : 'middle');
-    const labelY = db === METER_DB_MIN ? ny + 1 : (isZero ? ny + 0.5 : ny);
-    c.fillText(String(Math.abs(db)), METER_X + METER_W + 2, labelY);
+    c.fillStyle    = 'rgba(255,255,255,0.28)';
+    c.textBaseline = db === METER_DB_MIN ? 'bottom' : db === 6 ? 'top' : 'middle';
+    const label    = db > 0 ? '+' + db : String(db);
+    const labelY   = db === METER_DB_MIN ? ny + 1 : db === 6 ? ny + 0.5 : ny;
+    c.fillText(label, METER_X + METER_W + 2, labelY);
   });
 
-  // ── 0 dB marker ───────────────────────────────────────────────────────────
-  const zeroY = meterDbToY(0);
-  c.strokeStyle = 'rgba(255,255,255,0.85)';
-  c.lineWidth   = 2;
-  c.beginPath(); c.moveTo(METER_X, zeroY); c.lineTo(METER_X + METER_W, zeroY); c.stroke();
+  // Clip flash — only when peaking
+  if (isClipping) {
+    c.fillStyle = '#dd2222';
+    c.fillRect(METER_X, PAD_T, METER_W, 3);
+  }
 
-  // ── Fader arrow — muted state greys it out ─────────────────────────────────
-  // Map outputGainValue (0–2 linear) using same gainToFaderPos helper
+  // ── Fader arrow + white line at gain position ──────────────────────────────
   const fPos  = gainToFaderPos(outputGainValue);
   const fY    = PAD_T + trackH - fPos * trackH;
   const arrowColor = isMuted ? '#553333' : (outputGainValue > 1.0 ? '#e8a030' : '#c8c8c8');
-  const TH = 8, TW = ARROW_W;
+
+  // White line across meter at fader position
+  c.strokeStyle = arrowColor;
+  c.lineWidth   = 1;
+  c.beginPath(); c.moveTo(METER_X, fY); c.lineTo(METER_X + METER_W, fY); c.stroke();
+
+  // Arrow triangle
+  const TH = 8;
   c.fillStyle = arrowColor;
   c.beginPath();
-  c.moveTo(0,  fY - TH / 2);
-  c.lineTo(TW, fY);
-  c.lineTo(0,  fY + TH / 2);
+  c.moveTo(0,       fY - TH / 2);
+  c.lineTo(ARROW_W, fY);
+  c.lineTo(0,       fY + TH / 2);
   c.closePath();
   c.fill();
 
@@ -4691,6 +4689,8 @@ function drawCursor() {
     ctx.beginPath(); ctx.arc(mx, my, brushR, 0, Math.PI * 2); ctx.stroke();
     ctx.shadowBlur  = 0;
   } else {
+    ctx.fillStyle = 'rgba(180,180,180,0.06)';
+    ctx.beginPath(); ctx.arc(mx, my, brushR, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = 'rgba(122,188,188,0.35)';
     ctx.lineWidth   = 1;
     ctx.setLineDash([5, 5]);
@@ -4961,24 +4961,20 @@ function setupEvents() {
       e.preventDefault();
       faderCanvas.setPointerCapture(e.pointerId);
       const rect = faderCanvas.getBoundingClientRect();
-      // Convert click Y to fader position and start drag from there
-      // Must match drawInputMeter: PAD_T=3, PAD_B=3
-      const PAD_T = 3, PAD_B = 3, trackH = rect.height - PAD_T - PAD_B;
+      const PAD_T = 3, trackH = rect.height - PAD_T - 3;
       const clickPos = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top - PAD_T) / trackH));
       setInputGain(faderPosToGain(clickPos));
       faderDragStart = { startY: e.clientY, startPos: gainToFaderPos(inputGainValue), trackH };
     });
     faderCanvas.addEventListener('pointermove', e => {
       if (!faderDragStart) return;
-      const dy    = faderDragStart.startY - e.clientY; // up = positive
+      const dy    = faderDragStart.startY - e.clientY;
       const delta = dy / faderDragStart.trackH;
-      const newPos = Math.max(0, Math.min(1, faderDragStart.startPos + delta));
-      setInputGain(faderPosToGain(newPos));
+      setInputGain(faderPosToGain(Math.max(0, Math.min(1, faderDragStart.startPos + delta))));
     });
     faderCanvas.addEventListener('pointerup',     () => { faderDragStart = null; });
     faderCanvas.addEventListener('pointercancel', () => { faderDragStart = null; });
-    // Double-click → reset to unity (0 dB = 1×)
-    faderCanvas.addEventListener('dblclick', () => setInputGain(1.0)); // reset to 0 dB (unity)
+    faderCanvas.addEventListener('dblclick', () => setInputGain(1.0));
   }
 
   // Fullscreen
@@ -4990,7 +4986,8 @@ function setupEvents() {
   document.addEventListener('fullscreenchange', () => {
     document.getElementById('fullscreenBtn').textContent =
       document.fullscreenElement ? '✕' : '⛶';
-    resizeCanvas();
+    // Wait a frame for the browser to finish the fullscreen layout transition
+    requestAnimationFrame(() => resizeCanvas());
   });
 
   // ── Grain controls panel ─────────────────────────────────────────────────────
@@ -5336,8 +5333,9 @@ function animate() {
     updateWaveformPlayheads();
 
     const { lon, lat } = mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-    document.getElementById('coordinates').textContent =
-      `${(lon * 180 / Math.PI).toFixed(1)},${(lat * 180 / Math.PI).toFixed(1)}`;
+    const lonDeg = (lon * 180 / Math.PI).toFixed(1).padStart(7);
+    const latDeg = (lat * 180 / Math.PI).toFixed(1).padStart(6);
+    document.getElementById('coordinates').textContent = `${lonDeg},${latDeg}`;
   }
 
   requestAnimationFrame(animate);
