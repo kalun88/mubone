@@ -232,7 +232,7 @@
     color: #777; font-family: 'Roboto Mono', monospace;
     font-size: 1rem; padding: 0.35rem 0.55rem;
     border-radius: 4px; cursor: pointer; pointer-events: all;
-    z-index: 21; display: none;
+    z-index: 21;
   }
   #mobileSettingsBtn:active { color: #fff; border-color: #888; }
 
@@ -5762,12 +5762,10 @@ function setupMobileTouchHandlers() {
     paintFrameCount = 0;
     updateLiveRecUI();
 
-    const btn         = document.getElementById('mobileRecalibBtn');
-    const settingsBtn = document.getElementById('mobileSettingsBtn');
-    const hint        = document.getElementById('mobileTapHint');
-    if (btn)         btn.style.display         = '';
-    if (settingsBtn) settingsBtn.style.display = '';
-    if (hint)        hint.style.display        = 'none';
+    const btn  = document.getElementById('mobileRecalibBtn');
+    const hint = document.getElementById('mobileTapHint');
+    if (btn)  btn.style.display  = '';
+    if (hint) hint.style.display = 'none';
   }, { passive: false });
 
   canvas.addEventListener('touchmove', e => {
