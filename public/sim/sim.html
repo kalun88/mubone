@@ -1826,10 +1826,10 @@ let altFrozenMousePixelY = 0;
 
 // ── Mobile mode ──────────────────────────────────────────────────────────────
 const isMobile = navigator.maxTouchPoints > 0 && window.innerWidth < 1024;
-let orientationRef    = null;  // { beta, gamma } at calibration
+let refDeviceQ        = null;  // device orientation quaternion at calibration
 let refCamQ           = null;  // camQ snapshot at calibration
 let orientationActive = false; // true once deviceorientation fires
-let currentOrientation = null; // latest { beta, gamma } from sensor
+let currentOrientation = null; // latest { alpha, beta, gamma } from sensor
 let searchRadiusDeg = 10;
 let nearestMode = false;   // when true: ignore radius, always pick closest particle
 let radiusTooltipUntil = 0; // performance.now() — show transient radius label until this time
@@ -5490,9 +5490,20 @@ function saveMidiMappings() {
 // MOBILE MODE
 // ============================================================================
 
+// Convert W3C DeviceOrientationEvent angles to a quaternion.
+// Spec rotation order: Rz(alpha) * Rx(beta) * Ry(gamma) — all in degrees.
+function deviceOrientationToQuat(alpha, beta, gamma) {
+  const r = Math.PI / 180;
+  const qa = qFromAxisAngle(0, 0, 1, alpha * r);
+  const qb = qFromAxisAngle(1, 0, 0, beta  * r);
+  const qg = qFromAxisAngle(0, 1, 0, gamma * r);
+  return qNormalize(qMul(qMul(qa, qb), qg));
+}
+
 function calibrateOrientation() {
   if (!currentOrientation) return;
-  orientationRef = { alpha: currentOrientation.alpha, beta: currentOrientation.beta };
+  refDeviceQ = deviceOrientationToQuat(
+    currentOrientation.alpha, currentOrientation.beta, currentOrientation.gamma);
   refCamQ = [...camQ];
 }
 
@@ -5513,31 +5524,22 @@ function initMobileMode() {
     calibrateOrientation();
   });
 
-  // Device orientation → camera
-  // alpha = compass heading (0-360): changes when you physically TURN the phone left/right
-  // beta  = front-back tilt: changes when you tilt the phone up/down
-  // gamma = roll: changes when you tilt the phone sideways like a steering wheel (not used)
+  // Device orientation → camera (gimbal-lock-free quaternion approach).
+  // Instead of decomposing Euler deltas (which breaks near beta=±90°),
+  // convert the full orientation to a quaternion each frame and compute
+  // the relative rotation as qRel = conj(refDeviceQ) * qCurrent,
+  // then apply that relative rotation to the reference camera quaternion.
   window.addEventListener('deviceorientation', e => {
-    if (e.beta === null || e.alpha === null) return;
-    currentOrientation = { alpha: e.alpha, beta: e.beta };
+    if (e.beta === null || e.alpha === null || e.gamma === null) return;
+    currentOrientation = { alpha: e.alpha, beta: e.beta, gamma: e.gamma };
 
-    // Auto-calibrate on first sensor event if not yet calibrated
-    if (!orientationRef) calibrateOrientation();
+    if (!refDeviceQ) calibrateOrientation();
 
-    // Alpha wraparound: e.g. going 359→1 should be a small +2° not -358°
-    let dAlpha = currentOrientation.alpha - orientationRef.alpha;
-    if (dAlpha >  180) dAlpha -= 360;
-    if (dAlpha < -180) dAlpha += 360;
-
-    // Negate alpha: turning phone right (alpha↑) → look right
-    // Negate beta:  tilting phone top toward you (beta↓) → look up
-    const dYaw   = -dAlpha * Math.PI / 180;
-    const dPitch = -(currentOrientation.beta - orientationRef.beta) * Math.PI / 180;
-
-    // Yaw in world space, pitch in camera-local space (matches mouse rotation logic)
-    let q = qMul(qFromAxisAngle(0, 1, 0, dYaw), refCamQ);
-    q = qMul(q, qFromAxisAngle(1, 0, 0, dPitch));
-    camQ = qNormalize(q);
+    const qCurrent = deviceOrientationToQuat(e.alpha, e.beta, e.gamma);
+    // Relative rotation: how has the device moved since calibration?
+    const qRel = qMul(qConjugate(refDeviceQ), qCurrent);
+    // Apply that same relative rotation to the reference camera orientation
+    camQ = qNormalize(qMul(refCamQ, qRel));
 
     orientationActive = true;
     mouseInCanvas = true;
