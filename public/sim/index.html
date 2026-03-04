@@ -5099,8 +5099,14 @@ function setupEvents() {
     if (e.button !== 0) return;
     e.preventDefault();
     ensureAudioContext();
-    const gotMic = micPermissionGranted ? true : await requestMicAccess();
-    if (gotMic) startLiveRecording();
+    if (!micPermissionGranted) {
+      // Request permission now; the click that approves the dialog fires mouseup
+      // outside the canvas so we'd never get a stop. Just acquire permission and
+      // wait — the user's next click will start recording cleanly.
+      await requestMicAccess();
+      return;
+    }
+    startLiveRecording();
     recordStrokeStart('live', currentLiveBufferIdx);
     isPainting      = true;
     paintFrameCount = 0;
@@ -5642,7 +5648,10 @@ function calibrateOrientation() {
   camQ = [1, 0, 0, 0]; // snap back to neutral equator-facing view
 }
 
+let _orientationTrackingStarted = false;
 function startOrientationTracking() {
+  if (_orientationTrackingStarted) return;
+  _orientationTrackingStarted = true;
   window.addEventListener('devicemotion', e => {
     if (!e.rotationRate || e.rotationRate.beta === null) return;
     const dt = Math.min(e.interval || 16, 50) / 1000; // seconds, capped at 50 ms
@@ -5736,6 +5745,8 @@ function initMobileMode() {
 
   document.getElementById('mobileRecalibBtn').addEventListener('click', calibrateOrientation);
   document.getElementById('mobileEnterBtn').addEventListener('click', enterMobileFullscreen);
+  document.addEventListener('fullscreenchange',       _onFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', _onFullscreenChange);
   setupMobileSettings();
   setupMobileTouchHandlers();
 }
@@ -5790,41 +5801,56 @@ function setupMobileSettings() {
   }, 100);
 }
 
-async function enterMobileFullscreen() {
-  // 1. Enter fullscreen — required on Android before orientation.lock() works
-  try {
-    const el  = document.documentElement;
-    const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
-    if (rfs) await rfs.call(el).catch(() => {});
-  } catch (_) {}
+// Called once fullscreen is confirmed (or skipped if unsupported).
+// Runs outside the original user-gesture so we keep each async step small.
+let _mobileSetupDone = false;
+async function _finishMobileSetup() {
+  if (_mobileSetupDone) return;
+  _mobileSetupDone = true;
 
-  // 2. Detect orientation NOW, apply preset, lock screen
+  // Detect orientation and apply preset (no orientation.lock — it destabilises fullscreen)
   const isLandscape = window.innerWidth > window.innerHeight;
   applyOrientationPreset(isLandscape);
-  try {
-    await screen.orientation.lock(isLandscape ? 'landscape' : 'portrait').catch(() => {});
-  } catch (_) {}
 
-  // 3. iOS 13+ motion permission (must be inside user gesture)
+  // iOS 13+ motion permission
   if (typeof DeviceMotionEvent !== 'undefined' &&
       typeof DeviceMotionEvent.requestPermission === 'function') {
     const perm = await DeviceMotionEvent.requestPermission().catch(() => 'denied');
-    if (perm !== 'granted') return;
+    if (perm !== 'granted') { _mobileSetupDone = false; return; }
   }
 
-  // 4. Start gyroscope + zero orientation
+  // Start gyroscope + zero
   startOrientationTracking();
   calibrateOrientation();
 
-  // 5. Pre-request mic so touchstart is fully synchronous (no async dialog mid-recording)
+  // Pre-request mic so the first tap goes straight to recording
   ensureAudioContext();
   await requestMicAccess();
 
-  // 6. Swap UI
+  // Swap UI
   document.getElementById('mobileEnterBtn').style.display    = 'none';
   document.getElementById('mobileTapHint').style.display     = '';
   document.getElementById('mobileRecalibBtn').style.display  = '';
   document.getElementById('mobileSettingsBtn').style.display = '';
+}
+
+// Button handler: ONLY requests fullscreen. _finishMobileSetup() is triggered
+// by fullscreenchange so it runs after the browser has fully settled.
+function enterMobileFullscreen() {
+  const el  = document.documentElement;
+  const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
+  if (rfs) {
+    rfs.call(el).catch(() => _finishMobileSetup()); // if fullscreen is denied, proceed anyway
+  } else {
+    _finishMobileSetup(); // fullscreen not supported — proceed directly
+  }
+}
+
+// Triggered once fullscreen actually settles
+function _onFullscreenChange() {
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    _finishMobileSetup();
+  }
 }
 
 function setupMobileTouchHandlers() {
