@@ -5519,9 +5519,9 @@ function saveMidiMappings() {
 // We integrate it directly into camQ each frame, completely avoiding Euler angles
 // and the gimbal lock singularity that sits at beta=90° (portrait orientation).
 //
-// For a portrait-held phone:
-//   rotationRate.beta  = deg/s around device X (horizontal short axis) = PITCH
-//   rotationRate.gamma = deg/s around device Y (vertical long axis)    = YAW
+// For a portrait-held phone (empirically determined — hardware axes vary):
+//   rotationRate.beta  = deg/s around device Y (turn left/right)       = YAW
+//   rotationRate.gamma = deg/s around device X (tilt up/down)          = PITCH
 //   rotationRate.alpha = deg/s around device Z (screen normal)         = ROLL (ignored)
 //
 // Each frame we apply two incremental rotations:
@@ -5541,8 +5541,8 @@ function startOrientationTracking() {
     if (!e.rotationRate || e.rotationRate.beta === null) return;
     const dt = Math.min(e.interval || 16, 50) / 1000; // seconds, capped at 50 ms
 
-    const dYaw   = e.rotationRate.gamma * dt * ORIENTATION_YAW_SIGN   * (Math.PI / 180);
-    const dPitch = e.rotationRate.beta  * dt * ORIENTATION_PITCH_SIGN * (Math.PI / 180);
+    const dYaw   = e.rotationRate.beta  * dt * ORIENTATION_YAW_SIGN   * (Math.PI / 180);
+    const dPitch = e.rotationRate.gamma * dt * ORIENTATION_PITCH_SIGN * (Math.PI / 180);
 
     const qDY = qFromAxisAngle(0, 1, 0, dYaw);    // world-space yaw
     const qDP = qFromAxisAngle(1, 0, 0, dPitch);  // camera-local pitch
