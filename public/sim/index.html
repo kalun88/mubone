@@ -226,6 +226,60 @@
   }
   #mobileRecalibBtn:active { color: #fff; border-color: #888; }
 
+  #mobileSettingsBtn {
+    position: absolute; top: 1rem; left: 1rem;
+    background: rgba(20,20,20,0.7); border: 1px solid #444;
+    color: #777; font-family: 'Roboto Mono', monospace;
+    font-size: 1rem; padding: 0.35rem 0.55rem;
+    border-radius: 4px; cursor: pointer; pointer-events: all;
+    z-index: 21; display: none;
+  }
+  #mobileSettingsBtn:active { color: #fff; border-color: #888; }
+
+  #mobileSettingsPanel {
+    position: absolute; inset: 0; z-index: 30;
+    background: rgba(10,10,10,0.95);
+    display: none; flex-direction: column;
+    align-items: stretch; padding: 1.2rem 1rem 1.4rem;
+    gap: 0.75rem; overflow-y: auto;
+    font-family: 'Roboto Mono', monospace; color: #aaa; font-size: 0.75rem;
+    pointer-events: all;
+  }
+  #mobileSettingsPanel.open { display: flex; }
+  .mob-panel-title {
+    font-size: 0.65rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: #555; margin-top: 0.4rem;
+  }
+  .mob-row {
+    display: flex; align-items: center; gap: 0.5rem;
+    justify-content: space-between;
+  }
+  .mob-label { color: #666; min-width: 4.5rem; }
+  .mob-readout {
+    font-size: 0.72rem; color: #556; font-variant-numeric: tabular-nums;
+    min-width: 5rem; text-align: right; letter-spacing: 0.03em;
+  }
+  .mob-sel {
+    background: #181818; border: 1px solid #444; color: #ccc;
+    font-family: 'Roboto Mono', monospace; font-size: 0.72rem;
+    padding: 0.25rem 0.4rem; border-radius: 3px; flex: 1;
+  }
+  .mob-sign {
+    background: #181818; border: 1px solid #444; color: #777;
+    font-family: 'Roboto Mono', monospace; font-size: 0.72rem;
+    padding: 0.25rem 0.5rem; border-radius: 3px; cursor: pointer;
+    min-width: 2.5rem; text-align: center;
+  }
+  .mob-sign.neg { border-color: #a66; color: #c88; }
+  .mob-big-btn {
+    background: rgba(40,40,40,0.6); border: 1px solid #555; color: #999;
+    font-family: 'Roboto Mono', monospace; font-size: 0.72rem;
+    padding: 0.55rem; border-radius: 4px; cursor: pointer; width: 100%;
+    letter-spacing: 0.06em;
+  }
+  .mob-big-btn:active { color: #fff; border-color: #888; }
+  .mob-divider { border: none; border-top: 1px solid #222; margin: 0.2rem 0; }
+
   /* ── Device strip (Ableton-style bottom bar) ─────────────────────────────── */
   .device-strip {
     display: flex;
@@ -5528,9 +5582,12 @@ function saveMidiMappings() {
 //   dYaw   → world-space   left-multiply  (stable at any facing direction)
 //   dPitch → camera-local  right-multiply (always means "tilt phone up/down")
 //
-// Flip a sign constant if an axis feels inverted on your device.
-const ORIENTATION_PITCH_SIGN =  1;  // +1: top-away = look up
-const ORIENTATION_YAW_SIGN   = -1;  // -1: turn right = look right
+// Runtime-configurable via the in-app axis menu — adjust without reloading.
+let orientationYawAxis   = 'beta';   // which rotationRate key drives yaw
+let orientationPitchAxis = 'gamma';  // which rotationRate key drives pitch
+let ORIENTATION_YAW_SIGN   = -1;     // flip if turning right pans the wrong way
+let ORIENTATION_PITCH_SIGN =  1;     // flip if tilting up looks down
+let lastRotationRate = { alpha: 0, beta: 0, gamma: 0 }; // for live readout
 
 function calibrateOrientation() {
   camQ = [1, 0, 0, 0]; // snap back to neutral equator-facing view
@@ -5541,8 +5598,18 @@ function startOrientationTracking() {
     if (!e.rotationRate || e.rotationRate.beta === null) return;
     const dt = Math.min(e.interval || 16, 50) / 1000; // seconds, capped at 50 ms
 
-    const dYaw   = e.rotationRate.beta  * dt * ORIENTATION_YAW_SIGN   * (Math.PI / 180);
-    const dPitch = e.rotationRate.gamma * dt * ORIENTATION_PITCH_SIGN * (Math.PI / 180);
+    // Cache for the live readout panel
+    lastRotationRate = {
+      alpha: e.rotationRate.alpha ?? 0,
+      beta:  e.rotationRate.beta  ?? 0,
+      gamma: e.rotationRate.gamma ?? 0
+    };
+
+    const rawYaw   = lastRotationRate[orientationYawAxis]   ?? 0;
+    const rawPitch = lastRotationRate[orientationPitchAxis] ?? 0;
+
+    const dYaw   = rawYaw   * dt * ORIENTATION_YAW_SIGN   * (Math.PI / 180);
+    const dPitch = rawPitch * dt * ORIENTATION_PITCH_SIGN * (Math.PI / 180);
 
     const qDY = qFromAxisAngle(0, 1, 0, dYaw);    // world-space yaw
     const qDP = qFromAxisAngle(1, 0, 0, dPitch);  // camera-local pitch
@@ -5565,10 +5632,102 @@ function initMobileMode() {
       <div id="mobileTapHint">tap to record<br><span style="font-size:0.7rem;opacity:0.6">tilt to look around</span></div>
     </div>
     <button id="mobileRecalibBtn">⊕ recalibrate</button>
+    <button id="mobileSettingsBtn">⚙</button>
+
+    <div id="mobileSettingsPanel">
+      <div class="mob-panel-title">live sensor  (deg / s)</div>
+      <div class="mob-row">
+        <span class="mob-label">alpha</span>
+        <span class="mob-readout" id="mobReadAlpha">0.0</span>
+      </div>
+      <div class="mob-row">
+        <span class="mob-label">beta</span>
+        <span class="mob-readout" id="mobReadBeta">0.0</span>
+      </div>
+      <div class="mob-row">
+        <span class="mob-label">gamma</span>
+        <span class="mob-readout" id="mobReadGamma">0.0</span>
+      </div>
+
+      <hr class="mob-divider">
+      <div class="mob-panel-title">axis mapping</div>
+
+      <div class="mob-row">
+        <span class="mob-label">yaw ↔</span>
+        <select class="mob-sel" id="mobYawAxis">
+          <option value="beta">beta</option>
+          <option value="gamma">gamma</option>
+          <option value="alpha">alpha</option>
+        </select>
+        <button class="mob-sign" id="mobYawSign">−</button>
+      </div>
+      <div class="mob-row">
+        <span class="mob-label">pitch ↕</span>
+        <select class="mob-sel" id="mobPitchAxis">
+          <option value="gamma">gamma</option>
+          <option value="beta">beta</option>
+          <option value="alpha">alpha</option>
+        </select>
+        <button class="mob-sign" id="mobPitchSign">+</button>
+      </div>
+
+      <hr class="mob-divider">
+      <button class="mob-big-btn" id="mobZeroBtn">⊕  zero / recalibrate</button>
+      <button class="mob-big-btn" id="mobCloseSettings">close</button>
+    </div>
   `);
 
   document.getElementById('mobileRecalibBtn').addEventListener('click', calibrateOrientation);
+  setupMobileSettings();
   setupMobileTouchHandlers();
+}
+
+function setupMobileSettings() {
+  const panel      = document.getElementById('mobileSettingsPanel');
+  const settingsBtn= document.getElementById('mobileSettingsBtn');
+  const closeBtn   = document.getElementById('mobCloseSettings');
+  const zeroBtn    = document.getElementById('mobZeroBtn');
+  const yawSel     = document.getElementById('mobYawAxis');
+  const pitchSel   = document.getElementById('mobPitchAxis');
+  const yawSignBtn = document.getElementById('mobYawSign');
+  const pitchSignBtn = document.getElementById('mobPitchSign');
+
+  // Sync selects to current defaults
+  yawSel.value   = orientationYawAxis;
+  pitchSel.value = orientationPitchAxis;
+  refreshSignBtns();
+
+  settingsBtn.addEventListener('click', () => panel.classList.toggle('open'));
+  closeBtn.addEventListener('click',    () => panel.classList.remove('open'));
+  zeroBtn.addEventListener('click',     () => { calibrateOrientation(); panel.classList.remove('open'); });
+
+  yawSel.addEventListener('change',   () => { orientationYawAxis   = yawSel.value; });
+  pitchSel.addEventListener('change', () => { orientationPitchAxis = pitchSel.value; });
+
+  yawSignBtn.addEventListener('click', () => {
+    ORIENTATION_YAW_SIGN *= -1;
+    refreshSignBtns();
+  });
+  pitchSignBtn.addEventListener('click', () => {
+    ORIENTATION_PITCH_SIGN *= -1;
+    refreshSignBtns();
+  });
+
+  function refreshSignBtns() {
+    yawSignBtn.textContent = ORIENTATION_YAW_SIGN > 0 ? '+' : '−';
+    yawSignBtn.classList.toggle('neg', ORIENTATION_YAW_SIGN > 0);
+    pitchSignBtn.textContent = ORIENTATION_PITCH_SIGN > 0 ? '+' : '−';
+    pitchSignBtn.classList.toggle('neg', ORIENTATION_PITCH_SIGN > 0);
+  }
+
+  // Live readout — poll at ~10 Hz only while panel is open
+  setInterval(() => {
+    if (!panel.classList.contains('open')) return;
+    const r = lastRotationRate;
+    document.getElementById('mobReadAlpha').textContent = r.alpha.toFixed(1);
+    document.getElementById('mobReadBeta').textContent  = r.beta.toFixed(1);
+    document.getElementById('mobReadGamma').textContent = r.gamma.toFixed(1);
+  }, 100);
 }
 
 function setupMobileTouchHandlers() {
@@ -5603,10 +5762,12 @@ function setupMobileTouchHandlers() {
     paintFrameCount = 0;
     updateLiveRecUI();
 
-    const btn  = document.getElementById('mobileRecalibBtn');
-    const hint = document.getElementById('mobileTapHint');
-    if (btn)  btn.style.display  = '';
-    if (hint) hint.style.display = 'none';
+    const btn         = document.getElementById('mobileRecalibBtn');
+    const settingsBtn = document.getElementById('mobileSettingsBtn');
+    const hint        = document.getElementById('mobileTapHint');
+    if (btn)         btn.style.display         = '';
+    if (settingsBtn) settingsBtn.style.display = '';
+    if (hint)        hint.style.display        = 'none';
   }, { passive: false });
 
   canvas.addEventListener('touchmove', e => {
