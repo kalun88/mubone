@@ -5517,7 +5517,7 @@ function calibrateOrientation() {
 function applyRelativeOrientation(qCurrent) {
   if (!refDeviceQ) { refDeviceQ = [...qCurrent]; refCamQ = [...camQ]; }
   const qRel = qMul(qConjugate(refDeviceQ), qCurrent);
-  camQ = qNormalize(qMul(refCamQ, qRel));
+  camQ = qNormalize(qMul(refCamQ, qConjugate(qRel)));
   orientationActive = true;
   mouseInCanvas = true;
 }
