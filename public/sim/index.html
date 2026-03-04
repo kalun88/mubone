@@ -193,6 +193,39 @@
     box-shadow: 0 0 5px #e8a030;
   }
 
+  /* ── Mobile mode ─────────────────────────────────────────────────────────── */
+  body.mobile-mode { gap: 0 !important; }
+  body.mobile-mode .top-bar,
+  body.mobile-mode .right-panel,
+  body.mobile-mode .bottom-panel { display: none !important; }
+  body.mobile-mode .main-layout  { gap: 0; padding: 0; }
+  body.mobile-mode .canvas-wrapper {
+    border: none; border-radius: 0;
+    cursor: default !important;
+  }
+  body.mobile-mode canvas { cursor: default !important; }
+  #mobileOverlay {
+    position: absolute; inset: 0; z-index: 20;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 1rem; pointer-events: none;
+  }
+  #mobileTapHint {
+    color: rgba(255,255,255,0.4);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.9rem; letter-spacing: 0.1em;
+    text-align: center; line-height: 1.6;
+  }
+  #mobileRecalibBtn {
+    position: absolute; bottom: 1.4rem; right: 1rem;
+    background: rgba(20,20,20,0.7); border: 1px solid #444;
+    color: #777; font-family: 'Roboto Mono', monospace;
+    font-size: 0.7rem; padding: 0.4rem 0.7rem;
+    border-radius: 4px; cursor: pointer; pointer-events: all;
+    display: none; z-index: 21;
+  }
+  #mobileRecalibBtn:active { color: #fff; border-color: #888; }
+
   /* ── Device strip (Ableton-style bottom bar) ─────────────────────────────── */
   .device-strip {
     display: flex;
@@ -1790,6 +1823,13 @@ let altFrozenMouseX      = 0;    // mouse coords snapshotted at Alt press
 let altFrozenMouseY      = 0;
 let altFrozenMousePixelX = 0;
 let altFrozenMousePixelY = 0;
+
+// ── Mobile mode ──────────────────────────────────────────────────────────────
+const isMobile = navigator.maxTouchPoints > 0 && window.innerWidth < 1024;
+let orientationRef    = null;  // { beta, gamma } at calibration
+let refCamQ           = null;  // camQ snapshot at calibration
+let orientationActive = false; // true once deviceorientation fires
+let currentOrientation = null; // latest { beta, gamma } from sensor
 let searchRadiusDeg = 10;
 let nearestMode = false;   // when true: ignore radius, always pick closest particle
 let radiusTooltipUntil = 0; // performance.now() — show transient radius label until this time
@@ -3849,6 +3889,7 @@ function init() {
   setupPresets();
   setupMappingModal();
   initMidi();
+  if (isMobile) initMobileMode();
   // Re-size after first layout pass in case dimensions weren't settled yet
   requestAnimationFrame(() => { resizeCanvas(); drawPresetWaveform(); updatePlaybackControls(); buildSvTabs(); drawSvWaveform(); animate(); });
 
@@ -4767,20 +4808,22 @@ function setupEvents() {
   });
   canvas.addEventListener('mouseleave', () => { if (!altLocked) mouseInCanvas = false; });
 
-  canvas.addEventListener('touchstart', e => {
-    e.preventDefault();
-    const rect = canvas.getBoundingClientRect(), t = e.touches[0];
-    mouseX = ((t.clientX - rect.left) / rect.width  - 0.5) * 2;
-    mouseY = ((t.clientY - rect.top)  / rect.height - 0.5) * 2;
-    mouseInCanvas = true;
-  });
-  canvas.addEventListener('touchmove', e => {
-    e.preventDefault();
-    const rect = canvas.getBoundingClientRect(), t = e.touches[0];
-    mouseX = ((t.clientX - rect.left) / rect.width  - 0.5) * 2;
-    mouseY = ((t.clientY - rect.top)  / rect.height - 0.5) * 2;
-  });
-  canvas.addEventListener('touchend', e => { e.preventDefault(); mouseInCanvas = false; });
+  if (!isMobile) {
+    canvas.addEventListener('touchstart', e => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect(), t = e.touches[0];
+      mouseX = ((t.clientX - rect.left) / rect.width  - 0.5) * 2;
+      mouseY = ((t.clientY - rect.top)  / rect.height - 0.5) * 2;
+      mouseInCanvas = true;
+    });
+    canvas.addEventListener('touchmove', e => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect(), t = e.touches[0];
+      mouseX = ((t.clientX - rect.left) / rect.width  - 0.5) * 2;
+      mouseY = ((t.clientY - rect.top)  / rect.height - 0.5) * 2;
+    });
+    canvas.addEventListener('touchend', e => { e.preventDefault(); mouseInCanvas = false; });
+  }
 
   // ── Keyboard ────────────────────────────────────────────────────────────────
   document.addEventListener('keydown', async e => {
@@ -4978,7 +5021,7 @@ function setupEvents() {
     undoLastStroke();
   });
 
-  canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+  if (!isMobile) canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
   // ── Input gain fader (Ableton-style) ─────────────────────────────────────────
   // Drag the arrow handle up/down to set gain. Double-click to reset to unity (0 dB).
@@ -5288,7 +5331,8 @@ function animate() {
   perfTick();
 
   // ── Camera rotation ──────────────────────────────────────────────────────
-  if (mouseInCanvas && !altLocked) {
+  // Skip mouse-driven rotation on mobile — device orientation handles camQ directly
+  if (mouseInCanvas && !altLocked && !(isMobile && orientationActive)) {
     const dist = Math.sqrt(mouseX*mouseX + mouseY*mouseY);
     const DEAD_ZONE = 0.30;
     if (dist > DEAD_ZONE) {
@@ -5440,6 +5484,104 @@ function loadMidiMappings() {
 
 function saveMidiMappings() {
   try { localStorage.setItem('mubone_midi_map', JSON.stringify(midiMappings)); } catch(e) {}
+}
+
+// ============================================================================
+// MOBILE MODE
+// ============================================================================
+
+function calibrateOrientation() {
+  if (!currentOrientation) return;
+  orientationRef = { beta: currentOrientation.beta, gamma: currentOrientation.gamma };
+  refCamQ = [...camQ];
+}
+
+function initMobileMode() {
+  document.body.classList.add('mobile-mode');
+  selectPreset(0);
+
+  // Inject overlay into canvas wrapper
+  const wrapper = document.getElementById('canvasWrapper');
+  wrapper.insertAdjacentHTML('beforeend', `
+    <div id="mobileOverlay">
+      <div id="mobileTapHint">tap anywhere to record<br><span style="font-size:0.7rem;opacity:0.6">tilt phone to look around</span></div>
+    </div>
+    <button id="mobileRecalibBtn">⊕ recalibrate</button>
+  `);
+
+  document.getElementById('mobileRecalibBtn').addEventListener('click', () => {
+    calibrateOrientation();
+  });
+
+  // Device orientation → camera
+  window.addEventListener('deviceorientation', e => {
+    if (e.beta === null || e.gamma === null) return;
+    currentOrientation = { beta: e.beta, gamma: e.gamma };
+
+    // Auto-calibrate on first sensor event if not yet calibrated
+    if (!orientationRef) calibrateOrientation();
+
+    const dGamma = -(currentOrientation.gamma - orientationRef.gamma) * Math.PI / 180;
+    const dBeta  =  (currentOrientation.beta  - orientationRef.beta)  * Math.PI / 180;
+
+    // Yaw (left/right tilt) applied in world space; pitch (fwd/back tilt) in local
+    let q = qMul(qFromAxisAngle(0, 1, 0, dGamma), refCamQ);
+    q = qMul(q, qFromAxisAngle(1, 0, 0, dBeta));
+    camQ = qNormalize(q);
+
+    orientationActive = true;
+    mouseInCanvas = true;
+  });
+
+  // Replace canvas touch handlers with mobile-specific ones
+  setupMobileTouchHandlers();
+}
+
+function setupMobileTouchHandlers() {
+  // touchstart → record + paint
+  canvas.addEventListener('touchstart', async e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches[0];
+    mousePixelX = (t.clientX - rect.left) * (canvas.width  / rect.width);
+    mousePixelY = (t.clientY - rect.top)  * (canvas.height / rect.height);
+    mouseInCanvas = true;
+
+    ensureAudioContext();
+    const gotMic = micPermissionGranted ? true : await requestMicAccess();
+    if (!gotMic) return;
+    startLiveRecording();
+    recordStrokeStart('live', currentLiveBufferIdx);
+    isPainting      = true;
+    paintFrameCount = 0;
+    updateLiveRecUI();
+
+    // Reveal recalibrate button + hide initial hint after first tap
+    const btn  = document.getElementById('mobileRecalibBtn');
+    const hint = document.getElementById('mobileTapHint');
+    if (btn)  btn.style.display  = '';
+    if (hint) hint.style.display = 'none';
+  }, { passive: false });
+
+  // touchmove → update particle drop point
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches[0];
+    mousePixelX = (t.clientX - rect.left) * (canvas.width  / rect.width);
+    mousePixelY = (t.clientY - rect.top)  * (canvas.height / rect.height);
+  }, { passive: false });
+
+  // touchend → stop recording
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    isPainting      = false;
+    currentStrokeId = -1;
+    if (isRecording) stopLiveRecording();
+    liveColorIndex = (liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+    updateLiveRecUI();
+    // Keep mouseInCanvas true — orientation keeps cursor active
+  }, { passive: false });
 }
 
 async function initMidi() {
