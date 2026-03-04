@@ -5538,10 +5538,25 @@ function calibrateOrientation() {
   refCamQ = [...camQ];
 }
 
+// Decomposes q into yaw-only (twist around world Y) and pitch+roll (swing).
+// Identity: q = twist * swing  →  swing = twist^{-1} * q
+function swingTwistDecompose(q) {
+  const [w, , y] = q;
+  const len = Math.sqrt(w * w + y * y);
+  if (len < 1e-6) return { twist: [1, 0, 0, 0], swing: [...q] };
+  const twist = [w / len, 0, y / len, 0];
+  return { twist, swing: qMul(qConjugate(twist), q) };
+}
+
 function applyRelativeOrientation(qCurrent) {
   if (!refDeviceQ) { refDeviceQ = [...qCurrent]; refCamQ = [...camQ]; }
   const qRel = qMul(qConjugate(refDeviceQ), qCurrent);
-  camQ = qNormalize(qMul(refCamQ, qConjugate(qRel)));
+  // Split: twist = pure yaw (around world Y), swing = remaining pitch+roll.
+  // Apply yaw in world space (left-multiply) so turning around stays stable,
+  // apply pitch/roll in camera-local space (right-multiply after refCamQ)
+  // so up/down always matches the phone tilt regardless of facing direction.
+  const { twist, swing } = swingTwistDecompose(qRel);
+  camQ = qNormalize(qMul(qMul(twist, refCamQ), swing));
   orientationActive = true;
   mouseInCanvas = true;
 }
