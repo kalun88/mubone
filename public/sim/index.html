@@ -5583,14 +5583,12 @@ function saveMidiMappings() {
 //   dPitch → camera-local  right-multiply (always means "tilt phone up/down")
 //
 // Runtime-configurable via the in-app axis menu — adjust without reloading.
-// Portrait defaults (empirically correct for this device):
-//   yaw=beta/+1  pitch=alpha/+1
-// Landscape defaults:
-//   yaw=alpha/+1  pitch=beta/-1
+// Portrait defaults:  yaw=beta/−1  pitch=alpha/−1
+// Landscape defaults: yaw=alpha/−1  pitch=beta/+1
 let orientationYawAxis   = 'beta';
 let orientationPitchAxis = 'alpha';
-let ORIENTATION_YAW_SIGN   =  1;
-let ORIENTATION_PITCH_SIGN =  1;
+let ORIENTATION_YAW_SIGN   = -1;
+let ORIENTATION_PITCH_SIGN = -1;
 let lastRotationRate = { alpha: 0, beta: 0, gamma: 0 }; // for live readout
 let refreshMobileOrientationUI = null; // set by setupMobileSettings
 
@@ -5598,14 +5596,14 @@ let refreshMobileOrientationUI = null; // set by setupMobileSettings
 function applyOrientationPreset(isLandscape) {
   if (isLandscape) {
     orientationYawAxis     = 'alpha';
-    ORIENTATION_YAW_SIGN   =  1;
+    ORIENTATION_YAW_SIGN   = -1;
     orientationPitchAxis   = 'beta';
-    ORIENTATION_PITCH_SIGN = -1;
+    ORIENTATION_PITCH_SIGN =  1;
   } else {
     orientationYawAxis     = 'beta';
-    ORIENTATION_YAW_SIGN   =  1;
+    ORIENTATION_YAW_SIGN   = -1;
     orientationPitchAxis   = 'alpha';
-    ORIENTATION_PITCH_SIGN =  1;
+    ORIENTATION_PITCH_SIGN = -1;
   }
   const ySel = document.getElementById('mobYawAxis');
   const pSel = document.getElementById('mobPitchAxis');
@@ -5779,9 +5777,13 @@ function setupMobileTouchHandlers() {
 
       // Snapshot portrait vs landscape RIGHT NOW, apply matching axis preset,
       // then lock the screen so the phone can't flip mid-session and scramble the axes.
+      // Android Chrome requires fullscreen before screen.orientation.lock() will work.
       const isLandscape = window.innerWidth > window.innerHeight;
       applyOrientationPreset(isLandscape);
       try {
+        const el = document.documentElement;
+        const requestFS = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
+        if (requestFS) await requestFS.call(el).catch(() => {});
         await screen.orientation.lock(isLandscape ? 'landscape' : 'portrait').catch(() => {});
       } catch (_) {}
 
