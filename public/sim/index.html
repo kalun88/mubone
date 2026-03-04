@@ -1826,10 +1826,10 @@ let altFrozenMousePixelY = 0;
 
 // ── Mobile mode ──────────────────────────────────────────────────────────────
 const isMobile = navigator.maxTouchPoints > 0 && window.innerWidth < 1024;
-let refDeviceQ        = null;  // device orientation quaternion at calibration
-let refCamQ           = null;  // camQ snapshot at calibration
-let orientationActive = false; // true once deviceorientation fires
-let currentOrientation = null; // latest { alpha, beta, gamma } from sensor
+let refDeviceQ         = null;  // device orientation quaternion at calibration
+let refCamQ            = null;  // camQ snapshot at calibration
+let orientationActive  = false; // true once sensor fires
+let currentOrientation = null;  // latest reading from sensor
 let searchRadiusDeg = 10;
 let nearestMode = false;   // when true: ignore radius, always pick closest particle
 let radiusTooltipUntil = 0; // performance.now() — show transient radius label until this time
@@ -5490,67 +5490,95 @@ function saveMidiMappings() {
 // MOBILE MODE
 // ============================================================================
 
-// Convert W3C DeviceOrientationEvent angles to a quaternion.
-// Spec rotation order: Rz(alpha) * Rx(beta) * Ry(gamma) — all in degrees.
-function deviceOrientationToQuat(alpha, beta, gamma) {
+// ── Orientation helpers ───────────────────────────────────────────────────────
+
+// Build quaternion from W3C DeviceOrientationEvent angles (degrees).
+// We deliberately pass alpha=0 to strip the magnetometer axis entirely.
+// Only beta (tilt fwd/back) and gamma (tilt left/right) are used —
+// both come from accelerometer + gyro, which are stable and singularity-free
+// at normal phone-holding angles.
+// Rotation order per W3C spec: Rz(alpha) * Rx(beta) * Ry(gamma)
+function deviceOrientationToQuat(beta, gamma) {
   const r = Math.PI / 180;
-  const qa = qFromAxisAngle(0, 0, 1, alpha * r);
-  const qb = qFromAxisAngle(1, 0, 0, beta  * r);
-  const qg = qFromAxisAngle(0, 1, 0, gamma * r);
-  return qNormalize(qMul(qMul(qa, qb), qg));
+  return qNormalize(qMul(
+    qFromAxisAngle(1, 0, 0, beta  * r),
+    qFromAxisAngle(0, 1, 0, gamma * r)
+  ));
 }
 
 function calibrateOrientation() {
   if (!currentOrientation) return;
-  refDeviceQ = deviceOrientationToQuat(
-    currentOrientation.alpha, currentOrientation.beta, currentOrientation.gamma);
+  refDeviceQ = currentOrientation.quat
+    ? [...currentOrientation.quat]
+    : deviceOrientationToQuat(currentOrientation.beta, currentOrientation.gamma);
   refCamQ = [...camQ];
 }
+
+function applyRelativeOrientation(qCurrent) {
+  if (!refDeviceQ) { refDeviceQ = [...qCurrent]; refCamQ = [...camQ]; }
+  const qRel = qMul(qConjugate(refDeviceQ), qCurrent);
+  camQ = qNormalize(qMul(refCamQ, qRel));
+  orientationActive = true;
+  mouseInCanvas = true;
+}
+
+// Try RelativeOrientationSensor first (gyro+accel only, no magnetometer,
+// works on Android Chrome and iOS 17.4+). Falls back to deviceorientation
+// with alpha stripped out.
+async function startOrientationTracking() {
+  if (typeof RelativeOrientationSensor !== 'undefined') {
+    try {
+      const results = await Promise.all([
+        navigator.permissions.query({ name: 'accelerometer' }),
+        navigator.permissions.query({ name: 'gyroscope' }),
+      ]);
+      if (results.every(r => r.state !== 'denied')) {
+        const sensor = new RelativeOrientationSensor({ frequency: 60, referenceFrame: 'device' });
+        sensor.addEventListener('reading', () => {
+          if (!sensor.quaternion) return;
+          const [x, y, z, w] = sensor.quaternion; // WebGL format → [w,x,y,z]
+          const q = [w, x, y, z];
+          currentOrientation = { quat: q };
+          applyRelativeOrientation(q);
+        });
+        sensor.addEventListener('error', () => fallbackToDeviceOrientation());
+        sensor.start();
+        return;
+      }
+    } catch (err) { /* fall through */ }
+  }
+  fallbackToDeviceOrientation();
+}
+
+function fallbackToDeviceOrientation() {
+  window.addEventListener('deviceorientation', e => {
+    if (e.beta === null || e.gamma === null) return;
+    currentOrientation = { beta: e.beta, gamma: e.gamma };
+    applyRelativeOrientation(deviceOrientationToQuat(e.beta, e.gamma));
+  });
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
 
 function initMobileMode() {
   document.body.classList.add('mobile-mode');
   selectPreset(0);
 
-  // Inject overlay into canvas wrapper
   const wrapper = document.getElementById('canvasWrapper');
   wrapper.insertAdjacentHTML('beforeend', `
     <div id="mobileOverlay">
-      <div id="mobileTapHint">tap anywhere to record<br><span style="font-size:0.7rem;opacity:0.6">tilt phone to look around</span></div>
+      <div id="mobileTapHint">tap to record<br><span style="font-size:0.7rem;opacity:0.6">tilt to look around</span></div>
     </div>
     <button id="mobileRecalibBtn">⊕ recalibrate</button>
   `);
 
-  document.getElementById('mobileRecalibBtn').addEventListener('click', () => {
-    calibrateOrientation();
-  });
-
-  // Device orientation → camera (gimbal-lock-free quaternion approach).
-  // Instead of decomposing Euler deltas (which breaks near beta=±90°),
-  // convert the full orientation to a quaternion each frame and compute
-  // the relative rotation as qRel = conj(refDeviceQ) * qCurrent,
-  // then apply that relative rotation to the reference camera quaternion.
-  window.addEventListener('deviceorientation', e => {
-    if (e.beta === null || e.alpha === null || e.gamma === null) return;
-    currentOrientation = { alpha: e.alpha, beta: e.beta, gamma: e.gamma };
-
-    if (!refDeviceQ) calibrateOrientation();
-
-    const qCurrent = deviceOrientationToQuat(e.alpha, e.beta, e.gamma);
-    // Relative rotation: how has the device moved since calibration?
-    const qRel = qMul(qConjugate(refDeviceQ), qCurrent);
-    // Apply that same relative rotation to the reference camera orientation
-    camQ = qNormalize(qMul(refCamQ, qRel));
-
-    orientationActive = true;
-    mouseInCanvas = true;
-  });
-
-  // Replace canvas touch handlers with mobile-specific ones
+  document.getElementById('mobileRecalibBtn').addEventListener('click', calibrateOrientation);
   setupMobileTouchHandlers();
 }
 
 function setupMobileTouchHandlers() {
-  // touchstart → record + paint
+  let orientationStarted = false;
+
   canvas.addEventListener('touchstart', async e => {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
@@ -5558,6 +5586,17 @@ function setupMobileTouchHandlers() {
     mousePixelX = (t.clientX - rect.left) * (canvas.width  / rect.width);
     mousePixelY = (t.clientY - rect.top)  * (canvas.height / rect.height);
     mouseInCanvas = true;
+
+    // iOS 13+ requires DeviceOrientationEvent permission inside a user gesture
+    if (!orientationStarted) {
+      orientationStarted = true;
+      if (typeof DeviceOrientationEvent !== 'undefined' &&
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        const perm = await DeviceOrientationEvent.requestPermission().catch(() => 'denied');
+        if (perm !== 'granted') { orientationStarted = false; }
+      }
+      startOrientationTracking();
+    }
 
     ensureAudioContext();
     const gotMic = micPermissionGranted ? true : await requestMicAccess();
@@ -5568,14 +5607,12 @@ function setupMobileTouchHandlers() {
     paintFrameCount = 0;
     updateLiveRecUI();
 
-    // Reveal recalibrate button + hide initial hint after first tap
     const btn  = document.getElementById('mobileRecalibBtn');
     const hint = document.getElementById('mobileTapHint');
     if (btn)  btn.style.display  = '';
     if (hint) hint.style.display = 'none';
   }, { passive: false });
 
-  // touchmove → update particle drop point
   canvas.addEventListener('touchmove', e => {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
@@ -5584,7 +5621,6 @@ function setupMobileTouchHandlers() {
     mousePixelY = (t.clientY - rect.top)  * (canvas.height / rect.height);
   }, { passive: false });
 
-  // touchend → stop recording
   canvas.addEventListener('touchend', e => {
     e.preventDefault();
     isPainting      = false;
@@ -5592,7 +5628,6 @@ function setupMobileTouchHandlers() {
     if (isRecording) stopLiveRecording();
     liveColorIndex = (liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
     updateLiveRecUI();
-    // Keep mouseInCanvas true — orientation keeps cursor active
   }, { passive: false });
 }
 
