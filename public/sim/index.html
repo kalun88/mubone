@@ -203,7 +203,10 @@
     border: none; border-radius: 0;
     cursor: default !important;
   }
-  body.mobile-mode canvas { cursor: default !important; }
+  body.mobile-mode canvas {
+    cursor: default !important;
+    position: relative; z-index: 1; /* sit above absolutely-positioned #arVideo */
+  }
   #mobileOverlay {
     position: absolute; inset: 0; z-index: 20;
     display: flex; flex-direction: column;
@@ -5578,7 +5581,11 @@ function applyRelativeOrientation(qCurrent) {
   // apply pitch/roll in camera-local space (right-multiply after refCamQ)
   // so up/down always matches the phone tilt regardless of facing direction.
   const { twist, swing } = swingTwistDecompose(qRel);
-  camQ = qNormalize(qMul(qMul(twist, refCamQ), swing));
+  // qConjugate(twist) keeps yaw direction matching what the device produces
+  // (same sign as the old refCamQ*qConjugate(qRel) for zero-yaw).
+  // Applying it left of refCamQ (world-space) means pitch never flips when turned 180°.
+  // qConjugate(swing) keeps pitch direction correct (same as old formula's pitch sign).
+  camQ = qNormalize(qMul(qMul(qConjugate(twist), refCamQ), qConjugate(swing)));
   orientationActive = true;
   mouseInCanvas = true;
 }
