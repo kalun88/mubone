@@ -1850,12 +1850,7 @@ let altFrozenMousePixelY = 0;
 
 // ── Mobile mode ──────────────────────────────────────────────────────────────
 const isMobile = navigator.maxTouchPoints > 0 && window.innerWidth < 1024;
-// portrait-mode orientation (fresh simple approach)
-let refCamQ        = null;   // camQ at calibration
-let refBeta        = null;   // beta  at calibration
-let refGamma       = null;   // gamma at calibration
-let lastBeta       = null;   // most recent beta reading
-let lastGamma      = null;   // most recent gamma reading
+// portrait-mode orientation (gyroscope integration — no gimbal lock)
 let orientationActive = false;
 let searchRadiusDeg = 10;
 let nearestMode = false;   // when true: ignore radius, always pick closest particle
@@ -5519,50 +5514,40 @@ function saveMidiMappings() {
 
 // ── Orientation helpers ───────────────────────────────────────────────────────
 
-// ── Portrait-mode orientation (fresh simple approach) ─────────────────────────
-// deviceorientation gives:
-//   beta  (-180..180) : front/back tilt. ~90° when phone upright in portrait,
-//                       increases when top tips AWAY from user (camera tilts up).
-//   gamma (-90..90)   : rotation around phone's long axis = yaw when upright.
-//                       decreases when user turns RIGHT (right-hand rule, Y up).
+// ── Portrait-mode orientation (gyroscope integration) ─────────────────────────
+// Uses devicemotion.rotationRate — the raw gyroscope angular velocity in deg/s.
+// We integrate it directly into camQ each frame, completely avoiding Euler angles
+// and the gimbal lock singularity that sits at beta=90° (portrait orientation).
 //
-// We store the angles at calibration and apply the deltas as two independent
-// rotations so yaw and pitch can never cross-contaminate each other:
-//   qYaw   left-multiplied  (world-space) → stable at any facing direction
-//   qPitch right-multiplied (camera-local) → always means "tilt screen up/down"
+// For a portrait-held phone:
+//   rotationRate.beta  = deg/s around device X (horizontal short axis) = PITCH
+//   rotationRate.gamma = deg/s around device Y (vertical long axis)    = YAW
+//   rotationRate.alpha = deg/s around device Z (screen normal)         = ROLL (ignored)
 //
-// If an axis feels inverted after testing, flip its sign constant below.
-const ORIENTATION_PITCH_SIGN = -1;  // −1 = tilt top away → look up
-const ORIENTATION_YAW_SIGN   = -1;  // −1 = turn phone right → look right
+// Each frame we apply two incremental rotations:
+//   dYaw   → world-space   left-multiply  (stable at any facing direction)
+//   dPitch → camera-local  right-multiply (always means "tilt phone up/down")
+//
+// Flip a sign constant if an axis feels inverted on your device.
+const ORIENTATION_PITCH_SIGN =  1;  // +1: top-away = look up
+const ORIENTATION_YAW_SIGN   = -1;  // -1: turn right = look right
 
 function calibrateOrientation() {
-  if (lastBeta === null) return;
-  refBeta  = lastBeta;
-  refGamma = lastGamma;
-  refCamQ  = [...camQ];
+  camQ = [1, 0, 0, 0]; // snap back to neutral equator-facing view
 }
 
 function startOrientationTracking() {
-  window.addEventListener('deviceorientation', e => {
-    if (e.beta === null || e.gamma === null) return;
-    lastBeta  = e.beta;
-    lastGamma = e.gamma;
+  window.addEventListener('devicemotion', e => {
+    if (!e.rotationRate || e.rotationRate.beta === null) return;
+    const dt = Math.min(e.interval || 16, 50) / 1000; // seconds, capped at 50 ms
 
-    // Auto-calibrate on first reading
-    if (refBeta === null) {
-      refBeta  = e.beta;
-      refGamma = e.gamma;
-      refCamQ  = [...camQ];
-    }
+    const dYaw   = e.rotationRate.gamma * dt * ORIENTATION_YAW_SIGN   * (Math.PI / 180);
+    const dPitch = e.rotationRate.beta  * dt * ORIENTATION_PITCH_SIGN * (Math.PI / 180);
 
-    const db = (e.beta  - refBeta)  * Math.PI / 180;
-    const dg = (e.gamma - refGamma) * Math.PI / 180;
+    const qDY = qFromAxisAngle(0, 1, 0, dYaw);    // world-space yaw
+    const qDP = qFromAxisAngle(1, 0, 0, dPitch);  // camera-local pitch
 
-    const qYaw   = qFromAxisAngle(0, 1, 0, ORIENTATION_YAW_SIGN   * dg);
-    const qPitch = qFromAxisAngle(1, 0, 0, ORIENTATION_PITCH_SIGN * db);
-
-    // yaw in world space (left), pitch in camera-local space (right of refCamQ)
-    camQ = qNormalize(qMul(qYaw, qMul(refCamQ, qPitch)));
+    camQ = qNormalize(qMul(qDY, qMul(camQ, qDP)));
     orientationActive = true;
     mouseInCanvas = true;
   });
@@ -5597,12 +5582,13 @@ function setupMobileTouchHandlers() {
     mousePixelY = (t.clientY - rect.top)  * (canvas.height / rect.height);
     mouseInCanvas = true;
 
-    // iOS 13+ requires DeviceOrientationEvent permission inside a user gesture
+    // iOS 13+ requires explicit permission for motion sensors inside a user gesture
     if (!orientationStarted) {
       orientationStarted = true;
-      if (typeof DeviceOrientationEvent !== 'undefined' &&
-          typeof DeviceOrientationEvent.requestPermission === 'function') {
-        const perm = await DeviceOrientationEvent.requestPermission().catch(() => 'denied');
+      // DeviceMotionEvent permission (iOS 13+); DeviceOrientationEvent shares the same dialog
+      if (typeof DeviceMotionEvent !== 'undefined' &&
+          typeof DeviceMotionEvent.requestPermission === 'function') {
+        const perm = await DeviceMotionEvent.requestPermission().catch(() => 'denied');
         if (perm !== 'granted') { orientationStarted = false; }
       }
       startOrientationTracking();
