@@ -203,10 +203,7 @@
     border: none; border-radius: 0;
     cursor: default !important;
   }
-  body.mobile-mode canvas {
-    cursor: default !important;
-    position: relative; z-index: 1; /* sit above absolutely-positioned #arVideo */
-  }
+  body.mobile-mode canvas { cursor: default !important; }
   #mobileOverlay {
     position: absolute; inset: 0; z-index: 20;
     display: flex; flex-direction: column;
@@ -228,21 +225,6 @@
     display: none; z-index: 21;
   }
   #mobileRecalibBtn:active { color: #fff; border-color: #888; }
-  /* AR mode */
-  #arVideo {
-    position: absolute; top: 0; left: 0;
-    width: 100%; height: 100%;
-    object-fit: cover; z-index: 0; display: none;
-  }
-  body.ar-mode #arVideo { display: block; }
-  #mobileARBtn {
-    position: absolute; bottom: 1.4rem; left: 1rem;
-    background: rgba(20,20,20,0.7); border: 1px solid #444;
-    color: #777; font-family: 'Roboto Mono', monospace;
-    font-size: 0.7rem; padding: 0.4rem 0.7rem;
-    border-radius: 4px; cursor: pointer; pointer-events: all; z-index: 21;
-  }
-  #mobileARBtn.active { color: #7abcbc; border-color: #5a8a8a; background: rgba(10,30,30,0.8); }
 
   /* ── Device strip (Ableton-style bottom bar) ─────────────────────────────── */
   .device-strip {
@@ -1872,8 +1854,6 @@ let refDeviceQ         = null;  // device orientation quaternion at calibration
 let refCamQ            = null;  // camQ snapshot at calibration
 let orientationActive  = false; // true once sensor fires
 let currentOrientation = null;  // latest reading from sensor
-let arMode             = false; // AR: camera feed behind transparent canvas
-let arStream           = null;  // MediaStream from rear camera
 let searchRadiusDeg = 10;
 let nearestMode = false;   // when true: ignore radius, always pick closest particle
 let radiusTooltipUntil = 0; // performance.now() — show transient radius label until this time
@@ -4321,12 +4301,8 @@ function drawOutputMeter() {
 }
 
 function drawFrame() {
-  if (arMode) {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-  } else {
-    ctx.fillStyle = BG_COLOR;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
+  ctx.fillStyle = BG_COLOR;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   drawGridLines();
   drawParticles();
   updateLiveGranulatingIndicator();
@@ -4490,22 +4466,21 @@ function drawTetherLine() {
 }
 
 function drawGridLines() {
-  const ab = arMode ? 1.8 : 1.0; // alpha boost in AR — grid needs to read against real world
   for (let i = 0; i < GRID_SEGMENTS_LON; i++) {
     const lon = (i / GRID_SEGMENTS_LON) * Math.PI * 2;
     ctx.strokeStyle = GRID_COLOR;
-    ctx.lineWidth   = arMode ? 1.0 : 0.8;
-    ctx.globalAlpha = Math.min(1, 0.45 * ab);
+    ctx.lineWidth   = 0.8;
+    ctx.globalAlpha = 0.45;
     drawArc(lon, 'lon');
   }
   for (let i = 1; i < GRID_SEGMENTS_LAT; i++) {
     const lat          = (i / GRID_SEGMENTS_LAT) * Math.PI - Math.PI / 2;
     const distFromEq   = Math.abs(lat) / (Math.PI / 2);
     const gridTint     = lat > 0 ? '#c8a060' : '#60a0c8';
-    if      (distFromEq < 0.05) { ctx.strokeStyle = '#a0dede'; ctx.lineWidth = 2.5; ctx.globalAlpha = Math.min(1, 0.9  * ab); }
-    else if (distFromEq < 0.4)  { ctx.strokeStyle = gridTint;  ctx.lineWidth = 1.2; ctx.globalAlpha = Math.min(1, 0.6  * ab); }
-    else if (distFromEq < 0.7)  { ctx.strokeStyle = gridTint;  ctx.lineWidth = 0.8; ctx.globalAlpha = Math.min(1, 0.4  * ab); }
-    else                        { ctx.strokeStyle = gridTint;  ctx.lineWidth = 0.5; ctx.globalAlpha = Math.min(1, 0.2  * ab); }
+    if      (distFromEq < 0.05) { ctx.strokeStyle = '#a0dede'; ctx.lineWidth = 2.5; ctx.globalAlpha = 0.9;  }
+    else if (distFromEq < 0.4)  { ctx.strokeStyle = gridTint;  ctx.lineWidth = 1.2; ctx.globalAlpha = 0.6; }
+    else if (distFromEq < 0.7)  { ctx.strokeStyle = gridTint;  ctx.lineWidth = 0.8; ctx.globalAlpha = 0.4;  }
+    else                        { ctx.strokeStyle = gridTint;  ctx.lineWidth = 0.5; ctx.globalAlpha = 0.2;  }
     drawArc(lat, 'lat');
   }
   ctx.globalAlpha = 1;
@@ -5563,13 +5538,17 @@ function calibrateOrientation() {
   refCamQ = [...camQ];
 }
 
-// Decomposes q into yaw-only (twist around world Y) and pitch+roll (swing).
+// Decomposes q into yaw-only twist and pitch+roll swing.
+// The sensor uses (East=X, North=Y, Up=Z). When phone is held in portrait,
+// "yaw" (turning left/right around world vertical) is a rotation around
+// sensor Z = the Z component of the quaternion. Decomposing around Z (not Y)
+// prevents yaw from appearing as camera roll.
 // Identity: q = twist * swing  →  swing = twist^{-1} * q
 function swingTwistDecompose(q) {
-  const [w, , y] = q;
-  const len = Math.sqrt(w * w + y * y);
+  const [w, , , z] = q;
+  const len = Math.sqrt(w * w + z * z);
   if (len < 1e-6) return { twist: [1, 0, 0, 0], swing: [...q] };
-  const twist = [w / len, 0, y / len, 0];
+  const twist = [w / len, 0, 0, z / len];
   return { twist, swing: qMul(qConjugate(twist), q) };
 }
 
@@ -5628,43 +5607,6 @@ function fallbackToDeviceOrientation() {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-async function toggleARMode() {
-  const btn = document.getElementById('mobileARBtn');
-  if (!arMode) {
-    try {
-      arStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
-        audio: false,
-      });
-      // Insert video element behind the canvas
-      let vid = document.getElementById('arVideo');
-      if (!vid) {
-        vid = document.createElement('video');
-        vid.id = 'arVideo';
-        vid.autoplay = true;
-        vid.playsInline = true;
-        vid.muted = true;
-        document.getElementById('canvasWrapper').insertBefore(vid, canvas);
-      }
-      vid.srcObject = arStream;
-      arMode = true;
-      document.body.classList.add('ar-mode');
-      if (btn) { btn.textContent = '◎ AR on'; btn.classList.add('active'); }
-    } catch (err) {
-      console.warn('Camera denied:', err);
-      if (btn) btn.textContent = '◎ cam denied';
-    }
-  } else {
-    // Turn off AR
-    if (arStream) { arStream.getTracks().forEach(t => t.stop()); arStream = null; }
-    const vid = document.getElementById('arVideo');
-    if (vid) vid.srcObject = null;
-    arMode = false;
-    document.body.classList.remove('ar-mode');
-    if (btn) { btn.textContent = '◎ AR'; btn.classList.remove('active'); }
-  }
-}
-
 function initMobileMode() {
   document.body.classList.add('mobile-mode');
   selectPreset(PRESETS.findIndex(p => p.name === 'wash') || 0);
@@ -5675,11 +5617,9 @@ function initMobileMode() {
       <div id="mobileTapHint">tap to record<br><span style="font-size:0.7rem;opacity:0.6">tilt to look around</span></div>
     </div>
     <button id="mobileRecalibBtn">⊕ recalibrate</button>
-    <button id="mobileARBtn">◎ AR</button>
   `);
 
   document.getElementById('mobileRecalibBtn').addEventListener('click', calibrateOrientation);
-  document.getElementById('mobileARBtn').addEventListener('click', toggleARMode);
   setupMobileTouchHandlers();
 }
 
