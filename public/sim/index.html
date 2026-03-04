@@ -1850,10 +1850,13 @@ let altFrozenMousePixelY = 0;
 
 // ── Mobile mode ──────────────────────────────────────────────────────────────
 const isMobile = navigator.maxTouchPoints > 0 && window.innerWidth < 1024;
-let refDeviceQ         = null;  // device orientation quaternion at calibration
-let refCamQ            = null;  // camQ snapshot at calibration
-let orientationActive  = false; // true once sensor fires
-let currentOrientation = null;  // latest reading from sensor
+// portrait-mode orientation (fresh simple approach)
+let refCamQ        = null;   // camQ at calibration
+let refBeta        = null;   // beta  at calibration
+let refGamma       = null;   // gamma at calibration
+let lastBeta       = null;   // most recent beta reading
+let lastGamma      = null;   // most recent gamma reading
+let orientationActive = false;
 let searchRadiusDeg = 10;
 let nearestMode = false;   // when true: ignore radius, always pick closest particle
 let radiusTooltipUntil = 0; // performance.now() — show transient radius label until this time
@@ -5516,92 +5519,52 @@ function saveMidiMappings() {
 
 // ── Orientation helpers ───────────────────────────────────────────────────────
 
-// Build quaternion from W3C DeviceOrientationEvent angles (degrees).
-// We deliberately pass alpha=0 to strip the magnetometer axis entirely.
-// Only beta (tilt fwd/back) and gamma (tilt left/right) are used —
-// both come from accelerometer + gyro, which are stable and singularity-free
-// at normal phone-holding angles.
-// Rotation order per W3C spec: Rz(alpha) * Rx(beta) * Ry(gamma)
-function deviceOrientationToQuat(beta, gamma) {
-  const r = Math.PI / 180;
-  return qNormalize(qMul(
-    qFromAxisAngle(1, 0, 0, beta  * r),
-    qFromAxisAngle(0, 1, 0, gamma * r)
-  ));
-}
+// ── Portrait-mode orientation (fresh simple approach) ─────────────────────────
+// deviceorientation gives:
+//   beta  (-180..180) : front/back tilt. ~90° when phone upright in portrait,
+//                       increases when top tips AWAY from user (camera tilts up).
+//   gamma (-90..90)   : rotation around phone's long axis = yaw when upright.
+//                       decreases when user turns RIGHT (right-hand rule, Y up).
+//
+// We store the angles at calibration and apply the deltas as two independent
+// rotations so yaw and pitch can never cross-contaminate each other:
+//   qYaw   left-multiplied  (world-space) → stable at any facing direction
+//   qPitch right-multiplied (camera-local) → always means "tilt screen up/down"
+//
+// If an axis feels inverted after testing, flip its sign constant below.
+const ORIENTATION_PITCH_SIGN = -1;  // −1 = tilt top away → look up
+const ORIENTATION_YAW_SIGN   = -1;  // −1 = turn phone right → look right
 
 function calibrateOrientation() {
-  if (!currentOrientation) return;
-  refDeviceQ = currentOrientation.quat
-    ? [...currentOrientation.quat]
-    : deviceOrientationToQuat(currentOrientation.beta, currentOrientation.gamma);
-  refCamQ = [...camQ];
+  if (lastBeta === null) return;
+  refBeta  = lastBeta;
+  refGamma = lastGamma;
+  refCamQ  = [...camQ];
 }
 
-// Decomposes q into yaw-only twist and pitch+roll swing.
-// The sensor uses (East=X, North=Y, Up=Z). When phone is held in portrait,
-// "yaw" (turning left/right around world vertical) is a rotation around
-// sensor Z = the Z component of the quaternion. Decomposing around Z (not Y)
-// prevents yaw from appearing as camera roll.
-// Identity: q = twist * swing  →  swing = twist^{-1} * q
-function swingTwistDecompose(q) {
-  const [w, , , z] = q;
-  const len = Math.sqrt(w * w + z * z);
-  if (len < 1e-6) return { twist: [1, 0, 0, 0], swing: [...q] };
-  const twist = [w / len, 0, 0, z / len];
-  return { twist, swing: qMul(qConjugate(twist), q) };
-}
-
-function applyRelativeOrientation(qCurrent) {
-  if (!refDeviceQ) { refDeviceQ = [...qCurrent]; refCamQ = [...camQ]; }
-  const qRel = qMul(qConjugate(refDeviceQ), qCurrent);
-  // Split: twist = pure yaw (around world Y), swing = remaining pitch+roll.
-  // Apply yaw in world space (left-multiply) so turning around stays stable,
-  // apply pitch/roll in camera-local space (right-multiply after refCamQ)
-  // so up/down always matches the phone tilt regardless of facing direction.
-  const { twist, swing } = swingTwistDecompose(qRel);
-  // qConjugate(twist) keeps yaw direction matching what the device produces
-  // (same sign as the old refCamQ*qConjugate(qRel) for zero-yaw).
-  // Applying it left of refCamQ (world-space) means pitch never flips when turned 180°.
-  // qConjugate(swing) keeps pitch direction correct (same as old formula's pitch sign).
-  camQ = qNormalize(qMul(qMul(qConjugate(twist), refCamQ), qConjugate(swing)));
-  orientationActive = true;
-  mouseInCanvas = true;
-}
-
-// Try RelativeOrientationSensor first (gyro+accel only, no magnetometer,
-// works on Android Chrome and iOS 17.4+). Falls back to deviceorientation
-// with alpha stripped out.
-async function startOrientationTracking() {
-  if (typeof RelativeOrientationSensor !== 'undefined') {
-    try {
-      const results = await Promise.all([
-        navigator.permissions.query({ name: 'accelerometer' }),
-        navigator.permissions.query({ name: 'gyroscope' }),
-      ]);
-      if (results.every(r => r.state !== 'denied')) {
-        const sensor = new RelativeOrientationSensor({ frequency: 60, referenceFrame: 'device' });
-        sensor.addEventListener('reading', () => {
-          if (!sensor.quaternion) return;
-          const [x, y, z, w] = sensor.quaternion; // WebGL format → [w,x,y,z]
-          const q = [w, x, y, z];
-          currentOrientation = { quat: q };
-          applyRelativeOrientation(q);
-        });
-        sensor.addEventListener('error', () => fallbackToDeviceOrientation());
-        sensor.start();
-        return;
-      }
-    } catch (err) { /* fall through */ }
-  }
-  fallbackToDeviceOrientation();
-}
-
-function fallbackToDeviceOrientation() {
+function startOrientationTracking() {
   window.addEventListener('deviceorientation', e => {
     if (e.beta === null || e.gamma === null) return;
-    currentOrientation = { beta: e.beta, gamma: e.gamma };
-    applyRelativeOrientation(deviceOrientationToQuat(e.beta, e.gamma));
+    lastBeta  = e.beta;
+    lastGamma = e.gamma;
+
+    // Auto-calibrate on first reading
+    if (refBeta === null) {
+      refBeta  = e.beta;
+      refGamma = e.gamma;
+      refCamQ  = [...camQ];
+    }
+
+    const db = (e.beta  - refBeta)  * Math.PI / 180;
+    const dg = (e.gamma - refGamma) * Math.PI / 180;
+
+    const qYaw   = qFromAxisAngle(0, 1, 0, ORIENTATION_YAW_SIGN   * dg);
+    const qPitch = qFromAxisAngle(1, 0, 0, ORIENTATION_PITCH_SIGN * db);
+
+    // yaw in world space (left), pitch in camera-local space (right of refCamQ)
+    camQ = qNormalize(qMul(qYaw, qMul(refCamQ, qPitch)));
+    orientationActive = true;
+    mouseInCanvas = true;
   });
 }
 
