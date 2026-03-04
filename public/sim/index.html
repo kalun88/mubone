@@ -5492,7 +5492,7 @@ function saveMidiMappings() {
 
 function calibrateOrientation() {
   if (!currentOrientation) return;
-  orientationRef = { beta: currentOrientation.beta, gamma: currentOrientation.gamma };
+  orientationRef = { alpha: currentOrientation.alpha, beta: currentOrientation.beta };
   refCamQ = [...camQ];
 }
 
@@ -5514,19 +5514,29 @@ function initMobileMode() {
   });
 
   // Device orientation → camera
+  // alpha = compass heading (0-360): changes when you physically TURN the phone left/right
+  // beta  = front-back tilt: changes when you tilt the phone up/down
+  // gamma = roll: changes when you tilt the phone sideways like a steering wheel (not used)
   window.addEventListener('deviceorientation', e => {
-    if (e.beta === null || e.gamma === null) return;
-    currentOrientation = { beta: e.beta, gamma: e.gamma };
+    if (e.beta === null || e.alpha === null) return;
+    currentOrientation = { alpha: e.alpha, beta: e.beta };
 
     // Auto-calibrate on first sensor event if not yet calibrated
     if (!orientationRef) calibrateOrientation();
 
-    const dGamma = -(currentOrientation.gamma - orientationRef.gamma) * Math.PI / 180;
-    const dBeta  =  (currentOrientation.beta  - orientationRef.beta)  * Math.PI / 180;
+    // Alpha wraparound: e.g. going 359→1 should be a small +2° not -358°
+    let dAlpha = currentOrientation.alpha - orientationRef.alpha;
+    if (dAlpha >  180) dAlpha -= 360;
+    if (dAlpha < -180) dAlpha += 360;
 
-    // Yaw (left/right tilt) applied in world space; pitch (fwd/back tilt) in local
-    let q = qMul(qFromAxisAngle(0, 1, 0, dGamma), refCamQ);
-    q = qMul(q, qFromAxisAngle(1, 0, 0, dBeta));
+    // Negate alpha: turning phone right (alpha↑) → look right
+    // Negate beta:  tilting phone top toward you (beta↓) → look up
+    const dYaw   = -dAlpha * Math.PI / 180;
+    const dPitch = -(currentOrientation.beta - orientationRef.beta) * Math.PI / 180;
+
+    // Yaw in world space, pitch in camera-local space (matches mouse rotation logic)
+    let q = qMul(qFromAxisAngle(0, 1, 0, dYaw), refCamQ);
+    q = qMul(q, qFromAxisAngle(1, 0, 0, dPitch));
     camQ = qNormalize(q);
 
     orientationActive = true;
