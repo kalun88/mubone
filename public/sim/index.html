@@ -1505,7 +1505,31 @@ const LIVE_PAINT_COLORS = [
 //   period < duration → grains overlap in time (dense/washy feel)
 // retriggerMs = per-particle debounce for cloud mode only (not cursor).
 const PRESETS = [
-  // ── 1. vinyl ─ lock+recency1: scrubbing a record, exact position tracking ──
+  // ── 0. wash ─ default: smooth granular freeze, live-monitor feel ────────────
+  {
+    name:          'wash',
+    nearestMode:   false,
+    searchRadiusDeg: 12,
+    recencyN:      3,
+    k:             10,
+    duration:      0.38,   // 380ms — long enough to overlap smoothly
+    durJitter:     0.08,
+    durVar:        0.04,
+    period:        0.09,   // 90ms → dense, very responsive to live input
+    periodVar:     0.01,
+    fade:          0.12,   // generous fade for smooth hann envelope
+    retriggerMs:   55,
+    startJitter:   0.05,
+    sprayCount:    1,
+    spraySpread:   0.04,
+    pitchJitter:   0.01,   // low pitch jitter → stays legible
+    panSpread:     0.65,
+    volume:        0.045,
+    probability:   1.0,
+    direction:     'fwd',
+    curveType:     'hann',
+  },
+  // ── 1. vinyl ─ lock+recency1: scrubbing a record, exact position tracking ───
   {
     name:          'vinyl',
     nearestMode:   true,
@@ -5562,7 +5586,7 @@ function fallbackToDeviceOrientation() {
 
 function initMobileMode() {
   document.body.classList.add('mobile-mode');
-  selectPreset(0);
+  selectPreset(PRESETS.findIndex(p => p.name === 'wash') || 0);
 
   const wrapper = document.getElementById('canvasWrapper');
   wrapper.insertAdjacentHTML('beforeend', `
