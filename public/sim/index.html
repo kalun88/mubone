@@ -6121,14 +6121,18 @@ function _toggleMobileFullscreen() {
 }
 
 function setupMobileTouchHandlers() {
+  // On mobile the cursor is always fixed at screen centre.
+  // The gyroscope rotates the camera; touch position is irrelevant for panning.
+  function lockCursorToCenter() {
+    mousePixelX   = canvas.width  / 2;
+    mousePixelY   = canvas.height / 2;
+    mouseInCanvas = true;
+  }
+  lockCursorToCenter();
 
   canvas.addEventListener('touchstart', async e => {
     e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const t = e.touches[0];
-    mousePixelX = (t.clientX - rect.left) * (canvas.width  / rect.width);
-    mousePixelY = (t.clientY - rect.top)  * (canvas.height / rect.height);
-    mouseInCanvas = true;
+    lockCursorToCenter(); // keep centre even if canvas resized
 
     // Guard: enter-button hasn't been tapped yet — don't try to record
     if (!_mobileSetupDone) return;
@@ -6151,12 +6155,9 @@ function setupMobileTouchHandlers() {
     updateLiveRecUI();
   }, { passive: false });
 
+  // touchmove: suppress scroll/zoom only — cursor stays at centre, no update needed
   canvas.addEventListener('touchmove', e => {
     e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const t = e.touches[0];
-    mousePixelX = (t.clientX - rect.left) * (canvas.width  / rect.width);
-    mousePixelY = (t.clientY - rect.top)  * (canvas.height / rect.height);
   }, { passive: false });
 
   canvas.addEventListener('touchend', e => {
