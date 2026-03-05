@@ -293,21 +293,22 @@
   }
 
   #mobileSettingsBtn {
-    position: absolute;
-    bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
+    position: fixed; /* viewport-level — never clipped by canvasWrapper overflow:hidden */
+    bottom: calc(2.8rem + env(safe-area-inset-bottom, 0px));
     right: 1rem;
     display: none; /* shown immediately by initMobileMode */
-    background: rgba(20,20,20,0.7); border: 1px solid #444;
-    color: #aaa; font-family: 'Roboto Mono', monospace;
-    font-size: 1rem; padding: 0.35rem 0.55rem;
-    border-radius: 4px; cursor: pointer; pointer-events: all;
-    z-index: 25; /* above mobileEnterBtn (22) so it's always tappable */
+    background: rgba(20,20,20,0.85); border: 1px solid #555;
+    color: #ccc; font-family: 'Roboto Mono', monospace;
+    font-size: 1.1rem; padding: 0.45rem 0.65rem;
+    border-radius: 5px; cursor: pointer; pointer-events: all;
+    z-index: 200; /* above everything */
+    -webkit-tap-highlight-color: transparent;
   }
-  #mobileSettingsBtn:active { color: #fff; border-color: #888; }
+  #mobileSettingsBtn:active { color: #fff; border-color: #aaa; background: rgba(40,40,40,0.95); }
 
   #mobileSettingsPanel {
-    position: absolute; inset: 0; z-index: 30;
-    background: rgba(10,10,10,0.95);
+    position: fixed; inset: 0; z-index: 199;
+    background: rgba(10,10,10,0.97);
     display: none; flex-direction: column;
     align-items: stretch; padding: 1.2rem 1rem calc(1.4rem + env(safe-area-inset-bottom, 0px));
     gap: 0.75rem; overflow-y: auto;
@@ -5802,7 +5803,6 @@ function initMobileMode() {
       <div id="mobileTapHint" style="display:none">hold to record</div>
     </div>
     <button id="mobileRecalibBtn">⊕ recalibrate</button>
-    <button id="mobileSettingsBtn">⚙</button>
 
     <div id="mobileSettingsPanel">
       <div class="mob-panel-title">live sensor  (deg / s)</div>
@@ -5842,10 +5842,25 @@ function initMobileMode() {
       </div>
 
       <hr class="mob-divider">
+      <div class="mob-panel-title">audio devices</div>
+      <div class="mob-row">
+        <span class="mob-label">mic in</span>
+        <select class="mob-sel" id="mobMicSelect"><option value="">— default —</option></select>
+      </div>
+      <div class="mob-row">
+        <span class="mob-label">output</span>
+        <select class="mob-sel" id="mobOutSelect"><option value="">— default —</option></select>
+      </div>
+      <div id="mobDeviceStatus" style="font-size:0.65rem;color:#666;text-align:right;margin-top:-0.2rem;"></div>
+
+      <hr class="mob-divider">
       <button class="mob-big-btn" id="mobZeroBtn">⊕  zero / recalibrate</button>
       <button class="mob-big-btn" id="mobCloseSettings">close</button>
     </div>
   `);
+
+  // Inject cog button at body level so overflow:hidden on canvasWrapper can't clip it
+  document.body.insertAdjacentHTML('beforeend', `<button id="mobileSettingsBtn">⚙</button>`);
 
   // Show the cog immediately — it doesn't need to wait for fullscreen/setup
   document.getElementById('mobileSettingsBtn').style.display = '';
@@ -5907,6 +5922,99 @@ function setupMobileSettings() {
     document.getElementById('mobReadBeta').textContent  = r.beta.toFixed(1);
     document.getElementById('mobReadGamma').textContent = r.gamma.toFixed(1);
   }, 100);
+
+  // ── Audio device picker ───────────────────────────────────────────────────
+  const micSel    = document.getElementById('mobMicSelect');
+  const outSel    = document.getElementById('mobOutSelect');
+  const devStatus = document.getElementById('mobDeviceStatus');
+
+  // Populate device lists — called after permission is granted so labels are visible
+  async function refreshDeviceLists() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    let devices;
+    try { devices = await navigator.mediaDevices.enumerateDevices(); } catch(_) { return; }
+
+    const inputs  = devices.filter(d => d.kind === 'audioinput');
+    const outputs = devices.filter(d => d.kind === 'audiooutput');
+
+    const prevMic = micSel.value;
+    const prevOut = outSel.value;
+
+    micSel.innerHTML = '<option value="">— default —</option>' +
+      inputs.map(d => `<option value="${d.deviceId}">${d.label || 'mic ' + d.deviceId.slice(0,6)}</option>`).join('');
+    outSel.innerHTML = '<option value="">— default —</option>' +
+      outputs.map(d => `<option value="${d.deviceId}">${d.label || 'out ' + d.deviceId.slice(0,6)}</option>`).join('');
+
+    // Restore previous selection if still available
+    if ([...micSel.options].some(o => o.value === prevMic)) micSel.value = prevMic;
+    if ([...outSel.options].some(o => o.value === prevOut)) outSel.value = prevOut;
+
+    // Hide output row if setSinkId not supported (iOS)
+    outSel.parentElement.style.display = (typeof Audio !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype) ? '' : 'none';
+  }
+
+  // Re-open mic stream with chosen device
+  micSel.addEventListener('change', async () => {
+    const deviceId = micSel.value;
+    devStatus.textContent = 'switching mic…';
+    // Stop current stream
+    if (recordingStream) { recordingStream.getTracks().forEach(t => t.stop()); recordingStream = null; }
+    if (window._micMonitorSrc) { try { window._micMonitorSrc.disconnect(); } catch(_) {} window._micMonitorSrc = null; }
+    micPermissionGranted = false;
+    _micAccessPromise    = null;
+
+    // Re-open with selected device
+    try {
+      recordingStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId:         deviceId ? { exact: deviceId } : undefined,
+          sampleRate:       22050,
+          channelCount:     1,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl:  false,
+        }
+      });
+      micPermissionGranted = true;
+      const actx = ensureAudioContext();
+      const monSrc = actx.createMediaStreamSource(recordingStream);
+      inputGainNode = inputGainNode || (() => { const g = actx.createGain(); g.gain.value = inputGainValue; return g; })();
+      inputAnalyser = inputAnalyser || (() => { const a = actx.createAnalyser(); a.fftSize = 256; a.smoothingTimeConstant = 0.6; return a; })();
+      monSrc.connect(inputGainNode);
+      inputGainNode.connect(inputAnalyser);
+      window._micMonitorSrc = monSrc;
+      devStatus.textContent = 'mic ready ✓';
+    } catch(e) {
+      devStatus.textContent = 'mic error: ' + e.message;
+    }
+  });
+
+  // Switch audio output (loudspeaker vs earpiece vs USB)
+  outSel.addEventListener('change', async () => {
+    const deviceId = outSel.value;
+    devStatus.textContent = 'switching output…';
+    // setSinkId on the silent audio element that keeps the session in speaker mode
+    const audioEl = window._mobileSpeakerAudio;
+    if (audioEl && 'setSinkId' in audioEl) {
+      try {
+        await audioEl.setSinkId(deviceId || '');
+        devStatus.textContent = 'output switched ✓';
+      } catch(e) {
+        devStatus.textContent = 'output error: ' + e.message;
+      }
+    } else {
+      devStatus.textContent = 'output switch not supported';
+    }
+  });
+
+  // Refresh when panel opens (so we get labels after permission is already granted)
+  settingsBtn.addEventListener('click', () => { if (panel.classList.contains('open')) refreshDeviceLists(); });
+  // Also refresh whenever devices change (USB plug/unplug)
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', refreshDeviceLists);
+  }
+  // Initial populate (labels may be empty before permission, but IDs work)
+  refreshDeviceLists();
 }
 
 // Called once fullscreen has settled (or been skipped/denied).
