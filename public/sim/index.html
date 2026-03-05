@@ -296,12 +296,12 @@
     position: absolute;
     bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
     right: 1rem;
-    display: none;
+    display: none; /* shown immediately by initMobileMode */
     background: rgba(20,20,20,0.7); border: 1px solid #444;
     color: #aaa; font-family: 'Roboto Mono', monospace;
     font-size: 1rem; padding: 0.35rem 0.55rem;
     border-radius: 4px; cursor: pointer; pointer-events: all;
-    z-index: 21;
+    z-index: 25; /* above mobileEnterBtn (22) so it's always tappable */
   }
   #mobileSettingsBtn:active { color: #fff; border-color: #888; }
 
@@ -2356,8 +2356,12 @@ function stopLiveRecording() {
   const actx = ensureAudioContext();
   const totalLength = recordingWritePos;
 
-  if (totalLength === 0) {
-    // Nothing captured — remove the placeholder
+  // Minimum kept length: 80 ms. Shorter than this is an accidental graze.
+  // (The 200 ms touchend delay means intentional taps always exceed this.)
+  const MIN_REC_SAMPLES = Math.floor(recordingSampleRate * 0.08);
+
+  if (totalLength < MIN_REC_SAMPLES) {
+    // Too short — remove the placeholder slot
     if (currentLiveBufferIdx >= 0 && currentLiveBufferIdx < liveRecBuffers.length) {
       liveRecBuffers.splice(currentLiveBufferIdx, 1);
       // Fix particle references
@@ -5829,6 +5833,9 @@ function initMobileMode() {
     </div>
   `);
 
+  // Show the cog immediately — it doesn't need to wait for fullscreen/setup
+  document.getElementById('mobileSettingsBtn').style.display = '';
+
   document.getElementById('mobileRecalibBtn').addEventListener('click', calibrateOrientation);
   document.getElementById('mobileEnterBtn').addEventListener('click', enterMobileFullscreen);
   document.getElementById('mobileFullscreenBtn').addEventListener('click', _toggleMobileFullscreen);
@@ -5925,11 +5932,10 @@ async function _finishMobileSetup() {
   startOrientationTracking();
   calibrateOrientation();
 
-  // Show mobile UI — mic permission will be requested on first recording tap
+  // Show mobile UI — cog already visible, reveal remaining controls
   document.getElementById('mobileEnterBtn').style.display       = 'none';
   document.getElementById('mobileTapHint').style.display        = '';
   document.getElementById('mobileRecalibBtn').style.display     = '';
-  document.getElementById('mobileSettingsBtn').style.display    = '';
   document.getElementById('mobileFullscreenBtn').style.display  = '';
 
   // Place cursor at canvas center so grains emit from the middle on first touch
@@ -6033,9 +6039,21 @@ function setupMobileTouchHandlers() {
     e.preventDefault();
     isPainting      = false;
     currentStrokeId = -1;
-    if (isRecording) stopLiveRecording();
     liveColorIndex = (liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
     updateLiveRecUI();
+    if (isRecording) {
+      // The ScriptProcessor fires every ~93 ms (2048 samples @ 22050 Hz).
+      // If the tap was shorter than one callback interval, recordingWritePos
+      // is still 0 and the recording gets silently discarded.
+      // Wait 200 ms so at least two callbacks fire before sealing the buffer.
+      const captureStart = recordingStartTime;
+      setTimeout(() => {
+        // Only stop if this is still the same recording (not a new tap already)
+        if (isRecording && recordingStartTime === captureStart) {
+          stopLiveRecording();
+        }
+      }, 200);
+    }
   }, { passive: false });
 }
 
