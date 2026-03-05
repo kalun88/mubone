@@ -207,6 +207,37 @@
     cursor: default !important;
   }
   body.mobile-mode canvas { cursor: default !important; }
+
+  /* Move HUD to bottom in mobile so it clears the selfie camera (top-right) */
+  body.mobile-mode .hud {
+    top: auto;
+    bottom: 1.2rem;
+    left: 1rem;
+    right: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.9rem;
+  }
+  /* In mobile, hide desktop-only HUD items that clutter the bottom bar */
+  body.mobile-mode #coordinates,
+  body.mobile-mode #altLockIndicator,
+  body.mobile-mode #loadIndicatorHud { display: none !important; }
+
+  /* Mobile fullscreen toggle button (bottom-right of HUD row) */
+  #mobileFullscreenBtn {
+    display: none;
+    background: none; border: none;
+    color: #888;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 1rem;
+    padding: 0; cursor: pointer;
+    pointer-events: all;
+    opacity: 0.7;
+    line-height: 1;
+    flex-shrink: 0;
+    margin-left: auto; /* push to right end of the HUD row */
+  }
+  #mobileFullscreenBtn:active { opacity: 1; color: #fff; }
   #mobileOverlay {
     position: absolute; inset: 0; z-index: 20;
     display: flex; flex-direction: column;
@@ -214,7 +245,7 @@
     gap: 1rem; pointer-events: none;
   }
   #mobileRecalibBtn {
-    position: absolute; bottom: 1.4rem; right: 1rem;
+    position: absolute; bottom: 3.2rem; right: 1rem;
     background: rgba(20,20,20,0.7); border: 1px solid #444;
     color: #777; font-family: 'Roboto Mono', monospace;
     font-size: 0.7rem; padding: 0.4rem 0.7rem;
@@ -255,7 +286,7 @@
   }
 
   #mobileSettingsBtn {
-    position: absolute; top: 1rem; right: 1rem;
+    position: absolute; top: 1rem; left: 1rem;
     display: none;
     background: rgba(20,20,20,0.7); border: 1px solid #444;
     color: #aaa; font-family: 'Roboto Mono', monospace;
@@ -1321,6 +1352,7 @@
           <span class="vm-grain-wrap"><span class="vm-dot" id="vmDot"></span><span id="loadIndicator" style="color:#555">ok</span></span>
           <span id="vmGrains" style="display:none">0 grains</span>
         </div>
+        <button id="mobileFullscreenBtn" title="exit fullscreen">✕</button>
       </div>
 
       <div id="perfMonitor" style="display:none;position:absolute;top:2.5rem;left:1rem;font-family:'Roboto Mono',monospace;font-size:0.75rem;color:#aaa;pointer-events:none;line-height:1.7;background:rgba(0,0,0,0.55);padding:0.35rem 0.5rem;border-radius:3px;"></div>
@@ -5790,8 +5822,9 @@ function initMobileMode() {
 
   document.getElementById('mobileRecalibBtn').addEventListener('click', calibrateOrientation);
   document.getElementById('mobileEnterBtn').addEventListener('click', enterMobileFullscreen);
-  document.addEventListener('fullscreenchange',       _onFullscreenChange);
-  document.addEventListener('webkitfullscreenchange', _onFullscreenChange);
+  document.getElementById('mobileFullscreenBtn').addEventListener('click', _toggleMobileFullscreen);
+  document.addEventListener('fullscreenchange',       _onMobileFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', _onMobileFullscreenChange);
   setupMobileSettings();
   setupMobileTouchHandlers();
 }
@@ -5881,10 +5914,16 @@ async function _finishMobileSetup() {
   await requestMicAccess();
 
   // Swap UI
-  document.getElementById('mobileEnterBtn').style.display    = 'none';
-  document.getElementById('mobileTapHint').style.display     = '';
-  document.getElementById('mobileRecalibBtn').style.display  = '';
-  document.getElementById('mobileSettingsBtn').style.display = '';
+  document.getElementById('mobileEnterBtn').style.display       = 'none';
+  document.getElementById('mobileTapHint').style.display        = '';
+  document.getElementById('mobileRecalibBtn').style.display     = '';
+  document.getElementById('mobileSettingsBtn').style.display    = '';
+  document.getElementById('mobileFullscreenBtn').style.display  = '';
+
+  // Place cursor at canvas center so grains emit from the middle on first touch
+  mousePixelX = canvas.width  / 2;
+  mousePixelY = canvas.height / 2;
+  mouseInCanvas = true;
 }
 
 // Button handler: ONLY requests fullscreen. _finishMobileSetup() is triggered
@@ -5907,11 +5946,28 @@ function enterMobileFullscreen() {
   }
 }
 
-// Triggered once fullscreen actually settles
-function _onFullscreenChange() {
-  if (document.fullscreenElement || document.webkitFullscreenElement) {
+// Triggered on every fullscreenchange while in mobile mode.
+// Handles both the initial enter (triggers setup) and subsequent
+// toggle presses (updates the exit/enter button label).
+function _onMobileFullscreenChange() {
+  const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+  const fsBtn = document.getElementById('mobileFullscreenBtn');
+  if (fsBtn) fsBtn.textContent = isFs ? '✕' : '⛶';
+
+  if (isFs) {
     clearTimeout(_fullscreenFallbackTimer);
     _finishMobileSetup();
+  }
+}
+
+// Mobile fullscreen toggle: exits or re-enters fullscreen
+function _toggleMobileFullscreen() {
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  } else {
+    const el = document.documentElement;
+    const rfs = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (rfs) rfs.call(el).catch(() => {});
   }
 }
 
@@ -5927,6 +5983,10 @@ function setupMobileTouchHandlers() {
 
     // Guard: fullscreen+mic not ready yet (user hasn't pressed enter button)
     if (!micPermissionGranted) return;
+
+    // Dismiss the "hold to record" hint on the very first tap
+    const hint = document.getElementById('mobileTapHint');
+    if (hint) hint.style.display = 'none';
 
     ensureAudioContext();
     startLiveRecording();
