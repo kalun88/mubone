@@ -252,7 +252,7 @@
     gap: 1rem; pointer-events: none;
   }
   #mobileRecalibBtn {
-    position: absolute; bottom: calc(3rem + env(safe-area-inset-bottom, 0px)); right: 1rem;
+    position: absolute; bottom: calc(3rem + env(safe-area-inset-bottom, 0px)); left: 1rem;
     background: rgba(20,20,20,0.7); border: 1px solid #444;
     color: #777; font-family: 'Roboto Mono', monospace;
     font-size: 0.7rem; padding: 0.4rem 0.7rem;
@@ -293,7 +293,9 @@
   }
 
   #mobileSettingsBtn {
-    position: absolute; top: 1rem; left: 1rem;
+    position: absolute;
+    bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
+    right: 1rem;
     display: none;
     background: rgba(20,20,20,0.7); border: 1px solid #444;
     color: #aaa; font-family: 'Roboto Mono', monospace;
@@ -5936,23 +5938,30 @@ async function _finishMobileSetup() {
   mouseInCanvas = true;
 }
 
-// Button handler: ONLY requests fullscreen. _finishMobileSetup() is triggered
-// by fullscreenchange so it runs after the browser has fully settled.
-// On Chrome for Android the address bar hides only once fullscreenElement is set;
-// we also set a 1.5s fallback in case the event never fires (some browsers swallow it).
+// Button handler: mic first (inside the tap gesture), then fullscreen.
+// Requesting mic BEFORE fullscreen avoids the mic dialog collapsing fullscreen.
+// The browser still honours the fullscreen request after an await inside the
+// same gesture handler on Chrome Android.
+// Sequence: mic → fullscreen → (fullscreenchange) → orientation lock → gyro → UI
 let _fullscreenFallbackTimer = null;
-function enterMobileFullscreen() {
+async function enterMobileFullscreen() {
+  // Step 1: audio context + mic — inside the tap gesture so browser allows it
+  ensureAudioContext();
+  await requestMicAccess();
+  // Proceed even if mic denied; user can grant on first recording tap
+
+  // Step 2: fullscreen — still within the gesture context after the await
   const el  = document.documentElement;
   const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
   if (rfs) {
-    // Arm a fallback: if fullscreenchange never fires within 1.5s, proceed anyway
-    _fullscreenFallbackTimer = setTimeout(() => _finishMobileSetup(), 1500);
+    // Fallback in case fullscreenchange never fires (some Android WebViews)
+    _fullscreenFallbackTimer = setTimeout(() => _finishMobileSetup(), 2000);
     rfs.call(el).catch(() => {
       clearTimeout(_fullscreenFallbackTimer);
       _finishMobileSetup(); // fullscreen denied — proceed without it
     });
   } else {
-    _finishMobileSetup(); // fullscreen not supported — proceed directly
+    _finishMobileSetup(); // fullscreen not supported
   }
 }
 
