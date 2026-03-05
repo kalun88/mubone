@@ -2163,9 +2163,23 @@ function ensureAudioContext() {
     // audio graph. More than enough bandwidth for trombone + voice.
     audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 22050 });
 
-    // Master gain — soft clipper downstream handles the ceiling
+    // On mobile, Web Audio defaults to the earpiece (call speaker, tiny & quiet).
+    // Playing a silent looping <audio> element forces Chrome/Android to switch
+    // the audio session to media/loudspeaker mode for the whole AudioContext.
+    if (isMobile) {
+      // Minimal valid WAV: 44-byte header + 0 samples of data
+      const silentAudio = document.createElement('audio');
+      silentAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+      silentAudio.loop   = true;
+      silentAudio.volume = 0.001; // effectively inaudible but keeps the session alive
+      silentAudio.play().catch(() => {});
+      window._mobileSpeakerAudio = silentAudio;
+    }
+
+    // Master gain — on mobile push harder to compensate for loudspeaker distance
+    // and the intentionally soft preset volumes (0.012–0.18). Desktop stays at 0.9.
     const masterGain = audioCtx.createGain();
-    masterGain.gain.value = 0.9;
+    masterGain.gain.value = isMobile ? 3.0 : 0.9;
 
     // Soft clipper (WaveShaper with tanh curve) — sample-accurate, no attack time,
     // frequency-transparent. Replaces DynamicsCompressor which was too slow for
