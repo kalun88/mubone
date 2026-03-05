@@ -1967,6 +1967,8 @@ const CLOUD_COLORS = [
   '#4fc3f7', '#81c784', '#ffb74d', '#e57373',
   '#ce93d8', '#fff176', '#80cbc4', '#ff8a65'
 ];
+// Glow color for nearest-lock cursor grains — distinct from particle and cloud colors
+const NEAREST_GLOW_COLOR = '#b8a0ff'; // soft violet
 
 // ── Loaded samples (1-9) ──────────────────────────────────────────────────
 // activeSampleIndex: which slot is currently toggled ON for painting (-1 = none)
@@ -3290,7 +3292,13 @@ function dropCloud() {
   const color = CLOUD_COLORS[slotIndex]; // color is fixed to slot position
   // Snapshot current grain params so this cloud is independent of future preset changes
   // Snapshot camQ so this cloud's spatial pan stays fixed to drop-time orientation
-  cloudSlots[slotIndex] = { slotIndex, lon, lat, color, searchRadiusDeg, grainParams: { ...grainParams } };
+  cloudSlots[slotIndex] = {
+    slotIndex, lon, lat, color, searchRadiusDeg,
+    nearestMode,           // snapshot so cloud uses same selection mode as cursor had
+    _lastFiredAt:  0,      // per-cloud onset clock (0 → fires on first scheduler tick)
+    _nextPeriodMs: 0,
+    grainParams: { ...grainParams }
+  };
   updateCloudBanksUI();
 }
 
@@ -4412,21 +4420,34 @@ function drawClouds() {
     const isNearest = i === nearestSlot;
     const isBehind  = cz <= 0.1;
 
-    // ── On-screen circle + dot ───────────────────────────────────────────
+    // ── On-screen indicator + dot ─────────────────────────────────────────
     if (proj) {
-      const rRad    = cloud.searchRadiusDeg * Math.PI / 180;
-      const fovRad  = (FOV_DEG * Math.PI) / 180;
-      const focalLen = (W / 2) / Math.tan(fovRad / 2);
-      const screenR  = focalLen * Math.tan(rRad) / (proj.depth / SPHERE_RADIUS);
-
       ctx.save();
       ctx.globalAlpha = isNearest ? 0.7 : 0.4;
       ctx.strokeStyle = cloud.color;
       ctx.lineWidth = isNearest ? 2 : 1;
       ctx.setLineDash([4, 6]);
-      ctx.beginPath();
-      ctx.arc(proj.sx, proj.sy, Math.max(12, screenR), 0, Math.PI * 2);
-      ctx.stroke();
+
+      if (cloud.nearestMode) {
+        // Nearest-lock cloud: dashed diamond (no radius to show)
+        const d = isNearest ? 36 : 30;
+        ctx.beginPath();
+        ctx.moveTo(proj.sx,     proj.sy - d);
+        ctx.lineTo(proj.sx + d, proj.sy    );
+        ctx.lineTo(proj.sx,     proj.sy + d);
+        ctx.lineTo(proj.sx - d, proj.sy    );
+        ctx.closePath();
+        ctx.stroke();
+      } else {
+        // Radius cloud: dashed circle
+        const rRad    = cloud.searchRadiusDeg * Math.PI / 180;
+        const fovRad  = (FOV_DEG * Math.PI) / 180;
+        const focalLen = (W / 2) / Math.tan(fovRad / 2);
+        const screenR  = focalLen * Math.tan(rRad) / (proj.depth / SPHERE_RADIUS);
+        ctx.beginPath();
+        ctx.arc(proj.sx, proj.sy, Math.max(12, screenR), 0, Math.PI * 2);
+        ctx.stroke();
+      }
       ctx.setLineDash([]);
       ctx.globalAlpha = isNearest ? 1 : 0.6;
       ctx.fillStyle = cloud.color;
@@ -4647,8 +4668,8 @@ function scheduleGrains() {
   const searchRadiusRad = searchRadiusDeg * Math.PI / 180;
 
   // Expire old entries from activeGrainMap so glow fades after grain duration.
-  for (const [particle, expiresAt] of activeGrainMap) {
-    if (now > expiresAt) activeGrainMap.delete(particle);
+  for (const [particle, entry] of activeGrainMap) {
+    if (now > entry.expiry) activeGrainMap.delete(particle);
   }
 
   liveGranulatingThisFrame = false;
@@ -4690,8 +4711,8 @@ function scheduleGrains() {
       if (toGranulate.length > 0) {
         if (!(grainProbability < 1.0 && Math.random() > grainProbability)) {
           const p = toGranulate[Math.floor(Math.random() * toGranulate.length)];
-          // Register glow for the full grain duration so visual matches audio.
-          activeGrainMap.set(p, now + liveDurMs);
+          // All cursor-granulating particles glow white; cloud grains use the cloud's color.
+          activeGrainMap.set(p, { expiry: now + liveDurMs, glowColor: '#ffffff' });
           playGrain(p);
           perf.grainsFired++;
           _granulatingCount++;
@@ -4700,38 +4721,52 @@ function scheduleGrains() {
       }
     }
 
-    // In nearest mode, also keep the k pool lit in activeGrainMap even between
-    // onsets — so the glow stays on continuously (snap = always playing).
-    if (nearestMode) {
-      const withAng = particles.map(p => ({
-        p, ang: angleBetweenSphere(p.lon, p.lat, cursorLon, cursorLat)
-      }));
-      withAng.sort((a, b) => a.ang - b.ang);
-      const pool = applyRecencyFilter(withAng).slice(0, k).map(c => c.p);
-      for (const p of pool) {
-        // Extend expiry so the glow doesn't flicker between scheduler ticks.
-        activeGrainMap.set(p, now + 60); // 60ms = 2 scheduler ticks of headroom
-      }
-    }
   }
 
-  // ── Cloud grains — always run, picks up particles painted after drop ──────
+  // ── Cloud grains — period-based onset clock per cloud (mirrors cursor timing) ─
+  // One grain fires per period (± periodVar), picked randomly from the k-pool.
+  // This preserves the rhythmic/timbral character of the preset that was active
+  // at drop time. nearestMode is snapshotted so the pool selection matches too.
   for (let i = 0; i < MAX_CLOUDS; i++) {
     const cloud = cloudSlots[i];
-    if (!cloud) continue;
-    const cloudRadiusRad = cloud.searchRadiusDeg * Math.PI / 180;
-    const cloudCandidates = particles
-      .map(p => ({ p, ang: angleBetweenSphere(p.lon, p.lat, cloud.lon, cloud.lat) }))
-      .filter(c => c.ang < cloudRadiusRad);
-    const cloudGrains = shuffleInPlace(applyRecencyFilter(cloudCandidates)).slice(0, cloud.grainParams.k).map(c => c.p);
-    for (const p of cloudGrains) {
-      playGrain(p, cloud.grainParams);
-      perf.grainsFired++;
-      _granulatingCount++;
-      if (p.source === 'live') liveGranulatingThisFrame = true;
-      // Cloud grains: extend glow by cloud duration each tick they fire.
-      activeGrainMap.set(p, now + cloud.grainParams.duration * 1000);
+    if (!cloud || !particles.length) continue;
+
+    const sinceLastMs = now - cloud._lastFiredAt;
+    if (sinceLastMs < cloud._nextPeriodMs) continue;
+
+    // Onset is due — advance the clock with per-onset variation
+    const cgp          = cloud.grainParams;
+    const basePeriodMs = cgp.period * 1000;
+    const periodVarMs  = (cgp.periodVar ?? 0) * 1000;
+    cloud._lastFiredAt  = now;
+    cloud._nextPeriodMs = Math.max(20, basePeriodMs + rand(-periodVarMs, periodVarMs));
+
+    // Build the k-pool using the snapshotted selection mode
+    const withAng = particles.map(p => ({
+      p, ang: angleBetweenSphere(p.lon, p.lat, cloud.lon, cloud.lat)
+    }));
+    let pool;
+    if (cloud.nearestMode) {
+      // Nearest-lock: k closest particles (ignores radius, same as cursor nearestMode)
+      withAng.sort((a, b) => a.ang - b.ang);
+      pool = applyRecencyFilter(withAng).slice(0, cgp.k).map(c => c.p);
+    } else {
+      // Radius mode: shuffled candidates within the snapshotted search radius
+      const cloudRadiusRad = cloud.searchRadiusDeg * Math.PI / 180;
+      pool = shuffleInPlace(applyRecencyFilter(
+        withAng.filter(c => c.ang < cloudRadiusRad)
+      )).slice(0, cgp.k).map(c => c.p);
     }
+
+    if (!pool.length) continue;
+
+    // Pick one at random — same single-grain-per-onset behaviour as cursor
+    const p = pool[Math.floor(Math.random() * pool.length)];
+    playGrain(p, cgp);
+    activeGrainMap.set(p, { expiry: now + cgp.duration * 1000, glowColor: cloud.color });
+    perf.grainsFired++;
+    _granulatingCount++;
+    if (p.source === 'live') liveGranulatingThisFrame = true;
   }
 
   // Rebuild selectedGrainSet as a live view of activeGrainMap for drawParticles.
@@ -4770,7 +4805,12 @@ function drawParticles() {
 
   // ── Build projected draw list ─────────────────────────────────────────────
   for (const { p, proj, facing, squash, squashAngle } of candidates) {
-    projected.push({ ...proj, color: p.color, selected: selectedGrainSet.has(p), facing, squash, squashAngle });
+    const grainEntry = activeGrainMap.get(p);
+    const selected   = grainEntry !== undefined;
+    // glowColor: null → particle's own color (radius mode); specific color for nearest/cloud
+    const glowColor  = selected ? (grainEntry.glowColor ?? p.color) : null;
+    const ringColor  = selected ? (grainEntry.glowColor ?? '#ffffff') : null;
+    projected.push({ ...proj, color: p.color, selected, glowColor, ringColor, facing, squash, squashAngle });
   }
 
   projected.sort((a, b) => b.depth - a.depth);
@@ -4788,9 +4828,9 @@ function drawParticles() {
 
     if (p.selected) {
       ctx.globalAlpha = 1;
-      ctx.shadowColor = p.color;
+      ctx.shadowColor = p.glowColor;
       ctx.shadowBlur  = 25;
-      ctx.strokeStyle = '#ffffff';
+      ctx.strokeStyle = p.ringColor;
       ctx.lineWidth   = 2;
       ctx.beginPath(); ctx.arc(0, 0, size + 5, 0, Math.PI * 2); ctx.stroke();
       ctx.shadowBlur  = 0;
@@ -4841,11 +4881,12 @@ function drawCursor() {
     : SAMPLE_PAINT_COLORS[activeSampleIndex >= 0 ? activeSampleIndex % SAMPLE_PAINT_COLORS.length : sampleColorIndex];
 
   if (nearestMode) {
-    // Nearest mode: no radius ring — draw a small diamond snap indicator
-    const d = 6;
-    ctx.strokeStyle = painting ? `${color}cc` : 'rgba(122,188,188,0.5)';
-    ctx.lineWidth   = 1.2;
-    if (painting) { ctx.shadowColor = color; ctx.shadowBlur = 8; }
+    // Nearest mode: dashed diamond — same visual weight as the radius ring
+    const d = 24;
+    ctx.strokeStyle = painting ? `${color}cc` : `${NEAREST_GLOW_COLOR}99`;
+    ctx.lineWidth   = painting ? 1.5 : 1;
+    ctx.setLineDash([4, 5]);
+    if (painting) { ctx.shadowColor = color; ctx.shadowBlur = 10; }
     ctx.beginPath();
     ctx.moveTo(mx,     my - d);
     ctx.lineTo(mx + d, my    );
@@ -4853,6 +4894,7 @@ function drawCursor() {
     ctx.lineTo(mx - d, my    );
     ctx.closePath();
     ctx.stroke();
+    ctx.setLineDash([]);
     ctx.shadowBlur = 0;
   } else if (painting) {
     ctx.fillStyle   = `${color}18`;
