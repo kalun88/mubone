@@ -4937,13 +4937,14 @@ function drawCursor() {
     ? focalLen * Math.tan(searchRadiusRad)
     : canvas.width * 0.8;
 
+  // On mobile, draw nothing until setup is done (enter ring is showing)
+  if (isMobile && !_mobileSetupDone) return;
+
   ctx.save();
 
-  // Centre reference dot — hidden on mobile before setup (enter ring covers this spot)
-  if (!isMobile || _mobileSetupDone) {
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); ctx.fill();
-  }
+  // Centre reference dot
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  ctx.beginPath(); ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); ctx.fill();
 
   if (!mouseInCanvas && !altLocked) { ctx.restore(); return; }
 
