@@ -208,10 +208,17 @@
   }
   body.mobile-mode canvas { cursor: default !important; }
 
-  /* Move HUD to bottom in mobile so it clears the selfie camera (top-right) */
+  /* In mobile-mode the body must not extend under Android's gesture bar.
+     env(safe-area-inset-bottom) is set by the browser in edge-to-edge / fullscreen mode. */
+  body.mobile-mode {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Move HUD to bottom in mobile so it clears the selfie camera (top-right).
+     calc() stacks the fixed offset on top of the safe-area inset. */
   body.mobile-mode .hud {
     top: auto;
-    bottom: 1.2rem;
+    bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
     left: 1rem;
     right: 1rem;
     align-items: center;
@@ -245,7 +252,7 @@
     gap: 1rem; pointer-events: none;
   }
   #mobileRecalibBtn {
-    position: absolute; bottom: 3.2rem; right: 1rem;
+    position: absolute; bottom: calc(3rem + env(safe-area-inset-bottom, 0px)); right: 1rem;
     background: rgba(20,20,20,0.7); border: 1px solid #444;
     color: #777; font-family: 'Roboto Mono', monospace;
     font-size: 0.7rem; padding: 0.4rem 0.7rem;
@@ -300,7 +307,7 @@
     position: absolute; inset: 0; z-index: 30;
     background: rgba(10,10,10,0.95);
     display: none; flex-direction: column;
-    align-items: stretch; padding: 1.2rem 1rem 1.4rem;
+    align-items: stretch; padding: 1.2rem 1rem calc(1.4rem + env(safe-area-inset-bottom, 0px));
     gap: 0.75rem; overflow-y: auto;
     font-family: 'Roboto Mono', monospace; color: #fff; font-size: 0.75rem;
     pointer-events: all;
@@ -5879,41 +5886,44 @@ function setupMobileSettings() {
   }, 100);
 }
 
-// Called once fullscreen is confirmed (or skipped if unsupported).
-// Runs outside the original user-gesture so we keep each async step small.
+// Called once fullscreen has settled (or been skipped/denied).
+// Sequence: orientation detect → orientation lock → gyro start → show UI.
+// Mic permission is NOT requested here — it is deferred to the first recording
+// tap so it never interrupts the fullscreen transition.
 let _mobileSetupDone = false;
 async function _finishMobileSetup() {
   if (_mobileSetupDone) return;
   _mobileSetupDone = true;
 
-  // Detect orientation and apply preset
+  // Give the browser one frame to finish the fullscreen layout repaint
+  await new Promise(r => requestAnimationFrame(r));
+
+  // Detect orientation and apply gyro-axis preset
   const isLandscape = window.innerWidth > window.innerHeight;
   applyOrientationPreset(isLandscape);
 
   // Lock orientation to whichever way the device is currently held.
-  // screen.orientation.lock() requires fullscreen to already be active (Chrome/Android).
-  // It throws on desktop and on iOS (Safari doesn't support it), so we always catch.
+  // Requires fullscreen to already be active on Chrome/Android.
+  // Silently ignored on desktop and iOS Safari.
   if (screen.orientation && screen.orientation.lock) {
     const lockType = isLandscape ? 'landscape' : 'portrait';
-    screen.orientation.lock(lockType).catch(() => { /* unsupported — ignore */ });
+    screen.orientation.lock(lockType).catch(() => {});
   }
 
-  // iOS 13+ motion permission
+  // iOS 13+: request motion permission (this is a user-gesture-gated dialog).
+  // We are still within the tap gesture context here (fullscreenchange fires
+  // synchronously-ish), so the prompt should be allowed.
   if (typeof DeviceMotionEvent !== 'undefined' &&
       typeof DeviceMotionEvent.requestPermission === 'function') {
     const perm = await DeviceMotionEvent.requestPermission().catch(() => 'denied');
     if (perm !== 'granted') { _mobileSetupDone = false; return; }
   }
 
-  // Start gyroscope + zero
+  // Start gyroscope tracking and zero it
   startOrientationTracking();
   calibrateOrientation();
 
-  // Pre-request mic so the first tap goes straight to recording
-  ensureAudioContext();
-  await requestMicAccess();
-
-  // Swap UI
+  // Show mobile UI — mic permission will be requested on first recording tap
   document.getElementById('mobileEnterBtn').style.display       = 'none';
   document.getElementById('mobileTapHint').style.display        = '';
   document.getElementById('mobileRecalibBtn').style.display     = '';
@@ -5973,7 +5983,7 @@ function _toggleMobileFullscreen() {
 
 function setupMobileTouchHandlers() {
 
-  canvas.addEventListener('touchstart', e => {
+  canvas.addEventListener('touchstart', async e => {
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const t = e.touches[0];
@@ -5981,14 +5991,20 @@ function setupMobileTouchHandlers() {
     mousePixelY = (t.clientY - rect.top)  * (canvas.height / rect.height);
     mouseInCanvas = true;
 
-    // Guard: fullscreen+mic not ready yet (user hasn't pressed enter button)
-    if (!micPermissionGranted) return;
+    // Guard: enter-button hasn't been tapped yet — don't try to record
+    if (!_mobileSetupDone) return;
 
     // Dismiss the "hold to record" hint on the very first tap
     const hint = document.getElementById('mobileTapHint');
     if (hint) hint.style.display = 'none';
 
+    // Ensure mic is ready — request permission now if needed (inside user gesture)
     ensureAudioContext();
+    if (!micPermissionGranted) {
+      await requestMicAccess();
+      if (!micPermissionGranted) return; // denied — bail
+    }
+
     startLiveRecording();
     recordStrokeStart('live', currentLiveBufferIdx);
     isPainting      = true;
