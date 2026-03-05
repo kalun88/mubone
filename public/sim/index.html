@@ -197,7 +197,15 @@
   }
 
   /* ── Mobile mode ─────────────────────────────────────────────────────────── */
-  body.mobile-mode { gap: 0 !important; }
+  body.mobile-mode {
+    gap: 0 !important;
+    /* Strip all desktop padding so the canvas fills edge-to-edge.
+       safe-area-inset-* handles notch / gesture-bar insets on any device. */
+    padding-top:    env(safe-area-inset-top,    0px) !important;
+    padding-right:  env(safe-area-inset-right,  0px) !important;
+    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+    padding-left:   env(safe-area-inset-left,   0px) !important;
+  }
   body.mobile-mode .top-bar,
   body.mobile-mode .right-panel,
   body.mobile-mode .bottom-panel { display: none !important; }
@@ -207,12 +215,6 @@
     cursor: default !important;
   }
   body.mobile-mode canvas { cursor: default !important; }
-
-  /* In mobile-mode the body must not extend under Android's gesture bar.
-     env(safe-area-inset-bottom) is set by the browser in edge-to-edge / fullscreen mode. */
-  body.mobile-mode {
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
 
   /* Move HUD to bottom in mobile so it clears the selfie camera (top-right).
      calc() stacks the fixed offset on top of the safe-area inset. */
