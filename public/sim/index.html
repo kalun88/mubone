@@ -5865,7 +5865,7 @@ function initMobileMode() {
   document.body.insertAdjacentHTML('beforeend', `<button id="mobileSettingsBtn">⚙</button>`);
 
   // Show the cog immediately — it doesn't need to wait for fullscreen/setup
-  document.getElementById('mobileSettingsBtn').style.display = '';
+  document.getElementById('mobileSettingsBtn').style.display = 'block';
 
   document.getElementById('mobileRecalibBtn').addEventListener('click', calibrateOrientation);
   document.getElementById('mobileEnterBtn').addEventListener('click', enterMobileFullscreen);
@@ -6058,9 +6058,9 @@ async function _finishMobileSetup() {
 
   // Show mobile UI — cog already visible, reveal remaining controls
   document.getElementById('mobileEnterBtn').style.display       = 'none';
-  document.getElementById('mobileTapHint').style.display        = '';
-  document.getElementById('mobileRecalibBtn').style.display     = '';
-  document.getElementById('mobileFullscreenBtn').style.display  = '';
+  document.getElementById('mobileTapHint').style.display        = 'block';
+  document.getElementById('mobileRecalibBtn').style.display     = 'block';
+  document.getElementById('mobileFullscreenBtn').style.display  = 'inline-flex';
 
   // Place cursor at canvas center so grains emit from the middle on first touch
   mousePixelX = canvas.width  / 2;
