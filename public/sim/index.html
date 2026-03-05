@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>mubone — simulation (preview)</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap');
@@ -5850,9 +5853,17 @@ async function _finishMobileSetup() {
   if (_mobileSetupDone) return;
   _mobileSetupDone = true;
 
-  // Detect orientation and apply preset (no orientation.lock — it destabilises fullscreen)
+  // Detect orientation and apply preset
   const isLandscape = window.innerWidth > window.innerHeight;
   applyOrientationPreset(isLandscape);
+
+  // Lock orientation to whichever way the device is currently held.
+  // screen.orientation.lock() requires fullscreen to already be active (Chrome/Android).
+  // It throws on desktop and on iOS (Safari doesn't support it), so we always catch.
+  if (screen.orientation && screen.orientation.lock) {
+    const lockType = isLandscape ? 'landscape' : 'portrait';
+    screen.orientation.lock(lockType).catch(() => { /* unsupported — ignore */ });
+  }
 
   // iOS 13+ motion permission
   if (typeof DeviceMotionEvent !== 'undefined' &&
@@ -5878,11 +5889,19 @@ async function _finishMobileSetup() {
 
 // Button handler: ONLY requests fullscreen. _finishMobileSetup() is triggered
 // by fullscreenchange so it runs after the browser has fully settled.
+// On Chrome for Android the address bar hides only once fullscreenElement is set;
+// we also set a 1.5s fallback in case the event never fires (some browsers swallow it).
+let _fullscreenFallbackTimer = null;
 function enterMobileFullscreen() {
   const el  = document.documentElement;
   const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
   if (rfs) {
-    rfs.call(el).catch(() => _finishMobileSetup()); // if fullscreen is denied, proceed anyway
+    // Arm a fallback: if fullscreenchange never fires within 1.5s, proceed anyway
+    _fullscreenFallbackTimer = setTimeout(() => _finishMobileSetup(), 1500);
+    rfs.call(el).catch(() => {
+      clearTimeout(_fullscreenFallbackTimer);
+      _finishMobileSetup(); // fullscreen denied — proceed without it
+    });
   } else {
     _finishMobileSetup(); // fullscreen not supported — proceed directly
   }
@@ -5891,6 +5910,7 @@ function enterMobileFullscreen() {
 // Triggered once fullscreen actually settles
 function _onFullscreenChange() {
   if (document.fullscreenElement || document.webkitFullscreenElement) {
+    clearTimeout(_fullscreenFallbackTimer);
     _finishMobileSetup();
   }
 }
