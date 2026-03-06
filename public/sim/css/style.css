@@ -1,0 +1,1587 @@
+  @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  button { outline: none; }
+  button:focus-visible { outline: none; }
+  html, body {
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+  }
+  /* Base font-size scales with viewport width so everything grows when the window widens.
+     clamp(min, preferred, max) — at 1400px wide: 1vw = 14px → font-size ≈ 14px (0.875rem equiv).
+     All rem-based children scale automatically. */
+  html { font-size: clamp(11px, 0.9vw, 15px); }
+  body {
+    background: #1a1a1a;
+    color: #fff;
+    font-family: 'Roboto Mono', monospace;
+    display: flex;
+    flex-direction: column;
+    padding: 0.5rem 0.75rem 0.5rem 0.75rem;
+    gap: 0.4rem;
+    height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  /* ── Top bar (title + ? button) ─────────────────────────────────────────── */
+  .top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    border-bottom: 1px solid #333;
+    padding-bottom: 0.3rem;
+  }
+  h1 {
+    font-size: 0.75rem;
+    font-weight: normal;
+    color: #555;
+    letter-spacing: 0.08em;
+    border: none;
+    padding: 0;
+    margin: 0;
+    flex-shrink: 0;
+  }
+  .top-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .top-bar-btn {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    color: #555;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.55rem;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .top-bar-btn:hover { color: #aaa; border-color: #555; }
+  .top-bar-btn.active { color: #7abcbc; border-color: #7abcbc; }
+  /* ── mic + mute as inline top-bar buttons ─────────────────────────────── */
+  .top-bar #micEnableBtn,
+  .top-bar #muteBtn {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.3rem;
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    color: #555;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.55rem;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    width: auto;
+    position: static;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .top-bar #micEnableBtn:hover { color: #aaa; border-color: #555; background: #2a2a2a; }
+  .top-bar #muteBtn:hover     { color: #aaa; border-color: #555; background: #2a2a2a; }
+  /* mic-dot: inline red circle */
+  .top-bar #micEnableBtn .mic-dot {
+    position: static;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #5a2a2a;
+    border: 1px solid #7a3a3a;
+    flex-shrink: 0;
+    transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
+  }
+  /* mic ready (permission granted) */
+  .top-bar #micEnableBtn.mic-ready { color: #cc5555; border-color: #5a2a2a; cursor: default; }
+  .top-bar #micEnableBtn.mic-ready .mic-dot {
+    background: #cc2222; border-color: #ee3333;
+    animation: rec-glow 1.5s ease-in-out infinite;
+  }
+  /* mic denied */
+  .top-bar #micEnableBtn.mic-denied { color: #444; border-color: #333; cursor: default; }
+  .top-bar #micEnableBtn.mic-denied .mic-dot { background: #333; border-color: #444; }
+  /* mute icon: small inline */
+  .top-bar #muteBtn .mute-dot { display: none; }
+  .top-bar #muteBtn .mute-icon { width: 13px; height: 13px; flex-shrink: 0; opacity: 1; }
+  /* muted state */
+  .top-bar #muteBtn.muted { color: #e8a030; border-color: #7a5a1a; background: #2a1e0a; }
+  /* inputFaderMeter lives in right-panel levels device now */
+  /* ── Main area: canvas + right panel side by side ─────────────────────── */
+  .main-layout {
+    display: flex;
+    flex-direction: row;
+    gap: 0.5rem;
+    align-items: stretch;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .canvas-wrapper {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    background: #1a2a2a;
+    border: 1px solid #555;
+    border-radius: 4px;
+    overflow: hidden;
+    cursor: none;
+  }
+  .canvas-wrapper:fullscreen,
+  .canvas-wrapper:-webkit-full-screen {
+    width: 100vw;
+    height: 100vh;
+    aspect-ratio: unset;
+    border: none;
+    border-radius: 0;
+  }
+  /* no hide rule needed — fullscreen overlay already covers other elements */
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    cursor: none;
+  }
+  .hud {
+    position: absolute;
+    top: 0.75rem;
+    left: 1rem;
+    right: 3rem;
+    font-size: 0.85rem;
+    color: #ccc;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    line-height: 1;
+  }
+  #coordinates { white-space: pre; font-variant-numeric: tabular-nums; }
+  /* ── Viewer monitor — now inline inside .hud ─────────────────────────────── */
+  #viewerMonitor {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    color: #ccc;
+  }
+  #viewerMonitor .vm-grain-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  #viewerMonitor .vm-dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: #333;
+    border: 1px solid #444;
+    transition: background 0.08s, box-shadow 0.08s;
+    flex-shrink: 0;
+  }
+  #viewerMonitor .vm-dot.active {
+    background: #e8a030;
+    box-shadow: 0 0 5px #e8a030;
+  }
+
+  /* ── Mobile mode ─────────────────────────────────────────────────────────── */
+  body.mobile-mode {
+    gap: 0 !important;
+    /* Strip all desktop padding so the canvas fills edge-to-edge.
+       safe-area-inset-* handles notch / gesture-bar insets on any device. */
+    padding-top:    env(safe-area-inset-top,    0px) !important;
+    padding-right:  env(safe-area-inset-right,  0px) !important;
+    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+    padding-left:   env(safe-area-inset-left,   0px) !important;
+  }
+  body.mobile-mode .top-bar,
+  body.mobile-mode .right-panel,
+  body.mobile-mode .bottom-panel { display: none !important; }
+  body.mobile-mode .main-layout  { gap: 0; padding: 0; }
+  body.mobile-mode .canvas-wrapper {
+    border: none; border-radius: 0;
+    cursor: default !important;
+  }
+  body.mobile-mode canvas { cursor: default !important; }
+
+  /* Move HUD to bottom in mobile so it clears the selfie camera (top-right).
+     calc() stacks the fixed offset on top of the safe-area inset. */
+  body.mobile-mode .hud {
+    top: auto;
+    bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+    left: 1rem;
+    right: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.9rem;
+  }
+  /* In mobile, hide desktop-only HUD items that clutter the bottom bar */
+  body.mobile-mode #coordinates,
+  body.mobile-mode #altLockIndicator,
+  body.mobile-mode #loadIndicatorHud { display: none !important; }
+
+  /* Mobile fullscreen toggle button (bottom-right of HUD row) */
+  #mobileFullscreenBtn {
+    display: none;
+    background: none; border: none;
+    color: #888;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 1rem;
+    padding: 0; cursor: pointer;
+    pointer-events: all;
+    opacity: 0.7;
+    line-height: 1;
+    flex-shrink: 0;
+    margin-left: auto; /* push to right end of the HUD row */
+  }
+  #mobileFullscreenBtn:active { opacity: 1; color: #fff; }
+  #mobileOverlay {
+    position: absolute; inset: 0; z-index: 20;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 1rem; pointer-events: none;
+  }
+  #mobileRecalibBtn {
+    position: absolute; bottom: calc(3rem + env(safe-area-inset-bottom, 0px)); left: 1rem;
+    background: rgba(20,20,20,0.7); border: 1px solid #444;
+    color: #777; font-family: 'Roboto Mono', monospace;
+    font-size: 0.7rem; padding: 0.4rem 0.7rem;
+    border-radius: 4px; cursor: pointer; pointer-events: all;
+    display: none; z-index: 21;
+  }
+  #mobileRecalibBtn:active { color: #fff; border-color: #888; }
+
+  /* ── Full-screen entry button ────────────────────────────────────────────── */
+  #mobileEnterBtn {
+    position: absolute; inset: 0; z-index: 22;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: transparent; border: none; cursor: pointer;
+    pointer-events: all; gap: 1.2rem;
+  }
+  .enter-ring {
+    width: 110px; height: 110px; border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,0.45);
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,0.04);
+    animation: mob-pulse 2.2s ease-in-out infinite;
+  }
+  .enter-ring svg { opacity: 0.75; }
+  .enter-label {
+    color: rgba(255,255,255,0.5);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.72rem; letter-spacing: 0.18em; text-transform: uppercase;
+  }
+  @keyframes mob-pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.3); }
+    50%     { box-shadow: 0 0 26px 8px rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.7); }
+  }
+  #mobileTapHint {
+    color: rgba(255,255,255,0.45);
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.82rem; letter-spacing: 0.1em; text-align: center; line-height: 1.7;
+  }
+
+  #mobileSettingsBtn {
+    position: fixed; /* viewport-level — never clipped by canvasWrapper overflow:hidden */
+    bottom: calc(2.8rem + env(safe-area-inset-bottom, 0px));
+    right: 1rem;
+    display: none; /* shown immediately by initMobileMode */
+    background: rgba(20,20,20,0.85); border: 1px solid #555;
+    color: #ccc; font-family: 'Roboto Mono', monospace;
+    font-size: 1.1rem; padding: 0.45rem 0.65rem;
+    border-radius: 5px; cursor: pointer; pointer-events: all;
+    z-index: 200; /* above everything */
+    -webkit-tap-highlight-color: transparent;
+  }
+  #mobileSettingsBtn:active { color: #fff; border-color: #aaa; background: rgba(40,40,40,0.95); }
+
+  #mobileSettingsPanel {
+    position: fixed; inset: 0; z-index: 199;
+    background: rgba(10,10,10,0.97);
+    display: none; flex-direction: column;
+    align-items: stretch; padding: 1.2rem 1rem calc(1.4rem + env(safe-area-inset-bottom, 0px));
+    gap: 0.75rem; overflow-y: auto;
+    font-family: 'Roboto Mono', monospace; color: #fff; font-size: 0.75rem;
+    pointer-events: all;
+  }
+  #mobileSettingsPanel.open { display: flex; }
+  .mob-panel-title {
+    font-size: 0.65rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: #888; margin-top: 0.4rem;
+  }
+  .mob-row {
+    display: flex; align-items: center; gap: 0.5rem;
+    justify-content: space-between;
+  }
+  .mob-label { color: #bbb; min-width: 4.5rem; }
+  .mob-readout {
+    font-size: 0.72rem; color: #fff; font-variant-numeric: tabular-nums;
+    min-width: 5rem; text-align: right; letter-spacing: 0.03em;
+  }
+  .mob-sel {
+    background: #181818; border: 1px solid #555; color: #fff;
+    font-family: 'Roboto Mono', monospace; font-size: 0.72rem;
+    padding: 0.25rem 0.4rem; border-radius: 3px; flex: 1;
+  }
+  .mob-sign {
+    background: #181818; border: 1px solid #555; color: #fff;
+    font-family: 'Roboto Mono', monospace; font-size: 0.72rem;
+    padding: 0.25rem 0.5rem; border-radius: 3px; cursor: pointer;
+    min-width: 2.5rem; text-align: center;
+  }
+  .mob-sign.neg { border-color: #a66; color: #f99; }
+  .mob-big-btn {
+    background: rgba(40,40,40,0.6); border: 1px solid #555; color: #fff;
+    font-family: 'Roboto Mono', monospace; font-size: 0.72rem;
+    padding: 0.55rem; border-radius: 4px; cursor: pointer; width: 100%;
+    letter-spacing: 0.06em;
+  }
+  .mob-big-btn:active { color: #fff; border-color: #aaa; }
+  .mob-divider { border: none; border-top: 1px solid #333; margin: 0.2rem 0; }
+
+  /* ── Device strip (Ableton-style bottom bar) ─────────────────────────────── */
+  .device-strip {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0;
+    flex-shrink: 0;
+    height: clamp(110px, 9.5vw, 155px);
+    background: #252525;
+    border: 1px solid #333;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  /* Each device block */
+  .device {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    border-right: 1px solid #333;
+    padding: 0.3rem 0.5rem 0.25rem;
+    min-width: 0;
+    position: relative;
+  }
+  .device:last-child { border-right: none; }
+  .device-label {
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    color: #666;
+    text-transform: lowercase;
+    margin-bottom: 0.3rem;
+    flex-shrink: 0;
+  }
+  .device-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1;
+    min-height: 0;
+    justify-content: flex-start;
+    overflow: hidden;
+  }
+
+  /* ── Device: live input ─────────────────────────────────────────────────── */
+  .device--liveinput { width: clamp(130px, 12vw, 190px); }
+  /* device body is row: mic button left, fader+meter right */
+  .device--liveinput .device-body {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0.4rem;
+  }
+  /* mic button fills height, fixed width */
+  .device--liveinput #micEnableBtn {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+  }
+  /* right side: narrow column, canvas fills full height */
+  .liveinput-body {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    width: 38px;
+    flex-shrink: 0;
+  }
+  #inputGainVal {
+    display: none; /* dB label drawn inside canvas instead */
+  }
+  /* combined fader+meter canvas — full remaining height */
+  #inputFaderMeter {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    display: block;
+    cursor: ns-resize;
+    touch-action: none;
+    border-radius: 2px;
+  }
+  #micEnableBtn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    background: #252525;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    color: #777;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.3rem 0.4rem 0.25rem;
+    cursor: pointer;
+    letter-spacing: 0.04em;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    width: 100%;
+    position: relative;
+  }
+  #micEnableBtn:hover { border-color: #555; color: #888; background: #2a2a2a; }
+  /* mic SVG icon */
+  #micEnableBtn .mic-icon {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    opacity: 0.4;
+    transition: opacity 0.15s;
+  }
+  #micEnableBtn:hover .mic-icon { opacity: 0.65; }
+  #micEnableBtn.mic-ready .mic-icon { opacity: 0.9; }
+  #micEnableBtn.mic-denied .mic-icon { opacity: 0.2; }
+  /* red status dot — top-right corner */
+  #micEnableBtn .mic-dot {
+    position: absolute;
+    top: 5px;
+    right: 6px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #5a2a2a;
+    border: 1px solid #7a3a3a;
+    transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
+  }
+  #micEnableBtn:hover .mic-dot { background: #8a3a3a; border-color: #aa4a4a; }
+  #micEnableBtn.mic-ready .mic-dot {
+    background: #cc2222;
+    border-color: #ee3333;
+    animation: rec-glow 1.5s ease-in-out infinite;
+  }
+  #micEnableBtn.mic-denied .mic-dot { background: #333; border-color: #444; }
+  #micEnableBtn.mic-ready { color: #cc5555; border-color: #5a2a2a; cursor: default; }
+  #micEnableBtn.mic-denied { color: #444; cursor: default; }
+  @keyframes rec-glow {
+    0%, 100% { box-shadow: 0 0 5px #cc222288; }
+    50%       { box-shadow: 0 0 10px #ee3333cc; }
+  }
+  .live-count { font-size: 0.75rem; color: #444; }
+  .live-count span { color: #e8a030; }
+  .live-granulating {
+    display: flex; align-items: center; gap: 0.3rem;
+    font-size: 0.75rem; color: #444; transition: color 0.1s;
+  }
+  .live-granulating.active { color: #e8a030; }
+  .live-granulating .gran-dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: #444; flex-shrink: 0; transition: background 0.1s, box-shadow 0.1s;
+  }
+  .live-granulating.active .gran-dot { background: #e8a030; box-shadow: 0 0 5px #e8a030; }
+  .input-clip-dot { display: none; } /* clip now shown inside fader canvas */
+
+  /* ── Device: search params ───────────────────────────────────────────────── */
+  .device--search { width: clamp(190px, 17vw, 280px); }
+  .search-body {
+    flex-direction: row !important;
+    gap: 0.35rem;
+    align-items: stretch;
+  }
+  /* Snap button: full-height standalone column on the left */
+  #snapToggleBtn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.05rem;
+    background: #1e1e1e;
+    border: 1px solid #2e2e2e;
+    border-radius: 4px;
+    color: #666;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.3rem 0.35rem;
+    cursor: pointer;
+    letter-spacing: 0.04em;
+    transition: border-color 0.15s, color 0.15s, box-shadow 0.15s;
+    flex-shrink: 0;
+    width: 46px;
+  }
+  #snapToggleBtn:hover { border-color: #e8a030; color: #666; }
+  #snapToggleBtn.active {
+    border-color: #e8a030;
+    color: #e8a030;
+    box-shadow: 0 0 5px #e8a03044;
+  }
+  #snapToggleBtn .snap-label-text { line-height: 1.3; }
+  #snapToggleBtn .snap-state-text {
+    color: #666;
+    margin-top: 0.2rem;
+    font-size: 0.75rem;
+  }
+  #snapToggleBtn.active .snap-state-text { color: #e8a030; }
+  /* Each viz box: label on top, canvas fills middle, value at bottom */
+  .search-viz-box {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.15rem;
+    min-width: 0;
+    background: #1e1e1e;
+    border: 1px solid #2e2e2e;
+    border-radius: 4px;
+    padding: 0.25rem 0.3rem 0.2rem;
+  }
+  .search-viz-label {
+    font-size: 0.75rem;
+    color: #606060;
+    letter-spacing: 0.06em;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  /* radius canvas wrapper fills remaining height */
+  .radius-viz-wrap {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+  }
+  #radiusViz { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .radius-val-label {
+    font-size: 0.75rem;
+    color: #7abcbc;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  /* recency canvas fills middle of its box */
+  #recencyDial {
+    display: block;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    cursor: ns-resize;
+    touch-action: none;
+  }
+  /* k box in search params */
+  .k-display-wrap {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .k-big-num {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #7abcbc;
+    line-height: 1;
+    cursor: ns-resize;
+    user-select: none;
+  }
+  .k-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 3px;
+    background: #2a2a2a;
+    border-radius: 2px;
+    outline: none;
+    flex-shrink: 0;
+  }
+  .k-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #7abcbc;
+    cursor: pointer;
+  }
+  .recency-val-label {
+    font-size: 0.75rem;
+    color: #7abcbc;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  #loadIndicator { font-size: 0.75rem; color: #606060; letter-spacing: 0.03em; }
+  #loadIndicator.warn { color: #c86020; }
+  #loadIndicator.crit { color: #cc2222; }
+
+  /* ── Device: grain preset ────────────────────────────────────────────────── */
+  .device--preset { flex: 1; min-width: clamp(280px, 22vw, 420px); }
+  /* ── Right panel: presets + search + grain stacked beside viewer ──────── */
+  .right-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    width: clamp(260px, 20vw, 360px);
+    flex-shrink: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .right-panel .device {
+    width: 100%;
+    min-width: 0;
+    flex-shrink: 0;
+    border: 1px solid #333;
+    border-right: 1px solid #333;
+    border-radius: 4px;
+  }
+  .right-panel .device:last-child { border-right: 1px solid #333; }
+  .right-panel .device--preset { flex: none; }
+  .right-panel .device--search  { flex: none; }
+  .right-panel .device--grain   { flex: 1; min-width: 0; }
+  .preset-body {
+    flex-direction: column !important;
+    gap: 0.3rem;
+    align-items: stretch;
+  }
+  /* 5-col × 2-row grid of preset buttons — full width */
+  .preset-buttons {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    gap: 3px;
+    flex-shrink: 0;
+  }
+  .preset-btn {
+    background: #1e1e1e;
+    border: 1px solid #2a2a2a;
+    color: #777;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.2rem;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+    letter-spacing: 0.02em;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .preset-btn:hover { border-color: #555; color: #999; }
+  .preset-btn.active {
+    border-color: #7abcbc;
+    color: #7abcbc;
+    background: #1a2a2a;
+    box-shadow: 0 0 4px #7abcbc44;
+  }
+  /* full-width waveform row below preset buttons */
+  .preset-right-box {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: #1e1e1e;
+    border: 1px solid #2e2e2e;
+    border-radius: 4px;
+    padding: 0.2rem 0.3rem;
+    height: clamp(64px, 7vw, 96px);
+  }
+  .preset-waveform-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: #141414;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #presetWaveform { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+  .preset-stats { display: none; } /* stats drawn inside canvas */
+
+  /* ── Device: grain controls ─────────────────────────────────────────────── */
+  .device--grain { flex: 2; min-width: clamp(480px, 40vw, 700px); }
+  .grain-body {
+    flex-direction: column !important;
+    gap: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .grain-col { display: contents; } /* flatten cols — rows become direct children */
+  .grain-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.15rem 0;
+    border-bottom: 1px solid #1e1e1e;
+    flex-shrink: 0;
+  }
+  .grain-row:last-child { border-bottom: none; }
+  .grain-label {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    color: #505050;
+    letter-spacing: 0.03em;
+    text-transform: none;
+    width: 36px;
+    flex-shrink: 0;
+    text-align: right;
+  }
+  /* Slider track */
+  .grain-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 2px;
+    background: #2e2e2e;
+    border-radius: 0;
+    outline: none;
+    cursor: ew-resize;
+    min-width: 0;
+  }
+  /* Ableton-style thumb: thin vertical bar */
+  .grain-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 3px;
+    height: 12px;
+    border-radius: 1px;
+    background: #7abcbc;
+    cursor: ew-resize;
+    border: none;
+    transition: background 0.1s, height 0.1s;
+  }
+  .grain-slider:hover::-webkit-slider-thumb { background: #9adcdc; height: 14px; }
+  /* Log-mapped sliders: subtle tick marks */
+  .grain-slider--log {
+    background: linear-gradient(90deg,
+      #2e2e2e 0%,
+      #2e2e2e calc(8.3%  - 1px), #3a5858 8.3%,  #2e2e2e calc(8.3%  + 1px),
+      #2e2e2e calc(29.8% - 1px), #3a5858 29.8%, #2e2e2e calc(29.8% + 1px),
+      #2e2e2e calc(45.1% - 1px), #3a5858 45.1%, #2e2e2e calc(45.1% + 1px),
+      #2e2e2e calc(68.8% - 1px), #3a5858 68.8%, #2e2e2e calc(68.8% + 1px),
+      #2e2e2e calc(77.1% - 1px), #3a5858 77.1%, #2e2e2e calc(77.1% + 1px),
+      #2e2e2e calc(85.4% - 1px), #3a5858 85.4%, #2e2e2e calc(85.4% + 1px),
+      #2e2e2e 100%
+    );
+  }
+  /* Numbox */
+  .grain-numbox {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    color: #6aacac;
+    background: transparent;
+    border: none;
+    border-left: 1px solid #2a2a2a;
+    border-radius: 0;
+    padding: 0 0 0 4px;
+    width: 46px;
+    text-align: right;
+    cursor: text;
+    flex-shrink: 0;
+    line-height: 1.6;
+    transition: color 0.1s, border-color 0.1s;
+    outline: none;
+    -moz-appearance: textfield;
+  }
+  .grain-numbox::-webkit-outer-spin-button,
+  .grain-numbox::-webkit-inner-spin-button { -webkit-appearance: none; }
+  .grain-numbox:hover { border-color: #3a3a3a; color: #9adcdc; }
+  .grain-numbox:focus {
+    color: #fff;
+    border-color: #5a9a9a;
+    background: rgba(20,50,50,0.5);
+  }
+  /* Segmented buttons (dir / curve) */
+  .grain-seg {
+    display: flex;
+    flex: 1;
+    gap: 1px;
+    min-width: 0;
+  }
+  .grain-seg-btn {
+    flex: 1;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    color: #484848;
+    background: #1e1e1e;
+    border: 1px solid #272727;
+    border-radius: 1px;
+    padding: 1px 2px;
+    cursor: pointer;
+    text-align: center;
+    transition: color 0.1s, background 0.1s, border-color 0.1s;
+    white-space: nowrap;
+  }
+  .grain-seg-btn:hover { color: #7abcbc; background: #222; border-color: #3a3a3a; }
+  .grain-seg-btn.active { color: #7abcbc; background: #1a2828; border-color: #3a6060; }
+
+  /* ── Device: spacer ─────────────────────────────────────────────────────── */
+  .device--spacer { flex: 1; border-right: none; background: transparent; }
+
+  /* ── Device: output ──────────────────────────────────────────────────────── */
+  .device--output { width: clamp(130px, 12vw, 190px); border-left: 1px solid #333; border-right: none; }
+  .device-body--output {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0.4rem;
+  }
+  /* mute button — mirrors mic button exactly */
+  #muteBtn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3rem;
+    background: #252525;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    color: #777;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.3rem 0.4rem 0.25rem;
+    cursor: pointer;
+    letter-spacing: 0.04em;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    position: relative;
+    width: auto;
+    min-width: 0;
+  }
+  #muteBtn:hover { border-color: #555; color: #888; background: #2a2a2a; }
+  #muteBtn .mute-icon {
+    width: 26px; height: 26px; flex-shrink: 0; opacity: 0.4;
+    transition: opacity 0.15s, display 0s;
+  }
+  #muteBtn:hover .mute-icon { opacity: 0.65; }
+  #muteBtn.muted .mute-icon-off { opacity: 0.9; }
+  #muteBtn.muted {
+    background: #2a1e0a;
+    border-color: #7a5a1a;
+    color: #e8a030;
+  }
+  #muteBtn.muted .mute-icon { opacity: 0.9; }
+  /* show/hide speaker icons based on mute state */
+  #muteBtn .mute-icon-on  { display: block; }
+  #muteBtn .mute-icon-off { display: none; }
+  #muteBtn.muted .mute-icon-on  { display: none; }
+  #muteBtn.muted .mute-icon-off { display: block; }
+  .mute-dot {
+    position: absolute; top: 5px; right: 6px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #2a4a2a; border: 1px solid #3a6a3a;
+    transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
+  }
+  #muteBtn.muted .mute-dot {
+    background: #e8a030; border-color: #f0b84a;
+    box-shadow: 0 0 8px #e8a03099;
+  }
+  /* output fader+meter column — mirrors liveinput-body */
+  .output-meter-body {
+    display: flex; flex-direction: column;
+    align-items: stretch; gap: 0; width: 38px; flex-shrink: 0;
+  }
+  #outputFaderMeter {
+    flex: 1; min-height: 0; width: 100%; display: block;
+    cursor: ns-resize; touch-action: none; border-radius: 2px;
+  }
+  /* compat — old IDs hidden */
+  #outputMeterCanvas, #outputMeterCanvasBottom,
+  .meter-row, .meter-wrap, .meter-clip-dot, #meterClipDot { display: none; }
+
+  /* ── Levels device (right panel) ────────────────────────────────────────── */
+  .right-panel .device--meters { flex: 0 0 125px; overflow: hidden; }
+  .meters-body {
+    flex-direction: row !important;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.1rem 0;
+  }
+  .meter-channel {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    flex: 0 0 clamp(32px, 3.5vw, 46px);
+    min-height: 0;
+    gap: 0.15rem;
+  }
+  .meter-ch-label {
+    color: #505050;
+    font-size: 0.75rem;
+    text-align: center;
+    flex-shrink: 0;
+    letter-spacing: 0.06em;
+  }
+  .meter-channel canvas {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    display: block;
+    cursor: ns-resize;
+    touch-action: none;
+    border-radius: 2px;
+  }
+
+  /* ── Right panel: clouds + samples ──────────────────────────────────────── */
+  /* ── Drop zone overlay ───────────────────────────────────────────────────── */
+  .drop-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(26, 42, 42, 0.92);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 10;
+  }
+  .drop-overlay.visible { opacity: 1; }
+  .drop-overlay .drop-icon { font-size: 2rem; color: #7abcbc; }
+  .drop-overlay .drop-text { font-size: 0.75rem; color: #aaa; letter-spacing: 0.05em; }
+
+  /* ── Sample slots (in bottom panel sample instrument) ───────────────────── */
+  .sample-slot {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.18rem 0.5rem;
+    border-bottom: 1px solid #242424;
+    font-size: 0.75rem;
+    color: #555;
+    user-select: none;
+    transition: background 0.1s;
+  }
+  .sample-slot:hover { background: #2a3a3a; }
+  .sample-slot.active {
+    border-color: #7abcbc;
+    background: #2a3a3a;
+  }
+  /* "active" here means the key is toggled ON for painting */
+  .sample-slot.painting {
+    border-color: var(--slot-color, #7abcbc);
+    background: #2a3a3a;
+  }
+  .sample-slot.loaded { color: #aaa; }
+  .sample-slot.empty.active { border-color: #555; }
+  .sample-slot.drag-over { border-color: #7abcbc; background: #2a3a3a; }
+  .sample-slot .slot-drag-handle {
+    color: #444;
+    cursor: grab;
+    font-size: 0.75rem;
+    line-height: 1;
+    padding: 0 2px;
+    visibility: hidden;
+  }
+  .sample-slot.loaded .slot-drag-handle { visibility: visible; }
+  .sample-slot.loaded .slot-drag-handle:hover { color: #888; }
+  .sample-slot .slot-key {
+    color: #555;
+    width: 1em;
+    flex-shrink: 0;
+    text-align: left;
+  }
+  /* Key shows the sample colour when that slot is actively painting */
+  .sample-slot.painting .slot-key { color: var(--slot-color, #7abcbc); }
+  .sample-slot .slot-name {
+    color: #aaa;
+    flex-shrink: 0;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sample-slot.empty .slot-name { color: #444; }
+  .sample-slot .slot-duration { color: #666; flex-shrink: 0; }
+  .sample-slot .slot-waveform {
+    flex: 1;
+    height: 18px;
+    background: #303030;
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+    min-width: 60px;
+  }
+  .sample-slot.loaded .slot-waveform { height: 28px; cursor: default; }
+  .sample-slot.loaded .slot-waveform.near-handle { cursor: col-resize; }
+  .sample-slot .slot-waveform canvas {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0; left: 0;
+    pointer-events: none; /* let mouse events fall through to waveDiv */
+  }
+  .sample-slot.empty .slot-waveform { background: #282828; opacity: 0.4; }
+  .sample-slot .slot-play {
+    color: #555;
+    font-size: 0.75rem;
+    line-height: 1;
+    padding: 0 2px;
+    cursor: pointer;
+    visibility: hidden;
+    border: none;
+    background: none;
+    font-family: inherit;
+    flex-shrink: 0;
+  }
+  .sample-slot.loaded .slot-play { visibility: visible; }
+  .sample-slot.loaded .slot-play:hover { color: #7abcbc; }
+  .sample-slot.loaded .slot-play.playing { color: #e0c860; }
+  .sample-slot .slot-delete {
+    color: #555;
+    font-size: 0.75rem;
+    line-height: 1;
+    padding: 0 4px;
+    cursor: pointer;
+    visibility: hidden;
+    border: none;
+    background: none;
+    font-family: inherit;
+  }
+  .sample-slot.loaded .slot-delete { visibility: visible; }
+  .sample-slot.loaded .slot-delete:hover { color: #e06060; }
+
+  /* Cloud banks removed — spatial tracking via canvas edge indicators */
+
+  /* ── Bottom panel (sample instrument + buttons) ───────────────────────────── */
+  .bottom-panel {
+    display: flex;
+    flex-direction: row;
+    gap: 0.5rem;
+    flex-shrink: 0;
+    align-items: stretch;
+    min-height: clamp(100px, 9vw, 160px);
+    max-height: clamp(140px, 14vw, 220px);
+  }
+  /* sample instrument block */
+  .sample-instrument {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .panel-label {
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    color: #666;
+    text-transform: lowercase;
+    padding: 0.25rem 0.5rem 0.2rem;
+    border-bottom: 1px solid #2a2a2a;
+    flex-shrink: 0;
+  }
+  /* sample list scrollable area */
+  .sample-list-wrap {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .sample-list-wrap::-webkit-scrollbar { width: 4px; }
+  .sample-list-wrap::-webkit-scrollbar-track { background: #1a1a1a; }
+  .sample-list-wrap::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  /* right side: action buttons */
+  .panel-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    flex-shrink: 0;
+    width: 170px;
+    justify-content: flex-start;
+    padding: 0.25rem 0;
+  }
+  .panel-btn {
+    background: #252525;
+    border: 1px solid #333;
+    border-radius: 3px;
+    color: #555;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.3rem 0.6rem;
+    cursor: pointer;
+    letter-spacing: 0.04em;
+    text-align: left;
+    transition: color 0.15s, border-color 0.15s;
+    width: 100%;
+  }
+  .panel-btn:hover { color: #aaa; border-color: #555; }
+  .panel-btn.active { color: #7abcbc; border-color: #7abcbc; }
+
+  /* ── Sample viewer (kept for backward-compat JS refs) ────────────────────── */
+  .sample-viewer {
+    display: none; /* replaced by bottom-panel */
+  }
+  .sv-display {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    background: #1a1a1a;
+    overflow: hidden;
+  }
+  .sv-waveform, .sv-crop, .sv-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .sv-info {
+    position: absolute;
+    bottom: 4px;
+    left: 8px;
+    font-size: 0.75rem;
+    color: #888;
+    pointer-events: none;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Input meter: vertical ───────────────────────────────────────────────── */
+  .input-vmeter-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    flex: 1;
+    min-width: 0;
+  }
+  #inputMeterCanvas {
+    display: block;
+    width: 8px;
+    flex: 1;
+    min-height: 0;
+    border-radius: 2px;
+    background: #1c1c1c;
+  }
+
+  /* ── Fullscreen button ───────────────────────────────────────────────────── */
+  #fullscreenBtn {
+    background: none;
+    border: none;
+    color: #888;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.85rem;
+    padding: 0;
+    cursor: pointer;
+    pointer-events: all;
+    opacity: 0.7;
+    transition: opacity 0.2s, color 0.2s;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+  #fullscreenBtn:hover {
+    opacity: 1;
+    color: #fff;
+  }
+
+  /* ── MIDI / Keyboard mapping modal ──────────────────────────────────────── */
+  #mappingModal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0,0,0,0.75);
+    align-items: center;
+    justify-content: center;
+  }
+  #mappingModal.open { display: flex; }
+  .mapping-dialog {
+    background: #1e1e1e;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 1.2rem;
+    width: min(700px, 92vw);
+    max-height: 85vh;
+    overflow-y: auto;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    color: #aaa;
+  }
+  .mapping-dialog h2 {
+    font-size: 0.75rem;
+    color: #fff;
+    margin: 0 0 0.8rem 0;
+    letter-spacing: 0.06em;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .mapping-dialog h2 .close-btn {
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0;
+  }
+  .mapping-dialog h2 .close-btn:hover { color: #fff; }
+  .mapping-status {
+    font-size: 0.75rem;
+    color: #e8a030;
+    min-height: 1.2rem;
+    margin-bottom: 0.5rem;
+  }
+  .mapping-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .mapping-table th {
+    color: #555;
+    font-weight: normal;
+    text-align: left;
+    padding: 0.2rem 0.4rem;
+    border-bottom: 1px solid #333;
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+  }
+  .mapping-table td {
+    padding: 0.25rem 0.4rem;
+    border-bottom: 1px solid #2a2a2a;
+    vertical-align: middle;
+  }
+  .mapping-table tr:hover td { background: #252525; }
+  .mapping-table .fn-name { color: #ddd; }
+  .mapping-table .key-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    color: #888;
+    font-size: 0.75rem;
+    padding: 0.05rem 0.3rem;
+  }
+  .mapping-table .midi-cell { color: #7abcbc; }
+  .mapping-table .midi-cell.unassigned { color: #444; font-style: italic; }
+  .learn-btn {
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 3px;
+    color: #666;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.4rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .learn-btn:hover { color: #fff; border-color: #666; }
+  .learn-btn.learning {
+    border-color: #e8a030;
+    color: #e8a030;
+    animation: learnPulse 0.8s infinite alternate;
+  }
+  @keyframes learnPulse { from { opacity: 1; } to { opacity: 0.4; } }
+  .clear-midi-btn {
+    background: none;
+    border: none;
+    color: #444;
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0 0.2rem;
+  }
+  .clear-midi-btn:hover { color: #e06060; }
+  .mapping-footer {
+    margin-top: 0.8rem;
+    font-size: 0.75rem;
+    color: #444;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .mapping-footer button {
+    background: none;
+    border: 1px solid #444;
+    border-radius: 3px;
+    color: #666;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    cursor: pointer;
+  }
+  .mapping-footer button:hover { color: #fff; border-color: #666; }
+
+/* ── Sensor calibration modal ─────────────────────────────────────────────── */
+#sensorModal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 200;
+}
+#sensorModal.open { display: block; }
+.sensor-dialog {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: #1e2e2e;
+  border: 1px solid #3a5a5a;
+  border-radius: 6px;
+  padding: 1.2rem 1.4rem;
+  min-width: 380px;
+  font-size: 0.8rem;
+  color: #ccc;
+}
+.sensor-dialog h2 {
+  font-size: 0.85rem;
+  font-weight: normal;
+  color: #7abcbc;
+  letter-spacing: 0.06em;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sensor-dialog h2 .close-btn {
+  background: none;
+  border: none;
+  color: #555;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0;
+}
+.sensor-dialog h2 .close-btn:hover { color: #aaa; }
+.sensor-section { margin-bottom: 1rem; }
+.sensor-section-label {
+  font-size: 0.7rem;
+  color: #555;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+}
+.sensor-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.3rem;
+}
+.sensor-btn {
+  background: none;
+  border: 1px solid #3a3a3a;
+  border-radius: 3px;
+  color: #555;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: color 0.15s, border-color 0.15s;
+}
+.sensor-btn:hover { color: #aaa; border-color: #555; }
+.sensor-btn.active { color: #7abcbc; border-color: #7abcbc; }
+.sensor-live {
+  margin-top: 0.8rem;
+  font-size: 0.8rem;
+  color: #555;
+  letter-spacing: 0.05em;
+  line-height: 1.6;
+}
+.sensor-live span { color: #7abcbc; }
+.sensor-map-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.sensor-map-table th {
+  font-size: 0.7rem;
+  color: #444;
+  font-weight: normal;
+  text-align: left;
+  padding: 0 0.4rem 0.4rem 0;
+  letter-spacing: 0.06em;
+}
+.sensor-map-table td {
+  padding: 0.2rem 0.4rem 0.2rem 0;
+  vertical-align: middle;
+}
+.sensor-map-label {
+  color: #7abcbc;
+  font-size: 0.8rem;
+  min-width: 1.2rem;
+}
+
+/* ── Audio settings modal ─────────────────────────────────────────────────── */
+#audioSettingsModal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 200;
+}
+#audioSettingsModal.open { display: block; }
+.audio-dialog {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: #1e2e2e;
+  border: 1px solid #3a5a5a;
+  border-radius: 6px;
+  padding: 1.2rem 1.4rem;
+  min-width: 400px;
+  max-width: 480px;
+  font-size: 0.8rem;
+  color: #ccc;
+}
+.audio-dialog h2 {
+  font-size: 0.85rem;
+  font-weight: normal;
+  color: #7abcbc;
+  letter-spacing: 0.06em;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.audio-dialog h2 .close-btn {
+  background: none;
+  border: none;
+  color: #555;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0;
+}
+.audio-dialog h2 .close-btn:hover { color: #aaa; }
+.as-section {
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #2a3a3a;
+}
+.as-section:last-of-type { border-bottom: none; }
+.as-section-label {
+  font-size: 0.7rem;
+  color: #555;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+}
+.as-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.as-label {
+  min-width: 5.5rem;
+  font-size: 0.75rem;
+  color: #777;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.as-select {
+  background: #1a2a2a;
+  border: 1px solid #3a5a5a;
+  border-radius: 3px;
+  color: #ccc;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.4rem;
+  cursor: pointer;
+}
+.as-slider {
+  flex: 1;
+  accent-color: #7abcbc;
+  cursor: pointer;
+}
+.as-val {
+  min-width: 5rem;
+  font-size: 0.75rem;
+  color: #7abcbc;
+  text-align: right;
+  flex-shrink: 0;
+}
+.as-badge {
+  background: #2a4a4a;
+  border: 1px solid #3a6a6a;
+  border-radius: 3px;
+  color: #7abcbc;
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.as-dim {
+  font-size: 0.7rem;
+  color: #444;
+  letter-spacing: 0.03em;
+}
+.as-note {
+  font-size: 0.68rem;
+  color: #444;
+  margin-top: 0.3rem;
+  letter-spacing: 0.03em;
+  font-style: italic;
+}
+.as-meter-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.4rem 0;
+  background: #111a1a;
+  border: 1px solid #2a3a3a;
+  border-radius: 3px;
+  padding: 0.25rem 0.5rem;
+}
+.as-meter-bar {
+  height: 6px;
+  width: 0%;
+  background: linear-gradient(to right, #3a9090, #7abcbc);
+  border-radius: 2px;
+  flex: 1;
+  transition: width 0.05s;
+}
+.as-meter-label {
+  font-size: 0.7rem;
+  color: #555;
+  min-width: 6rem;
+  text-align: right;
+  flex-shrink: 0;
+}
+.status-strip {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 3px;
+  letter-spacing: 0.03em;
+  margin-top: 0.3rem;
+}
+.status-strip.idle  { background: #1a1a1a; color: #444; border: 1px solid #2a2a2a; }
+.status-strip.ok    { background: #1a2a1a; color: #6abca0; border: 1px solid #2a4a2a; }
+.status-strip.warn  { background: #2a2a1a; color: #e8c840; border: 1px solid #4a4a2a; }
+.status-strip.error { background: #2a1a1a; color: #e06060; border: 1px solid #4a2a2a; }
+.latency-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+  background: #333;
+}
+.latency-dot.ok   { background: #5aba80; }
+.latency-dot.warn { background: #e8c840; }
+.latency-dot.bad  { background: #e06060; }
+.as-actions {
+  display: flex;
+  gap: 0.6rem;
+  padding-top: 0.8rem;
+}
+.as-btn {
+  background: #1a2a2a;
+  border: 1px solid #3a5a5a;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  color: #7abcbc;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.75rem;
+  padding: 0.3rem 0.8rem;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: background 0.1s, color 0.1s;
+}
+.as-btn:hover { background: #2a3a3a; }
+.as-btn.active { background: #2a4a4a; color: #fff; }
