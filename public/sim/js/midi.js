@@ -5,9 +5,10 @@
 import {
   S,
   PRESETS, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
+  LIVE_PAINT_COLORS,
 } from './state.js';
 import { ensureAudioContext } from './audio.js';
-import { startLiveRecording } from './audio.js';
+import { startLiveRecording, stopLiveRecording } from './audio.js';
 import {
   recordStrokeStart, undoLastStroke,
 } from './ui-samples.js';
@@ -19,7 +20,7 @@ import {
 // Each action definition: { id, label, key, fn, type }
 // type: 'trigger' | 'cc' (continuous 0-127)
 const ACTIONS = [
-  { id: 'recpaint',    label: 'rec + paint (hold)',  key: 'click / space', type: 'trigger' },
+  { id: 'recpaint',    label: 'rec + paint (hold)',  key: 'click / space', type: 'hold' },
   { id: 'undo',        label: 'undo last stroke',     key: 'right click / ⌘Z', type: 'trigger' },
   { id: 'drop_cloud',  label: 'drop cloud',           key: '↓', type: 'trigger' },
   { id: 'pickup_cloud',label: 'pick up cloud',        key: '↑', type: 'trigger' },
@@ -42,6 +43,8 @@ const ACTIONS = [
     ccFn: v => { S.recencyN = 1 + Math.round((v / 127) * 15); document.getElementById('recencyVal').textContent = S.recencyN; } },
   { id: 'preset_cc',   label: 'preset select (CC)',   key: '—', type: 'cc',
     ccFn: v => { const idx = Math.min(PRESETS.length - 1, Math.floor((v / 127) * PRESETS.length)); selectPreset(idx); } },
+  { id: 'preset_next', label: 'preset next',           key: 'shift+scroll ↓', type: 'trigger' },
+  { id: 'preset_prev', label: 'preset prev',           key: 'shift+scroll ↑', type: 'trigger' },
   { id: 'mapping',     label: 'open midi map',        key: 'M', type: 'trigger' },
 ];
 
@@ -102,6 +105,8 @@ function handleMidiMessage(event) {
     if (!mapping) continue;
     const matchCC   = mapping.type === 'cc'   && type === 11 && mapping.number === num && mapping.channel === channel;
     const matchNote = mapping.type === 'note' && type === 9  && mapping.number === num && mapping.channel === channel && val > 0;
+    // For trigger-type actions mapped to CC, only fire on press (val > 0), not release
+    if (matchCC && action.type === 'trigger' && val === 0) continue;
     if (matchCC || matchNote) {
       dispatchAction(action.id, matchCC ? val : 127);
     }
@@ -111,10 +116,19 @@ function handleMidiMessage(event) {
 function dispatchAction(id, midiVal) {
   switch(id) {
     case 'recpaint':
-      if (!S.isPainting) {
+      if (midiVal > 0 && !S.isPainting) {
+        // Press: start painting
         ensureAudioContext(); startLiveRecording();
         recordStrokeStart('live', S.currentLiveBufferIdx);
         S.isPainting = true; S.paintFrameCount = 0;
+        S.updateLiveRecUI?.();
+      } else if (midiVal === 0 && S.isPainting) {
+        // Release: stop painting
+        S.isPainting      = false;
+        S.currentStrokeId = -1;
+        if (S.isRecording) stopLiveRecording();
+        S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+        S.updateLiveRecUI?.();
       }
       break;
     case 'undo':        undoLastStroke(); break;
@@ -133,7 +147,9 @@ function dispatchAction(id, midiVal) {
       S.searchRadiusDeg = Math.min(SEARCH_RADIUS_MAX, S.searchRadiusDeg + SEARCH_RADIUS_STEP);
       updatePlaybackControls(); flashRadiusTooltip();
       break;
-    case 'mapping': openMappingModal(); break;
+    case 'mapping':      openMappingModal(); break;
+    case 'preset_next':  selectPreset((S.activePresetIndex + 1) % PRESETS.length); break;
+    case 'preset_prev':  selectPreset((S.activePresetIndex - 1 + PRESETS.length) % PRESETS.length); break;
     default:
       if (id.startsWith('paint')) {
         const n = parseInt(id.replace('paint', ''));
