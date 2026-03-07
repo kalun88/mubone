@@ -11,32 +11,26 @@ export const sensor = {
   euler: null,   // { x, y, z } in degrees — physical board axes
 };
 
-// ── Transport: Electron IPC (direct UDP from Max) or silent no-op in browser ──
+// ── Transport ─────────────────────────────────────────────────────────────────
 //
-// In Electron, Max sends OSC UDP to 127.0.0.1:7500. The main process receives
-// it with dgram, parses it, and pushes it here via electronBridge.onSensorData.
-// No WebSocket, no server script needed.
+// Sensor data arrives via osc.js which handles both transports:
+//   Electron — IPC from main process (UDP 7500 → electron-main.js → renderer)
+//   Browser  — WebSocket from bridge.js running inside the Max patch
 //
-// In the browser version the sensor is simply unavailable — sensor.quat stays
-// null and getSensorCamQ() returns null, so the renderer falls back to mouse.
+// osc.js calls handleSensorOSC(values) when it receives address "list".
+// In browser mode with no Max bridge, sensor.quat stays null and
+// getSensorCamQ() returns null, so the renderer falls back to mouse.
 
 export function initSensor() {
-  if (!window.electronBridge?.onSensorData) {
-    console.log('[sensor] not in Electron — sensor disabled');
-    return;
-  }
+  // Transport registration moved to osc.js — nothing to set up here.
+  console.log('[sensor] ready — waiting for OSC via osc.js');
+}
 
-  window.electronBridge.onSensorData((address, values) => {
-    // Max sends quaternion as OSC address "list" with 4 floats [qx, qy, qz, qw]
-    // (matching the old server.js text format: "list qx qy qz qw")
-    if (address === 'list' && values.length === 4) {
-      const [qx, qy, qz, qw] = values;
-      sensor.quat  = [qx, qy, qz, qw];
-      sensor.euler = quatToEulerDeg(qx, qy, qz, qw);
-    }
-  });
-
-  console.log('[sensor] IPC bridge active — waiting for OSC from Max');
+// Called by osc.js when address === 'list' and values.length === 4
+export function handleSensorOSC(values) {
+  const [qx, qy, qz, qw] = values;
+  sensor.quat  = [qx, qy, qz, qw];
+  sensor.euler = quatToEulerDeg(qx, qy, qz, qw);
 }
 
 // ── Quaternion → physical board angles in degrees ────────────────────────────

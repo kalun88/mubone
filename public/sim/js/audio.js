@@ -71,6 +71,20 @@ export function ensureAudioContext() {
     S.masterAnalyser.connect(muteGain);
     if (!window.electronBridge) {
       muteGain.connect(S.audioCtx.destination);
+
+      // Stereo L/R analyser tap — feeds the two-bar output meter on the main canvas.
+      // ChannelSplitter deinterleaves the stereo signal coming out of muteGain
+      // (grains connect through StereoPanner → masterBus, so the signal IS stereo).
+      // drawOutputMeter() uses S.speakerAnalysers when length > 1.
+      const splitter  = S.audioCtx.createChannelSplitter(2);
+      const analyserL = S.audioCtx.createAnalyser();
+      const analyserR = S.audioCtx.createAnalyser();
+      analyserL.fftSize = 256; analyserL.smoothingTimeConstant = 0.75;
+      analyserR.fftSize = 256; analyserR.smoothingTimeConstant = 0.75;
+      muteGain.connect(splitter);
+      splitter.connect(analyserL, 0);  // channel 0 = Left
+      splitter.connect(analyserR, 1);  // channel 1 = Right
+      S.speakerAnalysers = [analyserL, analyserR];
     }
     S.masterBus = masterGain;
     window._muteGain = muteGain; // expose for setMuted
@@ -114,9 +128,10 @@ export async function recreateAudioContext(newSampleRate) {
   }
 
   // Reset dependent state
-  S.masterBus      = null;
-  S.masterAnalyser = null;
-  S.inputGainNode  = null;
+  S.masterBus       = null;
+  S.masterAnalyser  = null;
+  S.speakerAnalysers = null;  // recreated by ensureAudioContext (browser) or initSpeakerBuses (Electron)
+  S.inputGainNode   = null;
   S.inputAnalyser  = null;
   S.micPermissionGranted = false;
   S.inputStream    = null;

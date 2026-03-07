@@ -73,20 +73,55 @@ Open the **audio settings** modal (gear icon) to configure:
 
 ---
 
-## Sensor (BNO085)
+## Max integration
 
-| Context | Sensor input |
-|---|---|
-| Electron | Max sends OSC quaternion to UDP `7500`. Main process parses it with `dgram` and pushes to renderer via `electronBridge.onSensorData`. No WebSocket needed. |
-| Browser | Sensor unavailable. Sphere rotation falls back to mouse/touch. Max/OSC is not connected in browser mode. |
+The same OSC namespace works in both browser and Electron — only the transport differs.
 
----
+`bridge.js` runs continuously via `[node.script bridge.js]` inside the Max patch regardless of mode. It handles both transport paths internally:
 
-## Max patch
+| Context | Transport | How it works |
+|---|---|---|
+| Electron | UDP | `bridge.js` encodes messages as OSC binary and sends UDP to `127.0.0.1:7500`; Electron main process receives natively via `dgram` |
+| Browser | WebSocket | `bridge.js` runs a local WebSocket server on `ws://localhost:8080`; the browser auto-connects and retries every 3 seconds |
 
-Send OSC messages to UDP port `7500` on localhost. Supports float (`f`), int (`i`), and double (`d`) argument types.
+Send `setmode electron` or `setmode browser` to `[node.script bridge.js]` to switch transport. The Max patch has a toggle that sends this message — all controller logic (sliders, presets, sensor data) is shared upstream of it.
 
-**Quaternion format:** address `list` with 4 floats `[qx, qy, qz, qw]` (matching BNO085 output).
+A `● MAX` indicator appears in the top-right corner of the UI when a connection is established.
+
+### Setup (one time)
+
+In the `max/` folder:
+```
+npm install
+```
+
+This installs the `ws` WebSocket package used by `bridge.js`. After that, opening the Max patch starts the bridge automatically via `node.script`.
+
+### OSC namespace
+
+All messages use the same addresses regardless of transport:
+
+| Address | Args | Description |
+|---|---|---|
+| `/orientation` | `f f f f` | BNO085 quaternion `[qx, qy, qz, qw]` |
+| `/grain/duration` | `f` | Grain duration in seconds |
+| `/grain/period` | `f` | Onset period in seconds |
+| `/grain/volume` | `f` | Grain volume (0–2) |
+| `/grain/pitch` | `f` | Pitch jitter (0–1) |
+| `/grain/pan` | `f` | Pan spread (0–1) |
+| `/grain/radius` | `f` | Search radius in degrees (1–180) |
+| `/grain/k` | `i` | Pool size |
+| `/grain/prob` | `f` | Fire probability (0–1) |
+| `/grain/dir` | `s` | `fwd` / `rev` / `rnd` |
+| `/preset` | `i` | Select preset by number (1-based: 1=wash, 2=vinyl, 3=cloud, 4=freeze, 5=pulse, 6=shimmer, 7=ghost, 8=glitch, 9=chop, 10=stutter, 11=wobble) |
+| `/spatial/mode` | `s` | `sim` / `physical` |
+| `/record` | `i` | `1` = start, `0` = stop |
+| `/mute` | `i` | `1` = mute, `0` = unmute |
+| `/cloud/drop` | *(bang)* | Drop a cloud at the current cursor position |
+| `/cloud/pickup` | *(bang)* | Pick up (remove) the nearest cloud |
+| `/undo` | *(bang)* | Undo the last particle paint action |
+
+Bang-style messages (`/cloud/drop`, `/cloud/pickup`, `/undo`) trigger on any incoming value — send `1` or bang from Max.
 
 ---
 

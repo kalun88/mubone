@@ -108,11 +108,57 @@ The granular engine (`grain.js`) checks `S.speakerBuses` at render time. If pres
 
 ---
 
-## Sensor Path: Electron vs Browser
+## OSC / Max Integration
 
-**Electron:** Max sends BNO085 quaternion data as OSC to UDP port `7500` on localhost. `electron-main.js` receives it with `dgram`, parses the OSC packet, and calls `win.webContents.send('osc-sensor', address, values)`. `electron-preload.js` exposes this as `window.electronBridge.onSensorData(cb)`. `sensor.js` registers the callback on init and populates `sensor.quat`.
+All OSC messages — sensor data, grain parameters, preset selection, transport and cloud controls — are dispatched through a single `handleOSC(address, values)` function in `js/osc.js`. Two transports feed it:
 
-**Browser:** `sensor.js` checks for `window.electronBridge?.onSensorData` on init. If absent (browser context), it logs a message and returns. `sensor.quat` stays null; `getSensorCamQ()` returns null; the renderer falls back to mouse/gyro control. Max/OSC is not connected in browser mode.
+```
+Electron:  Max → [node.script bridge.js]  (setmode electron)
+                    └─ encodeOSC() → UDP 127.0.0.1:7500
+                         └─ electron-main.js (dgram)
+                              └─ IPC osc-message
+                                   └─ electronBridge.onOSC
+                                        └─ handleOSC()
+
+Browser:   Max → [node.script bridge.js]  (setmode browser)
+                    └─ WebSocket server ws://localhost:8080
+                         └─ browser WebSocket client (osc.js)
+                              └─ handleOSC()
+```
+
+`bridge.js` (in `max/`) runs via `[node.script bridge.js]` inside the Max patch **in both modes** — it is never bypassed. Sending `setmode electron` or `setmode browser` to the node.script switches its output transport at runtime. In Electron mode it encodes messages as OSC binary and fires them over UDP; in browser mode it broadcasts JSON over WebSocket. The Max patch has a toggle that sends this message automatically.
+
+The browser tries `ws://localhost:8080` on load and retries every 3 seconds — graceful no-op if Max isn't running. A `● MAX` indicator appears in the UI top-right corner on first message received (either transport).
+
+**Sensor path:** `handleOSC` routes `/orientation` with 4 floats to `handleSensorOSC(values)` in `sensor.js`, which populates `sensor.quat`. This works identically in both contexts.
+
+**Grain params:** Written directly to `S.grainOverrides`, which `grain.js` reads on each scheduler tick. OSC changes also call `scheduleUISync()` to flush updated values back to the panel sliders and controls in the next animation frame.
+
+**Preset / mode changes:** `S._selectPreset` and `S._setSpatialMode` are registered by the relevant UI modules and called directly — no CustomEvent needed.
+
+**Cloud / undo controls:** Bang-style messages. `/cloud/drop` and `/cloud/pickup` call `S._dropCloud` and `S._pickupCloud` registered by `events.js`. `/undo` calls `S._undo`. Any incoming value (or no value) triggers the action.
+
+### Full OSC namespace
+
+| Address | Args | Description |
+|---|---|---|
+| `/orientation` | `f f f f` | BNO085 quaternion `[qx, qy, qz, qw]` |
+| `/grain/duration` | `f` | Grain duration in seconds |
+| `/grain/period` | `f` | Onset period in seconds |
+| `/grain/volume` | `f` | Grain volume (0–2) |
+| `/grain/pitch` | `f` | Pitch jitter (0–1) |
+| `/grain/pan` | `f` | Pan spread (0–1) |
+| `/grain/radius` | `f` | Search radius in degrees (1–180) |
+| `/grain/k` | `i` | Pool size |
+| `/grain/prob` | `f` | Fire probability (0–1) |
+| `/grain/dir` | `s` | `fwd` / `rev` / `rnd` |
+| `/preset` | `i` | Select preset (1-based: 1=wash … 11=wobble) |
+| `/spatial/mode` | `s` | `sim` / `physical` |
+| `/record` | `i` | `1` = start, `0` = stop |
+| `/mute` | `i` | `1` = mute, `0` = unmute |
+| `/cloud/drop` | *(bang)* | Drop a cloud at current cursor position |
+| `/cloud/pickup` | *(bang)* | Pick up (remove) the nearest cloud |
+| `/undo` | *(bang)* | Undo the last particle paint action |
 
 ---
 
@@ -138,7 +184,9 @@ When speaker buses are active, `audio.js` also wires a stereo headphone downmix:
 | `electron-preload.js` | IPC bridge. Exposes `window.electronBridge` to renderer (see API table below). |
 | `js/audio.js` | `ensureAudioContext` (44100 Hz default), `initSpeakerBuses(N)` (builds N-channel Web Audio graph + headphone downmix + meter tap), `recreateAudioContext` (sample rate change), `rewireChannelMerger` (apply `S.channelRouting` without full rebuild). |
 | `js/grain.js` | `playGrain` — VBAP routing when `S.speakerBuses` is set, stereo panner fallback otherwise. |
-| `js/sensor.js` | Registers `electronBridge.onSensorData` callback (Electron); silently does nothing in browser. |
+| `js/osc.js` | `initOSC()` selects transport (Electron IPC or browser WebSocket). `handleOSC(address, values)` dispatches all incoming OSC to sensor, grain params, preset, etc. |
+| `js/sensor.js` | `handleSensorOSC(values)` — called by `osc.js` for `address === 'list'`. Populates `sensor.quat` and `sensor.euler`. |
+| `max/bridge.js` | Node for Max script. Runs via `[node.script bridge.js]` in both modes. In browser mode: starts a WebSocket server on `ws://localhost:8080` and broadcasts all incoming messages to connected tabs. In Electron mode: encodes messages as OSC binary and sends UDP to `127.0.0.1:7500`. Send `setmode browser` or `setmode electron` to switch transport at runtime. |
 | `js/worklets/quad-capture.worklet.js` | Batches N-channel audio into interleaved Float32Array and posts to main thread. N and batchSize configured at runtime via `{ type: 'init', numChannels: N, batchSize: B }`. batchSize = bufferFrames / 128 so each post is exactly one audify write. |
 | `js/ui-audio-settings.js` | Input device picker (WebRTC in browser; RtAudio device list in Electron). Output device picker (Electron only). Channel routing dropdowns. Speaker sweep. Sample rate and buffer size controls. |
 
@@ -157,7 +205,7 @@ When speaker buses are active, `audio.js` also wires a stereo headphone downmix:
 | `getInputDevices()` | renderer → main | Returns list of input devices with `id`, `name`, `inputChannels`, `isDefault` (from RtAudio, not WebRTC) |
 | `setInputDevice(id, nCh, bufFrames)` | renderer → main | Open RtAudio input stream; returns `{ ok, nCh, sampleRate, name }` |
 | `onAudioInputBuffer(cb)` | main → renderer | Register callback `cb(f32: Float32Array, nCh: number)` for multichannel input PCM from RtAudio |
-| `onSensorData(cb)` | main → renderer | Register callback `cb(address: string, values: number[])` for OSC messages from Max |
+| `onOSC(cb)` | main → renderer | Register callback `cb(address: string, values: any[])` for all OSC messages from Max. Called by `osc.js` which dispatches to sensor, grain params, etc. |
 | `toggleFullscreen()` | renderer → main | Toggle native OS fullscreen (web `requestFullscreen()` doesn't work in BrowserWindow) |
 
 ---
@@ -188,4 +236,6 @@ The AudioContext was originally created at 22050 Hz to halve CPU load. This caus
 
 ## What Max Does Now
 
-Max is no longer in the audio chain. In Electron it sends OSC quaternion data (BNO085 sensor) and control messages directly to UDP port `7500`; the Electron main process receives them natively. Max is not connected in browser mode. Max patches live in `max/`.
+Max is no longer in the audio chain. It is a controller: sensor data, grain parameters, presets, transport, cloud placement, and undo — all via OSC. The same namespace works in both contexts; `bridge.js` handles the transport switch (UDP in Electron, WebSocket in browser). Max patches live in `max/`.
+
+The mubone-controller patch (`max/mubone-controller.maxpat`) exposes the full control surface: all 11 presets by name, grain parameter sliders, direction segmented control, transport buttons (record, mute), spatial mode toggle, and cloud/undo bangs. The BNO085 sensor path runs through a separate `bno085.maxpat` abstraction and feeds `/orientation` quaternion data upstream.

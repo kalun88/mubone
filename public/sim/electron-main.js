@@ -32,6 +32,12 @@ function parseOSC(buf) {
       if      (t === 'f') { values.push(buf.readFloatBE(i));  i += 4; }
       else if (t === 'i') { values.push(buf.readInt32BE(i));  i += 4; }
       else if (t === 'd') { values.push(buf.readDoubleBE(i)); i += 8; }
+      else if (t === 's') {
+        let s = '';
+        while (i < buf.length && buf[i] !== 0) s += String.fromCharCode(buf[i++]);
+        i = Math.ceil((i + 1) / 4) * 4;
+        values.push(s);
+      }
     }
 
     return { address: address.replace(/^\//, ''), values };
@@ -47,7 +53,8 @@ function startOSCReceiver() {
     if (!_oscWin || _oscWin.isDestroyed()) return;
     const parsed = parseOSC(msg);
     if (!parsed) return;
-    _oscWin.webContents.send('osc-sensor', parsed.address, parsed.values);
+    // Broadcast all OSC to renderer — osc.js dispatches to sensor, grain params, etc.
+    _oscWin.webContents.send('osc-message', parsed.address, parsed.values);
   });
 
   sock.on('error', (err) => {

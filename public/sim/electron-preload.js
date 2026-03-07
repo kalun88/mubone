@@ -33,9 +33,10 @@ contextBridge.exposeInMainWorld('electronBridge', {
     ipcRenderer.on('audio-input-buffer', (_e, f32, nCh) => cb(f32, nCh)),
 
   // Main → Renderer: OSC message received from Max over UDP
-  // cb(address: string, values: number[])
-  onSensorData: (cb) =>
-    ipcRenderer.on('osc-sensor', (_e, address, values) => cb(address, values)),
+  // All OSC addresses are forwarded — cb(address: string, values: any[])
+  // osc.js dispatches to sensor, grain params, preset, etc.
+  onOSC: (cb) =>
+    ipcRenderer.on('osc-message', (_e, address, values) => cb(address, values)),
 
   // Toggle native OS fullscreen (web requestFullscreen doesn't work in BrowserWindow)
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),

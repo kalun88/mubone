@@ -304,11 +304,16 @@ export function setupEvents() {
   function setMuted(muted) {
     S.isMuted = muted;
     ensureAudioContext();
+    const t      = S.audioCtx.currentTime;
+    const target = muted ? 0 : 1;
+    // Browser path: audio flows masterBus → softClipper → analyser → _muteGain → destination
     const mg = window._muteGain;
-    if (mg) mg.gain.setTargetAtTime(
-      S.isMuted ? 0 : 1,
-      S.audioCtx.currentTime, 0.01
-    );
+    if (mg) mg.gain.setTargetAtTime(target, t, 0.01);
+    // Electron path: grains connect directly to speaker buses → ChannelMerger → audify.
+    // _muteGain is not in that chain, so ramp each bus gain instead.
+    if (S.speakerBuses) {
+      S.speakerBuses.forEach(({ bus }) => bus.gain.setTargetAtTime(target, t, 0.01));
+    }
     if (muteBtn) {
       muteBtn.classList.toggle('muted', S.isMuted);
       const span = muteBtn.querySelector('span:last-child');
@@ -316,6 +321,32 @@ export function setupEvents() {
     }
   }
   if (muteBtn) muteBtn.addEventListener('click', () => setMuted(!S.isMuted));
+  // Expose for osc.js so /mute also ramps the audio gain and updates the button
+  S._setMuted = setMuted;
+
+  // Expose cloud/undo actions for osc.js (/cloud/drop, /cloud/pickup, /undo)
+  S._dropCloud    = dropCloud;
+  S._pickupCloud  = pickupNearestCloud;
+  S._undo         = undoLastStroke;
+
+  // Expose for osc.js — /record 1 starts live capture, /record 0 stops it.
+  // Mirrors the spacebar keydown/keyup logic exactly.
+  S._setRecording = async (shouldRecord) => {
+    ensureAudioContext();
+    if (shouldRecord) {
+      const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
+      if (gotMic) startLiveRecording();
+      recordStrokeStart('live', S.currentLiveBufferIdx);
+      S.isPainting      = true;
+      S.paintFrameCount = 0;
+    } else {
+      S.isPainting      = false;
+      S.currentStrokeId = -1;
+      if (S.isRecording) stopLiveRecording();
+      S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+    }
+    _updateLiveRecUI();
+  };
 
   // ── Output fader drag ─────────────────────────────────────────────────────
   const outputFaderCanvas = document.getElementById('outputFaderMeter');

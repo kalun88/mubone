@@ -15,6 +15,7 @@ import { initMobileMode } from './mobile.js';
 import { initQuadBuses, initSpeakerBuses } from './audio.js';
 import { resizeCanvas, animate, rebuildOutputMeterStrip } from './renderer.js';
 import { initSensor, getSensorCamQ } from './sensor.js';
+import { initOSC } from './osc.js';
 import { initSensorUI } from './ui-sensor.js';
 import { initAudioSettings } from './ui-audio-settings.js';
 
@@ -33,8 +34,9 @@ function init() {
   initMidi();
   if (S.isMobile) initMobileMode();
 
-  // Sensor + audio settings
+  // Sensor + OSC + audio settings
   initSensor();
+  initOSC();   // connects Electron IPC or browser WebSocket transport
   S._getSensorCamQ = getSensorCamQ;  // hook renderer without a circular import
   initSensorUI();
   initAudioSettings();
@@ -80,17 +82,17 @@ function init() {
         ? 'physical mode — sensor drives cursor, world-space VBAP, speakers fixed in room\nclick to switch to sim'
         : 'sim mode — mouse/MIDI only, view-relative stereo panning, headphones\nclick to switch to physical';
     }
-    spatialModeBtn.addEventListener('click', () => {
-      S.spatialMode = S.spatialMode === 'sim' ? 'physical' : 'sim';
+    function applySpatialMode(mode) {
+      S.spatialMode = mode;
       updateSpatialModeBtn();
-      // In physical mode hide the OS cursor over the canvas — the renderer draws
-      // the crosshair at center. Clicks/scroll/right-click all still fire normally.
-      // In sim mode restore the default cursor.
-      if (S.canvas) {
-        S.canvas.style.cursor = S.spatialMode === 'physical' ? 'none' : '';
-      }
+      if (S.canvas) S.canvas.style.cursor = mode === 'physical' ? 'none' : '';
       console.log(`[spatial] mode: ${S.spatialMode}`);
+    }
+    spatialModeBtn.addEventListener('click', () => {
+      applySpatialMode(S.spatialMode === 'sim' ? 'physical' : 'sim');
     });
+    // Expose for osc.js (/spatial/mode sim|physical)
+    S._setSpatialMode = applySpatialMode;
     updateSpatialModeBtn();
   }
 

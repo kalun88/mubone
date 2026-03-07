@@ -1,0 +1,9 @@
+{
+  "name": "mubone-bridge",
+  "version": "1.0.0",
+  "description": "WebSocket relay for mubone browser mode",
+  "private": true,
+  "dependencies": {
+    "ws": "^8.0.0"
+  }
+}

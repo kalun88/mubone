@@ -164,6 +164,9 @@ export function setupPresets() {
   }
   document.getElementById('fullscreenBtn2')?.addEventListener('click', doToggleFullscreen);
 
+  // Expose selectPreset on S so osc.js can call it without a circular import
+  S._selectPreset = selectPreset;
+
   // Mic enable button
   const micBtn = document.getElementById('micEnableBtn');
   if (micBtn) {

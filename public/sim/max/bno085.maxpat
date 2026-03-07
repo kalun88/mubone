@@ -10,46 +10,19 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 500.0, 101.0, 1152.0, 972.0 ],
+		"rect" : [ 388.0, 117.0, 1050.0, 699.0 ],
 		"gridonopen" : 2,
 		"gridsize" : [ 15.0, 15.0 ],
 		"gridsnaponopen" : 2,
 		"boxes" : [ 			{
 				"box" : 				{
-					"id" : "obj-43",
-					"linecount" : 8,
-					"maxclass" : "comment",
+					"comment" : "",
+					"id" : "obj-3",
+					"index" : 0,
+					"maxclass" : "outlet",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 713.5, 520.0, 150.0, 114.0 ],
-					"text" : "sends to electron\n\n\n\nto do: \nuse osc / style to define which bno, what data stream"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-4",
-					"maxclass" : "newobj",
-					"numinlets" : 1,
-					"numoutlets" : 2,
-					"outlettype" : [ "", "" ],
-					"patching_rect" : [ 285.0, 810.0, 67.0, 22.0 ],
-					"saved_object_attributes" : 					{
-						"autostart" : 0,
-						"defer" : 0,
-						"node_bin_path" : "",
-						"npm_bin_path" : "",
-						"watch" : 0
-					}
-,
-					"text" : "node.script",
-					"textfile" : 					{
-						"text" : "",
-						"flags" : 2,
-						"embed" : 1,
-						"autowatch" : 0
-					}
-
+					"patching_rect" : [ 720.0, 735.0, 30.0, 30.0 ]
 				}
 
 			}
@@ -79,97 +52,11 @@
 			}
 , 			{
 				"box" : 				{
-					"id" : "obj-39",
-					"maxclass" : "message",
-					"numinlets" : 2,
-					"numoutlets" : 1,
-					"outlettype" : [ "" ],
-					"patching_rect" : [ 945.0, 570.0, 50.0, 22.0 ],
-					"text" : "0"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-6",
-					"maxclass" : "comment",
-					"numinlets" : 1,
-					"numoutlets" : 0,
-					"patching_rect" : [ 987.0, 521.0, 150.0, 20.0 ],
-					"text" : "double click to select port"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-56",
-					"maxclass" : "newobj",
-					"numinlets" : 1,
-					"numoutlets" : 1,
-					"outlettype" : [ "bang" ],
-					"patching_rect" : [ 945.0, 450.0, 58.0, 22.0 ],
-					"text" : "loadbang"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-14",
-					"maxclass" : "message",
-					"numinlets" : 2,
-					"numoutlets" : 1,
-					"outlettype" : [ "" ],
-					"patching_rect" : [ 946.0, 480.0, 39.0, 22.0 ],
-					"presentation" : 1,
-					"presentation_rect" : [ 130.0, 48.0, 39.0, 22.0 ],
-					"text" : "Wave"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-18",
-					"maxclass" : "newobj",
-					"numinlets" : 1,
-					"numoutlets" : 1,
-					"outlettype" : [ "int" ],
-					"patching_rect" : [ 946.0, 519.0, 40.0, 22.0 ],
-					"presentation" : 1,
-					"presentation_rect" : [ 129.0, 88.0, 40.0, 22.0 ],
-					"text" : "midiin"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-35",
-					"maxclass" : "newobj",
-					"numinlets" : 1,
-					"numoutlets" : 0,
-					"patching_rect" : [ 710.0, 540.0, 138.0, 22.0 ],
-					"text" : "udpsend 127.0.0.1 7500"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-3",
-					"maxclass" : "newobj",
-					"numinlets" : 0,
-					"numoutlets" : 1,
-					"outlettype" : [ "" ],
-					"patching_rect" : [ 482.0, 735.0, 39.0, 22.0 ],
-					"text" : "r data"
-				}
-
-			}
-, 			{
-				"box" : 				{
 					"id" : "obj-2",
 					"maxclass" : "newobj",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 481.0, 690.0, 41.0, 22.0 ],
+					"patching_rect" : [ 465.0, 660.0, 41.0, 22.0 ],
 					"text" : "s data"
 				}
 
@@ -550,7 +437,7 @@
 
 											}
  ],
-										"originid" : "pat-124"
+										"originid" : "pat-526"
 									}
 ,
 									"patching_rect" : [ 286.0, 600.0, 53.5, 22.0 ],
@@ -1196,7 +1083,7 @@
 
 											}
  ],
-										"originid" : "pat-136"
+										"originid" : "pat-538"
 									}
 ,
 									"patching_rect" : [ 15.0, 135.0, 120.0, 22.0 ],
@@ -1692,7 +1579,7 @@
 
 							}
  ],
-						"originid" : "pat-120"
+						"originid" : "pat-522"
 					}
 ,
 					"patching_rect" : [ 30.0, 285.0, 122.0, 22.0 ],
@@ -1731,7 +1618,7 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 481.0, 540.0, 95.0, 22.0 ],
+					"patching_rect" : [ 465.0, 555.0, 95.0, 22.0 ],
 					"text" : "prepend buttons"
 				}
 
@@ -2479,7 +2366,7 @@
 
 							}
  ],
-						"originid" : "pat-140"
+						"originid" : "pat-542"
 					}
 ,
 					"patching_rect" : [ 419.0, 360.0, 111.0, 22.0 ],
@@ -2760,9 +2647,8 @@
 						}
 ,
 						"classnamespace" : "box",
-						"rect" : [ 164.0, 373.0, 576.0, 700.0 ],
+						"rect" : [ 248.0, 948.0, 576.0, 700.0 ],
 						"gridsize" : [ 15.0, 15.0 ],
-						"visible" : 1,
 						"boxes" : [ 							{
 								"box" : 								{
 									"id" : "obj-1",
@@ -3003,7 +2889,7 @@
 
 							}
  ],
-						"originid" : "pat-142"
+						"originid" : "pat-544"
 					}
 ,
 					"patching_rect" : [ 919.0, 285.0, 70.0, 22.0 ],
@@ -3198,13 +3084,6 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-18", 0 ],
-					"source" : [ "obj-14", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
 					"destination" : [ "obj-38", 1 ],
 					"source" : [ "obj-15", 0 ]
 				}
@@ -3214,22 +3093,6 @@
 				"patchline" : 				{
 					"destination" : [ "obj-38", 2 ],
 					"source" : [ "obj-16", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-39", 1 ],
-					"order" : 1,
-					"source" : [ "obj-18", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
-					"destination" : [ "obj-40", 0 ],
-					"order" : 0,
-					"source" : [ "obj-18", 0 ]
 				}
 
 			}
@@ -3279,7 +3142,7 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-35", 0 ],
+					"destination" : [ "obj-3", 0 ],
 					"order" : 0,
 					"source" : [ "obj-19", 1 ]
 				}
@@ -3568,13 +3431,6 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-14", 0 ],
-					"source" : [ "obj-56", 0 ]
-				}
-
-			}
-, 			{
-				"patchline" : 				{
 					"destination" : [ "obj-7", 0 ],
 					"source" : [ "obj-59", 0 ]
 				}
@@ -3644,7 +3500,7 @@
 
 			}
  ],
-		"originid" : "pat-46",
+		"originid" : "pat-520",
 		"dependency_cache" : [ 			{
 				"name" : "OSC-route.mxo",
 				"type" : "iLaX"
@@ -3677,13 +3533,6 @@
 , 			{
 				"name" : "slipOSC.mxo",
 				"type" : "iLaX"
-			}
-, 			{
-				"name" : "u073003222.js",
-				"bootpath" : "~/Library/Application Support/Cycling '74/Max 9/Settings/temp64-Max",
-				"patcherrelativepath" : "../../../../Library/Application Support/Cycling '74/Max 9/Settings/temp64-Max",
-				"type" : "TEXT",
-				"implicit" : 1
 			}
  ],
 		"autosave" : 0
