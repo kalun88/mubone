@@ -60,8 +60,26 @@ export const CLOUD_COLORS = [
 // Glow color for nearest-lock cursor grains -- distinct from particle and cloud colors
 export const NEAREST_GLOW_COLOR = '#b8a0ff'; // soft violet
 
-// Hard cap on concurrent AudioBufferSourceNodes
+// ── Performance tuning ────────────────────────────────────────────────────────
+// These were set conservatively during early CPU-load testing. Adjust here if
+// you want to change system-wide behaviour without hunting through call sites.
+
+// Hard cap on concurrent AudioBufferSourceNodes. Each live grain holds 3–5 nodes.
+// 250 was set as a safe ceiling during testing — real CPU headroom may allow more.
+// Dense presets (cloud, shimmer, glitch sprayCount=3) approach this fastest.
+// Raise to 400–500 if your machine handles it; lower to 100–150 for CPU relief.
 export const MAX_GRAIN_NODES = 250;
+
+// Grain scheduler tick rate in ms. 30ms ≈ 33 ticks/sec.
+// Grains are 25ms–2000ms so 30ms resolution is inaudible.
+// Halving to 15ms doubles scheduling precision but increases CPU load.
+// Doubling to 60ms is still fine for most presets; reduces CPU on weak hardware.
+export const GRAIN_SCHEDULER_INTERVAL_MS = 30;
+
+// Render loop frame rate cap. The animate() loop throttles canvas redraws to
+// this rate while requestAnimationFrame still runs at full display rate (handling
+// painting and camera). Lower this (e.g. 20) to cut canvas draw cost on dense scenes.
+export const RENDER_TARGET_FPS = 30;
 
 // Live rebuild throttle
 export const LIVE_REBUILD_INTERVAL_MS = 200; // rebuild at most every 200ms

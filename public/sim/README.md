@@ -125,6 +125,21 @@ Bang-style messages (`/cloud/drop`, `/cloud/pickup`, `/undo`) trigger on any inc
 
 ---
 
+## Performance tuning
+
+All system-wide performance constants live at the top of `js/state.js`. Change them there and the whole app picks them up — no other files need editing.
+
+| Constant | Default | What it controls |
+|---|---|---|
+| `MAX_GRAIN_NODES` | `250` | Hard cap on concurrent `AudioBufferSourceNode` instances. Set conservatively during early testing. Dense presets (cloud, shimmer, glitch) approach this fastest. Raise to 400–500 if your machine handles it; lower to 100–150 for CPU relief. |
+| `GRAIN_SCHEDULER_INTERVAL_MS` | `30` | Grain scheduler tick rate in ms (~33 ticks/sec). Inaudible at this resolution since grains are 25ms–2s. Raising to 60ms halves scheduler CPU cost; lowering to 15ms improves timing precision at higher CPU cost. |
+| `RENDER_TARGET_FPS` | `30` | Canvas redraw rate cap. The animation loop still runs at display refresh rate for painting and camera; only the canvas draw is throttled here. Lower to 20 to cut draw cost on dense particle scenes. |
+| `LIVE_REBUILD_INTERVAL_MS` | `200` | How often the live recording buffer is rebuilt during active mic recording. Lower = more responsive waveform; higher = less CPU during recording. |
+
+> **If you're hitting CPU limits:** drop `MAX_GRAIN_NODES` to 100–150 first, then raise `GRAIN_SCHEDULER_INTERVAL_MS` to 50–60. Those two changes alone have the biggest impact on total CPU load. `RENDER_TARGET_FPS` matters most on dense particle scenes (thousands of particles).
+
+---
+
 ## Project structure
 
 ```

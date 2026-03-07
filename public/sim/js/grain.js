@@ -6,7 +6,6 @@ export function rand(min, max) { return min + Math.random() * (max - min); }
 
 // activeGrainMap: particle → { expiry, glowColor } — shared with renderer
 export let activeGrainMap = new Map();
-export let selectedGrainSet = new Set();
 
 export function getBufferKey(p) {
   return p.source === 'live' ? `live:${p.liveBufferIdx}` : `sample:${p.sampleIndex}`;
@@ -372,12 +371,11 @@ export function scheduleGrains() {
     if (p.source === 'live') S.liveGranulatingThisFrame = true;
   }
 
-  selectedGrainSet = new Set(activeGrainMap.keys());
-
+  const activeCount = activeGrainMap.size;
   const gcEl = document.getElementById('granulatingCount');
-  if (gcEl) gcEl.textContent = selectedGrainSet.size;
+  if (gcEl) gcEl.textContent = activeCount;
   const vmGrains = document.getElementById('vmGrains');
-  if (vmGrains) vmGrains.textContent = `${selectedGrainSet.size} grains`;
+  if (vmGrains) vmGrains.textContent = `${activeCount} grains`;
 }
 
 // Reset onset period when period/periodVar changes (called from events.js)

@@ -2,7 +2,7 @@
 // MAIN — entry point: wire up all modules and start the app
 // ============================================================================
 
-import { S } from './state.js';
+import { S, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
 import { scheduleGrains } from './grain.js';
 import { setupEvents, setupDragDrop } from './events.js';
 import { rebuildSampleListUI, buildSvTabs, drawSvWaveform } from './ui-samples.js';
@@ -135,9 +135,8 @@ function init() {
   }
 
   // Grain scheduler — independent of render loop so slow frames don't delay grains.
-  // 30ms interval = ~33 ticks/sec. Grains are 25ms–2000ms so 30ms scheduling
-  // resolution is inaudible. Halves background CPU vs the old 15ms interval.
-  setInterval(scheduleGrains, 30);
+  // Interval set by GRAIN_SCHEDULER_INTERVAL_MS in state.js (default 30ms ≈ 33 ticks/sec).
+  setInterval(scheduleGrains, GRAIN_SCHEDULER_INTERVAL_MS);
 }
 
 init();

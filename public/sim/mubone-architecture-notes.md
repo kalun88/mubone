@@ -228,6 +228,23 @@ When speaker buses are active, `audio.js` also wires a stereo headphone downmix:
 
 ---
 
+## Performance Tuning Constants
+
+All system-wide performance knobs are exported from `js/state.js`. They were set conservatively during early CPU-load testing and are designed to be the single place you touch when tuning for different machines or use contexts.
+
+| Constant | Default | Where used | Notes |
+|---|---|---|---|
+| `MAX_GRAIN_NODES` | `250` | `grain.js` `scheduleGrains()` | Hard cap on concurrent `AudioBufferSourceNode`s. Each live grain holds 3–5 nodes (source, envelope gain, elevGain + 2 VBAP gains). Dense presets (cloud, shimmer, glitch sprayCount=3) hit this cap fastest. |
+| `GRAIN_SCHEDULER_INTERVAL_MS` | `30` | `main.js` `setInterval` | Tick rate for the grain scheduler. Decoupled from the render loop so dropped frames don't delay grain onsets. At 30ms the scheduling jitter is inaudible (all grains are ≥25ms). |
+| `RENDER_TARGET_FPS` | `30` | `renderer.js` `animate()` | Canvas redraw cap. `requestAnimationFrame` still runs at display rate to keep painting and camera responsive; only `drawFrame()` is throttled. Lowering to 20 meaningfully reduces draw cost on scenes with many particles. |
+| `LIVE_REBUILD_INTERVAL_MS` | `200` | `audio.js` | How often the live mic buffer is resampled into a playable `AudioBuffer` during recording. Lower = more responsive; higher = less CPU overhead during live capture. |
+
+**CPU load profile:** The grain scheduler (`grain.js`) is the dominant CPU consumer — each tick does an O(n) distance pass over all particles + a sort. `MAX_GRAIN_NODES` is the primary lever. The canvas renderer is the second consumer and scales with particle count and canvas resolution. `RENDER_TARGET_FPS` is the lever there.
+
+**Known headroom:** `MAX_GRAIN_NODES = 250` was chosen when the VBAP path wasn't yet implemented and each grain cost more nodes. With the current 2-node VBAP scheme the real ceiling may be higher on modern hardware. Worth testing at 400 with a dense preset.
+
+---
+
 ## Sample Rate History
 
 The AudioContext was originally created at 22050 Hz to halve CPU load. This caused hardware negotiation failures (Core Audio rejects 22050 on MacBook built-in) and pitch/timing mismatches with audify. The default is now 44100 Hz in all contexts. 22050 Hz is still selectable in Audio Settings for CPU-constrained use.

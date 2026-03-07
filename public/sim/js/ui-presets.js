@@ -8,7 +8,7 @@ import {
   gp, rebuildGrainCurves, minGrainDurS, minGrainPeriodS,
   SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
 } from './state.js';
-import { angleBetweenSphere, resetCursorPeriod } from './grain.js';
+import { angleBetweenSphere, findNearestCloudSlot, resetCursorPeriod } from './grain.js';
 import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js';
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
 
@@ -217,13 +217,7 @@ export function dropCloud() {
 
 export function pickupNearestCloud() {
   const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  let nearestSlot = -1;
-  let nearestAng = Infinity;
-  for (let i = 0; i < MAX_CLOUDS; i++) {
-    if (!S.cloudSlots[i]) continue;
-    const ang = angleBetweenSphere(S.cloudSlots[i].lon, S.cloudSlots[i].lat, lon, lat);
-    if (ang < nearestAng) { nearestAng = ang; nearestSlot = i; }
-  }
+  const nearestSlot = findNearestCloudSlot(lon, lat);
   if (nearestSlot === -1) return;
   S.cloudSlots[nearestSlot] = null;
   updateCloudBanksUI();

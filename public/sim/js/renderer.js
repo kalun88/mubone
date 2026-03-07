@@ -7,6 +7,7 @@ import {
   SPHERE_RADIUS, FOV_DEG, PARTICLE_BASE_SIZE, PARTICLE_MAX_SIZE,
   SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, NEAREST_GLOW_COLOR,
   MAX_CLOUDS, AUTO_ROTATION_SPEED, ROTATION_SPEED, PAINT_INTERVAL,
+  RENDER_TARGET_FPS,
   perf, perfTick, gp, rebuildGrainCurves
 } from './state.js';
 import { spherePoint, cameraTransform, project, getCursorLonLat, screenToLonLat, qFromAxisAngle, qNormalize, qMul } from './sphere.js';
@@ -19,8 +20,7 @@ let outputClipHoldUntil = 0;
 const INPUT_CLIP_HOLD_S  = 1.5;
 const METER_CLIP_HOLD_S  = 1.5;
 const ANALYSER_BUF = new Float32Array(128);
-let _faderInputLevel  = 0;
-let _faderOutputLevel = 0;       // fallback: single-bar master analyser (browser)
+let _faderInputLevel   = 0;
 let _faderOutputLevels = [];     // per-channel smoothed levels (Electron N-ch)
 
 // ── Fader helpers ─────────────────────────────────────────────────────────────
@@ -361,12 +361,11 @@ export function drawOutputMeter() {
   }
 
   // Grow _faderOutputLevels array if needed for index 0
-  if (!_faderOutputLevels.length) _faderOutputLevels = [_faderOutputLevel];
+  if (!_faderOutputLevels.length) _faderOutputLevels = [0];
 
   // No fader arrow on output (trim is in audio settings); always show dB lines
   const peakDb = _drawOneMeterBar(fc, S.masterAnalyser, 0, now < outputClipHoldUntil, false, true);
   if (peakDb >= 0) outputClipHoldUntil = now + METER_CLIP_HOLD_S;
-  _faderOutputLevel = _faderOutputLevels[0]; // keep legacy var in sync
 }
 
 // ── Main draw frame ───────────────────────────────────────────────────────────
@@ -797,17 +796,6 @@ export function animate() {
       const nx = S.mouseX / dist, ny = S.mouseY / dist;
 
       if (Math.abs(nx) > 0.001) {
-        const camUp  = qRotateVec => {
-          // inline to avoid import — use S.camQ directly
-          const q = S.camQ, v = [0, 1, 0];
-          const vq = [0, v[0], v[1], v[2]];
-          const conj = [q[0], -q[1], -q[2], -q[3]];
-          function mul(a, b) {
-            return [a[0]*b[0]-a[1]*b[1]-a[2]*b[2]-a[3]*b[3], a[0]*b[1]+a[1]*b[0]+a[2]*b[3]-a[3]*b[2], a[0]*b[2]-a[1]*b[3]+a[2]*b[0]+a[3]*b[1], a[0]*b[3]+a[1]*b[2]-a[2]*b[1]+a[3]*b[0]];
-          }
-          const r = mul(mul(q, vq), conj); return [r[1], r[2], r[3]];
-        };
-        // Use sphere.js imports directly
         const up = _qRotVec(S.camQ, [0, 1, 0]);
         const yawSign = up[1] < 0 ? -1 : 1;
         const qYaw = _qFromAA(0, 1, 0, nx * speed * yawSign);
@@ -890,10 +878,11 @@ export function animate() {
 
   if (S.isRecording) rebuildLiveBuffer();
 
+  const _frameMs = 1000 / RENDER_TARGET_FPS;
   const now30 = performance.now();
   const elapsed30 = now30 - (animate._lastRenderTime || 0);
-  if (elapsed30 >= 33) {
-    animate._lastRenderTime = now30 - (elapsed30 % 33);
+  if (elapsed30 >= _frameMs) {
+    animate._lastRenderTime = now30 - (elapsed30 % _frameMs);
     drawFrame();
     S.updateWaveformPlayheads?.();
 
@@ -907,8 +896,9 @@ export function animate() {
   requestAnimationFrame(animate);
 }
 
-// Inline quaternion helpers to avoid re-importing (sphere.js exports these too
-// but we keep them here to avoid any circular-import edge cases at load time).
+// Inline quaternion helpers used in the animate() hot path.
+// sphere.js exports the same functions; these local copies avoid the overhead
+// of an extra module indirection in the RAF loop.
 function _qMul(a, b) {
   return [a[0]*b[0]-a[1]*b[1]-a[2]*b[2]-a[3]*b[3], a[0]*b[1]+a[1]*b[0]+a[2]*b[3]-a[3]*b[2], a[0]*b[2]-a[1]*b[3]+a[2]*b[0]+a[3]*b[1], a[0]*b[3]+a[1]*b[2]-a[2]*b[1]+a[3]*b[0]];
 }
