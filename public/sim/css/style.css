@@ -883,8 +883,39 @@
     display: flex; flex-direction: column;
     align-items: stretch; gap: 0; width: 38px; flex-shrink: 0;
   }
+  /* Multi-channel output meter strip — horizontal row of equal-width bar slots */
+  .output-meter-strip {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 1px;
+    width: 100%;
+    overflow: hidden;
+  }
+  /* Each bar slot is a flex child div that controls layout size.
+     The canvas inside is absolutely positioned to fill it — this prevents
+     the canvas's intrinsic pixel dimensions from feeding back into flex layout
+     and causing the resize-loop / sad-face glitch. */
+  .output-meter-slot {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    cursor: ns-resize;
+    touch-action: none;
+  }
+  .output-meter-slot canvas {
+    position: absolute;
+    inset: 0;
+    display: block;
+    border-radius: 2px;
+  }
+  /* Single-bar fallback: the original #outputFaderMeter sits directly in the strip */
   #outputFaderMeter {
-    flex: 1; min-height: 0; width: 100%; display: block;
+    flex: 1;
+    min-width: 0;
+    display: block;
     cursor: ns-resize; touch-action: none; border-radius: 2px;
   }
   /* compat — old IDs hidden */
@@ -892,13 +923,15 @@
   .meter-row, .meter-wrap, .meter-clip-dot, #meterClipDot { display: none; }
 
   /* ── Levels device (right panel) ────────────────────────────────────────── */
-  .right-panel .device--meters { flex: 0 0 125px; overflow: hidden; }
+  /* Fill the full right-panel width like all other devices */
+  .right-panel .device--meters { flex: 0 0 auto; width: 100%; overflow: hidden; }
   .meters-body {
     flex-direction: row !important;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 0.5rem;
-    padding: 0.1rem 0;
+    padding: 0.1rem 0.25rem;
   }
+  /* in: fixed narrow column; out: takes the remaining space */
   .meter-channel {
     display: flex;
     flex-direction: column;
@@ -906,6 +939,10 @@
     flex: 0 0 clamp(32px, 3.5vw, 46px);
     min-height: 0;
     gap: 0.15rem;
+  }
+  #outputMeterChannel {
+    flex: 1 1 0;
+    min-width: 0;
   }
   .meter-ch-label {
     color: #505050;
@@ -1047,36 +1084,52 @@
 
   /* Cloud banks removed — spatial tracking via canvas edge indicators */
 
-  /* ── Bottom panel (sample instrument + buttons) ───────────────────────────── */
-  .bottom-panel {
-    display: flex;
-    flex-direction: row;
-    gap: 0.5rem;
-    flex-shrink: 0;
-    align-items: stretch;
-    min-height: clamp(100px, 9vw, 160px);
-    max-height: clamp(140px, 14vw, 220px);
+  /* ── Sample instrument modal ───────────────────────────────────────────────── */
+  #sampleModal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 200;
   }
-  /* sample instrument block */
-  .sample-instrument {
+  #sampleModal.open { display: block; }
+  .sample-dialog {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: #1e2e2e;
+    border: 1px solid #2a4a4a;
+    border-radius: 6px;
+    padding: 1rem 1.2rem 1.2rem;
+    width: clamp(320px, 60vw, 700px);
+    max-height: 80vh;
     display: flex;
     flex-direction: column;
-    flex: 1;
-    min-width: 0;
-    background: #1e1e1e;
-    border: 1px solid #333;
-    border-radius: 4px;
-    overflow: hidden;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+    color: #ccc;
+    box-sizing: border-box;
   }
-  .panel-label {
+  .sample-dialog h2 {
+    font-size: 0.85rem;
+    font-weight: normal;
+    color: #7abcbc;
+    letter-spacing: 0.06em;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .sample-dialog h2 .close-btn {
+    background: none;
+    border: none;
+    color: #555;
     font-size: 0.75rem;
-    letter-spacing: 0.08em;
-    color: #666;
-    text-transform: lowercase;
-    padding: 0.25rem 0.5rem 0.2rem;
-    border-bottom: 1px solid #2a2a2a;
-    flex-shrink: 0;
+    font-family: inherit;
+    cursor: pointer;
+    padding: 0;
   }
+  .sample-dialog h2 .close-btn:hover { color: #aaa; }
   /* sample list scrollable area */
   .sample-list-wrap {
     flex: 1;
@@ -1087,32 +1140,8 @@
   .sample-list-wrap::-webkit-scrollbar { width: 4px; }
   .sample-list-wrap::-webkit-scrollbar-track { background: #1a1a1a; }
   .sample-list-wrap::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
-  /* right side: action buttons */
-  .panel-buttons {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    flex-shrink: 0;
-    width: 170px;
-    justify-content: flex-start;
-    padding: 0.25rem 0;
-  }
-  .panel-btn {
-    background: #252525;
-    border: 1px solid #333;
-    border-radius: 3px;
-    color: #555;
-    font-family: 'Roboto Mono', monospace;
-    font-size: 0.75rem;
-    padding: 0.3rem 0.6rem;
-    cursor: pointer;
-    letter-spacing: 0.04em;
-    text-align: left;
-    transition: color 0.15s, border-color 0.15s;
-    width: 100%;
-  }
-  .panel-btn:hover { color: #aaa; border-color: #555; }
-  .panel-btn.active { color: #7abcbc; border-color: #7abcbc; }
+  /* Button highlight when modal is open */
+  #bottomPanelToggleBtn.open { color: #7abcbc; }
 
   /* ── Sample viewer (kept for backward-compat JS refs) ────────────────────── */
   .sample-viewer {
@@ -1425,9 +1454,13 @@
   border-radius: 6px;
   padding: 1.2rem 1.4rem;
   min-width: 400px;
-  max-width: 480px;
+  max-width: 520px;
+  width: min(520px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
   font-size: 0.8rem;
   color: #ccc;
+  box-sizing: border-box;
 }
 .audio-dialog h2 {
   font-size: 0.85rem;
@@ -1585,3 +1618,101 @@
 }
 .as-btn:hover { background: #2a3a3a; }
 .as-btn.active { background: #2a4a4a; color: #fff; }
+
+/* ── Multi-channel vertical meter strip ──────────────────────────────────── */
+.as-multi-meter-wrap {
+  display: flex;
+  flex-direction: row;
+  gap: 3px;
+  background: #111a1a;
+  border: 1px solid #2a3a3a;
+  border-radius: 3px;
+  padding: 0.3rem 0.4rem 0.25rem;
+  margin: 0.4rem 0;
+  height: 72px;          /* fixed height — no stretching */
+  align-items: stretch;
+  overflow-x: auto;      /* scroll if many channels */
+  overflow-y: hidden;
+}
+/* placeholder text shown when no stream is active */
+.as-multi-meter-wrap:empty::before {
+  content: 'no signal';
+  color: #333;
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  align-self: center;
+  margin: auto;
+}
+.as-vchan {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  flex: 0 0 18px;   /* fixed 18px per channel — scrolls for large counts */
+  min-width: 0;
+}
+/* clip indicator dot above the bar */
+.as-vchan-clip {
+  width: 100%;
+  height: 4px;
+  border-radius: 1px;
+  background: #2a2a2a;
+  flex-shrink: 0;
+  transition: background 0.05s;
+}
+.as-vchan-clip.clipping { background: #e06060; box-shadow: 0 0 4px #e0606066; }
+/* the canvas bar itself */
+.as-vchan canvas {
+  width: 100%;
+  flex: 1;
+  display: block;
+  border-radius: 1px;
+  background: #1a1a1a;
+  min-height: 0;
+}
+/* channel number label under bar */
+.as-vchan-label {
+  font-size: 0.6rem;
+  color: #444;
+  text-align: center;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  line-height: 1.3;
+}
+
+/* ── Output routing table ────────────────────────────────────────────────── */
+.as-routing-wrap {
+  margin-top: 0.6rem;
+}
+.as-routing-label {
+  font-size: 0.68rem;
+  color: #555;
+  letter-spacing: 0.07em;
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+}
+.as-routing-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+  font-size: 0.72rem;
+}
+.as-routing-ch {
+  min-width: 3.8rem;
+  color: #666;
+  flex-shrink: 0;
+  letter-spacing: 0.03em;
+}
+.as-routing-sel {
+  flex: 1;
+  background: #1a2828;
+  border: 1px solid #3a5050;
+  border-radius: 3px;
+  color: #aaa;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.72rem;
+  padding: 0.15rem 0.3rem;
+  cursor: pointer;
+}
+.as-routing-sel:focus { outline: none; border-color: #7abcbc; }

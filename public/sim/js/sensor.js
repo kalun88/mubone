@@ -11,28 +11,32 @@ export const sensor = {
   euler: null,   // { x, y, z } in degrees — physical board axes
 };
 
-// ── WebSocket bridge connection ──────────────────────────────────────────────
-let _ws = null;
+// ── Transport: Electron IPC (direct UDP from Max) or silent no-op in browser ──
+//
+// In Electron, Max sends OSC UDP to 127.0.0.1:7500. The main process receives
+// it with dgram, parses it, and pushes it here via electronBridge.onSensorData.
+// No WebSocket, no server script needed.
+//
+// In the browser version the sensor is simply unavailable — sensor.quat stays
+// null and getSensorCamQ() returns null, so the renderer falls back to mouse.
 
 export function initSensor() {
-  try {
-    _ws = new WebSocket('ws://localhost:8080');
-    _ws.onopen    = () => console.log('[sensor] connected to bridge');
-    _ws.onclose   = () => console.warn('[sensor] bridge disconnected');
-    _ws.onerror   = () => console.warn('[sensor] bridge unavailable — sensor disabled');
-    _ws.onmessage = (event) => {
-      const parts = event.data.trim().split(' ');
-      const type  = parts[0];
-      const vals  = parts.slice(1).map(Number);
-      if (type === 'list' && vals.length === 4) {
-        const [qx, qy, qz, qw] = vals;
-        sensor.quat  = [qx, qy, qz, qw];
-        sensor.euler = quatToEulerDeg(qx, qy, qz, qw);
-      }
-    };
-  } catch(e) {
-    console.warn('[sensor] WebSocket init failed:', e.message);
+  if (!window.electronBridge?.onSensorData) {
+    console.log('[sensor] not in Electron — sensor disabled');
+    return;
   }
+
+  window.electronBridge.onSensorData((address, values) => {
+    // Max sends quaternion as OSC address "list" with 4 floats [qx, qy, qz, qw]
+    // (matching the old server.js text format: "list qx qy qz qw")
+    if (address === 'list' && values.length === 4) {
+      const [qx, qy, qz, qw] = values;
+      sensor.quat  = [qx, qy, qz, qw];
+      sensor.euler = quatToEulerDeg(qx, qy, qz, qw);
+    }
+  });
+
+  console.log('[sensor] IPC bridge active — waiting for OSC from Max');
 }
 
 // ── Quaternion → physical board angles in degrees ────────────────────────────

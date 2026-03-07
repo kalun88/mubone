@@ -33,6 +33,8 @@
       <button id="perfMonBtn" class="top-bar-btn">perf</button>
       <button id="fullscreenBtn2" class="top-bar-btn">⛶ fullscreen</button>
       <button id="helpBtn" class="top-bar-btn">? keys / midi</button>
+      <button id="bottomPanelToggleBtn" class="top-bar-btn" title="sample instrument">⊞ samples</button>
+      <button id="spatialModeBtn" class="top-bar-btn" title="sim: headphones/mouse, view-relative panning&#10;physical: real speakers, sensor drives cursor, world-space VBAP">⬡ sim</button>
       <button id="sensorBtn" class="top-bar-btn">⊕ sensor</button>
       <button id="audioSettingsBtn" class="top-bar-btn">♪ audio</button>
     </div>
@@ -185,9 +187,11 @@
             <span class="meter-ch-label">in</span>
             <canvas id="inputFaderMeter"></canvas>
           </div>
-          <div class="meter-channel">
+          <div class="meter-channel" id="outputMeterChannel">
             <span class="meter-ch-label">out</span>
-            <canvas id="outputFaderMeter"></canvas>
+            <div id="outputMeterStrip" class="output-meter-strip">
+              <canvas id="outputFaderMeter"></canvas>
+            </div>
           </div>
         </div>
       </div>
@@ -196,18 +200,15 @@
 
   </div><!-- end .main-layout -->
 
-  <!-- Bottom panel: sample instrument + action buttons -->
-  <div class="bottom-panel">
-
-    <div class="sample-instrument">
-      <div class="panel-label">sample instrument</div>
+  <!-- Sample instrument modal -->
+  <div id="sampleModal">
+    <div class="sample-dialog">
+      <h2>sample instrument <button class="close-btn" id="sampleModalClose">✕ close</button></h2>
       <div class="sample-list-wrap">
         <div id="sampleList"></div>
       </div>
     </div>
-
-
-  </div><!-- end .bottom-panel -->
+  </div>
 
   <!-- Hidden compat: sample viewer canvases kept for JS refs (display:none) -->
   <div class="sample-viewer" id="sampleViewer" style="display:none;">
@@ -341,6 +342,14 @@
       <div class="as-section-label">input</div>
 
       <div class="as-row">
+        <span class="as-label">device</span>
+        <select id="asInputDevice" class="as-select" style="flex:1">
+          <option value="">— click to scan —</option>
+        </select>
+        <button class="as-btn" id="asInputApply">apply</button>
+      </div>
+
+      <div class="as-row">
         <span class="as-label">channel</span>
         <select id="asInputChannel" class="as-select">
           <option value="0">ch 1</option>
@@ -348,6 +357,7 @@
           <option value="stereo">stereo (L+R)</option>
         </select>
       </div>
+      <div class="as-note">granular engine records mono — channel sets which input is used</div>
 
       <div class="as-row">
         <span class="as-label">gain</span>
@@ -356,23 +366,23 @@
         <span class="as-val" id="asInputGainVal">0.0 dB</span>
       </div>
 
-      <div class="as-meter-wrap">
-        <div class="as-meter-bar" id="asInputMeter"></div>
-        <span class="as-meter-label" id="asInputMeterLabel">— dBFS</span>
-      </div>
+      <!-- Multi-channel input meters — populated by renderInputMeters() -->
+      <div id="asInputMeters" class="as-multi-meter-wrap"></div>
 
       <div class="status-strip idle" id="asInputStatus">no input active</div>
-      <div class="as-note">channel selection requires active input below</div>
     </div>
 
     <!-- Output -->
     <div class="as-section">
       <div class="as-section-label">output</div>
 
-      <div class="as-row">
-        <span class="as-label">routing</span>
-        <span class="as-badge">stereo L+R</span>
-        <span class="as-dim">ch 1 + ch 2 (fixed)</span>
+      <!-- Device picker — shown only in Electron, hidden in browser -->
+      <div class="as-row" id="asOutputDeviceRow" style="display:none">
+        <span class="as-label">device</span>
+        <select id="asOutputDevice" class="as-select" style="flex:1">
+          <option value="">— scanning…</option>
+        </select>
+        <button class="as-btn" id="asOutputApply">apply</button>
       </div>
 
       <div class="as-row">
@@ -382,32 +392,44 @@
         <span class="as-val" id="asOutputGainVal">−6.0 dB</span>
       </div>
 
+      <!-- Multi-channel output meters — populated by renderOutputMeters() in Electron -->
+      <div id="asOutputMeters" class="as-multi-meter-wrap" style="display:none"></div>
+
       <div class="status-strip idle" id="asOutputStatus">no output active</div>
-      <div class="as-note">output device: set in System Settings → Sound</div>
+      <div class="as-note" id="asOutputNote">output device: set in System Settings → Sound</div>
+
+      <!-- Physical→Spatial routing table — shown in Electron when > 2 channels active -->
+      <div id="asRoutingTable" style="display:none"></div>
     </div>
 
-    <!-- Latency -->
+    <!-- Latency / engine settings -->
     <div class="as-section">
-      <div class="as-section-label">latency</div>
+      <div class="as-section-label">engine</div>
+
       <div class="as-row">
-        <span class="as-label">buffer</span>
+        <span class="as-label">sample rate</span>
+        <select id="asSampleRate" class="as-select">
+          <option value="44100" selected>44100 Hz</option>
+          <option value="48000">48000 Hz</option>
+          <option value="96000">96000 Hz</option>
+        </select>
+        <button class="as-btn" id="asRateApply">apply</button>
+      </div>
+
+      <div class="as-row">
+        <span class="as-label">buffer size</span>
         <select id="asBufferSize" class="as-select">
           <option value="128">128</option>
-          <option value="256" selected>256</option>
-          <option value="512">512</option>
+          <option value="256">256</option>
+          <option value="512" selected>512</option>
           <option value="1024">1024</option>
         </select>
-        <span class="as-dim">samples</span>
+        <span class="as-dim">frames</span>
+        <button class="as-btn" id="asBufferApply">apply</button>
       </div>
-      <div class="as-row">
-        <span class="as-label">rate</span>
-        <select id="asSampleRate" class="as-select">
-          <option value="44100">44100</option>
-          <option value="48000" selected>48000</option>
-          <option value="96000">96000</option>
-        </select>
-        <span class="as-dim">Hz</span>
-      </div>
+
+      <div class="as-note" id="asRateNote">rate change restarts audio engine — active recordings will be lost</div>
+
       <div class="as-row">
         <span class="latency-dot" id="asLatencyDot"></span>
         <span id="asLatencyLabel" class="as-dim">latency: ≈ — ms</span>
@@ -417,7 +439,7 @@
     <!-- Actions -->
     <div class="as-actions">
       <button class="as-btn" id="asStartBtn">start audio</button>
-      <button class="as-btn" id="asTestBtn">test tone</button>
+      <button class="as-btn" id="asTestBtn">speaker sweep</button>
       <button class="as-btn" id="asResetBtn">reset</button>
     </div>
   </div>

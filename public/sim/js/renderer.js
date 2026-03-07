@@ -20,7 +20,8 @@ const INPUT_CLIP_HOLD_S  = 1.5;
 const METER_CLIP_HOLD_S  = 1.5;
 const ANALYSER_BUF = new Float32Array(128);
 let _faderInputLevel  = 0;
-let _faderOutputLevel = 0;
+let _faderOutputLevel = 0;       // fallback: single-bar master analyser (browser)
+let _faderOutputLevels = [];     // per-channel smoothed levels (Electron N-ch)
 
 // ── Fader helpers ─────────────────────────────────────────────────────────────
 export function gainToFaderPos(gain) {
@@ -155,13 +156,55 @@ export function drawInputMeter() {
 }
 
 // ── Output meter ──────────────────────────────────────────────────────────────
-export function drawOutputMeter() {
-  const fc = document.getElementById('outputFaderMeter');
-  if (!fc) return;
+// In Electron with S.speakerAnalysers set: draws one narrow bar per active
+// speaker channel. In browser (no speakerAnalysers): draws the single master
+// analyser bar as before.
+//
+// Call rebuildOutputMeterStrip(n) whenever the speaker channel count changes
+// (e.g. after initSpeakerBuses). It repopulates #outputMeterStrip with n canvases.
+
+export function rebuildOutputMeterStrip(numChannels) {
+  const strip = document.getElementById('outputMeterStrip');
+  if (!strip) return;
+  strip.innerHTML = '';
+  _faderOutputLevels = [];
+  const n = Math.max(1, numChannels);
+  for (let i = 0; i < n; i++) {
+    // Wrap each canvas in a slot div so the slot controls flex layout size.
+    // The canvas is absolutely positioned inside the slot — this prevents the
+    // canvas intrinsic pixel dimensions from feeding back into flex layout
+    // and causing the resize-loop / sad-face glitch.
+    const slot = document.createElement('div');
+    slot.className = 'output-meter-slot';
+    slot.dataset.ch = i;
+
+    const cv = document.createElement('canvas');
+    cv.className = 'output-meter-bar';
+    // First bar keeps id="outputFaderMeter" so the fader drag logic in events.js
+    // (which uses getElementById) continues to work without modification.
+    if (i === 0) cv.id = 'outputFaderMeter';
+
+    slot.appendChild(cv);
+    strip.appendChild(slot);
+    _faderOutputLevels.push(0);
+  }
+}
+
+function _drawOneMeterBar(fc, analyser, smoothIdx, peakIsClipping, showFader, showLabels) {
+  const dpr  = window.devicePixelRatio || 1;
+  const rect  = fc.getBoundingClientRect();
+  const W = Math.round(rect.width);
+  const H = Math.round(rect.height);
+  // Skip this frame if the element hasn't been laid out yet (avoids sad-face canvas)
+  if (W < 2 || H < 2) return -60;
+  if (fc.width !== W * dpr || fc.height !== H * dpr) {
+    fc.width  = W * dpr;
+    fc.height = H * dpr;
+  }
 
   let rmsDb = -60, peakDb = -60;
-  if (S.masterAnalyser) {
-    S.masterAnalyser.getFloatTimeDomainData(ANALYSER_BUF);
+  if (analyser) {
+    analyser.getFloatTimeDomainData(ANALYSER_BUF);
     let sumSq = 0, peak = 0;
     for (let i = 0; i < ANALYSER_BUF.length; i++) {
       const v = Math.abs(ANALYSER_BUF[i]);
@@ -175,40 +218,37 @@ export function drawOutputMeter() {
 
   const DB_FLOOR = -60;
   const rawLevel = Math.max(0, Math.min(1, (rmsDb - DB_FLOOR) / -DB_FLOOR));
-  _faderOutputLevel += rawLevel > _faderOutputLevel
-    ? (rawLevel - _faderOutputLevel) * 0.6
-    : (rawLevel - _faderOutputLevel) * 0.08;
+  _faderOutputLevels[smoothIdx] = _faderOutputLevels[smoothIdx] !== undefined
+    ? _faderOutputLevels[smoothIdx] + (rawLevel > _faderOutputLevels[smoothIdx]
+        ? (rawLevel - _faderOutputLevels[smoothIdx]) * 0.6
+        : (rawLevel - _faderOutputLevels[smoothIdx]) * 0.08)
+    : rawLevel;
+  const smoothLevel = _faderOutputLevels[smoothIdx];
 
-  const dpr  = window.devicePixelRatio || 1;
-  const rect  = fc.getBoundingClientRect();
-  const W = Math.round(rect.width  || 38);
-  const H = Math.round(rect.height || 64);
-  if (fc.width !== W * dpr || fc.height !== H * dpr) {
-    fc.width  = W * dpr;
-    fc.height = H * dpr;
-  }
   const c = fc.getContext('2d');
   c.save();
   c.scale(dpr, dpr);
   c.clearRect(0, 0, W, H);
 
-  const ARROW_W  = 4;
-  const LABEL_W  = 14;
-  const METER_X  = ARROW_W + 1;
-  const METER_W  = W - ARROW_W - 1 - LABEL_W - 1;
+  // Layout: fader arrow on left (only on first bar), labels on right (only on last bar)
+  const ARROW_W  = showFader ? 4 : 0;
+  const LABEL_W  = showLabels ? 14 : 0;
+  const METER_X  = ARROW_W + (ARROW_W > 0 ? 1 : 0);
+  const GAP_R    = LABEL_W > 0 ? 1 : 0;
+  const METER_W  = Math.max(4, W - METER_X - GAP_R - LABEL_W);
   const PAD_T    = 3, PAD_B = 3;
   const trackH   = H - PAD_T - PAD_B;
   const METER_DB_MIN = -60, METER_DB_MAX = 6;
 
-  function meterDbToY(db) {
+  const meterDbToY = (db) => {
     const t = (db - METER_DB_MIN) / (METER_DB_MAX - METER_DB_MIN);
     return PAD_T + trackH - t * trackH;
-  }
+  };
 
   c.fillStyle = '#111';
   c.fillRect(METER_X, PAD_T, METER_W, trackH);
 
-  const fillH = Math.round(_faderOutputLevel * trackH);
+  const fillH = Math.round(smoothLevel * trackH);
   if (fillH > 0) {
     const grad = c.createLinearGradient(0, PAD_T + trackH, 0, PAD_T);
     grad.addColorStop(0,    '#1a5c2e');
@@ -220,50 +260,113 @@ export function drawOutputMeter() {
     c.fillRect(METER_X, PAD_T + trackH - fillH, METER_W, fillH);
   }
 
-  const now = performance.now() / 1000;
-  if (peakDb >= 0) outputClipHoldUntil = now + METER_CLIP_HOLD_S;
+  const isClipping = peakDb >= 0 || peakIsClipping;
 
-  const notchDbs = [6, 0, -12, -24, -36, -48, -60];
-  const isClipping = now < outputClipHoldUntil;
-  const fontSize = Math.round(Math.max(5, Math.min(7, trackH / notchDbs.length - 1)));
-  c.font = `${fontSize}px 'Roboto Mono', monospace`;
-  c.textAlign = 'left';
-  notchDbs.forEach(db => {
-    const ny = meterDbToY(db);
-    const isTop = db === 6;
-    c.strokeStyle = (isTop && isClipping) ? 'rgba(220,80,80,0.9)' : 'rgba(255,255,255,0.2)';
-    c.lineWidth   = isTop ? 1.5 : 0.75;
-    c.beginPath(); c.moveTo(METER_X, ny); c.lineTo(METER_X + METER_W, ny); c.stroke();
-    c.fillStyle    = 'rgba(255,255,255,0.28)';
-    c.textBaseline = db === METER_DB_MIN ? 'bottom' : db === 6 ? 'top' : 'middle';
-    const label    = db > 0 ? '+' + db : String(db);
-    const labelY   = db === METER_DB_MIN ? ny + 1 : db === 6 ? ny + 0.5 : ny;
-    c.fillText(label, METER_X + METER_W + 2, labelY);
-  });
+  if (showLabels) {
+    const notchDbs = [6, 0, -12, -24, -36, -48, -60];
+    const fontSize = Math.round(Math.max(5, Math.min(7, trackH / notchDbs.length - 1)));
+    c.font = `${fontSize}px 'Roboto Mono', monospace`;
+    c.textAlign = 'left';
+    notchDbs.forEach(db => {
+      const ny = meterDbToY(db);
+      const isTop = db === 6;
+      c.strokeStyle = (isTop && isClipping) ? 'rgba(220,80,80,0.9)' : 'rgba(255,255,255,0.2)';
+      c.lineWidth   = isTop ? 1.5 : 0.75;
+      c.beginPath(); c.moveTo(METER_X, ny); c.lineTo(METER_X + METER_W, ny); c.stroke();
+      c.fillStyle    = 'rgba(255,255,255,0.28)';
+      c.textBaseline = db === METER_DB_MIN ? 'bottom' : db === 6 ? 'top' : 'middle';
+      const label    = db > 0 ? '+' + db : String(db);
+      const labelY   = db === METER_DB_MIN ? ny + 1 : db === 6 ? ny + 0.5 : ny;
+      c.fillText(label, METER_X + METER_W + 2, labelY);
+    });
+  } else {
+    // No text labels but draw all notch tick lines so the scale is visible on every bar
+    const notchDbs = [6, 0, -12, -24, -36, -48, -60];
+    notchDbs.forEach(db => {
+      const ny = meterDbToY(db);
+      const isTop = db === 6;
+      c.strokeStyle = (isTop && isClipping) ? 'rgba(220,80,80,0.9)' : 'rgba(255,255,255,0.2)';
+      c.lineWidth   = isTop ? 1.5 : 0.75;
+      c.beginPath(); c.moveTo(METER_X, ny); c.lineTo(METER_X + METER_W, ny); c.stroke();
+    });
+  }
 
   if (isClipping) {
     c.fillStyle = '#dd2222';
     c.fillRect(METER_X, PAD_T, METER_W, 3);
   }
 
-  const fPos  = gainToFaderPos(S.outputGainValue);
-  const fY    = PAD_T + trackH - fPos * trackH;
-  const arrowColor = S.isMuted ? '#553333' : (S.outputGainValue > 1.0 ? '#e8a030' : '#c8c8c8');
-
-  c.strokeStyle = arrowColor;
-  c.lineWidth   = 1;
-  c.beginPath(); c.moveTo(METER_X, fY); c.lineTo(METER_X + METER_W, fY); c.stroke();
-
-  const TH = 8;
-  c.fillStyle = arrowColor;
-  c.beginPath();
-  c.moveTo(0,       fY - TH / 2);
-  c.lineTo(ARROW_W, fY);
-  c.lineTo(0,       fY + TH / 2);
-  c.closePath();
-  c.fill();
+  if (showFader) {
+    const fPos  = gainToFaderPos(S.outputGainValue);
+    const fY    = PAD_T + trackH - fPos * trackH;
+    const arrowColor = S.isMuted ? '#553333' : (S.outputGainValue > 1.0 ? '#e8a030' : '#c8c8c8');
+    c.strokeStyle = arrowColor;
+    c.lineWidth   = 1;
+    c.beginPath(); c.moveTo(METER_X, fY); c.lineTo(METER_X + METER_W, fY); c.stroke();
+    const TH = 8;
+    c.fillStyle = arrowColor;
+    c.beginPath();
+    c.moveTo(0,       fY - TH / 2);
+    c.lineTo(ARROW_W, fY);
+    c.lineTo(0,       fY + TH / 2);
+    c.closePath();
+    c.fill();
+  }
 
   c.restore();
+  return peakDb;
+}
+
+export function drawOutputMeter() {
+  const strip = document.getElementById('outputMeterStrip');
+  if (!strip) return;
+
+  const now = performance.now() / 1000;
+
+  // ── Multi-channel (Electron) ────────────────────────────────────────────────
+  if (S.speakerAnalysers && S.speakerAnalysers.length > 1) {
+    const bars = strip.querySelectorAll('.output-meter-slot canvas');
+    const n    = S.speakerAnalysers.length;
+
+    // If bar count doesn't match channel count, rebuild the strip
+    if (bars.length !== n) {
+      rebuildOutputMeterStrip(n);
+      return; // will be drawn next frame
+    }
+
+    let anyClip = now < outputClipHoldUntil;
+
+    bars.forEach((fc, i) => {
+      const peakDb = _drawOneMeterBar(
+        fc,
+        S.speakerAnalysers[i],
+        i,
+        anyClip,
+        false,            // no fader arrow on output — trim lives in audio settings
+        i === n - 1       // dB text labels on last (rightmost) bar; all bars get tick lines
+      );
+      if (peakDb >= 0) outputClipHoldUntil = now + METER_CLIP_HOLD_S;
+    });
+    return;
+  }
+
+  // ── Single-bar fallback (browser / mono Electron) ──────────────────────────
+  // Ensure there's exactly one canvas in the strip (the original #outputFaderMeter)
+  let fc = strip.querySelector('canvas');
+  if (!fc) {
+    fc = document.getElementById('outputFaderMeter');
+    if (!fc) return;
+    // Re-attach if it was somehow removed
+    if (!strip.contains(fc)) strip.appendChild(fc);
+  }
+
+  // Grow _faderOutputLevels array if needed for index 0
+  if (!_faderOutputLevels.length) _faderOutputLevels = [_faderOutputLevel];
+
+  // No fader arrow on output (trim is in audio settings); always show dB lines
+  const peakDb = _drawOneMeterBar(fc, S.masterAnalyser, 0, now < outputClipHoldUntil, false, true);
+  if (peakDb >= 0) outputClipHoldUntil = now + METER_CLIP_HOLD_S;
+  _faderOutputLevel = _faderOutputLevels[0]; // keep legacy var in sync
 }
 
 // ── Main draw frame ───────────────────────────────────────────────────────────
@@ -672,8 +775,19 @@ export function animate() {
   _animLastAt = _animNow;
   perfTick();
 
-  // Camera rotation
-  if (S.mouseInCanvas && !S.altLocked && !(S.isMobile && S.orientationActive)) {
+  // In physical mode the sensor owns the camera — lock cursor to canvas centre
+  // so painting always targets the direction you're facing (straight ahead).
+  if (S.spatialMode === 'physical') {
+    S.mousePixelX   = S.canvas.width  / 2;
+    S.mousePixelY   = S.canvas.height / 2;
+    S.mouseX        = 0;
+    S.mouseY        = 0;
+    S.mouseInCanvas = true;
+  }
+
+  // Camera rotation — disabled in physical mode (sensor drives camQ instead)
+  if (S.mouseInCanvas && !S.altLocked && !(S.isMobile && S.orientationActive)
+      && S.spatialMode !== 'physical') {
     const dist = Math.sqrt(S.mouseX*S.mouseX + S.mouseY*S.mouseY);
     const DEAD_ZONE = 0.30;
     if (dist > DEAD_ZONE) {
@@ -710,8 +824,10 @@ export function animate() {
   }
 
   // ── BNO085 sensor override ─────────────────────────────────────────────────
-  // getSensorCamQ is injected via S._getSensorCamQ by main.js after sensor init.
-  if (typeof S._getSensorCamQ === 'function') {
+  // Physical mode: sensor drives the camera so the monitor on stage shows your
+  // real-world facing direction. The visual rotates with your body.
+  // Sim mode: sensor is ignored — mouse/MIDI only. No sensor in simulation.
+  if (S.spatialMode === 'physical' && typeof S._getSensorCamQ === 'function') {
     const sq = S._getSensorCamQ();
     if (sq) S.camQ = sq;  // [w, vx, vy, vz]
   }

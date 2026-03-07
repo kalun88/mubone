@@ -10,18 +10,57 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 499.0, 534.0, 1152.0, 972.0 ],
+		"rect" : [ 500.0, 101.0, 1152.0, 972.0 ],
 		"gridonopen" : 2,
 		"gridsize" : [ 15.0, 15.0 ],
 		"gridsnaponopen" : 2,
 		"boxes" : [ 			{
+				"box" : 				{
+					"id" : "obj-43",
+					"linecount" : 8,
+					"maxclass" : "comment",
+					"numinlets" : 1,
+					"numoutlets" : 0,
+					"patching_rect" : [ 713.5, 520.0, 150.0, 114.0 ],
+					"text" : "sends to electron\n\n\n\nto do: \nuse osc / style to define which bno, what data stream"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-4",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 2,
+					"outlettype" : [ "", "" ],
+					"patching_rect" : [ 285.0, 810.0, 67.0, 22.0 ],
+					"saved_object_attributes" : 					{
+						"autostart" : 0,
+						"defer" : 0,
+						"node_bin_path" : "",
+						"npm_bin_path" : "",
+						"watch" : 0
+					}
+,
+					"text" : "node.script",
+					"textfile" : 					{
+						"text" : "",
+						"flags" : 2,
+						"embed" : 1,
+						"autowatch" : 0
+					}
+
+				}
+
+			}
+, 			{
 				"box" : 				{
 					"id" : "obj-44",
 					"maxclass" : "message",
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 840.0, 900.0, 50.0, 22.0 ],
+					"patching_rect" : [ 1035.0, 645.0, 50.0, 22.0 ],
 					"text" : "5 0"
 				}
 
@@ -33,7 +72,7 @@
 					"numinlets" : 1,
 					"numoutlets" : 8,
 					"outlettype" : [ "", "", "", "int", "int", "", "int", "" ],
-					"patching_rect" : [ 855.0, 825.0, 92.5, 22.0 ],
+					"patching_rect" : [ 1050.0, 570.0, 92.5, 22.0 ],
 					"text" : "midiparse"
 				}
 
@@ -45,7 +84,7 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 750.0, 825.0, 50.0, 22.0 ],
+					"patching_rect" : [ 945.0, 570.0, 50.0, 22.0 ],
 					"text" : "0"
 				}
 
@@ -56,7 +95,7 @@
 					"maxclass" : "comment",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 792.0, 776.0, 150.0, 20.0 ],
+					"patching_rect" : [ 987.0, 521.0, 150.0, 20.0 ],
 					"text" : "double click to select port"
 				}
 
@@ -68,7 +107,7 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "bang" ],
-					"patching_rect" : [ 750.0, 705.0, 58.0, 22.0 ],
+					"patching_rect" : [ 945.0, 450.0, 58.0, 22.0 ],
 					"text" : "loadbang"
 				}
 
@@ -80,7 +119,7 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 751.0, 735.0, 39.0, 22.0 ],
+					"patching_rect" : [ 946.0, 480.0, 39.0, 22.0 ],
 					"presentation" : 1,
 					"presentation_rect" : [ 130.0, 48.0, 39.0, 22.0 ],
 					"text" : "Wave"
@@ -94,7 +133,7 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "int" ],
-					"patching_rect" : [ 751.0, 774.0, 40.0, 22.0 ],
+					"patching_rect" : [ 946.0, 519.0, 40.0, 22.0 ],
 					"presentation" : 1,
 					"presentation_rect" : [ 129.0, 88.0, 40.0, 22.0 ],
 					"text" : "midiin"
@@ -511,7 +550,7 @@
 
 											}
  ],
-										"originid" : "pat-10"
+										"originid" : "pat-124"
 									}
 ,
 									"patching_rect" : [ 286.0, 600.0, 53.5, 22.0 ],
@@ -1157,7 +1196,7 @@
 
 											}
  ],
-										"originid" : "pat-22"
+										"originid" : "pat-136"
 									}
 ,
 									"patching_rect" : [ 15.0, 135.0, 120.0, 22.0 ],
@@ -1653,7 +1692,7 @@
 
 							}
  ],
-						"originid" : "pat-6"
+						"originid" : "pat-120"
 					}
 ,
 					"patching_rect" : [ 30.0, 285.0, 122.0, 22.0 ],
@@ -2440,7 +2479,7 @@
 
 							}
  ],
-						"originid" : "pat-26"
+						"originid" : "pat-140"
 					}
 ,
 					"patching_rect" : [ 419.0, 360.0, 111.0, 22.0 ],
@@ -2721,8 +2760,9 @@
 						}
 ,
 						"classnamespace" : "box",
-						"rect" : [ 164.0, 394.0, 576.0, 700.0 ],
+						"rect" : [ 164.0, 373.0, 576.0, 700.0 ],
 						"gridsize" : [ 15.0, 15.0 ],
+						"visible" : 1,
 						"boxes" : [ 							{
 								"box" : 								{
 									"id" : "obj-1",
@@ -2840,7 +2880,7 @@
 									"numoutlets" : 1,
 									"outlettype" : [ "" ],
 									"patching_rect" : [ 185.0, 100.0, 184.0, 22.0 ],
-									"text" : "port e, open, baud 115200, poll 1"
+									"text" : "port d, open, baud 115200, poll 1"
 								}
 
 							}
@@ -2963,7 +3003,7 @@
 
 							}
  ],
-						"originid" : "pat-28"
+						"originid" : "pat-142"
 					}
 ,
 					"patching_rect" : [ 919.0, 285.0, 70.0, 22.0 ],
@@ -3604,7 +3644,7 @@
 
 			}
  ],
-		"originid" : "pat-4",
+		"originid" : "pat-46",
 		"dependency_cache" : [ 			{
 				"name" : "OSC-route.mxo",
 				"type" : "iLaX"
@@ -3615,21 +3655,21 @@
 			}
 , 			{
 				"name" : "mumath.colvec.maxpat",
-				"bootpath" : "~/Documents/mubone sim/mubone-web-private/max",
+				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
 				"patcherrelativepath" : ".",
 				"type" : "JSON",
 				"implicit" : 1
 			}
 , 			{
 				"name" : "mumath.matranspose.maxpat",
-				"bootpath" : "~/Documents/mubone sim/mubone-web-private/max",
+				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
 				"patcherrelativepath" : ".",
 				"type" : "JSON",
 				"implicit" : 1
 			}
 , 			{
 				"name" : "mumath.vrz.maxpat",
-				"bootpath" : "~/Documents/mubone sim/mubone-web-private/max",
+				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
 				"patcherrelativepath" : ".",
 				"type" : "JSON",
 				"implicit" : 1
@@ -3637,6 +3677,13 @@
 , 			{
 				"name" : "slipOSC.mxo",
 				"type" : "iLaX"
+			}
+, 			{
+				"name" : "u073003222.js",
+				"bootpath" : "~/Library/Application Support/Cycling '74/Max 9/Settings/temp64-Max",
+				"patcherrelativepath" : "../../../../Library/Application Support/Cycling '74/Max 9/Settings/temp64-Max",
+				"type" : "TEXT",
+				"implicit" : 1
 			}
  ],
 		"autosave" : 0

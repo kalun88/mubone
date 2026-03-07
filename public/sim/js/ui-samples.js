@@ -21,6 +21,7 @@ export async function loadAudioFile(file) {
   const arrayBuffer = await file.arrayBuffer();
   const audioBuffer = await actx.decodeAudioData(arrayBuffer);
 
+  const sampleIdx = S.samples.length;
   S.samples.push({
     buffer:     audioBuffer,
     name:       file.name,
@@ -30,7 +31,7 @@ export async function loadAudioFile(file) {
     cropEnd:    1
   });
 
-  if (svActiveTab < 0) svActiveTab = S.samples.length - 1;
+  if (svActiveTab < 0) svActiveTab = sampleIdx;
   rebuildSampleListUI();
   requestAnimationFrame(drawSvWaveform);
   console.log(`Loaded sample ${S.samples.length}: ${file.name} (${audioBuffer.duration.toFixed(2)}s)`);

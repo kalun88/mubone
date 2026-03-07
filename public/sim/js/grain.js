@@ -157,31 +157,109 @@ export function playGrain(particle, customParams) {
     gain.gain.setValueCurveAtTime(attackCurve,  t,               fade);
     gain.gain.setValueCurveAtTime(releaseCurve, t + actualDur - fade, fade);
 
-    const panner = actx.createStereoPanner();
     const [wx, wy, wz] = spherePoint(particle.lon, particle.lat);
-    const [cx, cy, cz] = qRotateVec(qConjugate(S.camQ), [wx, wy, wz]);
-    const azimuthPan = cz !== 0
-      ? Math.max(-1, Math.min(1, cx / Math.abs(cz)))
-      : 0;
-    const jitter = rand(-ep.panSpread * 0.4, ep.panSpread * 0.4);
-    panner.pan.value = Math.max(-1, Math.min(1, azimuthPan + jitter));
-    const elevNorm    = cz !== 0 ? Math.min(1, Math.abs(cy / Math.abs(cz))) : 0;
-    const elevScale   = 1 - elevNorm * 0.35;
 
-    const elevGain = actx.createGain();
+    // Sim mode:      transform grain into camera space — panning is view-relative
+    //                (turn your head left, a front grain moves right = pans right).
+    // Physical mode: use world-space position directly — speakers are fixed in the
+    //                room, turning your body doesn't move the sound. The camera
+    //                (and sensor) still rotates visually but audio is absolute.
+    const [cx, cy, cz] = S.spatialMode === 'physical'
+      ? [wx, wy, wz]
+      : qRotateVec(qConjugate(S.camQ), [wx, wy, wz]);
+
+    // Elevation attenuation — shared by both paths
+    const elevNorm  = cz !== 0 ? Math.min(1, Math.abs(cy / Math.abs(cz))) : 0;
+    const elevScale = 1 - elevNorm * 0.35;
+    const elevGain  = actx.createGain();
     elevGain.gain.value = elevScale;
 
     source.connect(gain);
     gain.connect(elevGain);
-    elevGain.connect(panner);
-    panner.connect(getMasterBus());
 
-    source.start(t, bufferStartPos, actualDur);
-    S._grainSourceCount++;
-    source.addEventListener('ended', () => {
-      S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-      try { source.disconnect(); gain.disconnect(); elevGain.disconnect(); panner.disconnect(); } catch(_){}
-    });
+    if (S.speakerBuses?.length) {
+      // ── Multi-channel speaker path (Electron) ─────────────────────────────
+      // Project grain's camera-space horizontal angle onto the speaker ring using
+      // angle-aware 2-D VBAP: find the two speakers that bracket the grain's
+      // azimuth by their actual angleDeg values (not by index), so any speaker
+      // layout — including stereo L/R at 270°/90° — pans correctly.
+      //
+      // Camera space: cx = right, cz = into screen (negative = toward viewer).
+      // Azimuth: atan2(cx, -cz) → 0 = front, clockwise positive.
+
+      const speakers = S.speakerBuses;
+      const n        = speakers.length;
+
+      // Raw azimuth in radians, with pan-spread jitter, normalised to [0, 2π).
+      // Camera space: cz>0 = in front of listener, cx>0 = to listener's right.
+      // atan2(cx, cz): 0°=front, 90°=right, 180°=rear, 270°=left — matches the
+      // speaker bus layout (bus 0 = 0° = front for n≥3; R=90°/L=270° for n=2).
+      const TWO_PI = 2 * Math.PI;
+      const rawAz  = Math.atan2(cx, cz);
+      const jitter = rand(-ep.panSpread * 0.5, ep.panSpread * 0.5);
+      let   az     = ((rawAz + jitter) % TWO_PI + TWO_PI) % TWO_PI;
+      const azDeg  = az * (180 / Math.PI);
+
+      // Build sorted list of speaker angles (deg, 0-360) with their original indices.
+      // Sort once per grain — cheap for ≤16 speakers.
+      const sorted = speakers
+        .map(({ angleDeg }, idx) => ({ angleDeg, idx }))
+        .sort((a, b) => a.angleDeg - b.angleDeg);
+
+      // Find the speaker just CW (clockwise ≥ azDeg) — that's "next".
+      // The one before it is "sector" (the speaker CCW of azDeg).
+      let nextPos = sorted.findIndex(s => s.angleDeg > azDeg);
+      if (nextPos === -1) nextPos = 0;           // wrapped around
+      const prevPos = (nextPos - 1 + n) % n;
+
+      const sA = sorted[prevPos];
+      const sB = sorted[nextPos];
+
+      // Angular span of this sector, and how far az sits within it
+      let spanDeg = sB.angleDeg - sA.angleDeg;
+      if (spanDeg <= 0) spanDeg += 360;          // wraps past 0°
+      let offsetDeg = azDeg - sA.angleDeg;
+      if (offsetDeg < 0) offsetDeg += 360;
+      const t01 = Math.max(0, Math.min(1, offsetDeg / spanDeg));
+
+      // Equal-power crossfade
+      const wA = Math.cos(t01 * Math.PI * 0.5);
+      const wB = Math.sin(t01 * Math.PI * 0.5);
+
+      // Create per-grain gain nodes only for the two active speakers
+      const gA = actx.createGain(); gA.gain.value = wA;
+      const gB = actx.createGain(); gB.gain.value = wB;
+
+      elevGain.connect(gA); gA.connect(speakers[sA.idx].bus);
+      elevGain.connect(gB); gB.connect(speakers[sB.idx].bus);
+
+      source.start(t, bufferStartPos, actualDur);
+      S._grainSourceCount++;
+      source.addEventListener('ended', () => {
+        S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
+        try {
+          source.disconnect(); gain.disconnect(); elevGain.disconnect();
+          gA.disconnect(); gB.disconnect();
+        } catch(_) {}
+      });
+
+    } else {
+      // ── Stereo path (browser / no device selected) — unchanged ────────────
+      const panner     = actx.createStereoPanner();
+      const azimuthPan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
+      const jitter     = rand(-ep.panSpread * 0.4, ep.panSpread * 0.4);
+      panner.pan.value  = Math.max(-1, Math.min(1, azimuthPan + jitter));
+
+      elevGain.connect(panner);
+      panner.connect(getMasterBus());
+
+      source.start(t, bufferStartPos, actualDur);
+      S._grainSourceCount++;
+      source.addEventListener('ended', () => {
+        S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
+        try { source.disconnect(); gain.disconnect(); elevGain.disconnect(); panner.disconnect(); } catch(_) {}
+      });
+    }
 
     if (particle.source === 'sample') {
       S.activeGrains.push({

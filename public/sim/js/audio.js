@@ -24,9 +24,9 @@ export function makeSoftClipCurve(amount = 10) {
 
 export function ensureAudioContext() {
   if (!S.audioCtx) {
-    // 22050 Hz — half the default 44100/48000, halves CPU load across the entire
-    // audio graph. More than enough bandwidth for trombone + voice.
-    S.audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 22050 });
+    // Use caller-supplied preferred rate (set by audio settings UI) or default to 44100.
+    const sampleRate = S.preferredSampleRate ?? 44100;
+    S.audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
 
     // On mobile, Web Audio defaults to the earpiece (call speaker, tiny & quiet).
     // Playing a silent looping <audio> element forces Chrome/Android to switch
@@ -51,7 +51,7 @@ export function ensureAudioContext() {
     // transient whistle peaks and introduced frequency-dependent distortion.
     const softClipper = S.audioCtx.createWaveShaper();
     softClipper.curve     = makeSoftClipCurve(4);
-    softClipper.oversample = '2x'; // at 22050 Hz, 2x gives 44100 Hz internal — enough to avoid aliasing
+    softClipper.oversample = '2x'; // 2x internal oversampling — enough to avoid aliasing at both 22050 and 44100
 
     // Analyser tap — post-clipper, pre-mute, so meter stays active even when muted
     S.masterAnalyser = S.audioCtx.createAnalyser();
@@ -63,10 +63,15 @@ export function ensureAudioContext() {
     muteGain.gain.value = 1;
 
     // Chain: masterGain -> softClipper -> analyser -> muteGain -> destination
+    // In Electron, RtAudio owns hardware output — don't connect to Web Audio
+    // destination (it always goes to OS default / MacBook speakers regardless
+    // of the selected interface). The speaker buses tap masterBus directly.
     masterGain.connect(softClipper);
     softClipper.connect(S.masterAnalyser);
     S.masterAnalyser.connect(muteGain);
-    muteGain.connect(S.audioCtx.destination);
+    if (!window.electronBridge) {
+      muteGain.connect(S.audioCtx.destination);
+    }
     S.masterBus = masterGain;
     window._muteGain = muteGain; // expose for setMuted
   }
@@ -75,6 +80,52 @@ export function ensureAudioContext() {
 }
 
 export function getMasterBus() { ensureAudioContext(); return S.masterBus; }
+
+// Tear down the AudioContext and all dependent state so ensureAudioContext()
+// will recreate it at the new S.preferredSampleRate on next call.
+// Any active recording is lost — caller should warn the user first.
+export async function recreateAudioContext(newSampleRate) {
+  S.preferredSampleRate = newSampleRate;
+
+  // Stop any active recording
+  if (S.isRecording) {
+    const { stopLiveRecording } = await import('./audio.js');
+    stopLiveRecording?.();
+  }
+
+  // Disconnect and stop the mic stream
+  try { window._micMonitorSrc?.disconnect(); } catch(_) {}
+  try { S.inputGainNode?.disconnect(); }       catch(_) {}
+  if (S.recordingStream) {
+    S.recordingStream.getTracks().forEach(t => t.stop());
+    S.recordingStream = null;
+  }
+
+  // Tear down speaker buses (Electron)
+  if (S.speakerBuses) {
+    S.speakerBuses.forEach(b => { try { b.bus.disconnect(); } catch(_) {} });
+    S.speakerBuses = null;
+  }
+
+  // Close the old context
+  if (S.audioCtx) {
+    try { await S.audioCtx.close(); } catch(_) {}
+    S.audioCtx = null;
+  }
+
+  // Reset dependent state
+  S.masterBus      = null;
+  S.masterAnalyser = null;
+  S.inputGainNode  = null;
+  S.inputAnalyser  = null;
+  S.micPermissionGranted = false;
+  S.inputStream    = null;
+  window._micMonitorSrc = null;
+
+  // Recreate immediately so the rest of the app can use it
+  ensureAudioContext();
+  console.log(`AudioContext recreated at ${newSampleRate} Hz`);
+}
 
 // ── Mic access ──────────────────────────────────────────────────────────────
 
@@ -99,6 +150,7 @@ export function warmUpAudioEngine() {
 let _micAccessPromise = null;  // guard against concurrent getUserMedia calls
 
 export async function requestMicAccess() {
+  // If settings modal already opened a stream, reuse it — don't fight over the device.
   if (S.micPermissionGranted && S.recordingStream) return true;
   if (_micAccessPromise) return _micAccessPromise;   // already asking — wait for it
   _micAccessPromise = (async () => {
@@ -109,14 +161,22 @@ export async function requestMicAccess() {
         'NotSupportedError'
       );
     }
+
+    // Build audio constraints — if the user pre-selected a device in settings,
+    // honour it. Otherwise open the system default in mono.
+    const audioConstraints = {
+      sampleRate:          { ideal: S.audioCtx?.sampleRate ?? 44100 },
+      channelCount:        { ideal: S.selectedInputChannels || 1 },
+      echoCancellation:    false,
+      noiseSuppression:    false,
+      autoGainControl:     false,
+    };
+    if (S.selectedInputDeviceId) {
+      audioConstraints.deviceId = { exact: S.selectedInputDeviceId };
+    }
+
     S.recordingStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        sampleRate:   22050,  // match AudioContext — avoids browser resampling the mic stream
-        channelCount: 1,      // mono — no point capturing stereo for a trombone
-        echoCancellation:    false, // off — we want the raw signal, not phone-call processing
-        noiseSuppression:    false,
-        autoGainControl:     false,
-      }
+      audio: audioConstraints,
     });
     S.micPermissionGranted = true;
     S.inputStream = S.recordingStream;  // expose for ui-audio-settings (no re-prompt)
@@ -302,6 +362,190 @@ export function stopLiveRecording() {
   S.liveBufferSampleCount = 0;
   S.currentLiveBufferIdx = -1;
   S.updateLiveRecUI?.();
+}
+
+// ── Multi-channel speaker bus setup (Electron only) ──────────────────────────
+// Creates N persistent GainNode buses, one per output channel, evenly spaced
+// around a circle (speaker 0 = front, going clockwise).
+// Wires them through a ChannelMerger into the capture worklet → IPC → audify.
+// Safe to call in the browser — bails out immediately if electronBridge is absent.
+// Call initSpeakerBuses(n) once a device is selected; calling again tears down
+// the old graph and rebuilds for the new channel count.
+
+let _captureNode    = null;  // keep ref so we can disconnect on rebuild
+let _meterTap       = null;
+let _merger         = null;  // module-level ref so rewireChannelMerger can access it
+let _headphoneNode  = null;  // stereo headphone downmix gain node (Electron)
+
+export async function initSpeakerBuses(numChannels = 2) {
+  if (!window.electronBridge?.isElectron) return;
+
+  const actx = ensureAudioContext();
+
+  // Register worklet once (addModule is idempotent after first call)
+  await actx.audioWorklet.addModule('js/worklets/quad-capture.worklet.js');
+
+  // Tear down any previous graph
+  if (_captureNode) {
+    try { _captureNode.port.onmessage = null; _captureNode.disconnect(); } catch(_) {}
+    _captureNode = null;
+  }
+  if (_meterTap) {
+    try { _meterTap.disconnect(); } catch(_) {}
+    _meterTap = null;
+  }
+  if (_headphoneNode) {
+    try { _headphoneNode.disconnect(); } catch(_) {}
+    _headphoneNode = null;
+  }
+  if (_merger) {
+    try { _merger.disconnect(); } catch(_) {}
+    _merger = null;
+  }
+  if (S.speakerAnalysers) {
+    S.speakerAnalysers.forEach(an => { try { an.disconnect(); } catch(_) {} });
+    S.speakerAnalysers = null;
+  }
+  if (S.speakerBuses) {
+    S.speakerBuses.forEach(b => { try { b.bus.disconnect(); } catch(_) {} });
+    S.speakerBuses = null;
+  }
+
+  const n = Math.max(1, numChannels);
+
+  // One GainNode bus per speaker.
+  // For stereo (n=2) use the standard L/R arrangement: 270° (left) and 90° (right).
+  // For n=1 (mono) use 0° (front). For n≥3 space equally clockwise from front (0°).
+  // This ensures stereo headphone/laptop output pans correctly (front-center = equal L+R).
+  function speakerAngleDeg(i, total) {
+    if (total === 1) return 0;
+    if (total === 2) return i === 0 ? 270 : 90;   // 270 = left, 90 = right
+    return (360 / total) * i;                      // equal spacing from front
+  }
+  const buses = Array.from({ length: n }, (_, i) => {
+    const angleDeg = speakerAngleDeg(i, n);
+    const angleRad = (angleDeg * Math.PI) / 180;
+    const bus = actx.createGain();
+    return { bus, angleDeg, angleRad };
+  });
+
+  // Per-bus AnalyserNodes for the output meter strip in audio settings
+  S.speakerAnalysers = buses.map(({ bus }) => {
+    const an = actx.createAnalyser();
+    an.fftSize = 256;
+    an.smoothingTimeConstant = 0.8;
+    bus.connect(an);   // tap from bus; an is a dead-end (no further connect needed)
+    return an;
+  });
+
+  // Merge N mono buses into a single N-channel stream.
+  // Apply S.channelRouting if set (Physical→Spatial mapping); default = identity.
+  _merger = actx.createChannelMerger(n);
+  const routing = S.channelRouting ?? buses.map((_, i) => i);
+  buses.forEach(({ bus }, i) => {
+    const destCh = routing[i] ?? i;
+    if (destCh >= 0 && destCh < n) bus.connect(_merger, 0, destCh);
+  });
+
+  // Capture worklet — generalised to N channels via a message on init
+  _captureNode = new AudioWorkletNode(actx, 'quad-capture', {
+    numberOfInputs:   1,
+    numberOfOutputs:  0,
+    channelCount:     n,
+    channelCountMode: 'explicit',
+  });
+
+  // Tell the worklet how many channels and what batch size to use.
+  // batchSize must equal bufferFrames / 128 so each posted buffer is exactly
+  // one audify write-call's worth of frames (audify rejects mismatched sizes).
+  const bufferFrames = S.preferredBufferSize ?? 512;
+  const batchSize    = Math.max(1, Math.round(bufferFrames / 128));
+  _captureNode.port.postMessage({ type: 'init', numChannels: n, batchSize });
+
+  _merger.connect(_captureNode);
+
+  // Route captured buffers to Electron main process → audify → hardware
+  _captureNode.port.onmessage = ({ data }) => {
+    window.electronBridge.sendAudioBuffer(data.interleaved);
+  };
+
+  // ── Stereo headphone mix ──────────────────────────────────────────────────
+  // Always-on downmix → AudioContext destination (system output = headphones/laptop).
+  // Finds the bus closest to left (270°) and closest to right (90°) by angle distance
+  // so the downmix is correct regardless of channel count or layout.
+  // For n=1 (mono) both sides use the single bus.
+  function closestBusIdx(targetDeg) {
+    let best = 0, bestDist = Infinity;
+    buses.forEach(({ angleDeg }, i) => {
+      const d = Math.abs(((angleDeg - targetDeg + 540) % 360) - 180); // circular distance
+      if (d < bestDist) { bestDist = d; best = i; }
+    });
+    return best;
+  }
+  const hpL = closestBusIdx(270); // left
+  const hpR = closestBusIdx(90);  // right
+
+  const hpMerger = actx.createChannelMerger(2);
+  buses[hpL].bus.connect(hpMerger, 0, 0);
+  buses[hpR].bus.connect(hpMerger, 0, 1);
+  _headphoneNode = actx.createGain();
+  _headphoneNode.gain.value = 0.7;
+  hpMerger.connect(_headphoneNode);
+  // In Electron, RtAudio (audify) owns all hardware output. The Web Audio
+  // destination always routes to the OS default device (MacBook speakers),
+  // completely ignoring the selected interface. Don't connect to destination
+  // at all in Electron — the node exists only as a dead-end tap for the
+  // output gain slider value. In browser it's the only output path so connect normally.
+  if (!window.electronBridge) {
+    _headphoneNode.connect(actx.destination);
+  }
+  window._headphoneOutNode = _headphoneNode;  // expose for output gain slider
+
+  // Meter tap: down-mix L+R buses into S.masterAnalyser so meters work.
+  const meterMerger = actx.createChannelMerger(2);
+  buses[hpL].bus.connect(meterMerger, 0, 0);
+  buses[hpR].bus.connect(meterMerger, 0, 1);
+  _meterTap = actx.createGain();
+  _meterTap.gain.value = 1;
+  meterMerger.connect(_meterTap);
+  _meterTap.connect(S.masterAnalyser);
+
+  // Expose on S so grain.js can route to them
+  S.speakerBuses  = buses;   // [{ bus, angleDeg, angleRad }, ...]
+  S.speakerBuses.numChannels = n;
+
+  // Legacy alias — keeps any remaining S.quadBuses references from crashing
+  S.quadBuses = null;
+
+  // Notify the main window that channel count changed so it can rebuild the meter strip.
+  // Uses a callback on S to avoid a circular import with renderer.js.
+  S._onSpeakerBusesReady?.(n);
+
+  console.log(`Speaker buses ready — ${n} ch, angles: ${buses.map(b => b.angleDeg.toFixed(0) + '°').join(', ')} → audify + headphone mix`);
+}
+
+// ── Routing rewire ────────────────────────────────────────────────────────────
+// Reconnects speaker buses to the ChannelMerger using S.channelRouting without
+// rebuilding the whole graph. Call this when the user changes a routing dropdown.
+export function rewireChannelMerger() {
+  if (!S.speakerBuses || !_merger) return;
+  const n = S.speakerBuses.length;
+  // Disconnect all buses from merger first
+  S.speakerBuses.forEach(({ bus }) => {
+    try { bus.disconnect(_merger); } catch(_) {}
+  });
+  // Reconnect using current routing map
+  const routing = S.channelRouting ?? S.speakerBuses.map((_, i) => i);
+  S.speakerBuses.forEach(({ bus }, i) => {
+    const destCh = routing[i] ?? i;
+    if (destCh >= 0 && destCh < n) bus.connect(_merger, 0, destCh);
+  });
+  console.log('Channel routing updated:', routing);
+}
+
+// Convenience: called from main.js on startup (stereo placeholder until device is chosen)
+export async function initQuadBuses() {
+  return initSpeakerBuses(2);
 }
 
 export function getRecordingDuration() {

@@ -12,7 +12,8 @@ import {
 } from './ui-presets.js';
 import { setupMappingModal, initMidi } from './midi.js';
 import { initMobileMode } from './mobile.js';
-import { resizeCanvas, animate } from './renderer.js';
+import { initQuadBuses, initSpeakerBuses } from './audio.js';
+import { resizeCanvas, animate, rebuildOutputMeterStrip } from './renderer.js';
 import { initSensor, getSensorCamQ } from './sensor.js';
 import { initSensorUI } from './ui-sensor.js';
 import { initAudioSettings } from './ui-audio-settings.js';
@@ -38,6 +39,61 @@ function init() {
   initSensorUI();
   initAudioSettings();
 
+  // When speaker buses are (re)initialised, rebuild the main-window output meter
+  // strip to show one bar per active channel. Using a callback on S avoids a
+  // circular import between audio.js and renderer.js.
+  S._onSpeakerBusesReady = (n) => rebuildOutputMeterStrip(n);
+
+  // ── Sample instrument modal ──────────────────────────────────────────────────
+  const sampleModal    = document.getElementById('sampleModal');
+  const sampleOpenBtn  = document.getElementById('bottomPanelToggleBtn');
+  const sampleCloseBtn = document.getElementById('sampleModalClose');
+  if (sampleModal && sampleOpenBtn) {
+    sampleOpenBtn.addEventListener('click', () => {
+      const opening = !sampleModal.classList.contains('open');
+      sampleModal.classList.toggle('open', opening);
+      sampleOpenBtn.classList.toggle('open', opening);
+    });
+    sampleCloseBtn?.addEventListener('click', () => {
+      sampleModal.classList.remove('open');
+      sampleOpenBtn.classList.remove('open');
+    });
+    // Click backdrop to close
+    sampleModal.addEventListener('click', e => {
+      if (e.target === sampleModal) {
+        sampleModal.classList.remove('open');
+        sampleOpenBtn.classList.remove('open');
+      }
+    });
+  }
+
+  // ── Spatial mode toggle ─────────────────────────────────────────────────────
+  // sim:      headphones / mouse. View-relative stereo panning. Sensor ignored.
+  // physical: real speakers. Sensor drives camera + paint cursor. World-space VBAP.
+  const spatialModeBtn = document.getElementById('spatialModeBtn');
+  if (spatialModeBtn) {
+    function updateSpatialModeBtn() {
+      const isPhysical = S.spatialMode === 'physical';
+      spatialModeBtn.textContent = isPhysical ? '⬡ physical' : '⬡ sim';
+      spatialModeBtn.classList.toggle('active', isPhysical);
+      spatialModeBtn.title = isPhysical
+        ? 'physical mode — sensor drives cursor, world-space VBAP, speakers fixed in room\nclick to switch to sim'
+        : 'sim mode — mouse/MIDI only, view-relative stereo panning, headphones\nclick to switch to physical';
+    }
+    spatialModeBtn.addEventListener('click', () => {
+      S.spatialMode = S.spatialMode === 'sim' ? 'physical' : 'sim';
+      updateSpatialModeBtn();
+      // In physical mode hide the OS cursor over the canvas — the renderer draws
+      // the crosshair at center. Clicks/scroll/right-click all still fire normally.
+      // In sim mode restore the default cursor.
+      if (S.canvas) {
+        S.canvas.style.cursor = S.spatialMode === 'physical' ? 'none' : '';
+      }
+      console.log(`[spatial] mode: ${S.spatialMode}`);
+    });
+    updateSpatialModeBtn();
+  }
+
   // Re-size after first layout pass in case dimensions weren't settled yet
   requestAnimationFrame(() => {
     resizeCanvas();
@@ -54,6 +110,27 @@ function init() {
 
   const presetWaveformWrap = document.querySelector('.preset-waveform-wrap');
   if (presetWaveformWrap) new ResizeObserver(() => drawPresetWaveform()).observe(presetWaveformWrap);
+
+  // Quad bus init — Electron only, no-op in the browser
+  if (window.electronBridge?.isElectron) {
+    initQuadBuses()
+      .then(async () => {
+        // Auto-select the first multi-channel device, falling back to stereo.
+        // User can change device anytime via the audio settings modal.
+        const devices = await window.electronBridge.getAudioDevices();
+        // Always start with the system default — user can switch in Audio Settings
+        const best = devices.find(d => d.isDefault) || devices[0];
+        if (best) {
+          const nCh = best.outputChannels;
+          await initSpeakerBuses(nCh);
+          const result = await window.electronBridge.setAudioDevice(best.id, nCh);
+          console.log(`Output: "${best.name}" (system default) — ${nCh} ch — streaming: ${result.streaming}`);
+        } else {
+          console.warn('No output devices found. Open Audio Settings to select one.');
+        }
+      })
+      .catch(e => console.warn('Quad bus init failed:', e));
+  }
 
   // Grain scheduler — independent of render loop so slow frames don't delay grains.
   // 30ms interval = ~33 ticks/sec. Grains are 25ms–2000ms so 30ms scheduling

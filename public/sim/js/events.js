@@ -282,10 +282,16 @@ export function setupEvents() {
   }
 
   // ── Fullscreen ────────────────────────────────────────────────────────────
-  document.getElementById('fullscreenBtn').addEventListener('click', () => {
-    const wrapper = document.getElementById('canvasWrapper');
-    if (!document.fullscreenElement) wrapper.requestFullscreen().catch(() => {});
-    else document.exitFullscreen();
+  // In Electron, requestFullscreen() on a sub-element doesn't work — use native
+  // BrowserWindow.setFullScreen() via IPC instead.
+  document.getElementById('fullscreenBtn')?.addEventListener('click', () => {
+    if (window.electronBridge?.toggleFullscreen) {
+      window.electronBridge.toggleFullscreen();
+    } else {
+      const wrapper = document.getElementById('canvasWrapper');
+      if (!document.fullscreenElement) wrapper?.requestFullscreen().catch(() => {});
+      else document.exitFullscreen();
+    }
   });
   document.addEventListener('fullscreenchange', () => {
     document.getElementById('fullscreenBtn').textContent =

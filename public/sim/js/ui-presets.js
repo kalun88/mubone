@@ -151,12 +151,18 @@ export function setupPresets() {
     if (btn) btn.classList.toggle('active', S.perfMonitorVisible);
   });
 
-  // Fullscreen button 2
-  document.getElementById('fullscreenBtn2')?.addEventListener('click', () => {
-    const wrapper = document.getElementById('canvasWrapper');
-    if (!document.fullscreenElement) wrapper.requestFullscreen().catch(() => {});
-    else document.exitFullscreen();
-  });
+  // Fullscreen — use Electron native API in Electron (requestFullscreen doesn't work
+  // in BrowserWindow), fall back to web API in browser.
+  function doToggleFullscreen() {
+    if (window.electronBridge?.toggleFullscreen) {
+      window.electronBridge.toggleFullscreen();
+    } else {
+      const wrapper = document.getElementById('canvasWrapper');
+      if (!document.fullscreenElement) wrapper?.requestFullscreen().catch(() => {});
+      else document.exitFullscreen();
+    }
+  }
+  document.getElementById('fullscreenBtn2')?.addEventListener('click', doToggleFullscreen);
 
   // Mic enable button
   const micBtn = document.getElementById('micEnableBtn');

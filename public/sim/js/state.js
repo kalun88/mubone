@@ -618,6 +618,30 @@ export const S = {
 
   // ── Mobile setup gate ──────────────────────────────────────────────────
   _mobileSetupDone: false, // true once orientation + gyro setup completes
+
+  // ── Spatial mode ───────────────────────────────────────────────────────────
+  // 'sim'      — simulation / headphones. Sensor ignored; mouse drives camera.
+  //              Audio panned relative to current view direction (video-game style).
+  //              Always stereo out.
+  // 'physical' — real speaker setup. Sensor drives camera AND paint cursor.
+  //              Audio VBAP uses world-space grain positions (speakers are fixed
+  //              in the room — turning your body doesn't pan the sound).
+  //              2 to N speakers.
+  spatialMode: 'sim',   // 'sim' | 'physical'
+
+  // ── Multi-channel audio routing ────────────────────────────────────────
+  // channelRouting: null → identity (bus i → physical ch i).
+  // When set, channelRouting[physicalCh] = speaker bus index (or -1 = mute).
+  channelRouting: null,
+
+  // speakerAnalysers: one AnalyserNode per speaker bus, populated by initSpeakerBuses.
+  // Used by the audio settings modal output meter strip.
+  speakerAnalysers: null,
+
+  // ── Channel label overrides ───────────────────────────────────────────────
+  // Short names shown on VU meter bars. null = auto-generate.
+  inputChannelLabels:  null,   // string[] | null
+  outputChannelLabels: null,   // string[] | null
 };
 
 // ── Initialise grainParams from first preset ─────────────────────────────────
