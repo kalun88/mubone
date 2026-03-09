@@ -76,7 +76,12 @@ function init() {
   if (spatialModeBtn) {
     function updateSpatialModeBtn() {
       const isPhysical = S.spatialMode === 'physical';
-      spatialModeBtn.textContent = isPhysical ? '⬡ physical' : '⬡ sim';
+      const label = spatialModeBtn.querySelector('.spatial-mode-label');
+      const iconSim = spatialModeBtn.querySelector('.spatial-icon-sim');
+      const iconPhys = spatialModeBtn.querySelector('.spatial-icon-physical');
+      if (label) label.textContent = isPhysical ? 'mubone physical mode' : 'mubone simulation mode';
+      if (iconSim)  iconSim.style.display  = isPhysical ? 'none' : '';
+      if (iconPhys) iconPhys.style.display = isPhysical ? '' : 'none';
       spatialModeBtn.classList.toggle('active', isPhysical);
       spatialModeBtn.title = isPhysical
         ? 'physical mode — sensor drives cursor, world-space VBAP, speakers fixed in room\nclick to switch to sim'

@@ -12,6 +12,17 @@ import { angleBetweenSphere, findNearestCloudSlot, resetCursorPeriod } from './g
 import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js';
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
 
+// ── Shared time formatter (seconds → human-readable ms/s string) ─────────────
+export function fmtMs(v) {
+  const ms = v * 1000;
+  if (ms >= 1000)  return (ms / 1000).toFixed(2) + 's';
+  if (ms < 0.01)   return ms.toFixed(4) + 'ms';
+  if (ms < 0.1)    return ms.toFixed(3) + 'ms';
+  if (ms < 1)      return ms.toFixed(2) + 'ms';
+  if (ms < 10)     return ms.toFixed(1) + 'ms';
+  return Math.round(ms) + 'ms';
+}
+
 // ── Grain presets UI ─────────────────────────────────────────────────────────
 
 export function setupPresets() {
@@ -100,13 +111,28 @@ export function setupPresets() {
     }, { passive: false });
   }
 
-  // ── Radius slider ─────────────────────────────────────────────────────────
+  // ── Radius slider + numbox ────────────────────────────────────────────────
   const radiusSliderEl = document.getElementById('radiusSlider');
+  const radiusValEl    = document.getElementById('radiusVal');
+  function applyRadius(deg) {
+    const v = Math.max(1, Math.min(180, Math.round(deg)));
+    S.searchRadiusDeg = v;
+    if (radiusSliderEl) radiusSliderEl.value = v;
+    if (radiusValEl)    radiusValEl.value    = v + '°';
+    updatePlaybackControls();
+  }
   if (radiusSliderEl) {
     radiusSliderEl.value = S.searchRadiusDeg;
-    radiusSliderEl.addEventListener('input', () => {
-      S.searchRadiusDeg = parseInt(radiusSliderEl.value);
-      updatePlaybackControls();
+    radiusSliderEl.addEventListener('input', () => applyRadius(parseInt(radiusSliderEl.value)));
+  }
+  if (radiusValEl) {
+    radiusValEl.addEventListener('change', () => {
+      const v = parseFloat(radiusValEl.value);
+      if (!isNaN(v)) applyRadius(v); else radiusValEl.value = S.searchRadiusDeg + '°';
+    });
+    radiusValEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  { radiusValEl.blur(); }
+      if (e.key === 'Escape') { radiusValEl.value = S.searchRadiusDeg + '°'; radiusValEl.blur(); }
     });
   }
 
@@ -453,8 +479,8 @@ export function drawPresetWaveform() {
   c.stroke();
   c.globalAlpha = 1;
 
-  const durStr   = Math.round(liveDur * 1000) + 'ms';
-  const perStr   = Math.round(livePeriod * 1000) + 'ms';
+  const durStr   = fmtMs(liveDur);
+  const perStr   = fmtMs(livePeriod);
   const curveStr = (S.grainCurveType || 'hann').slice(0, 4);
   const statY = h - 2;
   const fs    = Math.max(7, Math.round(7.5 * window.devicePixelRatio) / window.devicePixelRatio);
@@ -485,7 +511,7 @@ export function updatePresetStats() {
   const durEl = document.getElementById('psDur');
   const kEl   = document.getElementById('psK');
   const panEl = document.getElementById('psPan');
-  if (durEl) durEl.textContent = Math.round(pr.duration * 1000) + 'ms';
+  if (durEl) durEl.textContent = fmtMs(pr.duration);
   if (kEl)   kEl.textContent   = pr.k === 0 ? 'nearest' : pr.k;
   if (panEl) panEl.textContent = Math.round(pr.panSpread * 100) + '%';
 }
@@ -495,17 +521,11 @@ export function updatePresetStats() {
 // Registers S.syncGrainControlsUI so selectPreset can call it.
 
 export function initGrainControls() {
-  const _LOG_MIN_MS = 2;
+  const _LOG_MIN_MS = 2 / (S.audioCtx?.sampleRate ?? 44100) * 1000; // 2 samples in ms
   const _LOG_MIN = Math.log(_LOG_MIN_MS), _LOG_MAX = Math.log(4000);
   const _sliderToMs = sv => Math.exp(_LOG_MIN + (parseFloat(sv) / 1000) * (_LOG_MAX - _LOG_MIN));
   const _msToSlider = ms => Math.round(((Math.log(Math.max(_LOG_MIN_MS, ms)) - _LOG_MIN) / (_LOG_MAX - _LOG_MIN)) * 1000);
-  const _fmtMs = v => {
-    const ms = v * 1000;
-    if (ms >= 1000)  return (ms / 1000).toFixed(2) + 's';
-    if (ms < 0.1)    return ms.toFixed(3) + 'ms';
-    if (ms < 10)     return ms.toFixed(2) + 'ms';
-    return Math.round(ms) + 'ms';
-  };
+  const _fmtMs = fmtMs;
   const _parseMs = str => {
     const s = str.trim();
     if (s.endsWith('ms')) return parseFloat(s) / 1000;
@@ -551,24 +571,30 @@ export function initGrainControls() {
     },
     {
       sliderId: 'gcPitchSlider', numId: 'gcPitchNum', param: 'pitchJitter',
-      toDisplay: v => v.toFixed(2),
-      sliderToInternal: sv => parseFloat(sv),
-      internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0, Math.min(0.5, v)); },
+      // Internal: playback-rate offset (0–~0.029). UI: cents (0–50).
+      // cents = 1200 * log2(1 + v),  v = 2^(c/1200) - 1
+      toDisplay: v => '±' + Math.round(1200 * Math.log2(1 + Math.max(0, v))) + '¢',
+      sliderToInternal: sv => Math.pow(2, parseFloat(sv) / 1200) - 1,
+      internalToSlider: v  => Math.round(1200 * Math.log2(1 + Math.max(0, v))),
+      fromDisplay: str => {
+        const c = parseFloat(str.replace(/[±¢\s]/g, ''));
+        if (isNaN(c)) return null;
+        return Math.pow(2, Math.max(0, Math.min(50, c)) / 1200) - 1;
+      },
     },
     {
       sliderId: 'gcProbSlider', numId: 'gcProbNum', param: 'probability',
-      toDisplay: v => v.toFixed(2),
+      toDisplay: v => Math.round(v * 100) + '%',
       sliderToInternal: sv => parseFloat(sv),
       internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
+      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
     },
     {
       sliderId: 'gcPanSlider', numId: 'gcPanNum', param: 'panSpread',
-      toDisplay: v => v.toFixed(2),
+      toDisplay: v => Math.round(v * 100) + '%',
       sliderToInternal: sv => parseFloat(sv),
       internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
+      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
     },
     {
       sliderId: 'gcVolSlider', numId: 'gcVolNum', param: 'volume',
@@ -659,12 +685,12 @@ export function initGrainControls() {
     SLIDER_DEFS.forEach(syncSliderFromInternal);
     if (dirSeg)   dirSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.dir   === S.grainDirection));
     if (curveSeg) curveSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.curve === S.grainCurveType));
-    const probDef = SLIDER_DEFS.find(d => d.key === 'probability');
+    const probDef = SLIDER_DEFS.find(d => d.param === 'probability');
     if (!probDef) {
       const probSlider = document.getElementById('gcProbSlider');
       const probNum    = document.getElementById('gcProbNum');
-      if (probSlider) probSlider.value = Math.round(S.grainProbability * 100);
-      if (probNum)    probNum.value    = S.grainProbability.toFixed(2);
+      if (probSlider) probSlider.value = S.grainProbability;
+      if (probNum)    probNum.value    = Math.round(S.grainProbability * 100) + '%';
     }
     const kVal = S.grainOverrides.k ?? gp().k;
     const skSlider = document.getElementById('searchKSlider');

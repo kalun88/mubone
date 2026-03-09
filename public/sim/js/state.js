@@ -65,16 +65,28 @@ export const NEAREST_GLOW_COLOR = '#b8a0ff'; // soft violet
 // you want to change system-wide behaviour without hunting through call sites.
 
 // Hard cap on concurrent AudioBufferSourceNodes. Each live grain holds 3–5 nodes.
-// 250 was set as a safe ceiling during testing — real CPU headroom may allow more.
-// Dense presets (cloud, shimmer, glitch sprayCount=3) approach this fastest.
-// Raise to 400–500 if your machine handles it; lower to 100–150 for CPU relief.
-export const MAX_GRAIN_NODES = 250;
+// Hard ceiling on simultaneous AudioBufferSourceNodes.
+//
+// Why 200: each live source has 2–3 Web Audio nodes attached (source + gain,
+// optional panner/elev).  Chrome's audio thread becomes unstable above ~400–600
+// active nodes and will crash the tab.  200 sources × 2–3 nodes = 400–600
+// total — right at the safe ceiling.
+//
+// At sub-ms grain periods (audio-rate granulation) with duration riding up,
+// steady-state concurrency = ceil(duration / period).  Without this cap, at
+// period=0.1ms and duration=200ms that reaches 2000 concurrent sources and
+// 4000 nodes → reliable tab crash.  With 200 the scheduler throttles gracefully:
+// new grains are only scheduled as old ones expire, keeping node count stable.
+//
+// For all normal-use presets (period ≥ 30ms, duration ≤ 480ms) the steady-state
+// concurrent count stays ≤ 16 — this cap is never the binding constraint.
+export const MAX_GRAIN_NODES = 200;
 
 // Grain scheduler tick rate in ms. 30ms ≈ 33 ticks/sec.
 // Grains are 25ms–2000ms so 30ms resolution is inaudible.
 // Halving to 15ms doubles scheduling precision but increases CPU load.
 // Doubling to 60ms is still fine for most presets; reduces CPU on weak hardware.
-export const GRAIN_SCHEDULER_INTERVAL_MS = 30;
+export const GRAIN_SCHEDULER_INTERVAL_MS = 10;
 
 // Render loop frame rate cap. The animate() loop throttles canvas redraws to
 // this rate while requestAnimationFrame still runs at full display rate (handling
@@ -357,6 +369,31 @@ export const PRESETS = [
     direction:     'fwd',
     curveType:     'hann',
   },
+
+  // -- 11. test -- diagnostic: nearest-lock, k=1, zero variation, deterministic
+  {
+    name:          'test',
+    nearestMode:   true,
+    searchRadiusDeg: 10,
+    recencyN:      1,
+    k:             1,
+    duration:      0.080,  // 80ms
+    durJitter:     0.0,
+    durVar:        0.0,
+    period:        0.080,  // 80ms
+    periodVar:     0.0,
+    fadeRatio:     0.25,
+    retriggerMs:   0,
+    startJitter:   0.0,
+    sprayCount:    1,
+    spraySpread:   0.0,
+    pitchJitter:   0.0,
+    panSpread:     0.0,
+    volume:        0.10,
+    probability:   1.0,
+    direction:     'fwd',
+    curveType:     'hann',
+  },
 ];
 
 // ── Sample-rate-derived grain parameter floors ───────────────────────────────
@@ -419,7 +456,7 @@ export const perf = {
   frameMs:        0,    // last frame duration ms
   frameMsMax:     0,    // rolling max (resets every 2s)
   frameMsMaxAt:   0,
-  schedulerDrift: 0,    // how late scheduleGrains fired vs 30ms target
+  schedulerDrift: 0,    // how late scheduleGrains fired vs GRAIN_SCHEDULER_INTERVAL_MS target
   schedulerMax:   0,
   schedulerMaxAt: 0,
   grainsFired:    0,    // grains fired in last scheduler tick
@@ -460,8 +497,14 @@ export function perfTick() {
   const loadEl = document.getElementById('loadIndicator');
   if (loadEl) {
     const frameBad = perf.frameMs > 25;        // >25ms = dropped frame
-    const schedBad = perf.schedulerDrift > 20; // >20ms late on 30ms interval = likely glitch
-    const nodesBad = perf.activeNodes > MAX_GRAIN_NODES * 0.75; // approaching cap
+    // Drift up to baseLatency is expected — the OS audio interrupt for large
+    // hardware buffers can delay the JS timer by ~baseLatency ms. Only flag
+    // as bad if drift exceeds what the hardware buffer alone explains.
+    const hwBufMs  = (S.audioCtx?.baseLatency ?? 0) * 1000;
+    const schedBad = perf.schedulerDrift > GRAIN_SCHEDULER_INTERVAL_MS * 0.60 + hwBufMs * 0.90;
+    // Node count warning: only trigger if we're burning through the hard cap,
+    // not at an arbitrary fraction of it — real overload shows up in frame/sched first.
+    const nodesBad = perf.activeNodes > MAX_GRAIN_NODES * 0.90;
     if (frameBad || schedBad || nodesBad) {
       const reasons = [];
       if (nodesBad) reasons.push(`${perf.activeNodes} grains`);
@@ -480,14 +523,27 @@ export function perfTick() {
   if (!el) return;
 
   const frameColor    = perf.frameMs   > 20 ? '#e06060' : perf.frameMs   > 12 ? '#e8a030' : '#7abcbc';
-  const schedColor    = perf.schedulerDrift > 20 ? '#e06060' : perf.schedulerDrift > 10 ? '#e8a030' : '#7abcbc';
+  // Sched thresholds: drift within (interval × 0.6 + baseLatency × 0.9) is
+  // expected for large hardware buffers and shown in teal. Beyond that: orange
+  // or red. This prevents false alarms at 1024-frame buffer sizes.
+  const hwBufMsDisp   = (S.audioCtx?.baseLatency ?? 0) * 1000;
+  const schedWarn     = GRAIN_SCHEDULER_INTERVAL_MS * 0.60 + hwBufMsDisp * 0.90;
+  const schedRed      = GRAIN_SCHEDULER_INTERVAL_MS * 0.90 + hwBufMsDisp * 0.90;
+  const schedColor    = perf.schedulerDrift > schedRed  ? '#e06060'
+                      : perf.schedulerDrift > schedWarn ? '#e8a030' : '#7abcbc';
   const underrunColor = perf.underruns > 0 ? '#e06060' : '#555';
+  const srHz          = S.audioCtx?.sampleRate;
+  const srStr         = srHz ? `${(srHz / 1000).toFixed(1)}kHz` : '—';
+  // baseLatency approximates the hardware buffer size
+  const blMs          = S.audioCtx?.baseLatency != null
+    ? `${(S.audioCtx.baseLatency * 1000).toFixed(1)}ms` : '—';
 
   el.innerHTML =
     `<span style="color:#555">── perf monitor (P) ──</span>\n` +
     `frame  <span style="color:${frameColor}">${perf.frameMs.toFixed(1)}ms</span>  max <span style="color:#e8a030">${perf.frameMsMax.toFixed(1)}ms</span>\n` +
     `sched  <span style="color:${schedColor}">+${perf.schedulerDrift.toFixed(1)}ms</span> max <span style="color:#e8a030">+${perf.schedulerMax.toFixed(1)}ms</span>\n` +
     `grains <span style="color:#aaa">${perf.grainsFired} fired / ${perf.activeNodes} active</span>\n` +
+    `audio  <span style="color:#aaa">${srStr}  buf ${blMs}</span>\n` +
     `underruns <span style="color:${underrunColor}">${perf.underruns}</span>`;
 }
 

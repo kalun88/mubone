@@ -1,4 +1,4 @@
-import { S, HANN_LEN, HANN_ATTACK, HANN_RELEASE, MAX_CLOUDS, MAX_GRAIN_NODES, perf, gp, minGrainDurS, minGrainPeriodS } from './state.js';
+import { S, HANN_LEN, HANN_ATTACK, HANN_RELEASE, MAX_CLOUDS, MAX_GRAIN_NODES, GRAIN_SCHEDULER_INTERVAL_MS, perf, gp, minGrainDurS, minGrainPeriodS } from './state.js';
 import { ensureAudioContext, getMasterBus } from './audio.js';
 import { spherePoint, qRotateVec, qConjugate, getCursorLonLat, screenToLonLat } from './sphere.js';
 
@@ -48,7 +48,7 @@ export function findNearestCloudSlot(refLon, refLat) {
   return nearestSlot;
 }
 
-export function playGrain(particle, customParams) {
+export function playGrain(particle, customParams, scheduledOnsetT) {
   const actx   = ensureAudioContext();
   let   buffer = null;
 
@@ -86,8 +86,19 @@ export function playGrain(particle, customParams) {
     ? (S.samples[particle.sampleIndex].cropStart * sampleDur) : 0;
   const cropEndSec   = particle.source === 'sample'
     ? (S.samples[particle.sampleIndex].cropEnd   * sampleDur) : sampleDur;
-  const LOOKAHEAD = 0.015;
-  const baseTime  = actx.currentTime + LOOKAHEAD;
+  // If a pre-scheduled onset time is provided (lookahead scheduler), use it directly.
+  // Otherwise fall back to a small immediate lookahead (cloud / one-shot calls).
+  // Safety floor: clamp to at least 2ms in the future at call time.  The scheduler
+  // samples audioNow once at the top of its tick, then does O(N log N) candidate
+  // sorting before calling playGrain.  During that gap actx.currentTime advances,
+  // so scheduledOnsetT can slip into the past by call-time → setValueCurveAtTime
+  // throws InvalidStateError.  Math.max ensures t is always a live future value
+  // regardless of how much JS ran between audioNow being read and this call.
+  const LOOKAHEAD    = 0.015;
+  const MIN_FUTURE_S = 0.002; // 2ms safety floor
+  const baseTime  = scheduledOnsetT !== undefined
+    ? Math.max(scheduledOnsetT, actx.currentTime + MIN_FUTURE_S)
+    : actx.currentTime + LOOKAHEAD;
 
   let attackCurve, releaseCurve;
   if (customParams) {
@@ -128,15 +139,41 @@ export function playGrain(particle, customParams) {
     const goReverse = dir === 'rev' || (dir === 'rnd' && Math.random() < 0.5);
 
     const fadeRatio = S.grainOverrides.fadeRatio ?? ep.fadeRatio ?? 0.25;
-    // fade = actualDur * fadeRatio, capped at just under half the grain so release is always in the future.
-    // No fixed-ms floor — fadeRatio stays meaningful at any duration. rect mode handles intentional hard cuts.
-    const fade = Math.min(actualDur / 2 - 0.0001, actualDur * Math.min(fadeRatio, 0.5));
+    // One Web Audio render quantum — the minimum source.start() duration that
+    // guarantees audio output (the browser rounds down to the nearest render block).
+    const MIN_FADE = 128 / actx.sampleRate;
+    // Two tiers by grain length — 'rect' was removed because setValueAtTime(0)
+    // creates a hard gain discontinuity (audible click) when sweeping duration.
+    //
+    //   'linear' — grain < 2 quanta (< 2×MIN_FADE): symmetric triangle ramp.
+    //              Triangle covers the entire [0, 2×MIN_FADE) range smoothly,
+    //              including the sub-quantum zone where 'rect' used to live.
+    //              No hard step; no click anywhere in this region.
+    //
+    //   'curve'  — grain ≥ 2 quanta: setValueCurveAtTime Hann window.
+    //              Boundary kept at 2×MIN_FADE (not 1×) because Chrome's
+    //              setValueCurveAtTime requires duration ≥ 1 render quantum
+    //              (128/sampleRate) per call — at 2×MIN_FADE the fade value
+    //              is guaranteed ≥ MIN_FADE, satisfying that constraint.
+    //              Lowering to 1×MIN_FADE causes sub-quantum fade calls that
+    //              Chrome no-ops or mis-applies, producing snaps that persist
+    //              even after duration is raised (scheduler loop aborts early).
+    const fadeMode = actualDur < MIN_FADE * 2 ? 'linear' : 'curve';
+    const fade = fadeMode === 'curve'
+      ? Math.min(actualDur / 2 - 0.0001, Math.max(MIN_FADE, actualDur * Math.min(fadeRatio, 0.5)))
+      : 0;
+    // Minimum source playback duration: always at least one full render quantum so the
+    // browser's block scheduler actually outputs audio. For short grains the gain envelope
+    // already shapes the amplitude; sourceDur just keeps the source alive long enough.
+    const sourceDur = Math.max(MIN_FADE, actualDur);
     const source = actx.createBufferSource();
 
     if (goReverse) {
       const sr         = buffer.sampleRate;
       const frameStart = Math.floor(startPos   * sr);
-      const frameCount = Math.ceil(actualDur   * sr);
+      // Use sourceDur (≥ MIN_FADE) so the reversed buffer has enough frames for
+      // the browser to output at least one render quantum.
+      const frameCount = Math.ceil(sourceDur   * sr);
       const safeFc     = Math.min(frameCount, buffer.length - frameStart);
       if (safeFc < 2) continue;
       const revBuf = actx.createBuffer(buffer.numberOfChannels, safeFc, sr);
@@ -155,9 +192,40 @@ export function playGrain(particle, customParams) {
     const bufferStartPos = goReverse ? 0 : startPos;
 
     const gain = actx.createGain();
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.setValueCurveAtTime(attackCurve,  t,               fade);
-    gain.gain.setValueCurveAtTime(releaseCurve, t + actualDur - fade, fade);
+    if (fadeMode === 'linear') {
+      // Sub-quantum grain: symmetric triangle (0 → peak → 0) over actualDur.
+      // Source plays for sourceDur (≥ MIN_FADE) so the browser outputs audio;
+      // gain reaches 0 at actualDur and stays there for the silent tail.
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(ep.volume, t + actualDur * 0.5);
+      gain.gain.linearRampToValueAtTime(0,         t + actualDur);
+    } else {
+      // Hann window: attack ramp then release ramp, with sustain in between.
+      // setValueCurveAtTime requires fade ≥ 1 render quantum; the boundary
+      // above guarantees this. The try/catch is a last-resort safety net so
+      // that a bad call can never throw and abort the scheduler's while loop
+      // (which would stall _cursorNextOnsetT and cause persistent snapping).
+      gain.gain.setValueAtTime(0, t);
+      try {
+        gain.gain.setValueCurveAtTime(attackCurve,  t,               fade);
+        gain.gain.setValueCurveAtTime(releaseCurve, t + actualDur - fade, fade);
+      } catch (_) {
+        // Fallback: triangle ramp so the grain is never silent or unclamped.
+        // Nested try/catch: linearRamp can also throw in rare Chrome edge-cases
+        // (e.g. during AudioContext resumption when event ordering is violated).
+        // An uncaught throw here would propagate out of playGrain and stall the
+        // onset clock in the scheduler while loop (see scheduleGrains guard).
+        try {
+          gain.gain.linearRampToValueAtTime(ep.volume, t + actualDur * 0.5);
+          gain.gain.linearRampToValueAtTime(0,         t + actualDur);
+        } catch (_2) {
+          // Both curve and ramp automation failed entirely — cancel all events
+          // and hold gain at 0 (silent) so the scheduler can still advance.
+          gain.gain.cancelScheduledValues(0);
+          gain.gain.value = 0;
+        }
+      }
+    }
 
     const [wx, wy, wz] = spherePoint(particle.lon, particle.lat);
 
@@ -170,14 +238,29 @@ export function playGrain(particle, customParams) {
       ? [wx, wy, wz]
       : qRotateVec(qConjugate(S.camQ), [wx, wy, wz]);
 
-    // Elevation attenuation — shared by both paths
+    // At audio-rate grain periods (< 1ms) spatial positioning is acoustically
+    // inaudible — the human auditory system cannot track pan position changes
+    // faster than ~2ms. Skip the elevation-gain and stereo-panner nodes entirely
+    // to cut per-grain node creation by ~3 Web Audio ops, saving ~600 calls/tick
+    // at 220 grains/tick. This is the primary lever for clean sub-ms granulation.
+    const audioRate = ep.period < 0.001;
+
+    // Elevation attenuation — fold into main gain to avoid a separate node
     const elevNorm  = cz !== 0 ? Math.min(1, Math.abs(cy / Math.abs(cz))) : 0;
     const elevScale = 1 - elevNorm * 0.35;
-    const elevGain  = actx.createGain();
-    elevGain.gain.value = elevScale;
+    // Insert elevScale node only when meaningfully different from 1 (elevation
+    // > ~10°) and we're NOT in audio-rate mode where the node cost dominates.
+    const needsElevNode = !audioRate && elevScale < 0.98;
+    let lastNode = gain; // track the last node in the chain for connecting
+    let elevGainNode = null;
+    if (needsElevNode) {
+      elevGainNode = actx.createGain();
+      elevGainNode.gain.value = elevScale;
+      gain.connect(elevGainNode);
+      lastNode = elevGainNode;
+    }
 
     source.connect(gain);
-    gain.connect(elevGain);
 
     if (S.speakerBuses?.length) {
       // ── Multi-channel speaker path (Electron) ─────────────────────────────
@@ -232,35 +315,57 @@ export function playGrain(particle, customParams) {
       const gA = actx.createGain(); gA.gain.value = wA;
       const gB = actx.createGain(); gB.gain.value = wB;
 
-      elevGain.connect(gA); gA.connect(speakers[sA.idx].bus);
-      elevGain.connect(gB); gB.connect(speakers[sB.idx].bus);
+      lastNode.connect(gA); gA.connect(speakers[sA.idx].bus);
+      lastNode.connect(gB); gB.connect(speakers[sB.idx].bus);
 
-      source.start(t, bufferStartPos, actualDur);
+      source.start(t, bufferStartPos, sourceDur);
       S._grainSourceCount++;
       source.addEventListener('ended', () => {
         S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
         try {
-          source.disconnect(); gain.disconnect(); elevGain.disconnect();
+          source.disconnect(); gain.disconnect();
+          if (elevGainNode) elevGainNode.disconnect();
           gA.disconnect(); gB.disconnect();
         } catch(_) {}
       });
 
     } else {
-      // ── Stereo path (browser / no device selected) — unchanged ────────────
-      const panner     = actx.createStereoPanner();
+      // ── Stereo path ────────────────────────────────────────────────────────
+      // Stereo placement: blend from sphere-position-based azimuth (panSpread=0)
+      // to a fully independent random position per grain (panSpread=1).
+      // This gives true shimmer/scatter behaviour — every grain fires at a new
+      // random pan position — rather than just widening a single azimuth point.
+      // At intermediate spread values, spatial positioning is gradually loosened.
+      // At audio-rate periods the panner is skipped entirely (see audioRate above).
       const azimuthPan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
-      const jitter     = rand(-ep.panSpread * 0.4, ep.panSpread * 0.4);
-      panner.pan.value  = Math.max(-1, Math.min(1, azimuthPan + jitter));
+      const finalPan   = audioRate ? 0 : Math.max(-1, Math.min(1,
+        azimuthPan * (1 - ep.panSpread) + rand(-1, 1) * ep.panSpread
+      ));
+      // Skip the StereoPanner node at audio rate, or when pan is effectively zero.
+      const needsPanner = !audioRate && (Math.abs(finalPan) > 0.01 || ep.panSpread > 0.01);
 
-      elevGain.connect(panner);
-      panner.connect(getMasterBus());
+      if (needsPanner) {
+        const panner = actx.createStereoPanner();
+        panner.pan.value = finalPan;
+        lastNode.connect(panner);
+        panner.connect(getMasterBus());
 
-      source.start(t, bufferStartPos, actualDur);
-      S._grainSourceCount++;
-      source.addEventListener('ended', () => {
-        S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-        try { source.disconnect(); gain.disconnect(); elevGain.disconnect(); panner.disconnect(); } catch(_) {}
-      });
+        source.start(t, bufferStartPos, sourceDur);
+        S._grainSourceCount++;
+        source.addEventListener('ended', () => {
+          S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
+          try { source.disconnect(); gain.disconnect(); if (elevGainNode) elevGainNode.disconnect(); panner.disconnect(); } catch(_) {}
+        });
+      } else {
+        lastNode.connect(getMasterBus());
+
+        source.start(t, bufferStartPos, sourceDur);
+        S._grainSourceCount++;
+        source.addEventListener('ended', () => {
+          S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
+          try { source.disconnect(); gain.disconnect(); if (elevGainNode) elevGainNode.disconnect(); lastNode.disconnect(); } catch(_) {}
+        });
+      }
     }
 
     if (particle.source === 'sample') {
@@ -276,15 +381,50 @@ export function playGrain(particle, customParams) {
 }
 
 let _schedLastAt = 0;
-let _cursorLastFiredAt  = -Infinity;
-let _cursorNextPeriodMs = null;
+// Audio-clock time (actx.currentTime seconds) of the next cursor grain onset.
+// Using the audio clock instead of performance.now() allows sub-10ms periods:
+// each scheduler tick looks ahead by SCHED_LOOKAHEAD seconds and fires all
+// onsets that fall within that window, so periods much shorter than the
+// tick interval work correctly (comb/zipper effect into audio-rate territory).
+let _cursorNextOnsetT  = null;   // null = not yet initialised
+let _cursorNextPeriodS = null;   // next inter-onset interval in seconds
+
+// How far ahead we schedule grain onsets (seconds). Must be > scheduler interval
+// to guarantee grains are always scheduled before they need to play.
+const SCHED_LOOKAHEAD = 0.120;   // 120ms lookahead window
+
+// Hard limit on grains created per scheduler call. Each grain allocates ~3 Web
+// Audio nodes synchronously on the main thread. Each grain in rect/linear fade
+// mode costs ~10 Web Audio operations (~0.002ms each):
+//   256 grains × 10 ops × 0.002ms ≈ 5ms node-creation work per 10ms tick.
+// At large hardware buffer sizes (e.g. 1024 frames ≈ 23ms baseLatency) the
+// scheduler also needs to pre-fill more grains per tick to stay ahead of
+// hardware interrupts — hence 256 rather than 128.
+// Below ~0.04ms period some onsets will still be skipped; for true audio-rate
+// granulation an AudioWorklet grain engine is the correct long-term path.
+const MAX_GRAINS_PER_TICK = 256;
 
 export function scheduleGrains() {
   const now = performance.now();
-  if (_schedLastAt > 0) perf.schedulerDrift = Math.max(0, (now - _schedLastAt) - 30);
+  if (_schedLastAt > 0) perf.schedulerDrift = Math.max(0, (now - _schedLastAt) - GRAIN_SCHEDULER_INTERVAL_MS);
   _schedLastAt = now;
 
   if (S._grainSourceCount >= MAX_GRAIN_NODES) return;
+
+  const actx = ensureAudioContext();
+  // Don't attempt to schedule while the context is suspended or still resuming.
+  // ensureAudioContext() calls resume() but doesn't await it, so there is a
+  // window where state is still 'suspended' and currentTime is frozen.
+  // Scheduling in that window produces grains at t ≈ frozen-audioNow which,
+  // by the time setValueCurveAtTime() is called a few µs later, is already
+  // slightly in the past → Chrome throws InvalidStateError.
+  if (actx.state !== 'running') {
+    if (actx.state === 'suspended') actx.resume().catch(() => {});
+    return;
+  }
+  const audioNow = actx.currentTime;
+  // Horizon: schedule all onsets up to this audio time
+  const scheduleUntil = audioNow + SCHED_LOOKAHEAD;
 
   const { lon: cursorLon, lat: cursorLat } =
     (S.mouseInCanvas || S.altLocked)
@@ -302,27 +442,74 @@ export function scheduleGrains() {
   perf.grainsFired = 0;
 
   if (S.particles.length) {
-    const basePeriodMs  = (S.grainOverrides.period ?? gp().period) * 1000;
-    const periodVarMs   = (S.grainOverrides.periodVar ?? 0) * 1000;
-    const livePeriodMs  = _cursorNextPeriodMs ?? basePeriodMs;
-    const sinceLastMs   = now - _cursorLastFiredAt;
+    const basePeriodS = S.grainOverrides.period ?? gp().period;
+    const periodVarS  = S.grainOverrides.periodVar ?? 0;
 
-    if (sinceLastMs >= livePeriodMs) {
-      _cursorLastFiredAt   = now;
-      _cursorNextPeriodMs  = Math.max(minGrainPeriodS() * 1000, basePeriodMs + rand(-periodVarMs, periodVarMs));
+    // Stale-clock guard: if the onset clock is far ahead of audioNow the
+    // AudioContext was likely recreated (currentTime reset to 0) and the old
+    // clock value is meaningless.  Reset so the scheduler reinitialises.
+    if (_cursorNextOnsetT !== null && (_cursorNextOnsetT - audioNow) > 30.0) {
+      _cursorNextOnsetT  = null;
+      _cursorNextPeriodS = null;
+    }
 
-      const withAng = S.particles.map(p => ({
-        p,
-        ang: angleBetweenSphere(p.lon, p.lat, cursorLon, cursorLat)
-      }));
+    // Initialise next onset to just ahead of now on first call or after reset.
+    // Use audioNow + 0.005 (same forward margin as the snap guard) so the very
+    // first grain after a reset is never at exactly audioNow — by call-time that
+    // would already be in the past and cause setValueCurveAtTime to throw.
+    if (_cursorNextOnsetT === null) {
+      _cursorNextOnsetT  = audioNow + 0.005;
+      _cursorNextPeriodS = Math.max(minGrainPeriodS(), basePeriodS + rand(-periodVarS, periodVarS));
+    }
+
+    // Pre-compute candidate pool once per scheduler tick (shared by all onsets in window)
+    const withAng = S.particles.map(p => ({
+      p,
+      ang: angleBetweenSphere(p.lon, p.lat, cursorLon, cursorLat)
+    }));
+
+    // Pre-sort / filter candidate pool once for all onsets in this tick window
+    let candidatePool = [];
+    if (S.nearestMode) {
+      withAng.sort((a, b) => a.ang - b.ang);
+      candidatePool = applyRecencyFilter(withAng).slice(0, k).map(c => c.p);
+    } else {
+      const inRadius = withAng.filter(c => c.ang < searchRadiusRad);
+      candidatePool = applyRecencyFilter(inRadius).map(c => c.p);
+    }
+
+    // Minimum lookahead: one scheduler interval PLUS the hardware output buffer
+    // latency (baseLatency). With large buffer sizes (e.g. 1024 frames ≈ 23ms)
+    // the OS audio interrupt can delay the JS timer by up to ~baseLatency ms.
+    // Pre-scheduling at least (interval + baseLatency) ahead guarantees no gap
+    // in audio even when the tick fires at the worst possible time.
+    const SCHED_INTERVAL_S = GRAIN_SCHEDULER_INTERVAL_MS / 1000;
+    const hwBufS      = S.audioCtx?.baseLatency ?? 0;
+    const minAheadS   = SCHED_INTERVAL_S + hwBufS;
+    const grainsNeeded  = Math.ceil(minAheadS / Math.max(basePeriodS, minGrainPeriodS()));
+    const nodesBudget   = Math.max(0, MAX_GRAIN_NODES - S._grainSourceCount);
+    const budgetPerTick = Math.min(grainsNeeded, nodesBudget, MAX_GRAINS_PER_TICK);
+
+    // Lookahead window: cover at least minAheadS, or however many grains the
+    // budget allows if that's larger (short periods with headroom).
+    const dynamicUntil = audioNow + Math.max(minAheadS, basePeriodS * budgetPerTick);
+
+    let iterations = 0;
+    while (_cursorNextOnsetT < dynamicUntil && iterations < budgetPerTick) {
+      // We're behind — snap forward by 5ms so t is safely in the future when
+      // setValueCurveAtTime() is called inside playGrain.  Using exactly
+      // audioNow risks a race: actx.currentTime advances a few µs between
+      // sampling audioNow here and the actual Web Audio API call, making
+      // Chrome consider t "in the past" and throw InvalidStateError.
+      if (_cursorNextOnsetT < audioNow) {
+        _cursorNextOnsetT = audioNow + 0.005;
+      }
 
       let toGranulate = [];
       if (S.nearestMode) {
-        withAng.sort((a, b) => a.ang - b.ang);
-        toGranulate = applyRecencyFilter(withAng).slice(0, k).map(c => c.p);
+        toGranulate = candidatePool;
       } else {
-        const inRadius = withAng.filter(c => c.ang < searchRadiusRad);
-        toGranulate = shuffleInPlace(applyRecencyFilter(inRadius)).slice(0, k).map(c => c.p);
+        toGranulate = shuffleInPlace([...candidatePool]).slice(0, k);
       }
 
       if (toGranulate.length > 0) {
@@ -330,11 +517,22 @@ export function scheduleGrains() {
           const p = toGranulate[Math.floor(Math.random() * toGranulate.length)];
           const liveDurMs = (S.grainOverrides.duration ?? gp().duration) * 1000;
           activeGrainMap.set(p, { expiry: now + liveDurMs, glowColor: '#ffffff' });
-          playGrain(p);
-          perf.grainsFired++;
-          if (p.source === 'live') S.liveGranulatingThisFrame = true;
+          // Wrap playGrain so any unexpected throw never stalls the onset clock.
+          // Without this guard, an exception here exits the while loop before
+          // _cursorNextOnsetT advances; on the next tick the same onset is
+          // retried, throws again, and the clock is stuck permanently.
+          try {
+            playGrain(p, null, _cursorNextOnsetT);
+            perf.grainsFired++;
+            if (p.source === 'live') S.liveGranulatingThisFrame = true;
+          } catch (_) { /* clock still advances unconditionally below */ }
         }
       }
+
+      // Advance to next onset — always runs, even if playGrain threw above.
+      _cursorNextPeriodS = Math.max(minGrainPeriodS(), basePeriodS + rand(-periodVarS, periodVarS));
+      _cursorNextOnsetT += _cursorNextPeriodS;
+      iterations++;
     }
   }
 
@@ -342,18 +540,20 @@ export function scheduleGrains() {
     const cloud = S.cloudSlots[i];
     if (!cloud || !S.particles.length) continue;
 
-    const sinceLastMs = now - cloud._lastFiredAt;
-    if (sinceLastMs < cloud._nextPeriodMs) continue;
-
     const cgp          = cloud.grainParams;
-    const basePeriodMs = cgp.period * 1000;
-    const periodVarMs  = (cgp.periodVar ?? 0) * 1000;
-    cloud._lastFiredAt  = now;
-    cloud._nextPeriodMs = Math.max(minGrainPeriodS() * 1000, basePeriodMs + rand(-periodVarMs, periodVarMs));
+    const basePeriodS  = cgp.period;
+    const periodVarS   = cgp.periodVar ?? 0;
+
+    // Initialise cloud onset clock on first use — same 5ms forward margin as
+    // the cursor init so the first cloud grain is never at exactly currentTime.
+    if (cloud._nextOnsetT === undefined) {
+      cloud._nextOnsetT = ensureAudioContext().currentTime + 0.005;
+    }
 
     const withAng = S.particles.map(p => ({
       p, ang: angleBetweenSphere(p.lon, p.lat, cloud.lon, cloud.lat)
     }));
+
     let pool;
     if (cloud.nearestMode) {
       withAng.sort((a, b) => a.ang - b.ang);
@@ -365,13 +565,42 @@ export function scheduleGrains() {
       )).slice(0, cgp.k).map(c => c.p);
     }
 
-    if (!pool.length) continue;
+    const cloudAudioNow  = ensureAudioContext().currentTime;
+    const SCHED_INTERVAL_S = GRAIN_SCHEDULER_INTERVAL_MS / 1000;
+    const hwBufS           = S.audioCtx?.baseLatency ?? 0;
+    const cloudMinAheadS   = SCHED_INTERVAL_S + hwBufS;
+    const cloudGrainsNeeded = Math.ceil(cloudMinAheadS / Math.max(basePeriodS, minGrainPeriodS()));
+    const cloudNodesBudget  = Math.max(0, MAX_GRAIN_NODES - S._grainSourceCount);
+    const cloudBudget = Math.min(cloudGrainsNeeded, cloudNodesBudget, MAX_GRAINS_PER_TICK);
+    const cloudDynUntil = cloudAudioNow + Math.max(cloudMinAheadS, basePeriodS * cloudBudget);
 
-    const p = pool[Math.floor(Math.random() * pool.length)];
-    playGrain(p, cgp);
-    activeGrainMap.set(p, { expiry: now + cgp.duration * 1000, glowColor: cloud.color });
-    perf.grainsFired++;
-    if (p.source === 'live') S.liveGranulatingThisFrame = true;
+    if (!pool.length) {
+      // Still advance the clock even if no particles in range
+      while (cloud._nextOnsetT < cloudDynUntil) {
+        const p = Math.max(minGrainPeriodS(), basePeriodS + rand(-periodVarS, periodVarS));
+        cloud._nextOnsetT += p;
+      }
+      continue;
+    }
+
+    let cloudIter = 0;
+    while (cloud._nextOnsetT < cloudDynUntil && cloudIter < cloudBudget) {
+      if (cloud._nextOnsetT < cloudAudioNow) {
+        cloud._nextOnsetT = cloudAudioNow + 0.005; // 5ms forward margin (same race-guard as cursor)
+      }
+
+      const p = pool[Math.floor(Math.random() * pool.length)];
+      try {
+        playGrain(p, cgp, cloud._nextOnsetT);
+        activeGrainMap.set(p, { expiry: now + cgp.duration * 1000, glowColor: cloud.color });
+        perf.grainsFired++;
+        if (p.source === 'live') S.liveGranulatingThisFrame = true;
+      } catch (_) { /* clock still advances below */ }
+
+      const nextPeriod = Math.max(minGrainPeriodS(), basePeriodS + rand(-periodVarS, periodVarS));
+      cloud._nextOnsetT += nextPeriod;
+      cloudIter++;
+    }
   }
 
   const activeCount = activeGrainMap.size;
@@ -381,7 +610,26 @@ export function scheduleGrains() {
   if (vmGrains) vmGrains.textContent = `${activeCount} grains`;
 }
 
-// Reset onset period when period/periodVar changes (called from events.js)
+// Reset onset clock when period/periodVar changes (called from events.js).
+// Setting to null causes scheduleGrains to re-initialise from the current audio time.
 export function resetCursorPeriod() {
-  _cursorNextPeriodMs = null;
+  _cursorNextOnsetT  = null;
+  _cursorNextPeriodS = null;
 }
+
+// Register the global onset-clock reset callback so audio.js can invoke it
+// when the AudioContext transitions from 'suspended' → 'running'.  Resetting
+// here prevents the scheduler from trying to schedule grains at the frozen
+// pre-suspension audioNow, which would be in the past by call-time and cause
+// setValueCurveAtTime to throw (→ persistent snapping / "stuck on triangle").
+S._resetOnsetClocks = () => {
+  _cursorNextOnsetT  = null;
+  _cursorNextPeriodS = null;
+  // Also reset cloud onset clocks so they reinitialise cleanly from resumed time
+  if (S.cloudSlots) {
+    for (let i = 0; i < S.cloudSlots.length; i++) {
+      const cloud = S.cloudSlots[i];
+      if (cloud) delete cloud._nextOnsetT;
+    }
+  }
+};

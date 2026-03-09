@@ -67,8 +67,8 @@ export function setupEvents() {
   // ── Keyboard ──────────────────────────────────────────────────────────────
   document.addEventListener('keydown', async e => {
 
-    // Alt: freeze sphere at current position
-    if (e.code === 'AltLeft' || e.code === 'AltRight') {
+    // Alt: toggle-lock sphere at current position
+    if ((e.code === 'AltLeft' || e.code === 'AltRight') && !e.repeat) {
       e.preventDefault();
       if (!S.altLocked) {
         S.altLocked            = true;
@@ -80,6 +80,12 @@ export function setupEvents() {
         if (wrapper) { wrapper.style.cursor = 'auto'; S.canvas.style.cursor = 'auto'; }
         const ind = document.getElementById('altLockIndicator');
         if (ind) ind.style.display = '';
+      } else {
+        S.altLocked = false;
+        const wrapper = document.getElementById('canvasWrapper');
+        if (wrapper) { wrapper.style.cursor = ''; S.canvas.style.cursor = ''; }
+        const ind = document.getElementById('altLockIndicator');
+        if (ind) ind.style.display = 'none';
       }
       return;
     }
@@ -164,15 +170,8 @@ export function setupEvents() {
   });
 
   document.addEventListener('keyup', e => {
-    // Alt release
-    if (e.code === 'AltLeft' || e.code === 'AltRight') {
-      S.altLocked = false;
-      const wrapper = document.getElementById('canvasWrapper');
-      if (wrapper) { wrapper.style.cursor = ''; S.canvas.style.cursor = ''; }
-      const ind = document.getElementById('altLockIndicator');
-      if (ind) ind.style.display = 'none';
-      return;
-    }
+    // Alt key-up is intentionally ignored — lock is a toggle, not momentary
+    if (e.code === 'AltLeft' || e.code === 'AltRight') return;
 
     // Spacebar release: stop recording, end live paint stroke
     if (e.code === 'Space') {

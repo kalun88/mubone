@@ -182,7 +182,8 @@ export function handleOSC(rawAddress, values) {
       break;
 
     case '/grain/pitch':
-      S.grainOverrides.pitchJitter = clamp(values[0], 0, 1);
+      // Incoming value is cents (0–50). Convert to rate-ratio offset: v = 2^(c/1200) - 1
+      S.grainOverrides.pitchJitter = Math.pow(2, clamp(values[0], 0, 50) / 1200) - 1;
       scheduleUISync();
       break;
 

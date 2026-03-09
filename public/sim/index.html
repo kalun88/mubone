@@ -12,8 +12,8 @@
 <body>
   <!-- Top bar -->
   <div class="top-bar">
-    <h1>simulation</h1>
-    <div class="top-bar-right">
+    <div class="top-bar-left">
+      <button id="fullscreenBtn2" class="top-bar-btn">⛶ fullscreen</button>
       <button id="micEnableBtn">
         <span class="mic-dot"></span>
         <span class="mic-label">enable mic</span>
@@ -30,13 +30,29 @@
         </svg>
         mute
       </button>
-      <button id="perfMonBtn" class="top-bar-btn">perf</button>
-      <button id="fullscreenBtn2" class="top-bar-btn">⛶ fullscreen</button>
-      <button id="helpBtn" class="top-bar-btn">? keys / midi</button>
-      <button id="bottomPanelToggleBtn" class="top-bar-btn" title="sample instrument">⊞ samples</button>
-      <button id="spatialModeBtn" class="top-bar-btn" title="sim: headphones/mouse, view-relative panning&#10;physical: real speakers, sensor drives cursor, world-space VBAP">⬡ sim</button>
+    </div>
+    <div class="top-bar-center">
+      <button id="spatialModeBtn" class="top-bar-btn" title="sim: headphones/mouse, view-relative panning&#10;physical: real speakers, sensor drives cursor, world-space VBAP">
+        <svg class="spatial-icon spatial-icon-sim" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" width="13" height="13">
+          <path d="M4 2 L4 13 L8 10 L10 14 L12 13 L10 9 L14 9 Z" fill="currentColor"/>
+        </svg>
+        <svg class="spatial-icon spatial-icon-physical" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" width="13" height="13" style="display:none">
+          <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.6"/>
+        </svg>
+        <span class="spatial-mode-label">mubone simulation mode</span>
+      </button>
+    </div>
+    <div class="top-bar-right">
+      <button id="perfMonBtn" class="top-bar-btn">
+        <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" width="13" height="13">
+          <polyline points="1,12 4,7 7,10 10,4 13,8 15,5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        perf
+      </button>
+      <button id="bottomPanelToggleBtn" class="top-bar-btn" title="sample instrument">⊞ sampler</button>
       <button id="sensorBtn" class="top-bar-btn">⊕ sensor</button>
       <button id="audioSettingsBtn" class="top-bar-btn">♪ audio</button>
+      <button id="helpBtn" class="top-bar-btn">? keys / midi / osc</button>
     </div>
   </div>
 
@@ -161,18 +177,18 @@
             <input class="grain-slider" type="range" id="gcPeriodVarSlider" min="0" max="500" step="1" value="0">
             <input type="text" class="grain-numbox" id="gcPeriodVarNum" data-param="periodVar" value="0ms">
           </div>
-          <div class="grain-row" title="pitch — pitch jitter per grain&#10;min: 0.00  max: 0.50 semitones">
+          <div class="grain-row" title="pitch — random pitch spread per grain (±cents)&#10;min: 0¢  max: ±50¢">
             <span class="grain-label">pitch</span>
-            <input class="grain-slider" type="range" id="gcPitchSlider" min="0" max="0.5" step="0.01" value="0">
-            <input type="text" class="grain-numbox" id="gcPitchNum" data-param="pitchJitter" value="0.00">
+            <input class="grain-slider" type="range" id="gcPitchSlider" min="0" max="50" step="1" value="0">
+            <input type="text" class="grain-numbox" id="gcPitchNum" data-param="pitchJitter" value="±0¢">
           </div>
-          <div class="grain-row" title="prob — probability of firing each grain&#10;min: 0.00 (never)  max: 1.00 (always)">
+          <div class="grain-row" title="prob — probability of firing each grain&#10;min: 0% (never)  max: 100% (always)">
             <span class="grain-label">prob</span>
             <input class="grain-slider" type="range" id="gcProbSlider" min="0" max="1" step="0.01" value="1">
-            <input type="text" class="grain-numbox" id="gcProbNum" data-param="probability" value="1.00">
+            <input type="text" class="grain-numbox" id="gcProbNum" data-param="probability" value="100%">
           </div>
-          <div class="grain-row" title="pan — stereo spread&#10;min: 0.00 (mono)  max: 1.00 (full spread)">
-            <span class="grain-label">pan</span>
+          <div class="grain-row" title="spread — stereo spread&#10;min: 0% (mono)  max: 100% (full spread)">
+            <span class="grain-label">spread</span>
             <input class="grain-slider" type="range" id="gcPanSlider" min="0" max="1" step="0.01" value="0.6">
             <input type="text" class="grain-numbox" id="gcPanNum" data-param="panSpread" value="0.60">
           </div>

@@ -88,6 +88,23 @@ export function ensureAudioContext() {
     }
     S.masterBus = masterGain;
     window._muteGain = muteGain; // expose for setMuted
+
+    // Detect suspension → resumption so grain.js can reset onset clocks.
+    // When Chrome auto-suspends the AudioContext (tab backgrounded, autoplay
+    // policy, etc.) actx.currentTime freezes.  On resumption the scheduler
+    // would try to schedule grains at t ≈ audioNow (the frozen value), which
+    // by call-time is already slightly in the past → setValueCurveAtTime
+    // throws → persistent snapping / "stuck on triangle" sound.
+    // Resetting the onset clock on 'running' after 'suspended' makes the
+    // scheduler reinitialise from the current (resumed) audio time instead.
+    let _prevCtxState = S.audioCtx.state;
+    S.audioCtx.addEventListener('statechange', () => {
+      const next = S.audioCtx?.state;
+      if (next === 'running' && _prevCtxState === 'suspended') {
+        S._resetOnsetClocks?.();
+      }
+      _prevCtxState = next;
+    });
   }
   if (S.audioCtx.state === 'suspended') S.audioCtx.resume();
   return S.audioCtx;
