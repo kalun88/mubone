@@ -91,71 +91,92 @@
       <div class="device device--search">
         <div class="device-label">search</div>
         <div class="device-body search-body">
-          <button id="snapToggleBtn">
-            <span class="snap-label-text">lock</span>
-            <span class="snap-state-text">OFF</span>
-          </button>
-          <div class="search-viz-box">
+
+          <!-- lock -->
+          <div class="search-viz-box" title="lock — snap playhead to nearest grain">
+            <span class="search-viz-label">lock</span>
+            <div class="search-viz-mid">
+              <button id="snapToggleBtn">
+                <span class="snap-label-text">lock</span>
+              </button>
+            </div>
+            <input type="text" class="search-viz-numbox search-viz-numbox--snap" id="snapStateNum" value="off" readonly>
+          </div>
+
+          <!-- radius -->
+          <div class="search-viz-box" title="radius — search cone angle">
             <span class="search-viz-label">radius</span>
-            <div class="radius-viz-wrap">
-              <canvas id="radiusViz"></canvas>
+            <div class="search-viz-mid search-viz-mid--k">
+              <input class="k-slider" type="range" id="radiusSlider" min="1" max="180" step="1" value="10">
             </div>
-            <span class="radius-val-label" id="radiusVal">10°</span>
+            <input type="text" class="search-viz-numbox" id="radiusVal" value="10°">
           </div>
-          <div class="search-viz-box">
+
+          <!-- recency -->
+          <div class="search-viz-box" title="recency — recent grains to skip">
             <span class="search-viz-label">recency</span>
-            <canvas id="recencyDial"></canvas>
-            <span class="recency-val-label" id="recencyVal">3</span>
-          </div>
-          <div class="search-viz-box">
-            <span class="search-viz-label">k</span>
-            <div class="k-display-wrap">
-              <span class="k-big-num" id="kBigNum">5</span>
+            <div class="search-viz-mid search-viz-mid--k">
+              <input class="k-slider" type="range" id="recencySlider" min="1" max="16" step="1" value="3">
             </div>
-            <input class="k-slider" type="range" id="searchKSlider" min="1" max="20" step="1" value="5">
+            <input type="text" class="search-viz-numbox" id="recencyVal" value="3">
           </div>
+
+          <!-- k -->
+          <div class="search-viz-box" title="k — nearest neighbours">
+            <span class="search-viz-label">k</span>
+            <div class="search-viz-mid search-viz-mid--k">
+              <input class="k-slider" type="range" id="searchKSlider" min="1" max="20" step="1" value="5">
+            </div>
+            <input type="text" class="search-viz-numbox k-big-num" id="kBigNum" value="5">
+          </div>
+
         </div>
       </div>
 
       <div class="device device--grain">
         <div class="device-label">grain</div>
         <div class="device-body grain-body">
-          <div class="grain-row">
+          <div class="grain-row" title="dur — grain duration&#10;min: 2 samples (~0.045ms)  max: 4s&#10;log scale">
             <span class="grain-label">dur</span>
             <input class="grain-slider grain-slider--log" type="range" id="gcDurSlider" min="0" max="1000" step="1" value="432">
             <input type="text" class="grain-numbox" id="gcDurNum" data-param="duration" value="180ms">
           </div>
-          <div class="grain-row">
+          <div class="grain-row" title="dur ± — duration randomness&#10;min: 0ms  max: 500ms">
             <span class="grain-label">dur ±</span>
             <input class="grain-slider" type="range" id="gcDurVarSlider" min="0" max="500" step="1" value="0">
             <input type="text" class="grain-numbox" id="gcDurVarNum" data-param="durVar" value="0ms">
           </div>
-          <div class="grain-row">
+          <div class="grain-row" title="fade — attack + release each as % of grain duration&#10;min: 0% (instant on/off)  max: 50% (pure envelope, no sustain)">
+            <span class="grain-label">fade</span>
+            <input class="grain-slider" type="range" id="gcFadeSlider" min="0" max="50" step="1" value="25">
+            <input type="text" class="grain-numbox" id="gcFadeNum" data-param="fadeRatio" value="25%">
+          </div>
+          <div class="grain-row" title="period — time between grains&#10;min: 2 samples (~0.045ms)  max: 4s&#10;log scale">
             <span class="grain-label">period</span>
             <input class="grain-slider grain-slider--log" type="range" id="gcPeriodSlider" min="0" max="1000" step="1" value="389">
             <input type="text" class="grain-numbox" id="gcPeriodNum" data-param="period" value="160ms">
           </div>
-          <div class="grain-row">
+          <div class="grain-row" title="per ± — period randomness&#10;min: 0ms  max: 500ms">
             <span class="grain-label">per ±</span>
             <input class="grain-slider" type="range" id="gcPeriodVarSlider" min="0" max="500" step="1" value="0">
             <input type="text" class="grain-numbox" id="gcPeriodVarNum" data-param="periodVar" value="0ms">
           </div>
-          <div class="grain-row">
+          <div class="grain-row" title="pitch — pitch jitter per grain&#10;min: 0.00  max: 0.50 semitones">
             <span class="grain-label">pitch</span>
             <input class="grain-slider" type="range" id="gcPitchSlider" min="0" max="0.5" step="0.01" value="0">
             <input type="text" class="grain-numbox" id="gcPitchNum" data-param="pitchJitter" value="0.00">
           </div>
-          <div class="grain-row">
+          <div class="grain-row" title="prob — probability of firing each grain&#10;min: 0.00 (never)  max: 1.00 (always)">
             <span class="grain-label">prob</span>
             <input class="grain-slider" type="range" id="gcProbSlider" min="0" max="1" step="0.01" value="1">
             <input type="text" class="grain-numbox" id="gcProbNum" data-param="probability" value="1.00">
           </div>
-          <div class="grain-row">
+          <div class="grain-row" title="pan — stereo spread&#10;min: 0.00 (mono)  max: 1.00 (full spread)">
             <span class="grain-label">pan</span>
             <input class="grain-slider" type="range" id="gcPanSlider" min="0" max="1" step="0.01" value="0.6">
             <input type="text" class="grain-numbox" id="gcPanNum" data-param="panSpread" value="0.60">
           </div>
-          <div class="grain-row">
+          <div class="grain-row" title="vol — grain volume&#10;min: 0.001  max: 0.50">
             <span class="grain-label">vol</span>
             <input class="grain-slider" type="range" id="gcVolSlider" min="0.001" max="0.5" step="0.001" value="0.06">
             <input type="text" class="grain-numbox" id="gcVolNum" data-param="volume" value="0.06">
@@ -343,7 +364,7 @@
 
       <div class="as-row">
         <span class="as-label">device</span>
-        <select id="asInputDevice" class="as-select" style="flex:1">
+        <select id="asInputDevice" class="as-select">
           <option value="">— click to scan —</option>
         </select>
         <button class="as-btn" id="asInputApply">apply</button>
@@ -351,7 +372,7 @@
 
       <div class="as-row">
         <span class="as-label">channel</span>
-        <select id="asInputChannel" class="as-select">
+        <select id="asInputChannel" class="as-select as-select-narrow">
           <option value="0">ch 1</option>
           <option value="1">ch 2</option>
           <option value="stereo">stereo (L+R)</option>

@@ -8,7 +8,7 @@ import {
   SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, NEAREST_GLOW_COLOR,
   MAX_CLOUDS, AUTO_ROTATION_SPEED, ROTATION_SPEED, PAINT_INTERVAL,
   RENDER_TARGET_FPS,
-  perf, perfTick, gp, rebuildGrainCurves
+  perf, perfTick, gp, rebuildGrainCurves, minGrainDurS
 } from './state.js';
 import { spherePoint, cameraTransform, project, getCursorLonLat, screenToLonLat, qFromAxisAngle, qNormalize, qMul } from './sphere.js';
 import { activeGrainMap, rand } from './grain.js';
@@ -839,7 +839,7 @@ export function animate() {
           lon, lat,
           strokeId:      S.currentStrokeId,
           lastTriggeredAt: undefined,
-          grainDuration: Math.max(0.05, gpr.duration + durVariation),
+          grainDuration: Math.max(minGrainDurS(), gpr.duration + durVariation),
           source:        'live',
           liveBufferIdx: S.currentLiveBufferIdx,
           grainStart:    Math.max(0, recTime - gpr.duration),
@@ -854,7 +854,7 @@ export function animate() {
         let rawStart      = s.grainCursor + startJitter;
         if (cropLen > 0) rawStart = cropStart + ((rawStart - cropStart) % cropLen + cropLen) % cropLen;
         const clampedStart = Math.max(cropStart, Math.min(rawStart, cropEnd - 0.01));
-        const grainDur     = Math.max(0.05, Math.min(gpr.duration + durVariation, cropEnd - clampedStart));
+        const grainDur     = Math.max(minGrainDurS(), Math.min(gpr.duration + durVariation, cropEnd - clampedStart));
 
         particle = {
           lon, lat,

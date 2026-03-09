@@ -19,88 +19,50 @@ export function setupPresets() {
   PRESETS.forEach((preset, i) => {
     const btn = document.createElement('button');
     btn.className = 'preset-btn' + (i === 0 ? ' active' : '');
-    btn.textContent = preset.name;
+    btn.innerHTML = `<span class="preset-num">${i + 1}</span>${preset.name}`;
     btn.addEventListener('click', () => selectPreset(i));
     container.appendChild(btn);
   });
   drawPresetWaveform();
   updatePresetStats();
 
-  // Snap toggle button
+  // Snap toggle button — initialise state on load then wire click
+  updatePlaybackControls();
   const snapBtn = document.getElementById('snapToggleBtn');
   if (snapBtn) snapBtn.addEventListener('click', toggleNearestMode);
 
-  // ── Recency dial ──────────────────────────────────────────────────────────
-  const recencyValEl  = document.getElementById('recencyVal');
-  const recencyDialEl = document.getElementById('recencyDial');
+  // ── Recency slider ────────────────────────────────────────────────────────
+  const recencyValEl    = document.getElementById('recencyVal');
+  const recencySliderEl = document.getElementById('recencySlider');
   const RECENCY_MIN = 1, RECENCY_MAX = 16;
 
-  S.drawRecencyDial = function() {
-    if (!recencyDialEl) return;
-    const dpr  = window.devicePixelRatio || 1;
-    const rect = recencyDialEl.getBoundingClientRect();
-    const W = Math.round(rect.width  || 50);
-    const H = Math.round(rect.height || 60);
-    if (recencyDialEl.width !== W * dpr || recencyDialEl.height !== H * dpr) {
-      recencyDialEl.width  = W * dpr;
-      recencyDialEl.height = H * dpr;
-    }
-    const dc = recencyDialEl.getContext('2d');
-    dc.save();
-    dc.scale(dpr, dpr);
-    dc.clearRect(0, 0, W, H);
-
-    const NUM_LINES = 5;
-    const PAD_X = 4, PAD_T = 4, PAD_B = 4;
-    const totalH = H - PAD_T - PAD_B;
-    const gap    = totalH / (NUM_LINES - 1);
-
-    for (let i = 0; i < NUM_LINES; i++) {
-      const y = PAD_T + i * gap;
-      const lit = i < Math.min(S.recencyN, NUM_LINES);
-      dc.beginPath();
-      dc.moveTo(PAD_X, y);
-      dc.lineTo(W - PAD_X, y);
-      dc.strokeStyle = lit ? '#7abcbc' : '#2a2a2a';
-      dc.lineWidth   = lit ? (i === 0 ? 2.5 : 1.8) : 1;
-      dc.lineCap = 'round';
-      dc.stroke();
-    }
-
-    if (S.recencyN > NUM_LINES) {
-      dc.fillStyle = '#7abcbc88';
-      dc.font = `${Math.max(6, Math.round(6 * dpr) / dpr)}px 'Roboto Mono', monospace`;
-      dc.textAlign = 'right';
-      dc.textBaseline = 'bottom';
-      dc.fillText(`+${S.recencyN - NUM_LINES}`, W - PAD_X, H - 1);
-    }
-
-    dc.restore();
-  };
+  // keep S.drawRecencyDial a no-op so renderer.js call is safe
+  S.drawRecencyDial = function() {};
 
   S.setRecency = function(n) {
     S.recencyN = Math.max(RECENCY_MIN, Math.min(RECENCY_MAX, n));
-    if (recencyValEl) recencyValEl.textContent = S.recencyN;
-    S.drawRecencyDial();
+    if (recencySliderEl) recencySliderEl.value = S.recencyN;
+    if (recencyValEl)    recencyValEl.value    = S.recencyN;
   };
 
-  if (recencyDialEl) {
-    let _recDragY = null, _recDragStart = 0;
-    recencyDialEl.addEventListener('mousedown', e => {
-      _recDragY = e.clientY; _recDragStart = S.recencyN;
-      e.preventDefault();
+  if (recencySliderEl) {
+    recencySliderEl.value = S.recencyN;
+    recencySliderEl.addEventListener('input', () => S.setRecency(parseInt(recencySliderEl.value)));
+  }
+
+  // editable recency numbox — parse on commit
+  if (recencyValEl) {
+    recencyValEl.value = S.recencyN;
+    recencyValEl.addEventListener('focus', e => e.target.select());
+    recencyValEl.addEventListener('blur', () => {
+      const v = parseInt(recencyValEl.value);
+      if (!isNaN(v)) S.setRecency(v); else recencyValEl.value = S.recencyN;
     });
-    window.addEventListener('mousemove', e => {
-      if (_recDragY === null) return;
-      const dy = e.clientY - _recDragY;
-      S.setRecency(Math.round(_recDragStart + dy / 6));
+    recencyValEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { recencyValEl.blur(); }
+      if (e.key === 'Escape') { recencyValEl.value = S.recencyN; recencyValEl.blur(); }
     });
-    window.addEventListener('mouseup', () => { _recDragY = null; });
-    recencyDialEl.addEventListener('wheel', e => {
-      e.preventDefault(); e.stopPropagation();
-      S.setRecency(S.recencyN + (e.deltaY > 0 ? 1 : -1));
-    }, { passive: false });
-    S.drawRecencyDial();
+    recencyValEl.style.cursor = 'text';
   }
 
   // ── k control in search params ────────────────────────────────────────────
@@ -110,7 +72,7 @@ export function setupPresets() {
     const slider = document.getElementById('searchKSlider');
     if (slider) slider.value = k;
     const bigNum = document.getElementById('kBigNum');
-    if (bigNum) bigNum.textContent = k;
+    if (bigNum) bigNum.value = k;
   };
 
   const searchKSlider = document.getElementById('searchKSlider');
@@ -121,22 +83,31 @@ export function setupPresets() {
 
   const kBigNum = document.getElementById('kBigNum');
   if (kBigNum) {
-    kBigNum.textContent = S.grainOverrides.k ?? gp().k;
-    let _kDragY = null, _kDragStart = 0;
-    kBigNum.addEventListener('mousedown', e => {
-      _kDragY = e.clientY; _kDragStart = S.grainOverrides.k ?? gp().k;
-      e.preventDefault();
+    kBigNum.value = S.grainOverrides.k ?? gp().k;
+    kBigNum.style.cursor = 'text';
+    kBigNum.addEventListener('focus', e => e.target.select());
+    kBigNum.addEventListener('blur', () => {
+      const v = parseInt(kBigNum.value);
+      if (!isNaN(v)) S.setSearchK(v); else kBigNum.value = S.grainOverrides.k ?? gp().k;
     });
-    window.addEventListener('mousemove', e => {
-      if (_kDragY === null) return;
-      const dy = _kDragY - e.clientY;
-      S.setSearchK(_kDragStart + Math.round(dy / 8));
+    kBigNum.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { kBigNum.blur(); }
+      if (e.key === 'Escape') { kBigNum.value = S.grainOverrides.k ?? gp().k; kBigNum.blur(); }
     });
-    window.addEventListener('mouseup', () => { _kDragY = null; });
     kBigNum.addEventListener('wheel', e => {
       e.preventDefault();
       S.setSearchK((S.grainOverrides.k ?? gp().k) + (e.deltaY < 0 ? 1 : -1));
     }, { passive: false });
+  }
+
+  // ── Radius slider ─────────────────────────────────────────────────────────
+  const radiusSliderEl = document.getElementById('radiusSlider');
+  if (radiusSliderEl) {
+    radiusSliderEl.value = S.searchRadiusDeg;
+    radiusSliderEl.addEventListener('input', () => {
+      S.searchRadiusDeg = parseInt(radiusSliderEl.value);
+      updatePlaybackControls();
+    });
   }
 
   // ? button opens mapping modal (midi.js registers S.openMappingModal)
@@ -319,13 +290,19 @@ export function updatePlaybackControls() {
   const snapBtn = document.getElementById('snapToggleBtn');
   if (snapBtn) {
     snapBtn.classList.toggle('active', S.nearestMode);
-    const stateSpan = snapBtn.querySelector('.snap-state-text');
-    if (stateSpan) stateSpan.textContent = S.nearestMode ? 'ON' : 'OFF';
+    const labelSpan = snapBtn.querySelector('.snap-label-text');
+    if (labelSpan) labelSpan.textContent = S.nearestMode ? 'locked' : 'lock';
   }
+  const snapStateNum = document.getElementById('snapStateNum');
+  if (snapStateNum) snapStateNum.value = S.nearestMode ? 'on' : 'off';
   drawRadiusViz();
 }
 
 export function drawRadiusViz() {
+  // Always update the numbox readout regardless of whether the canvas exists
+  const radValEl = document.getElementById('radiusVal');
+  if (radValEl) radValEl.value = `${S.searchRadiusDeg}°`;
+
   const canvas = document.getElementById('radiusViz');
   if (!canvas) return;
   const rect = canvas.parentElement.getBoundingClientRect();
@@ -338,9 +315,6 @@ export function drawRadiusViz() {
   c.clearRect(0, 0, w, h);
 
   const cx = w / 2, cy = h / 2;
-
-  const radValEl = document.getElementById('radiusVal');
-  if (radValEl) radValEl.textContent = `${S.searchRadiusDeg}°`;
 
   if (S.nearestMode) {
     const d = Math.min(w, h) * 0.36;
@@ -425,30 +399,32 @@ export function drawPresetWaveform() {
     return 0.5 * (1 + Math.cos(Math.PI * t));
   };
 
-  const liveFade = Math.max(0.004, Math.min(pr.fade, liveDur / 3));
+  const liveFadeRatio = S.grainOverrides.fadeRatio ?? pr.fadeRatio ?? 0.25;
+  const liveFade      = Math.min(liveDur / 2 - 0.0001, liveDur * Math.min(liveFadeRatio, 0.5));
 
   const tints = ['#7abcbc', '#6090e0', '#e07060', '#a0c060', '#c060a0', '#e0a030', '#60a0e0', '#e06060'];
   const tint  = tints[S.activePresetIndex % tints.length] || '#7abcbc';
 
-  const count  = Math.ceil(viewSec / stride) + 2;
+  const count  = Math.ceil(viewSec / stride) + 1;
   const STEPS  = 40;
   const fadeW  = liveFade * pxPerSec;
-  const sustW  = Math.max(0, grainW - fadeW * 2);
   const ampH   = maxAmp - PAD * 2;
 
-  for (let i = -1; i < count; i++) {
-    const jit    = Math.sin(i * 7.3) * pr.startJitter * pxPerSec;
-    const xStart = i * stride * pxPerSec + jit;
+  for (let i = 0; i < count; i++) {
+    // All grains drawn at nominal size — the viz shows the pattern, not stochastic variation
+    const xStart = i * stride * pxPerSec;
+    const fadeWi = liveFade * pxPerSec;
+    const sustWi = Math.max(0, grainW - fadeWi * 2);
 
     const pts = [];
     for (let s = 0; s <= STEPS; s++) {
       const t = s / STEPS;
-      pts.push({ x: xStart + t * fadeW, y: baseY - PAD - atkShape(t) * ampH });
+      pts.push({ x: xStart + t * fadeWi, y: baseY - PAD - atkShape(t) * ampH });
     }
-    if (sustW > 0) pts.push({ x: xStart + fadeW + sustW, y: baseY - PAD - ampH });
+    if (sustWi > 0) pts.push({ x: xStart + fadeWi + sustWi, y: baseY - PAD - ampH });
     for (let s = 0; s <= STEPS; s++) {
       const t = s / STEPS;
-      pts.push({ x: xStart + fadeW + sustW + t * fadeW, y: baseY - PAD - relShape(t) * ampH });
+      pts.push({ x: xStart + fadeWi + sustWi + t * fadeWi, y: baseY - PAD - relShape(t) * ampH });
     }
 
     c.beginPath();
@@ -519,7 +495,7 @@ export function updatePresetStats() {
 // Registers S.syncGrainControlsUI so selectPreset can call it.
 
 export function initGrainControls() {
-  const _LOG_MIN_MS = 0.01;
+  const _LOG_MIN_MS = 2;
   const _LOG_MIN = Math.log(_LOG_MIN_MS), _LOG_MAX = Math.log(4000);
   const _sliderToMs = sv => Math.exp(_LOG_MIN + (parseFloat(sv) / 1000) * (_LOG_MAX - _LOG_MIN));
   const _msToSlider = ms => Math.round(((Math.log(Math.max(_LOG_MIN_MS, ms)) - _LOG_MIN) / (_LOG_MAX - _LOG_MIN)) * 1000);
@@ -551,6 +527,13 @@ export function initGrainControls() {
       sliderToInternal: sv => parseFloat(sv) / 1000,
       internalToSlider: v  => Math.round(v * 1000),
       fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(0, Math.min(0.5, v)); },
+    },
+    {
+      sliderId: 'gcFadeSlider', numId: 'gcFadeNum', param: 'fadeRatio',
+      toDisplay: v => Math.round(v * 100) + '%',
+      sliderToInternal: sv => parseFloat(sv) / 100,
+      internalToSlider: v  => Math.round(v * 100),
+      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(0.5, v)); },
     },
     {
       sliderId: 'gcPeriodSlider', numId: 'gcPeriodNum', param: 'period',
@@ -604,7 +587,7 @@ export function initGrainControls() {
       if (param === 'period')   internalVal = Math.max(minGrainPeriodS(), internalVal);
       S.grainOverrides[param] = internalVal;
       if (param === 'volume') rebuildGrainCurves();
-      if (param === 'duration' || param === 'period') drawPresetWaveform();
+      if (param === 'duration' || param === 'period' || param === 'fadeRatio') drawPresetWaveform();
       if (param === 'period' || param === 'periodVar') resetCursorPeriod();
     }
   }

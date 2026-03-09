@@ -105,7 +105,7 @@ export const PRESETS = [
     durVar:        0.04,
     period:        0.09,   // 90ms -> dense, very responsive to live input
     periodVar:     0.01,
-    fade:          0.12,   // generous fade for smooth hann envelope
+    fadeRatio:     0.32,   // attack+release each = 32% of dur
     retriggerMs:   55,
     startJitter:   0.05,
     sprayCount:    1,
@@ -129,7 +129,7 @@ export const PRESETS = [
     durVar:        0.02,   // slight flutter +/-20ms
     period:        0.10,   // 100ms -> near-continuous
     periodVar:     0.01,
-    fade:          0.03,
+    fadeRatio:     0.21,
     retriggerMs:   80,
     startJitter:   0.01,
     sprayCount:    1,
@@ -153,7 +153,7 @@ export const PRESETS = [
     durVar:        0.12,
     period:        0.28,   // 280ms -> density
     periodVar:     0.04,
-    fade:          0.24,
+    fadeRatio:     0.28,
     retriggerMs:   400,
     startJitter:   0.28,
     sprayCount:    1,
@@ -177,7 +177,7 @@ export const PRESETS = [
     durVar:        0.25,
     period:        1.1,    // 1100ms
     periodVar:     0.08,
-    fade:          0.5,
+    fadeRatio:     0.25,
     retriggerMs:   900,
     startJitter:   0.01,
     sprayCount:    1,
@@ -201,7 +201,7 @@ export const PRESETS = [
     durVar:        0.03,
     period:        0.40,   // 400ms -> 2.5Hz beat
     periodVar:     0.02,
-    fade:          0.05,
+    fadeRatio:     0.23,
     retriggerMs:   100,
     startJitter:   0.04,
     sprayCount:    1,
@@ -225,7 +225,7 @@ export const PRESETS = [
     durVar:        0.08,
     period:        0.055,  // 55ms -> rapid shimmer
     periodVar:     0.01,
-    fade:          0.14,
+    fadeRatio:     0.33,
     retriggerMs:   180,
     startJitter:   0.14,
     sprayCount:    2,
@@ -249,7 +249,7 @@ export const PRESETS = [
     durVar:        0.15,
     period:        0.65,   // 650ms -> sparse
     periodVar:     0.10,
-    fade:          0.22,
+    fadeRatio:     0.31,
     retriggerMs:   350,
     startJitter:   0.35,
     sprayCount:    1,
@@ -273,7 +273,7 @@ export const PRESETS = [
     durVar:        0.01,
     period:        0.04,   // 40ms
     periodVar:     0.03,
-    fade:          0.004,
+    fadeRatio:     0.22,
     retriggerMs:   20,
     startJitter:   0.9,
     sprayCount:    3,
@@ -297,7 +297,7 @@ export const PRESETS = [
     durVar:        0.0,
     period:        0.20,   // 200ms -> choppy rhythm
     periodVar:     0.0,
-    fade:          0.008,
+    fadeRatio:     0.08,
     retriggerMs:   60,
     startJitter:   0.02,
     sprayCount:    1,
@@ -321,7 +321,7 @@ export const PRESETS = [
     durVar:        0.005,
     period:        0.060,  // 60ms -> rapid fire repeat
     periodVar:     0.005,
-    fade:          0.01,
+    fadeRatio:     0.15,
     retriggerMs:   40,
     startJitter:   0.005,
     sprayCount:    1,
@@ -345,7 +345,7 @@ export const PRESETS = [
     durVar:        0.18,   // heavy variation = tape wobble
     period:        0.38,   // 380ms
     periodVar:     0.15,   // period drifts wildly
-    fade:          0.12,
+    fadeRatio:     0.25,
     retriggerMs:   150,
     startJitter:   0.08,
     sprayCount:    2,
@@ -360,11 +360,11 @@ export const PRESETS = [
 ];
 
 // ── Sample-rate-derived grain parameter floors ───────────────────────────────
-// Minimum grain duration = 5 samples; minimum inter-onset period = 2 samples.
-// Getter functions read the live AudioContext sample rate (falls back to 22050
+// Minimum grain duration = 2 samples; minimum inter-onset period = 2 samples.
+// Getter functions read the live AudioContext sample rate (falls back to 44100
 // before the context is created, e.g. during early UI initialisation).
-export const minGrainDurS    = () => 5 / (S.audioCtx?.sampleRate ?? 22050);
-export const minGrainPeriodS = () => 2 / (S.audioCtx?.sampleRate ?? 22050);
+export const minGrainDurS    = () => 2 / (S.audioCtx?.sampleRate ?? 44100);
+export const minGrainPeriodS = () => 2 / (S.audioCtx?.sampleRate ?? 44100);
 
 // ── Envelope curve builders ──────────────────────────────────────────────────
 
@@ -598,6 +598,7 @@ export const S = {
   grainOverrides: {
     duration:    null,
     durVar:      null,   // +/- seconds of duration randomisation per grain
+    fadeRatio:   null,   // attack+release each as fraction of dur (0–0.5)
     k:           null,
     period:      null,
     periodVar:   null,   // +/- seconds of period randomisation per onset

@@ -127,7 +127,10 @@ export function playGrain(particle, customParams) {
 
     const goReverse = dir === 'rev' || (dir === 'rnd' && Math.random() < 0.5);
 
-    const fade   = Math.max(0.004, Math.min(ep.fade, actualDur / 3));
+    const fadeRatio = S.grainOverrides.fadeRatio ?? ep.fadeRatio ?? 0.25;
+    // fade = actualDur * fadeRatio, capped at just under half the grain so release is always in the future.
+    // No fixed-ms floor — fadeRatio stays meaningful at any duration. rect mode handles intentional hard cuts.
+    const fade = Math.min(actualDur / 2 - 0.0001, actualDur * Math.min(fadeRatio, 0.5));
     const source = actx.createBufferSource();
 
     if (goReverse) {
