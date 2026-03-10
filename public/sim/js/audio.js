@@ -4,6 +4,10 @@
 
 import { S } from './state.js';
 
+// Track whether the recording-capture worklet module has been registered.
+// Reset to false on AudioContext recreation (new context needs fresh addModule).
+let _recWorkletReady = false;
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 export function makeSoftClipCurve(amount = 10) {
@@ -144,6 +148,9 @@ export async function recreateAudioContext(newSampleRate) {
     S.audioCtx = null;
   }
 
+  // Reset worklet registration — new AudioContext needs fresh addModule calls
+  _recWorkletReady = false;
+
   // Reset dependent state
   S.masterBus       = null;
   S.masterAnalyser  = null;
@@ -177,6 +184,14 @@ export function warmUpAudioEngine() {
   src.addEventListener('ended', () => {
     try { src.disconnect(); gain.disconnect(); pan.disconnect(); } catch(_) {}
   });
+
+  // Pre-load the recording-capture worklet so startLiveRecording is synchronous.
+  // addModule is idempotent — safe to call multiple times.
+  if (!_recWorkletReady) {
+    actx.audioWorklet.addModule('js/worklets/recording-capture.worklet.js')
+      .then(() => { _recWorkletReady = true; })
+      .catch(e => console.warn('Recording worklet pre-load failed:', e));
+  }
 }
 
 let _micAccessPromise = null;  // guard against concurrent getUserMedia calls
@@ -279,6 +294,17 @@ export function startLiveRecording() {
   if (!S.recordingStream) return;
 
   const actx = ensureAudioContext();
+
+  // The worklet is pre-loaded in warmUpAudioEngine (called on mic grant).
+  // If it somehow hasn't loaded yet (race on very first press), bail out
+  // and schedule a retry — the user won't notice the ~50ms delay.
+  if (!_recWorkletReady) {
+    actx.audioWorklet.addModule('js/worklets/recording-capture.worklet.js')
+      .then(() => { _recWorkletReady = true; startLiveRecording(); })
+      .catch(e => console.error('Failed to load recording worklet:', e));
+    return;
+  }
+
   S.recordingSampleRate   = actx.sampleRate;
   S.recordingRaw          = new Float32Array(S.recordingSampleRate * 300); // 5 min headroom
   S.recordingWritePos     = 0;
@@ -286,30 +312,35 @@ export function startLiveRecording() {
 
   // inputGainNode and inputAnalyser are created once in requestMicAccess and persist.
   // We don't need a separate MediaStreamSource for recording — tap the already-connected
-  // inputAnalyser output and route it through the ScriptProcessor for capture.
+  // inputAnalyser output and route it through the AudioWorklet for capture.
 
-  // 8192-sample buffer (~372ms at 22050 Hz) — very safe headroom at the lower sample rate.
-  // Recording latency is irrelevant since we don't do live monitoring through the chain.
-  S.recordingNode = actx.createScriptProcessor(2048, 1, 1);
+  S.recordingNode = new AudioWorkletNode(actx, 'recording-capture', {
+    numberOfInputs:   1,
+    numberOfOutputs:  0,    // no output needed — worklet is a pure sink
+    channelCount:     1,
+    channelCountMode: 'explicit',
+  });
 
   S.recordingStartTime = performance.now();
 
-  S.recordingNode.onaudioprocess = (e) => {
-    const input = e.inputBuffer.getChannelData(0);
-    if (S.recordingWritePos + input.length > S.recordingRaw.length) {
+  // Receive batched PCM chunks from the worklet's audio thread
+  S.recordingNode.port.onmessage = ({ data }) => {
+    const { samples, frames } = data;
+    if (S.recordingWritePos + frames > S.recordingRaw.length) {
       const grown = new Float32Array(S.recordingRaw.length * 2);
       grown.set(S.recordingRaw);
       S.recordingRaw = grown;
     }
-    S.recordingRaw.set(input, S.recordingWritePos);
-    S.recordingWritePos += input.length;
+    S.recordingRaw.set(samples, S.recordingWritePos);
+    S.recordingWritePos += frames;
   };
 
-  // Chain: (persistent) inputGain -> inputAnalyser -> scriptProcessor -> destination(dummy)
+  // Tell worklet to start capturing
+  S.recordingNode.port.postMessage({ type: 'init', batchSize: 16 });
+
+  // Chain: (persistent) inputGain -> inputAnalyser -> worklet (pure sink, no destination needed)
   // inputAnalyser already has inputGainNode feeding it; just attach the recorder.
   S.inputAnalyser.connect(S.recordingNode);
-  S.recordingNode.connect(actx.destination); // ScriptProcessor must connect to keep running
-
 
   S.isRecording = true;
 
@@ -328,7 +359,9 @@ export function stopLiveRecording() {
   // inputGainNode and inputAnalyser are persistent (created in requestMicAccess)
   // so the meter and knob stay active between recordings.
   if (S.recordingNode) {
-    S.recordingNode.onaudioprocess = null;
+    // Tell the worklet to flush any partial batch and stop
+    try { S.recordingNode.port.postMessage({ type: 'stop' }); } catch(_) {}
+    S.recordingNode.port.onmessage = null;
     try { S.inputAnalyser && S.inputAnalyser.disconnect(S.recordingNode); } catch(_) {}
     S.recordingNode.disconnect();
     S.recordingNode = null;

@@ -1,4 +1,4 @@
-import { S, HANN_LEN, HANN_ATTACK, HANN_RELEASE, MAX_CLOUDS, MAX_GRAIN_NODES, GRAIN_SCHEDULER_INTERVAL_MS, perf, gp, minGrainDurS, minGrainPeriodS } from './state.js';
+import { S, HANN_LEN, HANN_ATTACK, HANN_RELEASE, MAX_CLOUDS, MAX_GRAIN_NODES, GRAIN_SCHEDULER_INTERVAL_MS, perf, gp, minGrainDurS, minGrainPeriodS, buildEnvelopeCurves } from './state.js';
 import { ensureAudioContext, getMasterBus } from './audio.js';
 import { spherePoint, qRotateVec, qConjugate, getCursorLonLat, screenToLonLat } from './sphere.js';
 
@@ -6,6 +6,28 @@ export function rand(min, max) { return min + Math.random() * (max - min); }
 
 // activeGrainMap: particle → { expiry, glowColor } — shared with renderer
 export let activeGrainMap = new Map();
+
+// ── Reversed buffer cache ──────────────────────────────────────────────────
+// Caches a full reversed copy of each source AudioBuffer to avoid per-grain
+// allocation. WeakMap so entries are automatically GC'd when the source buffer
+// (sample or live rec) is discarded.
+const _reversedBufferCache = new WeakMap();
+
+function getReversedBuffer(actx, buffer) {
+  let rev = _reversedBufferCache.get(buffer);
+  if (rev) return rev;
+
+  rev = actx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
+  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+    const src = buffer.getChannelData(ch);
+    const dst = rev.getChannelData(ch);
+    for (let f = 0, len = src.length; f < len; f++) {
+      dst[f] = src[len - 1 - f];
+    }
+  }
+  _reversedBufferCache.set(buffer, rev);
+  return rev;
+}
 
 export function getBufferKey(p) {
   return p.source === 'live' ? `live:${p.liveBufferIdx}` : `sample:${p.sampleIndex}`;
@@ -110,12 +132,21 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
 
   let attackCurve, releaseCurve;
   if (customParams) {
-    attackCurve  = new Float32Array(HANN_LEN);
-    releaseCurve = new Float32Array(HANN_LEN);
-    for (let j = 0; j < HANN_LEN; j++) {
-      attackCurve[j]  = HANN_ATTACK[j]  * ep.volume;
-      releaseCurve[j] = HANN_RELEASE[j] * ep.volume;
+    // Cloud grains: cache volume-scaled curves on the params object.
+    // Rebuilt only when volume or curveType changes — eliminates 2 × Float32Array(128)
+    // allocation per cloud grain (was the #2 OOM contributor).
+    // Uses buildEnvelopeCurves so tri/rect curve types are respected (clouds snapshot
+    // the active preset's curveType at drop time).
+    const ctype = customParams.curveType || 'hann';
+    if (!customParams._cachedAtk || customParams._cachedVol !== ep.volume || customParams._cachedCurve !== ctype) {
+      const { atk, rel } = buildEnvelopeCurves(ctype, ep.volume);
+      customParams._cachedAtk   = atk;
+      customParams._cachedRel   = rel;
+      customParams._cachedVol   = ep.volume;
+      customParams._cachedCurve = ctype;
     }
+    attackCurve  = customParams._cachedAtk;
+    releaseCurve = customParams._cachedRel;
   } else {
     attackCurve  = S.GRAIN_ATTACK_CURVE;
     releaseCurve = S.GRAIN_RELEASE_CURVE;
@@ -205,27 +236,26 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
     const source = actx.createBufferSource();
 
     if (goReverse) {
-      const sr         = buffer.sampleRate;
-      const frameStart = Math.floor(startPos   * sr);
-      // Size the reversed buffer for pitch-shifted playback: at pitchRate > 1 the
-      // source reads `sourceDur * pitchRate` frames, so the buffer must hold that
-      // many frames or the source will exhaust early and click.
-      const frameCount = Math.ceil(sourceDur * Math.max(pitchRate, 1) * sr);
-      const safeFc     = Math.min(frameCount, buffer.length - frameStart);
-      if (safeFc < 2) continue;
-      const revBuf = actx.createBuffer(buffer.numberOfChannels, safeFc, sr);
-      for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-        const src = buffer.getChannelData(ch).subarray(frameStart, frameStart + safeFc);
-        const dst = revBuf.getChannelData(ch);
-        for (let f = 0; f < safeFc; f++) dst[f] = src[safeFc - 1 - f];
-      }
+      // Use cached full-buffer reverse — zero per-grain allocation.
+      // The reversed buffer mirrors the original: sample at time t in the
+      // original is at time (bufferDuration - t) in the reversed copy.
+      // To play what was at [startPos, startPos+sourceDur] in reverse,
+      // we play the reversed buffer starting from (bufferDuration - startPos - sourceDur).
+      const revBuf = getReversedBuffer(actx, buffer);
       source.buffer = revBuf;
     } else {
       source.buffer = buffer;
     }
 
     source.playbackRate.value = pitchRate; // pitchRate computed above, before startPos
-    const bufferStartPos = goReverse ? 0 : startPos;
+    // For reverse: map the original startPos into the reversed buffer.
+    // Original region [startPos, startPos+sourceDur] maps to reversed region
+    // [bufDur - startPos - sourceDur, bufDur - startPos]. We start at the
+    // beginning of that region and the source plays forward through the
+    // already-reversed samples, producing the original audio in reverse.
+    const bufferStartPos = goReverse
+      ? Math.max(0, buffer.duration - startPos - sourceDur * Math.max(pitchRate, 1))
+      : startPos;
 
     const gain = actx.createGain();
     if (fadeMode === 'linear') {
