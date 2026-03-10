@@ -13,15 +13,18 @@ export let activeGrainMap = new Map();
 // path alone, plus ~33 000 × numClouds for clouds.
 //
 // Cursor: angles only change when the cursor moves or particles are added/
-// removed.  _cursorAngBuf stores the last computed values; if the dirty
-// check passes we skip the trig loop entirely and restore from the buffer
-// (clouds may have overwritten p._ang in the previous tick).
+// removed.  On a cache miss we compute angleBetweenSphere for every particle
+// and store the result directly on the particle as p._cursorAng so the correct
+// angle survives in-place array sorts (a positional Float32Array was wrong
+// because nearest-mode sorts S.particles in-place, making _cursorAngBuf[pi]
+// refer to a different particle on every cache hit).  On a cache hit we copy
+// p._cursorAng → p._ang to undo any overwrite by the cloud pass.
 //
-// Clouds: a cloud's position is fixed after placement, so its per-particle
-// angles only need recomputing when S._particleVersion changes.  We store
-// the Float32Array on the cloud object itself so it lives as long as the
-// cloud and is GC'd when the cloud is dropped.
-let _cursorAngBuf          = new Float32Array(512); // grows if particle count exceeds initial size
+// Clouds: a cloud's position is fixed after placement, so angles only need
+// recomputing when S._particleVersion changes.  Stored as p[_cAng${slot}]
+// on each particle — same reason as above: a positional Float32Array would
+// break after any sort.  The per-cloud dirty version is kept on the cloud
+// object itself so it is GC'd when the cloud is dropped.
 let _cursorAngCacheLon     = null;
 let _cursorAngCacheLat     = null;
 let _cursorAngCachePartVer = -1;
@@ -126,8 +129,24 @@ let _candidateBuf = [];
 
 // Build candidate pool for nearest mode: particles already sorted by _ang.
 // Takes first k that pass recency filter.
-function _buildCandidatePool(sortedParticles, k, applyRecency) {
-  const allowed = applyRecency ? _recencyAllowedSet(sortedParticles, sortedParticles.length) : null;
+// radiusRad — when provided, recency is ranked from ONLY the in-radius subset so
+// that recording new buffers elsewhere never silences old buffers inside the cone.
+function _buildCandidatePool(sortedParticles, k, applyRecency, radiusRad) {
+  let allowed = null;
+  if (applyRecency && S.recencyN > 0) {
+    const bufRec = new Map();
+    for (let i = 0; i < sortedParticles.length; i++) {
+      const p = sortedParticles[i];
+      if (radiusRad !== undefined && p._ang >= radiusRad) continue; // local universe
+      const key = getBufferKey(p);
+      if ((bufRec.get(key) ?? -Infinity) < p.strokeId) bufRec.set(key, p.strokeId);
+    }
+    if (bufRec.size > 0) {
+      allowed = new Set(
+        [...bufRec.entries()].sort((a, b) => b[1] - a[1]).slice(0, S.recencyN).map(([k]) => k)
+      );
+    }
+  }
   _candidateBuf.length = 0;
   for (let i = 0; i < sortedParticles.length && _candidateBuf.length < k; i++) {
     const p = sortedParticles[i];
@@ -138,8 +157,21 @@ function _buildCandidatePool(sortedParticles, k, applyRecency) {
 }
 
 // Build candidate pool for radius mode: filter by _ang < radiusRad.
+// Recency is ranked from the in-radius particles only (local universe),
+// so buffers recorded elsewhere do not affect which local buffers are audible.
 function _buildCandidatePoolRadius(particles, radiusRad) {
-  const allowed = _recencyAllowedSet(particles, particles.length);
+  // Phase 1: build per-buffer recency from ONLY in-radius particles.
+  const bufRec = new Map();
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    if (p._ang >= radiusRad) continue;
+    const key = getBufferKey(p);
+    if ((bufRec.get(key) ?? -Infinity) < p.strokeId) bufRec.set(key, p.strokeId);
+  }
+  const allowed = S.recencyN > 0 && bufRec.size > 0
+    ? new Set([...bufRec.entries()].sort((a, b) => b[1] - a[1]).slice(0, S.recencyN).map(([k]) => k))
+    : null;
+  // Phase 2: collect in-radius particles that pass local recency.
   _candidateBuf.length = 0;
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
@@ -676,22 +708,21 @@ export function scheduleGrains() {
     // because the cloud loop may have overwritten it in the previous tick.
     const particles = S.particles;
     const pLen = particles.length;
-    if (pLen > _cursorAngBuf.length) _cursorAngBuf = new Float32Array(pLen);
     const cursorAngDirty = cursorLon !== _cursorAngCacheLon
                         || cursorLat !== _cursorAngCacheLat
                         || S._particleVersion !== _cursorAngCachePartVer;
     if (cursorAngDirty) {
       for (let pi = 0; pi < pLen; pi++) {
         const ang = angleBetweenSphere(particles[pi].lon, particles[pi].lat, cursorLon, cursorLat);
-        _cursorAngBuf[pi]  = ang;
-        particles[pi]._ang = ang;
+        particles[pi]._cursorAng = ang; // keyed to particle object — survives array sorts
+        particles[pi]._ang       = ang;
       }
       _cursorAngCacheLon     = cursorLon;
       _cursorAngCacheLat     = cursorLat;
       _cursorAngCachePartVer = S._particleVersion;
     } else {
-      // Restore cached angles — cheap float copy, no trig.
-      for (let pi = 0; pi < pLen; pi++) particles[pi]._ang = _cursorAngBuf[pi];
+      // Restore from per-particle cache — correct regardless of sort order.
+      for (let pi = 0; pi < pLen; pi++) particles[pi]._ang = particles[pi]._cursorAng ?? 0;
     }
 
     // Pre-sort / filter candidate pool once for all onsets in this tick window.
@@ -699,7 +730,11 @@ export function scheduleGrains() {
     let candidatePool;
     if (S.nearestMode) {
       particles.sort((a, b) => a._ang - b._ang);
-      candidatePool = _buildCandidatePool(particles, k, true);
+      // kAllMode: no k cap — use all particles (still recency-filtered).
+      // Pass searchRadiusRad so recency is ranked from the local cone, not globally.
+      candidatePool = S.grainKAllMode
+        ? _buildCandidatePool(particles, particles.length, true, searchRadiusRad)
+        : _buildCandidatePool(particles, k, true, searchRadiusRad);
     } else {
       candidatePool = _buildCandidatePoolRadius(particles, searchRadiusRad);
     }
@@ -741,9 +776,9 @@ export function scheduleGrains() {
       if (S.nearestMode) {
         toGranulate = candidatePool;
       } else {
-        // Nearest K from within the radius pool — _ang already stamped on each particle.
-        // K is the binding constraint; radius just sets the eligible universe.
-        toGranulate = candidatePool.length <= k
+        // kAllMode: use the full radius pool with no k cap.
+        // Otherwise nearest K from within the radius pool — _ang already stamped.
+        toGranulate = S.grainKAllMode || candidatePool.length <= k
           ? candidatePool
           : candidatePool.sort((a, b) => a._ang - b._ang).slice(0, k);
       }
@@ -792,32 +827,40 @@ export function scheduleGrains() {
     // Stamp cloud-relative angle on particles (reuses _ang property).
     // Dirty-flag: cloud positions are fixed after placement, so angles only
     // change when the particle set changes (S._particleVersion bumps).
-    // On cache hit we still copy into p._ang because the cursor pass (or a
-    // previous cloud pass) will have overwritten it this tick.
-    const cParts = S.particles;
-    const cLen   = cParts.length;
-    if (!cloud._angBuf || cloud._angBuf.length < cLen) cloud._angBuf = new Float32Array(cLen);
+    // Stored as p[cAngKey] on each particle (not a positional Float32Array)
+    // so the correct angle survives after the cursor or cloud path sorts
+    // S.particles in-place — same reasoning as p._cursorAng above.
+    const cParts  = S.particles;
+    const cLen    = cParts.length;
+    const cAngKey = `_cAng${cloud.slotIndex}`;
     if (cloud._angBufPartVer !== S._particleVersion) {
       for (let pi = 0; pi < cLen; pi++) {
         const ang = angleBetweenSphere(cParts[pi].lon, cParts[pi].lat, cloud.lon, cloud.lat);
-        cloud._angBuf[pi] = ang;
-        cParts[pi]._ang   = ang;
+        cParts[pi][cAngKey] = ang; // keyed to particle object — survives array sorts
+        cParts[pi]._ang     = ang;
       }
       cloud._angBufPartVer = S._particleVersion;
     } else {
-      // Restore cached angles — cheap float copy, no trig.
-      for (let pi = 0; pi < cLen; pi++) cParts[pi]._ang = cloud._angBuf[pi];
+      // Restore from per-particle cache — correct regardless of sort order.
+      for (let pi = 0; pi < cLen; pi++) cParts[pi]._ang = cParts[pi][cAngKey] ?? 0;
     }
 
+    // Hoist cloudRadiusRad so both branches (nearest + radius) can use it for
+    // local recency ranking — same fix as cursor path.
+    const cloudRadiusRad = cloud.searchRadiusDeg * Math.PI / 180;
     let pool;
     if (cloud.nearestMode) {
       cParts.sort((a, b) => a._ang - b._ang);
-      pool = _buildCandidatePool(cParts, cgp.k, true);
+      // kAllMode: no k cap — all particles (still recency-filtered).
+      // Pass cloudRadiusRad so recency uses the local cone, not globally.
+      pool = cloud.kAllMode
+        ? _buildCandidatePool(cParts, cParts.length, true, cloudRadiusRad)
+        : _buildCandidatePool(cParts, cgp.k, true, cloudRadiusRad);
     } else {
-      const cloudRadiusRad = cloud.searchRadiusDeg * Math.PI / 180;
       pool = _buildCandidatePoolRadius(cParts, cloudRadiusRad);
       // Nearest K from within the radius — same logic as cursor path.
-      if (pool.length > cgp.k) pool.sort((a, b) => a._ang - b._ang).length = cgp.k;
+      // Skip k cap when kAllMode is on.
+      if (!cloud.kAllMode && pool.length > cgp.k) pool.sort((a, b) => a._ang - b._ang).length = cgp.k;
     }
 
     const cloudAudioNow   = ensureAudioContext().currentTime;

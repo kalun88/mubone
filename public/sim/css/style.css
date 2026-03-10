@@ -607,6 +607,27 @@
   #snapToggleBtn .snap-label-text { display: block; }
   /* snap state in the numbox position — readonly, styled consistent with other numboxes */
   .search-viz-numbox--snap { cursor: pointer; pointer-events: none; }
+  /* k-all toggle — mirrors snapToggleBtn */
+  #kAllBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 0;
+    width: 100%;
+    min-height: 2.4rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    flex: 1;
+    color: #555555;
+    font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+  }
+  #kAllBtn:hover { border-color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.03); color: #888888; }
+  #kAllBtn.active { border-color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.06); color: #e8a030; }
+  #kAllBtn .kall-label-text { display: block; }
   /* k slider */
   .k-slider {
     -webkit-appearance: none;

@@ -603,6 +603,7 @@ export const S = {
   orientationActive: false,
   searchRadiusDeg: 10,
   nearestMode: false,   // when true: ignore radius, always pick closest particle
+  grainKAllMode: false, // when true: k limit is removed — all particles within radius fire
   radiusTooltipUntil: 0, // performance.now() -- show transient radius label until this time
 
   // ── Painting ───────────────────────────────────────────────────────────

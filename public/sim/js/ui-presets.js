@@ -42,6 +42,15 @@ export function setupPresets() {
   const snapBtn = document.getElementById('snapToggleBtn');
   if (snapBtn) snapBtn.addEventListener('click', toggleNearestMode);
 
+  // k-all toggle button
+  const kAllBtnEl = document.getElementById('kAllBtn');
+  if (kAllBtnEl) {
+    kAllBtnEl.addEventListener('click', () => {
+      S.grainKAllMode = !S.grainKAllMode;
+      updatePlaybackControls();
+    });
+  }
+
   // ── Recency slider ────────────────────────────────────────────────────────
   const recencyValEl    = document.getElementById('recencyVal');
   const recencySliderEl = document.getElementById('recencySlider');
@@ -229,9 +238,15 @@ export function dropCloud() {
   S.cloudSlots[slotIndex] = {
     slotIndex, lon, lat, color, searchRadiusDeg: S.searchRadiusDeg,
     nearestMode: S.nearestMode,
+    kAllMode: S.grainKAllMode,
     _lastFiredAt:  0,
     _nextPeriodMs: 0,
-    grainParams: { ...S.grainParams }
+    // Merge live overrides so the cloud inherits the user's current k, duration,
+    // period, etc. — not the raw preset defaults which S.grainParams holds.
+    grainParams: {
+      ...S.grainParams,
+      ...Object.fromEntries(Object.entries(S.grainOverrides).filter(([, v]) => v !== null))
+    }
   };
   updateCloudBanksUI();
 }
@@ -314,6 +329,7 @@ export function selectPreset(index) {
   rebuildGrainCurves();
 
   if (typeof preset.nearestMode === 'boolean') S.nearestMode = preset.nearestMode;
+  if (typeof preset.grainKAllMode === 'boolean') S.grainKAllMode = preset.grainKAllMode;
   if (typeof preset.searchRadiusDeg === 'number') S.searchRadiusDeg = preset.searchRadiusDeg;
   if (typeof preset.recencyN === 'number') {
     if (typeof S.setRecency === 'function') S.setRecency(preset.recencyN);
@@ -343,6 +359,20 @@ export function updatePlaybackControls() {
   }
   const snapStateNum = document.getElementById('snapStateNum');
   if (snapStateNum) snapStateNum.value = S.nearestMode ? 'on' : 'off';
+  // sync k-all toggle
+  const kAllBtn = document.getElementById('kAllBtn');
+  if (kAllBtn) {
+    kAllBtn.classList.toggle('active', S.grainKAllMode);
+    const kAllLabel = kAllBtn.querySelector('.kall-label-text');
+    if (kAllLabel) kAllLabel.textContent = S.grainKAllMode ? 'all' : 'k';
+  }
+  const kAllStateNum = document.getElementById('kAllStateNum');
+  if (kAllStateNum) kAllStateNum.value = S.grainKAllMode ? 'on' : 'off';
+  // grey out k slider/numbox when k-all is active
+  const skSlider = document.getElementById('searchKSlider');
+  const kNum = document.getElementById('kBigNum');
+  if (skSlider) skSlider.disabled = S.grainKAllMode;
+  if (kNum) kNum.style.opacity = S.grainKAllMode ? '0.4' : '';
   drawRadiusViz();
 }
 
@@ -783,6 +813,7 @@ export function initGrainControls() {
     if (kNum) kNum.textContent = kVal;
     const recValEl = document.getElementById('recencyVal');
     if (recValEl) recValEl.textContent = S.recencyN;
+    updatePlaybackControls();
     drawRadiusViz();
     updatePresetStats();
   };
