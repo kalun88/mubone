@@ -426,6 +426,9 @@ export function stopLiveRecording() {
   S.recordingWritePos    = 0;
   S.liveBufferSampleCount = 0;
   S.currentLiveBufferIdx = -1;
+  // Release the reusable live buffer — the final audioBuffer is now in the slot
+  _liveAudioBuf    = null;
+  _liveAudioBufLen = 0;
   S.updateLiveRecUI?.();
 }
 
@@ -618,6 +621,11 @@ export function getRecordingDuration() {
   return (performance.now() - S.recordingStartTime) / 1000;
 }
 
+// Pre-allocated live buffer — reused across rebuilds to avoid creating a new
+// AudioBuffer every 200ms.  Only reallocated when recording outgrows it.
+let _liveAudioBuf    = null;
+let _liveAudioBufLen = 0;
+
 export function rebuildLiveBuffer() {
   // Build a running AudioBuffer from raw PCM so grains can play during recording.
   // Throttled: createBuffer + set() on a growing array is expensive — don't do it every frame.
@@ -630,13 +638,24 @@ export function rebuildLiveBuffer() {
 
   const actx = ensureAudioContext();
   const len = S.recordingWritePos;
-  const liveBuffer = actx.createBuffer(1, len, S.recordingSampleRate);
-  liveBuffer.getChannelData(0).set(S.recordingRaw.subarray(0, len));
+
+  // Reuse the existing AudioBuffer if it's large enough; otherwise allocate
+  // with 2× headroom so reallocations are rare (amortised doubling).
+  if (!_liveAudioBuf || _liveAudioBufLen < len || _liveAudioBuf.sampleRate !== S.recordingSampleRate) {
+    const allocLen = Math.max(len, (_liveAudioBufLen || len) * 2);
+    _liveAudioBuf    = actx.createBuffer(1, allocLen, S.recordingSampleRate);
+    _liveAudioBufLen = allocLen;
+  }
+
+  // Copy current recording data into the reusable buffer.
+  // Grains read from this buffer using duration-based offsets, so the extra
+  // zeroed tail beyond `len` is never reached.
+  _liveAudioBuf.getChannelData(0).set(S.recordingRaw.subarray(0, len));
   S.liveBufferSampleCount = len;
 
   if (S.currentLiveBufferIdx >= 0 && S.currentLiveBufferIdx < S.liveRecBuffers.length) {
-    S.liveRecBuffers[S.currentLiveBufferIdx].liveBuffer = liveBuffer;
-    S.liveRecBuffers[S.currentLiveBufferIdx].duration   = liveBuffer.duration;
+    S.liveRecBuffers[S.currentLiveBufferIdx].liveBuffer = _liveAudioBuf;
+    S.liveRecBuffers[S.currentLiveBufferIdx].duration   = len / S.recordingSampleRate;
   }
 }
 

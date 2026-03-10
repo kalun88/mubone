@@ -11,7 +11,7 @@ import {
   perf, perfTick, gp, rebuildGrainCurves, minGrainDurS
 } from './state.js';
 import { spherePoint, cameraTransform, project, getCursorLonLat, screenToLonLat, qFromAxisAngle, qNormalize, qMul } from './sphere.js';
-import { rand } from './grain.js';
+import { rand, activeGrainMap } from './grain.js';
 import { rebuildLiveBuffer, getRecordingDuration } from './audio.js';
 
 // ── Module-level meter state ──────────────────────────────────────────────────
@@ -656,6 +656,26 @@ export function drawParticles() {
   }
 
   S.ctx.globalAlpha = 1;
+
+  // ── Active grain highlight (second pass) ──────────────────────────────────
+  // Draw a bright dot over every particle that currently has a grain playing.
+  // activeGrainMap: particle → { expiry, glowColor }
+  if (activeGrainMap.size > 0) {
+    for (const [p] of activeGrainMap) {
+      const [wx, wy, wz] = spherePoint(p.lon, p.lat);
+      const [cx, cy, cz] = cameraTransform(wx, wy, wz);
+      const proj = project(cx, cy, cz);
+      if (!proj) continue;
+      const mag    = Math.sqrt(cx*cx + cy*cy + cz*cz);
+      const facing = Math.max(0, cz / mag);
+      const distFactor = 1 - (proj.depth / (SPHERE_RADIUS * 2));
+      const size   = (PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * Math.max(0, distFactor)) * 1.8;
+      S.ctx.globalAlpha = (0.6 + 0.4 * facing) * Math.max(0, distFactor);
+      S.ctx.fillStyle   = '#ffffff';
+      S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, size, 0, Math.PI * 2); S.ctx.fill();
+    }
+    S.ctx.globalAlpha = 1;
+  }
 }
 
 // ── Cursor ────────────────────────────────────────────────────────────────────
@@ -830,8 +850,7 @@ export function animate() {
         const cropStart  = s.cropStart * s.duration;
         const cropEnd    = s.cropEnd   * s.duration;
         const cropLen    = cropEnd - cropStart;
-        const startJitter = rand(-gpr.startJitter * 0.3, gpr.startJitter * 0.3);
-        let rawStart      = s.grainCursor + startJitter;
+        let rawStart      = s.grainCursor;
         if (cropLen > 0) rawStart = cropStart + ((rawStart - cropStart) % cropLen + cropLen) % cropLen;
         const clampedStart = Math.max(cropStart, Math.min(rawStart, cropEnd - 0.01));
         const grainDur     = Math.max(minGrainDurS(), Math.min(gpr.duration + durVariation, cropEnd - clampedStart));
@@ -852,7 +871,7 @@ export function animate() {
         if (s.grainCursor > cropEnd) s.grainCursor = cropStart + ((s.grainCursor - cropStart) % cropLen);
       }
 
-      if (particle) S.particles.push(particle);
+      if (particle) { S.particles.push(particle); S._particleVersion++; }
     }
   }
 

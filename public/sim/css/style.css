@@ -185,6 +185,22 @@
     align-items: center;
     gap: 0.3rem;
   }
+  #viewerMonitor .vm-node-meter {
+    width: 48px;
+    height: 3px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 2px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  #viewerMonitor .vm-node-bar {
+    display: block;
+    height: 100%;
+    width: 0%;
+    border-radius: 2px;
+    background: #7abcbc;
+    transition: width 0.25s ease, background-color 0.25s ease;
+  }
   #viewerMonitor .vm-dot {
     width: 0.45rem;
     height: 0.45rem;
@@ -615,6 +631,74 @@
   #loadIndicator { font-size: 0.75rem; color: #666666; letter-spacing: 0.03em; }
   #loadIndicator.warn { color: #c86020; }
   #loadIndicator.crit { color: #cc2222; }
+
+  /* ── Perf monitor (P key) ──────────────────────────────────────────────── */
+  #perfMonitor {
+    position: absolute;
+    top: 2.5rem;
+    left: 1rem;
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.7rem;
+    color: #aaa;
+    pointer-events: none;
+    background: rgba(0,0,0,0.65);
+    padding: 0.5rem 0.65rem;
+    border-radius: 4px;
+    min-width: 200px;
+  }
+  .pm-head {
+    color: #444;
+    font-size: 0.65rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 0.45rem;
+  }
+  .pm-key { color: #333; }
+  .pm-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-bottom: 0.3rem;
+  }
+  .pm-label {
+    width: 2.6rem;
+    color: #555;
+    font-size: 0.65rem;
+    flex-shrink: 0;
+  }
+  .pm-track {
+    width: 80px;
+    height: 3px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 2px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .pm-fill {
+    display: block;
+    height: 100%;
+    width: 0%;
+    border-radius: 2px;
+    background: #7abcbc;
+    transition: width 0.2s ease, background-color 0.2s ease;
+  }
+  .pm-num {
+    font-size: 0.68rem;
+    color: #7abcbc;
+    min-width: 4rem;
+  }
+  .pm-info {
+    color: #3a3a3a;
+    font-size: 0.63rem;
+    margin-top: 0.4rem;
+    padding-top: 0.3rem;
+    border-top: 1px solid rgba(255,255,255,0.04);
+  }
+  .pm-warn {
+    color: #e06060;
+    font-size: 0.68rem;
+    margin-top: 0.2rem;
+  }
 
   /* ── Device: grain preset ────────────────────────────────────────────────── */
   .device--preset { flex: 1; min-width: clamp(280px, 22vw, 420px); }

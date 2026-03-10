@@ -80,13 +80,24 @@ export const NEAREST_GLOW_COLOR = '#b8a0ff'; // soft violet
 //
 // For all normal-use presets (period ≥ 30ms, duration ≤ 480ms) the steady-state
 // concurrent count stays ≤ 16 — this cap is never the binding constraint.
-export const MAX_GRAIN_NODES = 200;
+// Lowered from 200 → 150: at extreme combos (2ms period × 4s duration) Chrome's
+// audio renderer processes all concurrent nodes per render quantum (2.9ms).
+// 150 concurrent chains + deferred disconnect batching keeps the audio thread
+// within budget.  Normal presets use < 20 nodes so this cap has zero effect.
+export const MAX_GRAIN_NODES = 150;
 
 // Grain scheduler tick rate in ms. 30ms ≈ 33 ticks/sec.
 // Grains are 25ms–2000ms so 30ms resolution is inaudible.
 // Halving to 15ms doubles scheduling precision but increases CPU load.
 // Doubling to 60ms is still fine for most presets; reduces CPU on weak hardware.
 export const GRAIN_SCHEDULER_INTERVAL_MS = 10;
+
+// Minimum period for onset-clock advancement and the UI slider floor.
+// The scheduler can smoothly deliver grains down to
+// GRAIN_SCHEDULER_INTERVAL_MS / MAX_GRAINS_PER_TICK ≈ 0.83ms.
+// 10ms = 100 grains/sec max.  Raised from 2ms to prevent Chrome renderer
+// crashes at extreme period+duration combos (error code 5).
+export const SCHED_SAFE_PERIOD_S = 0.010; // 10 ms
 
 // Render loop frame rate cap. The animate() loop throttles canvas redraws to
 // this rate while requestAnimationFrame still runs at full display rate (handling
@@ -119,9 +130,6 @@ export const PRESETS = [
     periodVar:     0.01,
     fadeRatio:     0.32,   // attack+release each = 32% of dur
     retriggerMs:   55,
-    startJitter:   0.05,
-    sprayCount:    1,
-    spraySpread:   0.04,
     pitchJitter:   0.01,   // low pitch jitter -> stays legible
     panSpread:     0.65,
     volume:        0.045,
@@ -143,9 +151,6 @@ export const PRESETS = [
     periodVar:     0.01,
     fadeRatio:     0.21,
     retriggerMs:   80,
-    startJitter:   0.01,
-    sprayCount:    1,
-    spraySpread:   0.01,
     pitchJitter:   0.015,
     panSpread:     0.2,
     volume:        0.07,
@@ -167,9 +172,6 @@ export const PRESETS = [
     periodVar:     0.04,
     fadeRatio:     0.28,
     retriggerMs:   400,
-    startJitter:   0.28,
-    sprayCount:    1,
-    spraySpread:   0.18,
     pitchJitter:   0.02,
     panSpread:     1.0,
     volume:        0.025,
@@ -191,9 +193,6 @@ export const PRESETS = [
     periodVar:     0.08,
     fadeRatio:     0.25,
     retriggerMs:   900,
-    startJitter:   0.01,
-    sprayCount:    1,
-    spraySpread:   0.06,
     pitchJitter:   0.004,
     panSpread:     0.85,
     volume:        0.012,
@@ -215,9 +214,6 @@ export const PRESETS = [
     periodVar:     0.02,
     fadeRatio:     0.23,
     retriggerMs:   100,
-    startJitter:   0.04,
-    sprayCount:    1,
-    spraySpread:   0.04,
     pitchJitter:   0.0,
     panSpread:     0.4,
     volume:        0.08,
@@ -239,9 +235,6 @@ export const PRESETS = [
     periodVar:     0.01,
     fadeRatio:     0.33,
     retriggerMs:   180,
-    startJitter:   0.14,
-    sprayCount:    2,
-    spraySpread:   0.12,
     pitchJitter:   0.029,  // ≈ ±50¢  (slider ceiling is 0–~0.029 = 0–50¢; 0.20 = ±316¢ was a typo)
     panSpread:     1.0,
     volume:        0.018,
@@ -263,9 +256,6 @@ export const PRESETS = [
     periodVar:     0.10,
     fadeRatio:     0.31,
     retriggerMs:   350,
-    startJitter:   0.35,
-    sprayCount:    1,
-    spraySpread:   0.20,
     pitchJitter:   0.06,
     panSpread:     0.9,
     volume:        0.030,
@@ -287,9 +277,6 @@ export const PRESETS = [
     periodVar:     0.03,
     fadeRatio:     0.22,
     retriggerMs:   20,
-    startJitter:   0.9,
-    sprayCount:    3,
-    spraySpread:   0.35,
     pitchJitter:   0.45,
     panSpread:     1.0,
     volume:        0.18,
@@ -311,9 +298,6 @@ export const PRESETS = [
     periodVar:     0.0,
     fadeRatio:     0.08,
     retriggerMs:   60,
-    startJitter:   0.02,
-    sprayCount:    1,
-    spraySpread:   0.01,
     pitchJitter:   0.0,
     panSpread:     0.5,
     volume:        0.10,
@@ -335,9 +319,6 @@ export const PRESETS = [
     periodVar:     0.005,
     fadeRatio:     0.15,
     retriggerMs:   40,
-    startJitter:   0.005,
-    sprayCount:    1,
-    spraySpread:   0.005,
     pitchJitter:   0.01,
     panSpread:     0.15,
     volume:        0.09,
@@ -359,9 +340,6 @@ export const PRESETS = [
     periodVar:     0.15,   // period drifts wildly
     fadeRatio:     0.25,
     retriggerMs:   150,
-    startJitter:   0.08,
-    sprayCount:    2,
-    spraySpread:   0.08,
     pitchJitter:   0.08,
     panSpread:     0.65,
     volume:        0.045,
@@ -384,9 +362,6 @@ export const PRESETS = [
     periodVar:     0.0,
     fadeRatio:     0.25,
     retriggerMs:   0,
-    startJitter:   0.0,
-    sprayCount:    1,
-    spraySpread:   0.0,
     pitchJitter:   0.0,
     panSpread:     0.0,
     volume:        0.10,
@@ -461,6 +436,10 @@ export const perf = {
   schedulerMaxAt: 0,
   grainsFired:    0,    // grains fired in last scheduler tick
   activeNodes:    0,    // running AudioBufferSource count
+  grainsPerSec:   0,    // rolling 1s grain rate
+  _grainAccum:    0,    // accumulator fed by scheduleGrains
+  _grainRateTs:   0,    // wall time of last rate computation
+  _pmLastUpdate:  0,    // wall time of last perf monitor DOM update
   audioClockLast: 0,    // audioCtx.currentTime last check
   audioClockWall: 0,    // performance.now() at that check
   underruns:      0,    // times audio clock fell behind wall clock
@@ -493,58 +472,108 @@ export function perfTick() {
     }
   }
 
-  // -- Always-visible load indicator
-  const loadEl = document.getElementById('loadIndicator');
+  // -- Always-visible load indicator + node bar
+  const loadEl  = document.getElementById('loadIndicator');
+  const barEl   = document.getElementById('vmNodeBar');
+  const frameBad = perf.frameMs > 25;
+  const hwBufMs  = (S.audioCtx?.baseLatency ?? 0) * 1000;
+  const schedBad = perf.schedulerDrift > GRAIN_SCHEDULER_INTERVAL_MS * 0.60 + hwBufMs * 0.90;
+  const nodesBad = perf.activeNodes > MAX_GRAIN_NODES * 0.90;
+
+  if (barEl) {
+    const pct = Math.min(100, (perf.activeNodes / MAX_GRAIN_NODES) * 100);
+    barEl.style.width = `${pct}%`;
+    barEl.style.backgroundColor = pct > 85 ? '#e06060' : pct > 55 ? '#e8a030' : '#7abcbc';
+  }
+
   if (loadEl) {
-    const frameBad = perf.frameMs > 25;        // >25ms = dropped frame
-    // Drift up to baseLatency is expected — the OS audio interrupt for large
-    // hardware buffers can delay the JS timer by ~baseLatency ms. Only flag
-    // as bad if drift exceeds what the hardware buffer alone explains.
-    const hwBufMs  = (S.audioCtx?.baseLatency ?? 0) * 1000;
-    const schedBad = perf.schedulerDrift > GRAIN_SCHEDULER_INTERVAL_MS * 0.60 + hwBufMs * 0.90;
-    // Node count warning: only trigger if we're burning through the hard cap,
-    // not at an arbitrary fraction of it — real overload shows up in frame/sched first.
-    const nodesBad = perf.activeNodes > MAX_GRAIN_NODES * 0.90;
     if (frameBad || schedBad || nodesBad) {
       const reasons = [];
-      if (nodesBad) reasons.push(`${perf.activeNodes} grains`);
+      if (nodesBad) reasons.push(`${perf.activeNodes} nodes`);
       if (schedBad) reasons.push(`sched +${perf.schedulerDrift.toFixed(0)}ms`);
       if (frameBad) reasons.push(`frame ${perf.frameMs.toFixed(0)}ms`);
       loadEl.style.color = frameBad ? '#e06060' : '#e8a030';
-      loadEl.textContent = `overload: ${reasons.join(', ')}`;
+      loadEl.textContent = reasons.join(' · ');
     } else {
-      loadEl.style.color = '#555';
-      loadEl.textContent = `${perf.activeNodes} grains`;
+      loadEl.style.color = '';
+      loadEl.textContent = '';
     }
   }
 
+  // Rolling grain rate: accumulate in _grainAccum (fed by scheduleGrains) and
+  // compute grains/sec once per second to avoid per-frame division noise.
+  if (perf._grainRateTs === 0) perf._grainRateTs = now;
+  const rateElapsed = now - perf._grainRateTs;
+  if (rateElapsed >= 1000) {
+    perf.grainsPerSec = Math.round(perf._grainAccum * 1000 / rateElapsed);
+    perf._grainAccum  = 0;
+    perf._grainRateTs = now;
+  }
+
   if (!S.perfMonitorVisible) return;
-  const el = document.getElementById('perfMonitor');
-  if (!el) return;
 
-  const frameColor    = perf.frameMs   > 20 ? '#e06060' : perf.frameMs   > 12 ? '#e8a030' : '#7abcbc';
-  // Sched thresholds: drift within (interval × 0.6 + baseLatency × 0.9) is
-  // expected for large hardware buffers and shown in teal. Beyond that: orange
-  // or red. This prevents false alarms at 1024-frame buffer sizes.
-  const hwBufMsDisp   = (S.audioCtx?.baseLatency ?? 0) * 1000;
-  const schedWarn     = GRAIN_SCHEDULER_INTERVAL_MS * 0.60 + hwBufMsDisp * 0.90;
-  const schedRed      = GRAIN_SCHEDULER_INTERVAL_MS * 0.90 + hwBufMsDisp * 0.90;
-  const schedColor    = perf.schedulerDrift > schedRed  ? '#e06060'
-                      : perf.schedulerDrift > schedWarn ? '#e8a030' : '#7abcbc';
-  const underrunColor = perf.underruns > 0 ? '#e06060' : '#555';
-  const srHz          = S.audioCtx?.sampleRate;
-  const srStr         = srHz ? `${(srHz / 1000).toFixed(1)}kHz` : '—';
-  // baseLatency approximates the hardware buffer size
-  const blMs          = S.audioCtx?.baseLatency != null
-    ? `${(S.audioCtx.baseLatency * 1000).toFixed(1)}ms` : '—';
+  // Throttle DOM writes to 4Hz — readable without churning layout.
+  if (now - perf._pmLastUpdate < 250) return;
+  perf._pmLastUpdate = now;
 
-  el.innerHTML =
-    `<span style="color:#555">── perf monitor (P) ──</span>\n` +
-    `frame  <span style="color:${frameColor}">${perf.frameMs.toFixed(1)}ms</span>  max <span style="color:#e8a030">${perf.frameMsMax.toFixed(1)}ms</span>\n` +
-    `sched  <span style="color:${schedColor}">+${perf.schedulerDrift.toFixed(1)}ms</span> max <span style="color:#e8a030">+${perf.schedulerMax.toFixed(1)}ms</span>\n` +
-    `grains <span style="color:#aaa">${perf.grainsFired} fired / ${perf.activeNodes} active</span>\n` +
-    `audio  <span style="color:#aaa">${srStr}  buf ${blMs}</span>\n` +
-    `underruns <span style="color:${underrunColor}">${perf.underruns}</span>`;
+  function setBar(barId, valId, pct, valStr, warnPct, critPct) {
+    const bar = document.getElementById(barId);
+    const val = document.getElementById(valId);
+    if (bar) {
+      bar.style.width = `${Math.min(100, pct)}%`;
+      bar.style.backgroundColor = pct > critPct ? '#e06060' : pct > warnPct ? '#e8a030' : '#7abcbc';
+    }
+    if (val) {
+      val.textContent = valStr;
+      val.style.color = pct > critPct ? '#e06060' : pct > warnPct ? '#e8a030' : '#7abcbc';
+    }
+  }
+
+  const hwBufMsDisp = (S.audioCtx?.baseLatency ?? 0) * 1000;
+  const schedMax    = GRAIN_SCHEDULER_INTERVAL_MS * 2 + hwBufMsDisp;
+
+  // nodes: 0–200, warn at 55%, crit at 85%
+  setBar('pmNodesBar', 'pmNodesVal',
+    (perf.activeNodes / MAX_GRAIN_NODES) * 100,
+    `${perf.activeNodes} / ${MAX_GRAIN_NODES}`,
+    55, 85);
+
+  // frame: 60fps = 16.7ms baseline. Bar spans 16–50ms (0% = 16ms, 100% = 50ms).
+  // Warn at 33ms (dropping to ~30fps), crit at 50ms (~20fps).
+  const frameBaseline = 1000 / 60;
+  const frameCap      = 50;
+  setBar('pmFrameBar', 'pmFrameVal',
+    Math.max(0, (perf.frameMs - frameBaseline) / (frameCap - frameBaseline)) * 100,
+    `${perf.frameMs.toFixed(1)}ms`,
+    (33 - frameBaseline) / (frameCap - frameBaseline) * 100,
+    (50 - frameBaseline) / (frameCap - frameBaseline) * 100);
+
+  // sched drift: cap bar at 2× interval, warn at 60%, crit at 90%
+  setBar('pmSchedBar', 'pmSchedVal',
+    (perf.schedulerDrift / Math.max(schedMax, 1)) * 100,
+    `+${perf.schedulerDrift.toFixed(1)}ms`,
+    60, 90);
+
+  // grains/sec: cap bar at 200/s, always teal (informational)
+  setBar('pmRateBar', 'pmRateVal',
+    (perf.grainsPerSec / 200) * 100,
+    `${perf.grainsPerSec}/s`,
+    101, 101);  // never warn
+
+  const infoEl = document.getElementById('pmInfo');
+  if (infoEl) {
+    const srHz = S.audioCtx?.sampleRate;
+    const srStr = srHz ? `${(srHz / 1000).toFixed(1)}kHz` : '—';
+    const blMs  = S.audioCtx?.baseLatency != null
+      ? `${(S.audioCtx.baseLatency * 1000).toFixed(1)}ms` : '—';
+    infoEl.textContent = `${srStr}  ·  buf ${blMs}`;
+  }
+
+  const warnEl = document.getElementById('pmUnderruns');
+  if (warnEl) {
+    warnEl.textContent  = perf.underruns > 0 ? `⚠ ${perf.underruns} underrun${perf.underruns > 1 ? 's' : ''}` : '';
+    warnEl.style.display = perf.underruns > 0 ? 'block' : 'none';
+  }
 }
 
 // ============================================================================
@@ -580,6 +609,7 @@ export const S = {
   isPainting: false,          // true while mouse-move painting is active
   paintFrameCount: 0,
   particles: [],              // all painted particles on the sphere
+  _particleVersion: 0,        // incremented on every push/remove; grain.js uses this to invalidate angular-distance caches
 
   // ── Stroke history (for undo) ──────────────────────────────────────────
   // Each entry: { strokeId, type: 'sample'|'live', liveBufferIndex (live only) }
@@ -662,9 +692,6 @@ export const S = {
     pitchJitter: null,
     panSpread:   null,
     volume:      null,
-    startJitter: null,   // start-position randomisation (seconds)
-    sprayCount:  null,   // number of simultaneous grains per onset (integer ≥ 1)
-    spraySpread: null,   // time spread between spray grains (seconds)
     retriggerMs: null,   // minimum re-trigger time for cloud grains (ms)
   },
   grainProbability: 1.0,   // 0-1: probability each candidate grain fires per tick

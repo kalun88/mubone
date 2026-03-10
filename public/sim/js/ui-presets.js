@@ -4,7 +4,7 @@
 
 import {
   S,
-  PRESETS, CLOUD_COLORS, MAX_CLOUDS,
+  PRESETS, CLOUD_COLORS, MAX_CLOUDS, SCHED_SAFE_PERIOD_S,
   gp, rebuildGrainCurves, minGrainDurS, minGrainPeriodS,
   SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
 } from './state.js';
@@ -433,8 +433,8 @@ export function drawPresetWaveform() {
 
   const pr = PRESETS[S.activePresetIndex];
 
-  const liveDur    = S.grainOverrides.duration ?? pr.duration;
-  const livePeriod = S.grainOverrides.period   ?? pr.period;
+  const liveDur    = Math.max(0.00001, S.grainOverrides.duration ?? pr.duration);
+  const livePeriod = Math.max(0.00001, S.grainOverrides.period   ?? pr.period);
 
   const STATS_H = 11;
   const drawH   = h - STATS_H;
@@ -442,8 +442,8 @@ export function drawPresetWaveform() {
   const baseY   = drawH;
   const maxAmp  = drawH;
 
-  const minPeriod = 2 / ((w / (livePeriod * 5 + liveDur)));
-  const stride    = Math.max(minPeriod, livePeriod);
+  const minPeriod = 2 * (livePeriod * 5 + liveDur) / Math.max(1, w);
+  const stride    = Math.max(minPeriod, livePeriod, 0.0001); // floor prevents NaN/Inf
 
   const viewSec  = stride * 4.5 + liveDur;
   const pxPerSec = w / viewSec;
@@ -466,10 +466,22 @@ export function drawPresetWaveform() {
   const tints = ['#7abcbc', '#6090e0', '#e07060', '#a0c060', '#c060a0', '#e0a030', '#60a0e0', '#e06060'];
   const tint  = tints[S.activePresetIndex % tints.length] || '#7abcbc';
 
-  const count  = Math.ceil(viewSec / stride) + 1;
-  const STEPS  = 40;
-  const fadeW  = liveFade * pxPerSec;
-  const ampH   = maxAmp - PAD * 2;
+  // Hard cap: never draw more than 50 grain shapes.  At low period + high
+  // duration the raw count can reach 100+ shapes × 82 canvas ops each =
+  // 8 000+ path operations per frame → starves the grain scheduler.  50
+  // shapes is visually indistinguishable from 100 at these scales.
+  const MAX_WAVEFORM_GRAINS = 50;
+  const rawCount = stride > 0 ? Math.ceil(viewSec / stride) + 1 : 6;
+  const count    = Math.min(rawCount, MAX_WAVEFORM_GRAINS);
+  const STEPS    = Math.min(40, count > 30 ? 20 : 40); // coarser steps at high shape counts
+  const fadeW    = liveFade * pxPerSec;
+  const ampH     = maxAmp - PAD * 2;
+
+  // Reuse a single points array to avoid per-grain {x,y} allocation pressure.
+  // At STEPS=40: up to 41 + 1 + 41 = 83 points per grain.
+  const maxPts = STEPS * 2 + 3;
+  const ptsX = new Float64Array(maxPts);
+  const ptsY = new Float64Array(maxPts);
 
   for (let i = 0; i < count; i++) {
     // All grains drawn at nominal size — the viz shows the pattern, not stochastic variation
@@ -477,28 +489,37 @@ export function drawPresetWaveform() {
     const fadeWi = liveFade * pxPerSec;
     const sustWi = Math.max(0, grainW - fadeWi * 2);
 
-    const pts = [];
+    let nPts = 0;
     for (let s = 0; s <= STEPS; s++) {
       const t = s / STEPS;
-      pts.push({ x: xStart + t * fadeWi, y: baseY - PAD - atkShape(t) * ampH });
+      ptsX[nPts] = xStart + t * fadeWi;
+      ptsY[nPts] = baseY - PAD - atkShape(t) * ampH;
+      nPts++;
     }
-    if (sustWi > 0) pts.push({ x: xStart + fadeWi + sustWi, y: baseY - PAD - ampH });
+    if (sustWi > 0) {
+      ptsX[nPts] = xStart + fadeWi + sustWi;
+      ptsY[nPts] = baseY - PAD - ampH;
+      nPts++;
+    }
     for (let s = 0; s <= STEPS; s++) {
       const t = s / STEPS;
-      pts.push({ x: xStart + fadeWi + sustWi + t * fadeWi, y: baseY - PAD - relShape(t) * ampH });
+      ptsX[nPts] = xStart + fadeWi + sustWi + t * fadeWi;
+      ptsY[nPts] = baseY - PAD - relShape(t) * ampH;
+      nPts++;
     }
 
     c.beginPath();
-    c.moveTo(pts[0].x, baseY);
-    for (const p of pts) c.lineTo(p.x, p.y);
-    c.lineTo(pts[pts.length - 1].x, baseY);
+    c.moveTo(ptsX[0], baseY);
+    for (let j = 0; j < nPts; j++) c.lineTo(ptsX[j], ptsY[j]);
+    c.lineTo(ptsX[nPts - 1], baseY);
     c.closePath();
     c.globalAlpha = 0.1;
     c.fillStyle = tint;
     c.fill();
 
     c.beginPath();
-    pts.forEach((p, idx) => idx === 0 ? c.moveTo(p.x, p.y) : c.lineTo(p.x, p.y));
+    c.moveTo(ptsX[0], ptsY[0]);
+    for (let j = 1; j < nPts; j++) c.lineTo(ptsX[j], ptsY[j]);
     c.globalAlpha = 0.65;
     c.strokeStyle = tint;
     c.lineWidth = 1.5;
@@ -556,7 +577,7 @@ export function updatePresetStats() {
 // Registers S.syncGrainControlsUI so selectPreset can call it.
 
 export function initGrainControls() {
-  const _LOG_MIN_MS = 1; // 1ms hard floor — sub-ms periods cause audible clipping artifacts
+  const _LOG_MIN_MS = 1; // 1ms — bottom of the log slider range for both duration and period
   const _LOG_MIN = Math.log(_LOG_MIN_MS), _LOG_MAX = Math.log(4000);
   const _sliderToMs = sv => Math.exp(_LOG_MIN + (parseFloat(sv) / 1000) * (_LOG_MAX - _LOG_MIN));
   const _msToSlider = ms => Math.round(((Math.log(Math.max(_LOG_MIN_MS, ms)) - _LOG_MIN) / (_LOG_MAX - _LOG_MIN)) * 1000);
@@ -593,9 +614,9 @@ export function initGrainControls() {
     {
       sliderId: 'gcPeriodSlider', numId: 'gcPeriodNum', param: 'period',
       toDisplay: _fmtMs,
-      sliderToInternal: sv => Math.max(0.001, _sliderToMs(sv) / 1000),
+      sliderToInternal: sv => Math.max(SCHED_SAFE_PERIOD_S, _sliderToMs(sv) / 1000),
       internalToSlider: v  => _msToSlider(v * 1000),
-      fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(0.001, Math.min(4, v)); },
+      fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(SCHED_SAFE_PERIOD_S, Math.min(4, v)); },
     },
     {
       sliderId: 'gcPeriodVarSlider', numId: 'gcPeriodVarNum', param: 'periodVar',
@@ -641,15 +662,26 @@ export function initGrainControls() {
     },
   ];
 
+  // rAF-throttled waveform preview — avoids blocking the main thread with
+  // canvas draws during rapid slider drags (was running at ~20fps synchronously,
+  // each call doing ~8 000 canvas path operations, starving the grain scheduler).
+  let _waveformRafId = 0;
+  function requestWaveformRedraw() {
+    if (!_waveformRafId) _waveformRafId = requestAnimationFrame(() => {
+      _waveformRafId = 0;
+      drawPresetWaveform();
+    });
+  }
+
   function setGrainParam(param, internalVal) {
     if (param === 'probability') {
       S.grainProbability = Math.max(0, Math.min(1, internalVal));
     } else {
       if (param === 'duration') internalVal = Math.max(minGrainDurS(), internalVal);
-      if (param === 'period')   internalVal = Math.max(0.001, internalVal);
+      if (param === 'period')   internalVal = Math.max(SCHED_SAFE_PERIOD_S, internalVal);
       S.grainOverrides[param] = internalVal;
       if (param === 'volume') rebuildGrainCurves();
-      if (param === 'duration' || param === 'period' || param === 'fadeRatio') drawPresetWaveform();
+      if (param === 'duration' || param === 'period' || param === 'fadeRatio') requestWaveformRedraw();
       if (param === 'period' || param === 'periodVar') resetCursorPeriod();
     }
   }

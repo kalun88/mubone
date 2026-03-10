@@ -42,12 +42,10 @@ export function generateDiagReport(triggerLabel = 'manual', error = null) {
   const effDur     = eff('duration') ?? 0;
   const dutyCycle  = effPeriod > 0 ? ((effDur / effPeriod) * 100).toFixed(0) + '%' : 'n/a';
   const effPitch   = eff('pitchJitter') ?? 0;
-  const effSpray   = eff('sprayCount')  ?? 1;
   const effVol     = eff('volume')      ?? 1;
   const effProb    = eff('probability') ?? 1;
   const effAtk     = eff('attack')      ?? 0.25;
   const effRel     = eff('release')     ?? 0.25;
-  const effStart   = eff('startJitter') ?? 0;
   const effDurVar  = eff('durVar')      ?? 0;
   const effPan     = eff('panSpread')   ?? 0;
 
@@ -98,11 +96,9 @@ export function generateDiagReport(triggerLabel = 'manual', error = null) {
     `  preset         : ${presetLabel}`,
     `  period         : ${(effPeriod * 1000).toFixed(1)} ms`,
     `  duration       : ${(effDur * 1000).toFixed(1)} ms  (duty cycle: ${dutyCycle})`,
-    `  spray count    : ${effSpray}`,
     `  pitch jitter   : ${cents(effPitch)}  (internal: ${typeof effPitch === 'number' ? effPitch.toFixed(4) : 'n/a'})`,
     `  attack         : ${(effAtk * 100).toFixed(0)}%`,
     `  release        : ${(effRel * 100).toFixed(0)}%`,
-    `  start jitter   : ${(effStart * 1000).toFixed(1)} ms`,
     `  dur variance   : ${(effDurVar * 1000).toFixed(1)} ms`,
     `  pan spread     : ${effPan}`,
     `  volume         : ${effVol}`,

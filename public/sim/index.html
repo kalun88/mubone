@@ -71,13 +71,41 @@
         <div id="viewerMonitor">
           <span id="vmClouds">clouds: 0</span>
           <span id="vmBuffers">buf: 0</span>
-          <span class="vm-grain-wrap"><span class="vm-dot" id="vmDot"></span><span id="loadIndicator" style="color:#555">ok</span></span>
+          <span class="vm-grain-wrap">
+            <span class="vm-dot" id="vmDot"></span>
+            <span class="vm-node-meter"><span class="vm-node-bar" id="vmNodeBar"></span></span>
+            <span id="loadIndicator" style="color:#555"></span>
+          </span>
           <span id="vmGrains" style="display:none">0 grains</span>
         </div>
         <button id="mobileFullscreenBtn" title="exit fullscreen">✕</button>
       </div>
 
-      <div id="perfMonitor" style="display:none;position:absolute;top:2.5rem;left:1rem;font-family:'Roboto Mono',monospace;font-size:0.75rem;color:#aaa;pointer-events:none;line-height:1.7;background:rgba(0,0,0,0.55);padding:0.35rem 0.5rem;border-radius:3px;"></div>
+      <div id="perfMonitor" style="display:none">
+        <div class="pm-head">perf <span class="pm-key">P</span></div>
+        <div class="pm-row">
+          <span class="pm-label">nodes</span>
+          <span class="pm-track"><span class="pm-fill" id="pmNodesBar"></span></span>
+          <span class="pm-num" id="pmNodesVal">0/200</span>
+        </div>
+        <div class="pm-row">
+          <span class="pm-label">frame</span>
+          <span class="pm-track"><span class="pm-fill" id="pmFrameBar"></span></span>
+          <span class="pm-num" id="pmFrameVal">0ms</span>
+        </div>
+        <div class="pm-row">
+          <span class="pm-label">sched</span>
+          <span class="pm-track"><span class="pm-fill" id="pmSchedBar"></span></span>
+          <span class="pm-num" id="pmSchedVal">+0ms</span>
+        </div>
+        <div class="pm-row">
+          <span class="pm-label">rate</span>
+          <span class="pm-track"><span class="pm-fill" id="pmRateBar"></span></span>
+          <span class="pm-num" id="pmRateVal">0/s</span>
+        </div>
+        <div class="pm-info" id="pmInfo"></div>
+        <div class="pm-warn" id="pmUnderruns" style="display:none"></div>
+      </div>
       <div class="drop-overlay" id="dropOverlay">
         <div class="drop-icon">↓</div>
         <div class="drop-text">drop audio file (.wav, .mp3, .ogg)</div>

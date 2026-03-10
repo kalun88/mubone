@@ -160,9 +160,17 @@ function drawSvCrop() {
   cctx.fillRect(xS, cropC.height - 2 * dpr, xE - xS, 2 * dpr);
 }
 
+// Track previous document-level listeners so we can remove them on re-setup
+let _svDocMoveHandler = null;
+let _svDocUpHandler   = null;
+
 export function setupSvCropInteraction() {
   const display = document.getElementById('svDisplay');
   if (!display) return;
+
+  // Remove previous document-level listeners to prevent accumulation
+  if (_svDocMoveHandler) document.removeEventListener('mousemove', _svDocMoveHandler);
+  if (_svDocUpHandler)   document.removeEventListener('mouseup',   _svDocUpHandler);
 
   const fresh = display.cloneNode(true);
   display.parentNode.replaceChild(fresh, display);
@@ -201,7 +209,7 @@ export function setupSvCropInteraction() {
     document.body.style.cursor = 'col-resize';
   });
 
-  document.addEventListener('mousemove', function svMove(e) {
+  _svDocMoveHandler = function svMove(e) {
     if (!dragging) return;
     const rect = fresh.getBoundingClientRect();
     const x    = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
@@ -211,10 +219,8 @@ export function setupSvCropInteraction() {
     const minSpan = 0.01;
     if (dragging === 'start') s.cropStart = Math.max(0, Math.min(norm, s.cropEnd   - minSpan));
     else                      s.cropEnd   = Math.min(1, Math.max(norm, s.cropStart + minSpan));
-    // Use the cloned fresh element's crop canvas
     const freshCropC = fresh.querySelector('#svCrop');
     if (freshCropC) {
-      // Redraw crop overlay on the cloned canvas
       const dpr = window.devicePixelRatio || 1;
       const W = freshCropC.width / dpr, H = freshCropC.height / dpr;
       const cctx = freshCropC.getContext('2d');
@@ -238,15 +244,18 @@ export function setupSvCropInteraction() {
       infoEl.textContent = `${s.name}   ${cropDur}s / ${s.duration.toFixed(2)}s`;
     }
     drawCropOverlay(svActiveTab);
-  });
+  };
 
-  document.addEventListener('mouseup', function svUp() {
+  _svDocUpHandler = function svUp() {
     if (!dragging) return;
     dragging = null;
     document.body.style.cursor = '';
     const s = svActiveTab >= 0 ? S.samples[svActiveTab] : null;
     if (s) s.grainCursor = s.cropStart * s.duration;
-  });
+  };
+
+  document.addEventListener('mousemove', _svDocMoveHandler);
+  document.addEventListener('mouseup',   _svDocUpHandler);
 }
 
 // Draw live grain position overlay on svOverlay (called from render loop via S)
@@ -316,6 +325,7 @@ export function undoLastStroke() {
   const sid   = entry.strokeId;
 
   S.particles = S.particles.filter(p => p.strokeId !== sid);
+  S._particleVersion++;
 
   if (entry.type === 'live' && entry.liveBufferIndex >= 0) {
     const idx = entry.liveBufferIndex;
@@ -719,7 +729,14 @@ export function stopSamplePreview(slotIdx) {
 
 function updateWaveformPlayheads() {
   const now = performance.now();
-  S.activeGrains = S.activeGrains.filter(g => now < g.startTime + g.totalDuration * 1000);
+  // In-place compaction — avoids creating a new array every frame
+  let writeIdx = 0;
+  for (let i = 0; i < S.activeGrains.length; i++) {
+    if (now < S.activeGrains[i].startTime + S.activeGrains[i].totalDuration * 1000) {
+      S.activeGrains[writeIdx++] = S.activeGrains[i];
+    }
+  }
+  S.activeGrains.length = writeIdx;
 
   const grainsBySample = {};
   for (const g of S.activeGrains) {

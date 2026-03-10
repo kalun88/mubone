@@ -1,4 +1,4 @@
-import { S, HANN_LEN, HANN_ATTACK, HANN_RELEASE, MAX_CLOUDS, MAX_GRAIN_NODES, GRAIN_SCHEDULER_INTERVAL_MS, perf, gp, minGrainDurS, minGrainPeriodS, buildEnvelopeCurves } from './state.js';
+import { S, HANN_LEN, HANN_ATTACK, HANN_RELEASE, MAX_CLOUDS, MAX_GRAIN_NODES, GRAIN_SCHEDULER_INTERVAL_MS, SCHED_SAFE_PERIOD_S, perf, gp, minGrainDurS, minGrainPeriodS, buildEnvelopeCurves } from './state.js';
 import { ensureAudioContext, getMasterBus } from './audio.js';
 import { spherePoint, qRotateVec, qConjugate, getCursorLonLat, screenToLonLat } from './sphere.js';
 
@@ -6,6 +6,58 @@ export function rand(min, max) { return min + Math.random() * (max - min); }
 
 // activeGrainMap: particle → { expiry, glowColor } — shared with renderer
 export let activeGrainMap = new Map();
+
+// ── Angular distance caches ────────────────────────────────────────────────
+// angleBetweenSphere costs 6 transcendental ops per particle. With 500
+// particles and 33 ticks/sec that's ~99 000 trig calls/sec for the cursor
+// path alone, plus ~33 000 × numClouds for clouds.
+//
+// Cursor: angles only change when the cursor moves or particles are added/
+// removed.  _cursorAngBuf stores the last computed values; if the dirty
+// check passes we skip the trig loop entirely and restore from the buffer
+// (clouds may have overwritten p._ang in the previous tick).
+//
+// Clouds: a cloud's position is fixed after placement, so its per-particle
+// angles only need recomputing when S._particleVersion changes.  We store
+// the Float32Array on the cloud object itself so it lives as long as the
+// cloud and is GC'd when the cloud is dropped.
+let _cursorAngBuf          = new Float32Array(512); // grows if particle count exceeds initial size
+let _cursorAngCacheLon     = null;
+let _cursorAngCacheLat     = null;
+let _cursorAngCachePartVer = -1;
+
+// ── Deferred node disconnect ───────────────────────────────────────────────
+// When 200 grains expire in the same ~170ms window, 200 `ended` callbacks
+// each calling 3-4 synchronous disconnect() calls = ~800 audio-graph
+// mutations in a burst.  Chrome's audio renderer locks the graph for each
+// disconnect; the burst can deadlock/crash the renderer (error code 5).
+//
+// Solution: batch disconnect calls into periodic sweeps (every 100ms).
+// Nodes are pushed onto a queue; the sweep drains up to 40 per pass,
+// spreading the graph mutations across multiple frames.
+let _disconnectQueue = [];
+let _disconnectTimerId = 0;
+const DISCONNECT_BATCH = 40;  // max nodes per sweep
+const DISCONNECT_INTERVAL = 100; // ms between sweeps
+
+function _flushDisconnects() {
+  let count = Math.min(DISCONNECT_BATCH, _disconnectQueue.length);
+  while (count-- > 0) {
+    const node = _disconnectQueue.pop();
+    try { node.disconnect(); } catch (_) {}
+  }
+  if (_disconnectQueue.length === 0) {
+    clearInterval(_disconnectTimerId);
+    _disconnectTimerId = 0;
+  }
+}
+
+function _deferDisconnect(node) {
+  _disconnectQueue.push(node);
+  if (!_disconnectTimerId) {
+    _disconnectTimerId = setInterval(_flushDisconnects, DISCONNECT_INTERVAL);
+  }
+}
 
 // ── Reversed buffer cache ──────────────────────────────────────────────────
 // Caches a full reversed copy of each source AudioBuffer to avoid per-grain
@@ -54,6 +106,50 @@ export function applyRecencyFilter(candidates) {
   return candidates.filter(({ p }) => allowed.has(getBufferKey(p)));
 }
 
+// Recency filter that works directly on particle arrays (no {p} wrappers).
+// Returns the allowed-set for use by _buildCandidatePool helpers.
+function _recencyAllowedSet(particles, count) {
+  if (S.recencyN <= 0) return null; // null = allow all
+  const bufRec = new Map();
+  for (let i = 0; i < count; i++) {
+    const p = particles[i];
+    const key = getBufferKey(p);
+    if ((bufRec.get(key) ?? -Infinity) < p.strokeId) bufRec.set(key, p.strokeId);
+  }
+  return new Set(
+    [...bufRec.entries()].sort((a, b) => b[1] - a[1]).slice(0, S.recencyN).map(([k]) => k)
+  );
+}
+
+// Reusable candidate output buffer — avoids allocating a new array every tick.
+let _candidateBuf = [];
+
+// Build candidate pool for nearest mode: particles already sorted by _ang.
+// Takes first k that pass recency filter.
+function _buildCandidatePool(sortedParticles, k, applyRecency) {
+  const allowed = applyRecency ? _recencyAllowedSet(sortedParticles, sortedParticles.length) : null;
+  _candidateBuf.length = 0;
+  for (let i = 0; i < sortedParticles.length && _candidateBuf.length < k; i++) {
+    const p = sortedParticles[i];
+    if (allowed && !allowed.has(getBufferKey(p))) continue;
+    _candidateBuf.push(p);
+  }
+  return _candidateBuf;
+}
+
+// Build candidate pool for radius mode: filter by _ang < radiusRad.
+function _buildCandidatePoolRadius(particles, radiusRad) {
+  const allowed = _recencyAllowedSet(particles, particles.length);
+  _candidateBuf.length = 0;
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    if (p._ang >= radiusRad) continue;
+    if (allowed && !allowed.has(getBufferKey(p))) continue;
+    _candidateBuf.push(p);
+  }
+  return _candidateBuf;
+}
+
 export function angleBetweenSphere(lon1, lat1, lon2, lat2) {
   const x1 = Math.cos(lat1)*Math.cos(lon1), y1 = Math.sin(lat1), z1 = Math.cos(lat1)*Math.sin(lon1);
   const x2 = Math.cos(lat2)*Math.cos(lon2), y2 = Math.sin(lat2), z2 = Math.cos(lat2)*Math.sin(lon2);
@@ -98,9 +194,6 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
     pitchJitter: S.grainOverrides.pitchJitter ?? p.pitchJitter,
     panSpread:   S.grainOverrides.panSpread   ?? p.panSpread,
     volume:      S.grainOverrides.volume      ?? p.volume,
-    startJitter: S.grainOverrides.startJitter ?? p.startJitter,
-    sprayCount:  S.grainOverrides.sprayCount  ?? p.sprayCount,
-    spraySpread: S.grainOverrides.spraySpread ?? p.spraySpread,
     retriggerMs: S.grainOverrides.retriggerMs ?? p.retriggerMs,
   };
 
@@ -154,9 +247,14 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
 
   const dir = customParams ? 'fwd' : S.grainDirection;
 
-  for (let i = 0; i < ep.sprayCount; i++) {
-    const timeOffset = i * ep.spraySpread * rand(0.5, 1.5);
-    const t          = baseTime + timeOffset;
+  // Minimum grain duration: 2 render quanta (≈5.8ms at 44100Hz).
+  // This guarantees every grain gets a proper fade envelope — grains shorter
+  // than this would be 1–2 sample impulses that sound like clicks/crackle,
+  // especially when durVar pushes the raw duration negative and it clamps
+  // to the old floor of 2/sampleRate (≈0.045ms = literal impulse).
+  const MIN_GRAIN_DUR = (128 / actx.sampleRate) * 2;
+
+  const t = baseTime;
 
     // pitchRate must be computed BEFORE startPos/actualDur because it determines
     // how much buffer the source consumes: at pitchRate > 1 the source reads
@@ -166,11 +264,17 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
     // while the gain envelope is still non-zero → abrupt hard cut → audible click.
     // Clamping startPos so that `startPos + dur * pitchRate ≤ cropEndSec` prevents
     // premature exhaustion for any pitch; pitch < 1 uses less buffer so no change.
-    const pitchRate = Math.max(1e-6, 1 + rand(-ep.pitchJitter, ep.pitchJitter));
+    // pitchJitter is stored as 2^(cents/1200) - 1, so (1 + pitchJitter) = 2^(cents/1200).
+    // Raising that to a uniform random in [-1, 1] gives a symmetric musical interval:
+    //   rand=+1 → maxRate    = 2^(+cents/1200)  (correct up-pitch)
+    //   rand=-1 → 1/maxRate  = 2^(-cents/1200)  (correct down-pitch)
+    // The old approach (1 + rand(-v, v)) made down-pitch far too extreme at high
+    // values — at 700¢ it produced 0.502× (≈ -1200¢) instead of 0.668× (-700¢).
+    const pitchRate = Math.max(1e-6, Math.pow(1 + ep.pitchJitter, rand(-1, 1)));
 
-    let startPos = particle.grainStart + rand(-ep.startJitter, ep.startJitter);
+    let startPos = particle.grainStart;
     const durVarSec = customParams ? 0 : (ep.durVar ?? 0);
-    const dur = Math.max(minGrainDurS(),
+    const dur = Math.max(MIN_GRAIN_DUR,
       ep.duration * (1 + rand(-ep.durJitter, ep.durJitter))
       + rand(-durVarSec, durVarSec)
     );
@@ -188,14 +292,14 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
     // buffer-seconds only cover `(cropEndSec - startPos) / pitchRate` real-time
     // seconds before the source exhausts — use that as the ceiling.
     const actualDur = Math.min(dur, (cropEndSec - startPos) / Math.max(pitchRate, 1));
-    if (actualDur < minGrainDurS()) continue;
+    if (actualDur < MIN_GRAIN_DUR) return;
 
     const goReverse = dir === 'rev' || (dir === 'rnd' && Math.random() < 0.5);
 
     const fadeRatio = ep.fadeRatio ?? 0.25;
     // One Web Audio render quantum — the minimum source.start() duration that
     // guarantees audio output (the browser rounds down to the nearest render block).
-    const MIN_FADE = 128 / actx.sampleRate;
+    const MIN_FADE = MIN_GRAIN_DUR / 2;  // = 128 / actx.sampleRate
     // Two tiers by grain length — 'rect' was removed because setValueAtTime(0)
     // creates a hard gain discontinuity (audible click) when sweeping duration.
     //
@@ -407,12 +511,10 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       S._grainSourceCount++;
       source.addEventListener('ended', () => {
         S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-        try {
-          source.disconnect(); gain.disconnect();
-          if (elevGainNode) elevGainNode.disconnect();
-          gA.disconnect(); gB.disconnect();
-        } catch(_) {}
-      });
+        _deferDisconnect(source); _deferDisconnect(gain);
+        if (elevGainNode) _deferDisconnect(elevGainNode);
+        _deferDisconnect(gA); _deferDisconnect(gB);
+      }, { once: true });
 
     } else {
       // ── Stereo path ────────────────────────────────────────────────────────
@@ -439,8 +541,10 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
         S._grainSourceCount++;
         source.addEventListener('ended', () => {
           S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-          try { source.disconnect(); gain.disconnect(); if (elevGainNode) elevGainNode.disconnect(); panner.disconnect(); } catch(_) {}
-        });
+          _deferDisconnect(source); _deferDisconnect(gain);
+          if (elevGainNode) _deferDisconnect(elevGainNode);
+          _deferDisconnect(panner);
+        }, { once: true });
       } else {
         lastNode.connect(getMasterBus());
 
@@ -448,20 +552,27 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
         S._grainSourceCount++;
         source.addEventListener('ended', () => {
           S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-          try { source.disconnect(); gain.disconnect(); if (elevGainNode) elevGainNode.disconnect(); lastNode.disconnect(); } catch(_) {}
-        });
+          _deferDisconnect(source); _deferDisconnect(gain);
+          if (elevGainNode) _deferDisconnect(elevGainNode);
+          // lastNode is either gain (if no elevGainNode) or elevGainNode;
+          // both are already queued above, so no extra disconnect needed.
+        }, { once: true });
       }
     }
 
-    if (particle.source === 'sample') {
-      S.activeGrains.push({
-        sampleIndex:   particle.sampleIndex,
-        grainStart:    startPos,
-        grainDuration: actualDur,
-        startTime:     performance.now() + timeOffset * 1000,
-        totalDuration: actualDur
-      });
-    }
+  if (particle.source === 'sample') {
+    // Cap array at 2× MAX_GRAIN_NODES — at extreme settings (4s duration ×
+    // 500 grains/sec) the array grows faster than the renderer can prune
+    // expired entries, eventually consuming all available heap.  Evict the
+    // oldest entry (index 0) to keep the array bounded.
+    if (S.activeGrains.length >= MAX_GRAIN_NODES * 2) S.activeGrains.shift();
+    S.activeGrains.push({
+      sampleIndex:   particle.sampleIndex,
+      grainStart:    startPos,
+      grainDuration: actualDur,
+      startTime:     performance.now(),
+      totalDuration: actualDur
+    });
   }
 }
 
@@ -478,26 +589,34 @@ let _cursorNextPeriodS = null;   // next inter-onset interval in seconds
 // to guarantee grains are always scheduled before they need to play.
 const SCHED_LOOKAHEAD = 0.120;   // 120ms lookahead window
 
-// Hard limit on grains created per scheduler call. Each grain allocates 2–3 Web
-// Audio nodes synchronously on the main thread. Reduced from 48 to 16 to cut
-// worst-case burst allocation rate: 16 nodes/tick × 100 ticks/s = 1,600/s max.
-// At 1ms real period we only need ~10 grains/tick to stay on schedule (1,000/s),
-// so 16 gives 60% headroom without letting bursts spike the GC.
-const MAX_GRAINS_PER_TICK = 16;
+// Hard limit on grains created per scheduler call.  Each grain allocates 2–5
+// Web Audio nodes synchronously on the main thread.
+//
+// With SCHED_SAFE_PERIOD_S = 2ms and SCHED_LOOKAHEAD = 120ms, the window holds
+// 60 onsets.  12 per tick × 100 ticks/sec = 1 200 grain-creations/sec max.
+// Smooth delivery requires MAX_GRAINS_PER_TICK ≥ interval/period = 10ms/2ms = 5.
+// 12 gives 2.4× headroom and keeps the scheduler comfortably ahead.
+//
+// The old burst-on-reset crash (slider drag → 20 clock nulls/sec × 12-grain
+// bursts = 240 burst grains/sec → OOM) is no longer possible because
+// resetCursorPeriod now clamps the clock forward instead of nulling it.
+const MAX_GRAINS_PER_TICK = 12;
 
-// Minimum period used for the grainsNeeded budget calculation only — NOT for
-// actual onset timing. Raised from 1ms to 10ms so that sub-10ms periods cap
-// grainsNeeded at ceil(120ms/10ms)=12 rather than 120. At 1ms real period,
-// 12 grains/tick still covers the 10 grains/tick actually needed — audio is
-// unaffected. The old 1ms floor allowed budgetPerTick=48 at very short periods,
-// producing ~4,800 node-creations/s which overwhelmed Chrome's GC and caused
-// the "Aw Snap" OOM crash when the period slider was dragged hard.
-const SCHED_SAFE_PERIOD_S = 0.010; // 10 ms
+// SCHED_SAFE_PERIOD_S (2ms) is imported from state.js so both the grain
+// scheduler and the UI slider share the same floor.  See state.js for docs.
 
 export function scheduleGrains() {
   const now = performance.now();
   if (_schedLastAt > 0) perf.schedulerDrift = Math.max(0, (now - _schedLastAt) - GRAIN_SCHEDULER_INTERVAL_MS);
   _schedLastAt = now;
+
+  // Always prune stale glow-map entries — even when the node budget is
+  // exhausted.  The old placement after the early return meant the map was
+  // never cleaned when _grainSourceCount stayed at MAX_GRAIN_NODES for
+  // seconds (long-duration grains), causing unbounded memory growth.
+  for (const [particle, entry] of activeGrainMap) {
+    if (now > entry.expiry) activeGrainMap.delete(particle);
+  }
 
   if (S._grainSourceCount >= MAX_GRAIN_NODES) return;
 
@@ -524,10 +643,6 @@ export function scheduleGrains() {
   const k = S.grainOverrides.k ?? gp().k;
   const searchRadiusRad = S.searchRadiusDeg * Math.PI / 180;
 
-  for (const [particle, entry] of activeGrainMap) {
-    if (now > entry.expiry) activeGrainMap.delete(particle);
-  }
-
   S.liveGranulatingThisFrame = false;
   perf.grainsFired = 0;
 
@@ -552,20 +667,41 @@ export function scheduleGrains() {
       _cursorNextPeriodS = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS + rand(-periodVarS, periodVarS));
     }
 
-    // Pre-compute candidate pool once per scheduler tick (shared by all onsets in window)
-    const withAng = S.particles.map(p => ({
-      p,
-      ang: angleBetweenSphere(p.lon, p.lat, cursorLon, cursorLat)
-    }));
-
-    // Pre-sort / filter candidate pool once for all onsets in this tick window
-    let candidatePool = [];
-    if (S.nearestMode) {
-      withAng.sort((a, b) => a.ang - b.ang);
-      candidatePool = applyRecencyFilter(withAng).slice(0, k).map(c => c.p);
+    // Pre-compute candidate pool once per scheduler tick (shared by all onsets in window).
+    // Dirty-flag: skip the trig loop when the cursor position and particle set
+    // are unchanged from the previous tick.  angleBetweenSphere costs 6
+    // transcendental ops per particle; skipping it saves ~16 500 trig calls/sec
+    // at 500 particles / 33 ticks/sec whenever the cursor is still.
+    // When the cache is valid we still need to restore p._ang from the buffer
+    // because the cloud loop may have overwritten it in the previous tick.
+    const particles = S.particles;
+    const pLen = particles.length;
+    if (pLen > _cursorAngBuf.length) _cursorAngBuf = new Float32Array(pLen);
+    const cursorAngDirty = cursorLon !== _cursorAngCacheLon
+                        || cursorLat !== _cursorAngCacheLat
+                        || S._particleVersion !== _cursorAngCachePartVer;
+    if (cursorAngDirty) {
+      for (let pi = 0; pi < pLen; pi++) {
+        const ang = angleBetweenSphere(particles[pi].lon, particles[pi].lat, cursorLon, cursorLat);
+        _cursorAngBuf[pi]  = ang;
+        particles[pi]._ang = ang;
+      }
+      _cursorAngCacheLon     = cursorLon;
+      _cursorAngCacheLat     = cursorLat;
+      _cursorAngCachePartVer = S._particleVersion;
     } else {
-      const inRadius = withAng.filter(c => c.ang < searchRadiusRad);
-      candidatePool = applyRecencyFilter(inRadius).map(c => c.p);
+      // Restore cached angles — cheap float copy, no trig.
+      for (let pi = 0; pi < pLen; pi++) particles[pi]._ang = _cursorAngBuf[pi];
+    }
+
+    // Pre-sort / filter candidate pool once for all onsets in this tick window.
+    // Build candidatePool in-place reusing _angSortBuf to avoid .map()/.filter() allocations.
+    let candidatePool;
+    if (S.nearestMode) {
+      particles.sort((a, b) => a._ang - b._ang);
+      candidatePool = _buildCandidatePool(particles, k, true);
+    } else {
+      candidatePool = _buildCandidatePoolRadius(particles, searchRadiusRad);
     }
 
     // Budget: how many cursor grains to schedule this tick.
@@ -579,7 +715,14 @@ export function scheduleGrains() {
     const schedPeriodS  = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS);
     const grainsNeeded  = Math.ceil(SCHED_LOOKAHEAD / Math.max(schedPeriodS, minGrainPeriodS()));
     const nodesBudget   = Math.max(0, MAX_GRAIN_NODES - S._grainSourceCount);
-    const budgetPerTick = Math.min(grainsNeeded, nodesBudget, MAX_GRAINS_PER_TICK);
+    // Dynamic throttle: when the node pool is > 75% full, halve the per-tick
+    // budget.  This back-pressures creation during extreme combos (long dur +
+    // short period) so Chrome's audio renderer has time to process existing
+    // nodes instead of being flooded with new ones.  The 75% threshold is
+    // well above normal usage (~20-50 nodes) so musical presets are unaffected.
+    const poolPressure  = S._grainSourceCount / MAX_GRAIN_NODES;
+    const pressureCap   = poolPressure > 0.75 ? Math.max(2, MAX_GRAINS_PER_TICK >> 1) : MAX_GRAINS_PER_TICK;
+    const budgetPerTick = Math.min(grainsNeeded, nodesBudget, pressureCap);
     // scheduleUntil (= audioNow + SCHED_LOOKAHEAD) was already computed above but
     // was never used as the while-loop bound — use it now.
 
@@ -598,7 +741,11 @@ export function scheduleGrains() {
       if (S.nearestMode) {
         toGranulate = candidatePool;
       } else {
-        toGranulate = shuffleInPlace([...candidatePool]).slice(0, k);
+        // Nearest K from within the radius pool — _ang already stamped on each particle.
+        // K is the binding constraint; radius just sets the eligible universe.
+        toGranulate = candidatePool.length <= k
+          ? candidatePool
+          : candidatePool.sort((a, b) => a._ang - b._ang).slice(0, k);
       }
 
       if (toGranulate.length > 0) {
@@ -642,19 +789,35 @@ export function scheduleGrains() {
       cloud._nextOnsetT = ensureAudioContext().currentTime + 0.005;
     }
 
-    const withAng = S.particles.map(p => ({
-      p, ang: angleBetweenSphere(p.lon, p.lat, cloud.lon, cloud.lat)
-    }));
+    // Stamp cloud-relative angle on particles (reuses _ang property).
+    // Dirty-flag: cloud positions are fixed after placement, so angles only
+    // change when the particle set changes (S._particleVersion bumps).
+    // On cache hit we still copy into p._ang because the cursor pass (or a
+    // previous cloud pass) will have overwritten it this tick.
+    const cParts = S.particles;
+    const cLen   = cParts.length;
+    if (!cloud._angBuf || cloud._angBuf.length < cLen) cloud._angBuf = new Float32Array(cLen);
+    if (cloud._angBufPartVer !== S._particleVersion) {
+      for (let pi = 0; pi < cLen; pi++) {
+        const ang = angleBetweenSphere(cParts[pi].lon, cParts[pi].lat, cloud.lon, cloud.lat);
+        cloud._angBuf[pi] = ang;
+        cParts[pi]._ang   = ang;
+      }
+      cloud._angBufPartVer = S._particleVersion;
+    } else {
+      // Restore cached angles — cheap float copy, no trig.
+      for (let pi = 0; pi < cLen; pi++) cParts[pi]._ang = cloud._angBuf[pi];
+    }
 
     let pool;
     if (cloud.nearestMode) {
-      withAng.sort((a, b) => a.ang - b.ang);
-      pool = applyRecencyFilter(withAng).slice(0, cgp.k).map(c => c.p);
+      cParts.sort((a, b) => a._ang - b._ang);
+      pool = _buildCandidatePool(cParts, cgp.k, true);
     } else {
       const cloudRadiusRad = cloud.searchRadiusDeg * Math.PI / 180;
-      pool = shuffleInPlace(applyRecencyFilter(
-        withAng.filter(c => c.ang < cloudRadiusRad)
-      )).slice(0, cgp.k).map(c => c.p);
+      pool = _buildCandidatePoolRadius(cParts, cloudRadiusRad);
+      // Nearest K from within the radius — same logic as cursor path.
+      if (pool.length > cgp.k) pool.sort((a, b) => a._ang - b._ang).length = cgp.k;
     }
 
     const cloudAudioNow   = ensureAudioContext().currentTime;
@@ -698,6 +861,9 @@ export function scheduleGrains() {
     }
   }
 
+  // Feed rolling grain rate accumulator (read by perfTick in state.js).
+  perf._grainAccum += perf.grainsFired;
+
   const activeCount = activeGrainMap.size;
   const gcEl = document.getElementById('granulatingCount');
   if (gcEl) gcEl.textContent = activeCount;
@@ -705,19 +871,24 @@ export function scheduleGrains() {
   if (vmGrains) vmGrains.textContent = `${activeCount} grains`;
 }
 
-// Reset onset clock when period/periodVar changes (called from events.js).
-// Only resets if the clock has drifted beyond the lookahead window, which happens
-// when switching from a long period (e.g. 3s) to a short one — without a reset
-// the scheduler would see _cursorNextOnsetT = audioNow+3 and fire no grains for 3s.
-// If the clock is already within the lookahead window (always true at ≤5ms periods)
-// the scheduler naturally adopts the new period on the next onset, with no burst.
-// This prevents the rapid slider-drag crash: each pixel of slider movement used to
-// null the clock → burst of up to MAX_GRAINS_PER_TICK grains on the next tick.
+// Reset onset clock when period/periodVar changes (called from ui-presets.js).
+// When switching from a long period (e.g. 3s) to a short one the clock can be
+// far in the future — without correction the scheduler would fire no grains for
+// seconds.  The old approach nulled the clock, but that caused a 12-grain burst
+// on reinit (the full 120ms lookahead window filled in one tick).  During rapid
+// slider dragging 20 nulls/sec × 12 grains = 240 burst grains/sec → OOM.
+//
+// New approach: clamp the clock to just one period ahead of audioNow.  The
+// scheduler sees one grain due on the next tick instead of an empty 120ms
+// window to fill.  No burst, no silence, immediate response to new period.
 export function resetCursorPeriod() {
   const audioNow = S.audioCtx?.currentTime ?? 0;
-  if (_cursorNextOnsetT === null || _cursorNextOnsetT > audioNow + SCHED_LOOKAHEAD) {
-    _cursorNextOnsetT  = null;
-    _cursorNextPeriodS = null;
+  if (_cursorNextOnsetT === null) return; // nothing to reset
+  if (_cursorNextOnsetT > audioNow + SCHED_LOOKAHEAD) {
+    // Clock is beyond the lookahead horizon — pull it back to one period ahead.
+    const newPeriod = Math.max(SCHED_SAFE_PERIOD_S, S.grainOverrides.period ?? gp().period);
+    _cursorNextOnsetT  = audioNow + newPeriod;
+    _cursorNextPeriodS = newPeriod;
   }
 }
 

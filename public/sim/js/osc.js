@@ -234,21 +234,6 @@ export function handleOSC(rawAddress, values) {
       scheduleUISync();
       break;
 
-    case '/grain/startjitter':
-      S.grainOverrides.startJitter = clamp(values[0], 0, 2);
-      scheduleUISync();
-      break;
-
-    case '/grain/spray':
-      S.grainOverrides.sprayCount  = Math.max(1, Math.round(values[0]));
-      scheduleUISync();
-      break;
-
-    case '/grain/sprayspread':
-      S.grainOverrides.spraySpread = clamp(values[0], 0, 1);
-      scheduleUISync();
-      break;
-
     case '/grain/retrigger':
       S.grainOverrides.retriggerMs = clamp(values[0], 0, 500);
       scheduleUISync();
