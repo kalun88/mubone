@@ -67,11 +67,19 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
   const ep = customParams ? p : {
     ...p,
     duration:    S.grainOverrides.duration    ?? p.duration,
+    durJitter:   S.grainOverrides.durJitter   ?? p.durJitter,
+    durVar:      S.grainOverrides.durVar      ?? p.durVar,
+    fadeRatio:   S.grainOverrides.fadeRatio   ?? p.fadeRatio,
     k:           S.grainOverrides.k           ?? p.k,
     period:      S.grainOverrides.period      ?? p.period,
+    periodVar:   S.grainOverrides.periodVar   ?? p.periodVar,
     pitchJitter: S.grainOverrides.pitchJitter ?? p.pitchJitter,
     panSpread:   S.grainOverrides.panSpread   ?? p.panSpread,
     volume:      S.grainOverrides.volume      ?? p.volume,
+    startJitter: S.grainOverrides.startJitter ?? p.startJitter,
+    sprayCount:  S.grainOverrides.sprayCount  ?? p.sprayCount,
+    spraySpread: S.grainOverrides.spraySpread ?? p.spraySpread,
+    retriggerMs: S.grainOverrides.retriggerMs ?? p.retriggerMs,
   };
 
   const audioNow = actx.currentTime;
@@ -119,26 +127,41 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
     const timeOffset = i * ep.spraySpread * rand(0.5, 1.5);
     const t          = baseTime + timeOffset;
 
+    // pitchRate must be computed BEFORE startPos/actualDur because it determines
+    // how much buffer the source consumes: at pitchRate > 1 the source reads
+    // `dur * pitchRate` buffer-seconds in `dur` real-time seconds.  Without
+    // accounting for pitch here, startPos can be positioned such that the source
+    // exhausts the crop boundary early and AudioBufferSourceNode fires 'ended'
+    // while the gain envelope is still non-zero → abrupt hard cut → audible click.
+    // Clamping startPos so that `startPos + dur * pitchRate ≤ cropEndSec` prevents
+    // premature exhaustion for any pitch; pitch < 1 uses less buffer so no change.
+    const pitchRate = Math.max(1e-6, 1 + rand(-ep.pitchJitter, ep.pitchJitter));
+
     let startPos = particle.grainStart + rand(-ep.startJitter, ep.startJitter);
-    const durVarSec = customParams ? 0 : (S.grainOverrides.durVar ?? 0);
+    const durVarSec = customParams ? 0 : (ep.durVar ?? 0);
     const dur = Math.max(minGrainDurS(),
       ep.duration * (1 + rand(-ep.durJitter, ep.durJitter))
       + rand(-durVarSec, durVarSec)
     );
 
+    // How much buffer the source will read at this pitch (output seconds × rate).
+    const bufferNeeded = dur * Math.max(pitchRate, 1);
     const cropLen = cropEndSec - cropStartSec;
-    if (cropLen < dur) {
+    if (cropLen < bufferNeeded) {
       startPos = cropStartSec;
     } else {
-      startPos = Math.max(cropStartSec, Math.min(startPos, cropEndSec - dur));
+      startPos = Math.max(cropStartSec, Math.min(startPos, cropEndSec - bufferNeeded));
     }
 
-    const actualDur = Math.min(dur, cropEndSec - startPos);
+    // actualDur: real-time envelope span. For pitchRate > 1, `cropEndSec - startPos`
+    // buffer-seconds only cover `(cropEndSec - startPos) / pitchRate` real-time
+    // seconds before the source exhausts — use that as the ceiling.
+    const actualDur = Math.min(dur, (cropEndSec - startPos) / Math.max(pitchRate, 1));
     if (actualDur < minGrainDurS()) continue;
 
     const goReverse = dir === 'rev' || (dir === 'rnd' && Math.random() < 0.5);
 
-    const fadeRatio = S.grainOverrides.fadeRatio ?? ep.fadeRatio ?? 0.25;
+    const fadeRatio = ep.fadeRatio ?? 0.25;
     // One Web Audio render quantum — the minimum source.start() duration that
     // guarantees audio output (the browser rounds down to the nearest render block).
     const MIN_FADE = 128 / actx.sampleRate;
@@ -162,18 +185,32 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
     const fade = fadeMode === 'curve'
       ? Math.min(actualDur / 2 - 0.0001, Math.max(MIN_FADE, actualDur * Math.min(fadeRatio, 0.5)))
       : 0;
-    // Minimum source playback duration: always at least one full render quantum so the
-    // browser's block scheduler actually outputs audio. For short grains the gain envelope
-    // already shapes the amplitude; sourceDur just keeps the source alive long enough.
-    const sourceDur = Math.max(MIN_FADE, actualDur);
+    // Silent tail: extend sourceDur past actualDur so the source outlives the
+    // gain envelope.  The release automation reaches 0 at t+actualDur and the
+    // GainNode holds there; GRAIN_TAIL_S extra seconds play silently through
+    // the 0-gain node, so when the source finally stops there is nothing to
+    // discontinue.  Without this tail, the source's stop-sample and the curve's
+    // final zero-sample can land in different render quanta → the last few
+    // samples run through a not-yet-zero gain → step discontinuity → click.
+    // If the buffer is exhausted early (crop too short), ended fires mid-tail
+    // but gain is already 0 at that point, so no click either way.
+    // Adaptive silent tail: sub-quantum grains (actualDur < MIN_FADE) reach gain=0
+    // within the very first render quantum, so a tail of just MIN_FADE (~3ms, 1 block)
+    // is sufficient. Longer grains need 10ms (3–4 quanta) because the release curve
+    // spans multiple blocks and the source must outlive the last non-zero sample.
+    // Using MIN_FADE for sub-quantum grains cuts concurrent node lifetime from 10ms
+    // to ~3ms, reducing live node count from ~10 to ~3 at 1ms period — lower GC load.
+    const GRAIN_TAIL_S = actualDur < MIN_FADE ? MIN_FADE : 0.010;
+    const sourceDur = Math.max(MIN_FADE, actualDur + GRAIN_TAIL_S);
     const source = actx.createBufferSource();
 
     if (goReverse) {
       const sr         = buffer.sampleRate;
       const frameStart = Math.floor(startPos   * sr);
-      // Use sourceDur (≥ MIN_FADE) so the reversed buffer has enough frames for
-      // the browser to output at least one render quantum.
-      const frameCount = Math.ceil(sourceDur   * sr);
+      // Size the reversed buffer for pitch-shifted playback: at pitchRate > 1 the
+      // source reads `sourceDur * pitchRate` frames, so the buffer must hold that
+      // many frames or the source will exhaust early and click.
+      const frameCount = Math.ceil(sourceDur * Math.max(pitchRate, 1) * sr);
       const safeFc     = Math.min(frameCount, buffer.length - frameStart);
       if (safeFc < 2) continue;
       const revBuf = actx.createBuffer(buffer.numberOfChannels, safeFc, sr);
@@ -187,8 +224,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       source.buffer = buffer;
     }
 
-    const pitchRate = 1 + rand(-ep.pitchJitter, ep.pitchJitter);
-    source.playbackRate.value = pitchRate;
+    source.playbackRate.value = pitchRate; // pitchRate computed above, before startPos
     const bufferStartPos = goReverse ? 0 : startPos;
 
     const gain = actx.createGain();
@@ -205,17 +241,31 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       // above guarantees this. The try/catch is a last-resort safety net so
       // that a bad call can never throw and abort the scheduler's while loop
       // (which would stall _cursorNextOnsetT and cause persistent snapping).
-      gain.gain.setValueAtTime(0, t);
+      // NOTE: do NOT call setValueAtTime(0, t) here. Chrome treats a SetValue
+      // event at exactly t as overlapping with setValueCurveAtTime(…, t, fade)
+      // (which also starts at t) and can throw InvalidStateError or silently
+      // treat the curve as a no-op — both produce a loud rectangular burst.
+      // attackCurve[0] is already 0 and the gain node initialises to 0, so
+      // no additional "pre-zero" event is needed.
       try {
         gain.gain.setValueCurveAtTime(attackCurve,  t,               fade);
         gain.gain.setValueCurveAtTime(releaseCurve, t + actualDur - fade, fade);
       } catch (_) {
         // Fallback: triangle ramp so the grain is never silent or unclamped.
+        // IMPORTANT: setValueAtTime(0, t) goes here (NOT in the try block above).
+        // The GainNode's default gain is 1.0 — without anchoring at 0 first,
+        // linearRampToValueAtTime ramps from 1.0 at actx.currentTime to ep.volume,
+        // so the grain starts at full volume and produces a loud burst/crackle.
+        // Placing the anchor only in the catch block avoids the original conflict:
+        // setValueAtTime(0, t) + setValueCurveAtTime(…, t, …) at the same time t
+        // can cause Chrome to treat the curve as overlapping with the SetValue event.
+        //
         // Nested try/catch: linearRamp can also throw in rare Chrome edge-cases
         // (e.g. during AudioContext resumption when event ordering is violated).
         // An uncaught throw here would propagate out of playGrain and stall the
         // onset clock in the scheduler while loop (see scheduleGrains guard).
         try {
+          gain.gain.setValueAtTime(0, t);
           gain.gain.linearRampToValueAtTime(ep.volume, t + actualDur * 0.5);
           gain.gain.linearRampToValueAtTime(0,         t + actualDur);
         } catch (_2) {
@@ -238,12 +288,17 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       ? [wx, wy, wz]
       : qRotateVec(qConjugate(S.camQ), [wx, wy, wz]);
 
-    // At audio-rate grain periods (< 1ms) spatial positioning is acoustically
-    // inaudible — the human auditory system cannot track pan position changes
-    // faster than ~2ms. Skip the elevation-gain and stereo-panner nodes entirely
-    // to cut per-grain node creation by ~3 Web Audio ops, saving ~600 calls/tick
-    // at 220 grains/tick. This is the primary lever for clean sub-ms granulation.
-    const audioRate = ep.period < 0.001;
+    // At dense grain periods (≤ 5ms, ≥ 200Hz repetition) spatial positioning is
+    // acoustically inaudible — the human auditory system integrates pan position
+    // over 2–5ms, so changes faster than 200Hz are heard as timbre, not movement.
+    // Skip the elevation-gain and stereo-panner nodes entirely to cut per-grain
+    // node creation by 1–2 Web Audio nodes per grain.
+    // IMPORTANT: the period minimum is now 1ms. Without this threshold covering ≥1ms,
+    // every grain at the new floor would use the full 4-node chain (source + gain +
+    // elevGain + panner) → ~4000 node ops/s → Chrome audio renderer crash.
+    // Threshold at 5ms keeps the lightweight path for the entire dense-granulation
+    // range while restoring full spatial processing at ≥ 6ms (100Hz and below).
+    const audioRate = ep.period <= 0.005;
 
     // Elevation attenuation — fold into main gain to avoid a separate node
     const elevNorm  = cz !== 0 ? Math.min(1, Math.abs(cy / Math.abs(cz))) : 0;
@@ -393,16 +448,21 @@ let _cursorNextPeriodS = null;   // next inter-onset interval in seconds
 // to guarantee grains are always scheduled before they need to play.
 const SCHED_LOOKAHEAD = 0.120;   // 120ms lookahead window
 
-// Hard limit on grains created per scheduler call. Each grain allocates ~3 Web
-// Audio nodes synchronously on the main thread. Each grain in rect/linear fade
-// mode costs ~10 Web Audio operations (~0.002ms each):
-//   256 grains × 10 ops × 0.002ms ≈ 5ms node-creation work per 10ms tick.
-// At large hardware buffer sizes (e.g. 1024 frames ≈ 23ms baseLatency) the
-// scheduler also needs to pre-fill more grains per tick to stay ahead of
-// hardware interrupts — hence 256 rather than 128.
-// Below ~0.04ms period some onsets will still be skipped; for true audio-rate
-// granulation an AudioWorklet grain engine is the correct long-term path.
-const MAX_GRAINS_PER_TICK = 256;
+// Hard limit on grains created per scheduler call. Each grain allocates 2–3 Web
+// Audio nodes synchronously on the main thread. Reduced from 48 to 16 to cut
+// worst-case burst allocation rate: 16 nodes/tick × 100 ticks/s = 1,600/s max.
+// At 1ms real period we only need ~10 grains/tick to stay on schedule (1,000/s),
+// so 16 gives 60% headroom without letting bursts spike the GC.
+const MAX_GRAINS_PER_TICK = 16;
+
+// Minimum period used for the grainsNeeded budget calculation only — NOT for
+// actual onset timing. Raised from 1ms to 10ms so that sub-10ms periods cap
+// grainsNeeded at ceil(120ms/10ms)=12 rather than 120. At 1ms real period,
+// 12 grains/tick still covers the 10 grains/tick actually needed — audio is
+// unaffected. The old 1ms floor allowed budgetPerTick=48 at very short periods,
+// producing ~4,800 node-creations/s which overwhelmed Chrome's GC and caused
+// the "Aw Snap" OOM crash when the period slider was dragged hard.
+const SCHED_SAFE_PERIOD_S = 0.010; // 10 ms
 
 export function scheduleGrains() {
   const now = performance.now();
@@ -459,7 +519,7 @@ export function scheduleGrains() {
     // would already be in the past and cause setValueCurveAtTime to throw.
     if (_cursorNextOnsetT === null) {
       _cursorNextOnsetT  = audioNow + 0.005;
-      _cursorNextPeriodS = Math.max(minGrainPeriodS(), basePeriodS + rand(-periodVarS, periodVarS));
+      _cursorNextPeriodS = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS + rand(-periodVarS, periodVarS));
     }
 
     // Pre-compute candidate pool once per scheduler tick (shared by all onsets in window)
@@ -478,24 +538,23 @@ export function scheduleGrains() {
       candidatePool = applyRecencyFilter(inRadius).map(c => c.p);
     }
 
-    // Minimum lookahead: one scheduler interval PLUS the hardware output buffer
-    // latency (baseLatency). With large buffer sizes (e.g. 1024 frames ≈ 23ms)
-    // the OS audio interrupt can delay the JS timer by up to ~baseLatency ms.
-    // Pre-scheduling at least (interval + baseLatency) ahead guarantees no gap
-    // in audio even when the tick fires at the worst possible time.
-    const SCHED_INTERVAL_S = GRAIN_SCHEDULER_INTERVAL_MS / 1000;
-    const hwBufS      = S.audioCtx?.baseLatency ?? 0;
-    const minAheadS   = SCHED_INTERVAL_S + hwBufS;
-    const grainsNeeded  = Math.ceil(minAheadS / Math.max(basePeriodS, minGrainPeriodS()));
+    // Budget: how many cursor grains to schedule this tick.
+    // Use the full SCHED_LOOKAHEAD window (120ms) — not just minAheadS (≈15ms).
+    // With minAheadS, short-period presets like shimmer (period≈55ms) only got
+    // budgetPerTick=1, so dynamicUntil ended up just 55ms ahead. Any JS jitter
+    // longer than one period caused audio gaps with a consistent rhythmic crackle.
+    // Using SCHED_LOOKAHEAD gives budgetPerTick≈3 for shimmer and advances
+    // scheduleUntil 120ms ahead, which is the intent of that constant.
+    // Floor period for budget calc only — prevents 2000+ grainsNeeded at sub-ms periods.
+    const schedPeriodS  = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS);
+    const grainsNeeded  = Math.ceil(SCHED_LOOKAHEAD / Math.max(schedPeriodS, minGrainPeriodS()));
     const nodesBudget   = Math.max(0, MAX_GRAIN_NODES - S._grainSourceCount);
     const budgetPerTick = Math.min(grainsNeeded, nodesBudget, MAX_GRAINS_PER_TICK);
-
-    // Lookahead window: cover at least minAheadS, or however many grains the
-    // budget allows if that's larger (short periods with headroom).
-    const dynamicUntil = audioNow + Math.max(minAheadS, basePeriodS * budgetPerTick);
+    // scheduleUntil (= audioNow + SCHED_LOOKAHEAD) was already computed above but
+    // was never used as the while-loop bound — use it now.
 
     let iterations = 0;
-    while (_cursorNextOnsetT < dynamicUntil && iterations < budgetPerTick) {
+    while (_cursorNextOnsetT < scheduleUntil && iterations < budgetPerTick) {
       // We're behind — snap forward by 5ms so t is safely in the future when
       // setValueCurveAtTime() is called inside playGrain.  Using exactly
       // audioNow risks a race: actx.currentTime advances a few µs between
@@ -530,7 +589,10 @@ export function scheduleGrains() {
       }
 
       // Advance to next onset — always runs, even if playGrain threw above.
-      _cursorNextPeriodS = Math.max(minGrainPeriodS(), basePeriodS + rand(-periodVarS, periodVarS));
+      // Floor at SCHED_SAFE_PERIOD_S (10ms) so the onset clock always advances.
+      // Without this, sub-10ms periods with many grains per tick could stall the
+      // clock, cause the snap guard to fire every tick, and spike node creation.
+      _cursorNextPeriodS = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS + rand(-periodVarS, periodVarS));
       _cursorNextOnsetT += _cursorNextPeriodS;
       iterations++;
     }
@@ -565,26 +627,29 @@ export function scheduleGrains() {
       )).slice(0, cgp.k).map(c => c.p);
     }
 
-    const cloudAudioNow  = ensureAudioContext().currentTime;
-    const SCHED_INTERVAL_S = GRAIN_SCHEDULER_INTERVAL_MS / 1000;
-    const hwBufS           = S.audioCtx?.baseLatency ?? 0;
-    const cloudMinAheadS   = SCHED_INTERVAL_S + hwBufS;
-    const cloudGrainsNeeded = Math.ceil(cloudMinAheadS / Math.max(basePeriodS, minGrainPeriodS()));
+    const cloudAudioNow   = ensureAudioContext().currentTime;
+    // Same fix as cursor path: use SCHED_LOOKAHEAD (120ms) for budget/window,
+    // not minAheadS (≈15ms), so cloud grains are scheduled far enough ahead
+    // to survive JS timer jitter without rhythmic crackle.
+    const cloudSchedUntil   = cloudAudioNow + SCHED_LOOKAHEAD;
+    // Floor period for budget calc only — same OOM guard as cursor path.
+    const cloudSchedPeriodS = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS);
+    const cloudGrainsNeeded = Math.ceil(SCHED_LOOKAHEAD / Math.max(cloudSchedPeriodS, minGrainPeriodS()));
     const cloudNodesBudget  = Math.max(0, MAX_GRAIN_NODES - S._grainSourceCount);
     const cloudBudget = Math.min(cloudGrainsNeeded, cloudNodesBudget, MAX_GRAINS_PER_TICK);
-    const cloudDynUntil = cloudAudioNow + Math.max(cloudMinAheadS, basePeriodS * cloudBudget);
 
     if (!pool.length) {
-      // Still advance the clock even if no particles in range
-      while (cloud._nextOnsetT < cloudDynUntil) {
-        const p = Math.max(minGrainPeriodS(), basePeriodS + rand(-periodVarS, periodVarS));
+      // Still advance the clock even if no particles in range.
+      // Floor at SCHED_SAFE_PERIOD_S to match the OOM guard on the firing path.
+      while (cloud._nextOnsetT < cloudSchedUntil) {
+        const p = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS + rand(-periodVarS, periodVarS));
         cloud._nextOnsetT += p;
       }
       continue;
     }
 
     let cloudIter = 0;
-    while (cloud._nextOnsetT < cloudDynUntil && cloudIter < cloudBudget) {
+    while (cloud._nextOnsetT < cloudSchedUntil && cloudIter < cloudBudget) {
       if (cloud._nextOnsetT < cloudAudioNow) {
         cloud._nextOnsetT = cloudAudioNow + 0.005; // 5ms forward margin (same race-guard as cursor)
       }
@@ -597,7 +662,7 @@ export function scheduleGrains() {
         if (p.source === 'live') S.liveGranulatingThisFrame = true;
       } catch (_) { /* clock still advances below */ }
 
-      const nextPeriod = Math.max(minGrainPeriodS(), basePeriodS + rand(-periodVarS, periodVarS));
+      const nextPeriod = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS + rand(-periodVarS, periodVarS));
       cloud._nextOnsetT += nextPeriod;
       cloudIter++;
     }
@@ -611,10 +676,19 @@ export function scheduleGrains() {
 }
 
 // Reset onset clock when period/periodVar changes (called from events.js).
-// Setting to null causes scheduleGrains to re-initialise from the current audio time.
+// Only resets if the clock has drifted beyond the lookahead window, which happens
+// when switching from a long period (e.g. 3s) to a short one — without a reset
+// the scheduler would see _cursorNextOnsetT = audioNow+3 and fire no grains for 3s.
+// If the clock is already within the lookahead window (always true at ≤5ms periods)
+// the scheduler naturally adopts the new period on the next onset, with no burst.
+// This prevents the rapid slider-drag crash: each pixel of slider movement used to
+// null the clock → burst of up to MAX_GRAINS_PER_TICK grains on the next tick.
 export function resetCursorPeriod() {
-  _cursorNextOnsetT  = null;
-  _cursorNextPeriodS = null;
+  const audioNow = S.audioCtx?.currentTime ?? 0;
+  if (_cursorNextOnsetT === null || _cursorNextOnsetT > audioNow + SCHED_LOOKAHEAD) {
+    _cursorNextOnsetT  = null;
+    _cursorNextPeriodS = null;
+  }
 }
 
 // Register the global onset-clock reset callback so audio.js can invoke it

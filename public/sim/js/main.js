@@ -19,6 +19,7 @@ import { initOSC } from './osc.js';
 import { initSensorUI } from './ui-sensor.js';
 import { initAudioSettings } from './ui-audio-settings.js';
 
+
 function init() {
   S.canvas = document.getElementById('sphereCanvas');
   S.ctx    = S.canvas.getContext('2d');

@@ -11,7 +11,7 @@ import {
   perf, perfTick, gp, rebuildGrainCurves, minGrainDurS
 } from './state.js';
 import { spherePoint, cameraTransform, project, getCursorLonLat, screenToLonLat, qFromAxisAngle, qNormalize, qMul } from './sphere.js';
-import { activeGrainMap, rand } from './grain.js';
+import { rand } from './grain.js';
 import { rebuildLiveBuffer, getRecordingDuration } from './audio.js';
 
 // ── Module-level meter state ──────────────────────────────────────────────────
@@ -22,6 +22,26 @@ const METER_CLIP_HOLD_S  = 1.5;
 const ANALYSER_BUF = new Float32Array(128);
 let _faderInputLevel   = 0;
 let _faderOutputLevels = [];     // per-channel smoothed levels (Electron N-ch)
+
+// Meter gradient cached across frames — the color stops never change so there
+// is no reason to call createLinearGradient on every draw call.
+// Keyed by canvas height so it survives window resize.
+let _meterGradCache = null;
+let _meterGradH     = -1;
+function _getMeterGrad(c, PAD_T, trackH) {
+  const h = PAD_T + trackH;
+  if (!_meterGradCache || _meterGradH !== h) {
+    const g = c.createLinearGradient(0, PAD_T + trackH, 0, PAD_T);
+    g.addColorStop(0,    '#1a5c2e');
+    g.addColorStop(0.60, '#3daa55');
+    g.addColorStop(0.78, '#a8a820');
+    g.addColorStop(0.90, '#c85818');
+    g.addColorStop(1.0,  '#aa1818');
+    _meterGradCache = g;
+    _meterGradH     = h;
+  }
+  return _meterGradCache;
+}
 
 // ── Fader helpers ─────────────────────────────────────────────────────────────
 export function gainToFaderPos(gain) {
@@ -98,13 +118,7 @@ export function drawInputMeter() {
 
   const fillH = Math.round(_faderInputLevel * trackH);
   if (fillH > 0) {
-    const grad = c.createLinearGradient(0, PAD_T + trackH, 0, PAD_T);
-    grad.addColorStop(0,    '#1a5c2e');
-    grad.addColorStop(0.60, '#3daa55');
-    grad.addColorStop(0.78, '#a8a820');
-    grad.addColorStop(0.90, '#c85818');
-    grad.addColorStop(1.0,  '#aa1818');
-    c.fillStyle = grad;
+    c.fillStyle = _getMeterGrad(c, PAD_T, trackH);
     c.fillRect(METER_X, PAD_T + trackH - fillH, METER_W, fillH);
   }
 
@@ -250,13 +264,7 @@ function _drawOneMeterBar(fc, analyser, smoothIdx, peakIsClipping, showFader, sh
 
   const fillH = Math.round(smoothLevel * trackH);
   if (fillH > 0) {
-    const grad = c.createLinearGradient(0, PAD_T + trackH, 0, PAD_T);
-    grad.addColorStop(0,    '#1a5c2e');
-    grad.addColorStop(0.60, '#3daa55');
-    grad.addColorStop(0.78, '#a8a820');
-    grad.addColorStop(0.90, '#c85818');
-    grad.addColorStop(1.0,  '#aa1818');
-    c.fillStyle = grad;
+    c.fillStyle = _getMeterGrad(c, PAD_T, trackH);
     c.fillRect(METER_X, PAD_T + trackH - fillH, METER_W, fillH);
   }
 
@@ -432,9 +440,7 @@ export function drawClouds() {
       S.ctx.setLineDash([]);
       S.ctx.globalAlpha = isNearest ? 1 : 0.6;
       S.ctx.fillStyle = cloud.color;
-      if (isNearest) { S.ctx.shadowColor = cloud.color; S.ctx.shadowBlur = 10; }
       S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, 4, 0, Math.PI * 2); S.ctx.fill();
-      S.ctx.shadowBlur = 0;
       S.ctx.globalAlpha = isNearest ? 0.9 : 0.5;
       S.ctx.fillStyle = cloud.color;
       S.ctx.font = `10px "Roboto Mono", monospace`;
@@ -493,12 +499,10 @@ export function drawClouds() {
       S.ctx.save();
       S.ctx.globalAlpha = alpha;
       S.ctx.fillStyle   = cloud.color;
-      if (isNearest && isBehind) { S.ctx.shadowColor = cloud.color; S.ctx.shadowBlur = 10; }
       S.ctx.beginPath();
       S.ctx.arc(ex, ey, dotR, 0, Math.PI * 2);
       S.ctx.fill();
       if (fadeT > 0.6) {
-        S.ctx.shadowBlur   = 0;
         S.ctx.globalAlpha  = alpha * 0.8;
         S.ctx.fillStyle    = cloud.color;
         S.ctx.font         = `8px "Roboto Mono", monospace`;
@@ -558,7 +562,7 @@ export function drawGridLines() {
 }
 
 export function drawArc(angle, type) {
-  const steps = 48;
+  const steps = 24;
   let started = false;
   S.ctx.beginPath();
   for (let i = 0; i <= steps; i++) {
@@ -612,65 +616,46 @@ export function drawRadiusTooltip() {
 
 // ── Particles ─────────────────────────────────────────────────────────────────
 export function drawParticles() {
-  const projected = [];
-  const candidates = [];
+  // Single-pass: project + collect directly into a flat sort buffer.
+  // No intermediate object spread, no squash trig (atan2/cos/sin removed),
+  // no specular highlight arc — particles are plain depth-sorted circles.
+  const buf = [];
 
   for (const p of S.particles) {
     const [wx, wy, wz] = spherePoint(p.lon, p.lat);
     const [cx, cy, cz] = cameraTransform(wx, wy, wz);
     const proj = project(cx, cy, cz);
     if (!proj) continue;
-
     const mag    = Math.sqrt(cx*cx + cy*cy + cz*cz);
     const facing = Math.max(0, cz / mag);
-    const squash = 0.3 + 0.7 * facing;
-    const dx     = proj.sx - S.canvas.width  / 2;
-    const dy     = proj.sy - S.canvas.height / 2;
-    const squashAngle = Math.atan2(dy, dx);
-
-    candidates.push({ p, proj, facing, squash, squashAngle });
+    buf.push(proj.sx, proj.sy, proj.depth, facing, p.color);
   }
 
-  for (const { p, proj, facing, squash, squashAngle } of candidates) {
-    const grainEntry = activeGrainMap.get(p);
-    const selected   = grainEntry !== undefined;
-    const glowColor  = selected ? (grainEntry.glowColor ?? p.color) : null;
-    const ringColor  = selected ? (grainEntry.glowColor ?? '#ffffff') : null;
-    projected.push({ ...proj, color: p.color, selected, glowColor, ringColor, facing, squash, squashAngle });
-  }
+  // Sort by depth descending (back-to-front). Each entry is 5 elements.
+  const STRIDE = 5;
+  const count  = buf.length / STRIDE;
+  // Build an index array and sort that instead of rearranging buf.
+  const idx = new Int32Array(count);
+  for (let i = 0; i < count; i++) idx[i] = i;
+  idx.sort((a, b) => buf[b * STRIDE + 2] - buf[a * STRIDE + 2]);
 
-  projected.sort((a, b) => b.depth - a.depth);
+  for (let ii = 0; ii < count; ii++) {
+    const i          = idx[ii] * STRIDE;
+    const sx         = buf[i];
+    const sy         = buf[i + 1];
+    const depth      = buf[i + 2];
+    const facing     = buf[i + 3];
+    const color      = buf[i + 4];
+    const distFactor = 1 - (depth / (SPHERE_RADIUS * 2));
+    const size       = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * Math.max(0, distFactor);
+    const alpha      = (0.3 + 0.7 * Math.max(0, distFactor)) * (0.5 + 0.5 * facing);
 
-  for (const p of projected) {
-    const distFactor = 1 - (p.depth / (SPHERE_RADIUS * 2));
-    const size  = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * Math.max(0, distFactor);
-    const alpha = (0.3 + 0.7 * Math.max(0, distFactor)) * (0.5 + 0.5 * p.facing);
-
-    S.ctx.save();
     S.ctx.globalAlpha = alpha;
-    S.ctx.translate(p.sx, p.sy);
-    S.ctx.rotate(p.squashAngle);
-    S.ctx.scale(1, p.squash);
-
-    if (p.selected) {
-      S.ctx.globalAlpha = 1;
-      S.ctx.shadowColor = p.glowColor;
-      S.ctx.shadowBlur  = 25;
-      S.ctx.strokeStyle = p.ringColor;
-      S.ctx.lineWidth   = 2;
-      S.ctx.beginPath(); S.ctx.arc(0, 0, size + 5, 0, Math.PI * 2); S.ctx.stroke();
-      S.ctx.shadowBlur  = 0;
-      S.ctx.globalAlpha = alpha;
-    }
-
-    S.ctx.fillStyle = p.color;
-    S.ctx.beginPath(); S.ctx.arc(0, 0, size, 0, Math.PI * 2); S.ctx.fill();
-
-    S.ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    S.ctx.beginPath(); S.ctx.arc(0, 0, size * 0.25, 0, Math.PI * 2); S.ctx.fill();
-
-    S.ctx.restore();
+    S.ctx.fillStyle   = color;
+    S.ctx.beginPath(); S.ctx.arc(sx, sy, size, 0, Math.PI * 2); S.ctx.fill();
   }
+
+  S.ctx.globalAlpha = 1;
 }
 
 // ── Cursor ────────────────────────────────────────────────────────────────────
@@ -705,7 +690,6 @@ export function drawCursor() {
     S.ctx.strokeStyle = painting ? `${color}cc` : `${NEAREST_GLOW_COLOR}99`;
     S.ctx.lineWidth   = painting ? 1.5 : 1;
     S.ctx.setLineDash([4, 5]);
-    if (painting) { S.ctx.shadowColor = color; S.ctx.shadowBlur = 10; }
     S.ctx.beginPath();
     S.ctx.moveTo(mx,     my - d);
     S.ctx.lineTo(mx + d, my    );
@@ -714,16 +698,12 @@ export function drawCursor() {
     S.ctx.closePath();
     S.ctx.stroke();
     S.ctx.setLineDash([]);
-    S.ctx.shadowBlur = 0;
   } else if (painting) {
     S.ctx.fillStyle   = `${color}18`;
     S.ctx.beginPath(); S.ctx.arc(mx, my, brushR, 0, Math.PI * 2); S.ctx.fill();
-    S.ctx.shadowColor = color;
-    S.ctx.shadowBlur  = 12;
     S.ctx.strokeStyle = `${color}cc`;
     S.ctx.lineWidth   = 1.5;
     S.ctx.beginPath(); S.ctx.arc(mx, my, brushR, 0, Math.PI * 2); S.ctx.stroke();
-    S.ctx.shadowBlur  = 0;
   } else {
     S.ctx.fillStyle = 'rgba(180,180,180,0.06)';
     S.ctx.beginPath(); S.ctx.arc(mx, my, brushR, 0, Math.PI * 2); S.ctx.fill();

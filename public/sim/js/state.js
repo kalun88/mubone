@@ -14,7 +14,7 @@ export const FOV_DEG             = 80;
 export const PAINT_INTERVAL      = 3;
 export const PARTICLE_BASE_SIZE  = 4;
 export const PARTICLE_MAX_SIZE   = 20;
-export const MAX_SAMPLES         = 10;
+export const MAX_SAMPLES         = 9;
 
 export const SEARCH_RADIUS_MIN  = 1;
 export const SEARCH_RADIUS_MAX  = 180;
@@ -242,7 +242,7 @@ export const PRESETS = [
     startJitter:   0.14,
     sprayCount:    2,
     spraySpread:   0.12,
-    pitchJitter:   0.20,
+    pitchJitter:   0.029,  // ≈ ±50¢  (slider ceiling is 0–~0.029 = 0–50¢; 0.20 = ±316¢ was a typo)
     panSpread:     1.0,
     volume:        0.018,
     probability:   0.85,
@@ -653,6 +653,7 @@ export const S = {
   activePresetIndex: 0,
   grainOverrides: {
     duration:    null,
+    durJitter:   null,   // multiplier randomisation per grain (0–1)
     durVar:      null,   // +/- seconds of duration randomisation per grain
     fadeRatio:   null,   // attack+release each as fraction of dur (0–0.5)
     k:           null,
@@ -661,6 +662,10 @@ export const S = {
     pitchJitter: null,
     panSpread:   null,
     volume:      null,
+    startJitter: null,   // start-position randomisation (seconds)
+    sprayCount:  null,   // number of simultaneous grains per onset (integer ≥ 1)
+    spraySpread: null,   // time spread between spray grains (seconds)
+    retriggerMs: null,   // minimum re-trigger time for cloud grains (ms)
   },
   grainProbability: 1.0,   // 0-1: probability each candidate grain fires per tick
   grainDirection:   'fwd', // 'fwd' | 'rev' | 'rnd'

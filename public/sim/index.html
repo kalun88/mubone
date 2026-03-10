@@ -167,7 +167,7 @@
             <input class="grain-slider" type="range" id="gcFadeSlider" min="0" max="50" step="1" value="25">
             <input type="text" class="grain-numbox" id="gcFadeNum" data-param="fadeRatio" value="25%">
           </div>
-          <div class="grain-row" title="period — time between grains&#10;min: 2 samples (~0.045ms)  max: 4s&#10;log scale">
+          <div class="grain-row" title="period — time between grains&#10;min: 1ms  max: 4s&#10;log scale">
             <span class="grain-label">period</span>
             <input class="grain-slider grain-slider--log" type="range" id="gcPeriodSlider" min="0" max="1000" step="1" value="389">
             <input type="text" class="grain-numbox" id="gcPeriodNum" data-param="period" value="160ms">
@@ -177,9 +177,9 @@
             <input class="grain-slider" type="range" id="gcPeriodVarSlider" min="0" max="500" step="1" value="0">
             <input type="text" class="grain-numbox" id="gcPeriodVarNum" data-param="periodVar" value="0ms">
           </div>
-          <div class="grain-row" title="pitch — random pitch spread per grain (±cents)&#10;min: 0¢  max: ±50¢">
+          <div class="grain-row" title="pitch — random pitch spread per grain (±cents)&#10;min: 0¢  max: ±700¢">
             <span class="grain-label">pitch</span>
-            <input class="grain-slider" type="range" id="gcPitchSlider" min="0" max="50" step="1" value="0">
+            <input class="grain-slider" type="range" id="gcPitchSlider" min="0" max="700" step="1" value="0">
             <input type="text" class="grain-numbox" id="gcPitchNum" data-param="pitchJitter" value="±0¢">
           </div>
           <div class="grain-row" title="prob — probability of firing each grain&#10;min: 0% (never)  max: 100% (always)">
@@ -270,7 +270,7 @@
 <div id="mappingModal">
   <div class="mapping-dialog">
     <h2>
-      midi + keyboard map
+      keys / midi / osc
       <button class="close-btn" id="mappingClose">✕</button>
     </h2>
     <div class="mapping-status" id="mappingStatus"></div>
@@ -280,7 +280,9 @@
           <th>function</th>
           <th>keyboard</th>
           <th>midi</th>
-          <th></th>
+          <th>midi learn</th>
+          <th>osc</th>
+          <th>data</th>
         </tr>
       </thead>
       <tbody id="mappingTableBody"></tbody>

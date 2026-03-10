@@ -58,7 +58,14 @@ export function setupPresets() {
 
   if (recencySliderEl) {
     recencySliderEl.value = S.recencyN;
-    recencySliderEl.addEventListener('input', () => S.setRecency(parseInt(recencySliderEl.value)));
+    let _recencyTimerId = null;
+    recencySliderEl.addEventListener('input', () => {
+      if (_recencyTimerId === null)
+        _recencyTimerId = setTimeout(() => {
+          _recencyTimerId = null;
+          S.setRecency(parseInt(recencySliderEl.value));
+        }, 50);
+    });
   }
 
   // editable recency numbox — parse on commit
@@ -89,7 +96,14 @@ export function setupPresets() {
   const searchKSlider = document.getElementById('searchKSlider');
   if (searchKSlider) {
     searchKSlider.value = S.grainOverrides.k ?? gp().k;
-    searchKSlider.addEventListener('input', () => S.setSearchK(parseInt(searchKSlider.value)));
+    let _searchKTimerId = null;
+    searchKSlider.addEventListener('input', () => {
+      if (_searchKTimerId === null)
+        _searchKTimerId = setTimeout(() => {
+          _searchKTimerId = null;
+          S.setSearchK(parseInt(searchKSlider.value));
+        }, 50);
+    });
   }
 
   const kBigNum = document.getElementById('kBigNum');
@@ -123,7 +137,17 @@ export function setupPresets() {
   }
   if (radiusSliderEl) {
     radiusSliderEl.value = S.searchRadiusDeg;
-    radiusSliderEl.addEventListener('input', () => applyRadius(parseInt(radiusSliderEl.value)));
+    // setTimeout-throttle at 100ms — matches hardware MIDI potentiometer rate
+    // (~10 updates/second). Numbox updates immediately for snappy feel.
+    let _radiusTimerId = null;
+    radiusSliderEl.addEventListener('input', () => {
+      if (radiusValEl) radiusValEl.value = radiusSliderEl.value + '°';
+      if (_radiusTimerId === null)
+        _radiusTimerId = setTimeout(() => {
+          _radiusTimerId = null;
+          applyRadius(parseInt(radiusSliderEl.value));
+        }, 50);
+    });
   }
   if (radiusValEl) {
     radiusValEl.addEventListener('change', () => {
@@ -264,13 +288,6 @@ function updateCloudBanksUI() {
       c.strokeStyle = cloud.color;
       c.lineWidth   = 1.5;
       c.stroke();
-      c.shadowColor = cloud.color;
-      c.shadowBlur  = 6;
-      c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2);
-      c.strokeStyle = cloud.color;
-      c.lineWidth   = 1.5;
-      c.stroke();
-      c.shadowBlur  = 0;
     } else {
       c.fillStyle   = '#1a1a1a';
       c.fill();
@@ -287,6 +304,13 @@ export function selectPreset(index) {
   const preset = PRESETS[index];
   S.grainParams = { ...preset };
   Object.keys(S.grainOverrides).forEach(k => S.grainOverrides[k] = null);
+  // Set curveType (and direction) BEFORE rebuildGrainCurves so the cached
+  // attack/release arrays are built for the incoming preset, not the old one.
+  // Previously this was after rebuildGrainCurves, which left stale rect curves
+  // in GRAIN_ATTACK_CURVE/GRAIN_RELEASE_CURVE whenever switching away from a
+  // rect preset — causing a square-envelope sound on all subsequent grains.
+  if (preset.direction)  S.grainDirection  = preset.direction;
+  if (preset.curveType)  S.grainCurveType  = preset.curveType;
   rebuildGrainCurves();
 
   if (typeof preset.nearestMode === 'boolean') S.nearestMode = preset.nearestMode;
@@ -299,8 +323,6 @@ export function selectPreset(index) {
     if (typeof S.setSearchK === 'function') S.setSearchK(preset.k);
     else S.grainOverrides.k = preset.k;
   }
-  if (preset.direction)  S.grainDirection  = preset.direction;
-  if (preset.curveType)  S.grainCurveType  = preset.curveType;
   if (typeof preset.probability === 'number') S.grainProbability = preset.probability;
 
   document.querySelectorAll('.preset-btn').forEach((btn, i) => {
@@ -324,6 +346,11 @@ export function updatePlaybackControls() {
   drawRadiusViz();
 }
 
+// Dirty-flag cache: skip canvas redraw when radius and nearestMode haven't changed.
+// The numbox is always updated; only the canvas draw is gated.
+let _rvLastDeg      = -1;
+let _rvLastNearest  = null;
+
 export function drawRadiusViz() {
   // Always update the numbox readout regardless of whether the canvas exists
   const radValEl = document.getElementById('radiusVal');
@@ -331,13 +358,23 @@ export function drawRadiusViz() {
 
   const canvas = document.getElementById('radiusViz');
   if (!canvas) return;
+
+  // Skip canvas redraw if nothing that affects the visualization has changed.
+  if (S.searchRadiusDeg === _rvLastDeg && S.nearestMode === _rvLastNearest &&
+      canvas.width > 0) return;
+  _rvLastDeg     = S.searchRadiusDeg;
+  _rvLastNearest = S.nearestMode;
   const rect = canvas.parentElement.getBoundingClientRect();
   const w = rect.width  || 180;
   const h = rect.height || 48;
-  canvas.width  = w * window.devicePixelRatio;
-  canvas.height = h * window.devicePixelRatio;
+  const dpr = window.devicePixelRatio;
+  const needW = Math.round(w * dpr), needH = Math.round(h * dpr);
+  if (canvas.width !== needW || canvas.height !== needH) {
+    canvas.width  = needW;
+    canvas.height = needH;
+  }
   const c = canvas.getContext('2d');
-  c.scale(window.devicePixelRatio, window.devicePixelRatio);
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
   c.clearRect(0, 0, w, h);
 
   const cx = w / 2, cy = h / 2;
@@ -346,8 +383,6 @@ export function drawRadiusViz() {
     const d = Math.min(w, h) * 0.36;
     c.strokeStyle = '#e8a030';
     c.lineWidth = 1.5;
-    c.shadowColor = '#e8a030';
-    c.shadowBlur = 6;
     c.beginPath();
     c.moveTo(cx,     cy - d);
     c.lineTo(cx + d, cy    );
@@ -355,7 +390,6 @@ export function drawRadiusViz() {
     c.lineTo(cx - d, cy    );
     c.closePath();
     c.stroke();
-    c.shadowBlur = 0;
     c.fillStyle = '#e8a030';
     c.beginPath(); c.arc(cx, cy, 2.5, 0, Math.PI * 2); c.fill();
   } else {
@@ -370,10 +404,7 @@ export function drawRadiusViz() {
 
     c.strokeStyle = '#7abcbc';
     c.lineWidth = 1.5;
-    c.shadowColor = '#7abcbc';
-    c.shadowBlur = S.searchRadiusDeg > 90 ? 8 : 4;
     c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.stroke();
-    c.shadowBlur = 0;
 
     c.fillStyle = 'rgba(255,255,255,0.35)';
     c.beginPath(); c.arc(cx, cy, 2, 0, Math.PI * 2); c.fill();
@@ -390,10 +421,14 @@ export function drawPresetWaveform() {
   const rect = canvas.parentElement.getBoundingClientRect();
   const w = rect.width  || 180;
   const h = rect.height || 48;
-  canvas.width  = w * window.devicePixelRatio;
-  canvas.height = h * window.devicePixelRatio;
+  const dpr = window.devicePixelRatio;
+  const needW = Math.round(w * dpr), needH = Math.round(h * dpr);
+  if (canvas.width !== needW || canvas.height !== needH) {
+    canvas.width  = needW;
+    canvas.height = needH;
+  }
   const c = canvas.getContext('2d');
-  c.scale(window.devicePixelRatio, window.devicePixelRatio);
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
   c.clearRect(0, 0, w, h);
 
   const pr = PRESETS[S.activePresetIndex];
@@ -521,7 +556,7 @@ export function updatePresetStats() {
 // Registers S.syncGrainControlsUI so selectPreset can call it.
 
 export function initGrainControls() {
-  const _LOG_MIN_MS = 2 / (S.audioCtx?.sampleRate ?? 44100) * 1000; // 2 samples in ms
+  const _LOG_MIN_MS = 1; // 1ms hard floor — sub-ms periods cause audible clipping artifacts
   const _LOG_MIN = Math.log(_LOG_MIN_MS), _LOG_MAX = Math.log(4000);
   const _sliderToMs = sv => Math.exp(_LOG_MIN + (parseFloat(sv) / 1000) * (_LOG_MAX - _LOG_MIN));
   const _msToSlider = ms => Math.round(((Math.log(Math.max(_LOG_MIN_MS, ms)) - _LOG_MIN) / (_LOG_MAX - _LOG_MIN)) * 1000);
@@ -558,9 +593,9 @@ export function initGrainControls() {
     {
       sliderId: 'gcPeriodSlider', numId: 'gcPeriodNum', param: 'period',
       toDisplay: _fmtMs,
-      sliderToInternal: sv => Math.max(minGrainPeriodS(), _sliderToMs(sv) / 1000),
+      sliderToInternal: sv => Math.max(0.001, _sliderToMs(sv) / 1000),
       internalToSlider: v  => _msToSlider(v * 1000),
-      fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(minGrainPeriodS(), Math.min(4, v)); },
+      fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(0.001, Math.min(4, v)); },
     },
     {
       sliderId: 'gcPeriodVarSlider', numId: 'gcPeriodVarNum', param: 'periodVar',
@@ -571,15 +606,16 @@ export function initGrainControls() {
     },
     {
       sliderId: 'gcPitchSlider', numId: 'gcPitchNum', param: 'pitchJitter',
-      // Internal: playback-rate offset (0–~0.029). UI: cents (0–50).
+      // Internal: playback-rate offset (0–~0.498). UI: cents (0–700).
       // cents = 1200 * log2(1 + v),  v = 2^(c/1200) - 1
+      // Slider caps at 700¢ for ergonomics; numbox and presets accept any value.
       toDisplay: v => '±' + Math.round(1200 * Math.log2(1 + Math.max(0, v))) + '¢',
       sliderToInternal: sv => Math.pow(2, parseFloat(sv) / 1200) - 1,
       internalToSlider: v  => Math.round(1200 * Math.log2(1 + Math.max(0, v))),
       fromDisplay: str => {
         const c = parseFloat(str.replace(/[±¢\s]/g, ''));
         if (isNaN(c)) return null;
-        return Math.pow(2, Math.max(0, Math.min(50, c)) / 1200) - 1;
+        return Math.pow(2, Math.max(0, c) / 1200) - 1;
       },
     },
     {
@@ -610,7 +646,7 @@ export function initGrainControls() {
       S.grainProbability = Math.max(0, Math.min(1, internalVal));
     } else {
       if (param === 'duration') internalVal = Math.max(minGrainDurS(), internalVal);
-      if (param === 'period')   internalVal = Math.max(minGrainPeriodS(), internalVal);
+      if (param === 'period')   internalVal = Math.max(0.001, internalVal);
       S.grainOverrides[param] = internalVal;
       if (param === 'volume') rebuildGrainCurves();
       if (param === 'duration' || param === 'period' || param === 'fadeRatio') drawPresetWaveform();
@@ -631,6 +667,19 @@ export function initGrainControls() {
   const dirSeg   = document.getElementById('gcDirSeg');
   const curveSeg = document.getElementById('gcCurveSeg');
 
+  // setTimeout-throttle for grain slider input events.
+  // Aggressive slider dragging fires 200+ input events/second. 100ms cap (~10fps)
+  // matches the update rate of a hardware MIDI potentiometer and is the practical
+  // minimum for a musical instrument feel. Numbox updates immediately on every event.
+  // The Map stores only the LATEST value per param so no stale values accumulate.
+  let   _sliderTimerId        = null;
+  const _pendingSliderUpdates = new Map(); // param → latest internalVal
+  function _flushSliderUpdates() {
+    _sliderTimerId = null;
+    _pendingSliderUpdates.forEach((internal, param) => setGrainParam(param, internal));
+    _pendingSliderUpdates.clear();
+  }
+
   SLIDER_DEFS.forEach(def => {
     const slider = document.getElementById(def.sliderId);
     const numbox = document.getElementById(def.numId);
@@ -638,8 +687,11 @@ export function initGrainControls() {
 
     slider.addEventListener('input', () => {
       const internal = def.sliderToInternal(slider.value);
-      setGrainParam(def.param, internal);
+      // Update numbox immediately — purely visual, no grain engine side-effects.
       if (document.activeElement !== numbox) numbox.value = def.toDisplay(internal);
+      // Coalesce grain engine updates — only the latest value per param is kept.
+      _pendingSliderUpdates.set(def.param, internal);
+      if (_sliderTimerId === null) _sliderTimerId = setTimeout(_flushSliderUpdates, 50);
     });
 
     const commitNumbox = () => {

@@ -214,6 +214,46 @@ export function handleOSC(rawAddress, values) {
       }
       break;
 
+    case '/grain/fade':
+      S.grainOverrides.fadeRatio   = clamp(values[0], 0, 0.5);
+      scheduleUISync();
+      break;
+
+    case '/grain/durjitter':
+      S.grainOverrides.durJitter   = clamp(values[0], 0, 1);
+      scheduleUISync();
+      break;
+
+    case '/grain/durvar':
+      S.grainOverrides.durVar      = clamp(values[0], 0, 0.5);
+      scheduleUISync();
+      break;
+
+    case '/grain/periodvar':
+      S.grainOverrides.periodVar   = clamp(values[0], 0, 0.5);
+      scheduleUISync();
+      break;
+
+    case '/grain/startjitter':
+      S.grainOverrides.startJitter = clamp(values[0], 0, 2);
+      scheduleUISync();
+      break;
+
+    case '/grain/spray':
+      S.grainOverrides.sprayCount  = Math.max(1, Math.round(values[0]));
+      scheduleUISync();
+      break;
+
+    case '/grain/sprayspread':
+      S.grainOverrides.spraySpread = clamp(values[0], 0, 1);
+      scheduleUISync();
+      break;
+
+    case '/grain/retrigger':
+      S.grainOverrides.retriggerMs = clamp(values[0], 0, 500);
+      scheduleUISync();
+      break;
+
     // ── Preset ───────────────────────────────────────────────────────────────
     // Dispatches a CustomEvent so ui-presets.js can update its UI alongside
     // the state change. ui-presets.js listens for 'osc-preset'.

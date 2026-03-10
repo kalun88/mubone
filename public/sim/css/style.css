@@ -1241,7 +1241,7 @@
     border: none;
     border-radius: 0;
     padding: 1.2rem;
-    width: min(700px, 92vw);
+    width: min(1100px, 95vw);
     max-height: 85vh;
     overflow-y: auto;
     font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
@@ -1333,6 +1333,34 @@
     padding: 0 0.2rem;
   }
   .clear-midi-btn:hover { color: #e06060; }
+  .mapping-group-header th {
+    color: #7abcbc;
+    font-size: 0.65rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 0.6rem 0.4rem 0.2rem;
+    border-top: 1px solid #1e1e1e;
+    background: transparent;
+  }
+  .mapping-group-header:first-child th { border-top: none; padding-top: 0.2rem; }
+  .mapping-group-header:hover th { background: transparent; }
+  .mapping-table .osc-path { color: #888888; }
+  .mapping-table .osc-badge {
+    display: inline-flex;
+    align-items: center;
+    background: #182020;
+    color: #7abcbc;
+    font-size: 0.72rem;
+    font-family: 'Roboto Mono', monospace;
+    padding: 0.05rem 0.3rem;
+    letter-spacing: 0.03em;
+  }
+  .mapping-table .osc-fmt {
+    color: #666666;
+    font-size: 0.72rem;
+    font-family: 'Roboto Mono', monospace;
+    white-space: nowrap;
+  }
   .mapping-footer {
     margin-top: 0.8rem;
     font-size: 0.75rem;
