@@ -10,7 +10,7 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 388.0, 117.0, 1050.0, 699.0 ],
+		"rect" : [ 953.0, 210.0, 1050.0, 699.0 ],
 		"gridonopen" : 2,
 		"gridsize" : [ 15.0, 15.0 ],
 		"gridsnaponopen" : 2,
@@ -18,7 +18,7 @@
 				"box" : 				{
 					"comment" : "",
 					"id" : "obj-3",
-					"index" : 0,
+					"index" : 1,
 					"maxclass" : "outlet",
 					"numinlets" : 1,
 					"numoutlets" : 0,
@@ -437,7 +437,7 @@
 
 											}
  ],
-										"originid" : "pat-526"
+										"originid" : "pat-26"
 									}
 ,
 									"patching_rect" : [ 286.0, 600.0, 53.5, 22.0 ],
@@ -1083,7 +1083,7 @@
 
 											}
  ],
-										"originid" : "pat-538"
+										"originid" : "pat-38"
 									}
 ,
 									"patching_rect" : [ 15.0, 135.0, 120.0, 22.0 ],
@@ -1579,7 +1579,7 @@
 
 							}
  ],
-						"originid" : "pat-522"
+						"originid" : "pat-22"
 					}
 ,
 					"patching_rect" : [ 30.0, 285.0, 122.0, 22.0 ],
@@ -2366,7 +2366,7 @@
 
 							}
  ],
-						"originid" : "pat-542"
+						"originid" : "pat-42"
 					}
 ,
 					"patching_rect" : [ 419.0, 360.0, 111.0, 22.0 ],
@@ -2647,17 +2647,28 @@
 						}
 ,
 						"classnamespace" : "box",
-						"rect" : [ 248.0, 948.0, 576.0, 700.0 ],
+						"rect" : [ 460.0, 934.0, 861.0, 700.0 ],
 						"gridsize" : [ 15.0, 15.0 ],
 						"boxes" : [ 							{
+								"box" : 								{
+									"id" : "obj-2",
+									"maxclass" : "newobj",
+									"numinlets" : 1,
+									"numoutlets" : 1,
+									"outlettype" : [ "" ],
+									"patching_rect" : [ 356.45999999999998, 153.889999999999986, 100.0, 22.0 ]
+								}
+
+							}
+, 							{
 								"box" : 								{
 									"id" : "obj-1",
 									"maxclass" : "message",
 									"numinlets" : 2,
 									"numoutlets" : 1,
 									"outlettype" : [ "" ],
-									"patching_rect" : [ 185.0, 70.0, 184.0, 22.0 ],
-									"text" : "port a, open, baud 115200, poll 1"
+									"patching_rect" : [ 223.5, 47.0, 184.0, 22.0 ],
+									"text" : "port e, open, baud 115200, poll 1"
 								}
 
 							}
@@ -2889,7 +2900,7 @@
 
 							}
  ],
-						"originid" : "pat-544"
+						"originid" : "pat-44"
 					}
 ,
 					"patching_rect" : [ 919.0, 285.0, 70.0, 22.0 ],
@@ -3033,7 +3044,7 @@
 				"box" : 				{
 					"comment" : "zero_heading, heading_offset f, tare_sensor, or sampling_rate f",
 					"id" : "obj-1",
-					"index" : 0,
+					"index" : 1,
 					"maxclass" : "inlet",
 					"numinlets" : 0,
 					"numoutlets" : 1,
@@ -3500,42 +3511,7 @@
 
 			}
  ],
-		"originid" : "pat-520",
-		"dependency_cache" : [ 			{
-				"name" : "OSC-route.mxo",
-				"type" : "iLaX"
-			}
-, 			{
-				"name" : "OpenSoundControl.mxo",
-				"type" : "iLaX"
-			}
-, 			{
-				"name" : "mumath.colvec.maxpat",
-				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
-				"patcherrelativepath" : ".",
-				"type" : "JSON",
-				"implicit" : 1
-			}
-, 			{
-				"name" : "mumath.matranspose.maxpat",
-				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
-				"patcherrelativepath" : ".",
-				"type" : "JSON",
-				"implicit" : 1
-			}
-, 			{
-				"name" : "mumath.vrz.maxpat",
-				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
-				"patcherrelativepath" : ".",
-				"type" : "JSON",
-				"implicit" : 1
-			}
-, 			{
-				"name" : "slipOSC.mxo",
-				"type" : "iLaX"
-			}
- ],
-		"autosave" : 0
+		"originid" : "pat-20"
 	}
 
 }

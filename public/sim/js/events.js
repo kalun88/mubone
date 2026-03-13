@@ -19,8 +19,10 @@ import {
   updatePlaybackControls, flashRadiusTooltip, selectPreset,
   drawPresetWaveform,
 } from './ui-presets.js';
-import { resizeCanvas, gainToFaderPos, faderPosToGain } from './renderer.js';
+import { resizeCanvas } from './renderer.js';
 import { loadAudioFile } from './ui-samples.js';
+import { triggerWandTare } from './ui-wand.js';
+import { setCursorHouseMuted } from './ui-meters.js';
 
 // ── Helper: get lon/lat from mouse screen position ────────────────────────────
 function getMouseLonLat() {
@@ -119,6 +121,12 @@ export function setupEvents() {
       }
     }
 
+    // 0: wand tare
+    if (e.key === '0' && !e.repeat && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      triggerWandTare();
+    }
+
     // P: toggle performance monitor
     if (e.key === 'p' || e.key === 'P') {
       e.preventDefault();
@@ -158,6 +166,12 @@ export function setupEvents() {
     if (e.key === 'ArrowUp' && !e.repeat) {
       e.preventDefault();
       pickupNearestCloud();
+    }
+
+    // C: toggle cursor mute
+    if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      e.preventDefault();
+      setCursorHouseMuted(!S.cursorHouseMuted);
     }
 
     // M: open/close MIDI / keyboard map
@@ -250,36 +264,6 @@ export function setupEvents() {
 
   if (!S.isMobile) S.canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
-  // ── Input gain fader ─────────────────────────────────────────────────────
-  const faderCanvas = document.getElementById('inputFaderMeter');
-
-  function setInputGain(linearVal) {
-    S.inputGainValue = Math.max(0, Math.min(2, linearVal));
-    if (S.inputGainNode) S.inputGainNode.gain.setTargetAtTime(S.inputGainValue, ensureAudioContext().currentTime, 0.01);
-  }
-
-  let faderDragStart = null;
-  if (faderCanvas) {
-    faderCanvas.addEventListener('pointerdown', e => {
-      e.preventDefault();
-      faderCanvas.setPointerCapture(e.pointerId);
-      const rect = faderCanvas.getBoundingClientRect();
-      const PAD_T = 3, trackH = rect.height - PAD_T - 3;
-      const clickPos = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top - PAD_T) / trackH));
-      setInputGain(faderPosToGain(clickPos));
-      faderDragStart = { startY: e.clientY, startPos: gainToFaderPos(S.inputGainValue), trackH };
-    });
-    faderCanvas.addEventListener('pointermove', e => {
-      if (!faderDragStart) return;
-      const dy    = faderDragStart.startY - e.clientY;
-      const delta = dy / faderDragStart.trackH;
-      setInputGain(faderPosToGain(Math.max(0, Math.min(1, faderDragStart.startPos + delta))));
-    });
-    faderCanvas.addEventListener('pointerup',     () => { faderDragStart = null; });
-    faderCanvas.addEventListener('pointercancel', () => { faderDragStart = null; });
-    faderCanvas.addEventListener('dblclick', () => setInputGain(1.0));
-  }
-
   // ── Fullscreen ────────────────────────────────────────────────────────────
   // In Electron, requestFullscreen() on a sub-element doesn't work — use native
   // BrowserWindow.setFullScreen() via IPC instead.
@@ -310,8 +294,10 @@ export function setupEvents() {
     if (mg) mg.gain.setTargetAtTime(target, t, 0.01);
     // Electron path: grains connect directly to speaker buses → ChannelMerger → audify.
     // _muteGain is not in that chain, so ramp each bus gain instead.
+    // On unmute, restore to the current output gain level (not just 1).
     if (S.speakerBuses) {
-      S.speakerBuses.forEach(({ bus }) => bus.gain.setTargetAtTime(target, t, 0.01));
+      const busTarget = muted ? 0 : (S.outputGainValue ?? 1);
+      S.speakerBuses.forEach(({ bus }) => bus.gain.setTargetAtTime(busTarget, t, 0.01));
     }
     if (muteBtn) {
       muteBtn.classList.toggle('muted', S.isMuted);
@@ -347,34 +333,6 @@ export function setupEvents() {
     _updateLiveRecUI();
   };
 
-  // ── Output fader drag ─────────────────────────────────────────────────────
-  const outputFaderCanvas = document.getElementById('outputFaderMeter');
-  function setOutputGain(linearVal) {
-    S.outputGainValue = Math.max(0, Math.min(2, linearVal));
-    if (S.masterBus)
-      S.masterBus.gain.setTargetAtTime(S.outputGainValue, S.audioCtx.currentTime, 0.01);
-  }
-  let outputFaderDrag = null;
-  if (outputFaderCanvas) {
-    outputFaderCanvas.addEventListener('pointerdown', e => {
-      e.preventDefault();
-      outputFaderCanvas.setPointerCapture(e.pointerId);
-      const rect = outputFaderCanvas.getBoundingClientRect();
-      const PAD_T = 3, PAD_B = 3, trackH = rect.height - PAD_T - PAD_B;
-      const clickPos = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top - PAD_T) / trackH));
-      setOutputGain(faderPosToGain(clickPos));
-      outputFaderDrag = { startY: e.clientY, startPos: gainToFaderPos(S.outputGainValue), trackH };
-    });
-    outputFaderCanvas.addEventListener('pointermove', e => {
-      if (!outputFaderDrag) return;
-      const dy    = outputFaderDrag.startY - e.clientY;
-      const delta = dy / outputFaderDrag.trackH;
-      setOutputGain(faderPosToGain(Math.max(0, Math.min(1, outputFaderDrag.startPos + delta))));
-    });
-    outputFaderCanvas.addEventListener('pointerup',     () => { outputFaderDrag = null; });
-    outputFaderCanvas.addEventListener('pointercancel', () => { outputFaderDrag = null; });
-    outputFaderCanvas.addEventListener('dblclick', () => setOutputGain(1.0));
-  }
 }
 
 // ── Drag & drop file loading ──────────────────────────────────────────────────

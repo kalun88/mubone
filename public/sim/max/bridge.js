@@ -17,7 +17,7 @@
 //
 // Max patch inlet format — same regardless of mode:
 //   [list 0.1 -0.2 0.3 0.9]        → { address: "list",           values: [0.1, -0.2, 0.3, 0.9] }
-//   [/grain/duration 0.38]          → { address: "/grain/duration", values: [0.38] }
+//   [/grain/dur 380]                → { address: "/grain/dur",      values: [380]  }
 //   [/preset 2]                     → { address: "/preset",         values: [2] }
 //
 // Setup (one time, in this folder):
@@ -47,6 +47,15 @@ const wss = new WebSocket.Server({ port: WS_PORT }, () => {
 wss.on('connection', (ws) => {
   clients.add(ws);
   Max.post(`[bridge] browser connected — ${clients.size} client(s)`);
+
+  ws.on('message', (data) => {
+    try {
+      const { address, values } = JSON.parse(data);
+      Max.outlet(address, ...values);
+    } catch (e) {
+      Max.post(`[bridge] bad message from browser: ${e.message}`);
+    }
+  });
 
   ws.on('close', () => {
     clients.delete(ws);

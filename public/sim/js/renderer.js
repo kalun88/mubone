@@ -13,368 +13,9 @@ import {
 import { spherePoint, cameraTransform, project, getCursorLonLat, screenToLonLat, qFromAxisAngle, qNormalize, qMul } from './sphere.js';
 import { rand, activeGrainMap } from './grain.js';
 import { rebuildLiveBuffer, getRecordingDuration } from './audio.js';
+import { snapshotInputFeatures, featuresFromBuffer, normalise, featuresToHSL, tickPeakHold } from './audio-features.js';
 
-// ── Module-level meter state ──────────────────────────────────────────────────
-let inputClipHoldUntil  = 0;
-let outputClipHoldUntil = 0;
-const INPUT_CLIP_HOLD_S  = 1.5;
-const METER_CLIP_HOLD_S  = 1.5;
-const ANALYSER_BUF = new Float32Array(128);
-let _faderInputLevel   = 0;
-let _faderOutputLevels = [];     // per-channel smoothed levels (Electron N-ch)
-
-// Meter gradient cached across frames — the color stops never change so there
-// is no reason to call createLinearGradient on every draw call.
-// Keyed by canvas height so it survives window resize.
-let _meterGradCache = null;
-let _meterGradH     = -1;
-function _getMeterGrad(c, PAD_T, trackH) {
-  const h = PAD_T + trackH;
-  if (!_meterGradCache || _meterGradH !== h) {
-    const g = c.createLinearGradient(0, PAD_T + trackH, 0, PAD_T);
-    g.addColorStop(0,    '#1a5c2e');
-    g.addColorStop(0.60, '#3daa55');
-    g.addColorStop(0.78, '#a8a820');
-    g.addColorStop(0.90, '#c85818');
-    g.addColorStop(1.0,  '#aa1818');
-    _meterGradCache = g;
-    _meterGradH     = h;
-  }
-  return _meterGradCache;
-}
-
-// ── Fader helpers ─────────────────────────────────────────────────────────────
-export function gainToFaderPos(gain) {
-  if (gain <= 0) return 0;
-  const db = 20 * Math.log10(gain);
-  const DB_MIN = -60, DB_MAX = 6;
-  return Math.max(0, Math.min(1, (db - DB_MIN) / (DB_MAX - DB_MIN)));
-}
-export function faderPosToGain(pos) {
-  const DB_MIN = -60, DB_MAX = 6;
-  const db = DB_MIN + pos * (DB_MAX - DB_MIN);
-  return Math.pow(10, db / 20);
-}
-export function gainToDb(gain) {
-  if (gain <= 0) return -Infinity;
-  return 20 * Math.log10(gain);
-}
-
-// ── Input fader + meter ───────────────────────────────────────────────────────
-export function drawInputMeter() {
-  const fc = document.getElementById('inputFaderMeter');
-  if (!fc) return;
-
-  const dpr  = window.devicePixelRatio || 1;
-  const rect  = fc.getBoundingClientRect();
-  const W = Math.round(rect.width  || 40);
-  const H = Math.round(rect.height || 64);
-  if (fc.width !== W * dpr || fc.height !== H * dpr) {
-    fc.width  = W * dpr;
-    fc.height = H * dpr;
-  }
-
-  const c = fc.getContext('2d');
-  c.save();
-  c.scale(dpr, dpr);
-  c.clearRect(0, 0, W, H);
-
-  let rmsDb = -60, peakDb = -60;
-  if (S.inputAnalyser) {
-    S.inputAnalyser.getFloatTimeDomainData(ANALYSER_BUF);
-    let sumSq = 0, peak = 0;
-    for (let i = 0; i < ANALYSER_BUF.length; i++) {
-      const v = Math.abs(ANALYSER_BUF[i]);
-      sumSq += v * v;
-      if (v > peak) peak = v;
-    }
-    const rms = Math.sqrt(sumSq / ANALYSER_BUF.length);
-    rmsDb  = rms  > 0 ? 20 * Math.log10(rms)  : -60;
-    peakDb = peak > 0 ? 20 * Math.log10(peak) : -60;
-  }
-
-  const DB_FLOOR = -60;
-  const rawLevel = Math.max(0, Math.min(1, (rmsDb - DB_FLOOR) / -DB_FLOOR));
-  _faderInputLevel += rawLevel > _faderInputLevel
-    ? (rawLevel - _faderInputLevel) * 0.6
-    : (rawLevel - _faderInputLevel) * 0.08;
-
-  const ARROW_W  = 4;
-  const LABEL_W  = 14;
-  const METER_X  = ARROW_W + 1;
-  const METER_W  = W - ARROW_W - 1 - LABEL_W - 1;
-  const PAD_T    = 3;
-  const PAD_B    = 3;
-  const trackH   = H - PAD_T - PAD_B;
-
-  const METER_DB_MIN = -60, METER_DB_MAX = 6;
-  const meterDbToY = (db) => {
-    const t = (db - METER_DB_MIN) / (METER_DB_MAX - METER_DB_MIN);
-    return PAD_T + trackH - t * trackH;
-  };
-
-  c.fillStyle = '#111';
-  c.fillRect(METER_X, PAD_T, METER_W, trackH);
-
-  const fillH = Math.round(_faderInputLevel * trackH);
-  if (fillH > 0) {
-    c.fillStyle = _getMeterGrad(c, PAD_T, trackH);
-    c.fillRect(METER_X, PAD_T + trackH - fillH, METER_W, fillH);
-  }
-
-  const now = performance.now() / 1000;
-  if (peakDb >= 0) inputClipHoldUntil = now + INPUT_CLIP_HOLD_S;
-
-  const notchDbs = [6, 0, -12, -24, -36, -48, -60];
-  const isClipping = now < inputClipHoldUntil;
-  const fontSize = Math.round(Math.max(5, Math.min(7, trackH / notchDbs.length - 1)));
-  c.font = `${fontSize}px 'Roboto Mono', monospace`;
-  c.textAlign = 'left';
-  notchDbs.forEach(db => {
-    const ny = meterDbToY(db);
-    const isTop = db === 6;
-    c.strokeStyle = (isTop && isClipping) ? 'rgba(220,80,80,0.9)' : 'rgba(255,255,255,0.2)';
-    c.lineWidth   = isTop ? 1.5 : 0.75;
-    c.beginPath(); c.moveTo(METER_X, ny); c.lineTo(METER_X + METER_W, ny); c.stroke();
-    c.fillStyle    = 'rgba(255,255,255,0.28)';
-    c.textBaseline = db === METER_DB_MIN ? 'bottom' : db === 6 ? 'top' : 'middle';
-    const label    = db > 0 ? '+' + db : String(db);
-    const labelY   = db === METER_DB_MIN ? ny + 1 : db === 6 ? ny + 0.5 : ny;
-    c.fillText(label, METER_X + METER_W + 2, labelY);
-  });
-
-  if (isClipping) {
-    c.fillStyle = '#dd2222';
-    c.fillRect(METER_X, PAD_T, METER_W, 3);
-  }
-
-  const fPos     = gainToFaderPos(S.inputGainValue);
-  const fY       = PAD_T + trackH - fPos * trackH;
-  const isOver   = S.inputGainValue > 1.0;
-  const arrowColor = isOver ? '#e8a030' : '#c8c8c8';
-
-  c.strokeStyle = arrowColor;
-  c.lineWidth   = 1;
-  c.beginPath(); c.moveTo(METER_X, fY); c.lineTo(METER_X + METER_W, fY); c.stroke();
-
-  const TH = 8;
-  c.fillStyle = arrowColor;
-  c.beginPath();
-  c.moveTo(0,       fY - TH / 2);
-  c.lineTo(ARROW_W, fY);
-  c.lineTo(0,       fY + TH / 2);
-  c.closePath();
-  c.fill();
-
-  c.restore();
-}
-
-// ── Output meter ──────────────────────────────────────────────────────────────
-// In Electron with S.speakerAnalysers set: draws one narrow bar per active
-// speaker channel. In browser (no speakerAnalysers): draws the single master
-// analyser bar as before.
-//
-// Call rebuildOutputMeterStrip(n) whenever the speaker channel count changes
-// (e.g. after initSpeakerBuses). It repopulates #outputMeterStrip with n canvases.
-
-export function rebuildOutputMeterStrip(numChannels) {
-  const strip = document.getElementById('outputMeterStrip');
-  if (!strip) return;
-  strip.innerHTML = '';
-  _faderOutputLevels = [];
-  const n = Math.max(1, numChannels);
-  for (let i = 0; i < n; i++) {
-    // Wrap each canvas in a slot div so the slot controls flex layout size.
-    // The canvas is absolutely positioned inside the slot — this prevents the
-    // canvas intrinsic pixel dimensions from feeding back into flex layout
-    // and causing the resize-loop / sad-face glitch.
-    const slot = document.createElement('div');
-    slot.className = 'output-meter-slot';
-    slot.dataset.ch = i;
-
-    const cv = document.createElement('canvas');
-    cv.className = 'output-meter-bar';
-    // First bar keeps id="outputFaderMeter" so the fader drag logic in events.js
-    // (which uses getElementById) continues to work without modification.
-    if (i === 0) cv.id = 'outputFaderMeter';
-
-    slot.appendChild(cv);
-    strip.appendChild(slot);
-    _faderOutputLevels.push(0);
-  }
-}
-
-function _drawOneMeterBar(fc, analyser, smoothIdx, peakIsClipping, showFader, showLabels) {
-  const dpr  = window.devicePixelRatio || 1;
-  const rect  = fc.getBoundingClientRect();
-  const W = Math.round(rect.width);
-  const H = Math.round(rect.height);
-  // Skip this frame if the element hasn't been laid out yet (avoids sad-face canvas)
-  if (W < 2 || H < 2) return -60;
-  if (fc.width !== W * dpr || fc.height !== H * dpr) {
-    fc.width  = W * dpr;
-    fc.height = H * dpr;
-  }
-
-  let rmsDb = -60, peakDb = -60;
-  if (analyser) {
-    analyser.getFloatTimeDomainData(ANALYSER_BUF);
-    let sumSq = 0, peak = 0;
-    for (let i = 0; i < ANALYSER_BUF.length; i++) {
-      const v = Math.abs(ANALYSER_BUF[i]);
-      sumSq += v * v;
-      if (v > peak) peak = v;
-    }
-    const rms = Math.sqrt(sumSq / ANALYSER_BUF.length);
-    rmsDb  = rms  > 0 ? 20 * Math.log10(rms)  : -60;
-    peakDb = peak > 0 ? 20 * Math.log10(peak) : -60;
-  }
-
-  const DB_FLOOR = -60;
-  const rawLevel = Math.max(0, Math.min(1, (rmsDb - DB_FLOOR) / -DB_FLOOR));
-  _faderOutputLevels[smoothIdx] = _faderOutputLevels[smoothIdx] !== undefined
-    ? _faderOutputLevels[smoothIdx] + (rawLevel > _faderOutputLevels[smoothIdx]
-        ? (rawLevel - _faderOutputLevels[smoothIdx]) * 0.6
-        : (rawLevel - _faderOutputLevels[smoothIdx]) * 0.08)
-    : rawLevel;
-  const smoothLevel = _faderOutputLevels[smoothIdx];
-
-  const c = fc.getContext('2d');
-  c.save();
-  c.scale(dpr, dpr);
-  c.clearRect(0, 0, W, H);
-
-  // Layout: fader arrow on left (only on first bar), labels on right (only on last bar)
-  const ARROW_W  = showFader ? 4 : 0;
-  const LABEL_W  = showLabels ? 14 : 0;
-  const METER_X  = ARROW_W + (ARROW_W > 0 ? 1 : 0);
-  const GAP_R    = LABEL_W > 0 ? 1 : 0;
-  const METER_W  = Math.max(4, W - METER_X - GAP_R - LABEL_W);
-  const PAD_T    = 3, PAD_B = 3;
-  const trackH   = H - PAD_T - PAD_B;
-  const METER_DB_MIN = -60, METER_DB_MAX = 6;
-
-  const meterDbToY = (db) => {
-    const t = (db - METER_DB_MIN) / (METER_DB_MAX - METER_DB_MIN);
-    return PAD_T + trackH - t * trackH;
-  };
-
-  c.fillStyle = '#111';
-  c.fillRect(METER_X, PAD_T, METER_W, trackH);
-
-  const fillH = Math.round(smoothLevel * trackH);
-  if (fillH > 0) {
-    c.fillStyle = _getMeterGrad(c, PAD_T, trackH);
-    c.fillRect(METER_X, PAD_T + trackH - fillH, METER_W, fillH);
-  }
-
-  const isClipping = peakDb >= 0 || peakIsClipping;
-
-  if (showLabels) {
-    const notchDbs = [6, 0, -12, -24, -36, -48, -60];
-    const fontSize = Math.round(Math.max(5, Math.min(7, trackH / notchDbs.length - 1)));
-    c.font = `${fontSize}px 'Roboto Mono', monospace`;
-    c.textAlign = 'left';
-    notchDbs.forEach(db => {
-      const ny = meterDbToY(db);
-      const isTop = db === 6;
-      c.strokeStyle = (isTop && isClipping) ? 'rgba(220,80,80,0.9)' : 'rgba(255,255,255,0.2)';
-      c.lineWidth   = isTop ? 1.5 : 0.75;
-      c.beginPath(); c.moveTo(METER_X, ny); c.lineTo(METER_X + METER_W, ny); c.stroke();
-      c.fillStyle    = 'rgba(255,255,255,0.28)';
-      c.textBaseline = db === METER_DB_MIN ? 'bottom' : db === 6 ? 'top' : 'middle';
-      const label    = db > 0 ? '+' + db : String(db);
-      const labelY   = db === METER_DB_MIN ? ny + 1 : db === 6 ? ny + 0.5 : ny;
-      c.fillText(label, METER_X + METER_W + 2, labelY);
-    });
-  } else {
-    // No text labels but draw all notch tick lines so the scale is visible on every bar
-    const notchDbs = [6, 0, -12, -24, -36, -48, -60];
-    notchDbs.forEach(db => {
-      const ny = meterDbToY(db);
-      const isTop = db === 6;
-      c.strokeStyle = (isTop && isClipping) ? 'rgba(220,80,80,0.9)' : 'rgba(255,255,255,0.2)';
-      c.lineWidth   = isTop ? 1.5 : 0.75;
-      c.beginPath(); c.moveTo(METER_X, ny); c.lineTo(METER_X + METER_W, ny); c.stroke();
-    });
-  }
-
-  if (isClipping) {
-    c.fillStyle = '#dd2222';
-    c.fillRect(METER_X, PAD_T, METER_W, 3);
-  }
-
-  if (showFader) {
-    const fPos  = gainToFaderPos(S.outputGainValue);
-    const fY    = PAD_T + trackH - fPos * trackH;
-    const arrowColor = S.isMuted ? '#553333' : (S.outputGainValue > 1.0 ? '#e8a030' : '#c8c8c8');
-    c.strokeStyle = arrowColor;
-    c.lineWidth   = 1;
-    c.beginPath(); c.moveTo(METER_X, fY); c.lineTo(METER_X + METER_W, fY); c.stroke();
-    const TH = 8;
-    c.fillStyle = arrowColor;
-    c.beginPath();
-    c.moveTo(0,       fY - TH / 2);
-    c.lineTo(ARROW_W, fY);
-    c.lineTo(0,       fY + TH / 2);
-    c.closePath();
-    c.fill();
-  }
-
-  c.restore();
-  return peakDb;
-}
-
-export function drawOutputMeter() {
-  const strip = document.getElementById('outputMeterStrip');
-  if (!strip) return;
-
-  const now = performance.now() / 1000;
-
-  // ── Multi-channel (Electron) ────────────────────────────────────────────────
-  if (S.speakerAnalysers && S.speakerAnalysers.length > 1) {
-    const bars = strip.querySelectorAll('.output-meter-slot canvas');
-    const n    = S.speakerAnalysers.length;
-
-    // If bar count doesn't match channel count, rebuild the strip
-    if (bars.length !== n) {
-      rebuildOutputMeterStrip(n);
-      return; // will be drawn next frame
-    }
-
-    let anyClip = now < outputClipHoldUntil;
-
-    bars.forEach((fc, i) => {
-      const peakDb = _drawOneMeterBar(
-        fc,
-        S.speakerAnalysers[i],
-        i,
-        anyClip,
-        false,            // no fader arrow on output — trim lives in audio settings
-        i === n - 1       // dB text labels on last (rightmost) bar; all bars get tick lines
-      );
-      if (peakDb >= 0) outputClipHoldUntil = now + METER_CLIP_HOLD_S;
-    });
-    return;
-  }
-
-  // ── Single-bar fallback (browser / mono Electron) ──────────────────────────
-  // Ensure there's exactly one canvas in the strip (the original #outputFaderMeter)
-  let fc = strip.querySelector('canvas');
-  if (!fc) {
-    fc = document.getElementById('outputFaderMeter');
-    if (!fc) return;
-    // Re-attach if it was somehow removed
-    if (!strip.contains(fc)) strip.appendChild(fc);
-  }
-
-  // Grow _faderOutputLevels array if needed for index 0
-  if (!_faderOutputLevels.length) _faderOutputLevels = [0];
-
-  // No fader arrow on output (trim is in audio settings); always show dB lines
-  const peakDb = _drawOneMeterBar(fc, S.masterAnalyser, 0, now < outputClipHoldUntil, false, true);
-  if (peakDb >= 0) outputClipHoldUntil = now + METER_CLIP_HOLD_S;
-}
+// All VU metering moved to ui-meters.js (DOM-based, shared with audio settings modal).
 
 // ── Main draw frame ───────────────────────────────────────────────────────────
 export function drawFrame() {
@@ -388,8 +29,7 @@ export function drawFrame() {
   drawClouds();
   S.drawSvLiveOverlay?.();
   drawRadiusTooltip();
-  drawOutputMeter();
-  drawInputMeter();
+  // Meters now drawn by DOM-based startMainMetering() loop in ui-meters.js
   if (typeof S.drawRecencyDial === 'function') S.drawRecencyDial();
   S.drawRadiusViz?.();
   S.updateCloudBanksUI?.();
@@ -617,8 +257,11 @@ export function drawRadiusTooltip() {
 // ── Particles ─────────────────────────────────────────────────────────────────
 export function drawParticles() {
   // Single-pass: project + collect directly into a flat sort buffer.
-  // No intermediate object spread, no squash trig (atan2/cos/sin removed),
-  // no specular highlight arc — particles are plain depth-sorted circles.
+  // When vizMode is on, we pack audio features into the buffer for
+  // feature-driven size/colour. When off, original palette colour is used.
+  const useViz = S.vizMode;
+  // STRIDE: sx, sy, depth, facing, color, rms, centroid, zcr
+  const STRIDE = 8;
   const buf = [];
 
   for (const p of S.particles) {
@@ -628,16 +271,18 @@ export function drawParticles() {
     if (!proj) continue;
     const mag    = Math.sqrt(cx*cx + cy*cy + cz*cz);
     const facing = Math.max(0, cz / mag);
-    buf.push(proj.sx, proj.sy, proj.depth, facing, p.color);
+    buf.push(proj.sx, proj.sy, proj.depth, facing, p.color,
+             p.rms ?? 0, p.centroid ?? 0, p.zcr ?? 0);
   }
 
-  // Sort by depth descending (back-to-front). Each entry is 5 elements.
-  const STRIDE = 5;
   const count  = buf.length / STRIDE;
-  // Build an index array and sort that instead of rearranging buf.
   const idx = new Int32Array(count);
   for (let i = 0; i < count; i++) idx[i] = i;
   idx.sort((a, b) => buf[b * STRIDE + 2] - buf[a * STRIDE + 2]);
+
+  // Read mutable size overrides (set from viz modal sliders)
+  const pBase = S.vizMinSize ?? PARTICLE_BASE_SIZE;
+  const pMax  = S.vizMaxSize ?? PARTICLE_MAX_SIZE;
 
   for (let ii = 0; ii < count; ii++) {
     const i          = idx[ii] * STRIDE;
@@ -645,10 +290,29 @@ export function drawParticles() {
     const sy         = buf[i + 1];
     const depth      = buf[i + 2];
     const facing     = buf[i + 3];
-    const color      = buf[i + 4];
     const distFactor = 1 - (depth / (SPHERE_RADIUS * 2));
-    const size       = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * Math.max(0, distFactor);
-    const alpha      = (0.3 + 0.7 * Math.max(0, distFactor)) * (0.5 + 0.5 * facing);
+    const depthScale = Math.max(0, distFactor);
+
+    let size, color, alpha;
+
+    if (useViz && buf[i + 5] > 0) {
+      // ── Feature-driven rendering ──
+      const rmsN  = normalise(buf[i + 5], S.vizRmsMin, S.vizRmsMax);
+      const centN = normalise(buf[i + 6], S.vizCentroidMin, S.vizCentroidMax);
+      const zcrR  = buf[i + 7]; // already 0–1
+
+      // Size: RMS drives a min→max lerp, then depth perspective scales it down
+      // rmsN=0 → pBase (quiet floor), rmsN=1 → pMax (loud ceiling)
+      const rmsSize = pBase + (pMax - pBase) * rmsN;
+      size  = rmsSize * (0.5 + 0.5 * depthScale);
+      color = featuresToHSL(centN, zcrR);
+      alpha = (0.35 + 0.65 * depthScale) * (0.5 + 0.5 * facing);
+    } else {
+      // ── Original palette rendering (fallback) ──
+      color = buf[i + 4];
+      size  = pBase + (pMax - pBase) * depthScale;
+      alpha = (0.3 + 0.7 * depthScale) * (0.5 + 0.5 * facing);
+    }
 
     S.ctx.globalAlpha = alpha;
     S.ctx.fillStyle   = color;
@@ -659,6 +323,8 @@ export function drawParticles() {
 
   // ── Active grain highlight (second pass) ──────────────────────────────────
   // Draw a bright dot over every particle that currently has a grain playing.
+  // Glow uses the original small constants so it stays compact regardless
+  // of how large the user sets viz particle sizes.
   // activeGrainMap: particle → { expiry, glowColor }
   if (activeGrainMap.size > 0) {
     for (const [p] of activeGrainMap) {
@@ -668,9 +334,9 @@ export function drawParticles() {
       if (!proj) continue;
       const mag    = Math.sqrt(cx*cx + cy*cy + cz*cz);
       const facing = Math.max(0, cz / mag);
-      const distFactor = 1 - (proj.depth / (SPHERE_RADIUS * 2));
-      const size   = (PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * Math.max(0, distFactor)) * 1.8;
-      S.ctx.globalAlpha = (0.6 + 0.4 * facing) * Math.max(0, distFactor);
+      const df     = Math.max(0, 1 - (proj.depth / (SPHERE_RADIUS * 2)));
+      const size   = (PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df) * 1.6;
+      S.ctx.globalAlpha = (0.6 + 0.4 * facing) * df;
       S.ctx.fillStyle   = '#ffffff';
       S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, size, 0, Math.PI * 2); S.ctx.fill();
     }
@@ -774,6 +440,10 @@ export function animate() {
   _animLastAt = _animNow;
   perfTick();
 
+  // Sample the input analyser every frame so transient peaks between paint
+  // events are captured and held for the next snapshotInputFeatures() call.
+  tickPeakHold();
+
   // In physical mode the sensor owns the camera — lock cursor to canvas centre
   // so painting always targets the direction you're facing (straight ahead).
   if (S.spatialMode === 'physical') {
@@ -817,7 +487,7 @@ export function animate() {
   // Sim mode: sensor is ignored — mouse/MIDI only. No sensor in simulation.
   if (S.spatialMode === 'physical' && typeof S._getSensorCamQ === 'function') {
     const sq = S._getSensorCamQ();
-    if (sq) S.camQ = sq;  // [w, vx, vy, vz]
+    if (sq) S.camQ = sq;  // [x, y, z, w]
   }
 
   // Drop particles while painting
@@ -845,6 +515,16 @@ export function animate() {
           grainStart:    Math.max(0, recTime - gpr.duration),
           color:         LIVE_PAINT_COLORS[S.liveColorIndex % LIVE_PAINT_COLORS.length]
         };
+        // Snapshot audio features from input analyser (live path)
+        const feat = snapshotInputFeatures();
+        if (feat) {
+          // Noise floor gate — reject particle if signal is just room ambience
+          if (S.vizNoiseFloor > 0 && feat.rms < S.vizNoiseFloor) {
+            particle = null;
+          } else {
+            particle.rms = feat.rms; particle.centroid = feat.centroid; particle.zcr = feat.zcr;
+          }
+        }
       } else if (S.activeSampleIndex >= 0 && S.samples[S.activeSampleIndex] && S.samples[S.activeSampleIndex].buffer) {
         const s          = S.samples[S.activeSampleIndex];
         const cropStart  = s.cropStart * s.duration;
@@ -865,6 +545,9 @@ export function animate() {
           grainDuration: grainDur,
           color:         SAMPLE_PAINT_COLORS[S.activeSampleIndex % SAMPLE_PAINT_COLORS.length]
         };
+        // Snapshot audio features from sample buffer (offline path)
+        const feat = featuresFromBuffer(s.buffer, clampedStart);
+        if (feat) { particle.rms = feat.rms; particle.centroid = feat.centroid; particle.zcr = feat.zcr; }
 
         const stride = gpr.period * rand(0.8, 1.2);
         s.grainCursor += stride;
@@ -898,12 +581,13 @@ export function animate() {
 // Inline quaternion helpers used in the animate() hot path.
 // sphere.js exports the same functions; these local copies avoid the overhead
 // of an extra module indirection in the RAF loop.
+// All quaternions use [x, y, z, w] convention (scalar w last).
 function _qMul(a, b) {
-  return [a[0]*b[0]-a[1]*b[1]-a[2]*b[2]-a[3]*b[3], a[0]*b[1]+a[1]*b[0]+a[2]*b[3]-a[3]*b[2], a[0]*b[2]-a[1]*b[3]+a[2]*b[0]+a[3]*b[1], a[0]*b[3]+a[1]*b[2]-a[2]*b[1]+a[3]*b[0]];
+  return [a[3]*b[0]+a[0]*b[3]+a[1]*b[2]-a[2]*b[1], a[3]*b[1]-a[0]*b[2]+a[1]*b[3]+a[2]*b[0], a[3]*b[2]+a[0]*b[1]-a[1]*b[0]+a[2]*b[3], a[3]*b[3]-a[0]*b[0]-a[1]*b[1]-a[2]*b[2]];
 }
 function _qNorm(q) { const l=Math.sqrt(q[0]*q[0]+q[1]*q[1]+q[2]*q[2]+q[3]*q[3]); return [q[0]/l,q[1]/l,q[2]/l,q[3]/l]; }
-function _qFromAA(ax, ay, az, angle) { const h=angle/2,s=Math.sin(h); return [Math.cos(h),ax*s,ay*s,az*s]; }
+function _qFromAA(ax, ay, az, angle) { const h=angle/2,s=Math.sin(h); return [ax*s,ay*s,az*s,Math.cos(h)]; }
 function _qRotVec(q, v) {
-  const vq=[0,v[0],v[1],v[2]], c=[q[0],-q[1],-q[2],-q[3]];
-  const r=_qMul(_qMul(q,vq),c); return [r[1],r[2],r[3]];
+  const vq=[v[0],v[1],v[2],0], c=[-q[0],-q[1],-q[2],q[3]];
+  const r=_qMul(_qMul(q,vq),c); return [r[0],r[1],r[2]];
 }

@@ -25,29 +25,38 @@
   }
   /* ── Top bar (title + ? button) ─────────────────────────────────────────── */
   .top-bar {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    display: flex;
+    flex-direction: row;
     align-items: center;
+    justify-content: space-between;
     flex-shrink: 0;
     border-bottom: none;
     padding-bottom: 0.3rem;
   }
   .top-bar-left {
     display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    justify-content: flex-start;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+    flex-shrink: 0;
   }
-  .top-bar-center {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  .top-bar-version {
+    font-size: 0.62rem;
+    opacity: 0.4;
+    letter-spacing: 0.04em;
+    padding-left: 0.15rem;
+    white-space: nowrap;
   }
   .top-bar-right {
     display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.1rem;
+  }
+  .top-bar-row {
+    display: flex;
     align-items: center;
-    gap: 0.35rem;
-    justify-content: flex-end;
+    gap: 0.1rem;
   }
   .top-bar-btn svg {
     vertical-align: middle;
@@ -74,6 +83,10 @@
   }
   .top-bar-btn:hover { color: #aaaaaa; border-color: transparent; }
   .top-bar-btn.active { color: #ffffff; border-color: transparent; }
+  /* ── tare shortcut buttons — amber accent when active ─────────────────── */
+  .top-bar-btn.tare-btn { color: #555; font-size: 0.70rem; padding: 0.15rem 0.35rem; }
+  .top-bar-btn.tare-btn:hover { color: #e8a030; }
+  .top-bar-btn.tare-btn.active { color: #e8a030; }
   /* ── mic + mute as inline top-bar buttons ─────────────────────────────── */
   .top-bar #micEnableBtn,
   .top-bar #muteBtn {
@@ -122,7 +135,6 @@
   .top-bar #muteBtn .mute-icon { width: 13px; height: 13px; flex-shrink: 0; opacity: 1; }
   /* muted state */
   .top-bar #muteBtn.muted { color: #e8a030; border-color: transparent; background: transparent; }
-  /* inputFaderMeter lives in right-panel levels device now */
   /* ── Main area: canvas + right panel side by side ─────────────────────── */
   .main-layout {
     display: flex;
@@ -439,19 +451,7 @@
     width: 38px;
     flex-shrink: 0;
   }
-  #inputGainVal {
-    display: none; /* dB label drawn inside canvas instead */
-  }
-  /* combined fader+meter canvas — full remaining height */
-  #inputFaderMeter {
-    flex: 1;
-    min-height: 0;
-    width: 100%;
-    display: block;
-    cursor: ns-resize;
-    touch-action: none;
-    border-radius: 2px;
-  }
+  #inputGainVal { display: none; }
   #micEnableBtn {
     display: flex;
     flex-direction: column;
@@ -722,18 +722,18 @@
   }
 
   /* ── Device: grain preset ────────────────────────────────────────────────── */
-  .device--preset { flex: 1; min-width: clamp(280px, 22vw, 420px); }
+  .device--preset { flex: 1; min-width: clamp(340px, 28vw, 560px); }
   /* ── Right panel: presets + search + grain stacked beside viewer ──────── */
   .right-panel {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
-    width: clamp(280px, 22vw, 400px);
+    width: clamp(340px, 28vw, 560px);
     flex-shrink: 0;
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 0.4rem;
+    padding: 0.5rem;
   }
   .right-panel .device {
     width: 100%;
@@ -751,11 +751,11 @@
     gap: 0.3rem;
     align-items: stretch;
   }
-  /* 5-col × 2-row grid of preset buttons — full width */
+  /* 4-col × 5-row grid of preset buttons — full width (12 built-in + 8 user) */
   .preset-buttons {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    grid-template-rows: repeat(3, 1fr);
+    grid-template-rows: repeat(5, 1fr);
     gap: 2px;
     flex-shrink: 0;
   }
@@ -765,7 +765,7 @@
     color: #666666;
     font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
     font-size: 0.82rem;
-    padding: 0.15rem 0.2rem;
+    padding: 0.18rem 0.35rem;
     border-radius: 0;
     cursor: pointer;
     transition: color 0.15s;
@@ -775,6 +775,8 @@
     overflow: hidden;
     text-overflow: clip;
     min-width: 0;
+    display: flex;
+    align-items: baseline;
   }
   .preset-btn:hover { border-color: transparent; color: #aaaaaa; }
   .preset-num {
@@ -783,6 +785,13 @@
     margin-right: 0.35em;
     vertical-align: 0.05em;
     letter-spacing: 0;
+    flex-shrink: 0;
+  }
+  .preset-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: clip;
   }
   .preset-btn.active .preset-num { color: #666666; }
   .preset-btn:hover .preset-num  { color: #666666; }
@@ -792,6 +801,41 @@
     background: transparent;
     box-shadow: none;
   }
+  /* User-defined preset slots */
+  .preset-btn.user-preset {
+    color: #555566;
+  }
+  .preset-btn.user-preset:hover { color: #9999bb; }
+  .preset-btn.user-preset.active { color: #aaaaff; }
+  .preset-btn.user-preset.active .preset-num { color: #7777aa; }
+  .preset-btn.user-preset:hover .preset-num  { color: #7777aa; }
+  /* Save icon inside user preset buttons */
+  .preset-save {
+    flex-shrink: 0;
+    margin-left: 0.2em;
+    font-size: 0.8em;
+    color: #444455;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+    cursor: pointer;
+    padding: 0 0.1em;
+    line-height: 1;
+  }
+  .preset-dupe {
+    flex-shrink: 0;
+    margin-left: 0.2em;
+    font-size: 0.8em;
+    color: #444455;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+    cursor: pointer;
+    padding: 0 0.1em;
+    line-height: 1;
+  }
+  .preset-btn.user-preset:hover .preset-dupe { opacity: 1; }
+  .preset-dupe:hover { color: #88bbcc !important; }
+  .preset-btn.user-preset:hover .preset-save { opacity: 1; }
+  .preset-save:hover { color: #8888cc !important; }
   /* full-width waveform row below preset buttons */
   .preset-right-box {
     flex-shrink: 0;
@@ -996,74 +1040,56 @@
     display: flex; flex-direction: column;
     align-items: stretch; gap: 0; width: 38px; flex-shrink: 0;
   }
-  /* Multi-channel output meter strip — horizontal row of equal-width bar slots */
-  .output-meter-strip {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: row;
-    align-items: stretch;
-    gap: 1px;
-    width: 100%;
-    overflow: hidden;
-  }
-  /* Each bar slot is a flex child div that controls layout size.
-     The canvas inside is absolutely positioned to fill it — this prevents
-     the canvas's intrinsic pixel dimensions from feeding back into flex layout
-     and causing the resize-loop / sad-face glitch. */
-  .output-meter-slot {
-    flex: 1;
-    min-width: 0;
-    position: relative;
-    cursor: ns-resize;
-    touch-action: none;
-  }
-  .output-meter-slot canvas {
-    position: absolute;
-    inset: 0;
-    display: block;
-    border-radius: 2px;
-  }
-  /* Single-bar fallback: the original #outputFaderMeter sits directly in the strip */
-  #outputFaderMeter {
-    flex: 1;
-    min-width: 0;
-    display: block;
-    cursor: ns-resize; touch-action: none; border-radius: 2px;
-  }
+  /* Multi-channel output meter strip — row of fixed-width bar slots.
   /* compat — old IDs hidden */
   #outputMeterCanvas, #outputMeterCanvasBottom,
   .meter-row, .meter-wrap, .meter-clip-dot, #meterClipDot { display: none; }
 
+  /* ── Improv mode device (right panel) ──────────────────────────────────── */
+  .right-panel .device--improv {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+  .improv-body {
+    flex-direction: column !important;
+    padding: 0 !important;
+  }
+  /* Reuse grain-row / grain-label / grain-slider / grain-numbox / grain-seg styles */
+
   /* ── Levels device (right panel) ────────────────────────────────────────── */
-  /* Fixed height breaks the canvas-draw→layout feedback loop that causes
-     the box to slowly expand each frame until the sad/happy-face canvas appears. */
   .right-panel .device--meters {
     flex: 0 0 auto;
     width: 100%;
     overflow: hidden;
-    height: clamp(90px, 8vw, 130px);
   }
   .meters-body {
     flex-direction: row !important;
     justify-content: flex-start;
     gap: 0.5rem;
     padding: 0.1rem 0.25rem;
-    height: 100%;
   }
-  /* in: fixed narrow column; out: takes the remaining space */
+  /* Label column above each meter group */
   .meter-channel {
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    flex: 0 0 clamp(32px, 3.5vw, 46px);
     min-height: 0;
-    height: 100%;
-    gap: 0.15rem;
+    gap: 0.1rem;
   }
-  #outputMeterChannel {
-    flex: 1 1 0;
-    min-width: 0;
+  .main-in-meter-col  { flex: 0 0 auto; }
+  .main-out-meter-col { flex: 0 0 auto; }
+  /* Side-by-side house / mixdown groups inside the out column */
+  .main-out-groups {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .main-out-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
   }
   .meter-ch-label {
     color: #666666;
@@ -1071,15 +1097,94 @@
     text-align: center;
     flex-shrink: 0;
     letter-spacing: 0.06em;
+    line-height: 1.1;
   }
-  .meter-channel canvas {
-    flex: 1;
-    min-height: 0;
-    width: 100%;
-    display: block;
-    cursor: ns-resize;
-    touch-action: none;
+  /* DOM meter bars — override modal padding/margin for tighter main-window fit */
+  .main-meter-dom {
+    margin: 0 !important;
+    padding: 0.15rem 0.3rem !important;
+    height: clamp(70px, 7vw, 110px) !important;
+    width: fit-content !important;   /* size to channel count — no trailing space */
     border-radius: 2px;
+    overflow: visible;
+  }
+
+  /* ── Play device — cursor mute big button ────────────────────────────────── */
+  .right-panel .device--play {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+  .play-body {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    padding: 0.3rem 0.4rem !important;
+  }
+  .play-mute-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.8rem;
+    font-family: inherit;
+    font-size: 0.8rem;
+    letter-spacing: 0.05em;
+    color: #7abcbc;
+    background: transparent;
+    border: 1px solid rgba(122, 188, 188, 0.4);
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .play-mute-btn:hover {
+    background: rgba(122, 188, 188, 0.1);
+    border-color: #7abcbc;
+  }
+  .play-mute-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
+  /* Default (unmuted): show speaker-on icon, hide muted icon */
+  .play-mute-icon--on  { display: inline-block; }
+  .play-mute-icon--off { display: none; }
+  /* Muted state: amber, show X icon */
+  .play-mute-btn.muted {
+    color: #e8a030;
+    border-color: #e8a030;
+    background: rgba(232, 160, 48, 0.15);
+  }
+  .play-mute-btn.muted .play-mute-icon--on  { display: none; }
+  .play-mute-btn.muted .play-mute-icon--off { display: inline-block; }
+
+  /* Mixdown source gain sliders — compact vertical controls under mixdown meters */
+  .mixdown-gains {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 2px;
+    width: 100%;
+  }
+  .mixdown-gain-row {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .mixdown-gain-label {
+    color: #666;
+    font-size: 0.6rem;
+    letter-spacing: 0.04em;
+    width: 20px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+  .mixdown-gain-slider {
+    flex: 1;
+    height: 12px;
+    min-width: 36px;
+    max-width: 60px;
+    accent-color: #7abcbc;
+    cursor: pointer;
   }
 
   /* ── Right panel: clouds + samples ──────────────────────────────────────── */
@@ -1503,12 +1608,32 @@
   border: 1px solid rgba(255,255,255,0.1);
   border-radius: 0;
   padding: 1.4rem 1.6rem 1.6rem;
-  min-width: 400px;
+  width: calc(100vw - 2rem);
+  max-height: 90vh;
+  overflow-y: auto;
   font-size: 0.8rem;
   color: #aaaaaa;
   display: flex;
   flex-direction: column;
   gap: 0.8rem;
+}
+.sensor-columns {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+}
+.sensor-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  padding: 0 1.2rem;
+}
+.sensor-col:first-child { padding-left: 0; }
+.sensor-col:last-child  { padding-right: 0; }
+.sensor-col + .sensor-col {
+  border-left: 1px solid rgba(255,255,255,0.07);
 }
 .sensor-dialog h2 {
   font-size: 0.85rem;
@@ -1582,6 +1707,12 @@
   border: 1px solid rgba(255,255,255,0.06);
 }
 .sensor-live span { color: #aaaaaa; }
+.sensor-note {
+  font-size: 0.78rem;
+  color: #666;
+  line-height: 1.6;
+  padding: 0.4rem 0;
+}
 .sensor-map-table {
   border-collapse: collapse;
   width: 100%;
@@ -1615,6 +1746,259 @@
   min-width: 1.4rem;
   font-weight: 500;
   letter-spacing: 0.04em;
+}
+
+/* ── Wand control modal ──────────────────────────────────────────────────────*/
+#wandModal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  z-index: 200;
+}
+#wandModal.open { display: block; }
+
+.wand-dialog {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: #161616;
+  border: 1px solid rgba(255,255,255,0.1);
+  padding: 1.4rem 1.6rem 1.6rem;
+  width: calc(100vw - 2rem);
+  max-width: 700px;
+  max-height: 90vh;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  color: #aaaaaa;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.wand-dialog h2 {
+  font-size: 0.85rem;
+  font-weight: normal;
+  color: #ffffff;
+  letter-spacing: 0.06em;
+  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.wand-dialog h2 .close-btn {
+  background: none;
+  border: none;
+  color: #666666;
+  font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0;
+  letter-spacing: 0.04em;
+}
+.wand-dialog h2 .close-btn:hover { color: #ffffff; }
+
+/* Visualizer row */
+.wand-viz-row {
+  display: flex;
+  gap: 1.2rem;
+  align-items: flex-start;
+}
+.wand-viz-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.wand-meters-panel {
+  flex: 1;
+  min-width: 0;
+}
+#wandXYPlot {
+  display: block;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: #1c1c1c;
+}
+.wand-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.wand-meter-label {
+  font-size: 0.72rem;
+  color: #555555;
+  letter-spacing: 0.04em;
+  min-width: 2.6rem;
+}
+.wand-meter-track {
+  flex: 1;
+  height: 6px;
+  background: #1c1c1c;
+  border: 1px solid rgba(255,255,255,0.08);
+  overflow: hidden;
+}
+.wand-meter-fill {
+  height: 100%;
+  width: 0%;
+  background: #7abcbc;
+  transition: width 0.06s linear;
+}
+.wand-meter-val {
+  font-size: 0.72rem;
+  color: #555555;
+  letter-spacing: 0.04em;
+  min-width: 5rem;
+  text-align: right;
+}
+.wand-euler-heading {
+  margin-top: 0.6rem;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  padding-top: 0.6rem !important;
+}
+
+/* Axis slots */
+.wand-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  padding: 0.3rem 0;
+}
+.wand-slot-row + .wand-slot-row {
+  border-top: 1px solid rgba(255,255,255,0.04);
+}
+.wand-slot-lbl {
+  color: #aaaaaa;
+  font-weight: 500;
+  font-size: 0.8rem;
+  min-width: 1rem;
+  letter-spacing: 0.04em;
+}
+.wand-arrow {
+  color: #444444;
+  font-size: 0.85rem;
+  padding: 0 0.1rem;
+}
+.wand-select {
+  background: #242424;
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #aaaaaa;
+  font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 0.75rem;
+  padding: 0.22rem 0.5rem;
+  cursor: pointer;
+  letter-spacing: 0.03em;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+}
+.wand-select:hover, .wand-select:focus {
+  border-color: rgba(255,255,255,0.22);
+  color: #ffffff;
+}
+.wand-param-sel  { min-width: 7.5rem; }
+.wand-morph-sel  { min-width: 6.5rem; }
+.wand-num {
+  background: #242424;
+  border: 1px solid rgba(255,255,255,0.1);
+  color: #aaaaaa;
+  font-family: 'Roboto Mono', monospace;
+  font-size: 0.75rem;
+  padding: 0.22rem 0.4rem;
+  width: 3.8rem;
+  text-align: right;
+  letter-spacing: 0.02em;
+  outline: none;
+}
+.wand-num-sm { width: 3.2rem; }
+.wand-num:hover, .wand-num:focus {
+  border-color: rgba(255,255,255,0.22);
+  color: #ffffff;
+}
+.wand-deg {
+  font-size: 0.72rem;
+  color: #444444;
+  letter-spacing: 0.03em;
+}
+.wand-meta {
+  font-size: 0.72rem;
+  color: #555555;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+/* Preset morph bar */
+.wand-morph-row { flex-wrap: nowrap; }
+/* Wrap groups the track bar + center select vertically */
+.wand-morph-track-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 60px;
+}
+.wand-morph-track {
+  width: 100%;
+  height: 8px;
+  background: #1c1c1c;
+  border: 1px solid rgba(255,255,255,0.08);
+  position: relative;
+  overflow: visible;
+}
+/* Center preset select — sits below the track, centered */
+.wand-morph-center-sel {
+  font-size: 0.68rem;
+  padding: 0.05rem 0.2rem;
+  max-width: 100%;
+  color: #e8a030;
+  border-color: rgba(232,160,48,0.25);
+  background: #1a1a22;
+}
+.wand-morph-cursor {
+  position: absolute;
+  top: -4px;
+  width: 8px;
+  height: 16px;
+  background: #e8a030;
+  margin-left: -4px;
+  left: 0%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── 2D bilinear morph pad ────────────────────────────────────────────────── */
+.xy2d-corner-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.3rem;
+  margin-bottom: 0.25rem;
+}
+.xy2d-corner-sel {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.72rem;
+}
+#xy2dPad {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  cursor: crosshair;
+  border-radius: 2px;
+  touch-action: none;
+  margin-bottom: 0.25rem;
+}
+.xy2d-center-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.2rem 0;
+}
+.xy2d-center-row .xy2d-corner-sel { flex: 1; }
+.xy2d-axis-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.2rem;
 }
 
 /* ── Audio settings modal ─────────────────────────────────────────────────── */
@@ -1729,6 +2113,29 @@
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
+/* Gate activity indicator light */
+.as-gate-light {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #333333;
+  flex-shrink: 0;
+  transition: background 0.06s;
+}
+.as-gate-light.closed {
+  background: #e05050;
+  box-shadow: 0 0 4px #e05050;
+}
+/* Live RMS readout row */
+.as-rms-row { margin-top: -2px; }
+.as-rms-readout {
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-size: 11px;
+  color: #7abcbc;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+}
 .as-badge {
   background: #242424;
   border: 1px solid rgba(255,255,255,0.08);
@@ -1815,6 +2222,8 @@
 }
 .as-btn:hover { background: #2e2e2e; color: #aaaaaa; }
 .as-btn.active { background: #2e2e2e; color: #aaaaaa; border-color: rgba(255,255,255,0.2); }
+.as-btn--save { margin-left: auto; }
+.as-btn--flash { color: #7abcbc !important; border-color: #7abcbc !important; }
 
 /* ── Multi-channel vertical meter strip ──────────────────────────────────── */
 .as-multi-meter-wrap {
@@ -1867,6 +2276,13 @@
   background: #161616;
   min-height: 0;
 }
+/* thin vertical divider between meter groups (e.g. house buses | L R mixdown) */
+.as-vchan-sep {
+  flex: 0 0 1px;
+  background: rgba(255,255,255,0.14);
+  align-self: stretch;
+  margin: 0 4px;
+}
 /* channel number label under bar */
 .as-vchan-label {
   font-size: 0.75rem;
@@ -1877,33 +2293,80 @@
   line-height: 1.3;
 }
 
-/* ── Output routing table ────────────────────────────────────────────────── */
-.as-routing-wrap {
-  margin-top: 0.6rem;
+/* ── Legacy routing table (kept for reference) ───────────────────────────── */
+.as-routing-wrap  { margin-top: 0.6rem; }
+.as-routing-label { font-size: 0.75rem; color: #888888; letter-spacing: 0.07em; margin-bottom: 0.35rem; text-transform: uppercase; }
+.as-routing-row   { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; font-size: 0.75rem; }
+.as-routing-ch    { min-width: 3.8rem; color: #888888; flex-shrink: 0; letter-spacing: 0.03em; }
+.as-routing-sel   { flex: 1; background: #2c2c2c; border: none; border-radius: 0; color: #aaaaaa; font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 0.75rem; padding: 0.15rem 0.3rem; cursor: pointer; }
+.as-routing-sel:focus { outline: none; border-color: rgba(255,255,255,0.3); }
+
+/* ── I/O mapping table (software-centric routing) ────────────────────────── */
+/* Used for both input and output sections.
+   Left column: software path label.  Right column: hardware channel dropdown. */
+.as-io-table {
+  margin: 0.4rem 0;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 0;
+  overflow: hidden;
 }
-.as-routing-label {
-  font-size: 0.75rem;
-  color: #888888;
-  letter-spacing: 0.07em;
-  margin-bottom: 0.35rem;
+.as-io-hdr {
+  display: flex;
+  background: #141414;
+  padding: 0.2rem 0.5rem;
+  gap: 0.5rem;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.as-io-col-sw {
+  flex: 1;
+  font-size: 0.65rem;
+  color: #555555;
   text-transform: uppercase;
+  letter-spacing: 0.07em;
 }
-.as-routing-row {
+.as-io-col-hw {
+  width: 7rem;
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  color: #555555;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.as-io-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
   font-size: 0.75rem;
 }
-.as-routing-ch {
-  min-width: 3.8rem;
-  color: #888888;
-  flex-shrink: 0;
+.as-io-row:last-child { border-bottom: none; }
+/* Headphone rows: subtle tint to distinguish from house speakers */
+.as-io-row--hp {
+  background: rgba(40,40,60,0.4);
+}
+/* Dimmed/future row (experimental path) */
+.as-io-row--dim {
+  opacity: 0.45;
+}
+.as-io-sw {
+  flex: 1;
+  color: #cccccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Small secondary label (angle / "monitor") shown inside the sw cell */
+.as-io-angle {
+  font-size: 0.65rem;
+  color: #555555;
+  margin-left: 0.35rem;
   letter-spacing: 0.03em;
 }
-.as-routing-sel {
-  flex: 1;
-  background: #2c2c2c;
+.as-io-sel {
+  width: 7rem;
+  flex-shrink: 0;
+  background: #232323;
   border: none;
   border-radius: 0;
   color: #aaaaaa;
@@ -1912,4 +2375,69 @@
   padding: 0.15rem 0.3rem;
   cursor: pointer;
 }
-.as-routing-sel:focus { outline: none; border-color: rgba(255,255,255,0.3); }
+.as-io-sel:disabled { opacity: 0.35; cursor: default; }
+.as-io-sel:focus    { outline: none; background: #2a2a2a; }
+
+
+/* ── Pre-fader meter group label ─────────────────────────────────────────── */
+.as-meter-group-label {
+  font-size: 0.65rem;
+  color: #555555;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-top: 0.4rem;
+  margin-bottom: 0.1rem;
+}
+
+/* ── Viz settings modal ──────────────────────────────────────────────────── */
+#vizModal {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  z-index: 200;
+}
+#vizModal.open { display: block; }
+.viz-dialog {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: #161616;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 0;
+  padding: 1.4rem 1.6rem 1.6rem;
+  min-width: 400px;
+  max-width: 520px;
+  width: min(520px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  font-size: 0.75rem;
+  color: #aaaaaa;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+.viz-dialog h2 {
+  font-size: 0.85rem;
+  font-weight: normal;
+  color: #ffffff;
+  letter-spacing: 0.06em;
+  margin-bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.viz-dialog h2 .close-btn {
+  background: none;
+  border: none;
+  color: #666666;
+  font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0;
+  letter-spacing: 0.04em;
+}
+.viz-dialog h2 .close-btn:hover { color: #ffffff; }
+/* Reuse .as-section, .as-row, .as-label, .as-slider, .as-val inside viz-dialog */

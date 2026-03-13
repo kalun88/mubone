@@ -132,7 +132,7 @@ export const PRESETS = [
     retriggerMs:   55,
     pitchJitter:   0.01,   // low pitch jitter -> stays legible
     panSpread:     0.65,
-    volume:        0.045,
+    volume:        0.50,
     probability:   1.0,
     direction:     'fwd',
     curveType:     'hann',
@@ -153,7 +153,7 @@ export const PRESETS = [
     retriggerMs:   80,
     pitchJitter:   0.015,
     panSpread:     0.2,
-    volume:        0.07,
+    volume:        0.85,
     probability:   1.0,
     direction:     'fwd',
     curveType:     'hann',
@@ -174,7 +174,7 @@ export const PRESETS = [
     retriggerMs:   400,
     pitchJitter:   0.02,
     panSpread:     1.0,
-    volume:        0.025,
+    volume:        0.55,
     probability:   0.9,
     direction:     'fwd',
     curveType:     'hann',
@@ -195,7 +195,7 @@ export const PRESETS = [
     retriggerMs:   900,
     pitchJitter:   0.004,
     panSpread:     0.85,
-    volume:        0.012,
+    volume:        0.70,
     probability:   1.0,
     direction:     'fwd',
     curveType:     'hann',
@@ -216,7 +216,7 @@ export const PRESETS = [
     retriggerMs:   100,
     pitchJitter:   0.0,
     panSpread:     0.4,
-    volume:        0.08,
+    volume:        1.0,
     probability:   1.0,
     direction:     'fwd',
     curveType:     'tri',
@@ -237,7 +237,7 @@ export const PRESETS = [
     retriggerMs:   180,
     pitchJitter:   0.029,  // ≈ ±50¢  (slider ceiling is 0–~0.029 = 0–50¢; 0.20 = ±316¢ was a typo)
     panSpread:     1.0,
-    volume:        0.018,
+    volume:        0.35,
     probability:   0.85,
     direction:     'fwd',
     curveType:     'hann',
@@ -258,7 +258,7 @@ export const PRESETS = [
     retriggerMs:   350,
     pitchJitter:   0.06,
     panSpread:     0.9,
-    volume:        0.030,
+    volume:        0.85,
     probability:   0.6,
     direction:     'rev',
     curveType:     'hann',
@@ -279,7 +279,7 @@ export const PRESETS = [
     retriggerMs:   20,
     pitchJitter:   0.45,
     panSpread:     1.0,
-    volume:        0.18,
+    volume:        1.0,
     probability:   0.55,
     direction:     'rnd',
     curveType:     'rect',
@@ -300,7 +300,7 @@ export const PRESETS = [
     retriggerMs:   60,
     pitchJitter:   0.0,
     panSpread:     0.5,
-    volume:        0.10,
+    volume:        1.0,
     probability:   1.0,
     direction:     'fwd',
     curveType:     'rect',
@@ -321,7 +321,7 @@ export const PRESETS = [
     retriggerMs:   40,
     pitchJitter:   0.01,
     panSpread:     0.15,
-    volume:        0.09,
+    volume:        0.90,
     probability:   1.0,
     direction:     'fwd',
     curveType:     'tri',
@@ -342,7 +342,7 @@ export const PRESETS = [
     retriggerMs:   150,
     pitchJitter:   0.08,
     panSpread:     0.65,
-    volume:        0.045,
+    volume:        0.80,
     probability:   0.88,
     direction:     'fwd',
     curveType:     'hann',
@@ -364,12 +364,71 @@ export const PRESETS = [
     retriggerMs:   0,
     pitchJitter:   0.0,
     panSpread:     0.0,
-    volume:        0.10,
+    volume:        1.0,
     probability:   1.0,
     direction:     'fwd',
     curveType:     'hann',
   },
 ];
+
+// ── User-defined preset slots (indices 12–19) ─────────────────────────────────
+// These 8 slots are appended to PRESETS at load time.  On startup they hold
+// neutral wash-like defaults; loadUserPresets() overwrites them from localStorage
+// so any saves from a previous session survive a page reload.
+export const USER_PRESET_START = 12;
+const _userDefault = n => ({
+  name:           `user ${n}`,
+  userDefined:    true,
+  nearestMode:    false,
+  searchRadiusDeg: 12,
+  recencyN:       3,
+  k:              10,
+  duration:       0.38,
+  durJitter:      0.08,
+  durVar:         0.04,
+  period:         0.09,
+  periodVar:      0.01,
+  fadeRatio:      0.32,
+  retriggerMs:    55,
+  pitchJitter:    0.01,
+  panSpread:      0.65,
+  volume:         0.50,
+  probability:    1.0,
+  direction:      'fwd',
+  curveType:      'hann',
+});
+for (let n = 1; n <= 8; n++) PRESETS.push(_userDefault(n));
+
+// Load saved user presets from localStorage and overwrite the 8 slots in-place.
+// Call this before building the preset buttons so the UI reflects saved names.
+export function loadUserPresets() {
+  try {
+    const raw = localStorage.getItem('mubone_user_presets');
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (!Array.isArray(saved)) return;
+    saved.forEach((p, n) => {
+      const idx = USER_PRESET_START + n;
+      if (idx < PRESETS.length && p && typeof p === 'object') {
+        PRESETS[idx] = { ...PRESETS[idx], ...p, userDefined: true };
+      }
+    });
+  } catch (e) {
+    console.warn('[presets] could not load user presets from localStorage:', e);
+  }
+}
+
+// Persist the 8 user slots to localStorage.
+export function saveUserPresets() {
+  try {
+    localStorage.setItem(
+      'mubone_user_presets',
+      JSON.stringify(PRESETS.slice(USER_PRESET_START, USER_PRESET_START + 8))
+    );
+  } catch (e) {
+    console.warn('[presets] could not save user presets to localStorage:', e);
+  }
+}
 
 // ── Sample-rate-derived grain parameter floors ───────────────────────────────
 // Minimum grain duration = 2 samples; minimum inter-onset period = 2 samples.
@@ -586,7 +645,7 @@ export const S = {
   // ── Canvas / rendering ─────────────────────────────────────────────────
   canvas: undefined,
   ctx:    undefined,
-  camQ:   [1, 0, 0, 0],       // camera orientation quaternion
+  camQ:   [0, 0, 0, 1],       // camera orientation quaternion [x, y, z, w]
   mouseX: 0,
   mouseY: 0,
   mousePixelX: 0,
@@ -657,11 +716,42 @@ export const S = {
   // ── Sensor calibration ─────────────────────────────────────────────────
   sensorCal: {
     axisMap: {
-      x: { viz: 'x', sign:  1, mute: false },
-      y: { viz: 'y', sign:  1, mute: false },
-      z: { viz: 'z', sign:  1, mute: false },
+      x: { viz: 'roll',  sign: -1, mute: false },
+      y: { viz: 'pitch', sign:  1, mute: false },
+      z: { viz: 'yaw',   sign: -1, mute: false },
     }
   },
+
+  sensor2Cal: {
+    axisMap: {
+      x: { viz: 'roll',  sign: -1, mute: false },
+      y: { viz: 'pitch', sign:  1, mute: false },
+      z: { viz: 'yaw',   sign: -1, mute: false },
+    }
+  },
+
+  // /space/wand — wand controller (viz-invisible, forwarded to Max)
+  wandCal: {
+    axisMap: {
+      x: { viz: 'roll',  sign:  1, mute: false },
+      y: { viz: 'pitch', sign: -1, mute: false },
+      z: { viz: 'yaw',   sign: -1, mute: false },
+    }
+  },
+
+  // ── Particle visualisation (audio-feature-driven) ────────────────────
+  // When true, particle color/size derived from audio features baked at
+  // paint time.  When false, original palette-based colouring is used.
+  vizMode:       true,      // master toggle for feature-driven viz
+  vizMinSize:    6,         // particle min radius (px) — quiet floor, overrides PARTICLE_BASE_SIZE
+  vizMaxSize:    120,       // particle max radius (px) — loud ceiling, overrides PARTICLE_MAX_SIZE
+  // Calibration ranges — raw feature values outside these clip to 0 or 1.
+  // Users adjust via the viz panel sliders to match their input level / content.
+  vizNoiseFloor: 0.002,     // RMS below this → particle not created (noise gate)
+  vizRmsMin:     0.005,     // quiet floor (below this → smallest particle)
+  vizRmsMax:     0.31,      // loud ceiling (above this → largest particle)
+  vizCentroidMin: 0.04,     // lowest expected centroid (deepest bass content)
+  vizCentroidMax: 0.45,     // highest expected centroid (bright/hissy content)
 
   // ── Audio ──────────────────────────────────────────────────────────────
   audioCtx:   null,
@@ -720,6 +810,59 @@ export const S = {
   // ── Live rebuild throttle ──────────────────────────────────────────────
   lastLiveRebuildTime: 0,
 
+  // ── Gesture morph (Phase 4 — Improv Mode) ──────────────────────────────
+  // Physical gesture drives cloud grain character along a smooth↔agitated axis.
+  morphHoldMode:    'momentum',  // 'momentum' = hold at last position, 'elastic' = drift to 0.5
+  morphElasticRate: 0.02,        // 0.0 = no recovery, 1.0 = instant snap back
+  agitateThreshold: 80,          // deg/s — gyroMag above this pushes toward agitated
+  smoothThreshold:  20,          // deg/s — gyroMag below this (with movement) pushes toward smooth
+  morphEnabled:     true,        // master enable for gesture morphing
+
+  // ── Nearest-cloud navigation (Phase 3 — Improv Mode) ──────────────────
+  // 'collage' = all clouds play simultaneously (existing behavior)
+  // 'nearest' = distance-weighted blend toward closest cloud(s)
+  cloudMode:     'collage',   // 'collage' | 'nearest'
+  cloudSnapFade: 0.0,         // 0.0 = hard snap (nearest only), 1.0 = full crossfade (distance blend)
+  cloudNearestAlways: true,   // true = always plays closest cloud(s) even if far away
+                              // false = gated by cursor radius — clouds outside radius fade to silence
+
+  // Per-cloud GainNodes for nearest-cloud mode distance weighting.
+  // Created lazily by grain.js when cloudMode === 'nearest'.
+  // cloudGainNodes[slotIndex] = GainNode | null
+  cloudGainNodes: null,
+
+  // ── Monitor / House bus split (Phase 1 — Improv Mode) ─────────────────
+  // monitorBus:  cursor grains route here (private monitoring, always on)
+  // houseBus:    cloud grains route here (public house mix)
+  // monitorToHouseGain: pedal-controlled send from monitor → house (0–1)
+  // houseGainNode: volume pedal for overall cloud/house level (0–2)
+  monitorBus:           null,   // GainNode — cursor grain destination
+  houseBus:             null,   // GainNode — cloud grain destination
+  monitorToHouseGain:   null,   // GainNode — pedal send: monitor → house
+  houseGainNode:        null,   // GainNode — house master volume
+  monitorGainValue:     0.0,    // 0–1, MIDI pedal (cursor → house send level)
+  houseGainValue:       1.0,    // 0–2, volume pedal (house master)
+  // When interface has ≥4 outputs, cursor grains route to the last 2 channels
+  // (headphone pair) via these two speaker-bus objects {bus, angleDeg, angleRad}.
+  // null = use stereo monitorBus path (browser / 2-ch interface).
+  monitorSpeakerBuses:  null,   // [{bus,angleDeg,angleRad}, ...] — headphone pair
+
+  // ── Cursor house mute ─────────────────────────────────────────────────
+  // When true, cursor grains are silenced in the house / main output.
+  // In stereo mode this mutes cursorMasterGain (only clouds are heard).
+  // In multi-ch mode this also zeros monitorToHouseGain (cursor stays on monitor outputs).
+  cursorHouseMuted: false,
+  cursorMasterGain: null,   // GainNode inserted between monitorBus and masterGain
+
+  // ── Mixdown source gains ────────────────────────────────────────────────
+  // Independent volume controls for house fold-down and cursor contributions
+  // to the stereo mixdown bus. Allows performer to hear more/less of either.
+  mixdownHouseGainValue:  1.0,   // 0–1, how much house fold-down in the mixdown
+  mixdownCursorGainValue: 1.0,   // 0–1, how much cursor in the mixdown
+  mixdownHouseGainNodes:  null,  // [GainNode L, GainNode R] — house fold-down → mix sum
+  mixdownCursorGainNodes: null,  // [GainNode L, GainNode R] — cursor → mix sum
+  mixdownCursorInputs:    null,  // [GainNode L, GainNode R] — cursor grains connect here
+
   // ── Output gain + mute ─────────────────────────────────────────────────
   outputGainValue: 0.9,  // linear gain (0–2), matches masterGain initial value
   isMuted:         false,
@@ -738,8 +881,28 @@ export const S = {
   spatialMode: 'sim',   // 'sim' | 'physical'
 
   // ── Multi-channel audio routing ────────────────────────────────────────
-  // channelRouting: null → identity (bus i → physical ch i).
-  // When set, channelRouting[physicalCh] = speaker bus index (or -1 = mute).
+  // Number of spatial house speaker positions in the VBAP field.
+  // initSpeakerBuses creates exactly this many house buses.
+  // When stereoMixdownEnabled is true the last 2 physical channels are
+  // reserved for the mixdown pair; otherwise all channels are house.
+  numHouseSpeakers: 2,
+
+  // When true, a dedicated stereo mixdown bus pair is created and wired to
+  // the last 2 physical output channels (overrideable via mixdownRouting).
+  // Cursor grains route to this pair.  When false, all channels are house
+  // and cursor grains use the stereo monitorBus path.
+  stereoMixdownEnabled: false,
+
+  // Hardware input channel index (0-based) that feeds the granular engine.
+  // Shown as "main (mono)" in audio settings input mapping table.
+  mainInputChannel: 0,
+
+  // Physical output channel assignments for the stereo mixdown pair.
+  // null = auto (last 2 physical channels of the device: [n-2, n-1]).
+  headphoneRouting: null,   // [physChL, physChR] or null  (kept as headphoneRouting for compat)
+
+  // channelRouting[busIndex] = physical output channel (or -1 = mute).
+  // null → identity (house bus i → physical ch i).
   channelRouting: null,
 
   // speakerAnalysers: one AnalyserNode per speaker bus, populated by initSpeakerBuses.

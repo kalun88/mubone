@@ -160,31 +160,35 @@ function drawSvCrop() {
   cctx.fillRect(xS, cropC.height - 2 * dpr, xE - xS, 2 * dpr);
 }
 
-// Track previous document-level listeners so we can remove them on re-setup
-let _svDocMoveHandler = null;
-let _svDocUpHandler   = null;
+// Track previous listeners so we can remove them on re-setup without cloning the DOM
+let _svDocMoveHandler   = null;
+let _svDocUpHandler     = null;
+let _svLocalMoveHandler = null;
+let _svLocalLeaveHandler = null;
+let _svLocalDownHandler = null;
 
 export function setupSvCropInteraction() {
   const display = document.getElementById('svDisplay');
   if (!display) return;
 
-  // Remove previous document-level listeners to prevent accumulation
-  if (_svDocMoveHandler) document.removeEventListener('mousemove', _svDocMoveHandler);
-  if (_svDocUpHandler)   document.removeEventListener('mouseup',   _svDocUpHandler);
+  // Remove previous listeners — both document-level and local — to prevent accumulation
+  if (_svDocMoveHandler)    document.removeEventListener('mousemove', _svDocMoveHandler);
+  if (_svDocUpHandler)      document.removeEventListener('mouseup',   _svDocUpHandler);
+  if (_svLocalMoveHandler)  display.removeEventListener('mousemove',  _svLocalMoveHandler);
+  if (_svLocalLeaveHandler) display.removeEventListener('mouseleave', _svLocalLeaveHandler);
+  if (_svLocalDownHandler)  display.removeEventListener('mousedown',  _svLocalDownHandler);
 
-  const fresh = display.cloneNode(true);
-  display.parentNode.replaceChild(fresh, display);
+  // NOTE: intentionally not cloning/replacing #svDisplay — cloneNode orphans the
+  // ResizeObserver in main.js (which watches the original element), causing the
+  // waveform to never redraw when the sampler panel opens.
 
-  const wc     = fresh.querySelector('#svWaveform');
-  const cropC  = fresh.querySelector('#svCrop');
-
-  if (!wc || !cropC) return;
+  if (!document.getElementById('svWaveform') || !document.getElementById('svCrop')) return;
 
   let dragging = null;
   const HANDLE_HIT = 10;
 
   function getHit(e) {
-    const rect = fresh.getBoundingClientRect();
+    const rect = display.getBoundingClientRect();
     const x    = e.clientX - rect.left;
     const W    = rect.width;
     const s    = svActiveTab >= 0 ? S.samples[svActiveTab] : null;
@@ -194,24 +198,26 @@ export function setupSvCropInteraction() {
     return null;
   }
 
-  fresh.addEventListener('mousemove', e => {
+  _svLocalMoveHandler = function(e) {
     if (dragging) return;
-    const hit = getHit(e);
-    fresh.style.cursor = hit ? 'col-resize' : '';
-  });
-  fresh.addEventListener('mouseleave', () => { if (!dragging) fresh.style.cursor = ''; });
-
-  fresh.addEventListener('mousedown', e => {
+    display.style.cursor = getHit(e) ? 'col-resize' : '';
+  };
+  _svLocalLeaveHandler = function() { if (!dragging) display.style.cursor = ''; };
+  _svLocalDownHandler  = function(e) {
     const hit = getHit(e);
     if (!hit) return;
     e.preventDefault();
     dragging = hit;
     document.body.style.cursor = 'col-resize';
-  });
+  };
+
+  display.addEventListener('mousemove',  _svLocalMoveHandler);
+  display.addEventListener('mouseleave', _svLocalLeaveHandler);
+  display.addEventListener('mousedown',  _svLocalDownHandler);
 
   _svDocMoveHandler = function svMove(e) {
     if (!dragging) return;
-    const rect = fresh.getBoundingClientRect();
+    const rect = display.getBoundingClientRect();
     const x    = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
     const norm = x / rect.width;
     const s    = svActiveTab >= 0 ? S.samples[svActiveTab] : null;
@@ -219,26 +225,26 @@ export function setupSvCropInteraction() {
     const minSpan = 0.01;
     if (dragging === 'start') s.cropStart = Math.max(0, Math.min(norm, s.cropEnd   - minSpan));
     else                      s.cropEnd   = Math.min(1, Math.max(norm, s.cropStart + minSpan));
-    const freshCropC = fresh.querySelector('#svCrop');
-    if (freshCropC) {
+    const cropC = document.getElementById('svCrop');
+    if (cropC) {
       const dpr = window.devicePixelRatio || 1;
-      const W = freshCropC.width / dpr, H = freshCropC.height / dpr;
-      const cctx = freshCropC.getContext('2d');
-      cctx.clearRect(0, 0, freshCropC.width, freshCropC.height);
+      const W = cropC.width / dpr;
+      const cctx = cropC.getContext('2d');
+      cctx.clearRect(0, 0, cropC.width, cropC.height);
       const xS = s.cropStart * W * dpr;
       const xE = s.cropEnd   * W * dpr;
       cctx.fillStyle = 'rgba(0,0,0,0.55)';
-      if (xS > 0)         cctx.fillRect(0,   0, xS,                    freshCropC.height);
-      if (xE < W * dpr)   cctx.fillRect(xE,  0, W * dpr - xE,          freshCropC.height);
+      if (xS > 0)         cctx.fillRect(0,   0, xS,                    cropC.height);
+      if (xE < W * dpr)   cctx.fillRect(xE,  0, W * dpr - xE,          cropC.height);
       const hw = 8;
       cctx.fillStyle = '#e0c860';
-      cctx.fillRect(xS - hw/2, 0, hw, freshCropC.height);
-      cctx.fillRect(xE - hw/2, 0, hw, freshCropC.height);
+      cctx.fillRect(xS - hw/2, 0, hw, cropC.height);
+      cctx.fillRect(xE - hw/2, 0, hw, cropC.height);
       cctx.fillStyle = 'rgba(224,200,96,0.5)';
       cctx.fillRect(xS, 0, xE - xS, 2 * dpr);
-      cctx.fillRect(xS, freshCropC.height - 2 * dpr, xE - xS, 2 * dpr);
+      cctx.fillRect(xS, cropC.height - 2 * dpr, xE - xS, 2 * dpr);
     }
-    const infoEl = fresh.querySelector('#svInfo');
+    const infoEl = document.getElementById('svInfo');
     if (infoEl && s) {
       const cropDur = ((s.cropEnd - s.cropStart) * s.duration).toFixed(2);
       infoEl.textContent = `${s.name}   ${cropDur}s / ${s.duration.toFixed(2)}s`;

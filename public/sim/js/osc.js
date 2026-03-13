@@ -11,7 +11,12 @@
 // ============================================================================
 
 import { S, PRESETS, rebuildGrainCurves } from './state.js';
-import { handleSensorOSC } from './sensor.js';
+import {
+  handleSensorOSC, handleSensor2OSC, handleWandOSC, handleWandInertialOSC,
+  sensor, wand,
+} from './sensor.js';
+import { updateWand, updateGestureMorph } from './wand.js';
+import { setCursorHouseMuted } from './ui-meters.js';
 
 const WS_URL            = 'ws://localhost:8080';
 const WS_RETRY_INTERVAL = 3000;  // ms between reconnect attempts
@@ -150,10 +155,32 @@ export function handleOSC(rawAddress, values) {
   // Normalize so both transports produce the same /address strings.
   const address = rawAddress.startsWith('/') ? rawAddress : '/' + rawAddress;
 
-  // ── Sensor quaternion ──────────────────────────────────────────────────────
-  // BNO085 sends: /orientation qx qy qz qw  (4 floats)
-  if (address === '/orientation' && values.length === 4) {
+  // ── Sensor quaternions ─────────────────────────────────────────────────────
+  // Both addresses expect:  qx qy qz qw  (4 floats, scalar W last)
+  // /space/cursor — sensor 1, instrument (drives the visual cursor)
+  if (address === '/space/cursor' && values.length === 4) {
     handleSensorOSC(values);
+    return;
+  }
+  // /space/frame  — sensor 2, world reference (body frame or floor lock)
+  if (address === '/space/frame' && values.length === 4) {
+    handleSensor2OSC(values);
+    return;
+  }
+  // /space/wand — wand controller quaternion stream (viz-invisible)
+  // Sends tare-relative euler back to Max as /space/wand/0euler.
+  if (address === '/space/wand' && values.length === 4) {
+    handleWandOSC(values);
+    if (wand.zeroEuler) sendOSC('/space/wand/0euler', [wand.zeroEuler.x, wand.zeroEuler.y, wand.zeroEuler.z]);
+    updateWand();
+    return;
+  }
+  // /space/wand/inertial — gyro + accel from x-IMU
+  // Values: [gx, gy, gz, ax, ay, az]  (deg/s, g)
+  if (address === '/space/wand/inertial' && values.length === 6) {
+    handleWandInertialOSC(values);
+    updateWand();
+    updateGestureMorph();  // Phase 4: drive cloud morph from gyro (independent of wandConfig)
     return;
   }
 
@@ -165,13 +192,15 @@ export function handleOSC(rawAddress, values) {
 
   switch (address) {
 
-    case '/grain/duration':
-      S.grainOverrides.duration    = clamp(values[0], 0.001, 10);
+    case '/grain/dur':
+      // Incoming value in ms (1–4000) → convert to seconds internally
+      S.grainOverrides.duration    = clamp(values[0], 1, 4000) / 1000;
       scheduleUISync();
       break;
 
-    case '/grain/period':
-      S.grainOverrides.period      = clamp(values[0], 0.001, 10);
+    case '/grain/per':
+      // Incoming value in ms (1–4000) → convert to seconds internally
+      S.grainOverrides.period      = clamp(values[0], 1, 4000) / 1000;
       scheduleUISync();
       break;
 
@@ -182,13 +211,14 @@ export function handleOSC(rawAddress, values) {
       break;
 
     case '/grain/pitch':
-      // Incoming value is cents (0–50). Convert to rate-ratio offset: v = 2^(c/1200) - 1
-      S.grainOverrides.pitchJitter = Math.pow(2, clamp(values[0], 0, 50) / 1200) - 1;
+      // Incoming value in cents (0–700) → rate-ratio offset: v = 2^(c/1200) - 1
+      S.grainOverrides.pitchJitter = Math.pow(2, clamp(values[0], 0, 700) / 1200) - 1;
       scheduleUISync();
       break;
 
     case '/grain/pan':
-      S.grainOverrides.panSpread   = clamp(values[0], 0, 1);
+      // Incoming value in percent (0–100) → 0–1 internal
+      S.grainOverrides.panSpread   = clamp(values[0], 0, 100) / 100;
       scheduleUISync();
       break;
 
@@ -215,7 +245,8 @@ export function handleOSC(rawAddress, values) {
       break;
 
     case '/grain/fade':
-      S.grainOverrides.fadeRatio   = clamp(values[0], 0, 0.5);
+      // Incoming value in percent (0–50, matching UI slider max) → 0–0.5 internal
+      S.grainOverrides.fadeRatio   = clamp(values[0], 0, 50) / 100;
       scheduleUISync();
       break;
 
@@ -225,12 +256,14 @@ export function handleOSC(rawAddress, values) {
       break;
 
     case '/grain/durvar':
-      S.grainOverrides.durVar      = clamp(values[0], 0, 0.5);
+      // Incoming value in ms (0–500) → convert to seconds internally
+      S.grainOverrides.durVar      = clamp(values[0], 0, 500) / 1000;
       scheduleUISync();
       break;
 
-    case '/grain/periodvar':
-      S.grainOverrides.periodVar   = clamp(values[0], 0, 0.5);
+    case '/grain/pervar':
+      // Incoming value in ms (0–500) → convert to seconds internally
+      S.grainOverrides.periodVar   = clamp(values[0], 0, 500) / 1000;
       scheduleUISync();
       break;
 
@@ -273,6 +306,52 @@ export function handleOSC(rawAddress, values) {
       else S.isMuted = !!values[0];
       break;
 
+    case '/cursor/mute':
+      setCursorHouseMuted(!!values[0]);
+      break;
+
+    // ── Monitor / House bus (Phase 1 — Improv Mode) ────────────────────────
+    // /monitor/volume f  — cursor-to-house send level (MIDI pedal, 0–1)
+    // /house/volume   f  — cloud bus master volume (volume pedal, 0–2)
+    case '/monitor/volume': {
+      const v = clamp(values[0], 0, 1);
+      S.monitorGainValue = v;
+      if (S.monitorToHouseGain) {
+        const effectiveGain = S.cursorHouseMuted ? 0 : v;
+        S.monitorToHouseGain.gain.setTargetAtTime(effectiveGain, S.audioCtx.currentTime, 0.02);
+      }
+      S._syncImprovUI?.();
+      break;
+    }
+    case '/house/volume': {
+      const v = clamp(values[0], 0, 2);
+      S.houseGainValue = v;
+      if (S.houseGainNode) {
+        S.houseGainNode.gain.setTargetAtTime(v, S.audioCtx.currentTime, 0.02);
+      }
+      S._syncImprovUI?.();
+      break;
+    }
+
+    // ── Nearest-cloud navigation (Phase 3 — Improv Mode) ───────────────────
+    // /cloud/mode     s  — 'collage' | 'nearest'
+    // /cloud/always   i  — 1 = always play nearest, 0 = radius-gated
+    // /cloud/snapfade f  — 0.0 = hard snap (nearest only), 1.0 = full crossfade
+    case '/cloud/mode':
+      if (values[0] === 'collage' || values[0] === 'nearest') {
+        S.cloudMode = values[0];
+        S._syncImprovUI?.();
+      }
+      break;
+    case '/cloud/always':
+      S.cloudNearestAlways = !!values[0];
+      S._syncImprovUI?.();
+      break;
+    case '/cloud/snapfade':
+      S.cloudSnapFade = clamp(values[0], 0, 1);
+      S._syncImprovUI?.();
+      break;
+
     // ── Cloud / undo ──────────────────────────────────────────────────────────
     // S._dropCloud / _pickupCloud / _undo registered by events.js.
     // Bang-style: any value (or no value) triggers the action.
@@ -282,6 +361,20 @@ export function handleOSC(rawAddress, values) {
 
     default:
       console.log(`[osc] unhandled: ${address}`, values);
+  }
+}
+
+// ── Outbound (browser → Max) ──────────────────────────────────────────────────
+// Sends an OSC-style message back to the Max bridge over the same WebSocket.
+// Silently dropped when not connected (browser mode only; Electron not supported).
+// Usage: sendOSC('/my/address', [1, 2, 3])
+
+export function sendOSC(address, values = []) {
+  if (!_ws || _ws.readyState !== WebSocket.OPEN) return;
+  try {
+    _ws.send(JSON.stringify({ address, values }));
+  } catch (e) {
+    console.warn('[osc] sendOSC failed:', e);
   }
 }
 

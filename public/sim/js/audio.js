@@ -45,10 +45,10 @@ export function ensureAudioContext() {
       window._mobileSpeakerAudio = silentAudio;
     }
 
-    // Master gain — on mobile push harder to compensate for loudspeaker distance
-    // and the intentionally soft preset volumes (0.012-0.18). Desktop stays at 0.9.
+    // Master gain — on mobile push harder to compensate for loudspeaker distance.
+    // Desktop uses saved outputGainValue if available (from save-as-default), else 0.9.
     const masterGain = S.audioCtx.createGain();
-    masterGain.gain.value = S.isMobile ? 3.0 : 0.9;
+    masterGain.gain.value = S.isMobile ? 3.0 : (S.outputGainValue ?? 0.9);
 
     // Soft clipper (WaveShaper with tanh curve) — sample-accurate, no attack time,
     // frequency-transparent. Replaces DynamicsCompressor which was too slow for
@@ -76,10 +76,9 @@ export function ensureAudioContext() {
     if (!window.electronBridge) {
       muteGain.connect(S.audioCtx.destination);
 
-      // Stereo L/R analyser tap — feeds the two-bar output meter on the main canvas.
+      // Stereo L/R analyser tap — feeds the two-bar output meter (DOM, via ui-meters.js).
       // ChannelSplitter deinterleaves the stereo signal coming out of muteGain
       // (grains connect through StereoPanner → masterBus, so the signal IS stereo).
-      // drawOutputMeter() uses S.speakerAnalysers when length > 1.
       const splitter  = S.audioCtx.createChannelSplitter(2);
       const analyserL = S.audioCtx.createAnalyser();
       const analyserR = S.audioCtx.createAnalyser();
@@ -92,6 +91,58 @@ export function ensureAudioContext() {
     }
     S.masterBus = masterGain;
     window._muteGain = muteGain; // expose for setMuted
+
+    // ── Monitor / House bus split (Phase 1 — Improv Mode) ────────────────
+    // monitorBus:  cursor grains connect here. Always feeds masterGain so
+    //              the performer hears the cursor in headphones (or main out).
+    // houseBus:    cloud grains connect here.  Feeds masterGain through
+    //              houseGainNode (volume-pedal controllable).
+    // monitorToHouseGain:  pedal-controlled send from monitor into houseBus.
+    //              Default 0 = cursor is private.  Pedal opens it to 1.
+    //              (When outputs physically split, this is the only path
+    //              cursor audio reaches the house speakers.)
+    //
+    // Current graph (single stereo out, both buses merge to masterGain):
+    //   cursor grains → monitorBus ──────────────────→ masterGain → …
+    //                       └→ monitorToHouseGain ──→ houseBus
+    //   cloud grains  → houseBus → houseGainNode ──→ masterGain → …
+    //
+    // When separate hardware outputs are available, monitorBus will
+    // disconnect from masterGain and route to a dedicated headphone output.
+    const monitorBus = S.audioCtx.createGain();
+    monitorBus.gain.value = 1;
+
+    const houseBus = S.audioCtx.createGain();
+    houseBus.gain.value = 1;
+
+    const monitorToHouseGain = S.audioCtx.createGain();
+    monitorToHouseGain.gain.value = S.cursorHouseMuted ? 0 : S.monitorGainValue; // respect mute state
+
+    const houseGainNode = S.audioCtx.createGain();
+    houseGainNode.gain.value = S.houseGainValue; // default 1
+
+    // Cursor house mute: insert a gain node between monitorBus and masterGain.
+    // When cursorHouseMuted is true this gain is zeroed — cursor disappears from
+    // the house/main output.  In multi-ch mode the monitor speaker buses are
+    // unaffected (cursor stays audible on headphones).
+    const cursorMasterGain = S.audioCtx.createGain();
+    cursorMasterGain.gain.value = S.cursorHouseMuted ? 0 : 1;
+    S.cursorMasterGain = cursorMasterGain;
+
+    // Wire: monitorBus → cursorMasterGain → masterGain (cursor audible unless muted)
+    monitorBus.connect(cursorMasterGain);
+    cursorMasterGain.connect(masterGain);
+    // Wire: monitorBus → monitorToHouseGain → houseBus (pedal send)
+    monitorBus.connect(monitorToHouseGain);
+    monitorToHouseGain.connect(houseBus);
+    // Wire: houseBus → houseGainNode → masterGain (clouds to output)
+    houseBus.connect(houseGainNode);
+    houseGainNode.connect(masterGain);
+
+    S.monitorBus         = monitorBus;
+    S.houseBus           = houseBus;
+    S.monitorToHouseGain = monitorToHouseGain;
+    S.houseGainNode      = houseGainNode;
 
     // Detect suspension → resumption so grain.js can reset onset clocks.
     // When Chrome auto-suspends the AudioContext (tab backgrounded, autoplay
@@ -155,6 +206,15 @@ export async function recreateAudioContext(newSampleRate) {
   S.masterBus       = null;
   S.masterAnalyser  = null;
   S.speakerAnalysers = null;  // recreated by ensureAudioContext (browser) or initSpeakerBuses (Electron)
+  S.monitorBus          = null;
+  S.houseBus            = null;
+  S.monitorToHouseGain  = null;
+  S.houseGainNode       = null;
+  S.cursorMasterGain    = null;
+  S.mixdownHouseGainNodes  = null;
+  S.mixdownCursorGainNodes = null;
+  S.mixdownCursorInputs    = null;
+  S.monitorSpeakerBuses = null;
   S.inputGainNode   = null;
   S.inputAnalyser  = null;
   S.micPermissionGranted = false;
@@ -234,17 +294,26 @@ export async function requestMicAccess() {
     const actx = ensureAudioContext();
     const monitorSrc = actx.createMediaStreamSource(S.recordingStream);
 
-    S.inputGainNode = actx.createGain();
-    S.inputGainNode.gain.value = S.inputGainValue;
+    // Only create these nodes if they don't already exist.
+    // In Electron mode, setupRtAudioInputMeters may have already created
+    // S.inputGainNode and wired per-channel routing gains into it.
+    // Unconditionally overwriting would orphan those routing gains and
+    // break channel selection — only the getUserMedia source would remain.
+    if (!S.inputGainNode) {
+      S.inputGainNode = actx.createGain();
+      S.inputGainNode.gain.value = S.inputGainValue;
+    }
+    if (!S.inputAnalyser) {
+      S.inputAnalyser = actx.createAnalyser();
+      S.inputAnalyser.fftSize = 256;
+      S.inputAnalyser.smoothingTimeConstant = 0.6;
+      S.inputGainNode.connect(S.inputAnalyser);
+    }
 
-    S.inputAnalyser = actx.createAnalyser();
-    S.inputAnalyser.fftSize = 256;
-    S.inputAnalyser.smoothingTimeConstant = 0.6;
-
-    // Connect monitor chain (no destination — AnalyserNode is a dead-end tap)
+    // Connect getUserMedia source into the gain node.
+    // In Electron mode, rewireRtAudioRecordingChannel will disconnect this
+    // once RtAudio takes over as sole input source.
     monitorSrc.connect(S.inputGainNode);
-    S.inputGainNode.connect(S.inputAnalyser);
-    // inputAnalyser is a dead-end for monitoring (no further connect needed)
 
     // Store monitorSrc so we can disconnect on hypothetical future cleanup
     window._micMonitorSrc = monitorSrc;
@@ -478,6 +547,22 @@ export async function initSpeakerBuses(numChannels = 2) {
     S.speakerBuses.forEach(b => { try { b.bus.disconnect(); } catch(_) {} });
     S.speakerBuses = null;
   }
+  if (S.monitorSpeakerBuses) {
+    S.monitorSpeakerBuses.forEach(b => { try { b.bus.disconnect(); } catch(_) {} });
+    S.monitorSpeakerBuses = null;
+  }
+  if (S.mixdownHouseGainNodes) {
+    S.mixdownHouseGainNodes.forEach(g => { try { g.disconnect(); } catch(_) {} });
+    S.mixdownHouseGainNodes = null;
+  }
+  if (S.mixdownCursorGainNodes) {
+    S.mixdownCursorGainNodes.forEach(g => { try { g.disconnect(); } catch(_) {} });
+    S.mixdownCursorGainNodes = null;
+  }
+  if (S.mixdownCursorInputs) {
+    S.mixdownCursorInputs.forEach(g => { try { g.disconnect(); } catch(_) {} });
+    S.mixdownCursorInputs = null;
+  }
 
   const n = Math.max(1, numChannels);
 
@@ -490,15 +575,95 @@ export async function initSpeakerBuses(numChannels = 2) {
     if (total === 2) return i === 0 ? 270 : 90;   // 270 = left, 90 = right
     return (360 / total) * i;                      // equal spacing from front
   }
-  const buses = Array.from({ length: n }, (_, i) => {
-    const angleDeg = speakerAngleDeg(i, n);
+
+  // ── Split house / stereo mixdown when S.stereoMixdownEnabled is on ────────
+  // When stereoMixdownEnabled: the last 2 physical channels are reserved for the
+  // stereo mixdown bus pair (cursor grains).  S.numHouseSpeakers defines how many
+  // channels carry the VBAP spatial field — capped at n-2 so mixdown always fits.
+  // When stereoMixdownEnabled is false: all n channels are house; cursor grains
+  // use the stereo monitorBus path (monitorBus → masterGain → destination).
+  const requestedHouse  = S.numHouseSpeakers ?? 2;
+  const hasMonitorCh    = S.stereoMixdownEnabled === true && n >= 2;
+  const numHouseCh      = hasMonitorCh
+    ? Math.max(1, Math.min(requestedHouse, n - 2))
+    : Math.min(requestedHouse, n);
+  // Physical output channels for the stereo mixdown L/R buses.
+  // Default: immediately after the last house channel (numHouseCh, numHouseCh+1).
+  const hpPhysL = hasMonitorCh ? (S.headphoneRouting?.[0] ?? numHouseCh)     : -1;
+  const hpPhysR = hasMonitorCh ? (S.headphoneRouting?.[1] ?? numHouseCh + 1) : -1;
+
+  const busGainInit = S.isMuted ? 0 : (S.outputGainValue ?? 1);
+  const buses = Array.from({ length: numHouseCh }, (_, i) => {
+    const angleDeg = speakerAngleDeg(i, numHouseCh);
     const angleRad = (angleDeg * Math.PI) / 180;
     const bus = actx.createGain();
+    bus.gain.value = busGainInit;
     return { bus, angleDeg, angleRad };
   });
 
+  // Stereo downmix of house buses → mixdown physical channels.
+  // Each house bus is panned L/R by its angle using equal-power weighting:
+  //   270° → full L,  90° → full R,  0°/180° → centre.
+  // Architecture (when mixdown is active):
+  //   house buses → fold-down L/R → houseMixGainL/R → mixSumL/R → merger + headphones
+  //   cursor grains (muted from house) → cursorInputL/R → cursorMixGainL/R → mixSumL/R
+  // The house and cursor gains are independently controllable from the mixdown UI.
+  const monitorBuses = hasMonitorCh ? (() => {
+    // Intermediate house fold-down nodes
+    const houseFoldL = actx.createGain();
+    const houseFoldR = actx.createGain();
+    buses.forEach(({ bus, angleDeg }) => {
+      const pan   = Math.sin(angleDeg * Math.PI / 180);
+      const lGain = Math.cos((pan + 1) * Math.PI / 4);
+      const rGain = Math.sin((pan + 1) * Math.PI / 4);
+      const gL = actx.createGain(); gL.gain.value = lGain;
+      const gR = actx.createGain(); gR.gain.value = rGain;
+      bus.connect(gL); gL.connect(houseFoldL);
+      bus.connect(gR); gR.connect(houseFoldR);
+    });
+
+    // House mix gain (controllable from mixdown UI)
+    const houseMixGainL = actx.createGain();
+    const houseMixGainR = actx.createGain();
+    houseMixGainL.gain.value = S.mixdownHouseGainValue;
+    houseMixGainR.gain.value = S.mixdownHouseGainValue;
+    houseFoldL.connect(houseMixGainL);
+    houseFoldR.connect(houseMixGainR);
+
+    // Cursor mix input + gain (cursor grains connect to inputs when muted from house)
+    const cursorInputL = actx.createGain(); cursorInputL.gain.value = 1;
+    const cursorInputR = actx.createGain(); cursorInputR.gain.value = 1;
+    const cursorMixGainL = actx.createGain();
+    const cursorMixGainR = actx.createGain();
+    cursorMixGainL.gain.value = S.mixdownCursorGainValue;
+    cursorMixGainR.gain.value = S.mixdownCursorGainValue;
+    cursorInputL.connect(cursorMixGainL);
+    cursorInputR.connect(cursorMixGainR);
+
+    // Final mixdown sum (house fold-down + cursor → single L/R pair)
+    const mixSumL = actx.createGain(); mixSumL.gain.value = 1;
+    const mixSumR = actx.createGain(); mixSumR.gain.value = 1;
+    houseMixGainL.connect(mixSumL);
+    houseMixGainR.connect(mixSumR);
+    cursorMixGainL.connect(mixSumL);
+    cursorMixGainR.connect(mixSumR);
+
+    // Expose gain nodes on S for UI control
+    S.mixdownHouseGainNodes  = [houseMixGainL, houseMixGainR];
+    S.mixdownCursorGainNodes = [cursorMixGainL, cursorMixGainR];
+    S.mixdownCursorInputs    = [cursorInputL, cursorInputR];
+
+    return [
+      { bus: mixSumL, angleDeg: 270, angleRad: (270 * Math.PI) / 180 },
+      { bus: mixSumR, angleDeg:  90, angleRad: ( 90 * Math.PI) / 180 },
+    ];
+  })() : [];
+
+  // All buses for analyser creation and headphone downmix
+  const allBuses = [...buses, ...monitorBuses];
+
   // Per-bus AnalyserNodes for the output meter strip in audio settings
-  S.speakerAnalysers = buses.map(({ bus }) => {
+  S.speakerAnalysers = allBuses.map(({ bus }) => {
     const an = actx.createAnalyser();
     an.fftSize = 256;
     an.smoothingTimeConstant = 0.8;
@@ -508,12 +673,19 @@ export async function initSpeakerBuses(numChannels = 2) {
 
   // Merge N mono buses into a single N-channel stream.
   // Apply S.channelRouting if set (Physical→Spatial mapping); default = identity.
+  // Monitor buses are always wired to the last 2 channels — channel routing does
+  // not apply to them (they are never remapped by the user).
   _merger = actx.createChannelMerger(n);
   const routing = S.channelRouting ?? buses.map((_, i) => i);
   buses.forEach(({ bus }, i) => {
     const destCh = routing[i] ?? i;
-    if (destCh >= 0 && destCh < n) bus.connect(_merger, 0, destCh);
+    if (destCh >= 0 && destCh < numHouseCh) bus.connect(_merger, 0, destCh);
   });
+  // Wire monitor buses to their physical channels (configurable via S.headphoneRouting)
+  if (hasMonitorCh) {
+    if (hpPhysL >= 0 && hpPhysL < n) monitorBuses[0].bus.connect(_merger, 0, hpPhysL);
+    if (hpPhysR >= 0 && hpPhysR < n) monitorBuses[1].bus.connect(_merger, 0, hpPhysR);
+  }
 
   // Capture worklet — generalised to N channels via a message on init
   _captureNode = new AudioWorkletNode(actx, 'quad-capture', {
@@ -539,23 +711,29 @@ export async function initSpeakerBuses(numChannels = 2) {
 
   // ── Stereo headphone mix ──────────────────────────────────────────────────
   // Always-on downmix → AudioContext destination (system output = headphones/laptop).
-  // Finds the bus closest to left (270°) and closest to right (90°) by angle distance
-  // so the downmix is correct regardless of channel count or layout.
+  // When n ≥ 4 the monitor buses ARE the stereo headphone pair (L=270°, R=90°),
+  // so use them directly.  For n < 4 find the closest house buses to L/R.
   // For n=1 (mono) both sides use the single bus.
-  function closestBusIdx(targetDeg) {
-    let best = 0, bestDist = Infinity;
-    buses.forEach(({ angleDeg }, i) => {
-      const d = Math.abs(((angleDeg - targetDeg + 540) % 360) - 180); // circular distance
-      if (d < bestDist) { bestDist = d; best = i; }
-    });
-    return best;
+  let hpLBus, hpRBus;
+  if (hasMonitorCh) {
+    hpLBus = monitorBuses[0].bus; // already at 270° (L)
+    hpRBus = monitorBuses[1].bus; // already at 90°  (R)
+  } else {
+    function closestBusIdx(targetDeg) {
+      let best = 0, bestDist = Infinity;
+      buses.forEach(({ angleDeg }, i) => {
+        const d = Math.abs(((angleDeg - targetDeg + 540) % 360) - 180); // circular distance
+        if (d < bestDist) { bestDist = d; best = i; }
+      });
+      return best;
+    }
+    hpLBus = buses[closestBusIdx(270)].bus; // left
+    hpRBus = buses[closestBusIdx(90)].bus;  // right
   }
-  const hpL = closestBusIdx(270); // left
-  const hpR = closestBusIdx(90);  // right
 
   const hpMerger = actx.createChannelMerger(2);
-  buses[hpL].bus.connect(hpMerger, 0, 0);
-  buses[hpR].bus.connect(hpMerger, 0, 1);
+  hpLBus.connect(hpMerger, 0, 0);
+  hpRBus.connect(hpMerger, 0, 1);
   _headphoneNode = actx.createGain();
   _headphoneNode.gain.value = 0.7;
   hpMerger.connect(_headphoneNode);
@@ -571,16 +749,19 @@ export async function initSpeakerBuses(numChannels = 2) {
 
   // Meter tap: down-mix L+R buses into S.masterAnalyser so meters work.
   const meterMerger = actx.createChannelMerger(2);
-  buses[hpL].bus.connect(meterMerger, 0, 0);
-  buses[hpR].bus.connect(meterMerger, 0, 1);
+  hpLBus.connect(meterMerger, 0, 0);
+  hpRBus.connect(meterMerger, 0, 1);
   _meterTap = actx.createGain();
   _meterTap.gain.value = 1;
   meterMerger.connect(_meterTap);
   _meterTap.connect(S.masterAnalyser);
 
-  // Expose on S so grain.js can route to them
+  // Expose on S so grain.js can route to them.
+  // S.speakerBuses = house spatial field (cloud grains).
+  // S.monitorSpeakerBuses = stereo mixdown pair (cursor grains); null when disabled.
   S.speakerBuses  = buses;   // [{ bus, angleDeg, angleRad }, ...]
   S.speakerBuses.numChannels = n;
+  S.monitorSpeakerBuses = hasMonitorCh ? monitorBuses : null;
 
   // Legacy alias — keeps any remaining S.quadBuses references from crashing
   S.quadBuses = null;
@@ -589,7 +770,64 @@ export async function initSpeakerBuses(numChannels = 2) {
   // Uses a callback on S to avoid a circular import with renderer.js.
   S._onSpeakerBusesReady?.(n);
 
-  console.log(`Speaker buses ready — ${n} ch, angles: ${buses.map(b => b.angleDeg.toFixed(0) + '°').join(', ')} → audify + headphone mix`);
+  const houseDesc   = buses.map(b => b.angleDeg.toFixed(0) + '°').join(', ');
+  const mixdownDesc = hasMonitorCh ? ` | stereo mixdown: ch ${hpPhysL}(L) ch ${hpPhysR}(R)` : '';
+  console.log(`Speaker buses ready — ${n} ch, house[${numHouseCh}]: [${houseDesc}]${mixdownDesc} → audify`);
+}
+
+// ── Speaker sweep helper ──────────────────────────────────────────────────────
+// Plays a short noise burst on a single physical output channel, bypassing all
+// VBAP buses and routing tables.  Used by the audio settings sweep function.
+// Returns a Promise that resolves when the burst finishes.
+export function playSweepChannel(chIndex, durationMs = 600, fadeMs = 40, vol = 0.06) {
+  const actx = ensureAudioContext();
+  if (!_merger || !actx) return Promise.resolve();
+  const n = S.speakerBuses?.numChannels ?? 0;
+  if (chIndex < 0 || chIndex >= n) return Promise.resolve();
+
+  const frames   = Math.floor(actx.sampleRate * durationMs / 1000);
+  const noiseBuf = actx.createBuffer(1, frames, actx.sampleRate);
+  const data     = noiseBuf.getChannelData(0);
+  for (let i = 0; i < frames; i++) data[i] = Math.random() * 2 - 1;
+
+  const src      = actx.createBufferSource();
+  src.buffer     = noiseBuf;
+  const gain     = actx.createGain();
+  const fadeSec  = fadeMs / 1000;
+  const t        = actx.currentTime;
+  gain.gain.setValueAtTime(0, t);
+  gain.gain.linearRampToValueAtTime(vol, t + fadeSec);
+  gain.gain.setValueAtTime(vol, t + durationMs / 1000 - fadeSec);
+  gain.gain.linearRampToValueAtTime(0, t + durationMs / 1000);
+
+  src.connect(gain);
+  gain.connect(_merger, 0, chIndex);
+
+  // Also connect into the matching speakerAnalyser so meters show the sweep.
+  // Reverse-lookup: find which bus (or mixdown pair) maps to this physical channel.
+  const analyserConn = (() => {
+    if (!S.speakerAnalysers?.length) return null;
+    const nBuses   = S.speakerBuses?.length ?? 0;
+    const routing  = S.channelRouting ?? S.speakerBuses?.map((_, i) => i) ?? [];
+    const hpL      = S.headphoneRouting?.[0] ?? nBuses;
+    const hpR      = S.headphoneRouting?.[1] ?? nBuses + 1;
+    // Check house buses
+    const busIdx = routing.indexOf(chIndex);
+    if (busIdx >= 0 && S.speakerAnalysers[busIdx]) return S.speakerAnalysers[busIdx];
+    // Check mixdown pair
+    if (chIndex === hpL && S.speakerAnalysers[nBuses])   return S.speakerAnalysers[nBuses];
+    if (chIndex === hpR && S.speakerAnalysers[nBuses + 1]) return S.speakerAnalysers[nBuses + 1];
+    return null;
+  })();
+  if (analyserConn) gain.connect(analyserConn);
+
+  src.start();
+
+  return new Promise(resolve => setTimeout(() => {
+    try { src.stop(); src.disconnect(); gain.disconnect(_merger, 0, chIndex); } catch(_) {}
+    try { if (analyserConn) gain.disconnect(analyserConn); } catch(_) {}
+    resolve();
+  }, durationMs));
 }
 
 // ── Routing rewire ────────────────────────────────────────────────────────────
@@ -609,6 +847,25 @@ export function rewireChannelMerger() {
     if (destCh >= 0 && destCh < n) bus.connect(_merger, 0, destCh);
   });
   console.log('Channel routing updated:', routing);
+}
+
+// Rewire the headphone (monitor) buses to new physical channels.
+// Call after changing S.headphoneRouting.
+export function rewireMonitorChannels() {
+  if (!S.monitorSpeakerBuses?.length || !_merger) return;
+  const n = S.speakerBuses.numChannels ?? (S.speakerBuses.length + 2);
+  // Disconnect monitor buses from all merger inputs
+  S.monitorSpeakerBuses.forEach(({ bus }) => {
+    for (let i = 0; i < n; i++) {
+      try { bus.disconnect(_merger, 0, i); } catch(_) {}
+    }
+  });
+  const nHouse  = S.speakerBuses.length;  // house bus count = first sequential default
+  const hpPhysL = S.headphoneRouting?.[0] ?? nHouse;
+  const hpPhysR = S.headphoneRouting?.[1] ?? nHouse + 1;
+  if (hpPhysL >= 0 && hpPhysL < n) S.monitorSpeakerBuses[0].bus.connect(_merger, 0, hpPhysL);
+  if (hpPhysR >= 0 && hpPhysR < n) S.monitorSpeakerBuses[1].bus.connect(_merger, 0, hpPhysR);
+  console.log(`Stereo mixdown routing updated: L→ch${hpPhysL} R→ch${hpPhysR}`);
 }
 
 // Convenience: called from main.js on startup (stereo placeholder until device is chosen)

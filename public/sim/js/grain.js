@@ -493,6 +493,51 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       // Camera space: cx = right, cz = into screen (negative = toward viewer).
       // Azimuth: atan2(cx, -cz) → 0 = front, clockwise positive.
 
+      const isCursorGrain = !customParams;
+
+      // ── Cursor → mixdown direct feed (always, independent of house mute) ──
+      // When mixdownCursorInputs exist, cursor grains always get a dedicated
+      // L/R send so the mixdown cursor-gain slider works regardless of whether
+      // the cursor is muted in the house or not.
+      const _extraNodes = [];  // extra gain nodes to disconnect on grain end
+      const cursorDestL = isCursorGrain ? (S.mixdownCursorInputs?.[0] ?? null) : null;
+      const cursorDestR = isCursorGrain ? (S.mixdownCursorInputs?.[1] ?? null) : null;
+      if (cursorDestL && cursorDestR) {
+        const azimuthPan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
+        const panJitter  = rand(-ep.panSpread * 0.5, ep.panSpread * 0.5);
+        const pan        = Math.max(-1, Math.min(1, azimuthPan + panJitter));
+        const lW = Math.cos((pan + 1) * Math.PI / 4);  // equal-power
+        const rW = Math.sin((pan + 1) * Math.PI / 4);
+
+        const gL = actx.createGain(); gL.gain.value = lW;
+        const gR = actx.createGain(); gR.gain.value = rW;
+
+        lastNode.connect(gL); gL.connect(cursorDestL);
+        lastNode.connect(gR); gR.connect(cursorDestR);
+        _extraNodes.push(gL, gR);
+      }
+
+      // ── Cursor house mute: skip house VBAP when cursor is muted ───────────
+      // When muted AND no mixdown exists → grain is simply not played
+      // (pared-down demo mode: only planted clouds are heard).
+      if (isCursorGrain && S.cursorHouseMuted) {
+        if (cursorDestL && cursorDestR) {
+          // Cursor already routed to mixdown above — just start & clean up
+          source.start(t, bufferStartPos, sourceDur);
+          S._grainSourceCount++;
+          source.addEventListener('ended', () => {
+            S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
+            _deferDisconnect(source); _deferDisconnect(gain);
+            if (elevGainNode) _deferDisconnect(elevGainNode);
+            for (const n of _extraNodes) _deferDisconnect(n);
+          }, { once: true });
+        }
+        // else: no mixdown, cursor muted → grain not played
+
+      } else {
+      // ── Normal VBAP routing (cursor unmuted, or cloud grains always) ───────
+      // All grains spatialise through the house speaker field.
+      // Cursor grains additionally feed the mixdown cursor inputs (above).
       const speakers = S.speakerBuses;
       const n        = speakers.length;
 
@@ -546,7 +591,9 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
         _deferDisconnect(source); _deferDisconnect(gain);
         if (elevGainNode) _deferDisconnect(elevGainNode);
         _deferDisconnect(gA); _deferDisconnect(gB);
+        for (const n of _extraNodes) _deferDisconnect(n);
       }, { once: true });
+      } // end normal VBAP
 
     } else {
       // ── Stereo path ────────────────────────────────────────────────────────
@@ -563,11 +610,18 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       // Skip the StereoPanner node at audio rate, or when pan is effectively zero.
       const needsPanner = !audioRate && (Math.abs(finalPan) > 0.01 || ep.panSpread > 0.01);
 
+      // Phase 1 bus routing: cursor grains → monitorBus, cloud grains → houseBus.
+      // Falls back to masterBus if the improv buses haven't been created yet.
+      const isCursorGrain = !customParams;
+      const destBus = isCursorGrain
+        ? (S.monitorBus || getMasterBus())
+        : (S.houseBus   || getMasterBus());
+
       if (needsPanner) {
         const panner = actx.createStereoPanner();
         panner.pan.value = finalPan;
         lastNode.connect(panner);
-        panner.connect(getMasterBus());
+        panner.connect(destBus);
 
         source.start(t, bufferStartPos, sourceDur);
         S._grainSourceCount++;
@@ -578,7 +632,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
           _deferDisconnect(panner);
         }, { once: true });
       } else {
-        lastNode.connect(getMasterBus());
+        lastNode.connect(destBus);
 
         source.start(t, bufferStartPos, sourceDur);
         S._grainSourceCount++;
@@ -810,11 +864,103 @@ export function scheduleGrains() {
     }
   }
 
+  // ── Phase 3: Nearest-cloud navigation — compute per-cloud weights ──────
+  // collage: every cloud has weight 1 (all play equally).
+  // nearest: distance-weighted blend toward closest cloud(s).
+  //   cloudNearestAlways=true  → always plays something (closest cloud never silent)
+  //   cloudNearestAlways=false → gated by cursor radius; clouds outside fade to silence
+  // cloudSnapFade controls blending: 0 = hard snap (nearest only), 1 = full crossfade.
+  const _cloudWeights = new Float32Array(MAX_CLOUDS); // reused each tick
+  if (S.cloudMode === 'nearest') {
+    const radiusGated = !S.cloudNearestAlways;
+    // Radius gate when not "always" (reuse the cursor search radius)
+    const gateRadRad = radiusGated ? (S.searchRadiusDeg * Math.PI / 180) : Infinity;
+
+    // Gather distances from cursor to each active cloud
+    const cloudDists = [];
+    for (let i = 0; i < MAX_CLOUDS; i++) {
+      const cloud = S.cloudSlots[i];
+      if (!cloud) { _cloudWeights[i] = 0; continue; }
+      const dist = angleBetweenSphere(cloud.lon, cloud.lat, cursorLon, cursorLat);
+      // When radius-gated, skip clouds outside the search radius
+      if (radiusGated && dist > gateRadRad) { _cloudWeights[i] = 0; continue; }
+      cloudDists.push({ i, dist });
+    }
+
+    if (cloudDists.length > 0) {
+      // Sort to find nearest
+      cloudDists.sort((a, b) => a.dist - b.dist);
+      const nearestIdx = cloudDists[0].i;
+      const sf = S.cloudSnapFade; // 0 = snap, 1 = crossfade
+
+      if (sf < 0.001) {
+        // Pure snap: only nearest (in-range) cloud plays
+        for (const { i } of cloudDists) _cloudWeights[i] = i === nearestIdx ? 1 : 0;
+      } else {
+        // Distance-weighted crossfade with softmax-style blending.
+        // At sf=1: pure inverse-distance weighting.
+        // At 0<sf<1: sharpen the distribution toward nearest.
+        // Sharpness exponent: 1/sf gives higher exponent at low sf (sharper focus).
+        const sharpness = 1 / Math.max(0.01, sf);
+        let sumW = 0;
+        const EPSILON = 0.001; // prevent division by zero for coincident positions
+        for (const { i, dist } of cloudDists) {
+          const w = Math.pow(1 / (dist + EPSILON), sharpness);
+          _cloudWeights[i] = w;
+          sumW += w;
+        }
+        // Normalise to [0, 1]
+        if (sumW > 0) {
+          for (const { i } of cloudDists) _cloudWeights[i] /= sumW;
+        }
+      }
+
+      // Store dominant cloud index for UI highlighting
+      S._dominantCloudSlot = nearestIdx;
+    } else {
+      // Radius-gated: no clouds in range → all silent
+      S._dominantCloudSlot = -1;
+    }
+  } else {
+    // Collage mode: all active clouds play at full weight
+    for (let i = 0; i < MAX_CLOUDS; i++) {
+      _cloudWeights[i] = S.cloudSlots[i] ? 1 : 0;
+    }
+    S._dominantCloudSlot = -1;
+  }
+
   for (let i = 0; i < MAX_CLOUDS; i++) {
     const cloud = S.cloudSlots[i];
     if (!cloud || !S.particles.length) continue;
 
-    const cgp          = cloud.grainParams;
+    // Phase 3: skip clouds with negligible weight in nearest mode
+    const cloudWeight = _cloudWeights[i];
+    if (cloudWeight < 0.001) {
+      // Still advance the onset clock so it doesn't burst when weight returns
+      if (cloud._nextOnsetT !== undefined) {
+        const cgpSkip = cloud.grainParams;
+        const skipPeriod = Math.max(SCHED_SAFE_PERIOD_S, cgpSkip.period);
+        const skipUntil = (ensureAudioContext().currentTime) + SCHED_LOOKAHEAD;
+        while (cloud._nextOnsetT < skipUntil) {
+          cloud._nextOnsetT += skipPeriod;
+        }
+      }
+      continue;
+    }
+
+    // Phase 4: merge cloud.grainOverrides (written by gesture morph) on top of
+    // the planted snapshot. Overrides with non-null values take precedence.
+    const baseGP = cloud.grainParams;
+    const cgo    = cloud.grainOverrides;
+    let cgp;
+    if (cgo && Object.keys(cgo).length > 0) {
+      // Prototype chain avoids full object copy: reads fall through to baseGP
+      // for unoverridden keys. _cachedAtk is nulled by morph on change so
+      // playGrain rebuilds envelope curves with the morphed volume/fade.
+      cgp = Object.assign(Object.create(baseGP), cgo);
+    } else {
+      cgp = baseGP;
+    }
     const basePeriodS  = cgp.period;
     const periodVarS   = cgp.periodVar ?? 0;
 
@@ -892,7 +1038,13 @@ export function scheduleGrains() {
 
       const p = pool[Math.floor(Math.random() * pool.length)];
       try {
-        playGrain(p, cgp, cloud._nextOnsetT);
+        // Phase 3: scale cloud volume by navigation weight.
+        // When cloudWeight < 1 (nearest-cloud mode), attenuate the grain volume.
+        // Reuse cgp directly when weight is 1 to avoid object allocation.
+        const effectiveParams = cloudWeight < 0.999
+          ? Object.assign(Object.create(cgp), { volume: cgp.volume * cloudWeight, _cachedAtk: null })
+          : cgp;
+        playGrain(p, effectiveParams, cloud._nextOnsetT);
         activeGrainMap.set(p, { expiry: now + cgp.duration * 1000, glowColor: cloud.color });
         perf.grainsFired++;
         if (p.source === 'live') S.liveGranulatingThisFrame = true;

@@ -36,7 +36,7 @@ function applyOrientationPreset(isLandscape) {
 }
 
 function calibrateOrientation() {
-  S.camQ = [1, 0, 0, 0];
+  S.camQ = [0, 0, 0, 1];  // identity [x, y, z, w]
 }
 
 let _orientationTrackingStarted = false;

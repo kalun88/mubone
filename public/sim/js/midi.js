@@ -16,6 +16,8 @@ import {
   toggleNearestMode, dropCloud, pickupNearestCloud,
   updatePlaybackControls, flashRadiusTooltip, selectPreset,
 } from './ui-presets.js';
+import { wireSaveDefaultBtn } from './ui-audio-settings.js';
+import { setCursorHouseMuted } from './ui-meters.js';
 
 // Each action definition: { id, label, key, osc, type, ccFn? }
 // id: null entries are section headers (group: 'label')
@@ -28,27 +30,28 @@ const ACTIONS = [
   { id: 'recpaint',     label: 'rec + paint (hold)',        key: 'click / space',     osc: null,                 fmt: null,               type: 'hold' },
   { id: 'record',       label: 'record',                    key: '—',                 osc: '/record',            fmt: 'int 0|1',          type: 'trigger' },
   { id: 'mute',         label: 'mute',                      key: '—',                 osc: '/mute',              fmt: 'int 0|1',          type: 'trigger' },
+  { id: 'cursor_mute',  label: 'cursor mute',               key: 'C',                 osc: '/cursor/mute',       fmt: 'int 0|1',          type: 'trigger' },
   { id: 'undo',         label: 'undo last stroke',          key: 'right click / ⌘Z',  osc: '/undo',              fmt: 'bang',             type: 'trigger' },
 
   // ── Grain ──────────────────────────────────────────────────────────────────
   { id: null, group: 'grain' },
-  { id: 'grain_dur',    label: 'duration',                  key: '—',  osc: '/grain/duration',    fmt: 'float 0.001–10 s',  type: 'cc',
+  { id: 'grain_dur',    label: 'duration',                  key: '—',  osc: '/grain/dur',         fmt: 'float 1–4000 ms',   type: 'cc',
     ccFn: v => { const lo = Math.log(0.001), hi = Math.log(4.0); S.grainOverrides.duration = Math.exp(lo + (v / 127) * (hi - lo)); S.syncGrainControlsUI?.(); } },
-  { id: 'grain_durvar', label: 'dur ±',                     key: '—',  osc: '/grain/durvar',      fmt: 'float 0–0.5 s',     type: 'cc',
+  { id: 'grain_durvar', label: 'dur ±',                     key: '—',  osc: '/grain/durvar',      fmt: 'float 0–500 ms',    type: 'cc',
     ccFn: v => { S.grainOverrides.durVar = (v / 127) * 0.5; S.syncGrainControlsUI?.(); } },
   { id: 'grain_durjit', label: 'dur jitter',                key: '—',  osc: '/grain/durjitter',   fmt: 'float 0–1',         type: 'cc',
     ccFn: v => { S.grainOverrides.durJitter = v / 127; S.syncGrainControlsUI?.(); } },
-  { id: 'grain_fade',   label: 'fade',                      key: '—',  osc: '/grain/fade',        fmt: 'float 0–0.5',       type: 'cc',
+  { id: 'grain_fade',   label: 'fade',                      key: '—',  osc: '/grain/fade',        fmt: 'float 0–50 %',      type: 'cc',
     ccFn: v => { S.grainOverrides.fadeRatio = (v / 127) * 0.5; S.syncGrainControlsUI?.(); } },
-  { id: 'grain_period', label: 'period',                    key: '—',  osc: '/grain/period',      fmt: 'float 0.001–10 s',  type: 'cc',
+  { id: 'grain_period', label: 'period',                    key: '—',  osc: '/grain/per',         fmt: 'float 1–4000 ms',   type: 'cc',
     ccFn: v => { const lo = Math.log(0.001), hi = Math.log(4.0); S.grainOverrides.period = Math.exp(lo + (v / 127) * (hi - lo)); S.syncGrainControlsUI?.(); } },
-  { id: 'grain_pervar', label: 'per ±',                     key: '—',  osc: '/grain/periodvar',   fmt: 'float 0–0.5 s',     type: 'cc',
+  { id: 'grain_pervar', label: 'per ±',                     key: '—',  osc: '/grain/pervar',      fmt: 'float 0–500 ms',    type: 'cc',
     ccFn: v => { S.grainOverrides.periodVar = (v / 127) * 0.5; S.syncGrainControlsUI?.(); } },
-  { id: 'grain_pitch',  label: 'pitch',                     key: '—',  osc: '/grain/pitch',       fmt: 'float 0–50 ¢',      type: 'cc',
-    ccFn: v => { S.grainOverrides.pitchJitter = Math.pow(2, (v / 127) * 50 / 1200) - 1; S.syncGrainControlsUI?.(); } },
+  { id: 'grain_pitch',  label: 'pitch',                     key: '—',  osc: '/grain/pitch',       fmt: 'float 0–700 ¢',     type: 'cc',
+    ccFn: v => { S.grainOverrides.pitchJitter = Math.pow(2, (v / 127) * 700 / 1200) - 1; S.syncGrainControlsUI?.(); } },
   { id: 'grain_prob',   label: 'prob',                      key: '—',  osc: '/grain/prob',        fmt: 'float 0–1',         type: 'cc',
     ccFn: v => { S.grainProbability = v / 127; S.syncGrainControlsUI?.(); } },
-  { id: 'grain_pan',    label: 'spread',                    key: '—',  osc: '/grain/pan',         fmt: 'float 0–1',         type: 'cc',
+  { id: 'grain_pan',    label: 'spread',                    key: '—',  osc: '/grain/pan',         fmt: 'float 0–100 %',     type: 'cc',
     ccFn: v => { S.grainOverrides.panSpread = v / 127; S.syncGrainControlsUI?.(); } },
   { id: 'grain_vol',    label: 'vol',                       key: '—',  osc: '/grain/volume',      fmt: 'float 0–2',         type: 'cc',
     ccFn: v => { S.grainOverrides.volume = (v / 127) * 2; rebuildGrainCurves(); S.syncGrainControlsUI?.(); } },
@@ -67,6 +70,7 @@ const ACTIONS = [
   { id: 'recency_cc',   label: 'recency N (CC)',             key: '—',                 osc: null,             fmt: 'int 1–16',         type: 'cc',
     ccFn: v => { S.recencyN = 1 + Math.round((v / 127) * 15); document.getElementById('recencyVal').textContent = S.recencyN; } },
   { id: 'snap',         label: 'toggle snap/nearest',       key: 'N',                 osc: null,             fmt: null,               type: 'trigger' },
+  { id: 'k_all',        label: 'toggle k-all',              key: '—',                 osc: null,             fmt: null,               type: 'trigger' },
 
   // ── Presets ────────────────────────────────────────────────────────────────
   { id: null, group: 'presets' },
@@ -193,10 +197,17 @@ function dispatchAction(id, midiVal) {
       if (S._setMuted) S._setMuted(!S.isMuted);
       else S.isMuted = !S.isMuted;
       break;
+    case 'cursor_mute':
+      setCursorHouseMuted(!S.cursorHouseMuted);
+      break;
     case 'undo':         undoLastStroke(); break;
     case 'drop_cloud':   dropCloud(); break;
     case 'pickup_cloud': pickupNearestCloud(); break;
     case 'snap':         toggleNearestMode(); break;
+    case 'k_all':
+      S.grainKAllMode = !S.grainKAllMode;
+      updatePlaybackControls();
+      break;
     case 'grain_dir': {
       const dirs = ['fwd', 'rev', 'rnd'];
       S.grainDirection = dirs[(dirs.indexOf(S.grainDirection) + 1) % dirs.length];
@@ -397,4 +408,7 @@ export function setupMappingModal() {
   // Expose modal open/close via S so events.js and ui-presets.js can call them
   S.openMappingModal  = openMappingModal;
   S.closeMappingModal = closeMappingModal;
+
+  // Save as default button
+  wireSaveDefaultBtn('mappingSaveDefaultsBtn');
 }

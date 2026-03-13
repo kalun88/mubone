@@ -5,19 +5,23 @@
 import { S, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
 import { scheduleGrains } from './grain.js';
 import { setupEvents, setupDragDrop } from './events.js';
-import { rebuildSampleListUI, buildSvTabs, drawSvWaveform } from './ui-samples.js';
+import { rebuildSampleListUI, buildSvTabs, drawSvWaveform, setupSvCropInteraction } from './ui-samples.js';
 import {
   setupPresets, initGrainControls,
   drawPresetWaveform, updatePlaybackControls,
 } from './ui-presets.js';
 import { setupMappingModal, initMidi } from './midi.js';
 import { initMobileMode } from './mobile.js';
-import { initQuadBuses, initSpeakerBuses } from './audio.js';
-import { resizeCanvas, animate, rebuildOutputMeterStrip } from './renderer.js';
+import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
+import { resizeCanvas, animate } from './renderer.js';
+import { startMainMetering, rebuildMainOutputMeters, initCursorHouseMute, initMixdownGains } from './ui-meters.js';
 import { initSensor, getSensorCamQ } from './sensor.js';
 import { initOSC } from './osc.js';
 import { initSensorUI } from './ui-sensor.js';
-import { initAudioSettings } from './ui-audio-settings.js';
+import { initAudioSettings, loadAudioDefaults, activateSavedInputDevice } from './ui-audio-settings.js';
+import { initWandUI } from './ui-wand.js';
+import { initImprovUI } from './ui-improv.js';
+import { initVizUI } from './ui-viz.js';
 
 
 function init() {
@@ -33,6 +37,7 @@ function init() {
   initGrainControls();
   setupMappingModal();
   initMidi();
+  requestMicAccess();  // prompt for mic permission on load, same pattern as MIDI
   if (S.isMobile) initMobileMode();
 
   // Sensor + OSC + audio settings
@@ -40,12 +45,23 @@ function init() {
   initOSC();   // connects Electron IPC or browser WebSocket transport
   S._getSensorCamQ = getSensorCamQ;  // hook renderer without a circular import
   initSensorUI();
+  initWandUI();
+  loadAudioDefaults();   // restore saved audio settings before UI init
   initAudioSettings();
+  initImprovUI();
+  initVizUI();
 
-  // When speaker buses are (re)initialised, rebuild the main-window output meter
-  // strip to show one bar per active channel. Using a callback on S avoids a
-  // circular import between audio.js and renderer.js.
-  S._onSpeakerBusesReady = (n) => rebuildOutputMeterStrip(n);
+  // ── Reset all saved defaults ──────────────────────────────────────────────
+  document.getElementById('resetDefaultsBtn')?.addEventListener('click', () => {
+    if (!confirm('Reset all saved settings to factory defaults?\n\nThis clears saved audio, viz, sensor, and wand settings. The page will reload.')) return;
+    localStorage.removeItem('mubone_audio_defaults');
+    location.reload();
+  });
+
+  // When speaker buses are (re)initialised, rebuild the main-window output meters.
+  // Using a callback on S avoids a circular import between audio.js and ui-meters.js.
+  // S._rebuildMainOutputMeters is also set inside startMainMetering() for the renderer shim.
+  S._onSpeakerBusesReady = () => rebuildMainOutputMeters();
 
   // ── Sample instrument modal ──────────────────────────────────────────────────
   const sampleModal    = document.getElementById('sampleModal');
@@ -56,6 +72,13 @@ function init() {
       const opening = !sampleModal.classList.contains('open');
       sampleModal.classList.toggle('open', opening);
       sampleOpenBtn.classList.toggle('open', opening);
+      // Rebuild all slot waveforms + sv display when the panel opens —
+      // samples loaded while the panel was closed have zero-size canvases.
+      // Double-rAF: first rAF triggers layout of the newly-visible modal,
+      // second rAF runs after elements have real dimensions.
+      if (opening) requestAnimationFrame(() => requestAnimationFrame(() => {
+        rebuildSampleListUI();
+      }));
     });
     sampleCloseBtn?.addEventListener('click', () => {
       sampleModal.classList.remove('open');
@@ -80,7 +103,7 @@ function init() {
       const label = spatialModeBtn.querySelector('.spatial-mode-label');
       const iconSim = spatialModeBtn.querySelector('.spatial-icon-sim');
       const iconPhys = spatialModeBtn.querySelector('.spatial-icon-physical');
-      if (label) label.textContent = isPhysical ? 'mubone physical mode' : 'mubone simulation mode';
+      if (label) label.textContent = isPhysical ? 'physical' : 'sim';
       if (iconSim)  iconSim.style.display  = isPhysical ? 'none' : '';
       if (iconPhys) iconPhys.style.display = isPhysical ? '' : 'none';
       spatialModeBtn.classList.toggle('active', isPhysical);
@@ -110,6 +133,9 @@ function init() {
     buildSvTabs();
     drawSvWaveform();
     animate();
+    startMainMetering();  // start DOM-based VU meter loop for main window
+    initCursorHouseMute(); // wire cursor-in-house mute toggle
+    initMixdownGains();    // wire mixdown source gain sliders
   });
 
   // Redraw waveforms when their containers resize (e.g. window resize or flex relayout)
@@ -123,18 +149,35 @@ function init() {
   if (window.electronBridge?.isElectron) {
     initQuadBuses()
       .then(async () => {
-        // Auto-select the first multi-channel device, falling back to stereo.
-        // User can change device anytime via the audio settings modal.
+        // Use saved output device if available, otherwise system default.
         const devices = await window.electronBridge.getAudioDevices();
-        // Always start with the system default — user can switch in Audio Settings
-        const best = devices.find(d => d.isDefault) || devices[0];
+        const savedId = S._savedOutputDeviceId;  // set by loadAudioDefaults
+        const saved   = savedId != null ? devices.find(d => d.id === savedId) : null;
+        const best    = saved || devices.find(d => d.isDefault) || devices[0];
         if (best) {
           const nCh = best.outputChannels;
           await initSpeakerBuses(nCh);
           const result = await window.electronBridge.setAudioDevice(best.id, nCh);
-          console.log(`Output: "${best.name}" (system default) — ${nCh} ch — streaming: ${result.streaming}`);
+          const tag = saved ? 'saved' : 'system default';
+          console.log(`Output: "${best.name}" (${tag}) — ${nCh} ch — streaming: ${result.streaming}`);
         } else {
           console.warn('No output devices found. Open Audio Settings to select one.');
+        }
+
+        // Auto-open saved input device and wire the full Web Audio chain
+        if (window.electronBridge.setInputDevice && S._savedInputDeviceId != null) {
+          const inDevices = await window.electronBridge.getInputDevices();
+          const inDev     = inDevices.find(d => d.id === S._savedInputDeviceId);
+          if (inDev) {
+            const bufFrames = S.preferredBufferSize ?? 512;
+            const result = await window.electronBridge.setInputDevice(inDev.id, inDev.inputChannels, bufFrames);
+            if (result.ok) {
+              console.log(`Input: "${inDev.name}" (saved) — ${result.nCh} ch`);
+              // Wire up the worklet, analysers, and recording chain so the
+              // input is fully active — not just open at the hardware level.
+              await activateSavedInputDevice(result.nCh);
+            }
+          }
         }
       })
       .catch(e => console.warn('Quad bus init failed:', e));

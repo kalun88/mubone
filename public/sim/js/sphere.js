@@ -7,11 +7,12 @@ import { S, SPHERE_RADIUS, FOV_DEG } from './state.js';
 // ── Quaternion helpers ───────────────────────────────────────────────────────
 
 export function qMul(a, b) {
+  // [x, y, z, w] convention: a[0]=x, a[1]=y, a[2]=z, a[3]=w
   return [
-    a[0]*b[0] - a[1]*b[1] - a[2]*b[2] - a[3]*b[3],
-    a[0]*b[1] + a[1]*b[0] + a[2]*b[3] - a[3]*b[2],
-    a[0]*b[2] - a[1]*b[3] + a[2]*b[0] + a[3]*b[1],
-    a[0]*b[3] + a[1]*b[2] - a[2]*b[1] + a[3]*b[0]
+    a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1],
+    a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0],
+    a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3],
+    a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2],
   ];
 }
 export function qNormalize(q) {
@@ -20,13 +21,13 @@ export function qNormalize(q) {
 }
 export function qFromAxisAngle(ax, ay, az, angle) {
   const half = angle / 2, s = Math.sin(half);
-  return [Math.cos(half), ax*s, ay*s, az*s];
+  return [ax*s, ay*s, az*s, Math.cos(half)];  // [x, y, z, w]
 }
-export function qConjugate(q) { return [q[0], -q[1], -q[2], -q[3]]; }
+export function qConjugate(q) { return [-q[0], -q[1], -q[2], q[3]]; }  // negate xyz, keep w
 export function qRotateVec(q, v) {
-  const vq = [0, v[0], v[1], v[2]];
+  const vq = [v[0], v[1], v[2], 0];             // pure quaternion, w=0
   const r  = qMul(qMul(q, vq), qConjugate(q));
-  return [r[1], r[2], r[3]];
+  return [r[0], r[1], r[2]];
 }
 
 // ── 3D Math — inside-sphere camera ───────────────────────────────────────────

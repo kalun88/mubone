@@ -7,6 +7,7 @@ import {
   PRESETS, CLOUD_COLORS, MAX_CLOUDS, SCHED_SAFE_PERIOD_S,
   gp, rebuildGrainCurves, minGrainDurS, minGrainPeriodS,
   SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
+  USER_PRESET_START, loadUserPresets, saveUserPresets,
 } from './state.js';
 import { angleBetweenSphere, findNearestCloudSlot, resetCursorPeriod } from './grain.js';
 import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js';
@@ -25,13 +26,61 @@ export function fmtMs(v) {
 
 // ── Grain presets UI ─────────────────────────────────────────────────────────
 
+// ── Snapshot current grain state into a user preset slot and persist ──────────
+function saveToUserPreset(index) {
+  // Merge active overrides on top of grainParams for a complete snapshot
+  const snap = { ...S.grainParams };
+  for (const [k, v] of Object.entries(S.grainOverrides)) {
+    if (v !== null) snap[k] = v;
+  }
+  const currentName = PRESETS[index].name;
+  const name = window.prompt('Preset name:', currentName);
+  if (name === null) return;   // cancelled
+  PRESETS[index] = {
+    ...snap,
+    name:            name.trim() || currentName,
+    userDefined:     true,
+    direction:       S.grainDirection,
+    curveType:       S.grainCurveType,
+    searchRadiusDeg: S.searchRadiusDeg,
+    probability:     S.grainProbability,
+    nearestMode:     S.nearestMode,
+    grainKAllMode:   S.grainKAllMode,
+  };
+  saveUserPresets();
+  // Refresh the button label
+  const btn = document.querySelectorAll('.preset-btn')[index];
+  if (btn) btn.querySelector('.preset-name').textContent = PRESETS[index].name;
+  // Re-sync UI if this slot is currently selected
+  if (S.activePresetIndex === index) selectPreset(index);
+}
+
 export function setupPresets() {
+  loadUserPresets();   // hydrate user slots from localStorage before building buttons
   const container = document.getElementById('presetButtons');
   PRESETS.forEach((preset, i) => {
     const btn = document.createElement('button');
     btn.className = 'preset-btn' + (i === 0 ? ' active' : '');
-    btn.innerHTML = `<span class="preset-num">${i + 1}</span>${preset.name}`;
-    btn.addEventListener('click', () => selectPreset(i));
+
+    if (i >= USER_PRESET_START) {
+      // User-defined slot — name span + save icon
+      btn.classList.add('user-preset');
+      btn.innerHTML =
+        `<span class="preset-num">${i + 1}</span>` +
+        `<span class="preset-name">${preset.name}</span>` +
+        `<span class="preset-save" title="save current grain state to this slot">✎</span>`;
+      btn.addEventListener('click', e => {
+        if (!e.target.classList.contains('preset-save')) selectPreset(i);
+      });
+      btn.querySelector('.preset-save').addEventListener('click', e => {
+        e.stopPropagation();
+        saveToUserPreset(i);
+      });
+    } else {
+      btn.innerHTML = `<span class="preset-num">${i + 1}</span>${preset.name}`;
+      btn.addEventListener('click', () => selectPreset(i));
+    }
+
     container.appendChild(btn);
   });
   drawPresetWaveform();
@@ -245,8 +294,17 @@ export function dropCloud() {
     // period, etc. — not the raw preset defaults which S.grainParams holds.
     grainParams: {
       ...S.grainParams,
-      ...Object.fromEntries(Object.entries(S.grainOverrides).filter(([, v]) => v !== null))
-    }
+      ...Object.fromEntries(Object.entries(S.grainOverrides).filter(([, v]) => v !== null)),
+      // Capture curve type and direction from global state (not in grainParams/overrides)
+      curveType:   S.grainCurveType,
+      direction:   S.grainDirection,
+      probability: S.grainProbability,
+    },
+    // Per-cloud overrides — starts empty, Phase 4 gesture morphing writes here.
+    grainOverrides: {},
+    // Phase 4: agitation morph state (0=smooth, 0.5=neutral/planted, 1=agitated)
+    morphT:        0.5,
+    morphVelocity: 0,
   };
   updateCloudBanksUI();
 }
@@ -329,7 +387,7 @@ export function selectPreset(index) {
   rebuildGrainCurves();
 
   if (typeof preset.nearestMode === 'boolean') S.nearestMode = preset.nearestMode;
-  if (typeof preset.grainKAllMode === 'boolean') S.grainKAllMode = preset.grainKAllMode;
+  S.grainKAllMode = typeof preset.grainKAllMode === 'boolean' ? preset.grainKAllMode : false;
   if (typeof preset.searchRadiusDeg === 'number') S.searchRadiusDeg = preset.searchRadiusDeg;
   if (typeof preset.recencyN === 'number') {
     if (typeof S.setRecency === 'function') S.setRecency(preset.recencyN);
@@ -688,7 +746,7 @@ export function initGrainControls() {
       toDisplay: v => v.toFixed(3),
       sliderToInternal: sv => parseFloat(sv),
       internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.001, Math.min(0.5, v)); },
+      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.001, Math.min(2.0, v)); },
     },
   ];
 
@@ -810,7 +868,7 @@ export function initGrainControls() {
     const skSlider = document.getElementById('searchKSlider');
     if (skSlider) skSlider.value = kVal;
     const kNum = document.getElementById('kBigNum');
-    if (kNum) kNum.textContent = kVal;
+    if (kNum) kNum.value = kVal;
     const recValEl = document.getElementById('recencyVal');
     if (recValEl) recValEl.textContent = S.recencyN;
     updatePlaybackControls();
