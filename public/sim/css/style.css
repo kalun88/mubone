@@ -1,7 +1,7 @@
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
   button { outline: none; }
-  button:focus-visible { outline: none; }
+  button:focus-visible { outline: 1px solid rgba(122,188,188,0.5); outline-offset: 1px; }
   html, body {
     height: 100dvh;
     max-height: 100dvh;
@@ -334,7 +334,7 @@
     color: #aaaaaa; font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
     font-size: 1.1rem; padding: 0.45rem 0.65rem;
     border-radius: 5px; cursor: pointer; pointer-events: all;
-    z-index: 200; /* above everything */
+    z-index: 150; /* above canvas, below modals */
     -webkit-tap-highlight-color: transparent;
   }
   #mobileSettingsBtn:active { color: #aaaaaa; border-color: #aaaaaa; background: rgba(40,40,40,0.95); }
@@ -505,8 +505,8 @@
   #micEnableBtn.mic-ready { color: #cc5555; border-color: #5a2a2a; cursor: default; }
   #micEnableBtn.mic-denied { color: #888888; cursor: default; }
   @keyframes rec-glow {
-    0%, 100% { box-shadow: 0 0 5px #cc222288; }
-    50%       { box-shadow: 0 0 10px #ee3333cc; }
+    0%, 100% { filter: drop-shadow(0 0 3px #cc222288); }
+    50%       { filter: drop-shadow(0 0 6px #ee3333cc); }
   }
   .live-count { font-size: 0.75rem; color: #888888; }
   .live-count span { color: #e8a030; }
@@ -941,7 +941,7 @@
     line-height: 1.6;
     transition: color 0.1s, border-color 0.1s;
     outline: none;
-    -moz-appearance: textfield;
+    appearance: textfield;
   }
   .grain-numbox::-webkit-outer-spin-button,
   .grain-numbox::-webkit-inner-spin-button { -webkit-appearance: none; }
@@ -1010,7 +1010,7 @@
   #muteBtn:hover { border-color: transparent; color: #aaaaaa; background: #2c2c2c; }
   #muteBtn .mute-icon {
     width: 26px; height: 26px; flex-shrink: 0; opacity: 0.4;
-    transition: opacity 0.15s, display 0s;
+    transition: opacity 0.15s, visibility 0s;
   }
   #muteBtn:hover .mute-icon { opacity: 0.65; }
   #muteBtn.muted .mute-icon-off { opacity: 0.9; }
@@ -1055,6 +1055,72 @@
     padding: 0 !important;
   }
   /* Reuse grain-row / grain-label / grain-slider / grain-numbox / grain-seg styles */
+
+  /* ── Cloud actions (drop / pickup / clear) ──────────────────────────────── */
+  .cloud-actions-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 6px 4px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .cloud-slots-canvas {
+    flex: 0 0 auto;
+    width: 50px;
+    height: 60px;
+  }
+  .cloud-actions-btns {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    flex: 1;
+    min-width: 0;
+  }
+  .cloud-action-btn {
+    font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-size: 0.7rem;
+    color: #999;
+    background: #1e1e1e;
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 2px;
+    padding: 2px 6px;
+    cursor: pointer;
+    text-align: center;
+    transition: color 0.1s, background 0.1s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .cloud-action-btn:hover:not(:disabled) {
+    color: #ddd;
+    background: #2a2a2a;
+    border-color: rgba(255,255,255,0.12);
+  }
+  .cloud-action-btn:active:not(:disabled) {
+    background: #333;
+  }
+  .cloud-action-btn:disabled {
+    color: #444;
+    cursor: default;
+    opacity: 0.5;
+  }
+  .cloud-action-drop:hover:not(:disabled) {
+    border-color: rgba(79, 195, 247, 0.4);
+    color: #4fc3f7;
+  }
+  .cloud-action-pickup:hover:not(:disabled) {
+    border-color: rgba(255, 183, 77, 0.4);
+    color: #ffb74d;
+  }
+  .cloud-action-clear:hover:not(:disabled) {
+    border-color: rgba(229, 115, 115, 0.35);
+    color: #e57373;
+  }
+  .cloud-planted-count {
+    font-family: 'Inter', monospace;
+    font-size: 0.8rem;
+    color: #555;
+    min-width: 14px;
+    text-align: center;
+  }
 
   /* ── Levels device (right panel) ────────────────────────────────────────── */
   .right-panel .device--meters {
@@ -1316,7 +1382,7 @@
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,0.75);
-    z-index: 200;
+    z-index: 300;
   }
   #sampleModal.open { display: block; }
   .sample-dialog {
@@ -1363,6 +1429,7 @@
     overflow-y: auto;
     overflow-x: hidden;
   }
+  .sample-list-wrap { scrollbar-width: thin; scrollbar-color: #333 #161616; }
   .sample-list-wrap::-webkit-scrollbar { width: 4px; }
   .sample-list-wrap::-webkit-scrollbar-track { background: #161616; }
   .sample-list-wrap::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
@@ -1597,7 +1664,7 @@
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.75);
-  z-index: 200;
+  z-index: 300;
 }
 #sensorModal.open { display: block; }
 .sensor-dialog {
@@ -1754,7 +1821,7 @@
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.75);
-  z-index: 200;
+  z-index: 300;
 }
 #wandModal.open { display: block; }
 
@@ -1797,6 +1864,22 @@
   letter-spacing: 0.04em;
 }
 .wand-dialog h2 .close-btn:hover { color: #ffffff; }
+
+/* Section divider within wand dialog */
+.wand-section {
+  border-top: 1px solid rgba(255,255,255,0.06);
+  padding-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.wand-section-label {
+  font-size: 0.7rem;
+  color: #666;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 0.15rem;
+}
 
 /* Visualizer row */
 .wand-viz-row {
@@ -2007,7 +2090,7 @@
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.75);
-  z-index: 200;
+  z-index: 300;
 }
 #audioSettingsModal.open { display: block; }
 .audio-dialog {
@@ -2395,7 +2478,7 @@
   position: fixed;
   inset: 0;
   background: rgba(0,0,0,0.75);
-  z-index: 200;
+  z-index: 300;
 }
 #vizModal.open { display: block; }
 .viz-dialog {

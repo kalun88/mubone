@@ -50,7 +50,8 @@ function saveToUserPreset(index) {
   saveUserPresets();
   // Refresh the button label
   const btn = document.querySelectorAll('.preset-btn')[index];
-  if (btn) btn.querySelector('.preset-name').textContent = PRESETS[index].name;
+  const nameEl = btn?.querySelector('.preset-name');
+  if (nameEl) nameEl.textContent = PRESETS[index].name;
   // Re-sync UI if this slot is currently selected
   if (S.activePresetIndex === index) selectPreset(index);
 }
@@ -83,8 +84,10 @@ export function setupPresets() {
 
     container.appendChild(btn);
   });
-  drawPresetWaveform();
-  updatePresetStats();
+  // Activate preset 0 ("wash") on startup so all ancillary state
+  // (searchRadiusDeg, nearestMode, recencyN, grainDirection, curveType, etc.)
+  // is fully synced from the preset definition — not just grainParams.
+  selectPreset(0);
 
   // Snap toggle button — initialise state on load then wire click
   updatePlaybackControls();
@@ -306,7 +309,7 @@ export function dropCloud() {
     morphT:        0.5,
     morphVelocity: 0,
   };
-  updateCloudBanksUI();
+  (S.updateCloudBanksUI || updateCloudBanksUI)();
 }
 
 export function pickupNearestCloud() {
@@ -314,18 +317,27 @@ export function pickupNearestCloud() {
   const nearestSlot = findNearestCloudSlot(lon, lat);
   if (nearestSlot === -1) return;
   S.cloudSlots[nearestSlot] = null;
-  updateCloudBanksUI();
+  (S.updateCloudBanksUI || updateCloudBanksUI)();
 }
 
-function updateCloudBanksUI() {
+export function clearAllClouds() {
+  for (let i = 0; i < MAX_CLOUDS; i++) S.cloudSlots[i] = null;
+  (S.updateCloudBanksUI || updateCloudBanksUI)();
+}
+
+export function updateCloudBanksUI() {
   const count = S.cloudSlots.filter(c => c !== null).length;
   const cloudsEl = document.getElementById('cloudsPlantedCount');
-  if (cloudsEl) cloudsEl.textContent = count;
+  if (cloudsEl) cloudsEl.textContent = count + ' planted';
   const vmClouds = document.getElementById('vmClouds');
   if (vmClouds) vmClouds.textContent = `clouds: ${count}`;
 
   const canvas = document.getElementById('cloudSlotsCanvas');
   if (!canvas) return;
+
+  // Find nearest cloud to cursor for highlight
+  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+  const nearestSlot = count > 0 ? findNearestCloudSlot(lon, lat) : -1;
 
   const dpr  = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
@@ -351,15 +363,16 @@ function updateCloudBanksUI() {
     const cx = PAD + col * (cellW + GAP) + cellW / 2;
     const cy = PAD + row * (cellH + GAP) + cellH / 2;
     const cloud = S.cloudSlots[i];
+    const isNearest = (i === nearestSlot);
 
     c.beginPath();
     c.arc(cx, cy, r, 0, Math.PI * 2);
 
     if (cloud) {
-      c.fillStyle   = cloud.color + '44';
+      c.fillStyle   = isNearest ? cloud.color + '99' : cloud.color + '44';
       c.fill();
-      c.strokeStyle = cloud.color;
-      c.lineWidth   = 1.5;
+      c.strokeStyle = isNearest ? '#ffffff' : cloud.color;
+      c.lineWidth   = isNearest ? 2 : 1.5;
       c.stroke();
     } else {
       c.fillStyle   = '#1a1a1a';

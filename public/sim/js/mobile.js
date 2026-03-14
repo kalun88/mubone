@@ -194,14 +194,24 @@ function setupMobileSettings() {
   }
   refreshMobileOrientationUI = refreshSignBtns;
 
-  // Live readout at ~10 Hz while panel is open
-  setInterval(() => {
-    if (!panel.classList.contains('open')) return;
-    const r = lastRotationRate;
-    document.getElementById('mobReadAlpha').textContent = r.alpha.toFixed(1);
-    document.getElementById('mobReadBeta').textContent  = r.beta.toFixed(1);
-    document.getElementById('mobReadGamma').textContent = r.gamma.toFixed(1);
-  }, 100);
+  // Live readout at ~10 Hz — only while settings panel is open
+  let _mobileReadoutId = null;
+  function startMobileReadout() {
+    if (_mobileReadoutId) return;
+    _mobileReadoutId = setInterval(() => {
+      const r = lastRotationRate;
+      document.getElementById('mobReadAlpha').textContent = r.alpha.toFixed(1);
+      document.getElementById('mobReadBeta').textContent  = r.beta.toFixed(1);
+      document.getElementById('mobReadGamma').textContent = r.gamma.toFixed(1);
+    }, 100);
+  }
+  function stopMobileReadout() {
+    if (_mobileReadoutId) { clearInterval(_mobileReadoutId); _mobileReadoutId = null; }
+  }
+  const _mobObs = new MutationObserver(() => {
+    if (panel.classList.contains('open')) startMobileReadout(); else stopMobileReadout();
+  });
+  _mobObs.observe(panel, { attributes: true, attributeFilter: ['class'] });
 
   // ── Audio device picker ───────────────────────────────────────────────────
   const micSel    = document.getElementById('mobMicSelect');

@@ -10,7 +10,7 @@
 // The browser falls back gracefully to mouse/gyro if the bridge isn't running.
 // ============================================================================
 
-import { S, PRESETS, rebuildGrainCurves } from './state.js';
+import { S, DEBUG, PRESETS, rebuildGrainCurves } from './state.js';
 import {
   handleSensorOSC, handleSensor2OSC, handleWandOSC, handleWandInertialOSC,
   sensor, wand,
@@ -70,7 +70,7 @@ export function initOSC() {
       }
       handleOSC(address, values);
     });
-    console.log('[osc] Electron IPC transport active');
+    DEBUG && console.log('[osc] Electron IPC transport active');
     return;
   }
 
@@ -99,7 +99,7 @@ function connectWebSocket() {
     clearTimeout(_retryTimer);
     setIndicator(true);
     window.dispatchEvent(new CustomEvent('osc-connected'));
-    console.log('[osc] Max bridge connected — ws://localhost:8080');
+    DEBUG && console.log('[osc] Max bridge connected — ws://localhost:8080');
   };
 
   _ws.onmessage = (event) => {
@@ -113,7 +113,7 @@ function connectWebSocket() {
 
   _ws.onclose = () => {
     if (_connected) {
-      console.log('[osc] Max bridge disconnected');
+      DEBUG && console.log('[osc] Max bridge disconnected');
       setIndicator(false);
       window.dispatchEvent(new CustomEvent('osc-disconnected'));
     }
@@ -360,7 +360,7 @@ export function handleOSC(rawAddress, values) {
     case '/undo':          S._undo?.();        break;
 
     default:
-      console.log(`[osc] unhandled: ${address}`, values);
+      DEBUG && console.log(`[osc] unhandled: ${address}`, values);
   }
 }
 

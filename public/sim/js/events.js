@@ -24,6 +24,24 @@ import { loadAudioFile } from './ui-samples.js';
 import { triggerWandTare } from './ui-wand.js';
 import { setCursorHouseMuted } from './ui-meters.js';
 
+// ── Input event coalescing ──────────────────────────────────────────────────
+// Buffer the latest mouse/touch position and flush once per rAF to avoid
+// invalidating angular-distance caches at 60–120Hz when 30Hz is sufficient.
+let _pendingMouseX = null, _pendingMouseY = null;
+let _pendingPixelX = null, _pendingPixelY = null;
+let _inputRAFPending = false;
+
+function _flushInput() {
+  _inputRAFPending = false;
+  if (_pendingMouseX !== null) {
+    S.mouseX      = _pendingMouseX;
+    S.mouseY      = _pendingMouseY;
+    S.mousePixelX = _pendingPixelX;
+    S.mousePixelY = _pendingPixelY;
+    _pendingMouseX = null;
+  }
+}
+
 // ── Helper: get lon/lat from mouse screen position ────────────────────────────
 function getMouseLonLat() {
   return screenToLonLat(S.mousePixelX, S.mousePixelY);
@@ -39,11 +57,15 @@ export function setupEvents() {
   S.canvas.addEventListener('mousemove', e => {
     if (!S.altLocked) {
       const rect  = S.canvas.getBoundingClientRect();
-      S.mouseX      = ((e.clientX - rect.left) / rect.width  - 0.5) * 2;
-      S.mouseY      = ((e.clientY - rect.top)  / rect.height - 0.5) * 2;
-      S.mousePixelX = (e.clientX - rect.left) * (S.canvas.width  / rect.width);
-      S.mousePixelY = (e.clientY - rect.top)  * (S.canvas.height / rect.height);
+      _pendingMouseX = ((e.clientX - rect.left) / rect.width  - 0.5) * 2;
+      _pendingMouseY = ((e.clientY - rect.top)  / rect.height - 0.5) * 2;
+      _pendingPixelX = (e.clientX - rect.left) * (S.canvas.width  / rect.width);
+      _pendingPixelY = (e.clientY - rect.top)  * (S.canvas.height / rect.height);
       S.mouseInCanvas = true;
+      if (!_inputRAFPending) {
+        _inputRAFPending = true;
+        requestAnimationFrame(_flushInput);
+      }
     }
   });
   S.canvas.addEventListener('mouseleave', () => { if (!S.altLocked) S.mouseInCanvas = false; });
@@ -60,8 +82,14 @@ export function setupEvents() {
     S.canvas.addEventListener('touchmove', e => {
       e.preventDefault();
       const rect = S.canvas.getBoundingClientRect(), t = e.touches[0];
-      S.mouseX = ((t.clientX - rect.left) / rect.width  - 0.5) * 2;
-      S.mouseY = ((t.clientY - rect.top)  / rect.height - 0.5) * 2;
+      _pendingMouseX = ((t.clientX - rect.left) / rect.width  - 0.5) * 2;
+      _pendingMouseY = ((t.clientY - rect.top)  / rect.height - 0.5) * 2;
+      _pendingPixelX = 0; _pendingPixelY = 0;  // touch doesn't use pixel coords
+      S.mouseInCanvas = true;
+      if (!_inputRAFPending) {
+        _inputRAFPending = true;
+        requestAnimationFrame(_flushInput);
+      }
     });
     S.canvas.addEventListener('touchend', e => { e.preventDefault(); S.mouseInCanvas = false; });
   }
@@ -74,8 +102,6 @@ export function setupEvents() {
       e.preventDefault();
       if (!S.altLocked) {
         S.altLocked            = true;
-        S.altFrozenMouseX      = S.mouseX;
-        S.altFrozenMouseY      = S.mouseY;
         S.altFrozenMousePixelX = S.mousePixelX;
         S.altFrozenMousePixelY = S.mousePixelY;
         const wrapper = document.getElementById('canvasWrapper');

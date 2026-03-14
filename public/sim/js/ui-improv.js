@@ -6,7 +6,8 @@
 //   Phase 4 — gesture morph (morph enable, hold mode)
 // ============================================================================
 
-import { S } from './state.js';
+import { S, MAX_CLOUDS } from './state.js';
+import { dropCloud, pickupNearestCloud, clearAllClouds, updateCloudBanksUI } from './ui-presets.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -138,6 +139,30 @@ export function initImprovUI() {
   });
 
   applyHold(S.morphHoldMode ?? 'momentum');
+
+  // ── Cloud drop / pickup / clear all ──────────────────────────────────────
+  const dropBtn   = document.getElementById('cloudDropBtn');
+  const pickupBtn = document.getElementById('cloudPickupBtn');
+  const clearBtn  = document.getElementById('cloudClearBtn');
+
+  function refreshCloudBtns() {
+    const count = S.cloudSlots.filter(c => c !== null).length;
+    if (dropBtn)   dropBtn.disabled   = count >= MAX_CLOUDS;
+    if (pickupBtn) pickupBtn.disabled = count === 0;
+    if (clearBtn)  clearBtn.disabled  = count === 0;
+  }
+
+  dropBtn?.addEventListener('click', () => { dropCloud(); refreshCloudBtns(); });
+  pickupBtn?.addEventListener('click', () => { pickupNearestCloud(); refreshCloudBtns(); });
+  clearBtn?.addEventListener('click', () => { clearAllClouds(); refreshCloudBtns(); });
+
+  // Expose updateCloudBanksUI on S so renderer.js can call it,
+  // and chain our button state refresh into it.
+  S.updateCloudBanksUI = () => { updateCloudBanksUI(); refreshCloudBtns(); };
+
+  // Initial state
+  refreshCloudBtns();
+  updateCloudBanksUI();
 
   // ── OSC sync hook — so external OSC changes reflect in the UI ──────────
   // Called from osc.js after it writes a new value to S

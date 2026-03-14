@@ -5,7 +5,7 @@
 import {
   S,
   PRESETS, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
-  LIVE_PAINT_COLORS, rebuildGrainCurves,
+  LIVE_PAINT_COLORS, DEBUG, rebuildGrainCurves,
 } from './state.js';
 import { ensureAudioContext } from './audio.js';
 import { startLiveRecording, stopLiveRecording } from './audio.js';
@@ -129,7 +129,7 @@ export async function initMidi() {
     refreshMidiInputs();
     midiAccess.onstatechange = refreshMidiInputs;
   } catch(e) {
-    console.log('MIDI not available:', e.message);
+    DEBUG && console.log('MIDI not available:', e.message);
   }
 }
 

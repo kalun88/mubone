@@ -137,6 +137,8 @@ function createOutputStream(deviceId, numChannels, bufferFrames) {
   rtAudio.start();
   // Float32 = 4 bytes/sample. audify expects exactly bufferFrames × nCh × 4 per write().
   _expectedAudioBytes = (bufferFrames || 512) * nCh * 4;
+  _ipcAudioCredits = IPC_AUDIO_MAX_CREDITS;
+  _ipcDropCount = 0;
   console.log(`audify stream started — "${device.name}", ${nCh} ch @ ${openedRate} Hz, buffer ${bufferFrames || 512} frames (${_expectedAudioBytes} bytes/write)`);
 }
 
@@ -160,6 +162,11 @@ function createInputStream(deviceId, numChannels, bufferFrames, win) {
   if (!device) {
     console.warn(`audify input: device ${deviceId} not found`);
     return;
+  }
+
+  // Warn about potential clock drift when I/O share the same device
+  if (rtAudio && audioDeviceId === deviceId) {
+    console.warn('[audify] Input and output share the same device — separate RtAudio instances may drift over long sessions. Consider duplex mode for sessions > 30min.');
   }
 
   const nCh = Math.min(numChannels || device.inputChannels, device.inputChannels);
@@ -214,6 +221,12 @@ function createInputStream(deviceId, numChannels, bufferFrames, win) {
 // Recomputed whenever the output stream is (re)opened.
 let _expectedAudioBytes = 0;
 
+// Credit-based flow control for IPC audio path.
+// Main process sends credits back to renderer; worklet pauses when exhausted.
+let _ipcAudioCredits = 8;         // start with 8 buffer credits
+const IPC_AUDIO_MAX_CREDITS = 8;  // max outstanding buffers
+let _ipcDropCount = 0;            // consecutive drops — throttled warning
+
 function setupIPC() {
   // Receive N-channel interleaved Float32Array from renderer and push to RtAudio.
   // Guard against size mismatches — these happen transiently when the output device
@@ -223,11 +236,19 @@ function setupIPC() {
     if (!rtAudio || !rtAudio.isStreamRunning()) return;
     const buf = Buffer.from(interleavedFloat32.buffer);
     if (_expectedAudioBytes > 0 && buf.length !== _expectedAudioBytes) {
-      // Stale buffer from previous device config — drop it, worklet will catch up
-      console.warn(`[audio-buffer] size mismatch: got ${buf.length} bytes, expected ${_expectedAudioBytes} — dropping`);
+      // Throttled mismatch warning (max 1 per second)
+      _ipcDropCount++;
+      if (_ipcDropCount === 1 || _ipcDropCount % 100 === 0) {
+        console.warn(`[audio-buffer] size mismatch: got ${buf.length}, expected ${_expectedAudioBytes} — dropped ${_ipcDropCount} buffers`);
+      }
       return;
     }
+    _ipcDropCount = 0;
     rtAudio.write(buf);
+    // Send credit back to renderer so worklet can pace itself
+    if (!event.sender.isDestroyed()) {
+      event.sender.send('audio-credit', 1);
+    }
   });
 
   // List all output devices with channel counts, flagging the system default

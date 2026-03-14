@@ -38,6 +38,9 @@ contextBridge.exposeInMainWorld('electronBridge', {
   onOSC: (cb) =>
     ipcRenderer.on('osc-message', (_e, address, values) => cb(address, values)),
 
+  // Main → Renderer: credit-based flow control for audio buffer backpressure
+  onAudioCredit: (cb) => ipcRenderer.on('audio-credit', (_, credits) => cb(credits)),
+
   // Toggle native OS fullscreen (web requestFullscreen doesn't work in BrowserWindow)
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
 });

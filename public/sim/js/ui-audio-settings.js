@@ -5,7 +5,7 @@
 // No monitoring — graph ends at analyser (dead end), MOTU handles monitoring.
 // ============================================================================
 
-import { S } from './state.js';
+import { S, DEBUG } from './state.js';
 import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, playSweepChannel } from './audio.js';
 import { renderMeters, tickMeters, rebuildMainOutputMeters } from './ui-meters.js';
 
@@ -158,7 +158,7 @@ function rewireRtAudioRecordingChannel(chIndex, nCh) {
   const n = _rtInputRoutingGains.length || (nCh ?? as.inputAnalysers.length);
   const safe = Math.max(0, Math.min(chIndex, n - 1));
   _rtInputRoutingGains.forEach((g, i) => { g.gain.value = (i === safe) ? 1 : 0; });
-  console.log(`[input] recording from RtAudio ch ${safe + 1} (index ${safe})`);
+  DEBUG && console.log(`[input] recording from RtAudio ch ${safe + 1} (index ${safe})`);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -1170,7 +1170,7 @@ export function saveAllDefaults() {
   try {
     const json = JSON.stringify(defaults);
     localStorage.setItem(LS_AUDIO_DEFAULTS, json);
-    console.log('[defaults] saved:', json.length, 'bytes');
+    DEBUG && console.log('[defaults] saved:', json.length, 'bytes');
     return true;
   } catch (e) {
     console.warn('[defaults] could not save:', e);
@@ -1238,7 +1238,7 @@ export function loadAudioDefaults() {
     // Wand config — stash on S for ui-wand.js to pick up at init
     if (d.wandConfig) S._savedWandConfig = d.wandConfig;
 
-    console.log('[defaults] restored saved defaults');
+    DEBUG && console.log('[defaults] restored saved defaults');
   } catch (e) {
     console.warn('[audio-settings] could not load defaults:', e);
   }
@@ -1269,7 +1269,7 @@ export async function activateSavedInputDevice(nCh) {
   // Mark as.started so modal-open knows input is already live
   as.started = true;
 
-  console.log(`[startup] input device activated — ${nCh} ch, recording ch ${selCh + 1}`);
+  DEBUG && console.log(`[startup] input device activated — ${nCh} ch, recording ch ${selCh + 1}`);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

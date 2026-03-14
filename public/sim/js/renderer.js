@@ -10,12 +10,15 @@ import {
   RENDER_TARGET_FPS,
   perf, perfTick, gp, rebuildGrainCurves, minGrainDurS
 } from './state.js';
-import { spherePoint, cameraTransform, project, getCursorLonLat, screenToLonLat, qFromAxisAngle, qNormalize, qMul } from './sphere.js';
-import { rand, activeGrainMap } from './grain.js';
+import { spherePoint, cameraTransform, project, getCursorLonLat, screenToLonLat } from './sphere.js';
+import { rand, activeGrainMap, stampCartesian } from './grain.js';
 import { rebuildLiveBuffer, getRecordingDuration } from './audio.js';
 import { snapshotInputFeatures, featuresFromBuffer, normalise, featuresToHSL, tickPeakHold } from './audio-features.js';
 
 // All VU metering moved to ui-meters.js (DOM-based, shared with audio settings modal).
+
+// Cached DOM element for per-frame coordinate display
+let _coordEl = null;
 
 // ── Main draw frame ───────────────────────────────────────────────────────────
 export function drawFrame() {
@@ -246,7 +249,9 @@ export function drawRadiusTooltip() {
   const px = 5, py = 3;
   S.ctx.fillStyle = 'rgba(30,30,30,0.75)';
   S.ctx.beginPath();
-  S.ctx.roundRect(mx + ox - px, my + oy - fs/2 - py, tw + px*2, fs + py*2, 3);
+  const _rx = mx + ox - px, _ry = my + oy - fs/2 - py, _rw = tw + px*2, _rh = fs + py*2;
+  if (S.ctx.roundRect) { S.ctx.roundRect(_rx, _ry, _rw, _rh, 3); }
+  else                 { S.ctx.rect(_rx, _ry, _rw, _rh); }
   S.ctx.fill();
 
   S.ctx.fillStyle = S.nearestMode ? '#e8a030' : '#7abcbc';
@@ -255,15 +260,36 @@ export function drawRadiusTooltip() {
 }
 
 // ── Particles ─────────────────────────────────────────────────────────────────
+
+// Pre-allocated sort buffers — grown when needed, never shrunk.
+// Avoids per-frame GC pressure from fresh Array / Int32Array allocations.
+// STRIDE: sx, sy, depth, facing, (skip color), rms, centroid, zcr = 7 numeric fields
+const _STRIDE = 7;
+let _sortBuf   = new Float64Array(512 * _STRIDE);
+let _colorBuf  = new Array(512);       // string colors can't go in a typed array
+let _sortIdx   = new Int32Array(512);
+// Cache projected positions for active grains to avoid double spherePoint/project work.
+const _glowCache = new Map();   // particle → { sx, sy, depth, facing }
+
 export function drawParticles() {
   // Single-pass: project + collect directly into a flat sort buffer.
   // When vizMode is on, we pack audio features into the buffer for
   // feature-driven size/colour. When off, original palette colour is used.
   const useViz = S.vizMode;
-  // STRIDE: sx, sy, depth, facing, color, rms, centroid, zcr
-  const STRIDE = 8;
-  const buf = [];
+  const STRIDE = _STRIDE;
 
+  // Ensure pre-allocated buffers are large enough
+  const maxCount = S.particles.length;
+  if (_sortIdx.length < maxCount) {
+    _sortBuf  = new Float64Array(maxCount * STRIDE);
+    _colorBuf = new Array(maxCount);
+    _sortIdx  = new Int32Array(maxCount);
+  }
+
+  _glowCache.clear();
+  const hasGlow = activeGrainMap.size > 0;
+
+  let count = 0;
   for (const p of S.particles) {
     const [wx, wy, wz] = spherePoint(p.lon, p.lat);
     const [cx, cy, cz] = cameraTransform(wx, wy, wz);
@@ -271,14 +297,25 @@ export function drawParticles() {
     if (!proj) continue;
     const mag    = Math.sqrt(cx*cx + cy*cy + cz*cz);
     const facing = Math.max(0, cz / mag);
-    buf.push(proj.sx, proj.sy, proj.depth, facing, p.color,
-             p.rms ?? 0, p.centroid ?? 0, p.zcr ?? 0);
+    const off    = count * STRIDE;
+    _sortBuf[off]     = proj.sx;
+    _sortBuf[off + 1] = proj.sy;
+    _sortBuf[off + 2] = proj.depth;
+    _sortBuf[off + 3] = facing;
+    _sortBuf[off + 4] = p.rms ?? 0;
+    _sortBuf[off + 5] = p.centroid ?? 0;
+    _sortBuf[off + 6] = p.zcr ?? 0;
+    _colorBuf[count]  = p.color;
+    if (hasGlow && activeGrainMap.has(p)) {
+      _glowCache.set(p, { sx: proj.sx, sy: proj.sy, depth: proj.depth, facing });
+    }
+    count++;
   }
 
-  const count  = buf.length / STRIDE;
-  const idx = new Int32Array(count);
+  const buf = _sortBuf;
+  const idx = _sortIdx;
   for (let i = 0; i < count; i++) idx[i] = i;
-  idx.sort((a, b) => buf[b * STRIDE + 2] - buf[a * STRIDE + 2]);
+  idx.subarray(0, count).sort((a, b) => buf[b * STRIDE + 2] - buf[a * STRIDE + 2]);
 
   // Read mutable size overrides (set from viz modal sliders)
   const pBase = S.vizMinSize ?? PARTICLE_BASE_SIZE;
@@ -295,11 +332,11 @@ export function drawParticles() {
 
     let size, color, alpha;
 
-    if (useViz && buf[i + 5] > 0) {
+    if (useViz && buf[i + 4] > 0) {
       // ── Feature-driven rendering ──
-      const rmsN  = normalise(buf[i + 5], S.vizRmsMin, S.vizRmsMax);
-      const centN = normalise(buf[i + 6], S.vizCentroidMin, S.vizCentroidMax);
-      const zcrR  = buf[i + 7]; // already 0–1
+      const rmsN  = normalise(buf[i + 4], S.vizRmsMin, S.vizRmsMax);
+      const centN = normalise(buf[i + 5], S.vizCentroidMin, S.vizCentroidMax);
+      const zcrR  = buf[i + 6]; // already 0–1
 
       // Size: RMS drives a min→max lerp, then depth perspective scales it down
       // rmsN=0 → pBase (quiet floor), rmsN=1 → pMax (loud ceiling)
@@ -309,7 +346,7 @@ export function drawParticles() {
       alpha = (0.35 + 0.65 * depthScale) * (0.5 + 0.5 * facing);
     } else {
       // ── Original palette rendering (fallback) ──
-      color = buf[i + 4];
+      color = _colorBuf[idx[ii]];
       size  = pBase + (pMax - pBase) * depthScale;
       alpha = (0.3 + 0.7 * depthScale) * (0.5 + 0.5 * facing);
     }
@@ -323,22 +360,14 @@ export function drawParticles() {
 
   // ── Active grain highlight (second pass) ──────────────────────────────────
   // Draw a bright dot over every particle that currently has a grain playing.
-  // Glow uses the original small constants so it stays compact regardless
-  // of how large the user sets viz particle sizes.
-  // activeGrainMap: particle → { expiry, glowColor }
-  if (activeGrainMap.size > 0) {
-    for (const [p] of activeGrainMap) {
-      const [wx, wy, wz] = spherePoint(p.lon, p.lat);
-      const [cx, cy, cz] = cameraTransform(wx, wy, wz);
-      const proj = project(cx, cy, cz);
-      if (!proj) continue;
-      const mag    = Math.sqrt(cx*cx + cy*cy + cz*cz);
-      const facing = Math.max(0, cz / mag);
-      const df     = Math.max(0, 1 - (proj.depth / (SPHERE_RADIUS * 2)));
-      const size   = (PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df) * 1.6;
+  // Uses projections cached during the main loop to avoid redundant math.
+  if (_glowCache.size > 0) {
+    for (const [, { sx, sy, depth, facing }] of _glowCache) {
+      const df   = Math.max(0, 1 - (depth / (SPHERE_RADIUS * 2)));
+      const size = (PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df) * 1.6;
       S.ctx.globalAlpha = (0.6 + 0.4 * facing) * df;
       S.ctx.fillStyle   = '#ffffff';
-      S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, size, 0, Math.PI * 2); S.ctx.fill();
+      S.ctx.beginPath(); S.ctx.arc(sx, sy, size, 0, Math.PI * 2); S.ctx.fill();
     }
     S.ctx.globalAlpha = 1;
   }
@@ -368,7 +397,7 @@ export function drawCursor() {
 
   const painting = S.isPainting;
   const color    = S.isRecording
-    ? LIVE_PAINT_COLORS[S.liveColorIndex % LIVE_PAINT_COLORS.length]
+    ? '#e83030'
     : SAMPLE_PAINT_COLORS[S.activeSampleIndex >= 0 ? S.activeSampleIndex % SAMPLE_PAINT_COLORS.length : S.sampleColorIndex];
 
   if (S.nearestMode) {
@@ -435,6 +464,7 @@ export function resizeCanvas() {
 // ── Animation loop ────────────────────────────────────────────────────────────
 let _animLastAt = 0;
 export function animate() {
+  if (!_coordEl) _coordEl = document.getElementById('coordinates');
   const _animNow = performance.now();
   if (_animLastAt > 0) perf.frameMs = _animNow - _animLastAt;
   _animLastAt = _animNow;
@@ -554,7 +584,7 @@ export function animate() {
         if (s.grainCursor > cropEnd) s.grainCursor = cropStart + ((s.grainCursor - cropStart) % cropLen);
       }
 
-      if (particle) { S.particles.push(particle); S._particleVersion++; }
+      if (particle) { stampCartesian(particle); S.particles.push(particle); S._particleVersion++; }
     }
   }
 
@@ -571,9 +601,11 @@ export function animate() {
     const { lon, lat } = S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY) : getCursorLonLat();
     const lonDeg = (lon * 180 / Math.PI).toFixed(1).padStart(7);
     const latDeg = (lat * 180 / Math.PI).toFixed(1).padStart(6);
-    const coordEl = document.getElementById('coordinates');
-    if (coordEl) coordEl.textContent = `${lonDeg},${latDeg}`;
+    if (_coordEl) _coordEl.textContent = `${lonDeg},${latDeg}`;
   }
+
+  // Unified meter tick — runs inside the main RAF loop instead of its own
+  S._tickMainMeters?.();
 
   requestAnimationFrame(animate);
 }

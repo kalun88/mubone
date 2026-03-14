@@ -150,6 +150,7 @@ export function initSensorUI() {
            `yaw <span>${yaw.toFixed(1)}°</span>`;
   }
 
+  let _sensorRafId = null;
   function updateLive() {
     const el = document.getElementById('sensorLive');
     if (el) el.innerHTML = sensor.euler ? fmtEuler(sensor.euler) : 'waiting for data…';
@@ -157,9 +158,17 @@ export function initSensorUI() {
     const el2 = document.getElementById('sensor2Live');
     if (el2) el2.innerHTML = sensor2.euler ? fmtEuler(sensor2.euler) : 'no data';
 
-    requestAnimationFrame(updateLive);
+    _sensorRafId = requestAnimationFrame(updateLive);
   }
-  updateLive();
+  function startSensorRAF()  { if (!_sensorRafId) updateLive(); }
+  function stopSensorRAF()   { if (_sensorRafId) { cancelAnimationFrame(_sensorRafId); _sensorRafId = null; } }
+
+  // Start/stop RAF on modal open/close
+  if (modal.classList.contains('open')) startSensorRAF();
+  const _obs = new MutationObserver(() => {
+    if (modal.classList.contains('open')) startSensorRAF(); else stopSensorRAF();
+  });
+  _obs.observe(modal, { attributes: true, attributeFilter: ['class'] });
 
   // Save as default button
   wireSaveDefaultBtn('sensorSaveDefaultsBtn');

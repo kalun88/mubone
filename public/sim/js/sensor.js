@@ -3,7 +3,7 @@
 // Ported from standalone sensor.js to ES module, using S from state.js
 // ============================================================================
 
-import { S } from './state.js';
+import { S, DEBUG } from './state.js';
 
 // ── Raw sensor state ─────────────────────────────────────────────────────────
 export const sensor = {
@@ -40,7 +40,7 @@ export const wand = {
 
 export function initSensor() {
   // Transport registration moved to osc.js — nothing to set up here.
-  console.log('[sensor] ready — waiting for OSC via osc.js');
+  DEBUG && console.log('[sensor] ready — waiting for OSC via osc.js');
 }
 
 // Called by osc.js for /space/cursor (sensor 1 — instrument / cursor)
@@ -146,7 +146,7 @@ export function isWorldFrameEnabled() { return _worldFrameEnabled; }
 
 export function setWorldFrameEnabled(enabled) {
   _worldFrameEnabled = enabled;
-  console.log(`[sensor] world frame ${enabled ? 'enabled' : 'disabled'}`);
+  DEBUG && console.log(`[sensor] world frame ${enabled ? 'enabled' : 'disabled'}`);
 }
 
 // ── Semantic axis remap for euler angles ─────────────────────────────────────

@@ -4,7 +4,7 @@
 
 import {
   S,
-  MAX_SAMPLES, SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS,
+  MAX_SAMPLES, SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, DEBUG,
   gp,
 } from './state.js';
 import { ensureAudioContext, getMasterBus } from './audio.js';
@@ -34,7 +34,7 @@ export async function loadAudioFile(file) {
   if (svActiveTab < 0) svActiveTab = sampleIdx;
   rebuildSampleListUI();
   requestAnimationFrame(drawSvWaveform);
-  console.log(`Loaded sample ${S.samples.length}: ${file.name} (${audioBuffer.duration.toFixed(2)}s)`);
+  DEBUG && console.log(`Loaded sample ${S.samples.length}: ${file.name} (${audioBuffer.duration.toFixed(2)}s)`);
 }
 
 export function buildSvTabs() {
@@ -350,6 +350,7 @@ export function undoLastStroke() {
 // ============================================================================
 
 export function rebuildSampleListUI() {
+  teardownCropListeners();           // remove stale document-level crop handlers
   const list = document.getElementById('sampleList');
   if (list) list.innerHTML = '';
   S.waveformOverlays = [];
@@ -616,7 +617,20 @@ export function drawCropOverlay(slotIdx) {
   cctx.fillRect(xStart, h - 2, xEnd - xStart, 2);
 }
 
+// AbortController for document-level crop listeners — aborted on each rebuild
+// so old listeners don't accumulate.
+let _cropAbort = null;
+
+export function teardownCropListeners() {
+  if (_cropAbort) { _cropAbort.abort(); _cropAbort = null; }
+}
+
 export function setupCropInteraction(waveDiv, cropCanvas, slotIdx) {
+  // Lazily create a shared AbortController for this rebuild cycle.
+  // All crop slots share one controller; teardownCropListeners() kills them all.
+  if (!_cropAbort) _cropAbort = new AbortController();
+  const signal = _cropAbort.signal;
+
   let dragging = null;
   const HANDLE_HIT = 8;
 
@@ -660,7 +674,7 @@ export function setupCropInteraction(waveDiv, cropCanvas, slotIdx) {
     else                      s.cropEnd   = Math.min(1, Math.max(norm, s.cropStart + minSpan));
     drawCropOverlay(slotIdx);
     updateCropDuration(slotIdx);
-  });
+  }, { signal });
 
   document.addEventListener('mouseup', () => {
     if (!dragging) return;
@@ -669,7 +683,7 @@ export function setupCropInteraction(waveDiv, cropCanvas, slotIdx) {
     waveDiv.classList.remove('near-handle');
     const s = S.samples[slotIdx];
     if (s) s.grainCursor = s.cropStart * s.duration;
-  });
+  }, { signal });
 }
 
 export function updateCropDuration(slotIdx) {

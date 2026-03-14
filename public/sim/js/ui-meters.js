@@ -290,28 +290,31 @@ function updateGateLight() {
   }
 }
 
+let _meterTickCount = 0;
+
 export function startMainMetering() {
-  if (_mainMeterRAF) cancelAnimationFrame(_mainMeterRAF);
+  // No longer runs its own RAF loop — called from the main animate() loop
+  // via S._tickMainMeters(). Setup only.
+  if (_mainMeterRAF) { cancelAnimationFrame(_mainMeterRAF); _mainMeterRAF = null; }
   rebuildMainInputMeter();
-  // Expose rebuild callbacks on S so ui-audio-settings.js can trigger them
-  // without a circular import.
   S._rebuildMainInputMeters  = rebuildMainInputMeter;
   S._rebuildMainOutputMeters = rebuildMainOutputMeters;
-  function tick() {
-    // Input: use all-channel analysers when available, else the single selected one
-    const inAnalysers = S.inputAnalysers?.length ? S.inputAnalysers : (S.inputAnalyser ? [S.inputAnalyser] : null);
-    if (inAnalysers) tickMeters(inAnalysers, 'mainInputMeters');
-    if (S.speakerAnalysers?.length) {
-      const nHouse = S.speakerBuses?.length ?? S.speakerAnalysers.length;
-      tickMeters(S.speakerAnalysers.slice(0, nHouse), 'mainHouseMeters');
-      const mixAnalysers = S.speakerAnalysers.slice(nHouse);
-      if (mixAnalysers.length) tickMeters(mixAnalysers, 'mainMixdownMeters');
-    }
-    // Gate indicator — lights red when input is below noise floor
-    updateGateLight();
-    _mainMeterRAF = requestAnimationFrame(tick);
+  // Expose the tick function for the unified RAF dispatcher
+  S._tickMainMeters = tickMainMeters;
+}
+
+export function tickMainMeters() {
+  // Run at half rate (every other call ≈ 30fps when called from 60fps RAF)
+  if (++_meterTickCount & 1) return;
+  const inAnalysers = S.inputAnalysers?.length ? S.inputAnalysers : (S.inputAnalyser ? [S.inputAnalyser] : null);
+  if (inAnalysers) tickMeters(inAnalysers, 'mainInputMeters');
+  if (S.speakerAnalysers?.length) {
+    const nHouse = S.speakerBuses?.length ?? S.speakerAnalysers.length;
+    tickMeters(S.speakerAnalysers.slice(0, nHouse), 'mainHouseMeters');
+    const mixAnalysers = S.speakerAnalysers.slice(nHouse);
+    if (mixAnalysers.length) tickMeters(mixAnalysers, 'mainMixdownMeters');
   }
-  tick();
+  updateGateLight();
 }
 
 export function stopMainMetering() {

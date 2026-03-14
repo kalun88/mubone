@@ -2,7 +2,8 @@
 // AUDIO SYSTEM  (extracted from index.html)
 // ============================================================================
 
-import { S } from './state.js';
+import { S, DEBUG } from './state.js';
+import { buildVBAPLookup } from './grain.js';
 
 // Track whether the recording-capture worklet module has been registered.
 // Reset to false on AudioContext recreation (new context needs fresh addModule).
@@ -223,7 +224,7 @@ export async function recreateAudioContext(newSampleRate) {
 
   // Recreate immediately so the rest of the app can use it
   ensureAudioContext();
-  console.log(`AudioContext recreated at ${newSampleRate} Hz`);
+  DEBUG && console.log(`AudioContext recreated at ${newSampleRate} Hz`);
 }
 
 // ── Mic access ──────────────────────────────────────────────────────────────
@@ -490,7 +491,7 @@ export function stopLiveRecording() {
     }
   });
 
-  console.log(`Live rec buffer ${S.currentLiveBufferIdx}: ${audioBuffer.duration.toFixed(2)}s`);
+  DEBUG && console.log(`Live rec buffer ${S.currentLiveBufferIdx}: ${audioBuffer.duration.toFixed(2)}s`);
   S.recordingRaw         = null;
   S.recordingWritePos    = 0;
   S.liveBufferSampleCount = 0;
@@ -704,9 +705,19 @@ export async function initSpeakerBuses(numChannels = 2) {
 
   _merger.connect(_captureNode);
 
-  // Route captured buffers to Electron main process → audify → hardware
+  // Credit-based flow control: don't send if credits are exhausted
+  let _audioCredits = 8;
+  if (window.electronBridge.onAudioCredit) {
+    window.electronBridge.onAudioCredit((credits) => {
+      _audioCredits = Math.min(_audioCredits + credits, 8);
+    });
+  }
   _captureNode.port.onmessage = ({ data }) => {
-    window.electronBridge.sendAudioBuffer(data.interleaved);
+    if (_audioCredits > 0) {
+      _audioCredits--;
+      window.electronBridge.sendAudioBuffer(data.interleaved);
+    }
+    // else: drop this buffer — backpressure from main process
   };
 
   // ── Stereo headphone mix ──────────────────────────────────────────────────
@@ -763,6 +774,9 @@ export async function initSpeakerBuses(numChannels = 2) {
   S.speakerBuses.numChannels = n;
   S.monitorSpeakerBuses = hasMonitorCh ? monitorBuses : null;
 
+  // Pre-compute VBAP lookup table for O(1) speaker pair resolution in playGrain
+  buildVBAPLookup(buses);
+
   // Legacy alias — keeps any remaining S.quadBuses references from crashing
   S.quadBuses = null;
 
@@ -772,7 +786,7 @@ export async function initSpeakerBuses(numChannels = 2) {
 
   const houseDesc   = buses.map(b => b.angleDeg.toFixed(0) + '°').join(', ');
   const mixdownDesc = hasMonitorCh ? ` | stereo mixdown: ch ${hpPhysL}(L) ch ${hpPhysR}(R)` : '';
-  console.log(`Speaker buses ready — ${n} ch, house[${numHouseCh}]: [${houseDesc}]${mixdownDesc} → audify`);
+  DEBUG && console.log(`Speaker buses ready — ${n} ch, house[${numHouseCh}]: [${houseDesc}]${mixdownDesc} → audify`);
 }
 
 // ── Speaker sweep helper ──────────────────────────────────────────────────────
@@ -846,7 +860,7 @@ export function rewireChannelMerger() {
     const destCh = routing[i] ?? i;
     if (destCh >= 0 && destCh < n) bus.connect(_merger, 0, destCh);
   });
-  console.log('Channel routing updated:', routing);
+  DEBUG && console.log('Channel routing updated:', routing);
 }
 
 // Rewire the headphone (monitor) buses to new physical channels.
@@ -865,7 +879,7 @@ export function rewireMonitorChannels() {
   const hpPhysR = S.headphoneRouting?.[1] ?? nHouse + 1;
   if (hpPhysL >= 0 && hpPhysL < n) S.monitorSpeakerBuses[0].bus.connect(_merger, 0, hpPhysL);
   if (hpPhysR >= 0 && hpPhysR < n) S.monitorSpeakerBuses[1].bus.connect(_merger, 0, hpPhysR);
-  console.log(`Stereo mixdown routing updated: L→ch${hpPhysL} R→ch${hpPhysR}`);
+  DEBUG && console.log(`Stereo mixdown routing updated: L→ch${hpPhysL} R→ch${hpPhysR}`);
 }
 
 // Convenience: called from main.js on startup (stereo placeholder until device is chosen)

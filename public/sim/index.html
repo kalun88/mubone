@@ -293,6 +293,17 @@
         <div class="device-label">clouds</div>
         <div class="device-body improv-body">
 
+          <!-- Cloud drop / pickup / clear -->
+          <div class="cloud-actions-row">
+            <canvas id="cloudSlotsCanvas" class="cloud-slots-canvas" width="50" height="60"></canvas>
+            <div class="cloud-actions-btns">
+              <button id="cloudDropBtn" class="cloud-action-btn cloud-action-drop" title="drop cloud at cursor position (↓)">drop</button>
+              <button id="cloudPickupBtn" class="cloud-action-btn cloud-action-pickup" title="pick up nearest cloud (↑)">pickup</button>
+              <button id="cloudClearBtn" class="cloud-action-btn cloud-action-clear" title="remove all clouds">clear all</button>
+            </div>
+            <span id="cloudsPlantedCount" class="cloud-planted-count">0</span>
+          </div>
+
           <!-- Cloud mode -->
           <div class="grain-row" title="cloud mode&#10;collage: all clouds play equally weighted&#10;nearest: distance-weighted blend toward closest cloud(s)">
             <span class="grain-label">cloud</span>
@@ -318,23 +329,7 @@
             <input type="text" class="grain-numbox" id="improvSnapNum" value="0%" readonly>
           </div>
 
-          <!-- Morph enable -->
-          <div class="grain-row" title="morph — wand gyro drives cloud agitation/smoothing&#10;Requires wand sensor with inertial data">
-            <span class="grain-label">morph</span>
-            <div class="grain-seg" id="improvMorphSeg">
-              <button class="grain-seg-btn active" data-morph="on">on</button>
-              <button class="grain-seg-btn" data-morph="off">off</button>
-            </div>
-          </div>
 
-          <!-- Hold mode -->
-          <div class="grain-row" title="hold mode — what morph does when wand is still&#10;momentum: stays at agitation level (inertial)&#10;elastic: slowly springs back to neutral">
-            <span class="grain-label">hold</span>
-            <div class="grain-seg" id="improvHoldSeg">
-              <button class="grain-seg-btn active" data-hold="momentum">momentum</button>
-              <button class="grain-seg-btn" data-hold="elastic">elastic</button>
-            </div>
-          </div>
 
         </div>
       </div>
@@ -899,6 +894,25 @@
         <span class="wand-deg">°</span>
         <input type="number" class="wand-num" id="xy2dYMax" value="45" step="5">
         <span class="wand-deg">°</span>
+      </div>
+    </div>
+
+    <!-- ── Cloud morph (moved from clouds panel) ────────────────────────── -->
+    <div class="wand-section">
+      <div class="wand-section-label">cloud morph</div>
+      <div class="grain-row" title="morph — wand gyro drives cloud agitation/smoothing">
+        <span class="grain-label">morph</span>
+        <div class="grain-seg" id="improvMorphSeg">
+          <button class="grain-seg-btn active" data-morph="on">on</button>
+          <button class="grain-seg-btn" data-morph="off">off</button>
+        </div>
+      </div>
+      <div class="grain-row" title="hold mode — what morph does when wand is still&#10;momentum: stays at agitation level (inertial)&#10;elastic: slowly springs back to neutral">
+        <span class="grain-label">hold</span>
+        <div class="grain-seg" id="improvHoldSeg">
+          <button class="grain-seg-btn active" data-hold="momentum">momentum</button>
+          <button class="grain-seg-btn" data-hold="elastic">elastic</button>
+        </div>
       </div>
     </div>
 

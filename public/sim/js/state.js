@@ -3,6 +3,10 @@
 // Extracted from index.html monolith.
 // ============================================================================
 
+// ── Debug ────────────────────────────────────────────────────────────────────
+// Set to true (or add ?debug to the URL) to enable verbose console logging.
+export const DEBUG = new URLSearchParams(window.location.search).has('debug');
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const SPHERE_RADIUS       = 1200;
@@ -652,8 +656,6 @@ export const S = {
   mousePixelY: 0,
   mouseInCanvas: false,
   altLocked:          false,  // true while Alt held -- sphere position frozen
-  altFrozenMouseX:      0,    // mouse coords snapshotted at Alt press
-  altFrozenMouseY:      0,
   altFrozenMousePixelX: 0,
   altFrozenMousePixelY: 0,
 
@@ -762,8 +764,9 @@ export const S = {
   inputAnalyser:  null,   // AnalyserNode tapped after inputGain, before compressor
   inputGainValue: 1.0,    // 0.0 - 2.0, default unity
 
-  // Grain tracking for waveform playhead
+  // Grain tracking for waveform playhead (ring buffer)
   activeGrains: [],
+  _agWriteIdx: 0,    // ring-buffer write cursor for activeGrains
 
   // ── Performance monitor ────────────────────────────────────────────────
   perfMonitorVisible: false,
@@ -825,11 +828,6 @@ export const S = {
   cloudSnapFade: 0.0,         // 0.0 = hard snap (nearest only), 1.0 = full crossfade (distance blend)
   cloudNearestAlways: true,   // true = always plays closest cloud(s) even if far away
                               // false = gated by cursor radius — clouds outside radius fade to silence
-
-  // Per-cloud GainNodes for nearest-cloud mode distance weighting.
-  // Created lazily by grain.js when cloudMode === 'nearest'.
-  // cloudGainNodes[slotIndex] = GainNode | null
-  cloudGainNodes: null,
 
   // ── Monitor / House bus split (Phase 1 — Improv Mode) ─────────────────
   // monitorBus:  cursor grains route here (private monitoring, always on)

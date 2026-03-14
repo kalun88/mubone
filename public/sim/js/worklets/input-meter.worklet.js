@@ -13,15 +13,30 @@ class InputMeterProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this._numChannels = 2;
-    this._pending     = [];   // queue of Float32Array chunks to drain
+
+    // Ring buffer for pending interleaved PCM data
+    this._ringSize = 8192;  // 8K interleaved frames capacity
+    this._ring     = new Float32Array(this._ringSize);
+    this._readPos  = 0;     // read position in ring (in interleaved frames)
+    this._writePos = 0;     // write position in ring (in interleaved frames)
 
     this.port.onmessage = ({ data }) => {
       if (!data) return;
       if (data.type === 'init') {
         this._numChannels = Math.max(1, data.numChannels | 0);
-        this._pending     = [];
+        this._readPos     = 0;
+        this._writePos    = 0;
       } else if (data.type === 'pcm' && data.interleaved) {
-        this._pending.push(data.interleaved);
+        // Copy incoming data into ring
+        const incoming = data.interleaved;
+        const inLen = incoming.length;
+
+        // Simple copy: append incoming data to ring
+        // Wrap around if needed (simple circular buffer)
+        for (let i = 0; i < inLen; i++) {
+          this._ring[this._writePos % this._ringSize] = incoming[i];
+          this._writePos++;
+        }
       }
     };
   }
@@ -33,24 +48,21 @@ class InputMeterProcessor extends AudioWorkletProcessor {
     // How many interleaved frames we need per block
     const needed = blockSize * n;
 
-    if (this._pending.length === 0) return true;
+    // How many frames available in ring?
+    const available = (this._writePos - this._readPos + this._ringSize) % this._ringSize;
+    if (available < needed) return true;
 
-    // Merge pending chunks into one flat array, then drain blockSize frames
-    const chunk = this._pending.shift();
-    if (!chunk || chunk.length < needed) return true;
-
-    // De-interleave: write each channel into its output
+    // De-interleave: read needed frames from ring, write each channel to output
     for (let ch = 0; ch < n && ch < outputs[0].length; ch++) {
       const out = outputs[0][ch];
       for (let i = 0; i < blockSize; i++) {
-        out[i] = chunk[i * n + ch] ?? 0;
+        const ringIdx = (this._readPos + i * n + ch) % this._ringSize;
+        out[i] = this._ring[ringIdx] ?? 0;
       }
     }
 
-    // If the chunk had more frames than one block, put the remainder back
-    if (chunk.length > needed) {
-      this._pending.unshift(chunk.subarray(needed));
-    }
+    // Advance read position by the frames we consumed
+    this._readPos = (this._readPos + needed) % this._ringSize;
 
     return true;
   }

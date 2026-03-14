@@ -2,7 +2,7 @@
 // MAIN — entry point: wire up all modules and start the app
 // ============================================================================
 
-import { S, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
+import { S, DEBUG, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
 import { scheduleGrains } from './grain.js';
 import { setupEvents, setupDragDrop } from './events.js';
 import { rebuildSampleListUI, buildSvTabs, drawSvWaveform, setupSvCropInteraction } from './ui-samples.js';
@@ -115,7 +115,7 @@ function init() {
       S.spatialMode = mode;
       updateSpatialModeBtn();
       if (S.canvas) S.canvas.style.cursor = mode === 'physical' ? 'none' : '';
-      console.log(`[spatial] mode: ${S.spatialMode}`);
+      DEBUG && console.log(`[spatial] mode: ${S.spatialMode}`);
     }
     spatialModeBtn.addEventListener('click', () => {
       applySpatialMode(S.spatialMode === 'sim' ? 'physical' : 'sim');
@@ -159,7 +159,7 @@ function init() {
           await initSpeakerBuses(nCh);
           const result = await window.electronBridge.setAudioDevice(best.id, nCh);
           const tag = saved ? 'saved' : 'system default';
-          console.log(`Output: "${best.name}" (${tag}) — ${nCh} ch — streaming: ${result.streaming}`);
+          DEBUG && console.log(`Output: "${best.name}" (${tag}) — ${nCh} ch — streaming: ${result.streaming}`);
         } else {
           console.warn('No output devices found. Open Audio Settings to select one.');
         }
@@ -172,7 +172,7 @@ function init() {
             const bufFrames = S.preferredBufferSize ?? 512;
             const result = await window.electronBridge.setInputDevice(inDev.id, inDev.inputChannels, bufFrames);
             if (result.ok) {
-              console.log(`Input: "${inDev.name}" (saved) — ${result.nCh} ch`);
+              DEBUG && console.log(`Input: "${inDev.name}" (saved) — ${result.nCh} ch`);
               // Wire up the worklet, analysers, and recording chain so the
               // input is fully active — not just open at the hardware level.
               await activateSavedInputDevice(result.nCh);

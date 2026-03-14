@@ -14,13 +14,21 @@ class QuadCaptureProcessor extends AudioWorkletProcessor {
     this._batchSize   = 4;   // accumulate N × 128-sample blocks before posting
                              // default 4 → 512 frames, matching default audify buffer.
                              // Overridden by 'init' batchSize to match audify bufferFrames.
-    this._batch       = [];
+    this._blockSize   = 128;
+
+    // Pre-allocated interleaved ring buffer
+    // Stored as: sample[0,ch0], sample[0,ch1], ..., sample[1,ch0], sample[1,ch1], ...
+    this._interleaved = new Float32Array(this._batchSize * this._blockSize * this._numChannels);
+    this._writePos    = 0;   // number of blocks written to ring
 
     this.port.onmessage = ({ data }) => {
       if (data?.type === 'init') {
         if (data.numChannels > 0) this._numChannels = data.numChannels;
         if (data.batchSize   > 0) this._batchSize   = data.batchSize;
-        this._batch = [];   // flush any partial batch from previous config
+
+        // Re-allocate ring if dimensions changed
+        this._interleaved = new Float32Array(this._batchSize * this._blockSize * this._numChannels);
+        this._writePos    = 0;
       }
     };
   }
@@ -31,31 +39,28 @@ class QuadCaptureProcessor extends AudioWorkletProcessor {
 
     const n = this._numChannels;
 
-    // Snapshot each channel for this 128-sample block
-    const block = [];
-    for (let ch = 0; ch < n; ch++) {
-      block.push(new Float32Array(input[ch] || new Float32Array(128)));
-    }
-    this._batch.push(block);
-
-    if (this._batch.length >= this._batchSize) {
-      const blockSize   = 128;
-      const totalFrames = this._batchSize * blockSize;
-      const interleaved = new Float32Array(totalFrames * n);
-
-      for (let b = 0; b < this._batchSize; b++) {
-        const blk = this._batch[b];
-        for (let i = 0; i < blockSize; i++) {
-          const base = (b * blockSize + i) * n;
-          for (let ch = 0; ch < n; ch++) {
-            interleaved[base + ch] = blk[ch][i];
-          }
-        }
+    // Write directly into interleaved ring — zero allocation
+    // For each sample i in this 128-sample block, write all channels in interleaved order
+    const baseOffset = this._writePos * this._blockSize * n;
+    for (let i = 0; i < this._blockSize; i++) {
+      for (let ch = 0; ch < n; ch++) {
+        this._interleaved[baseOffset + i * n + ch] = input[ch][i] || 0;
       }
+    }
 
-      // Transfer the buffer (zero-copy) to the main thread
+    this._writePos++;
+
+    if (this._writePos >= this._batchSize) {
+      const totalFrames = this._batchSize * this._blockSize;
+      const totalSamples = totalFrames * n;
+
+      // Transfer only the filled portion of the ring
+      const interleaved = this._interleaved.subarray(0, totalSamples);
       this.port.postMessage({ interleaved }, [interleaved.buffer]);
-      this._batch = [];
+
+      // Allocate a fresh ring for next batch
+      this._interleaved = new Float32Array(this._batchSize * this._blockSize * this._numChannels);
+      this._writePos    = 0;
     }
 
     return true; // keep processor alive

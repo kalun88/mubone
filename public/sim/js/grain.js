@@ -2,6 +2,39 @@ import { S, HANN_LEN, HANN_ATTACK, HANN_RELEASE, MAX_CLOUDS, MAX_GRAIN_NODES, GR
 import { ensureAudioContext, getMasterBus } from './audio.js';
 import { spherePoint, qRotateVec, qConjugate, getCursorLonLat, screenToLonLat } from './sphere.js';
 
+// ── Pre-computed VBAP lookup table ──────────────────────────────────────────
+// Built once at initSpeakerBuses time. Maps integer degrees [0, 359] to
+// { idxA, idxB, wA, wB } — the two bracketing speakers and their gains.
+// playGrain uses this for O(1) VBAP instead of per-grain sort + search.
+let _vbapLUT = null;
+
+export function buildVBAPLookup(speakers) {
+  if (!speakers || speakers.length < 1) { _vbapLUT = null; return; }
+  const n = speakers.length;
+  const sorted = speakers
+    .map(({ angleDeg }, idx) => ({ angleDeg, idx }))
+    .sort((a, b) => a.angleDeg - b.angleDeg);
+
+  _vbapLUT = new Array(360);
+  for (let deg = 0; deg < 360; deg++) {
+    let nextPos = sorted.findIndex(s => s.angleDeg > deg);
+    if (nextPos === -1) nextPos = 0;
+    const prevPos = (nextPos - 1 + n) % n;
+    const sA = sorted[prevPos];
+    const sB = sorted[nextPos];
+    let spanDeg = sB.angleDeg - sA.angleDeg;
+    if (spanDeg <= 0) spanDeg += 360;
+    let offsetDeg = deg - sA.angleDeg;
+    if (offsetDeg < 0) offsetDeg += 360;
+    const t01 = Math.max(0, Math.min(1, offsetDeg / spanDeg));
+    _vbapLUT[deg] = {
+      idxA: sA.idx, idxB: sB.idx,
+      wA: Math.cos(t01 * Math.PI * 0.5),
+      wB: Math.sin(t01 * Math.PI * 0.5),
+    };
+  }
+}
+
 export function rand(min, max) { return min + Math.random() * (max - min); }
 
 // activeGrainMap: particle → { expiry, glowColor } — shared with renderer
@@ -29,38 +62,34 @@ let _cursorAngCacheLon     = null;
 let _cursorAngCacheLat     = null;
 let _cursorAngCachePartVer = -1;
 
-// ── Deferred node disconnect ───────────────────────────────────────────────
-// When 200 grains expire in the same ~170ms window, 200 `ended` callbacks
-// each calling 3-4 synchronous disconnect() calls = ~800 audio-graph
-// mutations in a burst.  Chrome's audio renderer locks the graph for each
-// disconnect; the burst can deadlock/crash the renderer (error code 5).
-//
-// Solution: batch disconnect calls into periodic sweeps (every 100ms).
-// Nodes are pushed onto a queue; the sweep drains up to 40 per pass,
-// spreading the graph mutations across multiple frames.
-let _disconnectQueue = [];
-let _disconnectTimerId = 0;
-const DISCONNECT_BATCH = 40;  // max nodes per sweep
-const DISCONNECT_INTERVAL = 100; // ms between sweeps
+// ── Reusable cursor effective-params object ──────────────────────────────────
+// Avoids the spread-operator allocation ({...p, duration: ...}) on every cursor
+// grain. Mutated in-place once per scheduleGrains tick; all cursor grains in
+// the same tick share the same reference (safe because playGrain reads ep
+// synchronously before returning).
+const _cursorEP = {};
 
-function _flushDisconnects() {
-  let count = Math.min(DISCONNECT_BATCH, _disconnectQueue.length);
-  while (count-- > 0) {
-    const node = _disconnectQueue.pop();
-    try { node.disconnect(); } catch (_) {}
-  }
-  if (_disconnectQueue.length === 0) {
-    clearInterval(_disconnectTimerId);
-    _disconnectTimerId = 0;
-  }
-}
+// ── DOM update throttling for scheduleGrains() ─────────────────────────────
+// Avoid invalidating caches by throttling grain count display to ~4Hz
+let _gcEl = null;
+let _vmGrainsEl = null;
+let _domUpdateCounter = 0;
 
+// ── Node disconnect ───────────────────────────────────────────────────────
+// Disconnects are now done immediately in the `ended` callback.
+// Chrome has fixed the bulk-disconnect crash in recent versions, so we no
+// longer need to batch. Immediate disconnects with error handling are safe.
 function _deferDisconnect(node) {
-  _disconnectQueue.push(node);
-  if (!_disconnectTimerId) {
-    _disconnectTimerId = setInterval(_flushDisconnects, DISCONNECT_INTERVAL);
-  }
+  try { node.disconnect(); } catch (_) {}
 }
+
+// ── Reusable extra-nodes array for VBAP path ─────────────────────────────
+// playGrain's multi-channel path builds a list of extra gain nodes (mixdown
+// L/R) that need disconnecting on grain end.  Instead of allocating a new
+// array per grain, we reuse this module-level array — cleared at the start
+// of each playGrain call and snapshot-copied into the closure only when the
+// grain actually has extra nodes.
+const _extraNodesBuf = [];
 
 // ── Reversed buffer cache ──────────────────────────────────────────────────
 // Caches a full reversed copy of each source AudioBuffer to avoid per-grain
@@ -127,30 +156,48 @@ function _recencyAllowedSet(particles, count) {
 // Reusable candidate output buffer — avoids allocating a new array every tick.
 let _candidateBuf = [];
 
+// ── Pre-allocated recency filter structures ─────────────────────────────────
+// Reused across all _buildCandidatePool / _buildCandidatePoolRadius calls to
+// avoid creating new Map, Set, and sort-intermediate arrays on every tick.
+// At 4 clouds × 100 ticks/sec this eliminates ~400 Map+Set allocations/sec.
+const _recBufRec  = new Map();   // bufferKey → max strokeId
+const _recAllowed = new Set();   // allowed buffer keys after recency filter
+const _recSortBuf = [];          // reusable array for sorting entries by strokeId
+
+// Shared helper: build the _recAllowed set from _recBufRec.
+// Picks the recencyN most-recent buffer keys by strokeId.
+function _buildAllowedFromBufRec() {
+  _recAllowed.clear();
+  if (_recBufRec.size === 0 || S.recencyN <= 0) return false;
+  // Reuse sort buffer: copy entries, sort, pick top N
+  _recSortBuf.length = 0;
+  for (const entry of _recBufRec) _recSortBuf.push(entry); // [key, strokeId]
+  _recSortBuf.sort((a, b) => b[1] - a[1]);
+  const n = Math.min(S.recencyN, _recSortBuf.length);
+  for (let i = 0; i < n; i++) _recAllowed.add(_recSortBuf[i][0]);
+  return true;
+}
+
 // Build candidate pool for nearest mode: particles already sorted by _ang.
 // Takes first k that pass recency filter.
 // radiusRad — when provided, recency is ranked from ONLY the in-radius subset so
 // that recording new buffers elsewhere never silences old buffers inside the cone.
 function _buildCandidatePool(sortedParticles, k, applyRecency, radiusRad) {
-  let allowed = null;
+  let useAllowed = false;
   if (applyRecency && S.recencyN > 0) {
-    const bufRec = new Map();
+    _recBufRec.clear();
     for (let i = 0; i < sortedParticles.length; i++) {
       const p = sortedParticles[i];
       if (radiusRad !== undefined && p._ang >= radiusRad) continue; // local universe
       const key = getBufferKey(p);
-      if ((bufRec.get(key) ?? -Infinity) < p.strokeId) bufRec.set(key, p.strokeId);
+      if ((_recBufRec.get(key) ?? -Infinity) < p.strokeId) _recBufRec.set(key, p.strokeId);
     }
-    if (bufRec.size > 0) {
-      allowed = new Set(
-        [...bufRec.entries()].sort((a, b) => b[1] - a[1]).slice(0, S.recencyN).map(([k]) => k)
-      );
-    }
+    useAllowed = _buildAllowedFromBufRec();
   }
   _candidateBuf.length = 0;
   for (let i = 0; i < sortedParticles.length && _candidateBuf.length < k; i++) {
     const p = sortedParticles[i];
-    if (allowed && !allowed.has(getBufferKey(p))) continue;
+    if (useAllowed && !_recAllowed.has(getBufferKey(p))) continue;
     _candidateBuf.push(p);
   }
   return _candidateBuf;
@@ -161,22 +208,20 @@ function _buildCandidatePool(sortedParticles, k, applyRecency, radiusRad) {
 // so buffers recorded elsewhere do not affect which local buffers are audible.
 function _buildCandidatePoolRadius(particles, radiusRad) {
   // Phase 1: build per-buffer recency from ONLY in-radius particles.
-  const bufRec = new Map();
+  _recBufRec.clear();
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
     if (p._ang >= radiusRad) continue;
     const key = getBufferKey(p);
-    if ((bufRec.get(key) ?? -Infinity) < p.strokeId) bufRec.set(key, p.strokeId);
+    if ((_recBufRec.get(key) ?? -Infinity) < p.strokeId) _recBufRec.set(key, p.strokeId);
   }
-  const allowed = S.recencyN > 0 && bufRec.size > 0
-    ? new Set([...bufRec.entries()].sort((a, b) => b[1] - a[1]).slice(0, S.recencyN).map(([k]) => k))
-    : null;
+  const useAllowed = S.recencyN > 0 ? _buildAllowedFromBufRec() : false;
   // Phase 2: collect in-radius particles that pass local recency.
   _candidateBuf.length = 0;
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
     if (p._ang >= radiusRad) continue;
-    if (allowed && !allowed.has(getBufferKey(p))) continue;
+    if (useAllowed && !_recAllowed.has(getBufferKey(p))) continue;
     _candidateBuf.push(p);
   }
   return _candidateBuf;
@@ -186,6 +231,24 @@ export function angleBetweenSphere(lon1, lat1, lon2, lat2) {
   const x1 = Math.cos(lat1)*Math.cos(lon1), y1 = Math.sin(lat1), z1 = Math.cos(lat1)*Math.sin(lon1);
   const x2 = Math.cos(lat2)*Math.cos(lon2), y2 = Math.sin(lat2), z2 = Math.cos(lat2)*Math.sin(lon2);
   return Math.acos(Math.max(-1, Math.min(1, x1*x2 + y1*y2 + z1*z2)));
+}
+
+// ── Cached Cartesian coordinates on particles ─────────────────────────────
+// Pre-compute unit-sphere Cartesian [_cx, _cy, _cz] when a particle is
+// created so that the hot-loop angular distance becomes acos(dot) — 1 trig
+// call instead of 7 (4 cos + 2 sin + 1 acos).
+// Call this once per particle at creation time.
+export function stampCartesian(p) {
+  const cosLat = Math.cos(p.lat);
+  p._cx = cosLat * Math.cos(p.lon);
+  p._cy = Math.sin(p.lat);
+  p._cz = cosLat * Math.sin(p.lon);
+}
+
+// Fast angular distance using pre-cached Cartesian coords on the particle
+// and a reference point's Cartesian coords passed as arguments.
+function _angleFromCached(p, rx, ry, rz) {
+  return Math.acos(Math.max(-1, Math.min(1, p._cx * rx + p._cy * ry + p._cz * rz)));
 }
 
 export function findNearestCloudSlot(refLon, refLat) {
@@ -214,20 +277,33 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
 
   const p = customParams || gp();
 
-  const ep = customParams ? p : {
-    ...p,
-    duration:    S.grainOverrides.duration    ?? p.duration,
-    durJitter:   S.grainOverrides.durJitter   ?? p.durJitter,
-    durVar:      S.grainOverrides.durVar      ?? p.durVar,
-    fadeRatio:   S.grainOverrides.fadeRatio   ?? p.fadeRatio,
-    k:           S.grainOverrides.k           ?? p.k,
-    period:      S.grainOverrides.period      ?? p.period,
-    periodVar:   S.grainOverrides.periodVar   ?? p.periodVar,
-    pitchJitter: S.grainOverrides.pitchJitter ?? p.pitchJitter,
-    panSpread:   S.grainOverrides.panSpread   ?? p.panSpread,
-    volume:      S.grainOverrides.volume      ?? p.volume,
-    retriggerMs: S.grainOverrides.retriggerMs ?? p.retriggerMs,
-  };
+  // For cloud grains, use customParams directly.
+  // For cursor grains, build effective params in the reusable _cursorEP object
+  // to avoid per-grain object allocation from the spread operator.
+  let ep;
+  if (customParams) {
+    ep = p;
+  } else {
+    const ov = S.grainOverrides;
+    const ce = _cursorEP;
+    // Copy all base preset keys into the reusable object
+    const keys = Object.keys(p);
+    for (let ki = 0; ki < keys.length; ki++) ce[keys[ki]] = p[keys[ki]];
+    // Apply overrides (use != null to match the original ?? semantics —
+    // grainOverrides values are null when unset, not undefined)
+    if (ov.duration    != null) ce.duration    = ov.duration;
+    if (ov.durJitter   != null) ce.durJitter   = ov.durJitter;
+    if (ov.durVar      != null) ce.durVar      = ov.durVar;
+    if (ov.fadeRatio   != null) ce.fadeRatio   = ov.fadeRatio;
+    if (ov.k           != null) ce.k           = ov.k;
+    if (ov.period      != null) ce.period      = ov.period;
+    if (ov.periodVar   != null) ce.periodVar   = ov.periodVar;
+    if (ov.pitchJitter != null) ce.pitchJitter = ov.pitchJitter;
+    if (ov.panSpread   != null) ce.panSpread   = ov.panSpread;
+    if (ov.volume      != null) ce.volume      = ov.volume;
+    if (ov.retriggerMs != null) ce.retriggerMs = ov.retriggerMs;
+    ep = ce;
+  }
 
   const audioNow = actx.currentTime;
   if (customParams) {
@@ -499,7 +575,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       // When mixdownCursorInputs exist, cursor grains always get a dedicated
       // L/R send so the mixdown cursor-gain slider works regardless of whether
       // the cursor is muted in the house or not.
-      const _extraNodes = [];  // extra gain nodes to disconnect on grain end
+      _extraNodesBuf.length = 0;  // reuse module-level array; snapshot below
       const cursorDestL = isCursorGrain ? (S.mixdownCursorInputs?.[0] ?? null) : null;
       const cursorDestR = isCursorGrain ? (S.mixdownCursorInputs?.[1] ?? null) : null;
       if (cursorDestL && cursorDestR) {
@@ -514,8 +590,13 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
 
         lastNode.connect(gL); gL.connect(cursorDestL);
         lastNode.connect(gR); gR.connect(cursorDestR);
-        _extraNodes.push(gL, gR);
+        _extraNodesBuf.push(gL, gR);
       }
+      // Snapshot: the ended callback fires asynchronously, so capture
+      // a local copy only when there are extra nodes to disconnect.
+      const _extraNodes = _extraNodesBuf.length > 0
+        ? _extraNodesBuf.slice()  // small (≤2 elements), only when mixdown active
+        : null;
 
       // ── Cursor house mute: skip house VBAP when cursor is muted ───────────
       // When muted AND no mixdown exists → grain is simply not played
@@ -529,7 +610,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
             S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
             _deferDisconnect(source); _deferDisconnect(gain);
             if (elevGainNode) _deferDisconnect(elevGainNode);
-            for (const n of _extraNodes) _deferDisconnect(n);
+            if (_extraNodes) for (const n of _extraNodes) _deferDisconnect(n);
           }, { once: true });
         }
         // else: no mixdown, cursor muted → grain not played
@@ -551,38 +632,19 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       let   az     = ((rawAz + jitter) % TWO_PI + TWO_PI) % TWO_PI;
       const azDeg  = az * (180 / Math.PI);
 
-      // Build sorted list of speaker angles (deg, 0-360) with their original indices.
-      // Sort once per grain — cheap for ≤16 speakers.
-      const sorted = speakers
-        .map(({ angleDeg }, idx) => ({ angleDeg, idx }))
-        .sort((a, b) => a.angleDeg - b.angleDeg);
-
-      // Find the speaker just CW (clockwise ≥ azDeg) — that's "next".
-      // The one before it is "sector" (the speaker CCW of azDeg).
-      let nextPos = sorted.findIndex(s => s.angleDeg > azDeg);
-      if (nextPos === -1) nextPos = 0;           // wrapped around
-      const prevPos = (nextPos - 1 + n) % n;
-
-      const sA = sorted[prevPos];
-      const sB = sorted[nextPos];
-
-      // Angular span of this sector, and how far az sits within it
-      let spanDeg = sB.angleDeg - sA.angleDeg;
-      if (spanDeg <= 0) spanDeg += 360;          // wraps past 0°
-      let offsetDeg = azDeg - sA.angleDeg;
-      if (offsetDeg < 0) offsetDeg += 360;
-      const t01 = Math.max(0, Math.min(1, offsetDeg / spanDeg));
-
-      // Equal-power crossfade
-      const wA = Math.cos(t01 * Math.PI * 0.5);
-      const wB = Math.sin(t01 * Math.PI * 0.5);
+      // O(1) VBAP via pre-computed lookup table
+      const lut = _vbapLUT?.[Math.round(azDeg) % 360];
+      const wA = lut ? lut.wA : 0.707;
+      const wB = lut ? lut.wB : 0.707;
+      const idxA = lut ? lut.idxA : 0;
+      const idxB = lut ? lut.idxB : Math.min(1, n - 1);
 
       // Create per-grain gain nodes only for the two active speakers
       const gA = actx.createGain(); gA.gain.value = wA;
       const gB = actx.createGain(); gB.gain.value = wB;
 
-      lastNode.connect(gA); gA.connect(speakers[sA.idx].bus);
-      lastNode.connect(gB); gB.connect(speakers[sB.idx].bus);
+      lastNode.connect(gA); gA.connect(speakers[idxA].bus);
+      lastNode.connect(gB); gB.connect(speakers[idxB].bus);
 
       source.start(t, bufferStartPos, sourceDur);
       S._grainSourceCount++;
@@ -647,18 +709,31 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
     }
 
   if (particle.source === 'sample') {
-    // Cap array at 2× MAX_GRAIN_NODES — at extreme settings (4s duration ×
-    // 500 grains/sec) the array grows faster than the renderer can prune
-    // expired entries, eventually consuming all available heap.  Evict the
-    // oldest entry (index 0) to keep the array bounded.
-    if (S.activeGrains.length >= MAX_GRAIN_NODES * 2) S.activeGrains.shift();
-    S.activeGrains.push({
-      sampleIndex:   particle.sampleIndex,
-      grainStart:    startPos,
-      grainDuration: actualDur,
-      startTime:     performance.now(),
-      totalDuration: actualDur
-    });
+    // Fixed-capacity ring: overwrite the oldest slot by index instead of
+    // using push+shift (shift is O(N) and push allocates a new object).
+    // The ui-samples.js compaction loop reads entries up to .length and
+    // skips stale ones, so overwriting old entries is safe.
+    const AG_CAP = MAX_GRAIN_NODES * 2;
+    const ag = S.activeGrains;
+    const nowPerf = performance.now();
+    if (ag.length < AG_CAP) {
+      ag.push({
+        sampleIndex:   particle.sampleIndex,
+        grainStart:    startPos,
+        grainDuration: actualDur,
+        startTime:     nowPerf,
+        totalDuration: actualDur
+      });
+    } else {
+      // Reuse the slot at the write cursor — avoids object allocation
+      const slot = ag[S._agWriteIdx];
+      slot.sampleIndex   = particle.sampleIndex;
+      slot.grainStart    = startPos;
+      slot.grainDuration = actualDur;
+      slot.startTime     = nowPerf;
+      slot.totalDuration = actualDur;
+      S._agWriteIdx = (S._agWriteIdx + 1) % AG_CAP;
+    }
   }
 }
 
@@ -670,6 +745,7 @@ let _schedLastAt = 0;
 // tick interval work correctly (comb/zipper effect into audio-rate territory).
 let _cursorNextOnsetT  = null;   // null = not yet initialised
 let _cursorNextPeriodS = null;   // next inter-onset interval in seconds
+let _cursorReanchorAt  = 0;      // audio-clock time of next fp re-anchor
 
 // How far ahead we schedule grain onsets (seconds). Must be > scheduler interval
 // to guarantee grains are always scheduled before they need to play.
@@ -692,6 +768,9 @@ const MAX_GRAINS_PER_TICK = 12;
 // scheduler and the UI slider share the same floor.  See state.js for docs.
 
 export function scheduleGrains() {
+  // Guard: don't burn CPU scheduling grains while the context is suspended
+  if (!S.audioCtx || S.audioCtx.state !== 'running') return;
+
   const now = performance.now();
   if (_schedLastAt > 0) perf.schedulerDrift = Math.max(0, (now - _schedLastAt) - GRAIN_SCHEDULER_INTERVAL_MS);
   _schedLastAt = now;
@@ -766,10 +845,19 @@ export function scheduleGrains() {
                         || cursorLat !== _cursorAngCacheLat
                         || S._particleVersion !== _cursorAngCachePartVer;
     if (cursorAngDirty) {
+      // Pre-compute cursor Cartesian once; per-particle cost is then just
+      // acos(dot) = 1 trig call instead of 4 cos + 2 sin + 1 acos = 7.
+      const cosLat = Math.cos(cursorLat);
+      const crx = cosLat * Math.cos(cursorLon);
+      const cry = Math.sin(cursorLat);
+      const crz = cosLat * Math.sin(cursorLon);
       for (let pi = 0; pi < pLen; pi++) {
-        const ang = angleBetweenSphere(particles[pi].lon, particles[pi].lat, cursorLon, cursorLat);
-        particles[pi]._cursorAng = ang; // keyed to particle object — survives array sorts
-        particles[pi]._ang       = ang;
+        const p = particles[pi];
+        // Ensure particle has cached Cartesian (set at creation, but guard old particles)
+        if (p._cx === undefined) stampCartesian(p);
+        const ang = _angleFromCached(p, crx, cry, crz);
+        p._cursorAng = ang;
+        p._ang       = ang;
       }
       _cursorAngCacheLon     = cursorLon;
       _cursorAngCacheLat     = cursorLat;
@@ -862,6 +950,20 @@ export function scheduleGrains() {
       _cursorNextOnsetT += _cursorNextPeriodS;
       iterations++;
     }
+
+    // ── Onset clock re-anchoring ──────────────────────────────────────────
+    // Floating-point accumulation drift: after thousands of additions the
+    // onset time diverges from the true audio clock.  Every 30 seconds,
+    // snap the fractional offset (onset - audioNow) onto a fresh audioNow
+    // base so the accumulation error resets.  The musical effect is
+    // imperceptible — the jitter from periodVar already exceeds fp drift.
+    if (_cursorNextOnsetT !== null && audioNow > (_cursorReanchorAt ?? 0)) {
+      const offset = _cursorNextOnsetT - audioNow;
+      if (offset > 0 && offset < SCHED_LOOKAHEAD * 2) {
+        _cursorNextOnsetT = audioNow + offset; // re-anchor to fresh base
+      }
+      _cursorReanchorAt = audioNow + 30.0; // next re-anchor in 30s
+    }
   }
 
   // ── Phase 3: Nearest-cloud navigation — compute per-cloud weights ──────
@@ -933,6 +1035,9 @@ export function scheduleGrains() {
     const cloud = S.cloudSlots[i];
     if (!cloud || !S.particles.length) continue;
 
+    // Reusable effective params object — avoids per-grain allocation
+    if (!cloud._effectiveParams) cloud._effectiveParams = {};
+
     // Phase 3: skip clouds with negligible weight in nearest mode
     const cloudWeight = _cloudWeights[i];
     if (cloudWeight < 0.001) {
@@ -980,10 +1085,19 @@ export function scheduleGrains() {
     const cLen    = cParts.length;
     const cAngKey = `_cAng${cloud.slotIndex}`;
     if (cloud._angBufPartVer !== S._particleVersion) {
+      // Pre-compute cloud Cartesian once; use cached particle Cartesian for dot
+      if (cloud._crx === undefined) {
+        const cosLat = Math.cos(cloud.lat);
+        cloud._crx = cosLat * Math.cos(cloud.lon);
+        cloud._cry = Math.sin(cloud.lat);
+        cloud._crz = cosLat * Math.sin(cloud.lon);
+      }
       for (let pi = 0; pi < cLen; pi++) {
-        const ang = angleBetweenSphere(cParts[pi].lon, cParts[pi].lat, cloud.lon, cloud.lat);
-        cParts[pi][cAngKey] = ang; // keyed to particle object — survives array sorts
-        cParts[pi]._ang     = ang;
+        const p = cParts[pi];
+        if (p._cx === undefined) stampCartesian(p);
+        const ang = _angleFromCached(p, cloud._crx, cloud._cry, cloud._crz);
+        p[cAngKey] = ang;
+        p._ang     = ang;
       }
       cloud._angBufPartVer = S._particleVersion;
     } else {
@@ -1041,9 +1155,27 @@ export function scheduleGrains() {
         // Phase 3: scale cloud volume by navigation weight.
         // When cloudWeight < 1 (nearest-cloud mode), attenuate the grain volume.
         // Reuse cgp directly when weight is 1 to avoid object allocation.
-        const effectiveParams = cloudWeight < 0.999
-          ? Object.assign(Object.create(cgp), { volume: cgp.volume * cloudWeight, _cachedAtk: null })
-          : cgp;
+        let effectiveParams;
+        if (cloudWeight < 0.999) {
+          const ep = cloud._effectiveParams;
+          // Copy all properties from cgp (shallow, avoids prototype chain)
+          const keys = Object.keys(cgp);
+          for (let ki = 0; ki < keys.length; ki++) ep[keys[ki]] = cgp[keys[ki]];
+          // Also copy prototype properties (from baseGP through Object.create chain)
+          const baseKeys = Object.keys(cloud.grainParams);
+          for (let ki = 0; ki < baseKeys.length; ki++) {
+            if (!(baseKeys[ki] in ep)) ep[baseKeys[ki]] = cloud.grainParams[baseKeys[ki]];
+          }
+          ep.volume = cgp.volume * cloudWeight;
+          // Invalidate envelope cache only when volume actually changed
+          if (ep._lastCloudWeight !== cloudWeight) {
+            ep._cachedAtk = null;
+            ep._lastCloudWeight = cloudWeight;
+          }
+          effectiveParams = ep;
+        } else {
+          effectiveParams = cgp;
+        }
         playGrain(p, effectiveParams, cloud._nextOnsetT);
         activeGrainMap.set(p, { expiry: now + cgp.duration * 1000, glowColor: cloud.color });
         perf.grainsFired++;
@@ -1059,11 +1191,15 @@ export function scheduleGrains() {
   // Feed rolling grain rate accumulator (read by perfTick in state.js).
   perf._grainAccum += perf.grainsFired;
 
-  const activeCount = activeGrainMap.size;
-  const gcEl = document.getElementById('granulatingCount');
-  if (gcEl) gcEl.textContent = activeCount;
-  const vmGrains = document.getElementById('vmGrains');
-  if (vmGrains) vmGrains.textContent = `${activeCount} grains`;
+  // Throttle DOM updates to ~4Hz (every 25th tick at 10ms interval)
+  if (++_domUpdateCounter >= 25) {
+    _domUpdateCounter = 0;
+    const activeCount = activeGrainMap.size;
+    if (!_gcEl) _gcEl = document.getElementById('granulatingCount');
+    if (_gcEl) _gcEl.textContent = activeCount;
+    if (!_vmGrainsEl) _vmGrainsEl = document.getElementById('vmGrains');
+    if (_vmGrainsEl) _vmGrainsEl.textContent = `${activeCount} grains`;
+  }
 }
 
 // Reset onset clock when period/periodVar changes (called from ui-presets.js).

@@ -15,6 +15,24 @@ import { wireSaveDefaultBtn } from './ui-audio-settings.js';
 // slot key A/B/C → wandConfig property name
 const SLOTS = { A: 'axisA', B: 'axisB', C: 'axisC' };
 
+// ── HiDPI canvas helper ─────────────────────────────────────────────────────
+// Resizes the canvas backing store to match CSS layout × devicePixelRatio.
+// Returns logical (CSS) width and height so draw code stays resolution-agnostic.
+function hiDPIPrepare(ctx, canvas) {
+  const dpr  = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const w    = Math.round(rect.width)  || canvas.width;
+  const h    = Math.round(rect.height) || canvas.height;
+  const bw   = Math.round(w * dpr);
+  const bh   = Math.round(h * dpr);
+  if (canvas.width !== bw || canvas.height !== bh) {
+    canvas.width  = bw;
+    canvas.height = bh;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { W: w, H: h };
+}
+
 // Module-level tare callback — assigned during initWandUI, exported for keyboard shortcut.
 let _doWandTare = null;
 export function triggerWandTare() { _doWandTare?.(); }
@@ -266,18 +284,25 @@ export function initWandUI() {
   // Save as default button
   wireSaveDefaultBtn('wandSaveDefaultsBtn');
 
+  let _wandRafId = null;
   function tick() {
-    if (modal.classList.contains('open')) {
-      drawXYPlot(xyCtx, xyCanvas);
-      drawYawPlot(yawCtx, yawCanvas);
-      updateMeters();
-      updateMorphBar();
-      updateEulerLive();
-      drawXY2DPad(padCtx, padCanvas);
-    }
-    requestAnimationFrame(tick);
+    drawXYPlot(xyCtx, xyCanvas);
+    drawYawPlot(yawCtx, yawCanvas);
+    updateMeters();
+    updateMorphBar();
+    updateEulerLive();
+    drawXY2DPad(padCtx, padCanvas);
+    _wandRafId = requestAnimationFrame(tick);
   }
-  tick();
+  function startWandRAF()  { if (!_wandRafId) tick(); }
+  function stopWandRAF()   { if (_wandRafId) { cancelAnimationFrame(_wandRafId); _wandRafId = null; } }
+
+  // Start/stop RAF on modal open/close
+  if (modal.classList.contains('open')) startWandRAF();
+  const _obs = new MutationObserver(() => {
+    if (modal.classList.contains('open')) startWandRAF(); else stopWandRAF();
+  });
+  _obs.observe(modal, { attributes: true, attributeFilter: ['class'] });
 }
 
 // ── XY scatter: yaw (X-axis) × pitch (Y-axis), tare-relative ─────────────────
@@ -286,8 +311,7 @@ export function initWandUI() {
 // PITCH_LIMIT).  The dead zone is visualised with shaded bands.
 function drawXYPlot(ctx, canvas) {
   if (!ctx) return;
-  const W  = canvas.width;
-  const H  = canvas.height;
+  const { W, H } = hiDPIPrepare(ctx, canvas);
   const cx = W / 2;
   const cy = H / 2;
   const sX = (W / 2) / 180;   // px per degree — yaw:  ±180° fills width
@@ -394,8 +418,7 @@ function drawXYPlot(ctx, canvas) {
 // ── Roll strip: horizontal bar, ±180° range ───────────────────────────────────
 function drawYawPlot(ctx, canvas) {
   if (!ctx) return;
-  const W = canvas.width;
-  const H = canvas.height;
+  const { W, H } = hiDPIPrepare(ctx, canvas);
   const cx = W / 2;
   const cy = H / 2;
   const scale = (W / 2) / 180;   // same scale as XY plot
@@ -602,7 +625,7 @@ function initXY2D(modal) {
 // ── Draw the 2D pad canvas ────────────────────────────────────────────────────
 function drawXY2DPad(ctx, canvas) {
   if (!ctx) return;
-  const W = canvas.width, H = canvas.height;
+  const { W, H } = hiDPIPrepare(ctx, canvas);
   const c = wandConfig.xy2d;
 
   ctx.clearRect(0, 0, W, H);
