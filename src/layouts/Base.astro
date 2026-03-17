@@ -1,0 +1,100 @@
+---
+import "../styles/global.css";
+import Sidebar from "@/components/Sidebar.astro";
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = "mubone",
+  description = "an experimental class of trombones with embedded technologies",
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content="https://mubone.org" />
+    <meta property="og:type" content="website" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body>
+    <div class="site-layout">
+      <main class="main-content">
+        <slot />
+      </main>
+      <aside class="sidebar">
+        <Sidebar />
+      </aside>
+    </div>
+  </body>
+</html>
+
+<style>
+  .site-layout {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  .main-content {
+    flex: 1;
+    padding: 2.5rem 2rem;
+    max-width: 100%;
+  }
+
+  .sidebar {
+    padding: 2.5rem 2rem;
+    border-top: 1px dashed var(--color-rule);
+  }
+
+  @media (min-width: 768px) {
+    .site-layout {
+      flex-direction: row;
+    }
+
+    .main-content {
+      flex: 1;
+      padding: 3rem 3rem 3rem 4rem;
+      max-width: calc(100% - 280px);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      width: 280px;
+      min-width: 280px;
+      padding: 3rem 2rem;
+      border-top: none;
+      border-left: 1px dashed var(--color-rule);
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .main-content {
+      max-width: calc(100% - 320px);
+      padding: 3rem 4rem 3rem 6rem;
+    }
+
+    .sidebar {
+      width: 320px;
+      min-width: 320px;
+      padding: 3rem 2.5rem;
+    }
+  }
+</style>

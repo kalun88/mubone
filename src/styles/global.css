@@ -1,0 +1,52 @@
+@import url("https://fonts.googleapis.com/css2?family=Roboto+Mono:ital,wght@0,300..700;1,300..700&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-mono: "Roboto Mono", ui-monospace, monospace;
+
+  /* monome.org-inspired dark palette */
+  --color-bg:        #222222;
+  --color-bg-surface: #2e2e2e;
+  --color-text:      #ffffff;
+  --color-text-muted: #aaaaaa;
+  --color-text-dim:  #555555;
+  --color-accent:    #faf9f5;
+  --color-link:      #aaaaaa;
+  --color-link-hover: #ffffff;
+  --color-rule:      #444444;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: var(--color-link);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+a:hover {
+  color: var(--color-link-hover);
+}
+
+hr {
+  border: none;
+  border-top: 1px dashed var(--color-rule);
+  margin: 1.5rem 0;
+}
+
+::selection {
+  background-color: var(--color-accent);
+  color: var(--color-bg);
+}

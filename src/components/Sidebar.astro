@@ -1,0 +1,121 @@
+---
+// Sidebar component — site info, nav, links
+// Mirrors okla.quebec right-side info panel in dark mode
+---
+
+<div class="sidebar-inner">
+  <a href="/" class="site-title">mubone</a>
+
+  <hr />
+
+  <p class="description">
+    an experimental class of trombones with embedded technologies such as orientation sensors. augmented instruments for extending the creative range of instrumentalists.
+  </p>
+
+  <p class="people">
+    <a href="https://www.kalunleung.ca" target="_blank" rel="noopener">kalun leung</a><br />
+    <a href="https://www.traviswest.ca" target="_blank" rel="noopener">travis west</a>
+  </p>
+
+  <hr />
+
+  <nav class="nav-links">
+    <a href="/">home</a>
+    <a href="mailto:kalunis@gmail.com">email</a>
+    <a href="https://www.instagram.com/kalun_____" target="_blank" rel="noopener">instagram</a>
+  </nav>
+
+  <hr />
+
+  <div class="publications">
+    <p class="section-label">publications</p>
+    <a href="https://drive.google.com/file/d/1ifFS1aCrGZuTTPg-K50QAxkCUiZgkNeV/view" target="_blank" rel="noopener">
+      nime 2022
+    </a>
+    <a href="https://drive.google.com/file/d/16PQOAYWQdoDZ1wOTMg-9aHfM8hYm5bbK/view" target="_blank" rel="noopener">
+      moco 2019
+    </a>
+  </div>
+
+  <hr />
+
+  <div class="acknowledgements">
+    <p class="section-label">acknowledgements</p>
+    <p>
+      we acknowledge the support of the canada council for the arts.
+    </p>
+    <p>
+      thank you harvestworks for being our artist-in-residence host.
+    </p>
+  </div>
+</div>
+
+<style>
+  .sidebar-inner {
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .site-title {
+    display: block;
+    font-size: 18px;
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    color: var(--color-text);
+    margin-bottom: 0;
+  }
+  .site-title:hover {
+    color: var(--color-text);
+  }
+
+  .description {
+    color: var(--color-text-muted);
+    margin: 0 0 1rem;
+  }
+
+  .people {
+    margin: 0;
+  }
+  .people a {
+    color: var(--color-text);
+  }
+
+  .nav-links {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .nav-links a {
+    color: var(--color-text-muted);
+  }
+  .nav-links a:hover {
+    color: var(--color-text);
+  }
+  .nav-links a::before {
+    content: "→ ";
+    color: var(--color-text-dim);
+  }
+
+  .section-label {
+    color: var(--color-text-dim);
+    margin: 0 0 0.35rem;
+    font-size: 11px;
+    text-transform: lowercase;
+    letter-spacing: 0.05em;
+  }
+
+  .publications {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+  .publications a {
+    color: var(--color-text-muted);
+  }
+
+  .acknowledgements p {
+    color: var(--color-text-dim);
+    margin: 0 0 0.5rem;
+    font-size: 11px;
+  }
+</style>

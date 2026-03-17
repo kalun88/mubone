@@ -1,0 +1,112 @@
+---
+import type { RichText } from "@/lib/interfaces";
+
+interface Props {
+  richTexts: RichText[];
+}
+
+const { richTexts } = Astro.props;
+---
+
+{
+  richTexts.map((rt) => {
+    let content = rt.PlainText;
+
+    // Build the content with annotations
+    let element = (
+      <span
+        class:list={[
+          rt.Annotation.Bold && "font-bold",
+          rt.Annotation.Italic && "italic",
+          rt.Annotation.Strikethrough && "line-through",
+          rt.Annotation.Underline && "underline",
+          rt.Annotation.Code && "code-inline",
+          rt.Annotation.Color !== "default" && `color-${rt.Annotation.Color}`,
+        ]}
+      >
+        {content}
+      </span>
+    );
+
+    // Wrap in link if it has href
+    if (rt.Href || rt.Text?.Link?.Url) {
+      const href = rt.Href || rt.Text?.Link?.Url || "#";
+      element = (
+        <a href={href} target="_blank" rel="noopener noreferrer">
+          {element}
+        </a>
+      );
+    }
+
+    return element;
+  })
+}
+
+<style>
+  .font-bold {
+    font-weight: 700;
+  }
+
+  .italic {
+    font-style: italic;
+  }
+
+  .line-through {
+    text-decoration: line-through;
+  }
+
+  .underline {
+    text-decoration: underline;
+  }
+
+  .code-inline {
+    background-color: var(--color-bg-surface);
+    padding: 0.1em 0.3em;
+    border-radius: 2px;
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+
+  /* Color support */
+  :global(.color-red) {
+    color: #eb5757;
+  }
+
+  :global(.color-blue) {
+    color: #2f81f7;
+  }
+
+  :global(.color-green) {
+    color: #27ae60;
+  }
+
+  :global(.color-yellow) {
+    color: #f2cc8f;
+  }
+
+  :global(.color-orange) {
+    color: #ff9e64;
+  }
+
+  :global(.color-purple) {
+    color: #9d4edd;
+  }
+
+  :global(.color-pink) {
+    color: #e74c3c;
+  }
+
+  :global(.color-gray) {
+    color: #95a5a6;
+  }
+
+  a {
+    color: var(--color-link);
+    text-decoration: none;
+    transition: color 0.15s ease;
+  }
+
+  a:hover {
+    color: var(--color-link-hover);
+  }
+</style>

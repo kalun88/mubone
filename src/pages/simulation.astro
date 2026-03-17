@@ -1,0 +1,796 @@
+---
+import Base from "@/layouts/Base.astro";
+
+const title = "mubone — simulation";
+const description = "Interactive browser-based mubone sound composition with a 3D dotted sphere, drag-to-rotate control, and touch-based sound painting.";
+---
+
+<Base title={title} description={description}>
+  <div class="simulation-container">
+    <div class="simulation-header">
+      <h1 class="simulation-title">simulation</h1>
+    </div>
+
+    <div class="canvas-wrapper">
+      <canvas id="sphereCanvas"></canvas>
+      <div id="hud" class="hud">
+        <div id="coordinates" class="hud-text">--,--</div>
+        <div id="soundNumber" class="hud-text">-</div>
+      </div>
+    </div>
+
+    <div class="numberpad">
+      {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+        <button
+          class={`numberpad-btn btn-${num}`}
+          data-sound={num}
+        >
+          {num}
+        </button>
+      ))}
+    </div>
+
+    <div class="instructions">
+      move mouse to look · click to paint · 1-9 select sound
+    </div>
+  </div>
+</Base>
+
+<style>
+  .simulation-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .simulation-header {
+    border-bottom: 1px solid var(--color-rule);
+    padding-bottom: 1rem;
+  }
+
+  .simulation-title {
+    font-size: 1rem;
+    font-weight: normal;
+    color: var(--color-text-muted);
+    margin: 0;
+    font-family: "Roboto Mono", monospace;
+    letter-spacing: 0.05em;
+  }
+
+  .canvas-wrapper {
+    position: relative;
+    width: 100%;
+    background: #1a2a2a;
+    border: 1px solid var(--color-rule);
+    aspect-ratio: 16 / 10;
+    border-radius: 4px;
+    overflow: hidden;
+    cursor: crosshair;
+  }
+
+  #sphereCanvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .hud {
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    display: flex;
+    gap: 2rem;
+    font-family: "Roboto Mono", monospace;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    pointer-events: none;
+  }
+
+  .hud-text {
+    min-width: 60px;
+  }
+
+  .numberpad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+    max-width: 300px;
+    margin: 0 auto;
+  }
+
+  .numberpad-btn {
+    padding: 0.75rem;
+    font-size: 1rem;
+    font-family: "Roboto Mono", monospace;
+    font-weight: bold;
+    background: var(--color-bg-surface);
+    color: var(--color-text);
+    border: 1px solid var(--color-rule);
+    border-left: 3px solid;
+    cursor: pointer;
+    transition: all 0.1s ease;
+    border-radius: 2px;
+  }
+
+  .numberpad-btn:hover {
+    background: var(--color-rule);
+  }
+
+  .numberpad-btn:active {
+    transform: scale(0.95);
+  }
+
+  /* Color-coded left borders for each sound */
+  .btn-1 { border-left-color: #ff6b6b; }
+  .btn-2 { border-left-color: #ffa06b; }
+  .btn-3 { border-left-color: #ffd06b; }
+  .btn-4 { border-left-color: #a0ff6b; }
+  .btn-5 { border-left-color: #6bffa0; }
+  .btn-6 { border-left-color: #6bffd0; }
+  .btn-7 { border-left-color: #6ba0ff; }
+  .btn-8 { border-left-color: #6b6bff; }
+  .btn-9 { border-left-color: #d06bff; }
+
+  .instructions {
+    text-align: center;
+    font-family: "Roboto Mono", monospace;
+    font-size: 0.75rem;
+    color: var(--color-text-dim);
+    letter-spacing: 0.05em;
+  }
+
+  @media (max-width: 640px) {
+    .simulation-container {
+      padding: 1rem;
+      gap: 1rem;
+    }
+
+    .canvas-wrapper {
+      aspect-ratio: 3 / 4;
+    }
+
+    .hud {
+      font-size: 0.65rem;
+      gap: 1rem;
+    }
+
+    .instructions {
+      font-size: 0.65rem;
+    }
+  }
+</style>
+
+<script>
+  // ============================================================================
+  // CONSTANTS & CONFIGURATION
+  // ============================================================================
+
+  const SPHERE_RADIUS = 500;       // radius of the sphere we're inside
+  const GRID_SEGMENTS_LON = 24;    // longitude lines
+  const GRID_SEGMENTS_LAT = 12;    // latitude rings
+  const GRID_LINE_ALPHA = 0.12;    // grid line opacity
+  const CURSOR_RADIUS = 5;         // white dot cursor size
+  const CURSOR_SELECT_ANGLE = 0.08; // radians — how close cursor must be to select a particle
+  const MOUSE_SENSITIVITY = 0.003; // how much mouse offset rotates camera
+  const PAINTED_DOT_BASE_SIZE = 6; // base size of painted particles
+  const PAINTED_DOT_MAX_SIZE = 28; // max size when close to camera
+  const AUTO_ROTATION_SPEED = 0.0001; // slow ambient drift
+  const FOV_DEG = 90;              // field of view in degrees
+
+  // Sound frequencies (Hz)
+  const SOUND_FREQS = [
+    { freq: 130, waveform: 'sine' },     // 1: C3
+    { freq: 196, waveform: 'sine' },     // 2: G3
+    { freq: 262, waveform: 'sine' },     // 3: C4
+    { freq: 330, waveform: 'triangle' }, // 4: E4
+    { freq: 392, waveform: 'triangle' }, // 5: G4
+    { freq: 523, waveform: 'triangle' }, // 6: C5
+    { freq: 220, waveform: 'sawtooth' }, // 7: 220Hz sawtooth
+    { freq: 330, waveform: 'sawtooth' }, // 8: 330Hz sawtooth
+    { freq: 440, waveform: 'sawtooth' }  // 9: 440Hz sawtooth (A4)
+  ];
+
+  const SOUND_COLORS = [
+    '#ff6b6b', // 1: red
+    '#ffa06b', // 2: orange-red
+    '#ffd06b', // 3: orange
+    '#a0ff6b', // 4: yellow-green
+    '#6bffa0', // 5: green
+    '#6bffd0', // 6: cyan
+    '#6ba0ff', // 7: blue
+    '#6b6bff', // 8: purple
+    '#d06bff'  // 9: magenta
+  ];
+
+  // Background color — dark teal to match the reference
+  const BG_COLOR = '#1a2a2a';
+  const GRID_COLOR = '#4a8a8a';
+
+  // ============================================================================
+  // TYPES
+  // ============================================================================
+
+  interface PaintedDot {
+    lon: number;       // longitude on sphere (radians)
+    lat: number;       // latitude on sphere (radians)
+    soundIndex: number;
+    color: string;
+    selected: boolean;
+  }
+
+  // ============================================================================
+  // STATE
+  // ============================================================================
+
+  let canvas: HTMLCanvasElement;
+  let ctx: CanvasRenderingContext2D;
+  let audioContext: AudioContext | null = null;
+  let currentSoundIndex = 0;
+
+  // Camera look direction (euler angles — where we're looking from center)
+  let camYaw = 0;    // left-right rotation
+  let camPitch = 0;  // up-down rotation
+
+  // Mouse state
+  let mouseX = 0;   // mouse position relative to canvas center (-1 to 1)
+  let mouseY = 0;
+  let mouseInCanvas = false;
+
+  let paintedDots: PaintedDot[] = [];
+  let animationFrameId: number;
+
+  // Playhead state
+  let playheadLon = 0;
+  let lastPlayheadPos = 0;
+  let triggeredDots = new Set<number>();
+
+  // ============================================================================
+  // INITIALIZATION
+  // ============================================================================
+
+  function init() {
+    canvas = document.getElementById('sphereCanvas') as HTMLCanvasElement;
+    ctx = canvas.getContext('2d')!;
+
+    resizeCanvas();
+    setupEventListeners();
+    animate();
+  }
+
+  function resizeCanvas() {
+    const rect = canvas.parentElement!.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+  }
+
+  // ============================================================================
+  // 3D MATH — INSIDE-SPHERE CAMERA
+  // ============================================================================
+
+  // Convert spherical coords on the sphere surface to a 3D point
+  function spherePoint(lon: number, lat: number): [number, number, number] {
+    const x = SPHERE_RADIUS * Math.cos(lat) * Math.cos(lon);
+    const y = SPHERE_RADIUS * Math.sin(lat);
+    const z = SPHERE_RADIUS * Math.cos(lat) * Math.sin(lon);
+    return [x, y, z];
+  }
+
+  // Rotate a point by camera yaw and pitch (camera is at origin looking outward)
+  function cameraTransform(x: number, y: number, z: number): [number, number, number] {
+    // Yaw rotation (around Y axis)
+    const cosY = Math.cos(-camYaw);
+    const sinY = Math.sin(-camYaw);
+    let x1 = x * cosY + z * sinY;
+    let y1 = y;
+    let z1 = -x * sinY + z * cosY;
+
+    // Pitch rotation (around X axis)
+    const cosP = Math.cos(-camPitch);
+    const sinP = Math.sin(-camPitch);
+    let x2 = x1;
+    let y2 = y1 * cosP - z1 * sinP;
+    let z2 = y1 * sinP + z1 * cosP;
+
+    return [x2, y2, z2];
+  }
+
+  // Project a 3D point (in camera space) to 2D screen coords
+  // Returns null if behind camera
+  function project(x: number, y: number, z: number): { sx: number; sy: number; depth: number } | null {
+    if (z <= 0.1) return null; // behind camera
+
+    const fovRad = (FOV_DEG * Math.PI) / 180;
+    const focalLen = (canvas.width / 2) / Math.tan(fovRad / 2);
+
+    const sx = canvas.width / 2 + (x / z) * focalLen;
+    const sy = canvas.height / 2 - (y / z) * focalLen;
+
+    return { sx, sy, depth: z };
+  }
+
+  // Get the look direction as a unit vector (what the cursor center points at)
+  function getCursorRayDir(): [number, number, number] {
+    // Camera looks along +Z in camera space, so in world space
+    // we rotate [0,0,1] by camYaw and camPitch
+    const cosY = Math.cos(camYaw);
+    const sinY = Math.sin(camYaw);
+    const cosP = Math.cos(camPitch);
+    const sinP = Math.sin(camPitch);
+
+    return [
+      sinY * cosP,
+      sinP,
+      cosY * cosP
+    ];
+  }
+
+  // Angle between two unit-ish directions on the sphere
+  function angleBetween(
+    lon1: number, lat1: number,
+    lon2: number, lat2: number
+  ): number {
+    const [x1, y1, z1] = spherePoint(lon1, lat1);
+    const [x2, y2, z2] = spherePoint(lon2, lat2);
+    const dot = x1 * x2 + y1 * y2 + z1 * z2;
+    const mag1 = Math.sqrt(x1*x1 + y1*y1 + z1*z1);
+    const mag2 = Math.sqrt(x2*x2 + y2*y2 + z2*z2);
+    return Math.acos(Math.max(-1, Math.min(1, dot / (mag1 * mag2))));
+  }
+
+  // ============================================================================
+  // RENDERING
+  // ============================================================================
+
+  function drawFrame() {
+    ctx.fillStyle = BG_COLOR;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    drawGridLines();
+    drawPaintedDots();
+    drawPlayhead();
+    drawCursor();
+  }
+
+  function drawGridLines() {
+    ctx.strokeStyle = GRID_COLOR;
+    ctx.lineWidth = 0.8;
+    ctx.globalAlpha = GRID_LINE_ALPHA;
+
+    // Longitude lines (vertical arcs)
+    for (let i = 0; i < GRID_SEGMENTS_LON; i++) {
+      const lon = (i / GRID_SEGMENTS_LON) * Math.PI * 2;
+      drawArc(lon, 'lon');
+    }
+
+    // Latitude lines (horizontal rings)
+    for (let i = 1; i < GRID_SEGMENTS_LAT; i++) {
+      const lat = (i / GRID_SEGMENTS_LAT) * Math.PI - Math.PI / 2;
+      drawArc(lat, 'lat');
+    }
+
+    ctx.globalAlpha = 1;
+  }
+
+  function drawArc(angle: number, type: 'lon' | 'lat') {
+    const steps = 64;
+    let started = false;
+
+    ctx.beginPath();
+
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      let lon: number, lat: number;
+
+      if (type === 'lon') {
+        lon = angle;
+        lat = t * Math.PI - Math.PI / 2;
+      } else {
+        lon = t * Math.PI * 2;
+        lat = angle;
+      }
+
+      const [wx, wy, wz] = spherePoint(lon, lat);
+      const [cx, cy, cz] = cameraTransform(wx, wy, wz);
+      const proj = project(cx, cy, cz);
+
+      if (proj) {
+        if (!started) {
+          ctx.moveTo(proj.sx, proj.sy);
+          started = true;
+        } else {
+          ctx.lineTo(proj.sx, proj.sy);
+        }
+      } else {
+        started = false; // break the line if point is behind camera
+      }
+    }
+
+    ctx.stroke();
+  }
+
+  function drawPaintedDots() {
+    // Get cursor direction for selection check
+    const [rx, ry, rz] = getCursorRayDir();
+    const cursorLon = Math.atan2(rx, rz);
+    const cursorLat = Math.asin(Math.max(-1, Math.min(1, ry)));
+
+    // Sort by depth (furthest first) for proper overlap
+    const dotsWithProj: Array<{
+      dot: PaintedDot;
+      sx: number;
+      sy: number;
+      depth: number;
+      selected: boolean;
+    }> = [];
+
+    paintedDots.forEach(dot => {
+      const [wx, wy, wz] = spherePoint(dot.lon, dot.lat);
+      const [cx, cy, cz] = cameraTransform(wx, wy, wz);
+      const proj = project(cx, cy, cz);
+
+      if (proj) {
+        // Check selection
+        const ang = angleBetween(dot.lon, dot.lat, cursorLon, cursorLat);
+        const selected = ang < CURSOR_SELECT_ANGLE;
+        dot.selected = selected;
+
+        dotsWithProj.push({
+          dot,
+          sx: proj.sx,
+          sy: proj.sy,
+          depth: proj.depth,
+          selected
+        });
+      }
+    });
+
+    // Sort: furthest first
+    dotsWithProj.sort((a, b) => b.depth - a.depth);
+
+    dotsWithProj.forEach(({ dot, sx, sy, depth, selected }) => {
+      // Size based on distance — closer = bigger (like the reference)
+      const distanceFactor = 1 - (depth / (SPHERE_RADIUS * 2));
+      const size = PAINTED_DOT_BASE_SIZE + (PAINTED_DOT_MAX_SIZE - PAINTED_DOT_BASE_SIZE) * Math.max(0, distanceFactor);
+
+      // Alpha based on depth
+      const alpha = 0.4 + 0.6 * Math.max(0, distanceFactor);
+
+      // Draw the particle (slightly elliptical for depth feel)
+      ctx.save();
+      ctx.globalAlpha = alpha;
+
+      if (selected) {
+        // Selection glow
+        ctx.shadowColor = dot.color;
+        ctx.shadowBlur = 20;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sx, sy, size + 4, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
+
+      // Main dot
+      ctx.fillStyle = dot.color;
+      ctx.beginPath();
+      ctx.arc(sx, sy, size, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Slight highlight on top for 3D feel
+      const grad = ctx.createRadialGradient(sx - size * 0.3, sy - size * 0.3, 0, sx, sy, size);
+      grad.addColorStop(0, 'rgba(255,255,255,0.25)');
+      grad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, size, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    });
+  }
+
+  function drawPlayhead() {
+    // Draw a vertical arc at the playhead longitude
+    const steps = 40;
+    let started = false;
+
+    ctx.strokeStyle = 'rgba(255, 220, 100, 0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const lat = t * Math.PI - Math.PI / 2;
+
+      const [wx, wy, wz] = spherePoint(playheadLon, lat);
+      const [cx, cy, cz] = cameraTransform(wx, wy, wz);
+      const proj = project(cx, cy, cz);
+
+      if (proj) {
+        if (!started) {
+          ctx.moveTo(proj.sx, proj.sy);
+          started = true;
+        } else {
+          ctx.lineTo(proj.sx, proj.sy);
+        }
+      } else {
+        started = false;
+      }
+    }
+
+    ctx.stroke();
+  }
+
+  function drawCursor() {
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2;
+
+    // Outer ring
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, CURSOR_RADIUS + 2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Inner dot
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(cx, cy, CURSOR_RADIUS * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Small crosshair lines
+    const len = 12;
+    const gap = CURSOR_RADIUS + 5;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    // right
+    ctx.moveTo(cx + gap, cy);
+    ctx.lineTo(cx + gap + len, cy);
+    // left
+    ctx.moveTo(cx - gap, cy);
+    ctx.lineTo(cx - gap - len, cy);
+    // top
+    ctx.moveTo(cx, cy - gap);
+    ctx.lineTo(cx, cy - gap - len);
+    // bottom
+    ctx.moveTo(cx, cy + gap);
+    ctx.lineTo(cx, cy + gap + len);
+    ctx.stroke();
+  }
+
+  // ============================================================================
+  // AUDIO
+  // ============================================================================
+
+  function initAudioContext() {
+    if (!audioContext) {
+      audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+  }
+
+  function playSound(soundIndex: number) {
+    initAudioContext();
+    if (!audioContext) return;
+
+    const { freq, waveform } = SOUND_FREQS[soundIndex];
+    const now = audioContext.currentTime;
+    const duration = 0.21;
+
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+
+    osc.type = waveform as OscillatorType;
+    osc.frequency.value = freq;
+
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(1, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + duration);
+
+    if (waveform === 'sawtooth') {
+      const filter = audioContext.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 1000;
+      osc.connect(filter);
+      filter.connect(gain);
+    } else {
+      osc.connect(gain);
+    }
+
+    gain.connect(audioContext.destination);
+    osc.start(now);
+    osc.stop(now + duration);
+  }
+
+  // ============================================================================
+  // INTERACTION
+  // ============================================================================
+
+  function updateHUD() {
+    const coordDiv = document.getElementById('coordinates');
+    const soundDiv = document.getElementById('soundNumber');
+
+    const yawDeg = ((camYaw * 180 / Math.PI) % 360).toFixed(1);
+    const pitchDeg = (camPitch * 180 / Math.PI).toFixed(1);
+    coordDiv!.textContent = `${yawDeg},${pitchDeg}`;
+    soundDiv!.textContent = String(currentSoundIndex + 1);
+  }
+
+  // Paint a dot where the cursor center is pointing
+  function paintAtCursor() {
+    const [rx, ry, rz] = getCursorRayDir();
+    const lon = Math.atan2(rx, rz);
+    const lat = Math.asin(Math.max(-1, Math.min(1, ry)));
+
+    paintedDots.push({
+      lon,
+      lat,
+      soundIndex: currentSoundIndex,
+      color: SOUND_COLORS[currentSoundIndex],
+      selected: false
+    });
+
+    playSound(currentSoundIndex);
+  }
+
+  function selectSound(soundIndex: number) {
+    currentSoundIndex = soundIndex;
+    playSound(soundIndex);
+
+    // Highlight active button
+    document.querySelectorAll('.numberpad-btn').forEach(btn => {
+      (btn as HTMLButtonElement).style.opacity = '';
+    });
+    const activeBtn = document.querySelector(`.btn-${soundIndex + 1}`) as HTMLButtonElement;
+    if (activeBtn) activeBtn.style.opacity = '1';
+  }
+
+  // ============================================================================
+  // EVENT HANDLERS
+  // ============================================================================
+
+  function setupEventListeners() {
+    // Mouse move — controls camera look direction
+    canvas.addEventListener('mousemove', (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      // Normalize mouse position to -1..1 from canvas center
+      mouseX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+      mouseY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+      mouseInCanvas = true;
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      mouseInCanvas = false;
+    });
+
+    // Click — paint a dot
+    canvas.addEventListener('click', (e: MouseEvent) => {
+      initAudioContext();
+      paintAtCursor();
+    });
+
+    // Touch support
+    canvas.addEventListener('touchstart', (e: TouchEvent) => {
+      e.preventDefault();
+      initAudioContext();
+      const rect = canvas.getBoundingClientRect();
+      const touch = e.touches[0];
+      mouseX = ((touch.clientX - rect.left) / rect.width - 0.5) * 2;
+      mouseY = ((touch.clientY - rect.top) / rect.height - 0.5) * 2;
+      mouseInCanvas = true;
+    });
+
+    canvas.addEventListener('touchmove', (e: TouchEvent) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const touch = e.touches[0];
+      mouseX = ((touch.clientX - rect.left) / rect.width - 0.5) * 2;
+      mouseY = ((touch.clientY - rect.top) / rect.height - 0.5) * 2;
+    });
+
+    canvas.addEventListener('touchend', (e: TouchEvent) => {
+      e.preventDefault();
+      paintAtCursor();
+    });
+
+    // Keyboard 1-9
+    document.addEventListener('keydown', (e: KeyboardEvent) => {
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= 9) {
+        initAudioContext();
+        selectSound(num - 1);
+      }
+    });
+
+    // Number pad buttons
+    document.querySelectorAll('.numberpad-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const soundIndex = parseInt((e.target as HTMLButtonElement).dataset.sound!) - 1;
+        selectSound(soundIndex);
+      });
+    });
+
+    window.addEventListener('resize', resizeCanvas);
+  }
+
+  // ============================================================================
+  // PLAYHEAD & TRIGGERING
+  // ============================================================================
+
+  function updatePlayhead() {
+    playheadLon += AUTO_ROTATION_SPEED;
+    if (playheadLon > Math.PI) {
+      playheadLon -= Math.PI * 2;
+    }
+
+    // Check if any painted dots cross the playhead
+    const normalizedPlayhead = ((playheadLon % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    const normalizedLast = ((lastPlayheadPos % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+
+    paintedDots.forEach((pd, idx) => {
+      const normalizedLon = ((pd.lon % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+
+      let crossed = false;
+      if (normalizedLast < normalizedPlayhead) {
+        if (normalizedLon > normalizedLast && normalizedLon <= normalizedPlayhead) {
+          crossed = true;
+        }
+      } else if (normalizedLast > normalizedPlayhead) {
+        if (normalizedLon > normalizedLast || normalizedLon <= normalizedPlayhead) {
+          crossed = true;
+        }
+      }
+
+      if (crossed && !triggeredDots.has(idx)) {
+        triggeredDots.add(idx);
+        playSound(pd.soundIndex);
+      }
+    });
+
+    lastPlayheadPos = playheadLon;
+
+    // Reset triggered dots when playhead wraps
+    if (normalizedPlayhead < normalizedLast - Math.PI) {
+      triggeredDots.clear();
+    }
+  }
+
+  // ============================================================================
+  // ANIMATION LOOP
+  // ============================================================================
+
+  function animate() {
+    // Update camera from mouse position
+    if (mouseInCanvas) {
+      // Smoothly move camera toward where mouse is pointing
+      const targetYaw = mouseX * Math.PI * 0.8;   // ±~144 degrees horizontal range
+      const targetPitch = -mouseY * Math.PI * 0.4; // ±~72 degrees vertical range
+
+      // Smooth interpolation
+      camYaw += (targetYaw - camYaw) * 0.08;
+      camPitch += (targetPitch - camPitch) * 0.08;
+    } else {
+      // Gentle auto drift when mouse is outside
+      camYaw += AUTO_ROTATION_SPEED;
+    }
+
+    // Clamp pitch
+    camPitch = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, camPitch));
+
+    updatePlayhead();
+    drawFrame();
+    updateHUD();
+
+    animationFrameId = requestAnimationFrame(animate);
+  }
+
+  // ============================================================================
+  // STARTUP
+  // ============================================================================
+
+  init();
+</script>
