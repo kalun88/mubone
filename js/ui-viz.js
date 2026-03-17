@@ -1,0 +1,99 @@
+// ============================================================================
+// UI — VIZ SETTINGS MODAL
+// Manages the particle visualisation settings:
+//   - viz mode toggle (feature-driven vs original palette)
+//   - Particle base / max size sliders
+//   - RMS min/max (volume → particle size calibration)
+//   - Spectral centroid min/max (timbre → particle colour calibration)
+// ============================================================================
+
+import { S } from './state.js';
+import { wireSaveDefaultBtn } from './ui-audio-settings.js';
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function bindSlider(sliderId, valId, getter, setter, fmt) {
+  const slider = document.getElementById(sliderId);
+  const valEl  = document.getElementById(valId);
+  if (!slider) return;
+  slider.value = getter();
+  if (valEl) valEl.textContent = fmt(getter());
+  slider.addEventListener('input', () => {
+    setter(parseFloat(slider.value));
+    if (valEl) valEl.textContent = fmt(getter());
+  });
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+
+export function initVizUI() {
+
+  // ── Modal open / close ────────────────────────────────────────────────────
+  const modal    = document.getElementById('vizModal');
+  const openBtn  = document.getElementById('vizSettingsBtn');
+  const closeBtn = document.getElementById('vizModalClose');
+  if (modal && openBtn) {
+    openBtn.addEventListener('click', () => modal.classList.add('open'));
+  }
+  if (modal && closeBtn) {
+    closeBtn.addEventListener('click', () => modal.classList.remove('open'));
+  }
+  // Click backdrop to close
+  if (modal) {
+    modal.addEventListener('click', e => {
+      if (e.target === modal) modal.classList.remove('open');
+    });
+  }
+
+  // ── Mode toggle (on / off) ──────────────────────────────────────────────
+  const modeSeg = document.getElementById('vizModeSeg');
+  if (modeSeg) {
+    modeSeg.querySelectorAll('[data-viz]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        S.vizMode = btn.dataset.viz === 'on';
+        modeSeg.querySelectorAll('[data-viz]').forEach(b =>
+          b.classList.toggle('active', b === btn));
+      });
+    });
+  }
+
+  // ── Mode ring size slider ──────────────────────────────────────────────
+  bindSlider('vizModeRingSizeSlider', 'vizModeRingSizeVal',
+    () => S.modeRingSize,
+    v  => { S.modeRingSize = v; },
+    v  => v.toFixed(0));
+
+  // ── Particle size sliders ───────────────────────────────────────────────
+  bindSlider('vizMinSizeSlider', 'vizMinSizeVal',
+    () => S.vizMinSize,
+    v  => { S.vizMinSize = v; },
+    v  => v.toFixed(1));
+
+  bindSlider('vizMaxSizeSlider', 'vizMaxSizeVal',
+    () => S.vizMaxSize,
+    v  => { S.vizMaxSize = v; },
+    v  => v.toFixed(0));
+
+  // ── RMS calibration (volume → size) ─────────────────────────────────────
+  bindSlider('vizRmsMinSlider', 'vizRmsMinNum',
+    () => S.vizRmsMin,
+    v  => { S.vizRmsMin = v; },
+    v  => v.toFixed(3));
+
+  bindSlider('vizRmsMaxSlider', 'vizRmsMaxNum',
+    () => S.vizRmsMax,
+    v  => { S.vizRmsMax = v; },
+    v  => v.toFixed(2));
+
+  // ── Centroid calibration (timbre → colour) ──────────────────────────────
+  bindSlider('vizCentMinSlider', 'vizCentMinNum',
+    () => S.vizCentroidMin,
+    v  => { S.vizCentroidMin = v; },
+    v  => v.toFixed(2));
+
+  bindSlider('vizCentMaxSlider', 'vizCentMaxNum',
+    () => S.vizCentroidMax,
+    v  => { S.vizCentroidMax = v; },
+    v  => v.toFixed(2));
+
+}
