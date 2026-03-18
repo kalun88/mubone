@@ -12,6 +12,7 @@ import { S, PRESETS, MAX_SEEDS, rebuildGrainCurves } from './state.js';
 import { wand } from './sensor.js';
 import { angleBetweenSphere, findNearestSeedSlot } from './grain.js';
 import { getCursorLonLat, screenToLonLat } from './sphere.js';
+import { isLocked } from './param-lock.js';
 
 // ── Mappable source axes ──────────────────────────────────────────────────────
 export const AXIS_SRCS = ['pitch', 'roll', 'yaw'];
@@ -247,6 +248,7 @@ function applyLerpedPreset(p) {
   let volumeChanged = false;
   for (const k of overrideKeys) {
     if (typeof p[k] === 'number') {
+      if (isLocked(k)) continue;   // ◆ param lock
       S.grainOverrides[k] = k === 'k' ? Math.round(p[k]) : p[k];
     }
   }
@@ -256,7 +258,7 @@ function applyLerpedPreset(p) {
   }
   if (volumeChanged) rebuildGrainCurves();
 
-  if (typeof p.searchRadiusDeg === 'number') S.searchRadiusDeg  = p.searchRadiusDeg;
+  if (!isLocked('searchRadiusDeg') && typeof p.searchRadiusDeg === 'number') S.searchRadiusDeg  = p.searchRadiusDeg;
   if (typeof p.probability     === 'number') S.grainProbability = p.probability;
   if (typeof p.nearestMode     === 'boolean') S.nearestMode     = p.nearestMode;
   if (typeof p.direction       === 'string')  S.grainDirection  = p.direction;
@@ -445,7 +447,7 @@ export function updateGestureMorph() {
     const radiusGated = !S.seedTether;
     const gateRadRad = radiusGated ? (S.searchRadiusDeg * Math.PI / 180) : Infinity;
     const seedDists = [];
-    for (let i = 0; i < MAX_SEEDS; i++) {
+    for (let i = 0; i < S.seedSlotCount; i++) {
       const seed = S.seedSlots[i];
       if (!seed) continue;
       const dist = angleBetweenSphere(seed.lon, seed.lat, cursorLon, cursorLat);

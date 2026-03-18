@@ -119,34 +119,48 @@ const ACTIONS = [
   { id: 'radius_fade_curve', label: 'radius fade curve',    key: '—',                 osc: '/grain/radiusfadecurve', fmt: 'float 0–1',    type: 'cc',
     tip: '0 = gentle linear fade, 1 = steep sharp edge rolloff',
     ccFn: v => { S.radiusFadeCurve = v / 127; S._syncRadiusFadeUI?.(); } },
+  { id: 'lock_az',          label: 'lock azimuth (hold)',        key: '—',                 osc: '/cursor/lock_az',   fmt: 'int 0|1',           type: 'hold',
+    tip: 'hold to lock azimuth — only elevation moves' },
+  { id: 'lock_el',          label: 'lock elevation (hold)',      key: '—',                 osc: '/cursor/lock_el',   fmt: 'int 0|1',           type: 'hold',
+    tip: 'hold to lock elevation — only azimuth moves' },
 
   // ── Looper ─────────────────────────────────────────────────────────────────
   { id: null, group: 'looper' },
-  { id: 'seq_mode',     label: 'loop mode on/off',          key: 'L',                 osc: '/seq/mode',       fmt: 'int 0|1',          type: 'trigger',
-    tip: 'switch cursor to loop recording — paint creates a looping sequence on release' },
-  { id: 'seq_drop',     label: 'drop loop from cursor',     key: 'D',                 osc: '/seq/drop',       fmt: 'bang',             type: 'trigger',
-    tip: 'turn the last stroke under cursor into a looping sequence' },
-  { id: 'seq_pause',    label: 'pause nearest loop',        key: '—',                 osc: '/seq/pause',      fmt: 'bang',             type: 'trigger',
+  { id: 'seq_slots',    label: 'loop slot count',           key: '—',                 osc: '/loop/slots',      fmt: 'int 1–12',         type: 'cc',
+    tip: 'number of active loop slots (1–12)',
+    ccFn: v => { S.seqSlotCount = Math.max(1, Math.min(12, Math.round(1 + v * 11 / 127))); const sel = document.getElementById('seqSlotCountSelect'); if (sel) sel.value = String(S.seqSlotCount); (S.updateSeqBanksUI || (() => {}))(); S._syncSeqButtonStates?.(); } },
+  { id: 'seq_overflow', label: 'loop overflow (cycle)',     key: '—',                 osc: '/loop/overflow',   fmt: 'str off|oldest|nearest', type: 'trigger',
+    tip: 'cycle overflow mode: off → oldest → nearest' },
+  { id: 'seq_mode',     label: 'loop mode on/off',          key: 'L',                 osc: '/loop/mode',       fmt: 'int 0|1',          type: 'trigger',
+    tip: 'switch cursor to loop recording — paint creates a loop on release' },
+  { id: 'seq_drop',     label: 'drop loop from cursor',     key: 'D',                 osc: '/loop/drop',       fmt: 'bang',             type: 'trigger',
+    tip: 'turn the last stroke under cursor into a loop' },
+  { id: 'seq_pause',    label: 'pause nearest loop',        key: '—',                 osc: '/loop/pause',      fmt: 'bang',             type: 'trigger',
     tip: 'stop nearest loop playback, keep in slot to resume later' },
-  { id: 'seq_resume',   label: 'resume nearest loop',       key: '—',                 osc: '/seq/resume',     fmt: 'bang',             type: 'trigger',
+  { id: 'seq_resume',   label: 'resume nearest loop',       key: '—',                 osc: '/loop/resume',     fmt: 'bang',             type: 'trigger',
     tip: 'restart the nearest paused loop' },
-  { id: 'seq_remove',   label: 'remove nearest loop',       key: '—',                 osc: '/seq/remove',     fmt: 'bang',             type: 'trigger',
+  { id: 'seq_remove',   label: 'remove nearest loop',       key: '—',                 osc: '/loop/remove',     fmt: 'bang',             type: 'trigger',
     tip: 'fully delete nearest loop from its slot' },
-  { id: 'seq_clear',    label: 'clear all loops',           key: '—',                 osc: '/seq/clear',      fmt: 'bang',             type: 'trigger',
+  { id: 'seq_clear',    label: 'clear all loops',           key: '—',                 osc: '/loop/clear',      fmt: 'bang',             type: 'trigger',
     tip: 'remove all loops from all slots' },
-  { id: 'seq_volume',   label: 'next loop volume',          key: '—',                 osc: '/seq/volume',     fmt: 'float 0–1',        type: 'cc',
+  { id: 'seq_volume',   label: 'next loop volume',          key: '—',                 osc: '/loop/volume',     fmt: 'float 0–1',        type: 'cc',
     tip: 'volume for the next recorded loop — set before recording',
     ccFn: v => { S.seqNextParams.volume = v / 127; const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume; const nb = document.getElementById('seqVolumeNum'); if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; } },
-  { id: 'seq_speed',    label: 'next loop speed',           key: '—',                 osc: '/seq/speed',      fmt: 'float 0.25–4×',    type: 'cc',
+  { id: 'seq_speed',    label: 'next loop speed',           key: '—',                 osc: '/loop/speed',      fmt: 'float 0.25–4×',    type: 'cc',
     tip: 'speed for the next recorded loop — 1× = original, set before recording',
     ccFn: v => { S.seqNextParams.speed = 0.25 + (v / 127) * 3.75; const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed; const nb = document.getElementById('seqSpeedNum'); if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; } },
-  { id: 'seq_dir',      label: 'next loop direction',       key: '—',                 osc: '/seq/dir',        fmt: 'str fwd|rev',      type: 'trigger',
+  { id: 'seq_dir',      label: 'next loop direction',       key: '—',                 osc: '/loop/dir',        fmt: 'str fwd|rev',      type: 'trigger',
     tip: 'direction for the next recorded loop — set before recording' },
 
   // ── Seeder ─────────────────────────────────────────────────────────────────
   { id: null, group: 'seeder' },
-  { id: 'plant_seed',   label: 'plant seed',                key: '↓',                 osc: '/seed/plant',    fmt: 'bang',             type: 'trigger',
-    tip: 'plant a seed at the current cursor position — max 8 seeds' },
+  { id: 'seed_slots',    label: 'seed slot count',          key: '—',                 osc: '/seed/slots',    fmt: 'int 1–12',         type: 'cc',
+    tip: 'number of active seed slots (1–12)',
+    ccFn: v => { S.seedSlotCount = Math.max(1, Math.min(12, Math.round(1 + v * 11 / 127))); const sel = document.getElementById('seedSlotCountSelect'); if (sel) sel.value = String(S.seedSlotCount); (S.updateSeedBanksUI || (() => {}))(); } },
+  { id: 'seed_overflow', label: 'seed overflow (cycle)',    key: '—',                 osc: '/seed/overflow', fmt: 'str off|oldest|nearest', type: 'trigger',
+    tip: 'cycle overflow mode: off → oldest → nearest' },
+  { id: 'plant_seed',   label: 'sow seed',                  key: 'S',                 osc: '/seed/sow',      fmt: 'bang',             type: 'trigger',
+    tip: 'sow a seed at the current cursor position' },
   { id: 'uproot_seed',  label: 'uproot nearest seed',       key: '↑',                 osc: '/seed/uproot',   fmt: 'bang',             type: 'trigger',
     tip: 'remove the seed closest to the cursor' },
   { id: 'seed_clear',   label: 'clear all seeds',           key: '—',                 osc: '/seed/clear',    fmt: 'bang',             type: 'trigger',
@@ -354,6 +368,14 @@ function dispatchAction(id, midiVal) {
     case 'plant_seed':   plantSeed(); break;
     case 'uproot_seed':  uprootNearestSeed(); break;
     case 'seed_clear':   clearAllSeeds(); break;
+    case 'seed_overflow': {
+      const modes = ['off', 'oldest', 'nearest'];
+      S.seedOverflow = modes[(modes.indexOf(S.seedOverflow) + 1) % modes.length];
+      const seg = document.getElementById('seedOverflowSeg');
+      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.overflow === S.seedOverflow));
+      break;
+    }
     case 'snap':         toggleNearestMode(); break;
     case 'k_all':
       S.grainKAllMode = !S.grainKAllMode;
@@ -367,10 +389,27 @@ function dispatchAction(id, midiVal) {
       S.radiusFadeEnabled = !S.radiusFadeEnabled;
       S._syncRadiusFadeUI?.();
       break;
-    case 'seq_mode':
-      S.seqModeEnabled = !S.seqModeEnabled;
+    case 'seq_overflow': {
+      const modes = ['off', 'oldest', 'nearest'];
+      S.seqOverflow = modes[(modes.indexOf(S.seqOverflow) + 1) % modes.length];
+      const seg = document.getElementById('seqOverflowSeg');
+      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.overflow === S.seqOverflow));
+      S._syncSeqButtonStates?.();
+      break;
+    }
+    case 'seq_mode': {
+      // Don't allow turning ON loop mode when slots are full and overflow is off
+      const wouldEnable = !S.seqModeEnabled;
+      if (wouldEnable && S.seqOverflow === 'off') {
+        let full = true;
+        for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
+        if (full) break;
+      }
+      S.seqModeEnabled = wouldEnable;
       document.getElementById('seqModeBtn')?.classList.toggle('active', S.seqModeEnabled);
       break;
+    }
     case 'seq_drop':
       dropSeqFromCursor();
       break;
@@ -467,6 +506,22 @@ function dispatchAction(id, midiVal) {
         if (ind) ind.style.display = 'none';
       }
       break;
+    case 'lock_az':
+    case 'lock_el': {
+      const axis = id === 'lock_az' ? 'az' : 'el';
+      if (midiVal > 0) {
+        S.axisLock = axis;
+        S._axisLockFrozenNx = null; S._axisLockFrozenNy = null;
+        S._axisLockFrozenYaw = null; S._axisLockFrozenPitch = null;
+      } else {
+        if (S.axisLock === axis) S.axisLock = 'off';
+      }
+      // Sync UI buttons
+      const seg = document.getElementById('axisLockSeg');
+      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.lock === S.axisLock));
+      break;
+    }
     case 'perf':
       S.perfMonitorVisible = !S.perfMonitorVisible;
       { const el = document.getElementById('perfMonitor'); if (el) el.style.display = S.perfMonitorVisible ? 'block' : 'none'; }

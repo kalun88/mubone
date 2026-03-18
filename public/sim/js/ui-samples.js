@@ -9,6 +9,7 @@ import {
 } from './state.js';
 import { ensureAudioContext, getMasterBus } from './audio.js';
 import { removeSeqByStrokeId } from './ui-presets.js';
+import { undoSweep, commitSweep } from './ui-sweep.js';
 
 // ── Sample Viewer (large waveform display) ────────────────────────────────────
 let svActiveTab = -1;   // which tab is showing (-1 = none / live placeholder)
@@ -320,6 +321,8 @@ export function updatePaintIndicator() {
 // ============================================================================
 
 export function recordStrokeStart(type, liveBufferIndex) {
+  // New action makes any pending sweep permanent — snapshot is discarded
+  commitSweep();
   S.currentStrokeId = ++S.strokeIdCounter;
   S.strokeHistory.push({
     strokeId:        S.currentStrokeId,
@@ -329,11 +332,14 @@ export function recordStrokeStart(type, liveBufferIndex) {
 }
 
 export function undoLastStroke() {
-  if (S.strokeHistory.length === 0) return;
+  // If a sweep just happened, undo restores the sweep instead of a stroke
+  if (undoSweep()) { _flashUndoBtn(); return; }
+
+  if (S.strokeHistory.length === 0) { _flashUndoBtn(); return; }
   const entry = S.strokeHistory.pop();
   const sid   = entry.strokeId;
 
-  // Stop and remove any sequential that was created from this stroke
+  // Stop and remove any loop spawned from this stroke
   removeSeqByStrokeId(sid);
 
   S.particles = S.particles.filter(p => p.strokeId !== sid);
@@ -349,6 +355,20 @@ export function undoLastStroke() {
     }
     updateLiveRecUI();
   }
+
+  _flashUndoBtn();
+}
+
+function _flashUndoBtn() {
+  const btn = document.getElementById('undoBtn');
+  if (!btn) return;
+  btn.classList.add('flashing');
+  setTimeout(() => btn.classList.remove('flashing'), 180);
+}
+
+export function initUndoBtn() {
+  const btn = document.getElementById('undoBtn');
+  btn?.addEventListener('click', () => undoLastStroke());
 }
 
 // ============================================================================

@@ -7,14 +7,51 @@
 import { S, MAX_SEEDS, MAX_SEQS } from './state.js';
 import { angleBetweenSphere } from './grain.js';
 
+// ── Sweep snapshot — allows one-level undo of sweep ──────────────────────────
+// Stashed on sweep, restored on undo, permanently discarded on next new action.
+
+/**
+ * Restore a pending sweep snapshot. Called by undoLastStroke when a snapshot
+ * exists. Returns true if a snapshot was restored, false if none was pending.
+ */
+export function undoSweep() {
+  if (!S._sweepSnapshot) return false;
+  const snap = S._sweepSnapshot;
+  S.particles            = snap.particles;
+  S.liveRecBuffers       = snap.liveRecBuffers;
+  S.currentLiveBufferIdx = snap.currentLiveBufferIdx;
+  S.strokeHistory        = snap.strokeHistory;
+  S._particleVersion++;
+  S._sweepSnapshot = null;
+  S.updateLiveRecUI?.();
+  return true;
+}
+
+/**
+ * Discard any pending sweep snapshot — called when a new action makes the
+ * sweep permanent (e.g. new paint stroke, sow, arm loop).
+ */
+export function commitSweep() {
+  S._sweepSnapshot = null;
+}
+
 // ── Core sweep logic ─────────────────────────────────────────────────────────
 
 /**
  * Remove all particles not referenced by any active seed or loop.
  * Moving seeds keep particles within reach of any frame along their path.
+ * The removed data is stashed in S._sweepSnapshot so undo can restore it.
  * Returns { removed, kept } counts.
  */
 export function sweep() {
+  // Snapshot the current state before we modify anything
+  S._sweepSnapshot = {
+    particles:            [...S.particles],
+    liveRecBuffers:       S.liveRecBuffers ? [...S.liveRecBuffers] : [],
+    currentLiveBufferIdx: S.currentLiveBufferIdx,
+    strokeHistory:        [...S.strokeHistory],
+  };
+
   const kept = new Set();
 
   // ── Seeds: keep particles within each seed's search radius ──────────
@@ -23,7 +60,6 @@ export function sweep() {
     if (!seed) continue;
 
     if (seed.frames) {
-      // Moving seed: keep particles reachable by any frame along the path
       const frames = seed.frames;
       for (let fi = 0; fi < frames.length; fi++) {
         const frame = frames[fi];
@@ -36,7 +72,6 @@ export function sweep() {
         }
       }
     } else {
-      // Stationary seed: keep particles within search radius of fixed position
       const radiusRad = seed.searchRadiusDeg * Math.PI / 180;
       for (let pi = 0; pi < S.particles.length; pi++) {
         const p = S.particles[pi];
@@ -97,6 +132,9 @@ export function sweep() {
   const remainingStrokeIds = new Set(S.particles.map(p => p.strokeId));
   S.strokeHistory = S.strokeHistory.filter(e => remainingStrokeIds.has(e.strokeId));
 
+  // If nothing was actually removed, no need for a snapshot
+  if (removed === 0) S._sweepSnapshot = null;
+
   S.updateLiveRecUI?.();
 
   return { removed, kept: S.particles.length };
@@ -116,6 +154,14 @@ export function initSweepUI() {
 
     if (!hasActive) {
       const count = S.particles.length;
+      if (count === 0) { flashSweepFeedback(btn, 0, 0); return; }
+      // Stash snapshot before clearing everything
+      S._sweepSnapshot = {
+        particles:            [...S.particles],
+        liveRecBuffers:       S.liveRecBuffers ? [...S.liveRecBuffers] : [],
+        currentLiveBufferIdx: S.currentLiveBufferIdx,
+        strokeHistory:        [...S.strokeHistory],
+      };
       S.particles = [];
       S._particleVersion++;
       if (S.liveRecBuffers) {

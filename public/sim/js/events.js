@@ -18,6 +18,7 @@ import {
   toggleNearestMode, plantSeed, startSeedPlant, finalizeSeedPlant, uprootNearestSeed,
   updatePlaybackControls, flashRadiusTooltip, selectPreset,
   drawPresetWaveform, createSeqFromStroke, clearAllSeqs, dropSeqFromCursor,
+  pickupSeqRemove,
 } from './ui-presets.js';
 import { resizeCanvas } from './renderer.js';
 import { loadAudioFile } from './ui-samples.js';
@@ -178,6 +179,15 @@ export function setupEvents() {
     S.canvas.addEventListener('touchend', e => { e.preventDefault(); S.mouseInCanvas = false; });
   }
 
+  // ── Spacebar scroll prevention ────────────────────────────────────────────
+  // Space is always claimed for paint/record — never let it scroll the page,
+  // even when focus is on a right-panel button, slider, or other element.
+  // This synchronous listener fires before the async handler below and before
+  // the browser's built-in scroll behaviour.
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space' && !S._isKeyLearning?.()) e.preventDefault();
+  });
+
   // ── Keyboard ──────────────────────────────────────────────────────────────
   document.addEventListener('keydown', async e => {
 
@@ -226,6 +236,35 @@ export function setupEvents() {
         if (ind) ind.style.display = 'none';
       }
       return;
+    }
+
+    // A: momentary loop record — force seq mode for this stroke only, then restore
+    // Shift+A: remove nearest loop
+    if (e.key === 'A' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      e.preventDefault();
+      pickupSeqRemove();
+    }
+
+    // A: momentary loop record — force seq mode for this stroke only, then restore
+    if (e.key === 'a' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
+      e.preventDefault();
+      // Disallow if slots are full and overflow is off (same guard as L / drop)
+      if (S.seqOverflow === 'off') {
+        let full = true;
+        for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
+        if (full) return;
+      }
+      ensureAudioContext();
+      // Remember prior seq mode so we can restore it on keyup
+      S._loopRecPreSeqMode = S.seqModeEnabled;
+      S.seqModeEnabled = true;
+      if (!S.cursorHouseMuted) setCursorHouseMuted(true);
+      const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
+      if (gotMic) startLiveRecording();
+      recordStrokeStart('live', S.currentLiveBufferIdx);
+      S.isPainting      = true;
+      S.paintFrameCount = 0;
+      _updateLiveRecUI();
     }
 
     // Spacebar: live recording + painting
@@ -304,10 +343,16 @@ export function setupEvents() {
       undoLastStroke();
     }
 
-    // ArrowDown: start seed drop (hold to record a moving seed)
-    if (e.key === 'ArrowDown' && !e.repeat) {
+    // S: start seed sow (hold to record a moving seed)
+    if (e.key === 's' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
       e.preventDefault();
       startSeedPlant();
+    }
+
+    // Shift+S: uproot nearest seed
+    if (e.key === 'S' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      e.preventDefault();
+      uprootNearestSeed();
     }
 
     // ArrowUp: pick up nearest seed
@@ -322,11 +367,30 @@ export function setupEvents() {
       setCursorHouseMuted(!S.cursorHouseMuted);
     }
 
-    // L: toggle sequential mode
+    // L: toggle loop mode
     if (e.key === 'l' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
       e.preventDefault();
-      S.seqModeEnabled = !S.seqModeEnabled;
-      document.getElementById('seqModeBtn')?.classList.toggle('active', S.seqModeEnabled);
+      // If A is currently held, L should update the *restored* state, not the
+      // live seqModeEnabled (which A owns for the duration of the stroke).
+      // That way, when A releases, it restores to whatever the user toggled L to.
+      const aHeld = S._loopRecPreSeqMode !== undefined;
+      const effectiveCurrent = aHeld ? S._loopRecPreSeqMode : S.seqModeEnabled;
+      // Don't allow turning ON when slots are full and overflow is off
+      let nextValue;
+      if (!effectiveCurrent && S.seqOverflow === 'off') {
+        let full = true;
+        for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
+        nextValue = full ? effectiveCurrent : true;
+      } else {
+        nextValue = !effectiveCurrent;
+      }
+      if (aHeld) {
+        // Just update what A will restore to on release; seqModeEnabled stays true
+        S._loopRecPreSeqMode = nextValue;
+      } else {
+        S.seqModeEnabled = nextValue;
+      }
+      document.getElementById('seqModeBtn')?.classList.toggle('active', nextValue);
     }
 
     // D: drop loop from current cursor grain
@@ -359,10 +423,29 @@ export function setupEvents() {
       }
     }
 
-    // ArrowDown release: finalize seed drop (short hold = stationary, long = moving)
-    if (e.key === 'ArrowDown') {
+    // S release: finalize seed sow (short hold = stationary, long = moving)
+    if (e.key === 's') {
       e.preventDefault();
       finalizeSeedPlant();
+    }
+
+    // A release: end momentary loop record, restore prior seq mode
+    if (e.key === 'a' && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault();
+      if (S.currentStrokeId > 0) {
+        try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+      }
+      S.isPainting      = false;
+      S.currentStrokeId = -1;
+      if (S.isRecording) stopLiveRecording();
+      S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+      // Restore seq mode to what it was before A was pressed
+      if (S._loopRecPreSeqMode !== undefined) {
+        S.seqModeEnabled = S._loopRecPreSeqMode;
+        document.getElementById('seqModeBtn')?.classList.toggle('active', S.seqModeEnabled);
+        S._loopRecPreSeqMode = undefined;
+      }
+      _updateLiveRecUI();
     }
 
     // Spacebar release: stop recording, end live paint stroke
@@ -512,6 +595,11 @@ export function setupEvents() {
   S._plantSeed   = plantSeed;
   S._uprootSeed  = uprootNearestSeed;
   S._undo         = undoLastStroke;
+
+  // Expose slot-full check for inline indicator scripts (non-module context)
+  window._loopSlotsFull = () =>
+    S.seqOverflow === 'off' &&
+    Array.from({ length: S.seqSlotCount }, (_, i) => S.seqSlots[i]).every(Boolean);
 
   // Expose for osc.js — /record 1 starts live capture, /record 0 stops it.
   // Mirrors the spacebar keydown/keyup logic exactly.

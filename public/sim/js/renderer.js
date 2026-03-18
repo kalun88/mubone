@@ -47,7 +47,7 @@ export function drawSeeds() {
   const W = S.canvas.width, H = S.canvas.height;
   const margin = 14;
 
-  for (let i = 0; i < MAX_SEEDS; i++) {
+  for (let i = 0; i < S.seedSlotCount; i++) {
     const seed = S.seedSlots[i];
     if (!seed) continue;
 
@@ -528,7 +528,7 @@ export function drawParticles() {
 
   // ── Sequential playhead indicators ────────────────────────────────────────
   // Ring around the current playhead particle for each active sequence.
-  for (let ti = 0; ti < MAX_SEQS; ti++) {
+  for (let ti = 0; ti < S.seqSlotCount; ti++) {
     const seq = S.seqSlots[ti];
     if (!seq || !seq.playing || !seq.particles.length) continue;
     const p = seq.particles[seq.playheadIndex];
@@ -550,7 +550,7 @@ export function drawParticles() {
   // ── Sequence anchor markers ──────────────────────────────────────────────
   // Ring + dot + slot number at each sequence's anchor position.
   // Uses anchorLon/anchorLat (drop point for D-drops, first particle for strokes).
-  for (let si = 0; si < MAX_SEQS; si++) {
+  for (let si = 0; si < S.seqSlotCount; si++) {
     const seq = S.seqSlots[si];
     if (!seq) continue;
     const aLon = seq.anchorLon ?? seq.particles[0]?.lon;
@@ -823,13 +823,13 @@ export function animate() {
         const speed = curve * ROTATION_SPEED;
         const nx = S.mouseX / dist, ny = S.mouseY / dist;
 
-        if (Math.abs(nx) > 0.001) {
+        if (Math.abs(nx) > 0.001 && S.axisLock !== 'az') {
           const up = _qRotVec(S.camQ, [0, 1, 0]);
           const yawSign = up[1] < 0 ? -1 : 1;
           const qYaw = _qFromAA(0, 1, 0, nx * speed * yawSign);
           S.camQ = _qNorm(_qMul(qYaw, S.camQ));
         }
-        if (Math.abs(ny) > 0.001) {
+        if (Math.abs(ny) > 0.001 && S.axisLock !== 'el') {
           const qPitch = _qFromAA(1, 0, 0, ny * speed);
           S.camQ = _qNorm(_qMul(S.camQ, qPitch));
         }
@@ -844,7 +844,16 @@ export function animate() {
   // S._surfaceInput is set by events.js (accumulated pointer-lock movementX/Y).
   // { nx, ny } are virtual cursor coords in [-1, +1], persisted across lock cycles.
   if (S.cameraMode === 'surface' && S._surfaceInput) {
-    const { nx, ny } = S._surfaceInput;
+    let { nx, ny } = S._surfaceInput;
+    // Axis lock: freeze the locked component at the moment lock was engaged
+    if (S.axisLock === 'az') {
+      if (S._axisLockFrozenNx == null) S._axisLockFrozenNx = nx;
+      nx = S._axisLockFrozenNx;
+    } else { S._axisLockFrozenNx = null; }
+    if (S.axisLock === 'el') {
+      if (S._axisLockFrozenNy == null) S._axisLockFrozenNy = ny;
+      ny = S._axisLockFrozenNy;
+    } else { S._axisLockFrozenNy = null; }
     // Map virtual position to lon/lat:
     // nx: unbounded → continuous yaw (right = look right, wraps around)
     // ny: -1..+1 → full 180° pitch (up = look up, clamped at poles)
@@ -861,7 +870,30 @@ export function animate() {
   // real-world facing direction. The visual rotates with your body.
   if (S.cameraMode === 'sensor' && typeof S._getSensorCamQ === 'function') {
     const sq = S._getSensorCamQ();
-    if (sq) S.camQ = sq;  // [x, y, z, w]
+    if (sq) {
+      if (S.axisLock !== 'off') {
+        // Decompose sensor quat into yaw (azimuth) and pitch (elevation)
+        // Forward vector from quaternion
+        const fwd = _qRotVec(sq, [0, 0, 1]);
+        let yaw   = Math.atan2(fwd[0], fwd[2]);
+        let pitch  = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
+        if (S.axisLock === 'az') {
+          if (S._axisLockFrozenYaw == null) S._axisLockFrozenYaw = yaw;
+          yaw = S._axisLockFrozenYaw;
+        } else { S._axisLockFrozenYaw = null; }
+        if (S.axisLock === 'el') {
+          if (S._axisLockFrozenPitch == null) S._axisLockFrozenPitch = pitch;
+          pitch = S._axisLockFrozenPitch;
+        } else { S._axisLockFrozenPitch = null; }
+        const qY = _qFromAA(0, 1, 0, yaw);
+        const qP = _qFromAA(1, 0, 0, pitch);
+        S.camQ = _qNorm(_qMul(qY, qP));
+      } else {
+        S._axisLockFrozenYaw = null;
+        S._axisLockFrozenPitch = null;
+        S.camQ = sq;
+      }
+    }
   }
 
   // Drop particles while painting

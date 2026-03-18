@@ -12,6 +12,7 @@ import {
   saveUserPresets, rebuildGrainCurves,
 } from './state.js';
 import { resetCursorPeriod } from './grain.js';
+import { isLocked, isLockable, toggleLock, onLockChange, loadLocks } from './param-lock.js';
 
 // ── Parameter registry ──────────────────────────────────────────────────────
 // Each entry describes one mappable parameter.
@@ -141,8 +142,42 @@ export const PARAM_REGISTRY = [
     set: v  => { S.radiusFadeCurve = Math.max(0, Math.min(1, v)); },
     fmt: v  => Math.round(v * 100) + '%',
     parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
+  { key: 'axisLock', label: 'axis lock', group: 'cursor', type: 'enum', options: ['off', 'az', 'el'],
+    get: () => S.axisLock,
+    set: v  => {
+      S.axisLock = v;
+      S._axisLockFrozenNx = null; S._axisLockFrozenNy = null;
+      S._axisLockFrozenYaw = null; S._axisLockFrozenPitch = null;
+      const seg = document.getElementById('axisLockSeg');
+      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.lock === v));
+    },
+    fmt: v  => v,
+    parse: s => ['off', 'az', 'el'].includes(s.trim()) ? s.trim() : null },
 
   // ── Looper ────────────────────────────────────────────────────────────────
+  { key: 'seqSlotCount', label: 'loop slots', group: 'looper', type: 'number',
+    get: () => S.seqSlotCount,
+    set: v  => {
+      S.seqSlotCount = Math.max(1, Math.min(12, Math.round(v)));
+      const sel = document.getElementById('seqSlotCountSelect');
+      if (sel) sel.value = String(S.seqSlotCount);
+      (S.updateSeqBanksUI || (() => {}))();
+      S._syncSeqButtonStates?.();
+    },
+    fmt: v  => String(v),
+    parse: s => { const v = parseInt(s, 10); return isNaN(v) ? null : Math.max(1, Math.min(12, v)); } },
+  { key: 'seqOverflow', label: 'loop overflow', group: 'looper', type: 'enum', options: ['off', 'oldest', 'nearest'],
+    get: () => S.seqOverflow,
+    set: v  => {
+      S.seqOverflow = v;
+      const seg = document.getElementById('seqOverflowSeg');
+      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.overflow === v));
+      S._syncSeqButtonStates?.();
+    },
+    fmt: v  => v,
+    parse: s => ['off', 'oldest', 'nearest'].includes(s.trim()) ? s.trim() : null },
   { key: 'seqModeEnabled', label: 'loop mode',    group: 'looper', type: 'boolean',
     get: () => S.seqModeEnabled,
     set: v  => { S.seqModeEnabled = v; },
@@ -164,45 +199,65 @@ export const PARAM_REGISTRY = [
     fmt: v  => v,
     parse: s => ['fwd', 'rev'].includes(s.trim()) ? s.trim() : null },
 
-  // ── Seeds ────────────────────────────────────────────────────────────────
-  { key: 'seedMode',         label: 'blend mode',      group: 'seeds', type: 'enum', options: ['all', 'focus'],
+  // ── Seeder ───────────────────────────────────────────────────────────────
+  { key: 'seedSlotCount', label: 'seed slots', group: 'seeder', type: 'number',
+    get: () => S.seedSlotCount,
+    set: v  => {
+      S.seedSlotCount = Math.max(1, Math.min(12, Math.round(v)));
+      const sel = document.getElementById('seedSlotCountSelect');
+      if (sel) sel.value = String(S.seedSlotCount);
+      (S.updateSeedBanksUI || (() => {}))();
+    },
+    fmt: v  => String(v),
+    parse: s => { const v = parseInt(s, 10); return isNaN(v) ? null : Math.max(1, Math.min(12, v)); } },
+  { key: 'seedOverflow', label: 'seed overflow', group: 'seeder', type: 'enum', options: ['off', 'oldest', 'nearest'],
+    get: () => S.seedOverflow,
+    set: v  => {
+      S.seedOverflow = v;
+      const seg = document.getElementById('seedOverflowSeg');
+      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.overflow === v));
+    },
+    fmt: v  => v,
+    parse: s => ['off', 'oldest', 'nearest'].includes(s.trim()) ? s.trim() : null },
+  { key: 'seedMode',         label: 'blend mode',      group: 'seeder', type: 'enum', options: ['all', 'focus'],
     get: () => S.seedMode,
     set: v  => { S.seedMode = v; },
     fmt: v  => v,
     parse: s => ['all', 'focus'].includes(s.trim()) ? s.trim() : null },
-  { key: 'seedTether',       label: 'tether',         group: 'seeds', type: 'boolean',
+  { key: 'seedTether',       label: 'tether',         group: 'seeder', type: 'boolean',
     get: () => S.seedTether,
     set: v  => { S.seedTether = v; },
     fmt: v  => v ? 'on' : 'off',
     parse: s => parseBool(s) },
-  { key: 'seedXfade',    label: 'xfade',      group: 'seeds', type: 'number',
+  { key: 'seedXfade',    label: 'xfade',      group: 'seeder', type: 'number',
     get: () => S.seedXfade,
     set: v  => { S.seedXfade = Math.max(0, Math.min(1, v)); },
     fmt: v  => Math.round(v * 100) + '%',
     parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
-  { key: 'seedAttack',       label: 'attack',          group: 'seeds', type: 'number',
+  { key: 'seedAttack',       label: 'attack',          group: 'seeder', type: 'number',
     get: () => S.seedAttack,
     set: v  => { S.seedAttack = Math.max(0, Math.min(10, v)); },
     fmt: v  => v.toFixed(1) + 's',
     parse: s => { const v = parseFloat(s.replace('s', '')); return isNaN(v) ? null : Math.max(0, Math.min(10, v)); } },
-  { key: 'seedRelease',      label: 'release',         group: 'seeds', type: 'number',
+  { key: 'seedRelease',      label: 'release',         group: 'seeder', type: 'number',
     get: () => S.seedRelease,
     set: v  => { S.seedRelease = Math.max(0, Math.min(10, v)); },
     fmt: v  => v.toFixed(1) + 's',
     parse: s => { const v = parseFloat(s.replace('s', '')); return isNaN(v) ? null : Math.max(0, Math.min(10, v)); } },
-  { key: 'seedLoopMode',     label: 'loop mode',       group: 'seeds', type: 'enum', options: ['pingpong', 'forward'],
+  { key: 'seedLoopMode',     label: 'loop mode',       group: 'seeder', type: 'enum', options: ['pingpong', 'forward'],
     get: () => S.seedLoopMode,
     set: v  => { S.seedLoopMode = v; },
     fmt: v  => v,
     parse: s => ['pingpong', 'forward'].includes(s.trim()) ? s.trim() : null },
 
   // ── Morph ─────────────────────────────────────────────────────────────────
-  { key: 'morphEnabled',  label: 'morph',       group: 'seeds', type: 'boolean',
+  { key: 'morphEnabled',  label: 'morph',       group: 'seeder', type: 'boolean',
     get: () => S.morphEnabled,
     set: v  => { S.morphEnabled = v; },
     fmt: v  => v ? 'on' : 'off',
     parse: s => parseBool(s) },
-  { key: 'morphHoldMode', label: 'morph hold',  group: 'seeds', type: 'enum', options: ['momentum', 'elastic'],
+  { key: 'morphHoldMode', label: 'morph hold',  group: 'seeder', type: 'enum', options: ['momentum', 'elastic'],
     get: () => S.morphHoldMode,
     set: v  => { S.morphHoldMode = v; },
     fmt: v  => v,
@@ -261,6 +316,7 @@ export function applySparsePreset(patch, skipInlineKeys = true) {
   for (const p of PARAM_REGISTRY) {
     if (skipInlineKeys && INLINE_HANDLED_KEYS.has(p.key)) continue;
     if (!(p.key in patch) || patch[p.key] === undefined || patch[p.key] === null) continue;
+    if (isLocked(p.key)) continue;   // ◆ param lock — skip locked params
     p.set(patch[p.key]);
   }
 }
@@ -357,6 +413,10 @@ function _renderTable() {
   selLabel.className = 'pt-param-col pt-selector-label';
   selLabel.textContent = '●';
   selRow.appendChild(selLabel);
+  // Lock column spacer in selector row
+  const selLockSpacer = document.createElement('th');
+  selLockSpacer.className = 'pt-lock-col';
+  selRow.appendChild(selLockSpacer);
 
   for (let i = 0; i < PRESETS.length; i++) {
     const td = document.createElement('td');
@@ -392,6 +452,13 @@ function _renderTable() {
   thParam.textContent = 'parameter';
   thParam.className = 'pt-param-col';
   hRow.appendChild(thParam);
+  // Lock column header
+  const thLock = document.createElement('th');
+  thLock.className = 'pt-lock-col';
+  thLock.textContent = '🔒';
+  thLock.title = 'parameter locks — locked params hold through preset changes';
+  thLock.style.fontSize = '0.55rem';
+  hRow.appendChild(thLock);
 
   for (let i = 0; i < PRESETS.length; i++) {
     const th = document.createElement('th');
@@ -431,7 +498,7 @@ function _renderTable() {
       const groupRow = document.createElement('tr');
       groupRow.className = 'pt-group-row';
       const groupTd = document.createElement('td');
-      groupTd.colSpan = PRESETS.length + 1;
+      groupTd.colSpan = PRESETS.length + 2;  // +2 for label + lock column
       groupTd.textContent = currentGroup;
       groupRow.appendChild(groupTd);
       tbody.appendChild(groupRow);
@@ -439,11 +506,36 @@ function _renderTable() {
 
     const row = document.createElement('tr');
     row.className = 'pt-param-row';
+    if (isLocked(param.key)) row.classList.add('pt-row-locked');
 
     const labelTd = document.createElement('td');
     labelTd.className = 'pt-label';
     labelTd.textContent = param.label;
     row.appendChild(labelTd);
+
+    // Lock cell
+    const lockTd = document.createElement('td');
+    lockTd.className = 'pt-lock-col';
+    if (isLockable(param.key)) {
+      const lockSpan = document.createElement('span');
+      lockSpan.className = 'pt-lock-cell' + (isLocked(param.key) ? ' locked' : '');
+      lockSpan.textContent = isLocked(param.key) ? '🔒' : '🔓';
+      lockSpan.dataset.lockKey = param.key;
+      lockSpan.title = isLocked(param.key)
+        ? `unlock ${param.label} — preset recall will change this again`
+        : `lock ${param.label} — holds value through preset changes`;
+      lockSpan.addEventListener('click', () => {
+        const nowLocked = toggleLock(param.key);
+        lockSpan.classList.toggle('locked', nowLocked);
+        lockSpan.textContent = nowLocked ? '🔒' : '🔓';
+        lockSpan.title = nowLocked
+          ? `unlock ${param.label} — preset recall will change this again`
+          : `lock ${param.label} — holds value through preset changes`;
+        row.classList.toggle('pt-row-locked', nowLocked);
+      });
+      lockTd.appendChild(lockSpan);
+    }
+    row.appendChild(lockTd);
 
     for (let i = 0; i < PRESETS.length; i++) {
       const td = document.createElement('td');

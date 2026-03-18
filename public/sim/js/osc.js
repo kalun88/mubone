@@ -404,7 +404,7 @@ export function handleOSC(rawAddress, values) {
     // ── Seed / undo ──────────────────────────────────────────────────────────
     // S._plantSeed / _uprootSeed / _undo registered by events.js.
     // Bang-style: any value (or no value) triggers the action.
-    case '/seed/plant':   S._plantSeed?.();  break;
+    case '/seed/sow':     S._plantSeed?.();  break;
     case '/seed/uproot':  S._uprootSeed?.(); break;
     case '/seed/clear':   clearAllSeeds();   break;
     case '/undo':         S._undo?.();       break;
@@ -515,37 +515,37 @@ export function handleOSC(rawAddress, values) {
       scheduleUISync();
       break;
 
-    // ── Looper (sequential mode) ────────────────────────────────────────────
-    case '/seq/mode':
+    // ── Looper ─────────────────────────────────────────────────────────────
+    case '/loop/mode':
       S.seqModeEnabled = !!values[0];
       document.getElementById('seqModeBtn')?.classList.toggle('active', S.seqModeEnabled);
       break;
-    case '/seq/drop':
+    case '/loop/drop':
       dropSeqFromCursor();
       break;
-    case '/seq/resume':
+    case '/loop/resume':
       dropNearestSeq();
       break;
-    case '/seq/pause':
+    case '/loop/pause':
       pickupSeqPause();
       break;
-    case '/seq/remove':
+    case '/loop/remove':
       pickupSeqRemove();
       break;
-    case '/seq/clear':
+    case '/loop/clear':
       clearAllSeqs();
       break;
-    case '/seq/volume':
+    case '/loop/volume':
       S.seqNextParams.volume = clamp(values[0], 0, 1);
       { const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume;
         const nb = document.getElementById('seqVolumeNum');    if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; }
       break;
-    case '/seq/speed':
+    case '/loop/speed':
       S.seqNextParams.speed = clamp(values[0], 0.25, 4);
       { const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed;
         const nb = document.getElementById('seqSpeedNum');    if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; }
       break;
-    case '/seq/dir':
+    case '/loop/dir':
       if (values[0] === 'fwd' || values[0] === 'rev') {
         S.seqNextParams.direction = values[0] === 'rev' ? -1 : 1;
         const seg = document.getElementById('seqDirectionSeg');

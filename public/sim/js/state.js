@@ -56,17 +56,20 @@ export const LIVE_PAINT_COLORS = [
   '#c8603a', '#e8b050', '#d06838'
 ];
 
-// Seed plant system
-export const MAX_SEEDS = 8;
-// Sequential (loop) system
-export const MAX_SEQS = 8;
+// Seed plant system — MAX_SEEDS is the hard upper bound (array size).
+// S.seedSlotCount (1–12) is the active limit per session.
+export const MAX_SEEDS = 12;
+// Sequential (loop) system — same pattern.
+export const MAX_SEQS = 12;
 export const SEED_COLORS = [
   '#4fc3f7', '#81c784', '#ffb74d', '#e57373',
-  '#ce93d8', '#fff176', '#80cbc4', '#ff8a65'
+  '#ce93d8', '#fff176', '#80cbc4', '#ff8a65',
+  '#90caf9', '#a5d6a7', '#ffe082', '#ef9a9a'
 ];
 export const SEQ_COLORS = [
   '#ff6b9d', '#c084fc', '#67e8f9', '#fbbf24',
-  '#a3e635', '#f472b6', '#38bdf8', '#fb923c'
+  '#a3e635', '#f472b6', '#38bdf8', '#fb923c',
+  '#e879f9', '#86efac', '#7dd3fc', '#fdba74'
 ];
 // Moving seed recording: threshold (ms) — hold ↓ longer than this to record a moving seed.
 // Shorter is treated as a stationary drop.
@@ -915,6 +918,11 @@ export const S = {
   mousePixelY: 0,
   mouseInCanvas: false,
   altLocked:          false,  // true while Alt held -- sphere position frozen
+  axisLock:           'off',  // 'off' | 'az' | 'el' — locks azimuth or elevation
+  _axisLockFrozenNx:  null,   // snapshot of surface nx when az locked
+  _axisLockFrozenNy:  null,   // snapshot of surface ny when el locked
+  _axisLockFrozenYaw:   null, // snapshot of sensor yaw when az locked
+  _axisLockFrozenPitch: null, // snapshot of sensor pitch when el locked
   altFrozenMousePixelX: 0,
   altFrozenMousePixelY: 0,
 
@@ -948,6 +956,8 @@ export const S = {
 
   // ── Seed plant system ──────────────────────────────────────────────────
   seedSlots: new Array(MAX_SEEDS).fill(null), // fixed positions
+  seedSlotCount:    8,        // active limit (1–12), default 8
+  seedOverflow:     'off',    // 'off' | 'oldest' | 'nearest'
 
   // ── Loaded samples (1-9) ───────────────────────────────────────────────
   // activeSampleIndex: which slot is currently toggled ON for painting (-1 = none)
@@ -1084,6 +1094,16 @@ export const S = {
   smoothThreshold:  20,          // deg/s — gyroMag below this (with movement) pushes toward smooth
   morphEnabled:     true,        // master enable for gesture morphing
 
+  // ── Desktop morph (1D slider morph for HCI — no sensor) ────────────────
+  // Morphs the nearest non-moving seed's grain params between two presets,
+  // with center position = the seed's planted grain settings.
+  desktopMorphPresetL: -1,       // PRESETS index for left endpoint (-1 = none)
+  desktopMorphPresetR: -1,       // PRESETS index for right endpoint (-1 = none)
+  desktopMorphT:       0.5,      // 0=left preset, 0.5=center (planted), 1=right preset
+  desktopMorphSticky:  false,    // true = slider stays where released; false = returns to center
+  desktopMorphReturnMs: 800,     // return-to-center time in ms (when not sticky)
+  _desktopMorphAnimId: 0,        // rAF handle for return animation
+
   // ── Seed navigation (Phase 3 — Improv Mode) ───────────────────────────
   // 'all' = all seeds play simultaneously (existing behavior)
   // 'focus' = distance-weighted blend toward closest seed(s)
@@ -1133,6 +1153,8 @@ export const S = {
   // created and begins looping playback automatically.
   seqModeEnabled: false,
   seqSlots: new Array(MAX_SEQS).fill(null),
+  seqSlotCount:     8,        // active limit (1–12), default 8
+  seqOverflow:      'off',    // 'off' | 'oldest' | 'nearest'
   // Each seq slot (when active):
   //   { slotIndex, strokeId, particles: [...], buffer, loopStart, loopEnd,
   //     playheadIndex, direction: 1|-1, speed: 1.0, playing: true, color,

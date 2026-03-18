@@ -152,10 +152,7 @@ export function initImprovUI() {
   const clearBtn  = document.getElementById('seedClearBtn');
 
   function refreshSeedBtns() {
-    const count = S.seedSlots.filter(c => c !== null).length;
-    if (plantBtn)  plantBtn.disabled  = count >= MAX_SEEDS;
-    if (uprootBtn) uprootBtn.disabled = count === 0;
-    if (clearBtn)  clearBtn.disabled  = count === 0;
+    // All seed buttons stay always visible/enabled — consistent UI, no fading
   }
 
   plantBtn?.addEventListener('click', () => { plantSeed(); refreshSeedBtns(); });

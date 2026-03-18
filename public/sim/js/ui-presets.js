@@ -11,9 +11,11 @@ import {
   USER_PRESET_START, FACTORY_PRESET_START, loadUserPresets, saveUserPresets,
 } from './state.js';
 import { angleBetweenSphere, findNearestSeedSlot, resetCursorPeriod } from './grain.js';
+import { lerpPresets } from './wand.js';
 import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js';
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
 import { applySparsePreset, syncAllUI, PARAM_REGISTRY } from './ui-patch-table.js';
+import { isLocked, toggleLock, onLockChange, loadLocks } from './param-lock.js';
 
 // ── Shared time formatter (seconds → human-readable ms/s string) ─────────────
 export function fmtMs(v) {
@@ -375,6 +377,35 @@ export function setupPresets() {
       micBtn.disabled = false;
     });
   }
+
+  // ── Parameter lock buttons ────────────────────────────────────────────────
+  loadLocks();   // hydrate from localStorage
+
+  function _syncLockBtn(btn) {
+    const key = btn.dataset.lockKey;
+    const locked = isLocked(key);
+    btn.classList.toggle('locked', locked);
+    btn.textContent = locked ? '🔒' : '🔓';
+    btn.title = locked
+      ? `unlock ${btn.closest('.grain-row')?.querySelector('.grain-label')?.textContent?.trim() || key} — preset recall will change this again`
+      : `lock ${btn.closest('.grain-row')?.querySelector('.grain-label')?.textContent?.trim() || key} — holds value through preset changes`;
+    // Add/remove locked class on the parent grain-row
+    btn.closest('.grain-row')?.classList.toggle('param-locked', locked);
+  }
+
+  document.querySelectorAll('.param-lock-btn').forEach(btn => {
+    _syncLockBtn(btn);
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleLock(btn.dataset.lockKey);
+      _syncLockBtn(btn);
+    });
+  });
+
+  // Listen for lock changes from other sources (e.g. patch table)
+  onLockChange((key, locked) => {
+    document.querySelectorAll(`.param-lock-btn[data-lock-key="${key}"]`).forEach(_syncLockBtn);
+  });
 }
 
 export function toggleNearestMode() {
@@ -432,11 +463,47 @@ function _captureSeedFrame() {
   };
 }
 
+/**
+ * Find a free seed slot within the active count, or a replacement slot
+ * based on overflow mode. Returns -1 if no slot available.
+ */
+function _findSeedSlot(lon, lat) {
+  const limit = S.seedSlotCount;
+  // 1. First empty slot within active range
+  for (let i = 0; i < limit; i++) {
+    if (!S.seedSlots[i]) return i;
+  }
+  // 2. All active slots full — check overflow mode
+  if (S.seedOverflow === 'oldest') {
+    let oldestIdx = -1, oldestTime = Infinity;
+    for (let i = 0; i < limit; i++) {
+      const s = S.seedSlots[i];
+      if (s && s._plantedAt < oldestTime) { oldestTime = s._plantedAt; oldestIdx = i; }
+    }
+    return oldestIdx;
+  }
+  if (S.seedOverflow === 'nearest') {
+    let nearIdx = -1, nearAng = Infinity;
+    for (let i = 0; i < limit; i++) {
+      const s = S.seedSlots[i];
+      if (!s) continue;
+      const ang = angleBetweenSphere(s.lon, s.lat, lon, lat);
+      if (ang < nearAng) { nearAng = ang; nearIdx = i; }
+    }
+    return nearIdx;
+  }
+  return -1; // overflow === 'off'
+}
+
 /** Start a seed plant. Reserves a slot and begins recording movement. */
 export function startSeedPlant() {
-  const slotIndex = S.seedSlots.indexOf(null);
-  if (slotIndex === -1) return;
   const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+  const slotIndex = _findSeedSlot(lon, lat);
+  if (slotIndex === -1) return;
+  // If replacing an existing seed, remove it first (respect release envelope)
+  if (S.seedSlots[slotIndex]) {
+    S.seedSlots[slotIndex] = null;
+  }
   const color = SEED_COLORS[slotIndex];
   S.seedSlots[slotIndex] = {
     slotIndex, lon, lat, color, searchRadiusDeg: S.searchRadiusDeg,
@@ -579,10 +646,109 @@ export function clearAllSeeds() {
  * Collects all particles with that strokeId, sorts by paint order, and
  * places them in the first available sequence slot. Starts playing immediately.
  */
+/**
+ * Returns true when all active loop slots are occupied AND overflow is 'off',
+ * meaning no new loops can be created.
+ */
+S._syncSeqButtonStates = null; // assigned below after definition
+export function seqSlotsFull() {
+  if (S.seqOverflow !== 'off') return false;
+  for (let i = 0; i < S.seqSlotCount; i++) {
+    if (!S.seqSlots[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Sync the disabled / greyed-out state of the loop-mode button and drop button
+ * based on whether slots are full (overflow=off). Also auto-disables loop mode
+ * if it was on and slots just became full.
+ */
+function _syncSeqButtonStates() {
+  const full = seqSlotsFull();
+  const modeBtn      = document.getElementById('seqModeBtn');
+  const dropBtn      = document.getElementById('seqLoopDropBtn');
+  const loopRecBtn   = document.getElementById('loopRecordIndicatorBtn');
+  if (modeBtn) {
+    modeBtn.classList.toggle('disabled', full);
+    modeBtn.style.opacity = full ? '0.35' : '';
+    modeBtn.style.pointerEvents = full ? 'none' : '';
+  }
+  if (dropBtn) {
+    dropBtn.classList.toggle('disabled', full);
+    dropBtn.style.opacity = full ? '0.35' : '';
+    dropBtn.style.pointerEvents = full ? 'none' : '';
+  }
+  if (loopRecBtn) {
+    loopRecBtn.style.opacity = full ? '0.35' : '';
+  }
+  // Auto-disable loop mode when slots become full
+  if (full && S.seqModeEnabled) {
+    S.seqModeEnabled = false;
+    if (modeBtn) modeBtn.classList.remove('active');
+  }
+}
+S._syncSeqButtonStates = _syncSeqButtonStates;
+
+/**
+ * Find a free seq slot within the active count, or a replacement slot
+ * based on overflow mode. anchorLon/Lat used for 'nearest' mode.
+ */
+function _findSeqSlot(anchorLon, anchorLat) {
+  const limit = S.seqSlotCount;
+  // 1. First empty slot within active range
+  for (let i = 0; i < limit; i++) {
+    if (!S.seqSlots[i]) return i;
+  }
+  // 2. All active slots full — check overflow mode
+  if (S.seqOverflow === 'oldest') {
+    let oldestIdx = -1, oldestTime = Infinity;
+    for (let i = 0; i < limit; i++) {
+      const seq = S.seqSlots[i];
+      if (seq && (seq._createdAt || 0) < oldestTime) { oldestTime = seq._createdAt || 0; oldestIdx = i; }
+    }
+    return oldestIdx;
+  }
+  if (S.seqOverflow === 'nearest') {
+    let nearIdx = -1, nearAng = Infinity;
+    for (let i = 0; i < limit; i++) {
+      const seq = S.seqSlots[i];
+      if (!seq) continue;
+      const aLon = seq.anchorLon ?? seq.particles[0]?.lon;
+      const aLat = seq.anchorLat ?? seq.particles[0]?.lat;
+      if (aLon == null || aLat == null) continue;
+      const ang = angleBetweenSphere(aLon, aLat, anchorLon, anchorLat);
+      if (ang < nearAng) { nearAng = ang; nearIdx = i; }
+    }
+    return nearIdx;
+  }
+  return -1; // overflow === 'off'
+}
+
 export function createSeqFromStroke(strokeId, anchorParticle) {
   if (strokeId < 0) return;
-  const slotIndex = S.seqSlots.indexOf(null);
-  if (slotIndex === -1) return;  // all slots full
+
+  // Resolve anchor position early for overflow nearest-mode
+  let anchorLon = 0, anchorLat = 0;
+  if (anchorParticle) {
+    anchorLon = anchorParticle.lon; anchorLat = anchorParticle.lat;
+  } else {
+    // Fall back to first particle of the stroke
+    for (let i = 0; i < S.particles.length; i++) {
+      if (S.particles[i].strokeId === strokeId) {
+        anchorLon = S.particles[i].lon; anchorLat = S.particles[i].lat;
+        break;
+      }
+    }
+  }
+
+  const slotIndex = _findSeqSlot(anchorLon, anchorLat);
+  if (slotIndex === -1) return;  // all slots full, overflow off
+  // If replacing an existing seq, stop its audio first
+  if (S.seqSlots[slotIndex]) {
+    _stopSeqAudio(S.seqSlots[slotIndex]);
+    S.seqSlots[slotIndex] = null;
+  }
 
   // Collect particles belonging to this stroke, preserving paint order.
   // Paint order = array index order (particles are pushed sequentially).
@@ -687,11 +853,13 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
     _sourceNode:    null,           // AudioBufferSourceNode (created by scheduler)
     _gainNode:      null,           // GainNode for volume control
     _revBuffer:     null,           // cached reversed buffer (created lazily if direction=-1)
+    _createdAt:     performance.now() / 1000, // wallclock creation time (seconds)
     _startedAt:     0,              // audioContext.currentTime when started
     grainParams: {
       volume: S.seqNextParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0,
     },
   };
+  _syncSeqButtonStates();
 }
 
 /**
@@ -700,8 +868,14 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
  * starts playing from the anchor particle's position in the loop.
  */
 function addPlayheadFromExisting(sourceSeq, anchorParticle) {
-  const slotIndex = S.seqSlots.indexOf(null);
-  if (slotIndex === -1) return;  // all slots full
+  const { lon: aLon, lat: aLat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+  const slotIndex = _findSeqSlot(aLon, aLat);
+  if (slotIndex === -1) return;  // all slots full, overflow off
+  // If replacing an existing loop, stop its audio first
+  if (S.seqSlots[slotIndex]) {
+    _stopSeqAudio(S.seqSlots[slotIndex]);
+    S.seqSlots[slotIndex] = null;
+  }
 
   let startIdx = 0;
   if (anchorParticle) {
@@ -709,7 +883,6 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     if (idx > 0) startIdx = idx;
   }
 
-  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
   const color = SEQ_COLORS[slotIndex];
   S.seqSlots[slotIndex] = {
     slotIndex,
@@ -724,16 +897,18 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     speed:          S.seqNextParams.speed ?? 1.0,
     playing:        true,
     color,
-    anchorLon:      lon,                      // drop point — used for distance calcs
-    anchorLat:      lat,
+    anchorLon:      aLon,                     // drop point — used for distance calcs
+    anchorLat:      aLat,
     _sourceNode:    null,
     _gainNode:      null,
     _revBuffer:     null,
+    _createdAt:     performance.now() / 1000,
     _startedAt:     0,
     grainParams: {
       volume: S.seqNextParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0,
     },
   };
+  _syncSeqButtonStates();
 }
 
 /**
@@ -744,6 +919,7 @@ export function removeSeq(slotIndex) {
   if (!seq) return;
   _stopSeqAudio(seq);
   S.seqSlots[slotIndex] = null;
+  _syncSeqButtonStates();
 }
 
 /**
@@ -766,6 +942,7 @@ export function clearAllSeqs() {
     if (S.seqSlots[i]) _stopSeqAudio(S.seqSlots[i]);
     S.seqSlots[i] = null;
   }
+  _syncSeqButtonStates();
 }
 
 // ── Sequence panel helpers ────────────────────────────────────────────────
@@ -776,7 +953,7 @@ export function clearAllSeqs() {
  */
 export function findNearestSeqSlot(refLon, refLat, filterPlaying = null) {
   let nearestSlot = -1, nearestAng = Infinity;
-  for (let i = 0; i < MAX_SEQS; i++) {
+  for (let i = 0; i < S.seqSlotCount; i++) {
     const seq = S.seqSlots[i];
     if (!seq) continue;
     if (filterPlaying !== null && seq.playing !== filterPlaying) continue;
@@ -942,12 +1119,12 @@ export function updateSeqBanksUI() {
   c.scale(dpr, dpr);
   c.clearRect(0, 0, W, H);
 
-  const COLS = 8, ROWS = 1, GAP = 4, PAD = 4;
+  const COLS = S.seqSlotCount, ROWS = 1, GAP = 4, PAD = 4;
   const cellW = (W - PAD * 2 - GAP * (COLS - 1)) / COLS;
   const cellH = (H - PAD * 2 - GAP * (ROWS - 1)) / ROWS;
   const r     = Math.min(cellW, cellH) / 2 - 1;
 
-  for (let i = 0; i < MAX_SEQS; i++) {
+  for (let i = 0; i < S.seqSlotCount; i++) {
     const col = i % COLS;
     const row = Math.floor(i / COLS);
     const cx = PAD + col * (cellW + GAP) + cellW / 2;
@@ -1071,13 +1248,13 @@ export function updateSeedBanksUI() {
   c.scale(dpr, dpr);
   c.clearRect(0, 0, W, H);
 
-  // 8×1 grid — single row of slots
-  const COLS = 8, ROWS = 1, GAP = 4, PAD = 4;
+  // Dynamic slot grid — single row, adapts to seedSlotCount
+  const COLS = S.seedSlotCount, ROWS = 1, GAP = 4, PAD = 4;
   const cellW = (W - PAD * 2 - GAP * (COLS - 1)) / COLS;
   const cellH = (H - PAD * 2 - GAP * (ROWS - 1)) / ROWS;
   const r     = Math.min(cellW, cellH) / 2 - 1;
 
-  for (let i = 0; i < MAX_SEEDS; i++) {
+  for (let i = 0; i < S.seedSlotCount; i++) {
     const col = i % COLS;
     const row = Math.floor(i / COLS);
     const cx = PAD + col * (cellW + GAP) + cellW / 2;
@@ -1240,12 +1417,14 @@ export function selectPreset(index) {
     // Merge grain params — only present keys overwrite grainParams
     for (const k of GRAIN_KEYS) {
       if (k in preset && preset[k] !== undefined && preset[k] !== null) {
+        if (isLocked(k)) continue;   // ◆ param lock
         S.grainParams[k] = preset[k];
       }
     }
     // Clear overrides for keys that are mapped (so grainParams value is used)
     Object.keys(S.grainOverrides).forEach(k => {
       if (k in preset && preset[k] !== undefined && preset[k] !== null) {
+        if (isLocked(k)) return;     // ◆ param lock
         S.grainOverrides[k] = null;
       }
     });
@@ -1260,12 +1439,12 @@ export function selectPreset(index) {
   if ('nearestMode' in preset && typeof preset.nearestMode === 'boolean') S.nearestMode = preset.nearestMode;
   if ('grainKAllMode' in preset && typeof preset.grainKAllMode === 'boolean') S.grainKAllMode = preset.grainKAllMode;
   if ('grainKSeqMode' in preset && typeof preset.grainKSeqMode === 'boolean') S.grainKSeqMode = preset.grainKSeqMode;
-  if ('searchRadiusDeg' in preset && typeof preset.searchRadiusDeg === 'number') S.searchRadiusDeg = preset.searchRadiusDeg;
-  if ('recencyN' in preset && typeof preset.recencyN === 'number') {
+  if (!isLocked('searchRadiusDeg') && 'searchRadiusDeg' in preset && typeof preset.searchRadiusDeg === 'number') S.searchRadiusDeg = preset.searchRadiusDeg;
+  if (!isLocked('recencyN') && 'recencyN' in preset && typeof preset.recencyN === 'number') {
     if (typeof S.setRecency === 'function') S.setRecency(preset.recencyN);
     else S.recencyN = preset.recencyN;
   }
-  if ('k' in preset && typeof preset.k === 'number') {
+  if (!isLocked('k') && 'k' in preset && typeof preset.k === 'number') {
     if (typeof S.setSearchK === 'function') S.setSearchK(preset.k);
     else S.grainOverrides.k = preset.k;
   }
@@ -1309,6 +1488,7 @@ export function refreshPresetButtons() {
     }
   });
   S._rebuildPresetDropdown?.();
+  S._rebuildMorphDropdowns?.();
 }
 
 export function updatePlaybackControls() {
@@ -1741,7 +1921,7 @@ export function initGrainControls() {
       if (document.activeElement !== numbox) numbox.value = def.toDisplay(internal);
       // Coalesce grain engine updates — only the latest value per param is kept.
       _pendingSliderUpdates.set(def.param, internal);
-      if (_sliderTimerId === null) _sliderTimerId = setTimeout(_flushSliderUpdates, 50);
+      if (_sliderTimerId === null) _sliderTimerId = setTimeout(_flushSliderUpdates, 30);
     });
 
     const commitNumbox = () => {
@@ -1830,4 +2010,235 @@ export function initGrainControls() {
 
   // Init display from default preset
   S.syncGrainControlsUI();
+}
+
+// ============================================================================
+// DESKTOP MORPH — 1D slider morph for HCI (no sensor)
+// ============================================================================
+// Morphs the nearest non-moving seed's grain params between:
+//   left preset (t=0) ←→ planted grain settings (t=0.5) ←→ right preset (t=1)
+// Only active when nearest seed is stationary. Greyed out for moving seeds.
+
+/** Grain-engine keys that desktop morph interpolates (no search params). */
+const MORPH_GRAIN_KEYS = [
+  'duration', 'durJitter', 'durVar', 'period', 'periodVar',
+  'fadeRatio', 'pitchJitter', 'pitchShift', 'panSpread', 'volume',
+];
+
+/** Populate a preset dropdown (<select>) with user + factory presets. */
+function _populateMorphSelect(sel) {
+  sel.innerHTML = '<option value="-1">— none —</option>';
+  for (let i = 0; i < PRESETS.length; i++) {
+    const p = PRESETS[i];
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = `${i + 1}. ${p.name}`;
+    sel.appendChild(opt);
+  }
+}
+
+/** Apply morph interpolation to the nearest seed's grainOverrides. */
+function _applyDesktopMorph(seed) {
+  if (!seed) return;
+
+  const t = S.desktopMorphT;
+  const idxL = S.desktopMorphPresetL;
+  const idxR = S.desktopMorphPresetR;
+
+  // Center position → clear overrides (seed plays its planted params)
+  if (Math.abs(t - 0.5) < 0.002) {
+    // Reset seed.grainOverrides for morph keys only
+    for (const k of MORPH_GRAIN_KEYS) {
+      if (seed.grainOverrides[k] !== undefined) delete seed.grainOverrides[k];
+    }
+    if (seed.grainParams._cachedAtk) seed.grainParams._cachedAtk = null;
+    return;
+  }
+
+  // Planted params = the center reference
+  const center = seed.grainParams;
+
+  if (t < 0.5) {
+    // Morph toward left preset
+    if (idxL < 0 || !PRESETS[idxL]) return;
+    const left = PRESETS[idxL];
+    const localT = 1 - (t / 0.5); // 0 at center, 1 at far left
+    const lerped = lerpPresets(center, left, localT);
+    for (const k of MORPH_GRAIN_KEYS) {
+      if (typeof lerped[k] === 'number') seed.grainOverrides[k] = lerped[k];
+    }
+  } else {
+    // Morph toward right preset
+    if (idxR < 0 || !PRESETS[idxR]) return;
+    const right = PRESETS[idxR];
+    const localT = (t - 0.5) / 0.5; // 0 at center, 1 at far right
+    const lerped = lerpPresets(center, right, localT);
+    for (const k of MORPH_GRAIN_KEYS) {
+      if (typeof lerped[k] === 'number') seed.grainOverrides[k] = lerped[k];
+    }
+  }
+
+  // Invalidate envelope curve cache so playGrain picks up new fadeRatio
+  if (seed.grainParams._cachedAtk) seed.grainParams._cachedAtk = null;
+}
+
+/** Start a return-to-center animation when the slider is released. */
+function _startReturnToCenter(slider) {
+  cancelAnimationFrame(S._desktopMorphAnimId);
+  const startT   = S.desktopMorphT;
+  const startMs  = performance.now();
+  const duration = S.desktopMorphReturnMs;
+
+  function tick(now) {
+    const elapsed = now - startMs;
+    const progress = Math.min(1, elapsed / duration);
+    // Ease-in-out sine — smooth start and end, visible motion across full duration
+    const ease = 0.5 - 0.5 * Math.cos(progress * Math.PI);
+    S.desktopMorphT = startT + (0.5 - startT) * ease;
+    slider.value = S.desktopMorphT;
+
+    // Apply to seed
+    const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+    const slot = findNearestSeedSlot(lon, lat);
+    if (slot >= 0) _applyDesktopMorph(S.seedSlots[slot]);
+
+    if (progress < 1) {
+      S._desktopMorphAnimId = requestAnimationFrame(tick);
+    }
+  }
+  S._desktopMorphAnimId = requestAnimationFrame(tick);
+}
+
+export function initDesktopMorph() {
+  const section   = document.getElementById('desktopMorphSection');
+  const slider    = document.getElementById('morphSlider');
+  const selectL   = document.getElementById('morphPresetL');
+  const selectR   = document.getElementById('morphPresetR');
+  const stickySeg = document.getElementById('morphStickySeg');
+  const returnSl  = document.getElementById('morphReturnSlider');
+  const returnNum = document.getElementById('morphReturnNum');
+  const returnRow = document.getElementById('morphReturnRow');
+  if (!section || !slider || !selectL || !selectR) return;
+
+  // ── Restore persisted morph settings from localStorage ──────────────
+  const _MORPH_KEY = 'mubone_desktop_morph';
+  function _loadMorphSettings() {
+    try {
+      const raw = localStorage.getItem(_MORPH_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (typeof saved.presetL === 'number') S.desktopMorphPresetL = saved.presetL;
+      if (typeof saved.presetR === 'number') S.desktopMorphPresetR = saved.presetR;
+      if (typeof saved.sticky  === 'boolean') S.desktopMorphSticky = saved.sticky;
+      if (typeof saved.returnMs === 'number') S.desktopMorphReturnMs = saved.returnMs;
+    } catch (_) {}
+  }
+  function _saveMorphSettings() {
+    try {
+      localStorage.setItem(_MORPH_KEY, JSON.stringify({
+        presetL:  S.desktopMorphPresetL,
+        presetR:  S.desktopMorphPresetR,
+        sticky:   S.desktopMorphSticky,
+        returnMs: S.desktopMorphReturnMs,
+      }));
+    } catch (_) {}
+  }
+  _loadMorphSettings();
+
+  // Populate dropdowns
+  _populateMorphSelect(selectL);
+  _populateMorphSelect(selectR);
+  selectL.value = S.desktopMorphPresetL;
+  selectR.value = S.desktopMorphPresetR;
+
+  // Rebuild dropdowns when user presets change (name edits, saves)
+  S._rebuildMorphDropdowns = () => {
+    const curL = selectL.value, curR = selectR.value;
+    _populateMorphSelect(selectL);
+    _populateMorphSelect(selectR);
+    selectL.value = curL;
+    selectR.value = curR;
+  };
+
+  // Dropdown handlers
+  selectL.addEventListener('change', () => {
+    S.desktopMorphPresetL = parseInt(selectL.value, 10);
+    _saveMorphSettings();
+  });
+  selectR.addEventListener('change', () => {
+    S.desktopMorphPresetR = parseInt(selectR.value, 10);
+    _saveMorphSettings();
+  });
+
+  // Slider interaction
+  let sliderActive = false;
+  slider.addEventListener('input', () => {
+    // Cancel any in-flight return animation so it doesn't fight the user drag
+    cancelAnimationFrame(S._desktopMorphAnimId);
+    S._desktopMorphAnimId = 0;
+    sliderActive = true;
+    S.desktopMorphT = parseFloat(slider.value);
+    // Apply morph to nearest non-moving seed
+    const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+    const slot = findNearestSeedSlot(lon, lat);
+    if (slot >= 0) _applyDesktopMorph(S.seedSlots[slot]);
+  });
+
+  // On release, optionally return to center.
+  // Use 'change' event — it fires reliably when slider interaction ends,
+  // even if the pointer leaves the slider element (dragging to edges).
+  // Also listen on document pointerup as a safety net for edge drags.
+  const onRelease = () => {
+    if (!sliderActive) return;
+    sliderActive = false;
+    if (!S.desktopMorphSticky) {
+      _startReturnToCenter(slider);
+    }
+  };
+  slider.addEventListener('change', onRelease);
+  document.addEventListener('pointerup', (e) => {
+    // Only trigger if slider was active (avoids spurious fires)
+    if (sliderActive) onRelease();
+  });
+
+  // Sticky toggle
+  stickySeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sticky = btn.dataset.sticky === 'true';
+      S.desktopMorphSticky = sticky;
+      stickySeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', (b.dataset.sticky === 'true') === sticky));
+      // Show/hide return time row
+      if (returnRow) returnRow.style.display = sticky ? 'none' : '';
+      _saveMorphSettings();
+    });
+  });
+  // Init sticky toggle from persisted state
+  stickySeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+    b.classList.toggle('active', (b.dataset.sticky === 'true') === S.desktopMorphSticky));
+  // Init return row visibility
+  if (returnRow) returnRow.style.display = S.desktopMorphSticky ? 'none' : '';
+
+  // Return time slider
+  if (returnSl && returnNum) {
+    returnSl.value = S.desktopMorphReturnMs;
+    returnNum.value = S.desktopMorphReturnMs + 'ms';
+    returnSl.addEventListener('input', () => {
+      S.desktopMorphReturnMs = parseInt(returnSl.value, 10);
+      returnNum.value = S.desktopMorphReturnMs + 'ms';
+    });
+    returnSl.addEventListener('change', _saveMorphSettings);
+  }
+
+  // Hook into updateSeedBanksUI to grey out panel when no seeds exist
+  const _origUpdateSeedBanksUI = updateSeedBanksUI;
+  S.updateSeedBanksUI = function() {
+    _origUpdateSeedBanksUI();
+    const count = S.seedSlots.filter(c => c !== null).length;
+    if (count === 0) {
+      section.classList.add('morph-disabled');
+    } else {
+      section.classList.remove('morph-disabled');
+    }
+  };
 }

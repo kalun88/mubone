@@ -257,7 +257,7 @@ function _angleFromCached(p, rx, ry, rz) {
 
 export function findNearestSeedSlot(refLon, refLat) {
   let nearestSlot = -1, nearestAng = Infinity;
-  for (let i = 0; i < MAX_SEEDS; i++) {
+  for (let i = 0; i < S.seedSlotCount; i++) {
     if (!S.seedSlots[i]) continue;
     const ang = angleBetweenSphere(S.seedSlots[i].lon, S.seedSlots[i].lat, refLon, refLat);
     if (ang < nearestAng) { nearestAng = ang; nearestSlot = i; }
@@ -815,15 +815,20 @@ let _cursorSeqPool     = [];     // sequential K mode: last sorted pool (for sta
 
 // How far ahead we schedule grain onsets (seconds). Must be > scheduler interval
 // to guarantee grains are always scheduled before they need to play.
-const SCHED_LOOKAHEAD = 0.120;   // 120ms lookahead window
+// 40ms = 4× the 10ms scheduler interval — tight for low latency but enough
+// headroom for normal JS thread jitter. Grains are never more than 40ms stale
+// when parameters change, so slider scrubbing feels immediate.
+// (Was 120ms — caused sluggish parameter response during scrubbing because
+// grains were committed far ahead with stale values.)
+const SCHED_LOOKAHEAD = 0.040;   // 40ms lookahead window
 
 // Hard limit on grains created per scheduler call.  Each grain allocates 2–5
 // Web Audio nodes synchronously on the main thread.
 //
-// With SCHED_SAFE_PERIOD_S = 2ms and SCHED_LOOKAHEAD = 120ms, the window holds
-// 60 onsets.  12 per tick × 100 ticks/sec = 1 200 grain-creations/sec max.
-// Smooth delivery requires MAX_GRAINS_PER_TICK ≥ interval/period = 10ms/2ms = 5.
-// 12 gives 2.4× headroom and keeps the scheduler comfortably ahead.
+// With SCHED_SAFE_PERIOD_S = 10ms and SCHED_LOOKAHEAD = 40ms, the window holds
+// 4 onsets.  12 per tick × 100 ticks/sec = 1 200 grain-creations/sec max.
+// Smooth delivery requires MAX_GRAINS_PER_TICK ≥ interval/period = 10ms/10ms = 1.
+// 12 gives generous headroom for catch-up after jitter.
 //
 // The old burst-on-reset crash (slider drag → 20 clock nulls/sec × 12-grain
 // bursts = 240 burst grains/sec → OOM) is no longer possible because
@@ -1115,7 +1120,7 @@ export function scheduleGrains() {
   // correct moving position.
   for (let i = 0; i < MAX_SEEDS; i++) {
     const seed = S.seedSlots[i];
-    if (!seed || !seed.frames) continue;
+    if (!seed || !seed.frames || i >= S.seedSlotCount) continue;
     _advanceMovingSeed(seed, GRAIN_SCHEDULER_INTERVAL_MS);
     const frame = _interpolateMovingSeed(seed);
     if (frame) {
@@ -1144,7 +1149,7 @@ export function scheduleGrains() {
     const seedDists = [];
     for (let i = 0; i < MAX_SEEDS; i++) {
       const seed = S.seedSlots[i];
-      if (!seed) { _seedWeights[i] = 0; continue; }
+      if (!seed || i >= S.seedSlotCount) { _seedWeights[i] = 0; continue; }
       const dist = angleBetweenSphere(seed.lon, seed.lat, cursorLon, cursorLat);
       // When radius-gated, skip seeds outside the search radius
       if (radiusGated && dist > gateRadRad) { _seedWeights[i] = 0; continue; }
@@ -1186,16 +1191,16 @@ export function scheduleGrains() {
       S._dominantSeedSlot = -1;
     }
   } else {
-    // Collage mode: all active seeds play at full weight
+    // Collage mode: all active seeds within slot count play at full weight
     for (let i = 0; i < MAX_SEEDS; i++) {
-      _seedWeights[i] = S.seedSlots[i] ? 1 : 0;
+      _seedWeights[i] = (S.seedSlots[i] && i < S.seedSlotCount) ? 1 : 0;
     }
     S._dominantSeedSlot = -1;
   }
 
   for (let i = 0; i < MAX_SEEDS; i++) {
     const seed = S.seedSlots[i];
-    if (!seed || !S.particles.length) continue;
+    if (!seed || !S.particles.length || i >= S.seedSlotCount) continue;
 
     // ── Seed envelope (attack / release) ──────────────────────────────
     // Exponential curves for perceptually even loudness changes:
@@ -1252,14 +1257,13 @@ export function scheduleGrains() {
       continue;
     }
 
-    // Phase 4: merge seed.grainOverrides (written by gesture morph) on top of
-    // the planted snapshot. Overrides with non-null values take precedence.
-    // For moving seeds, the frame's grainParams override everything.
+    // Phase 4: merge seed.grainOverrides (written by gesture/desktop morph)
+    // on top of the base params. Overrides with non-null values take precedence.
+    // For moving seeds, the base is the interpolated frame's grainParams;
+    // for stationary seeds, the base is the planted snapshot.
     let cgp;
-    if (isMoving) {
-      cgp = frame.grainParams;
-    } else {
-      const baseGP = seed.grainParams;
+    {
+      const baseGP = isMoving ? frame.grainParams : seed.grainParams;
       const cgo    = seed.grainOverrides;
       if (cgo && Object.keys(cgo).length > 0) {
         cgp = Object.assign(Object.create(baseGP), cgo);
@@ -1441,6 +1445,14 @@ export function scheduleGrains() {
   for (let si = 0; si < MAX_SEQS; si++) {
     const seq = S.seqSlots[si];
     if (!seq || !seq.playing || !seq.particles.length) continue;
+    // Mute seqs beyond active slot count (data preserved, audio paused)
+    if (si >= S.seqSlotCount) {
+      if (seq._sourceNode && !seq._sourceNode._stopped) {
+        try { seq._sourceNode.stop(); } catch (e) {}
+        seq._sourceNode._stopped = true;
+      }
+      continue;
+    }
 
     // Create the looping source node on first tick (or after context recreate)
     if (!seq._sourceNode || seq._sourceNode._stopped) {
@@ -1661,24 +1673,23 @@ export function scheduleGrains() {
 }
 
 // Reset onset clock when period/periodVar changes (called from ui-presets.js).
-// When switching from a long period (e.g. 3s) to a short one the clock can be
-// far in the future — without correction the scheduler would fire no grains for
-// seconds.  The old approach nulled the clock, but that caused a 12-grain burst
-// on reinit (the full 120ms lookahead window filled in one tick).  During rapid
-// slider dragging 20 nulls/sec × 12 grains = 240 burst grains/sec → OOM.
+// Always snap the next onset to audioNow + newPeriod so the new spacing takes
+// effect immediately — no stale grains, no gap.
 //
-// New approach: clamp the clock to just one period ahead of audioNow.  The
-// scheduler sees one grain due on the next tick instead of an empty 120ms
-// window to fill.  No burst, no silence, immediate response to new period.
+// History: the original approach nulled the clock, causing a 12-grain burst on
+// reinit → OOM during slider dragging.  The second approach only reset when the
+// clock was beyond the lookahead horizon, but that missed medium→short period
+// changes (e.g. 100ms→10ms) causing 50-100ms silence gaps.
+//
+// Current approach: unconditionally snap forward to one period ahead.  The
+// scheduler sees exactly one grain due on the next tick.  With the tighter 40ms
+// lookahead, this gives immediate response without burst risk.
 export function resetCursorPeriod() {
   const audioNow = S.audioCtx?.currentTime ?? 0;
-  if (_cursorNextOnsetT === null) return; // nothing to reset
-  if (_cursorNextOnsetT > audioNow + SCHED_LOOKAHEAD) {
-    // Clock is beyond the lookahead horizon — pull it back to one period ahead.
-    const newPeriod = Math.max(SCHED_SAFE_PERIOD_S, S.grainOverrides.period ?? gp().period);
-    _cursorNextOnsetT  = audioNow + newPeriod;
-    _cursorNextPeriodS = newPeriod;
-  }
+  if (_cursorNextOnsetT === null) return;
+  const newPeriod = Math.max(SCHED_SAFE_PERIOD_S, S.grainOverrides.period ?? gp().period);
+  _cursorNextOnsetT  = audioNow + newPeriod;
+  _cursorNextPeriodS = newPeriod;
 }
 
 // Register the global onset-clock reset callback so audio.js can invoke it

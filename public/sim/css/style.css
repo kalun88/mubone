@@ -973,6 +973,103 @@
     color: #aaaaaa;
     background: rgba(255,255,255,0.02);
   }
+  /* Slot-count dropdown inside grain rows */
+  .grain-select {
+    font-family: 'Inter', monospace;
+    font-size: 0.68rem;
+    color: #888;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 2px;
+    padding: 2px 4px;
+    flex: 1 1 auto;
+    min-width: 0;
+    outline: none;
+    cursor: pointer;
+  }
+  .grain-select:hover { border-color: rgba(255,255,255,0.15); color: #aaa; }
+  .grain-select:focus { border-color: rgba(255,255,255,0.2); color: #ccc; }
+
+  /* ── Parameter lock buttons ──────────────────────────────────────────── */
+  .param-lock-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.6rem;
+    line-height: 1;
+    padding: 1px 2px;
+    margin: 0;
+    opacity: 0.2;
+    transition: opacity 0.15s, transform 0.1s;
+    flex-shrink: 0;
+    filter: grayscale(1);
+  }
+  .param-lock-btn:hover {
+    opacity: 0.5;
+  }
+  .param-lock-btn.locked {
+    opacity: 0.85;
+    filter: none;
+  }
+  .param-lock-btn.locked:hover {
+    opacity: 1;
+  }
+  /* Subtle locked row tint */
+  .grain-row.param-locked .grain-label {
+    color: #7abcbc;
+  }
+  .grain-row.param-locked .grain-numbox,
+  .grain-row.param-locked .grain-select {
+    color: #7abcbc;
+  }
+  .grain-row.param-locked .grain-slider::-webkit-slider-thumb {
+    background: #7abcbc;
+  }
+  .grain-row.param-locked .grain-slider::-moz-range-thumb {
+    background: #7abcbc;
+  }
+  .grain-row.param-locked .grain-slider::-webkit-slider-runnable-track {
+    background: rgba(122, 188, 188, 0.15);
+  }
+  .grain-row.param-locked .grain-slider::-moz-range-track {
+    background: rgba(122, 188, 188, 0.15);
+  }
+
+  /* ── Patch table lock column ─────────────────────────────────────────── */
+  .pt-lock-col {
+    position: sticky;
+    left: 110px;
+    z-index: 2;
+    background: #1a1a1a;
+    min-width: 24px;
+    max-width: 24px;
+    text-align: center;
+    padding: 0;
+    border-right: 1px solid #2a2a2a;
+  }
+  .pt-lock-cell {
+    cursor: pointer;
+    font-size: 0.55rem;
+    opacity: 0.2;
+    filter: grayscale(1);
+    transition: opacity 0.15s;
+    user-select: none;
+  }
+  .pt-lock-cell:hover {
+    opacity: 0.5;
+  }
+  .pt-lock-cell.locked {
+    opacity: 0.85;
+    filter: none;
+  }
+  .pt-lock-cell.locked:hover {
+    opacity: 1;
+  }
+  /* Locked row highlight in patch table */
+  .pt-param-row.pt-row-locked .pt-label {
+    color: #7abcbc;
+  }
+
   /* Octave shortcut buttons */
   .oct-btn {
     font-family: inherit;
@@ -1132,6 +1229,9 @@
     grid-template-columns: 1fr 1fr 1fr;
     gap: 4px;
   }
+  .seed-transport-grid--2col {
+    grid-template-columns: 1fr 1fr;
+  }
   /* Color accents — seed uses sky-blue for plant */
   .seed-btn--plant:hover:not(:disabled) {
     color: #4fc3f7;
@@ -1143,6 +1243,64 @@
     border-color: rgba(255, 183, 77, 0.4);
     background: rgba(255, 183, 77, 0.06);
   }
+
+  /* ── Desktop morph sub-section (nested in seeder) ───────────────────────── */
+  .seed-section--morph {
+    border-top: 1px solid rgba(255,255,255,0.04);
+  }
+  .seed-section--morph.morph-disabled {
+    opacity: 0.25;
+    pointer-events: none;
+  }
+  .morph-slider-row {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.18rem 0;
+  }
+  .morph-preset-select {
+    font-family: 'Inter', monospace;
+    font-size: 0.68rem;
+    color: #888;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 2px;
+    padding: 2px 3px;
+    width: 5.5rem;
+    flex-shrink: 0;
+    outline: none;
+    cursor: pointer;
+  }
+  .morph-preset-select:hover { border-color: rgba(255,255,255,0.15); color: #aaa; }
+  .morph-preset-select:focus { border-color: rgba(255,255,255,0.2); color: #ccc; }
+  .morph-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 3px;
+    background: linear-gradient(90deg,
+      rgba(100,180,255,0.15) 0%,
+      rgba(255,255,255,0.06) 48%,
+      rgba(255,255,255,0.12) 50%,
+      rgba(255,255,255,0.06) 52%,
+      rgba(255,180,100,0.15) 100%);
+    border-radius: 0;
+    outline: none;
+    cursor: ew-resize;
+    min-width: 0;
+  }
+  .morph-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 4px;
+    height: 14px;
+    border-radius: 1px;
+    background: #777;
+    cursor: ew-resize;
+    border: none;
+    transition: background 0.12s, height 0.12s;
+  }
+  .morph-slider:hover::-webkit-slider-thumb { background: #aaa; height: 16px; }
 
   /* ── Levels device (right panel) ────────────────────────────────────────── */
   .right-panel .device--meters {
@@ -1237,6 +1395,159 @@
   .play-mute-btn.muted .play-mute-icon--on  { display: none; }
   .play-mute-btn.muted .play-mute-icon--off { display: inline-block; }
   .play-mute-btn.muted .seq-record-key {
+    color: rgba(232, 160, 48, 0.5);
+    border-color: rgba(232, 160, 48, 0.25);
+  }
+
+  /* ── Record/paint indicator button ─────────────────────────────────────── */
+  .paint-indicator-btn {
+    cursor: default;
+    user-select: none;
+    pointer-events: auto;
+    position: relative; /* anchor for absolutely-centred label */
+  }
+  /* label: truly centred across full button width regardless of badge widths */
+  .paint-indicator-label {
+    position: absolute;
+    left: 0;
+    right: 0;
+    text-align: center;
+    pointer-events: none;
+  }
+  /* badge group — pushed to the far right via margin-left: auto */
+  .paint-key-badges {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex-shrink: 0;
+  }
+  /* key badges — exact match to .seq-record-key */
+  .paint-key-badge {
+    flex-shrink: 0;
+    font-family: inherit;
+    font-size: 0.6rem;
+    color: #444;
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 3px;
+    padding: 1px 5px;
+    line-height: 1.2;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .paint-key-badge--mouse {
+    width: 12px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    color: #444;
+    vertical-align: middle;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+  /* painting state — per-button colours */
+
+  /* record (spacebar/click) — warm red */
+  #paintIndicatorBtn.painting {
+    color: #e05555;
+    border-color: rgba(224, 85, 85, 0.55);
+    background: rgba(224, 85, 85, 0.10);
+    box-shadow: 0 0 10px rgba(224, 85, 85, 0.20);
+  }
+  #paintIndicatorBtn.painting .paint-key-badge {
+    color: rgba(224, 85, 85, 0.5);
+    border-color: rgba(224, 85, 85, 0.25);
+  }
+  #paintIndicatorBtn.painting:active {
+    background: rgba(224, 85, 85, 0.10);
+    box-shadow: 0 0 10px rgba(224, 85, 85, 0.20);
+  }
+
+  /* loop record (A key) — pink, same family as loop mode */
+  #loopRecordIndicatorBtn.painting {
+    color: #ff6b9d;
+    border-color: rgba(255, 107, 157, 0.55);
+    background: rgba(255, 107, 157, 0.10);
+    box-shadow: 0 0 10px rgba(255, 107, 157, 0.20);
+  }
+  #loopRecordIndicatorBtn.painting .paint-key-badge {
+    color: rgba(255, 107, 157, 0.5);
+    border-color: rgba(255, 107, 157, 0.25);
+  }
+  #loopRecordIndicatorBtn.painting:active {
+    background: rgba(255, 107, 157, 0.10);
+    box-shadow: 0 0 10px rgba(255, 107, 157, 0.20);
+  }
+
+  /* sow (S key) — sage green */
+  #sowIndicatorBtn.painting {
+    color: #6ec97a;
+    border-color: rgba(110, 201, 122, 0.55);
+    background: rgba(110, 201, 122, 0.10);
+    box-shadow: 0 0 10px rgba(110, 201, 122, 0.20);
+  }
+  #sowIndicatorBtn.painting .paint-key-badge {
+    color: rgba(110, 201, 122, 0.5);
+    border-color: rgba(110, 201, 122, 0.25);
+  }
+  #sowIndicatorBtn.painting:active {
+    background: rgba(110, 201, 122, 0.10);
+    box-shadow: 0 0 10px rgba(110, 201, 122, 0.20);
+  }
+
+  /* suppress button press feel (all indicators) */
+  .paint-indicator-btn:active {
+    background: rgba(255,255,255,0.015);
+    box-shadow: none;
+  }
+
+  /* ── Undo button ─────────────────────────────────────────────────────────── */
+  .undo-btn {
+    cursor: pointer;
+    position: relative;
+  }
+  .undo-btn-label {
+    flex: 1;
+    text-align: center;
+    position: absolute;
+    left: 0; right: 0;
+    pointer-events: none;
+  }
+  /* ── Drop loop button ─────────────────────────────────────────────────── */
+  .drop-btn {
+    cursor: pointer;
+    position: relative;
+  }
+  .drop-btn-label {
+    flex: 1;
+    text-align: center;
+    position: absolute;
+    left: 0; right: 0;
+    pointer-events: none;
+  }
+  /* active flash on click — pink, loop family */
+  .drop-btn:active,
+  .drop-btn.flashing {
+    color: #ff6b9d;
+    border-color: rgba(255, 107, 157, 0.55);
+    background: rgba(255, 107, 157, 0.10);
+    box-shadow: 0 0 10px rgba(255, 107, 157, 0.20);
+  }
+  .drop-btn:active .paint-key-badge,
+  .drop-btn.flashing .paint-key-badge {
+    color: rgba(255, 107, 157, 0.5);
+    border-color: rgba(255, 107, 157, 0.25);
+  }
+
+  /* active flash on click — amber, matches cursor mute / system mute */
+  .undo-btn:active,
+  .undo-btn.flashing {
+    color: #e8a030;
+    border-color: rgba(232, 160, 48, 0.55);
+    background: rgba(232, 160, 48, 0.10);
+    box-shadow: 0 0 10px rgba(232, 160, 48, 0.20);
+  }
+  .undo-btn:active .paint-key-badge,
+  .undo-btn.flashing .paint-key-badge {
     color: rgba(232, 160, 48, 0.5);
     border-color: rgba(232, 160, 48, 0.25);
   }
@@ -1388,6 +1699,9 @@
   .seq-transport-grid--2col {
     grid-template-columns: 1fr 1fr;
   }
+  .seq-transport-grid--4col {
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+  }
   .seq-transport-btn {
     display: flex;
     flex-direction: column;
@@ -1422,6 +1736,11 @@
     color: #444;
     cursor: default;
     opacity: 0.4;
+  }
+  .seq-transport-btn.flashing {
+    color: #bbb;
+    background: rgba(255,255,255,0.10);
+    border-color: rgba(255,255,255,0.25);
   }
   /* Color accents on hover */
   .seq-btn--drop:hover:not(:disabled) {
