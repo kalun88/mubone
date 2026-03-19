@@ -2,7 +2,7 @@
 // MAIN — entry point: wire up all modules and start the app
 // ============================================================================
 
-import { S, DEBUG, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
+import { S, DEBUG, EXP, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
 import { scheduleGrains } from './grain.js';
 import { setupEvents, setupDragDrop } from './events.js';
 import { rebuildSampleListUI, buildSvTabs, drawSvWaveform, setupSvCropInteraction, initUndoBtn } from './ui-samples.js';
@@ -359,6 +359,16 @@ function init() {
       };
       window.addEventListener('keydown', _frKeyHandler);
     }
+  }
+
+  // ── Experimental modules (?exp in URL) ─────────────────────────────────────
+  // Lazy-loaded so they add zero overhead when EXP is off.  Each module
+  // self-registers its hooks on S and wires its own UI (if any).
+  if (EXP) {
+    console.log('%c[exp] experimental mode active', 'color:#e8a030;font-weight:bold');
+    import('./exp/exp-init.js')
+      .then(m => m.initExp())
+      .catch(e => console.warn('[exp] failed to load experimental modules:', e));
   }
 
   // Grain scheduler — independent of render loop so slow frames don't delay grains.

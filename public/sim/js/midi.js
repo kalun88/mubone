@@ -131,6 +131,8 @@ const ACTIONS = [
     ccFn: v => { S.seqSlotCount = Math.max(1, Math.min(12, Math.round(1 + v * 11 / 127))); const sel = document.getElementById('seqSlotCountSelect'); if (sel) sel.value = String(S.seqSlotCount); (S.updateSeqBanksUI || (() => {}))(); S._syncSeqButtonStates?.(); } },
   { id: 'seq_overflow', label: 'loop overflow (cycle)',     key: '—',                 osc: '/loop/overflow',   fmt: 'str off|oldest|nearest', type: 'trigger',
     tip: 'cycle overflow mode: off → oldest → nearest' },
+  { id: 'seq_arm',      label: 'arm loop (hold)',            key: 'A',                 osc: '/loop/arm',        fmt: 'int 0|1',          type: 'hold',
+    tip: 'momentary loop record — hold to force loop mode and paint, release to finish loop and restore prior mode' },
   { id: 'seq_mode',     label: 'loop mode on/off',          key: 'L',                 osc: '/loop/mode',       fmt: 'int 0|1',          type: 'trigger',
     tip: 'switch cursor to loop recording — paint creates a loop on release' },
   { id: 'seq_drop',     label: 'drop loop from cursor',     key: 'D',                 osc: '/loop/drop',       fmt: 'bang',             type: 'trigger',
@@ -139,7 +141,7 @@ const ACTIONS = [
     tip: 'stop nearest loop playback, keep in slot to resume later' },
   { id: 'seq_resume',   label: 'resume nearest loop',       key: '—',                 osc: '/loop/resume',     fmt: 'bang',             type: 'trigger',
     tip: 'restart the nearest paused loop' },
-  { id: 'seq_remove',   label: 'remove nearest loop',       key: '—',                 osc: '/loop/remove',     fmt: 'bang',             type: 'trigger',
+  { id: 'seq_remove',   label: 'remove nearest loop',       key: 'Shift+A',            osc: '/loop/remove',     fmt: 'bang',             type: 'trigger',
     tip: 'fully delete nearest loop from its slot' },
   { id: 'seq_clear',    label: 'clear all loops',           key: '—',                 osc: '/loop/clear',      fmt: 'bang',             type: 'trigger',
     tip: 'remove all loops from all slots' },
@@ -161,7 +163,7 @@ const ACTIONS = [
     tip: 'cycle overflow mode: off → oldest → nearest' },
   { id: 'plant_seed',   label: 'sow seed',                  key: 'S',                 osc: '/seed/sow',      fmt: 'bang',             type: 'trigger',
     tip: 'sow a seed at the current cursor position' },
-  { id: 'uproot_seed',  label: 'uproot nearest seed',       key: '↑',                 osc: '/seed/uproot',   fmt: 'bang',             type: 'trigger',
+  { id: 'uproot_seed',  label: 'uproot nearest seed',       key: 'Shift+S',            osc: '/seed/uproot',   fmt: 'bang',             type: 'trigger',
     tip: 'remove the seed closest to the cursor' },
   { id: 'seed_clear',   label: 'clear all seeds',           key: '—',                 osc: '/seed/clear',    fmt: 'bang',             type: 'trigger',
     tip: 'remove all planted seeds' },
@@ -324,10 +326,15 @@ function handleMidiMessage(event) {
     if (!mapping) continue;
     const matchCC   = mapping.type === 'cc'   && type === 11 && mapping.number === num && mapping.channel === channel;
     const matchNote = mapping.type === 'note' && type === 9  && mapping.number === num && mapping.channel === channel && val > 0;
+    // Note-off for hold actions: status type 8 (noteOff) or type 9 with vel 0
+    const matchNoteOff = mapping.type === 'note' && mapping.number === num && mapping.channel === channel &&
+      ((type === 8) || (type === 9 && val === 0));
     // For trigger-type actions mapped to CC, only fire on press (val > 0), not release
     if (matchCC && action.type === 'trigger' && val === 0) continue;
     if (matchCC || matchNote) {
       dispatchAction(action.id, matchCC ? val : 127);
+    } else if (matchNoteOff && action.type === 'hold') {
+      dispatchAction(action.id, 0);
     }
   }
 }
@@ -350,6 +357,39 @@ function dispatchAction(id, midiVal) {
         S.currentStrokeId = -1;
         if (S.isRecording) stopLiveRecording();
         S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+        S.updateLiveRecUI?.();
+      }
+      break;
+    case 'seq_arm':
+      if (midiVal > 0 && !S.isPainting) {
+        // Guard: reject if slots full and overflow off
+        if (S.seqOverflow === 'off') {
+          let full = true;
+          for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
+          if (full) break;
+        }
+        ensureAudioContext();
+        S._loopRecPreSeqMode = S.seqModeEnabled;
+        S.seqModeEnabled = true;
+        if (!S.cursorHouseMuted) setCursorHouseMuted(true);
+        startLiveRecording();
+        recordStrokeStart('live', S.currentLiveBufferIdx);
+        S.isPainting = true; S.paintFrameCount = 0;
+        S.updateLiveRecUI?.();
+      } else if (midiVal === 0 && S.isPainting) {
+        if (S.currentStrokeId > 0) {
+          try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+        }
+        S.isPainting      = false;
+        S.currentStrokeId = -1;
+        if (S.isRecording) stopLiveRecording();
+        S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+        // Restore prior seq mode
+        if (S._loopRecPreSeqMode !== undefined) {
+          S.seqModeEnabled = S._loopRecPreSeqMode;
+          document.getElementById('seqModeBtn')?.classList.toggle('active', S.seqModeEnabled);
+          S._loopRecPreSeqMode = undefined;
+        }
         S.updateLiveRecUI?.();
       }
       break;
@@ -441,12 +481,8 @@ function dispatchAction(id, midiVal) {
       S.seedTether = !S.seedTether;
       S._syncImprovUI?.();
       break;
-    case 'seed_xfade': {
-      // Toggle between 0 and 1
-      S.seedXfade = S.seedXfade > 0.5 ? 0 : 1;
-      S._syncImprovUI?.();
-      break;
-    }
+    // seed_xfade: handled by ccFn in the default case (continuous 0–1 control).
+    // Note/keyboard dispatch sends 127 → ccFn maps to 1.0; CC sends 0–127 smoothly.
     case 'seed_loopmode': {
       const mode = S.seedLoopMode === 'pingpong' ? 'forward' : 'pingpong';
       S.seedLoopMode = mode;
@@ -821,6 +857,13 @@ export function setupMappingModal() {
   document.addEventListener('wheel', e => {
     if (keyLearningId === null) return;
 
+    // Hold actions need a release event — scroll has no release, so block it
+    const learningAction = ACTIONS.find(a => a.id === keyLearningId);
+    if (learningAction?.type === 'hold') {
+      setMappingStatus(`scroll can't be assigned to hold actions — press a key instead`);
+      return;
+    }
+
     e.preventDefault();
     e.stopPropagation();
 
@@ -849,5 +892,6 @@ export function setupMappingModal() {
   S._dispatchAction = dispatchAction;
   S._isKeyLearning  = () => keyLearningId !== null;
   S._holdActionIds  = new Set(ACTIONS.filter(a => a.type === 'hold').map(a => a.id));
+  S._activeHoldKeyMap = new Map();  // code → actionId for held custom-bound keys
 
 }

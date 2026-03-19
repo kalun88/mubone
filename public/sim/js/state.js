@@ -7,6 +7,12 @@
 // Set to true (or add ?debug to the URL) to enable verbose console logging.
 export const DEBUG = new URLSearchParams(window.location.search).has('debug');
 
+// ── Experimental mode ────────────────────────────────────────────────────────
+// Add ?exp to the URL to enable experimental modules (gesture engine,
+// processing chain, etc.).  Off by default — collaborators on the published
+// build never see these features until they graduate to main.
+export const EXP = new URLSearchParams(window.location.search).has('exp');
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const SPHERE_RADIUS       = 1200;

@@ -204,6 +204,8 @@ export function setupEvents() {
         if (km.shift !== e.shiftKey || km.ctrl !== e.ctrlKey || km.meta !== e.metaKey) continue;
         e.preventDefault();
         S._dispatchAction(actionId, 127);
+        // Track which hold action this key code activated so keyup releases the right one
+        if (S._holdActionIds?.has(actionId)) S._activeHoldKeyMap?.set(e.code, actionId);
         return;
       }
     }
@@ -355,12 +357,6 @@ export function setupEvents() {
       uprootNearestSeed();
     }
 
-    // ArrowUp: pick up nearest seed
-    if (e.key === 'ArrowUp' && !e.repeat) {
-      e.preventDefault();
-      uprootNearestSeed();
-    }
-
     // C: toggle cursor mute
     if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
@@ -410,16 +406,19 @@ export function setupEvents() {
     // Alt key-up is intentionally ignored — lock is a toggle, not momentary
     if (e.code === 'AltLeft' || e.code === 'AltRight') return;
 
-    // Custom key binding keyup — only for hold-type actions (recpaint, paint samples)
-    // Trigger/cc actions fire once on keydown and should NOT re-fire on keyup.
-    // Modifier matching is relaxed on keyup because modifiers may release first.
-    if (S._keyMappings && S._dispatchAction && S._holdActionIds) {
-      for (const [actionId, km] of Object.entries(S._keyMappings)) {
-        if (km.type !== 'key') continue;
-        if (km.code !== e.code) continue;
-        if (!S._holdActionIds.has(actionId)) return;  // not a hold action — swallow but don't dispatch
-        S._dispatchAction(actionId, 0);
-        return;
+    // Custom key binding keyup — release the hold action that this key activated.
+    // Uses _activeHoldKeyMap (populated on keydown) so we release the exact action
+    // even if modifiers changed between keydown and keyup.
+    if (S._activeHoldKeyMap?.has(e.code)) {
+      const actionId = S._activeHoldKeyMap.get(e.code);
+      S._activeHoldKeyMap.delete(e.code);
+      S._dispatchAction?.(actionId, 0);
+      return;
+    }
+    // For custom-bound trigger actions, swallow keyup (don't fall through to hardcoded handlers)
+    if (S._keyMappings) {
+      for (const [, km] of Object.entries(S._keyMappings)) {
+        if (km.type === 'key' && km.code === e.code) return;
       }
     }
 

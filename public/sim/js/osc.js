@@ -188,6 +188,7 @@ export function handleOSC(rawAddress, values) {
     handleWandInertialOSC(values);
     updateWand();
     updateGestureMorph();  // Phase 4: drive seed morph from gyro (independent of wandConfig)
+    S._onGestureUpdate?.();  // exp: gesture extraction (no-op when ?exp is off)
     return;
   }
 
@@ -516,6 +517,9 @@ export function handleOSC(rawAddress, values) {
       break;
 
     // ── Looper ─────────────────────────────────────────────────────────────
+    case '/loop/arm':
+      S._dispatchAction?.('seq_arm', values[0] ? 127 : 0);
+      break;
     case '/loop/mode':
       S.seqModeEnabled = !!values[0];
       document.getElementById('seqModeBtn')?.classList.toggle('active', S.seqModeEnabled);
