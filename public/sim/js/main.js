@@ -14,7 +14,7 @@ import { setupMappingModal, initMidi } from './midi.js';
 import { initMobileMode } from './mobile.js';
 import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
 import { resizeCanvas, animate } from './renderer.js';
-import { startMainMetering, rebuildMainOutputMeters, initCursorHouseMute, initRadiusFade, initSeqMode, initMixdownGains, setCursorHouseMuted } from './ui-meters.js';
+import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initRadiusFade, initSeqMode, initMixdownGains, setScanMuted } from './ui-meters.js';
 import { initSensor, getSensorCamQ } from './sensor.js';
 import { initOSC } from './osc.js';
 import { initSensorUI } from './ui-sensor.js';
@@ -57,7 +57,7 @@ function init() {
   initSweepUI();
   initUndoBtn();
   initExportImport();
-  initPatchTable(updatePlaybackControls, setCursorHouseMuted, selectPreset);
+  initPatchTable(updatePlaybackControls, setScanMuted, selectPreset);
   startAutoSave();       // begin 2s dirty-check auto-persist for settings
 
   // ── Collapsible panels ───────────────────────────────────────────────────
@@ -278,7 +278,7 @@ function init() {
     drawSvWaveform();
     animate();
     startMainMetering();  // start DOM-based VU meter loop for main window
-    initCursorHouseMute(); // wire cursor-in-house mute toggle
+    initScanToggle(); // wire scan (cursor spotlight) on/off toggle
     initRadiusFade();      // wire radius fade toggle + curve slider
     initSeqMode();         // wire sequential (loop) mode toggle
     initMixdownGains();    // wire mixdown source gain sliders

@@ -23,7 +23,7 @@ import {
 import { resizeCanvas } from './renderer.js';
 import { loadAudioFile } from './ui-samples.js';
 import { triggerWandTare } from './ui-wand.js';
-import { setCursorHouseMuted } from './ui-meters.js';
+import { setScanMuted } from './ui-meters.js';
 
 // ── Focus helpers ───────────────────────────────────────────────────────────
 // Returns true when focus is on a text-entry element that should consume
@@ -288,11 +288,32 @@ export function setupEvents() {
       return;
     }
 
-    // D: momentary loop record (draw loop) — force seq mode for this stroke only, then restore
-    // Shift+D: lift nearest loop
-    if (e.key === 'D' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+    // ⌘D: lift nearest loop
+    if (e.key === 'd' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.repeat) {
       e.preventDefault();
       pickupSeqRemove();
+    }
+
+    // Shift+D: toggle loop lock (was L)
+    if (e.key === 'D' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      e.preventDefault();
+      // If D is currently held, update the *restored* state, not the live seqModeEnabled
+      const dHeld = S._loopRecPreSeqMode !== undefined;
+      const effectiveCurrent = dHeld ? S._loopRecPreSeqMode : S.seqModeEnabled;
+      let nextValue;
+      if (!effectiveCurrent && S.seqOverflow === 'off') {
+        let full = true;
+        for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
+        nextValue = full ? effectiveCurrent : true;
+      } else {
+        nextValue = !effectiveCurrent;
+      }
+      if (dHeld) {
+        S._loopRecPreSeqMode = nextValue;
+      } else {
+        S.seqModeEnabled = nextValue;
+      }
+      document.getElementById('seqModeBtn')?.classList.toggle('active', nextValue);
     }
 
     // D: dual-action loop key
@@ -313,12 +334,13 @@ export function setupEvents() {
       // Remember prior seq mode so we can restore it on keyup
       S._loopRecPreSeqMode = S.seqModeEnabled;
       S.seqModeEnabled = true;
-      if (!S.cursorHouseMuted) setCursorHouseMuted(true);
+      if (!S.scanMuted) setScanMuted(true);
       const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
       if (gotMic) startLiveRecording();
       recordStrokeStart('live', S.currentLiveBufferIdx);
       S.isPainting      = true;
       S.paintFrameCount = 0;
+      if (S.seedLockEnabled) startSeedPlant();
       _updateLiveRecUI();
     }
 
@@ -327,12 +349,13 @@ export function setupEvents() {
       e.preventDefault();
       ensureAudioContext();
       // Auto-mute cursor when starting a sequential recording
-      if (S.seqModeEnabled && !S.cursorHouseMuted) setCursorHouseMuted(true);
+      if (S.seqModeEnabled && !S.scanMuted) setScanMuted(true);
       const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
       if (gotMic) startLiveRecording();
       recordStrokeStart('live', S.currentLiveBufferIdx);
       S.isPainting      = true;
       S.paintFrameCount = 0;
+      if (S.seedLockEnabled) startSeedPlant();
       _updateLiveRecUI();
     }
 
@@ -344,11 +367,12 @@ export function setupEvents() {
         e.preventDefault();
         ensureAudioContext();
         // Auto-mute cursor when starting a sequential recording
-        if (S.seqModeEnabled && !S.cursorHouseMuted) setCursorHouseMuted(true);
+        if (S.seqModeEnabled && !S.scanMuted) setScanMuted(true);
         S.activeSampleIndex = _sampleIdx;
         recordStrokeStart('sample');
         S.isPainting      = true;
         S.paintFrameCount = 0;
+        if (S.seedLockEnabled) startSeedPlant();
         switchSvTab(_sampleIdx);
         updateSampleListActiveState();
         updateSvTabStates();
@@ -404,42 +428,23 @@ export function setupEvents() {
       startSeedPlant();
     }
 
-    // Shift+S: uproot nearest seed
-    if (e.key === 'S' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+    // ⌘S: uproot nearest seed
+    if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.repeat) {
       e.preventDefault();
       uprootNearestSeed();
     }
 
-    // C: toggle cursor mute
-    if ((e.key === 'c' || e.key === 'C') && !e.metaKey && !e.ctrlKey && !e.repeat) {
+    // Shift+S: toggle seed lock
+    if (e.key === 'S' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
-      setCursorHouseMuted(!S.cursorHouseMuted);
+      S.seedLockEnabled = !S.seedLockEnabled;
+      document.getElementById('seedLockBtn')?.classList.toggle('active', S.seedLockEnabled);
     }
 
-    // L: toggle loop mode
-    if (e.key === 'l' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
+    // X: toggle scan (cursor spotlight on/off)
+    if ((e.key === 'x' || e.key === 'X') && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
-      // If A is currently held, L should update the *restored* state, not the
-      // live seqModeEnabled (which A owns for the duration of the stroke).
-      // That way, when A releases, it restores to whatever the user toggled L to.
-      const aHeld = S._loopRecPreSeqMode !== undefined;
-      const effectiveCurrent = aHeld ? S._loopRecPreSeqMode : S.seqModeEnabled;
-      // Don't allow turning ON when slots are full and overflow is off
-      let nextValue;
-      if (!effectiveCurrent && S.seqOverflow === 'off') {
-        let full = true;
-        for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
-        nextValue = full ? effectiveCurrent : true;
-      } else {
-        nextValue = !effectiveCurrent;
-      }
-      if (aHeld) {
-        // Just update what A will restore to on release; seqModeEnabled stays true
-        S._loopRecPreSeqMode = nextValue;
-      } else {
-        S.seqModeEnabled = nextValue;
-      }
-      document.getElementById('seqModeBtn')?.classList.toggle('active', nextValue);
+      setScanMuted(!S.scanMuted);
     }
 
     // M: system mute (master output)
@@ -518,6 +523,8 @@ export function setupEvents() {
         if (S.isRecording) stopLiveRecording();
         S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
       }
+      // Finalize seed lock trail if active
+      if (S.seedLockEnabled) finalizeSeedPlant();
       // Restore seq mode to what it was before D was pressed
       if (S._loopRecPreSeqMode !== undefined) {
         S.seqModeEnabled = S._loopRecPreSeqMode;
@@ -537,6 +544,7 @@ export function setupEvents() {
       if (S.seqModeEnabled && S.currentStrokeId > 0) {
         try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
       }
+      if (S.seedLockEnabled) finalizeSeedPlant();
       S.isPainting      = false;
       S.currentStrokeId = -1;
       if (S.isRecording) stopLiveRecording();
@@ -551,6 +559,7 @@ export function setupEvents() {
       if (S.seqModeEnabled && S.currentStrokeId > 0) {
         try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
       }
+      if (S.seedLockEnabled) finalizeSeedPlant();
       S.isPainting      = false;
       S.currentStrokeId = -1;
       S.activeSampleIndex = -1;
@@ -593,7 +602,7 @@ export function setupEvents() {
     e.preventDefault();
     ensureAudioContext();
     // Auto-mute cursor when starting a sequential recording
-    if (S.seqModeEnabled && !S.cursorHouseMuted) setCursorHouseMuted(true);
+    if (S.seqModeEnabled && !S.scanMuted) setScanMuted(true);
     if (!S.micPermissionGranted) {
       await requestMicAccess();
       return;
@@ -602,6 +611,7 @@ export function setupEvents() {
     recordStrokeStart('live', S.currentLiveBufferIdx);
     S.isPainting      = true;
     S.paintFrameCount = 0;
+    if (S.seedLockEnabled) startSeedPlant();
     _updateLiveRecUI();
   });
   S.canvas.addEventListener('mouseup', e => {
@@ -610,6 +620,7 @@ export function setupEvents() {
     if (S.seqModeEnabled && S.currentStrokeId > 0) {
       try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
     }
+    if (S.seedLockEnabled) finalizeSeedPlant();
     S.isPainting      = false;
     S.currentStrokeId = -1;
     if (S.isRecording) stopLiveRecording();

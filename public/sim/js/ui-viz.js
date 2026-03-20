@@ -57,6 +57,25 @@ export function initVizUI() {
     });
   }
 
+  // ── UI scale slider ────────────────────────────────────────────────────
+  const BASE_FONT_PX = 15;
+  const SCALE_KEY = 'mubone_uiScale';
+  function applyUiScale(scale) {
+    S.uiScale = scale;
+    document.documentElement.style.fontSize = (BASE_FONT_PX * scale) + 'px';
+    try { localStorage.setItem(SCALE_KEY, scale); } catch {}
+  }
+  // Restore saved scale
+  try {
+    const saved = parseFloat(localStorage.getItem(SCALE_KEY));
+    if (saved >= 0.7 && saved <= 1.6) S.uiScale = saved;
+  } catch {}
+  applyUiScale(S.uiScale);
+  bindSlider('vizUiScaleSlider', 'vizUiScaleVal',
+    () => S.uiScale,
+    v  => { applyUiScale(v); },
+    v  => v.toFixed(2));
+
   // ── Mode ring size slider ──────────────────────────────────────────────
   bindSlider('vizModeRingSizeSlider', 'vizModeRingSizeVal',
     () => S.modeRingSize,

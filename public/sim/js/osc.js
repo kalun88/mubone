@@ -16,7 +16,7 @@ import {
   sensor, wand,
 } from './sensor.js';
 import { updateWand, updateGestureMorph } from './wand.js';
-import { setCursorHouseMuted, setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
+import { setScanMuted, setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
 import {
   toggleNearestMode, dropSeqFromCursor, dropNearestSeq,
   pickupSeqPause, pickupSeqRemove, clearAllSeqs, clearAllSeeds, updatePlaybackControls,
@@ -342,7 +342,7 @@ export function handleOSC(rawAddress, values) {
       break;
 
     case '/cursor/mute':
-      setCursorHouseMuted(!!values[0]);
+      setScanMuted(!!values[0]);
       break;
 
     // ── Monitor / House bus (Phase 1 — Improv Mode) ────────────────────────
@@ -352,7 +352,7 @@ export function handleOSC(rawAddress, values) {
       const v = clamp(values[0], 0, 1);
       S.monitorGainValue = v;
       if (S.monitorToHouseGain) {
-        const effectiveGain = S.cursorHouseMuted ? 0 : v;
+        const effectiveGain = S.scanMuted ? 0 : v;
         S.monitorToHouseGain.gain.setTargetAtTime(effectiveGain, S.audioCtx.currentTime, 0.02);
       }
       S._syncImprovUI?.();
@@ -411,6 +411,10 @@ export function handleOSC(rawAddress, values) {
       else         S._finalizeSeedPlant?.();
       break;
     case '/seed/uproot':  S._uprootSeed?.(); break;
+    case '/seed/lock':
+      S.seedLockEnabled = !!val;
+      document.getElementById('seedLockBtn')?.classList.toggle('active', S.seedLockEnabled);
+      break;
     case '/seed/clear':   clearAllSeeds();   break;
     case '/undo':         S._undo?.();       break;
     case '/sweep':        sweep();           break;

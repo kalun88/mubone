@@ -460,6 +460,7 @@ function _captureSeedFrame() {
     grainProbability:  S.grainProbability,
     radiusFadeEnabled: S.radiusFadeEnabled,
     radiusFadeCurve:   S.radiusFadeCurve,
+    // NOTE: recencyN is intentionally NOT captured per-frame — it stays global
   };
 }
 
@@ -469,9 +470,10 @@ function _captureSeedFrame() {
  */
 function _findSeedSlot(lon, lat) {
   const limit = S.seedSlotCount;
-  // 1. First empty slot within active range
+  // 1. First empty or releasing slot within active range
+  //    Releasing seeds are treated as free — they're already fading out
   for (let i = 0; i < limit; i++) {
-    if (!S.seedSlots[i]) return i;
+    if (!S.seedSlots[i] || S.seedSlots[i]._releasingAt > 0) return i;
   }
   // 2. All active slots full — check overflow mode
   if (S.seedOverflow === 'oldest') {
@@ -529,6 +531,7 @@ export function startSeedPlant() {
     morphVelocity: 0,
     radiusFadeEnabled: S.radiusFadeEnabled,
     radiusFadeCurve:   S.radiusFadeCurve,
+    // NOTE: recencyN is intentionally NOT captured per-seed — it stays global
     // Moving seed fields (null = stationary, populated on finalize if held long enough)
     frames:   null,
     duration: 0,
@@ -607,12 +610,11 @@ export function toggleSeedLoopMode(slotIndex) {
 
 export function uprootNearestSeed() {
   const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  const nearestSlot = findNearestSeedSlot(lon, lat);
+  // Skip seeds already fading out so rapid uproot hits the next live seed
+  const nearestSlot = findNearestSeedSlot(lon, lat, { skipReleasing: true });
   if (nearestSlot === -1) return;
   const seed = S.seedSlots[nearestSlot];
   if (!seed) return;
-  // If already releasing, ignore (don't restart)
-  if (seed._releasingAt > 0) return;
   // Use the current release time (performance gesture), not a stored value
   const rel = S.seedRelease || 0;
   if (rel <= 0) {
@@ -1101,7 +1103,7 @@ export function updateSeqBanksUI() {
   const countEl  = document.getElementById('seqActiveCount');
   if (countEl) countEl.textContent = active ? `${active} active` : (paused ? `${paused} paused` : '0');
   const vmLoops = document.getElementById('vmLoops');
-  if (vmLoops) vmLoops.textContent = `loops: ${allSeqs.length}`;
+  if (vmLoops) vmLoops.textContent = `loops: ${allSeqs.length} / ${S.seqSlotCount}`;
 
   const canvas = document.getElementById('seqSlotsCanvas');
   if (!canvas) return;
@@ -1226,11 +1228,12 @@ export function updateSeqBanksUI() {
 }
 
 export function updateSeedBanksUI() {
-  const count = S.seedSlots.filter(c => c !== null).length;
+  // Exclude seeds that are fading out — count drops immediately on uproot
+  const count = S.seedSlots.filter(c => c !== null && !(c._releasingAt > 0)).length;
   const seedsEl = document.getElementById('seedsPlantedCount');
   if (seedsEl) seedsEl.textContent = count + ' planted';
   const vmSeeds = document.getElementById('vmSeeds');
-  if (vmSeeds) vmSeeds.textContent = `seeds: ${count}`;
+  if (vmSeeds) vmSeeds.textContent = `seeds: ${count} / ${S.seedSlotCount}`;
 
   const canvas = document.getElementById('seedSlotsCanvas');
   if (!canvas) return;
@@ -1303,8 +1306,8 @@ export function updateSeedBanksUI() {
       c.fillStyle = seed.color + alphaHex;
       c.fill();
 
-      // Ring
-      const ringAlpha = Math.round(0x66 * envAlphaMul);
+      // Ring — always visible with a minimum alpha so the frame never disappears
+      const ringAlpha = Math.max(0x22, Math.round(0x66 * envAlphaMul));
       const ringHex   = ringAlpha.toString(16).padStart(2, '0');
       c.beginPath();
       c.arc(cx, cy, r, 0, Math.PI * 2);

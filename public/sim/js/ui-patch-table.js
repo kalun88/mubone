@@ -127,10 +127,10 @@ export const PARAM_REGISTRY = [
     parse: s => ['hann', 'tri', 'rect'].includes(s.trim()) ? s.trim() : null },
 
   // ── Cursor ────────────────────────────────────────────────────────────────
-  { key: 'cursorHouseMuted', label: 'cursor mute', group: 'cursor', type: 'boolean',
-    get: () => S.cursorHouseMuted,
-    set: v  => { _setCursorHouseMutedFn?.(v); },
-    fmt: v  => v ? 'muted' : 'on',
+  { key: 'scanMuted', label: 'scan', group: 'cursor', type: 'boolean',
+    get: () => S.scanMuted,
+    set: v  => { _setScanMutedFn?.(v); },
+    fmt: v  => v ? 'off' : 'on',
     parse: s => parseBool(s) },
   { key: 'radiusFadeEnabled', label: 'radius fade', group: 'cursor', type: 'boolean',
     get: () => S.radiusFadeEnabled,
@@ -188,9 +188,9 @@ export const PARAM_REGISTRY = [
     },
     fmt: v  => v,
     parse: s => ['off', 'oldest', 'nearest'].includes(s.trim()) ? s.trim() : null },
-  { key: 'seqModeEnabled', label: 'loop mode',    group: 'looper', type: 'boolean',
+  { key: 'seqModeEnabled', label: 'loop lock',    group: 'looper', type: 'boolean',
     get: () => S.seqModeEnabled,
-    set: v  => { S.seqModeEnabled = v; },
+    set: v  => { S.seqModeEnabled = v; document.getElementById('seqModeBtn')?.classList.toggle('active', v); },
     fmt: v  => v ? 'on' : 'off',
     parse: s => parseBool(s) },
   { key: 'seqNextVolume', label: 'loop volume',    group: 'looper', type: 'number',
@@ -230,6 +230,11 @@ export const PARAM_REGISTRY = [
     },
     fmt: v  => v,
     parse: s => ['off', 'oldest', 'nearest'].includes(s.trim()) ? s.trim() : null },
+  { key: 'seedLockEnabled', label: 'seed lock',    group: 'seeder', type: 'boolean',
+    get: () => S.seedLockEnabled,
+    set: v  => { S.seedLockEnabled = v; document.getElementById('seedLockBtn')?.classList.toggle('active', v); },
+    fmt: v  => v ? 'on' : 'off',
+    parse: s => parseBool(s) },
   { key: 'seedMode',         label: 'blend mode',      group: 'seeder', type: 'enum', options: ['all', 'focus'],
     get: () => S.seedMode,
     set: v  => { S.seedMode = v; },
@@ -337,7 +342,7 @@ export function syncAllUI() {
   S._syncRadiusFadeUI?.();
   S._syncImprovUI?.();
   S._syncSeqUI?.();
-  S._syncCursorMuteUI?.();
+  S._syncScanUI?.();
   const { updatePlaybackControls } = _lazyImports();
   updatePlaybackControls?.();
 }
@@ -352,7 +357,7 @@ function _lazyImports() {
 }
 
 // ── Late-bound function references (set by initPatchTable) ──────────────
-let _setCursorHouseMutedFn = null;
+let _setScanMutedFn = null;
 let _selectPresetFn = null;
 
 // ── Modal state ─────────────────────────────────────────────────────────
@@ -707,9 +712,9 @@ function _startInlineEdit(param, presetIdx, td) {
 
 // ── Initialise — called from main.js ────────────────────────────────────
 
-export function initPatchTable(updatePlaybackControlsFn, setCursorHouseMutedFn, selectPresetFn) {
+export function initPatchTable(updatePlaybackControlsFn, setScanMutedFn, selectPresetFn) {
   _imports = { updatePlaybackControls: updatePlaybackControlsFn };
-  _setCursorHouseMutedFn = setCursorHouseMutedFn;
+  _setScanMutedFn = setScanMutedFn;
   _selectPresetFn = selectPresetFn;
 
   // Wire the menu button

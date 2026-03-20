@@ -20,7 +20,7 @@ import {
 import { sweep } from './ui-sweep.js';
 import { setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
 import { wireSaveDefaultBtn } from './ui-audio-settings.js';
-import { setCursorHouseMuted } from './ui-meters.js';
+import { setScanMuted } from './ui-meters.js';
 import { findNearestSeedSlot } from './grain.js';
 import { getCursorLonLat, screenToLonLat } from './sphere.js';
 
@@ -112,8 +112,8 @@ const ACTIONS = [
 
   // ── Cursor ─────────────────────────────────────────────────────────────────
   { id: null, group: 'cursor' },
-  { id: 'cursor_mute',  label: 'cursor mute',               key: 'C',                 osc: '/cursor/mute',       fmt: 'int 0|1',          type: 'trigger',
-    tip: 'mute cursor grains in the house output — seeds still play' },
+  { id: 'scan_toggle',  label: 'scan',                      key: 'X',                 osc: '/cursor/mute',       fmt: 'int 0|1',          type: 'trigger',
+    tip: 'toggle scan — cursor spotlight on/off in the house output' },
   { id: 'radius_fade',  label: 'radius fade on/off',        key: '—',                 osc: '/grain/radiusfade', fmt: 'int 0|1',          type: 'trigger',
     tip: 'attenuate grains by distance from cursor centre' },
   { id: 'radius_fade_curve', label: 'radius fade curve',    key: '—',                 osc: '/grain/radiusfadecurve', fmt: 'float 0–1',    type: 'cc',
@@ -133,15 +133,15 @@ const ACTIONS = [
     tip: 'cycle overflow mode: off → oldest → nearest' },
   { id: 'seq_arm',      label: 'drop/draw loop (D)',         key: 'D',                 osc: '/loop/arm',        fmt: 'int 0|1',          type: 'hold',
     tip: 'quick tap (<200ms) = drop loop from cursor, long hold = draw a new loop' },
-  { id: 'seq_mode',     label: 'loop mode on/off',          key: 'L',                 osc: '/loop/mode',       fmt: 'int 0|1',          type: 'trigger',
-    tip: 'switch cursor to loop recording — paint creates a loop on release' },
+  { id: 'seq_mode',     label: 'loop lock (⇧D)',            key: 'Shift+D',            osc: '/loop/mode',       fmt: 'int 0|1',          type: 'trigger',
+    tip: 'toggle loop lock — every paint trace auto-records a loop' },
   { id: 'seq_drop',     label: 'drop loop (OSC only)',      key: '—',                 osc: '/loop/drop',       fmt: 'bang',             type: 'trigger',
     tip: 'turn the last stroke under cursor into a loop — keyboard: quick tap D' },
   { id: 'seq_pause',    label: 'pause nearest loop',        key: '—',                 osc: '/loop/pause',      fmt: 'bang',             type: 'trigger',
     tip: 'stop nearest loop playback, keep in slot to resume later' },
   { id: 'seq_resume',   label: 'resume nearest loop',       key: '—',                 osc: '/loop/resume',     fmt: 'bang',             type: 'trigger',
     tip: 'restart the nearest paused loop' },
-  { id: 'seq_remove',   label: 'lift nearest loop',          key: 'Shift+D',            osc: '/loop/remove',     fmt: 'bang',             type: 'trigger',
+  { id: 'seq_remove',   label: 'lift nearest loop',          key: '⌘D',                osc: '/loop/remove',     fmt: 'bang',             type: 'trigger',
     tip: 'lift — remove nearest loop from its slot, painted material stays' },
   { id: 'seq_clear',    label: 'clear all loops',           key: '—',                 osc: '/loop/clear',      fmt: 'bang',             type: 'trigger',
     tip: 'remove all loops from all slots' },
@@ -165,8 +165,10 @@ const ACTIONS = [
     tip: 'sow a stationary seed at the current cursor position' },
   { id: 'sow_trail',    label: 'sow trail (hold S)',         key: 'hold S',             osc: '/seed/trail',    fmt: 'int 0|1',          type: 'hold',
     tip: 'hold to record a moving seed path — seed loops along the trail' },
-  { id: 'uproot_seed',  label: 'uproot nearest seed',       key: 'Shift+S',            osc: '/seed/uproot',   fmt: 'bang',             type: 'trigger',
+  { id: 'uproot_seed',  label: 'uproot nearest seed',       key: '⌘S',                osc: '/seed/uproot',   fmt: 'bang',             type: 'trigger',
     tip: 'remove the seed closest to the cursor' },
+  { id: 'seed_lock',    label: 'seed lock (⇧S)',            key: 'Shift+S',            osc: '/seed/lock',     fmt: 'int 0|1',          type: 'trigger',
+    tip: 'toggle seed lock — every paint trace auto-sows a seed trail' },
   { id: 'seed_clear',   label: 'clear all seeds',           key: '—',                 osc: '/seed/clear',    fmt: 'bang',             type: 'trigger',
     tip: 'remove all planted seeds' },
   { id: 'seed_mode',    label: 'seed blend mode',           key: '—',                 osc: '/seed/mode',     fmt: 'str all|focus',    type: 'trigger',
@@ -373,7 +375,7 @@ function dispatchAction(id, midiVal) {
         ensureAudioContext();
         S._loopRecPreSeqMode = S.seqModeEnabled;
         S.seqModeEnabled = true;
-        if (!S.cursorHouseMuted) setCursorHouseMuted(true);
+        if (!S.scanMuted) setScanMuted(true);
         startLiveRecording();
         recordStrokeStart('live', S.currentLiveBufferIdx);
         S.isPainting = true; S.paintFrameCount = 0;
@@ -402,8 +404,8 @@ function dispatchAction(id, midiVal) {
       if (S._setMuted) S._setMuted(!S.isMuted);
       else S.isMuted = !S.isMuted;
       break;
-    case 'cursor_mute':
-      setCursorHouseMuted(!S.cursorHouseMuted);
+    case 'scan_toggle':
+      setScanMuted(!S.scanMuted);
       break;
     case 'undo':        undoLastStroke(); break;
     case 'sweep':       sweep(); break;
@@ -413,6 +415,11 @@ function dispatchAction(id, midiVal) {
       else             finalizeSeedPlant();
       break;
     case 'uproot_seed':  uprootNearestSeed(); break;
+    case 'seed_lock': {
+      S.seedLockEnabled = !S.seedLockEnabled;
+      document.getElementById('seedLockBtn')?.classList.toggle('active', S.seedLockEnabled);
+      break;
+    }
     case 'seed_clear':   clearAllSeeds(); break;
     case 'seed_overflow': {
       const modes = ['off', 'oldest', 'nearest'];
@@ -445,7 +452,7 @@ function dispatchAction(id, midiVal) {
       break;
     }
     case 'seq_mode': {
-      // Don't allow turning ON loop mode when slots are full and overflow is off
+      // Don't allow turning ON loop lock when slots are full and overflow is off
       const wouldEnable = !S.seqModeEnabled;
       if (wouldEnable && S.seqOverflow === 'off') {
         let full = true;
@@ -583,7 +590,7 @@ function dispatchAction(id, midiVal) {
         if (midiVal > 0 && !S.isPainting && idx < S.samples.length && S.samples[idx].buffer) {
           // Start sample paint
           ensureAudioContext(); S.activeSampleIndex = idx;
-          if (S.seqModeEnabled && !S.cursorHouseMuted) S._setMuted?.(false) || setCursorHouseMuted?.(true);
+          if (S.seqModeEnabled && !S.scanMuted) S._setMuted?.(false) || setScanMuted?.(true);
           const s = S.samples[idx]; s.grainCursor = s.cropStart * s.duration;
           recordStrokeStart('sample'); S.isPainting = true; S.paintFrameCount = 0;
         } else if (midiVal === 0 && S.isPainting && S.activeSampleIndex === idx) {

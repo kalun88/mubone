@@ -106,11 +106,11 @@ export function initImprovUI() {
   function applyMonitor(v) {
     S.monitorGainValue = v;
     if (monSlider) monSlider.value = v;
-    if (monNum)    monNum.value    = S.cursorHouseMuted ? '(muted)' : pct(v);
+    if (monNum)    monNum.value    = S.scanMuted ? '(muted)' : pct(v);
     if (S.monitorToHouseGain && S.audioCtx) {
-      // Respect cursor house mute — store the value but don't apply it to the gain
-      // node while muted. setCursorHouseMuted() will restore it on unmute.
-      const effectiveGain = S.cursorHouseMuted ? 0 : v;
+      // Respect scan state — store the value but don't apply it to the gain
+      // node while scan is off. setScanMuted() will restore it on unmute.
+      const effectiveGain = S.scanMuted ? 0 : v;
       S.monitorToHouseGain.gain.setTargetAtTime(effectiveGain, S.audioCtx.currentTime, 0.02);
     }
   }
@@ -233,7 +233,7 @@ export function initImprovUI() {
     if (houseSlider) houseSlider.value = S.houseGainValue ?? 1;
     if (houseNum)    houseNum.value    = mul(S.houseGainValue ?? 1);
     if (monSlider)   monSlider.value   = S.monitorGainValue ?? 0;
-    if (monNum)      monNum.value      = S.cursorHouseMuted ? '(muted)' : pct(S.monitorGainValue ?? 0);
+    if (monNum)      monNum.value      = S.scanMuted ? '(muted)' : pct(S.monitorGainValue ?? 0);
     applySeedMode(S.seedMode ?? 'all');
     applyTether(S.seedTether ?? false);
     applyMorph(S.morphEnabled ?? true);

@@ -255,11 +255,12 @@ function _angleFromCached(p, rx, ry, rz) {
   return Math.acos(Math.max(-1, Math.min(1, p._cx * rx + p._cy * ry + p._cz * rz)));
 }
 
-export function findNearestSeedSlot(refLon, refLat) {
+export function findNearestSeedSlot(refLon, refLat, { skipReleasing = false } = {}) {
   let nearestSlot = -1, nearestAng = Infinity;
   for (let i = 0; i < S.seedSlotCount; i++) {
     const seed = S.seedSlots[i];
     if (!seed) continue;
+    if (skipReleasing && seed._releasingAt > 0) continue;
     // Moving seeds: measure distance from the start position (frames[0]),
     // not the current animated position — avoids disorienting results as
     // the cursor moves along the path.
@@ -645,10 +646,10 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
         ? _extraNodesBuf.slice()  // small (≤2 elements), only when mixdown active
         : null;
 
-      // ── Cursor house mute: skip house VBAP when cursor is muted ───────────
-      // When muted AND no mixdown exists → grain is simply not played
+      // ── Scan off: skip house VBAP when scan is muted ──────────────────────
+      // When scan is off AND no mixdown exists → grain is simply not played
       // (pared-down demo mode: only planted seeds are heard).
-      if (isCursorGrain && S.cursorHouseMuted) {
+      if (isCursorGrain && S.scanMuted) {
         if (cursorDestL && cursorDestR) {
           // Cursor already routed to mixdown above — just start & clean up
           source.start(t, bufferStartPos);
@@ -661,7 +662,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
             if (_extraNodes) for (const n of _extraNodes) _deferDisconnect(n);
           }, { once: true });
         }
-        // else: no mixdown, cursor muted → grain not played
+        // else: no mixdown, scan off → grain not played
 
       } else {
       // ── Normal VBAP routing (cursor unmuted, or seed grains always) ───────

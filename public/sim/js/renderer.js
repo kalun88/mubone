@@ -511,20 +511,20 @@ export function drawParticles() {
   // ── Active grain highlight (second pass) ──────────────────────────────────
   // Draw a bright dot over every particle that currently has a grain playing.
   // Uses projections cached during the main loop to avoid redundant math.
-  // When cursor is muted, cursor-triggered grains render as black/transparent
+  // When scan is off, cursor-triggered grains render as black/transparent
   // to visually distinguish them from seed-triggered grains (which stay white).
   if (_glowCache.size > 0) {
-    const cursorMuted = S.cursorHouseMuted;
+    const scanOff = S.scanMuted;
     for (const [particle, { sx, sy, depth, facing }] of _glowCache) {
       const df   = Math.max(0, 1 - (depth / (SPHERE_RADIUS * 2)));
       const size = (PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df) * 1.6;
       const entry = activeGrainMap.get(particle);
       const isCursorGrain = entry && entry.glowColor === '#ffffff';
-      if (cursorMuted && isCursorGrain) {
-        // Muted cursor grains: faint white — still visible but clearly quieter
+      if (scanOff && isCursorGrain) {
+        // Scan off cursor grains: faint white — still visible but clearly quieter
         S.ctx.globalAlpha = (0.15 + 0.1 * facing) * df;
       } else {
-        // Seed grains + unmuted cursor grains: near-opaque white
+        // Seed grains + scan-active cursor grains: near-opaque white
         S.ctx.globalAlpha = (0.75 + 0.25 * facing) * df;
       }
       S.ctx.fillStyle = '#ffffff';
@@ -601,8 +601,8 @@ export function drawParticles() {
 // Redesigned "Mode Ring" HUD — 3 concentric zones:
 //   Zone 1  Center reticle  — crosshair + dot (white idle, paint color, red record)
 //   Zone 2  Mode Ring       — 4 arc segments at ~14px radius:
-//             Top    = cursor muted       (amber #e8a030)
-//             Bottom = loop mode on       (pink  #ff6b9d)
+//             Top    = scan off           (amber #e8a030)
+//             Bottom = loop lock on       (pink  #ff6b9d)
 //             Right  = patch number       (white, always shown, flashes on change)
 //             Left   = seed tether on     (violet #b8a0ff)
 //   Zone 3  Radius circle   — search radius (solid, minimal)
@@ -630,7 +630,7 @@ export function drawCursor() {
   if (!S.mouseInCanvas && !S.altLocked) { S.ctx.restore(); return; }
 
   const painting    = S.isPainting;
-  const cursorMuted = S.cursorHouseMuted;
+  const scanOff = S.scanMuted;
   const recording   = S.isRecording;
   const color       = recording
     ? '#e83030'
@@ -638,9 +638,9 @@ export function drawCursor() {
 
   // ─── ZONE 3: Radius circle ─────────────────────────────────────────────
 
-  // Muted uses amber tint matching the mute button, otherwise neutral grey
-  const _rFill   = cursorMuted ? 'rgba(232,160,48,0.10)' : 'rgba(180,180,180,0.10)';
-  const _rStroke = cursorMuted ? 'rgba(232,160,48,0.55)' : 'rgba(200,200,200,0.55)';
+  // Scan off uses amber tint matching the scan button, otherwise neutral grey
+  const _rFill   = scanOff ? 'rgba(232,160,48,0.10)' : 'rgba(180,180,180,0.10)';
+  const _rStroke = scanOff ? 'rgba(232,160,48,0.55)' : 'rgba(200,200,200,0.55)';
 
   const kAll = S.grainKAllMode;
 
@@ -694,8 +694,8 @@ export function drawCursor() {
   const ARC_BOTTOM = [(Math.PI / 4) + gap,      (3 * Math.PI / 4) - gap];
   const ARC_LEFT   = [(3 * Math.PI / 4) + gap,  (5 * Math.PI / 4) - gap];
 
-  // Top arc — CURSOR MUTED (amber)
-  if (cursorMuted) {
+  // Top arc — SCAN OFF (orange)
+  if (scanOff) {
     S.ctx.strokeStyle = '#e8a030';
     S.ctx.lineWidth   = arcW;
     S.ctx.globalAlpha = 0.95;
@@ -703,25 +703,25 @@ export function drawCursor() {
     S.ctx.globalAlpha = 1;
   }
 
-  // Bottom arc — LOOP MODE ON (pink)
-  if (S.seqModeEnabled) {
-    S.ctx.strokeStyle = '#ff6b9d';
-    S.ctx.lineWidth   = arcW;
-    S.ctx.globalAlpha = 0.95;
-    S.ctx.beginPath(); S.ctx.arc(mx, my, ringR, ARC_BOTTOM[0], ARC_BOTTOM[1]); S.ctx.stroke();
-    S.ctx.globalAlpha = 1;
-  }
-
-  // Left arc — SEED TETHER ON (violet)
-  if (S.seedTether) {
-    S.ctx.strokeStyle = '#b8a0ff';
+  // Left arc — SEED LOCK (sage green)
+  if (S.seedLockEnabled) {
+    S.ctx.strokeStyle = '#6ec97a';
     S.ctx.lineWidth   = arcW;
     S.ctx.globalAlpha = 0.95;
     S.ctx.beginPath(); S.ctx.arc(mx, my, ringR, ARC_LEFT[0], ARC_LEFT[1]); S.ctx.stroke();
     S.ctx.globalAlpha = 1;
   }
 
-  // Right position — PATCH NUMBER (always visible, flashes on change)
+  // Right arc — LOOP LOCK / draw loop active (pink)
+  if (S.seqModeEnabled) {
+    S.ctx.strokeStyle = '#ff6b9d';
+    S.ctx.lineWidth   = arcW;
+    S.ctx.globalAlpha = 0.95;
+    S.ctx.beginPath(); S.ctx.arc(mx, my, ringR, ARC_RIGHT[0], ARC_RIGHT[1]); S.ctx.stroke();
+    S.ctx.globalAlpha = 1;
+  }
+
+  // Bottom position — PATCH NUMBER (always visible, flashes on change)
   {
     const now       = performance.now();
     const flashLeft = (S._patchFlashUntil || 0) - now;
@@ -736,15 +736,15 @@ export function drawCursor() {
     // Scale font with ring size — readable at distance
     const fs        = Math.max(11, Math.round(ringR * 0.55));
 
-    // Position: right of cursor at ringR distance
-    const px = mx + ringR + 2;
-    const py = my;
+    // Position: below cursor at ringR distance
+    const px = mx;
+    const py = my + ringR + 2;
 
     S.ctx.save();
     S.ctx.globalAlpha  = flashAlpha;
     S.ctx.font         = `700 ${fs}px "Inter", "Helvetica Neue", sans-serif`;
-    S.ctx.textAlign    = 'left';
-    S.ctx.textBaseline = 'middle';
+    S.ctx.textAlign    = 'center';
+    S.ctx.textBaseline = 'top';
     S.ctx.fillStyle    = '#ffffff';
     S.ctx.fillText(patchStr, px, py);
     S.ctx.restore();
@@ -984,7 +984,7 @@ export function animate() {
     const { lon, lat } = S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY) : getCursorLonLat();
     const lonDeg = (lon * 180 / Math.PI).toFixed(1).padStart(7);
     const latDeg = (lat * 180 / Math.PI).toFixed(1).padStart(6);
-    if (_coordEl) _coordEl.textContent = `${lonDeg},${latDeg}`;
+    if (_coordEl) _coordEl.textContent = `${lonDeg}°,${latDeg}°`;
   }
 
   // Unified meter tick — runs inside the main RAF loop instead of its own

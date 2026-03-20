@@ -152,15 +152,16 @@ export function rebuildMainInputMeter() {
   }
 }
 
-// ── Cursor house mute toggle ─────────────────────────────────────────────
+// ── Scan toggle (cursor spotlight on/off) ────────────────────────────────
 // Mutes/unmutes cursor grains from the house/main output.
+// When scan is muted, the cursor spotlight is off — only seeds are heard.
 // - In stereo mode: zeros cursorMasterGain (monitorBus → masterGain path).
 // - In multi-ch mode: also zeros monitorToHouseGain (cursor → house send).
 //   Cursor remains audible on the dedicated monitor/headphone outputs.
 // Exported so MIDI/OSC can call it programmatically.
 
-export function setCursorHouseMuted(muted) {
-  S.cursorHouseMuted = muted;
+export function setScanMuted(muted) {
+  S.scanMuted = muted;
   const t = S.audioCtx?.currentTime ?? 0;
   const ramp = 0.02; // 20ms smooth transition
 
@@ -178,30 +179,30 @@ export function setCursorHouseMuted(muted) {
   }
 
   // Update button appearance
-  const btn = document.getElementById('cursorHouseMuteBtn');
+  const btn = document.getElementById('scanBtn');
   if (btn) btn.classList.toggle('muted', muted);
 
-  // Sync the improv panel mon→hse slider display when muted
+  // Sync the improv panel mon→hse slider display when scan is off
   // (the actual S.monitorGainValue is preserved so unmuting restores it)
   const monNum = document.getElementById('improvMonitorNum');
   if (monNum && muted) monNum.value = '(muted)';
   else if (monNum) monNum.value = Math.round(S.monitorGainValue * 100) + '%';
 }
 
-export function initCursorHouseMute() {
-  const btn = document.getElementById('cursorHouseMuteBtn');
+export function initScanToggle() {
+  const btn = document.getElementById('scanBtn');
   if (!btn) return;
 
   // Restore persisted state
-  btn.classList.toggle('muted', !!S.cursorHouseMuted);
+  btn.classList.toggle('muted', !!S.scanMuted);
 
   btn.addEventListener('click', () => {
-    setCursorHouseMuted(!S.cursorHouseMuted);
+    setScanMuted(!S.scanMuted);
   });
 
   // ── Sync hook for patch table preset recall ─────────────────────────────
-  S._syncCursorMuteUI = () => {
-    btn.classList.toggle('muted', !!S.cursorHouseMuted);
+  S._syncScanUI = () => {
+    btn.classList.toggle('muted', !!S.scanMuted);
   };
 }
 
@@ -270,6 +271,16 @@ export function initSeqMode() {
     });
   }
 
+  // Seed lock toggle button
+  const seedLockBtn = document.getElementById('seedLockBtn');
+  if (seedLockBtn) {
+    seedLockBtn.classList.toggle('active', S.seedLockEnabled);
+    seedLockBtn.addEventListener('click', () => {
+      S.seedLockEnabled = !S.seedLockEnabled;
+      seedLockBtn.classList.toggle('active', S.seedLockEnabled);
+    });
+  }
+
   // Panel action buttons
   document.getElementById('seqLoopDropBtn')?.addEventListener('click', () => {
     dropSeqFromCursor();
@@ -329,8 +340,10 @@ export function initSeqMode() {
 
   // ── Sync hook for patch table preset recall ─────────────────────────────
   S._syncSeqUI = () => {
-    // Seq mode toggle
+    // Loop lock toggle
     if (btn) btn.classList.toggle('active', S.seqModeEnabled);
+    // Seed lock toggle
+    if (seedLockBtn) seedLockBtn.classList.toggle('active', S.seedLockEnabled);
     // Volume slider + numbox
     if (seqVolSlider) seqVolSlider.value = S.seqNextParams.volume;
     if (seqVolNum)    seqVolNum.value    = Math.round(S.seqNextParams.volume * 100) + '%';

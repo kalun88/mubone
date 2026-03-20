@@ -10,7 +10,7 @@
   /* Base font-size scales with viewport width so everything grows when the window widens.
      clamp(min, preferred, max) — at 1400px wide: 1vw = 14px → font-size ≈ 14px (0.875rem equiv).
      All rem-based children scale automatically. */
-  html { font-size: clamp(14px, 1.2vw, 19px); }
+  html { font-size: 15px; }
   body {
     background: #161616;
     color: #aaaaaa;
@@ -700,13 +700,13 @@
   }
 
   /* ── Device: grain preset ────────────────────────────────────────────────── */
-  .device--preset { flex: 1; min-width: clamp(340px, 28vw, 560px); }
+  .device--preset { flex: 1; min-width: 22.7rem; }
   /* ── Right panel: presets + search + grain stacked beside viewer ──────── */
   .right-panel {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
-    width: clamp(340px, 28vw, 560px);
+    width: 22.7rem;
     flex-shrink: 0;
     min-height: 0;
     overflow-y: auto;
@@ -894,16 +894,19 @@
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 0.35rem;
-    padding: 0.18rem 0;
+    gap: 0.4rem;
+    padding: 0.28rem 0;
     border-bottom: none;
     flex-shrink: 0;
   }
   .grain-row:last-child { border-bottom: none; }
+  /* Visual group break — adds top spacing without a label */
+  .grain-row--gap-top { margin-top: 6px; }
+  .morph-slider-row.grain-row--gap-top { margin-top: 6px; }
   .grain-label {
     font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
     font-size: 0.72rem;
-    color: #555555;
+    color: #5e5e5e;
     letter-spacing: 0.03em;
     text-transform: none;
     width: 52px;
@@ -915,9 +918,9 @@
     -webkit-appearance: none;
     appearance: none;
     flex: 1;
-    height: 1px;
-    background: rgba(255,255,255,0.08);
-    border-radius: 0;
+    height: 2px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 1px;
     outline: none;
     cursor: ew-resize;
     min-width: 0;
@@ -926,14 +929,14 @@
   .grain-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 2px;
-    height: 10px;
+    height: 12px;
     border-radius: 0;
-    background: #555555;
+    background: #606060;
     cursor: ew-resize;
     border: none;
     transition: background 0.12s, height 0.12s;
   }
-  .grain-slider:hover::-webkit-slider-thumb { background: #999999; height: 12px; }
+  .grain-slider:hover::-webkit-slider-thumb { background: #999999; height: 14px; }
   /* Log-mapped sliders: very subtle tick marks — barely visible */
   .grain-slider--log {
     background: linear-gradient(90deg,
@@ -951,7 +954,7 @@
   .grain-numbox {
     font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
     font-size: 0.72rem;
-    color: #888888;
+    color: #808080;
     background: transparent;
     border: none;
     border-radius: 0;
@@ -981,7 +984,8 @@
     background: rgba(255,255,255,0.04);
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 2px;
-    padding: 2px 4px;
+    padding: 0.25rem 4px;
+    height: 1.5rem;
     flex: 1 1 auto;
     min-width: 0;
     outline: none;
@@ -1106,19 +1110,19 @@
     font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
     font-size: 0.65rem;
     line-height: 1;
-    color: #555555;
-    background: rgba(255,255,255,0.025);
+    color: #505050;
+    background: rgba(255,255,255,0.02);
     border: none;
-    border-radius: 1px;
-    padding: 0.2rem 0.25rem;
-    height: 1.4rem;
+    border-radius: 2px;
+    padding: 0.25rem 0.25rem;
+    height: 1.5rem;
     cursor: pointer;
     text-align: center;
     transition: color 0.12s, background 0.12s;
     white-space: nowrap;
   }
   .grain-seg-btn:hover { color: #999999; background: rgba(255,255,255,0.05); }
-  .grain-seg-btn.active { color: #cccccc; background: rgba(255,255,255,0.07); }
+  .grain-seg-btn.active { color: #cccccc; background: rgba(255,255,255,0.08); }
 
   /* ── Device: spacer ─────────────────────────────────────────────────────── */
   .device--spacer { flex: 1; border-right: none; background: transparent; }
@@ -1247,7 +1251,7 @@
 
   /* ── Desktop morph sub-section (nested in seeder) ───────────────────────── */
   .seed-section--morph {
-    border-top: 1px solid rgba(255,255,255,0.04);
+    border-top: none;
   }
   .seed-section--morph.morph-disabled {
     opacity: 0.25;
@@ -1341,7 +1345,7 @@
     overflow: visible;
   }
 
-  /* ── Play device — cursor mute big button ────────────────────────────────── */
+  /* ── Play device — scan toggle button ────────────────────────────────────── */
   .right-panel .device--play {
     flex: 0 0 auto;
     width: 100%;
@@ -1447,7 +1451,7 @@
   }
   /* painting state — per-button colours */
 
-  /* record (spacebar/click) — warm red */
+  /* trace (spacebar/click) — warm red */
   #paintIndicatorBtn.painting {
     color: #e05555;
     border-color: rgba(224, 85, 85, 0.55);
@@ -1557,7 +1561,7 @@
     border-color: rgba(255, 107, 157, 0.25);
   }
 
-  /* active flash on click — amber, matches cursor mute / system mute */
+  /* active flash on click — amber, matches scan off / system mute */
   .undo-btn:active,
   .undo-btn.flashing {
     color: #e8a030;
@@ -1580,20 +1584,20 @@
 
   /* Section wrapper — consistent spacing between groups */
   .seq-section {
-    padding: 6px 6px;
+    padding: 7px 6px;
   }
   .seq-section + .seq-section {
-    border-top: 1px solid rgba(255,255,255,0.03);
+    border-top: none;
   }
 
-  /* Section labels — subtle group headers */
+  /* Section labels — subtle group headers (brighter than sublabels for hierarchy) */
   .seq-section-label {
     display: block;
     font-size: 0.52rem;
     letter-spacing: 0.1em;
     text-transform: uppercase;
-    color: #444;
-    margin-bottom: 5px;
+    color: #555;
+    margin-bottom: 6px;
   }
 
   /* ── Collapsible sections ── */
@@ -1624,17 +1628,17 @@
   /* Sublabels within grouped collapsible sections */
   .seq-section-sublabel {
     display: block;
-    font-size: 0.5rem;
-    letter-spacing: 0.08em;
+    font-size: 0.48rem;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: #444;
-    margin: 5px 0 3px;
-    padding-top: 4px;
-    border-top: 1px solid rgba(255,255,255,0.025);
+    color: #555;
+    margin: 8px 0 4px;
+    padding-top: 6px;
+    border-top: none;
   }
   .seq-section-sublabel:first-child,
   .seq-section-body > .seq-section-sublabel:first-child {
-    margin-top: 0;
+    margin-top: 2px;
     padding-top: 0;
     border-top: none;
   }
@@ -1688,7 +1692,29 @@
     border-color: rgba(255, 107, 157, 0.25);
   }
 
+  /* Seed lock button — sage green when active (matches sow seed color family) */
+  .seed-lock-btn.active {
+    color: #6ec97a;
+    border-color: #6ec97a;
+    background: rgba(110, 201, 122, 0.1);
+    box-shadow: 0 0 8px rgba(110, 201, 122, 0.15);
+  }
+  .seed-lock-btn.active .seq-record-key {
+    color: rgba(110, 201, 122, 0.5);
+    border-color: rgba(110, 201, 122, 0.25);
+  }
+
   /* ── Slot bank ── */
+  /* Lock row — loop lock + seed lock side by side */
+  .seq-section--lock-row {
+    display: flex;
+    gap: 4px;
+  }
+  .seq-section--lock-row > .seq-record-btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
   .seq-section--bank {
     display: flex;
     flex-direction: column;

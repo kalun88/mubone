@@ -117,17 +117,17 @@ export function ensureAudioContext() {
     houseBus.gain.value = 1;
 
     const monitorToHouseGain = S.audioCtx.createGain();
-    monitorToHouseGain.gain.value = S.cursorHouseMuted ? 0 : S.monitorGainValue; // respect mute state
+    monitorToHouseGain.gain.value = S.scanMuted ? 0 : S.monitorGainValue; // respect scan state
 
     const houseGainNode = S.audioCtx.createGain();
     houseGainNode.gain.value = S.houseGainValue; // default 1
 
-    // Cursor house mute: insert a gain node between monitorBus and masterGain.
-    // When cursorHouseMuted is true this gain is zeroed — cursor disappears from
+    // Scan mute: insert a gain node between monitorBus and masterGain.
+    // When scanMuted is true this gain is zeroed — cursor disappears from
     // the house/main output.  In multi-ch mode the monitor speaker buses are
     // unaffected (cursor stays audible on headphones).
     const cursorMasterGain = S.audioCtx.createGain();
-    cursorMasterGain.gain.value = S.cursorHouseMuted ? 0 : 1;
+    cursorMasterGain.gain.value = S.scanMuted ? 0 : 1;
     S.cursorMasterGain = cursorMasterGain;
 
     // Wire: monitorBus → cursorMasterGain → masterGain (cursor audible unless muted)

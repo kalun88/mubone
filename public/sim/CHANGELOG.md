@@ -5,6 +5,26 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.4 alpha — 2026-03-21
+
+### Fixed
+- **Shift+D / Shift+S button flash** — pressing Shift+D (loop lock) or Shift+S (seed lock) no longer causes the underlying D (drop loop) and S (sow seed) buttons to visually flash. Added `_plainD` / `_plainS` flag pattern to distinguish bare keydown from modified keydown on keyup.
+
+### Added
+- **UI scale slider** — new "panel & text size" control in viz settings scales all UI elements (panels, top bar, HUD overlay, text) without affecting the 3D rendering. Range 0.70–1.60×, persisted to localStorage.
+- **Recency exclusion note** — added code comments in seed capture and frame capture confirming `recencyN` is intentionally global, not stored per-seed.
+
+### Changed
+- **HUD quadrant redesign** — mode ring arcs repositioned: top = scan off (orange), left = seed lock (green `#6ec97a`), right = loop lock (pink `#ff6b9d`), bottom = patch number (centered below cursor). Removed old seed tether indicator from left arc.
+- **Panel width fixed** — right panel no longer scales with viewport. Root font locked at 15px, panel width converted to rem (22.7rem) so it responds only to the UI scale slider.
+- **Param panel cleanup** — removed all `grain-row--gap-top` utility classes that were standing in for removed subtitle headings. Merged search panel toggles and parameters into a single section (eliminates double padding between k-seq and radius).
+- **Morph section independence** — morph collapsible moved from nested inside params to a sibling section in the seeder panel, so collapsing params no longer hides morph.
+- **Panel heading flattening** — removed redundant section/sublabel headings (SLOT CONFIG, SEED PARAMS, BLEND, MOVEMENT, ENVELOPE, LOOP PARAMS, RADIUS FADE, AXIS LOCK) across seeder, looper, cursor, and search panels. Replaced with single collapsible "params" toggles per panel.
+- **Divider lines removed** — stripped all faint horizontal dividers within panels (`border-top: none` on `.seq-section + .seq-section`, `.seq-section-sublabel`, `.seed-section--morph`).
+- **Visual polish pass** — slider track 1px→2px, slider thumb 10→12px, seg button radius 1→2px, section label color `#444`→`#555`, grain row padding tightened, numbox color `#888`→`#808`, slots dropdown height matched to seg buttons.
+
+---
+
 ## 0.3 alpha — 2026-03-20
 
 ### Fixed

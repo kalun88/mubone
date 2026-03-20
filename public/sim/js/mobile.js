@@ -7,7 +7,7 @@ import { qFromAxisAngle, qNormalize, qMul } from './sphere.js';
 import { ensureAudioContext, requestMicAccess, startLiveRecording, stopLiveRecording } from './audio.js';
 import { recordStrokeStart } from './ui-samples.js';
 import { selectPreset, createSeqFromStroke } from './ui-presets.js';
-import { setCursorHouseMuted } from './ui-meters.js';
+import { setScanMuted } from './ui-meters.js';
 
 // ── Orientation state (module-private) ───────────────────────────────────────
 let orientationYawAxis   = 'beta';
@@ -392,8 +392,8 @@ function setupMobileTouchHandlers() {
       if (!S.micPermissionGranted) return;
     }
 
-    // Auto-mute cursor when starting a sequence recording
-    if (S.seqModeEnabled && !S.cursorHouseMuted) setCursorHouseMuted(true);
+    // Auto-mute scan when starting a sequence recording
+    if (S.seqModeEnabled && !S.scanMuted) setScanMuted(true);
     startLiveRecording();
     recordStrokeStart('live', S.currentLiveBufferIdx);
     S.isPainting      = true;

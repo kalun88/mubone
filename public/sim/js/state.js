@@ -966,6 +966,7 @@ export const S = {
   seedSlots: new Array(MAX_SEEDS).fill(null), // fixed positions
   seedSlotCount:    8,        // active limit (1–12), default 8
   seedOverflow:     'off',    // 'off' | 'oldest' | 'nearest'
+  seedLockEnabled:  false,    // when true, every paint trace auto-sows a seed trail
 
   // ── Loaded samples (1-9) ───────────────────────────────────────────────
   // activeSampleIndex: which slot is currently toggled ON for painting (-1 = none)
@@ -1033,6 +1034,7 @@ export const S = {
   vizCentroidMin: 0.04,     // lowest expected centroid (deepest bass content)
   vizCentroidMax: 0.45,     // highest expected centroid (bright/hissy content)
   modeRingSize:  30,        // mode ring radius (px) — controls how big the 4 status arcs are
+  uiScale:       1.0,       // UI scale factor — multiplied with base font-size (15px)
 
   // ── Audio ──────────────────────────────────────────────────────────────
   audioCtx:   null,
@@ -1137,10 +1139,10 @@ export const S = {
   monitorSpeakerBuses:  null,   // [{bus,angleDeg,angleRad}, ...] — headphone pair
 
   // ── Cursor house mute ─────────────────────────────────────────────────
-  // When true, cursor grains are silenced in the house / main output.
+  // When true, scan is off — cursor grains are silenced in the house / main output.
   // In stereo mode this mutes cursorMasterGain (only seeds are heard).
   // In multi-ch mode this also zeros monitorToHouseGain (cursor stays on monitor outputs).
-  cursorHouseMuted: false,
+  scanMuted: false,
   cursorMasterGain: null,   // GainNode inserted between monitorBus and masterGain
 
   // ── Radius fade (distance attenuation within cursor radius) ───────────

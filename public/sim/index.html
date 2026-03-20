@@ -14,11 +14,11 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.3 alpha</span>
+        <span class="top-bar-version">version 0.4 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
-        <button id="micEnableBtn" title="enable microphone input for live granulation&#10;records audio into paint buffers on the sphere">
+        <button id="micEnableBtn" title="enable microphone input for live granulation&#10;traces audio into paint buffers on the sphere">
           <span class="mic-dot"></span>
           <span class="mic-label">enable mic</span>
         </button>
@@ -94,7 +94,7 @@
         <div id="viewerMonitor">
           <span id="vmSeeds">seeds: 0</span>
           <span id="vmLoops">loops: 0</span>
-          <span id="vmBuffers">buf: 0</span>
+          <span id="vmBuffers">buffers: 0</span>
           <span class="vm-grain-wrap">
             <span class="vm-dot" id="vmDot"></span>
             <span class="vm-node-meter"><span class="vm-node-bar" id="vmNodeBar"></span></span>
@@ -189,7 +189,6 @@
 
           <!-- mode toggles — compact grain-seg style -->
           <div class="seq-section search-section--toggles">
-            <span class="seq-section-label">mode</span>
             <div class="grain-row" title="lock — snap to nearest particle instead of random k selection">
               <span class="grain-label">lock</span>
               <div class="grain-seg" id="snapToggleSeg">
@@ -211,11 +210,6 @@
                 <button class="grain-seg-btn active" data-kseq="off" title="random — pick randomly from k nearest">random</button>
               </div>
             </div>
-          </div>
-
-          <!-- parameters — grain-row style -->
-          <div class="seq-section search-section--params">
-            <span class="seq-section-label">parameters</span>
             <div class="grain-row" title="radius — search cone angle&#10;1° narrow to 180° full hemisphere">
               <span class="grain-label">radius</span>
               <input class="grain-slider" type="range" id="radiusSlider" min="1" max="180" step="1" value="10">
@@ -314,21 +308,21 @@
         </div>
       </div>
 
-      <!-- Cursor controls — cursor mute + radius fade -->
+      <!-- Cursor controls — scan + radius fade -->
       <div class="device device--play">
         <div class="device-label">cursor</div>
         <div class="device-body play-body">
 
-          <!-- Record indicator — reflects isPainting state, not a UI toggle -->
+          <!-- Trace indicator — reflects isPainting state, not a UI toggle -->
           <div class="seq-section">
-            <div id="paintIndicatorBtn" class="play-mute-btn paint-indicator-btn" title="record — momentary: driven by spacebar or left-click on canvas&#10;not a UI toggle — use input to activate">
+            <div id="paintIndicatorBtn" class="play-mute-btn paint-indicator-btn" title="trace — momentary: driven by spacebar or left-click on canvas&#10;not a UI toggle — use input to activate">
               <!-- Paintbrush icon -->
               <svg class="play-mute-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M3 17.5C3 17.5 4.5 16 7 16c1.5 0 2.5 1 4 1s3-1.5 4.5-2.5L20 9l-5-5-5.5 5.5C8.5 10.5 7 12 7 13.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
                 <path d="M3 17.5C3 19.4 4.3 21 6 21c1.4 0 2.5-1 3-2.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
                 <line x1="15" y1="4" x2="20" y2="9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
               </svg>
-              <span class="play-mute-label paint-indicator-label">record</span>
+              <span class="play-mute-label paint-indicator-label">trace</span>
               <!-- Right-side key badges (spacebar + mouse click) -->
               <span class="paint-key-badges">
                 <span class="paint-key-badge paint-key-badge--space">space</span>
@@ -341,23 +335,9 @@
             </div>
           </div>
 
-          <!-- Loop mode toggle — moved here from looper panel -->
-          <div class="seq-section seq-section--record">
-            <button id="seqModeBtn" class="seq-record-btn" title="looper mode (L) — switch cursor to loop recording&#10;ON (pink): paint to record a loop, auto-plays on release&#10;OFF (default): normal granular cursor">
-              <svg class="seq-record-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M17 2l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M3 11V9a4 4 0 0 1 4-4h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M7 22l-4-4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M21 13v2a4 4 0 0 1-4 4H3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              <span class="seq-record-label">loop mode</span>
-              <span class="seq-record-key">L</span>
-            </button>
-          </div>
-
-          <!-- Mute toggle — prominent, full-width -->
+          <!-- Scan toggle -->
           <div class="seq-section">
-            <button id="cursorHouseMuteBtn" class="play-mute-btn" title="cursor mute — toggle cursor grains in the house output&#10;ON (amber) = cursor silent in house, only seeds&#10;OFF (teal) = cursor audible in house">
+            <button id="scanBtn" class="play-mute-btn" title="scan — toggle cursor spotlight in the house output&#10;ON (teal) = scan active, cursor audible in house&#10;OFF (amber) = scan off, only seeds in house">
               <svg class="play-mute-icon play-mute-icon--on" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="12" cy="12" r="3" fill="currentColor"/>
                 <line x1="12" y1="2" x2="12" y2="7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
@@ -373,15 +353,14 @@
                 <line x1="17" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.4"/>
                 <line x1="5" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
               </svg>
-              <span class="play-mute-label">cursor mute</span>
-              <span class="seq-record-key">C</span>
+              <span class="play-mute-label">scan</span>
+              <span class="seq-record-key">X</span>
             </button>
           </div>
 
           <!-- Undo button — removes last painted stroke (particles + buffer + spawned loop) -->
           <div class="seq-section">
             <button id="undoBtn" class="play-mute-btn undo-btn" title="undo (⌃Z / right-click) — remove last painted stroke&#10;removes particles, audio buffer, and any loop spawned from it">
-              <!-- Undo arrow icon -->
               <svg class="play-mute-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M3 10h10a6 6 0 0 1 0 12H7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
                 <path d="M3 10l4-4M3 10l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -393,9 +372,32 @@
             </button>
           </div>
 
-          <!-- Radius fade — distance attenuation within cursor radius -->
-          <div class="seq-section seq-section--collapsible" data-collapse-key="radiusFade">
-            <span class="seq-section-label seq-section-toggle">radius fade</span>
+          <!-- Loop lock + Seed lock — side by side -->
+          <div class="seq-section seq-section--lock-row">
+            <button id="seqModeBtn" class="seq-record-btn" title="loop lock (⇧D) — switch cursor to loop recording&#10;ON (pink): every paint trace auto-records a loop&#10;OFF (default): normal granular cursor">
+              <svg class="seq-record-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M17 2l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M3 11V9a4 4 0 0 1 4-4h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M7 22l-4-4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M21 13v2a4 4 0 0 1-4 4H3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span class="seq-record-label">loop lock</span>
+              <span class="seq-record-key">⇧D</span>
+            </button>
+            <button id="seedLockBtn" class="seq-record-btn seed-lock-btn" title="seed lock (⇧S) — auto-sow a seed trail for every paint trace&#10;ON (green): every trace plants a moving seed along the path&#10;OFF (default): manual sow only&#10;stops when seed slots are full (unless overflow is on)">
+              <svg class="seq-record-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 18 C8 18, 8 6, 12 6 S16 18, 20 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none" opacity="0.6"/>
+                <circle cx="4" cy="18" r="2.5" fill="currentColor" opacity="0.9"/>
+                <circle cx="20" cy="18" r="1.5" fill="currentColor" opacity="0.5"/>
+              </svg>
+              <span class="seq-record-label">seed lock</span>
+              <span class="seq-record-key">⇧S</span>
+            </button>
+          </div>
+
+          <!-- Cursor params — flat list with collapsible toggle -->
+          <div class="seq-section seq-section--collapsible" data-collapse-key="cursorAllParams">
+            <span class="seq-section-label seq-section-toggle">params</span>
             <div class="seq-section-body">
               <div class="grain-row" title="radius fade — attenuate grains by distance from cursor centre&#10;ON: smooth volume fade at radius edge (no abrupt silence)&#10;OFF: all grains in radius play at full volume">
                 <span class="grain-label">fade</span>
@@ -409,13 +411,6 @@
                 <input class="grain-slider" type="range" id="radiusFadeCurveSlider" min="0" max="1" step="0.01" value="0.5">
                 <input type="text" class="grain-numbox" id="radiusFadeCurveNum" value="50%" readonly>
               </div>
-            </div>
-          </div>
-
-          <!-- Axis lock — independent azimuth / elevation toggle constraints -->
-          <div class="seq-section seq-section--collapsible" data-collapse-key="axisLock">
-            <span class="seq-section-label seq-section-toggle">axis lock</span>
-            <div class="seq-section-body">
               <div class="grain-row" title="lock azimuth — toggle to freeze horizontal position&#10;only elevation will move while locked">
                 <span class="grain-label">azimuth</span>
                 <div class="grain-seg" id="axisLockAzSeg">
@@ -467,7 +462,7 @@
 
           <!-- Draw loop — hold D to record a new loop -->
           <div class="seq-section">
-            <div id="loopRecordIndicatorBtn" class="play-mute-btn paint-indicator-btn" title="draw loop — hold D to record a loop while held&#10;Shift+D: lift nearest loop">
+            <div id="loopRecordIndicatorBtn" class="play-mute-btn paint-indicator-btn" title="draw loop — hold D to record a loop while held&#10;⌘D: lift nearest loop">
               <!-- Loop/cycle icon -->
               <svg class="play-mute-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M17 2l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
@@ -504,9 +499,9 @@
             </div>
           </div>
 
-          <!-- Slot config — count + overflow mode -->
-          <div class="seq-section seq-section--collapsible" data-collapse-key="loopSlotConfig">
-            <span class="seq-section-label seq-section-toggle">slot config</span>
+          <!-- Loop params — flat list with collapsible toggle -->
+          <div class="seq-section seq-section--params seq-section--collapsible" data-collapse-key="loopAllParams">
+            <span class="seq-section-label seq-section-toggle">params</span>
             <div class="seq-section-body">
               <div class="grain-row" title="number of active loop slots (1–12)">
                 <span class="grain-label">slots</span>
@@ -525,26 +520,17 @@
                   <button class="grain-seg-btn" data-overflow="nearest">nearest</button>
                 </div>
               </div>
-            </div>
-          </div>
-
-          <!-- Loop params — set before recording, loops inherit at creation -->
-          <div class="seq-section seq-section--params seq-section--collapsible" data-collapse-key="loopParams">
-            <span class="seq-section-label seq-section-toggle">loop params</span>
-            <div class="seq-section-body">
               <div class="seq-controls" id="seqControls">
                 <div class="grain-row" title="loop volume — recorded loops will play at this level&#10;min: 0% (silent)  max: 100% (full)&#10;set before recording, loops inherit at creation">
                   <span class="grain-label">vol</span>
                   <input class="grain-slider" type="range" id="seqVolumeSlider" min="0" max="1" step="0.01" value="1">
                   <input type="text" class="grain-numbox" id="seqVolumeNum" value="100%" readonly>
                 </div>
-
                 <div class="grain-row" title="loop speed — recorded loops will play at this rate&#10;min: 0.25× (quarter speed)  max: 4× (four times speed)&#10;1× = original speed&#10;set before recording, loops inherit at creation">
                   <span class="grain-label">speed</span>
                   <input class="grain-slider" type="range" id="seqSpeedSlider" min="0.25" max="4" step="0.01" value="1">
                   <input type="text" class="grain-numbox" id="seqSpeedNum" value="1.00×" readonly>
                 </div>
-
                 <div class="grain-row" title="loop direction — recorded loops will play in this direction&#10;fwd: play loop forward&#10;rev: play loop in reverse&#10;set before recording, loops inherit at creation">
                   <span class="grain-label">dir</span>
                   <div class="grain-seg" id="seqDirectionSeg">
@@ -571,7 +557,7 @@
 
           <!-- Sow seed — tap S to plant a stationary seed -->
           <div class="seq-section">
-            <div id="sowIndicatorBtn" class="play-mute-btn paint-indicator-btn" title="sow seed — tap S to plant a stationary seed at cursor position&#10;Shift+S: uproot nearest seed">
+            <div id="sowIndicatorBtn" class="play-mute-btn paint-indicator-btn" title="sow seed — tap S to plant a stationary seed at cursor position&#10;⌘S: uproot nearest seed">
               <!-- Seed/sow icon (matches existing sow SVG style) -->
               <svg class="play-mute-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <circle cx="12" cy="4" r="2" fill="currentColor" opacity="0.25"/>
@@ -605,7 +591,7 @@
           <!-- Transport — performance buttons -->
           <div class="seq-section seq-section--transport">
             <div class="seed-transport-grid seed-transport-grid--2col">
-              <button id="seedUprootBtn" class="seq-transport-btn seed-btn--uproot" title="uproot nearest seed (↑ / Shift+S)">
+              <button id="seedUprootBtn" class="seq-transport-btn seed-btn--uproot" title="uproot nearest seed (⌘S)">
                 <svg viewBox="0 0 16 16" fill="none"><circle cx="8" cy="13" r="2.5" fill="currentColor" opacity="0.25"/><circle cx="8" cy="8.5" r="2" fill="currentColor" opacity="0.5"/><circle cx="8" cy="4" r="1.5" fill="currentColor" opacity="0.9"/><line x1="5.5" y1="1.5" x2="10.5" y2="1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.4"/></svg>
                 uproot
               </button>
@@ -616,10 +602,11 @@
             </div>
           </div>
 
-          <!-- Slot config — count + overflow mode -->
-          <div class="seq-section seq-section--collapsible" data-collapse-key="seedSlotConfig">
-            <span class="seq-section-label seq-section-toggle">slot config</span>
+          <!-- Seed params — flat list with collapsible toggle -->
+          <div class="seq-section seed-section--params seq-section--collapsible" data-collapse-key="seedAllParams">
+            <span class="seq-section-label seq-section-toggle">params</span>
             <div class="seq-section-body">
+
               <div class="grain-row" title="number of active seed slots (1–12)">
                 <span class="grain-label">slots</span>
                 <select class="grain-select" id="seedSlotCountSelect">
@@ -637,15 +624,7 @@
                   <button class="grain-seg-btn" data-overflow="nearest">nearest</button>
                 </div>
               </div>
-            </div>
-          </div>
 
-          <!-- Seed params — blend, envelope, movement grouped -->
-          <div class="seq-section seed-section--params seq-section--collapsible" data-collapse-key="seedParams">
-            <span class="seq-section-label seq-section-toggle">seed params</span>
-            <div class="seq-section-body">
-
-              <span class="seq-section-sublabel">blend</span>
               <div class="grain-row" title="seed mode&#10;all: all seeds play equally weighted&#10;focus: distance-weighted blend toward closest seed(s)">
                 <span class="grain-label">mode</span>
                 <div class="grain-seg" id="seedModeSelect">
@@ -668,7 +647,6 @@
                 <input type="text" class="grain-numbox" id="improvSnapNum" value="0%" readonly>
               </div>
 
-              <span class="seq-section-sublabel">movement</span>
               <div class="grain-row" title="loop direction for moving seeds&#10;ping-pong: bounces back and forth along the path&#10;forward: loops from start to end, then jumps back&#10;applies to nearest seed or next planted seed">
                 <span class="grain-label">dir</span>
                 <div class="grain-seg" id="seedLoopModeSeg">
@@ -677,14 +655,13 @@
                 </div>
               </div>
 
-              <span class="seq-section-sublabel">envelope</span>
               <div class="grain-row" title="attack — fade-in time applied when sowing (S key)&#10;uses the current value at the moment you plant, not stored per seed&#10;0s = instant, up to 10s swell">
                 <span class="grain-label">attack</span>
                 <input class="grain-slider" type="range" id="seedAttackSlider" min="0" max="10" step="0.1" value="0">
                 <input type="text" class="grain-numbox" id="seedAttackNum" value="0.0s" readonly>
                 <button class="param-lock-btn" data-lock-key="seedAttack" title="lock seed attack — holds value through preset changes">🔓</button>
               </div>
-              <div class="grain-row" title="release — fade-out time applied when uprooting (Shift+S)&#10;uses the current value at the moment you uproot, not stored per seed&#10;0s = instant, up to 10s fade">
+              <div class="grain-row" title="release — fade-out time applied when uprooting (⌘S)&#10;uses the current value at the moment you uproot, not stored per seed&#10;0s = instant, up to 10s fade">
                 <span class="grain-label">release</span>
                 <input class="grain-slider" type="range" id="seedReleaseSlider" min="0" max="10" step="0.1" value="0">
                 <input type="text" class="grain-numbox" id="seedReleaseNum" value="0.0s" readonly>
@@ -694,20 +671,16 @@
             </div>
           </div>
 
-          <!-- Desktop morph — 1D preset morph for HCI (no sensor) -->
-          <div class="seq-section seed-section--morph seq-section--collapsible" data-collapse-key="desktopMorph" id="desktopMorphSection">
+          <!-- Morph — separate collapsible section -->
+          <div class="seq-section seq-section--collapsible seed-section--morph" id="desktopMorphSection" data-collapse-key="seedMorph">
             <span class="seq-section-label seq-section-toggle">morph</span>
             <div class="seq-section-body">
-
-              <!-- Left preset | slider | Right preset -->
               <div class="morph-slider-row">
                 <select id="morphPresetL" class="morph-preset-select" title="left endpoint preset"></select>
                 <input type="range" id="morphSlider" class="morph-slider" min="0" max="1" step="0.002" value="0.5"
                        title="morph position — center = planted grain settings">
                 <select id="morphPresetR" class="morph-preset-select" title="right endpoint preset"></select>
               </div>
-
-              <!-- Return behaviour -->
               <div class="grain-row" title="sticky — ON: slider stays where released&#10;OFF: slider returns to center over time">
                 <span class="grain-label">hold</span>
                 <div class="grain-seg" id="morphStickySeg">
@@ -720,7 +693,6 @@
                 <input class="grain-slider" type="range" id="morphReturnSlider" min="50" max="3000" step="10" value="800">
                 <input type="text" class="grain-numbox" id="morphReturnNum" value="800ms" readonly>
               </div>
-
             </div>
           </div>
 
@@ -1357,6 +1329,16 @@
       </div>
     </div>
 
+    <!-- UI scale -->
+    <div class="as-section">
+      <div class="as-section-label">UI scale</div>
+      <div class="as-row">
+        <span class="as-label">panel &amp; text size</span>
+        <input class="as-slider" type="range" id="vizUiScaleSlider" min="0.7" max="1.6" step="0.05" value="1">
+        <span class="as-val" id="vizUiScaleVal">1.00</span>
+      </div>
+    </div>
+
     <!-- Cursor HUD -->
     <div class="as-section">
       <div class="as-section-label">cursor HUD</div>
@@ -1677,6 +1659,7 @@
 (function () {
   const TRAIL_THRESHOLD_MS = 200;
   let _sowTimer = 0;
+  let _plainS = false;  // true only when bare 's' keydown fired (no Shift/Cmd/Ctrl)
 
   function init() {
     const seedBtn  = document.getElementById('sowIndicatorBtn');
@@ -1686,6 +1669,7 @@
 
     document.addEventListener('keydown', e => {
       if (e.key === 's' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+        _plainS = true;
         // Wait for threshold before showing anything — avoids a flash on
         // the sow seed button when the user is actually doing a sow trail hold.
         _sowTimer = setTimeout(() => {
@@ -1694,7 +1678,9 @@
       }
     });
     document.addEventListener('keyup', e => {
-      if (e.key === 's' && !e.shiftKey) {
+      if (e.key === 's' || e.key === 'S') {
+        if (!_plainS) return;   // Shift+S (seed lock) — skip sow flash
+        _plainS = false;
         const wasHeld = trailBtn?.classList.contains('painting');
         clearTimeout(_sowTimer);
         if (trailBtn) trailBtn.classList.remove('painting');
@@ -1720,6 +1706,7 @@
 (function () {
   const DRAW_THRESHOLD_MS = 200;
   let _loopTimer = 0;
+  let _plainD = false;  // true only when bare 'd' keydown fired (no Shift/Cmd/Ctrl)
 
   function init() {
     const dropBtn = document.getElementById('seqLoopDropBtn');
@@ -1728,6 +1715,7 @@
 
     document.addEventListener('keydown', e => {
       if (e.key === 'd' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+        _plainD = true;
         if (window._loopSlotsFull?.()) return;
         // Wait for threshold before showing anything — avoids a flash on
         // the drop button when the user is actually doing a draw hold.
@@ -1737,7 +1725,9 @@
       }
     });
     document.addEventListener('keyup', e => {
-      if (e.key === 'd') {
+      if (e.key === 'd' || e.key === 'D') {
+        if (!_plainD) return;   // Shift+D (loop lock) — skip drop flash
+        _plainD = false;
         const wasHeld = drawBtn?.classList.contains('painting');
         clearTimeout(_loopTimer);
         if (drawBtn) drawBtn.classList.remove('painting');
@@ -1779,12 +1769,12 @@
         if (undoBtn) flash(undoBtn);
       }
       // D drop/draw flash is handled by the threshold script above — not here
-      // Shift+S → flash uproot button
-      if (e.key === 'S' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      // ⌘S → flash uproot button
+      if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.repeat) {
         if (uprootBtn) flash(uprootBtn);
       }
-      // Shift+D → flash lift button
-      if (e.key === 'D' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      // ⌘D → flash lift button
+      if (e.key === 'd' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.repeat) {
         if (liftBtn) flash(liftBtn);
       }
     });

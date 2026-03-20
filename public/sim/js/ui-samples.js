@@ -578,7 +578,7 @@ function updateLiveRecUI() {
   const countEl = document.getElementById('liveRecCount');
   if (countEl) countEl.textContent = bufCount;
   const vmBuffers = document.getElementById('vmBuffers');
-  if (vmBuffers) vmBuffers.textContent = `buf: ${bufCount}`;
+  if (vmBuffers) vmBuffers.textContent = `buffers: ${bufCount}`;
   updatePaintIndicator();
 }
 
