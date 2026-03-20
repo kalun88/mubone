@@ -289,6 +289,22 @@ These two systems compose naturally:
 
 The self-organizing mode should be a separate paint mode, not a replacement. Some performances benefit from intentional spatial placement (the performer decides where sounds live). Others benefit from automatic timbral organization (the system decides, the performer navigates). Both should be available, switchable, and potentially mixed (paint some material by hand, let other material self-organize).
 
+### Related work: concatenative synthesis tools
+
+Several existing tools solve the same "organize audio segments by timbral similarity" problem in different contexts:
+
+**[Mosaique](https://github.com/LFO-lab/Mosaique)** (LFO-lab) — Max for Live device for corpus-based concatenative synthesis. Analyzes audio segments by timbral features, uses UMAP dimensionality reduction to project high-dimensional feature vectors into a 2D/3D navigable space. The performer (or sequencer) navigates the space and the system plays the nearest corpus segment. Key technical detail: Mosaique uses UMAP as a batch process — the entire corpus is analyzed, then UMAP runs on the full feature matrix to compute the layout. This produces excellent perceptual clustering but requires recomputation when new material is added.
+
+**CataRT** (IRCAM) — the foundational concatenative synthesis tool. Real-time corpus-based synthesis where audio segments are plotted in a 2D descriptor space and the performer navigates by cursor position. CataRT uses direct feature mapping (centroid on X, loudness on Y) rather than dimensionality reduction, which is simpler and incremental but doesn't capture nonlinear perceptual relationships.
+
+**AudioStellar** — 3D audio corpus navigator using t-SNE for dimensionality reduction, with spatial audio output.
+
+**Relevance to mubone's self-organizing sphere:** mubone's context differs in two key ways: (1) material is recorded incrementally during live performance (not pre-analyzed as a corpus), and (2) the output space is a physical speaker array with VBAP spatialization, not headphones or stereo. This suggests a **hybrid approach**:
+
+- **Real-time incremental placement** using simple feature mapping (centroid → lon, RMS → lat, ZCR → secondary offset) with adaptive normalization. This works frame-by-frame as new material is recorded — no batch computation needed.
+- **Optional UMAP reorganization pass** triggered manually or between sections. After accumulating material, run UMAP on the full particle set to find better perceptual clustering, then animate particles to their UMAP-determined positions. The `umap-js` library (npm) provides a JavaScript implementation suitable for this.
+- The simple mapping serves as the "first draft" layout; UMAP refines it when the performer has a moment. This preserves real-time responsiveness while enabling the richer perceptual organization that dimensionality reduction provides.
+
 ---
 
 ## Performance Scenarios

@@ -13,7 +13,7 @@ import {
   recordStrokeStart, undoLastStroke,
 } from './ui-samples.js';
 import {
-  toggleNearestMode, plantSeed, uprootNearestSeed, clearAllSeeds,
+  toggleNearestMode, plantSeed, startSeedPlant, finalizeSeedPlant, uprootNearestSeed, clearAllSeeds,
   updatePlaybackControls, flashRadiusTooltip, selectPreset,
   createSeqFromStroke, dropSeqFromCursor, dropNearestSeq, pickupSeqPause, pickupSeqRemove, clearAllSeqs,
 } from './ui-presets.js';
@@ -119,10 +119,10 @@ const ACTIONS = [
   { id: 'radius_fade_curve', label: 'radius fade curve',    key: '—',                 osc: '/grain/radiusfadecurve', fmt: 'float 0–1',    type: 'cc',
     tip: '0 = gentle linear fade, 1 = steep sharp edge rolloff',
     ccFn: v => { S.radiusFadeCurve = v / 127; S._syncRadiusFadeUI?.(); } },
-  { id: 'lock_az',          label: 'lock azimuth (hold)',        key: '—',                 osc: '/cursor/lock_az',   fmt: 'int 0|1',           type: 'hold',
-    tip: 'hold to lock azimuth — only elevation moves' },
-  { id: 'lock_el',          label: 'lock elevation (hold)',      key: '—',                 osc: '/cursor/lock_el',   fmt: 'int 0|1',           type: 'hold',
-    tip: 'hold to lock elevation — only azimuth moves' },
+  { id: 'lock_az',          label: 'lock azimuth (toggle)',      key: '—',                 osc: '/cursor/lock_az',   fmt: 'int 0|1',           type: 'toggle',
+    tip: 'toggle azimuth lock — freezes horizontal position' },
+  { id: 'lock_el',          label: 'lock elevation (toggle)',    key: '—',                 osc: '/cursor/lock_el',   fmt: 'int 0|1',           type: 'toggle',
+    tip: 'toggle elevation lock — freezes vertical position' },
 
   // ── Looper ─────────────────────────────────────────────────────────────────
   { id: null, group: 'looper' },
@@ -131,18 +131,18 @@ const ACTIONS = [
     ccFn: v => { S.seqSlotCount = Math.max(1, Math.min(12, Math.round(1 + v * 11 / 127))); const sel = document.getElementById('seqSlotCountSelect'); if (sel) sel.value = String(S.seqSlotCount); (S.updateSeqBanksUI || (() => {}))(); S._syncSeqButtonStates?.(); } },
   { id: 'seq_overflow', label: 'loop overflow (cycle)',     key: '—',                 osc: '/loop/overflow',   fmt: 'str off|oldest|nearest', type: 'trigger',
     tip: 'cycle overflow mode: off → oldest → nearest' },
-  { id: 'seq_arm',      label: 'arm loop (hold)',            key: 'A',                 osc: '/loop/arm',        fmt: 'int 0|1',          type: 'hold',
-    tip: 'momentary loop record — hold to force loop mode and paint, release to finish loop and restore prior mode' },
+  { id: 'seq_arm',      label: 'drop/draw loop (D)',         key: 'D',                 osc: '/loop/arm',        fmt: 'int 0|1',          type: 'hold',
+    tip: 'quick tap (<200ms) = drop loop from cursor, long hold = draw a new loop' },
   { id: 'seq_mode',     label: 'loop mode on/off',          key: 'L',                 osc: '/loop/mode',       fmt: 'int 0|1',          type: 'trigger',
     tip: 'switch cursor to loop recording — paint creates a loop on release' },
-  { id: 'seq_drop',     label: 'drop loop from cursor',     key: 'D',                 osc: '/loop/drop',       fmt: 'bang',             type: 'trigger',
-    tip: 'turn the last stroke under cursor into a loop' },
+  { id: 'seq_drop',     label: 'drop loop (OSC only)',      key: '—',                 osc: '/loop/drop',       fmt: 'bang',             type: 'trigger',
+    tip: 'turn the last stroke under cursor into a loop — keyboard: quick tap D' },
   { id: 'seq_pause',    label: 'pause nearest loop',        key: '—',                 osc: '/loop/pause',      fmt: 'bang',             type: 'trigger',
     tip: 'stop nearest loop playback, keep in slot to resume later' },
   { id: 'seq_resume',   label: 'resume nearest loop',       key: '—',                 osc: '/loop/resume',     fmt: 'bang',             type: 'trigger',
     tip: 'restart the nearest paused loop' },
-  { id: 'seq_remove',   label: 'remove nearest loop',       key: 'Shift+A',            osc: '/loop/remove',     fmt: 'bang',             type: 'trigger',
-    tip: 'fully delete nearest loop from its slot' },
+  { id: 'seq_remove',   label: 'lift nearest loop',          key: 'Shift+D',            osc: '/loop/remove',     fmt: 'bang',             type: 'trigger',
+    tip: 'lift — remove nearest loop from its slot, painted material stays' },
   { id: 'seq_clear',    label: 'clear all loops',           key: '—',                 osc: '/loop/clear',      fmt: 'bang',             type: 'trigger',
     tip: 'remove all loops from all slots' },
   { id: 'seq_volume',   label: 'next loop volume',          key: '—',                 osc: '/loop/volume',     fmt: 'float 0–1',        type: 'cc',
@@ -161,8 +161,10 @@ const ACTIONS = [
     ccFn: v => { S.seedSlotCount = Math.max(1, Math.min(12, Math.round(1 + v * 11 / 127))); const sel = document.getElementById('seedSlotCountSelect'); if (sel) sel.value = String(S.seedSlotCount); (S.updateSeedBanksUI || (() => {}))(); } },
   { id: 'seed_overflow', label: 'seed overflow (cycle)',    key: '—',                 osc: '/seed/overflow', fmt: 'str off|oldest|nearest', type: 'trigger',
     tip: 'cycle overflow mode: off → oldest → nearest' },
-  { id: 'plant_seed',   label: 'sow seed',                  key: 'S',                 osc: '/seed/sow',      fmt: 'bang',             type: 'trigger',
-    tip: 'sow a seed at the current cursor position' },
+  { id: 'plant_seed',   label: 'sow seed (tap S)',           key: 'S',                 osc: '/seed/sow',      fmt: 'bang',             type: 'trigger',
+    tip: 'sow a stationary seed at the current cursor position' },
+  { id: 'sow_trail',    label: 'sow trail (hold S)',         key: 'hold S',             osc: '/seed/trail',    fmt: 'int 0|1',          type: 'hold',
+    tip: 'hold to record a moving seed path — seed loops along the trail' },
   { id: 'uproot_seed',  label: 'uproot nearest seed',       key: 'Shift+S',            osc: '/seed/uproot',   fmt: 'bang',             type: 'trigger',
     tip: 'remove the seed closest to the cursor' },
   { id: 'seed_clear',   label: 'clear all seeds',           key: '—',                 osc: '/seed/clear',    fmt: 'bang',             type: 'trigger',
@@ -406,6 +408,10 @@ function dispatchAction(id, midiVal) {
     case 'undo':        undoLastStroke(); break;
     case 'sweep':       sweep(); break;
     case 'plant_seed':   plantSeed(); break;
+    case 'sow_trail':
+      if (midiVal > 0) startSeedPlant();
+      else             finalizeSeedPlant();
+      break;
     case 'uproot_seed':  uprootNearestSeed(); break;
     case 'seed_clear':   clearAllSeeds(); break;
     case 'seed_overflow': {
@@ -544,18 +550,18 @@ function dispatchAction(id, midiVal) {
       break;
     case 'lock_az':
     case 'lock_el': {
-      const axis = id === 'lock_az' ? 'az' : 'el';
-      if (midiVal > 0) {
-        S.axisLock = axis;
-        S._axisLockFrozenNx = null; S._axisLockFrozenNy = null;
-        S._axisLockFrozenYaw = null; S._axisLockFrozenPitch = null;
-      } else {
-        if (S.axisLock === axis) S.axisLock = 'off';
-      }
+      if (midiVal === 0) break; // toggle on press only, ignore release
+      const stateKey = id === 'lock_az' ? 'axisLockAz' : 'axisLockEl';
+      const segId    = id === 'lock_az' ? 'axisLockAzSeg' : 'axisLockElSeg';
+      S[stateKey] = !S[stateKey];
+      // Clear frozen snapshots so next lock captures fresh position
+      if (id === 'lock_az') { S._axisLockFrozenNx = null; S._axisLockFrozenYaw = null; }
+      else                  { S._axisLockFrozenNy = null; S._axisLockFrozenPitch = null; }
       // Sync UI buttons
-      const seg = document.getElementById('axisLockSeg');
+      const seg = document.getElementById(segId);
       if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active', b.dataset.lock === S.axisLock));
+        b.classList.toggle('active',
+          (b.dataset.val === 'on') === S[stateKey]));
       break;
     }
     case 'perf':

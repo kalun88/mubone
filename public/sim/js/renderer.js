@@ -107,10 +107,14 @@ export function drawSeeds() {
         S.ctx.stroke();
       }
       S.ctx.setLineDash([]);
-      S.ctx.globalAlpha = (isNearest ? 1 : 0.6) * envG;
+      // Center dot and label ignore envelope gain — the anchor should be
+      // visible immediately when planted, even with slow attack envelopes.
+      // The radius circle/diamond above still fades with envG.
+      S.ctx.globalAlpha = isNearest ? 1 : 0.6;
       S.ctx.fillStyle = seed.color;
-      S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, 4, 0, Math.PI * 2); S.ctx.fill();
-      S.ctx.globalAlpha = (isNearest ? 0.9 : 0.5) * envG;
+      const centerDotR = isMoving ? 3 : 6;
+      S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, centerDotR, 0, Math.PI * 2); S.ctx.fill();
+      S.ctx.globalAlpha = isNearest ? 0.9 : 0.5;
       S.ctx.fillStyle = seed.color;
       S.ctx.font = `10px "Roboto Mono", monospace`;
       S.ctx.textAlign = 'center';
@@ -265,17 +269,20 @@ function _drawVelocityDotTrail(frames, color, alpha, dotR, maxSamples) {
   const [lcx, lcy, lcz] = cameraTransform(lwx, lwy, lwz);
   const lastProj = project(lcx, lcy, lcz);
 
-  // Start + end markers (bigger)
+  // Start + end markers
+  // Start dot is large (matches stationary seed size) — this is the anchor
+  // point used for nearest-seed distance calculations on moving seeds.
+  // End dot stays small so it's visually distinct.
   S.ctx.globalAlpha = Math.min(1, alpha + 0.15);
   const first = frames[0];
   const [fwx, fwy, fwz] = spherePoint(first.lon, first.lat);
   const [fcx, fcy, fcz] = cameraTransform(fwx, fwy, fwz);
   const firstProj = project(fcx, fcy, fcz);
   if (firstProj) {
-    S.ctx.beginPath(); S.ctx.arc(firstProj.sx, firstProj.sy, 4, 0, Math.PI * 2); S.ctx.fill();
+    S.ctx.beginPath(); S.ctx.arc(firstProj.sx, firstProj.sy, 6, 0, Math.PI * 2); S.ctx.fill();
   }
   if (lastProj) {
-    S.ctx.beginPath(); S.ctx.arc(lastProj.sx, lastProj.sy, 4, 0, Math.PI * 2); S.ctx.fill();
+    S.ctx.beginPath(); S.ctx.arc(lastProj.sx, lastProj.sy, 3, 0, Math.PI * 2); S.ctx.fill();
   }
 
   S.ctx.restore();
@@ -823,13 +830,13 @@ export function animate() {
         const speed = curve * ROTATION_SPEED;
         const nx = S.mouseX / dist, ny = S.mouseY / dist;
 
-        if (Math.abs(nx) > 0.001 && S.axisLock !== 'az') {
+        if (Math.abs(nx) > 0.001 && !S.axisLockAz) {
           const up = _qRotVec(S.camQ, [0, 1, 0]);
           const yawSign = up[1] < 0 ? -1 : 1;
           const qYaw = _qFromAA(0, 1, 0, nx * speed * yawSign);
           S.camQ = _qNorm(_qMul(qYaw, S.camQ));
         }
-        if (Math.abs(ny) > 0.001 && S.axisLock !== 'el') {
+        if (Math.abs(ny) > 0.001 && !S.axisLockEl) {
           const qPitch = _qFromAA(1, 0, 0, ny * speed);
           S.camQ = _qNorm(_qMul(S.camQ, qPitch));
         }
@@ -846,11 +853,11 @@ export function animate() {
   if (S.cameraMode === 'surface' && S._surfaceInput) {
     let { nx, ny } = S._surfaceInput;
     // Axis lock: freeze the locked component at the moment lock was engaged
-    if (S.axisLock === 'az') {
+    if (S.axisLockAz) {
       if (S._axisLockFrozenNx == null) S._axisLockFrozenNx = nx;
       nx = S._axisLockFrozenNx;
     } else { S._axisLockFrozenNx = null; }
-    if (S.axisLock === 'el') {
+    if (S.axisLockEl) {
       if (S._axisLockFrozenNy == null) S._axisLockFrozenNy = ny;
       ny = S._axisLockFrozenNy;
     } else { S._axisLockFrozenNy = null; }
@@ -871,17 +878,17 @@ export function animate() {
   if (S.cameraMode === 'sensor' && typeof S._getSensorCamQ === 'function') {
     const sq = S._getSensorCamQ();
     if (sq) {
-      if (S.axisLock !== 'off') {
+      if (S.axisLockAz || S.axisLockEl) {
         // Decompose sensor quat into yaw (azimuth) and pitch (elevation)
         // Forward vector from quaternion
         const fwd = _qRotVec(sq, [0, 0, 1]);
         let yaw   = Math.atan2(fwd[0], fwd[2]);
         let pitch  = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
-        if (S.axisLock === 'az') {
+        if (S.axisLockAz) {
           if (S._axisLockFrozenYaw == null) S._axisLockFrozenYaw = yaw;
           yaw = S._axisLockFrozenYaw;
         } else { S._axisLockFrozenYaw = null; }
-        if (S.axisLock === 'el') {
+        if (S.axisLockEl) {
           if (S._axisLockFrozenPitch == null) S._axisLockFrozenPitch = pitch;
           pitch = S._axisLockFrozenPitch;
         } else { S._axisLockFrozenPitch = null; }

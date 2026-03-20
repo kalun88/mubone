@@ -406,6 +406,10 @@ export function handleOSC(rawAddress, values) {
     // S._plantSeed / _uprootSeed / _undo registered by events.js.
     // Bang-style: any value (or no value) triggers the action.
     case '/seed/sow':     S._plantSeed?.();  break;
+    case '/seed/trail':   // hold-style: value > 0 = start, value 0 = finalize
+      if (val > 0) S._startSeedPlant?.();
+      else         S._finalizeSeedPlant?.();
+      break;
     case '/seed/uproot':  S._uprootSeed?.(); break;
     case '/seed/clear':   clearAllSeeds();   break;
     case '/undo':         S._undo?.();       break;

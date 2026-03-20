@@ -258,8 +258,14 @@ function _angleFromCached(p, rx, ry, rz) {
 export function findNearestSeedSlot(refLon, refLat) {
   let nearestSlot = -1, nearestAng = Infinity;
   for (let i = 0; i < S.seedSlotCount; i++) {
-    if (!S.seedSlots[i]) continue;
-    const ang = angleBetweenSphere(S.seedSlots[i].lon, S.seedSlots[i].lat, refLon, refLat);
+    const seed = S.seedSlots[i];
+    if (!seed) continue;
+    // Moving seeds: measure distance from the start position (frames[0]),
+    // not the current animated position — avoids disorienting results as
+    // the cursor moves along the path.
+    const sLon = (seed.frames && seed.frames.length) ? seed.frames[0].lon : seed.lon;
+    const sLat = (seed.frames && seed.frames.length) ? seed.frames[0].lat : seed.lat;
+    const ang = angleBetweenSphere(sLon, sLat, refLon, refLat);
     if (ang < nearestAng) { nearestAng = ang; nearestSlot = i; }
   }
   return nearestSlot;
@@ -1200,9 +1206,11 @@ export function scheduleGrains() {
 
   for (let i = 0; i < MAX_SEEDS; i++) {
     const seed = S.seedSlots[i];
-    if (!seed || !S.particles.length || i >= S.seedSlotCount) continue;
+    if (!seed || i >= S.seedSlotCount) continue;
 
     // ── Seed envelope (attack / release) ──────────────────────────────
+    // Always advance the envelope regardless of whether particles exist,
+    // so seeds stay visually active (renderer + bank UI read _envGainCurrent).
     // Exponential curves for perceptually even loudness changes:
     //   Attack:  t^3  — slow swell-in, accelerating (like a bowed string)
     //   Release: (1-t)^3 — quick initial drop, long natural tail (like reverb decay)
@@ -1230,8 +1238,8 @@ export function scheduleGrains() {
     }
     // Store envelope gain on seed so renderer + bank UI can visualise it
     seed._envGainCurrent = seedEnvGain;
-    // Skip if envelope is effectively silent
-    if (seedEnvGain < 0.001) continue;
+    // Skip grain scheduling if envelope is silent or no particles to play
+    if (seedEnvGain < 0.001 || !S.particles.length) continue;
 
     // Reusable effective params object — avoids per-grain allocation
     if (!seed._effectiveParams) seed._effectiveParams = {};

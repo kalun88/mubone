@@ -924,7 +924,9 @@ export const S = {
   mousePixelY: 0,
   mouseInCanvas: false,
   altLocked:          false,  // true while Alt held -- sphere position frozen
-  axisLock:           'off',  // 'off' | 'az' | 'el' — locks azimuth or elevation
+  axisLock:           'off',  // legacy compat — derived from axisLockAz/El
+  axisLockAz:         false,  // independent azimuth lock toggle
+  axisLockEl:         false,  // independent elevation lock toggle
   _axisLockFrozenNx:  null,   // snapshot of surface nx when az locked
   _axisLockFrozenNy:  null,   // snapshot of surface ny when el locked
   _axisLockFrozenYaw:   null, // snapshot of sensor yaw when az locked

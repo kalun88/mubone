@@ -7,6 +7,7 @@
 
 ## Active
 
+- [x] **Bug: keyboard shortcuts swallowed after clicking right panel** — fixed in `events.js`: added `_focusedOnFormField()` guard to both keydown listeners (skips shortcuts when text input/select/textarea focused), delegated mouseup blur on right panel for buttons/sliders/seg-buttons, Escape blurs focused field without triggering app actions.
 - [ ] **Test gesture extraction with live wand** — load `?exp`, wave wand, verify viz panel shows meaningful features. Tune scaling constants in `gesture.js` (JERK_SCALE, EFFORT_GYRO_SCALE, ENERGY_DECAY, etc.) based on real IMU data.
 - [ ] Build gesture-to-sonic mapping layer (`js/exp/gesture-map.js`) — translates gesture features into sonic quality targets with temporal smoothing and inertia.
 

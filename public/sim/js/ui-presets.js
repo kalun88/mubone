@@ -514,8 +514,8 @@ export function startSeedPlant() {
     _nextPeriodMs: 0,
     _plantedAt:    performance.now() / 1000,
     _releasingAt:  0,
-    _envAttack:    S.seedAttack,
-    _envRelease:   S.seedRelease,
+    _envAttack:    S.seedAttack,     // snapshot at sow — duration of the attack ramp
+    _envRelease:   0,                // set at uproot time from current S.seedRelease
     _envGainCurrent: S.seedAttack > 0 ? 0 : 1,
     grainParams: {
       ...S.grainParams,
@@ -613,12 +613,14 @@ export function uprootNearestSeed() {
   if (!seed) return;
   // If already releasing, ignore (don't restart)
   if (seed._releasingAt > 0) return;
-  const rel = seed._envRelease || 0;
+  // Use the current release time (performance gesture), not a stored value
+  const rel = S.seedRelease || 0;
   if (rel <= 0) {
     // Instant removal
     S.seedSlots[nearestSlot] = null;
   } else {
-    // Start release ramp — grain scheduler will remove when done
+    // Stamp the current release duration onto the seed and start the ramp
+    seed._envRelease  = rel;
     seed._releasingAt = performance.now() / 1000;
   }
   (S.updateSeedBanksUI || updateSeedBanksUI)();
@@ -626,11 +628,13 @@ export function uprootNearestSeed() {
 
 export function clearAllSeeds() {
   const now = performance.now() / 1000;
+  // Use the current release time for all seeds being cleared
+  const rel = S.seedRelease || 0;
   for (let i = 0; i < MAX_SEEDS; i++) {
     const seed = S.seedSlots[i];
     if (!seed) continue;
-    const rel = seed._envRelease || 0;
     if (rel > 0 && !seed._releasingAt) {
+      seed._envRelease  = rel;
       seed._releasingAt = now;
     } else if (rel <= 0) {
       S.seedSlots[i] = null;
@@ -1122,7 +1126,7 @@ export function updateSeqBanksUI() {
   const COLS = S.seqSlotCount, ROWS = 1, GAP = 4, PAD = 4;
   const cellW = (W - PAD * 2 - GAP * (COLS - 1)) / COLS;
   const cellH = (H - PAD * 2 - GAP * (ROWS - 1)) / ROWS;
-  const r     = Math.min(cellW, cellH) / 2 - 1;
+  const r     = Math.max(0.5, Math.min(cellW, cellH) / 2 - 1);
 
   for (let i = 0; i < S.seqSlotCount; i++) {
     const col = i % COLS;
@@ -1252,7 +1256,7 @@ export function updateSeedBanksUI() {
   const COLS = S.seedSlotCount, ROWS = 1, GAP = 4, PAD = 4;
   const cellW = (W - PAD * 2 - GAP * (COLS - 1)) / COLS;
   const cellH = (H - PAD * 2 - GAP * (ROWS - 1)) / ROWS;
-  const r     = Math.min(cellW, cellH) / 2 - 1;
+  const r     = Math.max(0.5, Math.min(cellW, cellH) / 2 - 1);
 
   for (let i = 0; i < S.seedSlotCount; i++) {
     const col = i % COLS;
@@ -1963,8 +1967,9 @@ export function initGrainControls() {
   }
 
   // ── Octave shortcut buttons ──────────────────────────────────────────────
-  const octDownBtn = document.getElementById('octDownBtn');
-  const octUpBtn   = document.getElementById('octUpBtn');
+  const octDownBtn  = document.getElementById('octDownBtn');
+  const octResetBtn = document.getElementById('octResetBtn');
+  const octUpBtn    = document.getElementById('octUpBtn');
   const _setPitchShift = (cents) => {
     const clamped = Math.max(-2400, Math.min(2400, Math.round(cents)));
     setGrainParam('pitchShift', clamped);
@@ -1975,6 +1980,11 @@ export function initGrainControls() {
     octDownBtn.addEventListener('click', () => {
       const cur = S.grainOverrides.pitchShift ?? gp().pitchShift ?? 0;
       _setPitchShift(cur - 1200);
+    });
+  }
+  if (octResetBtn) {
+    octResetBtn.addEventListener('click', () => {
+      _setPitchShift(0);
     });
   }
   if (octUpBtn) {
@@ -2208,16 +2218,22 @@ export function initDesktopMorph() {
       S.desktopMorphSticky = sticky;
       stickySeg.querySelectorAll('.grain-seg-btn').forEach(b =>
         b.classList.toggle('active', (b.dataset.sticky === 'true') === sticky));
-      // Show/hide return time row
-      if (returnRow) returnRow.style.display = sticky ? 'none' : '';
+      // Grey out return time row when sticky (don't hide — just disable)
+      if (returnRow) {
+        returnRow.style.opacity = sticky ? '0.35' : '';
+        returnRow.style.pointerEvents = sticky ? 'none' : '';
+      }
       _saveMorphSettings();
     });
   });
   // Init sticky toggle from persisted state
   stickySeg.querySelectorAll('.grain-seg-btn').forEach(b =>
     b.classList.toggle('active', (b.dataset.sticky === 'true') === S.desktopMorphSticky));
-  // Init return row visibility
-  if (returnRow) returnRow.style.display = S.desktopMorphSticky ? 'none' : '';
+  // Init return row visibility (greyed out when sticky)
+  if (returnRow) {
+    returnRow.style.opacity = S.desktopMorphSticky ? '0.35' : '';
+    returnRow.style.pointerEvents = S.desktopMorphSticky ? 'none' : '';
+  }
 
   // Return time slider
   if (returnSl && returnNum) {

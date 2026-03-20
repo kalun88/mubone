@@ -378,22 +378,25 @@ function init() {
 
   // ── Global Escape key → close topmost modal ──────────────────────────────
   // All .mu-overlay modals and .factory-reset-overlay popups close on Escape.
-  // ── Axis lock segmented button ──────────────────────────────────────────
-  const axisLockSeg = document.getElementById('axisLockSeg');
-  if (axisLockSeg) {
-    axisLockSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+  // ── Axis lock — independent azimuth / elevation toggles ─────────────────
+  function _initAxisLockSeg(segId, stateKey, frozenKeys) {
+    const seg = document.getElementById(segId);
+    if (!seg) return;
+    seg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        S.axisLock = btn.dataset.lock;               // 'off' | 'az' | 'el'
+        const on = btn.dataset.val === 'on';
+        S[stateKey] = on;
         // Clear frozen snapshots so next lock captures fresh position
-        S._axisLockFrozenNx = null;
-        S._axisLockFrozenNy = null;
-        S._axisLockFrozenYaw = null;
-        S._axisLockFrozenPitch = null;
-        axisLockSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        for (const k of frozenKeys) S[k] = null;
+        seg.querySelectorAll('.grain-seg-btn').forEach(b =>
           b.classList.toggle('active', b === btn));
       });
     });
   }
+  _initAxisLockSeg('axisLockAzSeg', 'axisLockAz',
+    ['_axisLockFrozenNx', '_axisLockFrozenYaw']);
+  _initAxisLockSeg('axisLockElSeg', 'axisLockEl',
+    ['_axisLockFrozenNy', '_axisLockFrozenPitch']);
 
   // ── Loop slot config ───────────────────────────────────────────────────
   const seqSlotSelect = document.getElementById('seqSlotCountSelect');

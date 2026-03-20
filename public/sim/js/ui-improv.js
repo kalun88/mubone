@@ -208,6 +208,10 @@ export function initImprovUI() {
     });
   }
 
+  // Sync seed envelope sliders from persisted state
+  if (atkSlider) { atkSlider.value = S.seedAttack; if (atkNum) atkNum.value = fmtEnvTime(S.seedAttack); }
+  if (relSlider) { relSlider.value = S.seedRelease; if (relNum) relNum.value = fmtEnvTime(S.seedRelease); }
+
   // Initial state
   refreshSeedBtns();
   updateSeedBanksUI();
@@ -222,6 +226,8 @@ export function initImprovUI() {
   // ── OSC sync hook — so external OSC changes reflect in the UI ──────────
   // Called from osc.js after it writes a new value to S
   S._syncImprovUI = () => {
+    if (atkSlider) { atkSlider.value = S.seedAttack; if (atkNum) atkNum.value = fmtEnvTime(S.seedAttack); }
+    if (relSlider) { relSlider.value = S.seedRelease; if (relNum) relNum.value = fmtEnvTime(S.seedRelease); }
     if (snapSlider)  snapSlider.value  = S.seedXfade ?? 0.5;
     if (snapNum)     snapNum.value     = pct(S.seedXfade ?? 0.5);
     if (houseSlider) houseSlider.value = S.houseGainValue ?? 1;

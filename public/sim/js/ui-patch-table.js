@@ -142,18 +142,28 @@ export const PARAM_REGISTRY = [
     set: v  => { S.radiusFadeCurve = Math.max(0, Math.min(1, v)); },
     fmt: v  => Math.round(v * 100) + '%',
     parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
-  { key: 'axisLock', label: 'axis lock', group: 'cursor', type: 'enum', options: ['off', 'az', 'el'],
-    get: () => S.axisLock,
+  { key: 'axisLockAz', label: 'lock azimuth', group: 'cursor', type: 'bool',
+    get: () => S.axisLockAz,
     set: v  => {
-      S.axisLock = v;
-      S._axisLockFrozenNx = null; S._axisLockFrozenNy = null;
-      S._axisLockFrozenYaw = null; S._axisLockFrozenPitch = null;
-      const seg = document.getElementById('axisLockSeg');
+      S.axisLockAz = v;
+      S._axisLockFrozenNx = null; S._axisLockFrozenYaw = null;
+      const seg = document.getElementById('axisLockAzSeg');
       if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active', b.dataset.lock === v));
+        b.classList.toggle('active', (b.dataset.val === 'on') === v));
     },
-    fmt: v  => v,
-    parse: s => ['off', 'az', 'el'].includes(s.trim()) ? s.trim() : null },
+    fmt: v  => v ? 'on' : 'off',
+    parse: s => s.trim() === 'on' ? true : s.trim() === 'off' ? false : null },
+  { key: 'axisLockEl', label: 'lock elevation', group: 'cursor', type: 'bool',
+    get: () => S.axisLockEl,
+    set: v  => {
+      S.axisLockEl = v;
+      S._axisLockFrozenNy = null; S._axisLockFrozenPitch = null;
+      const seg = document.getElementById('axisLockElSeg');
+      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', (b.dataset.val === 'on') === v));
+    },
+    fmt: v  => v ? 'on' : 'off',
+    parse: s => s.trim() === 'on' ? true : s.trim() === 'off' ? false : null },
 
   // ── Looper ────────────────────────────────────────────────────────────────
   { key: 'seqSlotCount', label: 'loop slots', group: 'looper', type: 'number',

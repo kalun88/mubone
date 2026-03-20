@@ -33,9 +33,10 @@
     el.removeAttribute('title');
   });
 
-  // Also observe dynamically added elements
+  // Also observe dynamically added elements AND attribute changes on existing ones
   const obs = new MutationObserver(muts => {
     for (const m of muts) {
+      // Handle newly added nodes
       for (const node of m.addedNodes) {
         if (node.nodeType !== 1) continue;
         if (node.hasAttribute('title')) {
@@ -47,9 +48,17 @@
           el.removeAttribute('title');
         });
       }
+      // Handle title attribute set/changed on existing elements
+      if (m.type === 'attributes' && m.attributeName === 'title') {
+        const el = m.target;
+        if (el.hasAttribute('title')) {
+          el.setAttribute('data-title', el.getAttribute('title'));
+          el.removeAttribute('title');
+        }
+      }
     }
   });
-  obs.observe(document.body, { childList: true, subtree: true });
+  obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title'] });
 
   function show(el) {
     const text = el.getAttribute('data-title');

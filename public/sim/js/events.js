@@ -25,6 +25,19 @@ import { loadAudioFile } from './ui-samples.js';
 import { triggerWandTare } from './ui-wand.js';
 import { setCursorHouseMuted } from './ui-meters.js';
 
+// ── Focus helpers ───────────────────────────────────────────────────────────
+// Returns true when focus is on a text-entry element that should consume
+// keypresses (text inputs, textareas). Selects, range inputs, and buttons
+// are blurred after interaction instead so they don't block shortcuts.
+function _focusedOnFormField() {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === 'TEXTAREA') return true;
+  if (tag === 'INPUT' && el.type !== 'range') return true;
+  return false;
+}
+
 // ── Input event coalescing ──────────────────────────────────────────────────
 // Buffer the latest mouse/touch position and flush once per rAF to avoid
 // invalidating angular-distance caches at 60–120Hz when 30Hz is sufficient.
@@ -179,12 +192,38 @@ export function setupEvents() {
     S.canvas.addEventListener('touchend', e => { e.preventDefault(); S.mouseInCanvas = false; });
   }
 
+  // ── Right-panel focus management ──────────────────────────────────────────
+  // Buttons, sliders, selects, and segmented controls in the right panel steal
+  // keyboard focus after interaction. Blur them so shortcuts work immediately.
+  const rightPanel = document.querySelector('.right-panel');
+  if (rightPanel) {
+    rightPanel.addEventListener('mouseup', e => {
+      const el = e.target;
+      if (!el) return;
+      const tag = el.tagName;
+      // Blur buttons, range sliders, and div-based seg buttons after click.
+      // Text inputs are left alone — user may be typing.
+      if (tag === 'BUTTON' || (tag === 'INPUT' && el.type === 'range') ||
+          el.classList.contains('grain-seg-btn') || el.classList.contains('param-lock-btn') ||
+          el.classList.contains('oct-btn')) {
+        el.blur();
+      }
+    }, true);  // capture phase so we blur even if a handler stops propagation
+
+    // Blur select dropdowns after the user picks a value — they don't need
+    // to stay focused and would otherwise swallow keyboard shortcuts.
+    rightPanel.addEventListener('change', e => {
+      if (e.target?.tagName === 'SELECT') e.target.blur();
+    }, true);
+  }
+
   // ── Spacebar scroll prevention ────────────────────────────────────────────
   // Space is always claimed for paint/record — never let it scroll the page,
   // even when focus is on a right-panel button, slider, or other element.
   // This synchronous listener fires before the async handler below and before
   // the browser's built-in scroll behaviour.
   document.addEventListener('keydown', e => {
+    if (_focusedOnFormField()) return;             // let form fields behave normally
     if (e.code === 'Space' && !S._isKeyLearning?.()) e.preventDefault();
   });
 
@@ -193,6 +232,15 @@ export function setupEvents() {
 
     // Skip all default handling while key learn mode is active
     if (S._isKeyLearning?.()) return;
+
+    // Skip shortcuts when a text input, select, or textarea has focus —
+    // the user is typing into a form field, not issuing app commands.
+    // Escape blurs the focused field and stops — it shouldn't also fire
+    // any app-level Escape action.
+    if (_focusedOnFormField()) {
+      if (e.key === 'Escape') document.activeElement.blur();
+      return;
+    }
 
     // ── Custom key bindings (overrides) ─────────────────────────────────
     // Check user-defined key mappings before hardcoded defaults.
@@ -240,15 +288,19 @@ export function setupEvents() {
       return;
     }
 
-    // A: momentary loop record — force seq mode for this stroke only, then restore
-    // Shift+A: remove nearest loop
-    if (e.key === 'A' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+    // D: momentary loop record (draw loop) — force seq mode for this stroke only, then restore
+    // Shift+D: lift nearest loop
+    if (e.key === 'D' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
       pickupSeqRemove();
     }
 
-    // A: momentary loop record — force seq mode for this stroke only, then restore
-    if (e.key === 'a' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
+    // D: dual-action loop key
+    //   Quick tap (<200ms) = drop loop (turn stroke under cursor into a loop)
+    //   Long hold (≥200ms) = draw loop (record a new loop)
+    // Recording always starts immediately on keydown for timing precision;
+    // the decision happens on keyup based on hold duration.
+    if (e.key === 'd' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
       e.preventDefault();
       // Disallow if slots are full and overflow is off (same guard as L / drop)
       if (S.seqOverflow === 'off') {
@@ -256,6 +308,7 @@ export function setupEvents() {
         for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
         if (full) return;
       }
+      S._drawLoopStartMs = performance.now();
       ensureAudioContext();
       // Remember prior seq mode so we can restore it on keyup
       S._loopRecPreSeqMode = S.seqModeEnabled;
@@ -389,12 +442,6 @@ export function setupEvents() {
       document.getElementById('seqModeBtn')?.classList.toggle('active', nextValue);
     }
 
-    // D: drop loop from current cursor grain
-    if (e.key === 'd' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
-      e.preventDefault();
-      dropSeqFromCursor();
-    }
-
     // M: system mute (master output)
     if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
@@ -428,22 +475,56 @@ export function setupEvents() {
       finalizeSeedPlant();
     }
 
-    // A release: end momentary loop record, restore prior seq mode
-    if (e.key === 'a' && !e.metaKey && !e.ctrlKey) {
+    // D release: decide between drop (quick tap) and draw (long hold)
+    if (e.key === 'd' && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
-      if (S.currentStrokeId > 0) {
-        try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+      const holdMs = performance.now() - (S._drawLoopStartMs || 0);
+      const DROP_THRESHOLD_MS = 200;
+
+      if (holdMs < DROP_THRESHOLD_MS) {
+        // Quick tap → drop: discard the aborted recording, then drop
+        // existing stroke under cursor into a loop slot.
+        const abortedStrokeId = S.currentStrokeId;
+        S.isPainting      = false;
+        S.currentStrokeId = -1;
+        if (S.isRecording) stopLiveRecording();
+        // Remove any particles deposited during the tiny hold
+        if (abortedStrokeId > 0) {
+          S.particles = S.particles.filter(p => p.strokeId !== abortedStrokeId);
+          S._particleVersion++;
+          // Remove the stroke from history so undo doesn't see it
+          const hIdx = S.strokeHistory.findIndex(h => h.strokeId === abortedStrokeId);
+          if (hIdx !== -1) {
+            const entry = S.strokeHistory.splice(hIdx, 1)[0];
+            // Clean up the live buffer that was allocated for this aborted stroke
+            if (entry.type === 'live' && entry.liveBufferIndex >= 0) {
+              const idx = entry.liveBufferIndex;
+              if (idx < S.liveRecBuffers.length) {
+                S.liveRecBuffers.splice(idx, 1);
+                S.particles.forEach(p => { if (p.liveBufferIdx > idx) p.liveBufferIdx--; });
+              }
+            }
+          }
+        }
+        // Drop the stroke under cursor into a loop slot
+        dropSeqFromCursor();
+      } else {
+        // Long hold → draw: finalize the recorded loop
+        if (S.currentStrokeId > 0) {
+          try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+        }
+        S.isPainting      = false;
+        S.currentStrokeId = -1;
+        if (S.isRecording) stopLiveRecording();
+        S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
       }
-      S.isPainting      = false;
-      S.currentStrokeId = -1;
-      if (S.isRecording) stopLiveRecording();
-      S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-      // Restore seq mode to what it was before A was pressed
+      // Restore seq mode to what it was before D was pressed
       if (S._loopRecPreSeqMode !== undefined) {
         S.seqModeEnabled = S._loopRecPreSeqMode;
         document.getElementById('seqModeBtn')?.classList.toggle('active', S.seqModeEnabled);
         S._loopRecPreSeqMode = undefined;
       }
+      S._drawLoopStartMs = 0;
       _updateLiveRecUI();
     }
 
@@ -590,9 +671,11 @@ export function setupEvents() {
   // Expose for osc.js so /mute also ramps the audio gain and updates the button
   S._setMuted = setMuted;
 
-  // Expose seed/undo actions for osc.js (/seed/plant, /seed/uproot, /undo)
-  S._plantSeed   = plantSeed;
-  S._uprootSeed  = uprootNearestSeed;
+  // Expose seed/undo actions for osc.js (/seed/sow, /seed/trail, /seed/uproot, /undo)
+  S._plantSeed        = plantSeed;
+  S._startSeedPlant   = startSeedPlant;
+  S._finalizeSeedPlant = finalizeSeedPlant;
+  S._uprootSeed       = uprootNearestSeed;
   S._undo         = undoLastStroke;
 
   // Expose slot-full check for inline indicator scripts (non-module context)
