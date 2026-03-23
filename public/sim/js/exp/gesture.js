@@ -1,73 +1,171 @@
 // ============================================================================
 // gesture.js — Gesture feature extraction from IMU data
 //
-// Derives high-level movement qualities from raw quaternion + gyro + accel
-// streams.  Source-agnostic: reads from whatever IMU object is passed in
-// (defaults to wand from sensor.js).
+// Derives high-level movement qualities from gyro + accel streams.
+// Source-agnostic: reads from whatever IMU slot has the 'gesture' role.
+// No quaternion dependency — all features derive from inertial data alone.
 //
-// Runs every frame (~60hz from rAF or every inertial OSC tick at ~100hz).
+// Runs every frame (~60 Hz from rAF or every inertial OSC tick at ~100 Hz).
 // Outputs a gesture descriptor on S.gesture that other modules can read.
 //
 // Features:
-//   smoothness      (0–1)  jerk-based — 0 = jerky, 1 = smooth arc
-//   effort          (0–1)  velocity + acceleration magnitude
-//   directness      (0–1)  net displacement / total path length
-//   periodicity     (0–1)  autocorrelation strength of angular velocity
-//   periodicityHz   (Hz)   detected period frequency (0 if no pattern)
-//   accumulatedEnergy (0–∞) leaky integrator of effort over time
+//   intensity       (0–1)  how much you're moving — EMA of gyro magnitude
+//   smoothness      (0–1)  how fluid the movement — low variation = smooth
+//   effort          (0–1)  rotational speed + linear acceleration combined
+//   periodicity     (0–1)  autocorrelation on dominant axis (hysteresis hold)
+//   periodicityHz   (Hz)   detected repetition frequency (0 if none)
+//   accumulatedEnergy (0–1) leaky integrator of effort — builds up, decays
 //
-// Only loaded when ?exp is in the URL.
+// Verification tests (hold sensor, observe gesture panel):
+//   intensity:  still → 0, gentle wave → 0.3, vigorous shake → 1.0
+//   smoothness: still → 0, slow steady arc → 0.8, jerky/stuttered → 0.1
+//   effort:     gentle motion → low, forceful thrust → high
+//   periodicity: random movement → 0, steady back-and-forth → rises to 0.8+
+//   energy:     sustained playing → builds, rest → decays over ~1–2 seconds
 // ============================================================================
 
 import { S, DEBUG } from '../state.js';
-import { wand } from '../sensor.js';
+import { getByRole } from '../sensor-registry.js';
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
-const SMOOTH_WINDOW     = 8;      // frames for jerk moving average
-const DIRECT_WINDOW     = 60;     // frames (~0.6s at 100hz) for directness
-const AUTOCORR_WINDOW   = 150;    // frames (~1.5s at 100hz) for periodicity
-const AUTOCORR_MIN_LAG  = 10;     // min lag to search (skip DC / very short)
-const AUTOCORR_MAX_LAG  = 120;    // max lag (~1.2s period at 100hz)
-const ENERGY_DECAY      = 0.993;  // per-frame decay (~1s half-life at 100hz)
-const EFFORT_GYRO_SCALE = 1/400;  // normalize gyro mag (deg/s) → [0,1]ish
-const EFFORT_ACCEL_SCALE = 1/3;   // normalize dynamic accel (g) → [0,1]ish
-const JERK_SCALE        = 1/8000; // normalize angular jerk → [0,1]ish
+// Intensity: EMA of gyro magnitude, normalized to 0–1.
+const INTENSITY_FAST_COEFF = 0.20;   // fast EMA ~5 frame time constant
+const INTENSITY_SLOW_COEFF = 0.06;   // slow EMA ~17 frame time constant
+const INTENSITY_SCALE      = 1/250;  // 250 deg/s = full scale
+const INTENSITY_NOISE_FLOOR = 5;     // deg/s — below this, decay toward 0
+
+// Smoothness: coefficient of variation of gyroMag over a window.
+// Low CV = steady speed = smooth.  High CV = jerky speed changes = not smooth.
+const SMOOTH_WINDOW        = 30;     // frames (~0.3s at 100 Hz)
+
+// Effort: weighted combination of gyro + accel magnitudes.
+const EFFORT_GYRO_SCALE    = 1/400;  // normalize gyro (deg/s) → ~[0,1]
+const EFFORT_ACCEL_SCALE   = 1/3;    // normalize accel (g) → ~[0,1]
+
+// Accumulated energy: leaky integrator of effort.
+const ENERGY_DECAY         = 0.993;  // per-frame (~1s half-life at 100 Hz)
+
+// Periodicity: autocorrelation on dominant gyro axis with hysteresis.
+// Uses signed dominant axis so back-and-forth reads as clean ±wave.
+const PERIO_WINDOW         = 150;    // frames (~1.5s at 100 Hz)
+const PERIO_MIN_LAG        = 10;     // min lag ~0.1s (skip very fast jitter)
+const PERIO_MAX_LAG        = 80;     // max lag ~0.8s (min ~1.25 Hz)
+const PERIO_PEAK_MIN       = 0.35;   // min correlation to count as periodic (raised — noise was triggering at 0.20)
+const PERIO_ATTACK         = 0.10;   // how fast periodicity rises
+const PERIO_RELEASE        = 0.03;   // how fast it falls
+const PERIO_INTENSITY_GATE = 0.08;   // suppress periodicity when intensity below this (noise floor)
+// Dominant axis hysteresis: don't switch unless new axis has 1.5× more energy
+const PERIO_AXIS_SWITCH_RATIO = 1.5;
 
 // ── State ───────────────────────────────────────────────────────────────────
 
-let _prevGyro      = null;   // previous [gx, gy, gz]
-let _prevTs        = 0;      // previous timestamp (seconds)
+let _prevTs        = 0;
 
-// Ring buffers
-const _jerkHistory   = new Float32Array(SMOOTH_WINDOW);
-let   _jerkIdx       = 0;
+// Intensity: EMA state
+let _intensityFastEMA = 0;
+let _intensitySlowEMA = 0;
 
-// Directness: store unit-quaternion displacements
-const _quatHistory   = [];   // ring buffer of [x,y,z,w] quaternions
-let   _quatIdx       = 0;
-const _pathLengths   = new Float32Array(DIRECT_WINDOW); // angular step per frame
-let   _pathIdx       = 0;
+// Jerk
+let _prevGyroMag   = 0;
+let _hasPrev       = false;
 
-// Periodicity: gyro magnitude history for autocorrelation
-const _gyroMagHistory = new Float32Array(AUTOCORR_WINDOW);
-let   _gyroMagIdx     = 0;
-let   _gyroMagCount   = 0;  // frames received (caps at AUTOCORR_WINDOW)
+// Smoothness: ring buffer for coefficient of variation
+const _smoothBuf   = new Float32Array(SMOOTH_WINDOW);
+let   _smoothIdx   = 0;
+let   _smoothCount = 0;
+let   _smoothEMA   = 0;
 
 // Accumulated energy
 let _accumulatedEnergy = 0;
 
+// Periodicity: per-axis history + dominant axis tracking
+const _axisHistory = [
+  new Float32Array(PERIO_WINDOW),
+  new Float32Array(PERIO_WINDOW),
+  new Float32Array(PERIO_WINDOW),
+];
+const _axisEnergy  = new Float64Array(3);  // running energy per axis
+let   _perioIdx    = 0;
+let   _perioCount  = 0;
+let   _domAxis     = 0;                   // current dominant axis (with hysteresis)
+let   _perioSmoothed   = 0;
+let   _perioHzSmoothed = 0;
+let   _avgDt           = 0.01;            // running average dt for Hz calc
+
+// ── Note on calibration ─────────────────────────────────────────────────────
+// Removed auto/timed calibration system.  Input range normalization is now
+// handled entirely by the per-feature conditioning chain (inMin/inMax
+// thresholds on the gesture panel sparklines).  This is more transparent —
+// the performer can see and drag the thresholds directly.
+
+// ── Signal conditioning ─────────────────────────────────────────────────────
+// Per-feature chain: inRange → deadZone → curve → outRange → smoothing
+
+const CONDITIONED_FEATURES = ['intensity', 'smoothness', 'periodicity', 'accumulatedEnergy'];
+
+const _smoothedOut = {};
+for (const k of CONDITIONED_FEATURES) _smoothedOut[k] = 0;
+
+function applyDeadZone(value, dz) {
+  if (dz <= 0) return value;
+  if (value < dz) return 0;
+  return (value - dz) / (1 - dz);
+}
+
+function applyCurve(value, curve) {
+  if (curve === 1 || curve <= 0) return value;
+  return Math.pow(value, curve);
+}
+
+function applyOutputSmoothing(key, rawValue) {
+  const cfg = S.gestureCondition?.[key];
+  const s = cfg?.smooth ?? 0;
+  if (s <= 0.001) {
+    _smoothedOut[key] = rawValue;
+    return rawValue;
+  }
+  const coeff = 1 - s * s * 0.98;
+  _smoothedOut[key] += (rawValue - _smoothedOut[key]) * coeff;
+  return _smoothedOut[key];
+}
+
+function conditionFeature(key, value) {
+  const cfg = S.gestureCondition?.[key];
+  if (!cfg) return value;
+  let v = Math.max(0, Math.min(1, value));
+
+  const inMin = cfg.inMin ?? 0;
+  const inMax = cfg.inMax ?? 1;
+  if (inMax > inMin) v = (v - inMin) / (inMax - inMin);
+  v = Math.max(0, Math.min(1, v));
+
+  v = applyDeadZone(v, cfg.deadZone ?? 0);
+  v = applyCurve(v, cfg.curve ?? 1);
+
+  const outMin = cfg.outMin ?? 0;
+  const outMax = cfg.outMax ?? 1;
+  v = outMin + v * (outMax - outMin);
+
+  return applyOutputSmoothing(key, v);
+}
+
 // ── Public descriptor (written to S.gesture each frame) ─────────────────────
 
 const descriptor = {
-  smoothness:       1,
-  effort:           0,
-  directness:       1,
-  periodicity:      0,
-  periodicityHz:    0,
-  accumulatedEnergy: 0,
-  // Raw intermediates (useful for viz)
-  jerk:             0,    // raw angular jerk magnitude (deg/s²)
+  intensity:        0,    // how much movement (EMA of gyroMag)
+  smoothness:       0,    // how fluid (low CV of gyroMag)
+  effort:           0,    // gyro + accel combined
+  periodicity:      0,    // autocorrelation (0–1)
+  periodicityHz:    0,    // detected Hz
+  accumulatedEnergy: 0,   // leaky integrator of effort
+  // Raw (post-cal, pre-conditioning) for viz overlays
+  rawIntensity:     0,
+  rawSmoothness:    0,
+  rawPeriodicity:   0,
+  rawAccumulatedEnergy: 0,
+  // Diagnostics
+  jerk:             0,    // angular jerk (deg/s²)
   gyroMag:          0,    // raw gyro magnitude (deg/s)
   accelDynMag:      0,    // raw dynamic accel magnitude (g)
 };
@@ -75,179 +173,240 @@ const descriptor = {
 // ── Core update — call this every inertial tick ─────────────────────────────
 
 export function updateGesture(source) {
-  const src = source || wand;
-  const inertial = src.inertial;
-  const quat     = src.quat;
+  const src = source || getByRole('gesture');
+  const inertial = src?.inertial;
   if (!inertial) return;
 
   const nowS = performance.now() * 0.001;
-  const dt   = Math.min(nowS - _prevTs, 0.1);  // cap after tab-hide
+  const dt   = Math.min(nowS - _prevTs, 0.1);
   _prevTs    = nowS;
   if (dt <= 0) return;
 
   const { gx, gy, gz, gyroMag, accelDynMag } = inertial;
-  const gyro = [gx, gy, gz];
 
   descriptor.gyroMag     = gyroMag;
   descriptor.accelDynMag = accelDynMag;
 
-  // ── Smoothness (jerk-based) ─────────────────────────────────────────────
-  if (_prevGyro) {
-    const jx = (gyro[0] - _prevGyro[0]) / dt;
-    const jy = (gyro[1] - _prevGyro[1]) / dt;
-    const jz = (gyro[2] - _prevGyro[2]) / dt;
-    const jerkMag = Math.sqrt(jx*jx + jy*jy + jz*jz);
+  // ── Intensity (EMA of gyro magnitude) ───────────────────────────────────
+  // How much you're moving.  Proportional, not binary.
+  // Verify: still → 0, gentle wave → ~0.3, vigorous shake → ~1.0
+  _intensityFastEMA += (gyroMag - _intensityFastEMA) * INTENSITY_FAST_COEFF;
+  _intensitySlowEMA += (gyroMag - _intensitySlowEMA) * INTENSITY_SLOW_COEFF;
 
-    _jerkHistory[_jerkIdx % SMOOTH_WINDOW] = jerkMag;
-    _jerkIdx++;
-
-    // Moving average of jerk
-    let sum = 0;
-    const n = Math.min(_jerkIdx, SMOOTH_WINDOW);
-    for (let i = 0; i < n; i++) sum += _jerkHistory[i];
-    const avgJerk = sum / n;
-
-    descriptor.jerk = avgJerk;
-    // Map to 0–1 with soft saturation (sigmoid-like)
-    const normalizedJerk = avgJerk * JERK_SCALE;
-    descriptor.smoothness = 1 - Math.min(1, normalizedJerk);
+  if (gyroMag > INTENSITY_NOISE_FLOOR) {
+    descriptor.intensity = Math.min(1, _intensitySlowEMA * INTENSITY_SCALE);
+  } else {
+    descriptor.intensity = Math.min(1, _intensitySlowEMA * INTENSITY_SCALE) * 0.95;
   }
-  _prevGyro = gyro;
 
-  // ── Effort / weight ─────────────────────────────────────────────────────
+  // ── Jerk (rate of change of gyroMag) ────────────────────────────────────
+  if (_hasPrev) {
+    descriptor.jerk = Math.abs(gyroMag - _prevGyroMag) / dt;
+  }
+  _prevGyroMag = gyroMag;
+  _hasPrev     = true;
+
+  // ── Smoothness (coefficient of variation of gyroMag) ────────────────────
+  // Measures movement *quality*, independent of amount.
+  // Low CV = consistent speed = fluid/smooth.  High CV = variable speed = jerky.
+  // Requires movement to be meaningful; decays to 0 when still.
+  //
+  // Verify: still → 0, slow steady arc → ~0.8, fast steady sweep → ~0.8,
+  //         jerky/stuttered → ~0.2, sudden start/stop → drops
+  {
+    _smoothBuf[_smoothIdx % SMOOTH_WINDOW] = gyroMag;
+    _smoothIdx++;
+    _smoothCount = Math.min(_smoothCount + 1, SMOOTH_WINDOW);
+
+    if (_smoothCount >= 8 && _intensitySlowEMA > INTENSITY_NOISE_FLOOR) {
+      let sum = 0, sumSq = 0;
+      for (let i = 0; i < _smoothCount; i++) {
+        const v = _smoothBuf[i];
+        sum   += v;
+        sumSq += v * v;
+      }
+      const mean     = sum / _smoothCount;
+      const variance = sumSq / _smoothCount - mean * mean;
+      const stddev   = Math.sqrt(Math.max(0, variance));
+      const cv       = mean > 1 ? stddev / mean : 1;  // cv=0 is perfectly steady
+      // Invert: cv=0 → smoothness=1, cv≥0.6 → smoothness=0
+      const rawSmooth = Math.max(0, 1 - cv / 0.6);
+      _smoothEMA += (rawSmooth - _smoothEMA) * 0.12;
+      descriptor.smoothness = Math.max(0, _smoothEMA);
+    } else {
+      // Not enough data or below noise floor — decay toward 0
+      _smoothEMA *= 0.97;
+      descriptor.smoothness = Math.max(0, _smoothEMA);
+    }
+  }
+
+  // ── Effort (gyro + accel combined) ──────────────────────────────────────
+  // Verify: gentle wave → low, forceful thrust → high
   const gyroNorm  = Math.min(1, gyroMag * EFFORT_GYRO_SCALE);
   const accelNorm = Math.min(1, accelDynMag * EFFORT_ACCEL_SCALE);
   descriptor.effort = Math.min(1, gyroNorm * 0.7 + accelNorm * 0.3);
 
   // ── Accumulated energy ──────────────────────────────────────────────────
   _accumulatedEnergy = _accumulatedEnergy * ENERGY_DECAY + descriptor.effort * dt;
-  // Normalize: at constant max effort, steady state ≈ effort*dt / (1-decay)
-  // At 100hz, dt≈0.01, decay=0.993 → steady ≈ 0.01/0.007 ≈ 1.4
   descriptor.accumulatedEnergy = Math.min(2, _accumulatedEnergy);
 
-  // ── Directness ──────────────────────────────────────────────────────────
-  if (quat) {
-    // Store quaternion in ring buffer
-    const idx = _quatIdx % DIRECT_WINDOW;
-    if (!_quatHistory[idx]) _quatHistory[idx] = [0, 0, 0, 1];
-    _quatHistory[idx][0] = quat[0];
-    _quatHistory[idx][1] = quat[1];
-    _quatHistory[idx][2] = quat[2];
-    _quatHistory[idx][3] = quat[3];
+  // ── Periodicity (autocorrelation on dominant gyro axis) ─────────────────
+  // Uses signed value of dominant axis so back-and-forth oscillation reads as
+  // clean ±wave with correct period.  Dominant axis has hysteresis to avoid
+  // rapid switching between axes mid-gesture.
+  //
+  // Verify: random movement → 0, steady back-and-forth → rises to 0.8+,
+  //         stops when you stop repeating (with ~1s hold from hysteresis)
+  {
+    _avgDt += (dt - _avgDt) * 0.02;
 
-    // Angular step from previous frame
-    const prevIdx = (_quatIdx - 1 + DIRECT_WINDOW) % DIRECT_WINDOW;
-    if (_quatHistory[prevIdx] && _quatIdx > 0) {
-      const step = quatAngleBetween(_quatHistory[prevIdx], quat);
-      _pathLengths[_pathIdx % DIRECT_WINDOW] = step;
-      _pathIdx++;
+    const wi = _perioIdx % PERIO_WINDOW;
+
+    // Subtract oldest sample's energy before overwriting
+    if (_perioCount === PERIO_WINDOW) {
+      _axisEnergy[0] -= _axisHistory[0][wi] * _axisHistory[0][wi];
+      _axisEnergy[1] -= _axisHistory[1][wi] * _axisHistory[1][wi];
+      _axisEnergy[2] -= _axisHistory[2][wi] * _axisHistory[2][wi];
     }
 
-    // Net angular displacement (oldest to newest in buffer)
-    const filled = Math.min(_quatIdx + 1, DIRECT_WINDOW);
-    if (filled >= 2) {
-      const oldestIdx = (_quatIdx - filled + 1 + DIRECT_WINDOW) % DIRECT_WINDOW;
-      const netAngle = quatAngleBetween(_quatHistory[oldestIdx], quat);
+    _axisHistory[0][wi] = gx;
+    _axisHistory[1][wi] = gy;
+    _axisHistory[2][wi] = gz;
 
-      // Total path length (sum of all steps in window)
-      let totalPath = 0;
-      const stepCount = Math.min(_pathIdx, DIRECT_WINDOW);
-      for (let i = 0; i < stepCount; i++) totalPath += _pathLengths[i];
+    _axisEnergy[0] += gx * gx;
+    _axisEnergy[1] += gy * gy;
+    _axisEnergy[2] += gz * gz;
 
-      descriptor.directness = totalPath > 0.001
-        ? Math.min(1, netAngle / totalPath)
-        : 1;  // no motion = "direct" by default
+    // Pick dominant axis with hysteresis — only switch if new axis has
+    // substantially more energy, preventing mid-gesture axis flipping
+    let candidateAxis = 0;
+    if (_axisEnergy[1] > _axisEnergy[candidateAxis]) candidateAxis = 1;
+    if (_axisEnergy[2] > _axisEnergy[candidateAxis]) candidateAxis = 2;
+    if (candidateAxis !== _domAxis) {
+      if (_axisEnergy[candidateAxis] > _axisEnergy[_domAxis] * PERIO_AXIS_SWITCH_RATIO) {
+        _domAxis = candidateAxis;
+      }
     }
 
-    _quatIdx++;
+    _perioIdx++;
+    _perioCount = Math.min(_perioCount + 1, PERIO_WINDOW);
   }
 
-  // ── Periodicity (autocorrelation of gyro magnitude) ─────────────────────
-  _gyroMagHistory[_gyroMagIdx % AUTOCORR_WINDOW] = gyroMag;
-  _gyroMagIdx++;
-  _gyroMagCount = Math.min(_gyroMagCount + 1, AUTOCORR_WINDOW);
+  // Autocorrelation on dominant axis history
+  let _rawPerio = 0;
+  let _rawHz    = 0;
 
-  if (_gyroMagCount >= AUTOCORR_MIN_LAG * 2) {
-    const n = _gyroMagCount;
+  if (_perioCount >= PERIO_MIN_LAG * 3) {
+    const n = _perioCount;
+    const oldest = _perioIdx >= PERIO_WINDOW ? (_perioIdx % PERIO_WINDOW) : 0;
 
-    // Compute mean
+    // Use dominant axis values
+    const hist = _axisHistory[_domAxis];
+
     let mean = 0;
-    for (let i = 0; i < n; i++) mean += _gyroMagHistory[i];
+    for (let i = 0; i < n; i++) mean += hist[(oldest + i) % PERIO_WINDOW];
     mean /= n;
 
-    // Compute variance (for normalization)
     let variance = 0;
     for (let i = 0; i < n; i++) {
-      const d = _gyroMagHistory[i] - mean;
+      const d = hist[(oldest + i) % PERIO_WINDOW] - mean;
       variance += d * d;
     }
 
-    if (variance > 0.01) {  // skip if signal is near-constant
-      // Find best autocorrelation peak
+    if (variance > 50 && _intensitySlowEMA > INTENSITY_NOISE_FLOOR) {
       let bestCorr = 0;
       let bestLag  = 0;
-      const maxLag = Math.min(AUTOCORR_MAX_LAG, Math.floor(n / 2));
+      const maxLag = Math.min(PERIO_MAX_LAG, Math.floor(n / 2));
 
-      for (let lag = AUTOCORR_MIN_LAG; lag <= maxLag; lag++) {
+      for (let lag = PERIO_MIN_LAG; lag <= maxLag; lag++) {
         let sum = 0;
         const pairs = n - lag;
         for (let i = 0; i < pairs; i++) {
-          const a = _gyroMagHistory[i] - mean;
-          const b = _gyroMagHistory[(i + lag) % AUTOCORR_WINDOW] - mean;
+          const a = hist[(oldest + i) % PERIO_WINDOW] - mean;
+          const b = hist[(oldest + i + lag) % PERIO_WINDOW] - mean;
           sum += a * b;
         }
-        const corr = sum / variance;  // normalized by variance → [-1, 1]
-
-        if (corr > bestCorr) {
-          bestCorr = corr;
-          bestLag  = lag;
-        }
+        const corr = sum / variance;
+        if (corr > bestCorr) { bestCorr = corr; bestLag = lag; }
       }
 
-      descriptor.periodicity   = Math.max(0, Math.min(1, bestCorr));
-      descriptor.periodicityHz = bestLag > 0 ? (1 / (bestLag * dt)) : 0;
-    } else {
-      descriptor.periodicity   = 0;
-      descriptor.periodicityHz = 0;
+      if (bestCorr >= PERIO_PEAK_MIN) {
+        _rawPerio = Math.min(1, bestCorr);
+        _rawHz    = bestLag > 0 ? (1 / (bestLag * _avgDt)) : 0;
+      }
     }
   }
 
-  // ── Write to shared state ───────────────────────────────────────────────
+  // Hysteresis: fast attack, slow release
+  if (_rawPerio > _perioSmoothed) {
+    _perioSmoothed += (_rawPerio - _perioSmoothed) * PERIO_ATTACK;
+  } else {
+    _perioSmoothed += (_rawPerio - _perioSmoothed) * PERIO_RELEASE;
+  }
+  if (_rawHz > 0) {
+    _perioHzSmoothed += (_rawHz - _perioHzSmoothed) * PERIO_ATTACK;
+  } else {
+    _perioHzSmoothed *= (1 - PERIO_RELEASE);
+  }
+
+  // Gate on intensity — no periodicity when barely moving
+  const intensityNow = _intensitySlowEMA * INTENSITY_SCALE;
+  if (intensityNow < PERIO_INTENSITY_GATE) {
+    _perioSmoothed   *= 0.92;  // fast decay when still
+    _perioHzSmoothed *= 0.92;
+  }
+
+  descriptor.periodicity   = Math.max(0, _perioSmoothed);
+  descriptor.periodicityHz = _perioHzSmoothed;
+
+  // Normalize accumulated energy to 0–1
+  const normEnergy = Math.min(1, descriptor.accumulatedEnergy / 1.5);
+
+  // ── Store raw (post-cal, pre-conditioning) for viz ────────────────────────
+  descriptor.rawIntensity        = descriptor.intensity;
+  descriptor.rawSmoothness       = descriptor.smoothness;
+  descriptor.rawPeriodicity      = descriptor.periodicity;
+  descriptor.rawAccumulatedEnergy = normEnergy;
+
+  // ── Apply conditioning chain ──────────────────────────────────────────────
+  descriptor.intensity         = conditionFeature('intensity',         descriptor.intensity);
+  descriptor.smoothness        = conditionFeature('smoothness',        descriptor.smoothness);
+  descriptor.periodicity       = conditionFeature('periodicity',       descriptor.periodicity);
+  descriptor.accumulatedEnergy = conditionFeature('accumulatedEnergy', normEnergy);
+
+  // ── Write to shared state ─────────────────────────────────────────────────
   S.gesture = descriptor;
 }
 
-// ── Quaternion angle between two unit quaternions (radians) ────────────────
-function quatAngleBetween(a, b) {
-  // dot product of unit quaternions
-  let dot = a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3];
-  dot = Math.min(1, Math.max(-1, Math.abs(dot)));  // abs handles double-cover
-  return 2 * Math.acos(dot);  // angle in radians
-}
-
 // ── Init ────────────────────────────────────────────────────────────────────
-// Hook: osc.js calls handleWandInertialOSC → updateWand → updateGestureMorph
-// on every /space/wand/inertial tick.  We can't modify osc.js from exp, so
-// we register a post-tick callback on S that osc.js can call if it exists.
-// We also set up a fallback rAF loop that polls wand.inertial in case the
-// callback isn't wired (e.g. no Max connected — testing with recorded data).
 
 let _rafId = null;
 
 function rafPoll() {
-  if (wand.inertial) updateGesture(wand);
+  const slot = getByRole('gesture');
+  if (slot?.inertial) updateGesture(slot);
   _rafId = requestAnimationFrame(rafPoll);
 }
 
 export function initGesture() {
   S.gesture = descriptor;
 
-  // Primary path: called from osc.js after every inertial message
-  S._onGestureUpdate = () => updateGesture(wand);
+  // Per-feature signal conditioning
+  S.gestureCondition = {
+    intensity:        { smooth: 0.2,  deadZone: 0.05, curve: 1.0, inMin: 0, inMax: 1, outMin: 0, outMax: 1 },
+    smoothness:       { smooth: 0.15, deadZone: 0.0,  curve: 1.0, inMin: 0, inMax: 1, outMin: 0, outMax: 1 },
+    periodicity:      { smooth: 0.1,  deadZone: 0.10, curve: 1.0, inMin: 0, inMax: 1, outMin: 0, outMax: 1 },
+    accumulatedEnergy:{ smooth: 0.0,  deadZone: 0.0,  curve: 1.0, inMin: 0, inMax: 1, outMin: 0, outMax: 1 },
+  };
 
-  // Fallback: rAF poll for when no OSC is connected (dev/testing)
+  // Joystick state — written by gesture-panel, readable by any module.
+  S.gestureJoy = { x: 0, y: 0, dist: 0, angle: 0 };
+
+  S._onGestureUpdate = () => updateGesture(getByRole('gesture'));
+
   _rafId = requestAnimationFrame(rafPoll);
 
-  DEBUG && console.log('[exp/gesture] initialized — reading from wand inertial');
+  DEBUG && console.log('[gesture] initialized — reading from gesture role slot');
 }
 
 export function destroyGesture() {

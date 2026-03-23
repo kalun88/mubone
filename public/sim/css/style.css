@@ -81,7 +81,7 @@
   /* ── Sensor group — label + separator ──────────────────────────────────── */
   .sensor-group-label {
     font-size: 0.6rem;
-    color: #444;
+    color: #666666;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     padding-right: 0.2rem;
@@ -89,18 +89,13 @@
     margin-right: 0.15rem;
     line-height: 1;
   }
-  .sensor-group-sep {
-    color: #333;
-    font-size: 0.7rem;
-    margin: 0 0.05rem;
-  }
-  .sensor-group.no-sensor {
-    opacity: 0.35;
-  }
   .sensor-group.no-sensor .sensor-group-label::after {
     content: ' (not connected)';
     font-size: 0.5rem;
-    opacity: 0.7;
+  }
+  .sensor-group:not(.no-sensor) .sensor-group-label::after {
+    content: ' (connected)';
+    font-size: 0.5rem;
   }
   /* ── Action buttons — amber toggle style (cursor zero, wand on/off, tare) */
   .top-bar-btn.action-btn {
@@ -520,6 +515,50 @@
   }
   .device.collapsed .device-body {
     display: none !important;
+  }
+
+  /* ── Device: session panel ─────────────────────────────────────────────── */
+  .session-btn {
+    font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    color: #808080;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 3px;
+    padding: 0.25rem 0.55rem;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    flex: 1;
+    text-align: center;
+  }
+  .session-btn:hover {
+    color: #bbb;
+    border-color: rgba(255,255,255,0.18);
+    background: rgba(255,255,255,0.06);
+  }
+  .session-btn.active {
+    color: #e8a030;
+    border-color: rgba(232,160,48,0.3);
+  }
+  .session-btn--danger:hover {
+    color: #e06060;
+    border-color: rgba(224,96,96,0.3);
+    background: rgba(224,96,96,0.06);
+  }
+  .session-btn.flashing {
+    color: #e8a030;
+    border-color: rgba(232,160,48,0.55);
+    background: rgba(232,160,48,0.10);
+  }
+  .session-btn.sweep-flash {
+    color: #76ff03;
+    border-color: rgba(118,255,3,0.4);
+    background: rgba(118,255,3,0.10);
+  }
+  .session-btn .paint-key-badge {
+    margin-left: 0.3rem;
+    vertical-align: baseline;
   }
 
   /* ── Device: live input ─────────────────────────────────────────────────── */
@@ -2705,28 +2744,185 @@
   border-color: #e8a030;
 }
 
-/* ── Sensor calibration modal ─────────────────────────────────────────────── */
-/* Sensor modal — size override only */
-.sensor-dialog { width: calc(100vw - 2rem); }
-.sensor-columns {
-  display: flex;
-  flex-direction: row;
-  align-items: flex-start;
+/* ── Sensor registry modal ────────────────────────────────────────────────── */
+.sensors-dialog { width: min(640px, calc(100vw - 2rem)); }
+.sensors-hint {
+  font: 10px/1.4 'Roboto Mono', monospace;
+  color: #4a7a7a;
+  margin-bottom: 12px;
+  letter-spacing: 0.03em;
 }
-.sensor-col {
-  flex: 1;
-  min-width: 0;
+.sensors-list {
   display: flex;
   flex-direction: column;
-  gap: 0.8rem;
-  padding: 0 1.2rem;
+  gap: 6px;
+  max-height: 70vh;
+  overflow-y: auto;
 }
-.sensor-col:first-child { padding-left: 0; }
-.sensor-col:last-child  { padding-right: 0; }
-.sensor-col + .sensor-col {
-  border-left: 1px solid rgba(255,255,255,0.07);
+.sensors-empty {
+  color: #4a7a7a;
+  font: 11px/1.5 'Roboto Mono', monospace;
+  text-align: center;
+  padding: 24px 0;
 }
-/* sensor h2 + close-btn inherited from .mu-dialog */
+.sensor-stream-block {
+  border: 1px solid rgba(122, 188, 188, 0.08);
+  border-radius: 4px;
+  background: rgba(122, 188, 188, 0.04);
+  margin-bottom: 6px;
+}
+.sensor-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+/* ── Routing breakout table ─────────────────────────────── */
+.sensor-routing-breakout {
+  padding: 4px 8px 6px;
+  border-top: 1px solid rgba(122, 188, 188, 0.06);
+}
+.sensor-route-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.sensor-route-table th {
+  font: 9px/1 'Roboto Mono', monospace;
+  color: #555;
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px 4px 2px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.sensor-route-table td {
+  padding: 3px 6px 3px 2px;
+  vertical-align: middle;
+}
+.sensor-route-signal {
+  font: 10px/1 'Roboto Mono', monospace;
+  color: #888;
+  white-space: nowrap;
+}
+.sensor-route-dest-label {
+  font: 10px/1 'Roboto Mono', monospace;
+  color: #555;
+}
+.sensor-route-dest-select {
+  font: 10px/1 'Roboto Mono', monospace;
+  background: #1a1a1a;
+  color: #7abcbc;
+  border: 1px solid #333;
+  border-radius: 3px;
+  padding: 2px 4px;
+  cursor: pointer;
+  width: 100%;
+}
+.sensor-route-dest-select:focus {
+  outline: 1px solid #7abcbc;
+}
+.sensor-axis-raw {
+  font: 10px/1 'Roboto Mono', monospace;
+  color: #666;
+  white-space: nowrap;
+  min-width: 42px;
+  text-align: right;
+}
+/* Inline toggle — minimal text button matching the registry's flat style */
+.sensor-inline-btn {
+  font: 10px/1 'Roboto Mono', monospace;
+  background: none;
+  border: none;
+  color: #555;
+  cursor: pointer;
+  padding: 2px 4px;
+  letter-spacing: 0.03em;
+  transition: color 0.15s;
+}
+.sensor-inline-btn:hover { color: #999; }
+.sensor-inline-btn.active { color: #7abcbc; }
+.sensor-tare-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0 2px;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  margin-top: 4px;
+}
+.sensor-tare-readout {
+  font: 9px/1 'Roboto Mono', monospace;
+  color: #555;
+  flex: 1;
+  text-align: right;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sensor-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #333;
+  flex-shrink: 0;
+  transition: background 0.3s;
+}
+.sensor-dot.active {
+  background: #7abcbc;
+  box-shadow: 0 0 4px #7abcbc;
+}
+.sensor-slot-name {
+  font: 11px/1 'Roboto Mono', monospace;
+  color: #7abcbc;
+  min-width: 60px;
+}
+.sensor-badges {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.sensor-badge {
+  font: 9px/1 'Roboto Mono', monospace;
+  padding: 2px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+}
+.sensor-badge-quat {
+  background: rgba(122, 188, 188, 0.12);
+  color: #7abcbc;
+}
+.sensor-badge-inertial {
+  background: rgba(232, 160, 48, 0.12);
+  color: #e8a030;
+}
+.sensor-slot-readout {
+  font: 10px/1 'Roboto Mono', monospace;
+  color: #666;
+  flex: 1;
+  text-align: right;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sensor-role-select {
+  font: 10px/1 'Roboto Mono', monospace;
+  background: #1a1a1a;
+  color: #7abcbc;
+  border: 1px solid #333;
+  border-radius: 3px;
+  padding: 3px 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sensor-role-select:focus {
+  outline: 1px solid #7abcbc;
+}
+.sensor-slot-tare {
+  font-size: 10px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+/* ── Shared sensor/wand UI classes ────────────────────────────────────────── */
 .sensor-section {
   background: #1c1c1c;
   border: 1px solid rgba(255,255,255,0.1);
@@ -2743,11 +2939,6 @@
   padding-bottom: 0.4rem;
   border-bottom: 1px solid rgba(255,255,255,0.06);
   margin-bottom: 0.1rem;
-}
-.sensor-row {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
 }
 .sensor-btn {
   background: #242424;
@@ -2777,12 +2968,6 @@
   border: 1px solid rgba(255,255,255,0.06);
 }
 .sensor-live span { color: #aaaaaa; }
-.sensor-note {
-  font-size: 0.78rem;
-  color: #666;
-  line-height: 1.6;
-  padding: 0.4rem 0;
-}
 .sensor-map-table {
   border-collapse: collapse;
   width: 100%;
@@ -2818,238 +3003,6 @@
   letter-spacing: 0.04em;
 }
 
-/* ── Wand control modal ──────────────────────────────────────────────────────*/
-/* Wand modal — size override only */
-.wand-dialog { width: calc(100vw - 2rem); max-width: 700px; }
-
-/* Section divider within wand dialog */
-.wand-section {
-  border-top: 1px solid rgba(255,255,255,0.06);
-  padding-top: 0.6rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-.wand-section-label {
-  font-size: 0.7rem;
-  color: #666;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  margin-bottom: 0.15rem;
-}
-
-/* Visualizer row */
-.wand-viz-row {
-  display: flex;
-  gap: 1rem;
-  align-items: flex-start;
-}
-.wand-viz-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-/* XY pad column: fixed size, don't stretch */
-.wand-viz-panel:not(.wand-meters-panel) {
-  flex: 0 0 132px;
-}
-.wand-meters-panel {
-  flex: 1;
-  min-width: 0;
-  max-width: none;
-}
-#wandXYPlot, #wandRollPlot {
-  display: block;
-  max-width: 130px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: #1c1c1c;
-}
-#wandRollPlot {
-  height: 24px;
-  border-radius: 3px;
-}
-.wand-meter-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.wand-meter-label {
-  font-size: 0.72rem;
-  color: #555555;
-  letter-spacing: 0.04em;
-  min-width: 2.6rem;
-}
-.wand-meter-track {
-  flex: 1;
-  height: 6px;
-  background: #1c1c1c;
-  border: 1px solid rgba(255,255,255,0.08);
-  overflow: hidden;
-}
-.wand-meter-fill {
-  height: 100%;
-  width: 0%;
-  background: #7abcbc;
-  transition: width 0.06s linear;
-}
-.wand-meter-val {
-  font-size: 0.72rem;
-  color: #555555;
-  letter-spacing: 0.04em;
-  min-width: 5rem;
-  text-align: right;
-}
-.wand-euler-heading {
-  margin-top: 0.6rem;
-  border-top: 1px solid rgba(255,255,255,0.06);
-  padding-top: 0.6rem !important;
-}
-
-/* Axis slots */
-.wand-slot-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-  padding: 0.3rem 0;
-}
-.wand-slot-row + .wand-slot-row {
-  border-top: 1px solid rgba(255,255,255,0.04);
-}
-.wand-slot-lbl {
-  color: #aaaaaa;
-  font-weight: 500;
-  font-size: 0.8rem;
-  min-width: 1rem;
-  letter-spacing: 0.04em;
-}
-.wand-arrow {
-  color: #444444;
-  font-size: 0.85rem;
-  padding: 0 0.1rem;
-}
-.wand-select {
-  background: #242424;
-  border: 1px solid rgba(255,255,255,0.1);
-  color: #aaaaaa;
-  font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  font-size: 0.75rem;
-  padding: 0.22rem 0.5rem;
-  cursor: pointer;
-  letter-spacing: 0.03em;
-  appearance: none;
-  -webkit-appearance: none;
-  outline: none;
-}
-.wand-select:hover, .wand-select:focus {
-  border-color: rgba(255,255,255,0.22);
-  color: #ffffff;
-}
-.wand-param-sel  { min-width: 7.5rem; }
-.wand-morph-sel  { min-width: 6.5rem; }
-.wand-num {
-  background: #242424;
-  border: 1px solid rgba(255,255,255,0.1);
-  color: #aaaaaa;
-  font-family: 'Roboto Mono', monospace;
-  font-size: 0.75rem;
-  padding: 0.22rem 0.4rem;
-  width: 3.8rem;
-  text-align: right;
-  letter-spacing: 0.02em;
-  outline: none;
-}
-.wand-num-sm { width: 3.2rem; }
-.wand-num:hover, .wand-num:focus {
-  border-color: rgba(255,255,255,0.22);
-  color: #ffffff;
-}
-.wand-deg {
-  font-size: 0.72rem;
-  color: #444444;
-  letter-spacing: 0.03em;
-}
-.wand-meta {
-  font-size: 0.72rem;
-  color: #555555;
-  letter-spacing: 0.05em;
-  white-space: nowrap;
-}
-
-/* Preset morph bar */
-.wand-morph-row { flex-wrap: nowrap; }
-/* Wrap groups the track bar + center select vertically */
-.wand-morph-track-wrap {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.2rem;
-  min-width: 60px;
-}
-.wand-morph-track {
-  width: 100%;
-  height: 8px;
-  background: #1c1c1c;
-  border: 1px solid rgba(255,255,255,0.08);
-  position: relative;
-  overflow: visible;
-}
-/* Center preset select — sits below the track, centered */
-.wand-morph-center-sel {
-  font-size: 0.68rem;
-  padding: 0.05rem 0.2rem;
-  max-width: 100%;
-  color: #e8a030;
-  border-color: rgba(232,160,48,0.25);
-  background: #1a1a22;
-}
-.wand-morph-cursor {
-  position: absolute;
-  top: -4px;
-  width: 8px;
-  height: 16px;
-  background: #e8a030;
-  margin-left: -4px;
-  left: 0%;
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* ── 2D bilinear morph pad ────────────────────────────────────────────────── */
-.xy2d-corner-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.3rem;
-  margin-bottom: 0.25rem;
-}
-.xy2d-corner-sel {
-  flex: 1;
-  min-width: 0;
-  font-size: 0.72rem;
-}
-#xy2dPad {
-  display: block;
-  width: 100%;
-  aspect-ratio: 1;
-  cursor: crosshair;
-  border-radius: 2px;
-  touch-action: none;
-  margin-bottom: 0.25rem;
-}
-.xy2d-center-row {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin: 0.2rem 0;
-}
-.xy2d-center-row .xy2d-corner-sel { flex: 1; }
-.xy2d-axis-row {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  margin-top: 0.2rem;
-}
 
 /* ── Audio settings modal ─────────────────────────────────────────────────── */
 /* Audio settings modal — size override only */

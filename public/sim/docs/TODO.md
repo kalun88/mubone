@@ -5,18 +5,29 @@
 
 ---
 
-## Active
+## Active — Workshop Prep (Dartmouth, week of Mar 30)
 
-- [x] **Bug: keyboard shortcuts swallowed after clicking right panel** — fixed in `events.js`: added `_focusedOnFormField()` guard to both keydown listeners (skips shortcuts when text input/select/textarea focused), delegated mouseup blur on right panel for buttons/sliders/seg-buttons, Escape blurs focused field without triggering app actions.
+### Memory & Stability (long sessions on student machines)
+
+- [ ] **Recording time meter** — lightweight HUD element showing total recorded time across all buffers. Gives performer awareness of memory pressure without expensive byte-counting. Show in seconds/minutes.
+- [ ] **Verify `sweep` actually frees memory** — test that sweep command releases AudioBuffer references and allows GC. If not, fix so buffers are truly deallocated. Document expected RAM recovery.
+- [ ] **Stress-test long sessions** — record continuously for 15–30 min in Chrome, monitor memory in DevTools. Identify if/when things stall or crash. Set a practical per-session recording ceiling if needed.
+- [ ] **Graceful memory guard** — if feasible, warn performer when approaching a configurable recording limit (e.g., flash the recording meter red). Stretch: auto-sweep oldest buffers.
+
+### Multi-Channel / VBAP
+
+- [ ] **Verify 8-channel VBAP** — test with 8-speaker layout in Electron. Confirm VBAP lookup table generates correctly, panning is smooth, no dropped/silent channels.
+- [ ] **Stretch: test 42-channel VBAP** — try the full Dartmouth layout. Identify any performance cliffs (lookup table size, per-grain cost). Have a fallback plan if 42 is too heavy.
+- [ ] **Electron multi-channel setup docs** — write a short checklist for getting Electron + multi-channel output running on a fresh machine (students may need to set this up).
+
+### General Reliability
+
+- [ ] **Full test pass** — run through the core workflow end-to-end (mic input → record → paint → scan → seed → sweep → repeat) on Chrome and Electron. Note and fix any rough edges.
+
+## Deferred — Gesture & Experimental (post-workshop)
+
 - [ ] **Test gesture extraction with live wand** — load `?exp`, wave wand, verify viz panel shows meaningful features. Tune scaling constants in `gesture.js` (JERK_SCALE, EFFORT_GYRO_SCALE, ENERGY_DECAY, etc.) based on real IMU data.
 - [ ] Build gesture-to-sonic mapping layer (`js/exp/gesture-map.js`) — translates gesture features into sonic quality targets with temporal smoothing and inertia.
-
-- [x] **Bug: rapid uproot blocked by release fade** — fixed: `findNearestSeedSlot()` now takes `skipReleasing` option; `uprootNearestSeed()` skips fading seeds so successive uproots target the next live seed. Releasing seeds treated as free slots for sowing. HUD count drops immediately on uproot.
-
-- [x] **Unify key bindings + add seed lock mode** — done: Loop lock remapped to ⇧D, seed lock (new) on ⇧S, lift → ⌘D, uproot → ⌘S. Seed lock auto-sows a trail for every paint trace. All cascading changes applied (MIDI/OSC table, events.js, patch table, osc.js, ui-meters.js, index.html tooltips, CSS).
-
-## Up Next
-
 - [ ] Gesture-influenced painting (`js/exp/gesture-paint.js`) — smoothness→brush tightness, effort→density, directness→coherence, periodicity→rhythmic deposit. See EXP-NOTES.md for full design.
 - [ ] Self-organizing sphere / concatenative paint mode (`js/exp/organized-paint.js`) — auto-place particles by timbral features (centroid→lon, RMS→lat, ZCR→secondary), adaptive normalization, particle migration animation. See EXP-NOTES.md for full design.
 - [ ] Resonant filter bank on master bus (`js/exp/resonant-filters.js`) — first audio processing module, controlled by gesture layer
@@ -25,6 +36,7 @@
 
 ## Someday
 
+- [ ] **Custom signal routing layer** — per-signal routing from breakout streams to arbitrary destinations. Design doc: `docs/ROUTING-DESIGN.md`. Plumbing scaffolded in sensor-registry.js (role arrays, route model, dispatch functions, persistence) and ui-sensors.js (breakout table with locked/editable destinations). Needs wiring to renderer, gesture, and morph consumers before it's usable. Build when preset roles (cursor/gesture/frame) aren't flexible enough.
 - [ ] Spectral freeze via AudioWorklet (`js/exp/spectral-freeze.js`)
 - [ ] Phase vocoder pitch shift for spatial harmonization
 - [ ] Stochastic trigger zones on sphere

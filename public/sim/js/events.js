@@ -22,8 +22,12 @@ import {
 } from './ui-presets.js';
 import { resizeCanvas } from './renderer.js';
 import { loadAudioFile } from './ui-samples.js';
-import { triggerWandTare } from './ui-wand.js';
+
 import { setScanMuted } from './ui-meters.js';
+
+// ── Erase-all triple-press state ────────────────────────────────────────────
+let _erasePressCount = 0;
+let _eraseLastPress  = 0;
 
 // ── Focus helpers ───────────────────────────────────────────────────────────
 // Returns true when focus is on a text-entry element that should consume
@@ -70,14 +74,13 @@ export function setupEvents() {
   // ── Pointer lock for surface mode ───────────────────────────────────────
   // Surface mode uses pointer lock so the full trackpad range is available
   // (no screen-edge limits). Accumulated deltas map to sphere orientation.
-  let _surfaceNX = 0, _surfaceNY = 0;
-  const SURFACE_SENSITIVITY = 600; // px for a full -1..+1 sweep
+  const SURFACE_SENSITIVITY = 600; // px per π radians of rotation
   let _pointerLocked = false;
 
-  S._surfaceInput = { nx: 0, ny: 0 };
+  S._surfaceDelta = { dx: 0, dy: 0 };
   S._resetSurfacePosition = () => {
-    _surfaceNX = 0; _surfaceNY = 0;
-    S._surfaceInput = { nx: 0, ny: 0 };
+    S._surfaceDelta = { dx: 0, dy: 0 };
+    S.camQ = [0, 0, 0, 1]; // identity — face front of sphere
   };
 
   // Pointer lock helpers
@@ -136,12 +139,10 @@ export function setupEvents() {
     // Sensor mode: mouse doesn't drive camera — skip
     if (S.cameraMode === 'sensor') return;
 
-    // Surface mode with pointer lock: accumulate deltas
+    // Surface mode with pointer lock: accumulate per-frame deltas
     if (S.cameraMode === 'surface' && _pointerLocked) {
-      _surfaceNX += e.movementX / SURFACE_SENSITIVITY;
-      _surfaceNY += e.movementY / SURFACE_SENSITIVITY;
-      _surfaceNY = Math.max(-1, Math.min(1, _surfaceNY));
-      S._surfaceInput = { nx: _surfaceNX, ny: _surfaceNY };
+      S._surfaceDelta.dx += e.movementX / SURFACE_SENSITIVITY;
+      S._surfaceDelta.dy += e.movementY / SURFACE_SENSITIVITY;
       return;
     }
 
@@ -273,6 +274,7 @@ export function setupEvents() {
         if (wrapper) { wrapper.style.cursor = 'auto'; S.canvas.style.cursor = 'auto'; }
         const ind = document.getElementById('altLockIndicator');
         if (ind) ind.style.display = '';
+        S._syncSessionAltLock?.(true);
       } else {
         // Unlock: resume camera control, re-enter pointer lock (surface)
         S.altLocked = false;
@@ -284,6 +286,7 @@ export function setupEvents() {
         }
         const ind = document.getElementById('altLockIndicator');
         if (ind) ind.style.display = 'none';
+        S._syncSessionAltLock?.(false);
       }
       return;
     }
@@ -452,6 +455,28 @@ export function setupEvents() {
       e.preventDefault();
       S._setMuted?.(!S.isMuted);
     }
+
+    // - (minus): sweep
+    if (e.key === '-' && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      e.preventDefault();
+      S._sessionSweep?.();
+    }
+
+    // Delete/Backspace: erase all (triple-press within 800ms)
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      e.preventDefault();
+      const now = performance.now();
+      if (now - (_eraseLastPress ?? 0) > 800) _erasePressCount = 0;
+      _erasePressCount = (_erasePressCount ?? 0) + 1;
+      _eraseLastPress = now;
+      if (_erasePressCount >= 3) {
+        _erasePressCount = 0;
+        S._eraseAllProgress?.(0); // clear progress display
+        S._sessionEraseAll?.();
+      } else {
+        S._eraseAllProgress?.(_erasePressCount);
+      }
+    }
   });
 
   document.addEventListener('keyup', e => {
@@ -570,29 +595,18 @@ export function setupEvents() {
 
   window.addEventListener('resize', () => { resizeCanvas(); drawPresetWaveform(); });
 
-  // Scroll: radius (or custom scroll binding)
+  // Scroll: custom scroll bindings only (radius is [ ] keys only)
   S.canvas.addEventListener('wheel', e => {
-    e.preventDefault();
-
-    // Check custom scroll bindings first
     if (S._keyMappings && S._dispatchAction) {
       const dir = e.deltaY > 0 ? 'scroll_down' : 'scroll_up';
       for (const [actionId, km] of Object.entries(S._keyMappings)) {
         if (km.type === dir) {
+          e.preventDefault();
           S._dispatchAction(actionId, 127);
           return;
         }
       }
     }
-
-    // Default: radius adjustment
-    // deltaY > 0 = scroll/swipe down → shrink radius (zoom in)
-    // deltaY < 0 = scroll/swipe up   → grow radius (zoom out)
-    const raw = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-    const delta = raw > 0 ? -SEARCH_RADIUS_STEP : SEARCH_RADIUS_STEP;
-    S.searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, Math.min(SEARCH_RADIUS_MAX, S.searchRadiusDeg + delta));
-    updatePlaybackControls();
-    flashRadiusTooltip();
   }, { passive: false });
 
   // Left click: live rec + paint
@@ -677,6 +691,7 @@ export function setupEvents() {
       const span = muteBtn.querySelector('span:last-child');
       if (span) span.textContent = S.isMuted ? 'unmute' : 'mute';
     }
+    S._syncSessionMute?.();
   }
   if (muteBtn) muteBtn.addEventListener('click', () => setMuted(!S.isMuted));
   // Expose for osc.js so /mute also ramps the audio gain and updates the button

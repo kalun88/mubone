@@ -14,7 +14,7 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.4 alpha</span>
+        <span class="top-bar-version">version 0.5 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -62,7 +62,6 @@
           </svg>
           perf
         </button>
-        <button id="sweepBtn" class="top-bar-btn" title="remove all particles not used by active seeds or loops">⌁ sweep</button>
         <button id="exportSetupBtn" class="top-bar-btn" title="export all settings, patches and key mappings as a JSON file">↑ export</button>
         <button id="importSetupBtn" class="top-bar-btn" title="import settings from a previously exported JSON file">↓ import</button>
         <button id="resetDefaultsBtn" class="top-bar-btn" title="Reset all saved settings to factory defaults">↺ factory defaults</button>
@@ -70,12 +69,9 @@
       </div>
       <div class="top-bar-row sensor-group no-sensor" id="sensorGroup">
         <span class="sensor-group-label">sensor</span>
-        <button id="sensorBtn" class="top-bar-btn" title="sensor settings — connect IMU, configure axis mapping">⊕ connect</button>
-        <button id="cursorZeroTopBtn" class="top-bar-btn action-btn" title="Zero cursor sensor (tare)">⊙ cursor zero</button>
-        <span class="sensor-group-sep">·</span>
-        <button id="wandBtn" class="top-bar-btn" title="wand controller settings — axis mapping, morph, 2D blend">⟆ wand</button>
-        <button id="wandEnableTopBtn" class="top-bar-btn action-btn" title="Toggle wand mapping on/off">⟆ wand off</button>
-        <button id="wandTareTopBtn" class="top-bar-btn action-btn" title="Tare wand [0]">⊙ wand tare</button>
+        <button id="sensorsBtn" class="top-bar-btn" title="sensor registry — view connected sensors, assign roles, calibrate">⊕ sensors</button>
+        <button id="gestureBtn" class="top-bar-btn" title="gesture panel — IMU feature extraction, conditioning, joystick morpher (Shift+G)">◎ gesture</button>
+
       </div>
     </div>
   </div>
@@ -127,6 +123,11 @@
           <span class="pm-track"><span class="pm-fill" id="pmRateBar"></span></span>
           <span class="pm-num" id="pmRateVal">0/s</span>
         </div>
+        <div class="pm-row">
+          <span class="pm-label">k</span>
+          <span class="pm-track"><span class="pm-fill" id="pmKBar"></span></span>
+          <span class="pm-num" id="pmKVal">0</span>
+        </div>
         <div class="pm-info" id="pmInfo"></div>
         <div class="pm-warn" id="pmUnderruns" style="display:none"></div>
       </div>
@@ -154,8 +155,23 @@
       </div>
     </div>
 
-    <!-- Right panel: patches + search + grain stacked -->
+    <!-- Right panel: session + patches + search + grain stacked -->
     <div class="right-panel">
+
+      <div class="device device--session">
+        <div class="device-label">session</div>
+        <div class="device-body session-body" style="flex-direction:column;gap:0.3rem;padding:0.4rem 0.5rem;">
+          <div style="display:flex;gap:0.4rem;">
+            <button class="session-btn" id="sessionMuteBtn" title="mute — silence all audio output (M)"><span>mute</span> <span class="paint-key-badge">M</span></button>
+            <button class="session-btn" id="sessionUndoBtn" title="undo — remove last painted stroke, particles, buffer and any loop spawned from it"><span>undo</span> <span class="paint-key-badge">⌃Z</span></button>
+            <button class="session-btn" id="sessionSweepBtn" title="sweep — remove particles not used by active seeds or loops (-)&#10;if no seeds/loops active, clears all particles"><span>sweep</span> <span class="paint-key-badge">−</span></button>
+          </div>
+          <div style="display:flex;gap:0.4rem;">
+            <button class="session-btn" id="sessionAltLockBtn" title="cursor lock — freeze cursor position to interact with UI&#10;hold Alt/Option while cursor is in the visualizer" disabled><span>lock cursor</span> <span class="paint-key-badge">Alt</span></button>
+            <button class="session-btn session-btn--danger" id="sessionEraseBtn" title="erase all — clear all particles, buffers and stroke history&#10;press Backspace ×3 to trigger from keyboard"><span>erase all</span> <span class="paint-key-badge">⌫×3</span></button>
+          </div>
+        </div>
+      </div>
 
       <div class="device device--preset">
         <div class="device-label">patches <button id="presetViewToggle" class="preset-view-toggle" title="switch to compact dropdown view">compact</button></div>
@@ -189,40 +205,41 @@
 
           <!-- mode toggles — compact grain-seg style -->
           <div class="seq-section search-section--toggles">
-            <div class="grain-row" title="lock — snap to nearest particle instead of random k selection">
+            <div class="grain-row" title="nearest lock — fire the k closest particles regardless of radius or recency&#10;when on: radius, recency and k-all are disabled&#10;only k and cursor position control selection">
               <span class="grain-label">lock</span>
               <div class="grain-seg" id="snapToggleSeg">
-                <button class="grain-seg-btn" data-snap="on" id="snapToggleBtn" title="snap — always fire the single closest particle">snap</button>
-                <button class="grain-seg-btn active" data-snap="off" title="free — random selection from k nearest">free</button>
+                <button class="grain-seg-btn" data-snap="on" id="snapToggleBtn" title="lock — fire the k nearest particles on the whole sphere&#10;radius and recency are bypassed">snap</button>
+                <button class="grain-seg-btn active" data-snap="off" title="free — select particles within the search radius&#10;filtered by recency and capped by k">free</button>
               </div>
             </div>
-            <div class="grain-row" title="k-all — fire all neighbours within radius, ignoring k limit">
+            <div class="grain-row" title="k-all — fire all particles within radius, ignoring k limit&#10;disabled when nearest lock is on">
               <span class="grain-label">k-all</span>
               <div class="grain-seg" id="kAllSeg">
-                <button class="grain-seg-btn" data-kall="on" id="kAllBtn" title="all — fire every particle in radius">all</button>
-                <button class="grain-seg-btn active" data-kall="off" title="k — fire only k nearest particles">k</button>
+                <button class="grain-seg-btn" data-kall="on" id="kAllBtn" title="all — fire every particle in radius, no k cap">all</button>
+                <button class="grain-seg-btn active" data-kall="off" title="k — cap selection to k nearest particles">k</button>
               </div>
             </div>
-            <div class="grain-row" title="k-seq — step through candidates sequentially by recording order instead of random">
+            <div class="grain-row" title="k-seq — step through candidates one at a time in recording order&#10;instead of picking randomly from the pool">
               <span class="grain-label">k-seq</span>
               <div class="grain-seg" id="kSeqSeg">
-                <button class="grain-seg-btn" data-kseq="on" id="kSeqBtn" title="step — play particles in recording order">step</button>
-                <button class="grain-seg-btn active" data-kseq="off" title="random — pick randomly from k nearest">random</button>
+                <button class="grain-seg-btn" data-kseq="on" id="kSeqBtn" title="step — play one particle at a time in recording order">step</button>
+                <button class="grain-seg-btn active" data-kseq="off" title="random — pick randomly from candidates">random</button>
               </div>
             </div>
-            <div class="grain-row" title="radius — search cone angle&#10;1° narrow to 180° full hemisphere">
+            <div class="grain-row" title="radius — search cone half-angle in degrees&#10;1° narrow beam to 180° full hemisphere&#10;disabled when nearest lock is on">
               <span class="grain-label">radius</span>
               <input class="grain-slider" type="range" id="radiusSlider" min="1" max="180" step="1" value="10">
               <input type="text" class="grain-numbox" id="radiusVal" value="10°">
               <button class="param-lock-btn" data-lock-key="searchRadiusDeg" title="lock radius — holds value through preset changes">🔓</button>
             </div>
-            <div class="grain-row" title="k — number of nearest particles to fire per grain tick&#10;min: 1  max: 20&#10;ignored when k-all is on">
+            <div class="grain-row" title="k — max particles to fire per grain tick&#10;scales dynamically to total particle count&#10;the /n indicator shows total particles in the world">
               <span class="grain-label">k</span>
-              <input class="grain-slider" type="range" id="searchKSlider" min="1" max="20" step="1" value="5">
+              <input class="grain-slider" type="range" id="searchKSlider" min="1" max="100" step="1" value="5">
               <input type="text" class="grain-numbox" id="kBigNum" value="5">
+              <span class="grain-numbox" id="kWorldCount" style="width:auto;min-width:0;padding:0;opacity:0.45;pointer-events:none"></span>
               <button class="param-lock-btn" data-lock-key="k" title="lock k — holds value through preset changes">🔓</button>
             </div>
-            <div class="grain-row" title="recency — number of recently played particles to skip&#10;avoids repeating the same particle&#10;min: 1  max: 16">
+            <div class="grain-row" title="recency — limit selection to the n most recent recording buffers&#10;lower = only recent recordings, higher = older buffers included&#10;disabled when nearest lock is on">
               <span class="grain-label">recency</span>
               <input class="grain-slider" type="range" id="recencySlider" min="1" max="16" step="1" value="3">
               <input type="text" class="grain-numbox" id="recencyVal" value="3">
@@ -355,20 +372,6 @@
               </svg>
               <span class="play-mute-label">scan</span>
               <span class="seq-record-key">X</span>
-            </button>
-          </div>
-
-          <!-- Undo button — removes last painted stroke (particles + buffer + spawned loop) -->
-          <div class="seq-section">
-            <button id="undoBtn" class="play-mute-btn undo-btn" title="undo (⌃Z / right-click) — remove last painted stroke&#10;removes particles, audio buffer, and any loop spawned from it">
-              <svg class="play-mute-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M3 10h10a6 6 0 0 1 0 12H7" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M3 10l4-4M3 10l4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              <span class="play-mute-label undo-btn-label">undo</span>
-              <span class="paint-key-badges">
-                <span class="paint-key-badge">⌃Z</span>
-              </span>
             </button>
           </div>
 
@@ -816,499 +819,19 @@
   </div>
 </div>
 
-<!-- ── Sensor calibration modal ───────────────────────────────────────────── -->
-<div id="sensorModal" class="mu-overlay">
-  <div class="sensor-dialog mu-dialog">
-    <h2>sensor
-      <button class="close-btn" id="sensorClose">✕</button>
+<!-- ── Sensor registry modal ────────────────────────────────────────────── -->
+<div id="sensorsModal" class="mu-overlay">
+  <div class="sensors-dialog mu-dialog">
+    <h2>sensors
+      <button class="close-btn" id="sensorsClose">✕</button>
     </h2>
-
-    <div class="sensor-columns">
-
-      <!-- ══ col 1: /space/cursor — instrument ══════════════════════════════ -->
-      <div class="sensor-col">
-        <div class="sensor-section-label">/space/cursor <span style="opacity:0.45;">— instrument</span></div>
-
-        <div class="sensor-section">
-          <table class="sensor-map-table">
-            <thead><tr><th>board</th><th>viz motion</th><th>sign</th><th>mute</th></tr></thead>
-            <tbody>
-              <tr>
-                <td class="sensor-map-label">X</td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap-axis active" data-phys="x" data-viz="roll">roll</button>
-                    <button class="sensor-btn smap-axis" data-phys="x" data-viz="pitch">pitch</button>
-                    <button class="sensor-btn smap-axis" data-phys="x" data-viz="yaw">yaw</button>
-                  </div>
-                </td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap-sign" data-phys="x" data-sign="+">+</button>
-                    <button class="sensor-btn smap-sign active" data-phys="x" data-sign="−">−</button>
-                  </div>
-                </td>
-                <td><button class="sensor-btn smap-mute" data-phys="x">◎</button></td>
-              </tr>
-              <tr>
-                <td class="sensor-map-label">Y</td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap-axis" data-phys="y" data-viz="roll">roll</button>
-                    <button class="sensor-btn smap-axis active" data-phys="y" data-viz="pitch">pitch</button>
-                    <button class="sensor-btn smap-axis" data-phys="y" data-viz="yaw">yaw</button>
-                  </div>
-                </td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap-sign active" data-phys="y" data-sign="+">+</button>
-                    <button class="sensor-btn smap-sign" data-phys="y" data-sign="−">−</button>
-                  </div>
-                </td>
-                <td><button class="sensor-btn smap-mute" data-phys="y">◎</button></td>
-              </tr>
-              <tr>
-                <td class="sensor-map-label">Z</td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap-axis" data-phys="z" data-viz="roll">roll</button>
-                    <button class="sensor-btn smap-axis" data-phys="z" data-viz="pitch">pitch</button>
-                    <button class="sensor-btn smap-axis active" data-phys="z" data-viz="yaw">yaw</button>
-                  </div>
-                </td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap-sign" data-phys="z" data-sign="+">+</button>
-                    <button class="sensor-btn smap-sign active" data-phys="z" data-sign="−">−</button>
-                  </div>
-                </td>
-                <td><button class="sensor-btn smap-mute" data-phys="z">◎</button></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="sensor-section">
-          <div class="sensor-section-label">tare</div>
-          <div class="sensor-row">
-            <button class="sensor-btn" id="sensorZeroBtn">⊙ zero now</button>
-            <button class="sensor-btn" id="sensorClearZeroBtn">✕ clear</button>
-          </div>
-        </div>
-
-        <div class="sensor-live" id="sensorLive">waiting for data…</div>
-      </div>
-
-      <!-- ══ col 2: /space/frame — world reference ══════════════════════════ -->
-      <div class="sensor-col">
-        <div class="sensor-section-label">/space/frame <span style="opacity:0.45;">— world reference</span></div>
-
-        <div class="sensor-section">
-          <div class="sensor-section-label">use as frame reference</div>
-          <div class="sensor-row">
-            <button class="sensor-btn active" id="wfOffBtn">off</button>
-            <button class="sensor-btn" id="wfOnBtn">on</button>
-          </div>
-        </div>
-
-        <div class="sensor-section">
-          <table class="sensor-map-table">
-            <thead><tr><th>board</th><th>viz motion</th><th>sign</th><th>mute</th></tr></thead>
-            <tbody>
-              <tr>
-                <td class="sensor-map-label">X</td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap2-axis active" data-phys="x" data-viz="roll">roll</button>
-                    <button class="sensor-btn smap2-axis" data-phys="x" data-viz="pitch">pitch</button>
-                    <button class="sensor-btn smap2-axis" data-phys="x" data-viz="yaw">yaw</button>
-                  </div>
-                </td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap2-sign" data-phys="x" data-sign="+">+</button>
-                    <button class="sensor-btn smap2-sign active" data-phys="x" data-sign="−">−</button>
-                  </div>
-                </td>
-                <td><button class="sensor-btn smap2-mute" data-phys="x">◎</button></td>
-              </tr>
-              <tr>
-                <td class="sensor-map-label">Y</td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap2-axis" data-phys="y" data-viz="roll">roll</button>
-                    <button class="sensor-btn smap2-axis active" data-phys="y" data-viz="pitch">pitch</button>
-                    <button class="sensor-btn smap2-axis" data-phys="y" data-viz="yaw">yaw</button>
-                  </div>
-                </td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap2-sign active" data-phys="y" data-sign="+">+</button>
-                    <button class="sensor-btn smap2-sign" data-phys="y" data-sign="−">−</button>
-                  </div>
-                </td>
-                <td><button class="sensor-btn smap2-mute" data-phys="y">◎</button></td>
-              </tr>
-              <tr>
-                <td class="sensor-map-label">Z</td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap2-axis" data-phys="z" data-viz="roll">roll</button>
-                    <button class="sensor-btn smap2-axis" data-phys="z" data-viz="pitch">pitch</button>
-                    <button class="sensor-btn smap2-axis active" data-phys="z" data-viz="yaw">yaw</button>
-                  </div>
-                </td>
-                <td>
-                  <div class="sensor-row">
-                    <button class="sensor-btn smap2-sign" data-phys="z" data-sign="+">+</button>
-                    <button class="sensor-btn smap2-sign active" data-phys="z" data-sign="−">−</button>
-                  </div>
-                </td>
-                <td><button class="sensor-btn smap2-mute" data-phys="z">◎</button></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="sensor-section">
-          <div class="sensor-section-label">tare</div>
-          <div class="sensor-row">
-            <button class="sensor-btn" id="sensor2ZeroBtn">⊙ zero now</button>
-            <button class="sensor-btn" id="sensor2ClearZeroBtn">✕ clear</button>
-          </div>
-        </div>
-
-        <div class="sensor-live" id="sensor2Live">no data</div>
-      </div>
-
-    </div><!-- end .sensor-columns -->
+    <div class="sensors-hint">sensors auto-discover from OSC:  /sensor/{name}/quaternion  ·  /sensor/{name}/inertial</div>
+    <div id="sensorsList" class="sensors-list">
+      <div class="sensors-empty">no sensors discovered yet — send /sensor/{name}/quaternion or /sensor/{name}/inertial from Max</div>
+    </div>
   </div>
 </div>
 
-<!-- ── Wand control modal ─────────────────────────────────────────────────── -->
-<div id="wandModal" class="mu-overlay">
-  <div class="wand-dialog mu-dialog">
-    <h2>wand
-      <span style="display:flex;align-items:center;gap:0.6rem;">
-        <button class="sensor-btn" id="wandTareBtnPanel">⊙ tare</button>
-        <button class="sensor-btn" id="wandClearTareBtnPanel">✕ clear tare</button>
-        <button class="sensor-btn" id="wandEnableBtn">mapping off</button>
-        <button class="close-btn" id="wandClose">✕</button>
-      </span>
-    </h2>
-
-    <!-- ── Visualizer row ── -->
-    <div class="wand-viz-row">
-
-      <!-- XY scatter: yaw (X) × pitch (Y), tare-relative + roll strip -->
-      <div class="wand-viz-panel">
-        <div class="sensor-section-label">yaw × pitch</div>
-        <canvas id="wandXYPlot" width="130" height="130"></canvas>
-        <div class="sensor-section-label" style="margin-top:0.5rem;">roll</div>
-        <canvas id="wandRollPlot" width="130" height="24" style="display:block;border-radius:3px;"></canvas>
-      </div>
-
-      <!-- Inertial meters + euler readout -->
-      <div class="wand-viz-panel wand-meters-panel">
-        <div class="sensor-section-label">inertial</div>
-        <div class="wand-meter-row">
-          <span class="wand-meter-label">gyro</span>
-          <div class="wand-meter-track"><div class="wand-meter-fill" id="wandGyroBar"></div></div>
-          <span class="wand-meter-val" id="wandGyroVal">—</span>
-        </div>
-        <div class="wand-meter-row">
-          <span class="wand-meter-label">accel</span>
-          <div class="wand-meter-track"><div class="wand-meter-fill" id="wandAccelBar"></div></div>
-          <span class="wand-meter-val" id="wandAccelVal">—</span>
-        </div>
-        <div class="sensor-section-label wand-euler-heading">euler (tared)</div>
-        <div class="sensor-live" id="wandEulerLive">no data</div>
-      </div>
-
-    </div><!-- end .wand-viz-row -->
-
-    <!-- ── Hardware axis remap ── -->
-    <div class="sensor-section">
-      <div class="sensor-section-label">hardware axis → semantic</div>
-      <table class="sensor-map-table">
-        <thead><tr><th>board</th><th>maps to</th><th>sign</th><th>mute</th></tr></thead>
-        <tbody>
-          <tr>
-            <td class="sensor-map-label">X</td>
-            <td>
-              <div class="sensor-row">
-                <button class="sensor-btn smapW-axis active" data-phys="x" data-viz="roll">roll</button>
-                <button class="sensor-btn smapW-axis" data-phys="x" data-viz="pitch">pitch</button>
-                <button class="sensor-btn smapW-axis" data-phys="x" data-viz="yaw">yaw</button>
-              </div>
-            </td>
-            <td>
-              <div class="sensor-row">
-                <button class="sensor-btn smapW-sign active" data-phys="x" data-sign="+">+</button>
-                <button class="sensor-btn smapW-sign" data-phys="x" data-sign="−">−</button>
-              </div>
-            </td>
-            <td><button class="sensor-btn smapW-mute" data-phys="x">◎</button></td>
-          </tr>
-          <tr>
-            <td class="sensor-map-label">Y</td>
-            <td>
-              <div class="sensor-row">
-                <button class="sensor-btn smapW-axis" data-phys="y" data-viz="roll">roll</button>
-                <button class="sensor-btn smapW-axis active" data-phys="y" data-viz="pitch">pitch</button>
-                <button class="sensor-btn smapW-axis" data-phys="y" data-viz="yaw">yaw</button>
-              </div>
-            </td>
-            <td>
-              <div class="sensor-row">
-                <button class="sensor-btn smapW-sign" data-phys="y" data-sign="+">+</button>
-                <button class="sensor-btn smapW-sign active" data-phys="y" data-sign="−">−</button>
-              </div>
-            </td>
-            <td><button class="sensor-btn smapW-mute" data-phys="y">◎</button></td>
-          </tr>
-          <tr>
-            <td class="sensor-map-label">Z</td>
-            <td>
-              <div class="sensor-row">
-                <button class="sensor-btn smapW-axis" data-phys="z" data-viz="roll">roll</button>
-                <button class="sensor-btn smapW-axis" data-phys="z" data-viz="pitch">pitch</button>
-                <button class="sensor-btn smapW-axis active" data-phys="z" data-viz="yaw">yaw</button>
-              </div>
-            </td>
-            <td>
-              <div class="sensor-row">
-                <button class="sensor-btn smapW-sign" data-phys="z" data-sign="+">+</button>
-                <button class="sensor-btn smapW-sign active" data-phys="z" data-sign="−">−</button>
-              </div>
-            </td>
-            <td><button class="sensor-btn smapW-mute" data-phys="z">◎</button></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- ── Orientation → parameter slots ── -->
-    <div class="sensor-section">
-      <div class="sensor-section-label">orientation → parameter</div>
-
-      <div class="wand-slot-row">
-        <span class="wand-slot-lbl">A</span>
-        <select class="wand-select" data-slot="A" data-field="src">
-          <option value="pitch">pitch</option>
-          <option value="roll">roll</option>
-          <option value="yaw">yaw</option>
-        </select>
-        <span class="wand-arrow">→</span>
-        <select class="wand-select wand-param-sel" data-slot="A" data-field="param"></select>
-        <input type="number" class="wand-num" data-slot="A" data-field="inMin" value="-45" step="5">
-        <span class="wand-deg">°</span>
-        <input type="number" class="wand-num" data-slot="A" data-field="inMax" value="45" step="5">
-        <span class="wand-deg">°</span>
-        <button class="sensor-btn wand-invert-btn" data-slot="A">flip</button>
-      </div>
-
-      <div class="wand-slot-row">
-        <span class="wand-slot-lbl">B</span>
-        <select class="wand-select" data-slot="B" data-field="src">
-          <option value="pitch">pitch</option>
-          <option value="roll" selected>roll</option>
-          <option value="yaw">yaw</option>
-        </select>
-        <span class="wand-arrow">→</span>
-        <select class="wand-select wand-param-sel" data-slot="B" data-field="param"></select>
-        <input type="number" class="wand-num" data-slot="B" data-field="inMin" value="-45" step="5">
-        <span class="wand-deg">°</span>
-        <input type="number" class="wand-num" data-slot="B" data-field="inMax" value="45" step="5">
-        <span class="wand-deg">°</span>
-        <button class="sensor-btn wand-invert-btn" data-slot="B">flip</button>
-      </div>
-
-      <div class="wand-slot-row">
-        <span class="wand-slot-lbl">C</span>
-        <select class="wand-select" data-slot="C" data-field="src">
-          <option value="pitch">pitch</option>
-          <option value="roll">roll</option>
-          <option value="yaw" selected>yaw</option>
-        </select>
-        <span class="wand-arrow">→</span>
-        <select class="wand-select wand-param-sel" data-slot="C" data-field="param"></select>
-        <input type="number" class="wand-num" data-slot="C" data-field="inMin" value="-90" step="5">
-        <span class="wand-deg">°</span>
-        <input type="number" class="wand-num" data-slot="C" data-field="inMax" value="90" step="5">
-        <span class="wand-deg">°</span>
-        <button class="sensor-btn wand-invert-btn" data-slot="C">flip</button>
-      </div>
-    </div>
-
-    <!-- ── Gyro agitation ── -->
-    <div class="sensor-section">
-      <div class="sensor-section-label">gyro agitation →</div>
-      <div class="wand-slot-row">
-        <select class="wand-select wand-param-sel" id="wandGyroParam"></select>
-        <span class="wand-meta">threshold</span>
-        <input type="number" class="wand-num" id="wandGyroThreshold" value="30" min="0" max="2000" step="10">
-        <span class="wand-deg">°/s</span>
-        <span class="wand-meta">max</span>
-        <input type="number" class="wand-num" id="wandGyroMax" value="300" min="0" max="2000" step="10">
-        <span class="wand-meta">strength</span>
-        <input type="number" class="wand-num wand-num-sm" id="wandGyroStrength" value="0.5" min="0" max="1" step="0.05">
-      </div>
-    </div>
-
-    <!-- ── Patch morph ── -->
-    <!-- ── Patch morph slots ── -->
-    <div class="sensor-section">
-      <div class="sensor-section-label">patch morph</div>
-
-      <!-- Morph A -->
-      <div class="wand-slot-row">
-        <span class="wand-slot-lbl">A</span>
-        <button class="sensor-btn wand-morph-enable" data-morph="A">off</button>
-        <select class="wand-select wand-morph-axis" data-morph="A">
-          <option value="pitch">pitch</option>
-          <option value="roll">roll</option>
-          <option value="yaw">yaw</option>
-        </select>
-        <input type="number" class="wand-num" data-morph="A" data-field="inMin" value="-45" step="5">
-        <span class="wand-deg">°</span>
-        <input type="number" class="wand-num" data-morph="A" data-field="inMax" value="45" step="5">
-        <span class="wand-deg">°</span>
-      </div>
-      <div class="wand-slot-row wand-morph-row">
-        <select class="wand-select wand-morph-sel" data-morph="A" data-field="presetA"></select>
-        <div class="wand-morph-track-wrap">
-          <div class="wand-morph-track">
-            <div class="wand-morph-cursor" id="wandMorphCursorA"></div>
-          </div>
-          <select class="wand-select wand-morph-sel wand-morph-center-sel" data-morph="A" data-field="presetC"></select>
-        </div>
-        <select class="wand-select wand-morph-sel" data-morph="A" data-field="presetB"></select>
-      </div>
-
-      <!-- Morph B -->
-      <div class="wand-slot-row" style="margin-top:0.5rem;">
-        <span class="wand-slot-lbl">B</span>
-        <button class="sensor-btn wand-morph-enable" data-morph="B">off</button>
-        <select class="wand-select wand-morph-axis" data-morph="B">
-          <option value="pitch">pitch</option>
-          <option value="roll" selected>roll</option>
-          <option value="yaw">yaw</option>
-        </select>
-        <input type="number" class="wand-num" data-morph="B" data-field="inMin" value="-45" step="5">
-        <span class="wand-deg">°</span>
-        <input type="number" class="wand-num" data-morph="B" data-field="inMax" value="45" step="5">
-        <span class="wand-deg">°</span>
-      </div>
-      <div class="wand-slot-row wand-morph-row">
-        <select class="wand-select wand-morph-sel" data-morph="B" data-field="presetA"></select>
-        <div class="wand-morph-track-wrap">
-          <div class="wand-morph-track">
-            <div class="wand-morph-cursor" id="wandMorphCursorB"></div>
-          </div>
-          <select class="wand-select wand-morph-sel wand-morph-center-sel" data-morph="B" data-field="presetC"></select>
-        </div>
-        <select class="wand-select wand-morph-sel" data-morph="B" data-field="presetB"></select>
-      </div>
-
-      <!-- Morph C -->
-      <div class="wand-slot-row" style="margin-top:0.5rem;">
-        <span class="wand-slot-lbl">C</span>
-        <button class="sensor-btn wand-morph-enable" data-morph="C">off</button>
-        <select class="wand-select wand-morph-axis" data-morph="C">
-          <option value="pitch">pitch</option>
-          <option value="roll">roll</option>
-          <option value="yaw" selected>yaw</option>
-        </select>
-        <input type="number" class="wand-num" data-morph="C" data-field="inMin" value="-90" step="5">
-        <span class="wand-deg">°</span>
-        <input type="number" class="wand-num" data-morph="C" data-field="inMax" value="90" step="5">
-        <span class="wand-deg">°</span>
-      </div>
-      <div class="wand-slot-row wand-morph-row">
-        <select class="wand-select wand-morph-sel" data-morph="C" data-field="presetA"></select>
-        <div class="wand-morph-track-wrap">
-          <div class="wand-morph-track">
-            <div class="wand-morph-cursor" id="wandMorphCursorC"></div>
-          </div>
-          <select class="wand-select wand-morph-sel wand-morph-center-sel" data-morph="C" data-field="presetC"></select>
-        </div>
-        <select class="wand-select wand-morph-sel" data-morph="C" data-field="presetB"></select>
-      </div>
-
-    </div>
-
-    <!-- ── 2D bilinear morph ── -->
-    <div class="sensor-section">
-      <div class="sensor-section-label">2D morph
-        <button class="sensor-btn" id="xy2dEnableBtn">off</button>
-      </div>
-
-      <!-- Corner preset selects + pad -->
-      <div class="xy2d-corner-row">
-        <select class="wand-select xy2d-corner-sel" id="xy2dTL"></select>
-        <select class="wand-select xy2d-corner-sel" id="xy2dTR"></select>
-      </div>
-      <canvas id="xy2dPad" width="220" height="220"></canvas>
-      <div class="xy2d-center-row">
-        <span class="wand-meta">center</span>
-        <select class="wand-select xy2d-corner-sel" id="xy2dC"></select>
-      </div>
-      <div class="xy2d-corner-row">
-        <select class="wand-select xy2d-corner-sel" id="xy2dBL"></select>
-        <select class="wand-select xy2d-corner-sel" id="xy2dBR"></select>
-      </div>
-
-      <!-- Axis controls -->
-      <div class="xy2d-axis-row">
-        <span class="wand-meta">X</span>
-        <select class="wand-select" id="xy2dAxisX">
-          <option value="yaw" selected>yaw</option>
-          <option value="pitch">pitch</option>
-          <option value="roll">roll</option>
-          <option value="manual">manual</option>
-        </select>
-        <input type="number" class="wand-num" id="xy2dXMin" value="-45" step="5">
-        <span class="wand-deg">°</span>
-        <input type="number" class="wand-num" id="xy2dXMax" value="45" step="5">
-        <span class="wand-deg">°</span>
-      </div>
-      <div class="xy2d-axis-row">
-        <span class="wand-meta">Y</span>
-        <select class="wand-select" id="xy2dAxisY">
-          <option value="yaw">yaw</option>
-          <option value="pitch" selected>pitch</option>
-          <option value="roll">roll</option>
-          <option value="manual">manual</option>
-        </select>
-        <input type="number" class="wand-num" id="xy2dYMin" value="-45" step="5">
-        <span class="wand-deg">°</span>
-        <input type="number" class="wand-num" id="xy2dYMax" value="45" step="5">
-        <span class="wand-deg">°</span>
-      </div>
-    </div>
-
-    <!-- ── Seed morph (moved from seeder panel) ────────────────────────── -->
-    <div class="wand-section">
-      <div class="wand-section-label">seed morph</div>
-      <div class="grain-row" title="morph — wand gyro drives seed agitation/smoothing">
-        <span class="grain-label">morph</span>
-        <div class="grain-seg" id="improvMorphSeg">
-          <button class="grain-seg-btn active" data-morph="on">on</button>
-          <button class="grain-seg-btn" data-morph="off">off</button>
-        </div>
-      </div>
-      <div class="grain-row" title="hold mode — what morph does when wand is still&#10;momentum: stays at agitation level (inertial)&#10;elastic: slowly springs back to neutral">
-        <span class="grain-label">hold</span>
-        <div class="grain-seg" id="improvHoldSeg">
-          <button class="grain-seg-btn active" data-hold="momentum">momentum</button>
-          <button class="grain-seg-btn" data-hold="elastic">elastic</button>
-        </div>
-      </div>
-    </div>
-
-  </div><!-- end .wand-dialog -->
-</div><!-- end #wandModal -->
 
 <!-- ── Viz settings modal ─────────────────────────────────────────────────── -->
 <div id="vizModal" class="mu-overlay">
@@ -1757,16 +1280,16 @@
   }
 
   function init() {
-    const undoBtn = document.getElementById('undoBtn');
+    const sessionUndoBtn = document.getElementById('sessionUndoBtn');
     const dropBtn = document.getElementById('seqLoopDropBtn');
 
     const uprootBtn = document.getElementById('seedUprootBtn');
     const liftBtn   = document.getElementById('seqPickupRemoveBtn');
 
     document.addEventListener('keydown', e => {
-      // Ctrl/Cmd+Z → flash undo
+      // Ctrl/Cmd+Z → flash session undo
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.repeat) {
-        if (undoBtn) flash(undoBtn);
+        if (sessionUndoBtn) flash(sessionUndoBtn);
       }
       // D drop/draw flash is handled by the threshold script above — not here
       // ⌘S → flash uproot button
@@ -1787,5 +1310,14 @@
   }
 })();
 </script>
+
+<!-- ── Gesture panel (exp mode only — injected by exp-init.js) ──────────── -->
+<div id="gestureModal" class="mu-overlay">
+  <div class="mu-dialog" style="width:96vw; max-width:1600px; height:92vh; padding:0.8rem;">
+    <h2>gesture <button class="close-btn" id="gestureClose">✕</button></h2>
+    <canvas id="gestureCanvas" style="width:100%; flex:1; display:block;"></canvas>
+  </div>
+</div>
+
 </body>
 </html>

@@ -51,19 +51,19 @@ const ACTIONS = [
   // ── Search ─────────────────────────────────────────────────────────────────
   { id: null, group: 'search' },
   { id: 'snap',         label: 'lock (nearest mode)',        key: 'N',                 osc: '/grain/lock',     fmt: 'int 0|1',          type: 'trigger',
-    tip: 'snap to nearest particle — ignores k and radius' },
+    tip: 'nearest lock — fire k closest particles on the whole sphere, bypassing radius and recency' },
   { id: 'k_all',        label: 'k-all toggle',              key: '—',                 osc: '/grain/kall',     fmt: 'int 0|1',          type: 'trigger',
-    tip: 'fire all particles in radius, ignoring k limit' },
+    tip: 'fire all particles in radius with no k cap — disabled when nearest lock is on' },
   { id: 'k_seq',        label: 'k-seq toggle',              key: '—',                 osc: '/grain/kseq',     fmt: 'int 0|1',          type: 'trigger',
-    tip: 'step through candidates by recording order instead of random selection' },
+    tip: 'step through candidates one at a time in recording order instead of random' },
   { id: 'radius_cc',    label: 'radius',                    key: '—',                 osc: '/grain/radius',   fmt: 'float 1–180 °',    type: 'cc',
     ccFn: v => { S.searchRadiusDeg = SEARCH_RADIUS_MIN + (v / 127) * (SEARCH_RADIUS_MAX - SEARCH_RADIUS_MIN); updatePlaybackControls(); flashRadiusTooltip(); } },
   { id: 'radius_inc',   label: 'radius ↑',                  key: 'scroll ↑ / ]',      osc: '/grain/radius/inc', fmt: 'bang',             type: 'trigger',
     tip: 'increase search radius by 2°' },
   { id: 'radius_dec',   label: 'radius ↓',                  key: 'scroll ↓ / [',      osc: '/grain/radius/dec', fmt: 'bang',             type: 'trigger',
     tip: 'decrease search radius by 2°' },
-  { id: 'grain_k',      label: 'k (nearest)',               key: '—',                 osc: '/grain/k',        fmt: 'int 1–20',          type: 'cc',
-    ccFn: v => { S.grainOverrides.k = Math.max(1, Math.round(1 + (v / 127) * 19)); S.syncGrainControlsUI?.(); } },
+  { id: 'grain_k',      label: 'k (nearest)',               key: '—',                 osc: '/grain/k',        fmt: 'int 1–N',            type: 'cc',
+    ccFn: v => { const mx = Math.max(1, S.particles.length); S.grainOverrides.k = Math.max(1, Math.round(1 + (v / 127) * (mx - 1))); S.syncGrainControlsUI?.(); } },
   { id: 'recency_cc',   label: 'recency',                   key: '—',                 osc: '/grain/recency',  fmt: 'int 1–16',         type: 'cc',
     ccFn: v => { const n = 1 + Math.round((v / 127) * 15); if (typeof S.setRecency === 'function') S.setRecency(n); else S.recencyN = n; const el = document.getElementById('recencyVal'); if (el) el.value = n; } },
 
@@ -431,8 +431,7 @@ function dispatchAction(id, midiVal) {
     }
     case 'snap':         toggleNearestMode(); break;
     case 'k_all':
-      S.grainKAllMode = !S.grainKAllMode;
-      updatePlaybackControls();
+      if (!S.nearestMode) { S.grainKAllMode = !S.grainKAllMode; updatePlaybackControls(); }
       break;
     case 'k_seq':
       S.grainKSeqMode = !S.grainKSeqMode;

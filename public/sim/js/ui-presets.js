@@ -11,7 +11,7 @@ import {
   USER_PRESET_START, FACTORY_PRESET_START, loadUserPresets, saveUserPresets,
 } from './state.js';
 import { angleBetweenSphere, findNearestSeedSlot, resetCursorPeriod } from './grain.js';
-import { lerpPresets } from './wand.js';
+import { lerpPresets } from './seed-morph.js';
 import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js';
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
 import { applySparsePreset, syncAllUI, PARAM_REGISTRY } from './ui-patch-table.js';
@@ -183,6 +183,8 @@ export function setupPresets() {
     snapSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         S.nearestMode = (btn.dataset.snap === 'on');
+        // k-all is incompatible with k-nearest — force it off
+        if (S.nearestMode && S.grainKAllMode) S.grainKAllMode = false;
         updatePlaybackControls();
         S._syncRadiusFadeUI?.();
         flashRadiusTooltip();
@@ -195,6 +197,8 @@ export function setupPresets() {
   if (kAllSeg) {
     kAllSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
+        // k-all not allowed when k-nearest is active
+        if (S.nearestMode) return;
         S.grainKAllMode = (btn.dataset.kall === 'on');
         updatePlaybackControls();
       });
@@ -255,7 +259,8 @@ export function setupPresets() {
 
   // ── k control in search params ────────────────────────────────────────────
   S.setSearchK = function(v) {
-    const k = Math.max(1, Math.min(20, Math.round(v)));
+    const kMax = Math.max(1, S.particles.length);
+    const k = Math.max(1, Math.min(kMax, Math.round(v)));
     S.grainOverrides.k = k;
     const slider = document.getElementById('searchKSlider');
     if (slider) slider.value = k;
@@ -410,6 +415,8 @@ export function setupPresets() {
 
 export function toggleNearestMode() {
   S.nearestMode = !S.nearestMode;
+  // k-all is incompatible with k-nearest — force it off
+  if (S.nearestMode && S.grainKAllMode) S.grainKAllMode = false;
   updatePlaybackControls();
   S._syncRadiusFadeUI?.();
   flashRadiusTooltip();
@@ -1445,6 +1452,8 @@ export function selectPreset(index) {
 
   if ('nearestMode' in preset && typeof preset.nearestMode === 'boolean') S.nearestMode = preset.nearestMode;
   if ('grainKAllMode' in preset && typeof preset.grainKAllMode === 'boolean') S.grainKAllMode = preset.grainKAllMode;
+  // Enforce constraint: k-all not allowed with k-nearest
+  if (S.nearestMode && S.grainKAllMode) S.grainKAllMode = false;
   if ('grainKSeqMode' in preset && typeof preset.grainKSeqMode === 'boolean') S.grainKSeqMode = preset.grainKSeqMode;
   if (!isLocked('searchRadiusDeg') && 'searchRadiusDeg' in preset && typeof preset.searchRadiusDeg === 'number') S.searchRadiusDeg = preset.searchRadiusDeg;
   if (!isLocked('recencyN') && 'recencyN' in preset && typeof preset.recencyN === 'number') {
@@ -1506,12 +1515,14 @@ export function updatePlaybackControls() {
       btn.classList.toggle('active', (btn.dataset.snap === 'on') === S.nearestMode);
     });
   }
-  // Sync k-all segmented toggle
+  // Sync k-all segmented toggle — disabled when k-nearest is active
   const kAllSeg = document.getElementById('kAllSeg');
   if (kAllSeg) {
     kAllSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.classList.toggle('active', (btn.dataset.kall === 'on') === S.grainKAllMode);
     });
+    kAllSeg.style.opacity = S.nearestMode ? '0.35' : '';
+    kAllSeg.style.pointerEvents = S.nearestMode ? 'none' : '';
   }
   // Sync k-seq segmented toggle
   const kSeqSeg = document.getElementById('kSeqSeg');
@@ -1525,6 +1536,16 @@ export function updatePlaybackControls() {
   const kNum = document.getElementById('kBigNum');
   if (skSlider) skSlider.disabled = S.grainKAllMode;
   if (kNum) kNum.style.opacity = S.grainKAllMode ? '0.4' : '';
+  // grey out radius when nearest mode is active (no radius in nearest mode)
+  const radSlider = document.getElementById('radiusSlider');
+  const radNum    = document.getElementById('radiusVal');
+  if (radSlider) { radSlider.disabled = S.nearestMode; radSlider.style.opacity = S.nearestMode ? '0.35' : ''; }
+  if (radNum)    { radNum.style.opacity = S.nearestMode ? '0.35' : ''; radNum.style.pointerEvents = S.nearestMode ? 'none' : ''; }
+  // grey out recency when nearest mode is active (recency bypassed)
+  const recSlider = document.getElementById('recencySlider');
+  const recNum    = document.getElementById('recencyVal');
+  if (recSlider) { recSlider.disabled = S.nearestMode; recSlider.style.opacity = S.nearestMode ? '0.35' : ''; }
+  if (recNum)    { recNum.style.opacity = S.nearestMode ? '0.35' : ''; recNum.style.pointerEvents = S.nearestMode ? 'none' : ''; }
   drawRadiusViz();
 }
 

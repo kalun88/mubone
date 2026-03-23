@@ -369,6 +369,8 @@ function _flashUndoBtn() {
 export function initUndoBtn() {
   const btn = document.getElementById('undoBtn');
   btn?.addEventListener('click', () => undoLastStroke());
+  // Expose for session panel (avoids circular import)
+  S._undoLastStroke = undoLastStroke;
 }
 
 // ============================================================================

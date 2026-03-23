@@ -42,7 +42,11 @@ export function spherePoint(lon, lat) {
   ];
 }
 export function cameraTransform(x, y, z) {
-  return qRotateVec(qConjugate(S.camQ), [x, y, z]);
+  // If a frame-role sensor is active, rotate world points first.
+  // frameQ rotates the sphere; camQ orients the camera — kept separate
+  // so the frame never accumulates into the incremental camera quaternion.
+  const p = S.frameQ ? qRotateVec(S.frameQ, [x, y, z]) : [x, y, z];
+  return qRotateVec(qConjugate(S.camQ), p);
 }
 export function project(x, y, z) {
   if (z <= 0.1) return null;
@@ -56,9 +60,11 @@ export function project(x, y, z) {
 }
 export function getCursorLonLat() {
   const forward = qRotateVec(S.camQ, [0, 0, 1]);
+  // Un-rotate from frame space back to sphere-local coordinates
+  const w = S.frameQ ? qRotateVec(qConjugate(S.frameQ), forward) : forward;
   return {
-    lon: Math.atan2(forward[0], forward[2]),
-    lat: Math.asin(Math.max(-1, Math.min(1, forward[1])))
+    lon: Math.atan2(w[0], w[2]),
+    lat: Math.asin(Math.max(-1, Math.min(1, w[1])))
   };
 }
 export function screenToLonLat(px, py) {
@@ -69,8 +75,10 @@ export function screenToLonLat(px, py) {
   const dz = 1;
   const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
   const world = qRotateVec(S.camQ, [dx/len, dy/len, dz/len]);
+  // Un-rotate from frame space back to sphere-local coordinates
+  const w = S.frameQ ? qRotateVec(qConjugate(S.frameQ), world) : world;
   return {
-    lon: Math.atan2(world[0], world[2]),
-    lat: Math.asin(Math.max(-1, Math.min(1, world[1])))
+    lon: Math.atan2(w[0], w[2]),
+    lat: Math.asin(Math.max(-1, Math.min(1, w[1])))
   };
 }

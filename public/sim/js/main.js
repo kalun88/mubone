@@ -15,14 +15,14 @@ import { initMobileMode } from './mobile.js';
 import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
 import { resizeCanvas, animate } from './renderer.js';
 import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initRadiusFade, initSeqMode, initMixdownGains, setScanMuted } from './ui-meters.js';
-import { initSensor, getSensorCamQ } from './sensor.js';
+import { initSensor, getSensorCamQ, getFrameQ, getSensorRawCursorQ, getCursorAxisSigns } from './sensor-registry.js';
 import { initOSC } from './osc.js';
-import { initSensorUI } from './ui-sensor.js';
+import { initSensorsUI } from './ui-sensors.js';
 import { initAudioSettings, loadAudioDefaults, activateSavedInputDevice, startAutoSave } from './ui-audio-settings.js';
-import { initWandUI } from './ui-wand.js';
+
 import { initImprovUI } from './ui-improv.js';
 import { initVizUI } from './ui-viz.js';
-import { initSweepUI } from './ui-sweep.js';
+import { initSweepUI, initSessionPanel } from './ui-sweep.js';
 import { initExportImport } from './ui-export.js';
 import { initPatchTable } from './ui-patch-table.js';
 
@@ -48,13 +48,16 @@ function init() {
   // Sensor + OSC + audio settings
   initSensor();
   initOSC();   // connects Electron IPC or browser WebSocket transport
-  S._getSensorCamQ = getSensorCamQ;  // hook renderer without a circular import
-  initSensorUI();
-  initWandUI();
+  S._getSensorCamQ    = getSensorCamQ;       // hook renderer without a circular import
+  S._getFrameQ        = getFrameQ;           // world-frame compensation from frame-role sensor
+  S._getSensorRawQ    = getSensorRawCursorQ; // raw tared quat for delta-based tracking
+  S._getCursorSigns   = getCursorAxisSigns;  // yaw/pitch sign multipliers
+  initSensorsUI();
   initAudioSettings();
   initImprovUI();
   initVizUI();
   initSweepUI();
+  initSessionPanel();
   initUndoBtn();
   initExportImport();
   initPatchTable(updatePlaybackControls, setScanMuted, selectPreset);
@@ -120,6 +123,7 @@ function init() {
       localStorage.removeItem('mubone-learn-mode');
       localStorage.removeItem('mubone_preset_view');
       localStorage.removeItem('mubone_desktop_morph');
+      localStorage.removeItem('mubone_sensor_cal');
       // Clear panel collapse states
       Object.keys(localStorage).forEach(k => {
         if (k.startsWith('mubone_panel_') || k.startsWith('mubone_sec_')) localStorage.removeItem(k);
@@ -360,6 +364,27 @@ function init() {
       window.addEventListener('keydown', _frKeyHandler);
     }
   }
+
+  // ── Gesture modules (always loaded) ──────────────────────────────────────
+  // Gesture extraction + panel are core features, loaded for all users.
+  import('./exp/gesture.js')
+    .then(({ initGesture }) => initGesture())
+    .catch(e => console.warn('[gesture] failed to load:', e));
+  import('./exp/gesture-panel.js')
+    .then(({ initGesturePanel, toggleGesturePanel }) => {
+      initGesturePanel();
+      // Wire the top-bar gesture button
+      const gestureBtn = document.getElementById('gestureBtn');
+      if (gestureBtn) gestureBtn.addEventListener('click', () => toggleGesturePanel());
+      // Shift+G keyboard shortcut
+      window.addEventListener('keydown', (e) => {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+        if (e.key === 'G' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          toggleGesturePanel();
+        }
+      });
+    })
+    .catch(e => console.warn('[gesture-panel] failed to load:', e));
 
   // ── Experimental modules (?exp in URL) ─────────────────────────────────────
   // Lazy-loaded so they add zero overhead when EXP is off.  Each module

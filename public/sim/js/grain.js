@@ -571,9 +571,11 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
     // Worldlocked:  use world-space position directly — speakers are fixed in the
     //               room, turning your body doesn't move the sound. The camera
     //               (and sensor) still rotates visually but audio is absolute.
+    // Apply frame rotation to world position if active
+    const [fwx, fwy, fwz] = S.frameQ ? qRotateVec(S.frameQ, [wx, wy, wz]) : [wx, wy, wz];
     const [cx, cy, cz] = S.spatialPanning === 'worldlocked'
-      ? [wx, wy, wz]
-      : qRotateVec(qConjugate(S.camQ), [wx, wy, wz]);
+      ? [fwx, fwy, fwz]
+      : qRotateVec(qConjugate(S.camQ), [fwx, fwy, fwz]);
 
     // At dense grain periods (≤ 5ms, ≥ 200Hz repetition) spatial positioning is
     // acoustically inaudible — the human auditory system integrates pan position
@@ -991,16 +993,22 @@ export function scheduleGrains() {
     // Pre-sort / filter candidate pool once for all onsets in this tick window.
     // Build candidatePool in-place reusing _angSortBuf to avoid .map()/.filter() allocations.
     let candidatePool;
+    // k-all is incompatible with k-nearest — guard here in case state leaks through
+    const effectiveKAll = S.grainKAllMode && !S.nearestMode;
     if (S.nearestMode) {
       particles.sort((a, b) => a._ang - b._ang);
-      // kAllMode: no k cap — use all particles (still recency-filtered).
-      // Pass searchRadiusRad so recency is ranked from the local cone, not globally.
-      candidatePool = S.grainKAllMode
-        ? _buildCandidatePool(particles, particles.length, true, searchRadiusRad)
-        : _buildCandidatePool(particles, k, true, searchRadiusRad);
+      // Nearest mode: no radius, no recency — cursor position + k are the only filters
+      candidatePool = _buildCandidatePool(particles, k, false, undefined);
     } else {
       candidatePool = _buildCandidatePoolRadius(particles, searchRadiusRad);
     }
+    // In nearest mode the whole sphere is available — pool = total particles
+    perf.kPool = S.nearestMode ? particles.length : candidatePool.length;
+    // Effective k count: how many candidates will actually be selected per onset.
+    // Computed once per tick (same result for every onset in the while loop).
+    perf.kCount = S.nearestMode || effectiveKAll || candidatePool.length <= k
+      ? candidatePool.length
+      : k;
 
     // Budget: how many cursor grains to schedule this tick.
     // Use the full SCHED_LOOKAHEAD window (120ms) — not just minAheadS (≈15ms).
@@ -1041,7 +1049,7 @@ export function scheduleGrains() {
       } else {
         // kAllMode: use the full radius pool with no k cap.
         // Otherwise nearest K from within the radius pool — _ang already stamped.
-        toGranulate = S.grainKAllMode || candidatePool.length <= k
+        toGranulate = effectiveKAll || candidatePool.length <= k
           ? candidatePool
           : candidatePool.sort((a, b) => a._ang - b._ang).slice(0, k);
       }
@@ -1117,6 +1125,9 @@ export function scheduleGrains() {
       }
       _cursorReanchorAt = audioNow + 30.0; // next re-anchor in 30s
     }
+  } else {
+    perf.kCount = 0;
+    perf.kPool  = 0;
   }
 
   // ── Pre-advance moving seed playheads ──────────────────────────────────
@@ -1545,9 +1556,10 @@ export function scheduleGrains() {
       const initP = seq.particles[seq.playheadIndex] || seq.particles[0];
       if (initP) {
         const [iWx, iWy, iWz] = spherePoint(initP.lon, initP.lat);
+        const [iFx, iFy, iFz] = S.frameQ ? qRotateVec(S.frameQ, [iWx, iWy, iWz]) : [iWx, iWy, iWz];
         const [iCx, iCy, iCz] = S.spatialPanning === 'worldlocked'
-          ? [iWx, iWy, iWz]
-          : qRotateVec(qConjugate(S.camQ), [iWx, iWy, iWz]);
+          ? [iFx, iFy, iFz]
+          : qRotateVec(qConjugate(S.camQ), [iFx, iFy, iFz]);
         if (seq._vbapGains && _vbapLUT) {
           const iAz = Math.atan2(iCx, iCz);
           const TWO_PI = 2 * Math.PI;
@@ -1621,9 +1633,10 @@ export function scheduleGrains() {
         // Use setTargetAtTime with a short time constant for smooth
         // interpolation, avoiding click/flutter from step changes.
         const [spWx, spWy, spWz] = spherePoint(p.lon, p.lat);
+        const [spFx, spFy, spFz] = S.frameQ ? qRotateVec(S.frameQ, [spWx, spWy, spWz]) : [spWx, spWy, spWz];
         const [spCx, spCy, spCz] = S.spatialPanning === 'worldlocked'
-          ? [spWx, spWy, spWz]
-          : qRotateVec(qConjugate(S.camQ), [spWx, spWy, spWz]);
+          ? [spFx, spFy, spFz]
+          : qRotateVec(qConjugate(S.camQ), [spFx, spFy, spFz]);
         const _panRampTau = 0.015; // ~15ms smoothing time constant
         const _panNow = actx.currentTime;
 

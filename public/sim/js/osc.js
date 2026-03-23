@@ -12,10 +12,10 @@
 
 import { S, DEBUG, PRESETS, rebuildGrainCurves } from './state.js';
 import {
-  handleSensorOSC, handleSensor2OSC, handleWandOSC, handleWandInertialOSC,
-  sensor, wand,
-} from './sensor.js';
-import { updateWand, updateGestureMorph } from './wand.js';
+  getOrCreateSlot, getByRole, assignQuatRole, assignInertialRole,
+  handleSlotQuaternion, handleSlotInertial,
+} from './sensor-registry.js';
+import { updateGestureMorph } from './seed-morph.js';
 import { setScanMuted, setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
 import {
   toggleNearestMode, dropSeqFromCursor, dropNearestSeq,
@@ -162,33 +162,66 @@ export function handleOSC(rawAddress, values) {
   // Normalize so both transports produce the same /address strings.
   const address = rawAddress.startsWith('/') ? rawAddress : '/' + rawAddress;
 
-  // ── Sensor quaternions ─────────────────────────────────────────────────────
-  // Both addresses expect:  qx qy qz qw  (4 floats, scalar W last)
-  // /space/cursor — sensor 1, instrument (drives the visual cursor)
+  // ── Generic sensor dispatch ─────────────────────────────────────────────────
+  // New convention: /sensor/{name}/quaternion  (4 floats)
+  //                 /sensor/{name}/inertial    (6 floats)
+  // The {name} is arbitrary — the app auto-discovers slots on first contact.
+  {
+    const parts = address.split('/');   // ["", "sensor", name, type]
+    if (parts[1] === 'sensor' && parts.length === 4) {
+      const name = parts[2];
+      const type = parts[3];
+      const slot = getOrCreateSlot(name);
+
+      if (type === 'quaternion' && values.length >= 4) {
+        handleSlotQuaternion(slot, values);
+        // If this slot's quat drives the cursor, send tare state
+        if (slot.quatRole === 'cursor') {
+          if (slot.zeroEuler) sendOSC('/sensor/' + name + '/0euler', [slot.zeroEuler.x, slot.zeroEuler.y, slot.zeroEuler.z]);
+        }
+        return;
+      }
+      if (type === 'inertial' && values.length >= 6) {
+        handleSlotInertial(slot, values);
+        // If this slot's inertial is gesture source, run downstream
+        if (slot.inertialRole === 'gesture') {
+          updateGestureMorph();
+          S._onGestureUpdate?.();
+        }
+        return;
+      }
+    }
+  }
+
+  // ── Legacy /space/* aliases ──────────────────────────────────────────────────
+  // Map old addresses into the registry so existing Max patches keep working.
+  // /space/cursor → slot "cursor" quaternion
   if (address === '/space/cursor' && values.length === 4) {
-    handleSensorOSC(values);
+    const slot = getOrCreateSlot('cursor');
+    if (slot.quatRole === 'unmapped') assignQuatRole('cursor', 'cursor');
+    handleSlotQuaternion(slot, values);
     return;
   }
-  // /space/frame  — sensor 2, world reference (body frame or floor lock)
+  // /space/frame → slot "frame" quaternion
   if (address === '/space/frame' && values.length === 4) {
-    handleSensor2OSC(values);
+    const slot = getOrCreateSlot('frame');
+    if (slot.quatRole === 'unmapped') assignQuatRole('frame', 'frame');
+    handleSlotQuaternion(slot, values);
     return;
   }
-  // /space/wand — wand controller quaternion stream (viz-invisible)
-  // Sends tare-relative euler back to Max as /space/wand/0euler.
+  // /space/wand → slot "wand" quaternion
   if (address === '/space/wand' && values.length === 4) {
-    handleWandOSC(values);
-    if (wand.zeroEuler) sendOSC('/space/wand/0euler', [wand.zeroEuler.x, wand.zeroEuler.y, wand.zeroEuler.z]);
-    updateWand();
+    const slot = getOrCreateSlot('wand');
+    handleSlotQuaternion(slot, values);
+    if (slot.zeroEuler) sendOSC('/space/wand/0euler', [slot.zeroEuler.x, slot.zeroEuler.y, slot.zeroEuler.z]);
     return;
   }
-  // /space/wand/inertial — gyro + accel from x-IMU
-  // Values: [gx, gy, gz, ax, ay, az]  (deg/s, g)
+  // /space/wand/inertial → slot "wand" inertial
   if (address === '/space/wand/inertial' && values.length === 6) {
-    handleWandInertialOSC(values);
-    updateWand();
-    updateGestureMorph();  // Phase 4: drive seed morph from gyro (independent of wandConfig)
-    S._onGestureUpdate?.();  // exp: gesture extraction (no-op when ?exp is off)
+    const slot = getOrCreateSlot('wand');
+    handleSlotInertial(slot, values);
+    updateGestureMorph();
+    S._onGestureUpdate?.();
     return;
   }
 
@@ -500,8 +533,7 @@ export function handleOSC(rawAddress, values) {
       toggleNearestMode();
       break;
     case '/grain/kall':
-      S.grainKAllMode = !S.grainKAllMode;
-      updatePlaybackControls();
+      if (!S.nearestMode) { S.grainKAllMode = !S.grainKAllMode; updatePlaybackControls(); }
       break;
     case '/grain/kseq':
       S.grainKSeqMode = !S.grainKSeqMode;

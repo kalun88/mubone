@@ -798,6 +798,7 @@ export function resizeCanvas() {
 
 // ── Animation loop ────────────────────────────────────────────────────────────
 let _animLastAt = 0;
+let _prevSensorRawQ = null;   // previous frame's raw tared sensor quaternion
 export function animate() {
   if (!_coordEl) _coordEl = document.getElementById('coordinates');
   const _animNow = performance.now();
@@ -819,7 +820,28 @@ export function animate() {
     S.mouseInCanvas = true;
   }
 
-  // Camera rotation — only in 'pull' mode (mouse pull-from-center)
+  // ══ Camera rotation ═══════════════════════════════════════════════════════
+  // Three modes, all writing S.camQ [x,y,z,w]:
+  //
+  //   pull    — mouse offset from canvas centre (absolute, below)
+  //   surface — pointer-lock trackpad deltas, incremental world-yaw × local-pitch
+  //   sensor  — BNO085 frame-to-frame deltas, same incremental pattern
+  //
+  // DESIGN NOTE (gimbal-lock-free rotation):
+  // Surface and sensor modes both use INCREMENTAL rotation to avoid gimbal
+  // lock at the poles.  Each frame's small delta is decomposed into dYaw and
+  // dPitch (well-conditioned for small angles), then applied as:
+  //
+  //     camQ = qYaw(world-Y, dYaw)  ×  camQ  ×  qPitch(local-X, dPitch)
+  //
+  // Pre-multiplying yaw keeps it in world frame (no roll accumulation).
+  // Post-multiplying pitch keeps it in local frame (clean pole traversal).
+  // This pattern is shared by surface trackpad, sensor (roll-muted), and
+  // mobile device orientation.  DO NOT replace with absolute Euler-angle
+  // reconstruction — that reintroduces gimbal lock.
+  // ════════════════════════════════════════════════════════════════════════════
+
+  // Pull mode — mouse pull-from-center (absolute, small-angle)
   if (S.cameraMode === 'pull') {
     if (S.mouseInCanvas && !S.altLocked && !(S.isMobile && S.orientationActive)) {
       const dist = Math.sqrt(S.mouseX*S.mouseX + S.mouseY*S.mouseY);
@@ -847,61 +869,116 @@ export function animate() {
     }
   }
 
-  // ── Surface mode: pointer-lock deltas → sphere direct mapping ────────────
-  // S._surfaceInput is set by events.js (accumulated pointer-lock movementX/Y).
-  // { nx, ny } are virtual cursor coords in [-1, +1], persisted across lock cycles.
-  if (S.cameraMode === 'surface' && S._surfaceInput) {
-    let { nx, ny } = S._surfaceInput;
-    // Axis lock: freeze the locked component at the moment lock was engaged
-    if (S.axisLockAz) {
-      if (S._axisLockFrozenNx == null) S._axisLockFrozenNx = nx;
-      nx = S._axisLockFrozenNx;
-    } else { S._axisLockFrozenNx = null; }
-    if (S.axisLockEl) {
-      if (S._axisLockFrozenNy == null) S._axisLockFrozenNy = ny;
-      ny = S._axisLockFrozenNy;
-    } else { S._axisLockFrozenNy = null; }
-    // Map virtual position to lon/lat:
-    // nx: unbounded → continuous yaw (right = look right, wraps around)
-    // ny: -1..+1 → full 180° pitch (up = look up, clamped at poles)
-    const lon = nx * Math.PI;
-    const lat = -ny * Math.PI / 2;
-    // Convert lon/lat to a look-at quaternion
-    const qYaw   = _qFromAA(0, 1, 0, lon);
-    const qPitch = _qFromAA(1, 0, 0, -lat);
-    S.camQ = _qNorm(_qMul(qYaw, qPitch));
+  // ── Surface mode: incremental trackball rotation ─────────────────────────
+  // S._surfaceDelta is set by events.js (per-frame pointer-lock movementX/Y).
+  // Each frame's delta is applied as a local-frame rotation on camQ, then cleared.
+  // This avoids gimbal lock at the poles — straight trackpad lines trace great circles.
+  if (S.cameraMode === 'surface' && S._surfaceDelta) {
+    let { dx, dy } = S._surfaceDelta;
+    // Consume the delta
+    S._surfaceDelta.dx = 0;
+    S._surfaceDelta.dy = 0;
+    // Axis lock: zero the locked component
+    if (S.axisLockAz) dx = 0;
+    if (S.axisLockEl) dy = 0;
+    if (dx !== 0 || dy !== 0) {
+      // Yaw in world frame (pre-multiply around world Y) — prevents roll.
+      // Pitch in local frame (post-multiply around local X) — clean pole traversal.
+      const qYaw   = _qFromAA(0, 1, 0, dx * Math.PI);
+      const qPitch = _qFromAA(1, 0, 0, dy * Math.PI);
+      S.camQ = _qNorm(_qMul(qYaw, _qMul(S.camQ, qPitch)));
+    }
   }
 
   // ── BNO085 sensor override ─────────────────────────────────────────────────
-  // Sensor mode: sensor drives the camera so the monitor on stage shows your
-  // real-world facing direction. The visual rotates with your body.
-  if (S.cameraMode === 'sensor' && typeof S._getSensorCamQ === 'function') {
-    const sq = S._getSensorCamQ();
-    if (sq) {
-      if (S.axisLockAz || S.axisLockEl) {
-        // Decompose sensor quat into yaw (azimuth) and pitch (elevation)
-        // Forward vector from quaternion
-        const fwd = _qRotVec(sq, [0, 0, 1]);
-        let yaw   = Math.atan2(fwd[0], fwd[2]);
-        let pitch  = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
-        if (S.axisLockAz) {
-          if (S._axisLockFrozenYaw == null) S._axisLockFrozenYaw = yaw;
-          yaw = S._axisLockFrozenYaw;
-        } else { S._axisLockFrozenYaw = null; }
-        if (S.axisLockEl) {
-          if (S._axisLockFrozenPitch == null) S._axisLockFrozenPitch = pitch;
-          pitch = S._axisLockFrozenPitch;
-        } else { S._axisLockFrozenPitch = null; }
+  // Delta-based tracking: compute the change in raw sensor orientation since
+  // the last frame, decompose into small yaw/pitch deltas (always well-
+  // conditioned for small angles), and apply incrementally — same world-yaw ×
+  // local-pitch pattern as the trackpad.  This avoids gimbal lock entirely
+  // and allows continuous rotation through the poles.
+  //
+  // Falls back to the absolute (applyAxisMapQuat) path when the raw quaternion
+  // is unavailable (e.g. custom-only sensor routing).
+  if (S.cameraMode !== 'sensor') _prevSensorRawQ = null; // reset on mode exit
+  if (S.cameraMode === 'sensor') {
+    const signs = typeof S._getCursorSigns === 'function'
+      ? S._getCursorSigns() : { yaw: 1, pitch: 1, rollMuted: true };
+    const rawQ = typeof S._getSensorRawQ === 'function' ? S._getSensorRawQ() : null;
+
+    if (rawQ && signs.rollMuted) {
+      // ── Roll muted: delta-based yaw/pitch tracking (gimbal-lock-free) ────
+      if (!_prevSensorRawQ) {
+        // First frame: snap to absolute orientation via forward vector
+        const [qx, qy, qz, qw] = rawQ;
+        const fx = 1 - 2 * (qy * qy + qz * qz);
+        const fy = 2 * (qx * qy + qw * qz);
+        const fz = 2 * (qx * qz - qw * qy);
+        const yaw   = Math.atan2(fy, fx) * signs.yaw;
+        const pitch = Math.asin(Math.max(-1, Math.min(1, -fz))) * signs.pitch;
         const qY = _qFromAA(0, 1, 0, yaw);
         const qP = _qFromAA(1, 0, 0, pitch);
         S.camQ = _qNorm(_qMul(qY, qP));
       } else {
-        S._axisLockFrozenYaw = null;
-        S._axisLockFrozenPitch = null;
-        S.camQ = sq;
+        // Delta = prev⁻¹ · current (rotation in sensor-local frame)
+        const delta = _qNorm(_qMul(_qConj(_prevSensorRawQ), rawQ));
+        // Skip if delta is too large (sensor reconnect / tare)
+        if (delta[3] > 0.95) {
+          const dfx = 1 - 2 * (delta[1] * delta[1] + delta[2] * delta[2]);
+          const dfy = 2 * (delta[0] * delta[1] + delta[3] * delta[2]);
+          const dfz = 2 * (delta[0] * delta[2] - delta[3] * delta[1]);
+          let dYaw   = Math.atan2(dfy, dfx) * signs.yaw;
+          let dPitch = Math.asin(Math.max(-1, Math.min(1, -dfz))) * signs.pitch;
+          if (S.axisLockAz) dYaw   = 0;
+          if (S.axisLockEl) dPitch = 0;
+          if (dYaw !== 0 || dPitch !== 0) {
+            const qDY = _qFromAA(0, 1, 0, dYaw);
+            const qDP = _qFromAA(1, 0, 0, dPitch);
+            S.camQ = _qNorm(_qMul(qDY, _qMul(S.camQ, qDP)));
+          }
+        } else {
+          _prevSensorRawQ = null; // large jump — re-snap next frame
+        }
+      }
+      _prevSensorRawQ = [rawQ[0], rawQ[1], rawQ[2], rawQ[3]];
+
+    } else if (typeof S._getSensorCamQ === 'function') {
+      // ── Roll active (or no raw quat): absolute path via applyAxisMapQuat ──
+      // Full 3DOF quaternion including roll. Also handles custom-role sensors.
+      _prevSensorRawQ = null; // ensure delta re-inits if roll gets muted again
+      const sq = S._getSensorCamQ();
+      if (sq) {
+        if (S.axisLockAz || S.axisLockEl) {
+          const fwd = _qRotVec(sq, [0, 0, 1]);
+          let yaw   = Math.atan2(fwd[0], fwd[2]);
+          let pitch = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
+          if (S.axisLockAz) {
+            if (S._axisLockFrozenYaw == null) S._axisLockFrozenYaw = yaw;
+            yaw = S._axisLockFrozenYaw;
+          } else { S._axisLockFrozenYaw = null; }
+          if (S.axisLockEl) {
+            if (S._axisLockFrozenPitch == null) S._axisLockFrozenPitch = pitch;
+            pitch = S._axisLockFrozenPitch;
+          } else { S._axisLockFrozenPitch = null; }
+          const qY = _qFromAA(0, 1, 0, yaw);
+          const qP = _qFromAA(1, 0, 0, pitch);
+          S.camQ = _qNorm(_qMul(qY, qP));
+        } else {
+          S._axisLockFrozenYaw = null;
+          S._axisLockFrozenPitch = null;
+          S.camQ = sq;
+        }
       }
     }
   }
+
+  // ── Frame sensor — world rotation ──────────────────────────────────────────
+  // The frame-role sensor rotates the virtual sphere.  Only active in surface
+  // and sensor camera modes — pull mode is mouse-only, no IMU world rotation.
+  // Stored on S.frameQ; sphere.js applies it per-point in cameraTransform /
+  // getCursorLonLat / screenToLonLat.
+  S.frameQ = (S.cameraMode !== 'pull' && typeof S._getFrameQ === 'function')
+    ? S._getFrameQ()
+    : null;
 
   // Drop particles while painting
   if (S.isPainting && !S.altLocked) {
@@ -1001,6 +1078,7 @@ function _qMul(a, b) {
   return [a[3]*b[0]+a[0]*b[3]+a[1]*b[2]-a[2]*b[1], a[3]*b[1]-a[0]*b[2]+a[1]*b[3]+a[2]*b[0], a[3]*b[2]+a[0]*b[1]-a[1]*b[0]+a[2]*b[3], a[3]*b[3]-a[0]*b[0]-a[1]*b[1]-a[2]*b[2]];
 }
 function _qNorm(q) { const l=Math.sqrt(q[0]*q[0]+q[1]*q[1]+q[2]*q[2]+q[3]*q[3]); return [q[0]/l,q[1]/l,q[2]/l,q[3]/l]; }
+function _qConj(q) { return [-q[0],-q[1],-q[2],q[3]]; }
 function _qFromAA(ax, ay, az, angle) { const h=angle/2,s=Math.sin(h); return [ax*s,ay*s,az*s,Math.cos(h)]; }
 function _qRotVec(q, v) {
   const vq=[v[0],v[1],v[2],0], c=[-q[0],-q[1],-q[2],q[3]];

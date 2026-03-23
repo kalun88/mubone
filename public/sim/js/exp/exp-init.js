@@ -3,32 +3,11 @@
 // Only loaded when ?exp is in the URL.  Add new experiment imports here.
 // ============================================================================
 
-import { S, DEBUG } from '../state.js';
-
-// ── Module registry ─────────────────────────────────────────────────────────
-// Each experimental module exports an init() function.  Add imports below
-// and call them from initExp().  If a module fails, the rest still load.
-
-async function safeInit(name, initFn) {
-  try {
-    await initFn();
-    DEBUG && console.log(`[exp] ✓ ${name}`);
-  } catch (e) {
-    console.warn(`[exp] ✗ ${name}:`, e);
-  }
-}
+import { S } from '../state.js';
 
 export async function initExp() {
   // Mark experimental mode on state so other modules can check at runtime
   S.exp = true;
-
-  // ── Gesture extraction ──────────────────────────────────────────────────
-  const { initGesture } = await import('./gesture.js');
-  await safeInit('gesture', initGesture);
-
-  // ── Gesture visualization ───────────────────────────────────────────────
-  const { initGestureViz } = await import('./gesture-viz.js');
-  await safeInit('gesture-viz', initGestureViz);
 
   // Show a subtle indicator so you know exp mode is on
   const badge = document.createElement('span');
@@ -40,5 +19,5 @@ export async function initExp() {
   `;
   document.body.appendChild(badge);
 
-  console.log('[exp] experimental modules loaded');
+  console.log('[exp] experimental mode active');
 }

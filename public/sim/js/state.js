@@ -773,6 +773,8 @@ export const perf = {
   audioClockLast: 0,    // audioCtx.currentTime last check
   audioClockWall: 0,    // performance.now() at that check
   underruns:      0,    // times audio clock fell behind wall clock
+  kCount:         0,    // actual particles selected per grain tick (live k count)
+  kPool:          0,    // total candidates available before k cap
   lastResetAt:    0,
 };
 
@@ -841,6 +843,20 @@ export function perfTick() {
     perf._grainRateTs = now;
   }
 
+  // Always update particle world count + dynamic k max
+  const pCount = S.particles.length;
+  const kwcEl = document.getElementById('kWorldCount');
+  if (kwcEl) {
+    const txt = pCount > 0 ? `/${pCount}` : '';
+    if (kwcEl.textContent !== txt) kwcEl.textContent = txt;
+  }
+  // Dynamic k slider max = particle count (floor 1 so the slider is always usable)
+  const kSliderEl = document.getElementById('searchKSlider');
+  if (kSliderEl) {
+    const newMax = String(Math.max(1, pCount));
+    if (kSliderEl.max !== newMax) kSliderEl.max = newMax;
+  }
+
   if (!S.perfMonitorVisible) return;
 
   // Throttle DOM writes to 4Hz — readable without churning layout.
@@ -890,6 +906,24 @@ export function perfTick() {
     (perf.grainsPerSec / 200) * 100,
     `${perf.grainsPerSec}/s`,
     101, 101);  // never warn
+
+  // k count: selected / k-setting (pool available) — show "—" when idle
+  const kSetting = S.grainOverrides.k ?? gp().k;
+  let kLabel, kPct;
+  if (perf.kPool > 0) {
+    const poolStr = ` (${perf.kPool})`;
+    kLabel = S.grainKAllMode
+      ? `${perf.kCount}${poolStr}`
+      : `${perf.kCount} / ${kSetting}${poolStr}`;
+    // Bar fills against the k setting (not the pool) so a full bar = k limit reached
+    kPct = S.grainKAllMode
+      ? Math.min(100, perf.kCount * 2)
+      : (perf.kCount / Math.max(kSetting, 1)) * 100;
+  } else {
+    kLabel = '—';
+    kPct = 0;
+  }
+  setBar('pmKBar', 'pmKVal', kPct, kLabel, 101, 101);
 
   const infoEl = document.getElementById('pmInfo');
   if (infoEl) {
@@ -1098,11 +1132,8 @@ export const S = {
 
   // ── Gesture morph (Phase 4 — Improv Mode) ──────────────────────────────
   // Physical gesture drives seeder grain character along a smooth↔agitated axis.
-  morphHoldMode:    'momentum',  // 'momentum' = hold at last position, 'elastic' = drift to 0.5
-  morphElasticRate: 0.02,        // 0.0 = no recovery, 1.0 = instant snap back
   agitateThreshold: 80,          // deg/s — gyroMag above this pushes toward agitated
   smoothThreshold:  20,          // deg/s — gyroMag below this (with movement) pushes toward smooth
-  morphEnabled:     true,        // master enable for gesture morphing
 
   // ── Desktop morph (1D slider morph for HCI — no sensor) ────────────────
   // Morphs the nearest non-moving seed's grain params between two presets,

@@ -4,7 +4,7 @@
 // Two-part display:
 //   1. Phase plot — 2D trajectory of two gesture features over time, showing
 //      the *shape* and *history* of movement through feature space.
-//   2. Sparkline trails — compact time-series for all five features, so you
+//   2. Sparkline trails — compact time-series for all four features, so you
 //      can see each feature's temporal contour at a glance.
 //
 // Press G to toggle visibility.  Press X to cycle phase plot axis pairs.
@@ -20,7 +20,7 @@ let _visible = true;
 
 // ── Layout ──────────────────────────────────────────────────────────────────
 const W          = 280;
-const H          = 420;
+const H          = 395;
 const M          = 10;     // margin
 const PLOT_SIZE  = 180;    // phase plot square
 const PLOT_X     = (W - PLOT_SIZE) / 2;
@@ -38,20 +38,20 @@ const COL_DIM      = '#4a7a7a';
 const COL_TEXT     = '#7abcbc';
 
 const FEATURES = [
-  { key: 'smoothness',       label: 'smooth',  color: '#7abcbc' },  // teal
-  { key: 'effort',           label: 'effort',  color: '#e8a030' },  // amber
-  { key: 'directness',       label: 'direct',  color: '#a0ff6b' },  // green
-  { key: 'periodicity',      label: 'period',  color: '#ce93d8' },  // violet
-  { key: 'accumulatedEnergy', label: 'energy', color: '#ff6b6b' },  // coral
+  { key: 'intensity',         label: 'intens',  color: '#7abcbc' },  // teal
+  { key: 'smoothness',        label: 'smooth',  color: '#a0ff6b' },  // green
+  { key: 'periodicity',       label: 'period',  color: '#ce93d8' },  // violet
+  { key: 'accumulatedEnergy', label: 'energy',  color: '#ff6b6b' },  // coral
 ];
 
 // Phase plot axis pair presets — cycle with X key
+// Indices: 0=intensity, 1=smooth, 2=period, 3=energy
 const AXIS_PAIRS = [
-  { x: 0, y: 1, label: 'smooth × effort' },
-  { x: 1, y: 3, label: 'effort × period' },
-  { x: 0, y: 2, label: 'smooth × direct' },
-  { x: 2, y: 3, label: 'direct × period' },
-  { x: 1, y: 4, label: 'effort × energy' },
+  { x: 0, y: 1, label: 'intens × smooth' },
+  { x: 0, y: 2, label: 'intens × period' },
+  { x: 0, y: 3, label: 'intens × energy' },
+  { x: 1, y: 2, label: 'smooth × period' },
+  { x: 2, y: 3, label: 'period × energy' },
 ];
 let _axisPairIdx = 0;
 
@@ -70,7 +70,7 @@ const _phaseTrailY = new Float32Array(TRAIL_LEN);
 
 // ── Smoothed display values ─────────────────────────────────────────────────
 const _disp = {};
-for (const f of FEATURES) _disp[f.key] = f.key === 'directness' ? 1 : 0;
+for (const f of FEATURES) _disp[f.key] = 0;
 const SLEW = 0.15;
 
 function slew(key, target) {
@@ -264,7 +264,8 @@ function draw() {
     M, sy
   );
   if (g.periodicity > 0.2) {
-    ctx.fillStyle = FEATURES[3].color;
+    const perioFeature = FEATURES.find(f => f.key === 'periodicity');
+    ctx.fillStyle = perioFeature ? perioFeature.color : '#ce93d8';
     ctx.fillText(`  ${g.periodicityHz.toFixed(1)}Hz`, M + 188, sy);
   }
 

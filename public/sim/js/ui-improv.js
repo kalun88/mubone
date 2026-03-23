@@ -118,33 +118,6 @@ export function initImprovUI() {
   monSlider?.addEventListener('input', () => applyMonitor(parseFloat(monSlider.value)));
   applyMonitor(S.monitorGainValue ?? 0.0);
 
-  // ── Morph enable (on / off) ─────────────────────────────────────────────
-  const morphSeg = document.getElementById('improvMorphSeg');
-
-  function applyMorph(enabled) {
-    S.morphEnabled = enabled;
-    setSegActive(morphSeg, b => (b.dataset.morph === 'on') === enabled);
-  }
-
-  morphSeg?.querySelectorAll('[data-morph]').forEach(btn => {
-    btn.addEventListener('click', () => applyMorph(btn.dataset.morph === 'on'));
-  });
-
-  applyMorph(S.morphEnabled ?? true);
-
-  // ── Morph hold mode (momentum / elastic) ───────────────────────────────
-  const holdSeg = document.getElementById('improvHoldSeg');
-
-  function applyHold(mode) {
-    S.morphHoldMode = mode;
-    setSegActive(holdSeg, b => b.dataset.hold === mode);
-  }
-
-  holdSeg?.querySelectorAll('[data-hold]').forEach(btn => {
-    btn.addEventListener('click', () => applyHold(btn.dataset.hold));
-  });
-
-  applyHold(S.morphHoldMode ?? 'momentum');
 
   // ── Seed plant / uproot / clear all ─────────────────────────────────────
   const plantBtn  = document.getElementById('seedPlantBtn');
@@ -236,8 +209,6 @@ export function initImprovUI() {
     if (monNum)      monNum.value      = S.scanMuted ? '(muted)' : pct(S.monitorGainValue ?? 0);
     applySeedMode(S.seedMode ?? 'all');
     applyTether(S.seedTether ?? false);
-    applyMorph(S.morphEnabled ?? true);
-    applyHold(S.morphHoldMode ?? 'momentum');
     // Sync loop mode toggle
     const lmSeg = document.getElementById('seedLoopModeSeg');
     if (lmSeg) lmSeg.querySelectorAll('[data-loopmode]').forEach(b =>

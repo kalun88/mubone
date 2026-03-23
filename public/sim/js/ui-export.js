@@ -26,6 +26,7 @@ const STATIC_KEYS = [
   'mubone_midi_map',
   'mubone_user_presets',
   'mubone-learn-mode',
+  'mubone_sensor_cal',
 ];
 
 // ── WAV encoding / decoding helpers ─────────────────────────────────────────

@@ -10,32 +10,152 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 24.0, 285.0, 1642.0, 972.0 ],
+		"rect" : [ 67.0, 882.0, 1642.0, 972.0 ],
 		"openrect" : [ 0.0, 0.0, 2040.6796875, 1328.125 ],
 		"default_fontsize" : 11.0,
 		"gridsize" : [ 15.0, 15.0 ],
 		"boxes" : [ 			{
 				"box" : 				{
-					"id" : "obj-18",
-					"maxclass" : "newobj",
-					"numinlets" : 1,
+					"id" : "obj-36",
+					"linecount" : 6,
+					"maxclass" : "message",
+					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 779.129999999999995, 35.909999999999997, 42.0, 21.0 ],
-					"text" : "x-imu3"
+					"patching_rect" : [ 914.0, 30.0, 50.0, 82.0 ],
+					"text" : "-0.0942 -0.2344 -0.0425 -0.2571 -0.0275 0.968"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-32",
+					"linecount" : 4,
+					"maxclass" : "message",
+					"numinlets" : 2,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 793.0, 61.0, 50.0, 58.0 ],
+					"text" : "-0.0018 0.1304 -0.103 0.9862"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-28",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 0,
+					"patching_rect" : [ 834.0, 172.0, 59.0, 21.0 ],
+					"text" : "s osc-hub"
 				}
 
 			}
 , 			{
 				"box" : 				{
 					"id" : "obj-17",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 834.0, 128.0, 160.0, 21.0 ],
+					"text" : "prepend /sensor/wifiimu/inertial"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-24",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 0,
+					"patching_rect" : [ 1097.0, 329.0, 70.0, 21.0 ],
+					"text" : "s osc-hub"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-27",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 0,
+					"patching_rect" : [ 864.0, 321.0, 70.0, 21.0 ],
+					"text" : "s osc-hub"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-21",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 1105.0, 296.0, 180.0, 21.0 ],
+					"text" : "prepend /sensor/ximu-wand/inertial"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-22",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 882.0, 291.0, 199.0, 21.0 ],
+					"text" : "prepend /sensor/ximu-wand/quaternion"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-20",
+					"linecount" : 6,
+					"maxclass" : "message",
+					"numinlets" : 2,
+					"numoutlets" : 1,
+					"outlettype" : [ "" ],
+					"patching_rect" : [ 1111.0, 131.5, 51.0, 82.0 ],
+					"text" : "0.3556 0.1297 0.3807 -0.4759 0.0527 0.8775"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-16",
 					"linecount" : 4,
 					"maxclass" : "message",
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 736.0, 127.0, 50.0, 58.0 ],
-					"text" : "-0.0057 -0.0056 0.0307 -0.9996"
+					"patching_rect" : [ 992.0, 131.5, 58.0, 58.0 ],
+					"text" : "-0.2274 0.0959 0.9297 0.2737"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-19",
+					"linecount" : 6,
+					"maxclass" : "comment",
+					"numinlets" : 1,
+					"numoutlets" : 0,
+					"patching_rect" : [ 1245.0, 310.5, 256.0, 93.0 ],
+					"text" : "naming convention\n\n/sensor/{sensorname}/quaternion\n\n/sensor/{sensorname}/inertial\n\n"
+				}
+
+			}
+, 			{
+				"box" : 				{
+					"id" : "obj-18",
+					"maxclass" : "newobj",
+					"numinlets" : 1,
+					"numoutlets" : 2,
+					"outlettype" : [ "", "" ],
+					"patching_rect" : [ 779.129999999999995, 35.909999999999997, 42.0, 21.0 ],
+					"text" : "x-imu3"
 				}
 
 			}
@@ -80,17 +200,6 @@
 					"numoutlets" : 0,
 					"patching_rect" : [ 1626.0, 21.0, 71.0, 19.0 ],
 					"text" : "FRAME"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-148",
-					"maxclass" : "comment",
-					"numinlets" : 1,
-					"numoutlets" : 0,
-					"patching_rect" : [ 1076.0, 21.0, 70.0, 19.0 ],
-					"text" : "CURSOR"
 				}
 
 			}
@@ -377,8 +486,8 @@
 					"numinlets" : 2,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 1490.0, 123.0, 51.0, 82.0 ],
-					"text" : "0.1962 0.0356 -0.0631 0.0656 0.1969 0.9787"
+					"patching_rect" : [ 1490.0, 88.5, 51.0, 82.0 ],
+					"text" : "0.1202 0.0954 0.0853 -0.4738 0.0086 0.8828"
 				}
 
 			}
@@ -389,8 +498,8 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 1413.0, 212.0, 166.0, 21.0 ],
-					"text" : "prepend /space/wand/inertial"
+					"patching_rect" : [ 1413.0, 212.0, 174.0, 21.0 ],
+					"text" : "prepend /sensor/ximu-curs/inertial"
 				}
 
 			}
@@ -403,17 +512,6 @@
 					"outlettype" : [ "", "" ],
 					"patching_rect" : [ 17.0, 429.0, 187.0, 21.0 ],
 					"text" : "OSC-route /space/cursor2/0euler"
-				}
-
-			}
-, 			{
-				"box" : 				{
-					"id" : "obj-131",
-					"maxclass" : "comment",
-					"numinlets" : 1,
-					"numoutlets" : 0,
-					"patching_rect" : [ 1287.0, 19.0, 52.0, 19.0 ],
-					"text" : "WAND"
 				}
 
 			}
@@ -435,8 +533,8 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 1241.0, 207.0, 124.0, 21.0 ],
-					"text" : "prepend /space/wand"
+					"patching_rect" : [ 1190.0, 207.0, 194.0, 21.0 ],
+					"text" : "prepend /sensor/ximu-curs/quaternion"
 				}
 
 			}
@@ -449,7 +547,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 1265.0, 135.0, 58.0, 58.0 ],
-					"text" : "0.0261 -0.1028 -0.8393 0.5335"
+					"text" : "0.2283 -0.0841 -0.9166 -0.3177"
 				}
 
 			}
@@ -484,7 +582,7 @@
 					"maxclass" : "newobj",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 1078.0, 134.0, 59.0, 21.0 ],
+					"patching_rect" : [ 751.0, 172.0, 59.0, 21.0 ],
 					"text" : "s osc-hub"
 				}
 
@@ -519,8 +617,8 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 1078.0, 98.0, 128.0, 21.0 ],
-					"text" : "prepend /space/cursor"
+					"patching_rect" : [ 751.0, 114.0, 180.0, 21.0 ],
+					"text" : "prepend /sensor/wifiimu/quaternion"
 				}
 
 			}
@@ -1144,7 +1242,38 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-17", 1 ],
+					"destination" : [ "obj-28", 0 ],
+					"source" : [ "obj-17", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-17", 0 ],
+					"order" : 1,
+					"source" : [ "obj-18", 1 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-32", 1 ],
+					"order" : 0,
+					"source" : [ "obj-18", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-36", 1 ],
+					"order" : 0,
+					"source" : [ "obj-18", 1 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-74", 0 ],
 					"order" : 1,
 					"source" : [ "obj-18", 0 ]
 				}
@@ -1152,9 +1281,15 @@
 			}
 , 			{
 				"patchline" : 				{
-					"destination" : [ "obj-74", 0 ],
-					"order" : 0,
-					"source" : [ "obj-18", 0 ]
+					"destination" : [ "obj-24", 0 ],
+					"source" : [ "obj-21", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-27", 0 ],
+					"source" : [ "obj-22", 0 ]
 				}
 
 			}
@@ -1353,6 +1488,38 @@
 			}
 , 			{
 				"patchline" : 				{
+					"destination" : [ "obj-16", 1 ],
+					"order" : 0,
+					"source" : [ "obj-72", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-20", 1 ],
+					"order" : 0,
+					"source" : [ "obj-72", 1 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-21", 0 ],
+					"order" : 1,
+					"source" : [ "obj-72", 1 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
+					"destination" : [ "obj-22", 0 ],
+					"order" : 1,
+					"source" : [ "obj-72", 0 ]
+				}
+
+			}
+, 			{
+				"patchline" : 				{
 					"destination" : [ "obj-92", 0 ],
 					"source" : [ "obj-74", 0 ]
 				}
@@ -1401,7 +1568,7 @@
 
 			}
  ],
-		"originid" : "pat-370",
+		"originid" : "pat-126",
 		"dependency_cache" : [ 			{
 				"name" : "OSC-route.mxo",
 				"type" : "iLaX"
@@ -1412,35 +1579,35 @@
 			}
 , 			{
 				"name" : "bno085.maxpat",
-				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
+				"bootpath" : "~/Documents/GitHub/muboneapp/max",
 				"patcherrelativepath" : ".",
 				"type" : "JSON",
 				"implicit" : 1
 			}
 , 			{
 				"name" : "bridge.js",
-				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
+				"bootpath" : "~/Documents/GitHub/muboneapp/max",
 				"patcherrelativepath" : ".",
 				"type" : "TEXT",
 				"implicit" : 1
 			}
 , 			{
 				"name" : "mumath.colvec.maxpat",
-				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
+				"bootpath" : "~/Documents/GitHub/muboneapp/max",
 				"patcherrelativepath" : ".",
 				"type" : "JSON",
 				"implicit" : 1
 			}
 , 			{
 				"name" : "mumath.matranspose.maxpat",
-				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
+				"bootpath" : "~/Documents/GitHub/muboneapp/max",
 				"patcherrelativepath" : ".",
 				"type" : "JSON",
 				"implicit" : 1
 			}
 , 			{
 				"name" : "mumath.vrz.maxpat",
-				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
+				"bootpath" : "~/Documents/GitHub/muboneapp/max",
 				"patcherrelativepath" : ".",
 				"type" : "JSON",
 				"implicit" : 1
@@ -1459,14 +1626,14 @@
 			}
 , 			{
 				"name" : "x-imu3.maxpat",
-				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
+				"bootpath" : "~/Documents/GitHub/muboneapp/max",
 				"patcherrelativepath" : ".",
 				"type" : "JSON",
 				"implicit" : 1
 			}
 , 			{
 				"name" : "x-imu3serial.maxpat",
-				"bootpath" : "~/Documents/mubone-sim/mubone-web-private/max",
+				"bootpath" : "~/Documents/GitHub/muboneapp/max",
 				"patcherrelativepath" : ".",
 				"type" : "JSON",
 				"implicit" : 1

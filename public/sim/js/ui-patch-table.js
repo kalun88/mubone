@@ -43,10 +43,10 @@ export const PARAM_REGISTRY = [
     get: () => S.grainOverrides.k ?? S.grainParams.k,
     set: v  => { if (typeof S.setSearchK === 'function') S.setSearchK(v); else S.grainOverrides.k = v; },
     fmt: v  => String(v),
-    parse: s => { const n = parseInt(s); return isNaN(n) ? null : Math.max(1, Math.min(20, n)); } },
+    parse: s => { const n = parseInt(s); return isNaN(n) ? null : Math.max(1, Math.min(Math.max(1, S.particles.length), n)); } },
   { key: 'grainKAllMode',  label: 'k-all',            group: 'search', type: 'boolean',
     get: () => S.grainKAllMode,
-    set: v  => { S.grainKAllMode = v; },
+    set: v  => { if (S.nearestMode) return; S.grainKAllMode = v; },
     fmt: v  => v ? 'on' : 'off',
     parse: s => parseBool(s) },
   { key: 'grainKSeqMode',  label: 'k-seq',            group: 'search', type: 'boolean',
@@ -266,17 +266,6 @@ export const PARAM_REGISTRY = [
     fmt: v  => v,
     parse: s => ['pingpong', 'forward'].includes(s.trim()) ? s.trim() : null },
 
-  // ── Morph ─────────────────────────────────────────────────────────────────
-  { key: 'morphEnabled',  label: 'morph',       group: 'seeder', type: 'boolean',
-    get: () => S.morphEnabled,
-    set: v  => { S.morphEnabled = v; },
-    fmt: v  => v ? 'on' : 'off',
-    parse: s => parseBool(s) },
-  { key: 'morphHoldMode', label: 'morph hold',  group: 'seeder', type: 'enum', options: ['momentum', 'elastic'],
-    get: () => S.morphHoldMode,
-    set: v  => { S.morphHoldMode = v; },
-    fmt: v  => v,
-    parse: s => ['momentum', 'elastic'].includes(s.trim()) ? s.trim() : null },
 ];
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

@@ -1174,11 +1174,6 @@ export function saveAllDefaults() {
     ts: Date.now(),
   };
 
-  // Wand config (imported via S._wandConfig ref if available)
-  if (S._wandConfig) {
-    defaults.wandConfig = JSON.parse(JSON.stringify(S._wandConfig));
-  }
-
   try {
     const json = JSON.stringify(defaults);
     localStorage.setItem(LS_AUDIO_DEFAULTS, json);
@@ -1218,7 +1213,6 @@ function _buildSettingsSnapshot() {
     mixdownHouseGainValue: S.mixdownHouseGainValue ?? 1.0,
     activePresetIndex: S.activePresetIndex ?? FACTORY_PRESET_START,
   };
-  if (S._wandConfig) snap.wandConfig = S._wandConfig;
   if (S.sensorCal)   snap.sensorCal  = S.sensorCal;
   if (S.sensor2Cal)  snap.sensor2Cal = S.sensor2Cal;
   if (S.wandCal)     snap.wandCal    = S.wandCal;
@@ -1310,9 +1304,6 @@ export function loadAudioDefaults() {
     if (d.sensorCal?.axisMap)  Object.assign(S.sensorCal.axisMap,  d.sensorCal.axisMap);
     if (d.sensor2Cal?.axisMap) Object.assign(S.sensor2Cal.axisMap, d.sensor2Cal.axisMap);
     if (d.wandCal?.axisMap)    Object.assign(S.wandCal.axisMap,    d.wandCal.axisMap);
-
-    // Wand config — stash on S for ui-wand.js to pick up at init
-    if (d.wandConfig) S._savedWandConfig = d.wandConfig;
 
     // Seed settings (with backward compat for old names)
     if (typeof d.seedMode === 'string')        S.seedMode        = d.seedMode;

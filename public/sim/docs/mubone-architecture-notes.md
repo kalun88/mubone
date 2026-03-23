@@ -83,6 +83,26 @@ const [cx, cy, cz] = S.spatialMode === 'physical'
 
 ---
 
+## Camera Rotation (gimbal-lock-free)
+
+`S.camQ` is a unit quaternion `[x, y, z, w]` that orients the camera.  Three modes write it:
+
+**Pull mode** — small absolute yaw/pitch from mouse offset.  No pole issues (small angles only).
+
+**Surface mode** (trackpad, events.js + renderer.js) — pointer-lock deltas accumulate per frame in `S._surfaceDelta`.  The renderer consumes each frame's `{dx, dy}`, converts to small angle rotations, and applies:
+
+    camQ = qYaw(world-Y, dx·π) × camQ × qPitch(local-X, dy·π)
+
+Pre-multiplying yaw keeps the vertical axis world-fixed (no roll).  Post-multiplying pitch keeps it local (clean pole traversal).
+
+**Sensor mode** (BNO085, renderer.js + sensor-registry.js) — when roll is muted (the default for cursor sensors), the renderer computes the delta between the current and previous raw tared quaternion: `delta = prev⁻¹ × current`.  The delta's forward vector `[1,0,0]` is decomposed into `dYaw = atan2(fy, fx)` and `dPitch = asin(−fz)`, then applied with the same world-yaw × local-pitch pattern.  Frame-to-frame deltas are always small, so the decomposition is well-conditioned (no gimbal lock).  When roll is *not* muted, the full 3DOF sensor quaternion from `getSensorCamQ()` is passed through directly.
+
+**Why not absolute Euler reconstruction?**  Decomposing a quaternion into yaw/pitch Euler angles and rebuilding from those fails at the poles: `asin` clamps pitch to ±90° (view bounces back), `atan2` for yaw becomes singular (view spins).  The incremental delta approach avoids both because it only decomposes *small* rotations.
+
+Key files: `renderer.js` (the `animate()` camera rotation section), `events.js` (`setupEvents()` surface delta accumulation), `sensor-registry.js` (`applyAxisMapQuat`, `getSensorRawCursorQ`, `getCursorAxisSigns`).
+
+---
+
 ## Multi-Channel Spatial Routing
 
 Grains are routed to N output channels using 2D VBAP (Vector Base Amplitude Panning):

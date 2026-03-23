@@ -1,0 +1,1392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>mubone — gesture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    background: #0a0f0f;
+    width: 100%; height: 100%;
+    overflow: hidden;
+    font-family: monospace;
+    color: #7abcbc;
+    user-select: none;
+  }
+  #status {
+    position: fixed; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 12px; color: #4a7a7a;
+    text-align: center;
+    line-height: 1.6;
+  }
+  #status.hidden { display: none; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<div id="status">waiting for parent window…<br><span style="font-size:10px;opacity:0.5">open this from mubone ?exp mode</span></div>
+<canvas id="vizCanvas"></canvas>
+
+<script>
+// ============================================================================
+// gesture-window.js — Standalone gesture visualization in a popup window.
+//
+// Connects to parent via BroadcastChannel (or window.opener fallback).
+// Writes to S.gestureCondition to tune per-feature conditioning (smooth/deadZone/curve).
+// Writes to S.gestureJoy for radial joystick output (x, y, dist, angle).
+//
+// Panels:
+//   1. Radial morph joystick / phase plot (top-left, V to toggle)
+//   2. Radar triangle — smooth, period, energy (top-right)
+//   3. Gyro XYZ scope — raw oscilloscope traces of gyro axes (middle)
+//   4. Sparkline trails + smoothing sliders (bottom)
+//   5. Movement quality label (footer)
+//
+// Keys: X = cycle phase plot axes
+// Mouse: click/drag the smoothing bar next to each sparkline
+// ============================================================================
+
+const canvas  = document.getElementById('vizCanvas');
+const ctx     = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+
+// ── Connection to parent via BroadcastChannel ────────────────────────────────
+// The parent (exp-init.js) broadcasts state at ~30fps on 'mubone-gesture'.
+// We maintain a local proxy S object updated from those messages.
+// Writes (conditioning, joystick, cal) are sent back via the same channel.
+// Falls back to window.opener if BroadcastChannel isn't available.
+
+// Local proxy state — looks like S to the rest of this file
+const S = {
+  gesture: null,
+  gestureCondition: null,
+  gestureCal: null,
+  gestureJoy: { x: 0, y: 0, dist: 0, angle: 0 },
+  _resetCal: null,
+  _startTimedCal: null,
+};
+
+let _connected = false;
+let _channel = null;
+let _useChannel = false;  // true once we receive a state-update via channel
+let _lastWandData = null; // wand inertial data from channel broadcasts
+
+// ── BroadcastChannel: primary connection method ─────────────────────────────
+try {
+  _channel = new BroadcastChannel('mubone-gesture');
+
+  _channel.onmessage = (e) => {
+    const msg = e.data;
+    if (!msg || msg.type !== 'state-update') return;
+
+    // Update local proxy from parent's broadcast
+    S.gesture = msg.gesture;
+    S.gestureCal = msg.gestureCal;
+    if (msg.wand) _lastWandData = msg.wand;
+
+    // Merge gestureCondition — keep local values if user just changed them,
+    // but accept parent's values for keys we haven't touched
+    if (msg.gestureCondition) {
+      if (!S.gestureCondition) {
+        S.gestureCondition = msg.gestureCondition;
+      } else {
+        // Parent sends authoritative structure; we only override locally-changed params
+        for (const key of Object.keys(msg.gestureCondition)) {
+          if (!S.gestureCondition[key]) {
+            S.gestureCondition[key] = msg.gestureCondition[key];
+          }
+        }
+      }
+    }
+
+    if (!_connected) {
+      _connected = true;
+      _useChannel = true;
+      statusEl.classList.add('hidden');
+      console.log('[gesture-window] connected via BroadcastChannel');
+    }
+  };
+
+  // Tell parent we're ready
+  _channel.postMessage({ type: 'gesture-window-ready' });
+  // Retry in case parent hasn't set up listener yet
+  setTimeout(() => _channel.postMessage({ type: 'gesture-window-ready' }), 500);
+  setTimeout(() => _channel.postMessage({ type: 'gesture-window-ready' }), 1500);
+} catch (e) {
+  console.warn('[gesture-window] BroadcastChannel not available:', e);
+}
+
+// ── Fallback: window.opener (legacy) ────────────────────────────────────────
+let _connectAttempts = 0;
+const connectInterval = setInterval(() => {
+  if (_connected) { clearInterval(connectInterval); return; }
+  _connectAttempts++;
+  try {
+    const parentS = (window._mubone_S) || (window.opener && window.opener._S);
+    if (parentS && parentS.gesture) {
+      // Direct reference mode — replace proxy with live object
+      Object.assign(S, parentS);
+      // Make S properties point to the real parent objects
+      S.gesture = parentS.gesture;
+      S.gestureCondition = parentS.gestureCondition;
+      S.gestureCal = parentS.gestureCal;
+      S.gestureJoy = parentS.gestureJoy;
+      S._resetCal = parentS._resetCal;
+      S._startTimedCal = parentS._startTimedCal;
+      _connected = true;
+      statusEl.classList.add('hidden');
+      clearInterval(connectInterval);
+      console.log('[gesture-window] connected via window reference');
+    }
+  } catch (e) { /* cross-origin */ }
+  if (_connectAttempts > 30) {
+    statusEl.innerHTML = 'could not connect to parent<br>' +
+      '<span style="font-size:10px;opacity:0.5">make sure mubone is open with ?exp flag</span>';
+    clearInterval(connectInterval);
+  }
+}, 200);
+
+// ── Send changes back to parent via channel ─────────────────────────────────
+function sendConditionUpdate(featureKey) {
+  if (!_useChannel || !_channel) return;
+  const cond = S.gestureCondition?.[featureKey];
+  if (!cond) return;
+  _channel.postMessage({ type: 'condition-update', key: featureKey, values: { ...cond } });
+}
+
+function sendJoyUpdate() {
+  if (!_useChannel || !_channel) return;
+  _channel.postMessage({
+    type: 'joy-update',
+    x: S.gestureJoy.x, y: S.gestureJoy.y,
+    dist: S.gestureJoy.dist, angle: S.gestureJoy.angle,
+  });
+}
+
+function sendCalUpdate(action, value) {
+  if (!_useChannel || !_channel) return;
+  _channel.postMessage({ type: 'cal-update', action, value });
+}
+
+// ── Colors ───────────────────────────────────────────────────────────────────
+
+const COL_BG       = '#0a0f0f';
+const COL_GRID     = 'rgba(122, 188, 188, 0.08)';
+const COL_AXIS     = 'rgba(122, 188, 188, 0.25)';
+const COL_DIM      = '#4a7a7a';
+const COL_TEXT     = '#7abcbc';
+
+const FEATURES = [
+  { key: 'smoothness',        rawKey: 'rawSmoothness',        label: 'rough',   color: '#7abcbc' },
+  { key: 'periodicity',       rawKey: 'rawPeriodicity',       label: 'period',  color: '#ce93d8' },
+  { key: 'accumulatedEnergy', rawKey: 'rawAccumulatedEnergy', label: 'energy',  color: '#ff6b6b' },
+];
+
+const GYRO_COLORS = ['#7abcbc', '#e8a030', '#ce93d8'];
+const GYRO_LABELS = ['gx', 'gy', 'gz'];
+
+// Phase plot axis pair presets — cycle with X key
+// Indices into FEATURES: 0=smooth, 1=period, 2=energy
+const AXIS_PAIRS = [
+  { x: 0, y: 1, label: 'rough × period' },
+  { x: 0, y: 2, label: 'rough × energy' },
+  { x: 1, y: 2, label: 'period × energy' },
+];
+let axisPairIdx = 0;
+
+// ── Radial morph controller (2D joystick from roll + pitch gyro) ─────────────
+// X = roll (wrist twist), Y = pitch (wave/nod).  Simple 2D — no projection.
+// Gyro pushes the dot like a joystick; friction holds, spring returns to center.
+// Toggle between radial view and phase plot with V key.
+
+let showRadial = true;
+
+// Remap raw gyro [gx, gy, gz] to semantic [roll, pitch, yaw] using wandCal.axisMap.
+function remapGyroToSemantic(gx, gy, gz) {
+  const cal = S?.wandCal?.axisMap;
+  if (!cal) return { roll: gx, pitch: gy, yaw: gz };
+  const raw = { x: gx, y: gy, z: gz };
+  let roll = 0, pitch = 0, yaw = 0;
+  for (const phys of ['x', 'y', 'z']) {
+    const { viz, sign, mute } = cal[phys];
+    if (mute) continue;
+    if (viz === 'roll')  roll  += sign * raw[phys];
+    if (viz === 'pitch') pitch += sign * raw[phys];
+    if (viz === 'yaw')   yaw   += sign * raw[phys];
+  }
+  return { roll, pitch, yaw };
+}
+
+// Joystick physics
+let joyInertia = 0.5;  // 0 = responsive, 1 = heavy (slider)
+const joySliderRect = { x: 0, y: 0, w: 0, h: 0 };
+let draggingJoySlider = false;
+
+let joyX = 0, joyY = 0;       // position (−maxR to +maxR)
+let joyVX = 0, joyVY = 0;     // velocity
+
+const JOY_PUSH_RATE  = 0.0008;
+const JOY_FRICTION   = 0.90;
+const JOY_RETURN     = 0.006;
+
+// Draggable circle range — controls how much gyro to reach the boundary.
+// Bigger = more headroom, smaller = hits wall faster.
+// dR_base * joyMaxRadius = visual circle radius.
+let joyMaxRadius = 2.5;
+const JOY_DEAD_ZONE = 0.08;    // center dead zone — small drift ignored
+const JOY_RADIUS_MIN = 0.5;
+const JOY_RADIUS_MAX = 5.0;
+
+// Circle drag state
+let draggingCircle = false;
+let dragCircleStartDist = 0;
+let dragCircleStartMaxR = 0;
+const radialGeom = { cx: 0, cy: 0, r: 0 };  // updated each draw frame
+
+// Trail for the radial view
+const JOY_TRAIL_LEN = 90;
+const joyTrail = [];  // [{x, y}]
+
+// ── History buffers ──────────────────────────────────────────────────────────
+
+const TRAIL_LEN = 300;
+
+// Feature trails (smoothed output)
+const trails = {};
+for (const f of FEATURES) trails[f.key] = new Float32Array(TRAIL_LEN);
+
+// Raw trails (pre-smoothing, shown as faint ghost)
+const rawTrails = {};
+for (const f of FEATURES) rawTrails[f.key] = new Float32Array(TRAIL_LEN);
+
+let trailIdx = 0;
+
+// Phase plot trail
+const phaseTrailX = new Float32Array(TRAIL_LEN);
+const phaseTrailY = new Float32Array(TRAIL_LEN);
+
+// Gyro XYZ scope history
+const gyroHistory = [
+  new Float32Array(TRAIL_LEN),
+  new Float32Array(TRAIL_LEN),
+  new Float32Array(TRAIL_LEN),
+];
+const GYRO_RANGE = 300;
+
+// ── Display values (light display-side slew just to avoid aliasing) ──────────
+
+const disp = {};
+const dispRaw = {};
+for (const f of FEATURES) {
+  disp[f.key] = 0;
+  dispRaw[f.key] = 0;
+}
+const DISP_SLEW = 0.35;  // light — the real smoothing is in gesture.js now
+
+function slew(key, target) {
+  disp[key] += (target - disp[key]) * DISP_SLEW;
+  return disp[key];
+}
+
+function slewRaw(key, target) {
+  dispRaw[key] += (target - dispRaw[key]) * DISP_SLEW;
+  return dispRaw[key];
+}
+
+function normalizeFeature(key, raw) {
+  // All features are now 0–1 after conditioning in gesture.js
+  return Math.max(0, Math.min(1, raw));
+}
+
+// ── Smoothing slider interaction ─────────────────────────────────────────────
+// Each feature gets a small horizontal slider bar drawn next to its label.
+// Click/drag sets S.gestureCondition[key].smooth = 0..1.
+
+const SLIDER_W = 50;
+const SLIDER_H = 10;
+let draggingSlider = null;  // index into FEATURES or null
+
+// Hit-test regions updated each frame
+const sliderRects = [];  // [{x, y, w, h, featureIdx}]
+const condRects   = [];  // [{x, y, w, h, featureIdx, param}] — deadZone / curve buttons
+const calBtnRects = [];  // [{x, y, w, h, action, value?}]
+
+const TIMED_DURATIONS = [5, 10, 15, 20, 30];
+
+canvas.addEventListener('mousedown', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left);
+  const my = (e.clientY - rect.top);
+
+  // Check calibration buttons first
+  for (const btn of calBtnRects) {
+    if (mx >= btn.x && mx <= btn.x + btn.w && my >= btn.y && my <= btn.y + btn.h) {
+      handleCalButton(btn);
+      return;
+    }
+  }
+
+  // Check smoothing sliders
+  for (const sr of sliderRects) {
+    if (mx >= sr.x && mx <= sr.x + sr.w && my >= sr.y - 4 && my <= sr.y + sr.h + 4) {
+      draggingSlider = sr.featureIdx;
+      setSliderValue(sr, mx);
+      return;
+    }
+  }
+
+  // Check conditioning buttons (dead zone / curve)
+  for (const cr of condRects) {
+    if (mx >= cr.x && mx <= cr.x + cr.w && my >= cr.y && my <= cr.y + cr.h) {
+      handleCondClick(cr);
+      return;
+    }
+  }
+
+  // Radial: circle edge drag (resize range) or inertia slider
+  if (showRadial) {
+    // Circle edge drag — grab within ±15px of boundary to resize
+    const cdx = mx - radialGeom.cx;
+    const cdy = my - radialGeom.cy;
+    const dist = Math.sqrt(cdx * cdx + cdy * cdy);
+    if (Math.abs(dist - radialGeom.r) < 15 && radialGeom.r > 0) {
+      draggingCircle = true;
+      dragCircleStartDist = dist;
+      dragCircleStartMaxR = joyMaxRadius;
+      return;
+    }
+
+    // Inertia slider
+    const sr = joySliderRect;
+    if (mx >= sr.x && mx <= sr.x + sr.w && my >= sr.y - 4 && my <= sr.y + sr.h + 4) {
+      draggingJoySlider = true;
+      joyInertia = Math.max(0, Math.min(1, (mx - sr.x) / sr.w));
+      return;
+    }
+  }
+});
+
+function handleCalButton(btn) {
+  if (!S || !S.gestureCal) return;
+  const cal = S.gestureCal;
+
+  switch (btn.action) {
+    case 'mode':
+      cal.mode = btn.value;
+      if (btn.value !== 'timed') cal._running = false;
+      if (S._resetCal) S._resetCal();
+      sendCalUpdate('modeOff', btn.value);
+      sendCalUpdate('reset');
+      break;
+    case 'start':
+      if (S._startTimedCal) S._startTimedCal();
+      sendCalUpdate('start');
+      break;
+    case 'duration':
+      const idx = TIMED_DURATIONS.indexOf(cal.timedDuration);
+      cal.timedDuration = TIMED_DURATIONS[(idx + 1) % TIMED_DURATIONS.length];
+      sendCalUpdate('duration', cal.timedDuration);
+      break;
+    case 'reset':
+      if (S._resetCal) S._resetCal();
+      sendCalUpdate('reset');
+      break;
+  }
+}
+
+const DEAD_ZONE_STEPS = [0, 0.03, 0.05, 0.10, 0.15, 0.25];
+const CURVE_STEPS     = [0.3, 0.5, 1.0, 1.5, 2.0, 3.0];
+const IN_MIN_STEPS    = [0, 0.05, 0.10, 0.20, 0.30];
+const IN_MAX_STEPS    = [0.5, 0.7, 0.85, 1.0];
+const OUT_MIN_STEPS   = [0, 0.1, 0.2, 0.3];
+const OUT_MAX_STEPS   = [0.5, 0.7, 0.85, 1.0];
+
+function cycleSteps(steps, current, tolerance) {
+  let nextIdx = steps.findIndex(v => v > current + (tolerance ?? 0.001));
+  if (nextIdx < 0) nextIdx = 0;
+  return steps[nextIdx];
+}
+
+function handleCondClick(cr) {
+  if (!S || !S.gestureCondition) return;
+  const key = FEATURES[cr.featureIdx].key;
+  const cond = S.gestureCondition[key];
+  if (!cond) return;
+
+  if (cr.param === 'deadZone') {
+    cond.deadZone = cycleSteps(DEAD_ZONE_STEPS, cond.deadZone ?? 0);
+  } else if (cr.param === 'curve') {
+    cond.curve = cycleSteps(CURVE_STEPS, cond.curve ?? 1, 0.01);
+  } else if (cr.param === 'inRange') {
+    // Cycle inMin up; when it maxes, reset and cycle inMax down
+    const curMin = cond.inMin ?? 0;
+    const curMax = cond.inMax ?? 1;
+    const nextMin = cycleSteps(IN_MIN_STEPS, curMin);
+    if (nextMin <= curMin) {
+      // inMin wrapped — cycle inMax
+      cond.inMin = 0;
+      cond.inMax = cycleSteps(IN_MAX_STEPS, curMax);
+    } else {
+      cond.inMin = nextMin;
+    }
+  } else if (cr.param === 'outRange') {
+    // Same pattern: cycle outMin, then outMax
+    const curMin = cond.outMin ?? 0;
+    const curMax = cond.outMax ?? 1;
+    const nextMin = cycleSteps(OUT_MIN_STEPS, curMin);
+    if (nextMin <= curMin) {
+      cond.outMin = 0;
+      cond.outMax = cycleSteps(OUT_MAX_STEPS, curMax);
+    } else {
+      cond.outMin = nextMin;
+    }
+  }
+  sendConditionUpdate(key);
+}
+
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = (e.clientX - rect.left);
+  const my = (e.clientY - rect.top);
+
+  // Circle edge drag — resize range
+  if (draggingCircle) {
+    const cdx = mx - radialGeom.cx;
+    const cdy = my - radialGeom.cy;
+    const dist = Math.sqrt(cdx * cdx + cdy * cdy);
+    const ratio = dist / dragCircleStartDist;
+    joyMaxRadius = Math.max(JOY_RADIUS_MIN, Math.min(JOY_RADIUS_MAX, dragCircleStartMaxR * ratio));
+    return;
+  }
+
+  // Joystick inertia slider drag
+  if (draggingJoySlider) {
+    const sr = joySliderRect;
+    joyInertia = Math.max(0, Math.min(1, (mx - sr.x) / sr.w));
+    return;
+  }
+
+  // Dragging a slider
+  if (draggingSlider !== null) {
+    const sr = sliderRects[draggingSlider];
+    if (sr) setSliderValue(sr, mx);
+    return;
+  }
+
+  // Update cursor: pointer over interactive elements
+  let overInteractive = false;
+  for (const btn of calBtnRects) {
+    if (mx >= btn.x && mx <= btn.x + btn.w && my >= btn.y && my <= btn.y + btn.h) {
+      overInteractive = true; break;
+    }
+  }
+  if (!overInteractive) {
+    for (const sr of sliderRects) {
+      if (mx >= sr.x && mx <= sr.x + sr.w && my >= sr.y - 4 && my <= sr.y + sr.h + 4) {
+        overInteractive = true; break;
+      }
+    }
+  }
+  if (!overInteractive) {
+    for (const cr of condRects) {
+      if (mx >= cr.x && mx <= cr.x + cr.w && my >= cr.y && my <= cr.y + cr.h) {
+        overInteractive = true; break;
+      }
+    }
+  }
+  // Check if near circle edge for resize cursor
+  if (!overInteractive && showRadial && radialGeom.r > 0) {
+    const cdx = mx - radialGeom.cx;
+    const cdy = my - radialGeom.cy;
+    const dist = Math.sqrt(cdx * cdx + cdy * cdy);
+    if (Math.abs(dist - radialGeom.r) < 15) overInteractive = true;
+  }
+  canvas.style.cursor = overInteractive ? 'pointer' : 'default';
+});
+
+window.addEventListener('mouseup', () => { draggingSlider = null; draggingJoySlider = false; draggingCircle = false; });
+
+function setSliderValue(sr, mx) {
+  if (!S || !S.gestureCondition) return;
+  const key = FEATURES[sr.featureIdx].key;
+  const cond = S.gestureCondition[key];
+  if (!cond) return;
+  const t = Math.max(0, Math.min(1, (mx - sr.x) / sr.w));
+  cond.smooth = t;
+  sendConditionUpdate(key);
+}
+
+// ── Movement quality label ───────────────────────────────────────────────────
+
+function getLabanLabel(d) {
+  const labels = [];
+  const energy = normalizeFeature('accumulatedEnergy', d.accumulatedEnergy);
+  if (d.smoothness > 0.7) labels.push('sudden');
+  else if (d.smoothness < 0.3) labels.push('sustained');
+  if (d.periodicity > 0.5) labels.push('rhythmic');
+  if (energy > 0.6) labels.push('intense');
+  else if (energy < 0.15) labels.push('calm');
+  return labels.length > 0 ? labels.join(' · ') : 'neutral';
+}
+
+// ── Responsive layout ────────────────────────────────────────────────────────
+
+let layout = {};
+
+function computeLayout() {
+  const dpr = window.devicePixelRatio || 1;
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const M = 12;
+
+  // ── Bottom-up: fixed-size panels first ──────────────────────────────
+  const calH = 16;
+  const footerH = 16;
+  const scopeH  = Math.min(60, H * 0.08);
+  const sparkH  = 72;  // fixed per-feature row height
+  const sparkGap = 6;
+  const sparkTotalH = FEATURES.length * (sparkH + sparkGap);
+  const sparkLabelW = 56;
+  const sparkSliderX = M + sparkLabelW + 2;
+  const sparkX    = sparkSliderX + SLIDER_W + 8;
+  const sparkW    = W - sparkX - M - 54;  // 54px reserved for conditioning buttons
+
+  // Stack from the bottom: footer, cal, sparklines, scope
+  const bottomStack = footerH + 6 + calH + 4 + sparkTotalH + 14 + scopeH + 20;
+
+  // ── Top row: sphere + radar get all remaining space ─────────────────
+  const topRowH  = Math.max(120, H - bottomStack - 24);  // 24 = plotY top margin
+  const plotSize = topRowH;
+  const halfW    = (W - M * 3) / 2;
+  // Constrain plotSize to fit within half-width too
+  const effectivePlotSize = Math.min(plotSize, halfW - 8);
+  const plotX    = M + (halfW - effectivePlotSize) / 2;
+  const plotY    = 16;
+  const radarCx  = M * 2 + halfW + halfW / 2;
+  const radarCy  = plotY + effectivePlotSize / 2;
+  const radarR   = effectivePlotSize * 0.42;
+
+  // Position bottom panels below the top row
+  const scopeY  = plotY + effectivePlotSize + 12;
+  const scopeX  = M + 24;
+  const scopeW  = W - scopeX - M;
+
+  const sparkY0 = scopeY + scopeH + 14;
+  const calY    = sparkY0 + sparkTotalH + 4;
+  const footerY = calY + calH + 6;
+
+  layout = {
+    W, H, M,
+    plotSize: effectivePlotSize, plotX, plotY, halfW,
+    radarCx, radarCy, radarR,
+    scopeX, scopeY, scopeW, scopeH,
+    sparkY0, sparkLabelW, sparkSliderX, sparkX, sparkW, sparkH, sparkGap,
+    calY, calH,
+    footerY,
+  };
+}
+
+window.addEventListener('resize', computeLayout);
+computeLayout();
+
+// ── Drawing ──────────────────────────────────────────────────────────────────
+
+function draw() {
+  if (!S || !S.gesture) {
+    requestAnimationFrame(draw);
+    return;
+  }
+
+  try {
+  const g = S.gesture;
+  const L = layout;
+  const ap = AXIS_PAIRS[axisPairIdx];
+
+  // Update smoothed + raw display values and trails
+  for (const f of FEATURES) {
+    const smoothedVal = normalizeFeature(f.key, g[f.key]);
+    const rawVal = normalizeFeature(f.key, g[f.rawKey] ?? g[f.key]);
+    slew(f.key, smoothedVal);
+    slewRaw(f.key, rawVal);
+    trails[f.key][trailIdx % TRAIL_LEN] = disp[f.key];
+    rawTrails[f.key][trailIdx % TRAIL_LEN] = dispRaw[f.key];
+  }
+
+  phaseTrailX[trailIdx % TRAIL_LEN] = disp[FEATURES[ap.x].key];
+  phaseTrailY[trailIdx % TRAIL_LEN] = disp[FEATURES[ap.y].key];
+
+  // Record gyro XYZ + update sphere trail
+  try {
+    // Get wand data — from channel message or direct reference
+    const _wandRef = window._mubone_wand || (window.opener && window.opener._wand);
+    const _wandInertial = _lastWandData || (_wandRef && _wandRef.inertial);
+    if (_wandInertial) {
+      gyroHistory[0][trailIdx % TRAIL_LEN] = _wandInertial.gx;
+      gyroHistory[1][trailIdx % TRAIL_LEN] = _wandInertial.gy;
+      gyroHistory[2][trailIdx % TRAIL_LEN] = _wandInertial.gz;
+
+      // ── 2D joystick physics: roll (X) + pitch (Y) ──
+      const { roll: _roll, pitch: _pitch } = remapGyroToSemantic(
+        _wandInertial.gx, _wandInertial.gy, _wandInertial.gz
+      );
+
+      // Sensitivity: inertia slider scales from 1.0 down to 0.15
+      const sensitivity = 1.0 - joyInertia * 0.85;
+      // Input smoothing: higher inertia = more filtering
+      const inputSlew = 1 - joyInertia * joyInertia * 0.95;
+
+      // Push from roll and pitch independently (no magnitude normalization)
+      const pushX = _roll  * JOY_PUSH_RATE * sensitivity;
+      const pushY = _pitch * JOY_PUSH_RATE * sensitivity;
+      joyVX += (pushX - joyVX * 0.3) * inputSlew;
+      joyVY += (pushY - joyVY * 0.3) * inputSlew;
+
+      // Friction
+      joyVX *= JOY_FRICTION;
+      joyVY *= JOY_FRICTION;
+
+      // Spring return
+      joyX -= joyX * JOY_RETURN;
+      joyY -= joyY * JOY_RETURN;
+
+      // Integrate
+      joyX += joyVX;
+      joyY += joyVY;
+
+      // Clamp to circle (radius = joyMaxRadius, draggable)
+      const joyMag = Math.sqrt(joyX * joyX + joyY * joyY);
+      if (joyMag > joyMaxRadius) {
+        const s = joyMaxRadius / joyMag;
+        joyX *= s; joyY *= s;
+      }
+
+      // Trail
+      joyTrail.push({ x: joyX, y: joyY });
+      if (joyTrail.length > JOY_TRAIL_LEN) joyTrail.shift();
+
+      // Export to S.gestureJoy for other modules (preset morphing etc.)
+      // Apply center dead zone: small drift near center is ignored.
+      const rawDist = Math.sqrt(joyX * joyX + joyY * joyY);
+      const normDist = rawDist / joyMaxRadius;  // 0–1
+      const dzJoy = JOY_DEAD_ZONE;
+      const condDist = normDist < dzJoy ? 0 : (normDist - dzJoy) / (1 - dzJoy);
+      const angle = Math.atan2(joyY, joyX);
+      if (S && S.gestureJoy) {
+        S.gestureJoy.x     = condDist > 0 ? Math.cos(angle) * condDist : 0;
+        S.gestureJoy.y     = condDist > 0 ? Math.sin(angle) * condDist : 0;
+        S.gestureJoy.dist  = condDist;
+        S.gestureJoy.angle = condDist > 0 ? angle : 0;
+        sendJoyUpdate();
+      }
+    } else {
+      gyroHistory[0][trailIdx % TRAIL_LEN] = 0;
+      gyroHistory[1][trailIdx % TRAIL_LEN] = 0;
+      gyroHistory[2][trailIdx % TRAIL_LEN] = 0;
+    }
+  } catch (e) {
+    gyroHistory[0][trailIdx % TRAIL_LEN] = 0;
+    gyroHistory[1][trailIdx % TRAIL_LEN] = 0;
+    gyroHistory[2][trailIdx % TRAIL_LEN] = 0;
+  }
+
+  trailIdx++;
+
+  // Clear
+  ctx.fillStyle = COL_BG;
+  ctx.fillRect(0, 0, L.W, L.H);
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 1. TOP-LEFT PANEL: RADIAL JOYSTICK or PHASE PLOT  [V to toggle]
+  // ════════════════════════════════════════════════════════════════════════
+
+  if (showRadial) {
+    // ── 2D RADIAL JOYSTICK — pure roll (X) + pitch (Y) ─────────────────
+    // joyX/joyY are computed from gyro via joystick physics above.
+    // dR_base = 1 unit of joy position in pixels.  The visual circle
+    // radius = dR_base × joyMaxRadius, so dragging the circle bigger
+    // gives more headroom before the dot hits the boundary.
+
+    const dCx = L.plotX + L.plotSize / 2;
+    const dCy = L.plotY + L.plotSize / 2;
+    const dR_base = L.plotSize * 0.18;  // pixels per unit of joy position
+    const dR = Math.min(dR_base * joyMaxRadius, L.plotSize * 0.48);
+    // Store geometry for mouse handlers
+    radialGeom.cx = dCx; radialGeom.cy = dCy; radialGeom.r = dR;
+
+    // ── Boundary circle (draggable) ─────────────────────────────────────
+    ctx.beginPath(); ctx.arc(dCx, dCy, dR, 0, Math.PI * 2);
+    ctx.strokeStyle = draggingCircle ? 'rgba(122, 188, 188, 0.5)' : 'rgba(122, 188, 188, 0.2)';
+    ctx.lineWidth = draggingCircle ? 2 : 1;
+    ctx.stroke();
+    // Glow
+    ctx.beginPath(); ctx.arc(dCx, dCy, dR, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(122, 188, 188, 0.06)';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    // Inner rings at 33% and 66%
+    for (const ringFrac of [0.33, 0.66]) {
+      ctx.beginPath(); ctx.arc(dCx, dCy, dR * ringFrac, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(122, 188, 188, 0.06)';
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+    }
+
+    // ── Crosshairs — roll (horizontal) and pitch (vertical) ─────────────
+    ctx.beginPath();
+    ctx.moveTo(dCx - dR, dCy); ctx.lineTo(dCx + dR, dCy);
+    ctx.strokeStyle = hexToRGBA(GYRO_COLORS[0], 0.12);
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(dCx, dCy - dR); ctx.lineTo(dCx, dCy + dR);
+    ctx.strokeStyle = hexToRGBA(GYRO_COLORS[1], 0.12);
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+    // Diagonals for reference
+    for (const angle of [Math.PI/4, 3*Math.PI/4]) {
+      ctx.beginPath();
+      ctx.moveTo(dCx + Math.cos(angle) * dR, dCy + Math.sin(angle) * dR);
+      ctx.lineTo(dCx - Math.cos(angle) * dR, dCy - Math.sin(angle) * dR);
+      ctx.strokeStyle = 'rgba(122, 188, 188, 0.04)';
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+    }
+
+    // ── Axis labels (positioned at circle edge) ─────────────────────────
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = GYRO_COLORS[0];
+    ctx.fillText('+roll', dCx + dR + 2, dCy - 4);
+    ctx.fillText('−roll', dCx - dR - 2, dCy - 4);
+    ctx.fillStyle = GYRO_COLORS[1];
+    ctx.fillText('+pitch', dCx, dCy - dR - 6);
+    ctx.fillText('−pitch', dCx, dCy + dR + 12);
+    ctx.textAlign = 'left';
+
+    // ── Trail ───────────────────────────────────────────────────────────
+    if (joyTrail.length > 1) {
+      for (let i = 1; i < joyTrail.length; i++) {
+        const t0 = joyTrail[i - 1], t1 = joyTrail[i];
+        const age = i / joyTrail.length;
+        const sx0 = dCx + t0.x * dR_base;
+        const sy0 = dCy - t0.y * dR_base;
+        const sx1 = dCx + t1.x * dR_base;
+        const sy1 = dCy - t1.y * dR_base;
+        ctx.beginPath();
+        ctx.moveTo(sx0, sy0); ctx.lineTo(sx1, sy1);
+        ctx.strokeStyle = `rgba(122, 188, 188, ${age * age * 0.5})`;
+        ctx.lineWidth = 0.5 + age * 1.5;
+        ctx.stroke();
+      }
+    }
+
+    // ── Current position — joystick dot ─────────────────────────────────
+    {
+      const jm = Math.sqrt(joyX * joyX + joyY * joyY);
+      const normJm = jm / joyMaxRadius;  // 0..1 for glow/alpha scaling
+      const sx = dCx + joyX * dR_base;
+      const sy = dCy - joyY * dR_base;
+
+      // Line from center to dot
+      ctx.beginPath();
+      ctx.moveTo(dCx, dCy); ctx.lineTo(sx, sy);
+      ctx.strokeStyle = `rgba(122, 188, 188, ${0.15 + normJm * 0.3})`;
+      ctx.lineWidth = 1 + normJm * 1.5;
+      ctx.stroke();
+
+      // Center dead zone ring
+      const dzR = JOY_DEAD_ZONE * dR;
+      ctx.beginPath(); ctx.arc(dCx, dCy, dzR, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(122, 188, 188, 0.04)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(122, 188, 188, 0.12)';
+      ctx.lineWidth = 0.5;
+      ctx.stroke();
+
+      // Center origin dot
+      ctx.beginPath(); ctx.arc(dCx, dCy, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(122, 188, 188, 0.15)';
+      ctx.fill();
+      ctx.beginPath(); ctx.arc(dCx, dCy, 1, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(122, 188, 188, 0.4)';
+      ctx.fill();
+
+      // Current dot: glow layers scaled by magnitude
+      const glowR = 6 + normJm * 8;
+      ctx.beginPath(); ctx.arc(sx, sy, glowR, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(122, 188, 188, ${0.04 + normJm * 0.04})`;
+      ctx.fill();
+      ctx.beginPath(); ctx.arc(sx, sy, glowR * 0.6, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(122, 188, 188, ${0.08 + normJm * 0.06})`;
+      ctx.fill();
+      ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = COL_TEXT;
+      ctx.fill();
+
+      // Magnitude readout (% of max radius)
+      const magPct = (normJm * 100).toFixed(0);
+      ctx.font = '8px monospace';
+      ctx.fillStyle = COL_DIM;
+      ctx.textAlign = 'right';
+      ctx.fillText(`${magPct}%`, L.plotX + L.plotSize - 2, L.plotY + L.plotSize + 12);
+      ctx.textAlign = 'left';
+    }
+
+    // ── Inertia slider — bottom-left of radial panel ────────────────────
+    {
+      const slW = 44, slH = 6;
+      const slX = L.plotX;
+      const slY = L.plotY + L.plotSize + 4;
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      ctx.fillRect(slX, slY, slW, slH);
+      ctx.fillStyle = 'rgba(122, 188, 188, 0.3)';
+      ctx.fillRect(slX, slY, slW * joyInertia, slH);
+      const thX = slX + slW * joyInertia;
+      ctx.fillStyle = COL_TEXT;
+      ctx.fillRect(thX - 1.5, slY - 1, 3, slH + 2);
+      ctx.font = '7px monospace';
+      ctx.fillStyle = COL_DIM;
+      ctx.fillText('inertia', slX + slW + 4, slY + 5);
+      joySliderRect.x = slX; joySliderRect.y = slY;
+      joySliderRect.w = slW; joySliderRect.h = slH;
+    }
+
+    // ── Range readout — shows current circle scale ──────────────────────
+    ctx.font = '7px monospace';
+    ctx.fillStyle = COL_DIM;
+    ctx.textAlign = 'right';
+    ctx.fillText(`range ${joyMaxRadius.toFixed(1)}×`, L.plotX + L.plotSize - 2, L.plotY + L.plotSize + 24);
+    ctx.textAlign = 'left';
+
+    // Panel label
+    ctx.fillStyle = COL_DIM;
+    ctx.font = '8px monospace';
+    ctx.fillText('radial morph  [V]', L.plotX, L.plotY - 5);
+
+  } else {
+    // ── PHASE PLOT (original) ────────────────────────────────────────────
+    ctx.strokeStyle = COL_GRID;
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 4; i++) {
+      const t = i / 4;
+      const gx = L.plotX + t * L.plotSize;
+      const gy = L.plotY + t * L.plotSize;
+      ctx.beginPath(); ctx.moveTo(gx, L.plotY); ctx.lineTo(gx, L.plotY + L.plotSize); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(L.plotX, gy); ctx.lineTo(L.plotX + L.plotSize, gy); ctx.stroke();
+    }
+
+    ctx.strokeStyle = COL_AXIS;
+    const pcx = L.plotX + L.plotSize / 2;
+    const pcy = L.plotY + L.plotSize / 2;
+    ctx.beginPath(); ctx.moveTo(pcx, L.plotY); ctx.lineTo(pcx, L.plotY + L.plotSize); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(L.plotX, pcy); ctx.lineTo(L.plotX + L.plotSize, pcy); ctx.stroke();
+
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = FEATURES[ap.x].color;
+    ctx.fillText(FEATURES[ap.x].label, L.plotX + L.plotSize / 2, L.plotY + L.plotSize + 12);
+    ctx.save();
+    ctx.translate(L.plotX - 10, L.plotY + L.plotSize / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillStyle = FEATURES[ap.y].color;
+    ctx.fillText(FEATURES[ap.y].label, 0, 0);
+    ctx.restore();
+    ctx.textAlign = 'left';
+
+    const filled = Math.min(trailIdx, TRAIL_LEN);
+    if (filled > 1) {
+      for (let i = 1; i < filled; i++) {
+        const idx0 = (trailIdx - filled + i - 1 + TRAIL_LEN) % TRAIL_LEN;
+        const idx1 = (trailIdx - filled + i + TRAIL_LEN) % TRAIL_LEN;
+        const x0 = L.plotX + phaseTrailX[idx0] * L.plotSize;
+        const y0 = L.plotY + (1 - phaseTrailY[idx0]) * L.plotSize;
+        const x1 = L.plotX + phaseTrailX[idx1] * L.plotSize;
+        const y1 = L.plotY + (1 - phaseTrailY[idx1]) * L.plotSize;
+        const age = i / filled;
+        ctx.strokeStyle = `rgba(122, 188, 188, ${age * age * 0.7})`;
+        ctx.lineWidth = 0.5 + age * 2;
+        ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      }
+      const curIdx = (trailIdx - 1 + TRAIL_LEN) % TRAIL_LEN;
+      const dotX = L.plotX + phaseTrailX[curIdx] * L.plotSize;
+      const dotY = L.plotY + (1 - phaseTrailY[curIdx]) * L.plotSize;
+      ctx.beginPath(); ctx.arc(dotX, dotY, 6, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(122, 188, 188, 0.2)'; ctx.fill();
+      ctx.beginPath(); ctx.arc(dotX, dotY, 3, 0, Math.PI * 2);
+      ctx.fillStyle = COL_TEXT; ctx.fill();
+    }
+
+    ctx.fillStyle = COL_DIM;
+    ctx.font = '8px monospace';
+    ctx.fillText(`${ap.label}  [X]  [V]`, L.plotX, L.plotY - 5);
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 2. RADAR PENTAGON (top-right)
+  // ════════════════════════════════════════════════════════════════════════
+
+  const radarN = FEATURES.length;
+  const angleOff = -Math.PI / 2;
+
+  ctx.strokeStyle = COL_GRID;
+  ctx.lineWidth = 0.5;
+  for (let ring = 1; ring <= 4; ring++) {
+    const r = (ring / 4) * L.radarR;
+    ctx.beginPath();
+    for (let i = 0; i <= radarN; i++) {
+      const a = angleOff + (i % radarN) * (Math.PI * 2 / radarN);
+      const px = L.radarCx + Math.cos(a) * r;
+      const py = L.radarCy + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < radarN; i++) {
+    const a = angleOff + i * (Math.PI * 2 / radarN);
+    const sx = L.radarCx + Math.cos(a) * L.radarR;
+    const sy = L.radarCy + Math.sin(a) * L.radarR;
+    ctx.strokeStyle = COL_AXIS;
+    ctx.beginPath(); ctx.moveTo(L.radarCx, L.radarCy); ctx.lineTo(sx, sy); ctx.stroke();
+    const lx = L.radarCx + Math.cos(a) * (L.radarR + 12);
+    const ly = L.radarCy + Math.sin(a) * (L.radarR + 12);
+    ctx.fillStyle = FEATURES[i].color;
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(FEATURES[i].label, lx, ly);
+  }
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+
+  // Data polygon
+  ctx.beginPath();
+  for (let i = 0; i < radarN; i++) {
+    const a = angleOff + i * (Math.PI * 2 / radarN);
+    let val = disp[FEATURES[i].key];
+    if (FEATURES[i].key === 'smoothness') val = 1 - val;
+    const r = val * L.radarR;
+    const px = L.radarCx + Math.cos(a) * r;
+    const py = L.radarCy + Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(122, 188, 188, 0.12)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(122, 188, 188, 0.6)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  for (let i = 0; i < radarN; i++) {
+    const a = angleOff + i * (Math.PI * 2 / radarN);
+    let val = disp[FEATURES[i].key];
+    if (FEATURES[i].key === 'smoothness') val = 1 - val;
+    const r = val * L.radarR;
+    const px = L.radarCx + Math.cos(a) * r;
+    const py = L.radarCy + Math.sin(a) * r;
+    ctx.beginPath(); ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = FEATURES[i].color; ctx.fill();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 3. GYRO XYZ SCOPE (middle)
+  // ════════════════════════════════════════════════════════════════════════
+
+  ctx.fillStyle = 'rgba(255,255,255,0.02)';
+  ctx.fillRect(L.scopeX, L.scopeY, L.scopeW, L.scopeH);
+
+  ctx.strokeStyle = COL_AXIS;
+  ctx.lineWidth = 0.5;
+  const scopeMid = L.scopeY + L.scopeH / 2;
+  ctx.beginPath(); ctx.moveTo(L.scopeX, scopeMid); ctx.lineTo(L.scopeX + L.scopeW, scopeMid); ctx.stroke();
+
+  ctx.fillStyle = COL_DIM;
+  ctx.font = '8px monospace';
+  ctx.fillText('gyro', L.M, L.scopeY + 8);
+  for (let a = 0; a < 3; a++) {
+    ctx.fillStyle = GYRO_COLORS[a];
+    ctx.fillText(GYRO_LABELS[a], L.M, L.scopeY + 20 + a * 10);
+  }
+
+  const scopeFilled = Math.min(trailIdx, TRAIL_LEN);
+  if (scopeFilled > 1) {
+    for (let a = 0; a < 3; a++) {
+      ctx.beginPath();
+      for (let i = 0; i < scopeFilled; i++) {
+        const idx = (trailIdx - scopeFilled + i + TRAIL_LEN) % TRAIL_LEN;
+        const px = L.scopeX + (i / (TRAIL_LEN - 1)) * L.scopeW;
+        const norm = gyroHistory[a][idx] / GYRO_RANGE;
+        const py = scopeMid - norm * (L.scopeH / 2);
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.strokeStyle = GYRO_COLORS[a];
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = 0.7;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 4. SPARKLINE TRAILS + SMOOTHING SLIDERS
+  // ════════════════════════════════════════════════════════════════════════
+
+  sliderRects.length = 0;  // rebuild hit-test rects each frame
+  condRects.length = 0;
+  let sy = L.sparkY0;
+
+  for (let fi = 0; fi < FEATURES.length; fi++) {
+    const f = FEATURES[fi];
+    const trail = trails[f.key];
+    const rawTrail = rawTrails[f.key];
+    const val = disp[f.key];
+    const cond = S.gestureCondition?.[f.key] ?? {};
+    const smoothAmt = cond.smooth ?? 0;
+    const deadZone  = cond.deadZone ?? 0;
+    const curve     = cond.curve ?? 1;
+
+    // Label
+    ctx.fillStyle = f.color;
+    ctx.font = '13px monospace';
+    ctx.fillText(f.label, L.M, sy + L.sparkH / 2 + 5);
+
+    // ── Smoothing slider ────────────────────────────────────────────────
+    const sliderX = L.sparkSliderX;
+    const sliderY = sy + L.sparkH / 2 - SLIDER_H / 2;
+
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx.fillRect(sliderX, sliderY, SLIDER_W, SLIDER_H);
+    ctx.fillStyle = hexToRGBA(f.color, 0.35);
+    ctx.fillRect(sliderX, sliderY, SLIDER_W * smoothAmt, SLIDER_H);
+    const thumbX = sliderX + SLIDER_W * smoothAmt;
+    ctx.fillStyle = f.color;
+    ctx.fillRect(thumbX - 2, sliderY - 2, 4, SLIDER_H + 4);
+
+    sliderRects.push({ x: sliderX, y: sliderY, w: SLIDER_W, h: SLIDER_H, featureIdx: fi });
+
+    // ── Sparkline background ────────────────────────────────────────────
+    ctx.fillStyle = 'rgba(255,255,255,0.03)';
+    ctx.fillRect(L.sparkX, sy, L.sparkW, L.sparkH);
+
+    const sparkFilled = Math.min(trailIdx, TRAIL_LEN);
+
+    // Raw trace (faint ghost behind the smoothed line)
+    if (sparkFilled > 1 && smoothAmt > 0.02) {
+      ctx.beginPath();
+      for (let i = 0; i < sparkFilled; i++) {
+        const idx = (trailIdx - sparkFilled + i + TRAIL_LEN) % TRAIL_LEN;
+        const px = L.sparkX + (i / (TRAIL_LEN - 1)) * L.sparkW;
+        const py = sy + L.sparkH - rawTrail[idx] * L.sparkH;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.strokeStyle = hexToRGBA(f.color, 0.18);
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+    }
+
+    // Smoothed trace (main line)
+    if (sparkFilled > 1) {
+      ctx.beginPath();
+      for (let i = 0; i < sparkFilled; i++) {
+        const idx = (trailIdx - sparkFilled + i + TRAIL_LEN) % TRAIL_LEN;
+        const px = L.sparkX + (i / (TRAIL_LEN - 1)) * L.sparkW;
+        const py = sy + L.sparkH - trail[idx] * L.sparkH;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.strokeStyle = f.color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Fill under
+      ctx.lineTo(L.sparkX + ((sparkFilled - 1) / (TRAIL_LEN - 1)) * L.sparkW, sy + L.sparkH);
+      ctx.lineTo(L.sparkX, sy + L.sparkH);
+      ctx.closePath();
+      ctx.fillStyle = hexToRGBA(f.color, 0.05);
+      ctx.fill();
+    }
+
+    // ── Dead zone indicator — shaded region on sparkline ────────────────
+    if (deadZone > 0.005) {
+      const dzH = deadZone * L.sparkH;
+      ctx.fillStyle = 'rgba(255, 80, 80, 0.08)';
+      ctx.fillRect(L.sparkX, sy + L.sparkH - dzH, L.sparkW, dzH);
+      ctx.beginPath();
+      ctx.moveTo(L.sparkX, sy + L.sparkH - dzH);
+      ctx.lineTo(L.sparkX + L.sparkW, sy + L.sparkH - dzH);
+      ctx.strokeStyle = 'rgba(255, 80, 80, 0.25)';
+      ctx.lineWidth = 0.5;
+      ctx.setLineDash([3, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // ── Input range markers — blue dashed lines on sparkline ──────────
+    const inMin  = cond.inMin  ?? 0;
+    const inMax  = cond.inMax  ?? 1;
+    if (inMin > 0.005 || inMax < 0.995) {
+      ctx.setLineDash([4, 3]);
+      ctx.strokeStyle = 'rgba(120, 200, 255, 0.35)';
+      ctx.lineWidth = 1;
+      if (inMin > 0.005) {
+        const yLine = sy + L.sparkH - inMin * L.sparkH;
+        ctx.beginPath(); ctx.moveTo(L.sparkX, yLine); ctx.lineTo(L.sparkX + L.sparkW, yLine); ctx.stroke();
+      }
+      if (inMax < 0.995) {
+        const yLine = sy + L.sparkH - inMax * L.sparkH;
+        ctx.beginPath(); ctx.moveTo(L.sparkX, yLine); ctx.lineTo(L.sparkX + L.sparkW, yLine); ctx.stroke();
+      }
+      // Shade outside region
+      ctx.fillStyle = 'rgba(120, 200, 255, 0.04)';
+      if (inMin > 0.005) ctx.fillRect(L.sparkX, sy + L.sparkH - inMin * L.sparkH, L.sparkW, inMin * L.sparkH);
+      if (inMax < 0.995) ctx.fillRect(L.sparkX, sy, L.sparkW, L.sparkH - inMax * L.sparkH);
+      ctx.setLineDash([]);
+    }
+
+    // ── Conditioning controls — right edge of sparkline ──────────────────
+    const infoX = L.sparkX + L.sparkW + 5;
+    const btnW = 44, btnH = 15;
+    const btnGap = 2;
+    const btnsTotal = btnH * 4 + btnGap * 3;
+    const btn0Y = sy + (L.sparkH - btnsTotal) / 2;
+
+    const inMin  = cond.inMin  ?? 0;
+    const inMax  = cond.inMax  ?? 1;
+    const outMin = cond.outMin ?? 0;
+    const outMax = cond.outMax ?? 1;
+
+    // Helper to draw one button row
+    function drawBtn(label, y, active, activeColor) {
+      ctx.fillStyle = active ? activeColor + '30' : 'rgba(255,255,255,0.05)';
+      ctx.fillRect(infoX, y, btnW, btnH);
+      ctx.font = '10px monospace';
+      ctx.fillStyle = active ? activeColor : 'rgba(200,200,200,0.5)';
+      ctx.fillText(label, infoX + 3, y + 11);
+    }
+
+    // Row 1: Dead zone
+    const dzActive = deadZone > 0.005;
+    const dzPct = (deadZone * 100).toFixed(0);
+    drawBtn(dzActive ? `dz ${dzPct}%` : 'dz off', btn0Y, dzActive, 'rgba(255,120,120');
+    condRects.push({ x: infoX, y: btn0Y, w: btnW, h: btnH, featureIdx: fi, param: 'deadZone' });
+
+    // Row 2: Curve
+    const btn1Y = btn0Y + btnH + btnGap;
+    const curveLabel = curve === 1 ? 'crv lin' : curve < 1 ? `crv .${(curve*10).toFixed(0)}` : `crv ${curve}`;
+    const crActive = curve !== 1;
+    drawBtn(curveLabel, btn1Y, crActive, hexToRGBA(f.color, 0.9));
+    condRects.push({ x: infoX, y: btn1Y, w: btnW, h: btnH, featureIdx: fi, param: 'curve' });
+
+    // Row 3: Input range
+    const btn2Y = btn1Y + btnH + btnGap;
+    const inActive = inMin > 0.005 || inMax < 0.995;
+    const inLabel = inActive ? `in ${(inMin*100).toFixed(0)}-${(inMax*100).toFixed(0)}` : 'in 0-1';
+    drawBtn(inLabel, btn2Y, inActive, 'rgba(120,200,255');
+    condRects.push({ x: infoX, y: btn2Y, w: btnW, h: btnH, featureIdx: fi, param: 'inRange' });
+
+    // Row 4: Output range
+    const btn3Y = btn2Y + btnH + btnGap;
+    const outActive = outMin > 0.005 || outMax < 0.995;
+    const outLabel = outActive ? `out${(outMin*100).toFixed(0)}-${(outMax*100).toFixed(0)}` : 'out 0-1';
+    drawBtn(outLabel, btn3Y, outActive, 'rgba(255,200,80');
+    condRects.push({ x: infoX, y: btn3Y, w: btnW, h: btnH, featureIdx: fi, param: 'outRange' });
+
+    // Value + dot
+    ctx.fillStyle = COL_DIM;
+    ctx.font = '12px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText((val * 100).toFixed(0), L.sparkX - 5, sy + L.sparkH / 2 + 4);
+    ctx.textAlign = 'left';
+
+    const dotPy = sy + L.sparkH - val * L.sparkH;
+    ctx.beginPath(); ctx.arc(L.sparkX + L.sparkW, dotPy, 4, 0, Math.PI * 2);
+    ctx.fillStyle = f.color; ctx.fill();
+
+    sy += L.sparkH + L.sparkGap;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 5. CALIBRATION BAR
+  // ════════════════════════════════════════════════════════════════════════
+
+  const calState = S.gestureCal;
+  if (calState) {
+    const cy = L.calY;
+    const modes = ['off', 'auto', 'timed'];
+    const modeLabels = ['off', 'auto', 'timed'];
+
+    // Mode buttons
+    let bx = L.M;
+    calBtnRects.length = 0;
+
+    ctx.font = '9px monospace';
+    ctx.textBaseline = 'middle';
+    const btnH = L.calH;
+    const btnMid = cy + btnH / 2;
+
+    ctx.fillStyle = COL_DIM;
+    ctx.fillText('cal', bx, btnMid);
+    bx += 24;
+
+    for (let mi = 0; mi < modes.length; mi++) {
+      const label = modeLabels[mi];
+      const tw = ctx.measureText(label).width + 10;
+      const isActive = calState.mode === modes[mi];
+
+      // Button background
+      ctx.fillStyle = isActive ? 'rgba(122, 188, 188, 0.2)' : 'rgba(255,255,255,0.04)';
+      ctx.fillRect(bx, cy, tw, btnH);
+      // Border
+      ctx.strokeStyle = isActive ? COL_TEXT : 'rgba(122, 188, 188, 0.15)';
+      ctx.lineWidth = isActive ? 1 : 0.5;
+      ctx.strokeRect(bx, cy, tw, btnH);
+      // Label
+      ctx.fillStyle = isActive ? COL_TEXT : COL_DIM;
+      ctx.textAlign = 'center';
+      ctx.fillText(label, bx + tw / 2, btnMid);
+      ctx.textAlign = 'left';
+
+      calBtnRects.push({ x: bx, y: cy, w: tw, h: btnH, action: 'mode', value: modes[mi] });
+      bx += tw + 3;
+    }
+
+    // Timed controls: start button + countdown + duration
+    if (calState.mode === 'timed') {
+      bx += 6;
+
+      if (calState._running) {
+        // Countdown display with progress bar
+        const progress = 1 - (calState.timedRemaining / calState.timedDuration);
+        const barW = 60;
+
+        ctx.fillStyle = 'rgba(255,255,255,0.04)';
+        ctx.fillRect(bx, cy, barW, btnH);
+        ctx.fillStyle = 'rgba(232, 160, 48, 0.3)';
+        ctx.fillRect(bx, cy, barW * progress, btnH);
+        ctx.strokeStyle = '#e8a030';
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(bx, cy, barW, btnH);
+
+        ctx.fillStyle = '#e8a030';
+        ctx.font = '9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(calState.timedRemaining.toFixed(1) + 's', bx + barW / 2, btnMid);
+        ctx.textAlign = 'left';
+        bx += barW + 4;
+      } else {
+        // Start button
+        const startLabel = 'start';
+        const stw = ctx.measureText(startLabel).width + 12;
+        ctx.fillStyle = 'rgba(232, 160, 48, 0.15)';
+        ctx.fillRect(bx, cy, stw, btnH);
+        ctx.strokeStyle = '#e8a030';
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(bx, cy, stw, btnH);
+        ctx.fillStyle = '#e8a030';
+        ctx.textAlign = 'center';
+        ctx.fillText(startLabel, bx + stw / 2, btnMid);
+        ctx.textAlign = 'left';
+
+        calBtnRects.push({ x: bx, y: cy, w: stw, h: btnH, action: 'start' });
+        bx += stw + 4;
+
+        // Duration display (clickable to cycle: 5, 10, 15, 20, 30)
+        const durLabel = calState.timedDuration + 's';
+        const dw = ctx.measureText(durLabel).width + 10;
+        ctx.fillStyle = 'rgba(255,255,255,0.04)';
+        ctx.fillRect(bx, cy, dw, btnH);
+        ctx.strokeStyle = COL_DIM;
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(bx, cy, dw, btnH);
+        ctx.fillStyle = COL_DIM;
+        ctx.textAlign = 'center';
+        ctx.fillText(durLabel, bx + dw / 2, btnMid);
+        ctx.textAlign = 'left';
+
+        calBtnRects.push({ x: bx, y: cy, w: dw, h: btnH, action: 'duration' });
+        bx += dw + 4;
+      }
+    }
+
+    // Reset button (always visible when not 'off')
+    if (calState.mode !== 'off') {
+      const rstLabel = 'reset';
+      const rw = ctx.measureText(rstLabel).width + 10;
+      const rx = L.W - L.M - rw;
+      ctx.fillStyle = 'rgba(255,255,255,0.04)';
+      ctx.fillRect(rx, cy, rw, btnH);
+      ctx.strokeStyle = COL_DIM;
+      ctx.lineWidth = 0.5;
+      ctx.strokeRect(rx, cy, rw, btnH);
+      ctx.fillStyle = COL_DIM;
+      ctx.textAlign = 'center';
+      ctx.fillText(rstLabel, rx + rw / 2, btnMid);
+      ctx.textAlign = 'left';
+      calBtnRects.push({ x: rx, y: cy, w: rw, h: btnH, action: 'reset' });
+    }
+
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 6. FOOTER: raw data + Laban label
+  // ════════════════════════════════════════════════════════════════════════
+
+  ctx.fillStyle = COL_DIM;
+  ctx.font = '9px monospace';
+  ctx.fillText(
+    `gyro ${g.gyroMag.toFixed(0)}°/s  accel ${g.accelDynMag.toFixed(2)}g  jerk ${g.jerk.toFixed(0)}`,
+    L.M, L.footerY
+  );
+  if (g.periodicity > 0.2) {
+    const perioFeature = FEATURES.find(f => f.key === 'periodicity');
+    ctx.fillStyle = perioFeature ? perioFeature.color : '#ce93d8';
+    ctx.fillText(`${g.periodicityHz.toFixed(1)}Hz`, L.M + 200, L.footerY);
+  }
+
+  const labanStr = getLabanLabel(g);
+  ctx.fillStyle = COL_TEXT;
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(labanStr, L.W - L.M, L.footerY);
+  ctx.textAlign = 'left';
+
+  } catch (err) {
+    console.error('[gesture-window] draw error:', err);
+  }
+  requestAnimationFrame(draw);
+}
+
+// ── Keyboard ─────────────────────────────────────────────────────────────────
+
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'x') {
+    axisPairIdx = (axisPairIdx + 1) % AXIS_PAIRS.length;
+  }
+  if (e.key === 'v') {
+    showRadial = !showRadial;
+  }
+});
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function hexToRGBA(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+// ── Start ────────────────────────────────────────────────────────────────────
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
