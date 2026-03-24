@@ -5,6 +5,26 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.6 alpha — 2026-03-24
+
+### Added
+- **Recording time meter** — HUD now shows total recorded audio duration next to the buffer count (`buffers: 3 · 2m14s`). Computed from live buffer durations, no expensive byte-counting.
+- **Recording memory guard** — configurable limit (default 10 min) warns at 80% (amber) and 95% (red), blocks new recordings at 100% with "rec limit — sweep!" flash. Prevents silent tab crashes during long performances.
+- **Rec limit slider** — new slider in audio settings → engine section. Range 2–30 minutes, persisted to localStorage.
+- **Perf monitor rec bar** — new `rec` row in the performance monitor (P key) showing recorded time vs limit with amber/red thresholds.
+- **Sweep auto-commit** — undo snapshot now auto-expires after 30s, freeing buffer memory even if the performer never paints again. Manual undo still works within the 30s window.
+
+### Changed
+- **Search panel restructured** — scope (area/nearest) is now the top-level decision, displayed first. Panel organized into two labeled sections: "selection" (k, order — always visible) and "area" (radius, recency, fill — hidden when scope is nearest). Area-only params disappear entirely in nearest mode instead of being greyed out.
+- **Search terminology renamed** — "lock/snap/free" → scope: nearest/area. "k-all" → fill: all/k. "k-seq" → order: step/random. Updated across UI, MIDI table, OSC, patch table, and renderer.
+- **Default button positions** — area, random, and k are now on the left of their toggle rows (default = left convention).
+- **Area param order** — radius first, then recency, then fill (was fill, radius, recency).
+- **Perf monitor k display standardized** — format is now `X / k (R) [W]` where X=firing, k=k-limit, (R)=in-radius pool (area mode only), [W]=world particle count (always shown). Nearest mode: `X / k [W]`. Area+all: `X all [W]`.
+- **World particle count format** — k slider and perf monitor both use `[n]` square brackets for world particle count.
+- **Canvas cursor label** — "snap" → "nearest" (violet text under cursor brush).
+
+---
+
 ## 0.5 alpha — 2026-03-23
 
 ### Fixed

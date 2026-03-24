@@ -2,7 +2,7 @@
 // AUDIO SYSTEM  (extracted from index.html)
 // ============================================================================
 
-import { S, DEBUG } from './state.js';
+import { S, DEBUG, perf } from './state.js';
 import { buildVBAPLookup } from './grain.js';
 
 // Track whether the recording-capture worklet module has been registered.
@@ -369,6 +369,18 @@ export async function requestMicAccess() {
 export function startLiveRecording() {
   if (S.isRecording) return;
   if (!S.recordingStream) return;
+
+  // Memory guard — refuse to start a new recording if we've hit the ceiling.
+  // The performer sees the HUD flash red and knows to sweep.
+  if (perf.recTotalSec >= S.recLimitSeconds) {
+    const vmBuf = document.getElementById('vmBuffers');
+    if (vmBuf) {
+      vmBuf.style.color = '#e06060';
+      vmBuf.textContent = 'rec limit — sweep!';
+      setTimeout(() => S.updateLiveRecUI?.(), 2000);
+    }
+    return;
+  }
 
   const actx = ensureAudioContext();
 

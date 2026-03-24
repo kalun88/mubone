@@ -176,14 +176,14 @@ export function setupPresets() {
     });
   }
 
-  // Snap toggle — segmented on/off
+  // Scope toggle — nearest / area
   updatePlaybackControls();
   const snapSeg = document.getElementById('snapToggleSeg');
   if (snapSeg) {
     snapSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         S.nearestMode = (btn.dataset.snap === 'on');
-        // k-all is incompatible with k-nearest — force it off
+        // fill=all is incompatible with nearest — force it off
         if (S.nearestMode && S.grainKAllMode) S.grainKAllMode = false;
         updatePlaybackControls();
         S._syncRadiusFadeUI?.();
@@ -192,20 +192,18 @@ export function setupPresets() {
     });
   }
 
-  // k-all toggle — segmented on/off
+  // Fill toggle — all / k (area mode only, hidden when nearest)
   const kAllSeg = document.getElementById('kAllSeg');
   if (kAllSeg) {
     kAllSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        // k-all not allowed when k-nearest is active
-        if (S.nearestMode) return;
         S.grainKAllMode = (btn.dataset.kall === 'on');
         updatePlaybackControls();
       });
     });
   }
 
-  // k-seq toggle — segmented on/off
+  // Order toggle — step / random
   const kSeqSeg = document.getElementById('kSeqSeg');
   if (kSeqSeg) {
     kSeqSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
@@ -1508,44 +1506,37 @@ export function refreshPresetButtons() {
 }
 
 export function updatePlaybackControls() {
-  // Sync lock segmented toggle
+  // Sync scope segmented toggle (nearest / area)
   const snapSeg = document.getElementById('snapToggleSeg');
   if (snapSeg) {
     snapSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.classList.toggle('active', (btn.dataset.snap === 'on') === S.nearestMode);
     });
   }
-  // Sync k-all segmented toggle — disabled when k-nearest is active
+  // Show/hide area-only params based on scope
+  const areaOnly = document.getElementById('areaOnlyParams');
+  if (areaOnly) areaOnly.style.display = S.nearestMode ? 'none' : '';
+
+  // Sync fill segmented toggle (all / k)
   const kAllSeg = document.getElementById('kAllSeg');
   if (kAllSeg) {
     kAllSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.classList.toggle('active', (btn.dataset.kall === 'on') === S.grainKAllMode);
     });
-    kAllSeg.style.opacity = S.nearestMode ? '0.35' : '';
-    kAllSeg.style.pointerEvents = S.nearestMode ? 'none' : '';
   }
-  // Sync k-seq segmented toggle
+  // Sync order segmented toggle (step / random)
   const kSeqSeg = document.getElementById('kSeqSeg');
   if (kSeqSeg) {
     kSeqSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.classList.toggle('active', (btn.dataset.kseq === 'on') === S.grainKSeqMode);
     });
   }
-  // grey out k slider/numbox when k-all is active
+  // Grey out k slider/numbox when fill=all is active (k is bypassed)
   const skSlider = document.getElementById('searchKSlider');
   const kNum = document.getElementById('kBigNum');
-  if (skSlider) skSlider.disabled = S.grainKAllMode;
-  if (kNum) kNum.style.opacity = S.grainKAllMode ? '0.4' : '';
-  // grey out radius when nearest mode is active (no radius in nearest mode)
-  const radSlider = document.getElementById('radiusSlider');
-  const radNum    = document.getElementById('radiusVal');
-  if (radSlider) { radSlider.disabled = S.nearestMode; radSlider.style.opacity = S.nearestMode ? '0.35' : ''; }
-  if (radNum)    { radNum.style.opacity = S.nearestMode ? '0.35' : ''; radNum.style.pointerEvents = S.nearestMode ? 'none' : ''; }
-  // grey out recency when nearest mode is active (recency bypassed)
-  const recSlider = document.getElementById('recencySlider');
-  const recNum    = document.getElementById('recencyVal');
-  if (recSlider) { recSlider.disabled = S.nearestMode; recSlider.style.opacity = S.nearestMode ? '0.35' : ''; }
-  if (recNum)    { recNum.style.opacity = S.nearestMode ? '0.35' : ''; recNum.style.pointerEvents = S.nearestMode ? 'none' : ''; }
+  const kDisabled = S.grainKAllMode && !S.nearestMode;
+  if (skSlider) skSlider.disabled = kDisabled;
+  if (kNum) kNum.style.opacity = kDisabled ? '0.4' : '';
   drawRadiusViz();
 }
 

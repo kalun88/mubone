@@ -521,7 +521,7 @@ export function handleOSC(rawAddress, values) {
         const nb = document.getElementById('seedReleaseNum');    if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; }
       break;
 
-    // ── Search: recency, lock, k-all, k-seq ─────────────────────────────────
+    // ── Search: recency, scope, fill, order ─────────────────────────────────
     case '/grain/recency': {
       const n = Math.max(1, Math.min(16, Math.round(values[0])));
       if (typeof S.setRecency === 'function') S.setRecency(n);

@@ -14,7 +14,7 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.5 alpha</span>
+        <span class="top-bar-version">version 0.6 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -128,6 +128,11 @@
           <span class="pm-track"><span class="pm-fill" id="pmKBar"></span></span>
           <span class="pm-num" id="pmKVal">0</span>
         </div>
+        <div class="pm-row">
+          <span class="pm-label">rec</span>
+          <span class="pm-track"><span class="pm-fill" id="pmRecBar"></span></span>
+          <span class="pm-num" id="pmRecVal">0s</span>
+        </div>
         <div class="pm-info" id="pmInfo"></div>
         <div class="pm-warn" id="pmUnderruns" style="display:none"></div>
       </div>
@@ -203,47 +208,55 @@
         <div class="device-label">search</div>
         <div class="device-body search-body">
 
-          <!-- mode toggles — compact grain-seg style -->
           <div class="seq-section search-section--toggles">
-            <div class="grain-row" title="nearest lock — fire the k closest particles regardless of radius or recency&#10;when on: radius, recency and k-all are disabled&#10;only k and cursor position control selection">
-              <span class="grain-label">lock</span>
+            <!-- scope — highest-order decision: how does the cursor find particles? -->
+            <div class="grain-row" title="scope — how the cursor finds particles&#10;area: plays within a radius, filtered by recency&#10;nearest: always plays the k closest on the whole sphere">
+              <span class="grain-label">scope</span>
               <div class="grain-seg" id="snapToggleSeg">
-                <button class="grain-seg-btn" data-snap="on" id="snapToggleBtn" title="lock — fire the k nearest particles on the whole sphere&#10;radius and recency are bypassed">snap</button>
-                <button class="grain-seg-btn active" data-snap="off" title="free — select particles within the search radius&#10;filtered by recency and capped by k">free</button>
+                <button class="grain-seg-btn active" data-snap="off" title="area — select particles within the search radius&#10;filtered by recency">area</button>
+                <button class="grain-seg-btn" data-snap="on" id="snapToggleBtn" title="nearest — fire the k closest particles on the whole sphere&#10;radius and recency are bypassed">nearest</button>
               </div>
             </div>
-            <div class="grain-row" title="k-all — fire all particles within radius, ignoring k limit&#10;disabled when nearest lock is on">
-              <span class="grain-label">k-all</span>
-              <div class="grain-seg" id="kAllSeg">
-                <button class="grain-seg-btn" data-kall="on" id="kAllBtn" title="all — fire every particle in radius, no k cap">all</button>
-                <button class="grain-seg-btn active" data-kall="off" title="k — cap selection to k nearest particles">k</button>
-              </div>
-            </div>
-            <div class="grain-row" title="k-seq — step through candidates one at a time in recording order&#10;instead of picking randomly from the pool">
-              <span class="grain-label">k-seq</span>
-              <div class="grain-seg" id="kSeqSeg">
-                <button class="grain-seg-btn" data-kseq="on" id="kSeqBtn" title="step — play one particle at a time in recording order">step</button>
-                <button class="grain-seg-btn active" data-kseq="off" title="random — pick randomly from candidates">random</button>
-              </div>
-            </div>
-            <div class="grain-row" title="radius — search cone half-angle in degrees&#10;1° narrow beam to 180° full hemisphere&#10;disabled when nearest lock is on">
-              <span class="grain-label">radius</span>
-              <input class="grain-slider" type="range" id="radiusSlider" min="1" max="180" step="1" value="10">
-              <input type="text" class="grain-numbox" id="radiusVal" value="10°">
-              <button class="param-lock-btn" data-lock-key="searchRadiusDeg" title="lock radius — holds value through preset changes">🔓</button>
-            </div>
-            <div class="grain-row" title="k — max particles to fire per grain tick&#10;scales dynamically to total particle count&#10;the /n indicator shows total particles in the world">
+
+            <!-- selection — applies in both nearest and area modes -->
+            <span class="seq-section-label" style="margin-top:6px">selection</span>
+            <div class="grain-row" title="k — max particles to fire per grain onset&#10;in nearest mode: the k closest on the whole sphere&#10;in area mode: the k closest within the radius&#10;the /n indicator shows total particles in the world">
               <span class="grain-label">k</span>
               <input class="grain-slider" type="range" id="searchKSlider" min="1" max="100" step="1" value="5">
               <input type="text" class="grain-numbox" id="kBigNum" value="5">
               <span class="grain-numbox" id="kWorldCount" style="width:auto;min-width:0;padding:0;opacity:0.45;pointer-events:none"></span>
               <button class="param-lock-btn" data-lock-key="k" title="lock k — holds value through preset changes">🔓</button>
             </div>
-            <div class="grain-row" title="recency — limit selection to the n most recent recording buffers&#10;lower = only recent recordings, higher = older buffers included&#10;disabled when nearest lock is on">
-              <span class="grain-label">recency</span>
-              <input class="grain-slider" type="range" id="recencySlider" min="1" max="16" step="1" value="3">
-              <input type="text" class="grain-numbox" id="recencyVal" value="3">
-              <button class="param-lock-btn" data-lock-key="recencyN" title="lock recency — holds value through preset changes">🔓</button>
+            <div class="grain-row" title="order — how the next grain is chosen from the candidate pool&#10;random: pick randomly from candidates&#10;step: cycle through candidates in recording order">
+              <span class="grain-label">order</span>
+              <div class="grain-seg" id="kSeqSeg">
+                <button class="grain-seg-btn active" data-kseq="off" title="random — pick randomly from candidates">random</button>
+                <button class="grain-seg-btn" data-kseq="on" id="kSeqBtn" title="step — play one particle at a time in recording order">step</button>
+              </div>
+            </div>
+
+            <!-- area — only visible when scope = area -->
+            <div id="areaOnlyParams">
+              <span class="seq-section-label" style="margin-top:6px">area</span>
+              <div class="grain-row" title="radius — search cone half-angle in degrees&#10;1° narrow beam to 180° full hemisphere">
+                <span class="grain-label">radius</span>
+                <input class="grain-slider" type="range" id="radiusSlider" min="1" max="180" step="1" value="10">
+                <input type="text" class="grain-numbox" id="radiusVal" value="10°">
+                <button class="param-lock-btn" data-lock-key="searchRadiusDeg" title="lock radius — holds value through preset changes">🔓</button>
+              </div>
+              <div class="grain-row" title="recency — limit selection to the n most recent recording buffers&#10;lower = only recent recordings, higher = older buffers included">
+                <span class="grain-label">recency</span>
+                <input class="grain-slider" type="range" id="recencySlider" min="1" max="16" step="1" value="3">
+                <input type="text" class="grain-numbox" id="recencyVal" value="3">
+                <button class="param-lock-btn" data-lock-key="recencyN" title="lock recency — holds value through preset changes">🔓</button>
+              </div>
+              <div class="grain-row" title="fill — fire all particles in the area, or cap at k&#10;k: cap to the k nearest within radius&#10;all: every particle in radius fires (ignores k)">
+                <span class="grain-label">fill</span>
+                <div class="grain-seg" id="kAllSeg">
+                  <button class="grain-seg-btn active" data-kall="off" title="k — cap selection to k nearest within radius">k</button>
+                  <button class="grain-seg-btn" data-kall="on" id="kAllBtn" title="all — fire every particle in radius, no k cap">all</button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1093,6 +1106,13 @@
       <div class="as-row">
         <span class="latency-dot" id="asLatencyDot"></span>
         <span id="asLatencyLabel" class="as-dim">latency: ≈ — ms</span>
+      </div>
+
+      <div class="as-row" title="maximum live recording time before new recordings are blocked&#10;sweep to free space — undo available for 30s after sweep">
+        <span class="as-label">rec limit</span>
+        <input type="range" id="asRecLimit" class="as-slider"
+               min="120" max="1800" step="60" value="600">
+        <span class="as-val" id="asRecLimitVal">10 min</span>
       </div>
     </div>
 

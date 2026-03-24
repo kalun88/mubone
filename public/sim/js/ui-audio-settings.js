@@ -1168,6 +1168,9 @@ export function saveAllDefaults() {
     mixdownCursorGainValue: S.mixdownCursorGainValue ?? 1.0,
     mixdownHouseGainValue:  S.mixdownHouseGainValue ?? 1.0,
 
+    // Recording limit
+    recLimitSeconds: S.recLimitSeconds,
+
     // Last active preset
     activePresetIndex: S.activePresetIndex ?? FACTORY_PRESET_START,
 
@@ -1321,6 +1324,9 @@ export function loadAudioDefaults() {
     if (typeof d.mixdownCursorGainValue === 'number') S.mixdownCursorGainValue = d.mixdownCursorGainValue;
     if (typeof d.mixdownHouseGainValue === 'number')  S.mixdownHouseGainValue  = d.mixdownHouseGainValue;
 
+    // Recording limit
+    if (typeof d.recLimitSeconds === 'number') S.recLimitSeconds = d.recLimitSeconds;
+
     // Last active preset
     if (typeof d.activePresetIndex === 'number') S.activePresetIndex = d.activePresetIndex;
 
@@ -1461,6 +1467,20 @@ export function initAudioSettings() {
   document.getElementById('asOutputDevice')?.addEventListener('change', applyOutputDevice);
   document.getElementById('asRateApply')?.addEventListener('click',   applySampleRate);
   document.getElementById('asBufferApply')?.addEventListener('click', applyBufferSize);
+
+  // Recording limit slider
+  const recLimitSlider = document.getElementById('asRecLimit');
+  const recLimitVal    = document.getElementById('asRecLimitVal');
+  if (recLimitSlider) {
+    recLimitSlider.value = String(S.recLimitSeconds);
+    if (recLimitVal) recLimitVal.textContent = `${Math.round(S.recLimitSeconds / 60)} min`;
+    recLimitSlider.addEventListener('input', e => {
+      const sec = parseInt(e.target.value, 10);
+      S.recLimitSeconds = sec;
+      if (recLimitVal) recLimitVal.textContent = `${Math.round(sec / 60)} min`;
+      S.updateLiveRecUI?.(); // refresh HUD warning state
+    });
+  }
 
   // Input gain — browser only (in Electron, trim at the interface hardware).
   // Writes to S.inputGainNode which sits between the mic source and S.inputAnalyser

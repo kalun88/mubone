@@ -130,6 +130,12 @@ export const RENDER_TARGET_FPS = 30;
 // Live rebuild throttle
 export const LIVE_REBUILD_INTERVAL_MS = 200; // rebuild at most every 200ms
 
+// Recording memory guard — warn performer when total recorded audio approaches
+// this ceiling.  At 48kHz mono, each minute ≈ 11.5MB of Float32 data.
+// 600s (10 min) ≈ 115MB — conservative for student laptops with 8GB RAM.
+// Mutable at runtime via audio settings slider (stored on S.recLimitSeconds).
+export const REC_LIMIT_SECONDS_DEFAULT = 600;
+
 // ── Presets ───────────────────────────────────────────────────────────────────
 // k    = neighbourhood pool size -- how many nearest particles are candidates.
 //        One grain fires per cursor onset, chosen randomly from the k pool.
@@ -776,6 +782,8 @@ export const perf = {
   kCount:         0,    // actual particles selected per grain tick (live k count)
   kPool:          0,    // total candidates available before k cap
   lastResetAt:    0,
+  recTotalSec:    0,    // total seconds of audio in liveRecBuffers (updated by updateLiveRecUI)
+  recWarning:     false,// true when approaching REC_LIMIT_SECONDS
 };
 
 export function perfTick() {
@@ -847,7 +855,7 @@ export function perfTick() {
   const pCount = S.particles.length;
   const kwcEl = document.getElementById('kWorldCount');
   if (kwcEl) {
-    const txt = pCount > 0 ? `/${pCount}` : '';
+    const txt = pCount > 0 ? `[${pCount}]` : '';
     if (kwcEl.textContent !== txt) kwcEl.textContent = txt;
   }
   // Dynamic k slider max = particle count (floor 1 so the slider is always usable)
@@ -907,23 +915,44 @@ export function perfTick() {
     `${perf.grainsPerSec}/s`,
     101, 101);  // never warn
 
-  // k count: selected / k-setting (pool available) — show "—" when idle
+  // k display — visual grammar: / = k cap, () = radius pool, [] = world
+  //   nearest:    "3 / 10 [42]"          X / k [world]
+  //   area+k:     "3 / 10 (12) [42]"     X / k (inRadius) [world]
+  //   area+all:   "12 all [42]"           X all [world]  (k bypassed, radius=X)
+  //   idle:       "— [42]"
   const kSetting = S.grainOverrides.k ?? gp().k;
+  const worldCount = S.particles.length;
   let kLabel, kPct;
   if (perf.kPool > 0) {
-    const poolStr = ` (${perf.kPool})`;
-    kLabel = S.grainKAllMode
-      ? `${perf.kCount}${poolStr}`
-      : `${perf.kCount} / ${kSetting}${poolStr}`;
-    // Bar fills against the k setting (not the pool) so a full bar = k limit reached
-    kPct = S.grainKAllMode
-      ? Math.min(100, perf.kCount * 2)
-      : (perf.kCount / Math.max(kSetting, 1)) * 100;
+    const effectiveAll = S.grainKAllMode && !S.nearestMode;
+    if (effectiveAll) {
+      kLabel = `${perf.kCount} all [${worldCount}]`;
+      kPct = Math.min(100, perf.kCount * 2);
+    } else if (S.nearestMode) {
+      kLabel = `${perf.kCount} / ${kSetting} [${worldCount}]`;
+      kPct = (perf.kCount / Math.max(kSetting, 1)) * 100;
+    } else {
+      // area + k cap
+      kLabel = `${perf.kCount} / ${kSetting} (${perf.kPool}) [${worldCount}]`;
+      kPct = (perf.kCount / Math.max(kSetting, 1)) * 100;
+    }
   } else {
-    kLabel = '—';
+    kLabel = worldCount > 0 ? `— [${worldCount}]` : '—';
     kPct = 0;
   }
   setBar('pmKBar', 'pmKVal', kPct, kLabel, 101, 101);
+
+  // rec: recorded audio duration vs S.recLimitSeconds. Warn 80%, crit 95%.
+  const recSec = perf.recTotalSec;
+  const recLim = S.recLimitSeconds;
+  const recPct = (recSec / recLim) * 100;
+  const recMins = Math.floor(recSec / 60);
+  const recSecs = Math.floor(recSec % 60);
+  const limMins = Math.floor(recLim / 60);
+  const recLabel = recMins > 0
+    ? `${recMins}m${recSecs < 10 ? '0' : ''}${recSecs}s / ${limMins}m`
+    : `${recSecs}s / ${limMins}m`;
+  setBar('pmRecBar', 'pmRecVal', recPct, recLabel, 80, 95);
 
   const infoEl = document.getElementById('pmInfo');
   if (infoEl) {
@@ -1010,6 +1039,7 @@ export const S = {
   samples: [],
 
   // ── Live recording (spacebar) ──────────────────────────────────────────
+  recLimitSeconds: REC_LIMIT_SECONDS_DEFAULT, // adjustable via audio settings
   // Each entry: { buffer, grainCursor } -- grows without bound
   liveRecBuffers: [],
   liveColorIndex: 0,          // cycles through LIVE_PAINT_COLORS

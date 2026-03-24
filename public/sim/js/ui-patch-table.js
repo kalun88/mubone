@@ -29,7 +29,7 @@ import { isLocked, isLockable, toggleLock, onLockChange, loadLocks } from './par
 export const PARAM_REGISTRY = [
 
   // ── Search ────────────────────────────────────────────────────────────────
-  { key: 'nearestMode',    label: 'lock (nearest)',   group: 'search', type: 'boolean',
+  { key: 'nearestMode',    label: 'scope (nearest)',  group: 'search', type: 'boolean',
     get: () => S.nearestMode,
     set: v  => { S.nearestMode = v; },
     fmt: v  => v ? 'on' : 'off',

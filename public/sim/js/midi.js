@@ -50,11 +50,11 @@ const ACTIONS = [
 
   // ── Search ─────────────────────────────────────────────────────────────────
   { id: null, group: 'search' },
-  { id: 'snap',         label: 'lock (nearest mode)',        key: 'N',                 osc: '/grain/lock',     fmt: 'int 0|1',          type: 'trigger',
-    tip: 'nearest lock — fire k closest particles on the whole sphere, bypassing radius and recency' },
-  { id: 'k_all',        label: 'k-all toggle',              key: '—',                 osc: '/grain/kall',     fmt: 'int 0|1',          type: 'trigger',
-    tip: 'fire all particles in radius with no k cap — disabled when nearest lock is on' },
-  { id: 'k_seq',        label: 'k-seq toggle',              key: '—',                 osc: '/grain/kseq',     fmt: 'int 0|1',          type: 'trigger',
+  { id: 'snap',         label: 'scope (nearest/area)',       key: 'N',                 osc: '/grain/lock',     fmt: 'int 0|1',          type: 'trigger',
+    tip: 'scope — nearest: fire k closest on whole sphere / area: search within radius + recency' },
+  { id: 'k_all',        label: 'fill (all/k)',              key: '—',                 osc: '/grain/kall',     fmt: 'int 0|1',          type: 'trigger',
+    tip: 'fill — all: fire every particle in radius / k: cap to k nearest (area mode only)' },
+  { id: 'k_seq',        label: 'order (step/random)',       key: '—',                 osc: '/grain/kseq',     fmt: 'int 0|1',          type: 'trigger',
     tip: 'step through candidates one at a time in recording order instead of random' },
   { id: 'radius_cc',    label: 'radius',                    key: '—',                 osc: '/grain/radius',   fmt: 'float 1–180 °',    type: 'cc',
     ccFn: v => { S.searchRadiusDeg = SEARCH_RADIUS_MIN + (v / 127) * (SEARCH_RADIUS_MAX - SEARCH_RADIUS_MIN); updatePlaybackControls(); flashRadiusTooltip(); } },

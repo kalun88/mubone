@@ -220,7 +220,7 @@ export function initRadiusFade() {
 
   // Restore persisted state — also reflects nearestMode override
   const syncUI = () => {
-    // When lock (nearestMode) is on, fade is forced off visually
+    // When scope=nearest, fade is forced off visually (no radius to fade)
     const effectiveOn = S.radiusFadeEnabled && !S.nearestMode;
     seg.querySelectorAll('.grain-seg-btn').forEach(b => {
       b.classList.toggle('active', (b.dataset.fade === 'on') === effectiveOn);

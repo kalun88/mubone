@@ -384,7 +384,7 @@ export function drawRadiusTooltip() {
       ? focalLen * Math.tan(searchRadiusRad)
       : S.canvas.width * 0.8;
 
-  const label = S.nearestMode ? 'snap' : `${S.searchRadiusDeg}°`;
+  const label = S.nearestMode ? 'nearest' : `${S.searchRadiusDeg}°`;
   const fs    = 9;
 
   // Flash calculation — brighter on change, fades to ghost

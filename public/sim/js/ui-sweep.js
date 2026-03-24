@@ -40,8 +40,24 @@ export function undoSweep() {
  * Discard any pending sweep snapshot — called when a new action makes the
  * sweep permanent (e.g. new paint stroke, sow, arm loop).
  */
+let _sweepAutoCommitTimer = null;
 export function commitSweep() {
+  if (_sweepAutoCommitTimer) { clearTimeout(_sweepAutoCommitTimer); _sweepAutoCommitTimer = null; }
   S._sweepSnapshot = null;
+}
+
+/**
+ * Schedule auto-commit of the sweep snapshot after a delay.
+ * Frees buffer memory even if the performer never paints again.
+ * 30s is long enough to undo a mistake, short enough to reclaim RAM.
+ */
+function scheduleSweepAutoCommit() {
+  if (_sweepAutoCommitTimer) clearTimeout(_sweepAutoCommitTimer);
+  _sweepAutoCommitTimer = setTimeout(() => {
+    S._sweepSnapshot = null;
+    _sweepAutoCommitTimer = null;
+    S.updateLiveRecUI?.(); // refresh HUD (recTotalSec may have dropped)
+  }, 30000);
 }
 
 // ── Core sweep logic ─────────────────────────────────────────────────────────
@@ -142,7 +158,11 @@ export function sweep() {
   S.strokeHistory = S.strokeHistory.filter(e => remainingStrokeIds.has(e.strokeId));
 
   // If nothing was actually removed, no need for a snapshot
-  if (removed === 0) S._sweepSnapshot = null;
+  if (removed === 0) {
+    S._sweepSnapshot = null;
+  } else {
+    scheduleSweepAutoCommit(); // auto-free snapshot memory after 30s
+  }
 
   S.updateLiveRecUI?.();
 
@@ -179,6 +199,7 @@ export function initSweepUI() {
       }
       S.strokeHistory = [];
       S.updateLiveRecUI?.();
+      scheduleSweepAutoCommit();
       flashSweepFeedback(btn, count, 0);
       return;
     }
@@ -238,6 +259,7 @@ function eraseAll() {
   (S.updateSeedBanksUI || (() => {}))();
   clearAllSeqs();
   S.updateLiveRecUI?.();
+  scheduleSweepAutoCommit();
   return count + (hadSeeds ? 1 : 0) + (hadSeqs ? 1 : 0);
 }
 

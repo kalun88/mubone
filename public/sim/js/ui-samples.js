@@ -5,7 +5,7 @@
 import {
   S,
   MAX_SAMPLES, SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, DEBUG,
-  gp,
+  gp, perf,
 } from './state.js';
 import { ensureAudioContext, getMasterBus } from './audio.js';
 import { removeSeqByStrokeId } from './ui-presets.js';
@@ -579,8 +579,35 @@ function updateLiveRecUI() {
   const bufCount = S.liveRecBuffers.filter(b => b.buffer !== null).length;
   const countEl = document.getElementById('liveRecCount');
   if (countEl) countEl.textContent = bufCount;
+
+  // Compute total recorded duration across all live buffers
+  let totalSec = 0;
+  for (let i = 0; i < S.liveRecBuffers.length; i++) {
+    const buf = S.liveRecBuffers[i].buffer;
+    if (buf) totalSec += buf.duration;
+  }
+  perf.recTotalSec = totalSec;
+
+  // Memory guard — flag when past 80% of limit
+  const pct = totalSec / S.recLimitSeconds;
+  perf.recWarning = pct >= 0.80;
+
+  // HUD: "buffers: 3 · 2m14s" (or "buffers: 3 · 2m14s !" when warning)
   const vmBuffers = document.getElementById('vmBuffers');
-  if (vmBuffers) vmBuffers.textContent = `buffers: ${bufCount}`;
+  if (vmBuffers) {
+    const mins = Math.floor(totalSec / 60);
+    const secs = Math.floor(totalSec % 60);
+    const timeStr = mins > 0
+      ? `${mins}m${secs < 10 ? '0' : ''}${secs}s`
+      : `${secs}s`;
+    const warn = pct >= 0.95 ? ' !!' : pct >= 0.80 ? ' !' : '';
+    vmBuffers.textContent = bufCount > 0
+      ? `buffers: ${bufCount} · ${timeStr}${warn}`
+      : `buffers: 0`;
+    vmBuffers.style.color = pct >= 0.95 ? '#e06060'
+                          : pct >= 0.80 ? '#e8a030'
+                          : '';
+  }
   updatePaintIndicator();
 }
 
