@@ -62,24 +62,26 @@ export const LIVE_PAINT_COLORS = [
   '#c8603a', '#e8b050', '#d06838'
 ];
 
-// Seed plant system — MAX_SEEDS is the hard upper bound (array size).
-// S.seedSlotCount (1–12) is the active limit per session.
-export const MAX_SEEDS = 12;
-// Sequential (loop) system — same pattern.
-export const MAX_SEQS = 12;
-export const SEED_COLORS = [
+// Commit system — unified pool for clouds (particle-based) and loops (buffer-based).
+// MAX_COMMITS is the hard upper bound (array size).
+// S.commitSlotCount (1–16) is the active limit per session.
+export const MAX_COMMITS = 16;
+// Legacy aliases — kept so existing code compiles during transition
+export const MAX_SEEDS = MAX_COMMITS;
+export const MAX_SEQS  = MAX_COMMITS;
+export const COMMIT_COLORS = [
   '#4fc3f7', '#81c784', '#ffb74d', '#e57373',
   '#ce93d8', '#fff176', '#80cbc4', '#ff8a65',
-  '#90caf9', '#a5d6a7', '#ffe082', '#ef9a9a'
-];
-export const SEQ_COLORS = [
   '#ff6b9d', '#c084fc', '#67e8f9', '#fbbf24',
-  '#a3e635', '#f472b6', '#38bdf8', '#fb923c',
-  '#e879f9', '#86efac', '#7dd3fc', '#fdba74'
+  '#a3e635', '#f472b6', '#38bdf8', '#fb923c'
 ];
-// Moving seed recording: threshold (ms) — hold ↓ longer than this to record a moving seed.
+// Legacy aliases
+export const SEED_COLORS = COMMIT_COLORS;
+export const SEQ_COLORS  = COMMIT_COLORS;
+// Commit draw threshold (ms) — hold D longer than this to record a moving cloud / new loop.
 // Shorter is treated as a stationary drop.
-export const MOVING_SEED_THRESHOLD_MS = 200;
+export const COMMIT_DRAW_THRESHOLD_MS = 200;
+export const MOVING_SEED_THRESHOLD_MS = COMMIT_DRAW_THRESHOLD_MS; // legacy alias
 // Glow color for nearest-lock cursor grains -- distinct from particle and seed colors
 export const NEAREST_GLOW_COLOR = '#b8a0ff'; // soft violet
 
@@ -858,10 +860,10 @@ export function perfTick() {
     const txt = pCount > 0 ? `[${pCount}]` : '';
     if (kwcEl.textContent !== txt) kwcEl.textContent = txt;
   }
-  // Dynamic k slider max = particle count (floor 1 so the slider is always usable)
+  // Dynamic k slider max = particle count, floor 30 so k can be set before painting
   const kSliderEl = document.getElementById('searchKSlider');
   if (kSliderEl) {
-    const newMax = String(Math.max(1, pCount));
+    const newMax = String(Math.max(30, pCount));
     if (kSliderEl.max !== newMax) kSliderEl.max = newMax;
   }
 
@@ -1025,11 +1027,35 @@ export const S = {
   setRecency:      null,     // same
   setSearchK:      null,     // set during setup -- module-level so selectPreset can call it
 
-  // ── Seed plant system ──────────────────────────────────────────────────
-  seedSlots: new Array(MAX_SEEDS).fill(null), // fixed positions
-  seedSlotCount:    8,        // active limit (1–12), default 8
-  seedOverflow:     'off',    // 'off' | 'oldest' | 'nearest'
-  seedLockEnabled:  false,    // when true, every paint trace auto-sows a seed trail
+  // ── Commit system (unified clouds + loops) ─────────────────────────────
+  // Each slot is either a cloud (particle-based granular) or a loop (buffer-based).
+  // type: 'cloud' | 'loop' stored on each slot object.
+  commitSlots: new Array(MAX_COMMITS).fill(null),
+  commitSlotCount:    8,        // active limit (1–16), adjustable during session
+  commitOverflow:     'off',    // 'off' | 'oldest' | 'nearest'
+  traceMode:          'trace',  // 'trace' | 'trace+loop' | 'trace+cloud' — what spacebar/click does
+  commitMode:         'cloud',  // 'cloud' | 'loop' — what the next C press creates
+  selectionMode:      'closest', // 'closest' | 'farthest' — which commit is targeted for morph & release
+  // Legacy aliases for code that still references old names
+  get seedSlots()       { return this.commitSlots; },
+  set seedSlots(v)      { this.commitSlots = v; },
+  get seedSlotCount()   { return this.commitSlotCount; },
+  set seedSlotCount(v)  { this.commitSlotCount = v; },
+  get seedOverflow()    { return this.commitOverflow; },
+  set seedOverflow(v)   { this.commitOverflow = v; },
+  // Legacy: commitLockEnabled maps to traceMode !== 'trace'
+  get commitLockEnabled()  { return this.traceMode !== 'trace'; },
+  set commitLockEnabled(v) { this.traceMode = v ? 'trace+cloud' : 'trace'; },
+  get seedLockEnabled()    { return this.commitLockEnabled; },
+  set seedLockEnabled(v)   { this.commitLockEnabled = v; },
+  get seqSlots()        { return this.commitSlots; },
+  set seqSlots(v)       { this.commitSlots = v; },
+  get seqSlotCount()    { return this.commitSlotCount; },
+  set seqSlotCount(v)   { this.commitSlotCount = v; },
+  get seqOverflow()     { return this.commitOverflow; },
+  set seqOverflow(v)    { this.commitOverflow = v; },
+  get seqModeEnabled()  { return this.commitMode === 'loop'; },
+  set seqModeEnabled(v) { this.commitMode = v ? 'loop' : 'cloud'; },
 
   // ── Loaded samples (1-9) ───────────────────────────────────────────────
   // activeSampleIndex: which slot is currently toggled ON for painting (-1 = none)
@@ -1099,6 +1125,7 @@ export const S = {
   vizCentroidMax: 0.45,     // highest expected centroid (bright/hissy content)
   modeRingSize:  30,        // mode ring radius (px) — controls how big the 4 status arcs are
   uiScale:       1.0,       // UI scale factor — multiplied with base font-size (15px)
+  hudScale:      1.0,       // canvas HUD scale — multiplies edge bar height, text size, dot size, spacing
 
   // ── Audio ──────────────────────────────────────────────────────────────
   audioCtx:   null,
@@ -1175,13 +1202,20 @@ export const S = {
   desktopMorphReturnMs: 800,     // return-to-center time in ms (when not sticky)
   _desktopMorphAnimId: 0,        // rAF handle for return animation
 
-  // ── Seed navigation (Phase 3 — Improv Mode) ───────────────────────────
-  // 'all' = all seeds play simultaneously (existing behavior)
-  // 'focus' = distance-weighted blend toward closest seed(s)
-  seedMode:     'all',       // 'all' | 'focus'
-  seedXfade: 0.5,        // 0.0 = hard snap (focus only), 1.0 = full crossfade (distance blend)
-  seedTether: false,         // true = always plays closest seed(s) even if far away
-                              // false = gated by cursor radius — seeds outside radius fade to silence
+  // ── Commit playback modes ──────────────────────────────────────────────
+  // 'all' = all commits play simultaneously (collage)
+  // 'focus' = distance-weighted blend toward closest commit(s)
+  commitPlayback:  'all',    // 'all' | 'focus'
+  commitXfade:     0.5,      // 0.0 = hard snap (focus only), 1.0 = full crossfade (distance blend)
+  commitTether:    false,    // true = always plays closest commit(s) even if far away
+                              // false = gated by cursor radius — commits outside radius fade to silence
+  // Legacy aliases
+  get seedMode()    { return this.commitPlayback; },
+  set seedMode(v)   { this.commitPlayback = v; },
+  get seedXfade()   { return this.commitXfade; },
+  set seedXfade(v)  { this.commitXfade = v; },
+  get seedTether()  { return this.commitTether; },
+  set seedTether(v) { this.commitTether = v; },
 
   // ── Monitor / House bus split (Phase 1 — Improv Mode) ─────────────────
   // monitorBus:  cursor grains route here (private monitoring, always on)
@@ -1213,35 +1247,40 @@ export const S = {
   radiusFadeEnabled: false,
   radiusFadeCurve:   0.5,   // 0 = gentle (linear), 1 = aggressive (steep edge fade)
 
-  // Seed envelope: attack = swell-in time on drop, release = fade-out time on pickup
-  seedAttack:  0,     // seconds (0 = instant, max 10)
-  seedRelease: 0,     // seconds (0 = instant, max 10)
-  seedLoopMode: 'pingpong', // default loop mode for new moving seeds: 'pingpong' | 'forward'
+  // Cloud envelope: fade in = swell-in time on commit, fade out = fade-out time on release
+  commitAttack:  0,     // cloud fade in — seconds (0 = instant, max 10)
+  commitRelease: 0,     // cloud fade out — seconds (0 = instant, max 10)
+  commitCloudLoopMode: 'pingpong', // default loop mode for moving clouds: 'pingpong' | 'forward'
+  loopReleaseMode: 'fade',        // loop fade out mode: 'fade' = fade over loopFadeTimeMs, 'play-to-end' = finish buffer then stop
+  loopFadeTimeMs: 15,             // loop fade out duration in ms (0 = instant, max 2000)
+  // Legacy aliases
+  get seedAttack()       { return this.commitAttack; },
+  set seedAttack(v)      { this.commitAttack = v; },
+  get seedRelease()      { return this.commitRelease; },
+  set seedRelease(v)     { this.commitRelease = v; },
+  get seedLoopMode()     { return this.commitCloudLoopMode; },
+  set seedLoopMode(v)    { this.commitCloudLoopMode = v; },
 
-  // ── Sequential (loop) system ────────────────────────────────────────────
-  // When true, cursor is in sequential/loop mode: painting records a loop,
-  // no granulation occurs while painting.  On release, a sequence object is
-  // created and begins looping playback automatically.
-  seqModeEnabled: false,
-  seqSlots: new Array(MAX_SEQS).fill(null),
-  seqSlotCount:     8,        // active limit (1–12), default 8
-  seqOverflow:      'off',    // 'off' | 'oldest' | 'nearest'
-  // Each seq slot (when active):
-  //   { slotIndex, strokeId, particles: [...], buffer, loopStart, loopEnd,
-  //     playheadIndex, direction: 1|-1, speed: 1.0, playing: true, color,
-  //     _sourceNode, _gainNode, _startedAt, grainParams: { volume } }
-  // The sequence's recording stroke ID — set when painting starts in seq mode,
-  // used on release to collect particles into a sequence.
+  // The recording stroke ID — set when painting starts in loop commit mode,
+  // used on release to collect particles into a loop.
   _seqRecordingStrokeId: -1,
-  // Defaults for the *next* loop created — sliders in the seq panel edit these
-  // when no loops exist yet, so you can dial in speed/dir/vol before recording.
-  seqNextParams: { direction: 1, speed: 1.0, volume: 1.0 },
+  // Defaults for the *next* loop commit — sliders in the commit panel edit these.
+  commitLoopParams: { direction: 1, speed: 1.0, volume: 1.0 },
+  get seqNextParams()  { return this.commitLoopParams; },
+  set seqNextParams(v) { this.commitLoopParams = v; },
 
-  // ── Moving seed recording state ─────────────────────────────────────
-  // Non-null while ↓ is held and recording cursor movement for a moving seed.
-  _seedRecordingFrames: null,
-  _seedRecordingStart:  0,     // performance.now() of ↓ keydown
-  _seedRecordingSlot:   -1,    // which seed slot is being recorded into
+  // ── Commit recording state ────────────────────────────────────────────
+  // Non-null while C is held and recording cursor movement for a moving cloud.
+  _commitRecordingFrames: null,
+  _commitRecordingStart:  0,     // performance.now() of C keydown
+  _commitRecordingSlot:   -1,    // which commit slot is being recorded into
+  // Legacy aliases
+  get _seedRecordingFrames()  { return this._commitRecordingFrames; },
+  set _seedRecordingFrames(v) { this._commitRecordingFrames = v; },
+  get _seedRecordingStart()   { return this._commitRecordingStart; },
+  set _seedRecordingStart(v)  { this._commitRecordingStart = v; },
+  get _seedRecordingSlot()    { return this._commitRecordingSlot; },
+  set _seedRecordingSlot(v)   { this._commitRecordingSlot = v; },
 
   // ── Mixdown source gains ────────────────────────────────────────────────
   // Independent volume controls for house fold-down and cursor contributions

@@ -15,10 +15,11 @@ import {
   updateSvTabStates, updateSamplePaintIndicator, switchSvTab,
 } from './ui-samples.js';
 import {
-  toggleNearestMode, plantSeed, startSeedPlant, finalizeSeedPlant, uprootNearestSeed,
+  toggleNearestMode, plantSeed, startSeedPlant, finalizeSeedPlant,
+  uprootNearestSeed,
   updatePlaybackControls, flashRadiusTooltip, selectPreset,
-  drawPresetWaveform, createSeqFromStroke, clearAllSeqs, dropSeqFromCursor,
-  pickupSeqRemove,
+  drawPresetWaveform, createSeqFromStroke, dropSeqFromCursor,
+  releaseCommit, clearAllCommits,
 } from './ui-presets.js';
 import { resizeCanvas } from './renderer.js';
 import { loadAudioFile } from './ui-samples.js';
@@ -68,6 +69,15 @@ function getMouseLonLat() {
 // ── updateLiveRecUI re-export (used inline here) ──────────────────────────────
 function _updateLiveRecUI() {
   S.updateLiveRecUI?.();
+}
+
+// Grey/restore D-loop buttons when trace+loop owns recording
+function _syncCommitBtnLock(locked) {
+  if (S.commitMode !== 'loop') return;  // only lock when commit is in loop mode
+  const dropBtn = document.getElementById('commitDropBtn');
+  const drawBtn = document.getElementById('commitDrawBtn');
+  if (dropBtn) { dropBtn.style.opacity = locked ? '0.35' : ''; dropBtn.style.pointerEvents = locked ? 'none' : ''; }
+  if (drawBtn) { drawBtn.style.opacity = locked ? '0.35' : ''; drawBtn.style.pointerEvents = locked ? 'none' : ''; }
 }
 
 export function setupEvents() {
@@ -205,7 +215,7 @@ export function setupEvents() {
       // Blur buttons, range sliders, and div-based seg buttons after click.
       // Text inputs are left alone — user may be typing.
       if (tag === 'BUTTON' || (tag === 'INPUT' && el.type === 'range') ||
-          el.classList.contains('grain-seg-btn') || el.classList.contains('param-lock-btn') ||
+          el.classList.contains('grain-seg-btn') ||
           el.classList.contains('oct-btn')) {
         el.blur();
       }
@@ -291,75 +301,84 @@ export function setupEvents() {
       return;
     }
 
-    // ⌘D: lift nearest loop
+    // ⌘D: release one commit (nearest or farthest based on selectionMode)
     if (e.key === 'd' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.repeat) {
       e.preventDefault();
-      pickupSeqRemove();
+      releaseCommit();
     }
 
-    // Shift+D: toggle loop lock (was L)
+    // Shift+D: cycle commit mode (cloud ↔ loop)
     if (e.key === 'D' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
-      // If D is currently held, update the *restored* state, not the live seqModeEnabled
-      const dHeld = S._loopRecPreSeqMode !== undefined;
-      const effectiveCurrent = dHeld ? S._loopRecPreSeqMode : S.seqModeEnabled;
-      let nextValue;
-      if (!effectiveCurrent && S.seqOverflow === 'off') {
-        let full = true;
-        for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
-        nextValue = full ? effectiveCurrent : true;
-      } else {
-        nextValue = !effectiveCurrent;
-      }
-      if (dHeld) {
-        S._loopRecPreSeqMode = nextValue;
-      } else {
-        S.seqModeEnabled = nextValue;
-      }
-      document.getElementById('seqModeBtn')?.classList.toggle('active', nextValue);
+      S.commitMode = S.commitMode === 'cloud' ? 'loop' : 'cloud';
+      S._syncCommitUI?.();
     }
 
-    // D: dual-action loop key
-    //   Quick tap (<200ms) = drop loop (turn stroke under cursor into a loop)
-    //   Long hold (≥200ms) = draw loop (record a new loop)
-    // Recording always starts immediately on keydown for timing precision;
-    // the decision happens on keyup based on hold duration.
+    // D: unified commit key
+    //   Quick tap (<200ms) = drop commit (cloud: parked cloud, loop: drop from cursor)
+    //   Long hold (≥200ms) = draw commit (cloud: moving path, loop: record new loop)
+    //   In loop mode, D-loop takes priority over trace (spacebar/mouse).
     if (e.key === 'd' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
       e.preventDefault();
-      // Disallow if slots are full and overflow is off (same guard as L / drop)
-      if (S.seqOverflow === 'off') {
+      // Disallow if slots are full and overflow is off
+      if (S.commitOverflow === 'off') {
         let full = true;
-        for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
+        for (let i = 0; i < S.commitSlotCount; i++) {
+          const sl = S.commitSlots[i];
+          if (!sl || (sl.type === 'cloud' && sl._releasingAt > 0)) { full = false; break; }
+        }
         if (full) return;
       }
-      S._drawLoopStartMs = performance.now();
+      S._commitStartMs = performance.now();
       ensureAudioContext();
-      // Remember prior seq mode so we can restore it on keyup
-      S._loopRecPreSeqMode = S.seqModeEnabled;
-      S.seqModeEnabled = true;
-      if (!S.scanMuted) setScanMuted(true);
-      const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
-      if (gotMic) startLiveRecording();
-      recordStrokeStart('live', S.currentLiveBufferIdx);
-      S.isPainting      = true;
-      S.paintFrameCount = 0;
-      if (S.seedLockEnabled) startSeedPlant();
+
+      if (S.commitMode === 'loop') {
+        // Block D-loop while trace+loop is actively recording — trace owns the mic
+        if (S._traceActive && S.traceMode === 'trace+loop') return;
+        S._cLoopActive = true;
+        // Loop mode: start recording immediately (decision on keyup)
+        if (!S.scanMuted) setScanMuted(true);
+        const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
+        if (gotMic) startLiveRecording();
+        recordStrokeStart('live', S.currentLiveBufferIdx);
+        S.isPainting      = true;
+        S.paintFrameCount = 0;
+        // Grey out trace indicator while D-loop owns recording
+        const traceInd = document.getElementById('paintIndicatorBtn');
+        if (traceInd) { traceInd.style.opacity = '0.35'; traceInd.style.pointerEvents = 'none'; }
+      } else {
+        // Cloud mode: start cloud recording (captures cursor frames)
+        // If trace+cloud is mid-recording, shelve its state so D gets its own seed
+        if (S._traceActive && S.traceMode === 'trace+cloud' && S._seedRecordingFrames) {
+          S._shelvedSeed = { frames: S._seedRecordingFrames, start: S._seedRecordingStart, slot: S._seedRecordingSlot };
+          S._seedRecordingFrames = null;
+          S._seedRecordingStart  = 0;
+          S._seedRecordingSlot   = -1;
+        }
+        startSeedPlant();
+      }
       _updateLiveRecUI();
     }
 
-    // Spacebar: live recording + painting
+    // Spacebar: live recording + painting (trace)
     if (e.code === 'Space' && !e.repeat) {
       e.preventDefault();
-      ensureAudioContext();
-      // Auto-mute cursor when starting a sequential recording
-      if (S.seqModeEnabled && !S.scanMuted) setScanMuted(true);
-      const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
-      if (gotMic) startLiveRecording();
-      recordStrokeStart('live', S.currentLiveBufferIdx);
-      S.isPainting      = true;
-      S.paintFrameCount = 0;
-      if (S.seedLockEnabled) startSeedPlant();
-      _updateLiveRecUI();
+      S._traceActive = true;
+      // If D-loop owns recording, just mark trace as held — don't touch audio
+      if (!S._cLoopActive) {
+        ensureAudioContext();
+        // In trace+loop mode, mute scan when trace fires
+        if (S.traceMode === 'trace+loop' && !S.scanMuted) setScanMuted(true);
+        if (S.traceMode === 'trace+loop') _syncCommitBtnLock(true);
+        const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
+        if (gotMic) startLiveRecording();
+        recordStrokeStart('live', S.currentLiveBufferIdx);
+        S.isPainting      = true;
+        S.paintFrameCount = 0;
+        // Auto-commit cloud during trace when in trace+cloud mode
+        if (S.traceMode === 'trace+cloud') startSeedPlant();
+        _updateLiveRecUI();
+      }
     }
 
     // QWERTYUIOP: momentary sample paint (10 slots)
@@ -369,13 +388,13 @@ export function setupEvents() {
       if (_sampleIdx < S.samples.length && S.samples[_sampleIdx].buffer) {
         e.preventDefault();
         ensureAudioContext();
-        // Auto-mute cursor when starting a sequential recording
-        if (S.seqModeEnabled && !S.scanMuted) setScanMuted(true);
+        // In trace+loop mode, mute scan when painting
+        if (S.traceMode === 'trace+loop' && !S.scanMuted) setScanMuted(true);
         S.activeSampleIndex = _sampleIdx;
         recordStrokeStart('sample');
         S.isPainting      = true;
         S.paintFrameCount = 0;
-        if (S.seedLockEnabled) startSeedPlant();
+        if (S.traceMode === 'trace+cloud') startSeedPlant();
         switchSvTab(_sampleIdx);
         updateSampleListActiveState();
         updateSvTabStates();
@@ -425,27 +444,20 @@ export function setupEvents() {
       undoLastStroke();
     }
 
-    // S: start seed sow (hold to record a moving seed)
+    // A: cycle trace mode (trace → trace+loop → trace+cloud → trace)
+    if (e.key === 'a' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
+      e.preventDefault();
+      const _modes = ['trace', 'trace+loop', 'trace+cloud'];
+      const _idx = _modes.indexOf(S.traceMode);
+      S.traceMode = _modes[(_idx + 1) % _modes.length];
+      // Flash the button
+      const _btn = document.getElementById('commitLockBtn');
+      if (_btn) { _btn.classList.add('flashing'); setTimeout(() => _btn.classList.remove('flashing'), 180); }
+      S._syncCommitUI?.();
+    }
+
+    // S: toggle scan (cursor spotlight on/off)
     if (e.key === 's' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
-      e.preventDefault();
-      startSeedPlant();
-    }
-
-    // ⌘S: uproot nearest seed
-    if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.repeat) {
-      e.preventDefault();
-      uprootNearestSeed();
-    }
-
-    // Shift+S: toggle seed lock
-    if (e.key === 'S' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
-      e.preventDefault();
-      S.seedLockEnabled = !S.seedLockEnabled;
-      document.getElementById('seedLockBtn')?.classList.toggle('active', S.seedLockEnabled);
-    }
-
-    // X: toggle scan (cursor spotlight on/off)
-    if ((e.key === 'x' || e.key === 'X') && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
       setScanMuted(!S.scanMuted);
     }
@@ -499,92 +511,123 @@ export function setupEvents() {
       }
     }
 
-    // S release: finalize seed sow (short hold = stationary, long = moving)
-    if (e.key === 's') {
-      e.preventDefault();
-      finalizeSeedPlant();
-    }
-
-    // D release: decide between drop (quick tap) and draw (long hold)
+    // D release: finalize commit (tap = drop, hold = draw)
     if (e.key === 'd' && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
-      const holdMs = performance.now() - (S._drawLoopStartMs || 0);
+      const holdMs = performance.now() - (S._commitStartMs || 0);
       const DROP_THRESHOLD_MS = 200;
 
-      if (holdMs < DROP_THRESHOLD_MS) {
-        // Quick tap → drop: discard the aborted recording, then drop
-        // existing stroke under cursor into a loop slot.
-        const abortedStrokeId = S.currentStrokeId;
-        S.isPainting      = false;
-        S.currentStrokeId = -1;
-        if (S.isRecording) stopLiveRecording();
-        // Remove any particles deposited during the tiny hold
-        if (abortedStrokeId > 0) {
-          S.particles = S.particles.filter(p => p.strokeId !== abortedStrokeId);
-          S._particleVersion++;
-          // Remove the stroke from history so undo doesn't see it
-          const hIdx = S.strokeHistory.findIndex(h => h.strokeId === abortedStrokeId);
-          if (hIdx !== -1) {
-            const entry = S.strokeHistory.splice(hIdx, 1)[0];
-            // Clean up the live buffer that was allocated for this aborted stroke
-            if (entry.type === 'live' && entry.liveBufferIndex >= 0) {
-              const idx = entry.liveBufferIndex;
-              if (idx < S.liveRecBuffers.length) {
-                S.liveRecBuffers.splice(idx, 1);
-                S.particles.forEach(p => { if (p.liveBufferIdx > idx) p.liveBufferIdx--; });
+      if (S.commitMode === 'loop') {
+        // If D-loop was blocked (trace+loop active), nothing to finalize
+        if (!S._cLoopActive) return;
+        // Loop commit
+        if (holdMs < DROP_THRESHOLD_MS) {
+          // Quick tap → drop loop: discard the aborted recording, then drop
+          // existing stroke under cursor into a loop slot.
+          const abortedStrokeId = S.currentStrokeId;
+          S.isPainting      = false;
+          S.currentStrokeId = -1;
+          if (S.isRecording) stopLiveRecording();
+          // Remove any particles deposited during the tiny hold
+          if (abortedStrokeId > 0) {
+            S.particles = S.particles.filter(p => p.strokeId !== abortedStrokeId);
+            S._particleVersion++;
+            const hIdx = S.strokeHistory.findIndex(h => h.strokeId === abortedStrokeId);
+            if (hIdx !== -1) {
+              const entry = S.strokeHistory.splice(hIdx, 1)[0];
+              if (entry.type === 'live' && entry.liveBufferIndex >= 0) {
+                const idx = entry.liveBufferIndex;
+                if (idx < S.liveRecBuffers.length) {
+                  S.liveRecBuffers.splice(idx, 1);
+                  S.particles.forEach(p => { if (p.liveBufferIdx > idx) p.liveBufferIdx--; });
+                }
               }
             }
           }
+          // Drop the stroke under cursor into a loop slot
+          dropSeqFromCursor();
+        } else {
+          // Long hold → draw loop: finalize the recorded loop
+          if (S.currentStrokeId > 0) {
+            try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+          }
+          S.isPainting      = false;
+          S.currentStrokeId = -1;
+          if (S.isRecording) stopLiveRecording();
+          S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
         }
-        // Drop the stroke under cursor into a loop slot
-        dropSeqFromCursor();
+        // D-loop done — restore trace indicator
+        S._cLoopActive = false;
+        const traceInd = document.getElementById('paintIndicatorBtn');
+        if (traceInd) { traceInd.style.opacity = ''; traceInd.style.pointerEvents = ''; }
+        // If trace (spacebar/mouse) is still held, resume recording
+        if (S._traceActive) {
+          startLiveRecording();
+          recordStrokeStart('live', S.currentLiveBufferIdx);
+          S.isPainting      = true;
+          S.paintFrameCount = 0;
+          if (S.traceMode === 'trace+cloud') startSeedPlant();
+        }
       } else {
-        // Long hold → draw: finalize the recorded loop
-        if (S.currentStrokeId > 0) {
-          try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+        // Cloud commit: finalize (tap = parked, hold = moving)
+        finalizeSeedPlant();
+        // If trace+cloud had a shelved seed, restore it so it keeps recording
+        if (S._shelvedSeed) {
+          S._seedRecordingFrames = S._shelvedSeed.frames;
+          S._seedRecordingStart  = S._shelvedSeed.start;
+          S._seedRecordingSlot   = S._shelvedSeed.slot;
+          S._shelvedSeed = null;
         }
-        S.isPainting      = false;
-        S.currentStrokeId = -1;
-        if (S.isRecording) stopLiveRecording();
-        S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
       }
-      // Finalize seed lock trail if active
-      if (S.seedLockEnabled) finalizeSeedPlant();
-      // Restore seq mode to what it was before D was pressed
-      if (S._loopRecPreSeqMode !== undefined) {
-        S.seqModeEnabled = S._loopRecPreSeqMode;
-        document.getElementById('seqModeBtn')?.classList.toggle('active', S.seqModeEnabled);
-        S._loopRecPreSeqMode = undefined;
-      }
-      S._drawLoopStartMs = 0;
+      S._commitStartMs = 0;
       _updateLiveRecUI();
     }
 
     // Spacebar release: stop recording, end live paint stroke
     if (e.code === 'Space') {
       e.preventDefault();
-      // In sequential mode, create a sequence from this stroke before resetting.
-      // Wrapped in try/catch so cleanup always runs even if seq creation fails
-      // (e.g. degenerate region when noise gate rejected most particles).
-      if (S.seqModeEnabled && S.currentStrokeId > 0) {
-        try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+      S._traceActive = false;
+      _syncCommitBtnLock(false);
+      // If D-loop owns recording, just mark trace as released — don't touch audio
+      if (!S._cLoopActive) {
+        // Auto-commit based on trace mode
+        if (S.traceMode === 'trace+loop' && S.currentStrokeId > 0) {
+          try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+        }
+        if (S.traceMode === 'trace+cloud') {
+          if (S._shelvedSeed) {
+            // D is still held — finalize the shelved trace seed, leave D's active recording alone
+            const sh = S._shelvedSeed;
+            S._shelvedSeed = null;
+            const slot = sh.slot;
+            const seed = S.commitSlots[slot];
+            if (seed && sh.frames && sh.frames.length >= 2) {
+              seed.frames   = sh.frames;
+              seed.duration = sh.frames[sh.frames.length - 1].t;
+              seed.lon      = sh.frames[0].lon;
+              seed.lat      = sh.frames[0].lat;
+            }
+            (S.updateSeedBanksUI || S._syncCommitUI)?.();
+          } else {
+            finalizeSeedPlant();
+          }
+        }
+        S.isPainting      = false;
+        S.currentStrokeId = -1;
+        if (S.isRecording) stopLiveRecording();
+        S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+        _updateLiveRecUI();
       }
-      if (S.seedLockEnabled) finalizeSeedPlant();
-      S.isPainting      = false;
-      S.currentStrokeId = -1;
-      if (S.isRecording) stopLiveRecording();
-      S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-      _updateLiveRecUI();
     }
 
     // QWERTYUIOP key release: end sample paint stroke
     const _sampleKeysUp = 'qwertyuiop';
     const _sampleIdxUp = _sampleKeysUp.indexOf(e.key.toLowerCase());
     if (_sampleIdxUp !== -1 && S.activeSampleIndex === _sampleIdxUp) {
-      if (S.seqModeEnabled && S.currentStrokeId > 0) {
+      if (S.traceMode === 'trace+loop' && S.currentStrokeId > 0) {
         try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
       }
-      if (S.seedLockEnabled) finalizeSeedPlant();
+      if (S.traceMode === 'trace+cloud') finalizeSeedPlant();
       S.isPainting      = false;
       S.currentStrokeId = -1;
       S.activeSampleIndex = -1;
@@ -609,14 +652,18 @@ export function setupEvents() {
     }
   }, { passive: false });
 
-  // Left click: live rec + paint
+  // Left click: live rec + paint (trace)
   S.canvas.addEventListener('mousedown', async e => {
     if (S.altLocked) return;
     if (e.button !== 0) return;
     e.preventDefault();
+    S._traceActive = true;
+    // If D-loop owns recording, just mark trace as held — don't touch audio
+    if (S._cLoopActive) return;
     ensureAudioContext();
-    // Auto-mute cursor when starting a sequential recording
-    if (S.seqModeEnabled && !S.scanMuted) setScanMuted(true);
+    // In trace+loop mode, mute scan when trace fires
+    if (S.traceMode === 'trace+loop' && !S.scanMuted) setScanMuted(true);
+    if (S.traceMode === 'trace+loop') _syncCommitBtnLock(true);
     if (!S.micPermissionGranted) {
       await requestMicAccess();
       return;
@@ -625,16 +672,37 @@ export function setupEvents() {
     recordStrokeStart('live', S.currentLiveBufferIdx);
     S.isPainting      = true;
     S.paintFrameCount = 0;
-    if (S.seedLockEnabled) startSeedPlant();
+    if (S.traceMode === 'trace+cloud') startSeedPlant();
     _updateLiveRecUI();
   });
   S.canvas.addEventListener('mouseup', e => {
     if (S.altLocked) return;
     if (e.button !== 0) return;
-    if (S.seqModeEnabled && S.currentStrokeId > 0) {
+    S._traceActive = false;
+    _syncCommitBtnLock(false);
+    // If D-loop owns recording, just mark trace as released — don't touch audio
+    if (S._cLoopActive) return;
+    if (S.traceMode === 'trace+loop' && S.currentStrokeId > 0) {
       try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
     }
-    if (S.seedLockEnabled) finalizeSeedPlant();
+    if (S.traceMode === 'trace+cloud') {
+      if (S._shelvedSeed) {
+        // D is still held — finalize the shelved trace seed, leave D's active recording alone
+        const sh = S._shelvedSeed;
+        S._shelvedSeed = null;
+        const slot = sh.slot;
+        const seed = S.commitSlots[slot];
+        if (seed && sh.frames && sh.frames.length >= 2) {
+          seed.frames   = sh.frames;
+          seed.duration = sh.frames[sh.frames.length - 1].t;
+          seed.lon      = sh.frames[0].lon;
+          seed.lat      = sh.frames[0].lat;
+        }
+        (S.updateSeedBanksUI || S._syncCommitUI)?.();
+      } else {
+        finalizeSeedPlant();
+      }
+    }
     S.isPainting      = false;
     S.currentStrokeId = -1;
     if (S.isRecording) stopLiveRecording();

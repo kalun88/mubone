@@ -18,8 +18,8 @@ import {
 import { updateGestureMorph } from './seed-morph.js';
 import { setScanMuted, setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
 import {
-  toggleNearestMode, dropSeqFromCursor, dropNearestSeq,
-  pickupSeqPause, pickupSeqRemove, clearAllSeqs, clearAllSeeds, updatePlaybackControls,
+  toggleNearestMode, dropSeqFromCursor,
+  releaseCommit, clearAllCommits, clearAllSeqs, clearAllSeeds, updatePlaybackControls,
 } from './ui-presets.js';
 import { sweep } from './ui-sweep.js';
 import { findNearestSeedSlot } from './grain.js';
@@ -401,10 +401,106 @@ export function handleOSC(rawAddress, values) {
       break;
     }
 
-    // ── Seed navigation (Phase 3 — Improv Mode) ────────────────────────────
-    // /seed/mode     s  — 'all' | 'focus'
-    // /seed/tether   i  — 1 = always play seed, 0 = radius-gated
-    // /seed/xfade f  — 0.0 = hard snap (focused only), 1.0 = full crossfade
+    // ── Commit system (unified cloud + loop) ────────────────────────────────
+    // New addresses — preferred going forward.
+    case '/commit/drop':
+      if (S.commitMode === 'cloud') S._plantSeed?.();
+      else                          dropSeqFromCursor();
+      break;
+    case '/commit/draw':
+      if (S.commitMode === 'cloud') {
+        if (values[0] > 0) S._startSeedPlant?.();
+        else               S._finalizeSeedPlant?.();
+      } else {
+        S._dispatchAction?.('commit_draw', values[0] ? 127 : 0);
+      }
+      break;
+    case '/commit/release':
+      releaseCommit();
+      break;
+    case '/commit/clear':
+      clearAllCommits();
+      break;
+    case '/commit/mode':
+      if (values[0] === 'cloud' || values[0] === 'loop') {
+        S.commitMode = values[0];
+      } else {
+        // Toggle
+        S.commitMode = S.commitMode === 'cloud' ? 'loop' : 'cloud';
+      }
+      S._syncCommitUI?.();
+      break;
+    case '/commit/blend':
+      if (values[0] === 'all' || values[0] === 'focus') {
+        S.seedMode = values[0];
+        S._syncImprovUI?.();
+      }
+      break;
+    case '/commit/tether':
+      S.seedTether = !!values[0];
+      S._syncImprovUI?.();
+      break;
+    case '/commit/xfade':
+      S.seedXfade = clamp(values[0], 0, 1);
+      S._syncImprovUI?.();
+      break;
+    case '/commit/loop_release':
+      if (values[0] === 'fade' || values[0] === 'play-to-end') {
+        S.loopReleaseMode = values[0];
+      } else {
+        S.loopReleaseMode = S.loopReleaseMode === 'fade' ? 'play-to-end' : 'fade';
+      }
+      { const lrSeg = document.getElementById('loopReleaseModeSeg');
+        if (lrSeg) lrSeg.querySelectorAll('[data-lrmode]').forEach(b =>
+          b.classList.toggle('active', b.dataset.lrmode === S.loopReleaseMode)); }
+      break;
+    case '/commit/loop_fade_time':
+      S.loopFadeTimeMs = clamp(values[0], 0, 2000);
+      { const sl = document.getElementById('loopFadeTimeSlider'); if (sl) sl.value = S.loopFadeTimeMs;
+        const nb = document.getElementById('loopFadeTimeNum');    if (nb) nb.value = S.loopFadeTimeMs < 1000 ? Math.round(S.loopFadeTimeMs) + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; }
+      break;
+    case '/commit/dir':
+      if (['fwd', 'rev', 'pingpong'].includes(values[0])) {
+        S.seedLoopMode = values[0];
+        const seg = document.getElementById('seedLoopModeSeg');
+        if (seg) seg.querySelectorAll('[data-loopmode]').forEach(b =>
+          b.classList.toggle('active', b.dataset.loopmode === S.seedLoopMode));
+      }
+      break;
+    case '/commit/attack':
+      S.seedAttack = clamp(values[0], 0, 10);
+      { const sl = document.getElementById('seedAttackSlider');  if (sl) sl.value = S.seedAttack;
+        const nb = document.getElementById('seedAttackNum');     if (nb) nb.value = S.seedAttack < 1 ? (S.seedAttack * 1000).toFixed(0) + 'ms' : S.seedAttack.toFixed(1) + 's'; }
+      break;
+    case '/commit/release_time':
+      S.seedRelease = clamp(values[0], 0, 10);
+      { const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.seedRelease;
+        const nb = document.getElementById('seedReleaseNum');    if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; }
+      break;
+    case '/commit/volume':
+      S.seqNextParams.volume = clamp(values[0], 0, 1);
+      { const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume;
+        const nb = document.getElementById('seqVolumeNum');    if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; }
+      break;
+    case '/commit/speed':
+      S.seqNextParams.speed = clamp(values[0], 0.25, 4);
+      { const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed;
+        const nb = document.getElementById('seqSpeedNum');    if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; }
+      break;
+
+    // ── Trace mode ──────────────────────────────────────────────────────────
+    case '/trace/mode':
+      if (['trace', 'trace+loop', 'trace+cloud'].includes(values[0])) {
+        S.traceMode = values[0];
+      } else {
+        // Cycle
+        const _tm = ['trace', 'trace+loop', 'trace+cloud'];
+        S.traceMode = _tm[(_tm.indexOf(S.traceMode) + 1) % _tm.length];
+      }
+      S._syncCommitUI?.();
+      break;
+
+    // ── Legacy seed/loop addresses (backward compat with existing Max patches) ──
     case '/seed/mode':
       if (values[0] === 'all' || values[0] === 'focus') {
         S.seedMode = values[0];
@@ -420,35 +516,34 @@ export function handleOSC(rawAddress, values) {
       S._syncImprovUI?.();
       break;
     case '/seed/loopmode':
-      if (values[0] === 'pingpong' || values[0] === 'forward') {
+      if (values[0] === 'pingpong' || values[0] === 'forward' || values[0] === 'rev') {
         S.seedLoopMode = values[0];
-        // Apply only to the nearest highlighted seed
+        // Apply to nearest commit that has frames
         const { lon: _lmLon, lat: _lmLat } = S.mouseInCanvas
           ? screenToLonLat(S.mousePixelX, S.mousePixelY)
           : getCursorLonLat();
         const _lmSlot = findNearestSeedSlot(_lmLon, _lmLat);
         if (_lmSlot >= 0) {
-          const _lmSeed = S.seedSlots[_lmSlot];
+          const _lmSeed = S.commitSlots?.[_lmSlot] || S.seedSlots?.[_lmSlot];
           if (_lmSeed && _lmSeed.frames) _lmSeed.loopMode = values[0];
         }
         S._syncImprovUI?.();
       }
       break;
-
-    // ── Seed / undo ──────────────────────────────────────────────────────────
-    // S._plantSeed / _uprootSeed / _undo registered by events.js.
-    // Bang-style: any value (or no value) triggers the action.
     case '/seed/sow':     S._plantSeed?.();  break;
     case '/seed/trail':   // hold-style: value > 0 = start, value 0 = finalize
-      if (val > 0) S._startSeedPlant?.();
-      else         S._finalizeSeedPlant?.();
+      if (values[0] > 0) S._startSeedPlant?.();
+      else               S._finalizeSeedPlant?.();
       break;
-    case '/seed/uproot':  S._uprootSeed?.(); break;
-    case '/seed/lock':
-      S.seedLockEnabled = !!val;
-      document.getElementById('seedLockBtn')?.classList.toggle('active', S.seedLockEnabled);
+    case '/seed/uproot':  releaseCommit(); break;
+    case '/seed/lock': {
+      // Legacy: cycle trace mode
+      const _tm2 = ['trace', 'trace+loop', 'trace+cloud'];
+      S.traceMode = _tm2[(_tm2.indexOf(S.traceMode) + 1) % _tm2.length];
+      S._syncCommitUI?.();
       break;
-    case '/seed/clear':   clearAllSeeds();   break;
+    }
+    case '/seed/clear':   clearAllCommits(); break;
     case '/undo':         S._undo?.();       break;
     case '/sweep':        sweep();           break;
 
@@ -509,7 +604,7 @@ export function handleOSC(rawAddress, values) {
         if (el) el.style.display = S.perfMonitorVisible ? 'block' : 'none'; }
       break;
 
-    // ── Seed envelope ────────────────────────────────────────────────────────
+    // ── Commit envelope (legacy /seed/ aliases) ──────────────────────────────
     case '/seed/attack':
       S.seedAttack = clamp(values[0], 0, 10);
       { const sl = document.getElementById('seedAttackSlider');  if (sl) sl.value = S.seedAttack;
@@ -556,28 +651,29 @@ export function handleOSC(rawAddress, values) {
       scheduleUISync();
       break;
 
-    // ── Looper ─────────────────────────────────────────────────────────────
+    // ── Legacy looper addresses (backward compat) ──────────────────────────
     case '/loop/arm':
-      S._dispatchAction?.('seq_arm', values[0] ? 127 : 0);
+      S._dispatchAction?.('commit_draw', values[0] ? 127 : 0);
       break;
     case '/loop/mode':
-      S.seqModeEnabled = !!values[0];
-      document.getElementById('seqModeBtn')?.classList.toggle('active', S.seqModeEnabled);
+      // Legacy: set commit mode to loop when 1, cloud when 0
+      S.commitMode = values[0] ? 'loop' : 'cloud';
+      S._syncCommitUI?.();
       break;
     case '/loop/drop':
       dropSeqFromCursor();
       break;
     case '/loop/resume':
-      dropNearestSeq();
+      // Pause/resume removed — release is the only undo for commits
       break;
     case '/loop/pause':
-      pickupSeqPause();
+      // Pause/resume removed — use release instead
       break;
     case '/loop/remove':
-      pickupSeqRemove();
+      releaseCommit();
       break;
     case '/loop/clear':
-      clearAllSeqs();
+      clearAllCommits();
       break;
     case '/loop/volume':
       S.seqNextParams.volume = clamp(values[0], 0, 1);
@@ -590,12 +686,11 @@ export function handleOSC(rawAddress, values) {
         const nb = document.getElementById('seqSpeedNum');    if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; }
       break;
     case '/loop/dir':
-      if (values[0] === 'fwd' || values[0] === 'rev') {
-        S.seqNextParams.direction = values[0] === 'rev' ? -1 : 1;
-        const seg = document.getElementById('seqDirectionSeg');
-        if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b => {
-          b.classList.toggle('active', (b.dataset.dir === 'rev') === (S.seqNextParams.direction === -1));
-        });
+      if (['fwd', 'rev', 'pingpong'].includes(values[0])) {
+        S.seedLoopMode = values[0];
+        const seg = document.getElementById('seedLoopModeSeg');
+        if (seg) seg.querySelectorAll('[data-loopmode]').forEach(b =>
+          b.classList.toggle('active', b.dataset.loopmode === S.seedLoopMode));
       }
       break;
 

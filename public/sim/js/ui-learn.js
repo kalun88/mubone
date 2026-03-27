@@ -8,7 +8,7 @@
 
   const S = window.S || {};
   const STORAGE_KEY = 'mubone-learn-mode';
-  const NORMAL_DELAY = 400; // ms
+  const NORMAL_DELAY = 3000; // ms — long delay when Learn is off so tooltips don't interfere during performance
 
   // Default ON — persists only when user explicitly turns it off
   let learnMode = true;

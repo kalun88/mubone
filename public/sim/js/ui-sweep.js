@@ -4,9 +4,8 @@
 // (stationary or moving) or loops (seqs).  Also cleans up orphaned live buffers.
 // ============================================================================
 
-import { S, MAX_SEEDS, MAX_SEQS } from './state.js';
+import { S, MAX_COMMITS } from './state.js';
 import { angleBetweenSphere } from './grain.js';
-import { clearAllSeqs } from './ui-presets.js';
 
 // ── Sweep snapshot — allows one-level undo of sweep ──────────────────────────
 // Stashed on sweep, restored on undo, permanently discarded on next new action.
@@ -23,13 +22,10 @@ export function undoSweep() {
   S.currentLiveBufferIdx = snap.currentLiveBufferIdx;
   S.strokeHistory        = snap.strokeHistory;
   S._particleVersion++;
-  // Restore seeds/loops if they were part of the snapshot (erase-all)
-  if (snap.seedSlots) {
-    for (let i = 0; i < snap.seedSlots.length; i++) S.seedSlots[i] = snap.seedSlots[i];
+  // Restore commits if they were part of the snapshot (erase-all)
+  if (snap.commitSlots) {
+    for (let i = 0; i < snap.commitSlots.length; i++) S.commitSlots[i] = snap.commitSlots[i];
     (S.updateSeedBanksUI || (() => {}))();
-  }
-  if (snap.seqSlots) {
-    for (let i = 0; i < snap.seqSlots.length; i++) S.seqSlots[i] = snap.seqSlots[i];
   }
   S._sweepSnapshot = null;
   S.updateLiveRecUI?.();
@@ -79,10 +75,10 @@ export function sweep() {
 
   const kept = new Set();
 
-  // ── Seeds: keep particles within each seed's search radius ──────────
-  for (let ci = 0; ci < MAX_SEEDS; ci++) {
-    const seed = S.seedSlots[ci];
-    if (!seed) continue;
+  // ── Clouds: keep particles within each cloud's search radius ──────────
+  for (let ci = 0; ci < MAX_COMMITS; ci++) {
+    const seed = S.commitSlots[ci];
+    if (!seed || seed.type !== 'cloud') continue;
 
     if (seed.frames) {
       const frames = seed.frames;
@@ -106,10 +102,10 @@ export function sweep() {
     }
   }
 
-  // ── Loops (seqs): keep all particles belonging to active loops ────────
-  for (let si = 0; si < MAX_SEQS; si++) {
-    const seq = S.seqSlots[si];
-    if (!seq) continue;
+  // ── Loops: keep all particles belonging to active loops ────────
+  for (let si = 0; si < MAX_COMMITS; si++) {
+    const seq = S.commitSlots[si];
+    if (!seq || seq.type !== 'loop') continue;
     const seqStrokeId = seq.strokeId;
     for (let pi = 0; pi < S.particles.length; pi++) {
       const p = S.particles[pi];
@@ -178,8 +174,7 @@ export function initSweepUI() {
   btn.addEventListener('click', () => {
     if (S.isPainting) return;
 
-    const hasActive = S.seedSlots.some(c => c !== null)
-                   || S.seqSlots.some(s => s !== null);
+    const hasActive = S.commitSlots.some(c => c !== null);
 
     if (!hasActive) {
       const count = S.particles.length;
@@ -234,17 +229,15 @@ function flashSessionBtn(btn, labelHtml, msg, cssClass = 'flashing', ms = 1200) 
 /** Erase everything — particles, buffers, strokes, seeds, loops. Clean slate. */
 function eraseAll() {
   const count = S.particles.length;
-  const hadSeeds = S.seedSlots.some(s => s !== null);
-  const hadSeqs  = S.seqSlots.some(s => s !== null);
-  if (count === 0 && !hadSeeds && !hadSeqs) return 0;
+  const hadCommits = S.commitSlots.some(s => s !== null);
+  if (count === 0 && !hadCommits) return 0;
   // Stash snapshot for undo
   S._sweepSnapshot = {
     particles:            [...S.particles],
     liveRecBuffers:       S.liveRecBuffers ? [...S.liveRecBuffers] : [],
     currentLiveBufferIdx: S.currentLiveBufferIdx,
     strokeHistory:        [...S.strokeHistory],
-    seedSlots:            S.seedSlots.map(s => s),   // shallow copy of slot refs
-    seqSlots:             S.seqSlots.map(s => s),
+    commitSlots:          S.commitSlots.map(s => s),   // shallow copy of slot refs
   };
   // Clear particles & buffers
   S.particles = [];
@@ -254,19 +247,23 @@ function eraseAll() {
     S.currentLiveBufferIdx = 0;
   }
   S.strokeHistory = [];
-  // Clear seeds (instant, no release ramp) and loops
-  for (let i = 0; i < MAX_SEEDS; i++) S.seedSlots[i] = null;
+  // Clear all commits (instant, no release ramp)
+  for (let i = 0; i < MAX_COMMITS; i++) {
+    const slot = S.commitSlots[i];
+    if (slot && slot.type === 'loop' && slot._sourceNode) {
+      try { slot._sourceNode.stop(); } catch (_) {}
+    }
+    S.commitSlots[i] = null;
+  }
   (S.updateSeedBanksUI || (() => {}))();
-  clearAllSeqs();
   S.updateLiveRecUI?.();
   scheduleSweepAutoCommit();
-  return count + (hadSeeds ? 1 : 0) + (hadSeqs ? 1 : 0);
+  return count + (hadCommits ? 1 : 0);
 }
 
 function doSweep(sweepBtn) {
   if (S.isPainting) return;
-  const hasActive = S.seedSlots.some(c => c !== null)
-                 || S.seqSlots.some(s => s !== null);
+  const hasActive = S.commitSlots.some(c => c !== null);
   if (!hasActive) {
     const count = eraseAll();
     if (sweepBtn) flashSessionBtn(sweepBtn, sweepBtn.innerHTML, count > 0 ? `✓ swept ${count}` : '✓ clean', 'sweep-flash');

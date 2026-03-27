@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { S } from './state.js';
-import { pickupSeqPause, pickupSeqRemove, dropNearestSeq, dropSeqFromCursor, clearAllSeqs, updateSeqBanksUI } from './ui-presets.js';
+import { dropSeqFromCursor, clearAllSeqs, releaseCommit, clearAllCommits, updateCommitBanksUI, updateSeqBanksUI } from './ui-presets.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
@@ -178,9 +178,9 @@ export function setScanMuted(muted) {
     );
   }
 
-  // Update button appearance
+  // Update button appearance — lit when scan is on, dim when muted
   const btn = document.getElementById('scanBtn');
-  if (btn) btn.classList.toggle('muted', muted);
+  if (btn) btn.classList.toggle('active', !muted);
 
   // Sync the improv panel mon→hse slider display when scan is off
   // (the actual S.monitorGainValue is preserved so unmuting restores it)
@@ -193,8 +193,8 @@ export function initScanToggle() {
   const btn = document.getElementById('scanBtn');
   if (!btn) return;
 
-  // Restore persisted state
-  btn.classList.toggle('muted', !!S.scanMuted);
+  // Restore persisted state — lit when scan is on
+  btn.classList.toggle('active', !S.scanMuted);
 
   btn.addEventListener('click', () => {
     setScanMuted(!S.scanMuted);
@@ -202,7 +202,7 @@ export function initScanToggle() {
 
   // ── Sync hook for patch table preset recall ─────────────────────────────
   S._syncScanUI = () => {
-    btn.classList.toggle('muted', !!S.scanMuted);
+    btn.classList.toggle('active', !S.scanMuted);
   };
 }
 
@@ -258,44 +258,64 @@ export function initRadiusFade() {
 // In sequential mode, painting records a loop that auto-plays on release.
 
 export function initSeqMode() {
-  // Mode toggle button
-  const btn = document.getElementById('seqModeBtn');
-  if (btn) {
-    const syncUI = () => {
-      btn.classList.toggle('active', S.seqModeEnabled);
-    };
-    syncUI();
-    btn.addEventListener('click', () => {
-      S.seqModeEnabled = !S.seqModeEnabled;
-      syncUI();
+  // ── Commit mode segmented control (commits panel) ──
+  const commitModeSeg = document.getElementById('commitModeSeg');
+  if (commitModeSeg) {
+    commitModeSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        S.commitMode = btn.dataset.mode;
+        S._syncCommitUI?.();
+      });
     });
   }
 
-  // Seed lock toggle button
-  const seedLockBtn = document.getElementById('seedLockBtn');
-  if (seedLockBtn) {
-    seedLockBtn.classList.toggle('active', S.seedLockEnabled);
-    seedLockBtn.addEventListener('click', () => {
+  // ── Trace mode cycle button (cursor panel) — bang, not toggle ──
+  const commitLockBtn = document.getElementById('commitLockBtn');
+  if (commitLockBtn) {
+    commitLockBtn.addEventListener('click', () => {
+      const _modes = ['trace', 'trace+loop', 'trace+cloud'];
+      const _idx = _modes.indexOf(S.traceMode);
+      S.traceMode = _modes[(_idx + 1) % _modes.length];
+      commitLockBtn.classList.add('flashing');
+      setTimeout(() => commitLockBtn.classList.remove('flashing'), 180);
+      S._syncCommitUI?.();
+    });
+  }
+
+  // Legacy compat — old button IDs still wired if present
+  const legacyModeBtn = document.getElementById('seqModeBtn');
+  if (legacyModeBtn) {
+    legacyModeBtn.addEventListener('click', () => {
+      S.seqModeEnabled = !S.seqModeEnabled;
+      S._syncCommitUI?.();
+    });
+  }
+  const legacyLockBtn = document.getElementById('seedLockBtn');
+  if (legacyLockBtn) {
+    legacyLockBtn.addEventListener('click', () => {
       S.seedLockEnabled = !S.seedLockEnabled;
-      seedLockBtn.classList.toggle('active', S.seedLockEnabled);
+      S._syncCommitUI?.();
     });
   }
 
   // Panel action buttons
-  document.getElementById('seqLoopDropBtn')?.addEventListener('click', () => {
+  document.getElementById('commitDropBtn')?.addEventListener('click', () => {
     dropSeqFromCursor();
   });
   document.getElementById('seqDropBtn')?.addEventListener('click', () => {
-    dropNearestSeq();
-  });
-  document.getElementById('seqPickupPauseBtn')?.addEventListener('click', () => {
-    pickupSeqPause();
+    releaseCommit();  // resume nearest paused loop
   });
   document.getElementById('seqPickupRemoveBtn')?.addEventListener('click', () => {
-    pickupSeqRemove();
+    releaseCommit();  // lift nearest loop
   });
+  // Clear all — unified (both old and new IDs)
   document.getElementById('seqClearBtn')?.addEventListener('click', () => {
-    clearAllSeqs();
+    clearAllCommits();
+  });
+  // commitClearBtn: click handler wired in inline script
+  // Unified release button
+  document.getElementById('commitReleaseBtn')?.addEventListener('click', () => {
+    releaseCommit();
   });
 
   // ── Seq record params (speed, volume, direction for next loop) ───────────
@@ -306,8 +326,6 @@ export function initSeqMode() {
   const seqVolNum     = document.getElementById('seqVolumeNum');
   const seqSpdSlider  = document.getElementById('seqSpeedSlider');
   const seqSpdNum     = document.getElementById('seqSpeedNum');
-  const seqDirSeg     = document.getElementById('seqDirectionSeg');
-
   if (seqVolSlider) {
     seqVolSlider.addEventListener('input', () => {
       const v = parseFloat(seqVolSlider.value);
@@ -324,45 +342,53 @@ export function initSeqMode() {
     });
   }
 
-  if (seqDirSeg) {
-    seqDirSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+  // Show/hide the controls based on seq mode toggle
+  // Controls are always visible — no need for a sync toggle.
+  S._syncSeqControls = function syncSeqControls() {};
+
+  // ── Commit slot count select (unified) ──
+  const commitSlotSelect = document.getElementById('commitSlotCountSelect');
+  if (commitSlotSelect) {
+    commitSlotSelect.value = S.commitSlotCount;
+    commitSlotSelect.addEventListener('change', () => {
+      S.commitSlotCount = parseInt(commitSlotSelect.value, 10);
+      S._syncCommitUI?.();
+    });
+  }
+
+  // ── Commit overflow seg (unified) ──
+  const commitOverflowSeg = document.getElementById('commitOverflowSeg');
+  if (commitOverflowSeg) {
+    commitOverflowSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        S.seqNextParams.direction = btn.dataset.dir === 'rev' ? -1 : 1;
-        seqDirSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.remove('active'));
+        S.commitOverflow = btn.dataset.overflow;
+        commitOverflowSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
       });
     });
   }
 
-  // Show/hide the controls based on seq mode toggle
-  // Controls are always visible — no need for a sync toggle.
-  S._syncSeqControls = function syncSeqControls() {};
-
   // ── Sync hook for patch table preset recall ─────────────────────────────
   S._syncSeqUI = () => {
-    // Loop lock toggle
-    if (btn) btn.classList.toggle('active', S.seqModeEnabled);
-    // Seed lock toggle
-    if (seedLockBtn) seedLockBtn.classList.toggle('active', S.seedLockEnabled);
+    // Commit mode + lock
+    S._syncCommitUI?.();
     // Volume slider + numbox
     if (seqVolSlider) seqVolSlider.value = S.seqNextParams.volume;
     if (seqVolNum)    seqVolNum.value    = Math.round(S.seqNextParams.volume * 100) + '%';
     // Speed slider + numbox
     if (seqSpdSlider) seqSpdSlider.value = S.seqNextParams.speed;
     if (seqSpdNum)    seqSpdNum.value    = S.seqNextParams.speed.toFixed(2) + '×';
-    // Direction segment
-    if (seqDirSeg) {
-      const dirStr = S.seqNextParams.direction === -1 ? 'rev' : 'fwd';
-      seqDirSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active', b.dataset.dir === dirStr));
-    }
+    // Commit slot count select
+    if (commitSlotSelect) commitSlotSelect.value = S.commitSlotCount;
   };
 
-  // Expose updateSeqBanksUI on S so renderer can call it each frame
-  S.updateSeqBanksUI = updateSeqBanksUI;
+  // Expose updateCommitBanksUI on S so renderer can call it each frame
+  S.updateSeqBanksUI  = updateCommitBanksUI;
+  S.updateSeedBanksUI = updateCommitBanksUI;
 
-  // Initial draw
-  updateSeqBanksUI();
+  // Initial draw + sync
+  updateCommitBanksUI();
+  S._syncCommitUI?.();
 }
 
 // ── Mixdown source gain controls ─────────────────────────────────────────────

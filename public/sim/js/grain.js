@@ -257,9 +257,9 @@ function _angleFromCached(p, rx, ry, rz) {
 
 export function findNearestSeedSlot(refLon, refLat, { skipReleasing = false } = {}) {
   let nearestSlot = -1, nearestAng = Infinity;
-  for (let i = 0; i < S.seedSlotCount; i++) {
-    const seed = S.seedSlots[i];
-    if (!seed) continue;
+  for (let i = 0; i < S.commitSlotCount; i++) {
+    const seed = S.commitSlots[i];
+    if (!seed || seed.type !== 'cloud') continue;
     if (skipReleasing && seed._releasingAt > 0) continue;
     // Moving seeds: measure distance from the start position (frames[0]),
     // not the current animated position — avoids disorienting results as
@@ -857,7 +857,13 @@ export function _interpolateMovingSeed(seed) {
     const cycle = duration * 2;
     const pos = _playheadMs % cycle;
     effectiveT = pos <= duration ? pos : cycle - pos;
+  } else if (loopMode === 'rev') {
+    // Reverse: traverse path end→start, looping. As playhead advances,
+    // effectiveT counts down from duration to 0, then wraps back to duration.
+    const pos = _playheadMs % duration;
+    effectiveT = duration - pos;
   } else {
+    // 'forward' (default): traverse path start→end, looping.
     effectiveT = _playheadMs % duration;
   }
   // Binary search for bounding frames
@@ -1137,8 +1143,8 @@ export function scheduleGrains() {
   // calculation, angular distance cache, and grain scheduling all use the
   // correct moving position.
   for (let i = 0; i < MAX_SEEDS; i++) {
-    const seed = S.seedSlots[i];
-    if (!seed || !seed.frames || i >= S.seedSlotCount) continue;
+    const seed = S.commitSlots[i];
+    if (!seed || seed.type !== 'cloud' || !seed.frames || i >= S.commitSlotCount) continue;
     _advanceMovingSeed(seed, GRAIN_SCHEDULER_INTERVAL_MS);
     const frame = _interpolateMovingSeed(seed);
     if (frame) {
@@ -1158,16 +1164,16 @@ export function scheduleGrains() {
   //   seedTether=false → gated by cursor radius; seeds outside fade to silence
   // seedXfade controls blending: 0 = hard snap (focus only), 1 = full crossfade.
   const _seedWeights = new Float32Array(MAX_SEEDS); // reused each tick
-  if (S.seedMode === 'focus') {
-    const radiusGated = !S.seedTether;
+  if (S.commitPlayback === 'focus') {
+    const radiusGated = !S.commitTether;
     // Radius gate when not "always" (reuse the cursor search radius)
     const gateRadRad = radiusGated ? (S.searchRadiusDeg * Math.PI / 180) : Infinity;
 
     // Gather distances from cursor to each active seed
     const seedDists = [];
     for (let i = 0; i < MAX_SEEDS; i++) {
-      const seed = S.seedSlots[i];
-      if (!seed || i >= S.seedSlotCount) { _seedWeights[i] = 0; continue; }
+      const seed = S.commitSlots[i];
+      if (!seed || seed.type !== 'cloud' || i >= S.commitSlotCount) { _seedWeights[i] = 0; continue; }
       const dist = angleBetweenSphere(seed.lon, seed.lat, cursorLon, cursorLat);
       // When radius-gated, skip seeds outside the search radius
       if (radiusGated && dist > gateRadRad) { _seedWeights[i] = 0; continue; }
@@ -1178,7 +1184,7 @@ export function scheduleGrains() {
       // Sort to find nearest
       seedDists.sort((a, b) => a.dist - b.dist);
       const nearestIdx = seedDists[0].i;
-      const sf = S.seedXfade; // 0 = snap, 1 = crossfade
+      const sf = S.commitXfade; // 0 = snap, 1 = crossfade
 
       if (sf < 0.001) {
         // Pure snap: only nearest (in-range) seed plays
@@ -1209,18 +1215,19 @@ export function scheduleGrains() {
       S._dominantSeedSlot = -1;
     }
   } else {
-    // Collage mode: all active seeds within slot count play at full weight
+    // Collage mode: all active clouds within slot count play at full weight
     for (let i = 0; i < MAX_SEEDS; i++) {
-      _seedWeights[i] = (S.seedSlots[i] && i < S.seedSlotCount) ? 1 : 0;
+      const slot = S.commitSlots[i];
+      _seedWeights[i] = (slot && slot.type === 'cloud' && i < S.commitSlotCount) ? 1 : 0;
     }
     S._dominantSeedSlot = -1;
   }
 
   for (let i = 0; i < MAX_SEEDS; i++) {
-    const seed = S.seedSlots[i];
-    if (!seed || i >= S.seedSlotCount) continue;
+    const seed = S.commitSlots[i];
+    if (!seed || seed.type !== 'cloud' || i >= S.commitSlotCount) continue;
 
-    // ── Seed envelope (attack / release) ──────────────────────────────
+    // ── Cloud envelope (fade in / fade out) ─────────────────────────────
     // Always advance the envelope regardless of whether particles exist,
     // so seeds stay visually active (renderer + bank UI read _envGainCurrent).
     // Exponential curves for perceptually even loudness changes:
@@ -1240,8 +1247,8 @@ export function scheduleGrains() {
     if (seed._releasingAt > 0) {
       const relElapsed = _nowS - seed._releasingAt;
       if (relElapsed >= seed._envRelease) {
-        // Release finished — remove the seed
-        S.seedSlots[i] = null;
+        // Release finished — remove the cloud
+        S.commitSlots[i] = null;
         if (S.updateSeedBanksUI) S.updateSeedBanksUI();
         continue;
       }
@@ -1455,18 +1462,18 @@ export function scheduleGrains() {
 
   // ── Moving seed recording tick ───────────────────────────────────────────
   // Capture cursor frame if ↓ key is held (recording a moving seed path)
-  if (S._seedRecordingFrames) tickSeedRecording();
+  if (S._seedRecordingFrames || S._shelvedSeed) tickSeedRecording();
 
   // ── Sequential (loop) playback ──────────────────────────────────────────────────
   // Each sequence uses a single looping AudioBufferSourceNode — no per-grain
   // scheduling, no envelopes, no crossfade.  One continuous buffer read,
   // exactly like a hardware looper.  The scheduler tick only manages the
   // source node lifecycle and updates the visual playhead index.
-  for (let si = 0; si < MAX_SEQS; si++) {
-    const seq = S.seqSlots[si];
-    if (!seq || !seq.playing || !seq.particles.length) continue;
-    // Mute seqs beyond active slot count (data preserved, audio paused)
-    if (si >= S.seqSlotCount) {
+  for (let si = 0; si < MAX_SEEDS; si++) {
+    const seq = S.commitSlots[si];
+    if (!seq || seq.type !== 'loop' || !seq.playing || !seq.particles.length) continue;
+    // Mute loops beyond active slot count (data preserved, audio paused)
+    if (si >= S.commitSlotCount) {
       if (seq._sourceNode && !seq._sourceNode._stopped) {
         try { seq._sourceNode.stop(); } catch (e) {}
         seq._sourceNode._stopped = true;

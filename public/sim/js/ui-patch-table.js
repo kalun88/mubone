@@ -165,34 +165,33 @@ export const PARAM_REGISTRY = [
     fmt: v  => v ? 'on' : 'off',
     parse: s => s.trim() === 'on' ? true : s.trim() === 'off' ? false : null },
 
-  // ── Looper ────────────────────────────────────────────────────────────────
-  { key: 'seqSlotCount', label: 'loop slots', group: 'looper', type: 'number',
-    get: () => S.seqSlotCount,
+  // ── Commits (unified) ────────────────────────────────────────────────────
+  { key: 'seqSlotCount', label: 'commit slots', group: 'commits', type: 'number',
+    get: () => S.commitSlotCount,
     set: v  => {
-      S.seqSlotCount = Math.max(1, Math.min(12, Math.round(v)));
-      const sel = document.getElementById('seqSlotCountSelect');
-      if (sel) sel.value = String(S.seqSlotCount);
-      (S.updateSeqBanksUI || (() => {}))();
-      S._syncSeqButtonStates?.();
+      S.commitSlotCount = Math.max(1, Math.min(16, Math.round(v)));
+      const sel = document.getElementById('commitSlotCountSelect');
+      if (sel) sel.value = String(S.commitSlotCount);
+      S._syncCommitUI?.();
     },
     fmt: v  => String(v),
-    parse: s => { const v = parseInt(s, 10); return isNaN(v) ? null : Math.max(1, Math.min(12, v)); } },
-  { key: 'seqOverflow', label: 'loop overflow', group: 'looper', type: 'enum', options: ['off', 'oldest', 'nearest'],
-    get: () => S.seqOverflow,
+    parse: s => { const v = parseInt(s, 10); return isNaN(v) ? null : Math.max(1, Math.min(16, v)); } },
+  { key: 'seqOverflow', label: 'commit overflow', group: 'commits', type: 'enum', options: ['off', 'oldest', 'nearest'],
+    get: () => S.commitOverflow,
     set: v  => {
-      S.seqOverflow = v;
-      const seg = document.getElementById('seqOverflowSeg');
+      S.commitOverflow = v;
+      const seg = document.getElementById('commitOverflowSeg');
       if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.overflow === v));
       S._syncSeqButtonStates?.();
     },
     fmt: v  => v,
     parse: s => ['off', 'oldest', 'nearest'].includes(s.trim()) ? s.trim() : null },
-  { key: 'seqModeEnabled', label: 'loop lock',    group: 'looper', type: 'boolean',
-    get: () => S.seqModeEnabled,
-    set: v  => { S.seqModeEnabled = v; document.getElementById('seqModeBtn')?.classList.toggle('active', v); },
-    fmt: v  => v ? 'on' : 'off',
-    parse: s => parseBool(s) },
+  { key: 'seqModeEnabled', label: 'commit mode',    group: 'commits', type: 'enum', options: ['cloud', 'loop'],
+    get: () => S.commitMode,
+    set: v  => { S.commitMode = v; S._syncCommitUI?.(); },
+    fmt: v  => v,
+    parse: s => ['cloud', 'loop'].includes(s.trim()) ? s.trim() : null },
   { key: 'seqNextVolume', label: 'loop volume',    group: 'looper', type: 'number',
     get: () => S.seqNextParams.volume,
     set: v  => { S.seqNextParams.volume = Math.max(0, Math.min(1, v)); },
@@ -203,36 +202,36 @@ export const PARAM_REGISTRY = [
     set: v  => { S.seqNextParams.speed = Math.max(0.25, Math.min(4, v)); },
     fmt: v  => '×' + v.toFixed(2),
     parse: s => { const v = parseFloat(s.replace('×', '')); return isNaN(v) ? null : Math.max(0.25, Math.min(4, v)); } },
-  { key: 'seqNextDirection', label: 'loop dir',    group: 'looper', type: 'enum', options: ['fwd', 'rev'],
-    get: () => S.seqNextParams.direction === 1 ? 'fwd' : 'rev',
-    set: v  => { S.seqNextParams.direction = v === 'rev' ? -1 : 1; },
+  { key: 'seqNextDirection', label: 'loop dir',    group: 'looper', type: 'enum', options: ['fwd', 'rev', 'pingpong'],
+    get: () => S.seedLoopMode ?? 'forward',
+    set: v  => { S.seedLoopMode = v; },
     fmt: v  => v,
-    parse: s => ['fwd', 'rev'].includes(s.trim()) ? s.trim() : null },
+    parse: s => ['fwd', 'rev', 'pingpong'].includes(s.trim()) ? s.trim() : null },
 
-  // ── Seeder ───────────────────────────────────────────────────────────────
-  { key: 'seedSlotCount', label: 'seed slots', group: 'seeder', type: 'number',
-    get: () => S.seedSlotCount,
+  // ── Seeder (legacy aliases — point to unified commit slots) ──────────────
+  { key: 'seedSlotCount', label: 'seed slots', group: 'commits', type: 'number',
+    get: () => S.commitSlotCount,
     set: v  => {
-      S.seedSlotCount = Math.max(1, Math.min(12, Math.round(v)));
-      const sel = document.getElementById('seedSlotCountSelect');
-      if (sel) sel.value = String(S.seedSlotCount);
-      (S.updateSeedBanksUI || (() => {}))();
+      S.commitSlotCount = Math.max(1, Math.min(16, Math.round(v)));
+      const sel = document.getElementById('commitSlotCountSelect');
+      if (sel) sel.value = String(S.commitSlotCount);
+      S._syncCommitUI?.();
     },
     fmt: v  => String(v),
-    parse: s => { const v = parseInt(s, 10); return isNaN(v) ? null : Math.max(1, Math.min(12, v)); } },
-  { key: 'seedOverflow', label: 'seed overflow', group: 'seeder', type: 'enum', options: ['off', 'oldest', 'nearest'],
-    get: () => S.seedOverflow,
+    parse: s => { const v = parseInt(s, 10); return isNaN(v) ? null : Math.max(1, Math.min(16, v)); } },
+  { key: 'seedOverflow', label: 'seed overflow', group: 'commits', type: 'enum', options: ['off', 'oldest', 'nearest'],
+    get: () => S.commitOverflow,
     set: v  => {
-      S.seedOverflow = v;
-      const seg = document.getElementById('seedOverflowSeg');
+      S.commitOverflow = v;
+      const seg = document.getElementById('commitOverflowSeg');
       if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.overflow === v));
     },
     fmt: v  => v,
     parse: s => ['off', 'oldest', 'nearest'].includes(s.trim()) ? s.trim() : null },
-  { key: 'seedLockEnabled', label: 'seed lock',    group: 'seeder', type: 'boolean',
-    get: () => S.seedLockEnabled,
-    set: v  => { S.seedLockEnabled = v; document.getElementById('seedLockBtn')?.classList.toggle('active', v); },
+  { key: 'seedLockEnabled', label: 'commit lock',    group: 'commits', type: 'boolean',
+    get: () => S.commitLockEnabled,
+    set: v  => { S.commitLockEnabled = v; S._syncCommitUI?.(); },
     fmt: v  => v ? 'on' : 'off',
     parse: s => parseBool(s) },
   { key: 'seedMode',         label: 'blend mode',      group: 'seeder', type: 'enum', options: ['all', 'focus'],
@@ -250,12 +249,12 @@ export const PARAM_REGISTRY = [
     set: v  => { S.seedXfade = Math.max(0, Math.min(1, v)); },
     fmt: v  => Math.round(v * 100) + '%',
     parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
-  { key: 'seedAttack',       label: 'attack',          group: 'seeder', type: 'number',
+  { key: 'seedAttack',       label: 'fade in',         group: 'seeder', type: 'number',
     get: () => S.seedAttack,
     set: v  => { S.seedAttack = Math.max(0, Math.min(10, v)); },
     fmt: v  => v.toFixed(1) + 's',
     parse: s => { const v = parseFloat(s.replace('s', '')); return isNaN(v) ? null : Math.max(0, Math.min(10, v)); } },
-  { key: 'seedRelease',      label: 'release',         group: 'seeder', type: 'number',
+  { key: 'seedRelease',      label: 'fade out',        group: 'seeder', type: 'number',
     get: () => S.seedRelease,
     set: v  => { S.seedRelease = Math.max(0, Math.min(10, v)); },
     fmt: v  => v.toFixed(1) + 's',
@@ -600,6 +599,8 @@ function _editPresetName(presetIdx, nameSpan) {
       const btn = document.querySelectorAll('.preset-btn')[presetIdx];
       const btnName = btn?.querySelector('.preset-name');
       if (btnName) btnName.textContent = newName;
+      S._rebuildPresetDropdown?.();
+      S._rebuildMorphDropdowns?.();
     }
     nameSpan.textContent = PRESETS[presetIdx].name;
   };

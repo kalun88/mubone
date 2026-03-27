@@ -232,18 +232,49 @@
 
   .hud {
     position: absolute;
-    top: 0.75rem;
+    top: calc(18px * var(--hud-scale, 1) + 0.75rem * var(--hud-scale, 1));
     left: 1rem;
-    right: 3rem;
-    font-size: 0.85rem;
+    right: 1rem;
+    font-size: calc(1.1rem * var(--hud-scale, 1));
     color: #666666;
     pointer-events: none;
     display: flex;
     align-items: center;
-    gap: 1.5rem;
+    justify-content: space-between;
     line-height: 1;
   }
+  .hud-left, .hud-right {
+    display: flex;
+    align-items: center;
+    gap: calc(1rem * var(--hud-scale, 1));
+    flex: 1;
+  }
+  .hud-left { justify-content: flex-start; }
+  .hud-right { justify-content: flex-end; }
+  .hud-center {
+    flex: 0 0 auto;
+    text-align: center;
+  }
+  .vm-patch-info {
+    color: #999;
+    font-weight: 600;
+    font-size: calc(1.2rem * var(--hud-scale, 1));
+    white-space: nowrap;
+    letter-spacing: 0.03em;
+  }
   #coordinates { white-space: pre; font-variant-numeric: tabular-nums; }
+  /* ── Commit dots — minimalist slot indicator in HUD ────────────────────── */
+  .vm-commit-dots {
+    display: flex;
+    align-items: center;
+    gap: calc(3px * var(--hud-scale, 1));
+  }
+  .vm-commit-dot {
+    width: calc(7px * var(--hud-scale, 1));
+    height: calc(7px * var(--hud-scale, 1));
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
   /* ── Viewer monitor — now inline inside .hud ─────────────────────────────── */
   #viewerMonitor {
     display: flex;
@@ -673,7 +704,7 @@
   /* ── Perf monitor (P key) ──────────────────────────────────────────────── */
   #perfMonitor {
     position: absolute;
-    top: 2.5rem;
+    top: calc(18px + 3rem);
     left: 1rem;
     font-family: 'Roboto Mono', monospace;
     font-size: 0.7rem;
@@ -1034,28 +1065,15 @@
   .grain-select:focus { border-color: rgba(255,255,255,0.2); color: #ccc; }
 
   /* ── Parameter lock buttons ──────────────────────────────────────────── */
-  .param-lock-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 0.6rem;
+  .param-lock-indicator {
+    font-size: 0.55rem;
     line-height: 1;
     padding: 1px 2px;
     margin: 0;
-    opacity: 0.2;
-    transition: opacity 0.15s, transform 0.1s;
+    opacity: 0.7;
     flex-shrink: 0;
-    filter: grayscale(1);
-  }
-  .param-lock-btn:hover {
-    opacity: 0.5;
-  }
-  .param-lock-btn.locked {
-    opacity: 0.85;
-    filter: none;
-  }
-  .param-lock-btn.locked:hover {
-    opacity: 1;
+    cursor: default;
+    user-select: none;
   }
   /* Subtle locked row tint */
   .grain-row.param-locked .grain-label {
@@ -1084,10 +1102,12 @@
     left: 110px;
     z-index: 2;
     background: #1a1a1a;
-    min-width: 24px;
-    max-width: 24px;
+    box-sizing: border-box;
+    width: 28px;
+    min-width: 28px;
+    max-width: 28px;
     text-align: center;
-    padding: 0;
+    padding: 0 2px;
     border-right: 1px solid #2a2a2a;
   }
   .pt-lock-cell {
@@ -1233,7 +1253,7 @@
   #outputMeterCanvas, #outputMeterCanvasBottom,
   .meter-row, .meter-wrap, .meter-clip-dot, #meterClipDot { display: none; }
 
-  /* ── Improv mode device (right panel) ──────────────────────────────────── */
+  /* ── Improv mode device (right panel) — LEGACY, kept for compat ────────── */
   .right-panel .device--improv {
     flex: 0 0 auto;
     width: 100%;
@@ -1243,11 +1263,58 @@
     padding: 0 !important;
     gap: 0 !important;
   }
-  /* Reuse grain-row / grain-label / grain-slider / grain-numbox / grain-seg styles */
 
-  /* ── Seed panel (reuses .seq-section, .seq-section-label, .seq-transport-btn, .seq-manage-btn) ── */
+  /* ── Unified commit panel ──────────────────────────────────────────────── */
+  .right-panel .device--commit {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+  .commit-body {
+    flex-direction: column !important;
+    padding: 0 !important;
+    gap: 0 !important;
+  }
 
-  /* Slot bank — canvas centred with count */
+  /* Unified slot bank — canvas + count label */
+  .commit-section--bank {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+  .commit-slots-canvas {
+    width: 100%;
+    height: 36px;                /* single row; JS bumps to 68px when >8 slots */
+    border-radius: 3px;
+  }
+  .commit-count-label {
+    font-family: 'Inter', monospace;
+    font-size: 0.65rem;
+    color: #555;
+    min-width: 14px;
+    text-align: center;
+  }
+
+  /* Commit action buttons — icon swap by mode */
+  /* Default: cloud mode — show cloud icon, hide loop icon */
+  .commit-action-btn .commit-icon--loop { display: none; }
+  .commit-action-btn .commit-icon--cloud { display: block; }
+  /* Loop mode: swap */
+  .commit-action-btn.commit-mode--loop .commit-icon--cloud { display: none; }
+  .commit-action-btn.commit-mode--loop .commit-icon--loop { display: block; }
+
+  /* Resting tint — cloud mode: light blue */
+  .commit-action-btn:not(.commit-mode--loop) {
+    color: #7eb8e0;
+    border-color: rgba(126, 184, 224, 0.35);
+  }
+  /* Resting tint — loop mode: pink */
+  .commit-action-btn.commit-mode--loop {
+    color: #ff6b9d;
+    border-color: rgba(255, 107, 157, 0.35);
+  }
+
+  /* LEGACY — kept for compat */
   .seed-section--bank {
     display: flex;
     flex-direction: column;
@@ -1399,9 +1466,11 @@
   .play-mute-btn {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    justify-content: center;
+    position: relative;
     width: 100%;
-    padding: 0.5rem 0.7rem;
+    min-height: 2.4rem;
+    padding: 0.55rem 0.7rem;
     font-family: inherit;
     font-size: 0.8rem;
     letter-spacing: 0.05em;
@@ -1419,6 +1488,8 @@
     background: rgba(122, 188, 188, 0.04);
   }
   .play-mute-icon {
+    position: absolute;
+    left: 0.7rem;
     width: 18px;
     height: 18px;
     flex-shrink: 0;
@@ -1427,7 +1498,7 @@
   .play-mute-icon--on  { display: inline-block; }
   .play-mute-icon--off { display: none; }
   .play-mute-label {
-    flex: 1;
+    text-align: center;
   }
   /* Muted state: amber, show X icon */
   .play-mute-btn.muted {
@@ -1441,6 +1512,42 @@
   .play-mute-btn.muted .seq-record-key {
     color: rgba(232, 160, 48, 0.5);
     border-color: rgba(232, 160, 48, 0.25);
+  }
+
+  /* ── Scan button — white-ish when on, orange when off ── */
+  #scanBtn .play-mute-icon--on  { display: none; }
+  #scanBtn .play-mute-icon--off { display: inline-block; }
+  #scanBtn:not(.active) {
+    color: #e8a030;
+    border-color: #e8a030;
+    background: rgba(232, 160, 48, 0.1);
+    box-shadow: 0 0 8px rgba(232, 160, 48, 0.15);
+  }
+  #scanBtn:not(.active) .seq-record-key {
+    color: rgba(232, 160, 48, 0.5);
+    border-color: rgba(232, 160, 48, 0.25);
+  }
+  #scanBtn.active {
+    color: #c8dce8;
+    border-color: rgba(200, 220, 232, 0.5);
+    background: rgba(200, 220, 232, 0.08);
+    box-shadow: 0 0 8px rgba(200, 220, 232, 0.12);
+  }
+  #scanBtn.active .play-mute-icon--on  { display: inline-block; }
+  #scanBtn.active .play-mute-icon--off { display: none; }
+  #scanBtn.active .seq-record-key {
+    color: rgba(200, 220, 232, 0.4);
+    border-color: rgba(200, 220, 232, 0.2);
+  }
+
+  /* ── Trace mode cycle button — bang (flash on press), no persistent state ── */
+  #commitLockBtn .play-mute-icon--on  { display: none; }
+  #commitLockBtn .play-mute-icon--off { display: inline-block; }
+  #commitLockBtn.flashing {
+    color: #c8dce8;
+    border-color: rgba(200, 220, 232, 0.55);
+    background: rgba(200, 220, 232, 0.10);
+    box-shadow: 0 0 10px rgba(200, 220, 232, 0.20);
   }
 
   /* ── Record/paint indicator button ─────────────────────────────────────── */
@@ -1460,7 +1567,8 @@
   }
   /* badge group — pushed to the far right via margin-left: auto */
   .paint-key-badges {
-    margin-left: auto;
+    position: absolute;
+    right: 0.7rem;
     display: flex;
     align-items: center;
     gap: 3px;
@@ -1506,52 +1614,27 @@
     box-shadow: 0 0 10px rgba(224, 85, 85, 0.20);
   }
 
-  /* loop record (D key) — pink, same family as loop mode */
-  #loopRecordIndicatorBtn.painting {
+  /* Commit action painting flash — cloud mode: bright light blue */
+  .commit-action-btn:not(.commit-mode--loop).painting {
+    color: #9ed0f0;
+    border-color: rgba(158, 208, 240, 0.65);
+    background: rgba(158, 208, 240, 0.12);
+    box-shadow: 0 0 12px rgba(158, 208, 240, 0.30);
+  }
+  .commit-action-btn:not(.commit-mode--loop).painting .paint-key-badge {
+    color: rgba(158, 208, 240, 0.6);
+    border-color: rgba(158, 208, 240, 0.3);
+  }
+  /* Commit action painting flash — loop mode: bright pink */
+  .commit-action-btn.commit-mode--loop.painting {
     color: #ff6b9d;
-    border-color: rgba(255, 107, 157, 0.55);
-    background: rgba(255, 107, 157, 0.10);
-    box-shadow: 0 0 10px rgba(255, 107, 157, 0.20);
+    border-color: rgba(255, 107, 157, 0.65);
+    background: rgba(255, 107, 157, 0.12);
+    box-shadow: 0 0 12px rgba(255, 107, 157, 0.30);
   }
-  #loopRecordIndicatorBtn.painting .paint-key-badge {
-    color: rgba(255, 107, 157, 0.5);
-    border-color: rgba(255, 107, 157, 0.25);
-  }
-  #loopRecordIndicatorBtn.painting:active {
-    background: rgba(255, 107, 157, 0.10);
-    box-shadow: 0 0 10px rgba(255, 107, 157, 0.20);
-  }
-
-  /* sow seed (S key) — sage green */
-  #sowIndicatorBtn.painting {
-    color: #6ec97a;
-    border-color: rgba(110, 201, 122, 0.55);
-    background: rgba(110, 201, 122, 0.10);
-    box-shadow: 0 0 10px rgba(110, 201, 122, 0.20);
-  }
-  #sowIndicatorBtn.painting .paint-key-badge {
-    color: rgba(110, 201, 122, 0.5);
-    border-color: rgba(110, 201, 122, 0.25);
-  }
-  #sowIndicatorBtn.painting:active {
-    background: rgba(110, 201, 122, 0.10);
-    box-shadow: 0 0 10px rgba(110, 201, 122, 0.20);
-  }
-
-  /* sow trail (hold S) — teal green, distinguishes from stationary sow */
-  #sowTrailIndicatorBtn.painting {
-    color: #5bb8a6;
-    border-color: rgba(91, 184, 166, 0.55);
-    background: rgba(91, 184, 166, 0.10);
-    box-shadow: 0 0 10px rgba(91, 184, 166, 0.20);
-  }
-  #sowTrailIndicatorBtn.painting .paint-key-badge {
-    color: rgba(91, 184, 166, 0.5);
-    border-color: rgba(91, 184, 166, 0.25);
-  }
-  #sowTrailIndicatorBtn.painting:active {
-    background: rgba(91, 184, 166, 0.10);
-    box-shadow: 0 0 10px rgba(91, 184, 166, 0.20);
+  .commit-action-btn.commit-mode--loop.painting .paint-key-badge {
+    color: rgba(255, 107, 157, 0.6);
+    border-color: rgba(255, 107, 157, 0.3);
   }
 
   /* suppress button press feel (all indicators) */
@@ -1719,6 +1802,8 @@
     flex: 1;
   }
   .seq-record-key {
+    position: absolute;
+    right: 0.7rem;
     font-size: 0.6rem;
     color: #444;
     border: 1px solid rgba(255,255,255,0.05);
@@ -1731,7 +1816,7 @@
     border-color: rgba(255, 107, 157, 0.25);
   }
 
-  /* Seed lock button — sage green when active (matches sow seed color family) */
+  /* Seed lock button — sage green when active (matches drop cloud color family) */
   .seed-lock-btn.active {
     color: #6ec97a;
     border-color: #6ec97a;
@@ -1988,6 +2073,7 @@
     padding: 1.4rem 1.6rem 1.6rem;
     max-height: 88vh;
     overflow-y: auto;
+    overscroll-behavior: contain;
     font-size: 0.75rem;
     color: #aaaaaa;
     box-sizing: border-box;
@@ -2550,6 +2636,7 @@
   overflow: auto;
   flex: 1;
   min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .pt-table {
@@ -2572,10 +2659,12 @@
 .pt-label {
   position: sticky;
   left: 0;
-  z-index: 2;
+  z-index: 3;
   background: #1a1a1a;
   color: #777777;
-  min-width: 90px;
+  box-sizing: border-box;
+  width: 110px;
+  min-width: 110px;
   max-width: 110px;
   font-weight: normal;
   letter-spacing: 0.03em;
@@ -3194,6 +3283,7 @@
   align-items: stretch;
   overflow-x: auto;      /* scroll if many channels */
   overflow-y: hidden;
+  overscroll-behavior: contain;
 }
 /* placeholder text shown when no stream is active */
 .as-multi-meter-wrap:empty::before {

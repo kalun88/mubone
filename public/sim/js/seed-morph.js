@@ -140,9 +140,9 @@ export function updateGestureMorph() {
     const radiusGated = !S.seedTether;
     const gateRadRad = radiusGated ? (S.searchRadiusDeg * Math.PI / 180) : Infinity;
     const seedDists = [];
-    for (let i = 0; i < S.seedSlotCount; i++) {
-      const seed = S.seedSlots[i];
-      if (!seed) continue;
+    for (let i = 0; i < S.commitSlotCount; i++) {
+      const seed = S.commitSlots[i];
+      if (!seed || seed.type !== 'cloud') continue;
       const dist = angleBetweenSphere(seed.lon, seed.lat, cursorLon, cursorLat);
       if (radiusGated && dist > gateRadRad) continue;
       seedDists.push({ seed, dist });

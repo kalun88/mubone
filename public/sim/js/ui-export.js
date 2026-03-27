@@ -8,12 +8,13 @@
 //                 acousmatic performance — load and it's ready to play)
 // ============================================================================
 
-import { S, MAX_SEEDS, MAX_SEQS, FACTORY_PRESET_START, loadUserPresets, saveUserPresets } from './state.js';
+import { S, MAX_COMMITS, FACTORY_PRESET_START, loadUserPresets, saveUserPresets } from './state.js';
 import { ensureAudioContext } from './audio.js';
 import { stampCartesian } from './grain.js';
 import { rebuildSampleListUI, buildSvTabs, drawSvWaveform } from './ui-samples.js';
 import { loadAudioDefaults, saveAllDefaults } from './ui-audio-settings.js';
 import { refreshPresetButtons, selectPreset, updatePlaybackControls } from './ui-presets.js';
+import { loadLocks } from './param-lock.js';
 
 const EXPORT_VERSION = 2;
 const SETUP_MAGIC    = 'mubone-setup';
@@ -25,6 +26,7 @@ const STATIC_KEYS = [
   'mubone_key_map',
   'mubone_midi_map',
   'mubone_user_presets',
+  'mubone_param_locks',
   'mubone-learn-mode',
   'mubone_sensor_cal',
 ];
@@ -202,51 +204,51 @@ function buildSessionPayload() {
       zcr:           p.zcr ?? 0,
     })),
 
-    // ── Seeds ──
-    seeds: S.seedSlots.map(seed => {
-      if (!seed) return null;
-      return {
-        slotIndex:        seed.slotIndex,
-        lon:              seed.lon,
-        lat:              seed.lat,
-        color:            seed.color,
-        searchRadiusDeg:  seed.searchRadiusDeg,
-        nearestMode:      seed.nearestMode,
-        kAllMode:         seed.kAllMode,
-        kSeqMode:         seed.kSeqMode,
-        grainParams:      seed.grainParams,
-        grainOverrides:   seed.grainOverrides,
-        radiusFadeEnabled: seed.radiusFadeEnabled,
-        radiusFadeCurve:  seed.radiusFadeCurve,
-        _envAttack:       seed._envAttack,
-        _envRelease:      seed._envRelease,
-        // Moving seed fields
-        frames:           seed.frames,
-        duration:         seed.duration,
-        loopMode:         seed.loopMode,
-      };
-    }),
-
-    // ── Sequences ──
-    sequences: S.seqSlots.map(seq => {
-      if (!seq) return null;
-      return {
-        slotIndex:     seq.slotIndex,
-        strokeId:      seq.strokeId,
-        color:         seq.color,
-        anchorLon:     seq.anchorLon,
-        anchorLat:     seq.anchorLat,
-        speed:         seq.speed,
-        direction:     seq.direction,
-        playing:       seq.playing,
-        playheadIndex: seq.playheadIndex,
-        loopStart:     seq.loopStart,
-        loopEnd:       seq.loopEnd,
-        grainParams:   seq.grainParams,
-        wav:           seq.buffer ? audioBufferToBase64Wav(seq.buffer) : null,
-        // Particle indices into the main particles array
-        particleIndices: seq.particles.map(p => S.particles.indexOf(p)),
-      };
+    // ── Commits (unified cloud + loop slots) ──
+    commits: S.commitSlots.map(slot => {
+      if (!slot) return null;
+      if (slot.type === 'cloud') {
+        return {
+          type:             'cloud',
+          slotIndex:        slot.slotIndex,
+          lon:              slot.lon,
+          lat:              slot.lat,
+          color:            slot.color,
+          searchRadiusDeg:  slot.searchRadiusDeg,
+          nearestMode:      slot.nearestMode,
+          kAllMode:         slot.kAllMode,
+          kSeqMode:         slot.kSeqMode,
+          grainParams:      slot.grainParams,
+          grainOverrides:   slot.grainOverrides,
+          radiusFadeEnabled: slot.radiusFadeEnabled,
+          radiusFadeCurve:  slot.radiusFadeCurve,
+          _envAttack:       slot._envAttack,
+          _envRelease:      slot._envRelease,
+          // Moving seed fields
+          frames:           slot.frames,
+          duration:         slot.duration,
+          loopMode:         slot.loopMode,
+        };
+      } else if (slot.type === 'loop') {
+        return {
+          type:          'loop',
+          slotIndex:     slot.slotIndex,
+          strokeId:      slot.strokeId,
+          color:         slot.color,
+          anchorLon:     slot.anchorLon,
+          anchorLat:     slot.anchorLat,
+          speed:         slot.speed,
+          direction:     slot.direction,
+          playing:       slot.playing,
+          playheadIndex: slot.playheadIndex,
+          loopStart:     slot.loopStart,
+          loopEnd:       slot.loopEnd,
+          grainParams:   slot.grainParams,
+          wav:           slot.buffer ? audioBufferToBase64Wav(slot.buffer) : null,
+          particleIndices: slot.particles.map(p => S.particles.indexOf(p)),
+        };
+      }
+      return null;
     }),
 
     // ── Misc live state ──
@@ -281,6 +283,7 @@ async function applySessionPayload(data) {
     // so presets, seed config, viz settings etc. take effect immediately
     loadAudioDefaults();
     loadUserPresets();
+    loadLocks();
   }
 
   // 2. Restore samples
@@ -330,71 +333,71 @@ async function applySessionPayload(data) {
   }
   S._particleVersion = (S._particleVersion || 0) + 1;
 
-  // 5. Restore seeds
-  for (let i = 0; i < MAX_SEEDS; i++) {
-    const c = data.seeds?.[i];
-    if (!c) { S.seedSlots[i] = null; continue; }
-    S.seedSlots[i] = {
-      slotIndex:        c.slotIndex,
-      lon:              c.lon,
-      lat:              c.lat,
-      color:            c.color,
-      searchRadiusDeg:  c.searchRadiusDeg,
-      nearestMode:      c.nearestMode,
-      kAllMode:         c.kAllMode,
-      kSeqMode:         c.kSeqMode,
-      grainParams:      c.grainParams,
-      grainOverrides:   c.grainOverrides ?? {},
-      morphT:           0.5,
-      morphVelocity:    0,
-      radiusFadeEnabled: c.radiusFadeEnabled,
-      radiusFadeCurve:  c.radiusFadeCurve,
-      _lastFiredAt:     0,
-      _nextPeriodMs:    0,
-      _plantedAt:       performance.now() / 1000,
-      _releasingAt:     0,
-      _envAttack:       c._envAttack ?? 0,
-      _envRelease:      c._envRelease ?? 0,
-      _envGainCurrent:  1,
-      // Moving seed fields
-      frames:           c.frames,
-      duration:         c.duration ?? 0,
-      loopMode:         c.loopMode ?? 'pingpong',
-      _playheadMs:      0,
-      _pingForward:     true,
-    };
-  }
+  // 5. Restore commits (unified cloud + loop slots)
+  for (let i = 0; i < MAX_COMMITS; i++) {
+    const c = data.commits?.[i];
+    if (!c) { S.commitSlots[i] = null; continue; }
 
-  // 6. Restore sequences
-  for (let i = 0; i < MAX_SEQS; i++) {
-    const s = data.sequences?.[i];
-    if (!s) { S.seqSlots[i] = null; continue; }
-    const buf = s.wav ? await base64WavToAudioBuffer(s.wav) : null;
-    // Resolve particle references
-    const particles = (s.particleIndices || [])
-      .map(idx => S.particles[idx])
-      .filter(p => p != null);
+    if (c.type === 'cloud') {
+      S.commitSlots[i] = {
+        type:             'cloud',
+        slotIndex:        c.slotIndex,
+        lon:              c.lon,
+        lat:              c.lat,
+        color:            c.color,
+        searchRadiusDeg:  c.searchRadiusDeg,
+        nearestMode:      c.nearestMode,
+        kAllMode:         c.kAllMode,
+        kSeqMode:         c.kSeqMode,
+        grainParams:      c.grainParams,
+        grainOverrides:   c.grainOverrides ?? {},
+        morphT:           0.5,
+        morphVelocity:    0,
+        radiusFadeEnabled: c.radiusFadeEnabled,
+        radiusFadeCurve:  c.radiusFadeCurve,
+        _lastFiredAt:     0,
+        _nextPeriodMs:    0,
+        _plantedAt:       performance.now() / 1000,
+        _releasingAt:     0,
+        _envAttack:       c._envAttack ?? 0,
+        _envRelease:      c._envRelease ?? 0,
+        _envGainCurrent:  1,
+        frames:           c.frames,
+        duration:         c.duration ?? 0,
+        loopMode:         c.loopMode ?? 'pingpong',
+        _playheadMs:      0,
+        _pingForward:     true,
+      };
+    } else if (c.type === 'loop') {
+      const buf = c.wav ? await base64WavToAudioBuffer(c.wav) : null;
+      const particles = (c.particleIndices || [])
+        .map(idx => S.particles[idx])
+        .filter(p => p != null);
 
-    S.seqSlots[i] = {
-      slotIndex:     s.slotIndex,
-      strokeId:      s.strokeId,
-      color:         s.color,
-      anchorLon:     s.anchorLon,
-      anchorLat:     s.anchorLat,
-      speed:         s.speed ?? 1,
-      direction:     s.direction ?? 1,
-      playing:       false, // start paused — user resumes manually
-      playheadIndex: s.playheadIndex ?? 0,
-      loopStart:     s.loopStart ?? 0,
-      loopEnd:       s.loopEnd ?? (buf ? buf.duration : 0),
-      grainParams:   s.grainParams ?? { volume: 1 },
-      buffer:        buf,
-      particles:     particles,
-      _sourceNode:   null,
-      _gainNode:     null,
-      _revBuffer:    null,
-      _startedAt:    0,
-    };
+      S.commitSlots[i] = {
+        type:          'loop',
+        slotIndex:     c.slotIndex,
+        strokeId:      c.strokeId,
+        color:         c.color,
+        anchorLon:     c.anchorLon,
+        anchorLat:     c.anchorLat,
+        speed:         c.speed ?? 1,
+        direction:     c.direction ?? 1,
+        playing:       false, // start stopped — user activates manually
+        playheadIndex: c.playheadIndex ?? 0,
+        loopStart:     c.loopStart ?? 0,
+        loopEnd:       c.loopEnd ?? (buf ? buf.duration : 0),
+        grainParams:   c.grainParams ?? { volume: 1 },
+        buffer:        buf,
+        particles:     particles,
+        _sourceNode:   null,
+        _gainNode:     null,
+        _revBuffer:    null,
+        _startedAt:    0,
+      };
+    } else {
+      S.commitSlots[i] = null;
+    }
   }
 
   // 7. Restore misc state
@@ -548,7 +551,6 @@ export function initExportImport() {
               buildSvTabs();
               requestAnimationFrame(drawSvWaveform);
               S.updateSeedBanksUI?.();
-              S.updateSeqBanksUI?.();
               // Refresh preset buttons from PRESETS array (loadUserPresets
               // already ran inside applySessionPayload, but the DOM buttons
               // still showed old names)
@@ -569,8 +571,8 @@ export function initExportImport() {
                 <div class="factory-reset-title">session loaded</div>
                 <p class="factory-reset-desc">
                   ${S.samples.length} sample(s), ${S.particles.length} particle(s),
-                  ${S.seedSlots.filter(c => c).length} seed(s),
-                  ${S.seqSlots.filter(s => s).length} loop(s)
+                  ${S.commitSlots.filter(c => c && c.type === 'cloud').length} cloud(s),
+                  ${S.commitSlots.filter(c => c && c.type === 'loop').length} loop(s)
                 </p>
                 <div class="factory-reset-btns">
                   <button class="factory-reset-btn factory-reset-confirm">ok</button>

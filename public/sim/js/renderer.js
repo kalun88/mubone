@@ -35,9 +35,9 @@ export function drawFrame() {
   // Meters now drawn by DOM-based startMainMetering() loop in ui-meters.js
   if (typeof S.drawRecencyDial === 'function') S.drawRecencyDial();
   S.drawRadiusViz?.();
-  S.updateSeedBanksUI?.();
-  S.updateSeqBanksUI?.();
+  S.updateSeedBanksUI?.();  // unified: both aliases point to updateCommitBanksUI
   S._syncSeqControls?.();
+  drawEdgeHUD();
 }
 
 // ── Seed rendering ───────────────────────────────────────────────────────────
@@ -47,9 +47,9 @@ export function drawSeeds() {
   const W = S.canvas.width, H = S.canvas.height;
   const margin = 14;
 
-  for (let i = 0; i < S.seedSlotCount; i++) {
-    const seed = S.seedSlots[i];
-    if (!seed) continue;
+  for (let i = 0; i < S.commitSlotCount; i++) {
+    const seed = S.commitSlots[i];
+    if (!seed || seed.type !== 'cloud') continue;
 
     const isMoving = seed.frames !== null && seed.frames !== undefined;
     const isNearest = i === nearestSlot;
@@ -535,9 +535,9 @@ export function drawParticles() {
 
   // ── Sequential playhead indicators ────────────────────────────────────────
   // Ring around the current playhead particle for each active sequence.
-  for (let ti = 0; ti < S.seqSlotCount; ti++) {
-    const seq = S.seqSlots[ti];
-    if (!seq || !seq.playing || !seq.particles.length) continue;
+  for (let ti = 0; ti < S.commitSlotCount; ti++) {
+    const seq = S.commitSlots[ti];
+    if (!seq || seq.type !== 'loop' || !seq.playing || !seq.particles.length) continue;
     const p = seq.particles[seq.playheadIndex];
     if (!p) continue;
     const [wx, wy, wz] = spherePoint(p.lon, p.lat);
@@ -557,9 +557,9 @@ export function drawParticles() {
   // ── Sequence anchor markers ──────────────────────────────────────────────
   // Ring + dot + slot number at each sequence's anchor position.
   // Uses anchorLon/anchorLat (drop point for D-drops, first particle for strokes).
-  for (let si = 0; si < S.seqSlotCount; si++) {
-    const seq = S.seqSlots[si];
-    if (!seq) continue;
+  for (let si = 0; si < S.commitSlotCount; si++) {
+    const seq = S.commitSlots[si];
+    if (!seq || seq.type !== 'loop') continue;
     const aLon = seq.anchorLon ?? seq.particles[0]?.lon;
     const aLat = seq.anchorLat ?? seq.particles[0]?.lat;
     if (aLon == null || aLat == null) continue;
@@ -678,79 +678,7 @@ export function drawCursor() {
     }
   }
 
-  // ─── ZONE 2: Mode Ring (4 arc segments) ────────────────────────────────
-
-  const ringR   = S.modeRingSize || 30;   // user-adjustable via viz settings
-  const arcW    = 3.5;     // thick strokes — readable from across the room
-  const gap     = 0.18;    // radians gap between arcs (~10°)
-
-  // Arc spans (in radians, 0 = 3-o'clock)
-  // Top:    from -135° to -45°  (NW to NE)
-  // Right:  from  -45° to  45°  (NE to SE)
-  // Bottom: from   45° to 135°  (SE to SW)
-  // Left:   from  135° to 225°  (SW to NW)
-  const ARC_TOP    = [(-3 * Math.PI / 4) + gap, (-Math.PI / 4) - gap];
-  const ARC_RIGHT  = [(-Math.PI / 4) + gap,     (Math.PI / 4)  - gap];
-  const ARC_BOTTOM = [(Math.PI / 4) + gap,      (3 * Math.PI / 4) - gap];
-  const ARC_LEFT   = [(3 * Math.PI / 4) + gap,  (5 * Math.PI / 4) - gap];
-
-  // Top arc — SCAN OFF (orange)
-  if (scanOff) {
-    S.ctx.strokeStyle = '#e8a030';
-    S.ctx.lineWidth   = arcW;
-    S.ctx.globalAlpha = 0.95;
-    S.ctx.beginPath(); S.ctx.arc(mx, my, ringR, ARC_TOP[0], ARC_TOP[1]); S.ctx.stroke();
-    S.ctx.globalAlpha = 1;
-  }
-
-  // Left arc — SEED LOCK (sage green)
-  if (S.seedLockEnabled) {
-    S.ctx.strokeStyle = '#6ec97a';
-    S.ctx.lineWidth   = arcW;
-    S.ctx.globalAlpha = 0.95;
-    S.ctx.beginPath(); S.ctx.arc(mx, my, ringR, ARC_LEFT[0], ARC_LEFT[1]); S.ctx.stroke();
-    S.ctx.globalAlpha = 1;
-  }
-
-  // Right arc — LOOP LOCK / draw loop active (pink)
-  if (S.seqModeEnabled) {
-    S.ctx.strokeStyle = '#ff6b9d';
-    S.ctx.lineWidth   = arcW;
-    S.ctx.globalAlpha = 0.95;
-    S.ctx.beginPath(); S.ctx.arc(mx, my, ringR, ARC_RIGHT[0], ARC_RIGHT[1]); S.ctx.stroke();
-    S.ctx.globalAlpha = 1;
-  }
-
-  // Bottom position — PATCH NUMBER (always visible, flashes on change)
-  {
-    const now       = performance.now();
-    const flashLeft = (S._patchFlashUntil || 0) - now;
-    const flashFade = 800;
-    const baseAlpha = 0.30;
-    const flashAlpha = flashLeft > 0
-      ? baseAlpha + (0.70 * Math.min(1, flashLeft / flashFade))
-      : baseAlpha;
-
-    const patchNum  = (S.activePresetIndex ?? 0) + 1;
-    const patchStr  = String(patchNum);
-    // Scale font with ring size — readable at distance
-    const fs        = Math.max(11, Math.round(ringR * 0.55));
-
-    // Position: below cursor at ringR distance
-    const px = mx;
-    const py = my + ringR + 2;
-
-    S.ctx.save();
-    S.ctx.globalAlpha  = flashAlpha;
-    S.ctx.font         = `700 ${fs}px "Inter", "Helvetica Neue", sans-serif`;
-    S.ctx.textAlign    = 'center';
-    S.ctx.textBaseline = 'top';
-    S.ctx.fillStyle    = '#ffffff';
-    S.ctx.fillText(patchStr, px, py);
-    S.ctx.restore();
-  }
-
-  // ─── ZONE 1: Center reticle ────────────────────────────────────────────
+  // ─── Center reticle ───────────────────────────────────────────────────
 
   const tipR = 5, armLen = 12, armGap = tipR + 3;
 
@@ -764,10 +692,10 @@ export function drawCursor() {
   // Center dot — solid red when recording, paint color when painting, white idle
   if (recording) {
     S.ctx.fillStyle = 'rgba(232,48,48,0.95)';
-    S.ctx.beginPath(); S.ctx.arc(mx, my, tipR * 0.55, 0, Math.PI * 2); S.ctx.fill();
+    S.ctx.beginPath(); S.ctx.arc(mx, my, tipR * 0.8, 0, Math.PI * 2); S.ctx.fill();
   } else {
     S.ctx.fillStyle = painting ? color : 'rgba(255,255,255,0.8)';
-    S.ctx.beginPath(); S.ctx.arc(mx, my, tipR * 0.45, 0, Math.PI * 2); S.ctx.fill();
+    S.ctx.beginPath(); S.ctx.arc(mx, my, tipR * 0.65, 0, Math.PI * 2); S.ctx.fill();
   }
 
   // Crosshair arms — thick, visible from across the room
@@ -781,6 +709,74 @@ export function drawCursor() {
   S.ctx.stroke();
 
   S.ctx.restore();
+}
+
+// ── Edge HUD — top bar with 3 columns matching A / S / D keys ───────────────
+// Left (A):   trace mode — dim=trace, pink=trace+loop, blue=trace+cloud
+// Center (S): scan state — white=on, orange=off, gradient if fade, diamond if nearest
+// Right (D):  commit mode — blue=cloud, pink=loop
+
+const EDGE_H_BASE = 18;  // bar height at scale 1.0
+
+function drawEdgeHUD() {
+  const scale = S.hudScale || 1;
+  const EDGE_H = Math.round(EDGE_H_BASE * scale);
+  const W = S.canvas.width;
+  const ctx = S.ctx;
+  const colW = Math.floor(W / 3);
+  const col2X = colW;
+  const col3X = colW * 2;
+  const col3W = W - col3X; // last column absorbs rounding remainder
+
+  ctx.save();
+
+  // ── LEFT: Trace mode (A) ──────────────────────────────────────────────
+  {
+    const traceColors = {
+      'trace':       '#3a3a3a',  // dim neutral
+      'trace+loop':  '#ff6b9d',  // pink-red
+      'trace+cloud': '#4a9fd4',  // saturated blue
+    };
+    ctx.fillStyle = traceColors[S.traceMode] || traceColors['trace'];
+    ctx.fillRect(0, 0, colW, EDGE_H);
+  }
+
+  // ── CENTER: Scan state (S) ────────────────────────────────────────────
+  {
+    const scanOn = !S.scanMuted;
+    const baseColor = scanOn ? '#f0f4f8' : '#e8a030';
+
+    if (S.radiusFadeEnabled) {
+      // Gradient: color at edges, fades to bg in the middle
+      const grad = ctx.createLinearGradient(col2X, 0, col2X + colW, 0);
+      grad.addColorStop(0, baseColor);
+      grad.addColorStop(0.5, BG_COLOR);
+      grad.addColorStop(1, baseColor);
+      ctx.fillStyle = grad;
+    } else {
+      ctx.fillStyle = baseColor;
+    }
+    ctx.fillRect(col2X, 0, colW, EDGE_H);
+
+    // Nearest mode: overlay a diamond icon in center
+    if (S.nearestMode) {
+      const cx = col2X + colW / 2, cy = EDGE_H / 2, d = Math.round(6 * scale);
+      ctx.fillStyle = scanOn ? '#ffffff' : '#ffcc66';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - d); ctx.lineTo(cx + d, cy); ctx.lineTo(cx, cy + d); ctx.lineTo(cx - d, cy);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // ── RIGHT: Commit mode (D) ────────────────────────────────────────────
+  {
+    const commitColor = S.commitMode === 'loop' ? '#ff6b9d' : '#4a9fd4';
+    ctx.fillStyle = commitColor;
+    ctx.fillRect(col3X, 0, col3W, EDGE_H);
+  }
+
+  ctx.restore();
 }
 
 // ── Canvas resize ─────────────────────────────────────────────────────────────

@@ -392,8 +392,8 @@ function setupMobileTouchHandlers() {
       if (!S.micPermissionGranted) return;
     }
 
-    // Auto-mute scan when starting a sequence recording
-    if (S.seqModeEnabled && !S.scanMuted) setScanMuted(true);
+    // In trace+loop mode, mute scan when trace fires
+    if (S.traceMode === 'trace+loop' && !S.scanMuted) setScanMuted(true);
     startLiveRecording();
     recordStrokeStart('live', S.currentLiveBufferIdx);
     S.isPainting      = true;
@@ -407,7 +407,7 @@ function setupMobileTouchHandlers() {
 
   S.canvas.addEventListener('touchend', e => {
     e.preventDefault();
-    if (S.seqModeEnabled && S.currentStrokeId > 0) {
+    if (S.traceMode === 'trace+loop' && S.currentStrokeId > 0) {
       try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
     }
     S.isPainting      = false;

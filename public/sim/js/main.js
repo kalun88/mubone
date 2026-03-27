@@ -423,42 +423,24 @@ function init() {
   _initAxisLockSeg('axisLockElSeg', 'axisLockEl',
     ['_axisLockFrozenNy', '_axisLockFrozenPitch']);
 
-  // ── Loop slot config ───────────────────────────────────────────────────
-  const seqSlotSelect = document.getElementById('seqSlotCountSelect');
-  if (seqSlotSelect) {
-    seqSlotSelect.addEventListener('change', () => {
-      S.seqSlotCount = parseInt(seqSlotSelect.value, 10);
-      (S.updateSeqBanksUI || (() => {}))();
-      S._syncSeqButtonStates?.();
-    });
-  }
-  const seqOverflowSeg = document.getElementById('seqOverflowSeg');
-  if (seqOverflowSeg) {
-    seqOverflowSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        S.seqOverflow = btn.dataset.overflow;
-        seqOverflowSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
-          b.classList.toggle('active', b === btn));
-        S._syncSeqButtonStates?.();
-      });
-    });
-  }
-
-  // ── Seed slot config ──────────────────────────────────────────────────
-  const seedSlotSelect = document.getElementById('seedSlotCountSelect');
-  if (seedSlotSelect) {
-    seedSlotSelect.addEventListener('change', () => {
-      S.seedSlotCount = parseInt(seedSlotSelect.value, 10);
+  // ── Commit slot config (unified cloud + loop pool) ──────────────────
+  const commitSlotSelect = document.getElementById('commitSlotCountSelect')
+                        || document.getElementById('seedSlotCountSelect');  // fallback to old ID
+  if (commitSlotSelect) {
+    commitSlotSelect.addEventListener('change', () => {
+      S.commitSlotCount = parseInt(commitSlotSelect.value, 10);
       (S.updateSeedBanksUI || (() => {}))();
     });
   }
-  const seedOverflowSeg = document.getElementById('seedOverflowSeg');
-  if (seedOverflowSeg) {
-    seedOverflowSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+  const commitOverflowSeg = document.getElementById('commitOverflowSeg')
+                          || document.getElementById('seedOverflowSeg');  // fallback to old ID
+  if (commitOverflowSeg) {
+    commitOverflowSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        S.seedOverflow = btn.dataset.overflow;
-        seedOverflowSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        S.commitOverflow = btn.dataset.overflow;
+        commitOverflowSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
           b.classList.toggle('active', b === btn));
+        S._syncSeqButtonStates?.();
       });
     });
   }

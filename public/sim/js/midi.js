@@ -13,9 +13,10 @@ import {
   recordStrokeStart, undoLastStroke,
 } from './ui-samples.js';
 import {
-  toggleNearestMode, plantSeed, startSeedPlant, finalizeSeedPlant, uprootNearestSeed, clearAllSeeds,
+  toggleNearestMode, plantSeed, startSeedPlant, finalizeSeedPlant, uprootNearestSeed,
+  clearAllSeeds, clearAllCommits, clearAllSeqs,
   updatePlaybackControls, flashRadiusTooltip, selectPreset,
-  createSeqFromStroke, dropSeqFromCursor, dropNearestSeq, pickupSeqPause, pickupSeqRemove, clearAllSeqs,
+  createSeqFromStroke, dropSeqFromCursor, releaseCommit,
 } from './ui-presets.js';
 import { sweep } from './ui-sweep.js';
 import { setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
@@ -112,7 +113,7 @@ const ACTIONS = [
 
   // ── Cursor ─────────────────────────────────────────────────────────────────
   { id: null, group: 'cursor' },
-  { id: 'scan_toggle',  label: 'scan',                      key: 'X',                 osc: '/cursor/mute',       fmt: 'int 0|1',          type: 'trigger',
+  { id: 'scan_toggle',  label: 'scan on/off (S)',            key: 'S',                 osc: '/cursor/mute',       fmt: 'int 0|1',          type: 'trigger',
     tip: 'toggle scan — cursor spotlight on/off in the house output' },
   { id: 'radius_fade',  label: 'radius fade on/off',        key: '—',                 osc: '/grain/radiusfade', fmt: 'int 0|1',          type: 'trigger',
     tip: 'attenuate grains by distance from cursor centre' },
@@ -124,68 +125,68 @@ const ACTIONS = [
   { id: 'lock_el',          label: 'lock elevation (toggle)',    key: '—',                 osc: '/cursor/lock_el',   fmt: 'int 0|1',           type: 'toggle',
     tip: 'toggle elevation lock — freezes vertical position' },
 
-  // ── Looper ─────────────────────────────────────────────────────────────────
-  { id: null, group: 'looper' },
-  { id: 'seq_slots',    label: 'loop slot count',           key: '—',                 osc: '/loop/slots',      fmt: 'int 1–12',         type: 'cc',
-    tip: 'number of active loop slots (1–12)',
-    ccFn: v => { S.seqSlotCount = Math.max(1, Math.min(12, Math.round(1 + v * 11 / 127))); const sel = document.getElementById('seqSlotCountSelect'); if (sel) sel.value = String(S.seqSlotCount); (S.updateSeqBanksUI || (() => {}))(); S._syncSeqButtonStates?.(); } },
-  { id: 'seq_overflow', label: 'loop overflow (cycle)',     key: '—',                 osc: '/loop/overflow',   fmt: 'str off|oldest|nearest', type: 'trigger',
-    tip: 'cycle overflow mode: off → oldest → nearest' },
-  { id: 'seq_arm',      label: 'drop/draw loop (D)',         key: 'D',                 osc: '/loop/arm',        fmt: 'int 0|1',          type: 'hold',
-    tip: 'quick tap (<200ms) = drop loop from cursor, long hold = draw a new loop' },
-  { id: 'seq_mode',     label: 'loop lock (⇧D)',            key: 'Shift+D',            osc: '/loop/mode',       fmt: 'int 0|1',          type: 'trigger',
-    tip: 'toggle loop lock — every paint trace auto-records a loop' },
-  { id: 'seq_drop',     label: 'drop loop (OSC only)',      key: '—',                 osc: '/loop/drop',       fmt: 'bang',             type: 'trigger',
-    tip: 'turn the last stroke under cursor into a loop — keyboard: quick tap D' },
-  { id: 'seq_pause',    label: 'pause nearest loop',        key: '—',                 osc: '/loop/pause',      fmt: 'bang',             type: 'trigger',
-    tip: 'stop nearest loop playback, keep in slot to resume later' },
-  { id: 'seq_resume',   label: 'resume nearest loop',       key: '—',                 osc: '/loop/resume',     fmt: 'bang',             type: 'trigger',
-    tip: 'restart the nearest paused loop' },
-  { id: 'seq_remove',   label: 'lift nearest loop',          key: '⌘D',                osc: '/loop/remove',     fmt: 'bang',             type: 'trigger',
-    tip: 'lift — remove nearest loop from its slot, painted material stays' },
-  { id: 'seq_clear',    label: 'clear all loops',           key: '—',                 osc: '/loop/clear',      fmt: 'bang',             type: 'trigger',
-    tip: 'remove all loops from all slots' },
-  { id: 'seq_volume',   label: 'next loop volume',          key: '—',                 osc: '/loop/volume',     fmt: 'float 0–1',        type: 'cc',
-    tip: 'volume for the next recorded loop — set before recording',
-    ccFn: v => { S.seqNextParams.volume = v / 127; const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume; const nb = document.getElementById('seqVolumeNum'); if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; } },
-  { id: 'seq_speed',    label: 'next loop speed',           key: '—',                 osc: '/loop/speed',      fmt: 'float 0.25–4×',    type: 'cc',
-    tip: 'speed for the next recorded loop — 1× = original, set before recording',
-    ccFn: v => { S.seqNextParams.speed = 0.25 + (v / 127) * 3.75; const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed; const nb = document.getElementById('seqSpeedNum'); if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; } },
-  { id: 'seq_dir',      label: 'next loop direction',       key: '—',                 osc: '/loop/dir',        fmt: 'str fwd|rev',      type: 'trigger',
-    tip: 'direction for the next recorded loop — set before recording' },
+  // ── Trace ─────────────────────────────────────────────────────────────────
+  { id: null, group: 'trace (A)' },
+  { id: 'trace_mode',   label: 'trace mode cycle (A)',      key: 'A',                 osc: '/trace/mode',      fmt: 'str trace|trace+loop|trace+cloud', type: 'trigger',
+    tip: 'cycle trace mode: trace → trace+loop → trace+cloud' },
 
-  // ── Seeder ─────────────────────────────────────────────────────────────────
-  { id: null, group: 'seeder' },
-  { id: 'seed_slots',    label: 'seed slot count',          key: '—',                 osc: '/seed/slots',    fmt: 'int 1–12',         type: 'cc',
-    tip: 'number of active seed slots (1–12)',
-    ccFn: v => { S.seedSlotCount = Math.max(1, Math.min(12, Math.round(1 + v * 11 / 127))); const sel = document.getElementById('seedSlotCountSelect'); if (sel) sel.value = String(S.seedSlotCount); (S.updateSeedBanksUI || (() => {}))(); } },
-  { id: 'seed_overflow', label: 'seed overflow (cycle)',    key: '—',                 osc: '/seed/overflow', fmt: 'str off|oldest|nearest', type: 'trigger',
+  // ── Commit ────────────────────────────────────────────────────────────────
+  { id: null, group: 'commit (D)' },
+  { id: 'commit_mode',  label: 'commit mode cycle (⇧D)',    key: 'Shift+D',           osc: '/commit/mode',     fmt: 'str cloud|loop',   type: 'trigger',
+    tip: 'cycle commit mode: cloud ↔ loop — what D key creates' },
+  { id: 'commit_drop',  label: 'drop commit (tap D)',       key: 'D',                 osc: '/commit/drop',     fmt: 'bang',             type: 'trigger',
+    tip: 'drop a stationary cloud or loop at the current cursor position' },
+  { id: 'commit_draw',  label: 'draw commit (hold D)',      key: 'hold D',            osc: '/commit/draw',     fmt: 'int 0|1',          type: 'hold',
+    tip: 'hold to draw a moving cloud path or record a loop — release to finalize' },
+  { id: 'commit_release', label: 'release nearest (⌘D)',    key: '⌘D',               osc: '/commit/release',  fmt: 'bang',             type: 'trigger',
+    tip: 'release the nearest commit (cloud or loop) from its slot' },
+  { id: 'commit_clear', label: 'clear all commits',         key: '—',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
+    tip: 'remove all clouds and loops from all slots' },
+  { id: 'commit_slots', label: 'commit slot count',         key: '—',                 osc: '/commit/slots',    fmt: 'int 1–16',         type: 'cc',
+    tip: 'number of active commit slots (1–16)',
+    ccFn: v => { S.commitSlotCount = Math.max(1, Math.min(16, Math.round(1 + v * 15 / 127))); const sel = document.getElementById('commitSlotCountSelect'); if (sel) sel.value = String(S.commitSlotCount); (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))(); } },
+  { id: 'commit_overflow', label: 'commit overflow (cycle)', key: '—',                osc: '/commit/overflow', fmt: 'str off|oldest|nearest', type: 'trigger',
     tip: 'cycle overflow mode: off → oldest → nearest' },
-  { id: 'plant_seed',   label: 'sow seed (tap S)',           key: 'S',                 osc: '/seed/sow',      fmt: 'bang',             type: 'trigger',
-    tip: 'sow a stationary seed at the current cursor position' },
-  { id: 'sow_trail',    label: 'sow trail (hold S)',         key: 'hold S',             osc: '/seed/trail',    fmt: 'int 0|1',          type: 'hold',
-    tip: 'hold to record a moving seed path — seed loops along the trail' },
-  { id: 'uproot_seed',  label: 'uproot nearest seed',       key: '⌘S',                osc: '/seed/uproot',   fmt: 'bang',             type: 'trigger',
-    tip: 'remove the seed closest to the cursor' },
-  { id: 'seed_lock',    label: 'seed lock (⇧S)',            key: 'Shift+S',            osc: '/seed/lock',     fmt: 'int 0|1',          type: 'trigger',
-    tip: 'toggle seed lock — every paint trace auto-sows a seed trail' },
-  { id: 'seed_clear',   label: 'clear all seeds',           key: '—',                 osc: '/seed/clear',    fmt: 'bang',             type: 'trigger',
-    tip: 'remove all planted seeds' },
-  { id: 'seed_mode',    label: 'seed blend mode',           key: '—',                 osc: '/seed/mode',     fmt: 'str all|focus',    type: 'trigger',
-    tip: 'all = equal weight, focus = distance-weighted blend toward closest' },
-  { id: 'seed_tether',  label: 'seed tether',               key: '—',                 osc: '/seed/tether',   fmt: 'int 0|1',          type: 'trigger',
-    tip: 'on = seed always plays regardless of cursor distance, off = radius-gated' },
-  { id: 'seed_xfade',   label: 'seed xfade',               key: '—',                 osc: '/seed/xfade',    fmt: 'float 0–1',        type: 'cc',
-    tip: '0 = hard snap to nearest seed, 1 = smooth distance-weighted crossfade',
-    ccFn: v => { S.seedXfade = v / 127; S._syncImprovUI?.(); } },
-  { id: 'seed_loopmode', label: 'seed movement dir',        key: '—',                 osc: '/seed/loopmode', fmt: 'str pingpong|forward', type: 'trigger',
-    tip: 'how moving seeds traverse their path — applies to nearest seed' },
-  { id: 'seed_attack',  label: 'seed attack',               key: '—',                 osc: '/seed/attack',   fmt: 'float 0–10 s',     type: 'cc',
-    tip: 'fade-in time when a seed is planted — 0s instant, up to 10s swell',
+  { id: 'commit_dir',   label: 'commit movement dir',       key: '—',                 osc: '/commit/dir',      fmt: 'str fwd|rev|pingpong', type: 'trigger',
+    tip: 'how moving commits traverse their path — cycles fwd → rev → pingpong' },
+  { id: 'commit_volume', label: 'next commit volume',       key: '—',                 osc: '/commit/volume',   fmt: 'float 0–1',        type: 'cc',
+    tip: 'volume for the next commit — set before recording',
+    ccFn: v => { S.seqNextParams.volume = v / 127; const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume; const nb = document.getElementById('seqVolumeNum'); if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; } },
+  { id: 'commit_speed', label: 'next commit speed',         key: '—',                 osc: '/commit/speed',    fmt: 'float 0.25–4×',    type: 'cc',
+    tip: 'speed for the next commit — 1× = original, set before recording',
+    ccFn: v => { S.seqNextParams.speed = 0.25 + (v / 127) * 3.75; const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed; const nb = document.getElementById('seqSpeedNum'); if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; } },
+  { id: 'commit_attack', label: 'cloud fade in',             key: '—',                 osc: '/commit/attack',   fmt: 'float 0–10 s',     type: 'cc',
+    tip: 'cloud fade-in time — 0s instant, up to 10s swell',
     ccFn: v => { S.seedAttack = (v / 127) * 10; const sl = document.getElementById('seedAttackSlider'); if (sl) sl.value = S.seedAttack; const nb = document.getElementById('seedAttackNum'); if (nb) nb.value = S.seedAttack < 1 ? (S.seedAttack * 1000).toFixed(0) + 'ms' : S.seedAttack.toFixed(1) + 's'; } },
-  { id: 'seed_release', label: 'seed release',              key: '—',                 osc: '/seed/release',  fmt: 'float 0–10 s',     type: 'cc',
-    tip: 'fade-out time when a seed is uprooted — 0s instant, up to 10s fade',
+  { id: 'commit_release_time', label: 'cloud fade out',     key: '—',               osc: '/commit/release_time', fmt: 'float 0–10 s',  type: 'cc',
+    tip: 'cloud fade-out time — 0s instant, up to 10s fade',
     ccFn: v => { S.seedRelease = (v / 127) * 10; const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.seedRelease; const nb = document.getElementById('seedReleaseNum'); if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; } },
+  { id: 'loop_release_mode', label: 'loop fade out mode',   key: '—',                 osc: '/commit/loop_release', fmt: 'str fade|play-to-end', type: 'trigger',
+    tip: 'fade = fade out over time, play-to-end = loop finishes current pass then stops' },
+  { id: 'loop_fade_time', label: 'loop fade out time',    key: '—',                 osc: '/commit/loop_fade_time', fmt: 'float 0–2000 ms', type: 'cc',
+    tip: 'fade-out duration for loops when released — 0ms instant, up to 2000ms',
+    ccFn: v => { S.loopFadeTimeMs = Math.round((v / 127) * 2000); const sl = document.getElementById('loopFadeTimeSlider'); if (sl) sl.value = S.loopFadeTimeMs; const nb = document.getElementById('loopFadeTimeNum'); if (nb) nb.value = S.loopFadeTimeMs < 1000 ? S.loopFadeTimeMs + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; } },
+  { id: 'commit_blend', label: 'commit blend mode',         key: '—',                 osc: '/commit/blend',    fmt: 'str all|focus',    type: 'trigger',
+    tip: 'all = equal weight, focus = distance-weighted blend toward closest' },
+  { id: 'commit_tether', label: 'commit tether',            key: '—',                 osc: '/commit/tether',   fmt: 'int 0|1',          type: 'trigger',
+    tip: 'on = commit always plays regardless of cursor distance, off = radius-gated' },
+  { id: 'commit_xfade', label: 'commit xfade',              key: '—',                 osc: '/commit/xfade',    fmt: 'float 0–1',        type: 'cc',
+    tip: '0 = hard snap to nearest commit, 1 = smooth distance-weighted crossfade',
+    ccFn: v => { S.seedXfade = v / 127; S._syncImprovUI?.(); } },
+
+  // ── Legacy commit aliases (backward compat) ───────────────────────────────
+  // These keep old MIDI mappings working — they forward to the unified commit actions.
+  // Hidden from the mapping table when rendering (filter by _legacy flag).
+  { id: 'plant_seed',   label: '(legacy) drop cloud',       key: '—',   osc: '/seed/sow',      fmt: 'bang',       type: 'trigger', _legacy: true },
+  { id: 'sow_trail',    label: '(legacy) draw cloud',       key: '—',   osc: '/seed/trail',    fmt: 'int 0|1',    type: 'hold',    _legacy: true },
+  { id: 'uproot_seed',  label: '(legacy) release commit',   key: '—',   osc: '/seed/uproot',   fmt: 'bang',       type: 'trigger', _legacy: true },
+  { id: 'seed_lock',    label: '(legacy) trace mode cycle', key: '—',   osc: '/seed/lock',     fmt: 'int 0|1',    type: 'trigger', _legacy: true },
+  { id: 'seed_clear',   label: '(legacy) clear all',        key: '—',   osc: '/seed/clear',    fmt: 'bang',       type: 'trigger', _legacy: true },
+  { id: 'seq_arm',      label: '(legacy) commit draw',      key: '—',   osc: '/loop/arm',      fmt: 'int 0|1',    type: 'hold',    _legacy: true },
+  { id: 'seq_mode',     label: '(legacy) commit mode',      key: '—',   osc: '/loop/mode',     fmt: 'int 0|1',    type: 'trigger', _legacy: true },
+  { id: 'seq_drop',     label: '(legacy) drop loop',        key: '—',   osc: '/loop/drop',     fmt: 'bang',       type: 'trigger', _legacy: true },
+  { id: 'seq_remove',   label: '(legacy) release commit',   key: '—',   osc: '/loop/remove',   fmt: 'bang',       type: 'trigger', _legacy: true },
+  { id: 'seq_clear',    label: '(legacy) clear all',        key: '—',   osc: '/loop/clear',    fmt: 'bang',       type: 'trigger', _legacy: true },
 
   // ── Levels ─────────────────────────────────────────────────────────────────
   { id: null, group: 'levels' },
@@ -364,39 +365,6 @@ function dispatchAction(id, midiVal) {
         S.updateLiveRecUI?.();
       }
       break;
-    case 'seq_arm':
-      if (midiVal > 0 && !S.isPainting) {
-        // Guard: reject if slots full and overflow off
-        if (S.seqOverflow === 'off') {
-          let full = true;
-          for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
-          if (full) break;
-        }
-        ensureAudioContext();
-        S._loopRecPreSeqMode = S.seqModeEnabled;
-        S.seqModeEnabled = true;
-        if (!S.scanMuted) setScanMuted(true);
-        startLiveRecording();
-        recordStrokeStart('live', S.currentLiveBufferIdx);
-        S.isPainting = true; S.paintFrameCount = 0;
-        S.updateLiveRecUI?.();
-      } else if (midiVal === 0 && S.isPainting) {
-        if (S.currentStrokeId > 0) {
-          try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
-        }
-        S.isPainting      = false;
-        S.currentStrokeId = -1;
-        if (S.isRecording) stopLiveRecording();
-        S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-        // Restore prior seq mode
-        if (S._loopRecPreSeqMode !== undefined) {
-          S.seqModeEnabled = S._loopRecPreSeqMode;
-          document.getElementById('seqModeBtn')?.classList.toggle('active', S.seqModeEnabled);
-          S._loopRecPreSeqMode = undefined;
-        }
-        S.updateLiveRecUI?.();
-      }
-      break;
     case 'record':
       S._setRecording?.(!S.isRecording);
       break;
@@ -409,26 +377,147 @@ function dispatchAction(id, midiVal) {
       break;
     case 'undo':        undoLastStroke(); break;
     case 'sweep':       sweep(); break;
-    case 'plant_seed':   plantSeed(); break;
-    case 'sow_trail':
-      if (midiVal > 0) startSeedPlant();
-      else             finalizeSeedPlant();
-      break;
-    case 'uproot_seed':  uprootNearestSeed(); break;
-    case 'seed_lock': {
-      S.seedLockEnabled = !S.seedLockEnabled;
-      document.getElementById('seedLockBtn')?.classList.toggle('active', S.seedLockEnabled);
+
+    // ── Trace ───────────────────────────────────────────────────────────────
+    case 'trace_mode': {
+      const _modes = ['trace', 'trace+loop', 'trace+cloud'];
+      const _idx = _modes.indexOf(S.traceMode);
+      S.traceMode = _modes[(_idx + 1) % _modes.length];
+      S._syncCommitUI?.();
       break;
     }
-    case 'seed_clear':   clearAllSeeds(); break;
+
+    // ── Commit: unified drop/draw/release/clear ─────────────────────────────
+    case 'commit_mode': {
+      S.commitMode = S.commitMode === 'cloud' ? 'loop' : 'cloud';
+      S._syncCommitUI?.();
+      break;
+    }
+    case 'commit_drop':
+    case 'plant_seed':   // legacy alias
+    case 'seq_drop':     // legacy alias
+      if (S.commitMode === 'cloud') plantSeed();
+      else                          dropSeqFromCursor();
+      break;
+    case 'commit_draw':
+    case 'sow_trail':    // legacy alias
+    case 'seq_arm':      // legacy alias
+      if (S.commitMode === 'cloud') {
+        if (midiVal > 0) startSeedPlant();
+        else             finalizeSeedPlant();
+      } else {
+        // Loop arm: reuse existing seq_arm logic
+        if (midiVal > 0 && !S.isPainting) {
+          if (S.seqOverflow === 'off') {
+            let full = true;
+            for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
+            if (full) break;
+          }
+          ensureAudioContext();
+          S._loopRecPreSeqMode = S.seqModeEnabled;
+          S.seqModeEnabled = true;
+          if (!S.scanMuted) setScanMuted(true);
+          startLiveRecording();
+          recordStrokeStart('live', S.currentLiveBufferIdx);
+          S.isPainting = true; S.paintFrameCount = 0;
+          S.updateLiveRecUI?.();
+        } else if (midiVal === 0 && S.isPainting) {
+          if (S.currentStrokeId > 0) {
+            try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+          }
+          S.isPainting      = false;
+          S.currentStrokeId = -1;
+          if (S.isRecording) stopLiveRecording();
+          S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+          if (S._loopRecPreSeqMode !== undefined) {
+            S.seqModeEnabled = S._loopRecPreSeqMode;
+            S._syncCommitUI?.();
+            S._loopRecPreSeqMode = undefined;
+          }
+          S.updateLiveRecUI?.();
+        }
+      }
+      break;
+    case 'commit_release':
+    case 'uproot_seed':  // legacy alias
+    case 'seq_remove':   // legacy alias
+      releaseCommit();
+      break;
+    case 'commit_clear':
+    case 'seed_clear':   // legacy alias
+    case 'seq_clear':    // legacy alias
+      clearAllCommits();
+      break;
+    case 'commit_overflow': {
+      const modes = ['off', 'oldest', 'nearest'];
+      const curOF = S.seedOverflow || 'off';
+      const nextOF = modes[(modes.indexOf(curOF) + 1) % modes.length];
+      S.seedOverflow = nextOF;
+      S.seqOverflow  = nextOF;
+      const seg = document.getElementById('commitOverflowSeg');
+      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.overflow === nextOF));
+      break;
+    }
+    case 'commit_dir': {
+      const cycle = { pingpong: 'forward', forward: 'rev', rev: 'pingpong' };
+      S.seedLoopMode = cycle[S.seedLoopMode] ?? 'forward';
+      const seg = document.getElementById('seedLoopModeSeg');
+      if (seg) seg.querySelectorAll('[data-loopmode]').forEach(b =>
+        b.classList.toggle('active', b.dataset.loopmode === S.seedLoopMode));
+      break;
+    }
+    case 'loop_release_mode': {
+      S.loopReleaseMode = S.loopReleaseMode === 'fade' ? 'play-to-end' : 'fade';
+      const lrSeg = document.getElementById('loopReleaseModeSeg');
+      if (lrSeg) lrSeg.querySelectorAll('[data-lrmode]').forEach(b =>
+        b.classList.toggle('active', b.dataset.lrmode === S.loopReleaseMode));
+      break;
+    }
+    case 'commit_blend':
+      S.seedMode = S.seedMode === 'focus' ? 'all' : 'focus';
+      S._syncImprovUI?.();
+      break;
+    case 'commit_tether':
+      S.seedTether = !S.seedTether;
+      S._syncImprovUI?.();
+      break;
+
+    // ── Legacy aliases that forward to unified handlers ──────────────────────
+    case 'seed_lock': {
+      // Legacy: cycle trace mode (was seed lock toggle)
+      const _modes2 = ['trace', 'trace+loop', 'trace+cloud'];
+      const _idx2 = _modes2.indexOf(S.traceMode);
+      S.traceMode = _modes2[(_idx2 + 1) % _modes2.length];
+      S._syncCommitUI?.();
+      break;
+    }
     case 'seed_overflow': {
       const modes = ['off', 'oldest', 'nearest'];
       S.seedOverflow = modes[(modes.indexOf(S.seedOverflow) + 1) % modes.length];
-      const seg = document.getElementById('seedOverflowSeg');
+      S.seqOverflow = S.seedOverflow;
+      const seg = document.getElementById('commitOverflowSeg');
       if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.overflow === S.seedOverflow));
       break;
     }
+    case 'seq_mode': {
+      // Legacy: toggle commit mode
+      S.commitMode = S.commitMode === 'cloud' ? 'loop' : 'cloud';
+      S._syncCommitUI?.();
+      break;
+    }
+    case 'seq_overflow': {
+      const modes = ['off', 'oldest', 'nearest'];
+      S.seqOverflow = modes[(modes.indexOf(S.seqOverflow) + 1) % modes.length];
+      S.seedOverflow = S.seqOverflow;
+      const seg = document.getElementById('commitOverflowSeg');
+      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.overflow === S.seqOverflow));
+      break;
+    }
+
+    // ── Search ──────────────────────────────────────────────────────────────
     case 'snap':         toggleNearestMode(); break;
     case 'k_all':
       if (!S.nearestMode) { S.grainKAllMode = !S.grainKAllMode; updatePlaybackControls(); }
@@ -441,74 +530,6 @@ function dispatchAction(id, midiVal) {
       S.radiusFadeEnabled = !S.radiusFadeEnabled;
       S._syncRadiusFadeUI?.();
       break;
-    case 'seq_overflow': {
-      const modes = ['off', 'oldest', 'nearest'];
-      S.seqOverflow = modes[(modes.indexOf(S.seqOverflow) + 1) % modes.length];
-      const seg = document.getElementById('seqOverflowSeg');
-      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active', b.dataset.overflow === S.seqOverflow));
-      S._syncSeqButtonStates?.();
-      break;
-    }
-    case 'seq_mode': {
-      // Don't allow turning ON loop lock when slots are full and overflow is off
-      const wouldEnable = !S.seqModeEnabled;
-      if (wouldEnable && S.seqOverflow === 'off') {
-        let full = true;
-        for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
-        if (full) break;
-      }
-      S.seqModeEnabled = wouldEnable;
-      document.getElementById('seqModeBtn')?.classList.toggle('active', S.seqModeEnabled);
-      break;
-    }
-    case 'seq_drop':
-      dropSeqFromCursor();
-      break;
-    case 'seq_resume':
-      dropNearestSeq();
-      break;
-    case 'seq_pause':
-      pickupSeqPause();
-      break;
-    case 'seq_remove':
-      pickupSeqRemove();
-      break;
-    case 'seq_clear':
-      clearAllSeqs();
-      break;
-    case 'seq_dir': {
-      S.seqNextParams.direction = S.seqNextParams.direction === 1 ? -1 : 1;
-      const seg = document.getElementById('seqDirectionSeg');
-      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b => {
-        b.classList.toggle('active', (b.dataset.dir === 'rev') === (S.seqNextParams.direction === -1));
-      });
-      break;
-    }
-    case 'seed_mode':
-      S.seedMode = S.seedMode === 'focus' ? 'all' : 'focus';
-      S._syncImprovUI?.();
-      break;
-    case 'seed_tether':
-      S.seedTether = !S.seedTether;
-      S._syncImprovUI?.();
-      break;
-    // seed_xfade: handled by ccFn in the default case (continuous 0–1 control).
-    // Note/keyboard dispatch sends 127 → ccFn maps to 1.0; CC sends 0–127 smoothly.
-    case 'seed_loopmode': {
-      const mode = S.seedLoopMode === 'pingpong' ? 'forward' : 'pingpong';
-      S.seedLoopMode = mode;
-      const { lon, lat } = S.mouseInCanvas
-        ? screenToLonLat(S.mousePixelX, S.mousePixelY)
-        : getCursorLonLat();
-      const slot = findNearestSeedSlot(lon, lat);
-      if (slot >= 0) {
-        const seed = S.seedSlots[slot];
-        if (seed && seed.frames) seed.loopMode = mode;
-      }
-      S._syncImprovUI?.();
-      break;
-    }
     case 'grain_dir': {
       const dirs = ['fwd', 'rev', 'rnd'];
       S.grainDirection = dirs[(dirs.indexOf(S.grainDirection) + 1) % dirs.length];
@@ -635,6 +656,9 @@ function renderMappingTable() {
   tbody.innerHTML = '';
 
   for (const action of ACTIONS) {
+    // Skip legacy aliases — they still work for existing MIDI maps but don't show in UI
+    if (action._legacy) continue;
+
     // ── Section header row ──────────────────────────────────────────────────
     if (!action.id) {
       const tr = document.createElement('tr');
@@ -675,7 +699,7 @@ function renderMappingTable() {
     tr.appendChild(tdKey);
 
     // Key override (custom binding) — only for trigger/hold actions
-    const canKeyLearn = action.type === 'trigger' || action.type === 'hold';
+    const canKeyLearn = action.type === 'trigger' || action.type === 'hold' || action.type === 'toggle';
     const tdKeyOverride = document.createElement('td');
     tdKeyOverride.className = 'key-cell' + (keyMap ? '' : ' unassigned');
     if (canKeyLearn && keyMap) {

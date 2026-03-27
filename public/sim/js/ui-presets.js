@@ -4,8 +4,9 @@
 
 import {
   S,
-  PRESETS, SEED_COLORS, MAX_SEEDS, SEQ_COLORS, MAX_SEQS, SCHED_SAFE_PERIOD_S,
-  MOVING_SEED_THRESHOLD_MS,
+  PRESETS, COMMIT_COLORS, MAX_COMMITS,
+  SEED_COLORS, MAX_SEEDS, SEQ_COLORS, MAX_SEQS, SCHED_SAFE_PERIOD_S,
+  COMMIT_DRAW_THRESHOLD_MS, MOVING_SEED_THRESHOLD_MS,
   gp, rebuildGrainCurves, minGrainDurS, minGrainPeriodS,
   SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
   USER_PRESET_START, FACTORY_PRESET_START, loadUserPresets, saveUserPresets,
@@ -15,7 +16,7 @@ import { lerpPresets } from './seed-morph.js';
 import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js';
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
 import { applySparsePreset, syncAllUI, PARAM_REGISTRY } from './ui-patch-table.js';
-import { isLocked, toggleLock, onLockChange, loadLocks } from './param-lock.js';
+import { isLocked, onLockChange, loadLocks } from './param-lock.js';
 
 // ── Shared time formatter (seconds → human-readable ms/s string) ─────────────
 export function fmtMs(v) {
@@ -32,26 +33,20 @@ export function fmtMs(v) {
 
 // ── Snapshot current grain state into a user preset slot and persist ──────────
 function saveToUserPreset(index) {
-  // Merge active overrides on top of grainParams for a complete snapshot
-  const snap = { ...S.grainParams };
-  for (const [k, v] of Object.entries(S.grainOverrides)) {
-    if (v !== null) snap[k] = v;
-  }
   const currentName = PRESETS[index].name;
   const name = window.prompt('Patch name:', currentName);
   if (name === null) return;   // cancelled
 
-  // Capture ALL mappable params from the registry (sparse — every param captured)
-  const fullSnap = { ...snap };
+  // Full capture of all params EXCEPT locked ones.
+  // Locked params are session-wide holds — they don't belong in patches.
+  const snap = {};
   for (const p of PARAM_REGISTRY) {
-    fullSnap[p.key] = p.get();
+    if (isLocked(p.key)) continue;   // locked → omit from patch
+    snap[p.key] = p.get();
   }
 
-  // Preserve existing sparse structure: if the preset already exists,
-  // keep any keys that were intentionally cleared (deleted from patch table).
-  // The save button always does a full capture of current state.
   PRESETS[index] = {
-    ...fullSnap,
+    ...snap,
     name:             name.trim() || currentName,
     userDefined:      true,
   };
@@ -62,6 +57,7 @@ function saveToUserPreset(index) {
   if (nameEl) nameEl.textContent = PRESETS[index].name;
   // Rebuild dropdown options to reflect new name
   S._rebuildPresetDropdown?.();
+  S._rebuildMorphDropdowns?.();
   // Re-sync UI if this slot is currently selected
   if (S.activePresetIndex === index) selectPreset(index);
 }
@@ -257,7 +253,7 @@ export function setupPresets() {
 
   // ── k control in search params ────────────────────────────────────────────
   S.setSearchK = function(v) {
-    const kMax = Math.max(1, S.particles.length);
+    const kMax = Math.max(30, S.particles.length);
     const k = Math.max(1, Math.min(kMax, Math.round(v)));
     S.grainOverrides.k = k;
     const slider = document.getElementById('searchKSlider');
@@ -381,33 +377,21 @@ export function setupPresets() {
     });
   }
 
-  // ── Parameter lock buttons ────────────────────────────────────────────────
-  loadLocks();   // hydrate from localStorage
+  // ── Parameter lock indicators (display-only, toggled via patch table) ─────
+  loadLocks();
 
-  function _syncLockBtn(btn) {
-    const key = btn.dataset.lockKey;
+  function _syncLockIndicator(el) {
+    const key = el.dataset.lockKey;
     const locked = isLocked(key);
-    btn.classList.toggle('locked', locked);
-    btn.textContent = locked ? '🔒' : '🔓';
-    btn.title = locked
-      ? `unlock ${btn.closest('.grain-row')?.querySelector('.grain-label')?.textContent?.trim() || key} — preset recall will change this again`
-      : `lock ${btn.closest('.grain-row')?.querySelector('.grain-label')?.textContent?.trim() || key} — holds value through preset changes`;
-    // Add/remove locked class on the parent grain-row
-    btn.closest('.grain-row')?.classList.toggle('param-locked', locked);
+    el.style.display = locked ? '' : 'none';
+    el.closest('.grain-row')?.classList.toggle('param-locked', locked);
   }
 
-  document.querySelectorAll('.param-lock-btn').forEach(btn => {
-    _syncLockBtn(btn);
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleLock(btn.dataset.lockKey);
-      _syncLockBtn(btn);
-    });
-  });
+  document.querySelectorAll('.param-lock-indicator').forEach(_syncLockIndicator);
 
-  // Listen for lock changes from other sources (e.g. patch table)
-  onLockChange((key, locked) => {
-    document.querySelectorAll(`.param-lock-btn[data-lock-key="${key}"]`).forEach(_syncLockBtn);
+  // Listen for lock changes from patch table
+  onLockChange((key) => {
+    document.querySelectorAll(`.param-lock-indicator[data-lock-key="${key}"]`).forEach(_syncLockIndicator);
   });
 }
 
@@ -438,9 +422,9 @@ export function plantSeed() {
 // ↓ keyup → finalizeSeedPlant(): if held <200ms → stationary, else → moving.
 
 /** Capture a single frame of cursor position + all grain-relevant params. */
-function _captureSeedFrame() {
+function _captureSeedFrame(startOverride) {
   const now = performance.now();
-  const t = now - S._seedRecordingStart;
+  const t = now - (startOverride ?? S._seedRecordingStart);
   const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
 
   // Merge overrides into params for a complete snapshot
@@ -473,46 +457,68 @@ function _captureSeedFrame() {
  * Find a free seed slot within the active count, or a replacement slot
  * based on overflow mode. Returns -1 if no slot available.
  */
-function _findSeedSlot(lon, lat) {
-  const limit = S.seedSlotCount;
-  // 1. First empty or releasing slot within active range
-  //    Releasing seeds are treated as free — they're already fading out
+/**
+ * Find a free commit slot, or evict one based on overflow mode.
+ * Unified for both clouds and loops — they share one pool.
+ * Releasing clouds are treated as free (already fading out).
+ */
+function _findCommitSlot(lon, lat) {
+  const limit = S.commitSlotCount;
+  // 1. First empty or releasing-cloud slot within active range
   for (let i = 0; i < limit; i++) {
-    if (!S.seedSlots[i] || S.seedSlots[i]._releasingAt > 0) return i;
+    const slot = S.commitSlots[i];
+    if (!slot) return i;
+    if (slot.type === 'cloud' && slot._releasingAt > 0) return i;
+    if (slot.type === 'loop' && (slot._playingToEnd || slot._fadingOut)) return i;
   }
   // 2. All active slots full — check overflow mode
-  if (S.seedOverflow === 'oldest') {
+  if (S.commitOverflow === 'oldest') {
     let oldestIdx = -1, oldestTime = Infinity;
     for (let i = 0; i < limit; i++) {
-      const s = S.seedSlots[i];
-      if (s && s._plantedAt < oldestTime) { oldestTime = s._plantedAt; oldestIdx = i; }
+      const slot = S.commitSlots[i];
+      if (!slot) continue;
+      const t = slot._plantedAt || slot._createdAt || 0;
+      if (t < oldestTime) { oldestTime = t; oldestIdx = i; }
     }
     return oldestIdx;
   }
-  if (S.seedOverflow === 'nearest') {
+  if (S.commitOverflow === 'nearest') {
     let nearIdx = -1, nearAng = Infinity;
     for (let i = 0; i < limit; i++) {
-      const s = S.seedSlots[i];
-      if (!s) continue;
-      const ang = angleBetweenSphere(s.lon, s.lat, lon, lat);
+      const slot = S.commitSlots[i];
+      if (!slot) continue;
+      let sLon, sLat;
+      if (slot.type === 'cloud') {
+        sLon = slot.lon; sLat = slot.lat;
+      } else {
+        sLon = slot.anchorLon ?? slot.particles?.[0]?.lon;
+        sLat = slot.anchorLat ?? slot.particles?.[0]?.lat;
+      }
+      if (sLon == null || sLat == null) continue;
+      const ang = angleBetweenSphere(sLon, sLat, lon, lat);
       if (ang < nearAng) { nearAng = ang; nearIdx = i; }
     }
     return nearIdx;
   }
   return -1; // overflow === 'off'
 }
+// Legacy alias
+function _findSeedSlot(lon, lat) { return _findCommitSlot(lon, lat); }
 
 /** Start a seed plant. Reserves a slot and begins recording movement. */
 export function startSeedPlant() {
   const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
   const slotIndex = _findSeedSlot(lon, lat);
   if (slotIndex === -1) return;
-  // If replacing an existing seed, remove it first (respect release envelope)
-  if (S.seedSlots[slotIndex]) {
-    S.seedSlots[slotIndex] = null;
+  // If replacing an existing commit, clean it up first
+  if (S.commitSlots[slotIndex]) {
+    const existing = S.commitSlots[slotIndex];
+    if (existing.type === 'loop') _stopSeqAudio(existing);
+    S.commitSlots[slotIndex] = null;
   }
   const color = SEED_COLORS[slotIndex];
-  S.seedSlots[slotIndex] = {
+  S.commitSlots[slotIndex] = {
+    type: 'cloud',
     slotIndex, lon, lat, color, searchRadiusDeg: S.searchRadiusDeg,
     nearestMode: S.nearestMode,
     kAllMode: S.grainKAllMode,
@@ -572,8 +578,9 @@ export function startSeedPlant() {
 
 /** Capture a frame during ↓ hold. Called from grain scheduler tick. */
 export function tickSeedRecording() {
-  if (!S._seedRecordingFrames) return;
-  S._seedRecordingFrames.push(_captureSeedFrame());
+  if (S._seedRecordingFrames) S._seedRecordingFrames.push(_captureSeedFrame());
+  // Also keep recording into a shelved trace+cloud seed while D key owns the active slot
+  if (S._shelvedSeed?.frames) S._shelvedSeed.frames.push(_captureSeedFrame(S._shelvedSeed.start));
 }
 
 /** Finalize seed plant on ↓ key release. Short hold = stationary, long = moving. */
@@ -609,7 +616,8 @@ export function finalizeSeedPlant() {
 export function toggleSeedLoopMode(slotIndex) {
   const seed = S.seedSlots[slotIndex];
   if (!seed || !seed.frames) return;
-  seed.loopMode = seed.loopMode === 'pingpong' ? 'forward' : 'pingpong';
+  const cycle = { pingpong: 'forward', forward: 'rev', rev: 'pingpong' };
+  seed.loopMode = cycle[seed.loopMode] ?? 'forward';
   (S.updateSeedBanksUI || updateSeedBanksUI)();
 }
 
@@ -635,16 +643,16 @@ export function uprootNearestSeed() {
 
 export function clearAllSeeds() {
   const now = performance.now() / 1000;
-  // Use the current release time for all seeds being cleared
-  const rel = S.seedRelease || 0;
-  for (let i = 0; i < MAX_SEEDS; i++) {
-    const seed = S.seedSlots[i];
-    if (!seed) continue;
+  // Use the current release time for all cloud-type commits being cleared
+  const rel = S.commitRelease || 0;
+  for (let i = 0; i < MAX_COMMITS; i++) {
+    const seed = S.commitSlots[i];
+    if (!seed || seed.type !== 'cloud') continue;
     if (rel > 0 && !seed._releasingAt) {
       seed._envRelease  = rel;
       seed._releasingAt = now;
     } else if (rel <= 0) {
-      S.seedSlots[i] = null;
+      S.commitSlots[i] = null;
     }
   }
   (S.updateSeedBanksUI || updateSeedBanksUI)();
@@ -665,7 +673,8 @@ S._syncSeqButtonStates = null; // assigned below after definition
 export function seqSlotsFull() {
   if (S.seqOverflow !== 'off') return false;
   for (let i = 0; i < S.seqSlotCount; i++) {
-    if (!S.seqSlots[i]) return false;
+    const sl = S.seqSlots[i];
+    if (!sl || (sl.type === 'cloud' && sl._releasingAt > 0) || (sl.type === 'loop' && (sl._playingToEnd || sl._fadingOut))) return false;
   }
   return true;
 }
@@ -677,64 +686,109 @@ export function seqSlotsFull() {
  */
 function _syncSeqButtonStates() {
   const full = seqSlotsFull();
-  const modeBtn      = document.getElementById('seqModeBtn');
-  const dropBtn      = document.getElementById('seqLoopDropBtn');
-  const loopRecBtn   = document.getElementById('loopRecordIndicatorBtn');
-  if (modeBtn) {
-    modeBtn.classList.toggle('disabled', full);
-    modeBtn.style.opacity = full ? '0.35' : '';
-    modeBtn.style.pointerEvents = full ? 'none' : '';
+  const commitDropBtn = document.getElementById('commitDropBtn');
+  const commitDrawBtn = document.getElementById('commitDrawBtn');
+  if (commitDropBtn) {
+    commitDropBtn.classList.toggle('disabled', full);
+    commitDropBtn.style.opacity = full ? '0.35' : '';
+    commitDropBtn.style.pointerEvents = full ? 'none' : '';
   }
-  if (dropBtn) {
-    dropBtn.classList.toggle('disabled', full);
-    dropBtn.style.opacity = full ? '0.35' : '';
-    dropBtn.style.pointerEvents = full ? 'none' : '';
+  if (commitDrawBtn) {
+    commitDrawBtn.style.opacity = full ? '0.35' : '';
   }
-  if (loopRecBtn) {
-    loopRecBtn.style.opacity = full ? '0.35' : '';
-  }
-  // Auto-disable loop mode when slots become full
-  if (full && S.seqModeEnabled) {
-    S.seqModeEnabled = false;
-    if (modeBtn) modeBtn.classList.remove('active');
+  // Auto-reset trace mode to plain trace when slots become full
+  if (full && S.traceMode !== 'trace') {
+    S.traceMode = 'trace';
+    S._syncCommitUI?.();
   }
 }
 S._syncSeqButtonStates = _syncSeqButtonStates;
+
+// Track previous commit mode so we can detect cloud↔loop transitions
+// and save/restore the dir setting per-mode.
+let _prevCommitMode   = null;
+let _savedCloudLoopMode = null;  // last dir setting while in cloud mode
+
+/**
+ * Sync all commit-related UI: mode toggle, commit lock, actions visibility,
+ * transport buttons, and slot-full state.
+ */
+function _syncCommitUI() {
+  const isLoop   = S.commitMode === 'loop';
+  const prevMode = _prevCommitMode;
+  _prevCommitMode = S.commitMode;
+
+  // ── Mode segmented control (in commits panel) ──
+  const modeSeg = document.getElementById('commitModeSeg');
+  if (modeSeg) {
+    modeSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === S.commitMode));
+  }
+
+  // ── Trace mode button — no persistent state, just updates label ──
+
+  // ── Trace label — reflects current trace mode ──
+  const traceLabel = document.getElementById('traceLabel');
+  if (traceLabel) {
+    const _labelMap = { 'trace': 'trace', 'trace+loop': 'trace + loop', 'trace+cloud': 'trace + cloud' };
+    traceLabel.textContent = _labelMap[S.traceMode] || 'trace';
+  }
+
+  // ── Legacy button compat ──
+  const legacyMode = document.getElementById('seqModeBtn');
+  if (legacyMode) legacyMode.classList.toggle('active', isLoop);
+  const legacyLock = document.getElementById('seedLockBtn');
+  if (legacyLock) legacyLock.classList.toggle('active', S.traceMode !== 'trace');
+
+  // ── Commit action buttons — swap mode class, labels, and titles ──
+  const modeName = isLoop ? 'loop' : 'cloud';
+  document.querySelectorAll('.commit-action-btn').forEach(el => {
+    el.classList.toggle('commit-mode--loop', isLoop);
+  });
+  const dropLabel = document.getElementById('commitDropLabel');
+  const drawLabel = document.getElementById('commitDrawLabel');
+  if (dropLabel) dropLabel.textContent = 'drop ' + modeName;
+  if (drawLabel) drawLabel.textContent = 'draw ' + modeName;
+  const dropBtn = document.getElementById('commitDropBtn');
+  const drawBtn = document.getElementById('commitDrawBtn');
+  if (dropBtn) dropBtn.title = 'drop ' + modeName + ' — tap D';
+  if (drawBtn) drawBtn.title = 'draw ' + modeName + ' — hold D';
+
+  // ── Dir seg — save/restore per-mode, disable ping-pong in loop mode ──
+  const dirSeg = document.getElementById('seedLoopModeSeg');
+  if (dirSeg) {
+    if (isLoop && prevMode !== 'loop') {
+      // cloud → loop: save current cloud dir, fall back from ping-pong to fwd
+      _savedCloudLoopMode = S.seedLoopMode ?? 'pingpong';
+      if (S.seedLoopMode === 'pingpong') S.seedLoopMode = 'forward';
+    } else if (!isLoop && prevMode === 'loop') {
+      // loop → cloud: restore saved cloud dir (default ping-pong if never set)
+      S.seedLoopMode = _savedCloudLoopMode ?? 'pingpong';
+    }
+    // Sync active button
+    dirSeg.querySelectorAll('[data-loopmode]').forEach(b =>
+      b.classList.toggle('active', b.dataset.loopmode === S.seedLoopMode));
+    // Grey-out ping-pong button in loop mode
+    const pingpongBtn = dirSeg.querySelector('[data-loopmode="pingpong"]');
+    if (pingpongBtn) {
+      pingpongBtn.style.opacity       = isLoop ? '0.35' : '';
+      pingpongBtn.style.pointerEvents = isLoop ? 'none'  : '';
+    }
+  }
+
+  // Also refresh slot-full state
+  _syncSeqButtonStates();
+}
+S._syncCommitUI = _syncCommitUI;
+S._clearAllCommits = () => clearAllCommits();
+window._clearAllCommits = S._clearAllCommits;
 
 /**
  * Find a free seq slot within the active count, or a replacement slot
  * based on overflow mode. anchorLon/Lat used for 'nearest' mode.
  */
-function _findSeqSlot(anchorLon, anchorLat) {
-  const limit = S.seqSlotCount;
-  // 1. First empty slot within active range
-  for (let i = 0; i < limit; i++) {
-    if (!S.seqSlots[i]) return i;
-  }
-  // 2. All active slots full — check overflow mode
-  if (S.seqOverflow === 'oldest') {
-    let oldestIdx = -1, oldestTime = Infinity;
-    for (let i = 0; i < limit; i++) {
-      const seq = S.seqSlots[i];
-      if (seq && (seq._createdAt || 0) < oldestTime) { oldestTime = seq._createdAt || 0; oldestIdx = i; }
-    }
-    return oldestIdx;
-  }
-  if (S.seqOverflow === 'nearest') {
-    let nearIdx = -1, nearAng = Infinity;
-    for (let i = 0; i < limit; i++) {
-      const seq = S.seqSlots[i];
-      if (!seq) continue;
-      const aLon = seq.anchorLon ?? seq.particles[0]?.lon;
-      const aLat = seq.anchorLat ?? seq.particles[0]?.lat;
-      if (aLon == null || aLat == null) continue;
-      const ang = angleBetweenSphere(aLon, aLat, anchorLon, anchorLat);
-      if (ang < nearAng) { nearAng = ang; nearIdx = i; }
-    }
-    return nearIdx;
-  }
-  return -1; // overflow === 'off'
-}
+// Legacy wrapper — now uses the unified commit slot finder
+function _findSeqSlot(anchorLon, anchorLat) { return _findCommitSlot(anchorLon, anchorLat); }
 
 export function createSeqFromStroke(strokeId, anchorParticle) {
   if (strokeId < 0) return;
@@ -845,8 +899,9 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
   // - For seq-mode strokes (no anchor): use the first particle of the stroke
   const anchorP = anchorParticle || seqParticles[0];
 
-  const color = SEQ_COLORS[slotIndex];
-  S.seqSlots[slotIndex] = {
+  const color = COMMIT_COLORS[slotIndex];
+  S.commitSlots[slotIndex] = {
+    type: 'loop',
     slotIndex,
     strokeId,
     particles:      seqParticles,
@@ -855,7 +910,7 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
     loopEnd:        loopBuffer.duration,     // buffer end (full buffer)
     playheadIndex:  startIdx,
     startOffset:    anchorParticle ? (seqParticles[startIdx].grainStart) : 0,
-    direction:      S.seqNextParams.direction ?? 1,
+    direction:      S.seedLoopMode === 'rev' ? -1 : 1,
     speed:          S.seqNextParams.speed ?? 1.0,
     playing:        true,
     color,
@@ -882,10 +937,11 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
   const { lon: aLon, lat: aLat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
   const slotIndex = _findSeqSlot(aLon, aLat);
   if (slotIndex === -1) return;  // all slots full, overflow off
-  // If replacing an existing loop, stop its audio first
-  if (S.seqSlots[slotIndex]) {
-    _stopSeqAudio(S.seqSlots[slotIndex]);
-    S.seqSlots[slotIndex] = null;
+  // If replacing an existing commit, clean it up first
+  if (S.commitSlots[slotIndex]) {
+    const existing = S.commitSlots[slotIndex];
+    if (existing.type === 'loop') _stopSeqAudio(existing);
+    S.commitSlots[slotIndex] = null;
   }
 
   let startIdx = 0;
@@ -894,8 +950,9 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     if (idx > 0) startIdx = idx;
   }
 
-  const color = SEQ_COLORS[slotIndex];
-  S.seqSlots[slotIndex] = {
+  const color = COMMIT_COLORS[slotIndex];
+  S.commitSlots[slotIndex] = {
+    type: 'loop',
     slotIndex,
     strokeId:       sourceSeq.strokeId,
     particles:      sourceSeq.particles,     // shared reference — same stroke particles
@@ -904,7 +961,7 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     loopEnd:        sourceSeq.loopEnd,
     playheadIndex:  startIdx,
     startOffset:    anchorParticle ? (anchorParticle.grainStart - sourceSeq.loopStart) : 0,
-    direction:      S.seqNextParams.direction ?? 1,
+    direction:      S.seedLoopMode === 'rev' ? -1 : 1,
     speed:          S.seqNextParams.speed ?? 1.0,
     playing:        true,
     color,
@@ -926,11 +983,11 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
  * Stop and remove a single sequence by slot index.
  */
 export function removeSeq(slotIndex) {
-  const seq = S.seqSlots[slotIndex];
-  if (!seq) return;
-  _stopSeqAudio(seq);
-  S.seqSlots[slotIndex] = null;
-  _syncSeqButtonStates();
+  const slot = S.commitSlots[slotIndex];
+  if (!slot) return;
+  if (slot.type === 'loop') _stopSeqAudio(slot);
+  S.commitSlots[slotIndex] = null;
+  S._syncCommitUI?.();
 }
 
 /**
@@ -938,22 +995,102 @@ export function removeSeq(slotIndex) {
  * Called from undoLastStroke to clean up sequences when their stroke is undone.
  */
 export function removeSeqByStrokeId(strokeId) {
-  for (let i = 0; i < MAX_SEQS; i++) {
-    if (S.seqSlots[i] && S.seqSlots[i].strokeId === strokeId) {
+  for (let i = 0; i < S.commitSlotCount; i++) {
+    const slot = S.commitSlots[i];
+    if (slot && slot.type === 'loop' && slot.strokeId === strokeId) {
       removeSeq(i);
     }
   }
 }
 
 /**
- * Remove all sequences.
+ * Remove all loops (legacy compat — clearAllCommits is preferred).
  */
 export function clearAllSeqs() {
-  for (let i = 0; i < MAX_SEQS; i++) {
-    if (S.seqSlots[i]) _stopSeqAudio(S.seqSlots[i]);
-    S.seqSlots[i] = null;
+  for (let i = 0; i < MAX_COMMITS; i++) {
+    const slot = S.commitSlots[i];
+    if (slot && slot.type === 'loop') {
+      _stopSeqAudio(slot);
+      S.commitSlots[i] = null;
+    }
   }
-  _syncSeqButtonStates();
+  S._syncCommitUI?.();
+}
+
+// ── Unified commit operations ─────────────────────────────────────────────
+
+/**
+ * Release the commit targeted by selectionMode (closest or farthest from cursor).
+ * Replaces uprootNearestSeed() and pickupSeqRemove().
+ * Clouds get a release envelope; loops are stopped immediately.
+ */
+export function releaseCommit() {
+  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+  let targetSlot = -1, targetAng = S.selectionMode === 'closest' ? Infinity : -1;
+  for (let i = 0; i < S.commitSlotCount; i++) {
+    const slot = S.commitSlots[i];
+    if (!slot) continue;
+    // Skip clouds already fading out or loops already playing to end
+    if (slot.type === 'cloud' && slot._releasingAt > 0) continue;
+    if (slot.type === 'loop' && (slot._playingToEnd || slot._fadingOut)) continue;
+    // Get position for distance calc
+    let sLon, sLat;
+    if (slot.type === 'cloud') {
+      sLon = (slot.frames && slot.frames.length) ? slot.frames[0].lon : slot.lon;
+      sLat = (slot.frames && slot.frames.length) ? slot.frames[0].lat : slot.lat;
+    } else {
+      sLon = slot.anchorLon ?? slot.particles?.[0]?.lon;
+      sLat = slot.anchorLat ?? slot.particles?.[0]?.lat;
+    }
+    if (sLon == null || sLat == null) continue;
+    const ang = angleBetweenSphere(sLon, sLat, lon, lat);
+    if (S.selectionMode === 'closest' ? ang < targetAng : ang > targetAng) {
+      targetAng = ang;
+      targetSlot = i;
+    }
+  }
+  if (targetSlot === -1) return;
+  const slot = S.commitSlots[targetSlot];
+  if (slot.type === 'cloud') {
+    // Cloud: apply release envelope
+    const rel = S.commitRelease || 0;
+    if (rel <= 0) {
+      S.commitSlots[targetSlot] = null;
+    } else {
+      slot._envRelease  = rel;
+      slot._releasingAt = performance.now() / 1000;
+    }
+  } else {
+    // Loop: stop audio — both fade and play-to-end defer slot removal to 'ended' event
+    _stopSeqAudio(slot, S.loopReleaseMode === 'play-to-end');
+  }
+  S._syncCommitUI?.();
+  (S.updateSeedBanksUI || updateSeedBanksUI)();
+}
+
+/**
+ * Release all commits. Clouds get envelope, loops fade/play-to-end.
+ */
+export function clearAllCommits() {
+  const now = performance.now() / 1000;
+  const rel = S.commitRelease || 0;
+  for (let i = 0; i < MAX_COMMITS; i++) {
+    const slot = S.commitSlots[i];
+    if (!slot) continue;
+    if (slot.type === 'cloud') {
+      if (rel > 0 && !slot._releasingAt) {
+        slot._envRelease  = rel;
+        slot._releasingAt = now;
+      } else if (rel <= 0) {
+        S.commitSlots[i] = null;
+      }
+    } else {
+      // Both fade and play-to-end defer slot removal to 'ended' event
+      _stopSeqAudio(slot, S.loopReleaseMode === 'play-to-end');
+    }
+  }
+  S._syncCommitUI?.();
+  (S.updateSeedBanksUI || updateSeedBanksUI)();
 }
 
 // ── Sequence panel helpers ────────────────────────────────────────────────
@@ -965,8 +1102,8 @@ export function clearAllSeqs() {
 export function findNearestSeqSlot(refLon, refLat, filterPlaying = null) {
   let nearestSlot = -1, nearestAng = Infinity;
   for (let i = 0; i < S.seqSlotCount; i++) {
-    const seq = S.seqSlots[i];
-    if (!seq) continue;
+    const seq = S.commitSlots[i];
+    if (!seq || seq.type !== 'loop') continue;
     if (filterPlaying !== null && seq.playing !== filterPlaying) continue;
     // Use explicit anchor position if set, otherwise fall back to first particle
     const aLon = seq.anchorLon ?? seq.particles[0]?.lon;
@@ -982,26 +1119,108 @@ export function findNearestSeqSlot(refLon, refLat, filterPlaying = null) {
  * Stop a sequence's audio nodes without removing it from its slot.
  * Uses a short fade-out to avoid click artifacts from abrupt stops.
  */
-function _stopSeqAudio(seq) {
-  const FADE_MS = 15;
+/**
+ * Stop a loop's audio. Two modes:
+ *   'fade' (default) — 15ms fade-out then stop.
+ *   'play-to-end'    — disable looping so the source plays through to loopEnd,
+ *                       with a short fade-out before it ends. Slot cleanup deferred
+ *                       to the 'ended' event.
+ */
+function _stopSeqAudio(seq, playToEnd = false) {
   const gain = seq._gainNode;
   const src  = seq._sourceNode;
+
+  if (playToEnd && gain && src && !src._stopped) {
+    const actx = S.audioCtx;
+    if (actx && src.loop) {
+      // Calculate remaining time to end of current loop pass
+      const now = actx.currentTime;
+      const elapsed = (now - (seq._startedAt || now)) * Math.abs(seq.speed || 1);
+      const loopLen = (src.loopEnd || src.buffer?.duration || 1) - (src.loopStart || 0);
+      const posInLoop = loopLen > 0 ? elapsed % loopLen : 0;
+      const remaining = loopLen - posInLoop;
+      const remainSec = remaining / Math.abs(seq.speed || 1);
+
+      // Disable looping — source will naturally stop at loopEnd
+      src.loop = false;
+
+      // Schedule fade-out over last 50ms (or less if loop is very short)
+      const fadeTime = Math.min(0.05, remainSec * 0.5);
+      const fadeStart = now + Math.max(0, remainSec - fadeTime);
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(gain.gain.value, fadeStart);
+      gain.gain.linearRampToValueAtTime(0, fadeStart + fadeTime);
+
+      // Mark as releasing-to-end so grain scheduler skips playhead updates
+      seq._playingToEnd = true;
+
+      // Clean up on natural end
+      src.addEventListener('ended', () => {
+        src._stopped = true;
+        if (seq._extraNodes) {
+          for (const n of seq._extraNodes) { try { n.disconnect(); } catch (_) {} }
+          seq._extraNodes = null;
+        }
+        seq._sourceNode = null;
+        seq._gainNode   = null;
+        seq._playingToEnd = false;
+        // Remove from slot
+        const idx = S.commitSlots.indexOf(seq);
+        if (idx >= 0) S.commitSlots[idx] = null;
+        S._syncCommitUI?.();
+        (S.updateSeedBanksUI || updateSeedBanksUI)();
+      }, { once: true });
+      return;
+    }
+  }
+
+  // Default: fade-out using loopFadeTimeMs
+  const FADE_MS = S.loopFadeTimeMs || 15;
   if (gain && src) {
     const actx = S.audioCtx;
     if (actx) {
       const now = actx.currentTime;
+      const fadeSec = FADE_MS / 1000;
       gain.gain.cancelScheduledValues(now);
       gain.gain.setValueAtTime(gain.gain.value, now);
-      gain.gain.linearRampToValueAtTime(0, now + FADE_MS / 1000);
-      try { src.stop(now + FADE_MS / 1000 + 0.001); } catch (_) {}
+      gain.gain.linearRampToValueAtTime(0, now + fadeSec);
+      try { src.stop(now + fadeSec + 0.01); } catch (_) {}
+
+      // Mark as fading so grain scheduler / slot logic can treat it as releasing
+      seq._fadingOut = true;
+
+      // Defer cleanup until source actually ends (after the fade completes)
+      src.addEventListener('ended', () => {
+        src._stopped = true;
+        if (seq._extraNodes) {
+          for (const n of seq._extraNodes) { try { n.disconnect(); } catch (_) {} }
+          seq._extraNodes = null;
+        }
+        seq._sourceNode = null;
+        seq._gainNode   = null;
+        seq._fadingOut  = false;
+        // Remove from slot
+        const idx = S.commitSlots.indexOf(seq);
+        if (idx >= 0) S.commitSlots[idx] = null;
+        S._syncCommitUI?.();
+        (S.updateSeedBanksUI || updateSeedBanksUI)();
+      }, { once: true });
     } else {
       try { src.stop(); } catch (_) {}
+      src._stopped = true;
+      _cleanupSeqNodes(seq);
     }
   } else if (src) {
     try { src.stop(); } catch (_) {}
+    src._stopped = true;
+    _cleanupSeqNodes(seq);
+  } else {
+    _cleanupSeqNodes(seq);
   }
-  if (src) src._stopped = true;
-  // Disconnect VBAP/panner nodes created during spatialization
+}
+
+/** Immediate cleanup helper for nodes when no deferred cleanup is needed */
+function _cleanupSeqNodes(seq) {
   if (seq._extraNodes) {
     for (const n of seq._extraNodes) { try { n.disconnect(); } catch (_) {} }
     seq._extraNodes = null;
@@ -1010,52 +1229,9 @@ function _stopSeqAudio(seq) {
   seq._gainNode   = null;
 }
 
-/**
- * Pick up (pause) the nearest active sequence — stop its loop but keep it
- * in the slot so it can be re-dropped later.
- */
-export function pickupSeqPause() {
-  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  const idx = findNearestSeqSlot(lon, lat, true);  // only playing
-  if (idx === -1) return;
-  const seq = S.seqSlots[idx];
-
-  // Save current position in the loop so resume continues from here.
-  const actx = S.audioCtx;
-  if (actx && seq._startedAt) {
-    const loopLen = seq.loopEnd - seq.loopStart;
-    if (loopLen > 0) {
-      const elapsed = (actx.currentTime - seq._startedAt) * Math.abs(seq.speed);
-      seq.startOffset = elapsed % loopLen;
-    }
-  }
-
-  seq.playing = false;
-  _stopSeqAudio(seq);
-}
-
-/**
- * Pick up (remove) the nearest sequence — fully remove it from the slot.
- * Particles stay on the sphere; only the loop is destroyed.
- */
-export function pickupSeqRemove() {
-  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  // Remove nearest regardless of playing/paused state
-  const idx = findNearestSeqSlot(lon, lat);
-  if (idx === -1) return;
-  removeSeq(idx);
-}
-
-/**
- * Re-drop the nearest paused (picked-up) sequence — resume its loop.
- * The grain scheduler will recreate the source node on next tick.
- */
-export function dropNearestSeq() {
-  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  const idx = findNearestSeqSlot(lon, lat, false);  // only paused
-  if (idx === -1) return;
-  S.seqSlots[idx].playing = true;
-}
+// pickupSeqPause, pickupSeqRemove, dropNearestSeq removed — unified model
+// uses releaseCommit() (⌘C) which handles both clouds and loops.
+// Pause/resume is no longer available; commits are either active or released.
 
 /**
  * Drop a sequence loop from the nearest particle within the cursor's search
@@ -1073,19 +1249,20 @@ export function dropSeqFromCursor() {
     const p = S.particles[i];
     if (p.strokeId == null || p.strokeId < 0) continue;
     const ang = angleBetweenSphere(p.lon, p.lat, lon, lat);
-    if (ang < searchRad && ang < nearestAng) {
+    if ((S.nearestMode || ang < searchRad) && ang < nearestAng) {
       nearestAng = ang;
       nearest = p;
     }
   }
   if (!nearest) return;  // nothing within radius — do nothing
 
-  // Check if this stroke already has a seq — if so, add another playhead
+  // Check if this stroke already has a loop — if so, add another playhead
   // on the same buffer rather than blocking creation.
   let existingSlot = null;
-  for (let i = 0; i < MAX_SEQS; i++) {
-    if (S.seqSlots[i] && S.seqSlots[i].strokeId === nearest.strokeId) {
-      existingSlot = S.seqSlots[i];
+  for (let i = 0; i < S.commitSlotCount; i++) {
+    const slot = S.commitSlots[i];
+    if (slot && slot.type === 'loop' && slot.strokeId === nearest.strokeId) {
+      existingSlot = slot;
       break;
     }
   }
@@ -1098,159 +1275,77 @@ export function dropSeqFromCursor() {
 }
 
 /**
- * Draw the 8-dot sequence slot indicators and update the active count.
- * Called from the render loop alongside updateSeedBanksUI.
+ * Unified commit slot bank renderer — draws all commitSlots on one canvas.
+ * Cloud slots get seed-style icons/glow; loop slots get progress arcs.
+ * Max 8 per row; wraps to 2 rows when commitSlotCount > 8.
+ * Called from the render loop (replaces separate updateSeqBanksUI + updateSeedBanksUI).
  */
-export function updateSeqBanksUI() {
-  const allSeqs  = S.seqSlots.filter(s => s !== null);
-  const active   = allSeqs.filter(s => s.playing).length;
-  const paused   = allSeqs.length - active;
-  const countEl  = document.getElementById('seqActiveCount');
-  if (countEl) countEl.textContent = active ? `${active} active` : (paused ? `${paused} paused` : '0');
-  const vmLoops = document.getElementById('vmLoops');
-  if (vmLoops) vmLoops.textContent = `loops: ${allSeqs.length} / ${S.seqSlotCount}`;
+export function updateCommitBanksUI() {
+  const total = S.commitSlotCount;
+  const filled = S.commitSlots.filter((s, i) => i < total && s !== null).length;
+  const clouds = S.commitSlots.filter((s, i) => i < total && s !== null && s.type === 'cloud' && !(s._releasingAt > 0)).length;
+  const loops  = S.commitSlots.filter((s, i) => i < total && s !== null && s.type === 'loop').length;
 
-  const canvas = document.getElementById('seqSlotsCanvas');
-  if (!canvas) return;
-
-  // Find nearest active sequence to cursor for highlight
-  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  const nearestSlot = allSeqs.length > 0 ? findNearestSeqSlot(lon, lat) : -1;
-
-  const dpr  = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  const W = Math.round(rect.width  || 50);
-  const H = Math.round(rect.height || 60);
-  if (canvas.width !== W * dpr || canvas.height !== H * dpr) {
-    canvas.width  = W * dpr;
-    canvas.height = H * dpr;
+  // Update count label
+  const countEl = document.getElementById('commitCountLabel');
+  if (countEl) {
+    const parts = [];
+    if (clouds) parts.push(`${clouds} cloud`);
+    if (loops)  parts.push(`${loops} loop`);
+    countEl.textContent = parts.length ? `${parts.join(' + ')} / ${total}` : `0 / ${total}`;
   }
-  const c = canvas.getContext('2d');
-  c.save();
-  c.scale(dpr, dpr);
-  c.clearRect(0, 0, W, H);
 
-  const COLS = S.seqSlotCount, ROWS = 1, GAP = 4, PAD = 4;
-  const cellW = (W - PAD * 2 - GAP * (COLS - 1)) / COLS;
-  const cellH = (H - PAD * 2 - GAP * (ROWS - 1)) / ROWS;
-  const r     = Math.max(0.5, Math.min(cellW, cellH) / 2 - 1);
+  // Legacy count element
+  const seedsEl = document.getElementById('seedsPlantedCount');
+  if (seedsEl) seedsEl.textContent = clouds + ' planted';
 
-  for (let i = 0; i < S.seqSlotCount; i++) {
-    const col = i % COLS;
-    const row = Math.floor(i / COLS);
-    const cx = PAD + col * (cellW + GAP) + cellW / 2;
-    const cy = PAD + row * (cellH + GAP) + cellH / 2;
-    const seq = S.seqSlots[i];
-    const isNearest = (i === nearestSlot);
-
-    if (seq) {
-      // Nearest highlight — soft glow behind the dot so it doesn't cover the arc
-      if (isNearest) {
-        c.save();
-        c.shadowColor = seq.color;
-        c.shadowBlur = 12;
-        c.beginPath();
-        c.arc(cx, cy, r + 3, 0, Math.PI * 2);
-        c.strokeStyle = seq.color + '66';
-        c.lineWidth = 2;
-        c.stroke();
-        c.restore();
+  // HUD commit dots — one dot per slot, colored when filled, grey when empty
+  const dotsEl = document.getElementById('vmCommitDots');
+  if (dotsEl) {
+    const slotCount = S.commitSlotCount;
+    // Rebuild dots only when slot count changes
+    if (dotsEl.childElementCount !== slotCount) {
+      dotsEl.innerHTML = '';
+      for (let i = 0; i < slotCount; i++) {
+        const dot = document.createElement('span');
+        dot.className = 'vm-commit-dot';
+        dotsEl.appendChild(dot);
       }
-
-      // Background circle (dim fill)
-      const alpha = seq.playing ? (isNearest ? '77' : '44') : '22';
-      c.beginPath();
-      c.arc(cx, cy, r, 0, Math.PI * 2);
-      c.fillStyle = seq.color + alpha;
-      c.fill();
-
-      // Dim track ring (full circle, behind the progress arc)
-      c.beginPath();
-      c.arc(cx, cy, r, 0, Math.PI * 2);
-      c.strokeStyle = seq.playing ? seq.color + '33' : seq.color + '22';
-      c.lineWidth = 2.5;
-      c.stroke();
-
-      // Progress arc — shows playhead position as a bright arc over the track
-      if (seq.playing && seq.particles.length > 1) {
-        const frac = seq.playheadIndex / seq.particles.length;
-        const startAngle = -Math.PI / 2;
-        const endAngle = startAngle + frac * Math.PI * 2;
-        c.beginPath();
-        c.arc(cx, cy, r, startAngle, endAngle);
-        c.strokeStyle = seq.color;
-        c.lineWidth = 2.5;
-        c.stroke();
+    }
+    // Update colors
+    for (let i = 0; i < slotCount; i++) {
+      const dot = dotsEl.children[i];
+      if (!dot) continue;
+      const slot = S.commitSlots[i];
+      if (slot && !(slot.type === 'cloud' && slot._releasingAt > 0)) {
+        dot.style.background = COMMIT_COLORS[i % COMMIT_COLORS.length];
+      } else {
+        dot.style.background = '#444';
       }
-
-      // Volume indicator — small inner arc proportional to volume
-      if (seq.playing) {
-        const vol = seq.grainParams.volume ?? 1;
-        const volR = r * 0.5;
-        c.beginPath();
-        c.arc(cx, cy, volR, -Math.PI / 2, -Math.PI / 2 + vol * Math.PI * 2);
-        c.strokeStyle = seq.color + '88';
-        c.lineWidth = 1.5;
-        c.stroke();
-      }
-
-      // Direction indicator — tiny arrow inside the dot
-      if (seq.playing) {
-        const arrowSize = r * 0.3;
-        c.fillStyle = '#ffffff88';
-        c.beginPath();
-        if (seq.direction === -1) {
-          c.moveTo(cx - arrowSize, cy);
-          c.lineTo(cx + arrowSize * 0.6, cy - arrowSize * 0.5);
-          c.lineTo(cx + arrowSize * 0.6, cy + arrowSize * 0.5);
-        } else {
-          c.moveTo(cx + arrowSize, cy);
-          c.lineTo(cx - arrowSize * 0.6, cy - arrowSize * 0.5);
-          c.lineTo(cx - arrowSize * 0.6, cy + arrowSize * 0.5);
-        }
-        c.fill();
-      }
-
-      // Pause icon for paused sequences
-      if (!seq.playing) {
-        c.fillStyle = seq.color + '88';
-        const bw = r * 0.3, bh = r * 0.8;
-        c.fillRect(cx - bw - 1, cy - bh / 2, bw, bh);
-        c.fillRect(cx + 1,      cy - bh / 2, bw, bh);
-      }
-    } else {
-      // Empty slot
-      c.beginPath();
-      c.arc(cx, cy, r, 0, Math.PI * 2);
-      c.fillStyle   = '#1a1a1a';
-      c.fill();
-      c.strokeStyle = '#2a2a2a';
-      c.lineWidth   = 1;
-      c.stroke();
     }
   }
-  c.restore();
-}
 
-export function updateSeedBanksUI() {
-  // Exclude seeds that are fading out — count drops immediately on uproot
-  const count = S.seedSlots.filter(c => c !== null && !(c._releasingAt > 0)).length;
-  const seedsEl = document.getElementById('seedsPlantedCount');
-  if (seedsEl) seedsEl.textContent = count + ' planted';
-  const vmSeeds = document.getElementById('vmSeeds');
-  if (vmSeeds) vmSeeds.textContent = `seeds: ${count} / ${S.seedSlotCount}`;
-
-  const canvas = document.getElementById('seedSlotsCanvas');
+  const canvas = document.getElementById('commitSlotsCanvas');
   if (!canvas) return;
 
-  // Find nearest seed to cursor for highlight
+  // Find nearest of each type for highlight
   const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
-  const nearestSlot = count > 0 ? findNearestSeedSlot(lon, lat) : -1;
+  const nearestSeed = clouds > 0 ? findNearestSeedSlot(lon, lat) : -1;
+  const nearestSeq  = loops  > 0 ? findNearestSeqSlot(lon, lat) : -1;
+
+  // Grid layout: max 8 per row
+  const COLS = Math.min(total, 8);
+  const ROWS = Math.ceil(total / COLS);
+  const GAP = 4, PAD = 4;
+
+  // Auto-size canvas height: 36px for 1 row, 68px for 2
+  const targetH = ROWS > 1 ? 68 : 36;
+  if (canvas.style.height !== targetH + 'px') canvas.style.height = targetH + 'px';
 
   const dpr  = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
   const W = Math.round(rect.width  || 160);
-  const H = Math.round(rect.height || 80);
+  const H = Math.round(rect.height || targetH);
   if (canvas.width !== W * dpr || canvas.height !== H * dpr) {
     canvas.width  = W * dpr;
     canvas.height = H * dpr;
@@ -1260,141 +1355,21 @@ export function updateSeedBanksUI() {
   c.scale(dpr, dpr);
   c.clearRect(0, 0, W, H);
 
-  // Dynamic slot grid — single row, adapts to seedSlotCount
-  const COLS = S.seedSlotCount, ROWS = 1, GAP = 4, PAD = 4;
   const cellW = (W - PAD * 2 - GAP * (COLS - 1)) / COLS;
   const cellH = (H - PAD * 2 - GAP * (ROWS - 1)) / ROWS;
   const r     = Math.max(0.5, Math.min(cellW, cellH) / 2 - 1);
 
-  for (let i = 0; i < S.seedSlotCount; i++) {
+  for (let i = 0; i < total; i++) {
     const col = i % COLS;
     const row = Math.floor(i / COLS);
     const cx = PAD + col * (cellW + GAP) + cellW / 2;
     const cy = PAD + row * (cellH + GAP) + cellH / 2;
-    const seed = S.seedSlots[i];
-    const isNearest = (i === nearestSlot);
+    const slot = S.commitSlots[i];
 
-    if (seed) {
-      // Envelope state — 0→1 during attack, 1→0 during release
-      const envG = seed._envGainCurrent ?? 1;
-      const isEnveloping = envG < 0.999;
-
-      // When enveloping, add a gentle pulse to the slot (2 Hz sine)
-      // Pulse oscillates between envG*0.5 and envG so the slot "breathes"
-      let envAlphaMul = envG;
-      if (isEnveloping) {
-        const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.004 * Math.PI);  // ~2 Hz
-        envAlphaMul = envG * (0.5 + 0.5 * pulse);
-      }
-
-      // Nearest highlight — soft glow behind the dot
-      if (isNearest) {
-        c.save();
-        c.globalAlpha = envAlphaMul;
-        c.shadowColor = seed.color;
-        c.shadowBlur = 12;
-        c.beginPath();
-        c.arc(cx, cy, r + 3, 0, Math.PI * 2);
-        c.strokeStyle = seed.color + '66';
-        c.lineWidth = 2;
-        c.stroke();
-        c.globalAlpha = 1;
-        c.restore();
-      }
-
-      // Background circle (dim fill)
-      const baseAlpha = isNearest ? 0x77 : 0x44;
-      const modAlpha  = Math.round(baseAlpha * envAlphaMul);
-      const alphaHex  = modAlpha.toString(16).padStart(2, '0');
-      c.beginPath();
-      c.arc(cx, cy, r, 0, Math.PI * 2);
-      c.fillStyle = seed.color + alphaHex;
-      c.fill();
-
-      // Ring — always visible with a minimum alpha so the frame never disappears
-      const ringAlpha = Math.max(0x22, Math.round(0x66 * envAlphaMul));
-      const ringHex   = ringAlpha.toString(16).padStart(2, '0');
-      c.beginPath();
-      c.arc(cx, cy, r, 0, Math.PI * 2);
-      c.strokeStyle = seed.color + ringHex;
-      c.lineWidth = 2.5;
-      c.stroke();
-
-      // Nearest gets a brighter ring
-      if (isNearest) {
-        const nearAlpha = Math.round(0xff * envAlphaMul);
-        const nearHex   = nearAlpha.toString(16).padStart(2, '0');
-        c.beginPath();
-        c.arc(cx, cy, r, 0, Math.PI * 2);
-        c.strokeStyle = seed.color + nearHex;
-        c.lineWidth = 2.5;
-        c.stroke();
-      }
-
-      // Seed icon — differentiate stationary vs moving
-      const iconAlpha = Math.round(0x44 * envAlphaMul);
-      const iconHex   = iconAlpha.toString(16).padStart(2, '0');
-      if (seed.frames) {
-        // Moving seed icon — clear distinction between ping-pong and forward
-        const ir = r * 0.45;
-        const tipS = ir * 0.45;
-        c.strokeStyle = '#ffffff' + iconHex;
-        c.lineWidth = 1.5;
-        if (seed.loopMode === 'pingpong') {
-          // Ping-pong: ◁──▷ bidirectional arrow
-          // Center line
-          c.beginPath();
-          c.moveTo(cx - ir, cy);
-          c.lineTo(cx + ir, cy);
-          c.stroke();
-          // Right arrow head
-          c.beginPath();
-          c.moveTo(cx + ir - tipS, cy - tipS);
-          c.lineTo(cx + ir, cy);
-          c.lineTo(cx + ir - tipS, cy + tipS);
-          c.stroke();
-          // Left arrow head
-          c.beginPath();
-          c.moveTo(cx - ir + tipS, cy - tipS);
-          c.lineTo(cx - ir, cy);
-          c.lineTo(cx - ir + tipS, cy + tipS);
-          c.stroke();
-        } else {
-          // Forward: looping arrow ──▷ with a curved return underneath
-          // Top line with arrow
-          c.beginPath();
-          c.moveTo(cx - ir, cy - tipS * 0.5);
-          c.lineTo(cx + ir, cy - tipS * 0.5);
-          c.stroke();
-          // Arrow head
-          c.beginPath();
-          c.moveTo(cx + ir - tipS, cy - tipS * 0.5 - tipS);
-          c.lineTo(cx + ir, cy - tipS * 0.5);
-          c.lineTo(cx + ir - tipS, cy - tipS * 0.5 + tipS);
-          c.stroke();
-          // Curved return path (dotted)
-          c.setLineDash([1.5, 1.5]);
-          c.beginPath();
-          c.moveTo(cx + ir * 0.7, cy + tipS * 0.5);
-          c.lineTo(cx - ir * 0.7, cy + tipS * 0.5);
-          c.stroke();
-          // Small left arrow on return
-          c.beginPath();
-          c.moveTo(cx - ir * 0.7 + tipS * 0.6, cy + tipS * 0.5 - tipS * 0.5);
-          c.lineTo(cx - ir * 0.7, cy + tipS * 0.5);
-          c.lineTo(cx - ir * 0.7 + tipS * 0.6, cy + tipS * 0.5 + tipS * 0.5);
-          c.stroke();
-          c.setLineDash([]);
-        }
-      } else {
-        // Stationary seed: small circle cluster
-        const ir = r * 0.25;
-        c.fillStyle = '#ffffff' + iconHex;
-        c.beginPath(); c.arc(cx - ir, cy, ir, 0, Math.PI * 2); c.fill();
-        c.beginPath(); c.arc(cx + ir, cy, ir, 0, Math.PI * 2); c.fill();
-        c.beginPath(); c.arc(cx, cy - ir * 0.7, ir, 0, Math.PI * 2); c.fill();
-      }
-
+    if (slot && slot.type === 'loop') {
+      _drawLoopSlot(c, cx, cy, r, slot, i === nearestSeq);
+    } else if (slot && slot.type === 'cloud') {
+      _drawCloudSlot(c, cx, cy, r, slot, i === nearestSeed);
     } else {
       // Empty slot
       c.beginPath();
@@ -1408,11 +1383,200 @@ export function updateSeedBanksUI() {
   }
   c.restore();
 }
+
+/** Draw a loop-type slot on the commit canvas */
+function _drawLoopSlot(c, cx, cy, r, seq, isNearest) {
+  // Nearest highlight
+  if (isNearest) {
+    c.save();
+    c.shadowColor = seq.color;
+    c.shadowBlur = 12;
+    c.beginPath();
+    c.arc(cx, cy, r + 3, 0, Math.PI * 2);
+    c.strokeStyle = seq.color + '66';
+    c.lineWidth = 2;
+    c.stroke();
+    c.restore();
+  }
+
+  // Background circle
+  const alpha = seq.playing ? (isNearest ? '77' : '44') : '22';
+  c.beginPath();
+  c.arc(cx, cy, r, 0, Math.PI * 2);
+  c.fillStyle = seq.color + alpha;
+  c.fill();
+
+  // Dim track ring
+  c.beginPath();
+  c.arc(cx, cy, r, 0, Math.PI * 2);
+  c.strokeStyle = seq.playing ? seq.color + '33' : seq.color + '22';
+  c.lineWidth = 2.5;
+  c.stroke();
+
+  // Nearest: full-brightness ring (matches cloud highlight style)
+  if (isNearest) {
+    c.beginPath();
+    c.arc(cx, cy, r, 0, Math.PI * 2);
+    c.strokeStyle = seq.color + 'ff';
+    c.lineWidth = 2.5;
+    c.stroke();
+  }
+
+  // Progress arc
+  if (seq.playing && seq.particles.length > 1) {
+    const frac = seq.playheadIndex / seq.particles.length;
+    const startAngle = -Math.PI / 2;
+    const endAngle = startAngle + frac * Math.PI * 2;
+    c.beginPath();
+    c.arc(cx, cy, r, startAngle, endAngle);
+    c.strokeStyle = seq.color;
+    c.lineWidth = 2.5;
+    c.stroke();
+  }
+
+  // Volume indicator
+  if (seq.playing) {
+    const vol = seq.grainParams.volume ?? 1;
+    const volR = r * 0.5;
+    c.beginPath();
+    c.arc(cx, cy, volR, -Math.PI / 2, -Math.PI / 2 + vol * Math.PI * 2);
+    c.strokeStyle = seq.color + '88';
+    c.lineWidth = 1.5;
+    c.stroke();
+  }
+
+  // Direction indicator
+  if (seq.playing) {
+    const arrowSize = r * 0.3;
+    c.fillStyle = '#ffffff88';
+    c.beginPath();
+    if (seq.direction === -1) {
+      c.moveTo(cx - arrowSize, cy);
+      c.lineTo(cx + arrowSize * 0.6, cy - arrowSize * 0.5);
+      c.lineTo(cx + arrowSize * 0.6, cy + arrowSize * 0.5);
+    } else {
+      c.moveTo(cx + arrowSize, cy);
+      c.lineTo(cx - arrowSize * 0.6, cy - arrowSize * 0.5);
+      c.lineTo(cx - arrowSize * 0.6, cy + arrowSize * 0.5);
+    }
+    c.fill();
+  }
+
+  // Pause icon
+  if (!seq.playing) {
+    c.fillStyle = seq.color + '88';
+    const bw = r * 0.3, bh = r * 0.8;
+    c.fillRect(cx - bw - 1, cy - bh / 2, bw, bh);
+    c.fillRect(cx + 1,      cy - bh / 2, bw, bh);
+  }
+}
+
+/** Draw a cloud-type slot on the commit canvas */
+function _drawCloudSlot(c, cx, cy, r, seed, isNearest) {
+  // Envelope state
+  const envG = seed._envGainCurrent ?? 1;
+  const isEnveloping = envG < 0.999;
+  let envAlphaMul = envG;
+  if (isEnveloping) {
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.004 * Math.PI);
+    envAlphaMul = envG * (0.5 + 0.5 * pulse);
+  }
+
+  // Nearest highlight
+  if (isNearest) {
+    c.save();
+    c.globalAlpha = envAlphaMul;
+    c.shadowColor = seed.color;
+    c.shadowBlur = 12;
+    c.beginPath();
+    c.arc(cx, cy, r + 3, 0, Math.PI * 2);
+    c.strokeStyle = seed.color + '66';
+    c.lineWidth = 2;
+    c.stroke();
+    c.globalAlpha = 1;
+    c.restore();
+  }
+
+  // Background circle
+  const baseAlpha = isNearest ? 0x77 : 0x44;
+  const modAlpha  = Math.round(baseAlpha * envAlphaMul);
+  const alphaHex  = modAlpha.toString(16).padStart(2, '0');
+  c.beginPath();
+  c.arc(cx, cy, r, 0, Math.PI * 2);
+  c.fillStyle = seed.color + alphaHex;
+  c.fill();
+
+  // Ring
+  const ringAlpha = Math.max(0x22, Math.round(0x66 * envAlphaMul));
+  const ringHex   = ringAlpha.toString(16).padStart(2, '0');
+  c.beginPath();
+  c.arc(cx, cy, r, 0, Math.PI * 2);
+  c.strokeStyle = seed.color + ringHex;
+  c.lineWidth = 2.5;
+  c.stroke();
+
+  // Nearest brighter ring
+  if (isNearest) {
+    const nearAlpha = Math.round(0xff * envAlphaMul);
+    const nearHex   = nearAlpha.toString(16).padStart(2, '0');
+    c.beginPath();
+    c.arc(cx, cy, r, 0, Math.PI * 2);
+    c.strokeStyle = seed.color + nearHex;
+    c.lineWidth = 2.5;
+    c.stroke();
+  }
+
+  // Seed icon
+  const iconAlpha = Math.round(0x44 * envAlphaMul);
+  const iconHex   = iconAlpha.toString(16).padStart(2, '0');
+  if (seed.frames) {
+    const ir = r * 0.45;
+    const tipS = ir * 0.45;
+    c.strokeStyle = '#ffffff' + iconHex;
+    c.lineWidth = 1.5;
+    if (seed.loopMode === 'pingpong') {
+      // ↔ double-headed arrow
+      c.beginPath(); c.moveTo(cx - ir, cy); c.lineTo(cx + ir, cy); c.stroke();
+      c.beginPath(); c.moveTo(cx + ir - tipS, cy - tipS); c.lineTo(cx + ir, cy); c.lineTo(cx + ir - tipS, cy + tipS); c.stroke();
+      c.beginPath(); c.moveTo(cx - ir + tipS, cy - tipS); c.lineTo(cx - ir, cy); c.lineTo(cx - ir + tipS, cy + tipS); c.stroke();
+    } else if (seed.loopMode === 'rev') {
+      // ← solid left arrow (top) + dashed right return (bottom) — mirror of forward
+      c.beginPath(); c.moveTo(cx + ir, cy - tipS * 0.5); c.lineTo(cx - ir, cy - tipS * 0.5); c.stroke();
+      c.beginPath(); c.moveTo(cx - ir + tipS, cy - tipS * 0.5 - tipS); c.lineTo(cx - ir, cy - tipS * 0.5); c.lineTo(cx - ir + tipS, cy - tipS * 0.5 + tipS); c.stroke();
+      c.setLineDash([1.5, 1.5]);
+      c.beginPath(); c.moveTo(cx - ir * 0.7, cy + tipS * 0.5); c.lineTo(cx + ir * 0.7, cy + tipS * 0.5); c.stroke();
+      c.beginPath(); c.moveTo(cx + ir * 0.7 - tipS * 0.6, cy + tipS * 0.5 - tipS * 0.5); c.lineTo(cx + ir * 0.7, cy + tipS * 0.5); c.lineTo(cx + ir * 0.7 - tipS * 0.6, cy + tipS * 0.5 + tipS * 0.5); c.stroke();
+      c.setLineDash([]);
+    } else {
+      // → solid right arrow (top) + dashed left return (bottom) — forward
+      c.beginPath(); c.moveTo(cx - ir, cy - tipS * 0.5); c.lineTo(cx + ir, cy - tipS * 0.5); c.stroke();
+      c.beginPath(); c.moveTo(cx + ir - tipS, cy - tipS * 0.5 - tipS); c.lineTo(cx + ir, cy - tipS * 0.5); c.lineTo(cx + ir - tipS, cy - tipS * 0.5 + tipS); c.stroke();
+      c.setLineDash([1.5, 1.5]);
+      c.beginPath(); c.moveTo(cx + ir * 0.7, cy + tipS * 0.5); c.lineTo(cx - ir * 0.7, cy + tipS * 0.5); c.stroke();
+      c.beginPath(); c.moveTo(cx - ir * 0.7 + tipS * 0.6, cy + tipS * 0.5 - tipS * 0.5); c.lineTo(cx - ir * 0.7, cy + tipS * 0.5); c.lineTo(cx - ir * 0.7 + tipS * 0.6, cy + tipS * 0.5 + tipS * 0.5); c.stroke();
+      c.setLineDash([]);
+    }
+  } else {
+    const ir = r * 0.25;
+    c.fillStyle = '#ffffff' + iconHex;
+    c.beginPath(); c.arc(cx - ir, cy, ir, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(cx + ir, cy, ir, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(cx, cy - ir * 0.7, ir, 0, Math.PI * 2); c.fill();
+  }
+}
+
+// Legacy aliases — redirect to unified renderer
+export function updateSeqBanksUI()  { updateCommitBanksUI(); }
+export function updateSeedBanksUI() { updateCommitBanksUI(); }
 
 export function selectPreset(index) {
   S.activePresetIndex = index;
   S._patchFlashUntil = performance.now() + 1200;
   const preset = PRESETS[index];
+
+  // Update HUD patch info
+  const patchEl = document.getElementById('vmPatchInfo');
+  if (patchEl) patchEl.textContent = `${index + 1} ${preset.name || ''}`;
 
   // ── Sparse application: only apply keys that exist in the preset ──────
   // For grain engine params, we still need the grainParams merge for
@@ -1482,6 +1646,7 @@ export function selectPreset(index) {
   S._patchTableRefresh?.();
   // Sync dropdown selector
   S._syncPresetDropdown?.();
+
 }
 
 /** Refresh all preset button labels from the in-memory PRESETS array.

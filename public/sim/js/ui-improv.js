@@ -6,10 +6,8 @@
 //   Phase 4 — gesture morph (morph enable, hold mode)
 // ============================================================================
 
-import { S, MAX_SEEDS } from './state.js';
+import { S } from './state.js';
 import { plantSeed, uprootNearestSeed, clearAllSeeds, updateSeedBanksUI } from './ui-presets.js';
-import { findNearestSeedSlot } from './grain.js';
-import { getCursorLonLat, screenToLonLat } from './sphere.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -132,7 +130,23 @@ export function initImprovUI() {
   uprootBtn?.addEventListener('click', () => { uprootNearestSeed(); refreshSeedBtns(); });
   clearBtn?.addEventListener('click', () => { clearAllSeeds(); refreshSeedBtns(); });
 
-  // ── Seed loop mode (ping-pong / forward) ─────────────────────────────
+  // ── Selection mode (closest / farthest — ⌘C target) ─────────────────
+  const selectionSeg = document.getElementById('commitSelectionSeg');
+  if (selectionSeg) {
+    selectionSeg.querySelectorAll('[data-selection]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        S.selectionMode = btn.dataset.selection;
+        selectionSeg.querySelectorAll('[data-selection]').forEach(b =>
+          b.classList.toggle('active', b.dataset.selection === S.selectionMode));
+      });
+    });
+    // Init from state
+    selectionSeg.querySelectorAll('[data-selection]').forEach(b =>
+      b.classList.toggle('active', b.dataset.selection === (S.selectionMode ?? 'closest')));
+  }
+
+  // ── Commit path direction (ping-pong / fwd / rev) ────────────────────
+  // Stamped at commit creation time — does not retroactively change existing commits.
   const loopModeSeg = document.getElementById('seedLoopModeSeg');
   if (loopModeSeg) {
     loopModeSeg.querySelectorAll('[data-loopmode]').forEach(btn => {
@@ -141,16 +155,6 @@ export function initImprovUI() {
         S.seedLoopMode = mode;
         loopModeSeg.querySelectorAll('[data-loopmode]').forEach(b =>
           b.classList.toggle('active', b.dataset.loopmode === mode));
-        // Apply only to the nearest highlighted seed (not all seeds)
-        const { lon, lat } = S.mouseInCanvas
-          ? screenToLonLat(S.mousePixelX, S.mousePixelY)
-          : getCursorLonLat();
-        const nearestSlot = findNearestSeedSlot(lon, lat);
-        if (nearestSlot >= 0) {
-          const seed = S.seedSlots[nearestSlot];
-          if (seed && seed.frames) seed.loopMode = mode;
-        }
-        (S.updateSeedBanksUI || updateSeedBanksUI)();
       });
     });
   }
@@ -159,7 +163,7 @@ export function initImprovUI() {
   // and chain our button state refresh into it.
   S.updateSeedBanksUI = () => { updateSeedBanksUI(); refreshSeedBtns(); };
 
-  // ── Seed envelope (attack / release) ────────────────────────────────
+  // ── Cloud envelope (fade in / fade out) ─────────────────────────────
   const atkSlider = document.getElementById('seedAttackSlider');
   const atkNum    = document.getElementById('seedAttackNum');
   const relSlider = document.getElementById('seedReleaseSlider');
@@ -184,6 +188,34 @@ export function initImprovUI() {
   // Sync seed envelope sliders from persisted state
   if (atkSlider) { atkSlider.value = S.seedAttack; if (atkNum) atkNum.value = fmtEnvTime(S.seedAttack); }
   if (relSlider) { relSlider.value = S.seedRelease; if (relNum) relNum.value = fmtEnvTime(S.seedRelease); }
+
+  // ── Loop fade out (mode + time) ─────────────────────────────────────
+  const lrSeg = document.getElementById('loopReleaseModeSeg');
+  const lfSlider = document.getElementById('loopFadeTimeSlider');
+  const lfNum    = document.getElementById('loopFadeTimeNum');
+
+  if (lrSeg) {
+    lrSeg.querySelectorAll('[data-lrmode]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.lrmode === S.loopReleaseMode);
+      btn.addEventListener('click', () => {
+        S.loopReleaseMode = btn.dataset.lrmode;
+        lrSeg.querySelectorAll('[data-lrmode]').forEach(b =>
+          b.classList.toggle('active', b.dataset.lrmode === S.loopReleaseMode));
+      });
+    });
+  }
+
+  function fmtFadeMs(v) {
+    return v < 1000 ? Math.round(v) + 'ms' : (v / 1000).toFixed(1) + 's';
+  }
+  if (lfSlider) {
+    lfSlider.value = S.loopFadeTimeMs;
+    if (lfNum) lfNum.value = fmtFadeMs(S.loopFadeTimeMs);
+    lfSlider.addEventListener('input', () => {
+      S.loopFadeTimeMs = parseFloat(lfSlider.value);
+      if (lfNum) lfNum.value = fmtFadeMs(S.loopFadeTimeMs);
+    });
+  }
 
   // Initial state
   refreshSeedBtns();
@@ -213,5 +245,8 @@ export function initImprovUI() {
     const lmSeg = document.getElementById('seedLoopModeSeg');
     if (lmSeg) lmSeg.querySelectorAll('[data-loopmode]').forEach(b =>
       b.classList.toggle('active', b.dataset.loopmode === (S.seedLoopMode ?? 'pingpong')));
+    const selSeg = document.getElementById('commitSelectionSeg');
+    if (selSeg) selSeg.querySelectorAll('[data-selection]').forEach(b =>
+      b.classList.toggle('active', b.dataset.selection === (S.selectionMode ?? 'closest')));
   };
 }

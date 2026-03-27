@@ -180,9 +180,9 @@ export async function recreateAudioContext(newSampleRate) {
     stopLiveRecording?.();
   }
 
-  // Stop all active sequences — their source nodes will be invalid after context close
-  const { clearAllSeqs } = await import('./ui-presets.js');
-  clearAllSeqs?.();
+  // Stop all active commits — their source nodes will be invalid after context close
+  const { clearAllCommits } = await import('./ui-presets.js');
+  clearAllCommits?.();
 
   // Disconnect and stop the mic stream
   try { window._micMonitorSrc?.disconnect(); } catch(_) {}

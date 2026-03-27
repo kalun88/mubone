@@ -76,11 +76,23 @@ export function initVizUI() {
     v  => { applyUiScale(v); },
     v  => v.toFixed(2));
 
-  // ── Mode ring size slider ──────────────────────────────────────────────
-  bindSlider('vizModeRingSizeSlider', 'vizModeRingSizeVal',
-    () => S.modeRingSize,
-    v  => { S.modeRingSize = v; },
-    v  => v.toFixed(0));
+  // ── HUD scale slider ───────────────────────────────────────────────────
+  const HUD_SCALE_KEY = 'mubone-hud-scale';
+  try {
+    const saved = parseFloat(localStorage.getItem(HUD_SCALE_KEY));
+    if (saved >= 0.5 && saved <= 2.0) S.hudScale = saved;
+  } catch {}
+  function applyHudScale(v) {
+    S.hudScale = v;
+    const wrapper = document.getElementById('canvasWrapper');
+    if (wrapper) wrapper.style.setProperty('--hud-scale', v);
+    try { localStorage.setItem(HUD_SCALE_KEY, String(v)); } catch {}
+  }
+  applyHudScale(S.hudScale);
+  bindSlider('vizHudScaleSlider', 'vizHudScaleVal',
+    () => S.hudScale,
+    v  => { applyHudScale(v); },
+    v  => v.toFixed(2));
 
   // ── Particle size sliders ───────────────────────────────────────────────
   bindSlider('vizMinSizeSlider', 'vizMinSizeVal',

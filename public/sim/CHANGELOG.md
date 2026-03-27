@@ -5,6 +5,39 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.7 alpha — 2026-03-26
+
+### Fixed
+- **Loop fade-out mode broken** — fade path in `_stopSeqAudio` disconnected VBAP/panner nodes and nulled source/gain references immediately after scheduling the gain ramp, cutting audio before the fade could complete. Now defers all cleanup to the `ended` event (same pattern as play-to-end). Slot removal also deferred so grain scheduler doesn't interfere during fade.
+- **`/seed/trail` OSC handler used undefined `val`** — was referencing MIDI handler variable instead of `values[0]`. Fixed.
+- **`/seed/lock` OSC handler set wrong state** — was directly setting `S.seedLockEnabled` instead of cycling trace mode. Fixed.
+- **`/seed/loopmode` referenced removed `S.seedSlots`** — updated to use `S.commitSlots` with `S.seedSlots` fallback.
+- **`/seed/clear` and `/seed/uproot` called removed functions** — updated to call `clearAllCommits()` and `releaseCommit()`.
+- **`/loop/mode` set wrong state** — was setting `S.seqModeEnabled` (removed). Now sets `S.commitMode`.
+- **Overflow: drop/draw buttons stayed greyed when slots full** (#26) — buttons now only disable when overflow is off.
+- **D-loop + trace conflict** (#27) — mutual exclusion via `_cLoopActive`/`_traceActive` flags with proper handoff on release.
+- **Release-all didn't work** (#25) — ⌘D tap now releases one commit (nearest/farthest per `selectionMode`). Hold-to-clear removed; clear-all is GUI button only.
+- **K count slider minimum range** (#15) — slider floor set to 30 so k can be set before painting.
+- **Tooltip delay too fast with Learn off** (#21) — increased from 400ms to 3000ms.
+- **`scan_toggle` key was 'X'** — corrected to 'S'.
+
+### Added
+- **Unified commit system** (#23) — clouds (particle-based) and loops (buffer-based) share a single `commitSlots[16]` pool. D key: tap=drop, hold=draw. Shift+D=cycle mode (cloud↔loop). ⌘D=release nearest/farthest. Three-function model: trace (spacebar) / scan (S) / commit (D). Selection mode (closest/farthest) for morph and release targeting. Legacy aliases preserve backward compatibility.
+- **Trace mode cycle** (#28) — `S.traceMode` cycles through trace / trace+loop / trace+cloud. A key or button cycles mode. Trace+loop and D-loop are mutually exclusive with visual greying. Trace+cloud allows concurrent D-cloud drops with shelved seed recording.
+- **Loop release mode: play-to-end** (#29) — `S.loopReleaseMode` ('fade'|'play-to-end'). Play-to-end disables loop flag on AudioBufferSourceNode, plays through to loopEnd with 50ms fade, auto-removes from slot via 'ended' event.
+- **Configurable loop fade time** — `S.loopFadeTimeMs` (0–2000ms, default 15ms). New slider in loop subsettings. MIDI CC mappable, OSC `/commit/loop_fade_time`, preset save/load wired.
+- **Canvas edge HUD** (#32) — 3-column top bar (A=trace, S=scan, D=commit) drawn in renderer.js, DOM text HUD with left/center/right layout, commit dots, patch info, HUD scale slider (0.5–2.0×) with localStorage persistence.
+- **OSC commit handlers** — new `/commit/drop`, `/commit/draw`, `/commit/release`, `/commit/clear`, `/commit/mode`, `/commit/blend`, `/commit/tether`, `/commit/xfade`, `/commit/dir`, `/commit/attack`, `/commit/release_time`, `/commit/volume`, `/commit/speed`, `/commit/loop_release`, `/commit/loop_fade_time`, `/trace/mode`.
+- **MIDI commit actions** — `trace_mode`, `commit_mode`, `commit_drop`, `commit_draw`, `commit_release`, `commit_clear`, `commit_slots`, `commit_overflow`, `commit_dir`, `commit_volume`, `commit_speed`, `commit_attack`, `commit_release_time`, `loop_release_mode`, `loop_fade_time`, `commit_blend`, `commit_tether`, `commit_xfade`. Legacy actions hidden from UI with `_legacy: true`.
+
+### Changed
+- **Cloud "attack"/"release" → "fade in"/"fade out"** — renamed across UI labels, state comments, patch table, grain.js, and improv panel. Consistent terminology with loop fade controls.
+- **MIDI/OSC modules restructured** (#70) — ACTIONS array merged seed+loop groups into unified commit group. OSC dispatch rewritten for `/commit/*` and `/trace/*` paths. Legacy `/seed/*` and `/loop/*` handlers fixed for backward compatibility. Dead code removed (`seq_pause`/`seq_resume`, duplicate `seed_slots`/`seq_slots`).
+- **Loop fade controls moved to loop subsettings** — fade out mode (fade/play→end) and fade ms slider relocated from cloud section to loop section in index.html.
+- **Commit slot pool expanded** — MAX_COMMITS raised from 12 to 16, shared between clouds and loops.
+
+---
+
 ## 0.6 alpha — 2026-03-24
 
 ### Added

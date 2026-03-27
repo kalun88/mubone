@@ -1135,7 +1135,6 @@ export function saveAllDefaults() {
     vizRmsMax:        S.vizRmsMax,
     vizCentroidMin:   S.vizCentroidMin,
     vizCentroidMax:   S.vizCentroidMax,
-    modeRingSize:     S.modeRingSize,
 
     // Radius fade
     radiusFadeEnabled: S.radiusFadeEnabled,
@@ -1163,6 +1162,8 @@ export function saveAllDefaults() {
     seedAttack:         S.seedAttack ?? 0,
     seedRelease:        S.seedRelease ?? 0,
     seedLoopMode:       S.seedLoopMode ?? 'pingpong',
+    loopReleaseMode:    S.loopReleaseMode ?? 'fade',
+    loopFadeTimeMs:     S.loopFadeTimeMs ?? 15,
 
     // Headphone mix balance
     mixdownCursorGainValue: S.mixdownCursorGainValue ?? 1.0,
@@ -1204,14 +1205,13 @@ function _buildSettingsSnapshot() {
     vizMinSize: S.vizMinSize, vizMaxSize: S.vizMaxSize,
     vizRmsMin: S.vizRmsMin, vizRmsMax: S.vizRmsMax,
     vizCentroidMin: S.vizCentroidMin, vizCentroidMax: S.vizCentroidMax,
-    modeRingSize: S.modeRingSize,
     radiusFadeEnabled: S.radiusFadeEnabled, radiusFadeCurve: S.radiusFadeCurve,
     cameraMode: S.cameraMode, spatialPanning: S.spatialPanning,
     numHouseSpeakers: S.numHouseSpeakers, stereoMixdownEnabled: S.stereoMixdownEnabled,
     channelRouting: S.channelRouting ?? null, headphoneRouting: S.headphoneRouting ?? null,
     seedMode: S.seedMode ?? 'all', seedTether: S.seedTether ?? false,
     seedXfade: S.seedXfade ?? 0.5, seedAttack: S.seedAttack ?? 0, seedRelease: S.seedRelease ?? 0,
-    seedLoopMode: S.seedLoopMode ?? 'pingpong',
+    seedLoopMode: S.seedLoopMode ?? 'pingpong', loopReleaseMode: S.loopReleaseMode ?? 'fade', loopFadeTimeMs: S.loopFadeTimeMs ?? 15,
     mixdownCursorGainValue: S.mixdownCursorGainValue ?? 1.0,
     mixdownHouseGainValue: S.mixdownHouseGainValue ?? 1.0,
     activePresetIndex: S.activePresetIndex ?? FACTORY_PRESET_START,
@@ -1287,7 +1287,6 @@ export function loadAudioDefaults() {
     if (typeof d.vizRmsMax      === 'number')  S.vizRmsMax       = d.vizRmsMax;
     if (typeof d.vizCentroidMin === 'number')  S.vizCentroidMin  = d.vizCentroidMin;
     if (typeof d.vizCentroidMax === 'number')  S.vizCentroidMax  = d.vizCentroidMax;
-    if (typeof d.modeRingSize   === 'number')  S.modeRingSize    = d.modeRingSize;
 
     // Radius fade
     if (typeof d.radiusFadeEnabled === 'boolean') S.radiusFadeEnabled = d.radiusFadeEnabled;
@@ -1319,6 +1318,9 @@ export function loadAudioDefaults() {
     if (typeof d.seedRelease === 'number')         S.seedRelease        = d.seedRelease;
     if (typeof d.seedLoopMode === 'string' && ['pingpong', 'forward'].includes(d.seedLoopMode))
       S.seedLoopMode = d.seedLoopMode;
+    if (typeof d.loopReleaseMode === 'string' && ['fade', 'play-to-end'].includes(d.loopReleaseMode))
+      S.loopReleaseMode = d.loopReleaseMode;
+    if (typeof d.loopFadeTimeMs === 'number') S.loopFadeTimeMs = Math.max(0, Math.min(2000, d.loopFadeTimeMs));
 
     // Headphone mix balance
     if (typeof d.mixdownCursorGainValue === 'number') S.mixdownCursorGainValue = d.mixdownCursorGainValue;
