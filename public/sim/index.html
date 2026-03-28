@@ -14,7 +14,7 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.8 alpha</span>
+        <span class="top-bar-version">version 0.9 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -736,6 +736,7 @@
       <button class="camera-mode-option" data-mode="sensor">
         <span class="camera-mode-name">sensor</span>
         <span class="camera-mode-desc">mubone IMU sensor drives camera orientation. cursor hidden, paint target is center. mouse is free for UI.</span>
+        <span class="camera-sensor-subtitle" style="display:none"></span>
       </button>
     </div>
   </div>
@@ -847,6 +848,23 @@
           <button class="grain-seg-btn active" data-zero="on">on</button>
           <button class="grain-seg-btn" data-zero="off">off</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Edge indicator (detethered cursor) -->
+    <div class="as-section">
+      <div class="as-section-label">edge indicator</div>
+      <div class="as-row">
+        <span class="as-label">off-screen cursor</span>
+        <div class="grain-seg" id="vizEdgeIndicatorSeg">
+          <button class="grain-seg-btn active" data-edge="on">on</button>
+          <button class="grain-seg-btn" data-edge="off">off</button>
+        </div>
+      </div>
+      <div class="as-row">
+        <span class="as-label">indicator size</span>
+        <input class="as-slider" type="range" id="vizEdgeIndicatorSizeSlider" min="0.5" max="2.0" step="0.1" value="1">
+        <span class="as-val" id="vizEdgeIndicatorSizeVal">1.0</span>
       </div>
     </div>
 

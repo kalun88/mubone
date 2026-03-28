@@ -983,6 +983,8 @@ export const S = {
   canvas: undefined,
   ctx:    undefined,
   camQ:   [0, 0, 0, 1],       // camera orientation quaternion [x, y, z, w]
+  cursorQ: null,               // [x,y,z,w] | null — separate cursor quat when detethered (two-IMU mode)
+  get detethered() { return this.cursorQ !== null; },  // true when cursor is independent of camera
   mouseX: 0,
   mouseY: 0,
   mousePixelX: 0,
@@ -1126,6 +1128,8 @@ export const S = {
   modeRingSize:  30,        // mode ring radius (px) — controls how big the 4 status arcs are
   uiScale:       1.0,       // UI scale factor — multiplied with base font-size (15px)
   hudScale:      1.0,       // canvas HUD scale — multiplies edge bar height, text size, dot size, spacing
+  edgeIndicator:     'on',  // 'on' | 'off' — show off-screen cursor arrow when detethered
+  edgeIndicatorSize: 1.0,   // 0.5–2.0 — scale of the edge arrow
   showZeroRef:   true,      // draw center-reference marker on sphere
   driftOffsetQ:  null,      // persistent [x,y,z,w] correction quaternion applied on recenter
 

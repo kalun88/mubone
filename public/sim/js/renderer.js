@@ -616,17 +616,52 @@ export function drawParticles() {
 //
 export function drawCursor() {
   const cx = S.canvas.width / 2, cy = S.canvas.height / 2;
-  const mx = (S.mouseInCanvas || S.altLocked) ? S.mousePixelX : cx;
-  const my = (S.mouseInCanvas || S.altLocked) ? S.mousePixelY : cy;
+  const w = S.canvas.width, h = S.canvas.height;
 
   const searchRadiusRad = S.searchRadiusDeg * Math.PI / 180;
   const fovRad   = (FOV_DEG * Math.PI) / 180;
-  const focalLen = (S.canvas.width / 2) / Math.tan(fovRad / 2);
+  const focalLen = (w / 2) / Math.tan(fovRad / 2);
   const brushR   = searchRadiusRad < Math.PI / 2
     ? focalLen * Math.tan(searchRadiusRad)
-    : S.canvas.width * 0.8;
+    : w * 0.8;
 
   if (S.isMobile && !S._mobileSetupDone) return;
+
+  // ── Resolve cursor screen position ──────────────────────────────────────
+  let mx, my;
+  let cursorOffScreen = false;
+
+  if (S.cursorQ) {
+    // Detethered: project cursorQ forward vector through camera to screen
+    const fwd = _qRotVec(S.cursorQ, [0, 0, 1]);
+    const cam = cameraTransform(fwd[0], fwd[1], fwd[2]);
+    const p   = project(cam[0], cam[1], cam[2]);
+    if (p && p.sx >= 0 && p.sx <= w && p.sy >= 0 && p.sy <= h) {
+      mx = p.sx;
+      my = p.sy;
+    } else {
+      cursorOffScreen = true;
+      // Clamp to nearest viewport edge for edge indicator
+      if (p) {
+        mx = Math.max(0, Math.min(w, p.sx));
+        my = Math.max(0, Math.min(h, p.sy));
+      } else {
+        // Behind camera — project to closest edge using 2D direction
+        const fwd2d = _qRotVec(S.cursorQ, [0, 0, 1]);
+        const cam2d = cameraTransform(fwd2d[0], fwd2d[1], fwd2d[2]);
+        // Use x/y to determine edge direction even though z <= 0
+        const angle = Math.atan2(-cam2d[1], cam2d[0]);
+        mx = cx + Math.cos(angle) * (w / 2);
+        my = cy - Math.sin(angle) * (h / 2);
+        mx = Math.max(0, Math.min(w, mx));
+        my = Math.max(0, Math.min(h, my));
+      }
+    }
+  } else {
+    // Standard: mouse position or canvas center
+    mx = (S.mouseInCanvas || S.altLocked) ? S.mousePixelX : cx;
+    my = (S.mouseInCanvas || S.altLocked) ? S.mousePixelY : cy;
+  }
 
   S.ctx.save();
 
@@ -634,7 +669,42 @@ export function drawCursor() {
   S.ctx.fillStyle = 'rgba(255,255,255,0.25)';
   S.ctx.beginPath(); S.ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); S.ctx.fill();
 
-  if (!S.mouseInCanvas && !S.altLocked) { S.ctx.restore(); return; }
+  // ── Early return guard ──────────────────────────────────────────────────
+  // In detethered mode cursor is always active (driven by IMU, not mouse).
+  // In standard mode, only draw when mouse is in canvas or alt-locked.
+  if (!S.cursorQ && !S.mouseInCanvas && !S.altLocked) { S.ctx.restore(); return; }
+
+  // ── Edge indicator — off-screen cursor arrow ────────────────────────────
+  if (cursorOffScreen) {
+    if (S.edgeIndicator === 'on') {
+      const sz = 8 * (S.edgeIndicatorSize || 1);
+      const edgePad = sz + 4;
+      // Clamp indicator inside viewport with padding
+      const ex = Math.max(edgePad, Math.min(w - edgePad, mx));
+      const ey = Math.max(edgePad, Math.min(h - edgePad, my));
+      // Arrow direction: point toward the off-screen cursor
+      const angle = Math.atan2(my - cy, mx - cx);
+
+      S.ctx.save();
+      S.ctx.translate(ex, ey);
+      S.ctx.rotate(angle);
+      // Draw chevron arrow pointing in the direction of the cursor
+      S.ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      S.ctx.lineWidth   = 2 * (S.edgeIndicatorSize || 1);
+      S.ctx.lineCap     = 'round';
+      S.ctx.beginPath();
+      S.ctx.moveTo(-sz * 0.6, -sz * 0.5);
+      S.ctx.lineTo(sz * 0.4, 0);
+      S.ctx.lineTo(-sz * 0.6, sz * 0.5);
+      S.ctx.stroke();
+      // Small dot at the tip
+      S.ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      S.ctx.beginPath(); S.ctx.arc(sz * 0.4, 0, 2.5 * (S.edgeIndicatorSize || 1), 0, Math.PI * 2); S.ctx.fill();
+      S.ctx.restore();
+    }
+    S.ctx.restore();
+    return;  // Don't draw reticle/radius when cursor is off-screen
+  }
 
   const painting    = S.isPainting;
   const scanOff = S.scanMuted;
@@ -936,6 +1006,43 @@ export function animate() {
         }
       }
     }
+
+    // ── Detethered cursor — two-IMU mode ──────────────────────────────────
+    // When frame-role sensor is active, getSensorCamQ returns null (handled
+    // above — sq is null, camQ untouched). Cursor-role drives cursorQ instead.
+    // camQ stays at identity so frameQ alone provides the viewport.
+    let cq = typeof S._getSensorCursorQ === 'function' ? S._getSensorCursorQ() : null;
+    if (cq) {
+      // Apply same drift correction as single-IMU path
+      if (S.driftOffsetQ) cq = _qNorm(_qMul(S.driftOffsetQ, cq));
+      // Apply axis locks to cursor orientation
+      if (S.axisLockAz || S.axisLockEl) {
+        const fwd = _qRotVec(cq, [0, 0, 1]);
+        let yaw   = Math.atan2(fwd[0], fwd[2]);
+        let pitch = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
+        if (S.axisLockAz) {
+          if (S._axisLockFrozenYaw == null) S._axisLockFrozenYaw = yaw;
+          yaw = S._axisLockFrozenYaw;
+        } else { S._axisLockFrozenYaw = null; }
+        if (S.axisLockEl) {
+          if (S._axisLockFrozenPitch == null) S._axisLockFrozenPitch = pitch;
+          pitch = S._axisLockFrozenPitch;
+        } else { S._axisLockFrozenPitch = null; }
+        const qY = _qFromAA(0, 1, 0, yaw);
+        const qP = _qFromAA(1, 0, 0, pitch);
+        S.cursorQ = _qNorm(_qMul(qY, qP));
+      } else {
+        S.cursorQ = cq;
+      }
+      // Camera at identity — frame provides the view
+      S.camQ = [0, 0, 0, 1];
+    } else {
+      S.cursorQ = null;
+      // Single IMU: camQ already set above
+    }
+  } else {
+    // Non-sensor modes: ensure cursorQ is cleared
+    S.cursorQ = null;
   }
 
   // ── Frame sensor — world rotation ──────────────────────────────────────────
@@ -951,10 +1058,13 @@ export function animate() {
   if (S.isPainting && !S.altLocked) {
     S.paintFrameCount++;
     if (S.paintFrameCount % PAINT_INTERVAL === 0) {
-      const { lon, lat } = screenToLonLat(
-        S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
-        S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY
-      );
+      // Detethered: paint at cursor IMU position, not mouse
+      const { lon, lat } = S.cursorQ
+        ? getCursorLonLat()
+        : screenToLonLat(
+            S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
+            S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY
+          );
       const gpr = gp();
       const durVariation = rand(-gpr.durJitter * 0.5, gpr.durJitter * 0.5);
 

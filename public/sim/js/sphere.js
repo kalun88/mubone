@@ -45,6 +45,11 @@ export function cameraTransform(x, y, z) {
   // If a frame-role sensor is active, rotate world points first.
   // frameQ rotates the sphere; camQ orients the camera — kept separate
   // so the frame never accumulates into the incremental camera quaternion.
+  //
+  // IMPORTANT: camQ is conjugated here, frameQ is NOT.  getFrameQ() conjugates
+  // its output to compensate, so both sensors use the same applyAxisMapQuat
+  // pipeline and produce identical visual behaviour.  Do not add/remove
+  // conjugation on either side without updating getFrameQ() to match.
   const p = S.frameQ ? qRotateVec(S.frameQ, [x, y, z]) : [x, y, z];
   return qRotateVec(qConjugate(S.camQ), p);
 }
@@ -59,7 +64,9 @@ export function project(x, y, z) {
   };
 }
 export function getCursorLonLat() {
-  const forward = qRotateVec(S.camQ, [0, 0, 1]);
+  // Detethered: cursor orientation is independent of camera
+  const q = S.cursorQ || S.camQ;
+  const forward = qRotateVec(q, [0, 0, 1]);
   // Un-rotate from frame space back to sphere-local coordinates
   const w = S.frameQ ? qRotateVec(qConjugate(S.frameQ), forward) : forward;
   return {

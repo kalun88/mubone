@@ -5,27 +5,40 @@
 
 ---
 
-## Sprint — Dartmouth prep (due Mar 27 EOD)
+## Sprint — Final Weekend Before Dartmouth (Mar 28–29)
+
+- [ ] **#80 Setup Joy-Con controller** — configure Nintendo Joy-Con as an input controller for mubone (button mapping, motion data, connection handling).
+- [ ] **#81 Setup FCB1010 foot controller** — configure Behringer FCB1010 MIDI foot controller for mubone (pedal/switch mapping, MIDI routing, preset integration).
+- [ ] **#24 "Performance patch" — dead-simple workshop preset** — a learning-friendly configuration for Dartmouth students. 3–4 patches max, key params locked (fade times, radius, grain settings), loop/seed simplified, designed around 1–2 pedal controls and nothing else. Goal: someone can sit down and perform a short piece without touching the UI. Design the patch set, lock list, and pedal mapping, then build as a loadable preset or startup mode.
+- [x] **#31 Pico projector + detethered cursor** — Two-IMU mode: frame-role IMU provides the viewport/world anchor, cursor-role IMU drives a free-roaming cursor detethered from screen center. Activates automatically when both cursor-role and frame-role sensor slots are assigned. Single IMU = cursor locked to center as before. **Done (Mar 28).** Key details:
+  - `S.cursorQ` holds the cursor orientation when detethered; `S.detethered` is a derived getter (`cursorQ !== null`).
+  - `getSensorCursorQ()` added to sensor-registry.js; `getSensorCamQ()` returns null when frame-role active (camera stays at identity, frame provides the view).
+  - `getFrameQ()` conjugates its output to compensate for `cameraTransform()` applying `frameQ` directly but `camQ` conjugated — this was the fix for frame gimbal lock (pitch→roll coupling at 90° yaw). **Do not remove this conjugation.**
+  - Cursor naturally roll-mutes in detethered mode: `cursorQ` is only used for forward-vector projection (a point, not an orientation), so physical roll of the cursor IMU has zero effect on cursor position.
+  - Edge indicator (off-screen cursor arrow) with on/off toggle and size slider in viz settings.
+  - Camera modal shows dynamic subtitle: "1 sensor — cursor locked" / "2 sensors — cursor free".
+  - Main tare (Z/backtick) tares both cursor and frame when both assigned. Per-slot tare still available.
+  - ~10 call sites audited; 2 fixed (renderer.js paint-drop, ui-trace.js captureFrame).
+  - Mounting-aware tare: `slotTare()` auto-selects gravity-aligned (flat mount, X=roll) or full-quaternion tare (non-flat mount, Y/Z=roll). Set axis map before taring. Full-quat tare zeros the entire mounting rotation so Euler decomposition works cleanly for any orientation.
+- [ ] **#82 Basic morph for roll override / azimuth+elevation lock (cursor lock) via gesture panel capture** — implement a basic morph mode where roll overrides or azimuth and elevation are locked (cursor lock), then use the gesture panel to capture and drive the morph.
+- [ ] **#41 Full test pass** — run through the core workflow end-to-end (mic input → record → paint → scan → seed → sweep → repeat) on Chrome and Electron. Note and fix any rough edges.
+- [ ] **#38 Verify 8-channel VBAP** — test with 8-speaker layout in Electron. Confirm VBAP lookup table generates correctly, panning is smooth, no dropped/silent channels.
+- [ ] **#89 Setup Keith McMillan SoftStep** — configure SoftStep foot controller for mubone (pad/pressure mapping, MIDI routing, preset integration).
+- [ ] **#88 Projection-to-space calibration** — method for aligning the projected sphere visualization to the physical speaker layout in the room. Needs a calibration step so the visual sphere orientation matches the VBAP spatial field from the audience/performer perspective.
+
+---
+
+## Sprint — Dartmouth prep (completed Mar 27)
 
 - [x] **#10 Zero reference indicator on sphere** — visual marker showing where "zero" is, so you can see how far the IMU has drifted over time. **Done (Mar 27)**.
 - [x] **#15 K count slider minimum range** — slider floor set to 30 so k can be set before painting. Grows beyond 30 once particle count exceeds it. **Done (Mar 26)**.
 - [x] **#21 Tooltip delay too fast with Learn off** — changed from 400ms to 3000ms when Learn is off. **Done (Mar 26)**.
-- [ ] **#24 "Performance patch" — dead-simple workshop preset** — 3–4 patches, key params locked, 1–2 pedal controls, someone can sit down and perform without touching the UI.
 - [x] **#29 Loop release mode: play-to-end option** — `S.loopReleaseMode`: 'fade' (existing ms fade-out) or 'play-to-end' (disables looping, plays through to loopEnd with 50ms fade). UI segmented button in commit section, OSC `/commit/loop_release`, MIDI mappable. Preset save/load wired. **Done (Mar 26)**.
 - [x] **#30 Sensor gain for extremity-mounted IMU** — resolved: not an issue. See full notes in Mar 26 flight test section.
-- [ ] **#31 Pico projector + detethered cursor** — Two-IMU mode: projector IMU controls the camera/frame (viewport into the sphere), performer IMU controls a free-roaming cursor detethered from screen center. Same quaternion math for both — just two independent orientation streams driving camera vs cursor separately. Currently the cursor is always locked to viewport center; this requires separating cursor position from camera orientation so the cursor can move freely across the visible sphere surface. **Implementation breakdown:**
-  - **state.js**: Add `S.cursorQ` (separate quaternion for cursor orientation when detethered). No manual toggle needed — detether activates automatically when both cursor-role and frame-role sensor slots are assigned. Single sensor = locked to center as today.
-  - **sensor-registry.js**: `getSensorCamQ()` already resolves cursor-role vs frame-role slots. Split so cursor-role writes `S.cursorQ` instead of (or in addition to) `S.camQ`. Frame-role continues writing `S.camQ` / `S.frameQ` as now.
-  - **sphere.js**: `getCursorLonLat()` currently reads `S.camQ` forward vector for cursor position. When `S.cursorQ` exists, use that instead. `screenToLonLat()` unchanged (mouse modes only).
-  - **renderer.js**: Draw cursor crosshair at the detethered screen position (project `S.cursorQ`'s forward vector through the camera to get screen x/y) instead of always at canvas center. This is the main visual change.
-  - **grain.js**: Inherits fix automatically — reads lon/lat from `getCursorLonLat()` / `screenToLonLat()`.
-  - **Audit ~8-10 call sites**: ui-trace.js `captureFrame()`, renderer.js `drawSeeds()`, seed-morph.js nearest lookup, and a few others all resolve cursor position through `getCursorLonLat()` or `screenToLonLat()` — verify they all go through the updated path.
-  - **Difficulty: medium.** Quaternion math already exists for both sensors. Main work is renderer drawing cursor at arbitrary screen position in sensor mode, and auditing all downstream consumers for consistency.
 - [x] **#32 Reimagine HUD display** — canvas edge HUD with 3-column top bar (A=trace, S=scan, D=commit), DOM text HUD (left/center/right layout), commit dots, patch info, HUD scale slider. **Done (Mar 26)**.
 - [x] **#77 Electron: painting doesn't produce particles** — **Fixed (Mar 27):** `startLiveRecording()` guard in audio.js checked `S.recordingStream` which is only set by browser getUserMedia. Added `hasRtAudioInput` check. Also added `warmUpAudioEngine()` call in `activateSavedInputDevice()` to pre-load recording worklet in Electron.
 - [x] **#78 Electron: getUserMedia conflict in audio settings** — **Fixed (Mar 27):** Added `hasRtAudioInput` guard in `startAudio()` to skip `getUserMedia` when Electron RtAudio input is already active.
 - [x] **#79 Electron: fullscreen button label + canvas resize** — **Fixed (Mar 27):** Main process now emits `fullscreen-changed` IPC on `enter-full-screen` / `leave-full-screen` events. Preload exposes `onFullscreenChanged` listener. events.js hooks it to update button label and fire `resizeCanvas()`.
-- [ ] **#38 Verify 8-channel VBAP** — test with 8-speaker layout in Electron, confirm lookup table, smooth panning, no silent channels.
 - [x] **#71 Zeroing cursor GUI button and function (Z)** — originally thought to be a new function separate from tare, but the tare/zero button (Z) in the main GUI is what was needed. **Done (Mar 27)**.
 - [x] **#69 Sensor tare correction for off-axis wrist mount** — when IMU is worn on the wrist at an angle (not flat), tare captures the tilt and subsequent up/down movements cause diagonal cursor drift. *Fixed (Mar 27):* gravity-aligned tare extracts only the heading (yaw around Z/up) from the raw quaternion, keeping the reference frame level with gravity. Auto-recenter fires on the next render frame to snap the cursor to center. Works correctly with tilted mounting. *Limitation:* tilt-tare correction only works with default axis mapping (X=roll, Y=elevation, Z=azimuth). Non-default axis maps still work normally but won't compensate for tilted mounting — the roll offset is always captured from the X Euler component because it's the innermost rotation in the ZYX decomposition and is the only axis where pre-subtraction is mathematically clean.
 - [x] **#70 Full audit of OSC/MIDI/keyboard mapping modules** — restructured ACTIONS array in midi.js: merged seed/loop groups into unified commit group, added trace_mode/commit_mode/commit_drop/commit_draw/commit_release/commit_clear/loop_release_mode/loop_fade_time actions. Legacy actions preserved with `_legacy: true` (hidden from UI, existing maps still work). OSC handlers rewritten for `/commit/*` and `/trace/*` paths; legacy `/seed/*` and `/loop/*` fixed. Interaction types verified (hold/toggle/trigger/cc). **Done (Mar 26)**.
@@ -80,7 +93,6 @@
 ### Architecture / Design
 
 - [x] **#23 Unify loop mode and cloud/seed mode under commit** — three-function interaction model (trace / scan / commit) with unified pool. Commit encompasses clouds (particle-based, parked or moving trail) and loops (buffer-based). Release is the opposite of commit. See `docs/INTERACTION-MODEL.md` for full design thinking. **Done (Mar 26)**: unified `commitSlots[16]` pool with `type: 'cloud'|'loop'`, C key (tap=drop, hold=draw), Shift+C=mode cycle, ⌘C=release, S=commit lock, selection mode (closest/farthest). Legacy aliases preserve backward compat. HUD unification deferred — existing seed/loop panels still functional.
-- [ ] **#24 "Performance patch" — dead-simple workshop preset** — a learning-friendly configuration for Dartmouth students. 3–4 patches max, key params locked (fade times, radius, grain settings), loop/seed simplified, designed around 1–2 pedal controls and nothing else. Goal: someone can sit down and perform a short piece without touching the UI. Design the patch set, lock list, and pedal mapping, then build as a loadable preset or startup mode.
 
 ## Active — Flight Test Notes (Mar 26, post-Vasily)
 
@@ -99,7 +111,6 @@
 ### IMU / Wand / Orientation
 
 - [x] **#30 ~~Sensor gain for extremity-mounted IMU~~** — NOT AN ISSUE. Quaternion orientation is 1:1 physical-to-virtual and should stay that way — where you point is where the cursor goes, regardless of mount position. The original concern (values too large on extremity mount) was misdiagnosed: quaternions represent absolute orientation, not relative motion, so mount position doesn't affect values. For "higher resolution" painting in a small area: turn down radius and viz dot size to pack more particles. For improv settings where full body 1:1 isn't needed: the flat map projection + definable painting area (#73) solves this by mapping a smaller physical range to the full sphere. Inertial gain (gyro/accel) is a separate issue if needed later — add per-slot gain in sensor-registry.js `inertialCal`.
-- [ ] **#31 Pico projector + detethered cursor** — see sprint section for full implementation breakdown.
 
 ### Visual / Display
 
@@ -120,18 +131,25 @@
 
 ### Multi-Channel / VBAP
 
-- [ ] **#38 Verify 8-channel VBAP** — test with 8-speaker layout in Electron. Confirm VBAP lookup table generates correctly, panning is smooth, no dropped/silent channels.
 - [ ] **#39 Stretch: test 42-channel VBAP** — try the full Dartmouth layout. Identify any performance cliffs (lookup table size, per-grain cost). Have a fallback plan if 42 is too heavy.
 - [ ] **#40 Electron multi-channel setup docs** — write a short checklist for getting Electron + multi-channel output running on a fresh machine (students may need to set this up).
 
-### General Reliability
-
-- [ ] **#41 Full test pass** — run through the core workflow end-to-end (mic input → record → paint → scan → seed → sweep → repeat) on Chrome and Electron. Note and fix any rough edges.
-
 ## Deferred — Later Fixes
 
-- [ ] **#75 Roll mute/unmap pole bug** — when roll axis is muted or unmapped in the sensor axis map, the cursor can never reach the poles and yaws excessively / flips. Works fine with all 3 axes active. Root cause: forward-vector decomposition in `applyAxisMapQuat` has a coordinate-system mismatch preventing pitch from reaching ±90°. Roll mute button disabled in UI with tooltip. Downstream roll-lock approach also failed (same decomposition issue) — roll lock code removed.
+- [ ] **#75 Roll mute/unmap pole bug** — when roll axis is muted or unmapped in the sensor axis map, the cursor can never reach the poles and yaws excessively / flips. Works fine with all 3 axes active. Root cause: forward-vector decomposition in `applyAxisMapQuat` has a coordinate-system mismatch preventing pitch from reaching ±90°. Roll mute button disabled in UI with tooltip. Downstream roll-lock approach also failed (same decomposition issue) — roll lock code removed. See `docs/EULER-VS-QUAT.md` § "Proposed fixes for 2-DOF gimbal lock" for two approaches:
+  - [ ] **#75a Explore pitch clamp** — clamp pitch to ±85° (configurable) when roll is muted, preventing the gimbal lock singularity. Quick win that could re-enable the roll mute button immediately. Tradeoff: poles become unreachable (small dead zone).
+  - [ ] **#75b Explore delta/incremental rotation path** — compute frame-to-frame quaternion deltas (always small angles, never hit poles), apply axis remap and roll-mute to the delta, accumulate into camera orientation. Avoids gimbal lock entirely. Would also fix #9 (surface mode yaw after pole). Tradeoff: drift from float accumulation (mitigate with periodic normalization and slow blend toward absolute orientation).
 - [ ] **#76 Recenter drift correction bug** — recenter (`recenterCursor()`) logic needs review. Button disabled in sensor panel UI with tooltip. Tare works correctly; recenter is separate and its behaviour is unclear. Re-enable once the logic is verified.
+
+## Upcoming — Euler Input & Sensor Format
+
+> See `docs/EULER-VS-QUAT.md` for full analysis and architecture.
+
+- [ ] **#83 Add `/euler` OSC input path** — new `handleSlotEuler(slot, [roll, pitch, yaw])` handler in sensor-registry.js. Stores `slot.rawEuler`, sets `slot.inputFormat = 'euler'`. OSC address: `/sensor/{name}/euler`. Coexists with existing `/quaternion` path — both formats supported per-slot.
+- [ ] **#84 Euler tare** — capture `(tareRoll, tarePitch, tareYaw)` at tare time, apply via subtraction + angle wrapping. Simpler than quaternion conjugate tare; no roll-offset special case. Needs wrapping logic for yaw (±180°), pitch (±90°), and roll (±180°).
+- [ ] **#85 Euler axis remap** — direct remap on the three Euler values using the existing axisMap table. No quat decomposition/recomposition needed. Convert final tared/remapped euler to quaternion at the end to feed into existing `getSensorCamQ()` pipeline.
+- [ ] **#86 Configure x-IMU3 for Euler output** — set `ahrs_message_type` to 2 (Euler angles) via x-IMU3 GUI or API. Keep `axes_alignment` at default (+X+Y+Z) — all mount remapping stays in mubone software for quick changes during experimentation.
+- [ ] **#87 UI: sensor panel format indicator** — show whether each slot is receiving quat or euler. Euler tare vs quat tare path selection based on `slot.inputFormat`.
 
 ## Deferred — Gesture & Experimental (post-workshop)
 

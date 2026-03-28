@@ -61,18 +61,22 @@ export function initSensorsUI() {
   S._onSensorDiscovered = () => rebuildList();
   S._onSensorRoleChanged = () => rebuildList();
 
-  // ── Session panel cursor tare shortcut ───────────────────────────────
-  // Shared action: tare cursor sensor and sync button state.
-  // Exposed on S so events.js can trigger it from keyboard (`) without
-  // importing sensor-registry.
-  function tareCursorAction() {
-    const slot = getByRole('cursor');
-    if (slot) slotTare(slot);
+  // ── Session panel tare shortcut ──────────────────────────────────────
+  // Tares the cursor sensor, and also the frame sensor if assigned (two-IMU
+  // mode).  Exposed on S so events.js can trigger it from keyboard (`)
+  // without importing sensor-registry.
+  function tareAction() {
+    const cursorSlot = getByRole('cursor');
+    if (cursorSlot) slotTare(cursorSlot);
+    // Two-IMU mode: tare frame sensor too — you almost always want both
+    // zeroed at the same time.  Per-slot tare in sensor panel for individual.
+    const frameSlot = getByRole('frame');
+    if (frameSlot) slotTare(frameSlot);
     const btn = document.getElementById('cursorZeroTopBtn');
     if (btn) btn.classList.add('active');
   }
-  S._tareCursor = tareCursorAction;
-  document.getElementById('cursorZeroTopBtn')?.addEventListener('click', tareCursorAction);
+  S._tareCursor = tareAction;   // keep legacy name — keyboard/OSC callers use it
+  document.getElementById('cursorZeroTopBtn')?.addEventListener('click', tareAction);
 }
 
 // ── Build / rebuild the sensor list ──────────────────────────────────────────
@@ -127,15 +131,25 @@ function buildStreamBlock(name, slot, stream) {
   const currentRole = stream === 'quat' ? slot.quatRole : slot.inertialRole;
   const assignFn = stream === 'quat' ? assignQuatRole : assignInertialRole;
 
+  const ROLE_TOOLTIPS = {
+    cursor:   'Controls where you paint and play',
+    frame:    'Sets the world orientation (mount on projector, body, or room)',
+    gesture:  'Drives gesture extraction features',
+    unmapped: 'Sensor active but not assigned to a role',
+    custom:   'Custom signal routing',
+  };
+
   const sel = document.createElement('select');
   sel.className = 'sensor-role-select';
   for (const role of roles) {
     const opt = document.createElement('option');
     opt.value = role;
     opt.textContent = role;
+    if (ROLE_TOOLTIPS[role]) opt.title = ROLE_TOOLTIPS[role];
     if (currentRole === role) opt.selected = true;
     sel.appendChild(opt);
   }
+  sel.title = ROLE_TOOLTIPS[currentRole] || '';
   sel.addEventListener('change', () => {
     assignFn(name, sel.value);
     rebuildList();
@@ -320,9 +334,10 @@ function buildCursorControls(name, slot) {
   const caution = document.createElement('div');
   caution.style.cssText = 'margin-top:8px; padding:6px 8px; font-size:0.7rem; line-height:1.4; color:#e8a850; border-left:2px solid #e8a850; opacity:0.85;';
   caution.innerHTML =
-    '<b>⚠ Mounting note:</b> If the sensor is mounted in a non-standard orientation, ' +
-    'keep the roll axis level with the horizon when taring. Tilt-tare correction only ' +
-    'works with the default axis mapping (X\u2009=\u2009roll).<br>' +
+    '<b>⚠ Mounting &amp; tare:</b> Set your axis map <i>before</i> taring. ' +
+    'Default (X\u2009=\u2009roll) uses gravity-aligned tare — pitch stays level with the horizon. ' +
+    'Non-default forward axis (Y or Z\u2009=\u2009roll) uses full-quaternion tare — ' +
+    'the entire mounting orientation is zeroed out, so any physical orientation works.<br>' +
     '<b>⚠ Roll axis required:</b> Roll must stay mapped and unmuted. ' +
     'Muting or unmapping roll causes pole/yaw issues — fix in progress.';
   container.appendChild(caution);
@@ -469,6 +484,15 @@ function buildFrameControls(name, slot) {
   tareRow.appendChild(clearBtn);
   tareRow.appendChild(tareReadout);
   container.appendChild(tareRow);
+
+  // ── Caution notes ──
+  const caution = document.createElement('div');
+  caution.style.cssText = 'margin-top:8px; padding:6px 8px; font-size:0.7rem; line-height:1.4; color:#e8a850; border-left:2px solid #e8a850; opacity:0.85;';
+  caution.innerHTML =
+    '<b>⚠ Mounting &amp; tare:</b> Set your axis map <i>before</i> taring. ' +
+    'Default (X\u2009=\u2009roll) uses gravity-aligned tare. ' +
+    'Non-default forward axis uses full-quaternion tare — any mounting orientation works.';
+  container.appendChild(caution);
 
   return container;
 }

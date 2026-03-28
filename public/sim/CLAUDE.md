@@ -46,7 +46,7 @@ docs/               — project reference documents (see below)
 
 ## Versioning
 
-Current version: **0.4 alpha**. Two things must be updated on every release:
+Current version: **0.9 alpha**. Two things must be updated on every release:
 
 1. **`index.html`** line 17 — the `<span class="top-bar-version">` text shown in the UI
 2. **`CHANGELOG.md`** — add a new section at the top with the version, date, and what changed (grouped into Fixed / Added / Changed / Removed)
@@ -61,7 +61,9 @@ Bump the minor number (0.2 → 0.3) for feature work or meaningful bug fixes. Bu
 | `docs/TODO.md` | **Always check this** — current tasks, priorities, what's done |
 | `docs/mubone-architecture-notes.md` | Working on audio routing, multi-channel, VBAP, Electron bridge |
 | `docs/IMPROV-FEATURE-PLAN.md` | Working on improv mode, seeds, monitor/house bus, gesture morph |
+| `docs/EULER-VS-QUAT.md` | Working on sensor input format, Euler vs quaternion tradeoffs, roll-mute pole fix, `/euler` OSC path |
 | `docs/EXP-NOTES.md` | Working on experimental modules — gesture extraction, processing chain, new synthesis modes |
+| `docs/DETETHER-PLAN.md` | Working on two-IMU detethered cursor, frame sensor, conjugation fix, projection calibration |
 
 ## Design principles
 

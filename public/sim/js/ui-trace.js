@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { S, MAX_TRACES, TRACE_COLORS } from './state.js';
-import { screenToLonLat } from './sphere.js';
+import { screenToLonLat, getCursorLonLat } from './sphere.js';
 
 // ── Recording ────────────────────────────────────────────────────────────────
 
@@ -15,10 +15,16 @@ function captureFrame() {
   const now = performance.now();
   const t = now - S._traceRecordingStart;
 
-  // Get cursor position (use alt-locked position if alt is held)
-  const px = S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX;
-  const py = S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY;
-  const { lon, lat } = screenToLonLat(px, py);
+  // Get cursor position — detethered mode uses IMU cursor directly,
+  // otherwise fall back to mouse pixel coords (with alt-lock support)
+  let lon, lat;
+  if (S.cursorQ) {
+    ({ lon, lat } = getCursorLonLat());
+  } else {
+    const px = S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX;
+    const py = S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY;
+    ({ lon, lat } = screenToLonLat(px, py));
+  }
 
   // Merge overrides into params for a complete snapshot
   const mergedParams = { ...S.grainParams };

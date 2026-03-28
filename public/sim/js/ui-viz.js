@@ -116,6 +116,37 @@ export function initVizUI() {
     });
   }
 
+  // ── Edge indicator (detethered cursor) ─────────────────────────────────
+  const EDGE_IND_KEY = 'mubone_edgeIndicator';
+  const EDGE_IND_SIZE_KEY = 'mubone_edgeIndicatorSize';
+  try {
+    const saved = localStorage.getItem(EDGE_IND_KEY);
+    if (saved === 'on' || saved === 'off') S.edgeIndicator = saved;
+  } catch {}
+  try {
+    const saved = parseFloat(localStorage.getItem(EDGE_IND_SIZE_KEY));
+    if (saved >= 0.5 && saved <= 2.0) S.edgeIndicatorSize = saved;
+  } catch {}
+
+  const edgeSeg = document.getElementById('vizEdgeIndicatorSeg');
+  if (edgeSeg) {
+    edgeSeg.querySelectorAll('[data-edge]').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.edge === S.edgeIndicator);
+    });
+    edgeSeg.querySelectorAll('[data-edge]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        S.edgeIndicator = btn.dataset.edge;
+        edgeSeg.querySelectorAll('[data-edge]').forEach(b =>
+          b.classList.toggle('active', b === btn));
+        try { localStorage.setItem(EDGE_IND_KEY, S.edgeIndicator); } catch {}
+      });
+    });
+  }
+  bindSlider('vizEdgeIndicatorSizeSlider', 'vizEdgeIndicatorSizeVal',
+    () => S.edgeIndicatorSize,
+    v  => { S.edgeIndicatorSize = v; try { localStorage.setItem(EDGE_IND_SIZE_KEY, String(v)); } catch {} },
+    v  => v.toFixed(1));
+
   // ── Particle size sliders ───────────────────────────────────────────────
   bindSlider('vizMinSizeSlider', 'vizMinSizeVal',
     () => S.vizMinSize,

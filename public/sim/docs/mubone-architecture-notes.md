@@ -103,6 +103,60 @@ Key files: `renderer.js` (the `animate()` camera rotation section), `events.js` 
 
 ---
 
+## Detethered Cursor / Two-IMU Mode
+
+When both a cursor-role and frame-role sensor are assigned, the cursor detethers from the viewport center. The frame IMU provides the viewport orientation (like a periscope — move the projector/frame to reveal different parts of the painted sphere), while the cursor IMU controls an independent pointer that can roam freely across the visible surface.
+
+**State:** `S.cursorQ` holds the cursor orientation quaternion when detethered (null otherwise). `S.detethered` is a derived getter checking `cursorQ !== null`. `S.camQ` is set to identity in detethered mode — the frame provides all viewport orientation via `S.frameQ`.
+
+**Sensor pipeline split:**
+
+- `getSensorCamQ()` returns null when frame-role is active (nothing to write to camQ).
+- `getSensorCursorQ()` returns the cursor-role quaternion (tare + axis map + custom layers) only when frame-role is also active.
+- `getFrameQ()` returns the frame-role quaternion with the same pipeline (tare + axis map).
+
+Both cursor and frame go through the exact same `applyAxisMapQuat()` pipeline. There is no special treatment for either sensor — they differ only in which state variable they write to.
+
+**Critical: conjugation in `getFrameQ()`**
+
+`cameraTransform()` in sphere.js applies an asymmetry: `camQ` is conjugated (`qRotateVec(qConjugate(camQ), p)`) but `frameQ` is applied directly (`qRotateVec(frameQ, p)`). Without compensation, this causes the frame sensor to exhibit gimbal lock (pitch→roll coupling at 90° yaw) while the cursor does not.
+
+The fix: `getFrameQ()` conjugates its output (`return [-q[0], -q[1], -q[2], q[3]]`) before returning. This pre-conjugation cancels the asymmetry in `cameraTransform()`, making both sensors produce identical visual behavior.
+
+**Do not add or remove conjugation on either side without updating the other to match.** See the inline comments in `getFrameQ()` and `cameraTransform()`.
+
+**Natural roll-muting:** In detethered mode, physically rolling the cursor IMU has no effect on cursor position. This is because `cursorQ` is only used for forward-vector projection (`qRotateVec(cursorQ, [0,0,1])`) to get lon/lat — a point on the sphere. Roll rotates the forward vector around its own axis, which doesn't change its direction. This is a stable mathematical property, not an explicit mute, and it applies regardless of axis mapping or tare state.
+
+**Three spatial anchoring modes** (same code, different physical placement of the frame IMU):
+
+- **Room-anchored (projector):** Frame on a tripod-mounted pico projector. Moving the projector reveals different parts of the painted sphere, like a periscope.
+- **Room-anchored (floor):** Frame stationary. Sphere is locked to the room.
+- **Body-anchored:** Frame on the performer's body. Everything painted "in front" stays in front regardless of where the performer physically moves or faces.
+
+Key files: `sensor-registry.js` (`getSensorCursorQ`, `getFrameQ`), `renderer.js` (camera update block, `drawCursor()`), `sphere.js` (`getCursorLonLat`, `cameraTransform`).
+
+---
+
+## Tare Strategy: Gravity-Aligned vs Full-Quaternion
+
+`slotTare()` in sensor-registry.js auto-selects between two tare strategies based on the axis map. The axis map is the signal — it implicitly encodes the physical mounting orientation.
+
+**Gravity-aligned tare** (flat mount — default axis map, X = roll/forward):
+
+Captures only the heading (yaw around world-Z / gravity axis). After tare, the quaternion retains static pitch and roll from the physical mounting angle. The `tareRollOffset` compensates for the X-roll component so the Euler decomposition doesn't couple pitch and yaw through a tilted roll axis. This preserves the gravity reference: pitch=0 always means level with the horizon.
+
+**Full-quaternion tare** (non-flat mount — forward axis is Y or Z):
+
+Captures the entire raw orientation. `applyTare` left-multiplies by the conjugate, zeroing out the full mounting rotation. After tare the quaternion is near-identity at rest, so the ZYX Euler decomposition produces small, clean angles that the axis remap handles correctly regardless of physical mounting angle. The gravity reference is sacrificed — "level" is wherever the IMU was at tare time — but for non-flat mounts that's what you want since the whole reference frame is being redefined.
+
+**Detection logic:** `_isFlatMount(cal)` checks whether X is mapped to roll (the default). If so → gravity-aligned. If the user remapped Y or Z to roll (indicating a non-standard mounting) → full-quaternion. Set the axis map *before* taring.
+
+**Detethered mode interaction:** In two-IMU mode, roll is naturally muted on the cursor (forward-vector projection ignores roll), so the gravity-aligned tare's roll handling has no effect on the cursor. Full-quat tare works fine for either sensor in detethered mode.
+
+Key file: `sensor-registry.js` (`slotTare`, `_isFlatMount`, `applyTare`).
+
+---
+
 ## Multi-Channel Spatial Routing
 
 Grains are routed to N output channels using 2D VBAP (Vector Base Amplitude Panning):

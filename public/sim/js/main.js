@@ -15,7 +15,7 @@ import { initMobileMode } from './mobile.js';
 import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
 import { resizeCanvas, animate } from './renderer.js';
 import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initRadiusFade, initSeqMode, initMixdownGains, setScanMuted } from './ui-meters.js';
-import { initSensor, getSensorCamQ, getFrameQ, recenterCursor } from './sensor-registry.js';
+import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, recenterCursor } from './sensor-registry.js';
 import { initOSC } from './osc.js';
 import { initSensorsUI } from './ui-sensors.js';
 import { initAudioSettings, loadAudioDefaults, activateSavedInputDevice, startAutoSave } from './ui-audio-settings.js';
@@ -49,6 +49,7 @@ function init() {
   initSensor();
   initOSC();   // connects Electron IPC or browser WebSocket transport
   S._getSensorCamQ    = getSensorCamQ;       // hook renderer without a circular import
+  S._getSensorCursorQ = getSensorCursorQ;    // detethered cursor quat (two-IMU mode)
   S._getFrameQ        = getFrameQ;           // world-frame compensation from frame-role sensor
   S._recenterCursor   = recenterCursor;      // drift correction — called from sensors UI
   S._onTare = () => {                        // reset drift correction on fresh tare
@@ -185,6 +186,18 @@ function init() {
     cameraModal?.querySelectorAll('.camera-mode-option').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.mode === S.cameraMode);
     });
+    // Dynamic subtitle for sensor mode — shows 1-sensor vs 2-sensor state
+    const sub = cameraModal?.querySelector('.camera-sensor-subtitle');
+    if (sub) {
+      if (S.cameraMode === 'sensor') {
+        sub.textContent = S.detethered
+          ? '2 sensors — cursor free'
+          : '1 sensor — cursor locked';
+        sub.style.display = '';
+      } else {
+        sub.style.display = 'none';
+      }
+    }
   }
 
   function applyCameraMode(mode) {
@@ -223,6 +236,7 @@ function init() {
 
   if (cameraModeBtn && cameraModal) {
     cameraModeBtn.addEventListener('click', () => {
+      updateCameraModeBtn();  // refresh subtitle with current sensor state
       cameraModal.classList.add('open');
     });
     cameraCloseBtn?.addEventListener('click', () => {

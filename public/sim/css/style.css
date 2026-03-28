@@ -2494,6 +2494,13 @@
     font-size: 0.7rem;
     line-height: 1.4;
   }
+  .camera-sensor-subtitle {
+    display: block;
+    color: #7abcbc;
+    font-size: 0.65rem;
+    margin-top: 0.25rem;
+    opacity: 0.85;
+  }
   #cameraModeBtn {
     display: inline-flex;
     align-items: center;

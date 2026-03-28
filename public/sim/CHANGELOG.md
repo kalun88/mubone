@@ -5,6 +5,30 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.9 alpha — 2026-03-28
+
+### Added
+- **Detethered cursor / two-IMU mode** (#31) — when both cursor-role and frame-role sensors are assigned, the cursor detethers from the viewport center and roams freely on the sphere. Frame IMU anchors the viewport (projector-mounted, floor-locked, or body-mounted — same code, different physical placement); cursor IMU controls where you paint and play. Activates automatically, no manual toggle.
+- **`S.cursorQ`** — separate cursor orientation quaternion for detethered mode. `S.detethered` derived getter (`cursorQ !== null`).
+- **`getSensorCursorQ()`** in sensor-registry.js — returns cursor-role quaternion only when frame-role is also active. Same processing pipeline as `getSensorCamQ()` (tare, axis map, custom layers).
+- **Edge indicator** — off-screen cursor arrow drawn on canvas when detethered cursor is outside the viewport. On/off toggle and size slider (0.5–2.0×) in viz settings, persisted to localStorage.
+- **Camera modal dynamic subtitle** — shows "1 sensor — cursor locked" or "2 sensors — cursor free" under the sensor option.
+- **Role tooltips in sensor panel** — dropdown options now have descriptive tooltips (cursor: "Controls where you paint and play", frame: "Sets the world orientation", etc.).
+- **Dual tare** — main tare button (Z/backtick) now tares both cursor and frame when both sensors are assigned.
+
+### Fixed
+- **Frame sensor gimbal lock** — frame exhibited pitch→roll coupling at 90° yaw because `cameraTransform()` applies `frameQ` directly but conjugates `camQ`. Fixed by conjugating `getFrameQ()` output to compensate for the asymmetry. Both sensors now use the exact same processing pipeline with identical visual behavior.
+- **Paint-drop in detethered mode** — renderer.js paint-drop code now uses `getCursorLonLat()` when `S.cursorQ` is set, instead of always using `screenToLonLat()`.
+- **Trace capture in detethered mode** — `ui-trace.js` `captureFrame()` now uses `getCursorLonLat()` when detethered, instead of always using mouse pixel coords.
+
+### Changed
+- **`getCursorLonLat()`** reads `S.cursorQ || S.camQ` — one-line change that propagates detethered cursor position to all downstream consumers (grain scheduler, seed morph, OSC broadcast, etc.).
+- **Natural roll-muting in detethered mode** — physically rolling the cursor IMU has no effect on cursor position because `cursorQ` is only used for forward-vector projection (a point, not an orientation). This is a mathematical property of the architecture, not explicit muting code.
+- **`cameraTransform()`** now has protective comments documenting the conjugation asymmetry between `camQ` and `frameQ`, with cross-references to `getFrameQ()`.
+- **Mounting-aware tare** — `slotTare()` now selects tare strategy based on axis map configuration. Default flat mount (X = roll/forward) uses gravity-aligned tare (heading-only, preserves horizon). Non-flat mount (Y or Z = roll/forward) uses full-quaternion tare — captures the entire raw orientation and divides it out, so any physical mounting angle works cleanly with the Euler decomposition. Set axis map *before* taring. In detethered mode, roll is naturally muted on the cursor anyway, so the gravity tare's roll handling is irrelevant.
+
+---
+
 ## 0.8 alpha — 2026-03-27
 
 ### Fixed

@@ -456,25 +456,56 @@ export function getCustomGestureSlots() {
 
 
 // ── Tare ─────────────────────────────────────────────────────────────────────
+// Two strategies, selected automatically based on the axis map:
+//
+// 1. Gravity-aligned tare (flat mount — default axis map, X = roll/forward):
+//    Captures only the heading (yaw around world-Z / gravity).  Keeps pitch=0
+//    aligned with the horizon.  tareRollOffset compensates for wrist tilt.
+//
+// 2. Full quaternion tare (non-flat mount — forward axis is Y or Z):
+//    Captures the entire raw orientation.  After tare the quaternion is near
+//    identity at rest, so the Euler decomposition works cleanly regardless of
+//    how the IMU is mounted.  Gravity alignment is sacrificed — "level" is
+//    wherever the IMU was at tare time — but for non-flat mounts that's what
+//    you want since the whole reference frame is being redefined.
+//
+// The axis map is the signal: if the user remapped the forward/roll axis away
+// from X (the default), the IMU isn't flat and we use full-quat tare.
+// In detethered (two-IMU) mode, roll is naturally muted on the cursor anyway,
+// so the gravity tare's roll handling has no effect — full tare works fine.
+
+function _isFlatMount(cal) {
+  // Default axis map: X=roll (forward), Y=pitch, Z=yaw → flat mounting.
+  // Any other configuration means the IMU is mounted non-standard.
+  if (!cal?.axisMap) return true;
+  const xViz = cal.axisMap.x?.viz;
+  return xViz === 'roll';
+}
 
 export function slotTare(slot) {
   if (!slot.quat) return;
   const [qx, qy, qz, qw] = slot.quat;
 
-  // Gravity-aligned tare: store only the heading (yaw around Z/up) so the
-  // tare reference stays level with gravity.  Tilted mounting won't skew
-  // the pitch axis — the remaining pitch/roll offset is handled downstream.
-  const heading = Math.atan2(2*(qw*qz + qx*qy), 1 - 2*(qy*qy + qz*qz));
-  slot.quatCal.tareQuat = eulerAxisToQuat(0, 0, 1, heading);
+  if (_isFlatMount(slot.quatCal)) {
+    // ── Gravity-aligned tare (flat mount) ──────────────────────────────
+    // Store only the heading (yaw around Z/up) so the tare reference stays
+    // level with gravity.  Tilted mounting won't skew the pitch axis.
+    const heading = Math.atan2(2*(qw*qz + qx*qy), 1 - 2*(qy*qy + qz*qz));
+    slot.quatCal.tareQuat = eulerAxisToQuat(0, 0, 1, heading);
 
-  // Store the X-roll angle at tare time so the Euler path can subtract it
-  // before decomposition (prevents pitch↔yaw coupling from static roll).
-  // Always uses the X component because it's the innermost rotation in the
-  // ZYX Euler decomposition — only right-multiplying Qx cleanly removes it.
-  // Limitation: tilt-tare correction only works with default axis mapping
-  // (X=roll). Non-default mappings still work but won't compensate for tilt.
-  const euler = quatToEulerDeg(qx, qy, qz, qw);
-  slot.quatCal.tareRollOffset = euler.x * (Math.PI / 180);
+    // Store the X-roll angle at tare time so the Euler path can subtract it
+    // before decomposition (prevents pitch↔yaw coupling from static roll).
+    const euler = quatToEulerDeg(qx, qy, qz, qw);
+    slot.quatCal.tareRollOffset = euler.x * (Math.PI / 180);
+  } else {
+    // ── Full quaternion tare (non-flat mount) ──────────────────────────
+    // Capture the entire raw orientation.  applyTare will left-multiply by
+    // the conjugate, zeroing out the full mounting rotation.  The tared
+    // quaternion will be near-identity at rest, so Euler decomposition and
+    // axis remap work cleanly for any physical mounting orientation.
+    slot.quatCal.tareQuat = [qx, qy, qz, qw];
+    slot.quatCal.tareRollOffset = 0;  // not needed — full tare handles everything
+  }
 
   // Auto-recenter on next render frame so cursor snaps to center
   if (slot.quatRole === 'cursor') {
@@ -541,6 +572,10 @@ export function recenterCursor() {
   }
 }
 
+// applyTare — works for BOTH tare strategies:
+//   Gravity-aligned: tareQuat is a pure heading rotation → conjugate removes heading only
+//   Full-quaternion:  tareQuat is the entire raw orientation → conjugate zeros everything
+// Result is always conj(tareQuat) * currentQuat = rotation FROM tare TO current.
 function applyTare(quat, tareQuat) {
   if (!tareQuat) return quat;
   const [tx, ty, tz, tw] = tareQuat;
@@ -655,17 +690,17 @@ function applyAxisMapQuat(q, cal) {
   }
 
   // ── Euler path (all three axes active) ────────────────────────────────
-  // If the gravity-aligned tare left a static roll offset in the tared
-  // quaternion, subtract it before decomposition so the Euler yaw/pitch
-  // don't couple through the tilted roll axis.  The offset is re-added
-  // to the mapped roll output so the camera still reflects physical roll
-  // changes (just zeroed at the tare position).
+  // Roll offset subtraction only applies to GRAVITY-ALIGNED tare (flat mount).
+  // With full-quaternion tare (non-flat mount), tareRollOffset is 0 — the full
+  // tare already zeroed the entire mounting rotation, so the tared quaternion
+  // is near-identity at rest and decomposes cleanly without any correction.
   let qIn = q;
   const rollOffset = cal.tareRollOffset ?? 0;
   if (rollOffset !== 0) {
-    // Subtract the static X-roll captured at tare time.  Right-multiplying
-    // by Qx(-offset) cleanly removes the innermost rotation in the ZYX
-    // Euler decomposition, preventing pitch↔yaw coupling from tilted mount.
+    // Gravity-aligned tare only: subtract the static X-roll captured at tare
+    // time.  Right-multiplying by Qx(-offset) cleanly removes the innermost
+    // rotation in the ZYX Euler decomposition, preventing pitch↔yaw coupling
+    // from tilted mount.  Skipped for full-quat tare (rollOffset === 0).
     const qRollOff = eulerAxisToQuat(1, 0, 0, -rollOffset);
     qIn = qMulQ(q, qRollOff);
   }
@@ -691,9 +726,15 @@ function applyAxisMapQuat(q, cal) {
 // Frame compensation is applied separately by the renderer via getFrameQ().
 
 export function getSensorCamQ() {
+  // ── Detethered mode: when frame-role is active, cursor-role drives cursorQ
+  // instead of camQ. Camera stays at identity — frame provides the view.
+  // getSensorCursorQ() handles the cursor path in that case.
+  const frameSlot = getByRole('frame');
+  if (frameSlot?.quat) return null;   // detethered — nothing for camQ
+
   let camQ = null;
 
-  // ── Primary path: cursor-role slot ──
+  // ── Primary path: cursor-role slot (single-IMU mode only) ──
   const cursorSlot = getByRole('cursor');
   if (cursorSlot?.quat) {
     camQ = applyAxisMapQuat(
@@ -723,6 +764,45 @@ export function getSensorCamQ() {
   }
 
   return camQ;
+}
+
+// ── getSensorCursorQ — cursor quaternion for detethered two-IMU mode ────────
+// Returns the cursor-role quaternion when frame-role is also active (detethered
+// mode). When only one IMU is assigned, returns null — cursor is locked to
+// camera center and getSensorCamQ() handles everything.
+// Same tare + axis-map + custom-layer pipeline as getSensorCamQ.
+export function getSensorCursorQ() {
+  const frameSlot = getByRole('frame');
+  if (!frameSlot?.quat) return null;   // single IMU — not detethered
+
+  let curQ = null;
+
+  const cursorSlot = getByRole('cursor');
+  if (cursorSlot?.quat) {
+    curQ = applyAxisMapQuat(
+      applyTare(cursorSlot.quat, cursorSlot.quatCal.tareQuat),
+      cursorSlot.quatCal
+    );
+  }
+
+  // Custom path: layer custom-role viz signals on top
+  for (const slot of _registry.values()) {
+    if (slot.quatRole !== 'custom' || !slot._customVizEuler) continue;
+    const e = slot._customVizEuler;
+    const DEG = Math.PI / 180;
+    const qYaw   = eulerAxisToQuat(0, 1, 0, e.z * DEG);
+    const qPitch = eulerAxisToQuat(1, 0, 0, e.y * DEG);
+    const qRoll  = eulerAxisToQuat(0, 0, 1, e.x * DEG);
+    const customQ = qMulQ(qYaw, qMulQ(qPitch, qRoll));
+
+    if (curQ) {
+      curQ = qMulQ(curQ, customQ);
+    } else {
+      curQ = customQ;
+    }
+  }
+
+  return curQ;
 }
 
 // ── getSensorRawCursorQ — raw tared quaternion for delta-based tracking ──────
@@ -756,10 +836,11 @@ export function getCursorAxisSigns() {
 // Stored on S.frameQ by the renderer; sphere.js applies it per-point in
 // cameraTransform / getCursorLonLat / screenToLonLat.
 //
-// Must return the SAME camera-convention quaternion as getSensorCamQ so that
-// when a cursor and frame sensor are co-located and moved together, the two
-// rotations cancel exactly:  camQ⁻¹ · frameQ · point · frameQ⁻¹ · camQ = point.
-// (A conjugate here would give Q⁻² · point · Q² — a double rotation.)
+// Uses the exact same tare + axis-map pipeline as getSensorCamQ (cursor path).
+// The output is conjugated because cameraTransform applies frameQ directly
+// (qRotateVec(frameQ, point)) while camQ is conjugated (qRotateVec(conj(camQ),
+// point)).  Conjugating here makes both sensors produce identical visual
+// behaviour — same Euler path, same artifact profile, same feel.
 //
 // Works without a tare (applyTare passes through raw quat), but taring is
 // recommended — without one the raw BNO085 magnetometer heading drifts
@@ -767,10 +848,17 @@ export function getCursorAxisSigns() {
 export function getFrameQ() {
   const frameSlot = getByRole('frame');
   if (!frameSlot?.quat) return null;
-  return applyAxisMapQuat(
+  const q = applyAxisMapQuat(
     applyTare(frameSlot.quat, frameSlot.quatCal.tareQuat),
     frameSlot.quatCal
   );
+  if (!q) return null;
+  // ⚠ CRITICAL — DO NOT REMOVE THIS CONJUGATION.
+  // cameraTransform applies frameQ directly but camQ conjugated.  Without this
+  // conjugation, the frame sensor exhibits gimbal lock (pitch→roll coupling at
+  // 90° yaw) while the cursor does not.  This was tested and verified Mar 28.
+  // See cameraTransform() in sphere.js for the matching comment.
+  return [-q[0], -q[1], -q[2], q[3]];
 }
 
 // Helper: quaternion from axis-angle (used for custom euler → quat)
