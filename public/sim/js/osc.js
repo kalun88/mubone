@@ -34,34 +34,11 @@ let _connected       = false;
 let _electronMsgSeen = false;  // Electron: show indicator on first message
 
 // ── MAX indicator ─────────────────────────────────────────────────────────────
-// Small dot in the top-right corner. Created once, toggled by connection state.
-
-let _indicator = null;
-
-function getIndicator() {
-  if (_indicator) return _indicator;
-  _indicator = document.createElement('div');
-  Object.assign(_indicator.style, {
-    position:    'fixed',
-    top:         '10px',
-    right:       '12px',
-    fontSize:    '10px',
-    fontFamily:  "'Roboto Mono', monospace",
-    letterSpacing: '0.08em',
-    color:       '#7abcbc',
-    opacity:     '0',
-    transition:  'opacity 0.4s',
-    pointerEvents: 'none',
-    zIndex:      '9999',
-    userSelect:  'none',
-  });
-  _indicator.textContent = '● MAX';
-  document.body.appendChild(_indicator);
-  return _indicator;
-}
+// Inline in the sensor group bar. Toggled by connection state via CSS class.
 
 function setIndicator(visible) {
-  getIndicator().style.opacity = visible ? '1' : '0';
+  const el = document.getElementById('maxIndicator');
+  if (el) el.classList.toggle('visible', visible);
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -519,8 +496,8 @@ export function handleOSC(rawAddress, values) {
       if (values[0] === 'pingpong' || values[0] === 'forward' || values[0] === 'rev') {
         S.seedLoopMode = values[0];
         // Apply to nearest commit that has frames
-        const { lon: _lmLon, lat: _lmLat } = S.mouseInCanvas
-          ? screenToLonLat(S.mousePixelX, S.mousePixelY)
+        const { lon: _lmLon, lat: _lmLat } = S.cursorQ ? getCursorLonLat()
+          : S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY)
           : getCursorLonLat();
         const _lmSlot = findNearestSeedSlot(_lmLon, _lmLat);
         if (_lmSlot >= 0) {
@@ -602,6 +579,10 @@ export function handleOSC(rawAddress, values) {
       S.perfMonitorVisible = !S.perfMonitorVisible;
       { const el = document.getElementById('perfMonitor');
         if (el) el.style.display = S.perfMonitorVisible ? 'block' : 'none'; }
+      break;
+    case '/app/perfmode':
+      S.perfMode = values[0] != null ? !!values[0] : !S.perfMode;
+      console.log(`[perf] high-performance render mode ${S.perfMode ? 'ON' : 'OFF'}`);
       break;
 
     // ── Commit envelope (legacy /seed/ aliases) ──────────────────────────────

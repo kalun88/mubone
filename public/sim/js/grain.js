@@ -1,6 +1,6 @@
 import { S, HANN_LEN, HANN_ATTACK, HANN_RELEASE, MAX_SEEDS, MAX_SEQS, MAX_GRAIN_NODES, GRAIN_SCHEDULER_INTERVAL_MS, SCHED_SAFE_PERIOD_S, SPHERE_RADIUS, perf, gp, minGrainDurS, minGrainPeriodS, buildEnvelopeCurves } from './state.js';
 import { ensureAudioContext, getMasterBus } from './audio.js';
-import { spherePoint, qRotateVec, qConjugate, getCursorLonLat, screenToLonLat } from './sphere.js';
+import { spherePoint, qRotateVec, qConjugate, cameraTransform, getCursorLonLat, screenToLonLat, cameraTransformInto, spherePointInto, updateFusedCamQ } from './sphere.js';
 import { tickSeedRecording } from './ui-presets.js';
 
 // ── Pre-computed VBAP lookup table ──────────────────────────────────────────
@@ -62,6 +62,7 @@ export let activeGrainMap = new Map();
 let _cursorAngCacheLon     = null;
 let _cursorAngCacheLat     = null;
 let _cursorAngCachePartVer = -1;
+let _cursorAngStampLen     = 0;
 
 // ── Reusable cursor effective-params object ──────────────────────────────────
 // Avoids the spread-operator allocation ({...p, duration: ...}) on every cursor
@@ -86,6 +87,17 @@ let _domUpdateCounter = 0;
 function _deferDisconnect(node) {
   try { node.disconnect(); } catch (_) {}
 }
+
+// ── Zero-allocation scratch buffers for per-grain spatial math ────────────
+// Avoids creating ~15 temporary arrays per playGrain call.  Updated in-place
+// by spherePointInto / cameraTransformInto; never leaked to closures.
+const _grainScratchW = [0, 0, 0];   // world-space particle position
+const _grainScratchC = [0, 0, 0];   // camera-space panning position
+
+// ── Seed focus-mode weight buffer ────────────────────────────────────────
+// Allocated once; .fill(0) each scheduler tick instead of `new Float32Array`
+// every 10ms (was 100 allocs/sec → needless GC pressure).
+const _seedWeights = new Float32Array(MAX_SEEDS);
 
 // ── Reusable extra-nodes array for VBAP path ─────────────────────────────
 // playGrain's multi-channel path builds a list of extra gain nodes (mixdown
@@ -204,6 +216,64 @@ function _buildCandidatePool(sortedParticles, k, applyRecency, radiusRad) {
     if (useAllowed && !_recAllowed.has(getBufferKey(p))) continue;
     _candidateBuf.push(p);
   }
+  return _candidateBuf;
+}
+
+// ── O(N) k-selection for nearest mode ──────────────────────────────────────
+// Replaces the O(N log N) sort-then-take-k pattern that was being called per
+// seed per tick (16 seeds × sort(500) = 72,000 comparisons/tick).  This does
+// a single linear pass collecting the k smallest-_ang particles, applying
+// recency filtering inline.  Result is written into _candidateBuf (unsorted,
+// but that's fine — grain selection picks randomly from the pool anyway).
+//
+// _kSelectBuf: fixed-size max-heap of {p, ang} with size ≤ k.  We maintain
+// the max at index 0 so each particle only compares against the largest
+// element in the heap — O(N log k) total, but for small k (≤16) the log k
+// is negligible and the constant factor is tiny.
+const _kSelectBuf = [];
+
+function _buildCandidatePoolNearest(particles, k, applyRecency, radiusRad) {
+  // Phase 0: build recency allow-set from in-radius particles (same as before)
+  let useAllowed = false;
+  if (applyRecency && S.recencyN > 0) {
+    _recBufRec.clear();
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      if (radiusRad !== undefined && p._ang >= radiusRad) continue;
+      const key = getBufferKey(p);
+      if ((_recBufRec.get(key) ?? -Infinity) < p.strokeId) _recBufRec.set(key, p.strokeId);
+    }
+    useAllowed = _buildAllowedFromBufRec();
+  }
+
+  // Phase 1: single-pass k-selection — keep the k smallest _ang particles
+  _kSelectBuf.length = 0;
+  let maxIdx = 0;  // index of current max in _kSelectBuf
+  let maxAng = 0;
+
+  for (let i = 0; i < particles.length; i++) {
+    const p = particles[i];
+    const ang = p._ang;
+    if (useAllowed && !_recAllowed.has(getBufferKey(p))) continue;
+    if (_kSelectBuf.length < k) {
+      _kSelectBuf.push(p);
+      if (ang > maxAng || _kSelectBuf.length === 1) {
+        maxAng = ang; maxIdx = _kSelectBuf.length - 1;
+      }
+    } else if (ang < maxAng) {
+      // Replace the current max with this closer particle
+      _kSelectBuf[maxIdx] = p;
+      // Rescan for new max (k is small, ≤16, so this is cheap)
+      maxAng = 0; maxIdx = 0;
+      for (let j = 0; j < _kSelectBuf.length; j++) {
+        if (_kSelectBuf[j]._ang > maxAng) { maxAng = _kSelectBuf[j]._ang; maxIdx = j; }
+      }
+    }
+  }
+
+  // Copy to _candidateBuf
+  _candidateBuf.length = _kSelectBuf.length;
+  for (let i = 0; i < _kSelectBuf.length; i++) _candidateBuf[i] = _kSelectBuf[i];
   return _candidateBuf;
 }
 
@@ -564,18 +634,30 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       }
     }
 
-    const [wx, wy, wz] = spherePoint(particle.lon, particle.lat);
+    // Zero-alloc scratch for spatial panning (reused across grains)
+    const _gW = _grainScratchW, _gC = _grainScratchC;
+    spherePointInto(particle.lon, particle.lat, _gW);
+    const wx = _gW[0], wy = _gW[1], wz = _gW[2];
 
-    // Headlocked:   transform grain into camera space — panning is view-relative
-    //               (turn your head left, a front grain moves right = pans right).
-    // Worldlocked:  use world-space position directly — speakers are fixed in the
-    //               room, turning your body doesn't move the sound. The camera
-    //               (and sensor) still rotates visually but audio is absolute.
-    // Apply frame rotation to world position if active
-    const [fwx, fwy, fwz] = S.frameQ ? qRotateVec(S.frameQ, [wx, wy, wz]) : [wx, wy, wz];
-    const [cx, cy, cz] = S.spatialPanning === 'worldlocked'
-      ? [fwx, fwy, fwz]
-      : qRotateVec(qConjugate(S.camQ), [fwx, fwy, fwz]);
+    // Worldlocked:  particle's sphere-local position drives panning directly.
+    //               Speakers are fixed in the room — neither cursor nor frame
+    //               movement should change what you hear.
+    // Headlocked:   transform into the viewer's visual space — panning matches what
+    //               you see (left on screen = left in audio).  Uses cameraTransformInto
+    //               (fused quaternion, single rotation, zero allocs).  In 1-IMU mode
+    //               (no frameQ) this reduces to qRotateVec(conj(camQ), …).  In 2-IMU
+    //               mode the cursor determines WHAT plays but the FRAME (projector)
+    //               determines WHERE it's heard: cursor off-screen-left → audio left.
+    //
+    // frameQ is a VISUAL transform that MUST NOT enter worldlocked (it caused drift)
+    // but MUST enter headlocked — that's the whole point of view-relative panning.
+    let cx, cy, cz;
+    if (S.spatialPanning === 'worldlocked') {
+      cx = wx; cy = wy; cz = wz;
+    } else {
+      cameraTransformInto(wx, wy, wz, _gC);
+      cx = _gC[0]; cy = _gC[1]; cz = _gC[2];
+    }
 
     // At dense grain periods (≤ 5ms, ≥ 200Hz repetition) spatial positioning is
     // acoustically inaudible — the human auditory system integrates pan position
@@ -898,6 +980,10 @@ function _advanceMovingSeed(seed, deltaMs) {
 }
 
 export function scheduleGrains() {
+  // Refresh the fused camera quaternion so headlocked panning in playGrain
+  // uses the latest camQ/frameQ even if the scheduler fires between frames.
+  updateFusedCamQ();
+
   // Prune stale glow-map entries BEFORE the AudioContext guard so entries
   // added just before suspension still get cleaned up.  Without this, the
   // map would hold stale references until the context resumes.
@@ -930,10 +1016,12 @@ export function scheduleGrains() {
   const scheduleUntil = audioNow + SCHED_LOOKAHEAD;
 
   const { lon: cursorLon, lat: cursorLat } =
-    (S.mouseInCanvas || S.altLocked)
-      ? screenToLonLat(S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
-                       S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY)
-      : getCursorLonLat();
+    S.cursorQ
+      ? getCursorLonLat()                       // detethered: cursor IMU drives position
+      : (S.mouseInCanvas || S.altLocked)
+        ? screenToLonLat(S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
+                         S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY)
+        : getCursorLonLat();
   const k = S.grainOverrides.k ?? gp().k;
   const searchRadiusRad = S.searchRadiusDeg * Math.PI / 180;
 
@@ -970,19 +1058,25 @@ export function scheduleGrains() {
     // because the seed loop may have overwritten it in the previous tick.
     const particles = S.particles;
     const pLen = particles.length;
-    const cursorAngDirty = cursorLon !== _cursorAngCacheLon
-                        || cursorLat !== _cursorAngCacheLat
+    const cursorMoved = cursorLon !== _cursorAngCacheLon
+                      || cursorLat !== _cursorAngCacheLat;
+    const cursorAngDirty = cursorMoved
                         || S._particleVersion !== _cursorAngCachePartVer;
     if (cursorAngDirty) {
-      // Pre-compute cursor Cartesian once; per-particle cost is then just
-      // acos(dot) = 1 trig call instead of 4 cos + 2 sin + 1 acos = 7.
       const cosLat = Math.cos(cursorLat);
       const crx = cosLat * Math.sin(cursorLon);
       const cry = Math.sin(cursorLat);
       const crz = cosLat * Math.cos(cursorLon);
-      for (let pi = 0; pi < pLen; pi++) {
+      // If cursor moved, all particles need re-stamping.
+      // If only particles changed (painting), incrementally stamp new ones.
+      const stampFrom = cursorMoved ? 0 : (_cursorAngStampLen ?? 0);
+      // Copy cached values for already-stamped particles
+      for (let pi = 0; pi < Math.min(stampFrom, pLen); pi++) {
+        particles[pi]._ang = particles[pi]._cursorAng ?? 0;
+      }
+      // Stamp new / invalidated particles
+      for (let pi = stampFrom; pi < pLen; pi++) {
         const p = particles[pi];
-        // Ensure particle has cached Cartesian (set at creation, but guard old particles)
         if (p._cx === undefined) stampCartesian(p);
         const ang = _angleFromCached(p, crx, cry, crz);
         p._cursorAng = ang;
@@ -991,6 +1085,7 @@ export function scheduleGrains() {
       _cursorAngCacheLon     = cursorLon;
       _cursorAngCacheLat     = cursorLat;
       _cursorAngCachePartVer = S._particleVersion;
+      _cursorAngStampLen     = pLen;
     } else {
       // Restore from per-particle cache — correct regardless of sort order.
       for (let pi = 0; pi < pLen; pi++) particles[pi]._ang = particles[pi]._cursorAng ?? 0;
@@ -1002,9 +1097,8 @@ export function scheduleGrains() {
     // k-all is incompatible with k-nearest — guard here in case state leaks through
     const effectiveKAll = S.grainKAllMode && !S.nearestMode;
     if (S.nearestMode) {
-      particles.sort((a, b) => a._ang - b._ang);
-      // Nearest mode: no radius, no recency — cursor position + k are the only filters
-      candidatePool = _buildCandidatePool(particles, k, false, undefined);
+      // O(N) k-selection — no sort of the global particles array.
+      candidatePool = _buildCandidatePoolNearest(particles, k, false, undefined);
     } else {
       candidatePool = _buildCandidatePoolRadius(particles, searchRadiusRad);
     }
@@ -1049,15 +1143,13 @@ export function scheduleGrains() {
         _cursorNextOnsetT = audioNow + 0.005;
       }
 
-      let toGranulate = [];
-      if (S.nearestMode) {
+      let toGranulate;
+      if (S.nearestMode || effectiveKAll || candidatePool.length <= k) {
         toGranulate = candidatePool;
       } else {
-        // kAllMode: use the full radius pool with no k cap.
-        // Otherwise nearest K from within the radius pool — _ang already stamped.
-        toGranulate = effectiveKAll || candidatePool.length <= k
-          ? candidatePool
-          : candidatePool.sort((a, b) => a._ang - b._ang).slice(0, k);
+        // Radius mode with k cap: k-selection (O(N)) instead of sort+slice.
+        // Runs inside the onset while-loop, so must be cheap.
+        toGranulate = _buildCandidatePoolNearest(candidatePool, k, false, undefined);
       }
 
       if (toGranulate.length > 0) {
@@ -1163,7 +1255,7 @@ export function scheduleGrains() {
   //   seedTether=true  → always plays something (closest seed never silent)
   //   seedTether=false → gated by cursor radius; seeds outside fade to silence
   // seedXfade controls blending: 0 = hard snap (focus only), 1 = full crossfade.
-  const _seedWeights = new Float32Array(MAX_SEEDS); // reused each tick
+  _seedWeights.fill(0);  // clear module-level buffer (no allocation)
   if (S.commitPlayback === 'focus') {
     const radiusGated = !S.commitTether;
     // Radius gate when not "always" (reuse the cursor search radius)
@@ -1329,26 +1421,38 @@ export function scheduleGrains() {
         p._ang = _angleFromCached(p, mRx, mRy, mRz);
       }
     } else {
-      // Stationary seed: use dirty-flag caching (position never changes)
+      // Stationary seed: incremental caching — only stamp NEW particles.
+      // During recording, particles are appended at ~10/sec.  The old approach
+      // recomputed ALL N distances on every version bump, making the cache
+      // effectively useless during recording (16 seeds × 500 particles × 50
+      // ticks = 400K acos/sec).  Now we only compute distances for particles
+      // added since the last stamp and copy the rest from per-particle cache.
       const cAngKey = `_cAng${seed.slotIndex}`;
-      if (seed._angBufPartVer !== S._particleVersion) {
-        if (seed._crx === undefined) {
-          const cosLat = Math.cos(seed.lat);
-          seed._crx = cosLat * Math.sin(seed.lon);
-          seed._cry = Math.sin(seed.lat);
-          seed._crz = cosLat * Math.cos(seed.lon);
-        }
-        for (let pi = 0; pi < cLen; pi++) {
-          const p = cParts[pi];
-          if (p._cx === undefined) stampCartesian(p);
-          const ang = _angleFromCached(p, seed._crx, seed._cry, seed._crz);
-          p[cAngKey] = ang;
-          p._ang     = ang;
-        }
-        seed._angBufPartVer = S._particleVersion;
-      } else {
-        for (let pi = 0; pi < cLen; pi++) cParts[pi]._ang = cParts[pi][cAngKey] ?? 0;
+      if (seed._crx === undefined) {
+        const cosLat = Math.cos(seed.lat);
+        seed._crx = cosLat * Math.sin(seed.lon);
+        seed._cry = Math.sin(seed.lat);
+        seed._crz = cosLat * Math.cos(seed.lon);
       }
+      // _angBufStampLen tracks how many particles have valid cached distances.
+      // Particles beyond this index are new and need stamping.
+      const stampedUpTo = (seed._angBufPartVer === S._particleVersion)
+        ? cLen  // fully up-to-date — just copy
+        : (seed._angBufStampLen ?? 0);
+      // Copy cached distances for already-stamped particles
+      for (let pi = 0; pi < Math.min(stampedUpTo, cLen); pi++) {
+        cParts[pi]._ang = cParts[pi][cAngKey] ?? 0;
+      }
+      // Stamp only new particles (appended beyond previous stamp length)
+      for (let pi = stampedUpTo; pi < cLen; pi++) {
+        const p = cParts[pi];
+        if (p._cx === undefined) stampCartesian(p);
+        const ang = _angleFromCached(p, seed._crx, seed._cry, seed._crz);
+        p[cAngKey] = ang;
+        p._ang     = ang;
+      }
+      seed._angBufPartVer  = S._particleVersion;
+      seed._angBufStampLen = cLen;
     }
 
     // Hoist seedRadiusRad so both branches (nearest + radius) can use it for
@@ -1356,13 +1460,19 @@ export function scheduleGrains() {
     const seedRadiusRad = cSearchDeg * Math.PI / 180;
     let pool;
     if (cNearestMode) {
-      cParts.sort((a, b) => a._ang - b._ang);
+      // O(N) k-selection instead of O(N log N) sort of the global array.
+      // The old code sorted S.particles for EACH seed — 16 seeds × sort(500)
+      // = 72,000 comparisons/tick.  k-selection does a single linear pass.
       pool = cKAllMode
-        ? _buildCandidatePool(cParts, cParts.length, true, seedRadiusRad)
-        : _buildCandidatePool(cParts, cgp.k, true, seedRadiusRad);
+        ? _buildCandidatePoolNearest(cParts, cParts.length, true, seedRadiusRad)
+        : _buildCandidatePoolNearest(cParts, cgp.k, true, seedRadiusRad);
     } else {
       pool = _buildCandidatePoolRadius(cParts, seedRadiusRad);
-      if (!cKAllMode && pool.length > cgp.k) pool.sort((a, b) => a._ang - b._ang).length = cgp.k;
+      if (!cKAllMode && pool.length > cgp.k) {
+        // Radius mode with k cap: use k-selection instead of sort+truncate
+        // Stamp _ang is already done above, so _buildCandidatePoolNearest works
+        pool = _buildCandidatePoolNearest(pool, cgp.k, false, undefined);
+      }
     }
 
     const seedAudioNow   = ensureAudioContext().currentTime;
@@ -1562,11 +1672,15 @@ export function scheduleGrains() {
       // position so the first tick's setTargetAtTime ramp starts from it.
       const initP = seq.particles[seq.playheadIndex] || seq.particles[0];
       if (initP) {
-        const [iWx, iWy, iWz] = spherePoint(initP.lon, initP.lat);
-        const [iFx, iFy, iFz] = S.frameQ ? qRotateVec(S.frameQ, [iWx, iWy, iWz]) : [iWx, iWy, iWz];
-        const [iCx, iCy, iCz] = S.spatialPanning === 'worldlocked'
-          ? [iFx, iFy, iFz]
-          : qRotateVec(qConjugate(S.camQ), [iFx, iFy, iFz]);
+        spherePointInto(initP.lon, initP.lat, _grainScratchW);
+        const iWx = _grainScratchW[0], iWy = _grainScratchW[1], iWz = _grainScratchW[2];
+        let iCx, iCy, iCz;
+        if (S.spatialPanning === 'worldlocked') {
+          iCx = iWx; iCy = iWy; iCz = iWz;
+        } else {
+          cameraTransformInto(iWx, iWy, iWz, _grainScratchC);
+          iCx = _grainScratchC[0]; iCy = _grainScratchC[1]; iCz = _grainScratchC[2];
+        }
         if (seq._vbapGains && _vbapLUT) {
           const iAz = Math.atan2(iCx, iCz);
           const TWO_PI = 2 * Math.PI;
@@ -1639,11 +1753,15 @@ export function scheduleGrains() {
         // ── Dynamic spatial pan — follow playhead particle position ──────
         // Use setTargetAtTime with a short time constant for smooth
         // interpolation, avoiding click/flutter from step changes.
-        const [spWx, spWy, spWz] = spherePoint(p.lon, p.lat);
-        const [spFx, spFy, spFz] = S.frameQ ? qRotateVec(S.frameQ, [spWx, spWy, spWz]) : [spWx, spWy, spWz];
-        const [spCx, spCy, spCz] = S.spatialPanning === 'worldlocked'
-          ? [spFx, spFy, spFz]
-          : qRotateVec(qConjugate(S.camQ), [spFx, spFy, spFz]);
+        spherePointInto(p.lon, p.lat, _grainScratchW);
+        const spWx = _grainScratchW[0], spWy = _grainScratchW[1], spWz = _grainScratchW[2];
+        let spCx, spCy, spCz;
+        if (S.spatialPanning === 'worldlocked') {
+          spCx = spWx; spCy = spWy; spCz = spWz;
+        } else {
+          cameraTransformInto(spWx, spWy, spWz, _grainScratchC);
+          spCx = _grainScratchC[0]; spCy = _grainScratchC[1]; spCz = _grainScratchC[2];
+        }
         const _panRampTau = 0.015; // ~15ms smoothing time constant
         const _panNow = actx.currentTime;
 

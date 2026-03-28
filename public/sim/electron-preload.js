@@ -41,7 +41,9 @@ contextBridge.exposeInMainWorld('electronBridge', {
   // Main → Renderer: credit-based flow control for audio buffer backpressure
   onAudioCredit: (cb) => ipcRenderer.on('audio-credit', (_, credits) => cb(credits)),
 
-  // Toggle native OS fullscreen (web requestFullscreen doesn't work in BrowserWindow)
+  // Toggle fullscreen (uses simpleFullScreen to avoid macOS Spaces blackout).
+  // Returns the new fullscreen state so the renderer can update immediately
+  // (simpleFullScreen doesn't fire enter/leave-full-screen events on all platforms).
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
 
   // Main → Renderer: native fullscreen state changed (enter/leave)

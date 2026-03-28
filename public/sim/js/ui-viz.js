@@ -22,6 +22,43 @@ function bindSlider(sliderId, valId, getter, setter, fmt) {
     setter(parseFloat(slider.value));
     if (valEl) valEl.textContent = fmt(getter());
   });
+  // ── Editable numbox — click the value label to type a precise number ──
+  if (valEl) {
+    valEl.style.cursor = 'text';
+    valEl.addEventListener('click', () => {
+      if (valEl.querySelector('input')) return; // already editing
+      const cur = getter();
+      const inp = document.createElement('input');
+      inp.type  = 'text';
+      inp.value = cur;
+      inp.style.cssText = `
+        width: 100%; background: #222; color: #fff; border: 1px solid #555;
+        border-radius: 3px; font-size: inherit; font-family: inherit;
+        text-align: right; padding: 0 0.2rem; box-sizing: border-box;
+        font-variant-numeric: tabular-nums;
+      `;
+      valEl.textContent = '';
+      valEl.appendChild(inp);
+      inp.focus();
+      inp.select();
+      function commit() {
+        const v = parseFloat(inp.value);
+        if (!isNaN(v)) {
+          const min = parseFloat(slider.min), max = parseFloat(slider.max);
+          const clamped = Math.min(max, Math.max(min, v));
+          setter(clamped);
+          slider.value = clamped;
+        }
+        valEl.textContent = fmt(getter());
+      }
+      inp.addEventListener('blur', commit);
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter')  { e.preventDefault(); inp.blur(); }
+        if (e.key === 'Escape') { valEl.textContent = fmt(getter()); }
+        e.stopPropagation(); // don't trigger app key bindings while typing
+      });
+    });
+  }
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -80,19 +117,33 @@ export function initVizUI() {
   const HUD_SCALE_KEY = 'mubone-hud-scale';
   try {
     const saved = parseFloat(localStorage.getItem(HUD_SCALE_KEY));
-    if (saved >= 0.5 && saved <= 2.0) S.hudScale = saved;
+    if (saved >= 0 && saved <= 2.0) S.hudScale = saved;
   } catch {}
   function applyHudScale(v) {
     S.hudScale = v;
     const wrapper = document.getElementById('canvasWrapper');
     if (wrapper) wrapper.style.setProperty('--hud-scale', v);
+    // Hide the DOM HUD overlay when scale is 0 (HUD off)
+    const hud = wrapper?.querySelector('.hud');
+    if (hud) hud.style.display = v === 0 ? 'none' : '';
     try { localStorage.setItem(HUD_SCALE_KEY, String(v)); } catch {}
   }
   applyHudScale(S.hudScale);
   bindSlider('vizHudScaleSlider', 'vizHudScaleVal',
     () => S.hudScale,
     v  => { applyHudScale(v); },
-    v  => v.toFixed(2));
+    v  => v === 0 ? 'off' : v.toFixed(2));
+
+  // ── Field of view slider ────────────────────────────────────────────────
+  const FOV_KEY = 'mubone_fovDeg';
+  try {
+    const saved = parseFloat(localStorage.getItem(FOV_KEY));
+    if (saved >= 20 && saved <= 120) S.fovDeg = saved;
+  } catch {}
+  bindSlider('vizFovSlider', 'vizFovVal',
+    () => S.fovDeg,
+    v  => { S.fovDeg = v; try { localStorage.setItem(FOV_KEY, String(v)); } catch {} },
+    v  => v.toFixed(1) + '°');
 
   // ── Center reference toggle ─────────────────────────────────────────────
   const zeroRefSeg = document.getElementById('vizZeroRefSeg');

@@ -296,7 +296,10 @@ function setupIPC() {
     return { ok: true, streaming, sampleRate: actualRate };
   });
 
-  // Fullscreen toggle — web requestFullscreen() doesn't work in Electron BrowserWindow
+  // Fullscreen toggle — native OS fullscreen on the current display.
+  // Note: on macOS this creates a Space, which dims the other display.
+  // This is a macOS limitation; simpleFullScreen avoids it but has sizing
+  // issues on modern macOS. The tradeoff is acceptable for now.
   ipcMain.handle('toggle-fullscreen', () => {
     const win = BrowserWindow.getFocusedWindow();
     if (win) win.setFullScreen(!win.isFullScreen());

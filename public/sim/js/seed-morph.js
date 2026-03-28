@@ -128,10 +128,12 @@ export function updateGestureMorph() {
 
   // Get cursor position for nearest-seed lookup
   const { lon: cursorLon, lat: cursorLat } =
-    (S.mouseInCanvas || S.altLocked)
-      ? screenToLonLat(S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
-                       S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY)
-      : getCursorLonLat();
+    S.cursorQ
+      ? getCursorLonLat()                       // detethered: cursor IMU drives position
+      : (S.mouseInCanvas || S.altLocked)
+        ? screenToLonLat(S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
+                         S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY)
+        : getCursorLonLat();
 
   // Determine which seeds to morph and their weights.
   const morphTargets = [];

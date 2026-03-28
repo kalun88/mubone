@@ -1203,6 +1203,7 @@ function _buildSettingsSnapshot() {
     mainInputChannel: S.mainInputChannel ?? 0,
     sampleRate: S.audioCtx?.sampleRate ?? null, bufferSize: S.preferredBufferSize ?? null,
     outputGain: as.outputGain, inputGains: { ...as.inputGains },
+    fovDeg: S.fovDeg,
     vizNoiseFloor: S.vizNoiseFloor, vizMode: S.vizMode,
     vizMinSize: S.vizMinSize, vizMaxSize: S.vizMaxSize,
     vizRmsMin: S.vizRmsMin, vizRmsMax: S.vizRmsMax,
@@ -1280,6 +1281,9 @@ export function loadAudioDefaults() {
 
     // Noise gate
     if (typeof d.vizNoiseFloor  === 'number') S.vizNoiseFloor  = d.vizNoiseFloor;
+
+    // FOV
+    if (typeof d.fovDeg         === 'number')  S.fovDeg          = d.fovDeg;
 
     // Viz calibration
     if (typeof d.vizMode        === 'boolean') S.vizMode         = d.vizMode;

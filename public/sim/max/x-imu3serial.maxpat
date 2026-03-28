@@ -117,7 +117,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "bang" ],
 					"patching_rect" : [ 541.360000000000014, 77.75, 56.0, 22.0 ],
-					"text" : "metro 10"
+					"text" : "metro 20"
 				}
 
 			}
@@ -397,7 +397,7 @@
 
 							}
  ],
-						"originid" : "pat-396"
+						"originid" : "pat-163"
 					}
 ,
 					"patching_rect" : [ 330.0, 929.0, 72.0, 22.0 ],
@@ -649,7 +649,7 @@
 
 							}
  ],
-						"originid" : "pat-398"
+						"originid" : "pat-165"
 					}
 ,
 					"patching_rect" : [ 396.0, 856.5, 53.5, 22.0 ],
@@ -901,7 +901,7 @@
 
 							}
  ],
-						"originid" : "pat-400"
+						"originid" : "pat-167"
 					}
 ,
 					"patching_rect" : [ 330.0, 857.0, 53.5, 22.0 ],
@@ -1068,7 +1068,7 @@
 
 							}
  ],
-						"originid" : "pat-402"
+						"originid" : "pat-169"
 					}
 ,
 					"patching_rect" : [ 218.0, 695.0, 83.0, 22.0 ],
@@ -1659,7 +1659,7 @@
 
 							}
  ],
-						"originid" : "pat-404"
+						"originid" : "pat-171"
 					}
 ,
 					"patching_rect" : [ 569.0, 834.0, 53.5, 22.0 ],
@@ -2690,7 +2690,7 @@
 
 			}
  ],
-		"originid" : "pat-394"
+		"originid" : "pat-161"
 	}
 
 }

@@ -522,6 +522,7 @@ export function stopLiveRecording() {
   // Release the reusable live buffer — the final audioBuffer is now in the slot
   _liveAudioBuf    = null;
   _liveAudioBufLen = 0;
+  _liveCopiedUpTo  = 0;
   S.updateLiveRecUI?.();
 }
 
@@ -919,6 +920,7 @@ export function getRecordingDuration() {
 // AudioBuffer every 200ms.  Only reallocated when recording outgrows it.
 let _liveAudioBuf    = null;
 let _liveAudioBufLen = 0;
+let _liveCopiedUpTo  = 0;  // samples already copied — only copy the delta
 
 export function rebuildLiveBuffer() {
   // Build a running AudioBuffer from raw PCM so grains can play during recording.
@@ -935,16 +937,24 @@ export function rebuildLiveBuffer() {
 
   // Reuse the existing AudioBuffer if it's large enough; otherwise allocate
   // with 2× headroom so reallocations are rare (amortised doubling).
+  let needFullCopy = false;
   if (!_liveAudioBuf || _liveAudioBufLen < len || _liveAudioBuf.sampleRate !== S.recordingSampleRate) {
     const allocLen = Math.max(len, (_liveAudioBufLen || len) * 2);
     _liveAudioBuf    = actx.createBuffer(1, allocLen, S.recordingSampleRate);
     _liveAudioBufLen = allocLen;
+    _liveCopiedUpTo  = 0;  // new buffer — must copy everything
+    needFullCopy = true;
   }
 
-  // Copy current recording data into the reusable buffer.
-  // Grains read from this buffer using duration-based offsets, so the extra
-  // zeroed tail beyond `len` is never reached.
-  _liveAudioBuf.getChannelData(0).set(S.recordingRaw.subarray(0, len));
+  // Incremental copy — only transfer new samples since last rebuild.
+  // At 48kHz with 200ms interval that's ~9600 samples (38KB) instead of
+  // the full recording (which grows to millions of samples over minutes).
+  const channelData = _liveAudioBuf.getChannelData(0);
+  const copyFrom = needFullCopy ? 0 : _liveCopiedUpTo;
+  if (copyFrom < len) {
+    channelData.set(S.recordingRaw.subarray(copyFrom, len), copyFrom);
+  }
+  _liveCopiedUpTo = len;
   S.liveBufferSampleCount = len;
 
   if (S.currentLiveBufferIdx >= 0 && S.currentLiveBufferIdx < S.liveRecBuffers.length) {

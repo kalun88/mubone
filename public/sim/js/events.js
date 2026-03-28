@@ -415,12 +415,17 @@ export function setupEvents() {
       }
     }
 
-    // P: toggle performance monitor
-    if (e.key === 'p' || e.key === 'P') {
+    // p: toggle performance monitor | Shift+P: toggle high-perf render mode
+    if (e.key === 'p' && !e.shiftKey) {
       e.preventDefault();
       S.perfMonitorVisible = !S.perfMonitorVisible;
       const el = document.getElementById('perfMonitor');
       if (el) el.style.display = S.perfMonitorVisible ? 'block' : 'none';
+    }
+    if (e.key === 'P' && e.shiftKey) {
+      e.preventDefault();
+      S.perfMode = !S.perfMode;
+      console.log(`[perf] high-performance render mode ${S.perfMode ? 'ON' : 'OFF'}`);
     }
 
     // N: toggle snap/nearest mode
@@ -725,30 +730,35 @@ export function setupEvents() {
 
   if (!S.isMobile) S.canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
-  // ── Fullscreen ────────────────────────────────────────────────────────────
-  // In Electron, requestFullscreen() on a sub-element doesn't work — use native
-  // BrowserWindow.setFullScreen() via IPC instead.
+  // ── Fullscreen — shared UI update + toggle ──────────────────────────────
+  function applyFullscreenState(isFs) {
+    document.getElementById('fullscreenBtn').textContent = isFs ? '✕' : '⛶';
+    const btn2 = document.getElementById('fullscreenBtn2');
+    if (btn2) btn2.textContent = isFs ? '✕ exit fullscreen' : '⛶ fullscreen';
+    document.body.classList.toggle('electron-fullscreen', isFs);
+    requestAnimationFrame(() => resizeCanvas());
+  }
+
   document.getElementById('fullscreenBtn')?.addEventListener('click', () => {
     if (window.electronBridge?.toggleFullscreen) {
+      // Electron: native fullscreen via IPC. State update comes back via
+      // onFullscreenChanged event.
       window.electronBridge.toggleFullscreen();
     } else {
+      // Browser: use Fullscreen API on the canvas wrapper.
       const wrapper = document.getElementById('canvasWrapper');
       if (!document.fullscreenElement) wrapper?.requestFullscreen().catch(() => {});
       else document.exitFullscreen();
     }
   });
+  // Browser: Fullscreen API state changes (enter/exit, including Escape key)
   document.addEventListener('fullscreenchange', () => {
-    document.getElementById('fullscreenBtn').textContent =
-      document.fullscreenElement ? '✕' : '⛶';
-    requestAnimationFrame(() => resizeCanvas());
+    const isFs = !!document.fullscreenElement;
+    applyFullscreenState(isFs);
   });
-  // Electron native fullscreen doesn't fire the web fullscreenchange event —
-  // listen for the IPC event from main process instead.
+  // Electron: native fullscreen state changes (enter/leave, green button, IPC)
   if (window.electronBridge?.onFullscreenChanged) {
-    window.electronBridge.onFullscreenChanged((isFullscreen) => {
-      document.getElementById('fullscreenBtn').textContent = isFullscreen ? '✕' : '⛶';
-      requestAnimationFrame(() => resizeCanvas());
-    });
+    window.electronBridge.onFullscreenChanged((isFs) => applyFullscreenState(isFs));
   }
 
   // ── Mute button ───────────────────────────────────────────────────────────

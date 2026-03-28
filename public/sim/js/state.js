@@ -16,8 +16,8 @@ export const EXP = new URLSearchParams(window.location.search).has('exp');
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const SPHERE_RADIUS       = 1200;
-export const GRID_SEGMENTS_LON   = 36;  // every 10deg
-export const GRID_SEGMENTS_LAT   = 18;  // every 10deg
+export const GRID_SEGMENTS_LON   = 18;  // every 20deg (halved for perf)
+export const GRID_SEGMENTS_LAT   = 9;   // every 20deg (halved for perf)
 export const AUTO_ROTATION_SPEED = 0.0001;
 export const ROTATION_SPEED      = 0.06;
 export const FOV_DEG             = 80;
@@ -113,9 +113,12 @@ export const MAX_GRAIN_NODES = 150;
 
 // Grain scheduler tick rate in ms. 30ms ≈ 33 ticks/sec.
 // Grains are 25ms–2000ms so 30ms resolution is inaudible.
-// Halving to 15ms doubles scheduling precision but increases CPU load.
-// Doubling to 60ms is still fine for most presets; reduces CPU on weak hardware.
-export const GRAIN_SCHEDULER_INTERVAL_MS = 10;
+// 20ms tick = 50 ticks/sec; with 40ms lookahead, grains overlap 2× (no gaps).
+// Was 10ms but the seed scheduling loop is O(seeds×particles) per tick —
+// at 16 seeds × 500 particles that's 800k+ ops/sec, starving the render loop.
+// 20ms halves the scheduler CPU while keeping onset precision well under
+// the 5ms audio-rate threshold.
+export const GRAIN_SCHEDULER_INTERVAL_MS = 20;
 
 // Minimum period for onset-clock advancement and the UI slider floor.
 // The scheduler can smoothly deliver grains down to
@@ -783,6 +786,7 @@ export const perf = {
   underruns:      0,    // times audio clock fell behind wall clock
   kCount:         0,    // actual particles selected per grain tick (live k count)
   kPool:          0,    // total candidates available before k cap
+  frameSkips:     0,    // frames skipped to give scheduler headroom
   lastResetAt:    0,
   recTotalSec:    0,    // total seconds of audio in liveRecBuffers (updated by updateLiveRecUI)
   recWarning:     false,// true when approaching REC_LIMIT_SECONDS
@@ -967,8 +971,11 @@ export function perfTick() {
 
   const warnEl = document.getElementById('pmUnderruns');
   if (warnEl) {
-    warnEl.textContent  = perf.underruns > 0 ? `⚠ ${perf.underruns} underrun${perf.underruns > 1 ? 's' : ''}` : '';
-    warnEl.style.display = perf.underruns > 0 ? 'block' : 'none';
+    const parts = [];
+    if (perf.underruns > 0)  parts.push(`⚠ ${perf.underruns} underrun${perf.underruns > 1 ? 's' : ''}`);
+    if (perf.frameSkips > 0) parts.push(`⏭ ${perf.frameSkips} skip${perf.frameSkips > 1 ? 's' : ''}`);
+    warnEl.textContent   = parts.join('  ');
+    warnEl.style.display = parts.length > 0 ? 'block' : 'none';
   }
 }
 
@@ -1130,6 +1137,7 @@ export const S = {
   hudScale:      1.0,       // canvas HUD scale — multiplies edge bar height, text size, dot size, spacing
   edgeIndicator:     'on',  // 'on' | 'off' — show off-screen cursor arrow when detethered
   edgeIndicatorSize: 1.0,   // 0.5–2.0 — scale of the edge arrow
+  fovDeg:        80,        // field of view (degrees) — match to projector throw for room-anchored use
   showZeroRef:   true,      // draw center-reference marker on sphere
   driftOffsetQ:  null,      // persistent [x,y,z,w] correction quaternion applied on recenter
 
@@ -1145,6 +1153,11 @@ export const S = {
   // Grain tracking for waveform playhead (ring buffer)
   activeGrains: [],
   _agWriteIdx: 0,    // ring-buffer write cursor for activeGrains
+
+  // ── Performance mode ──────────────────────────────────────────────────
+  // When true: minimal rendering — equator + meridian, particles (no glow),
+  // cursor, no edge HUD, no seed trails, no depth sort. Audio first.
+  perfMode: false,
 
   // ── Performance monitor ────────────────────────────────────────────────
   perfMonitorVisible: false,

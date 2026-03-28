@@ -226,7 +226,8 @@ const ACTIONS = [
 
   // ── App ────────────────────────────────────────────────────────────────────
   { id: null, group: 'app' },
-  { id: 'perf',         label: 'perf monitor',              key: 'P (upper)',          osc: '/app/perf',       fmt: 'int 0|1',          type: 'trigger' },
+  { id: 'perf',         label: 'perf monitor',              key: 'p',                  osc: '/app/perf',       fmt: 'int 0|1',          type: 'trigger' },
+  { id: 'perfmode',     label: 'high-perf render',          key: 'Shift+P',            osc: '/app/perfmode',   fmt: 'int 0|1',          type: 'trigger' },
 ];
 
 // MIDI mappings: { actionId → { type: 'cc'|'note', channel, number } }

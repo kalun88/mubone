@@ -7,11 +7,11 @@ import {
   SPHERE_RADIUS, FOV_DEG, PARTICLE_BASE_SIZE, PARTICLE_MAX_SIZE,
   SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, NEAREST_GLOW_COLOR,
   MAX_SEEDS, MAX_SEQS, AUTO_ROTATION_SPEED, ROTATION_SPEED, PAINT_INTERVAL,
-  RENDER_TARGET_FPS,
+  RENDER_TARGET_FPS, GRAIN_SCHEDULER_INTERVAL_MS,
   perf, perfTick, gp, rebuildGrainCurves, minGrainDurS
 } from './state.js';
-import { spherePoint, cameraTransform, project, getCursorLonLat, screenToLonLat } from './sphere.js';
-import { rand, activeGrainMap, stampCartesian, _interpolateMovingSeed } from './grain.js';
+import { spherePoint, cameraTransform, project, getCursorLonLat, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto } from './sphere.js';
+import { rand, activeGrainMap, stampCartesian } from './grain.js';
 import { rebuildLiveBuffer, getRecordingDuration } from './audio.js';
 import { snapshotInputFeatures, featuresFromBuffer, normalise, featuresToHSL, tickPeakHold } from './audio-features.js';
 
@@ -22,8 +22,24 @@ let _coordEl = null;
 
 // ── Main draw frame ───────────────────────────────────────────────────────────
 export function drawFrame() {
+  // Pre-compute fused camera quaternion once per frame — all subsequent
+  // cameraTransformInto calls use a single rotation instead of two.
+  updateFusedCamQ();
+
   S.ctx.fillStyle = BG_COLOR;
   S.ctx.fillRect(0, 0, S.canvas.width, S.canvas.height);
+
+  if (S.perfMode) {
+    // ── Minimal render: reference lines, particles, anchors, cursor, edge bar ──
+    drawGridLines();         // respects perfMode internally — equator + meridian only
+    drawParticlesMinimal();
+    drawSeedAnchorsMinimal();
+    drawCursor();
+    S.updateSeedBanksUI?.();
+    drawEdgeHUD();           // 3 fillRects — negligible cost
+    return;
+  }
+
   drawGridLines();
   drawParticles();
   S.updateLiveGranulatingIndicator?.();
@@ -33,7 +49,7 @@ export function drawFrame() {
   S.drawSvLiveOverlay?.();
   drawRadiusTooltip();
   // Meters now drawn by DOM-based startMainMetering() loop in ui-meters.js
-  if (typeof S.drawRecencyDial === 'function') S.drawRecencyDial();
+  // Recency dial removed — visual clutter, recency-N controlled via slider/OSC
   S.drawRadiusViz?.();
   S.updateSeedBanksUI?.();  // unified: both aliases point to updateCommitBanksUI
   S._syncSeqControls?.();
@@ -41,11 +57,29 @@ export function drawFrame() {
 }
 
 // ── Seed rendering ───────────────────────────────────────────────────────────
+// Budget: max trail projections per frame.  With 16 moving seeds × 50 points
+// = 800 projections + canvas arcs, which was the main stall source.
+// Cap at ~200 total trail projections.  Each trail gets maxTrailSamples from
+// the budget; excess seeds get no trail (just dot + edge indicator).
+const _TRAIL_BUDGET = 200;
+
 export function drawSeeds() {
-  const { lon: curLon, lat: curLat } = S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY) : getCursorLonLat();
+  const { lon: curLon, lat: curLat } = S.cursorQ ? getCursorLonLat()
+    : S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY) : getCursorLonLat();
   const nearestSlot = S.findNearestSeedSlot?.(curLon, curLat) ?? -1;
   const W = S.canvas.width, H = S.canvas.height;
   const margin = 14;
+
+  // Count moving seeds to budget trail draws
+  let movingCount = 0;
+  for (let i = 0; i < S.commitSlotCount; i++) {
+    const s = S.commitSlots[i];
+    if (s && s.type === 'cloud' && s.frames) movingCount++;
+  }
+  // Per-seed trail sample budget (0 = skip trails entirely)
+  const trailSamples = movingCount > 0
+    ? Math.min(50, Math.floor(_TRAIL_BUDGET / movingCount))
+    : 0;
 
   for (let i = 0; i < S.commitSlotCount; i++) {
     const seed = S.commitSlots[i];
@@ -54,15 +88,12 @@ export function drawSeeds() {
     const isMoving = seed.frames !== null && seed.frames !== undefined;
     const isNearest = i === nearestSlot;
 
-    // ── Moving seed: draw trail path first (behind the current indicator) ──
-    if (isMoving) {
-      _drawMovingSeedTrail(seed, i, isNearest);
-    }
-
-    // ── Resolve current position (interpolated for moving, static for stationary) ──
+    // ── Resolve current position ───────────────────────────────────────
+    // Moving seeds: reuse _currentFrame written by grain scheduler (avoids
+    // redundant binary search + interpolation per frame).
     let vizLon, vizLat, vizNearestMode, vizSearchRadiusDeg;
     if (isMoving) {
-      const frame = _interpolateMovingSeed(seed);
+      const frame = seed._currentFrame;
       if (!frame) continue;
       vizLon = frame.lon;
       vizLat = frame.lat;
@@ -75,9 +106,17 @@ export function drawSeeds() {
       vizSearchRadiusDeg = seed.searchRadiusDeg;
     }
 
-    const [wx, wy, wz] = spherePoint(vizLon, vizLat);
-    const [cx, cy, cz] = cameraTransform(wx, wy, wz);
+    spherePointInto(vizLon, vizLat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    const cx = _arcC[0], cy = _arcC[1], cz = _arcC[2];
     const proj = project(cx, cy, cz);
+
+    // ── Moving seed trail (only when on-screen and budget allows) ──────
+    // Off-screen trails are invisible; skip them entirely to avoid
+    // 50 wasted projection + canvas calls per off-screen seed.
+    if (isMoving && proj && trailSamples >= 4) {
+      _drawMovingSeedTrail(seed, i, isNearest, trailSamples);
+    }
 
     if (proj) {
       // Envelope gain: modulates visual opacity during attack/release
@@ -99,17 +138,14 @@ export function drawSeeds() {
         S.ctx.stroke();
       } else {
         const rRad    = vizSearchRadiusDeg * Math.PI / 180;
-        const fovRad  = (FOV_DEG * Math.PI) / 180;
-        const focalLen = (W / 2) / Math.tan(fovRad / 2);
+        const fovRad  = ((S.fovDeg ?? FOV_DEG) * Math.PI) / 180;
+        const focalLen = (Math.min(W, H) / 2) / Math.tan(fovRad / 2);
         const screenR  = focalLen * Math.tan(rRad) / (proj.depth / SPHERE_RADIUS);
         S.ctx.beginPath();
         S.ctx.arc(proj.sx, proj.sy, Math.max(12, screenR), 0, Math.PI * 2);
         S.ctx.stroke();
       }
       S.ctx.setLineDash([]);
-      // Center dot and label ignore envelope gain — the anchor should be
-      // visible immediately when planted, even with slow attack envelopes.
-      // The radius circle/diamond above still fades with envG.
       S.ctx.globalAlpha = isNearest ? 1 : 0.6;
       S.ctx.fillStyle = seed.color;
       const centerDotR = isMoving ? 3 : 6;
@@ -218,9 +254,9 @@ function _drawVelocityDotTrail(frames, color, alpha, dotR, maxSamples) {
 
   for (let fi = 0; fi < frames.length; fi += step) {
     const f = frames[fi];
-    const [wx, wy, wz] = spherePoint(f.lon, f.lat);
-    const [cx, cy, cz] = cameraTransform(wx, wy, wz);
-    const proj = project(cx, cy, cz);
+    spherePointInto(f.lon, f.lat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    const proj = project(_arcC[0], _arcC[1], _arcC[2]);
     if (!proj) { prevProj = null; continue; }
 
     if (prevProj) {
@@ -265,9 +301,9 @@ function _drawVelocityDotTrail(frames, color, alpha, dotR, maxSamples) {
 
   // Ensure last frame included
   const last = frames[frames.length - 1];
-  const [lwx, lwy, lwz] = spherePoint(last.lon, last.lat);
-  const [lcx, lcy, lcz] = cameraTransform(lwx, lwy, lwz);
-  const lastProj = project(lcx, lcy, lcz);
+  spherePointInto(last.lon, last.lat, _arcW);
+  cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+  const lastProj = project(_arcC[0], _arcC[1], _arcC[2]);
 
   // Start + end markers
   // Start dot is large (matches stationary seed size) — this is the anchor
@@ -275,9 +311,9 @@ function _drawVelocityDotTrail(frames, color, alpha, dotR, maxSamples) {
   // End dot stays small so it's visually distinct.
   S.ctx.globalAlpha = Math.min(1, alpha + 0.15);
   const first = frames[0];
-  const [fwx, fwy, fwz] = spherePoint(first.lon, first.lat);
-  const [fcx, fcy, fcz] = cameraTransform(fwx, fwy, fwz);
-  const firstProj = project(fcx, fcy, fcz);
+  spherePointInto(first.lon, first.lat, _arcW);
+  cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+  const firstProj = project(_arcC[0], _arcC[1], _arcC[2]);
   if (firstProj) {
     S.ctx.beginPath(); S.ctx.arc(firstProj.sx, firstProj.sy, 6, 0, Math.PI * 2); S.ctx.fill();
   }
@@ -301,9 +337,9 @@ function _drawLiveRecordingTrail() {
 
 // ── Moving seed trail ──────────────────────────────────────────────────────
 // Delegates to the shared velocity-dot renderer.
-function _drawMovingSeedTrail(seed, slotIndex, isNearest) {
+function _drawMovingSeedTrail(seed, slotIndex, isNearest, maxSamples) {
   const alpha = isNearest ? 0.7 : 0.45;
-  _drawVelocityDotTrail(seed.frames, seed.color, alpha, 2.5, 50);
+  _drawVelocityDotTrail(seed.frames, seed.color, alpha, 2.5, maxSamples || 50);
 }
 
 // ── Tether line ───────────────────────────────────────────────────────────────
@@ -329,6 +365,15 @@ export function drawTetherLine() {
 
 // ── Grid lines ────────────────────────────────────────────────────────────────
 export function drawGridLines() {
+  if (S.perfMode) {
+    // Minimal: equator + zero meridian only (2 arcs instead of ~27)
+    S.ctx.strokeStyle = '#a0dede'; S.ctx.lineWidth = 2.5; S.ctx.globalAlpha = 0.9;
+    drawArc(0, 'lat');
+    if (S.showZeroRef) drawArc(0, 'lon');
+    S.ctx.globalAlpha = 1;
+    return;
+  }
+
   for (let i = 0; i < GRID_SEGMENTS_LON; i++) {
     const lon = (i / GRID_SEGMENTS_LON) * Math.PI * 2;
     if (i === 0 && S.showZeroRef) {
@@ -343,12 +388,15 @@ export function drawGridLines() {
     }
     drawArc(lon, 'lon');
   }
+  // Always draw the equator explicitly — grid density changes must not lose it
+  S.ctx.strokeStyle = '#a0dede'; S.ctx.lineWidth = 2.5; S.ctx.globalAlpha = 0.9;
+  drawArc(0, 'lat');
   for (let i = 1; i < GRID_SEGMENTS_LAT; i++) {
     const lat          = (i / GRID_SEGMENTS_LAT) * Math.PI - Math.PI / 2;
     const distFromEq   = Math.abs(lat) / (Math.PI / 2);
+    if (distFromEq < 0.05) continue; // skip if it overlaps the explicit equator
     const gridTint     = lat > 0 ? '#c8a060' : '#60a0c8';
-    if      (distFromEq < 0.05) { S.ctx.strokeStyle = '#a0dede'; S.ctx.lineWidth = 2.5; S.ctx.globalAlpha = 0.9;  }
-    else if (distFromEq < 0.4)  { S.ctx.strokeStyle = gridTint;  S.ctx.lineWidth = 1.2; S.ctx.globalAlpha = 0.6; }
+    if      (distFromEq < 0.4)  { S.ctx.strokeStyle = gridTint;  S.ctx.lineWidth = 1.2; S.ctx.globalAlpha = 0.6; }
     else if (distFromEq < 0.7)  { S.ctx.strokeStyle = gridTint;  S.ctx.lineWidth = 0.8; S.ctx.globalAlpha = 0.4;  }
     else                        { S.ctx.strokeStyle = gridTint;  S.ctx.lineWidth = 0.5; S.ctx.globalAlpha = 0.2;  }
     drawArc(lat, 'lat');
@@ -356,17 +404,20 @@ export function drawGridLines() {
   S.ctx.globalAlpha = 1;
 }
 
+// Reusable scratch buffers for drawArc — avoids ~14,000 array allocations/frame
+const _arcW = [0, 0, 0];
+const _arcC = [0, 0, 0];
 export function drawArc(angle, type) {
-  const steps = 24;
+  const steps = 12;  // halved from 24 — saves ~650 transforms/frame
   let started = false;
   S.ctx.beginPath();
   for (let i = 0; i <= steps; i++) {
     const t   = i / steps;
     const lon = type === 'lon' ? angle : t * Math.PI * 2;
     const lat = type === 'lon' ? t * Math.PI - Math.PI / 2 : angle;
-    const [wx, wy, wz] = spherePoint(lon, lat);
-    const [cx, cy, cz] = cameraTransform(wx, wy, wz);
-    const proj = project(cx, cy, cz);
+    spherePointInto(lon, lat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    const proj = project(_arcC[0], _arcC[1], _arcC[2]);
     if (proj) {
       if (!started) { S.ctx.moveTo(proj.sx, proj.sy); started = true; }
       else            S.ctx.lineTo(proj.sx, proj.sy);
@@ -384,8 +435,8 @@ export function drawRadiusTooltip() {
 
   // Compute brush radius for offset positioning
   const searchRadiusRad = S.searchRadiusDeg * Math.PI / 180;
-  const fovRad   = (FOV_DEG * Math.PI) / 180;
-  const focalLen = (S.canvas.width / 2) / Math.tan(fovRad / 2);
+  const fovRad   = ((S.fovDeg ?? FOV_DEG) * Math.PI) / 180;
+  const focalLen = (Math.min(S.canvas.width, S.canvas.height) / 2) / Math.tan(fovRad / 2);
   const brushR   = S.nearestMode ? 28
     : searchRadiusRad < Math.PI / 2
       ? focalLen * Math.tan(searchRadiusRad)
@@ -446,10 +497,15 @@ export function drawParticles() {
   _glowCache.clear();
   const hasGlow = activeGrainMap.size > 0;
 
+  // Reusable scratch for per-particle projection — zero allocations in loop
+  const _pW = [0, 0, 0];
+  const _pC = [0, 0, 0];
+
   let count = 0;
   for (const p of S.particles) {
-    const [wx, wy, wz] = spherePoint(p.lon, p.lat);
-    const [cx, cy, cz] = cameraTransform(wx, wy, wz);
+    spherePointInto(p.lon, p.lat, _pW);
+    cameraTransformInto(_pW[0], _pW[1], _pW[2], _pC);
+    const cx = _pC[0], cy = _pC[1], cz = _pC[2];
     const proj = project(cx, cy, cz);
     if (!proj) continue;
     const mag    = Math.sqrt(cx*cx + cy*cy + cz*cz);
@@ -470,16 +526,13 @@ export function drawParticles() {
   }
 
   const buf = _sortBuf;
-  const idx = _sortIdx;
-  for (let i = 0; i < count; i++) idx[i] = i;
-  idx.subarray(0, count).sort((a, b) => buf[b * STRIDE + 2] - buf[a * STRIDE + 2]);
 
   // Read mutable size overrides (set from viz modal sliders)
   const pBase = S.vizMinSize ?? PARTICLE_BASE_SIZE;
   const pMax  = S.vizMaxSize ?? PARTICLE_MAX_SIZE;
 
   for (let ii = 0; ii < count; ii++) {
-    const i          = idx[ii] * STRIDE;
+    const i          = ii * STRIDE;
     const sx         = buf[i];
     const sy         = buf[i + 1];
     const depth      = buf[i + 2];
@@ -503,7 +556,7 @@ export function drawParticles() {
       alpha = (0.35 + 0.65 * depthScale) * (0.5 + 0.5 * facing);
     } else {
       // ── Original palette rendering (fallback) ──
-      color = _colorBuf[idx[ii]];
+      color = _colorBuf[ii];
       size  = pBase + (pMax - pBase) * depthScale;
       alpha = (0.3 + 0.7 * depthScale) * (0.5 + 0.5 * facing);
     }
@@ -547,9 +600,9 @@ export function drawParticles() {
     if (!seq || seq.type !== 'loop' || !seq.playing || !seq.particles.length) continue;
     const p = seq.particles[seq.playheadIndex];
     if (!p) continue;
-    const [wx, wy, wz] = spherePoint(p.lon, p.lat);
-    const [cx, cy, cz] = cameraTransform(wx, wy, wz);
-    const proj = project(cx, cy, cz);
+    spherePointInto(p.lon, p.lat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    const proj = project(_arcC[0], _arcC[1], _arcC[2]);
     if (!proj || proj.depth > SPHERE_RADIUS * 2) continue;
     const facing = Math.max(0, 1 - proj.depth / SPHERE_RADIUS);
     const df = Math.max(0, 1 - (proj.depth / (SPHERE_RADIUS * 2)));
@@ -570,9 +623,9 @@ export function drawParticles() {
     const aLon = seq.anchorLon ?? seq.particles[0]?.lon;
     const aLat = seq.anchorLat ?? seq.particles[0]?.lat;
     if (aLon == null || aLat == null) continue;
-    const [wx, wy, wz] = spherePoint(aLon, aLat);
-    const [cx, cy, cz] = cameraTransform(wx, wy, wz);
-    const proj = project(cx, cy, cz);
+    spherePointInto(aLon, aLat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    const proj = project(_arcC[0], _arcC[1], _arcC[2]);
     if (!proj || proj.depth > SPHERE_RADIUS * 2) continue;
     const df = Math.max(0, 1 - (proj.depth / (SPHERE_RADIUS * 2)));
     const a = (seq.playing ? 0.9 : 0.4) * df;
@@ -603,6 +656,104 @@ export function drawParticles() {
   }
 }
 
+// ── Minimal particle renderer (perfMode) ───────────────────────────────────
+// Single pass, no depth sort, no glow overlay, no sequence markers.
+// Eliminates: O(N log N) sort, activeGrainMap lookups, second glow pass,
+// sequence playhead + anchor rendering.  Roughly 3× fewer canvas ops.
+function drawParticlesMinimal() {
+  const useViz = S.vizMode;
+  const pBase = S.vizMinSize ?? PARTICLE_BASE_SIZE;
+  const pMax  = S.vizMaxSize ?? PARTICLE_MAX_SIZE;
+  const _pW = [0, 0, 0];
+  const _pC = [0, 0, 0];
+
+  for (const p of S.particles) {
+    spherePointInto(p.lon, p.lat, _pW);
+    cameraTransformInto(_pW[0], _pW[1], _pW[2], _pC);
+    const cx = _pC[0], cy = _pC[1], cz = _pC[2];
+    const proj = project(cx, cy, cz);
+    if (!proj) continue;
+    const mag    = Math.sqrt(cx*cx + cy*cy + cz*cz);
+    const facing = Math.max(0, cz / mag);
+    const df     = Math.max(0, 1 - (proj.depth / (SPHERE_RADIUS * 2)));
+
+    let size, color, alpha;
+    if (useViz && (p.rms ?? 0) > 0) {
+      const rmsN  = normalise(p.rms, S.vizRmsMin, S.vizRmsMax);
+      size  = (pBase + (pMax - pBase) * rmsN) * (0.5 + 0.5 * df);
+      color = featuresToHSL(
+        normalise(p.centroid ?? 0, S.vizCentroidMin, S.vizCentroidMax),
+        p.zcr ?? 0
+      );
+      alpha = (0.35 + 0.65 * df) * (0.5 + 0.5 * facing);
+    } else {
+      color = p.color;
+      size  = pBase + (pMax - pBase) * df;
+      alpha = (0.3 + 0.7 * df) * (0.5 + 0.5 * facing);
+    }
+
+    S.ctx.globalAlpha = alpha;
+    S.ctx.fillStyle   = color;
+    S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, size, 0, Math.PI * 2); S.ctx.fill();
+  }
+  S.ctx.globalAlpha = 1;
+}
+
+// ── Minimal seed/loop anchor markers (perfMode) ──────────────────────────────
+// Static dot + slot number at each committed slot's INITIAL placement position.
+// Moving seeds show frames[0], not the current interpolated position.
+// Draws the search radius circle if one was set at placement time.
+function drawSeedAnchorsMinimal() {
+  const _aW = [0, 0, 0];
+  const _aC = [0, 0, 0];
+  const fovRad = ((S.fovDeg ?? FOV_DEG) * Math.PI) / 180;
+
+  for (let si = 0; si < S.commitSlotCount; si++) {
+    const slot = S.commitSlots[si];
+    if (!slot) continue;
+    // Resolve initial placement position — frames[0] for moving, static otherwise
+    let aLon, aLat, color, radiusDeg;
+    if (slot.type === 'cloud') {
+      aLon = (slot.frames && slot.frames.length) ? slot.frames[0].lon : slot.lon;
+      aLat = (slot.frames && slot.frames.length) ? slot.frames[0].lat : slot.lat;
+      color = slot.color || '#4a9fd4';
+      radiusDeg = slot.searchRadiusDeg;
+    } else if (slot.type === 'loop') {
+      aLon = slot.anchorLon ?? slot.particles[0]?.lon;
+      aLat = slot.anchorLat ?? slot.particles[0]?.lat;
+      color = slot.color || '#ff6b9d';
+      radiusDeg = slot.searchRadiusDeg;
+    } else continue;
+    if (aLon == null || aLat == null) continue;
+
+    spherePointInto(aLon, aLat, _aW);
+    cameraTransformInto(_aW[0], _aW[1], _aW[2], _aC);
+    const proj = project(_aC[0], _aC[1], _aC[2]);
+    if (!proj || proj.depth > SPHERE_RADIUS * 2) continue;
+    const df = Math.max(0, 1 - (proj.depth / (SPHERE_RADIUS * 2)));
+
+    // Search radius circle at placement position
+    if (radiusDeg && radiusDeg > 0) {
+      const radiusRad = radiusDeg * Math.PI / 180;
+      const radiusPx  = (radiusRad / fovRad) * Math.min(S.canvas.width, S.canvas.height) * 0.5;
+      S.ctx.globalAlpha = 0.35 * df;
+      S.ctx.strokeStyle = color;
+      S.ctx.lineWidth = 1;
+      S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, radiusPx, 0, Math.PI * 2); S.ctx.stroke();
+    }
+
+    // Anchor dot
+    S.ctx.globalAlpha = 0.8 * df;
+    S.ctx.fillStyle = color;
+    S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, 5, 0, Math.PI * 2); S.ctx.fill();
+    // Slot number
+    S.ctx.font = 'bold 11px "Roboto Mono", monospace';
+    S.ctx.textAlign = 'center'; S.ctx.textBaseline = 'middle';
+    S.ctx.fillText(si + 1, proj.sx, proj.sy - 14);
+  }
+  S.ctx.globalAlpha = 1;
+}
+
 // ── Cursor ────────────────────────────────────────────────────────────────────
 //
 // Redesigned "Mode Ring" HUD — 3 concentric zones:
@@ -619,8 +770,8 @@ export function drawCursor() {
   const w = S.canvas.width, h = S.canvas.height;
 
   const searchRadiusRad = S.searchRadiusDeg * Math.PI / 180;
-  const fovRad   = (FOV_DEG * Math.PI) / 180;
-  const focalLen = (w / 2) / Math.tan(fovRad / 2);
+  const fovRad   = ((S.fovDeg ?? FOV_DEG) * Math.PI) / 180;
+  const focalLen = (Math.min(w, h) / 2) / Math.tan(fovRad / 2);
   const brushR   = searchRadiusRad < Math.PI / 2
     ? focalLen * Math.tan(searchRadiusRad)
     : w * 0.8;
@@ -634,8 +785,8 @@ export function drawCursor() {
   if (S.cursorQ) {
     // Detethered: project cursorQ forward vector through camera to screen
     const fwd = _qRotVec(S.cursorQ, [0, 0, 1]);
-    const cam = cameraTransform(fwd[0], fwd[1], fwd[2]);
-    const p   = project(cam[0], cam[1], cam[2]);
+    cameraTransformInto(fwd[0], fwd[1], fwd[2], _arcC);
+    const p   = project(_arcC[0], _arcC[1], _arcC[2]);
     if (p && p.sx >= 0 && p.sx <= w && p.sy >= 0 && p.sy <= h) {
       mx = p.sx;
       my = p.sy;
@@ -648,9 +799,9 @@ export function drawCursor() {
       } else {
         // Behind camera — project to closest edge using 2D direction
         const fwd2d = _qRotVec(S.cursorQ, [0, 0, 1]);
-        const cam2d = cameraTransform(fwd2d[0], fwd2d[1], fwd2d[2]);
+        cameraTransformInto(fwd2d[0], fwd2d[1], fwd2d[2], _arcC);
         // Use x/y to determine edge direction even though z <= 0
-        const angle = Math.atan2(-cam2d[1], cam2d[0]);
+        const angle = Math.atan2(-_arcC[1], _arcC[0]);
         mx = cx + Math.cos(angle) * (w / 2);
         my = cy - Math.sin(angle) * (h / 2);
         mx = Math.max(0, Math.min(w, mx));
@@ -796,6 +947,7 @@ export function drawCursor() {
 const EDGE_H_BASE = 18;  // bar height at scale 1.0
 
 function drawEdgeHUD() {
+  if (S.hudScale === 0) return;   // HUD off
   const scale = S.hudScale || 1;
   const EDGE_H = Math.round(EDGE_H_BASE * scale);
   const W = S.canvas.width;
@@ -879,8 +1031,22 @@ export function animate() {
   _animLastAt = _animNow;
   perfTick();
 
-  // Sample the input analyser every frame so transient peaks between paint
-  // events are captured and held for the next snapshotInputFeatures() call.
+  // ── 30fps gate — skip all heavy work on interim RAF callbacks ─────────
+  // The projector/display fires RAF at 60hz, but we only need 30fps for
+  // rendering AND for camera/sensor/painting updates.  Running camera math
+  // + sensor reads + painting at 60hz wastes half the CPU budget.
+  // perf.frameMs is still tracked at full RAF rate for drift monitoring.
+  const _frameMs = 1000 / RENDER_TARGET_FPS;
+  const now30 = performance.now();
+  const elapsed30 = now30 - (animate._lastRenderTime || 0);
+  if (elapsed30 < _frameMs) {
+    requestAnimationFrame(animate);
+    return;
+  }
+  animate._lastRenderTime = now30 - (elapsed30 % _frameMs);
+
+  // Sample the input analyser every render frame so transient peaks between
+  // paint events are captured and held for the next snapshotInputFeatures().
   tickPeakHold();
 
   // In sensor or surface mode, lock cursor to canvas centre
@@ -1127,19 +1293,30 @@ export function animate() {
 
   if (S.isRecording) rebuildLiveBuffer();
 
-  const _frameMs = 1000 / RENDER_TARGET_FPS;
-  const now30 = performance.now();
-  const elapsed30 = now30 - (animate._lastRenderTime || 0);
-  if (elapsed30 >= _frameMs) {
-    animate._lastRenderTime = now30 - (elapsed30 % _frameMs);
+  // ── Frame-skip under CPU pressure ────────────────────────────────────────
+  // Audio is higher priority than visuals.  When the grain scheduler is
+  // running late (schedulerDrift > 1.5× its interval), skip the expensive
+  // drawFrame() call so the next setInterval callback gets more main-thread
+  // time.  Camera math, painting, and sensor reads above still execute —
+  // only the canvas redraw is deferred.  At most one frame is skipped
+  // consecutively to avoid a frozen display.
+  const _skipThreshold = GRAIN_SCHEDULER_INTERVAL_MS * 1.5;
+  const _schedPressure = perf.schedulerDrift > _skipThreshold;
+  const _canSkip = !animate._skippedLast;  // never skip two in a row
+  if (_schedPressure && _canSkip) {
+    animate._skippedLast = true;
+    perf.frameSkips++;
+  } else {
+    animate._skippedLast = false;
     try { drawFrame(); } catch (e) { console.error('drawFrame error:', e); }
-    S.updateWaveformPlayheads?.();
-
-    const { lon, lat } = S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY) : getCursorLonLat();
-    const lonDeg = (lon * 180 / Math.PI).toFixed(1).padStart(7);
-    const latDeg = (lat * 180 / Math.PI).toFixed(1).padStart(6);
-    if (_coordEl) _coordEl.textContent = `${lonDeg}°,${latDeg}°`;
   }
+  S.updateWaveformPlayheads?.();
+
+  const { lon, lat } = S.cursorQ ? getCursorLonLat()
+    : S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY) : getCursorLonLat();
+  const lonDeg = (lon * 180 / Math.PI).toFixed(1).padStart(7);
+  const latDeg = (lat * 180 / Math.PI).toFixed(1).padStart(6);
+  if (_coordEl) _coordEl.textContent = `${lonDeg}°,${latDeg}°`;
 
   // Unified meter tick — runs inside the main RAF loop instead of its own
   S._tickMainMeters?.();

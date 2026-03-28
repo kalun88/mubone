@@ -78,6 +78,18 @@
   }
   .top-bar-btn:hover { color: #aaaaaa; border-color: transparent; }
   .top-bar-btn.active { color: #ffffff; border-color: transparent; }
+  /* ── Max bridge indicator — inline in sensor group ─────────────────────── */
+  .max-indicator {
+    display: none;            /* hidden until Max connects */
+    font-size: 0.55rem;
+    font-family: 'Roboto Mono', monospace;
+    letter-spacing: 0.08em;
+    color: #7abcbc;
+    padding-right: 0.3rem;
+    line-height: 1;
+    user-select: none;
+  }
+  .max-indicator.visible { display: inline; }
   /* ── Sensor group — label + separator ──────────────────────────────────── */
   .sensor-group-label {
     font-size: 0.6rem;
@@ -192,7 +204,27 @@
     aspect-ratio: unset;
     border: none;
     border-radius: 0;
+    background: #000000;
   }
+  .canvas-wrapper:fullscreen::backdrop,
+  .canvas-wrapper:-webkit-full-screen::backdrop {
+    background: #000000;
+  }
+  /* ── Electron fullscreen: viz-only mode (hides GUI, matches browser behaviour) ── */
+  body.electron-fullscreen { padding: 0 !important; gap: 0 !important; }
+  body.electron-fullscreen .top-bar       { display: none !important; }
+  body.electron-fullscreen .right-panel   { display: none !important; }
+  body.electron-fullscreen .bottom-panel  { display: none !important; }
+  body.electron-fullscreen .main-layout   { gap: 0; }
+  body.electron-fullscreen .canvas-wrapper {
+    width: 100vw;
+    height: 100vh;
+    aspect-ratio: unset;
+    border: none;
+    border-radius: 0;
+    background: #000000;
+  }
+
   /* no hide rule needed — fullscreen overlay already covers other elements */
   canvas {
     display: block;

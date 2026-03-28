@@ -10,7 +10,7 @@
 		}
 ,
 		"classnamespace" : "box",
-		"rect" : [ 191.0, 472.0, 1642.0, 972.0 ],
+		"rect" : [ -524.0, 506.0, 1642.0, 972.0 ],
 		"openrect" : [ 0.0, 0.0, 2040.6796875, 1328.125 ],
 		"default_fontsize" : 11.0,
 		"gridsize" : [ 15.0, 15.0 ],
@@ -34,7 +34,6 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 1383.5, 545.0, 51.0, 82.0 ],
-					"presentation_linecount" : 6,
 					"text" : "-0.0268 0.0956 0.1093 -0.0013 0.02 1.0015"
 				}
 
@@ -83,7 +82,6 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 1235.5, 560.0, 58.0, 58.0 ],
-					"presentation_linecount" : 4,
 					"text" : "-0.0085 -0.0053 -0.4602 -0.8879"
 				}
 
@@ -109,7 +107,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 914.0, 30.0, 50.0, 82.0 ],
-					"text" : "-0.5737 0.0569 -0.22 -0.0175 -0.3459 0.9415"
+					"text" : "-0.4303 1.2059 -2.0492 -0.5696 0.2455 0.7838"
 				}
 
 			}
@@ -122,7 +120,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 793.0, 61.0, 50.0, 58.0 ],
-					"text" : "0.1646 -0.0531 0.2565 -0.9511"
+					"text" : "-0.0046 0.3252 0.417 0.8489"
 				}
 
 			}
@@ -178,8 +176,8 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 1105.0, 296.0, 180.0, 21.0 ],
-					"text" : "prepend /sensor/ximu-wand/inertial"
+					"patching_rect" : [ 1105.0, 296.0, 147.0, 21.0 ],
+					"text" : "prepend /sensor/curs/inertial"
 				}
 
 			}
@@ -190,8 +188,8 @@
 					"numinlets" : 1,
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
-					"patching_rect" : [ 882.0, 291.0, 199.0, 21.0 ],
-					"text" : "prepend /sensor/ximu-wand/quaternion"
+					"patching_rect" : [ 882.0, 291.0, 167.0, 21.0 ],
+					"text" : "prepend /sensor/curs/quaternion"
 				}
 
 			}
@@ -204,7 +202,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 1111.0, 131.5, 51.0, 82.0 ],
-					"text" : "0.3556 0.1297 0.3807 -0.4759 0.0527 0.8775"
+					"text" : "-0.0322 -0.0399 -0.0848 -0.1139 0.0074 0.9958"
 				}
 
 			}
@@ -217,7 +215,7 @@
 					"numoutlets" : 1,
 					"outlettype" : [ "" ],
 					"patching_rect" : [ 992.0, 131.5, 58.0, 58.0 ],
-					"text" : "-0.2274 0.0959 0.9297 0.2737"
+					"text" : "-0.0452 0.0347 0.8201 0.5696"
 				}
 
 			}
@@ -1122,6 +1120,8 @@
 					"saved_object_attributes" : 					{
 						"autostart" : 1,
 						"defer" : 0,
+						"node_bin_path" : "",
+						"npm_bin_path" : "",
 						"watch" : 0
 					}
 ,

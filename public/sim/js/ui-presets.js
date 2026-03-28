@@ -341,18 +341,10 @@ export function setupPresets() {
     if (btn) btn.classList.toggle('active', S.perfMonitorVisible);
   });
 
-  // Fullscreen — use Electron native API in Electron (requestFullscreen doesn't work
-  // in BrowserWindow), fall back to web API in browser.
-  function doToggleFullscreen() {
-    if (window.electronBridge?.toggleFullscreen) {
-      window.electronBridge.toggleFullscreen();
-    } else {
-      const wrapper = document.getElementById('canvasWrapper');
-      if (!document.fullscreenElement) wrapper?.requestFullscreen().catch(() => {});
-      else document.exitFullscreen();
-    }
-  }
-  document.getElementById('fullscreenBtn2')?.addEventListener('click', doToggleFullscreen);
+  // Fullscreen — delegates to the same fullscreenBtn click handler in events.js
+  document.getElementById('fullscreenBtn2')?.addEventListener('click', () => {
+    document.getElementById('fullscreenBtn')?.click();
+  });
 
   // Expose selectPreset on S so osc.js can call it without a circular import
   S._selectPreset = selectPreset;
@@ -410,6 +402,14 @@ function getMouseLonLat() {
   return screenToLonLat(S.mousePixelX, S.mousePixelY);
 }
 
+/** Cursor position on the sphere — detethered-aware.
+ *  In two-IMU mode the wand drives position; otherwise mouse or camQ. */
+function getCursorPos() {
+  return S.cursorQ ? getCursorLonLat()
+    : S.mouseInCanvas ? getMouseLonLat()
+    : getCursorLonLat();
+}
+
 /** Legacy single-call plant (used by OSC, MIDI, etc). Plants a stationary seed. */
 export function plantSeed() {
   startSeedPlant();
@@ -425,7 +425,7 @@ export function plantSeed() {
 function _captureSeedFrame(startOverride) {
   const now = performance.now();
   const t = now - (startOverride ?? S._seedRecordingStart);
-  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+  const { lon, lat } = getCursorPos();
 
   // Merge overrides into params for a complete snapshot
   const mergedParams = { ...S.grainParams };
@@ -507,7 +507,7 @@ function _findSeedSlot(lon, lat) { return _findCommitSlot(lon, lat); }
 
 /** Start a seed plant. Reserves a slot and begins recording movement. */
 export function startSeedPlant() {
-  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+  const { lon, lat } = getCursorPos();
   const slotIndex = _findSeedSlot(lon, lat);
   if (slotIndex === -1) return;
   // If replacing an existing commit, clean it up first
@@ -576,10 +576,16 @@ export function startSeedPlant() {
   (S.updateSeedBanksUI || updateSeedBanksUI)();
 }
 
-/** Capture a frame during ↓ hold. Called from grain scheduler tick. */
+/** Capture a frame during ↓ hold. Called from grain scheduler tick (50/sec).
+ *  Throttled to ~15 frames/sec — sufficient for gesture path resolution,
+ *  avoids 50 object allocations/sec + { ...spread } + Object.entries per tick. */
+let _lastSeedFrameT = 0;
+const _SEED_FRAME_INTERVAL_MS = 66; // ~15fps
 export function tickSeedRecording() {
+  const now = performance.now();
+  if (now - _lastSeedFrameT < _SEED_FRAME_INTERVAL_MS) return;
+  _lastSeedFrameT = now;
   if (S._seedRecordingFrames) S._seedRecordingFrames.push(_captureSeedFrame());
-  // Also keep recording into a shelved trace+cloud seed while D key owns the active slot
   if (S._shelvedSeed?.frames) S._shelvedSeed.frames.push(_captureSeedFrame(S._shelvedSeed.start));
 }
 
@@ -622,7 +628,7 @@ export function toggleSeedLoopMode(slotIndex) {
 }
 
 export function uprootNearestSeed() {
-  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+  const { lon, lat } = getCursorPos();
   // Skip seeds already fading out so rapid uproot hits the next live seed
   const nearestSlot = findNearestSeedSlot(lon, lat, { skipReleasing: true });
   if (nearestSlot === -1) return;
@@ -934,7 +940,7 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
  * starts playing from the anchor particle's position in the loop.
  */
 function addPlayheadFromExisting(sourceSeq, anchorParticle) {
-  const { lon: aLon, lat: aLat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+  const { lon: aLon, lat: aLat } = getCursorPos();
   const slotIndex = _findSeqSlot(aLon, aLat);
   if (slotIndex === -1) return;  // all slots full, overflow off
   // If replacing an existing commit, clean it up first
@@ -1025,7 +1031,7 @@ export function clearAllSeqs() {
  * Clouds get a release envelope; loops are stopped immediately.
  */
 export function releaseCommit() {
-  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+  const { lon, lat } = getCursorPos();
   let targetSlot = -1, targetAng = S.selectionMode === 'closest' ? Infinity : -1;
   for (let i = 0; i < S.commitSlotCount; i++) {
     const slot = S.commitSlots[i];
@@ -1240,7 +1246,7 @@ function _cleanupSeqNodes(seq) {
  * to collect all particles from that stroke into a new sequence slot.
  */
 export function dropSeqFromCursor() {
-  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+  const { lon, lat } = getCursorPos();
   const searchRad = S.searchRadiusDeg * Math.PI / 180;
 
   // Find the nearest particle within the search radius
@@ -1329,7 +1335,7 @@ export function updateCommitBanksUI() {
   if (!canvas) return;
 
   // Find nearest of each type for highlight
-  const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+  const { lon, lat } = getCursorPos();
   const nearestSeed = clouds > 0 ? findNearestSeedSlot(lon, lat) : -1;
   const nearestSeq  = loops  > 0 ? findNearestSeqSlot(lon, lat) : -1;
 
@@ -2288,7 +2294,7 @@ function _startReturnToCenter(slider) {
     slider.value = S.desktopMorphT;
 
     // Apply to seed
-    const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+    const { lon, lat } = getCursorPos();
     const slot = findNearestSeedSlot(lon, lat);
     if (slot >= 0) _applyDesktopMorph(S.seedSlots[slot]);
 
@@ -2369,7 +2375,7 @@ export function initDesktopMorph() {
     sliderActive = true;
     S.desktopMorphT = parseFloat(slider.value);
     // Apply morph to nearest non-moving seed
-    const { lon, lat } = S.mouseInCanvas ? getMouseLonLat() : getCursorLonLat();
+    const { lon, lat } = getCursorPos();
     const slot = findNearestSeedSlot(lon, lat);
     if (slot >= 0) _applyDesktopMorph(S.seedSlots[slot]);
   });

@@ -14,7 +14,7 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.9 alpha</span>
+        <span class="top-bar-version">version 0.10 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -68,6 +68,7 @@
         <button id="learnModeBtn" class="top-bar-btn" title="learning mode — instant tooltips on hover">? learn</button>
       </div>
       <div class="top-bar-row sensor-group no-sensor" id="sensorGroup">
+        <span class="max-indicator" id="maxIndicator">● MAX</span>
         <span class="sensor-group-label">sensor</span>
         <button id="sensorsBtn" class="top-bar-btn" title="sensor registry — view connected sensors, assign roles, calibrate">⊕ sensors</button>
         <button id="gestureBtn" class="top-bar-btn" title="gesture panel — IMU feature extraction, conditioning, joystick morpher (Shift+G)">◎ gesture</button>
@@ -834,8 +835,18 @@
       <div class="as-section-label">canvas HUD</div>
       <div class="as-row">
         <span class="as-label">HUD size</span>
-        <input class="as-slider" type="range" id="vizHudScaleSlider" min="0.5" max="2.0" step="0.05" value="1">
+        <input class="as-slider" type="range" id="vizHudScaleSlider" min="0" max="2.0" step="0.05" value="1">
         <span class="as-val" id="vizHudScaleVal">1.00</span>
+      </div>
+    </div>
+
+    <!-- Field of view (projector calibration) -->
+    <div class="as-section" title="Match to your projector's throw angle so the&#10;sphere stays room-locked when you move the projector.&#10;Nebula Capsule 3 Laser ≈ 45°. Wider = more sphere visible.">
+      <div class="as-section-label">field of view</div>
+      <div class="as-row">
+        <span class="as-label">vertical FOV <span style="opacity:.5;font-size:.85em">(projector throw — Nebula 1.2:1 ≈ 26°)</span></span>
+        <input class="as-slider" type="range" id="vizFovSlider" min="10" max="90" step="0.5" value="80">
+        <span class="as-val" id="vizFovVal">80.0°</span>
       </div>
     </div>
 

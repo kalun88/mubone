@@ -5,6 +5,34 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.10 alpha — 2026-03-28
+
+### Fixed
+- **Fullscreen grey border** (#92) — Electron fullscreen left body padding (`0.5rem 0.75rem`) and dark-grey background visible around the canvas. Added `body.electron-fullscreen { padding: 0; gap: 0 }` to eliminate the border. Browser fullscreen `::backdrop` also set to `#000`.
+- **FOV vertical drift on pitch** (#88a) — FOV slider only controlled horizontal field of view (`focalLen` derived from `canvas.width`). When the canvas aspect ratio didn't match the projector (e.g. laptop 16:10 mirroring to 16:9 projector), vertical pitch caused the equator to drift from its physical position. Changed all six `focalLen` computation sites (`project()`, `screenToLonLat()`, and four renderer functions) to use `Math.min(canvas.width, canvas.height)`. The slider now controls vertical FOV, matching the standard 3D convention.
+- **Worldlocked panning ignored frameQ** — headlocked spatial panning now correctly uses `cameraTransformInto()` (fused quaternion), and worldlocked mode no longer applies `frameQ` (was causing drift in two-IMU setups).
+- **Cursor position in detethered mode** — grain scheduler, OSC loop-mode handler, seed plant/uproot/release, and sequence drop all now check `S.cursorQ` first (detethered cursor IMU) before falling back to mouse/camQ. Added `getCursorPos()` helper to centralize the pattern.
+- **`stopLiveRecording()` didn't reset `_liveCopiedUpTo`** — incremental copy offset persisted across recordings, causing stale data in subsequent live buffers.
+
+### Added
+- **High-performance render mode** (Shift+P) — skips non-essential rendering when CPU pressure is high. Separate from perf monitor (p). OSC: `/app/perfmode`, MIDI mappable.
+- **Max bridge indicator in top bar** (#92) — moved from floating `position: fixed` overlay (was obscuring the Learn button) to inline `<span>` in the sensor group, left of "sensor (connected)". Automatically hidden in fullscreen (inside top bar which is `display: none`).
+- **HUD scale goes to zero** — HUD size slider now ranges 0–2.0×. At 0 the canvas edge bars and DOM HUD overlay are both hidden (label shows "off").
+- **Editable numbox on viz sliders** — click any value label in viz settings to type a precise number. Clamps to slider min/max, Enter to confirm, Escape to cancel. Keyboard events stopped so typing doesn't trigger app shortcuts.
+- **FOV slider refinements** — label updated to "vertical FOV", range narrowed to 10°–90°, step increased to 0.5° for easier targeting. Tooltip shows Nebula Capsule 3 Laser reference (~26° at 1.2:1 throw). FOV now persisted in audio settings snapshot.
+- **Fullscreen button deduplication** — top-bar `fullscreenBtn2` now delegates to the HUD `fullscreenBtn` click handler (single source of truth). Unified `applyFullscreenState()` function updates both button labels, toggles `electron-fullscreen` class, and fires `resizeCanvas()`.
+- **Electron fullscreen body padding fix** — `body.electron-fullscreen` zeroes padding and gap so the canvas-wrapper fills the viewport edge-to-edge.
+
+### Changed
+- **Incremental live buffer copy** — `rebuildLiveBuffer()` now only copies new samples since the last rebuild (~9,600 samples at 48kHz/200ms interval) instead of the entire recording buffer. Eliminates the linear-growth copy cost that caused stalls during long recordings.
+- **O(N) k-selection in grain scheduler** — nearest-mode particle selection replaced O(N log N) `sort()` + `slice()` with a single-pass k-selection (`_buildCandidatePoolNearest`). At 16 seeds × 500 particles × 50 ticks/sec, this eliminates ~72K comparisons/tick.
+- **Incremental angular distance stamps** — when painting adds new particles, only the new particles are stamped with cursor distance (was re-stamping all N particles on every `_particleVersion` bump). Cursor movement still re-stamps all.
+- **Seed frame capture throttled** — `tickSeedRecording()` reduced from 50/sec to ~15/sec (66ms interval). Sufficient for gesture path resolution, eliminates 35 wasted `{...spread}` + `Object.entries` allocations per second.
+- **Zero-allocation grain spatial math** — `playGrain()` now uses `spherePointInto()` / `cameraTransformInto()` with scratch buffers instead of allocating arrays per grain. Seed weight buffer reused via `.fill(0)` instead of `new Float32Array` per tick.
+- **Fused camera quaternion in scheduler** — `updateFusedCamQ()` called at scheduler entry so headlocked panning uses the latest camQ/frameQ even when the scheduler fires between render frames.
+
+---
+
 ## 0.9 alpha — 2026-03-28
 
 ### Added
