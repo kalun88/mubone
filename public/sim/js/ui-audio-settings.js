@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { S, DEBUG, FACTORY_PRESET_START } from './state.js';
-import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, playSweepChannel } from './audio.js';
+import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, playSweepChannel, warmUpAudioEngine } from './audio.js';
 import { renderMeters, tickMeters, rebuildMainOutputMeters } from './ui-meters.js';
 
 // ── RtAudio input meter worklet (Electron only) ───────────────────────────────
@@ -538,8 +538,10 @@ async function startAudio() {
 
     // Prefer the shared stream already opened by the mic button in main app.
     // S.audioCtx and S.inputStream are set by audio.js when mic is enabled.
-    // Falls back to its own getUserMedia only when running standalone.
-    if (!S.inputStream) {
+    // In Electron, RtAudio handles input — skip getUserMedia entirely.
+    // Falls back to its own getUserMedia only when running standalone in browser.
+    const hasRtAudioInput = window.electronBridge?.isElectron && window._rtAudioInputListening;
+    if (!S.inputStream && !hasRtAudioInput) {
       S.inputStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount:     { ideal: 2 },
@@ -1362,6 +1364,14 @@ export async function activateSavedInputDevice(nCh) {
 
   // Mark as.started so modal-open knows input is already live
   as.started = true;
+
+  // Pre-load the recording-capture worklet so painting works immediately.
+  // In browser this happens in requestMicAccess → warmUpAudioEngine;
+  // in Electron with RtAudio we need to do it here.
+  if (!S.audioEngineWarmedUp) {
+    S.audioEngineWarmedUp = true;
+    warmUpAudioEngine();
+  }
 
   DEBUG && console.log(`[startup] input device activated — ${nCh} ch, recording ch ${selCh + 1}`);
 }

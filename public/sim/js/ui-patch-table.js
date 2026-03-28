@@ -164,7 +164,6 @@ export const PARAM_REGISTRY = [
     },
     fmt: v  => v ? 'on' : 'off',
     parse: s => s.trim() === 'on' ? true : s.trim() === 'off' ? false : null },
-
   // ── Commits (unified) ────────────────────────────────────────────────────
   { key: 'seqSlotCount', label: 'commit slots', group: 'commits', type: 'number',
     get: () => S.commitSlotCount,

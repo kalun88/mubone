@@ -7,16 +7,27 @@
 
 ## Sprint — Dartmouth prep (due Mar 27 EOD)
 
-- [ ] **#10 Zero reference indicator on sphere** — visual marker showing where "zero" is, so you can see how far the IMU has drifted over time.
+- [x] **#10 Zero reference indicator on sphere** — visual marker showing where "zero" is, so you can see how far the IMU has drifted over time. **Done (Mar 27)**.
 - [x] **#15 K count slider minimum range** — slider floor set to 30 so k can be set before painting. Grows beyond 30 once particle count exceeds it. **Done (Mar 26)**.
 - [x] **#21 Tooltip delay too fast with Learn off** — changed from 400ms to 3000ms when Learn is off. **Done (Mar 26)**.
 - [ ] **#24 "Performance patch" — dead-simple workshop preset** — 3–4 patches, key params locked, 1–2 pedal controls, someone can sit down and perform without touching the UI.
 - [x] **#29 Loop release mode: play-to-end option** — `S.loopReleaseMode`: 'fade' (existing ms fade-out) or 'play-to-end' (disables looping, plays through to loopEnd with 50ms fade). UI segmented button in commit section, OSC `/commit/loop_release`, MIDI mappable. Preset save/load wired. **Done (Mar 26)**.
-- [ ] **#30 Sensor gain for extremity-mounted IMU** — gain/scaling param for sensor input when mounted at arm/wand tip.
-- [ ] **#31 Pico projector + IMU as periscope** — IMU on projector as "frame" reference for periscope view into sphere.
+- [x] **#30 Sensor gain for extremity-mounted IMU** — resolved: not an issue. See full notes in Mar 26 flight test section.
+- [ ] **#31 Pico projector + detethered cursor** — Two-IMU mode: projector IMU controls the camera/frame (viewport into the sphere), performer IMU controls a free-roaming cursor detethered from screen center. Same quaternion math for both — just two independent orientation streams driving camera vs cursor separately. Currently the cursor is always locked to viewport center; this requires separating cursor position from camera orientation so the cursor can move freely across the visible sphere surface. **Implementation breakdown:**
+  - **state.js**: Add `S.cursorQ` (separate quaternion for cursor orientation when detethered). No manual toggle needed — detether activates automatically when both cursor-role and frame-role sensor slots are assigned. Single sensor = locked to center as today.
+  - **sensor-registry.js**: `getSensorCamQ()` already resolves cursor-role vs frame-role slots. Split so cursor-role writes `S.cursorQ` instead of (or in addition to) `S.camQ`. Frame-role continues writing `S.camQ` / `S.frameQ` as now.
+  - **sphere.js**: `getCursorLonLat()` currently reads `S.camQ` forward vector for cursor position. When `S.cursorQ` exists, use that instead. `screenToLonLat()` unchanged (mouse modes only).
+  - **renderer.js**: Draw cursor crosshair at the detethered screen position (project `S.cursorQ`'s forward vector through the camera to get screen x/y) instead of always at canvas center. This is the main visual change.
+  - **grain.js**: Inherits fix automatically — reads lon/lat from `getCursorLonLat()` / `screenToLonLat()`.
+  - **Audit ~8-10 call sites**: ui-trace.js `captureFrame()`, renderer.js `drawSeeds()`, seed-morph.js nearest lookup, and a few others all resolve cursor position through `getCursorLonLat()` or `screenToLonLat()` — verify they all go through the updated path.
+  - **Difficulty: medium.** Quaternion math already exists for both sensors. Main work is renderer drawing cursor at arbitrary screen position in sensor mode, and auditing all downstream consumers for consistency.
 - [x] **#32 Reimagine HUD display** — canvas edge HUD with 3-column top bar (A=trace, S=scan, D=commit), DOM text HUD (left/center/right layout), commit dots, patch info, HUD scale slider. **Done (Mar 26)**.
+- [x] **#77 Electron: painting doesn't produce particles** — **Fixed (Mar 27):** `startLiveRecording()` guard in audio.js checked `S.recordingStream` which is only set by browser getUserMedia. Added `hasRtAudioInput` check. Also added `warmUpAudioEngine()` call in `activateSavedInputDevice()` to pre-load recording worklet in Electron.
+- [x] **#78 Electron: getUserMedia conflict in audio settings** — **Fixed (Mar 27):** Added `hasRtAudioInput` guard in `startAudio()` to skip `getUserMedia` when Electron RtAudio input is already active.
+- [x] **#79 Electron: fullscreen button label + canvas resize** — **Fixed (Mar 27):** Main process now emits `fullscreen-changed` IPC on `enter-full-screen` / `leave-full-screen` events. Preload exposes `onFullscreenChanged` listener. events.js hooks it to update button label and fire `resizeCanvas()`.
 - [ ] **#38 Verify 8-channel VBAP** — test with 8-speaker layout in Electron, confirm lookup table, smooth panning, no silent channels.
-- [ ] **#69 Sensor tare correction for off-axis wrist mount** — when IMU is worn on the wrist at an angle (not flat), tare captures the offset but pitch up/down movements cause the cursor to drift left/right instead of moving straight along gravity. Need to decompose the tare orientation so that post-tare pitch maps cleanly to vertical cursor movement regardless of mount angle. Likely need a gravity-aligned correction in the orienter or tare logic.
+- [x] **#71 Zeroing cursor GUI button and function (Z)** — originally thought to be a new function separate from tare, but the tare/zero button (Z) in the main GUI is what was needed. **Done (Mar 27)**.
+- [x] **#69 Sensor tare correction for off-axis wrist mount** — when IMU is worn on the wrist at an angle (not flat), tare captures the tilt and subsequent up/down movements cause diagonal cursor drift. *Fixed (Mar 27):* gravity-aligned tare extracts only the heading (yaw around Z/up) from the raw quaternion, keeping the reference frame level with gravity. Auto-recenter fires on the next render frame to snap the cursor to center. Works correctly with tilted mounting. *Limitation:* tilt-tare correction only works with default axis mapping (X=roll, Y=elevation, Z=azimuth). Non-default axis maps still work normally but won't compensate for tilted mounting — the roll offset is always captured from the X Euler component because it's the innermost rotation in the ZYX decomposition and is the only axis where pre-subtraction is mathematically clean.
 - [x] **#70 Full audit of OSC/MIDI/keyboard mapping modules** — restructured ACTIONS array in midi.js: merged seed/loop groups into unified commit group, added trace_mode/commit_mode/commit_drop/commit_draw/commit_release/commit_clear/loop_release_mode/loop_fade_time actions. Legacy actions preserved with `_legacy: true` (hidden from UI, existing maps still work). OSC handlers rewritten for `/commit/*` and `/trace/*` paths; legacy `/seed/*` and `/loop/*` fixed. Interaction types verified (hold/toggle/trigger/cc). **Done (Mar 26)**.
 
 ---
@@ -39,8 +50,8 @@
 
 ### IMU / Wand / Orientation
 
-- [ ] **#9 Surface mode yaws one direction after pole** — orientation snaps or drifts after passing through a pole.
-- [ ] **#10 Zero reference indicator on sphere** — visual marker showing where "zero" is, so you can see how far the IMU has drifted over time.
+- [ ] **#9 Surface mode yaws one direction after pole** — orientation snaps or drifts after passing through a pole. *Note (Mar 27):* the forward-vector path pole fix now covers sensor mode with roll muted OR unmapped — surface mode (trackpad) uses a separate incremental rotation path that should already handle poles. If this persists in surface mode specifically, investigate the trackpad delta path in renderer.js.
+- [x] **#10 Zero reference indicator on sphere** — visual marker showing where "zero" is, so you can see how far the IMU has drifted over time. **Done (Mar 27)**.
 - [ ] **#11 Upside-down indicator in viz** — something in the 3D view showing when wand is inverted, helps diagnose whether orienter is reversed.
 
 ### Search / Cursor Enhancements
@@ -87,8 +98,8 @@
 
 ### IMU / Wand / Orientation
 
-- [ ] **#30 Sensor gain for extremity-mounted IMU** — when sensor is mounted at extremity of body (e.g. arm/wand tip), raw values are much larger than torso-mounted. Need gain/scaling param for sensor input. Check Vasily jam notes for specifics.
-- [ ] **#31 Pico projector + IMU as periscope** — pico projector is working. Mount an IMU on the projector to simulate a periscope view into the sphere world. That IMU would be set as the "frame" reference.
+- [x] **#30 ~~Sensor gain for extremity-mounted IMU~~** — NOT AN ISSUE. Quaternion orientation is 1:1 physical-to-virtual and should stay that way — where you point is where the cursor goes, regardless of mount position. The original concern (values too large on extremity mount) was misdiagnosed: quaternions represent absolute orientation, not relative motion, so mount position doesn't affect values. For "higher resolution" painting in a small area: turn down radius and viz dot size to pack more particles. For improv settings where full body 1:1 isn't needed: the flat map projection + definable painting area (#73) solves this by mapping a smaller physical range to the full sphere. Inertial gain (gyro/accel) is a separate issue if needed later — add per-slot gain in sensor-registry.js `inertialCal`.
+- [ ] **#31 Pico projector + detethered cursor** — see sprint section for full implementation breakdown.
 
 ### Visual / Display
 
@@ -117,6 +128,11 @@
 
 - [ ] **#41 Full test pass** — run through the core workflow end-to-end (mic input → record → paint → scan → seed → sweep → repeat) on Chrome and Electron. Note and fix any rough edges.
 
+## Deferred — Later Fixes
+
+- [ ] **#75 Roll mute/unmap pole bug** — when roll axis is muted or unmapped in the sensor axis map, the cursor can never reach the poles and yaws excessively / flips. Works fine with all 3 axes active. Root cause: forward-vector decomposition in `applyAxisMapQuat` has a coordinate-system mismatch preventing pitch from reaching ±90°. Roll mute button disabled in UI with tooltip. Downstream roll-lock approach also failed (same decomposition issue) — roll lock code removed.
+- [ ] **#76 Recenter drift correction bug** — recenter (`recenterCursor()`) logic needs review. Button disabled in sensor panel UI with tooltip. Tare works correctly; recenter is separate and its behaviour is unclear. Re-enable once the logic is verified.
+
 ## Deferred — Gesture & Experimental (post-workshop)
 
 - [ ] **#42 Test gesture extraction with live wand** — load `?exp`, wave wand, verify viz panel shows meaningful features. Tune scaling constants in `gesture.js` (JERK_SCALE, EFFORT_GYRO_SCALE, ENERGY_DECAY, etc.) based on real IMU data.
@@ -134,6 +150,7 @@
 - [ ] **#51** Phase vocoder pitch shift for spatial harmonization
 - [ ] **#52** Stochastic trigger zones on sphere
 - [ ] **#53** Flocking/boid-driven audio from particle behavior
+- [ ] **#74 x-IMU3 binary mode / direct UDP reception** — the x-IMU3 has a binary data mode (device setting 11.1.66) that sends data messages as raw bytes instead of ASCII text. For quaternion: ASCII is ~50 bytes (`Q,timestamp,w,x,y,z\n`), binary is ~25 bytes (0xD1 + 8-byte uint64 timestamp + 4×32-bit floats + byte stuffing + 0x0A terminator). Roughly half the bandwidth. **However, latency savings are negligible** — the real latency comes from WiFi jitter (1-5ms), the Max → OSC → WebSocket chain, and browser event loop, not from parsing 25 extra bytes. Binary mode would also require parsing binary in Max or bypassing Max entirely. **The bigger latency win** would be receiving the x-IMU3's UDP stream directly in Electron's Node.js layer (the x-IMU3 sends UDP to configurable IP/port via settings 11.1.42-44) and piping straight to the renderer, cutting Max out of the data path. Only worth pursuing if latency becomes a real performance issue, or if running multiple IMUs at high rates (400Hz+) where bandwidth matters. See x-IMU3 User Manual v1.11 §8.2 for binary format, §11.1.66 for binary mode setting.
 
 ## Done
 

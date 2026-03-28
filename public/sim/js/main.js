@@ -15,7 +15,7 @@ import { initMobileMode } from './mobile.js';
 import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
 import { resizeCanvas, animate } from './renderer.js';
 import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initRadiusFade, initSeqMode, initMixdownGains, setScanMuted } from './ui-meters.js';
-import { initSensor, getSensorCamQ, getFrameQ, getSensorRawCursorQ, getCursorAxisSigns } from './sensor-registry.js';
+import { initSensor, getSensorCamQ, getFrameQ, recenterCursor } from './sensor-registry.js';
 import { initOSC } from './osc.js';
 import { initSensorsUI } from './ui-sensors.js';
 import { initAudioSettings, loadAudioDefaults, activateSavedInputDevice, startAutoSave } from './ui-audio-settings.js';
@@ -50,8 +50,10 @@ function init() {
   initOSC();   // connects Electron IPC or browser WebSocket transport
   S._getSensorCamQ    = getSensorCamQ;       // hook renderer without a circular import
   S._getFrameQ        = getFrameQ;           // world-frame compensation from frame-role sensor
-  S._getSensorRawQ    = getSensorRawCursorQ; // raw tared quat for delta-based tracking
-  S._getCursorSigns   = getCursorAxisSigns;  // yaw/pitch sign multipliers
+  S._recenterCursor   = recenterCursor;      // drift correction — called from sensors UI
+  S._onTare = () => {                        // reset drift correction on fresh tare
+    S.driftOffsetQ = null;
+  };
   initSensorsUI();
   initAudioSettings();
   initImprovUI();
@@ -422,7 +424,6 @@ function init() {
     ['_axisLockFrozenNx', '_axisLockFrozenYaw']);
   _initAxisLockSeg('axisLockElSeg', 'axisLockEl',
     ['_axisLockFrozenNy', '_axisLockFrozenPitch']);
-
   // ── Commit slot config (unified cloud + loop pool) ──────────────────
   const commitSlotSelect = document.getElementById('commitSlotCountSelect')
                         || document.getElementById('seedSlotCountSelect');  // fallback to old ID

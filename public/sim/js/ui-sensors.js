@@ -61,12 +61,18 @@ export function initSensorsUI() {
   S._onSensorDiscovered = () => rebuildList();
   S._onSensorRoleChanged = () => rebuildList();
 
-  // ── Top-bar cursor tare shortcut ──────────────────────────────────────
-  document.getElementById('cursorZeroTopBtn')?.addEventListener('click', () => {
+  // ── Session panel cursor tare shortcut ───────────────────────────────
+  // Shared action: tare cursor sensor and sync button state.
+  // Exposed on S so events.js can trigger it from keyboard (`) without
+  // importing sensor-registry.
+  function tareCursorAction() {
     const slot = getByRole('cursor');
     if (slot) slotTare(slot);
-    document.getElementById('cursorZeroTopBtn')?.classList.add('active');
-  });
+    const btn = document.getElementById('cursorZeroTopBtn');
+    if (btn) btn.classList.add('active');
+  }
+  S._tareCursor = tareCursorAction;
+  document.getElementById('cursorZeroTopBtn')?.addEventListener('click', tareCursorAction);
 }
 
 // ── Build / rebuild the sensor list ──────────────────────────────────────────
@@ -199,6 +205,7 @@ function buildCursorControls(name, slot) {
     const tdDest = document.createElement('td');
     const destSel = document.createElement('select');
     destSel.className = 'sensor-route-dest-select';
+    destSel.title = 'Map this sensor axis to a viz dimension, or unmapped to ignore it';
     const currentViz = cal.axisMap[phys].viz;
     for (const destLabel of VIZ_DEST_OPTIONS) {
       const opt = document.createElement('option');
@@ -218,6 +225,7 @@ function buildCursorControls(name, slot) {
     const tdSign = document.createElement('td');
     const signBtn = document.createElement('button');
     signBtn.className = 'sensor-inline-btn';
+    signBtn.title = 'Reverse polarity of this axis';
     signBtn.textContent = cal.axisMap[phys].sign === 1 ? '+' : '−';
     if (cal.axisMap[phys].sign === -1) signBtn.classList.add('active');
     signBtn.addEventListener('click', () => {
@@ -235,11 +243,11 @@ function buildCursorControls(name, slot) {
     muteBtn.className = 'sensor-inline-btn';
     muteBtn.textContent = '◎';
     if (cal.axisMap[phys].mute) muteBtn.classList.add('active');
-    muteBtn.addEventListener('click', () => {
-      cal.axisMap[phys].mute = !cal.axisMap[phys].mute;
-      muteBtn.classList.toggle('active', cal.axisMap[phys].mute);
-      saveCalibration();
-    });
+    // BUG: muting any axis causes pole/yaw issues — all mutes disabled, fix in progress
+    muteBtn.title = 'Axis mute disabled — known pole/yaw bug when axes are muted, fix in progress';
+    muteBtn.disabled = true;
+    muteBtn.style.opacity = '0.4';
+    muteBtn.style.cursor = 'not-allowed';
     tdMute.appendChild(muteBtn);
     tr.appendChild(tdMute);
 
@@ -254,11 +262,13 @@ function buildCursorControls(name, slot) {
 
   const zeroBtn = document.createElement('button');
   zeroBtn.className = 'sensor-inline-btn';
+  zeroBtn.title = 'Set current orientation as zero reference — calibrates sensor offset';
   zeroBtn.textContent = slot.quatCal.tareQuat ? '⊙ retare' : '⊙ tare';
   if (slot.quatCal.tareQuat) zeroBtn.classList.add('active');
 
   const clearBtn = document.createElement('button');
   clearBtn.className = 'sensor-inline-btn';
+  clearBtn.title = 'Remove tare — revert to raw sensor orientation';
   clearBtn.textContent = '✕ clear';
 
   const tareReadout = document.createElement('span');
@@ -290,6 +300,32 @@ function buildCursorControls(name, slot) {
   tareRow.appendChild(clearBtn);
   tareRow.appendChild(tareReadout);
   container.appendChild(tareRow);
+
+  // ── Recenter row ──
+  const recenterRow = document.createElement('div');
+  recenterRow.className = 'sensor-tare-row';
+
+  const recenterBtn = document.createElement('button');
+  recenterBtn.className = 'sensor-inline-btn';
+  // BUG: recenter drift correction has a known issue — fix is being worked on
+  recenterBtn.title = 'Recenter disabled — known drift-correction bug, fix in progress';
+  recenterBtn.textContent = '⊕ recenter';
+  recenterBtn.disabled = true;
+  recenterBtn.style.opacity = '0.4';
+  recenterBtn.style.cursor = 'not-allowed';
+  recenterRow.appendChild(recenterBtn);
+  container.appendChild(recenterRow);
+
+  // ── Caution notes ──
+  const caution = document.createElement('div');
+  caution.style.cssText = 'margin-top:8px; padding:6px 8px; font-size:0.7rem; line-height:1.4; color:#e8a850; border-left:2px solid #e8a850; opacity:0.85;';
+  caution.innerHTML =
+    '<b>⚠ Mounting note:</b> If the sensor is mounted in a non-standard orientation, ' +
+    'keep the roll axis level with the horizon when taring. Tilt-tare correction only ' +
+    'works with the default axis mapping (X\u2009=\u2009roll).<br>' +
+    '<b>⚠ Roll axis required:</b> Roll must stay mapped and unmuted. ' +
+    'Muting or unmapping roll causes pole/yaw issues — fix in progress.';
+  container.appendChild(caution);
 
   return container;
 }
@@ -340,6 +376,7 @@ function buildFrameControls(name, slot) {
     const tdDest = document.createElement('td');
     const destSel = document.createElement('select');
     destSel.className = 'sensor-route-dest-select';
+    destSel.title = 'Map this sensor axis to a viz dimension, or unmapped to ignore it';
     const currentViz = cal.axisMap[phys].viz;
     for (const destLabel of VIZ_DEST_OPTIONS) {
       const opt = document.createElement('option');
@@ -359,6 +396,7 @@ function buildFrameControls(name, slot) {
     const tdSign = document.createElement('td');
     const signBtn = document.createElement('button');
     signBtn.className = 'sensor-inline-btn';
+    signBtn.title = 'Reverse polarity of this axis';
     signBtn.textContent = cal.axisMap[phys].sign === 1 ? '+' : '−';
     if (cal.axisMap[phys].sign === -1) signBtn.classList.add('active');
     signBtn.addEventListener('click', () => {
@@ -376,11 +414,11 @@ function buildFrameControls(name, slot) {
     muteBtn.className = 'sensor-inline-btn';
     muteBtn.textContent = '◎';
     if (cal.axisMap[phys].mute) muteBtn.classList.add('active');
-    muteBtn.addEventListener('click', () => {
-      cal.axisMap[phys].mute = !cal.axisMap[phys].mute;
-      muteBtn.classList.toggle('active', cal.axisMap[phys].mute);
-      saveCalibration();
-    });
+    // BUG: muting any axis causes pole/yaw issues — all mutes disabled, fix in progress
+    muteBtn.title = 'Axis mute disabled — known pole/yaw bug when axes are muted, fix in progress';
+    muteBtn.disabled = true;
+    muteBtn.style.opacity = '0.4';
+    muteBtn.style.cursor = 'not-allowed';
     tdMute.appendChild(muteBtn);
     tr.appendChild(tdMute);
 
@@ -395,11 +433,13 @@ function buildFrameControls(name, slot) {
 
   const zeroBtn = document.createElement('button');
   zeroBtn.className = 'sensor-inline-btn';
+  zeroBtn.title = 'Set current orientation as zero reference — calibrates sensor offset';
   zeroBtn.textContent = slot.quatCal.tareQuat ? '⊙ retare' : '⊙ tare';
   if (slot.quatCal.tareQuat) zeroBtn.classList.add('active');
 
   const clearBtn = document.createElement('button');
   clearBtn.className = 'sensor-inline-btn';
+  clearBtn.title = 'Remove tare — revert to raw sensor orientation';
   clearBtn.textContent = '✕ clear';
 
   const tareReadout = document.createElement('span');
@@ -474,11 +514,13 @@ function buildGestureControls(name, slot) {
 
   const captureBtn = document.createElement('button');
   captureBtn.className = 'sensor-inline-btn';
+  captureBtn.title = 'Capture current gravity vector as rest reference for gesture detection';
   captureBtn.textContent = slot.inertialCal.gravityRef ? '⊙ recapture' : '⊙ capture gravity';
   if (slot.inertialCal.gravityRef) captureBtn.classList.add('active');
 
   const clearBtn = document.createElement('button');
   clearBtn.className = 'sensor-inline-btn';
+  clearBtn.title = 'Remove gravity reference';
   clearBtn.textContent = '✕ clear';
 
   const gravReadout = document.createElement('span');

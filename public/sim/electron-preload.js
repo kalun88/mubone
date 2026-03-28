@@ -43,4 +43,9 @@ contextBridge.exposeInMainWorld('electronBridge', {
 
   // Toggle native OS fullscreen (web requestFullscreen doesn't work in BrowserWindow)
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
+
+  // Main → Renderer: native fullscreen state changed (enter/leave)
+  // cb(isFullscreen: boolean)
+  onFullscreenChanged: (cb) =>
+    ipcRenderer.on('fullscreen-changed', (_e, isFullscreen) => cb(isFullscreen)),
 });

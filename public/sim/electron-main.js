@@ -328,6 +328,11 @@ function createWindow() {
 
   win.loadFile('index.html');
 
+  // Forward native fullscreen state changes to the renderer so the
+  // fullscreen button label and canvas resize stay in sync.
+  win.on('enter-full-screen', () => win.webContents.send('fullscreen-changed', true));
+  win.on('leave-full-screen', () => win.webContents.send('fullscreen-changed', false));
+
   // Uncomment to open DevTools on launch during development:
   // win.webContents.openDevTools();
 

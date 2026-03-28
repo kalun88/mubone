@@ -1126,6 +1126,8 @@ export const S = {
   modeRingSize:  30,        // mode ring radius (px) — controls how big the 4 status arcs are
   uiScale:       1.0,       // UI scale factor — multiplied with base font-size (15px)
   hudScale:      1.0,       // canvas HUD scale — multiplies edge bar height, text size, dot size, spacing
+  showZeroRef:   true,      // draw center-reference marker on sphere
+  driftOffsetQ:  null,      // persistent [x,y,z,w] correction quaternion applied on recenter
 
   // ── Audio ──────────────────────────────────────────────────────────────
   audioCtx:   null,

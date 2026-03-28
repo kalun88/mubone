@@ -14,7 +14,7 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.7 alpha</span>
+        <span class="top-bar-version">version 0.8 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -169,6 +169,7 @@
             <button class="session-btn" id="sessionSweepBtn" title="sweep — remove particles not used by active seeds or loops (-)&#10;if no seeds/loops active, clears all particles"><span>sweep</span> <span class="paint-key-badge">−</span></button>
           </div>
           <div style="display:flex;gap:0.4rem;">
+            <button class="session-btn" id="cursorZeroTopBtn" title="tare cursor — set current sensor orientation as zero reference (`)"><span>tare</span> <span class="paint-key-badge">`</span></button>
             <button class="session-btn" id="sessionAltLockBtn" title="cursor lock — freeze cursor position to interact with UI&#10;hold Alt/Option while cursor is in the visualizer" disabled><span>lock cursor</span> <span class="paint-key-badge">Alt</span></button>
             <button class="session-btn session-btn--danger" id="sessionEraseBtn" title="erase all — clear all particles, buffers and stroke history&#10;press Backspace ×3 to trigger from keyboard"><span>erase all</span> <span class="paint-key-badge">⌫×3</span></button>
           </div>
@@ -788,7 +789,7 @@
 <!-- ── Sensor registry modal ────────────────────────────────────────────── -->
 <div id="sensorsModal" class="mu-overlay">
   <div class="sensors-dialog mu-dialog">
-    <h2>sensors
+    <h2><span class="mu-dialog-title-group">sensors <span class="sensor-info-btn" id="sensorInfoBtn" title="Tare: set current orientation as zero reference. Face front (speaker center) when taring — this aligns the sensor with the VBAP field (0° = front-center).&#10;&#10;Recenter: corrects IMU drift without recalibrating. Return your hand to the tare position and press recenter — the view snaps back to match.&#10;&#10;Mute: suppresses an axis using pole-safe math. Use for roll.&#10;&#10;Unmap: removes an axis from the viz mapping (Euler path — fine away from poles).&#10;&#10;± sign: reverses polarity of an axis.">?</span></span>
       <button class="close-btn" id="sensorsClose">✕</button>
     </h2>
     <div class="sensors-hint">sensors auto-discover from OSC:  /sensor/{name}/quaternion  ·  /sensor/{name}/inertial</div>
@@ -834,6 +835,18 @@
         <span class="as-label">HUD size</span>
         <input class="as-slider" type="range" id="vizHudScaleSlider" min="0.5" max="2.0" step="0.05" value="1">
         <span class="as-val" id="vizHudScaleVal">1.00</span>
+      </div>
+    </div>
+
+    <!-- Center reference marker -->
+    <div class="as-section">
+      <div class="as-section-label">center reference</div>
+      <div class="as-row">
+        <span class="as-label">show marker</span>
+        <div class="grain-seg" id="vizZeroRefSeg">
+          <button class="grain-seg-btn active" data-zero="on">on</button>
+          <button class="grain-seg-btn" data-zero="off">off</button>
+        </div>
       </div>
     </div>
 

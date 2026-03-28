@@ -5,6 +5,29 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.8 alpha — 2026-03-27
+
+### Fixed
+- **Electron: painting doesn't produce particles** (#77) — `startLiveRecording()` guard checked only `S.recordingStream` which is never set in Electron's RtAudio path. Added `hasRtAudioInput` alternative check. Also pre-loads recording-capture worklet via `warmUpAudioEngine()` in Electron startup.
+- **Electron: getUserMedia conflict** (#78) — `startAudio()` in audio settings now skips `getUserMedia` when Electron RtAudio input is already active, preventing a conflicting second input stream.
+- **Electron: fullscreen button label + canvas resize** (#79) — native `BrowserWindow.setFullScreen()` didn't fire the web `fullscreenchange` event. Main process now emits `fullscreen-changed` IPC; preload exposes `onFullscreenChanged` listener; events.js hooks it to update button label and fire `resizeCanvas()`.
+- **Sensor tare correction for off-axis wrist mount** (#69) — gravity-aligned tare extracts only heading (yaw around Z/up), keeping the reference frame level. Auto-recenters on next render frame. Tilt-tare correction works with default axis mapping (X=roll).
+- **Sensor mode pole/gimbal-lock fix** — replaced delta-based yaw/pitch tracking in renderer.js with a single absolute path via `applyAxisMapQuat()`. Forward-vector path now auto-selects the correct forward axis based on axis map configuration, avoiding gimbal lock when roll is muted.
+
+### Added
+- **Zero reference indicator on sphere** (#10) — visual meridian + equator marker showing where sensor zero is, so drift is visible over time. Toggleable via viz settings.
+- **Recenter / drift correction** — `recenterCursor()` computes a shortest-arc rotation offset mapping current camera forward to front-center. Applied every frame. Composed with existing drift offset. (Button currently disabled pending further testing.)
+- **Backtick (`) keyboard shortcut for tare** — quick tare from keyboard without opening sensor panel.
+- **Sensor panel UI improvements** — tooltips on all axis map controls, caution notes for mounting orientation and roll axis requirements. Axis mute buttons disabled with explanation (known pole/yaw bug).
+- **HUD scale and UI scale** — `S.hudScale` (canvas HUD) and `S.uiScale` (DOM) sliders with persistence.
+
+### Changed
+- **Sensor axis map refactored** — `applyAxisMapQuat()` rewritten with two clear paths: forward-vector (roll muted/unmapped) and Euler (all axes active). New `findForwardAxis()` helper auto-detects which physical axis is the pointing direction. `forwardVecFromQuat()` supports x/y/z forward axes, not just x.
+- **Renderer sensor mode simplified** — removed 80+ lines of delta-based tracking code. Sensor mode now uses the same absolute `getSensorCamQ()` path for all cases, with axis lock applied on top.
+- **Max controller patch updated** — expanded `mubone-controller.maxpat` with additional routing.
+
+---
+
 ## 0.7 alpha — 2026-03-26
 
 ### Fixed

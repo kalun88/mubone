@@ -368,7 +368,11 @@ export async function requestMicAccess() {
 
 export function startLiveRecording() {
   if (S.isRecording) return;
-  if (!S.recordingStream) return;
+  // Allow recording if we have a browser MediaStream OR Electron RtAudio input active.
+  // In Electron, S.recordingStream is never set — audio flows via RtAudio IPC into
+  // inputGainNode → inputAnalyser, which is the same chain the recording worklet taps.
+  const hasRtAudioInput = window.electronBridge?.isElectron && window._rtAudioInputListening;
+  if (!S.recordingStream && !hasRtAudioInput) return;
 
   // Memory guard — refuse to start a new recording if we've hit the ceiling.
   // The performer sees the HUD flash red and knows to sweep.

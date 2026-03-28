@@ -124,7 +124,6 @@ const ACTIONS = [
     tip: 'toggle azimuth lock — freezes horizontal position' },
   { id: 'lock_el',          label: 'lock elevation (toggle)',    key: '—',                 osc: '/cursor/lock_el',   fmt: 'int 0|1',           type: 'toggle',
     tip: 'toggle elevation lock — freezes vertical position' },
-
   // ── Trace ─────────────────────────────────────────────────────────────────
   { id: null, group: 'trace (A)' },
   { id: 'trace_mode',   label: 'trace mode cycle (A)',      key: 'A',                 osc: '/trace/mode',      fmt: 'str trace|trace+loop|trace+cloud', type: 'trigger',
@@ -583,7 +582,7 @@ function dispatchAction(id, midiVal) {
       S[stateKey] = !S[stateKey];
       // Clear frozen snapshots so next lock captures fresh position
       if (id === 'lock_az') { S._axisLockFrozenNx = null; S._axisLockFrozenYaw = null; }
-      else                  { S._axisLockFrozenNy = null; S._axisLockFrozenPitch = null; }
+      if (id === 'lock_el') { S._axisLockFrozenNy = null; S._axisLockFrozenPitch = null; }
       // Sync UI buttons
       const seg = document.getElementById(segId);
       if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>

@@ -94,6 +94,28 @@ export function initVizUI() {
     v  => { applyHudScale(v); },
     v  => v.toFixed(2));
 
+  // ── Center reference toggle ─────────────────────────────────────────────
+  const zeroRefSeg = document.getElementById('vizZeroRefSeg');
+  if (zeroRefSeg) {
+    const ZERO_KEY = 'mubone_showZeroRef';
+    try {
+      const saved = localStorage.getItem(ZERO_KEY);
+      if (saved !== null) S.showZeroRef = saved === 'true';
+    } catch {}
+    zeroRefSeg.querySelectorAll('[data-zero]').forEach(btn => {
+      btn.classList.toggle('active',
+        (btn.dataset.zero === 'on') === S.showZeroRef);
+    });
+    zeroRefSeg.querySelectorAll('[data-zero]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        S.showZeroRef = btn.dataset.zero === 'on';
+        zeroRefSeg.querySelectorAll('[data-zero]').forEach(b =>
+          b.classList.toggle('active', b === btn));
+        try { localStorage.setItem(ZERO_KEY, S.showZeroRef); } catch {}
+      });
+    });
+  }
+
   // ── Particle size sliders ───────────────────────────────────────────────
   bindSlider('vizMinSizeSlider', 'vizMinSizeVal',
     () => S.vizMinSize,

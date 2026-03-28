@@ -139,8 +139,9 @@ export function makeSensorSlot(name) {
 
     // Calibration
     quatCal: {
-      axisMap:  defaultQuatAxisMap(),
-      tareQuat: null,
+      axisMap:        defaultQuatAxisMap(),
+      tareQuat:       null,
+      tareRollOffset: 0,
     },
     inertialCal: {
       axisMap:    defaultInertialAxisMap(),
@@ -457,13 +458,87 @@ export function getCustomGestureSlots() {
 // ── Tare ─────────────────────────────────────────────────────────────────────
 
 export function slotTare(slot) {
-  if (slot.quat) slot.quatCal.tareQuat = [...slot.quat];
+  if (!slot.quat) return;
+  const [qx, qy, qz, qw] = slot.quat;
+
+  // Gravity-aligned tare: store only the heading (yaw around Z/up) so the
+  // tare reference stays level with gravity.  Tilted mounting won't skew
+  // the pitch axis — the remaining pitch/roll offset is handled downstream.
+  const heading = Math.atan2(2*(qw*qz + qx*qy), 1 - 2*(qy*qy + qz*qz));
+  slot.quatCal.tareQuat = eulerAxisToQuat(0, 0, 1, heading);
+
+  // Store the X-roll angle at tare time so the Euler path can subtract it
+  // before decomposition (prevents pitch↔yaw coupling from static roll).
+  // Always uses the X component because it's the innermost rotation in the
+  // ZYX Euler decomposition — only right-multiplying Qx cleanly removes it.
+  // Limitation: tilt-tare correction only works with default axis mapping
+  // (X=roll). Non-default mappings still work but won't compensate for tilt.
+  const euler = quatToEulerDeg(qx, qy, qz, qw);
+  slot.quatCal.tareRollOffset = euler.x * (Math.PI / 180);
+
+  // Auto-recenter on next render frame so cursor snaps to center
+  if (slot.quatRole === 'cursor') {
+    S.driftOffsetQ = null;
+    S._pendingRecenter = true;
+  }
   saveCalibration();
+  S._onTare?.();
 }
 
 export function slotClearTare(slot) {
   slot.quatCal.tareQuat = null;
+  slot.quatCal.tareRollOffset = 0;
+  S.driftOffsetQ = null;
   saveCalibration();
+}
+
+// ── Recenter — correct accumulated drift without changing tare ───────────────
+// Computes a rotation offset that maps the current camera direction back to
+// front-center [0,0,1] (lon=0, lat=0). Applied every frame in the renderer.
+export function recenterCursor() {
+  if (!S.camQ) return;
+  // Current camera direction as a unit vector (forward = [0,0,1] rotated by camQ)
+  const [cx, cy, cz, cw] = S.camQ;
+  const curFwd = [
+    2 * (cx * cz + cw * cy),
+    2 * (cy * cz - cw * cx),
+    1 - 2 * (cx * cx + cy * cy)
+  ];
+  // Target is always front-center: [0, 0, 1]
+  const tgtFwd = [0, 0, 1];
+  // Rotation from curFwd to tgtFwd (shortest arc quaternion)
+  const dot = curFwd[0] * tgtFwd[0] + curFwd[1] * tgtFwd[1] + curFwd[2] * tgtFwd[2];
+  let qOff;
+  if (dot > 0.999999) {
+    qOff = [0, 0, 0, 1]; // already aligned
+  } else if (dot < -0.999999) {
+    // 180° — pick arbitrary perpendicular axis
+    qOff = [0, 1, 0, 0];
+  } else {
+    const cross = [
+      curFwd[1] * tgtFwd[2] - curFwd[2] * tgtFwd[1],
+      curFwd[2] * tgtFwd[0] - curFwd[0] * tgtFwd[2],
+      curFwd[0] * tgtFwd[1] - curFwd[1] * tgtFwd[0]
+    ];
+    const w = 1 + dot;
+    const len = Math.sqrt(cross[0] ** 2 + cross[1] ** 2 + cross[2] ** 2 + w * w);
+    qOff = [cross[0] / len, cross[1] / len, cross[2] / len, w / len];
+  }
+  // Compose with existing drift offset
+  if (S.driftOffsetQ) {
+    const [ax, ay, az, aw] = S.driftOffsetQ;
+    const [bx, by, bz, bw] = qOff;
+    const composed = [
+      bw * ax + bx * aw + by * az - bz * ay,
+      bw * ay - bx * az + by * aw + bz * ax,
+      bw * az + bx * ay - by * ax + bz * aw,
+      bw * aw - bx * ax - by * ay - bz * az
+    ];
+    const cl = Math.sqrt(composed[0] ** 2 + composed[1] ** 2 + composed[2] ** 2 + composed[3] ** 2);
+    S.driftOffsetQ = [composed[0] / cl, composed[1] / cl, composed[2] / cl, composed[3] / cl];
+  } else {
+    S.driftOffsetQ = qOff;
+  }
 }
 
 function applyTare(quat, tareQuat) {
@@ -491,68 +566,111 @@ export function applyAxisMapToEuler(euler, cal) {
 
 
 // ── Axis remap (quaternion → camera space) ──────────────────────────────────
-// When roll is muted (the common cursor case), the Euler decompose → recompose
-// path suffers from gimbal lock at the poles: yaw and roll become entangled,
-// causing the image to spin when the wand points near a pole.
+// Two paths, selected automatically:
 //
-// Pole-safe path: extract the forward vector from the quaternion (always
-// well-defined), derive yaw/pitch from it (bypassing Euler), and hold yaw
-// steady near the poles where the XZ projection is too small for a stable
-// atan2.  Falls back to the original Euler path when all three axes are active.
+// 1. Forward-vector path (roll muted/unmapped):
+//    Find the unused physical axis, rotate its unit vector by the quaternion,
+//    extract yaw/pitch from the result.  Bypasses Euler, avoids gimbal lock.
+//    Yaw is held near the poles where atan2 becomes unstable.
+//
+// 2. Euler path (all three axes active):
+//    Standard decompose → remap → recompose.  Nearly lossless round-trip,
+//    handles poles well.  When the gravity-aligned tare leaves a static roll
+//    offset in the tared quaternion, the offset is subtracted before
+//    decomposition to prevent pitch↔yaw coupling from the tilted roll axis.
 
 let _axisMapLastYaw = 0;  // held yaw when sensor points near a pole
 
+// Find the physical axis that serves as the sensor's forward/pointing direction.
+// Returns the physical axis key ('x', 'y', or 'z'), or null if all axes are
+// actively driving the output (→ use Euler fallback).
+function findForwardAxis(cal) {
+  if (!cal?.axisMap) return null;
+  const entries = Object.entries(cal.axisMap);
+  // Priority 1: muted roll axis (explicit "I am the forward direction")
+  for (const [phys, a] of entries) {
+    if (a.viz === 'roll' && a.mute) return phys;
+  }
+  // Priority 2: unmapped axis (not driving anything → available as forward)
+  for (const [phys, a] of entries) {
+    if (a.viz === 'unmapped') return phys;
+  }
+  // Priority 3: any muted axis that isn't driving yaw or pitch
+  for (const [phys, a] of entries) {
+    if (a.mute && a.viz !== 'yaw' && a.viz !== 'pitch') return phys;
+  }
+  return null;
+}
+
+// Rotate the forward unit vector into the reference frame.
+// Returns [fx, fy, fz] — the world-space direction of the forward axis.
+function forwardVecFromQuat(q, forwardPhys) {
+  const [qx, qy, qz, qw] = q;
+  if (forwardPhys === 'x') {
+    return [
+      1 - 2*(qy*qy + qz*qz),
+      2*(qx*qy + qw*qz),
+      2*(qx*qz - qw*qy)
+    ];
+  } else if (forwardPhys === 'y') {
+    return [
+      2*(qx*qy - qw*qz),
+      1 - 2*(qx*qx + qz*qz),
+      2*(qy*qz + qw*qx)
+    ];
+  } else { // 'z'
+    return [
+      2*(qx*qz + qw*qy),
+      2*(qy*qz - qw*qx),
+      1 - 2*(qx*qx + qy*qy)
+    ];
+  }
+}
+
 function applyAxisMapQuat(q, cal) {
-  // Detect whether roll is muted — enables the pole-safe forward-vector path
-  const rollMuted = cal?.axisMap &&
-    Object.values(cal.axisMap).some(a => a.viz === 'roll' && a.mute);
+  const forwardPhys = findForwardAxis(cal);
 
-  if (rollMuted) {
-    // The muted axis is the sensor's "pointing direction" (forward vector).
-    // Default: x→roll(muted), so forward = [1,0,0].
-    // Rotating [1,0,0] by the quaternion and extracting atan2/asin gives
-    // exactly euler.z (yaw) and euler.y (pitch) — same values as the Euler
-    // decomposition but without the gimbal-lock singularity at the poles.
-    //
-    // This only works for the standard z→yaw, y→pitch layout.  Non-standard
-    // axis swaps fall through to the Euler path below.
-    const yawAxis  = Object.entries(cal.axisMap).find(([,a]) => a.viz === 'yaw'   && !a.mute);
-    const pitchAxis= Object.entries(cal.axisMap).find(([,a]) => a.viz === 'pitch' && !a.mute);
-    const isStdLayout = yawAxis?.[0] === 'z' && pitchAxis?.[0] === 'y';
+  // ── Forward-vector path (roll muted or unmapped) ──────────────────────
+  if (forwardPhys) {
+    const yawEntry   = Object.entries(cal.axisMap).find(([,a]) => a.viz === 'yaw'   && !a.mute);
+    const pitchEntry = Object.entries(cal.axisMap).find(([,a]) => a.viz === 'pitch' && !a.mute);
 
-    if (isStdLayout) {
-      const [qx, qy, qz, qw] = q;
-      // Forward vector = rotate [1,0,0] by quaternion (inline)
-      const fx = 1 - 2 * (qy * qy + qz * qz);
-      const fy = 2 * (qx * qy + qw * qz);
-      const fz = 2 * (qx * qz - qw * qy);
-
-      // Pitch (euler.y): always well-defined
+    if (yawEntry && pitchEntry) {
+      const [fx, fy, fz] = forwardVecFromQuat(q, forwardPhys);
       let pitch = Math.asin(Math.max(-1, Math.min(1, -fz)));
-
-      // Yaw (euler.z): hold last good value near the poles where fx,fy → 0
-      const xyLen = Math.sqrt(fx * fx + fy * fy);
+      const xyLen = Math.sqrt(fx*fx + fy*fy);
       let yaw;
-      if (xyLen > 0.15) {                         // ~81° — well clear of singularity
+      if (xyLen > 0.15) {
         yaw = Math.atan2(fy, fx);
         _axisMapLastYaw = yaw;
       } else {
         yaw = _axisMapLastYaw;
       }
-
-      // Apply axis-map signs
-      yaw   *= yawAxis[1].sign;
-      pitch *= pitchAxis[1].sign;
-
+      yaw   *= yawEntry[1].sign;
+      pitch *= pitchEntry[1].sign;
       const qY = eulerAxisToQuat(0, 1, 0, yaw);
       const qP = eulerAxisToQuat(1, 0, 0, pitch);
       return qMulQ(qY, qP);
     }
-    // Non-standard axis layout — fall through to Euler path
   }
 
-  // ── Fallback: full Euler path (all three axes active) ──
-  const euler = quatToEulerDeg(q[0], q[1], q[2], q[3]);
+  // ── Euler path (all three axes active) ────────────────────────────────
+  // If the gravity-aligned tare left a static roll offset in the tared
+  // quaternion, subtract it before decomposition so the Euler yaw/pitch
+  // don't couple through the tilted roll axis.  The offset is re-added
+  // to the mapped roll output so the camera still reflects physical roll
+  // changes (just zeroed at the tare position).
+  let qIn = q;
+  const rollOffset = cal.tareRollOffset ?? 0;
+  if (rollOffset !== 0) {
+    // Subtract the static X-roll captured at tare time.  Right-multiplying
+    // by Qx(-offset) cleanly removes the innermost rotation in the ZYX
+    // Euler decomposition, preventing pitch↔yaw coupling from tilted mount.
+    const qRollOff = eulerAxisToQuat(1, 0, 0, -rollOffset);
+    qIn = qMulQ(q, qRollOff);
+  }
+
+  const euler = quatToEulerDeg(qIn[0], qIn[1], qIn[2], qIn[3]);
   const mapped = { roll: 0, pitch: 0, yaw: 0 };
   for (const phys of ['x', 'y', 'z']) {
     const { viz, sign, mute } = cal.axisMap[phys];
@@ -705,8 +823,9 @@ function slotToJSON(slot) {
     quatRoutes:     slot.quatRoutes,
     inertialRoutes: slot.inertialRoutes,
     quatCal: {
-      axisMap:  slot.quatCal.axisMap,
-      tareQuat: slot.quatCal.tareQuat,
+      axisMap:        slot.quatCal.axisMap,
+      tareQuat:       slot.quatCal.tareQuat,
+      tareRollOffset: slot.quatCal.tareRollOffset ?? 0,
     },
     inertialCal: {
       axisMap:    slot.inertialCal.axisMap,
@@ -747,6 +866,7 @@ function applySavedCal(slot) {
   if (saved.quatCal) {
     if (saved.quatCal.axisMap)  slot.quatCal.axisMap  = saved.quatCal.axisMap;
     if (saved.quatCal.tareQuat) slot.quatCal.tareQuat = saved.quatCal.tareQuat;
+    if (saved.quatCal.tareRollOffset != null) slot.quatCal.tareRollOffset = saved.quatCal.tareRollOffset;
   }
   if (saved.inertialCal) {
     if (saved.inertialCal.axisMap)    slot.inertialCal.axisMap    = saved.inertialCal.axisMap;

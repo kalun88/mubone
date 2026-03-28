@@ -474,6 +474,12 @@ export function setupEvents() {
       S._sessionSweep?.();
     }
 
+    // Backtick: tare cursor sensor
+    if (e.key === '`' && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      e.preventDefault();
+      S._tareCursor?.();
+    }
+
     // Delete/Backspace: erase all (triple-press within 800ms)
     if ((e.key === 'Delete' || e.key === 'Backspace') && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
@@ -736,6 +742,14 @@ export function setupEvents() {
       document.fullscreenElement ? '✕' : '⛶';
     requestAnimationFrame(() => resizeCanvas());
   });
+  // Electron native fullscreen doesn't fire the web fullscreenchange event —
+  // listen for the IPC event from main process instead.
+  if (window.electronBridge?.onFullscreenChanged) {
+    window.electronBridge.onFullscreenChanged((isFullscreen) => {
+      document.getElementById('fullscreenBtn').textContent = isFullscreen ? '✕' : '⛶';
+      requestAnimationFrame(() => resizeCanvas());
+    });
+  }
 
   // ── Mute button ───────────────────────────────────────────────────────────
   const muteBtn = document.getElementById('muteBtn');

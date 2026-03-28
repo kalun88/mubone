@@ -331,9 +331,16 @@ export function drawTetherLine() {
 export function drawGridLines() {
   for (let i = 0; i < GRID_SEGMENTS_LON; i++) {
     const lon = (i / GRID_SEGMENTS_LON) * Math.PI * 2;
-    S.ctx.strokeStyle = GRID_COLOR;
-    S.ctx.lineWidth   = 0.8;
-    S.ctx.globalAlpha = 0.45;
+    if (i === 0 && S.showZeroRef) {
+      // Zero meridian — matches equator style as center reference
+      S.ctx.strokeStyle = '#a0dede';
+      S.ctx.lineWidth   = 2.5;
+      S.ctx.globalAlpha = 0.9;
+    } else {
+      S.ctx.strokeStyle = GRID_COLOR;
+      S.ctx.lineWidth   = 0.8;
+      S.ctx.globalAlpha = 0.45;
+    }
     drawArc(lon, 'lon');
   }
   for (let i = 1; i < GRID_SEGMENTS_LAT; i++) {
@@ -794,7 +801,7 @@ export function resizeCanvas() {
 
 // ── Animation loop ────────────────────────────────────────────────────────────
 let _animLastAt = 0;
-let _prevSensorRawQ = null;   // previous frame's raw tared sensor quaternion
+// (delta tracking removed — absolute path via applyAxisMapQuat handles roll mute)
 export function animate() {
   if (!_coordEl) _coordEl = document.getElementById('coordinates');
   const _animNow = performance.now();
@@ -887,81 +894,45 @@ export function animate() {
   }
 
   // ── BNO085 sensor override ─────────────────────────────────────────────────
-  // Delta-based tracking: compute the change in raw sensor orientation since
-  // the last frame, decompose into small yaw/pitch deltas (always well-
-  // conditioned for small angles), and apply incrementally — same world-yaw ×
-  // local-pitch pattern as the trackpad.  This avoids gimbal lock entirely
-  // and allows continuous rotation through the poles.
-  //
-  // Falls back to the absolute (applyAxisMapQuat) path when the raw quaternion
-  // is unavailable (e.g. custom-only sensor routing).
-  if (S.cameraMode !== 'sensor') _prevSensorRawQ = null; // reset on mode exit
-  if (S.cameraMode === 'sensor') {
-    const signs = typeof S._getCursorSigns === 'function'
-      ? S._getCursorSigns() : { yaw: 1, pitch: 1, rollMuted: true };
-    const rawQ = typeof S._getSensorRawQ === 'function' ? S._getSensorRawQ() : null;
-
-    if (rawQ && signs.rollMuted) {
-      // ── Roll muted: delta-based yaw/pitch tracking (gimbal-lock-free) ────
-      if (!_prevSensorRawQ) {
-        // First frame: snap to absolute orientation via forward vector
-        const [qx, qy, qz, qw] = rawQ;
-        const fx = 1 - 2 * (qy * qy + qz * qz);
-        const fy = 2 * (qx * qy + qw * qz);
-        const fz = 2 * (qx * qz - qw * qy);
-        const yaw   = Math.atan2(fy, fx) * signs.yaw;
-        const pitch = Math.asin(Math.max(-1, Math.min(1, -fz))) * signs.pitch;
+  // Always uses the absolute path via getSensorCamQ() → applyAxisMapQuat().
+  // applyAxisMapQuat already has a pole-safe forward-vector path for when
+  // roll is muted — no need for a second delta-tracking layer here.
+  if (S.cameraMode === 'sensor' && typeof S._getSensorCamQ === 'function') {
+    let sq = S._getSensorCamQ();
+    // Apply persistent drift correction from recenter
+    if (sq && S.driftOffsetQ) {
+      sq = _qNorm(_qMul(S.driftOffsetQ, sq));
+    }
+    if (sq) {
+      if (S.axisLockAz || S.axisLockEl) {
+        const fwd = _qRotVec(sq, [0, 0, 1]);
+        let yaw   = Math.atan2(fwd[0], fwd[2]);
+        let pitch = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
+        if (S.axisLockAz) {
+          if (S._axisLockFrozenYaw == null) S._axisLockFrozenYaw = yaw;
+          yaw = S._axisLockFrozenYaw;
+        } else { S._axisLockFrozenYaw = null; }
+        if (S.axisLockEl) {
+          if (S._axisLockFrozenPitch == null) S._axisLockFrozenPitch = pitch;
+          pitch = S._axisLockFrozenPitch;
+        } else { S._axisLockFrozenPitch = null; }
         const qY = _qFromAA(0, 1, 0, yaw);
         const qP = _qFromAA(1, 0, 0, pitch);
         S.camQ = _qNorm(_qMul(qY, qP));
       } else {
-        // Delta = prev⁻¹ · current (rotation in sensor-local frame)
-        const delta = _qNorm(_qMul(_qConj(_prevSensorRawQ), rawQ));
-        // Skip if delta is too large (sensor reconnect / tare)
-        if (delta[3] > 0.95) {
-          const dfx = 1 - 2 * (delta[1] * delta[1] + delta[2] * delta[2]);
-          const dfy = 2 * (delta[0] * delta[1] + delta[3] * delta[2]);
-          const dfz = 2 * (delta[0] * delta[2] - delta[3] * delta[1]);
-          let dYaw   = Math.atan2(dfy, dfx) * signs.yaw;
-          let dPitch = Math.asin(Math.max(-1, Math.min(1, -dfz))) * signs.pitch;
-          if (S.axisLockAz) dYaw   = 0;
-          if (S.axisLockEl) dPitch = 0;
-          if (dYaw !== 0 || dPitch !== 0) {
-            const qDY = _qFromAA(0, 1, 0, dYaw);
-            const qDP = _qFromAA(1, 0, 0, dPitch);
-            S.camQ = _qNorm(_qMul(qDY, _qMul(S.camQ, qDP)));
-          }
-        } else {
-          _prevSensorRawQ = null; // large jump — re-snap next frame
-        }
+        S._axisLockFrozenYaw = null;
+        S._axisLockFrozenPitch = null;
+        S.camQ = sq;
       }
-      _prevSensorRawQ = [rawQ[0], rawQ[1], rawQ[2], rawQ[3]];
 
-    } else if (typeof S._getSensorCamQ === 'function') {
-      // ── Roll active (or no raw quat): absolute path via applyAxisMapQuat ──
-      // Full 3DOF quaternion including roll. Also handles custom-role sensors.
-      _prevSensorRawQ = null; // ensure delta re-inits if roll gets muted again
-      const sq = S._getSensorCamQ();
-      if (sq) {
-        if (S.axisLockAz || S.axisLockEl) {
-          const fwd = _qRotVec(sq, [0, 0, 1]);
-          let yaw   = Math.atan2(fwd[0], fwd[2]);
-          let pitch = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
-          if (S.axisLockAz) {
-            if (S._axisLockFrozenYaw == null) S._axisLockFrozenYaw = yaw;
-            yaw = S._axisLockFrozenYaw;
-          } else { S._axisLockFrozenYaw = null; }
-          if (S.axisLockEl) {
-            if (S._axisLockFrozenPitch == null) S._axisLockFrozenPitch = pitch;
-            pitch = S._axisLockFrozenPitch;
-          } else { S._axisLockFrozenPitch = null; }
-          const qY = _qFromAA(0, 1, 0, yaw);
-          const qP = _qFromAA(1, 0, 0, pitch);
-          S.camQ = _qNorm(_qMul(qY, qP));
-        } else {
-          S._axisLockFrozenYaw = null;
-          S._axisLockFrozenPitch = null;
-          S.camQ = sq;
+      // Auto-recenter after gravity-aligned tare — fires once on next frame
+      if (S._pendingRecenter) {
+        S._pendingRecenter = false;
+        if (typeof S._recenterCursor === 'function') {
+          S._recenterCursor();
+          sq = S._getSensorCamQ();
+          if (sq && S.driftOffsetQ) sq = _qNorm(_qMul(S.driftOffsetQ, sq));
+          if (sq) S.camQ = sq;
         }
       }
     }
@@ -1074,7 +1045,6 @@ function _qMul(a, b) {
   return [a[3]*b[0]+a[0]*b[3]+a[1]*b[2]-a[2]*b[1], a[3]*b[1]-a[0]*b[2]+a[1]*b[3]+a[2]*b[0], a[3]*b[2]+a[0]*b[1]-a[1]*b[0]+a[2]*b[3], a[3]*b[3]-a[0]*b[0]-a[1]*b[1]-a[2]*b[2]];
 }
 function _qNorm(q) { const l=Math.sqrt(q[0]*q[0]+q[1]*q[1]+q[2]*q[2]+q[3]*q[3]); return [q[0]/l,q[1]/l,q[2]/l,q[3]/l]; }
-function _qConj(q) { return [-q[0],-q[1],-q[2],q[3]]; }
 function _qFromAA(ax, ay, az, angle) { const h=angle/2,s=Math.sin(h); return [ax*s,ay*s,az*s,Math.cos(h)]; }
 function _qRotVec(q, v) {
   const vq=[v[0],v[1],v[2],0], c=[-q[0],-q[1],-q[2],q[3]];
