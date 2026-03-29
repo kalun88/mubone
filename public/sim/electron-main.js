@@ -326,7 +326,7 @@ function createWindow() {
 
   // Grant mic + MIDI permissions without browser prompt
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    callback(['media', 'midi', 'midiSysex'].includes(permission));
+    callback(['media', 'midi', 'midiSysex', 'pointerLock'].includes(permission));
   });
 
   win.loadFile('index.html');

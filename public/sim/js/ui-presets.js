@@ -354,6 +354,14 @@ export function setupPresets() {
   if (micBtn) {
     micBtn.addEventListener('click', async () => {
       if (S.micPermissionGranted) return;
+      // In Electron, RtAudio handles input — don't try getUserMedia.
+      // If RtAudio is already active, the button should already show "mic ready".
+      // If not, open Audio Settings so the user can pick a device.
+      if (window.electronBridge?.isElectron) {
+        if (window._rtAudioInputListening) return;  // already active
+        document.getElementById('audioSettingsBtn')?.click();
+        return;
+      }
       setMicBtnLabel('enabling…');
       micBtn.disabled = true;
       ensureAudioContext();
@@ -702,10 +710,14 @@ function _syncSeqButtonStates() {
   if (commitDrawBtn) {
     commitDrawBtn.style.opacity = full ? '0.35' : '';
   }
-  // Auto-reset trace mode to plain trace when slots become full
-  if (full && S.traceMode !== 'trace') {
-    S.traceMode = 'trace';
-    S._syncCommitUI?.();
+  // Sync trace label — shows parenthesised mode name when armed but full
+  // (inlined here to avoid recursion with _syncCommitUI which calls us)
+  const traceLabel = document.getElementById('traceLabel');
+  if (traceLabel) {
+    const armed = S.traceMode !== 'trace';
+    const _labelMap      = { 'trace': 'trace', 'trace+loop': 'trace + loop',   'trace+cloud': 'trace + cloud' };
+    const _labelMapFull  = { 'trace': 'trace', 'trace+loop': 'trace + (loop)', 'trace+cloud': 'trace + (cloud)' };
+    traceLabel.textContent = (armed && full ? _labelMapFull : _labelMap)[S.traceMode] || 'trace';
   }
 }
 S._syncSeqButtonStates = _syncSeqButtonStates;
@@ -736,8 +748,10 @@ function _syncCommitUI() {
   // ── Trace label — reflects current trace mode ──
   const traceLabel = document.getElementById('traceLabel');
   if (traceLabel) {
-    const _labelMap = { 'trace': 'trace', 'trace+loop': 'trace + loop', 'trace+cloud': 'trace + cloud' };
-    traceLabel.textContent = _labelMap[S.traceMode] || 'trace';
+    const full = S.traceMode !== 'trace' && seqSlotsFull();
+    const _labelMap      = { 'trace': 'trace', 'trace+loop': 'trace + loop',   'trace+cloud': 'trace + cloud' };
+    const _labelMapFull  = { 'trace': 'trace', 'trace+loop': 'trace + (loop)', 'trace+cloud': 'trace + (cloud)' };
+    traceLabel.textContent = (full ? _labelMapFull : _labelMap)[S.traceMode] || 'trace';
   }
 
   // ── Legacy button compat ──

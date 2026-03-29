@@ -7,7 +7,7 @@ import {
   MAX_SAMPLES, SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, DEBUG,
   gp, perf,
 } from './state.js';
-import { ensureAudioContext, getMasterBus } from './audio.js';
+import { ensureAudioContext, getMasterBus, stopLiveRecording, startLiveRecording } from './audio.js';
 import { removeSeqByStrokeId } from './ui-presets.js';
 import { undoSweep, commitSweep } from './ui-sweep.js';
 
@@ -336,6 +336,16 @@ export function undoLastStroke() {
   if (undoSweep()) { _flashUndoBtn(); return; }
 
   if (S.strokeHistory.length === 0) { _flashUndoBtn(); return; }
+
+  // ── Mid-recording undo ──────────────────────────────────────────────────
+  // Stop the active recording first so its buffer is finalized (or removed
+  // if too short).  Then normal undo removes the stroke + buffer + particles
+  // cleanly.  Finally restart recording + a fresh stroke so the performer
+  // keeps painting without lifting their finger.
+  const wasRecording = S.isRecording && S.isPainting;
+  if (wasRecording) stopLiveRecording();
+
+  // ── Normal undo ─────────────────────────────────────────────────────────
   const entry = S.strokeHistory.pop();
   const sid   = entry.strokeId;
 
@@ -349,11 +359,23 @@ export function undoLastStroke() {
     const idx = entry.liveBufferIndex;
     if (idx < S.liveRecBuffers.length) {
       S.liveRecBuffers.splice(idx, 1);
+      // Reindex all particle buffer references above the removed slot
       S.particles.forEach(p => {
         if (p.liveBufferIdx > idx) p.liveBufferIdx--;
       });
+      // If another recording was active above the removed slot, keep its
+      // index in sync (shouldn't happen here since we stopped first, but
+      // guard against future paths)
+      if (S.currentLiveBufferIdx > idx) S.currentLiveBufferIdx--;
     }
     updateLiveRecUI();
+  }
+
+  // ── Restart recording if we interrupted one ─────────────────────────────
+  if (wasRecording) {
+    startLiveRecording();
+    recordStrokeStart('live', S.currentLiveBufferIdx);
+    S.paintFrameCount = 0;
   }
 
   _flashUndoBtn();

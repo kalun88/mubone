@@ -14,7 +14,7 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.10 alpha</span>
+        <span class="top-bar-version">version 0.11 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -64,7 +64,7 @@
         </button>
         <button id="exportSetupBtn" class="top-bar-btn" title="export all settings, patches and key mappings as a JSON file">↑ export</button>
         <button id="importSetupBtn" class="top-bar-btn" title="import settings from a previously exported JSON file">↓ import</button>
-        <button id="resetDefaultsBtn" class="top-bar-btn" title="Reset all saved settings to factory defaults">↺ factory defaults</button>
+        <button id="factoryResetBtn" class="top-bar-btn" title="Full factory reset — clears everything including patches">↺ factory reset</button>
         <button id="learnModeBtn" class="top-bar-btn" title="learning mode — instant tooltips on hover">? learn</button>
       </div>
       <div class="top-bar-row sensor-group no-sensor" id="sensorGroup">
@@ -809,14 +809,26 @@
       <button class="close-btn" id="vizModalClose">✕</button>
     </h2>
 
-    <!-- Mode -->
+    <!-- Background mode -->
     <div class="as-section">
-      <div class="as-section-label">mode</div>
+      <div class="as-section-label">background</div>
       <div class="as-row">
-        <span class="as-label">feature viz</span>
-        <div class="grain-seg" id="vizModeSeg">
-          <button class="grain-seg-btn active" data-viz="on">on</button>
-          <button class="grain-seg-btn" data-viz="off">off</button>
+        <span class="as-label">canvas theme</span>
+        <div class="grain-seg" id="vizDarkModeSeg">
+          <button class="grain-seg-btn active" data-theme="dark">dark</button>
+          <button class="grain-seg-btn" data-theme="light">light</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Performance mode -->
+    <div class="as-section">
+      <div class="as-section-label">performance mode <span style="opacity:.45;font-weight:400">⇧P</span></div>
+      <div class="as-row">
+        <span class="as-label">minimal rendering</span>
+        <div class="grain-seg" id="vizPerfModeSeg">
+          <button class="grain-seg-btn" data-perf="on">on</button>
+          <button class="grain-seg-btn active" data-perf="off">off</button>
         </div>
       </div>
     </div>
@@ -847,18 +859,6 @@
         <span class="as-label">vertical FOV <span style="opacity:.5;font-size:.85em">(projector throw — Nebula 1.2:1 ≈ 26°)</span></span>
         <input class="as-slider" type="range" id="vizFovSlider" min="10" max="90" step="0.5" value="80">
         <span class="as-val" id="vizFovVal">80.0°</span>
-      </div>
-    </div>
-
-    <!-- Center reference marker -->
-    <div class="as-section">
-      <div class="as-section-label">center reference</div>
-      <div class="as-row">
-        <span class="as-label">show marker</span>
-        <div class="grain-seg" id="vizZeroRefSeg">
-          <button class="grain-seg-btn active" data-zero="on">on</button>
-          <button class="grain-seg-btn" data-zero="off">off</button>
-        </div>
       </div>
     </div>
 
@@ -933,21 +933,16 @@
   <div class="audio-dialog mu-dialog">
     <h2>audio settings <button class="close-btn" id="audioSettingsClose">✕</button></h2>
 
-    <div class="as-actions as-actions--top">
-      <button class="as-btn" id="asStartBtn">start audio</button>
-    </div>
-
     <!-- ── INPUT ─────────────────────────────────────────────────────────── -->
     <div class="as-section">
       <div class="as-section-label">input</div>
 
-      <!-- Device -->
+      <!-- Device — selecting activates immediately (no Apply/Start needed) -->
       <div class="as-row">
         <span class="as-label">device</span>
         <select id="asInputDevice" class="as-select">
-          <option value="">— click to scan —</option>
+          <option value="">— select device —</option>
         </select>
-        <button class="as-btn" id="asInputDeviceApply">apply</button>
       </div>
 
       <!-- Input meters (all hardware input channels) -->
@@ -1080,7 +1075,6 @@
           <option value="48000">48000 Hz</option>
           <option value="96000">96000 Hz</option>
         </select>
-        <button class="as-btn" id="asRateApply">apply</button>
       </div>
 
       <div class="as-row">
@@ -1092,10 +1086,7 @@
           <option value="1024">1024</option>
         </select>
         <span class="as-dim">frames</span>
-        <button class="as-btn" id="asBufferApply">apply</button>
       </div>
-
-      <div class="as-note" id="asRateNote">rate change restarts audio engine — active recordings will be lost</div>
 
       <div class="as-row">
         <span class="latency-dot" id="asLatencyDot"></span>

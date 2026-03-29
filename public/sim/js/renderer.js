@@ -3,7 +3,7 @@
 // ============================================================================
 
 import {
-  S, BG_COLOR, GRID_COLOR, GRID_SEGMENTS_LON, GRID_SEGMENTS_LAT,
+  S, BG_COLOR_DARK, BG_COLOR_LIGHT, GRID_COLOR, GRID_SEGMENTS_LON, GRID_SEGMENTS_LAT,
   SPHERE_RADIUS, FOV_DEG, PARTICLE_BASE_SIZE, PARTICLE_MAX_SIZE,
   SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, NEAREST_GLOW_COLOR,
   MAX_SEEDS, MAX_SEQS, AUTO_ROTATION_SPEED, ROTATION_SPEED, PAINT_INTERVAL,
@@ -26,7 +26,7 @@ export function drawFrame() {
   // cameraTransformInto calls use a single rotation instead of two.
   updateFusedCamQ();
 
-  S.ctx.fillStyle = BG_COLOR;
+  S.ctx.fillStyle = S.darkMode ? BG_COLOR_DARK : BG_COLOR_LIGHT;
   S.ctx.fillRect(0, 0, S.canvas.width, S.canvas.height);
 
   if (S.perfMode) {
@@ -331,7 +331,7 @@ function _drawLiveRecordingTrail() {
   if (!frames || frames.length < 2) return;
   const slot = S._seedRecordingSlot;
   const seed = slot >= 0 ? S.seedSlots[slot] : null;
-  const color = seed ? seed.color : '#ffffff';
+  const color = seed ? seed.color : (S.darkMode ? '#ffffff' : '#000000');
   _drawVelocityDotTrail(frames, color, 0.7, 2.5, 50);
 }
 
@@ -365,37 +365,67 @@ export function drawTetherLine() {
 
 // ── Grid lines ────────────────────────────────────────────────────────────────
 export function drawGridLines() {
+  // Contrast-aware grid colours for dark/light mode
+  const eqColor   = S.darkMode ? '#a0dede' : '#207070';
+  const gridColor = S.darkMode ? GRID_COLOR : '#3a8888';
+  const northTint = S.darkMode ? '#c8a060' : '#806030';
+  const southTint = S.darkMode ? '#60a0c8' : '#306080';
+
   if (S.perfMode) {
-    // Minimal: equator + zero meridian only (2 arcs instead of ~27)
-    S.ctx.strokeStyle = '#a0dede'; S.ctx.lineWidth = 2.5; S.ctx.globalAlpha = 0.9;
+    // Minimal: equator + prime meridian only, very light
+    S.ctx.strokeStyle = eqColor; S.ctx.lineWidth = 0.8; S.ctx.globalAlpha = 0.2;
     drawArc(0, 'lat');
-    if (S.showZeroRef) drawArc(0, 'lon');
+    drawArc(0, 'lon');
     S.ctx.globalAlpha = 1;
     return;
   }
 
-  for (let i = 0; i < GRID_SEGMENTS_LON; i++) {
+  // ── Regular meridians (skip prime 0° and back 180°, drawn separately) ───
+  for (let i = 1; i < GRID_SEGMENTS_LON; i++) {
+    if (i === GRID_SEGMENTS_LON / 2) continue; // skip back meridian (180°)
     const lon = (i / GRID_SEGMENTS_LON) * Math.PI * 2;
-    if (i === 0 && S.showZeroRef) {
-      // Zero meridian — matches equator style as center reference
-      S.ctx.strokeStyle = '#a0dede';
-      S.ctx.lineWidth   = 2.5;
-      S.ctx.globalAlpha = 0.9;
-    } else {
-      S.ctx.strokeStyle = GRID_COLOR;
-      S.ctx.lineWidth   = 0.8;
-      S.ctx.globalAlpha = 0.45;
-    }
+    S.ctx.strokeStyle = gridColor;
+    S.ctx.lineWidth   = 0.8;
+    S.ctx.globalAlpha = 0.45;
     drawArc(lon, 'lon');
   }
-  // Always draw the equator explicitly — grid density changes must not lose it
-  S.ctx.strokeStyle = '#a0dede'; S.ctx.lineWidth = 2.5; S.ctx.globalAlpha = 0.9;
+
+  // ── Prime meridian (0°) and back meridian (180°) — tapered great circle ──
+  // Drawn as segmented arcs so width/alpha vary with latitude.
+  // Prime is heaviest at equator, thins toward poles. Back is lighter but
+  // follows the same taper so they read as one continuous great circle.
+  // The prime→back contrast must be obvious: prime peaks at 5px, back at 2px.
+  const TAPER_SEGS = 12;
+  const primeColor = S.darkMode ? '#a0dede' : '#186060';
+  const backColor  = S.darkMode ? '#70a8a8' : '#409090';
+  for (let s = 0; s < TAPER_SEGS; s++) {
+    const lat0 = (s / TAPER_SEGS) * Math.PI - Math.PI / 2;
+    const lat1 = ((s + 1) / TAPER_SEGS) * Math.PI - Math.PI / 2;
+    const midLat = (lat0 + lat1) / 2;
+    // t=1 at equator, t=0 at poles
+    const t = 1 - Math.abs(midLat) / (Math.PI / 2);
+    // Prime meridian (0°): width 5.0→1.5, alpha 0.95→0.35
+    S.ctx.strokeStyle = primeColor;
+    S.ctx.lineWidth   = 1.5 + 3.5 * t;
+    S.ctx.globalAlpha = 0.35 + 0.6 * t;
+    _drawArcSegment(0, 'lon', lat0, lat1);
+    // Back meridian (180°): width 3.0→1.2, alpha 0.6→0.25
+    S.ctx.strokeStyle = backColor;
+    S.ctx.lineWidth   = 1.2 + 1.8 * t;
+    S.ctx.globalAlpha = 0.25 + 0.35 * t;
+    _drawArcSegment(Math.PI, 'lon', lat0, lat1);
+  }
+
+  // ── Equator — always distinct ──────────────────────────────────────────
+  S.ctx.strokeStyle = eqColor; S.ctx.lineWidth = 2.5; S.ctx.globalAlpha = 0.9;
   drawArc(0, 'lat');
+
+  // ── Latitude lines — hemisphere-tinted, fading toward poles ────────────
   for (let i = 1; i < GRID_SEGMENTS_LAT; i++) {
     const lat          = (i / GRID_SEGMENTS_LAT) * Math.PI - Math.PI / 2;
     const distFromEq   = Math.abs(lat) / (Math.PI / 2);
     if (distFromEq < 0.05) continue; // skip if it overlaps the explicit equator
-    const gridTint     = lat > 0 ? '#c8a060' : '#60a0c8';
+    const gridTint     = lat > 0 ? northTint : southTint;
     if      (distFromEq < 0.4)  { S.ctx.strokeStyle = gridTint;  S.ctx.lineWidth = 1.2; S.ctx.globalAlpha = 0.6; }
     else if (distFromEq < 0.7)  { S.ctx.strokeStyle = gridTint;  S.ctx.lineWidth = 0.8; S.ctx.globalAlpha = 0.4;  }
     else                        { S.ctx.strokeStyle = gridTint;  S.ctx.lineWidth = 0.5; S.ctx.globalAlpha = 0.2;  }
@@ -415,6 +445,25 @@ export function drawArc(angle, type) {
     const t   = i / steps;
     const lon = type === 'lon' ? angle : t * Math.PI * 2;
     const lat = type === 'lon' ? t * Math.PI - Math.PI / 2 : angle;
+    spherePointInto(lon, lat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    const proj = project(_arcC[0], _arcC[1], _arcC[2]);
+    if (proj) {
+      if (!started) { S.ctx.moveTo(proj.sx, proj.sy); started = true; }
+      else            S.ctx.lineTo(proj.sx, proj.sy);
+    } else { started = false; }
+  }
+  S.ctx.stroke();
+}
+
+// Draw a segment of a meridian (lon arc) between lat0 and lat1.
+// Used for tapered prime/back meridians where width varies with latitude.
+function _drawArcSegment(lon, _type, lat0, lat1) {
+  const steps = 3;  // 3 steps per segment is enough for smooth curves
+  let started = false;
+  S.ctx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const lat = lat0 + (lat1 - lat0) * (i / steps);
     spherePointInto(lon, lat, _arcW);
     cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
     const proj = project(_arcC[0], _arcC[1], _arcC[2]);
@@ -462,7 +511,7 @@ export function drawRadiusTooltip() {
   S.ctx.font         = `${fs}px "Roboto Mono", monospace`;
   S.ctx.textAlign    = 'center';
   S.ctx.textBaseline = 'top';
-  S.ctx.fillStyle    = S.nearestMode ? '#b8a0ff' : '#ffffff';
+  S.ctx.fillStyle    = S.nearestMode ? '#b8a0ff' : (S.darkMode ? '#ffffff' : '#000000');
   S.ctx.fillText(label, mx, py);
   S.ctx.restore();
 }
@@ -481,9 +530,9 @@ const _glowCache = new Map();   // particle → { sx, sy, depth, facing }
 
 export function drawParticles() {
   // Single-pass: project + collect directly into a flat sort buffer.
-  // When vizMode is on, we pack audio features into the buffer for
-  // feature-driven size/colour. When off, original palette colour is used.
-  const useViz = S.vizMode;
+  // Feature-driven rendering: pack audio features into the buffer for
+  // feature-driven size/colour. Palette colour used as fallback for legacy particles.
+  const useViz = true;
   const STRIDE = _STRIDE;
 
   // Ensure pre-allocated buffers are large enough
@@ -587,7 +636,7 @@ export function drawParticles() {
         // Seed grains + scan-active cursor grains: near-opaque white
         S.ctx.globalAlpha = (0.75 + 0.25 * facing) * df;
       }
-      S.ctx.fillStyle = '#ffffff';
+      S.ctx.fillStyle = S.darkMode ? '#ffffff' : '#000000';
       S.ctx.beginPath(); S.ctx.arc(sx, sy, size, 0, Math.PI * 2); S.ctx.fill();
     }
     S.ctx.globalAlpha = 1;
@@ -657,15 +706,17 @@ export function drawParticles() {
 }
 
 // ── Minimal particle renderer (perfMode) ───────────────────────────────────
-// Single pass, no depth sort, no glow overlay, no sequence markers.
-// Eliminates: O(N log N) sort, activeGrainMap lookups, second glow pass,
-// sequence playhead + anchor rendering.  Roughly 3× fewer canvas ops.
+// Single pass, no depth sort, no second glow pass, no sequence markers.
+// Active grains get a simple brightness boost inline — one Map.has() per
+// particle, no extra draw pass.  Roughly 3× fewer canvas ops than normal.
 function drawParticlesMinimal() {
-  const useViz = S.vizMode;
+  const useViz = true;
   const pBase = S.vizMinSize ?? PARTICLE_BASE_SIZE;
   const pMax  = S.vizMaxSize ?? PARTICLE_MAX_SIZE;
   const _pW = [0, 0, 0];
   const _pC = [0, 0, 0];
+  const hasGlow = activeGrainMap.size > 0;
+  const glowColor = S.darkMode ? '#ffffff' : '#000000';
 
   for (const p of S.particles) {
     spherePointInto(p.lon, p.lat, _pW);
@@ -677,19 +728,22 @@ function drawParticlesMinimal() {
     const facing = Math.max(0, cz / mag);
     const df     = Math.max(0, 1 - (proj.depth / (SPHERE_RADIUS * 2)));
 
+    // Check if this particle is currently sounding
+    const active = hasGlow && activeGrainMap.has(p);
+
     let size, color, alpha;
     if (useViz && (p.rms ?? 0) > 0) {
       const rmsN  = normalise(p.rms, S.vizRmsMin, S.vizRmsMax);
       size  = (pBase + (pMax - pBase) * rmsN) * (0.5 + 0.5 * df);
-      color = featuresToHSL(
+      color = active ? glowColor : featuresToHSL(
         normalise(p.centroid ?? 0, S.vizCentroidMin, S.vizCentroidMax),
         p.zcr ?? 0
       );
-      alpha = (0.35 + 0.65 * df) * (0.5 + 0.5 * facing);
+      alpha = active ? 0.95 : (0.35 + 0.65 * df) * (0.5 + 0.5 * facing);
     } else {
-      color = p.color;
+      color = active ? glowColor : p.color;
       size  = pBase + (pMax - pBase) * df;
-      alpha = (0.3 + 0.7 * df) * (0.5 + 0.5 * facing);
+      alpha = active ? 0.95 : (0.3 + 0.7 * df) * (0.5 + 0.5 * facing);
     }
 
     S.ctx.globalAlpha = alpha;
@@ -817,7 +871,7 @@ export function drawCursor() {
   S.ctx.save();
 
   // Center-of-canvas anchor dot (always visible)
-  S.ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  S.ctx.fillStyle = S.darkMode ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)';
   S.ctx.beginPath(); S.ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); S.ctx.fill();
 
   // ── Early return guard ──────────────────────────────────────────────────
@@ -840,7 +894,7 @@ export function drawCursor() {
       S.ctx.translate(ex, ey);
       S.ctx.rotate(angle);
       // Draw chevron arrow pointing in the direction of the cursor
-      S.ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      S.ctx.strokeStyle = S.darkMode ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)';
       S.ctx.lineWidth   = 2 * (S.edgeIndicatorSize || 1);
       S.ctx.lineCap     = 'round';
       S.ctx.beginPath();
@@ -849,7 +903,7 @@ export function drawCursor() {
       S.ctx.lineTo(-sz * 0.6, sz * 0.5);
       S.ctx.stroke();
       // Small dot at the tip
-      S.ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      S.ctx.fillStyle = S.darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
       S.ctx.beginPath(); S.ctx.arc(sz * 0.4, 0, 2.5 * (S.edgeIndicatorSize || 1), 0, Math.PI * 2); S.ctx.fill();
       S.ctx.restore();
     }
@@ -910,24 +964,25 @@ export function drawCursor() {
 
   const tipR = 5, armLen = 12, armGap = tipR + 3;
 
-  // Outer ring — white normally, solid red when recording
+  // Outer ring — white/black normally, solid red when recording
+  const _rtic = S.darkMode ? '255,255,255' : '0,0,0';
   S.ctx.strokeStyle = recording
     ? 'rgba(232,48,48,0.95)'
-    : painting ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.7)';
+    : painting ? `rgba(${_rtic},0.95)` : `rgba(${_rtic},0.7)`;
   S.ctx.lineWidth   = 2;
   S.ctx.beginPath(); S.ctx.arc(mx, my, tipR, 0, Math.PI * 2); S.ctx.stroke();
 
-  // Center dot — solid red when recording, paint color when painting, white idle
+  // Center dot — solid red when recording, paint color when painting, white/black idle
   if (recording) {
     S.ctx.fillStyle = 'rgba(232,48,48,0.95)';
     S.ctx.beginPath(); S.ctx.arc(mx, my, tipR * 0.8, 0, Math.PI * 2); S.ctx.fill();
   } else {
-    S.ctx.fillStyle = painting ? color : 'rgba(255,255,255,0.8)';
+    S.ctx.fillStyle = painting ? color : `rgba(${_rtic},0.8)`;
     S.ctx.beginPath(); S.ctx.arc(mx, my, tipR * 0.65, 0, Math.PI * 2); S.ctx.fill();
   }
 
   // Crosshair arms — thick, visible from across the room
-  S.ctx.strokeStyle = painting ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.4)';
+  S.ctx.strokeStyle = painting ? `rgba(${_rtic},0.6)` : `rgba(${_rtic},0.4)`;
   S.ctx.lineWidth   = 1.5;
   S.ctx.beginPath();
   S.ctx.moveTo(mx + armGap, my);   S.ctx.lineTo(mx + armGap + armLen, my);
@@ -945,6 +1000,16 @@ export function drawCursor() {
 // Right (D):  commit mode — blue=cloud, pink=loop
 
 const EDGE_H_BASE = 18;  // bar height at scale 1.0
+
+// Lightweight inline check — mirrors seqSlotsFull() without circular import
+function _commitSlotsFull() {
+  for (let i = 0; i < S.commitSlotCount; i++) {
+    const sl = S.commitSlots[i];
+    if (!sl || (sl.type === 'cloud' && sl._releasingAt > 0) ||
+        (sl.type === 'loop' && (sl._playingToEnd || sl._fadingOut))) return false;
+  }
+  return true;
+}
 
 function drawEdgeHUD() {
   if (S.hudScale === 0) return;   // HUD off
@@ -966,8 +1031,34 @@ function drawEdgeHUD() {
       'trace+loop':  '#ff6b9d',  // pink-red
       'trace+cloud': '#4a9fd4',  // saturated blue
     };
-    ctx.fillStyle = traceColors[S.traceMode] || traceColors['trace'];
-    ctx.fillRect(0, 0, colW, EDGE_H);
+    const traceColor = traceColors[S.traceMode] || traceColors['trace'];
+    // Armed but full: diagonal stripe pattern (mode color + grey)
+    const armedButFull = S.traceMode !== 'trace'
+      && S.commitOverflow === 'off' && _commitSlotsFull();
+    if (armedButFull) {
+      // Draw grey base, then diagonal stripes in the mode colour
+      ctx.fillStyle = '#3a3a3a';
+      ctx.fillRect(0, 0, colW, EDGE_H);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, colW, EDGE_H);
+      ctx.clip();
+      ctx.fillStyle = traceColor;
+      const step = Math.round(8 * scale);
+      for (let x = -EDGE_H; x < colW + EDGE_H; x += step * 2) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x + EDGE_H, EDGE_H);
+        ctx.lineTo(x + EDGE_H + step, EDGE_H);
+        ctx.lineTo(x + step, 0);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    } else {
+      ctx.fillStyle = traceColor;
+      ctx.fillRect(0, 0, colW, EDGE_H);
+    }
   }
 
   // ── CENTER: Scan state (S) ────────────────────────────────────────────
@@ -979,7 +1070,7 @@ function drawEdgeHUD() {
       // Gradient: color at edges, fades to bg in the middle
       const grad = ctx.createLinearGradient(col2X, 0, col2X + colW, 0);
       grad.addColorStop(0, baseColor);
-      grad.addColorStop(0.5, BG_COLOR);
+      grad.addColorStop(0.5, S.darkMode ? BG_COLOR_DARK : BG_COLOR_LIGHT);
       grad.addColorStop(1, baseColor);
       ctx.fillStyle = grad;
     } else {
@@ -1001,8 +1092,31 @@ function drawEdgeHUD() {
   // ── RIGHT: Commit mode (D) ────────────────────────────────────────────
   {
     const commitColor = S.commitMode === 'loop' ? '#ff6b9d' : '#4a9fd4';
-    ctx.fillStyle = commitColor;
-    ctx.fillRect(col3X, 0, col3W, EDGE_H);
+    // Slots full + overflow off: diagonal stripe pattern (commit color + grey)
+    const slotsFull = S.commitOverflow === 'off' && _commitSlotsFull();
+    if (slotsFull) {
+      ctx.fillStyle = '#3a3a3a';
+      ctx.fillRect(col3X, 0, col3W, EDGE_H);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(col3X, 0, col3W, EDGE_H);
+      ctx.clip();
+      ctx.fillStyle = commitColor;
+      const step = Math.round(8 * scale);
+      for (let x = col3X - EDGE_H; x < col3X + col3W + EDGE_H; x += step * 2) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x + EDGE_H, EDGE_H);
+        ctx.lineTo(x + EDGE_H + step, EDGE_H);
+        ctx.lineTo(x + step, 0);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.restore();
+    } else {
+      ctx.fillStyle = commitColor;
+      ctx.fillRect(col3X, 0, col3W, EDGE_H);
+    }
   }
 
   ctx.restore();
@@ -1220,8 +1334,9 @@ export function animate() {
     ? S._getFrameQ()
     : null;
 
-  // Drop particles while painting
-  if (S.isPainting && !S.altLocked) {
+  // Drop particles while painting (alt-lock freezes view, not painting —
+  // position uses frozen coords below when altLocked)
+  if (S.isPainting) {
     S.paintFrameCount++;
     if (S.paintFrameCount % PAINT_INTERVAL === 0) {
       // Detethered: paint at cursor IMU position, not mouse

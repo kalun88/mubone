@@ -82,16 +82,48 @@ export function initVizUI() {
     });
   }
 
-  // ── Mode toggle (on / off) ──────────────────────────────────────────────
-  const modeSeg = document.getElementById('vizModeSeg');
-  if (modeSeg) {
-    modeSeg.querySelectorAll('[data-viz]').forEach(btn => {
+  // ── Dark / light mode toggle ─────────────────────────────────────────────
+  const DARK_MODE_KEY = 'mubone_darkMode';
+  try {
+    const saved = localStorage.getItem(DARK_MODE_KEY);
+    if (saved !== null) S.darkMode = saved === 'true';
+  } catch {}
+  const darkSeg = document.getElementById('vizDarkModeSeg');
+  if (darkSeg) {
+    const syncDarkButtons = () => {
+      darkSeg.querySelectorAll('[data-theme]').forEach(b =>
+        b.classList.toggle('active',
+          (b.dataset.theme === 'dark') === S.darkMode));
+      try { localStorage.setItem(DARK_MODE_KEY, S.darkMode); } catch {}
+    };
+    syncDarkButtons(); // init
+    darkSeg.querySelectorAll('[data-theme]').forEach(btn => {
       btn.addEventListener('click', () => {
-        S.vizMode = btn.dataset.viz === 'on';
-        modeSeg.querySelectorAll('[data-viz]').forEach(b =>
-          b.classList.toggle('active', b === btn));
+        S.darkMode = btn.dataset.theme === 'dark';
+        syncDarkButtons();
       });
     });
+    // Allow OSC / external toggle to sync UI
+    S._syncDarkModeUI = syncDarkButtons;
+  }
+
+  // ── Performance mode toggle (on / off) ─────────────────────────────────
+  const perfSeg = document.getElementById('vizPerfModeSeg');
+  if (perfSeg) {
+    const syncPerfButtons = () => {
+      perfSeg.querySelectorAll('[data-perf]').forEach(b =>
+        b.classList.toggle('active',
+          (b.dataset.perf === 'on') === S.perfMode));
+    };
+    perfSeg.querySelectorAll('[data-perf]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        S.perfMode = btn.dataset.perf === 'on';
+        syncPerfButtons();
+        console.log(`[perf] high-performance render mode ${S.perfMode ? 'ON' : 'OFF'}`);
+      });
+    });
+    // Allow keyboard shortcut (Shift+P) to sync the UI buttons
+    S._syncPerfModeUI = syncPerfButtons;
   }
 
   // ── UI scale slider ────────────────────────────────────────────────────
@@ -144,28 +176,6 @@ export function initVizUI() {
     () => S.fovDeg,
     v  => { S.fovDeg = v; try { localStorage.setItem(FOV_KEY, String(v)); } catch {} },
     v  => v.toFixed(1) + '°');
-
-  // ── Center reference toggle ─────────────────────────────────────────────
-  const zeroRefSeg = document.getElementById('vizZeroRefSeg');
-  if (zeroRefSeg) {
-    const ZERO_KEY = 'mubone_showZeroRef';
-    try {
-      const saved = localStorage.getItem(ZERO_KEY);
-      if (saved !== null) S.showZeroRef = saved === 'true';
-    } catch {}
-    zeroRefSeg.querySelectorAll('[data-zero]').forEach(btn => {
-      btn.classList.toggle('active',
-        (btn.dataset.zero === 'on') === S.showZeroRef);
-    });
-    zeroRefSeg.querySelectorAll('[data-zero]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        S.showZeroRef = btn.dataset.zero === 'on';
-        zeroRefSeg.querySelectorAll('[data-zero]').forEach(b =>
-          b.classList.toggle('active', b === btn));
-        try { localStorage.setItem(ZERO_KEY, S.showZeroRef); } catch {}
-      });
-    });
-  }
 
   // ── Edge indicator (detethered cursor) ─────────────────────────────────
   const EDGE_IND_KEY = 'mubone_edgeIndicator';

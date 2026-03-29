@@ -820,6 +820,11 @@ async function populateInputDevices() {
       // ── Electron: use RtAudio device list (shows true channel counts) ──────
       const devices = await window.electronBridge.getInputDevices();
       sel.innerHTML = '';
+      // Always show placeholder so user can deselect / go back to no input
+      const ph = document.createElement('option');
+      ph.value = '';
+      ph.textContent = '— select input device —';
+      sel.appendChild(ph);
       devices.forEach(d => {
         const opt = document.createElement('option');
         opt.value = d.id;
@@ -830,7 +835,6 @@ async function populateInputDevices() {
         sel.appendChild(opt);
       });
       if (_inputDeviceId != null) sel.value = _inputDeviceId;
-      else if (devices.length) sel.value = devices[0].id;
 
     } else {
       // ── Browser: use standard MediaDevices API ───────────────────────────
@@ -841,6 +845,11 @@ async function populateInputDevices() {
       const all    = await navigator.mediaDevices.enumerateDevices();
       const inputs = all.filter(d => d.kind === 'audioinput');
       sel.innerHTML = '';
+      // Always show placeholder so user can deselect / go back to no input
+      const ph = document.createElement('option');
+      ph.value = '';
+      ph.textContent = '— select input device —';
+      sel.appendChild(ph);
       inputs.forEach(d => {
         const opt = document.createElement('option');
         opt.value = d.deviceId;
@@ -849,7 +858,6 @@ async function populateInputDevices() {
         sel.appendChild(opt);
       });
       if (_inputDeviceId) sel.value = _inputDeviceId;
-      else if (inputs.length) sel.value = inputs[0].deviceId;
     }
   } catch (e) {
     sel.innerHTML = `<option value="">error: ${e.message}</option>`;
@@ -881,7 +889,57 @@ function repopulateChannelSelect(numCh) {
 
 async function applyInputDevice() {
   const devSel = document.getElementById('asInputDevice');
-  if (!devSel?.value) return;
+  if (!devSel) return;
+
+  // ── Deselect: tear down input and clear saved device ──────────────────────
+  if (!devSel.value) {
+    stopMetering();
+
+    // Disconnect worklet + analysers (Electron RtAudio path)
+    if (_inputWorkletNode) {
+      try { _inputWorkletNode.disconnect(); } catch(_) {}
+      _inputWorkletNode = null;
+    }
+    _rtInputRoutingGains.forEach(g => { try { g.disconnect(); } catch(_) {} });
+    _rtInputRoutingGains = [];
+    as.inputAnalysers.forEach(an => { try { an.disconnect(); } catch(_) {} });
+    as.inputAnalysers = [];
+    as._meterGainNodes.forEach(g => { try { g.disconnect(); } catch(_) {} });
+    as._meterGainNodes = [];
+    S.inputAnalysers = [];
+    _rtInputSplitter = null;
+
+    // Disconnect browser getUserMedia path
+    try { window._micMonitorSrc?.disconnect(); } catch(_) {}
+    window._micMonitorSrc = null;
+    if (S.recordingStream) {
+      S.recordingStream.getTracks().forEach(t => t.stop());
+      S.recordingStream = null;
+      S.inputStream     = null;
+    }
+
+    // Clear saved state
+    _inputDeviceId = null;
+    _inputNumCh    = 0;
+    S._savedInputDeviceId   = null;
+    S.selectedInputDeviceId = null;
+    S.micPermissionGranted  = false;
+    as.started = false;
+    window._rtAudioInputListening = false;
+
+    // Reset UI
+    renderMeters('asInputMeters', 1);  // minimal placeholder meter
+    const mapTable = document.getElementById('asInputMappingTable');
+    if (mapTable) mapTable.style.display = 'none';
+    setStatus('asInputStatus', 'idle', 'no input device');
+
+    const micBtn = document.getElementById('micEnableBtn');
+    if (micBtn) {
+      setMicBtnLabel('enable mic');
+      micBtn.classList.remove('mic-ready', 'mic-denied');
+    }
+    return;
+  }
 
   setStatus('asInputStatus', 'idle', 'opening input stream…');
   stopMetering();
@@ -914,9 +972,19 @@ async function applyInputDevice() {
     renderInputMeters(S.mainInputChannel ?? 0);
     renderInputMappingTable();  // show software-path → hardware-channel table
 
+    as.started = true;
     const devLabel = devSel.options[devSel.selectedIndex]?.text || String(deviceId);
     setStatus('asInputStatus', 'ok', `${devLabel} — ${nCh} ch — ${result.sampleRate} Hz`);
     startMetering();
+
+    // Sync mic button — input is now live
+    const micBtn = document.getElementById('micEnableBtn');
+    if (micBtn) {
+      setMicBtnLabel('mic ready');
+      micBtn.classList.remove('mic-denied');
+      micBtn.classList.add('mic-ready');
+      micBtn.disabled = false;
+    }
     return;
   }
 
@@ -983,9 +1051,25 @@ async function applyInputDevice() {
     // Render N vertical meter bars for the actual channel count
     renderInputMeters();
 
+    as.started = true;
     const devLabel = devSel.options[devSel.selectedIndex]?.text || deviceId;
     setStatus('asInputStatus', 'ok', `${devLabel} — ${numCh} ch — ${actx.sampleRate} Hz`);
     startMetering();
+
+    // Sync mic button — input is now live
+    const micBtn = document.getElementById('micEnableBtn');
+    if (micBtn) {
+      setMicBtnLabel('mic ready');
+      micBtn.classList.remove('mic-denied');
+      micBtn.classList.add('mic-ready');
+      micBtn.disabled = false;
+    }
+
+    // Pre-load recording worklet so painting works immediately
+    if (!S.audioEngineWarmedUp) {
+      S.audioEngineWarmedUp = true;
+      warmUpAudioEngine();
+    }
 
   } catch (e) {
     setStatus('asInputStatus', 'error', `failed: ${e.message}`);
@@ -1130,7 +1214,7 @@ export function saveAllDefaults() {
     vizNoiseFloor:    S.vizNoiseFloor,
 
     // Viz calibration
-    vizMode:          S.vizMode,
+    darkMode:         S.darkMode,
     vizMinSize:       S.vizMinSize,
     vizMaxSize:       S.vizMaxSize,
     vizRmsMin:        S.vizRmsMin,
@@ -1204,7 +1288,7 @@ function _buildSettingsSnapshot() {
     sampleRate: S.audioCtx?.sampleRate ?? null, bufferSize: S.preferredBufferSize ?? null,
     outputGain: as.outputGain, inputGains: { ...as.inputGains },
     fovDeg: S.fovDeg,
-    vizNoiseFloor: S.vizNoiseFloor, vizMode: S.vizMode,
+    vizNoiseFloor: S.vizNoiseFloor, darkMode: S.darkMode,
     vizMinSize: S.vizMinSize, vizMaxSize: S.vizMaxSize,
     vizRmsMin: S.vizRmsMin, vizRmsMax: S.vizRmsMax,
     vizCentroidMin: S.vizCentroidMin, vizCentroidMax: S.vizCentroidMax,
@@ -1286,7 +1370,8 @@ export function loadAudioDefaults() {
     if (typeof d.fovDeg         === 'number')  S.fovDeg          = d.fovDeg;
 
     // Viz calibration
-    if (typeof d.vizMode        === 'boolean') S.vizMode         = d.vizMode;
+    if (typeof d.darkMode       === 'boolean') S.darkMode        = d.darkMode;
+    if (typeof d.vizMode        === 'boolean') S.darkMode        = true; // legacy compat
     if (typeof d.vizMinSize    === 'number')  S.vizMinSize     = d.vizMinSize;
     if (typeof d.vizMaxSize     === 'number')  S.vizMaxSize      = d.vizMaxSize;
     if (typeof d.vizRmsMin      === 'number')  S.vizRmsMin       = d.vizRmsMin;
@@ -1377,6 +1462,17 @@ export async function activateSavedInputDevice(nCh) {
     warmUpAudioEngine();
   }
 
+  // Update mic button to reflect that RtAudio input is active.
+  // In Electron, requestMicAccess is skipped (getUserMedia always fails),
+  // so the button would otherwise stay in its default/denied state.
+  const micBtn = document.getElementById('micEnableBtn');
+  if (micBtn) {
+    setMicBtnLabel('mic ready');
+    micBtn.classList.remove('mic-denied');
+    micBtn.classList.add('mic-ready');
+    micBtn.disabled = false;
+  }
+
   DEBUG && console.log(`[startup] input device activated — ${nCh} ch, recording ch ${selCh + 1}`);
 }
 
@@ -1433,18 +1529,21 @@ export function initAudioSettings() {
         const nOut = S.speakerBuses?.length ?? S.speakerAnalysers.length;
         setStatus('asOutputStatus', 'ok', `${nOut}-ch output active`);
       }
-      // If input is already running (e.g. Electron auto-activation at startup),
-      // render its meters + mapping table and show active status.
+      // If input is already running, render its meters + mapping table and show active status.
       if (as.inputAnalysers.length > 0) {
         renderInputMeters();
         renderInputMappingTable();
-        // Show active status if not already displayed
         if (as.started && _inputDeviceId != null) {
           const nCh = as.inputAnalysers.length;
           setStatus('asInputStatus', 'ok', `${nCh} ch input active — recording ch ${(S.mainInputChannel ?? 0) + 1}`);
         }
+      } else if (as.started && S.inputAnalyser) {
+        // Browser path: mic granted via top-bar button — S.inputAnalyser exists
+        // but as.inputAnalysers (multi-channel meter array) wasn't built.
+        // Show a 1-ch meter and active status.
+        renderMeters('asInputMeters', 1);
+        setStatus('asInputStatus', 'ok', 'input active');
       } else {
-        // Render a minimal 1-ch input meter placeholder
         renderMeters('asInputMeters', 1);
       }
 
@@ -1459,11 +1558,10 @@ export function initAudioSettings() {
       if (bufSel && S.preferredBufferSize) bufSel.value = String(S.preferredBufferSize);
       updateLatency();
 
-      // If mic was already enabled from the top-bar button, auto-start the
-      // audio settings view so it reflects the active state rather than looking
-      // idle. startAudio() reuses S.inputStream / S.audioCtx without re-prompting.
+      // If mic was already enabled from the top-bar button, mark as started
+      // so the modal reflects the active state rather than looking idle.
       if (S.micPermissionGranted && S.inputStream && !as.started) {
-        startAudio();
+        as.started = true;
       }
 
       // Start metering loop whenever modal is open
@@ -1478,11 +1576,12 @@ export function initAudioSettings() {
     });
   }
 
+  // Device selects activate immediately on change — no Apply buttons needed
   document.getElementById('asInputDevice')?.addEventListener('change',  applyInputDevice);
-  document.getElementById('asInputDeviceApply')?.addEventListener('click', applyInputDevice);
   document.getElementById('asOutputDevice')?.addEventListener('change', applyOutputDevice);
-  document.getElementById('asRateApply')?.addEventListener('click',   applySampleRate);
-  document.getElementById('asBufferApply')?.addEventListener('click', applyBufferSize);
+  // Engine settings apply on change — DAW convention
+  document.getElementById('asSampleRate')?.addEventListener('change',  applySampleRate);
+  document.getElementById('asBufferSize')?.addEventListener('change', applyBufferSize);
 
   // Recording limit slider
   const recLimitSlider = document.getElementById('asRecLimit');
@@ -1642,7 +1741,31 @@ export function initAudioSettings() {
 
   // Buttons
   document.getElementById('asTestBtn')?.addEventListener('click', handleTestTone);
-  document.getElementById('asStartBtn')?.addEventListener('click', startAudio);
+
+  // ── Browser mic grant sync ───────────────────────────────────────────────
+  // When requestMicAccess() succeeds (browser getUserMedia), it calls this
+  // callback so the audio settings module knows which device is active.
+  // This makes the dropdown, meters, and internal state reflect reality
+  // without the user having to open audio settings and manually pick a device.
+  S._onBrowserMicGranted = (deviceId, numCh) => {
+    _inputDeviceId = deviceId;
+    _inputNumCh    = numCh;
+    as.started     = true;
+
+    // Build the per-channel analyser array so meters work immediately.
+    // requestMicAccess creates S.inputAnalyser (singular) but the meter
+    // animation loop reads from as.inputAnalysers[] (per-channel array).
+    const ch = document.getElementById('asInputChannel')?.value || '0';
+    buildInputGraph(ch);
+    repopulateChannelSelect(numCh);
+
+    // If the modal is currently open, sync the dropdown to show the active device
+    const devSel = document.getElementById('asInputDevice');
+    if (devSel) {
+      const match = Array.from(devSel.options).find(o => o.value === deviceId);
+      if (match) devSel.value = deviceId;
+    }
+  };
 
 }
 

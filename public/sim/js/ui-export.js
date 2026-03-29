@@ -21,6 +21,7 @@ const SETUP_MAGIC    = 'mubone-setup';
 const SESSION_MAGIC  = 'mubone-session';
 
 // localStorage keys that form a complete settings export.
+// ⚠ Keep this in sync with every localStorage key the app writes.
 const STATIC_KEYS = [
   'mubone_audio_defaults',
   'mubone_key_map',
@@ -29,6 +30,15 @@ const STATIC_KEYS = [
   'mubone_param_locks',
   'mubone-learn-mode',
   'mubone_sensor_cal',
+  'mubone_darkMode',
+  'mubone_uiScale',
+  'mubone-hud-scale',
+  'mubone_fovDeg',
+  'mubone_edgeIndicator',
+  'mubone_edgeIndicatorSize',
+  'mubone_preset_view',
+  'mubone_desktop_morph',
+  'grainDiagSnapshot',
 ];
 
 // ── WAV encoding / decoding helpers ─────────────────────────────────────────
@@ -119,14 +129,17 @@ function buildSettingsPayload() {
       if (raw !== null) data[key] = raw;
     } catch (_) {}
   }
-  const panels = {};
+  // Dynamic prefix keys: panel collapse + section collapse states
+  const panels = {}, sections = {};
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && k.startsWith('mubone_panel_')) panels[k] = localStorage.getItem(k);
+      if (k && k.startsWith('mubone_panel_'))  panels[k]   = localStorage.getItem(k);
+      if (k && k.startsWith('mubone_sec_'))    sections[k]  = localStorage.getItem(k);
     }
   } catch (_) {}
-  if (Object.keys(panels).length > 0) data._panels = panels;
+  if (Object.keys(panels).length > 0)   data._panels   = panels;
+  if (Object.keys(sections).length > 0) data._sections = sections;
   return data;
 }
 
@@ -147,6 +160,13 @@ function applySettingsPayload(data) {
   if (data._panels && typeof data._panels === 'object') {
     for (const [k, v] of Object.entries(data._panels)) {
       if (k.startsWith('mubone_panel_')) {
+        try { localStorage.setItem(k, v); } catch (_) {}
+      }
+    }
+  }
+  if (data._sections && typeof data._sections === 'object') {
+    for (const [k, v] of Object.entries(data._sections)) {
+      if (k.startsWith('mubone_sec_')) {
         try { localStorage.setItem(k, v); } catch (_) {}
       }
     }

@@ -262,6 +262,11 @@ export function warmUpAudioEngine() {
 let _micAccessPromise = null;  // guard against concurrent getUserMedia calls
 
 export async function requestMicAccess() {
+  // In Electron, RtAudio handles input — skip getUserMedia entirely.
+  // Return true if RtAudio is already streaming so callers proceed to recording.
+  if (window.electronBridge?.isElectron) {
+    return !!window._rtAudioInputListening;
+  }
   // If settings modal already opened a stream, reuse it — don't fight over the device.
   if (S.micPermissionGranted && S.recordingStream) return true;
   if (_micAccessPromise) return _micAccessPromise;   // already asking — wait for it
@@ -338,9 +343,15 @@ export async function requestMicAccess() {
       micBtn.disabled = false;
     }
 
-    // Don't dismiss first-run overlay here — mic permission alone doesn't
-    // mean the user has audio to work with.  The overlay is dismissed in
-    // ui-samples.js when a sample is actually loaded.
+    // Sync audio settings module — tell it which device is now active so the
+    // dropdown, meters, and internal state all reflect reality.  Uses the
+    // actual deviceId from the stream (browser may have chosen a different
+    // device than requested).
+    const grantedTrack = S.recordingStream.getAudioTracks()[0];
+    const grantedId    = grantedTrack?.getSettings()?.deviceId ?? S.selectedInputDeviceId ?? null;
+    const grantedCh    = grantedTrack?.getSettings()?.channelCount ?? 1;
+    S._onBrowserMicGranted?.(grantedId, grantedCh);
+
     return true;
   } catch (e) {
     const insecure = e instanceof DOMException && e.name === 'NotSupportedError';

@@ -33,39 +33,106 @@ const ACTIONS = [
 
   // ── Transport ──────────────────────────────────────────────────────────────
   { id: null, group: 'transport' },
-  { id: 'recpaint',     label: 'rec + paint (hold)',        key: 'click / space',     osc: '/paint',             fmt: 'int 0|1',          type: 'hold',
-    tip: 'hold to record mic input and place particles on the sphere — release to stop' },
-  { id: 'record',       label: 'record',                    key: '—',                 osc: '/record',            fmt: 'int 0|1',          type: 'trigger',
-    tip: 'toggle mic recording on/off without painting' },
+  { id: 'recpaint',     label: 'trace',                     key: 'click / space',     osc: '/trace',             fmt: 'int 0|1',          type: 'hold',
+    tip: 'hold to record mic input and paint particles on the sphere — release to stop' },
   { id: 'mute',         label: 'system mute',               key: 'M',                 osc: '/mute',              fmt: 'int 0|1',          type: 'trigger',
     tip: 'silence all audio output' },
   { id: 'undo',         label: 'undo last stroke',          key: 'right click / ⌘Z',  osc: '/undo',              fmt: 'bang',             type: 'trigger',
     tip: 'remove the most recently painted stroke from the sphere' },
   { id: 'sweep',        label: 'sweep (remove unused)',     key: '—',                 osc: '/sweep',             fmt: 'bang',             type: 'trigger',
     tip: 'delete all particles not referenced by active seeds or loops' },
+  { id: 'erase_all',    label: 'erase all (session)',       key: 'Backspace×3',       osc: '/session/erase',     fmt: 'bang',             type: 'trigger',
+    tip: 'erase everything — all particles, commits, and recordings' },
 
   // ── Patches ────────────────────────────────────────────────────────────────
   { id: null, group: 'patches' },
   { id: 'preset_select', label: 'patch select (1–20)',      key: '1–0, shift+1–0',    osc: '/preset',        fmt: 'int 1–20',          type: 'cc',
     ccFn: v => { const idx = Math.min(PRESETS.length - 1, Math.floor((v / 127) * PRESETS.length)); selectPreset(idx); } },
 
+  // ── Cursor / Scan (S) ─────────────────────────────────────────────────────
+  { id: null, group: 'cursor' },
+  { id: 'scan_toggle',  label: 'scan on/off (S)',            key: 'S',                 osc: '/cursor/scan',       fmt: 'int 0|1',          type: 'trigger',
+    tip: 'toggle scan — cursor spotlight on/off in the house output' },
+  { id: 'tare',         label: 'tare / zero (Z)',            key: '`',                 osc: '/cursor/tare',       fmt: 'bang',             type: 'trigger',
+    tip: 'zero the cursor sensor — set current orientation as center reference' },
+  { id: 'lock_az',      label: 'lock azimuth (toggle)',      key: '—',                 osc: '/cursor/lock_az',    fmt: 'int 0|1',          type: 'toggle',
+    tip: 'toggle azimuth lock — freezes horizontal position' },
+  { id: 'lock_el',      label: 'lock elevation (toggle)',    key: '—',                 osc: '/cursor/lock_el',    fmt: 'int 0|1',          type: 'toggle',
+    tip: 'toggle elevation lock — freezes vertical position' },
+  { id: 'radius_fade',  label: 'radius fade on/off',        key: '—',                 osc: '/cursor/radiusfade', fmt: 'int 0|1',          type: 'trigger',
+    tip: 'attenuate grains by distance from cursor centre' },
+  { id: 'radius_fade_curve', label: 'radius fade curve',    key: '—',                 osc: '/cursor/radiusfadecurve', fmt: 'float 0–1',   type: 'cc',
+    tip: '0 = gentle linear fade, 1 = steep sharp edge rolloff',
+    ccFn: v => { S.radiusFadeCurve = v / 127; S._syncRadiusFadeUI?.(); } },
+
+  // ── Trace (A) ─────────────────────────────────────────────────────────────
+  { id: null, group: 'trace (A)' },
+  { id: 'trace_mode',   label: 'trace mode cycle (A)',      key: 'A',                 osc: '/trace/mode',      fmt: 'bang',                             type: 'trigger',
+    tip: 'cycle trace mode: trace → trace+loop → trace+cloud' },
+
+  // ── Commit (D) ────────────────────────────────────────────────────────────
+  { id: null, group: 'commit (D)' },
+  { id: 'commit_mode',  label: 'commit mode cycle (⇧D)',    key: 'Shift+D',           osc: '/commit/mode',     fmt: 'bang',             type: 'trigger',
+    tip: 'cycle commit mode: cloud ↔ loop — what D key creates' },
+  { id: 'commit_drop',  label: 'drop commit (tap D)',       key: 'D',                 osc: '/commit/drop',     fmt: 'bang',             type: 'trigger',
+    tip: 'drop a stationary cloud or loop at the current cursor position' },
+  { id: 'commit_draw',  label: 'draw commit (hold D)',      key: 'hold D',            osc: '/commit/draw',     fmt: 'int 0|1',          type: 'hold',
+    tip: 'hold to draw a moving cloud path or record a loop — release to finalize' },
+  { id: 'commit_release', label: 'release nearest (⌘D)',    key: '⌘D',               osc: '/commit/release',  fmt: 'bang',             type: 'trigger',
+    tip: 'release the nearest commit (cloud or loop) from its slot' },
+  { id: 'commit_clear', label: 'clear all commits',         key: '—',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
+    tip: 'remove all clouds and loops from all slots' },
+  { id: 'commit_selection', label: 'selection mode (toggle)', key: '—',               osc: '/commit/selection', fmt: 'bang',                 type: 'trigger',
+    tip: 'toggle which commit is targeted for release and morph — closest or farthest from cursor' },
+  { id: 'commit_slots', label: 'commit slot count',         key: '—',                 osc: '/commit/slots',    fmt: 'int 1–16',         type: 'cc',
+    tip: 'number of active commit slots (1–16)',
+    ccFn: v => { S.commitSlotCount = Math.max(1, Math.min(16, Math.round(1 + v * 15 / 127))); const sel = document.getElementById('commitSlotCountSelect'); if (sel) sel.value = String(S.commitSlotCount); (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))(); } },
+  { id: 'commit_overflow', label: 'commit overflow (cycle)', key: '—',                osc: '/commit/overflow', fmt: 'bang',                   type: 'trigger',
+    tip: 'cycle overflow mode: off → oldest → nearest' },
+  { id: 'commit_dir',   label: 'commit movement dir',       key: '—',                 osc: '/commit/dir',      fmt: 'bang',                 type: 'trigger',
+    tip: 'how moving commits traverse their path — cycles fwd → rev → pingpong' },
+  { id: 'commit_volume', label: 'next commit volume',       key: '—',                 osc: '/commit/volume',   fmt: 'float 0–1',        type: 'cc',
+    tip: 'volume for the next commit — set before recording',
+    ccFn: v => { S.seqNextParams.volume = v / 127; const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume; const nb = document.getElementById('seqVolumeNum'); if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; } },
+  { id: 'commit_speed', label: 'next commit speed',         key: '—',                 osc: '/commit/speed',    fmt: 'float 0.25–4×',    type: 'cc',
+    tip: 'speed for the next commit — 1× = original, set before recording',
+    ccFn: v => { S.seqNextParams.speed = 0.25 + (v / 127) * 3.75; const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed; const nb = document.getElementById('seqSpeedNum'); if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; } },
+  { id: 'commit_attack', label: 'cloud fade in',             key: '—',                 osc: '/commit/attack',   fmt: 'float 0–10 s',     type: 'cc',
+    tip: 'cloud fade-in time — 0s instant, up to 10s swell',
+    ccFn: v => { S.seedAttack = (v / 127) * 10; const sl = document.getElementById('seedAttackSlider'); if (sl) sl.value = S.seedAttack; const nb = document.getElementById('seedAttackNum'); if (nb) nb.value = S.seedAttack < 1 ? (S.seedAttack * 1000).toFixed(0) + 'ms' : S.seedAttack.toFixed(1) + 's'; } },
+  { id: 'commit_release_time', label: 'cloud fade out',     key: '—',               osc: '/commit/release_time', fmt: 'float 0–10 s',  type: 'cc',
+    tip: 'cloud fade-out time — 0s instant, up to 10s fade',
+    ccFn: v => { S.seedRelease = (v / 127) * 10; const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.seedRelease; const nb = document.getElementById('seedReleaseNum'); if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; } },
+  { id: 'loop_release_mode', label: 'loop fade out mode',   key: '—',                 osc: '/commit/loop_release', fmt: 'bang',                 type: 'trigger',
+    tip: 'fade = fade out over time, play-to-end = loop finishes current pass then stops' },
+  { id: 'loop_fade_time', label: 'loop fade out time',    key: '—',                 osc: '/commit/loop_fade_time', fmt: 'float 0–2000 ms', type: 'cc',
+    tip: 'fade-out duration for loops when released — 0ms instant, up to 2000ms',
+    ccFn: v => { S.loopFadeTimeMs = Math.round((v / 127) * 2000); const sl = document.getElementById('loopFadeTimeSlider'); if (sl) sl.value = S.loopFadeTimeMs; const nb = document.getElementById('loopFadeTimeNum'); if (nb) nb.value = S.loopFadeTimeMs < 1000 ? S.loopFadeTimeMs + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; } },
+  { id: 'commit_blend', label: 'commit blend mode',         key: '—',                 osc: '/commit/blend',    fmt: 'bang',             type: 'trigger',
+    tip: 'all = equal weight, focus = distance-weighted blend toward closest' },
+  { id: 'commit_tether', label: 'commit tether',            key: '—',                 osc: '/commit/tether',   fmt: 'int 0|1',          type: 'trigger',
+    tip: 'on = commit always plays regardless of cursor distance, off = radius-gated' },
+  { id: 'commit_xfade', label: 'commit xfade',              key: '—',                 osc: '/commit/xfade',    fmt: 'float 0–1',        type: 'cc',
+    tip: '0 = hard snap to nearest commit, 1 = smooth distance-weighted crossfade',
+    ccFn: v => { S.seedXfade = v / 127; S._syncImprovUI?.(); } },
+
   // ── Search ─────────────────────────────────────────────────────────────────
   { id: null, group: 'search' },
-  { id: 'snap',         label: 'scope (nearest/area)',       key: 'N',                 osc: '/grain/lock',     fmt: 'int 0|1',          type: 'trigger',
+  { id: 'snap',         label: 'scope (nearest/area)',       key: 'N',                 osc: '/search/scope',   fmt: 'int 0|1',          type: 'trigger',
     tip: 'scope — nearest: fire k closest on whole sphere / area: search within radius + recency' },
-  { id: 'k_all',        label: 'fill (all/k)',              key: '—',                 osc: '/grain/kall',     fmt: 'int 0|1',          type: 'trigger',
+  { id: 'k_all',        label: 'fill (all/k)',              key: '—',                 osc: '/search/fill',    fmt: 'int 0|1',          type: 'trigger',
     tip: 'fill — all: fire every particle in radius / k: cap to k nearest (area mode only)' },
-  { id: 'k_seq',        label: 'order (step/random)',       key: '—',                 osc: '/grain/kseq',     fmt: 'int 0|1',          type: 'trigger',
+  { id: 'k_seq',        label: 'order (step/random)',       key: '—',                 osc: '/search/order',   fmt: 'int 0|1',          type: 'trigger',
     tip: 'step through candidates one at a time in recording order instead of random' },
-  { id: 'radius_cc',    label: 'radius',                    key: '—',                 osc: '/grain/radius',   fmt: 'float 1–180 °',    type: 'cc',
+  { id: 'radius_cc',    label: 'radius',                    key: '—',                 osc: '/search/radius',  fmt: 'float 1–180 °',    type: 'cc',
     ccFn: v => { S.searchRadiusDeg = SEARCH_RADIUS_MIN + (v / 127) * (SEARCH_RADIUS_MAX - SEARCH_RADIUS_MIN); updatePlaybackControls(); flashRadiusTooltip(); } },
-  { id: 'radius_inc',   label: 'radius ↑',                  key: 'scroll ↑ / ]',      osc: '/grain/radius/inc', fmt: 'bang',             type: 'trigger',
+  { id: 'radius_inc',   label: 'radius ↑',                  key: 'scroll ↑ / ]',      osc: '/search/radius/inc', fmt: 'bang',          type: 'trigger',
     tip: 'increase search radius by 2°' },
-  { id: 'radius_dec',   label: 'radius ↓',                  key: 'scroll ↓ / [',      osc: '/grain/radius/dec', fmt: 'bang',             type: 'trigger',
+  { id: 'radius_dec',   label: 'radius ↓',                  key: 'scroll ↓ / [',      osc: '/search/radius/dec', fmt: 'bang',          type: 'trigger',
     tip: 'decrease search radius by 2°' },
-  { id: 'grain_k',      label: 'k (nearest)',               key: '—',                 osc: '/grain/k',        fmt: 'int 1–N',            type: 'cc',
+  { id: 'grain_k',      label: 'k (nearest)',               key: '—',                 osc: '/search/k',       fmt: 'int 1–N',          type: 'cc',
     ccFn: v => { const mx = Math.max(1, S.particles.length); S.grainOverrides.k = Math.max(1, Math.round(1 + (v / 127) * (mx - 1))); S.syncGrainControlsUI?.(); } },
-  { id: 'recency_cc',   label: 'recency',                   key: '—',                 osc: '/grain/recency',  fmt: 'int 1–16',         type: 'cc',
+  { id: 'recency_cc',   label: 'recency',                   key: '—',                 osc: '/search/recency', fmt: 'int 1–16',         type: 'cc',
     ccFn: v => { const n = 1 + Math.round((v / 127) * 15); if (typeof S.setRecency === 'function') S.setRecency(n); else S.recencyN = n; const el = document.getElementById('recencyVal'); if (el) el.value = n; } },
 
   // ── Grain ──────────────────────────────────────────────────────────────────
@@ -103,89 +170,13 @@ const ACTIONS = [
   { id: 'grain_vol',    label: 'volume',                    key: '—',  osc: '/grain/volume',      fmt: 'float 0–2',         type: 'cc',
     tip: 'grain volume — 1.0 = unity/input parity, max 2.0',
     ccFn: v => { S.grainOverrides.volume = (v / 127) * 2; rebuildGrainCurves(); S.syncGrainControlsUI?.(); } },
-  { id: 'grain_dir',    label: 'direction',                 key: '—',  osc: '/grain/dir',         fmt: 'str fwd|rev|rnd',   type: 'trigger',
+  { id: 'grain_dir',    label: 'direction',                 key: '—',  osc: '/grain/dir',         fmt: 'bang',              type: 'trigger',
     tip: 'grain playback direction — cycles fwd → rev → rnd' },
-  { id: 'grain_curve',  label: 'envelope curve',            key: '—',  osc: '/grain/curve',       fmt: 'str hann|tri|rect', type: 'trigger',
+  { id: 'grain_curve',  label: 'envelope curve',            key: '—',  osc: '/grain/curve',       fmt: 'bang',              type: 'trigger',
     tip: 'grain envelope shape — cycles hann → triangle → rectangular' },
   { id: 'grain_retrig', label: 'retrigger (ms)',            key: '—',  osc: '/grain/retrigger',   fmt: 'float 0–500 ms',    type: 'cc',
     tip: 'per-particle cooldown — prevents the same point from firing again within this window',
     ccFn: v => { S.grainOverrides.retriggerMs = (v / 127) * 500; S.syncGrainControlsUI?.(); } },
-
-  // ── Cursor ─────────────────────────────────────────────────────────────────
-  { id: null, group: 'cursor' },
-  { id: 'scan_toggle',  label: 'scan on/off (S)',            key: 'S',                 osc: '/cursor/mute',       fmt: 'int 0|1',          type: 'trigger',
-    tip: 'toggle scan — cursor spotlight on/off in the house output' },
-  { id: 'radius_fade',  label: 'radius fade on/off',        key: '—',                 osc: '/grain/radiusfade', fmt: 'int 0|1',          type: 'trigger',
-    tip: 'attenuate grains by distance from cursor centre' },
-  { id: 'radius_fade_curve', label: 'radius fade curve',    key: '—',                 osc: '/grain/radiusfadecurve', fmt: 'float 0–1',    type: 'cc',
-    tip: '0 = gentle linear fade, 1 = steep sharp edge rolloff',
-    ccFn: v => { S.radiusFadeCurve = v / 127; S._syncRadiusFadeUI?.(); } },
-  { id: 'lock_az',          label: 'lock azimuth (toggle)',      key: '—',                 osc: '/cursor/lock_az',   fmt: 'int 0|1',           type: 'toggle',
-    tip: 'toggle azimuth lock — freezes horizontal position' },
-  { id: 'lock_el',          label: 'lock elevation (toggle)',    key: '—',                 osc: '/cursor/lock_el',   fmt: 'int 0|1',           type: 'toggle',
-    tip: 'toggle elevation lock — freezes vertical position' },
-  // ── Trace ─────────────────────────────────────────────────────────────────
-  { id: null, group: 'trace (A)' },
-  { id: 'trace_mode',   label: 'trace mode cycle (A)',      key: 'A',                 osc: '/trace/mode',      fmt: 'str trace|trace+loop|trace+cloud', type: 'trigger',
-    tip: 'cycle trace mode: trace → trace+loop → trace+cloud' },
-
-  // ── Commit ────────────────────────────────────────────────────────────────
-  { id: null, group: 'commit (D)' },
-  { id: 'commit_mode',  label: 'commit mode cycle (⇧D)',    key: 'Shift+D',           osc: '/commit/mode',     fmt: 'str cloud|loop',   type: 'trigger',
-    tip: 'cycle commit mode: cloud ↔ loop — what D key creates' },
-  { id: 'commit_drop',  label: 'drop commit (tap D)',       key: 'D',                 osc: '/commit/drop',     fmt: 'bang',             type: 'trigger',
-    tip: 'drop a stationary cloud or loop at the current cursor position' },
-  { id: 'commit_draw',  label: 'draw commit (hold D)',      key: 'hold D',            osc: '/commit/draw',     fmt: 'int 0|1',          type: 'hold',
-    tip: 'hold to draw a moving cloud path or record a loop — release to finalize' },
-  { id: 'commit_release', label: 'release nearest (⌘D)',    key: '⌘D',               osc: '/commit/release',  fmt: 'bang',             type: 'trigger',
-    tip: 'release the nearest commit (cloud or loop) from its slot' },
-  { id: 'commit_clear', label: 'clear all commits',         key: '—',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
-    tip: 'remove all clouds and loops from all slots' },
-  { id: 'commit_slots', label: 'commit slot count',         key: '—',                 osc: '/commit/slots',    fmt: 'int 1–16',         type: 'cc',
-    tip: 'number of active commit slots (1–16)',
-    ccFn: v => { S.commitSlotCount = Math.max(1, Math.min(16, Math.round(1 + v * 15 / 127))); const sel = document.getElementById('commitSlotCountSelect'); if (sel) sel.value = String(S.commitSlotCount); (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))(); } },
-  { id: 'commit_overflow', label: 'commit overflow (cycle)', key: '—',                osc: '/commit/overflow', fmt: 'str off|oldest|nearest', type: 'trigger',
-    tip: 'cycle overflow mode: off → oldest → nearest' },
-  { id: 'commit_dir',   label: 'commit movement dir',       key: '—',                 osc: '/commit/dir',      fmt: 'str fwd|rev|pingpong', type: 'trigger',
-    tip: 'how moving commits traverse their path — cycles fwd → rev → pingpong' },
-  { id: 'commit_volume', label: 'next commit volume',       key: '—',                 osc: '/commit/volume',   fmt: 'float 0–1',        type: 'cc',
-    tip: 'volume for the next commit — set before recording',
-    ccFn: v => { S.seqNextParams.volume = v / 127; const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume; const nb = document.getElementById('seqVolumeNum'); if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; } },
-  { id: 'commit_speed', label: 'next commit speed',         key: '—',                 osc: '/commit/speed',    fmt: 'float 0.25–4×',    type: 'cc',
-    tip: 'speed for the next commit — 1× = original, set before recording',
-    ccFn: v => { S.seqNextParams.speed = 0.25 + (v / 127) * 3.75; const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed; const nb = document.getElementById('seqSpeedNum'); if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; } },
-  { id: 'commit_attack', label: 'cloud fade in',             key: '—',                 osc: '/commit/attack',   fmt: 'float 0–10 s',     type: 'cc',
-    tip: 'cloud fade-in time — 0s instant, up to 10s swell',
-    ccFn: v => { S.seedAttack = (v / 127) * 10; const sl = document.getElementById('seedAttackSlider'); if (sl) sl.value = S.seedAttack; const nb = document.getElementById('seedAttackNum'); if (nb) nb.value = S.seedAttack < 1 ? (S.seedAttack * 1000).toFixed(0) + 'ms' : S.seedAttack.toFixed(1) + 's'; } },
-  { id: 'commit_release_time', label: 'cloud fade out',     key: '—',               osc: '/commit/release_time', fmt: 'float 0–10 s',  type: 'cc',
-    tip: 'cloud fade-out time — 0s instant, up to 10s fade',
-    ccFn: v => { S.seedRelease = (v / 127) * 10; const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.seedRelease; const nb = document.getElementById('seedReleaseNum'); if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; } },
-  { id: 'loop_release_mode', label: 'loop fade out mode',   key: '—',                 osc: '/commit/loop_release', fmt: 'str fade|play-to-end', type: 'trigger',
-    tip: 'fade = fade out over time, play-to-end = loop finishes current pass then stops' },
-  { id: 'loop_fade_time', label: 'loop fade out time',    key: '—',                 osc: '/commit/loop_fade_time', fmt: 'float 0–2000 ms', type: 'cc',
-    tip: 'fade-out duration for loops when released — 0ms instant, up to 2000ms',
-    ccFn: v => { S.loopFadeTimeMs = Math.round((v / 127) * 2000); const sl = document.getElementById('loopFadeTimeSlider'); if (sl) sl.value = S.loopFadeTimeMs; const nb = document.getElementById('loopFadeTimeNum'); if (nb) nb.value = S.loopFadeTimeMs < 1000 ? S.loopFadeTimeMs + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; } },
-  { id: 'commit_blend', label: 'commit blend mode',         key: '—',                 osc: '/commit/blend',    fmt: 'str all|focus',    type: 'trigger',
-    tip: 'all = equal weight, focus = distance-weighted blend toward closest' },
-  { id: 'commit_tether', label: 'commit tether',            key: '—',                 osc: '/commit/tether',   fmt: 'int 0|1',          type: 'trigger',
-    tip: 'on = commit always plays regardless of cursor distance, off = radius-gated' },
-  { id: 'commit_xfade', label: 'commit xfade',              key: '—',                 osc: '/commit/xfade',    fmt: 'float 0–1',        type: 'cc',
-    tip: '0 = hard snap to nearest commit, 1 = smooth distance-weighted crossfade',
-    ccFn: v => { S.seedXfade = v / 127; S._syncImprovUI?.(); } },
-
-  // ── Legacy commit aliases (backward compat) ───────────────────────────────
-  // These keep old MIDI mappings working — they forward to the unified commit actions.
-  // Hidden from the mapping table when rendering (filter by _legacy flag).
-  { id: 'plant_seed',   label: '(legacy) drop cloud',       key: '—',   osc: '/seed/sow',      fmt: 'bang',       type: 'trigger', _legacy: true },
-  { id: 'sow_trail',    label: '(legacy) draw cloud',       key: '—',   osc: '/seed/trail',    fmt: 'int 0|1',    type: 'hold',    _legacy: true },
-  { id: 'uproot_seed',  label: '(legacy) release commit',   key: '—',   osc: '/seed/uproot',   fmt: 'bang',       type: 'trigger', _legacy: true },
-  { id: 'seed_lock',    label: '(legacy) trace mode cycle', key: '—',   osc: '/seed/lock',     fmt: 'int 0|1',    type: 'trigger', _legacy: true },
-  { id: 'seed_clear',   label: '(legacy) clear all',        key: '—',   osc: '/seed/clear',    fmt: 'bang',       type: 'trigger', _legacy: true },
-  { id: 'seq_arm',      label: '(legacy) commit draw',      key: '—',   osc: '/loop/arm',      fmt: 'int 0|1',    type: 'hold',    _legacy: true },
-  { id: 'seq_mode',     label: '(legacy) commit mode',      key: '—',   osc: '/loop/mode',     fmt: 'int 0|1',    type: 'trigger', _legacy: true },
-  { id: 'seq_drop',     label: '(legacy) drop loop',        key: '—',   osc: '/loop/drop',     fmt: 'bang',       type: 'trigger', _legacy: true },
-  { id: 'seq_remove',   label: '(legacy) release commit',   key: '—',   osc: '/loop/remove',   fmt: 'bang',       type: 'trigger', _legacy: true },
-  { id: 'seq_clear',    label: '(legacy) clear all',        key: '—',   osc: '/loop/clear',    fmt: 'bang',       type: 'trigger', _legacy: true },
 
   // ── Levels ─────────────────────────────────────────────────────────────────
   { id: null, group: 'levels' },
@@ -204,9 +195,9 @@ const ACTIONS = [
 
   // ── Spatial ────────────────────────────────────────────────────────────────
   { id: null, group: 'spatial' },
-  { id: 'camera_mode',     label: 'camera mode (cycle)',        key: '—',                 osc: '/camera/mode',      fmt: 'str pull|surface|sensor', type: 'trigger',
+  { id: 'camera_mode',     label: 'camera mode (cycle)',        key: '—',                 osc: '/camera/mode',      fmt: 'bang',              type: 'trigger',
     tip: 'pull = mouse drag, surface = pointer lock, sensor = IMU input' },
-  { id: 'spatial_panning',  label: 'spatial panning (toggle)',   key: '—',                 osc: '/spatial/panning',  fmt: 'str headlocked|worldlocked', type: 'trigger',
+  { id: 'spatial_panning',  label: 'spatial panning (toggle)',   key: '—',                 osc: '/spatial/panning',  fmt: 'bang',              type: 'trigger',
     tip: 'headlocked = stereo follows head, worldlocked = stereo follows sphere position' },
   { id: 'alt_lock',         label: 'freeze sphere (hold)',       key: 'Alt / Opt',         osc: '/spatial/lock',     fmt: 'int 0|1',           type: 'hold',
     tip: 'hold to freeze sphere rotation — cursor stays in place while camera stops' },
@@ -228,6 +219,8 @@ const ACTIONS = [
   { id: null, group: 'app' },
   { id: 'perf',         label: 'perf monitor',              key: 'p',                  osc: '/app/perf',       fmt: 'int 0|1',          type: 'trigger' },
   { id: 'perfmode',     label: 'high-perf render',          key: 'Shift+P',            osc: '/app/perfmode',   fmt: 'int 0|1',          type: 'trigger' },
+  { id: 'darkmode',     label: 'dark / light mode',         key: '—',                  osc: '/app/darkmode',   fmt: 'int 0|1',          type: 'trigger',
+    tip: 'toggle dark mode (black background) and light mode (white background)' },
 ];
 
 // MIDI mappings: { actionId → { type: 'cc'|'note', channel, number } }
@@ -344,9 +337,16 @@ function handleMidiMessage(event) {
   }
 }
 
+// Brief flash on a button element (same 180ms pattern used by undo, commit, etc.)
+function _flash(el) {
+  if (!el) return;
+  el.classList.add('flashing');
+  setTimeout(() => el.classList.remove('flashing'), 180);
+}
+
 function dispatchAction(id, midiVal) {
   switch(id) {
-    case 'recpaint':
+    case 'recpaint': {
       if (midiVal > 0 && !S.isPainting) {
         // Press: start painting
         ensureAudioContext(); startLiveRecording();
@@ -364,25 +364,39 @@ function dispatchAction(id, midiVal) {
         S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
         S.updateLiveRecUI?.();
       }
+      // Sync trace indicator button with isPainting state (OSC/MIDI path)
+      const _traceBtn = document.getElementById('paintIndicatorBtn');
+      if (_traceBtn) _traceBtn.classList.toggle('painting', S.isPainting);
       break;
-    case 'record':
-      S._setRecording?.(!S.isRecording);
-      break;
+    }
     case 'mute':
       if (S._setMuted) S._setMuted(!S.isMuted);
       else S.isMuted = !S.isMuted;
       break;
     case 'scan_toggle':
-      setScanMuted(!S.scanMuted);
+      // OSC sends 0|1 (0 = off, 1 = on); keys/GUI send 127 → toggle
+      if (midiVal === 1)       setScanMuted(false);   // 1 = scan ON
+      else if (midiVal === 0)  setScanMuted(true);    // 0 = scan OFF
+      else                     setScanMuted(!S.scanMuted); // 127 = toggle
+      break;
+    case 'tare':
+      S._tareCursor?.();
+      break;
+    case 'erase_all':
+      S._sessionEraseAll?.();
       break;
     case 'undo':        undoLastStroke(); break;
-    case 'sweep':       sweep(); break;
+    case 'sweep':
+      if (S._sessionSweep) S._sessionSweep();
+      else sweep();
+      break;
 
     // ── Trace ───────────────────────────────────────────────────────────────
     case 'trace_mode': {
       const _modes = ['trace', 'trace+loop', 'trace+cloud'];
       const _idx = _modes.indexOf(S.traceMode);
       S.traceMode = _modes[(_idx + 1) % _modes.length];
+      _flash(document.getElementById('commitLockBtn'));
       S._syncCommitUI?.();
       break;
     }
@@ -394,17 +408,15 @@ function dispatchAction(id, midiVal) {
       break;
     }
     case 'commit_drop':
-    case 'plant_seed':   // legacy alias
-    case 'seq_drop':     // legacy alias
       if (S.commitMode === 'cloud') plantSeed();
       else                          dropSeqFromCursor();
+      _flash(document.getElementById('commitDropBtn'));
       break;
-    case 'commit_draw':
-    case 'sow_trail':    // legacy alias
-    case 'seq_arm':      // legacy alias
+    case 'commit_draw': {
+      const _drawBtn = document.getElementById('commitDrawBtn');
       if (S.commitMode === 'cloud') {
-        if (midiVal > 0) startSeedPlant();
-        else             finalizeSeedPlant();
+        if (midiVal > 0) { startSeedPlant(); if (_drawBtn) _drawBtn.classList.add('painting'); }
+        else             { finalizeSeedPlant(); if (_drawBtn) _drawBtn.classList.remove('painting'); }
       } else {
         // Loop arm: reuse existing seq_arm logic
         if (midiVal > 0 && !S.isPainting) {
@@ -420,6 +432,7 @@ function dispatchAction(id, midiVal) {
           startLiveRecording();
           recordStrokeStart('live', S.currentLiveBufferIdx);
           S.isPainting = true; S.paintFrameCount = 0;
+          if (_drawBtn) _drawBtn.classList.add('painting');
           S.updateLiveRecUI?.();
         } else if (midiVal === 0 && S.isPainting) {
           if (S.currentStrokeId > 0) {
@@ -434,20 +447,25 @@ function dispatchAction(id, midiVal) {
             S._syncCommitUI?.();
             S._loopRecPreSeqMode = undefined;
           }
+          if (_drawBtn) _drawBtn.classList.remove('painting');
           S.updateLiveRecUI?.();
         }
       }
       break;
+    }
     case 'commit_release':
-    case 'uproot_seed':  // legacy alias
-    case 'seq_remove':   // legacy alias
       releaseCommit();
+      _flash(document.getElementById('commitReleaseBtn'));
       break;
     case 'commit_clear':
-    case 'seed_clear':   // legacy alias
-    case 'seq_clear':    // legacy alias
       clearAllCommits();
+      _flash(document.getElementById('commitClearBtn'));
       break;
+    case 'commit_selection': {
+      S.selectionMode = S.selectionMode === 'closest' ? 'farthest' : 'closest';
+      S._syncImprovUI?.();
+      break;
+    }
     case 'commit_overflow': {
       const modes = ['off', 'oldest', 'nearest'];
       const curOF = S.seedOverflow || 'off';
@@ -482,40 +500,6 @@ function dispatchAction(id, midiVal) {
       S.seedTether = !S.seedTether;
       S._syncImprovUI?.();
       break;
-
-    // ── Legacy aliases that forward to unified handlers ──────────────────────
-    case 'seed_lock': {
-      // Legacy: cycle trace mode (was seed lock toggle)
-      const _modes2 = ['trace', 'trace+loop', 'trace+cloud'];
-      const _idx2 = _modes2.indexOf(S.traceMode);
-      S.traceMode = _modes2[(_idx2 + 1) % _modes2.length];
-      S._syncCommitUI?.();
-      break;
-    }
-    case 'seed_overflow': {
-      const modes = ['off', 'oldest', 'nearest'];
-      S.seedOverflow = modes[(modes.indexOf(S.seedOverflow) + 1) % modes.length];
-      S.seqOverflow = S.seedOverflow;
-      const seg = document.getElementById('commitOverflowSeg');
-      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active', b.dataset.overflow === S.seedOverflow));
-      break;
-    }
-    case 'seq_mode': {
-      // Legacy: toggle commit mode
-      S.commitMode = S.commitMode === 'cloud' ? 'loop' : 'cloud';
-      S._syncCommitUI?.();
-      break;
-    }
-    case 'seq_overflow': {
-      const modes = ['off', 'oldest', 'nearest'];
-      S.seqOverflow = modes[(modes.indexOf(S.seqOverflow) + 1) % modes.length];
-      S.seedOverflow = S.seqOverflow;
-      const seg = document.getElementById('commitOverflowSeg');
-      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active', b.dataset.overflow === S.seqOverflow));
-      break;
-    }
 
     // ── Search ──────────────────────────────────────────────────────────────
     case 'snap':         toggleNearestMode(); break;
@@ -595,6 +579,15 @@ function dispatchAction(id, midiVal) {
       S.perfMonitorVisible = !S.perfMonitorVisible;
       { const el = document.getElementById('perfMonitor'); if (el) el.style.display = S.perfMonitorVisible ? 'block' : 'none'; }
       break;
+    case 'perfmode':
+      S.perfMode = !S.perfMode;
+      S._syncPerfModeUI?.();
+      console.log(`[perf] high-performance render mode ${S.perfMode ? 'ON' : 'OFF'}`);
+      break;
+    case 'darkmode':
+      S.darkMode = !S.darkMode;
+      S._syncDarkModeUI?.();
+      break;
     case 'radius_dec':
       S.searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, S.searchRadiusDeg - SEARCH_RADIUS_STEP);
       updatePlaybackControls(); flashRadiusTooltip();
@@ -622,6 +615,9 @@ function dispatchAction(id, midiVal) {
           S.currentStrokeId = -1;
           S.activeSampleIndex = -1;
         }
+        // Sync trace indicator for sample paint too
+        const _traceBtn2 = document.getElementById('paintIndicatorBtn');
+        if (_traceBtn2) _traceBtn2.classList.toggle('painting', S.isPainting);
       }
       // CC actions and any other actions dispatched via ccFn
       { const action = ACTIONS.find(a => a.id === id);

@@ -10,20 +10,14 @@
 // The browser falls back gracefully to mouse/gyro if the bridge isn't running.
 // ============================================================================
 
-import { S, DEBUG, PRESETS, rebuildGrainCurves } from './state.js';
+import { S, DEBUG, PRESETS, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, rebuildGrainCurves } from './state.js';
 import {
   getOrCreateSlot, getByRole, assignQuatRole, assignInertialRole,
   handleSlotQuaternion, handleSlotInertial,
 } from './sensor-registry.js';
 import { updateGestureMorph } from './seed-morph.js';
-import { setScanMuted, setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
-import {
-  toggleNearestMode, dropSeqFromCursor,
-  releaseCommit, clearAllCommits, clearAllSeqs, clearAllSeeds, updatePlaybackControls,
-} from './ui-presets.js';
-import { sweep } from './ui-sweep.js';
-import { findNearestSeedSlot } from './grain.js';
-import { getCursorLonLat, screenToLonLat } from './sphere.js';
+import { setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
+import { updatePlaybackControls } from './ui-presets.js';
 
 const WS_URL            = 'ws://localhost:8080';
 const WS_RETRY_INTERVAL = 3000;  // ms between reconnect attempts
@@ -240,27 +234,12 @@ export function handleOSC(rawAddress, values) {
       scheduleUISync();
       break;
 
-    case '/grain/k':
-      S.grainOverrides.k           = Math.max(1, Math.round(values[0]));
-      scheduleUISync();
-      break;
-
     case '/grain/prob':
       S.grainProbability           = clamp(values[0], 0, 1);
       scheduleUISync();
       break;
 
-    case '/grain/radius':
-      S.searchRadiusDeg            = clamp(values[0], 1, 180);
-      scheduleUISync();
-      break;
-
-    case '/grain/dir':
-      if (['fwd', 'rev', 'rnd'].includes(values[0])) {
-        S.grainDirection = values[0];
-        scheduleUISync();
-      }
-      break;
+    case '/grain/dir':    S._dispatchAction?.('grain_dir', 127);   break;
 
     case '/grain/fade':
       // Incoming value in percent (0–50, matching UI slider max) → 0–0.5 internal
@@ -290,13 +269,7 @@ export function handleOSC(rawAddress, values) {
       scheduleUISync();
       break;
 
-    case '/grain/curve':
-      if (['hann', 'tri', 'rect'].includes(values[0])) {
-        S.grainCurveType = values[0];
-        rebuildGrainCurves();
-        scheduleUISync();
-      }
-      break;
+    case '/grain/curve':  S._dispatchAction?.('grain_curve', 127); break;
 
     // ── Preset ───────────────────────────────────────────────────────────────
     // Dispatches a CustomEvent so ui-presets.js can update its UI alongside
@@ -309,51 +282,44 @@ export function handleOSC(rawAddress, values) {
       break;
     }
 
-    // ── Camera mode ────────────────────────────────────────────────────────
+    // ── Camera mode (bang → cycle) ──────────────────────────────────────────
     case '/camera/mode':
-      if (['pull', 'surface', 'sensor'].includes(values[0])) {
-        if (S._setCameraMode) S._setCameraMode(values[0]);
-        else S.cameraMode = values[0];
-      }
+      S._dispatchAction?.('camera_mode', 127);
       break;
 
-    // ── Spatial panning ──────────────────────────────────────────────────────
+    // ── Spatial panning (bang → toggle) ──────────────────────────────────────
     case '/spatial/panning':
-      if (values[0] === 'headlocked' || values[0] === 'worldlocked') {
-        if (S._setSpatialPanning) S._setSpatialPanning(values[0]);
-        else S.spatialPanning = values[0];
-      }
+      S._dispatchAction?.('spatial_panning', 127);
       break;
 
-    // ── Legacy spatial mode (backwards compat) ───────────────────────────────
-    // Maps old /spatial/mode sim|physical to new camera + panning axes.
+    // ── Legacy spatial mode (bang → toggle sim/physical compound state) ──────
     case '/spatial/mode':
-      if (values[0] === 'physical') {
-        if (S._setCameraMode) S._setCameraMode('sensor');
-        if (S._setSpatialPanning) S._setSpatialPanning('worldlocked');
-      } else if (values[0] === 'sim') {
+      if (S.cameraMode === 'sensor' && S.spatialPanning === 'worldlocked') {
+        // currently "physical" → switch to "sim"
         if (S._setCameraMode) S._setCameraMode('pull');
         if (S._setSpatialPanning) S._setSpatialPanning('headlocked');
+      } else {
+        // anything else → switch to "physical"
+        if (S._setCameraMode) S._setCameraMode('sensor');
+        if (S._setSpatialPanning) S._setSpatialPanning('worldlocked');
       }
       break;
 
-    // ── Transport controls ────────────────────────────────────────────────────
-    // S._setRecording / S._setMuted registered by events.js.
+    // ── Transport & cursor controls ────────────────────────────────────────
+    // Trigger/bang actions route through dispatchAction for consistent UI feedback.
+    case '/mute':           S._dispatchAction?.('mute', 127);        break;
+    case '/cursor/scan':    S._dispatchAction?.('scan_toggle', values[0] ?? 127); break;
+    case '/cursor/tare':    S._dispatchAction?.('tare', 127);        break;
+    case '/cursor/lock_az': S._dispatchAction?.('lock_az', 127);     break;
+    case '/cursor/lock_el': S._dispatchAction?.('lock_el', 127);     break;
+    case '/cursor/radiusfade': S._dispatchAction?.('radius_fade', 127); break;
 
-    case '/record':
-      S._setRecording?.(!!values[0]);
+    case '/cursor/radiusfadecurve': {
+      const v = clamp(values[0], 0, 1);
+      S.radiusFadeCurve = v;
+      S._syncRadiusFadeUI?.();
       break;
-
-    case '/mute':
-      // S._setMuted is registered by events.js — it ramps audio gain and
-      // updates the mute button UI in addition to setting S.isMuted.
-      if (S._setMuted) S._setMuted(!!values[0]);
-      else S.isMuted = !!values[0];
-      break;
-
-    case '/cursor/mute':
-      setScanMuted(!!values[0]);
-      break;
+    }
 
     // ── Monitor / House bus (Phase 1 — Improv Mode) ────────────────────────
     // /monitor/volume f  — cursor-to-house send level (MIDI pedal, 0–1)
@@ -379,70 +345,22 @@ export function handleOSC(rawAddress, values) {
     }
 
     // ── Commit system (unified cloud + loop) ────────────────────────────────
-    // New addresses — preferred going forward.
-    case '/commit/drop':
-      if (S.commitMode === 'cloud') S._plantSeed?.();
-      else                          dropSeqFromCursor();
-      break;
-    case '/commit/draw':
-      if (S.commitMode === 'cloud') {
-        if (values[0] > 0) S._startSeedPlant?.();
-        else               S._finalizeSeedPlant?.();
-      } else {
-        S._dispatchAction?.('commit_draw', values[0] ? 127 : 0);
-      }
-      break;
-    case '/commit/release':
-      releaseCommit();
-      break;
-    case '/commit/clear':
-      clearAllCommits();
-      break;
-    case '/commit/mode':
-      if (values[0] === 'cloud' || values[0] === 'loop') {
-        S.commitMode = values[0];
-      } else {
-        // Toggle
-        S.commitMode = S.commitMode === 'cloud' ? 'loop' : 'cloud';
-      }
-      S._syncCommitUI?.();
-      break;
-    case '/commit/blend':
-      if (values[0] === 'all' || values[0] === 'focus') {
-        S.seedMode = values[0];
-        S._syncImprovUI?.();
-      }
-      break;
-    case '/commit/tether':
-      S.seedTether = !!values[0];
-      S._syncImprovUI?.();
-      break;
+    // Trigger/bang actions route through dispatchAction for consistent UI feedback.
+    case '/commit/drop':    S._dispatchAction?.('commit_drop', 127);    break;
+    case '/commit/draw':    S._dispatchAction?.('commit_draw', values[0] ? 127 : 0); break;
+    case '/commit/release': S._dispatchAction?.('commit_release', 127); break;
+    case '/commit/clear':   S._dispatchAction?.('commit_clear', 127);   break;
+    case '/commit/mode':    S._dispatchAction?.('commit_mode', 127);    break;
+    case '/commit/blend':   S._dispatchAction?.('commit_blend', 127);   break;
+    case '/commit/tether':  S._dispatchAction?.('commit_tether', 127);  break;
     case '/commit/xfade':
       S.seedXfade = clamp(values[0], 0, 1);
       S._syncImprovUI?.();
-      break;
-    case '/commit/loop_release':
-      if (values[0] === 'fade' || values[0] === 'play-to-end') {
-        S.loopReleaseMode = values[0];
-      } else {
-        S.loopReleaseMode = S.loopReleaseMode === 'fade' ? 'play-to-end' : 'fade';
-      }
-      { const lrSeg = document.getElementById('loopReleaseModeSeg');
-        if (lrSeg) lrSeg.querySelectorAll('[data-lrmode]').forEach(b =>
-          b.classList.toggle('active', b.dataset.lrmode === S.loopReleaseMode)); }
       break;
     case '/commit/loop_fade_time':
       S.loopFadeTimeMs = clamp(values[0], 0, 2000);
       { const sl = document.getElementById('loopFadeTimeSlider'); if (sl) sl.value = S.loopFadeTimeMs;
         const nb = document.getElementById('loopFadeTimeNum');    if (nb) nb.value = S.loopFadeTimeMs < 1000 ? Math.round(S.loopFadeTimeMs) + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; }
-      break;
-    case '/commit/dir':
-      if (['fwd', 'rev', 'pingpong'].includes(values[0])) {
-        S.seedLoopMode = values[0];
-        const seg = document.getElementById('seedLoopModeSeg');
-        if (seg) seg.querySelectorAll('[data-loopmode]').forEach(b =>
-          b.classList.toggle('active', b.dataset.loopmode === S.seedLoopMode));
-      }
       break;
     case '/commit/attack':
       S.seedAttack = clamp(values[0], 0, 10);
@@ -465,69 +383,27 @@ export function handleOSC(rawAddress, values) {
         const nb = document.getElementById('seqSpeedNum');    if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; }
       break;
 
-    // ── Trace mode ──────────────────────────────────────────────────────────
-    case '/trace/mode':
-      if (['trace', 'trace+loop', 'trace+cloud'].includes(values[0])) {
-        S.traceMode = values[0];
-      } else {
-        // Cycle
-        const _tm = ['trace', 'trace+loop', 'trace+cloud'];
-        S.traceMode = _tm[(_tm.indexOf(S.traceMode) + 1) % _tm.length];
-      }
-      S._syncCommitUI?.();
+    case '/commit/slots':
+      S.commitSlotCount = Math.max(1, Math.min(16, Math.round(values[0])));
+      { const sel = document.getElementById('commitSlotCountSelect');
+        if (sel) sel.value = String(S.commitSlotCount); }
+      (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))();
       break;
+    case '/commit/overflow':  S._dispatchAction?.('commit_overflow', 127);  break;
+    case '/commit/selection': S._dispatchAction?.('commit_selection', 127); break;
+    case '/commit/dir':       S._dispatchAction?.('commit_dir', 127);      break;
+    case '/commit/loop_release': S._dispatchAction?.('loop_release_mode', 127); break;
 
-    // ── Legacy seed/loop addresses (backward compat with existing Max patches) ──
-    case '/seed/mode':
-      if (values[0] === 'all' || values[0] === 'focus') {
-        S.seedMode = values[0];
-        S._syncImprovUI?.();
-      }
-      break;
-    case '/seed/tether':
-      S.seedTether = !!values[0];
-      S._syncImprovUI?.();
-      break;
-    case '/seed/xfade':
-      S.seedXfade = clamp(values[0], 0, 1);
-      S._syncImprovUI?.();
-      break;
-    case '/seed/loopmode':
-      if (values[0] === 'pingpong' || values[0] === 'forward' || values[0] === 'rev') {
-        S.seedLoopMode = values[0];
-        // Apply to nearest commit that has frames
-        const { lon: _lmLon, lat: _lmLat } = S.cursorQ ? getCursorLonLat()
-          : S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY)
-          : getCursorLonLat();
-        const _lmSlot = findNearestSeedSlot(_lmLon, _lmLat);
-        if (_lmSlot >= 0) {
-          const _lmSeed = S.commitSlots?.[_lmSlot] || S.seedSlots?.[_lmSlot];
-          if (_lmSeed && _lmSeed.frames) _lmSeed.loopMode = values[0];
-        }
-        S._syncImprovUI?.();
-      }
-      break;
-    case '/seed/sow':     S._plantSeed?.();  break;
-    case '/seed/trail':   // hold-style: value > 0 = start, value 0 = finalize
-      if (values[0] > 0) S._startSeedPlant?.();
-      else               S._finalizeSeedPlant?.();
-      break;
-    case '/seed/uproot':  releaseCommit(); break;
-    case '/seed/lock': {
-      // Legacy: cycle trace mode
-      const _tm2 = ['trace', 'trace+loop', 'trace+cloud'];
-      S.traceMode = _tm2[(_tm2.indexOf(S.traceMode) + 1) % _tm2.length];
-      S._syncCommitUI?.();
-      break;
-    }
-    case '/seed/clear':   clearAllCommits(); break;
-    case '/undo':         S._undo?.();       break;
-    case '/sweep':        sweep();           break;
+    // ── Trace mode ──────────────────────────────────────────────────────────
+    case '/trace/mode':   S._dispatchAction?.('trace_mode', 127); break;
+
+    case '/undo':         S._dispatchAction?.('undo', 127);       break;
+    case '/sweep':        S._dispatchAction?.('sweep', 127);      break;
 
     // ── Paint (live rec + sample painting) ─────────────────────────────────
     // Routed through dispatchAction for full lifecycle (mic, stroke, seq mode).
-    // /paint int — 1 = start live paint, 0 = stop
-    case '/paint':
+    // /trace int — 1 = start trace (rec + paint), 0 = stop
+    case '/trace':
       S._dispatchAction?.('recpaint', values[0] ? 127 : 0);
       break;
     // /paint/N int — 1 = start sample N paint, 0 = stop
@@ -538,14 +414,6 @@ export function handleOSC(rawAddress, values) {
       S._dispatchAction?.('paint' + n, values[0] ? 127 : 0);
       break;
     }
-
-    // ── Search radius step ──────────────────────────────────────────────────
-    case '/grain/radius/inc':
-      S._dispatchAction?.('radius_inc', 127);
-      break;
-    case '/grain/radius/dec':
-      S._dispatchAction?.('radius_dec', 127);
-      break;
 
     // ── Spatial lock (hold) ─────────────────────────────────────────────────
     case '/spatial/lock': {
@@ -575,104 +443,39 @@ export function handleOSC(rawAddress, values) {
     }
 
     // ── App ─────────────────────────────────────────────────────────────────
-    case '/app/perf':
-      S.perfMonitorVisible = !S.perfMonitorVisible;
-      { const el = document.getElementById('perfMonitor');
-        if (el) el.style.display = S.perfMonitorVisible ? 'block' : 'none'; }
-      break;
-    case '/app/perfmode':
-      S.perfMode = values[0] != null ? !!values[0] : !S.perfMode;
-      console.log(`[perf] high-performance render mode ${S.perfMode ? 'ON' : 'OFF'}`);
-      break;
+    case '/app/perf':       S._dispatchAction?.('perf', 127);      break;
+    case '/app/perfmode':   S._dispatchAction?.('perfmode', 127);  break;
+    case '/app/darkmode':   S._dispatchAction?.('darkmode', 127);  break;
+    case '/session/erase':  S._dispatchAction?.('erase_all', 127); break;
 
-    // ── Commit envelope (legacy /seed/ aliases) ──────────────────────────────
-    case '/seed/attack':
-      S.seedAttack = clamp(values[0], 0, 10);
-      { const sl = document.getElementById('seedAttackSlider');  if (sl) sl.value = S.seedAttack;
-        const nb = document.getElementById('seedAttackNum');     if (nb) nb.value = S.seedAttack < 1 ? (S.seedAttack * 1000).toFixed(0) + 'ms' : S.seedAttack.toFixed(1) + 's'; }
-      break;
-    case '/seed/release':
-      S.seedRelease = clamp(values[0], 0, 10);
-      { const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.seedRelease;
-        const nb = document.getElementById('seedReleaseNum');    if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; }
-      break;
-
-    // ── Search: recency, scope, fill, order ─────────────────────────────────
-    case '/grain/recency': {
+    // ── Search ───────────────────────────────────────────────────────────────
+    case '/search/scope':   S._dispatchAction?.('snap', 127);      break;
+    case '/search/fill':    S._dispatchAction?.('k_all', 127);     break;
+    case '/search/order':   S._dispatchAction?.('k_seq', 127);     break;
+    case '/search/recency': {
       const n = Math.max(1, Math.min(16, Math.round(values[0])));
       if (typeof S.setRecency === 'function') S.setRecency(n);
       else S.recencyN = n;
       const el = document.getElementById('recencyVal'); if (el) el.value = n;
       break;
     }
-    case '/grain/lock':
-      toggleNearestMode();
-      break;
-    case '/grain/kall':
-      if (!S.nearestMode) { S.grainKAllMode = !S.grainKAllMode; updatePlaybackControls(); }
-      break;
-    case '/grain/kseq':
-      S.grainKSeqMode = !S.grainKSeqMode;
+    case '/search/radius':
+      S.searchRadiusDeg = clamp(values[0], SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX);
       updatePlaybackControls();
       break;
-
-    // ── Radius fade ─────────────────────────────────────────────────────────
-    case '/grain/radiusfade':
-      S.radiusFadeEnabled = !!values[0];
-      S._syncRadiusFadeUI?.();
+    case '/search/radius/inc': S._dispatchAction?.('radius_inc', 127); break;
+    case '/search/radius/dec': S._dispatchAction?.('radius_dec', 127); break;
+    case '/search/k': {
+      const mx = Math.max(1, S.particles.length);
+      S.grainOverrides.k = Math.max(1, Math.min(mx, Math.round(values[0])));
+      S.syncGrainControlsUI?.();
       break;
-    case '/grain/radiusfadecurve':
-      S.radiusFadeCurve = clamp(values[0], 0, 1);
-      S._syncRadiusFadeUI?.();
-      break;
+    }
 
     // ── Pitch shift ─────────────────────────────────────────────────────────
     case '/grain/pitchshift':
       S.grainOverrides.pitchShift = clamp(values[0], -24, 24);
       scheduleUISync();
-      break;
-
-    // ── Legacy looper addresses (backward compat) ──────────────────────────
-    case '/loop/arm':
-      S._dispatchAction?.('commit_draw', values[0] ? 127 : 0);
-      break;
-    case '/loop/mode':
-      // Legacy: set commit mode to loop when 1, cloud when 0
-      S.commitMode = values[0] ? 'loop' : 'cloud';
-      S._syncCommitUI?.();
-      break;
-    case '/loop/drop':
-      dropSeqFromCursor();
-      break;
-    case '/loop/resume':
-      // Pause/resume removed — release is the only undo for commits
-      break;
-    case '/loop/pause':
-      // Pause/resume removed — use release instead
-      break;
-    case '/loop/remove':
-      releaseCommit();
-      break;
-    case '/loop/clear':
-      clearAllCommits();
-      break;
-    case '/loop/volume':
-      S.seqNextParams.volume = clamp(values[0], 0, 1);
-      { const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume;
-        const nb = document.getElementById('seqVolumeNum');    if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; }
-      break;
-    case '/loop/speed':
-      S.seqNextParams.speed = clamp(values[0], 0.25, 4);
-      { const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed;
-        const nb = document.getElementById('seqSpeedNum');    if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; }
-      break;
-    case '/loop/dir':
-      if (['fwd', 'rev', 'pingpong'].includes(values[0])) {
-        S.seedLoopMode = values[0];
-        const seg = document.getElementById('seedLoopModeSeg');
-        if (seg) seg.querySelectorAll('[data-loopmode]').forEach(b =>
-          b.classList.toggle('active', b.dataset.loopmode === S.seedLoopMode));
-      }
       break;
 
     // ── Headphone mixdown levels ────────────────────────────────────────────

@@ -42,7 +42,12 @@ function init() {
   initDesktopMorph();
   setupMappingModal();
   initMidi();
-  requestMicAccess();  // prompt for mic permission on load, same pattern as MIDI
+  // Prompt for mic permission on load — but skip in Electron where RtAudio
+  // handles input (getUserMedia always fails there → spurious "mic denied").
+  // Electron input is activated asynchronously below via activateSavedInputDevice.
+  if (!window.electronBridge?.isElectron) {
+    requestMicAccess();
+  }
   if (S.isMobile) initMobileMode();
 
   // Sensor + OSC + audio settings
@@ -94,18 +99,40 @@ function init() {
     }
   }
 
-  // ── Reset all saved defaults ──────────────────────────────────────────────
-  document.getElementById('resetDefaultsBtn')?.addEventListener('click', () => {
-    // Build custom dialog
+  // ── Factory reset ──────────────────────────────────────────────────────────
+  function _showResetDialog(title, desc, onConfirm) {
     const overlay = document.createElement('div');
     overlay.className = 'factory-reset-overlay';
     overlay.innerHTML = `
       <div class="factory-reset-dialog">
-        <div class="factory-reset-title">reset to factory defaults</div>
-        <p class="factory-reset-desc">This clears all saved settings (audio, viz, sensor, wand, seed, key mappings) and reloads the page.</p>
+        <div class="factory-reset-title">${title}</div>
+        <p class="factory-reset-desc">${desc}</p>
+        <div class="factory-reset-btns">
+          <button class="factory-reset-btn factory-reset-cancel">cancel</button>
+          <button class="factory-reset-btn factory-reset-confirm">reset</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector('.factory-reset-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelector('.factory-reset-confirm').addEventListener('click', () => {
+      onConfirm();
+      location.reload();
+    });
+  }
+
+  // Factory reset — nuclear, clears everything (with option to keep patches)
+  document.getElementById('factoryResetBtn')?.addEventListener('click', () => {
+    const overlay = document.createElement('div');
+    overlay.className = 'factory-reset-overlay';
+    overlay.innerHTML = `
+      <div class="factory-reset-dialog">
+        <div class="factory-reset-title">factory reset</div>
+        <p class="factory-reset-desc">Clears <strong>everything</strong> — settings, mappings, calibration. Back to day one.</p>
         <label class="factory-reset-check">
-          <input type="checkbox" id="factoryResetPresets">
-          <span>also clear saved user patches (1–20) and modes</span>
+          <input type="checkbox" id="keepPatchesChk" checked>
+          <span>keep my patches</span>
         </label>
         <div class="factory-reset-btns">
           <button class="factory-reset-btn factory-reset-cancel">cancel</button>
@@ -114,26 +141,13 @@ function init() {
       </div>
     `;
     document.body.appendChild(overlay);
-
     overlay.querySelector('.factory-reset-cancel').addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-
     overlay.querySelector('.factory-reset-confirm').addEventListener('click', () => {
-      const clearPresets = document.getElementById('factoryResetPresets')?.checked;
-      localStorage.removeItem('mubone_audio_defaults');
-      localStorage.removeItem('mubone_key_map');
-      localStorage.removeItem('mubone_midi_map');
-      localStorage.removeItem('mubone-learn-mode');
-      localStorage.removeItem('mubone_preset_view');
-      localStorage.removeItem('mubone_desktop_morph');
-      localStorage.removeItem('mubone_sensor_cal');
-      // Clear panel collapse states
-      Object.keys(localStorage).forEach(k => {
-        if (k.startsWith('mubone_panel_') || k.startsWith('mubone_sec_')) localStorage.removeItem(k);
-      });
-      if (clearPresets) {
-        localStorage.removeItem('mubone_user_presets');
-      }
+      const keepPatches = overlay.querySelector('#keepPatchesChk').checked;
+      const savedPresets = keepPatches ? localStorage.getItem('mubone_user_presets') : null;
+      localStorage.clear();
+      if (savedPresets) localStorage.setItem('mubone_user_presets', savedPresets);
       location.reload();
     });
   });

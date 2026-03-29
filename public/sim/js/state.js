@@ -30,7 +30,8 @@ export const SEARCH_RADIUS_MIN  = 1;
 export const SEARCH_RADIUS_MAX  = 180;
 export const SEARCH_RADIUS_STEP = 2;
 
-export const BG_COLOR   = '#000000';
+export const BG_COLOR_DARK  = '#000000';
+export const BG_COLOR_LIGHT = '#ffffff';
 export const GRID_COLOR = '#7abcbc';
 
 // ── Hann window curves (precomputed Float32Arrays for setValueCurveAtTime) ──
@@ -1122,7 +1123,7 @@ export const S = {
   // ── Particle visualisation (audio-feature-driven) ────────────────────
   // When true, particle color/size derived from audio features baked at
   // paint time.  When false, original palette-based colouring is used.
-  vizMode:       true,      // master toggle for feature-driven viz
+  darkMode:      true,      // true = black bg (dark mode), false = white bg (light mode)
   vizMinSize:    6,         // particle min radius (px) — quiet floor, overrides PARTICLE_BASE_SIZE
   vizMaxSize:    120,       // particle max radius (px) — loud ceiling, overrides PARTICLE_MAX_SIZE
   // Calibration ranges — raw feature values outside these clip to 0 or 1.
@@ -1138,7 +1139,6 @@ export const S = {
   edgeIndicator:     'on',  // 'on' | 'off' — show off-screen cursor arrow when detethered
   edgeIndicatorSize: 1.0,   // 0.5–2.0 — scale of the edge arrow
   fovDeg:        80,        // field of view (degrees) — match to projector throw for room-anchored use
-  showZeroRef:   true,      // draw center-reference marker on sphere
   driftOffsetQ:  null,      // persistent [x,y,z,w] correction quaternion applied on recenter
 
   // ── Audio ──────────────────────────────────────────────────────────────

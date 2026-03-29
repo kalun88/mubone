@@ -5,6 +5,26 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.11 alpha — 2026-03-29
+
+### Fixed
+- **Undo during active recording** (#104) — undo while tracing/recording was splicing the live buffer out of `liveRecBuffers` while the worklet was still writing into it, desyncing `currentLiveBufferIdx` and breaking subsequent undos. Undo now cleanly stops the recording, runs normal undo (splice + reindex), then restarts recording with a fresh stroke so the performer keeps painting seamlessly. Also fixed a pre-existing bug where splicing a finished buffer below the active recording slot didn't adjust `currentLiveBufferIdx`.
+- **Alt-lock blocking painting and undo** (#105) — alt-lock (freeze view, free mouse) was over-blocking: particle painting guard in renderer.js prevented spacebar/D-key/OSC recording from depositing particles while alt-locked. Removed the guard since the position calculation already uses frozen coords. Right-click undo on canvas also unblocked.
+- **OSC trigger/bang actions missing button flash** — OSC-triggered actions (trace, sweep, commit drop/draw/release/clear, trace mode cycle) now produce the same visual button feedback as keyboard shortcuts by routing through `dispatchAction`. Added `_flash()` helper for consistent 180ms flash pattern.
+- **Trace indicator not lighting from OSC** — `/trace 1` via OSC started recording but didn't toggle the `painting` class on `#paintIndicatorBtn`. The dispatch `recpaint` case now syncs the button. Sample paint (QWERTYUIOP via MIDI) also syncs.
+- **Sweep via dispatch had no UI feedback** — `sweep` dispatch case was calling raw `sweep()` instead of `S._sessionSweep()` which wraps it with the button flash.
+
+### Added
+- **Performance mode toggle in viz settings** (#96) — on/off segmented toggle with ⇧P shortcut label. Syncs with keyboard shortcut and `/app/perfmode` OSC via `S._syncPerfModeUI` callback.
+- **Factory reset expanded** — added 7 missing localStorage keys to factory reset: `mubone_darkMode`, `mubone_uiScale`, `mubone-hud-scale`, `mubone_fovDeg`, `mubone_edgeIndicator`, `mubone_edgeIndicatorSize`, `mubone_param_locks`, `grainDiagSnapshot`.
+
+### Changed
+- **OSC namespace redesign** (#102) — `/cursor/mute` → `/cursor/scan`, search params moved from `/grain/*` to `/search/*` (`/search/scope`, `/search/fill`, `/search/order`, `/search/radius`, `/search/k`, `/search/recency`). New paths: `/cursor/tare`, `/session/erase`, `/commit/selection`, `/app/darkmode`. Removed standalone `/record` (always paint into space — use `/trace`). Removed 10+ legacy aliases. All trigger/bang OSC handlers now route through `S._dispatchAction` for consistent UI feedback.
+- **"rec + paint" renamed to "trace"** — GUI label, ACTIONS array, and OSC path all use "trace" terminology. Standalone "record" action removed — recording always paints into space.
+- **Unused imports cleaned from osc.js** — removed 8 stale imports (`toggleNearestMode`, `dropSeqFromCursor`, `releaseCommit`, `clearAllCommits`, `clearAllSeqs`, `clearAllSeeds`, `setScanMuted`, `sweep`) after routing everything through dispatch.
+
+---
+
 ## 0.10 alpha — 2026-03-28
 
 ### Fixed

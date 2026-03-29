@@ -425,6 +425,7 @@ export function setupEvents() {
     if (e.key === 'P' && e.shiftKey) {
       e.preventDefault();
       S.perfMode = !S.perfMode;
+      S._syncPerfModeUI?.();
       console.log(`[perf] high-performance render mode ${S.perfMode ? 'ON' : 'OFF'}`);
     }
 
@@ -675,7 +676,9 @@ export function setupEvents() {
     // In trace+loop mode, mute scan when trace fires
     if (S.traceMode === 'trace+loop' && !S.scanMuted) setScanMuted(true);
     if (S.traceMode === 'trace+loop') _syncCommitBtnLock(true);
-    if (!S.micPermissionGranted) {
+    const hasInput = S.micPermissionGranted ||
+                     (window.electronBridge?.isElectron && window._rtAudioInputListening);
+    if (!hasInput) {
       await requestMicAccess();
       return;
     }
@@ -721,10 +724,9 @@ export function setupEvents() {
     _updateLiveRecUI();
   });
 
-  // Right click: undo
+  // Right click: undo (works even when alt-locked)
   S.canvas.addEventListener('contextmenu', e => {
     e.preventDefault();
-    if (S.altLocked) return;
     undoLastStroke();
   });
 

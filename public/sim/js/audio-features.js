@@ -173,6 +173,7 @@ export function featuresToHSL(centroidNorm, zcrNorm) {
   const hue = 240 - centroidNorm * 220;  // 240 → 20
   // Map ZCR: low (tonal) → 85% sat, high (noisy) → 35% sat
   const sat = 85 - zcrNorm * 50;         // 85% → 35%
-  const lit = 62;                         // fixed: good visibility on #1a2a2a BG
+  // Lightness: bright on dark BG, deeper on light BG
+  const lit = S.darkMode ? 62 : 42;
   return `hsl(${hue.toFixed(0)}, ${sat.toFixed(0)}%, ${lit}%)`;
 }
