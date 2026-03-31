@@ -14,10 +14,11 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.11 alpha</span>
+        <span class="top-bar-version">version 0.13 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
+        <button id="projectorModeBtn" class="top-bar-btn" title="projector mode (⇧F) — opens popup mirror for projector, double-click to fullscreen">⊟ projector</button>
         <button id="micEnableBtn" title="enable microphone input for live granulation&#10;traces audio into paint buffers on the sphere">
           <span class="mic-dot"></span>
           <span class="mic-label">enable mic</span>
@@ -87,6 +88,7 @@
         <div class="hud-left">
           <button id="fullscreenBtn" title="fullscreen">⛶</button>
           <div id="coordinates">--,--</div>
+          <div id="hfHudLabel" class="hf-hud-label" style="display:none">handsfree</div>
           <div id="altLockIndicator" style="display:none;color:#f0c060">alt: locked</div>
         </div>
         <div class="hud-center">
@@ -158,6 +160,9 @@
       </div>
     </div>
 
+    <!-- Projector mode: draggable divider between canvas and panels -->
+    <div class="proj-divider" id="projDivider"></div>
+
     <!-- Right panel: session + patches + search + grain stacked -->
     <div class="right-panel">
 
@@ -215,6 +220,7 @@
                 <button class="grain-seg-btn active" data-snap="off" title="area — select particles within the search radius&#10;filtered by recency">area</button>
                 <button class="grain-seg-btn" data-snap="on" id="snapToggleBtn" title="nearest — fire the k closest particles on the whole sphere&#10;radius and recency are bypassed">nearest</button>
               </div>
+              <span class="param-lock-indicator" data-lock-key="nearestMode" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
             </div>
 
             <!-- selection — applies in both nearest and area modes -->
@@ -232,6 +238,7 @@
                 <button class="grain-seg-btn active" data-kseq="off" title="random — pick randomly from candidates">random</button>
                 <button class="grain-seg-btn" data-kseq="on" id="kSeqBtn" title="step — play one particle at a time in recording order">step</button>
               </div>
+              <span class="param-lock-indicator" data-lock-key="grainKSeqMode" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
             </div>
 
             <!-- area — only visible when scope = area -->
@@ -255,6 +262,7 @@
                   <button class="grain-seg-btn active" data-kall="off" title="k — cap selection to k nearest within radius">k</button>
                   <button class="grain-seg-btn" data-kall="on" id="kAllBtn" title="all — fire every particle in radius, no k cap">all</button>
                 </div>
+                <span class="param-lock-indicator" data-lock-key="grainKAllMode" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
             </div>
           </div>
@@ -269,26 +277,31 @@
             <span class="grain-label">dur</span>
             <input class="grain-slider grain-slider--log" type="range" id="gcDurSlider" min="0" max="1000" step="1" value="432">
             <input type="text" class="grain-numbox" id="gcDurNum" data-param="duration" value="180ms">
+            <span class="param-lock-indicator" data-lock-key="duration" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="dur ± — duration randomness&#10;min: 0ms  max: 500ms">
             <span class="grain-label">dur ±</span>
             <input class="grain-slider" type="range" id="gcDurVarSlider" min="0" max="500" step="1" value="0">
             <input type="text" class="grain-numbox" id="gcDurVarNum" data-param="durVar" value="0ms">
+            <span class="param-lock-indicator" data-lock-key="durVar" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="fade — attack + release each as % of grain duration&#10;min: 0% (instant on/off)  max: 50% (pure envelope, no sustain)">
             <span class="grain-label">fade</span>
             <input class="grain-slider" type="range" id="gcFadeSlider" min="0" max="50" step="1" value="25">
             <input type="text" class="grain-numbox" id="gcFadeNum" data-param="fadeRatio" value="25%">
+            <span class="param-lock-indicator" data-lock-key="fadeRatio" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="period — time between grains&#10;min: 1ms  max: 4s&#10;log scale">
             <span class="grain-label">period</span>
             <input class="grain-slider grain-slider--log" type="range" id="gcPeriodSlider" min="0" max="1000" step="1" value="389">
             <input type="text" class="grain-numbox" id="gcPeriodNum" data-param="period" value="160ms">
+            <span class="param-lock-indicator" data-lock-key="period" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="per ± — period randomness&#10;min: 0ms  max: 500ms">
             <span class="grain-label">per ±</span>
             <input class="grain-slider" type="range" id="gcPeriodVarSlider" min="0" max="500" step="1" value="0">
             <input type="text" class="grain-numbox" id="gcPeriodVarNum" data-param="periodVar" value="0ms">
+            <span class="param-lock-indicator" data-lock-key="periodVar" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="pitch — base pitch shift (semitones)&#10;centre: 0  range: ±24 semitones (2 octaves)">
             <span class="grain-label">pitch</span>
@@ -297,26 +310,31 @@
             <button class="oct-btn" id="octDownBtn" title="−1 octave">−oct</button>
             <button class="oct-btn" id="octResetBtn" title="reset pitch to 0">0</button>
             <button class="oct-btn" id="octUpBtn" title="+1 octave">+oct</button>
+            <span class="param-lock-indicator" data-lock-key="pitchShift" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="pitch ± — random pitch spread per grain (±cents)&#10;min: 0¢  max: ±700¢">
             <span class="grain-label">pitch ±</span>
             <input class="grain-slider" type="range" id="gcPitchSlider" min="0" max="700" step="1" value="0">
             <input type="text" class="grain-numbox" id="gcPitchNum" data-param="pitchJitter" value="±0¢">
+            <span class="param-lock-indicator" data-lock-key="pitchJitter" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="prob — probability of firing each grain&#10;min: 0% (never)  max: 100% (always)">
             <span class="grain-label">prob</span>
             <input class="grain-slider" type="range" id="gcProbSlider" min="0" max="1" step="0.01" value="1">
             <input type="text" class="grain-numbox" id="gcProbNum" data-param="probability" value="100%">
+            <span class="param-lock-indicator" data-lock-key="probability" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="spread — stereo spread&#10;min: 0% (mono)  max: 100% (full spread)">
             <span class="grain-label">spread</span>
             <input class="grain-slider" type="range" id="gcPanSlider" min="0" max="1" step="0.01" value="0.6">
             <input type="text" class="grain-numbox" id="gcPanNum" data-param="panSpread" value="60%">
+            <span class="param-lock-indicator" data-lock-key="panSpread" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="vol — grain volume (1.0 = unity / input parity)&#10;min: 0.001  max: 2.0">
             <span class="grain-label">vol</span>
             <input class="grain-slider" type="range" id="gcVolSlider" min="0.001" max="2.0" step="0.001" value="0.50">
             <input type="text" class="grain-numbox" id="gcVolNum" data-param="volume" value="0.50">
+            <span class="param-lock-indicator" data-lock-key="volume" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="dir — grain playback direction&#10;fwd: play sample forward&#10;rev: play sample backward&#10;rnd: random direction per grain">
             <span class="grain-label">dir</span>
@@ -325,6 +343,7 @@
               <button class="grain-seg-btn" data-dir="rev" title="reverse">◀</button>
               <button class="grain-seg-btn" data-dir="rnd" title="random direction per grain">⇄</button>
             </div>
+            <span class="param-lock-indicator" data-lock-key="direction" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="curve — grain envelope shape&#10;hann: smooth bell curve (default)&#10;tri: linear ramp up/down&#10;rect: flat (instant on/off, clicks at short durations)">
             <span class="grain-label">curve</span>
@@ -333,6 +352,7 @@
               <button class="grain-seg-btn" data-curve="tri" title="triangle — linear ramp">⋀</button>
               <button class="grain-seg-btn" data-curve="rect" title="rectangular — flat, instant on/off">⊓</button>
             </div>
+            <span class="param-lock-indicator" data-lock-key="curveType" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
         </div>
       </div>
@@ -344,7 +364,7 @@
 
           <!-- Trace indicator — reflects isPainting state, not a UI toggle -->
           <div class="seq-section">
-            <div id="paintIndicatorBtn" class="play-mute-btn paint-indicator-btn" title="trace — momentary: driven by spacebar or left-click on canvas&#10;not a UI toggle — use input to activate">
+            <div id="paintIndicatorBtn" class="play-mute-btn paint-indicator-btn" title="trace — hold = momentary record, tap = toggle on/off&#10;when handsfree is armed, tap-trace lets the gate segment phrases">
               <!-- Paintbrush icon -->
               <svg class="play-mute-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M3 17.5C3 17.5 4.5 16 7 16c1.5 0 2.5 1 4 1s3-1.5 4.5-2.5L20 9l-5-5-5.5 5.5C8.5 10.5 7 12 7 13.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -364,24 +384,37 @@
             </div>
           </div>
 
-          <!-- Auto commit — every trace also commits (type set in commits panel) -->
-          <div class="seq-section">
+          <!-- Handsfree + Trace mode — side by side -->
+          <div class="seq-section seq-section--row">
+            <button id="hfArmBtn" class="play-mute-btn" title="handsfree (H) — arm gate segmentation for tap-trace&#10;when on: tap trace, gate segments phrases into buffers&#10;only active in plain trace mode (not trace+loop/cloud)">
+              <svg class="play-mute-icon play-mute-icon--on" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="9" y="2" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.6"/>
+                <path d="M5 10a7 7 0 0 0 14 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                <circle cx="19" cy="5" r="2.5" fill="currentColor" opacity="0.6"/>
+              </svg>
+              <svg class="play-mute-icon play-mute-icon--off" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="9" y="2" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.6" opacity="0.4"/>
+                <path d="M5 10a7 7 0 0 0 14 0" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.4"/>
+                <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity="0.4"/>
+              </svg>
+              <span class="play-mute-label">hf</span>
+              <span class="seq-record-key">H</span>
+            </button>
             <button id="commitLockBtn" class="play-mute-btn" title="trace mode (A) — cycle: trace → trace + loop → trace + cloud">
-              <!-- Off state: paintbrush + faded commit dot -->
               <svg class="play-mute-icon play-mute-icon--off" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M3 17.5C3 17.5 4.5 16 7 16c1.5 0 2.5 1 4 1s3-1.5 4.5-2.5L20 9l-5-5-5.5 5.5C8.5 10.5 7 12 7 13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/>
                 <circle cx="19" cy="17" r="3" stroke="currentColor" stroke-width="1.4" opacity="0.3"/>
                 <line x1="17.5" y1="17" x2="20.5" y2="17" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.3"/>
                 <line x1="19" y1="15.5" x2="19" y2="18.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" opacity="0.3"/>
               </svg>
-              <!-- On state: paintbrush + bright commit dot with + -->
               <svg class="play-mute-icon play-mute-icon--on" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M3 17.5C3 17.5 4.5 16 7 16c1.5 0 2.5 1 4 1s3-1.5 4.5-2.5L20 9l-5-5-5.5 5.5C8.5 10.5 7 12 7 13.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
                 <circle cx="19" cy="17" r="3" fill="currentColor" fill-opacity="0.2" stroke="currentColor" stroke-width="1.4"/>
                 <line x1="17.5" y1="17" x2="20.5" y2="17" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
                 <line x1="19" y1="15.5" x2="19" y2="18.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
               </svg>
-              <span class="play-mute-label">cycle trace mode</span>
+              <span class="play-mute-label">mode</span>
               <span class="seq-record-key">A</span>
             </button>
           </div>
@@ -405,6 +438,25 @@
             </button>
           </div>
 
+          <!-- Radial morph toggle -->
+          <div class="seq-section">
+            <button id="morphBtn" class="play-mute-btn" title="morph — gesture joystick interpolates between pinned presets&#10;ON = morph active, joystick drives grain params&#10;OFF = morph bypassed">
+              <svg class="play-mute-icon play-mute-icon--on" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <!-- two overlapping circles — blending -->
+                <circle cx="9.5" cy="12" r="5.5" stroke="currentColor" stroke-width="1.6" fill="none"/>
+                <circle cx="14.5" cy="12" r="5.5" stroke="currentColor" stroke-width="1.6" fill="none"/>
+              </svg>
+              <svg class="play-mute-icon play-mute-icon--off" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <!-- two circles dimmed + strike -->
+                <circle cx="9.5" cy="12" r="5.5" stroke="currentColor" stroke-width="1.6" fill="none" opacity="0.4"/>
+                <circle cx="14.5" cy="12" r="5.5" stroke="currentColor" stroke-width="1.6" fill="none" opacity="0.4"/>
+                <line x1="4" y1="4" x2="20" y2="20" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+              <span class="play-mute-label">morph</span>
+              <span class="seq-record-key">X</span>
+            </button>
+          </div>
+
           <!-- Cursor params — flat list with collapsible toggle -->
           <div class="seq-section seq-section--collapsible" data-collapse-key="cursorAllParams">
             <span class="seq-section-label seq-section-toggle">params</span>
@@ -415,11 +467,13 @@
                   <button class="grain-seg-btn" data-fade="on" title="on — volume fades with distance from cursor">on</button>
                   <button class="grain-seg-btn active" data-fade="off" title="off — all grains in radius at full volume">off</button>
                 </div>
+                <span class="param-lock-indicator" data-lock-key="radiusFadeEnabled" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
               <div class="grain-row" id="radiusFadeCurveRow" style="opacity:0.35" title="fade curve — how aggressively volume drops based on distance from cursor centre to radius edge&#10;0% = gentle (linear)&#10;100% = steep (sharp edge rolloff)">
                 <span class="grain-label">curve</span>
                 <input class="grain-slider" type="range" id="radiusFadeCurveSlider" min="0" max="1" step="0.01" value="0.5">
                 <input type="text" class="grain-numbox" id="radiusFadeCurveNum" value="50%" readonly>
+                <span class="param-lock-indicator" data-lock-key="radiusFadeCurve" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
               <div class="grain-row" title="lock azimuth — toggle to freeze horizontal position&#10;only elevation will move while locked">
                 <span class="grain-label">azimuth</span>
@@ -427,6 +481,7 @@
                   <button class="grain-seg-btn active" data-val="off">off</button>
                   <button class="grain-seg-btn" data-val="on">lock</button>
                 </div>
+                <span class="param-lock-indicator" data-lock-key="axisLockAz" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
               <div class="grain-row" title="lock elevation — toggle to freeze vertical position&#10;only azimuth will move while locked">
                 <span class="grain-label">elevation</span>
@@ -434,6 +489,7 @@
                   <button class="grain-seg-btn active" data-val="off">off</button>
                   <button class="grain-seg-btn" data-val="on">lock</button>
                 </div>
+                <span class="param-lock-indicator" data-lock-key="axisLockEl" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
             </div>
           </div>
@@ -461,6 +517,7 @@
                 <button class="grain-seg-btn active" data-mode="cloud" title="cloud — spatial grain seeds">cloud</button>
                 <button class="grain-seg-btn" data-mode="loop" title="loop — sequential playback loops">loop</button>
               </div>
+              <span class="param-lock-indicator" data-lock-key="seqModeEnabled" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
             </div>
           </div>
 
@@ -554,6 +611,7 @@
                   <button class="grain-seg-btn" data-overflow="oldest">oldest</button>
                   <button class="grain-seg-btn" data-overflow="nearest">nearest</button>
                 </div>
+                <span class="param-lock-indicator" data-lock-key="seqOverflow" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
               <div class="grain-row" title="select — which commit ⌘D targets for release&#10;closest: release the commit nearest the cursor&#10;farthest: release the commit furthest from the cursor">
                 <span class="grain-label">select</span>
@@ -568,6 +626,7 @@
                   <button class="grain-seg-btn active" data-mode="all" title="all commits play equally weighted">all</button>
                   <button class="grain-seg-btn" data-mode="focus" title="distance-weighted blend toward closest commit">focus</button>
                 </div>
+                <span class="param-lock-indicator" data-lock-key="seedMode" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
               <div class="grain-row" id="improvAlwaysRow" style="opacity:0.35" title="tether — when ON, commit always plays even if cursor is far away&#10;when OFF, commits only play within cursor radius">
                 <span class="grain-label">tether</span>
@@ -575,11 +634,13 @@
                   <button class="grain-seg-btn active" data-always="on" title="on — commit always plays regardless of cursor distance">on</button>
                   <button class="grain-seg-btn" data-always="off" title="off — commit only plays within cursor radius">off</button>
                 </div>
+                <span class="param-lock-indicator" data-lock-key="seedTether" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
               <div class="grain-row" id="improvSnapRow" style="opacity:0.35" title="xfade — crossfade between commits&#10;0% = hard snap&#10;100% = full crossfade&#10;only active in focus mode">
                 <span class="grain-label">xfade</span>
                 <input class="grain-slider" type="range" id="improvSnapSlider" min="0" max="1" step="0.01" value="0">
                 <input type="text" class="grain-numbox" id="improvSnapNum" value="0%" readonly>
+                <span class="param-lock-indicator" data-lock-key="seedXfade" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
               <div class="grain-row" title="path direction for moving commits&#10;ping-pong: bounces back and forth&#10;fwd: loops start to end, then jumps back&#10;rev: loops end to start, then jumps forward">
                 <span class="grain-label">dir</span>
@@ -588,6 +649,7 @@
                   <button class="grain-seg-btn" data-loopmode="forward" title="loop start to end">fwd</button>
                   <button class="grain-seg-btn" data-loopmode="rev" title="loop end to start">rev</button>
                 </div>
+                <span class="param-lock-indicator" data-lock-key="seedLoopMode" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
             </div>
           </div>
@@ -620,11 +682,13 @@
                   <span class="grain-label">vol</span>
                   <input class="grain-slider" type="range" id="seqVolumeSlider" min="0" max="1" step="0.01" value="1">
                   <input type="text" class="grain-numbox" id="seqVolumeNum" value="100%" readonly>
+                  <span class="param-lock-indicator" data-lock-key="seqNextVolume" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
                 </div>
                 <div class="grain-row" title="loop speed — 0.25× to 4×&#10;1× = original speed">
                   <span class="grain-label">speed</span>
                   <input class="grain-slider" type="range" id="seqSpeedSlider" min="0.25" max="4" step="0.01" value="1">
                   <input type="text" class="grain-numbox" id="seqSpeedNum" value="1.00×" readonly>
+                  <span class="param-lock-indicator" data-lock-key="seqNextSpeed" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
                 </div>
                 <div class="grain-row" title="loop fade out mode&#10;fade: fade out over the time set below&#10;play-to-end: loop finishes its current pass then stops">
                   <span class="grain-label">fade out</span>
@@ -676,6 +740,14 @@
         <div class="device-label">levels</div>
         <div class="device-body meters-body-v2">
 
+          <!-- noise gate meter (read-only — set threshold in audio settings) -->
+          <div class="seq-section levels-section--gate">
+            <span class="seq-section-label">noise gate</span>
+            <canvas id="mainGateMeter" class="as-gate-meter main-gate-meter" width="400" height="28"
+              title="noise gate level — adjust threshold in audio settings"></canvas>
+            <span class="as-val main-gate-val" id="mainNoiseGateVal"></span>
+          </div>
+
           <!-- meters row -->
           <div class="seq-section levels-section--meters">
             <div class="levels-meters-row">
@@ -687,7 +759,10 @@
                 <span class="seq-section-label">house</span>
                 <div id="mainHouseMeters" class="as-multi-meter-wrap main-meter-dom"></div>
               </div>
-              <!-- headphone mix meters + balance moved to audio settings modal -->
+              <div class="levels-meter-col" id="mainMixGroup" hidden>
+                <span class="seq-section-label">phones</span>
+                <div id="mainMixMeters" class="as-multi-meter-wrap main-meter-dom"></div>
+              </div>
             </div>
           </div>
 
@@ -961,17 +1036,69 @@
         <span class="as-val" id="asInputGainVal">0.0 dB</span>
       </div>
 
-      <!-- Noise gate -->
-      <div class="as-row">
+      <!-- Noise gate — visual meter with draggable threshold -->
+      <div class="as-row" title="drag the threshold marker to set the noise floor&#10;signal below threshold is gated (red), above is open (green)">
         <span class="as-label">noise gate</span>
-        <span class="as-gate-light" id="asGateLight"></span>
-        <input type="range" id="asNoiseGateSlider" class="as-slider"
-               min="0" max="0.030" step="0.0005" value="0.002">
+        <canvas id="asGateMeter" class="as-gate-meter" width="400" height="28"></canvas>
         <span class="as-val" id="asNoiseGateVal">0.002</span>
       </div>
-      <div class="as-row as-rms-row">
-        <span class="as-label">input rms</span>
-        <span class="as-rms-readout" id="asRmsReadout">—</span>
+      <!-- Hidden elements kept for backward compat with persistence -->
+      <input type="hidden" id="asNoiseGateSlider" value="0.002">
+      <span class="as-gate-light" id="asGateLight" style="display:none"></span>
+      <span class="as-rms-readout" id="asRmsReadout" style="display:none">—</span>
+
+      <!-- ── Handsfree gate tuning ─────────────────────────────────────── -->
+      <!-- Arm toggle is in main UI (cursor panel). These are tuning params. -->
+      <div class="as-section-label" style="margin-top:0.6rem">handsfree gate</div>
+      <div class="as-row">
+        <span class="as-dim" id="hfCaptureCount" title="number of buffers captured by the gate this session">0 buffers</span>
+      </div>
+      <div class="as-row" title="how long the gate stays open after signal drops below the noise gate&#10;longer = bridges short pauses within a phrase&#10;shorter = tighter segmentation, more separate buffers">
+        <span class="as-label">hold</span>
+        <input type="range" id="hfHoldSlider" class="as-slider"
+               min="100" max="2000" step="50" value="500">
+        <span class="as-val" id="hfHoldVal">500 ms</span>
+      </div>
+      <div class="as-row" title="how quickly the gate fades closed after hold expires&#10;longer = smoother tail on each buffer, captures more decay&#10;shorter = tighter cuts">
+        <span class="as-label">release</span>
+        <input type="range" id="hfReleaseSlider" class="as-slider"
+               min="50" max="1000" step="25" value="200">
+        <span class="as-val" id="hfReleaseVal">200 ms</span>
+      </div>
+      <div class="as-row" title="output-referenced threshold: input must exceed output by this margin&#10;0 dB = off (gate uses noise floor only)&#10;raise if speaker bleed is triggering false recordings">
+        <span class="as-label">margin</span>
+        <input type="range" id="hfMarginSlider" class="as-slider"
+               min="0" max="18" step="1" value="0">
+        <span class="as-val" id="hfMarginVal">0 dB</span>
+      </div>
+      <div class="as-row" title="high-pass filter on gate sidechain — rejects low-freq speaker rumble&#10;only affects gate detection, not the recorded signal&#10;raise if bass bleed is falsely opening the gate">
+        <span class="as-label">HPF</span>
+        <div id="hfHpfSeg" class="grain-seg" style="margin-right:0.3rem">
+          <button class="grain-seg-btn" data-hpf="off">off</button>
+          <button class="grain-seg-btn active" data-hpf="on">on</button>
+        </div>
+        <input type="range" id="hfHpfSlider" class="as-slider"
+               min="40" max="500" step="10" value="120">
+        <span class="as-val" id="hfHpfVal">120 Hz</span>
+      </div>
+      <div class="as-row" title="reject buffers shorter than this — prevents gate chatter&#10;from creating tiny useless fragments">
+        <span class="as-label">min buffer</span>
+        <input type="range" id="hfMinBufSlider" class="as-slider"
+               min="50" max="1000" step="25" value="150">
+        <span class="as-val" id="hfMinBufVal">150 ms</span>
+      </div>
+      <div class="as-row" title="auto-close the gate after this long&#10;prevents runaway recording if the gate stays open">
+        <span class="as-label">max buffer</span>
+        <input type="range" id="hfMaxBufSlider" class="as-slider"
+               min="5" max="120" step="5" value="30">
+        <span class="as-val" id="hfMaxBufVal">30 s</span>
+      </div>
+      <div class="as-row" title="detect sustained rising RMS (feedback buildup) and auto-close&#10;protects against runaway feedback loops&#10;safe to leave on — tuned to avoid false positives on normal playing">
+        <span class="as-label">feedback detect</span>
+        <div id="hfFeedbackSeg" class="grain-seg">
+          <button class="grain-seg-btn" data-fb="off">off</button>
+          <button class="grain-seg-btn active" data-fb="on">on</button>
+        </div>
       </div>
 
       <div class="status-strip idle" id="asInputStatus">no input active</div>
@@ -1034,7 +1161,7 @@
       <div class="as-row">
         <span class="as-label">master vol</span>
         <input type="range" id="asOutputGain" class="as-slider"
-               min="-24" max="6" step="0.5" value="-6">
+               min="-60" max="6" step="0.5" value="-6">
         <span class="as-val" id="asOutputGainVal">−6.0 dB</span>
       </div>
 
@@ -1135,7 +1262,8 @@
     });
     document.addEventListener('keyup', e => {
       if (e.code === 'Space') {
-        btn.classList.remove('painting');
+        // Don't remove if trace is toggled on — module code manages the class
+        if (!btn.classList.contains('trace-toggled')) btn.classList.remove('painting');
       }
     });
 
@@ -1154,7 +1282,8 @@
     });
     document.addEventListener('mouseup', e => {
       if (e.button !== 0) return;
-      btn.classList.remove('painting');
+      // Don't remove if trace is toggled on — module code manages the class
+      if (!btn.classList.contains('trace-toggled')) btn.classList.remove('painting');
     });
 
     // ── Pointer / touch mirrors (for touch devices) ──────────────────────────
@@ -1169,7 +1298,7 @@
     });
     document.addEventListener('pointerup', e => {
       if (e.pointerType === 'touch' || e.pointerType === 'pen') {
-        btn.classList.remove('painting');
+        if (!btn.classList.contains('trace-toggled')) btn.classList.remove('painting');
       }
     });
   }
@@ -1273,9 +1402,9 @@
 
 <!-- ── Gesture panel (exp mode only — injected by exp-init.js) ──────────── -->
 <div id="gestureModal" class="mu-overlay">
-  <div class="mu-dialog" style="width:96vw; max-width:1600px; height:92vh; padding:0.8rem;">
+  <div class="mu-dialog" style="width:96vw; max-width:1600px; max-height:92vh; padding:0.8rem; overflow-y:auto;">
     <h2>gesture <button class="close-btn" id="gestureClose">✕</button></h2>
-    <canvas id="gestureCanvas" style="width:100%; flex:1; display:block;"></canvas>
+    <canvas id="gestureCanvas" style="width:100%; display:block;"></canvas>
   </div>
 </div>
 

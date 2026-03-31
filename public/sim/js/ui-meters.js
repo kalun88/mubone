@@ -5,6 +5,7 @@
 
 import { S } from './state.js';
 import { dropSeqFromCursor, clearAllSeqs, releaseCommit, clearAllCommits, updateCommitBanksUI, updateSeqBanksUI } from './ui-presets.js';
+import { tickHandsfree } from './handsfree.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
@@ -114,22 +115,35 @@ export function rebuildMainOutputMeters() {
   const houseWrap  = document.getElementById('mainHouseMeters');
   const mixWrap    = document.getElementById('mainMixdownMeters');
   const mixGroup   = document.getElementById('mainMixdownGroup');
+  // Main-UI headphone mix meters (levels panel)
+  const mainMixWrap  = document.getElementById('mainMixMeters');
+  const mainMixGroup = document.getElementById('mainMixGroup');
   if (!houseWrap) return;
   if (!S.speakerAnalysers?.length) {
     houseWrap.innerHTML = '';
     if (mixWrap)  mixWrap.innerHTML = '';
     if (mixGroup) mixGroup.hidden = true;
+    if (mainMixWrap)  mainMixWrap.innerHTML = '';
+    if (mainMixGroup) mainMixGroup.hidden = true;
     return;
   }
   const nHouse     = S.speakerBuses?.length ?? S.speakerAnalysers.length;
   const hasMixdown = !!(S.monitorSpeakerBuses?.length);
   const houseLabels = Array.from({ length: nHouse }, (_, i) => String(i + 1));
   renderMeters('mainHouseMeters', nHouse, houseLabels);
+  // Audio-settings modal mixdown meters
   if (mixGroup) mixGroup.hidden = !hasMixdown;
   if (hasMixdown && mixWrap) {
     renderMeters('mainMixdownMeters', 2, ['L', 'R']);
   } else if (mixWrap) {
     mixWrap.innerHTML = '';
+  }
+  // Main-UI levels panel mixdown meters
+  if (mainMixGroup) mainMixGroup.hidden = !hasMixdown;
+  if (hasMixdown && mainMixWrap) {
+    renderMeters('mainMixMeters', 2, ['L', 'R']);
+  } else if (mainMixWrap) {
+    mainMixWrap.innerHTML = '';
   }
 }
 
@@ -206,6 +220,27 @@ export function initScanToggle() {
   };
 }
 
+// ── Radial morph toggle ──────────────────────────────────────────────────────
+// Mirror of the gesture-panel morph toggle, available in the main cursor panel.
+// Only visible in exp mode (S.exp === true).
+export function initMorphToggle() {
+  const btn = document.getElementById('morphBtn');
+  if (!btn) return;
+
+  // Restore state
+  btn.classList.toggle('active', !!S.radialMorphOn);
+
+  btn.addEventListener('click', () => {
+    S.radialMorphOn = !S.radialMorphOn;
+    btn.classList.toggle('active', S.radialMorphOn);
+  });
+
+  // Sync hook so the gesture panel toggle stays in sync
+  S._syncMorphBtnUI = () => {
+    btn.classList.toggle('active', !!S.radialMorphOn);
+  };
+}
+
 // ── Radius fade (distance attenuation) ───────────────────────────────────────
 // When enabled, cursor grains are attenuated based on angular distance from
 // the cursor centre. Grains at the edge of the search radius play softer,
@@ -273,6 +308,10 @@ export function initSeqMode() {
   const commitLockBtn = document.getElementById('commitLockBtn');
   if (commitLockBtn) {
     commitLockBtn.addEventListener('click', () => {
+      // If toggled trace is active, force-stop before mode change
+      if (S._traceToggled) {
+        S._stopToggleTrace?.();
+      }
       const _modes = ['trace', 'trace+loop', 'trace+cloud'];
       const _idx = _modes.indexOf(S.traceMode);
       S.traceMode = _modes[(_idx + 1) % _modes.length];
@@ -449,49 +488,237 @@ export function initMixdownGains() {
 // the sphere render loop. Call startMainMetering() once after init.
 let _mainMeterRAF = null;
 
-// ── Noise gate indicator ─────────────────────────────────────────────────────
-// Reusable buffer for gate RMS computation (shares size with _meterBuf).
+// ── Noise gate visual meter ──────────────────────────────────────────────────
+// Canvas-drawn meter: input RMS bar + draggable threshold marker.
+// Drawn on up to two canvases: modal (asGateMeter) and main UI (mainGateMeter).
 const _gateBuf = new Float32Array(256);
-let _gateLightEl = null;
+const GATE_METER_MAX = 0.06;     // RMS scale ceiling (covers typical mic range)
+let _gateMeterCanvas = null;     // modal canvas
+let _gateMeterCtx    = null;
+let _gateValEl       = null;     // modal value readout
+let _mainGateCanvas  = null;     // main UI canvas
+let _mainGateCtx     = null;
+let _mainGateValEl   = null;     // main UI value readout
+let _mainGateInited  = false;    // lazy DPR sizing for main UI canvas
+let _smoothedRms     = 0;        // exponential smooth for bar
+let _peakRms         = 0;        // peak-hold for peak marker
+let _peakDecay       = 0;        // frames since peak was set
+let _gateDragging    = false;    // threshold drag state
 
+// Also update hidden elements for backward compat
+let _gateLightEl = null;
 let _rmsReadoutEl = null;
-let _rmsFrameCount = 0;          // throttle text updates to every 6th frame (~10 Hz)
+
+let _gateMeterInited = false;
+
+/** Wire drag events on gate meter canvases (modal + main UI).
+ *  Modal canvas sizing is deferred until it becomes visible. */
+export function initGateMeter() {
+  // ── Modal canvas (audio settings) ──────────────────────────────────────
+  _gateMeterCanvas = document.getElementById('asGateMeter');
+  if (_gateMeterCanvas) {
+    _gateMeterCtx = _gateMeterCanvas.getContext('2d');
+    _gateValEl    = document.getElementById('asNoiseGateVal');
+  }
+
+  // ── Main UI canvas (levels panel) ──────────────────────────────────────
+  _mainGateCanvas = document.getElementById('mainGateMeter');
+  if (_mainGateCanvas) {
+    _mainGateCtx   = _mainGateCanvas.getContext('2d');
+    _mainGateValEl = document.getElementById('mainNoiseGateVal');
+  }
+
+  // Drag to set threshold — only on the modal canvas (audio settings is source of truth).
+  // Main UI canvas is read-only visual mirror.
+  if (_gateMeterCanvas) {
+    const xToThreshold = (clientX) => {
+      const r = _gateMeterCanvas.getBoundingClientRect();
+      if (r.width === 0) return S.vizNoiseFloor;
+      return Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * GATE_METER_MAX;
+    };
+    _gateMeterCanvas.addEventListener('mousedown', e => {
+      _gateDragging = true;
+      S.vizNoiseFloor = xToThreshold(e.clientX);
+      _syncGateVal();
+    });
+    window.addEventListener('mousemove', e => {
+      if (!_gateDragging) return;
+      S.vizNoiseFloor = xToThreshold(e.clientX);
+      _syncGateVal();
+    });
+    window.addEventListener('mouseup', () => { _gateDragging = false; });
+  }
+
+  // Main UI canvas: no drag, just default cursor
+  if (_mainGateCanvas) _mainGateCanvas.style.cursor = 'default';
+
+  // Lazy-init main UI canvas DPR sizing (always visible, so do it now)
+  _ensureMainGateSized();
+  // Show saved threshold value
+  _syncGateVal();
+
+  // ── S callback for MIDI / OSC access to noise gate threshold ────────────
+  // Accepts linear RMS value (0 to GATE_METER_MAX), syncs readouts + hidden slider.
+  S._setNoiseGateThreshold = (v) => {
+    S.vizNoiseFloor = Math.max(0, Math.min(GATE_METER_MAX, v));
+    _syncGateVal();
+  };
+}
+
+/** Lazy DPR scaling — called once when the canvas first becomes visible */
+function _ensureGateMeterSized() {
+  if (_gateMeterInited || !_gateMeterCanvas) return false;
+  const rect = _gateMeterCanvas.getBoundingClientRect();
+  if (rect.width === 0) return false; // still hidden
+  const dpr = window.devicePixelRatio || 1;
+  _gateMeterCanvas.width  = Math.round(rect.width * dpr);
+  _gateMeterCanvas.height = Math.round(rect.height * dpr);
+  _gateMeterCtx.scale(dpr, dpr);
+  _gateMeterInited = true;
+  return true;
+}
+
+function _ensureMainGateSized() {
+  if (!_mainGateCanvas) return false;
+  const rect = _mainGateCanvas.getBoundingClientRect();
+  if (rect.width === 0) return false;
+  const dpr = window.devicePixelRatio || 1;
+  const needW = Math.round(rect.width * dpr);
+  const needH = Math.round(rect.height * dpr);
+  // Re-size if dimensions changed (panel resize, projector mode toggle)
+  if (_mainGateInited && _mainGateCanvas.width === needW && _mainGateCanvas.height === needH) return true;
+  _mainGateCanvas.width  = needW;
+  _mainGateCanvas.height = needH;
+  _mainGateCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  _mainGateInited = true;
+  return true;
+}
+
+function _syncGateVal() {
+  const txt = S.vizNoiseFloor.toFixed(4);
+  if (_gateValEl) _gateValEl.textContent = txt;
+  if (_mainGateValEl) _mainGateValEl.textContent = txt;
+  // Keep hidden slider in sync for persistence
+  const hs = document.getElementById('asNoiseGateSlider');
+  if (hs) hs.value = S.vizNoiseFloor;
+}
+
+/** Draw the gate meter onto a given canvas context at CSS-space w×h. */
+function _drawGateMeter(ctx, w, h) {
+  ctx.clearRect(0, 0, w, h);
+
+  const gated = S.vizNoiseFloor > 0 && _smoothedRms < S.vizNoiseFloor;
+  const threshX = (S.vizNoiseFloor / GATE_METER_MAX) * w;
+  const barX    = (_smoothedRms / GATE_METER_MAX) * w;
+  const peakX   = (_peakRms / GATE_METER_MAX) * w;
+
+  // Background track
+  ctx.fillStyle = 'rgba(255,255,255,0.03)';
+  ctx.fillRect(0, 0, w, h);
+
+  // RMS bar
+  if (barX > 0.5) {
+    const barH = h * 0.55;
+    const barY = (h - barH) / 2;
+    if (gated) {
+      ctx.fillStyle = 'rgba(224, 80, 80, 0.5)';
+      ctx.fillRect(0, barY, Math.min(barX, w), barH);
+    } else {
+      if (threshX > 0) {
+        ctx.fillStyle = 'rgba(122, 188, 188, 0.2)';
+        ctx.fillRect(0, barY, Math.min(threshX, barX, w), barH);
+      }
+      ctx.fillStyle = 'rgba(122, 188, 188, 0.5)';
+      ctx.fillRect(Math.min(threshX, barX), barY, Math.max(0, Math.min(barX, w) - threshX), barH);
+    }
+  }
+
+  // Peak marker (thin bright line)
+  if (peakX > 1) {
+    ctx.fillStyle = gated ? 'rgba(224, 80, 80, 0.7)' : 'rgba(122, 188, 188, 0.8)';
+    ctx.fillRect(Math.min(peakX, w - 1), (h - h * 0.55) / 2, 1.5, h * 0.55);
+  }
+
+  // Threshold marker — vertical line with small triangles top and bottom
+  if (S.vizNoiseFloor > 0 && threshX > 0 && threshX < w) {
+    const tx = Math.round(threshX);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.moveTo(tx + 0.5, 0);
+    ctx.lineTo(tx + 0.5, h);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.beginPath();
+    ctx.moveTo(tx - 3, 0);
+    ctx.lineTo(tx + 4, 0);
+    ctx.lineTo(tx + 0.5, 5);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(tx - 3, h);
+    ctx.lineTo(tx + 4, h);
+    ctx.lineTo(tx + 0.5, h - 5);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Gate state label — small text in top-right
+  ctx.font = '9px Inter, Helvetica, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = gated ? 'rgba(224, 80, 80, 0.7)' : 'rgba(122, 188, 188, 0.6)';
+  ctx.fillText(gated ? 'gated' : 'open', w - 4, 10);
+}
 
 function updateGateLight() {
-  // Read the selected input analyser and compute RMS
   const an = S.inputAnalyser;
-  if (!an) {
-    if (_gateLightEl) _gateLightEl.classList.remove('closed');
+  if (!_gateMeterCanvas && !_mainGateCanvas) {
+    if (!_gateLightEl) _gateLightEl = document.getElementById('asGateLight');
+    if (!an && _gateLightEl) _gateLightEl.classList.remove('closed');
     return;
   }
+  if (!an) return;
+
+  // Lazy canvas sizing
+  if (!_gateMeterInited) _ensureGateMeterSized();
+  if (!_mainGateInited)  _ensureMainGateSized();
+
+  // Compute RMS
   an.getFloatTimeDomainData(_gateBuf);
   let sumSq = 0;
   for (let i = 0; i < _gateBuf.length; i++) sumSq += _gateBuf[i] * _gateBuf[i];
   const rms = Math.sqrt(sumSq / _gateBuf.length);
 
-  if (!_gateLightEl) _gateLightEl = document.getElementById('asGateLight');
-  if (_gateLightEl) {
-    if (S.vizNoiseFloor > 0) {
-      _gateLightEl.classList.toggle('closed', rms < S.vizNoiseFloor);
-    } else {
-      _gateLightEl.classList.remove('closed');
-    }
+  // Smooth RMS for bar (fast attack, slower release)
+  _smoothedRms = rms > _smoothedRms
+    ? _smoothedRms * 0.3 + rms * 0.7
+    : _smoothedRms * 0.85 + rms * 0.15;
+
+  // Peak hold (decays after ~20 frames)
+  if (rms > _peakRms) {
+    _peakRms   = rms;
+    _peakDecay = 0;
+  } else {
+    _peakDecay++;
+    if (_peakDecay > 20) _peakRms *= 0.95;
   }
 
-  // Live RMS readout — update text ~10 Hz to stay readable
-  _rmsFrameCount++;
-  if (_rmsFrameCount >= 6) {
-    _rmsFrameCount = 0;
-    if (!_rmsReadoutEl) _rmsReadoutEl = document.getElementById('asRmsReadout');
-    if (_rmsReadoutEl) {
-      _rmsReadoutEl.textContent = rms.toFixed(4);
-      // Colour hint: green when above gate, red when below (gated)
-      if (S.vizNoiseFloor > 0 && rms < S.vizNoiseFloor) {
-        _rmsReadoutEl.style.color = '#e05050';
-      } else {
-        _rmsReadoutEl.style.color = '#7abcbc';
-      }
-    }
+  // Update hidden elements for backward compat
+  if (!_gateLightEl) _gateLightEl = document.getElementById('asGateLight');
+  if (_gateLightEl) _gateLightEl.classList.toggle('closed', rms < S.vizNoiseFloor);
+
+  // Draw on modal canvas (if visible / sized)
+  if (_gateMeterInited && _gateMeterCtx) {
+    const r = _gateMeterCanvas.getBoundingClientRect();
+    _drawGateMeter(_gateMeterCtx, r.width, r.height);
+  }
+
+  // Draw on main UI canvas (always visible)
+  if (_mainGateInited && _mainGateCtx) {
+    const r = _mainGateCanvas.getBoundingClientRect();
+    _drawGateMeter(_mainGateCtx, r.width, r.height);
   }
 }
 
@@ -517,9 +744,13 @@ export function tickMainMeters() {
     const nHouse = S.speakerBuses?.length ?? S.speakerAnalysers.length;
     tickMeters(S.speakerAnalysers.slice(0, nHouse), 'mainHouseMeters');
     const mixAnalysers = S.speakerAnalysers.slice(nHouse);
-    if (mixAnalysers.length) tickMeters(mixAnalysers, 'mainMixdownMeters');
+    if (mixAnalysers.length) {
+      tickMeters(mixAnalysers, 'mainMixdownMeters');
+      tickMeters(mixAnalysers, 'mainMixMeters');
+    }
   }
   updateGateLight();
+  tickHandsfree();
 }
 
 export function stopMainMetering() {

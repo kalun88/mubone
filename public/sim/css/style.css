@@ -225,6 +225,89 @@
     background: #000000;
   }
 
+  /* ── Projector mode: compact laptop layout + popup mirror ────────────── */
+  /* Full viewport for panels; canvas is a small mini-monitor tile. */
+  body.projector-mode {
+    padding: 0 !important;
+    gap: 0 !important;
+  }
+  body.projector-mode .top-bar {
+    padding: 0.15rem 0.5rem;
+    flex-wrap: wrap;
+    gap: 0.15rem 0.5rem;
+  }
+  body.projector-mode .top-bar .top-bar-version { display: none; }
+  body.projector-mode .main-layout {
+    flex-direction: column;
+    gap: 0;
+    overflow: hidden;
+  }
+  /* Panels fill the viewport; canvas sits inside the column flow */
+  body.projector-mode .right-panel {
+    order: 1;
+    width: 100%;
+    flex: 1 1 0;
+    display: block;
+    columns: 4;
+    column-gap: 0.25rem;
+    padding: 0.25rem;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  body.projector-mode .proj-divider  { display: none; }
+  /* Mini canvas — panel-sized tile at the top of the column flow */
+  body.projector-mode .canvas-wrapper {
+    order: 2;
+    width: 100%;
+    flex: none;
+    height: 0;        /* hide from flex layout — canvas lives inside panel flow */
+    overflow: hidden;
+    border: none;
+    border-radius: 0;
+  }
+  body.projector-mode .right-panel .device {
+    width: auto;
+    min-height: 0;
+    overflow: hidden;
+    break-inside: avoid;
+    margin-bottom: 0.25rem;
+  }
+  /* Tighten device padding in projector mode */
+  body.projector-mode .device-body { gap: 0.15rem; }
+  body.projector-mode .seq-section { padding: 0.2rem 0.35rem; }
+  body.projector-mode .grain-row { gap: 0.2rem; }
+  body.projector-mode .grain-label { min-width: 2.5rem; }
+  /* Mini canvas device tile — injected into panel flow */
+  .projector-mini-canvas {
+    background: #000;
+    border-radius: 4px;
+    overflow: hidden;
+    break-inside: avoid;
+    margin-bottom: 0.25rem;
+  }
+  .projector-mini-body {
+    position: relative;
+  }
+  .projector-mini-canvas canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
+  /* HUD stays in canvas-wrapper (hidden in projector mode) — shown on popup instead */
+  /* Divider bar — kept but hidden in projector mode */
+  .proj-divider {
+    display: none;
+    width: 100%;
+    height: 6px;
+    cursor: row-resize;
+    background: rgba(255,255,255,0.06);
+    flex: none;
+  }
+  .proj-divider:hover, .proj-divider.dragging {
+    background: rgba(232,160,48,0.4);
+  }
+
   /* no hide rule needed — fullscreen overlay already covers other elements */
   canvas {
     display: block;
@@ -295,6 +378,13 @@
     letter-spacing: 0.03em;
   }
   #coordinates { white-space: pre; font-variant-numeric: tabular-nums; }
+  .hf-hud-label {
+    color: #50b850;
+    font-size: calc(0.72rem * var(--hud-scale, 1));
+    letter-spacing: 0.04em;
+    margin-left: calc(6px * var(--hud-scale, 1));
+    opacity: 0.85;
+  }
   /* ── Commit dots — minimalist slot indicator in HUD ────────────────────── */
   .vm-commit-dots {
     display: flex;
@@ -549,6 +639,26 @@
     align-items: center;
     gap: 0.35rem;
   }
+  /* ── Panel reorder arrows ─────────────────────────────────────────────── */
+  .device-reorder {
+    margin-left: auto;
+    display: flex;
+    gap: 0.1rem;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .device-label:hover .device-reorder { opacity: 0.6; }
+  .device-reorder-btn {
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 0.5rem;
+    padding: 0.1rem 0.25rem;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .device-reorder-btn:hover { color: #e8a030; }
+
   .device-label::before {
     content: '▾';
     font-size: 0.6rem;
@@ -1128,6 +1238,30 @@
     background: rgba(122, 188, 188, 0.15);
   }
 
+  /* Radial morph active — orange indicators (gesture-driven override) */
+  .grain-row.param-morphed .grain-slider::-webkit-slider-thumb {
+    background: #e8a030;
+  }
+  .grain-row.param-morphed .grain-slider::-moz-range-thumb {
+    background: #e8a030;
+  }
+  .grain-row.param-morphed .grain-slider::-webkit-slider-runnable-track {
+    background: rgba(232, 160, 48, 0.12);
+  }
+  .grain-row.param-morphed .grain-slider::-moz-range-track {
+    background: rgba(232, 160, 48, 0.12);
+  }
+  .grain-row.param-morphed .grain-numbox {
+    color: #e8a030;
+  }
+  .grain-row.param-morphed .grain-label {
+    color: #e8a030;
+  }
+  .grain-row.param-morphed .grain-seg-btn.active {
+    border-color: #e8a030;
+    color: #e8a030;
+  }
+
   /* ── Patch table lock column ─────────────────────────────────────────── */
   .pt-lock-col {
     position: sticky;
@@ -1463,6 +1597,7 @@
   .levels-meters-row {
     display: flex;
     flex-direction: row;
+    flex-wrap: wrap;            /* stack input / house when panel is narrow */
     justify-content: flex-start;
     gap: 0.5rem;
   }
@@ -1481,6 +1616,28 @@
     width: fit-content !important;   /* size to channel count — no trailing space */
     border-radius: 2px;
     overflow: visible;
+  }
+  /* Main-UI noise gate meter — full width in the levels panel */
+  .levels-section--gate {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.35rem;
+  }
+  .levels-section--gate .seq-section-label {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+  .main-gate-meter {
+    flex: 1;
+    min-width: 0;
+    height: 28px;
+    cursor: default;   /* read-only — drag threshold in audio settings */
+  }
+  .main-gate-val {
+    flex-shrink: 0;
+    min-width: 2.5rem;
+    text-align: right;
   }
 
   /* ── Play device — scan toggle button ────────────────────────────────────── */
@@ -1546,6 +1703,46 @@
     border-color: rgba(232, 160, 48, 0.25);
   }
 
+  /* ── Two-column row for compact button pairs ── */
+  .seq-section--row {
+    display: flex;
+    gap: 4px;
+  }
+  .seq-section--row .play-mute-btn {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* ── Handsfree arm button — green armed, red recording ── */
+  #hfArmBtn .play-mute-icon--on  { display: none; }
+  #hfArmBtn .play-mute-icon--off { display: inline-block; }
+  #hfArmBtn.hf-unavailable {
+    opacity: 0.25;
+    pointer-events: none;
+  }
+  #hfArmBtn.hf-armed {
+    color: #4dcc7a;
+    border-color: rgba(77, 204, 122, 0.5);
+    background: rgba(77, 204, 122, 0.08);
+    box-shadow: 0 0 8px rgba(77, 204, 122, 0.15);
+  }
+  #hfArmBtn.hf-armed .play-mute-icon--on  { display: inline-block; }
+  #hfArmBtn.hf-armed .play-mute-icon--off { display: none; }
+  #hfArmBtn.hf-armed .seq-record-key {
+    color: rgba(77, 204, 122, 0.5);
+    border-color: rgba(77, 204, 122, 0.25);
+  }
+  #hfArmBtn.hf-recording {
+    color: #e05555;
+    border-color: rgba(224, 85, 85, 0.55);
+    background: rgba(224, 85, 85, 0.10);
+    box-shadow: 0 0 10px rgba(224, 85, 85, 0.25);
+  }
+  #hfArmBtn.hf-recording .seq-record-key {
+    color: rgba(224, 85, 85, 0.5);
+    border-color: rgba(224, 85, 85, 0.25);
+  }
+
   /* ── Scan button — white-ish when on, orange when off ── */
   #scanBtn .play-mute-icon--on  { display: none; }
   #scanBtn .play-mute-icon--off { display: inline-block; }
@@ -1570,6 +1767,31 @@
   #scanBtn.active .seq-record-key {
     color: rgba(200, 220, 232, 0.4);
     border-color: rgba(200, 220, 232, 0.2);
+  }
+
+  /* ── Morph toggle — dim when off, orange when on ────────────────────── */
+  #morphBtn .play-mute-icon--on  { display: none; }
+  #morphBtn .play-mute-icon--off { display: inline-block; }
+  #morphBtn:not(.active) {
+    color: rgba(200, 220, 232, 0.35);
+    border-color: rgba(200, 220, 232, 0.12);
+    background: rgba(255, 255, 255, 0.015);
+  }
+  #morphBtn:not(.active) .seq-record-key {
+    color: rgba(200, 220, 232, 0.2);
+    border-color: rgba(200, 220, 232, 0.1);
+  }
+  #morphBtn.active {
+    color: #e8a030;
+    border-color: rgba(232, 160, 48, 0.7);
+    background: rgba(232, 160, 48, 0.15);
+    box-shadow: 0 0 12px rgba(232, 160, 48, 0.25);
+  }
+  #morphBtn.active .play-mute-icon--on  { display: inline-block; }
+  #morphBtn.active .play-mute-icon--off { display: none; }
+  #morphBtn.active .seq-record-key {
+    color: rgba(232, 160, 48, 0.5);
+    border-color: rgba(232, 160, 48, 0.25);
   }
 
   /* ── Trace mode cycle button — bang (flash on press), no persistent state ── */
@@ -3222,6 +3444,16 @@
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
 }
+/* Noise gate visual meter */
+.as-gate-meter {
+  flex: 1;
+  height: 28px;
+  min-width: 0;
+  border-radius: 3px;
+  cursor: ew-resize;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
 /* Gate activity indicator light */
 .as-gate-light {
   display: inline-block;
@@ -3235,6 +3467,10 @@
 .as-gate-light.closed {
   background: #e05050;
   box-shadow: 0 0 4px #e05050;
+}
+.as-gate-light.recording {
+  background: #e03030;
+  box-shadow: 0 0 6px #e03030;
 }
 /* Live RMS readout row */
 .as-rms-row { margin-top: -2px; }

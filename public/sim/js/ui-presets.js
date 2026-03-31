@@ -10,6 +10,7 @@ import {
   gp, rebuildGrainCurves, minGrainDurS, minGrainPeriodS,
   SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
   USER_PRESET_START, FACTORY_PRESET_START, loadUserPresets, saveUserPresets,
+  presetHasParams,
 } from './state.js';
 import { angleBetweenSphere, findNearestSeedSlot, resetCursorPeriod } from './grain.js';
 import { lerpPresets } from './seed-morph.js';
@@ -798,6 +799,10 @@ function _syncCommitUI() {
 
   // Also refresh slot-full state
   _syncSeqButtonStates();
+
+  // Grey out handsfree button when not in plain trace mode
+  const hfBtn = document.getElementById('hfArmBtn');
+  if (hfBtn) hfBtn.classList.toggle('hf-unavailable', S.traceMode !== 'trace');
 }
 S._syncCommitUI = _syncCommitUI;
 S._clearAllCommits = () => clearAllCommits();
@@ -1598,12 +1603,32 @@ export function selectPreset(index) {
   const patchEl = document.getElementById('vmPatchInfo');
   if (patchEl) patchEl.textContent = `${index + 1} ${preset.name || ''}`;
 
+  // ── Empty-preset guard ────────────────────────────────────────────────
+  // If the preset has no parameter data (only name/userDefined), skip all
+  // parameter application — selecting an empty slot should change nothing.
+  const hasParams = presetHasParams(preset);
+  if (!hasParams) {
+    // Still update UI indicators (active button, HUD) but touch no state.
+    document.querySelectorAll('.preset-btn').forEach((btn, i) => {
+      btn.classList.toggle('active', i === index);
+    });
+    syncAllUI();
+    drawPresetWaveform();
+    updatePresetStats();
+    S._patchTableRefresh?.();
+    S._syncPresetDropdown?.();
+    return;
+  }
+
   // ── Sparse application: only apply keys that exist in the preset ──────
   // For grain engine params, we still need the grainParams merge for
   // backward compatibility with factory presets and the grain engine's
   // fallback chain (grainOverrides → grainParams).
 
   // Check which grain-engine keys are present in this preset
+  // durJitter + retriggerMs are not in PARAM_REGISTRY (no patch table row)
+  // but factory presets define them — keep here so factory recall still works.
+  // User presets won't have them: loadUserPresets strips unknown keys on load.
   const GRAIN_KEYS = ['duration', 'durJitter', 'durVar', 'fadeRatio', 'period',
     'periodVar', 'pitchJitter', 'pitchShift', 'panSpread', 'volume', 'k',
     'retriggerMs'];
@@ -1731,9 +1756,11 @@ let _rvLastDeg      = -1;
 let _rvLastNearest  = null;
 
 export function drawRadiusViz() {
-  // Always update the numbox readout regardless of whether the canvas exists
+  // Always sync the slider + numbox readout regardless of whether the canvas exists
+  const radSliderEl = document.getElementById('radiusSlider');
+  if (radSliderEl) radSliderEl.value = S.searchRadiusDeg;
   const radValEl = document.getElementById('radiusVal');
-  if (radValEl) radValEl.value = `${S.searchRadiusDeg}°`;
+  if (radValEl) radValEl.value = `${Math.round(S.searchRadiusDeg)}°`;
 
   const canvas = document.getElementById('radiusViz');
   if (!canvas) return;
@@ -1812,8 +1839,8 @@ export function drawPresetWaveform() {
 
   const pr = PRESETS[S.activePresetIndex];
 
-  const liveDur    = Math.max(0.00001, S.grainOverrides.duration ?? pr.duration);
-  const livePeriod = Math.max(0.00001, S.grainOverrides.period   ?? pr.period);
+  const liveDur    = Math.max(0.00001, S.grainOverrides.duration ?? pr.duration ?? gp().duration);
+  const livePeriod = Math.max(0.00001, S.grainOverrides.period   ?? pr.period   ?? gp().period);
 
   const STATS_H = 11;
   const drawH   = h - STATS_H;
@@ -1839,7 +1866,7 @@ export function drawPresetWaveform() {
     return 0.5 * (1 + Math.cos(Math.PI * t));
   };
 
-  const liveFadeRatio = S.grainOverrides.fadeRatio ?? pr.fadeRatio ?? 0.25;
+  const liveFadeRatio = S.grainOverrides.fadeRatio ?? pr.fadeRatio ?? gp().fadeRatio ?? 0.25;
   const liveFade      = Math.min(liveDur / 2 - 0.0001, liveDur * Math.min(liveFadeRatio, 0.5));
 
   const tints = ['#7abcbc', '#6090e0', '#e07060', '#a0c060', '#c060a0', '#e0a030', '#60a0e0', '#e06060'];
@@ -1946,9 +1973,13 @@ export function updatePresetStats() {
   const durEl = document.getElementById('psDur');
   const kEl   = document.getElementById('psK');
   const panEl = document.getElementById('psPan');
-  if (durEl) durEl.textContent = fmtMs(pr.duration);
-  if (kEl)   kEl.textContent   = pr.k === 0 ? 'nearest' : pr.k;
-  if (panEl) panEl.textContent = Math.round(pr.panSpread * 100) + '%';
+  // Fall through to live grainParams when preset has no value (empty user slot)
+  const dur = pr.duration ?? (S.grainOverrides.duration ?? gp().duration);
+  const k   = pr.k       ?? (S.grainOverrides.k        ?? gp().k);
+  const pan = pr.panSpread ?? (S.grainOverrides.panSpread ?? gp().panSpread);
+  if (durEl) durEl.textContent = fmtMs(dur);
+  if (kEl)   kEl.textContent   = k === 0 ? 'nearest' : k;
+  if (panEl) panEl.textContent = Math.round((pan ?? 0) * 100) + '%';
 }
 
 // ── Grain controls panel ─────────────────────────────────────────────────────
@@ -2213,13 +2244,80 @@ export function initGrainControls() {
     if (kNum) kNum.value = kVal;
     const recValEl = document.getElementById('recencyVal');
     if (recValEl) recValEl.textContent = S.recencyN;
+    // Also sync the radius slider (morph writes to S.searchRadiusDeg directly)
+    const radSlider = document.getElementById('radiusSlider');
+    if (radSlider) radSlider.value = S.searchRadiusDeg;
+    // Radius fade curve slider
+    const rfcSlider = document.getElementById('radiusFadeCurveSlider');
+    if (rfcSlider) rfcSlider.value = S.radiusFadeCurve;
+    const rfcNum = document.getElementById('radiusFadeCurveNum');
+    if (rfcNum) rfcNum.value = Math.round(S.radiusFadeCurve * 100) + '%';
+    // Boolean toggles — sync segment button active states
+    const snapSeg = document.getElementById('snapToggleSeg');
+    if (snapSeg) snapSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+      b.classList.toggle('active', (b.dataset.snap === 'on') === S.nearestMode));
+    const kAllSeg = document.getElementById('kAllSeg');
+    if (kAllSeg) kAllSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+      b.classList.toggle('active', (b.dataset.kall === 'on') === S.grainKAllMode));
+    const kSeqSeg = document.getElementById('kSeqSeg');
+    if (kSeqSeg) kSeqSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+      b.classList.toggle('active', (b.dataset.kseq === 'on') === S.grainKSeqMode));
     updatePlaybackControls();
     drawRadiusViz();
+    drawPresetWaveform();
     updatePresetStats();
   };
 
   // Init display from default preset
   S.syncGrainControlsUI();
+
+  // ── Radial morph visual indicator ───────────────────────────────────────
+  // When the gesture radial morph is driving params, toggle .param-morphed
+  // on each affected grain-row so the slider thumb turns orange.
+  // Extra param → slider-ID mapping for controls outside SLIDER_DEFS
+  // Non-SLIDER_DEF controls: slider-based and segment-based UI elements
+  const EXTRA_MORPH_SLIDERS = [
+    { param: 'k',                sliderId: 'searchKSlider' },
+    { param: 'searchRadiusDeg',  sliderId: 'radiusSlider' },
+    { param: 'recencyN',         sliderId: 'recencySlider' },
+    { param: 'radiusFadeCurve',  sliderId: 'radiusFadeCurveSlider' },
+  ];
+  // Segment/toggle controls — use the segment container's parent .grain-row
+  const EXTRA_MORPH_SEGS = [
+    { param: 'nearestMode',      segId: 'snapToggleSeg' },
+    { param: 'grainKAllMode',    segId: 'kAllSeg' },
+    { param: 'grainKSeqMode',    segId: 'kSeqSeg' },
+    { param: 'radiusFadeEnabled', segId: 'radiusFadeSeg' },
+    { param: 'direction',        segId: 'gcDirSeg' },
+    { param: 'curveType',        segId: 'gcCurveSeg' },
+  ];
+
+  S._syncRadialMorphUI = function() {
+    const morphed = S.radialMorphActiveParams;
+    SLIDER_DEFS.forEach(def => {
+      const slider = document.getElementById(def.sliderId);
+      if (!slider) return;
+      const row = slider.closest('.grain-row');
+      if (!row) return;
+      row.classList.toggle('param-morphed', morphed?.has(def.param) ?? false);
+    });
+    // Also mark non-SLIDER_DEF slider controls (k, radius, recency, fade curve)
+    EXTRA_MORPH_SLIDERS.forEach(def => {
+      const el = document.getElementById(def.sliderId);
+      if (!el) return;
+      const row = el.closest('.grain-row');
+      if (!row) return;
+      row.classList.toggle('param-morphed', morphed?.has(def.param) ?? false);
+    });
+    // Segment/toggle controls (nearest, k-all, k-seq, radius fade, dir, curve)
+    EXTRA_MORPH_SEGS.forEach(def => {
+      const el = document.getElementById(def.segId);
+      if (!el) return;
+      const row = el.closest('.grain-row');
+      if (!row) return;
+      row.classList.toggle('param-morphed', morphed?.has(def.param) ?? false);
+    });
+  };
 }
 
 // ============================================================================
@@ -2456,5 +2554,38 @@ export function initDesktopMorph() {
     } else {
       section.classList.remove('morph-disabled');
     }
+  };
+
+  // ── S callbacks for MIDI / OSC access to cloud morph ────────────────────
+  // Set morph position (0–1) from external source (CC fader, OSC float).
+  // Cancels any in-flight return animation and applies morph to nearest seed.
+  S._setDesktopMorphT = (t) => {
+    cancelAnimationFrame(S._desktopMorphAnimId);
+    S._desktopMorphAnimId = 0;
+    S.desktopMorphT = Math.max(0, Math.min(1, t));
+    if (slider) slider.value = S.desktopMorphT;
+    const { lon, lat } = getCursorPos();
+    const slot = findNearestSeedSlot(lon, lat);
+    if (slot >= 0) _applyDesktopMorph(S.seedSlots[slot]);
+  };
+
+  // Toggle sticky mode from external trigger.
+  S._toggleDesktopMorphSticky = () => {
+    S.desktopMorphSticky = !S.desktopMorphSticky;
+    if (stickySeg) stickySeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+      b.classList.toggle('active', (b.dataset.sticky === 'true') === S.desktopMorphSticky));
+    if (returnRow) {
+      returnRow.style.opacity = S.desktopMorphSticky ? '0.35' : '';
+      returnRow.style.pointerEvents = S.desktopMorphSticky ? 'none' : '';
+    }
+    _saveMorphSettings();
+  };
+
+  // Set return time from external CC (50–3000 ms).
+  S._setDesktopMorphReturnMs = (ms) => {
+    S.desktopMorphReturnMs = Math.max(50, Math.min(3000, Math.round(ms)));
+    if (returnSl) returnSl.value = S.desktopMorphReturnMs;
+    if (returnNum) returnNum.value = S.desktopMorphReturnMs + 'ms';
+    _saveMorphSettings();
   };
 }

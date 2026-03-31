@@ -38,6 +38,8 @@ const STATIC_KEYS = [
   'mubone_edgeIndicatorSize',
   'mubone_preset_view',
   'mubone_desktop_morph',
+  'mubone_gesture_panel',
+  'mubone_radial_pins',
   'grainDiagSnapshot',
 ];
 

@@ -14,7 +14,7 @@ import { setupMappingModal, initMidi } from './midi.js';
 import { initMobileMode } from './mobile.js';
 import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
 import { resizeCanvas, animate } from './renderer.js';
-import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initRadiusFade, initSeqMode, initMixdownGains, setScanMuted } from './ui-meters.js';
+import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initMorphToggle, initRadiusFade, initSeqMode, initMixdownGains, setScanMuted, initGateMeter } from './ui-meters.js';
 import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, recenterCursor } from './sensor-registry.js';
 import { initOSC } from './osc.js';
 import { initSensorsUI } from './ui-sensors.js';
@@ -74,15 +74,74 @@ function init() {
   // ── Collapsible panels ───────────────────────────────────────────────────
   // Click any device-label to collapse/expand its body. State persists in
   // localStorage so panels stay collapsed across reloads.
+
+  // Helper: get the panel key from a device element
+  function _panelKey(device) { return device?.className.match(/device--(\S+)/)?.[1]; }
+
+  // Helper: save current panel order to localStorage
+  function _savePanelOrder() {
+    const panel = document.querySelector('.right-panel');
+    if (!panel) return;
+    const order = [...panel.querySelectorAll('.device')]
+      .map(d => _panelKey(d)).filter(Boolean);
+    localStorage.setItem('mubone_panel_order', JSON.stringify(order));
+  }
+
+  // Restore saved panel order on load
+  try {
+    const saved = JSON.parse(localStorage.getItem('mubone_panel_order'));
+    if (saved && Array.isArray(saved)) {
+      const panel = document.querySelector('.right-panel');
+      if (panel) {
+        const devices = new Map();
+        panel.querySelectorAll('.device').forEach(d => {
+          const k = _panelKey(d);
+          if (k) devices.set(k, d);
+        });
+        // re-append in saved order (unsaved devices stay at end)
+        for (const k of saved) {
+          const d = devices.get(k);
+          if (d) { panel.appendChild(d); devices.delete(k); }
+        }
+        for (const d of devices.values()) panel.appendChild(d);
+      }
+    }
+  } catch (_) { /* ignore corrupt data */ }
+
   for (const label of document.querySelectorAll('.device-label')) {
     const device = label.closest('.device');
     if (!device) continue;
-    const key = device.className.match(/device--(\S+)/)?.[1];
+    const key = _panelKey(device);
     if (key && localStorage.getItem(`mubone_panel_${key}`) === '1') device.classList.add('collapsed');
-    label.addEventListener('click', () => {
+    label.addEventListener('click', (e) => {
+      // don't collapse when clicking reorder arrows
+      if (e.target.closest('.device-reorder')) return;
       device.classList.toggle('collapsed');
       if (key) localStorage.setItem(`mubone_panel_${key}`, device.classList.contains('collapsed') ? '1' : '0');
     });
+
+    // Reorder arrows
+    const wrap = document.createElement('span');
+    wrap.className = 'device-reorder';
+    const upBtn = document.createElement('button');
+    upBtn.className = 'device-reorder-btn';
+    upBtn.textContent = '▲';
+    upBtn.title = 'move panel up';
+    const dnBtn = document.createElement('button');
+    dnBtn.className = 'device-reorder-btn';
+    dnBtn.textContent = '▼';
+    dnBtn.title = 'move panel down';
+    upBtn.addEventListener('click', () => {
+      const prev = device.previousElementSibling;
+      if (prev) { device.parentNode.insertBefore(device, prev); _savePanelOrder(); }
+    });
+    dnBtn.addEventListener('click', () => {
+      const next = device.nextElementSibling;
+      if (next) { next.parentNode.insertBefore(next, device); _savePanelOrder(); }
+    });
+    wrap.appendChild(upBtn);
+    wrap.appendChild(dnBtn);
+    label.appendChild(wrap);
   }
 
   // ── Collapsible sections (within devices) ─────────────────────────────
@@ -312,7 +371,9 @@ function init() {
     drawSvWaveform();
     animate();
     startMainMetering();  // start DOM-based VU meter loop for main window
+    initGateMeter();    // wire noise gate visual meter (canvas + drag)
     initScanToggle(); // wire scan (cursor spotlight) on/off toggle
+    initMorphToggle(); // wire radial morph on/off toggle (exp only)
     initRadiusFade();      // wire radius fade toggle + curve slider
     initSeqMode();         // wire sequential (loop) mode toggle
     initMixdownGains();    // wire mixdown source gain sliders

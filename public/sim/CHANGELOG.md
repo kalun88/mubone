@@ -5,6 +5,44 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.13 alpha — 2026-03-31
+
+### Fixed
+- **MIDI radius slider not syncing** — MIDI CC for radius updated the canvas and numbox but not the slider element. Also added `Math.round()` so CC values show integer degrees.
+- **MIDI grain envelope not updating** — `syncGrainControlsUI` called `updatePlaybackControls()` and `drawRadiusViz()` but not `drawPresetWaveform()`, so moving MIDI faders for dur/per/fade didn't redraw the grain envelope visualization.
+- **OSC `/search/radius` not syncing UI** — handler set `S.searchRadiusDeg` and called `updatePlaybackControls()` but never synced the slider, numbox, or radius canvas. Now uses `scheduleUISync()` with integer rounding.
+- **Multichannel input meter scramble** (#112) — 10-channel MOTU input caused channel levels to jump randomly, especially when switching hardware input. Root cause: fixed 8192-sample ring buffer in the input-meter worklet overflowed at high channel counts (~18ms for 10ch). Rewrote with scaled ring size (`max(32768, numChannels × 8192)` rounded to power of 2), bitmask wrap on both cursors, and overflow detection that snaps the read cursor forward on frame boundaries.
+- **`S.mainInputChannel` not synced** — legacy `asInputChannel` handler didn't update `S.mainInputChannel`, causing main UI meters to use stale channel index.
+- **Master volume range too narrow** — slider min extended from −24 dB to −60 dB in HTML, MIDI mapping, and `S._setOutputGainDb` callback.
+- **Empty user patches zero volume on recall** (#111) — selecting a user patch with no visible data in the patch table was silently zeroing volume. Three-part fix: strip unknown keys on load, early-return for empty presets, fall through to live grainParams for empty slots.
+- **Preset select OSC range** — `fmt` field said `int 1–20` but actual range is 1–46 (20 user + 26 factory). Corrected the documentation.
+
+### Added
+- **MIDI/OSC: cloud morph** — three new mappable actions: `morph_cc` (position 0–1), `morph_sticky` (hold toggle), `morph_return` (return time 50–3000 ms). Wired to `S._setDesktopMorphT`, `S._toggleDesktopMorphSticky`, `S._setDesktopMorphReturnMs` callbacks in ui-presets.js.
+- **MIDI/OSC: master volume** — new `master_vol` action (−60 to +6 dB) drives the actual audio settings slider via `S._setOutputGainDb` callback.
+- **MIDI/OSC: noise gate threshold** — new `noise_gate` action (0–0.06 RMS) via `S._setNoiseGateThreshold` callback.
+- **OSC routes for new actions** — added `/master/volume`, `/gate/threshold`, `/morph/position`, `/morph/sticky`, `/morph/return` to osc.js dispatcher. All accept real-world values matching their `fmt` fields.
+- **Headphone mix meters in levels panel** — when the mixdown bus is active, an L/R "phones" meter column appears alongside input and house in the main UI levels panel.
+- **Parameter lock indicators on all params** — 27 missing `param-lock-indicator` spans added across the main GUI. Locking any parameter in the patch table now shows the blue (#7abcbc) tint on the corresponding slider/label in the main GUI. Covers all grain params, search toggles, cursor params, and commit/seeder params.
+- **Radial morph orange indicators** — CSS for `.param-morphed` class turns slider thumb, track, numbox, and label orange when gesture morph is driving a parameter.
+- **Handsfree arm button** — dedicated `hfArmBtn` in the trace section with green armed / red recording states and HUD label.
+- **Projector mode** — compact laptop layout with popup mirror window for projector output. Panel reorder arrows. Projector divider bar.
+- **6 new factory presets** — shimmer-high, deep-drone, glitch-burst, crystal-seq, swarm-buzz, ghost-breath (indices 20–25).
+
+### Changed
+- **Levels panel meters wrap** — `flex-wrap: wrap` on `.levels-meters-row` so input, house, and phones meter groups stack vertically when the panel is too narrow for side-by-side layout.
+- **Removed orphaned MIDI actions** — removed `monitor_vol` and `house_vol` from ACTIONS array (no corresponding UI or audio functionality).
+- **Handsfree + trace mode buttons side by side** — combined into a `.seq-section--row` for compact layout.
+
+---
+
+## 0.12 alpha — 2026-03-30
+
+### Fixed
+- **Empty user patches zero volume on recall** (#111) — selecting a user patch with no visible data in the patch table was silently zeroing volume (and potentially other params). Stale keys from old saves (`durJitter`, `retriggerMs`) that weren't in PARAM_REGISTRY could trigger the grain merge block. Three-part fix: `loadUserPresets()` strips unknown keys on load, `selectPreset()` early-returns for truly empty presets, and `drawPresetWaveform()`/`updatePresetStats()` fall through to live grainParams for empty slots.
+
+---
+
 ## 0.11 alpha — 2026-03-29
 
 ### Fixed

@@ -9,7 +9,7 @@
 import {
   S,
   PRESETS, FACTORY_PRESET_START, USER_PRESET_START,
-  saveUserPresets, rebuildGrainCurves,
+  saveUserPresets, rebuildGrainCurves, _buildValidParamKeys,
 } from './state.js';
 import { resetCursorPeriod } from './grain.js';
 import { isLocked, isLockable, toggleLock, onLockChange, loadLocks } from './param-lock.js';
@@ -705,6 +705,10 @@ export function initPatchTable(updatePlaybackControlsFn, setScanMutedFn, selectP
   _imports = { updatePlaybackControls: updatePlaybackControlsFn };
   _setScanMutedFn = setScanMutedFn;
   _selectPresetFn = selectPresetFn;
+
+  // Register the canonical PARAM_REGISTRY key set with state.js so
+  // loadUserPresets can strip stale keys from stored data.
+  _buildValidParamKeys(PARAM_REGISTRY);
 
   // Wire the menu button
   const btn = document.getElementById('patchTableBtn');

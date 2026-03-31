@@ -8,6 +8,7 @@
 import { S, DEBUG, FACTORY_PRESET_START } from './state.js';
 import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, playSweepChannel, warmUpAudioEngine } from './audio.js';
 import { renderMeters, tickMeters, rebuildMainOutputMeters } from './ui-meters.js';
+import { armHandsfree, disarmHandsfree, updateHPFFreq } from './handsfree.js';
 
 // ── RtAudio input meter worklet (Electron only) ───────────────────────────────
 // In Electron, getUserMedia is capped at 2ch by the browser. Instead, we open an
@@ -1213,6 +1214,17 @@ export function saveAllDefaults() {
     // Noise gate
     vizNoiseFloor:    S.vizNoiseFloor,
 
+    // Handsfree
+    hfHoldMs:         S.hfHoldMs,
+    hfReleaseMs:      S.hfReleaseMs,
+    hfMarginDb:       S.hfMarginDb,
+    hfHpfFreq:        S.hfHpfFreq,
+    hfHpfEnabled:     S.hfHpfEnabled,
+    hfMinBufferMs:    S.hfMinBufferMs,
+    hfMaxBufferSec:   S.hfMaxBufferSec,
+    hfFeedbackDetect: S.hfFeedbackDetect,
+    hfCompEnabled:    S.hfCompEnabled,
+
     // Viz calibration
     darkMode:         S.darkMode,
     vizMinSize:       S.vizMinSize,
@@ -1365,6 +1377,17 @@ export function loadAudioDefaults() {
 
     // Noise gate
     if (typeof d.vizNoiseFloor  === 'number') S.vizNoiseFloor  = d.vizNoiseFloor;
+
+    // Handsfree
+    if (typeof d.hfHoldMs         === 'number')  S.hfHoldMs         = d.hfHoldMs;
+    if (typeof d.hfReleaseMs      === 'number')  S.hfReleaseMs      = d.hfReleaseMs;
+    if (typeof d.hfMarginDb       === 'number')  S.hfMarginDb       = d.hfMarginDb;
+    if (typeof d.hfHpfFreq        === 'number')  S.hfHpfFreq        = d.hfHpfFreq;
+    if (typeof d.hfHpfEnabled     === 'boolean') S.hfHpfEnabled     = d.hfHpfEnabled;
+    if (typeof d.hfMinBufferMs    === 'number')  S.hfMinBufferMs    = d.hfMinBufferMs;
+    if (typeof d.hfMaxBufferSec   === 'number')  S.hfMaxBufferSec   = d.hfMaxBufferSec;
+    if (typeof d.hfFeedbackDetect === 'boolean') S.hfFeedbackDetect = d.hfFeedbackDetect;
+    if (typeof d.hfCompEnabled    === 'boolean') S.hfCompEnabled    = d.hfCompEnabled;
 
     // FOV
     if (typeof d.fovDeg         === 'number')  S.fovDeg          = d.fovDeg;
@@ -1636,6 +1659,145 @@ export function initAudioSettings() {
     });
   }
 
+  // ── Handsfree gate tuning controls ────────────────────────────────────────
+  // Arm toggle is in the main UI cursor panel — only tuning sliders here.
+  {
+    // Hold slider
+    const holdSlider = document.getElementById('hfHoldSlider');
+    const holdVal    = document.getElementById('hfHoldVal');
+    if (holdSlider) {
+      holdSlider.value = S.hfHoldMs;
+      if (holdVal) holdVal.textContent = S.hfHoldMs + ' ms';
+      holdSlider.addEventListener('input', () => {
+        S.hfHoldMs = parseInt(holdSlider.value);
+        if (holdVal) holdVal.textContent = S.hfHoldMs + ' ms';
+      });
+    }
+
+    // Release slider
+    const relSlider = document.getElementById('hfReleaseSlider');
+    const relVal    = document.getElementById('hfReleaseVal');
+    if (relSlider) {
+      relSlider.value = S.hfReleaseMs;
+      if (relVal) relVal.textContent = S.hfReleaseMs + ' ms';
+      relSlider.addEventListener('input', () => {
+        S.hfReleaseMs = parseInt(relSlider.value);
+        if (relVal) relVal.textContent = S.hfReleaseMs + ' ms';
+      });
+    }
+
+    // Margin slider (dB above output RMS)
+    const marginSlider = document.getElementById('hfMarginSlider');
+    const marginVal    = document.getElementById('hfMarginVal');
+    if (marginSlider) {
+      const _fmtMargin = v => v === 0 ? 'off' : '+' + v + ' dB';
+      marginSlider.value = S.hfMarginDb;
+      if (marginVal) marginVal.textContent = _fmtMargin(S.hfMarginDb);
+      marginSlider.addEventListener('input', () => {
+        S.hfMarginDb = parseInt(marginSlider.value);
+        if (marginVal) marginVal.textContent = _fmtMargin(S.hfMarginDb);
+      });
+    }
+
+    // HPF toggle + freq slider
+    const hpfSeg = document.getElementById('hfHpfSeg');
+    if (hpfSeg) {
+      const syncHpf = () => hpfSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', (b.dataset.hpf === 'on') === S.hfHpfEnabled));
+      syncHpf();
+      hpfSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          S.hfHpfEnabled = btn.dataset.hpf === 'on';
+          syncHpf();
+        });
+      });
+    }
+    const hpfSlider = document.getElementById('hfHpfSlider');
+    const hpfVal    = document.getElementById('hfHpfVal');
+    if (hpfSlider) {
+      hpfSlider.value = S.hfHpfFreq;
+      if (hpfVal) hpfVal.textContent = S.hfHpfFreq + ' Hz';
+      hpfSlider.addEventListener('input', () => {
+        S.hfHpfFreq = parseInt(hpfSlider.value);
+        if (hpfVal) hpfVal.textContent = S.hfHpfFreq + ' Hz';
+        updateHPFFreq();
+      });
+    }
+
+    // Min buffer slider
+    const minSlider = document.getElementById('hfMinBufSlider');
+    const minVal    = document.getElementById('hfMinBufVal');
+    if (minSlider) {
+      minSlider.value = S.hfMinBufferMs;
+      if (minVal) minVal.textContent = S.hfMinBufferMs + ' ms';
+      minSlider.addEventListener('input', () => {
+        S.hfMinBufferMs = parseInt(minSlider.value);
+        if (minVal) minVal.textContent = S.hfMinBufferMs + ' ms';
+      });
+    }
+
+    // Max buffer slider
+    const maxSlider = document.getElementById('hfMaxBufSlider');
+    const maxVal    = document.getElementById('hfMaxBufVal');
+    if (maxSlider) {
+      maxSlider.value = S.hfMaxBufferSec;
+      if (maxVal) maxVal.textContent = S.hfMaxBufferSec + ' s';
+      maxSlider.addEventListener('input', () => {
+        S.hfMaxBufferSec = parseInt(maxSlider.value);
+        if (maxVal) maxVal.textContent = S.hfMaxBufferSec + ' s';
+      });
+    }
+
+    // Feedback detection toggle
+    const fbSeg = document.getElementById('hfFeedbackSeg');
+    if (fbSeg) {
+      const syncFb = () => fbSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', (b.dataset.fb === 'on') === S.hfFeedbackDetect));
+      syncFb();
+      fbSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          S.hfFeedbackDetect = btn.dataset.fb === 'on';
+          syncFb();
+        });
+      });
+    }
+
+    // Wire main-panel handsfree arm button (cursor device)
+    const hfMainBtn = document.getElementById('hfArmBtn');
+    if (hfMainBtn) {
+      hfMainBtn.addEventListener('click', () => {
+        // Only allow arming in plain trace mode
+        if (S.traceMode !== 'trace' && !S.hfArmed) return;
+        if (S.hfArmed) disarmHandsfree();
+        else           armHandsfree();
+      });
+    }
+
+    // Sync callback — updates capture count, main UI button, and HUD label
+    S._syncHandsfreeUI = () => {
+      const countEl = document.getElementById('hfCaptureCount');
+      if (countEl) countEl.textContent = S.hfCaptureCount + (S.hfCaptureCount === 1 ? ' buffer' : ' buffers');
+      // Sync main-panel arm button (armed = green, recording = red, greyed = unavailable)
+      const mainBtn = document.getElementById('hfArmBtn');
+      if (mainBtn) {
+        mainBtn.classList.toggle('hf-armed', S.hfArmed);
+        mainBtn.classList.toggle('hf-recording', S.hfRecording);
+        mainBtn.classList.toggle('hf-unavailable', S.traceMode !== 'trace');
+      }
+      // Sync trace indicator — show active state when toggled on
+      const traceBtn = document.getElementById('paintIndicatorBtn');
+      if (traceBtn) {
+        traceBtn.classList.toggle('painting', S._traceToggled);
+        traceBtn.classList.toggle('trace-toggled', S._traceToggled);
+      }
+      // HUD label — show "handsfree" next to coordinates when armed
+      const hudLabel = document.getElementById('hfHudLabel');
+      if (hudLabel) {
+        hudLabel.style.display = S.hfArmed ? '' : 'none';
+      }
+    };
+  }
+
   // Output gain — writes to S.masterBus (master chain) and headphone downmix node
   document.getElementById('asOutputGain')?.addEventListener('input', e => {
     as.outputGain = parseFloat(e.target.value);
@@ -1664,7 +1826,11 @@ export function initAudioSettings() {
     const lbl = val === 'stereo' ? 'stereo (L+R)' : `ch ${parseInt(val) + 1}`;
 
     const isStereo = val === 'stereo';
-    const highlight = isStereo ? [0, 1] : (parseInt(val, 10) || 0);
+    const chIndex  = isStereo ? 0 : (parseInt(val, 10) || 0);
+
+    // Keep S.mainInputChannel in sync so main UI meters and mapping table
+    // reflect the user's actual selection (was missing — caused stale highlight)
+    if (!isStereo) S.mainInputChannel = chIndex;
 
     // Restore the remembered gain for this channel and update the slider + gain node
     const savedGain = as.inputGains[val] ?? 0;
@@ -1674,9 +1840,10 @@ export function initAudioSettings() {
     if (gainLbl)    gainLbl.textContent = formatDb(savedGain);
     if (S.inputGainNode) S.inputGainNode.gain.value = dbToLinear(savedGain);
 
+    const highlight = isStereo ? [0, 1] : chIndex;
+
     if (window.electronBridge?.isElectron) {
       // Electron: RtAudio path — rewire splitter output into recording chain
-      const chIndex = isStereo ? 0 : (parseInt(val, 10) || 0);
       rewireRtAudioRecordingChannel(chIndex, as.inputAnalysers.length);
       renderInputMeters(highlight);
       setStatus('asInputStatus', 'ok', `${lbl} → granular engine`);
@@ -1765,6 +1932,25 @@ export function initAudioSettings() {
       const match = Array.from(devSel.options).find(o => o.value === deviceId);
       if (match) devSel.value = deviceId;
     }
+  };
+
+  // ── S callback for MIDI / OSC access to master output gain ──────────────
+  // Accepts dB value (-24 to +6), syncs the slider, label, and audio nodes.
+  S._setOutputGainDb = (db) => {
+    db = Math.max(-60, Math.min(6, db));
+    as.outputGain = db;
+    const ogSlider = document.getElementById('asOutputGain');
+    const ogVal    = document.getElementById('asOutputGainVal');
+    if (ogSlider) ogSlider.value = db;
+    if (ogVal)    ogVal.textContent = formatDb(db);
+    const lin = dbToLinear(db);
+    if (S.masterBus) S.masterBus.gain.value = lin;
+    if (S.speakerBuses && !S.isMuted) {
+      const t = S.audioCtx?.currentTime ?? 0;
+      S.speakerBuses.forEach(({ bus }) => bus.gain.setTargetAtTime(lin, t, 0.02));
+    }
+    if (window._headphoneOutNode) window._headphoneOutNode.gain.value = lin * 0.7;
+    S.outputGainValue = lin;
   };
 
 }

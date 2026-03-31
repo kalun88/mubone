@@ -10,7 +10,7 @@ import {
   RENDER_TARGET_FPS, GRAIN_SCHEDULER_INTERVAL_MS,
   perf, perfTick, gp, rebuildGrainCurves, minGrainDurS
 } from './state.js';
-import { spherePoint, cameraTransform, project, getCursorLonLat, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto } from './sphere.js';
+import { spherePoint, cameraTransform, project, projectInto, updateProjectionCache, getCursorLonLat, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto } from './sphere.js';
 import { rand, activeGrainMap, stampCartesian } from './grain.js';
 import { rebuildLiveBuffer, getRecordingDuration } from './audio.js';
 import { snapshotInputFeatures, featuresFromBuffer, normalise, featuresToHSL, tickPeakHold } from './audio-features.js';
@@ -25,6 +25,8 @@ export function drawFrame() {
   // Pre-compute fused camera quaternion once per frame — all subsequent
   // cameraTransformInto calls use a single rotation instead of two.
   updateFusedCamQ();
+  // Cache focalLen + canvas half-dimensions for zero-alloc projectInto().
+  updateProjectionCache();
 
   S.ctx.fillStyle = S.darkMode ? BG_COLOR_DARK : BG_COLOR_LIGHT;
   S.ctx.fillRect(0, 0, S.canvas.width, S.canvas.height);
@@ -57,11 +59,12 @@ export function drawFrame() {
 }
 
 // ── Seed rendering ───────────────────────────────────────────────────────────
-// Budget: max trail projections per frame.  With 16 moving seeds × 50 points
-// = 800 projections + canvas arcs, which was the main stall source.
-// Cap at ~200 total trail projections.  Each trail gets maxTrailSamples from
-// the budget; excess seeds get no trail (just dot + edge indicator).
-const _TRAIL_BUDGET = 200;
+// Budget: max trail projections per frame.  Each trail gets
+// floor(budget / movingCount) samples; excess seeds get no trail.
+// Lowered from 200→120 after switching to batched canvas fills +
+// zero-alloc projectInto — fewer samples needed for same visual
+// density, and the per-projection cost is now much lower.
+const _TRAIL_BUDGET = 120;
 
 export function drawSeeds() {
   const { lon: curLon, lat: curLat } = S.cursorQ ? getCursorLonLat()
@@ -76,9 +79,11 @@ export function drawSeeds() {
     const s = S.commitSlots[i];
     if (s && s.type === 'cloud' && s.frames) movingCount++;
   }
-  // Per-seed trail sample budget (0 = skip trails entirely)
+  // Per-seed trail sample budget (0 = skip trails entirely).
+  // Cap at 40 per trail — visually indistinguishable from 50 but saves
+  // ~20% projection work when only 1–2 seeds are moving.
   const trailSamples = movingCount > 0
-    ? Math.min(50, Math.floor(_TRAIL_BUDGET / movingCount))
+    ? Math.min(40, Math.floor(_TRAIL_BUDGET / movingCount))
     : 0;
 
   for (let i = 0; i < S.commitSlotCount; i++) {
@@ -177,7 +182,12 @@ export function drawSeeds() {
       if (fadeT <= 0) continue;
 
       const horiz = Math.sqrt(cx * cx + cz * cz);
-      const az    = Math.atan2(cx, Math.max(0.0001, horiz));
+      // Use atan2(cx, cz) for proper azimuth — the old formula
+      // atan2(cx, sqrt(cx²+cz²)) collapsed the sign of cz, mapping
+      // seeds behind the camera to screen-center instead of the far
+      // edge.  This caused the indicator to flicker on for seeds
+      // crossing the back meridian even when fully on-screen.
+      const az    = Math.atan2(cx, cz);
       const el    = Math.atan2(cy, horiz);
 
       const azMax = Math.PI * 0.75;
@@ -234,6 +244,17 @@ export function drawSeeds() {
 // ── Shared velocity-dot trail renderer ──────────────────────────────────────
 // Draws dots along a frame array with spacing proportional to cursor speed.
 // Fast → wide gaps, slow → tight dots.  Used by both live + finalized trails.
+//
+// Performance-critical path — optimised to minimise per-frame cost:
+//   • projectInto() writes into a scratch array (zero object allocations)
+//   • focalLen/canvas-halves cached once per frame by updateProjectionCache()
+//   • All trail dots batched into a single beginPath/fill (one canvas call
+//     instead of 200+ individual beginPath/arc/fill triplets)
+
+// Scratch arrays for projectInto results (never returned to caller)
+const _projA = [0, 0, 0];  // current frame projection
+const _projB = [0, 0, 0];  // previous frame projection (copied per step)
+
 function _drawVelocityDotTrail(frames, color, alpha, dotR, maxSamples) {
   if (!frames || frames.length < 2) return;
 
@@ -245,29 +266,55 @@ function _drawVelocityDotTrail(frames, color, alpha, dotR, maxSamples) {
   const minPx    = 5;    // tightest packing when nearly still
   const velScale = 3.0;  // px per (deg/s) — big multiplier for visible effect
   const maxPx    = 60;   // cap
+  const TWO_PI   = Math.PI * 2;
+
+  // Back-meridian guard threshold
+  const maxSegPx = Math.min(S.canvas.width, S.canvas.height) * 0.35;
 
   const step = Math.max(1, Math.floor(frames.length / maxSamples));
 
-  let prevProj = null, prevT = frames[0].t;
+  let hasPrev = false, prevT = frames[0].t;
   let prevLon = frames[0].lon, prevLat = frames[0].lat;
+  let prevSx = 0, prevSy = 0;
   let accumDist = 0, curSpacing = minPx;
+
+  // Batch all trail dots into a single path — one fill() at the end.
+  S.ctx.beginPath();
 
   for (let fi = 0; fi < frames.length; fi += step) {
     const f = frames[fi];
     spherePointInto(f.lon, f.lat, _arcW);
     cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
-    const proj = project(_arcC[0], _arcC[1], _arcC[2]);
-    if (!proj) { prevProj = null; continue; }
+    if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _projA)) {
+      hasPrev = false;
+      continue;
+    }
+    const sx = _projA[0], sy = _projA[1];
 
-    if (prevProj) {
-      const dx = proj.sx - prevProj.sx;
-      const dy = proj.sy - prevProj.sy;
+    if (hasPrev) {
+      const dx = sx - prevSx;
+      const dy = sy - prevSy;
       const segLen = Math.sqrt(dx * dx + dy * dy);
 
-      // Angular speed (deg/s)
+      // Back-meridian guard: when consecutive frames straddle ±π, both
+      // may project to valid screen positions on opposite edges.  The
+      // huge screen-space jump draws a flash of dots across the canvas.
+      // Break the trail instead (same as off-screen gap).
+      if (segLen > maxSegPx) {
+        S.ctx.moveTo(sx + dotR, sy);
+        S.ctx.arc(sx, sy, dotR, 0, TWO_PI);
+        accumDist = 0;
+        prevSx = sx; prevSy = sy;
+        prevT = f.t; prevLon = f.lon; prevLat = f.lat;
+        continue;
+      }
+
+      // Angular speed (deg/s) — wrap-aware longitude delta
       const dt = f.t - prevT;
       if (dt > 0) {
-        const dLon = f.lon - prevLon;
+        let dLon = f.lon - prevLon;
+        if (dLon > Math.PI) dLon -= TWO_PI;
+        else if (dLon < -Math.PI) dLon += TWO_PI;
         const dLat = f.lat - prevLat;
         const degDist = Math.sqrt(dLon * dLon + dLat * dLat);
         const speed = (degDist / dt) * 1000;
@@ -281,44 +328,44 @@ function _drawVelocityDotTrail(frames, color, alpha, dotR, maxSamples) {
         const nx = dx / segLen, ny = dy / segLen;
         while (accumDist >= curSpacing) {
           accumDist -= curSpacing;
-          const bx = proj.sx - nx * accumDist;
-          const by = proj.sy - ny * accumDist;
-          S.ctx.beginPath();
-          S.ctx.arc(bx, by, dotR, 0, Math.PI * 2);
-          S.ctx.fill();
+          const bx = sx - nx * accumDist;
+          const by = sy - ny * accumDist;
+          S.ctx.moveTo(bx + dotR, by);
+          S.ctx.arc(bx, by, dotR, 0, TWO_PI);
         }
       }
     } else {
       // First visible point
-      S.ctx.beginPath();
-      S.ctx.arc(proj.sx, proj.sy, dotR, 0, Math.PI * 2);
-      S.ctx.fill();
+      S.ctx.moveTo(sx + dotR, sy);
+      S.ctx.arc(sx, sy, dotR, 0, TWO_PI);
       accumDist = 0;
     }
 
-    prevProj = proj; prevT = f.t; prevLon = f.lon; prevLat = f.lat;
+    hasPrev = true; prevSx = sx; prevSy = sy;
+    prevT = f.t; prevLon = f.lon; prevLat = f.lat;
   }
+  // Single fill for all trail dots
+  S.ctx.fill();
 
-  // Ensure last frame included
-  const last = frames[frames.length - 1];
-  spherePointInto(last.lon, last.lat, _arcW);
-  cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
-  const lastProj = project(_arcC[0], _arcC[1], _arcC[2]);
-
-  // Start + end markers
-  // Start dot is large (matches stationary seed size) — this is the anchor
-  // point used for nearest-seed distance calculations on moving seeds.
-  // End dot stays small so it's visually distinct.
+  // ── Start + end markers (separate fill — different sizes) ──
   S.ctx.globalAlpha = Math.min(1, alpha + 0.15);
+
   const first = frames[0];
   spherePointInto(first.lon, first.lat, _arcW);
   cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
-  const firstProj = project(_arcC[0], _arcC[1], _arcC[2]);
-  if (firstProj) {
-    S.ctx.beginPath(); S.ctx.arc(firstProj.sx, firstProj.sy, 6, 0, Math.PI * 2); S.ctx.fill();
+  if (projectInto(_arcC[0], _arcC[1], _arcC[2], _projA)) {
+    S.ctx.beginPath();
+    S.ctx.arc(_projA[0], _projA[1], 6, 0, TWO_PI);
+    S.ctx.fill();
   }
-  if (lastProj) {
-    S.ctx.beginPath(); S.ctx.arc(lastProj.sx, lastProj.sy, 3, 0, Math.PI * 2); S.ctx.fill();
+
+  const last = frames[frames.length - 1];
+  spherePointInto(last.lon, last.lat, _arcW);
+  cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+  if (projectInto(_arcC[0], _arcC[1], _arcC[2], _projA)) {
+    S.ctx.beginPath();
+    S.ctx.arc(_projA[0], _projA[1], 3, 0, TWO_PI);
+    S.ctx.fill();
   }
 
   S.ctx.restore();
@@ -477,10 +524,10 @@ function _drawArcSegment(lon, _type, lat0, lat1) {
 
 // ── Radius readout (persistent ghost below cursor, flashes on change) ────────
 export function drawRadiusTooltip() {
-  if (!S.mouseInCanvas && !S.altLocked) return;
-
-  const mx = (S.mouseInCanvas || S.altLocked) ? S.mousePixelX : S.canvas.width  / 2;
-  const my = (S.mouseInCanvas || S.altLocked) ? S.mousePixelY : S.canvas.height / 2;
+  // Use stashed cursor screen coords from drawCursor — works for both mouse and detethered modes
+  const mx = S._cursorScreenX;
+  const my = S._cursorScreenY;
+  if (isNaN(mx) || isNaN(my)) return;  // cursor inactive or off-screen
 
   // Compute brush radius for offset positioning
   const searchRadiusRad = S.searchRadiusDeg * Math.PI / 180;
@@ -870,14 +917,24 @@ export function drawCursor() {
 
   S.ctx.save();
 
-  // Center-of-canvas anchor dot (always visible)
-  S.ctx.fillStyle = S.darkMode ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)';
-  S.ctx.beginPath(); S.ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); S.ctx.fill();
+  // Center-of-canvas anchor dot — only in standard (1-IMU / mouse) mode
+  // In detethered (2-IMU) mode the cursor roams freely, so a fixed center dot is misleading
+  if (!S.cursorQ) {
+    S.ctx.fillStyle = S.darkMode ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)';
+    S.ctx.beginPath(); S.ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); S.ctx.fill();
+  }
 
   // ── Early return guard ──────────────────────────────────────────────────
   // In detethered mode cursor is always active (driven by IMU, not mouse).
   // In standard mode, only draw when mouse is in canvas or alt-locked.
-  if (!S.cursorQ && !S.mouseInCanvas && !S.altLocked) { S.ctx.restore(); return; }
+  if (!S.cursorQ && !S.mouseInCanvas && !S.altLocked) {
+    S._cursorScreenX = NaN; S._cursorScreenY = NaN; // no active cursor
+    S.ctx.restore(); return;
+  }
+
+  // Stash resolved cursor screen coords for drawRadiusTooltip
+  S._cursorScreenX = cursorOffScreen ? NaN : mx;
+  S._cursorScreenY = cursorOffScreen ? NaN : my;
 
   // ── Edge indicator — off-screen cursor arrow ────────────────────────────
   if (cursorOffScreen) {
@@ -964,20 +1021,32 @@ export function drawCursor() {
 
   const tipR = 5, armLen = 12, armGap = tipR + 3;
 
-  // Outer ring — white/black normally, solid red when recording
+  // Handsfree + toggle-trace active in plain trace mode — green reticle indicator
+  const _toggleTraceOn = S._traceToggled && S.hfArmed && S.traceMode === 'trace';
+
+  // Outer ring — white/black normally, green when toggle-trace, red when recording
   const _rtic = S.darkMode ? '255,255,255' : '0,0,0';
   S.ctx.strokeStyle = recording
     ? 'rgba(232,48,48,0.95)'
-    : painting ? `rgba(${_rtic},0.95)` : `rgba(${_rtic},0.7)`;
+    : painting ? `rgba(${_rtic},0.95)`
+    : _toggleTraceOn ? 'rgba(77,204,122,0.80)'
+    : `rgba(${_rtic},0.7)`;
   S.ctx.lineWidth   = 2;
   S.ctx.beginPath(); S.ctx.arc(mx, my, tipR, 0, Math.PI * 2); S.ctx.stroke();
 
-  // Center dot — solid red when recording, paint color when painting, white/black idle
+  // Center dot — large solid red when recording, paint color when painting, white/black idle
   if (recording) {
-    S.ctx.fillStyle = 'rgba(232,48,48,0.95)';
-    S.ctx.beginPath(); S.ctx.arc(mx, my, tipR * 0.8, 0, Math.PI * 2); S.ctx.fill();
+    const recDotR = tipR * 2.4;  // big red dot — primary recording indicator
+    S.ctx.fillStyle = 'rgba(232,48,48,0.90)';
+    S.ctx.beginPath(); S.ctx.arc(mx, my, recDotR, 0, Math.PI * 2); S.ctx.fill();
   } else {
     S.ctx.fillStyle = painting ? color : `rgba(${_rtic},0.8)`;
+    S.ctx.beginPath(); S.ctx.arc(mx, my, tipR * 0.65, 0, Math.PI * 2); S.ctx.fill();
+  }
+  // Green toggle-trace pip — always drawn on top so it nests inside the red
+  // recording dot, giving a visual "recording via toggle-trace" indicator
+  if (_toggleTraceOn) {
+    S.ctx.fillStyle = 'rgba(77,204,122,0.95)';
     S.ctx.beginPath(); S.ctx.arc(mx, my, tipR * 0.65, 0, Math.PI * 2); S.ctx.fill();
   }
 
@@ -1059,6 +1128,9 @@ function drawEdgeHUD() {
       ctx.fillStyle = traceColor;
       ctx.fillRect(0, 0, colW, EDGE_H);
     }
+
+    // Handsfree state is shown via HUD text label, not on the edge bar.
+    // The left column is reserved exclusively for trace mode state.
   }
 
   // ── CENTER: Scan state (S) ────────────────────────────────────────────
@@ -1067,8 +1139,11 @@ function drawEdgeHUD() {
     const baseColor = scanOn ? '#f0f4f8' : '#e8a030';
 
     if (S.radiusFadeEnabled) {
-      // Gradient: color at edges, fades to bg in the middle
-      const grad = ctx.createLinearGradient(col2X, 0, col2X + colW, 0);
+      // Gradient: color at edges, fades to bg in the middle.
+      // Round coordinates to avoid sub-pixel gradient banding in Electron.
+      const gx0 = Math.round(col2X);
+      const gx1 = Math.round(col2X + colW);
+      const grad = ctx.createLinearGradient(gx0, 0, gx1, 0);
       grad.addColorStop(0, baseColor);
       grad.addColorStop(0.5, S.darkMode ? BG_COLOR_DARK : BG_COLOR_LIGHT);
       grad.addColorStop(1, baseColor);
@@ -1126,8 +1201,20 @@ function drawEdgeHUD() {
 export function resizeCanvas() {
   const rect   = S.canvas.parentElement.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) return;
-  S.canvas.width  = rect.width;
-  S.canvas.height = rect.height;
+
+  // In projector mode, render at popup resolution for crisp mirror blit,
+  // but display small on the laptop via CSS.  Mouse coord scaling in
+  // events.js already handles canvas.width ≠ display width.
+  if (S.projectorMode && S.projectorPopup && !S.projectorPopup.closed) {
+    const pw = S.projectorPopup.innerWidth  || 1920;
+    const ph = S.projectorPopup.innerHeight || 1080;
+    S.canvas.width  = pw;
+    S.canvas.height = ph;
+  } else {
+    S.canvas.width  = rect.width;
+    S.canvas.height = rect.height;
+  }
+
   if (S.isMobile) {
     S.mousePixelX   = S.canvas.width  / 2;
     S.mousePixelY   = S.canvas.height / 2;
@@ -1326,11 +1413,11 @@ export function animate() {
   }
 
   // ── Frame sensor — world rotation ──────────────────────────────────────────
-  // The frame-role sensor rotates the virtual sphere.  Only active in surface
-  // and sensor camera modes — pull mode is mouse-only, no IMU world rotation.
+  // The frame-role sensor rotates the virtual sphere.  Only active in sensor
+  // mode — surface and pull are mouse/trackpad only, no IMU world rotation.
   // Stored on S.frameQ; sphere.js applies it per-point in cameraTransform /
   // getCursorLonLat / screenToLonLat.
-  S.frameQ = (S.cameraMode !== 'pull' && typeof S._getFrameQ === 'function')
+  S.frameQ = (S.cameraMode === 'sensor' && typeof S._getFrameQ === 'function')
     ? S._getFrameQ()
     : null;
 
@@ -1424,6 +1511,14 @@ export function animate() {
   } else {
     animate._skippedLast = false;
     try { drawFrame(); } catch (e) { console.error('drawFrame error:', e); }
+    // ── Mirror blit + HUD sync to projector popup ────────────────────────
+    // Canvas already renders at popup resolution, so this is a 1:1 copy.
+    if (S.projectorCtx && S.projectorPopup && !S.projectorPopup.closed) {
+      try {
+        S.projectorCtx.drawImage(S.canvas, 0, 0);
+      } catch (_) { /* popup closed mid-frame — harmless */ }
+      S._syncProjectorHUD?.();
+    }
   }
   S.updateWaveformPlayheads?.();
 

@@ -126,6 +126,26 @@ export function project(x, y, z) {
     depth: z
   };
 }
+
+// ── Zero-allocation projection for hot paths ─────────────────────────────────
+// Caches focalLen + canvas half-dimensions once per frame.  Call
+// updateProjectionCache() at the start of each render frame.
+let _projFocal = 0, _projHalfW = 0, _projHalfH = 0;
+export function updateProjectionCache() {
+  const fovRad = (fov() * Math.PI) / 180;
+  _projFocal = (Math.min(S.canvas.width, S.canvas.height) / 2) / Math.tan(fovRad / 2);
+  _projHalfW = S.canvas.width  / 2;
+  _projHalfH = S.canvas.height / 2;
+}
+// Write screen coords into out[0]=sx, out[1]=sy, out[2]=depth.
+// Returns false (behind camera) instead of null — no allocation either way.
+export function projectInto(x, y, z, out) {
+  if (z <= 0.1) return false;
+  out[0] = _projHalfW + (x / z) * _projFocal;
+  out[1] = _projHalfH - (y / z) * _projFocal;
+  out[2] = z;
+  return true;
+}
 export function getCursorLonLat() {
   const q = S.cursorQ || S.camQ;
   const forward = qRotateVec(q, [0, 0, 1]);

@@ -3,8 +3,11 @@
 // Reads from the gesture role slot in the sensor registry.
 // ============================================================================
 
-import { S } from '../state.js';
+import { S, PRESETS } from '../state.js';
 import { getByRole } from '../sensor-registry.js';
+import {
+  addRadialPin, removeRadialPin, setRadialPinPreset, getPresetList,
+} from './gesture.js';
 
 let _canvas = null;
 let _ctx    = null;
@@ -79,6 +82,7 @@ const joySliderRects = {
   weight:   { x: 0, y: 0, w: 0, h: 0 },
   snap:     { x: 0, y: 0, w: 0, h: 0 },
   gain:     { x: 0, y: 0, w: 0, h: 0 },
+  return:   { x: 0, y: 0, w: 0, h: 0 },
   gate:  { x: 0, y: 0, w: 0, h: 0 },
   limit: { x: 0, y: 0, w: 0, h: 0 },
 };
@@ -93,9 +97,10 @@ let joyGateOn = true;          // when true, signal below inner ring is zeroed
 // weight: 0 = light (stops fast, no coast)  1 = heavy (long coast, momentum)
 // snap:   0 = stays where pushed             1 = rubber-bands back to center
 // gain:   0 = barely moves                   1 = very sensitive to gyro
-let joyWeight = 0.5;
-let joySnap   = 0.3;
-let joyGain   = 0.5;
+let joyWeight  = 0.5;
+let joySnap    = 0.3;
+let joyGain    = 0.5;
+let joyReturn  = 0.85; // return suppression: 0 = bidirectional (raw), 1 = outward-only
 
 // Derived physics parameters — recomputed each frame from the 3 controls.
 // Exposed here so the draw loop can show them as readouts.
@@ -133,6 +138,18 @@ let dragCircleStartMaxR = 0;
 let dragGateStartDist = 0;
 let dragGateStartVal = 0;
 const radialGeom = { cx: 0, cy: 0, r: 0, dzR: 0 };  // updated each draw frame
+
+// ── Radial morph pin UI state ───────────────────────────────────────────────
+const morphToggleRect  = { x: 0, y: 0, w: 0, h: 0 };
+const dropPinRect      = { x: 0, y: 0, w: 0, h: 0 };
+const pinDeleteRects   = [];  // [{x,y,w,h,idx}] — one per pin
+const pinDropdownRects = [];  // [{x,y,w,h,idx}] — click to cycle preset
+let pinDropdownOpen    = -1;  // index of pin with open dropdown, or -1
+let pinDropdownItems   = [];  // [{x,y,w,h,presetIdx}] — items in open dropdown
+let pinDropdownScroll  = 0;   // scroll offset (number of items scrolled)
+const PIN_DD_MAX_VISIBLE = 10; // max items visible at once
+const pinDdUpRect      = { x: 0, y: 0, w: 0, h: 0 };  // scroll up arrow
+const pinDdDownRect    = { x: 0, y: 0, w: 0, h: 0 };  // scroll down arrow
 
 // Trail for the radial view
 const JOY_TRAIL_LEN = 90;
@@ -265,36 +282,36 @@ function onMouseDown(e) {
     if (mx >= xr.x && mx <= xr.x + xr.w && my >= xr.y && my <= xr.y + xr.h) {
       joyAxisX = (joyAxisX + 1) % JOY_AXIS_OPTIONS.length;
       if (joyAxisX === joyAxisY) joyAxisX = (joyAxisX + 1) % JOY_AXIS_OPTIONS.length;
-      return;
+      _saveGestureSettings(); return;
     }
     const yr = joyAxisYRect;
     if (mx >= yr.x && mx <= yr.x + yr.w && my >= yr.y && my <= yr.y + yr.h) {
       joyAxisY = (joyAxisY + 1) % JOY_AXIS_OPTIONS.length;
       if (joyAxisY === joyAxisX) joyAxisY = (joyAxisY + 1) % JOY_AXIS_OPTIONS.length;
-      return;
+      _saveGestureSettings(); return;
     }
     // Polarity toggles
     const sxr = joySignXRect;
     if (mx >= sxr.x && mx <= sxr.x + sxr.w && my >= sxr.y && my <= sxr.y + sxr.h) {
       joySignX *= -1;
-      return;
+      _saveGestureSettings(); return;
     }
     const syr = joySignYRect;
     if (mx >= syr.x && mx <= syr.x + syr.w && my >= syr.y && my <= syr.y + syr.h) {
       joySignY *= -1;
-      return;
+      _saveGestureSettings(); return;
     }
     // Limit toggle
     const cr = joyLimitRect;
     if (mx >= cr.x && mx <= cr.x + cr.w && my >= cr.y && my <= cr.y + cr.h) {
       joyLimit = !joyLimit;
-      return;
+      _saveGestureSettings(); return;
     }
     // Gate toggle
     const gr = joyGateRect;
     if (mx >= gr.x && mx <= gr.x + gr.w && my >= gr.y && my <= gr.y + gr.h) {
       joyGateOn = !joyGateOn;
-      return;
+      _saveGestureSettings(); return;
     }
     // Trail persist toggle
     const tr = joyTrailPersistRect;
@@ -304,7 +321,71 @@ function onMouseDown(e) {
         // Switching off: trim trail back to normal length
         while (joyTrail.length > JOY_TRAIL_LEN) joyTrail.shift();
       }
+      _saveGestureSettings(); return;
+    }
+
+    // ── Radial morph pin UI clicks ────────────────────────────────────────
+    // Handle open dropdown first — scroll arrows, item select, or close
+    if (pinDropdownOpen >= 0) {
+      // Scroll up arrow
+      const uu = pinDdUpRect;
+      if (uu.h > 0 && mx >= uu.x && mx <= uu.x + uu.w && my >= uu.y && my <= uu.y + uu.h) {
+        pinDropdownScroll = Math.max(0, pinDropdownScroll - PIN_DD_MAX_VISIBLE);
+        return;
+      }
+      // Scroll down arrow
+      const dd = pinDdDownRect;
+      if (dd.h > 0 && mx >= dd.x && mx <= dd.x + dd.w && my >= dd.y && my <= dd.y + dd.h) {
+        pinDropdownScroll += PIN_DD_MAX_VISIBLE;
+        return;
+      }
+      // Check if click is on a dropdown item
+      for (const item of pinDropdownItems) {
+        if (mx >= item.x && mx <= item.x + item.w && my >= item.y && my <= item.y + item.h) {
+          setRadialPinPreset(pinDropdownOpen, item.presetIdx);
+          pinDropdownOpen = -1;
+          pinDropdownItems = [];
+          pinDropdownScroll = 0;
+          return;
+        }
+      }
+      // Click outside dropdown — close it
+      pinDropdownOpen = -1;
+      pinDropdownItems = [];
+      pinDropdownScroll = 0;
       return;
+    }
+    // Morph on/off toggle
+    const mt = morphToggleRect;
+    if (mx >= mt.x && mx <= mt.x + mt.w && my >= mt.y && my <= mt.y + mt.h) {
+      S.radialMorphOn = !S.radialMorphOn;
+      S._syncMorphBtnUI?.();  // sync main UI button
+      return;
+    }
+    // Drop pin button
+    const dp = dropPinRect;
+    if (mx >= dp.x && mx <= dp.x + dp.w && my >= dp.y && my <= dp.y + dp.h) {
+      addRadialPin(0);  // default to first preset, user picks from dropdown
+      return;
+    }
+    // Pin delete buttons
+    for (const pr of pinDeleteRects) {
+      if (mx >= pr.x && mx <= pr.x + pr.w && my >= pr.y && my <= pr.y + pr.h) {
+        removeRadialPin(pr.idx);
+        return;
+      }
+    }
+    // Pin preset dropdown click — open the dropdown, scroll to selected
+    for (const pr of pinDropdownRects) {
+      if (mx >= pr.x && mx <= pr.x + pr.w && my >= pr.y && my <= pr.y + pr.h) {
+        pinDropdownOpen = pr.idx;
+        // Scroll so the currently selected preset is visible
+        const currentIdx = S.radialPins?.[pr.idx]?.presetIdx ?? 0;
+        const presets = getPresetList();
+        const selPos = presets.findIndex(p => p.idx === currentIdx);
+        pinDropdownScroll = Math.max(0, selPos - Math.floor(PIN_DD_MAX_VISIBLE / 2));
+        return;
+      }
     }
   }
 
@@ -329,7 +410,7 @@ function onMouseDown(e) {
     }
 
     // Physics + zone sliders
-    for (const key of ['weight', 'snap', 'gain', 'gate', 'limit']) {
+    for (const key of ['weight', 'snap', 'gain', 'return', 'gate', 'limit']) {
       const sr = joySliderRects[key];
       if (mx >= sr.x && mx <= sr.x + sr.w && my >= sr.y - 4 && my <= sr.y + sr.h + 4) {
         draggingJoySlider = key;
@@ -423,9 +504,25 @@ function onMouseMove(e) {
   }
   // Check physics + zone sliders
   if (!overInteractive && showRadial) {
-    for (const key of ['weight', 'snap', 'gain', 'gate', 'limit']) {
+    for (const key of ['weight', 'snap', 'gain', 'return', 'gate', 'limit']) {
       const sr = joySliderRects[key];
       if (mx >= sr.x && mx <= sr.x + sr.w && my >= sr.y - 4 && my <= sr.y + sr.h + 4) { overInteractive = true; break; }
+    }
+  }
+  // Check radial morph pin UI elements
+  if (!overInteractive && showRadial) {
+    for (const r of [morphToggleRect, dropPinRect]) {
+      if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) { overInteractive = true; break; }
+    }
+    if (!overInteractive) {
+      for (const r of [...pinDeleteRects, ...pinDropdownRects]) {
+        if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) { overInteractive = true; break; }
+      }
+    }
+    if (!overInteractive && pinDropdownOpen >= 0) {
+      for (const r of [...pinDropdownItems, pinDdUpRect, pinDdDownRect]) {
+        if (r.h > 0 && mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) { overInteractive = true; break; }
+      }
     }
   }
   // Check if near circle edge or dead zone ring for resize cursor
@@ -442,14 +539,60 @@ function onMouseMove(e) {
     : overInteractive ? 'pointer' : 'default';
 }
 
-function onMouseUp() { draggingSlider = null; draggingJoySlider = null; draggingCircle = false; draggingGate = false; draggingThreshold = null; }
+function onMouseUp() {
+  // Save if any joystick param was being dragged (slider, ring, gate)
+  if (draggingJoySlider || draggingCircle || draggingGate) _saveGestureSettings();
+  draggingSlider = null; draggingJoySlider = null; draggingCircle = false; draggingGate = false; draggingThreshold = null;
+}
 
 function setJoySliderValue(key, val) {
   if (key === 'weight') joyWeight = val;
   else if (key === 'snap') joySnap = val;
   else if (key === 'gain') joyGain = val;
+  else if (key === 'return') joyReturn = val;
   else if (key === 'gate') joyGate = JOY_GATE_MIN + val * (JOY_GATE_MAX - JOY_GATE_MIN);
   else if (key === 'limit') joyMaxRadius = JOY_RADIUS_MIN + val * (JOY_RADIUS_MAX - JOY_RADIUS_MIN);
+  _saveGestureSettings();
+}
+
+// ── Persistence ─────────────────────────────────────────────────────────────
+const _GESTURE_STORAGE_KEY = 'mubone_gesture_panel';
+
+function _saveGestureSettings() {
+  try {
+    localStorage.setItem(_GESTURE_STORAGE_KEY, JSON.stringify({
+      joyWeight, joySnap, joyGain, joyReturn,
+      joyMaxRadius, joyGate,
+      joyLimit, joyGateOn,
+      joyAxisX, joyAxisY, joySignX, joySignY,
+      joyTrailPersist,
+      axisPairIdx, showRadial,
+    }));
+  } catch (_) { /* storage full */ }
+}
+
+function _loadGestureSettings() {
+  try {
+    const raw = localStorage.getItem(_GESTURE_STORAGE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (typeof s.joyWeight === 'number')  joyWeight  = s.joyWeight;
+    if (typeof s.joySnap === 'number')    joySnap    = s.joySnap;
+    if (typeof s.joyGain === 'number')    joyGain    = s.joyGain;
+    if (typeof s.joyReturn === 'number')  joyReturn  = s.joyReturn;
+    if (typeof s.joyMaxRadius === 'number') joyMaxRadius = s.joyMaxRadius;
+    if (typeof s.joyGate === 'number')    joyGate    = s.joyGate;
+    if (typeof s.joyLimit === 'boolean')  joyLimit   = s.joyLimit;
+    if (typeof s.joyGateOn === 'boolean') joyGateOn  = s.joyGateOn;
+    if (typeof s.joyAxisX === 'number')   joyAxisX   = s.joyAxisX;
+    if (typeof s.joyAxisY === 'number')   joyAxisY   = s.joyAxisY;
+    if (typeof s.joySignX === 'number')   joySignX   = s.joySignX;
+    if (typeof s.joySignY === 'number')   joySignY   = s.joySignY;
+    if (typeof s.joyTrailPersist === 'boolean') joyTrailPersist = s.joyTrailPersist;
+    if (typeof s.axisPairIdx === 'number') axisPairIdx = s.axisPairIdx;
+    if (typeof s.showRadial === 'boolean') showRadial = s.showRadial;
+    updatePhysicsParams();
+  } catch (_) { /* corrupt data — use defaults */ }
 }
 
 function setSliderValue(sr, mx) {
@@ -486,11 +629,7 @@ function computeLayout() {
   const dpr = window.devicePixelRatio || 1;
   const rect = _canvas.getBoundingClientRect();
   const W = Math.round(rect.width);
-  const H = Math.round(rect.height);
-  if (W < 10 || H < 10) return; // not visible yet
-  _canvas.width  = W * dpr;
-  _canvas.height = H * dpr;
-  _ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (W < 10) return; // not visible yet
 
   const M = 12;
 
@@ -505,27 +644,43 @@ function computeLayout() {
   const rightX = M + leftW + colGap;
   const rightW = W - rightX - M;
 
-  // ── Left column: radial joystick ────────────────────────────────────
-  // plotSize is the coordinate box the ring + overflow live in.
-  // It fills most of the left column.  The ring itself sits at ~35% of
-  // plotSize (set in the draw loop via dR cap), so ~65% is overflow
-  // margin where the unclamped dot can travel.
-  const controlsH = 130;  // space below plot for toggles + 5 sliders (18px gap)
-  const headerH   = 20;  // top label
-  const availH = H - headerH - controlsH;
-  const plotSize = Math.max(100, Math.min(leftW - 8, availH));
-  const plotX = M + (leftW - plotSize) / 2;
-  const plotY = headerH + (availH - plotSize) / 2;
+  // ── Compute required heights for both columns, then set canvas tall enough ──
 
-  // ── Right column: stack from top ────────────────────────────────────
-  const footerH = 16;
-  const radarH   = Math.min(rightW * 0.85, (H - 40) * 0.36);
+  // Left column: radial plot + controls below
+  const pinCount = S.radialPins?.length ?? 0;
+  const controlsH = 130 + 18 + pinCount * 14 + 30;  // toggles + sliders + morph toggle + pin list
+  const headerH   = 20;
+  // Use a reasonable plot size based on width (not constrained by height)
+  const plotSize = Math.max(100, Math.min(leftW - 8, 500));
+  const leftTotalH = headerH + plotSize + 20 + controlsH;
+
+  // Right column: radar + scope + sparklines + footer
+  const radarH   = Math.min(rightW * 0.85, 250);
+  const scopeH   = Math.min(60, 50);
+  const sparkH       = 72;
+  const sparkGap     = 6;
+  const sparkTotalH  = FEATURES.length * (sparkH + sparkGap);
+  const rightTotalH  = 16 + radarH + 10 + scopeH + 14 + sparkTotalH + 30;
+
+  // Canvas height = max of both columns + margin
+  const H = Math.max(leftTotalH, rightTotalH, 400) + M;
+
+  // Set canvas size and CSS height so the dialog can scroll
+  _canvas.style.height = H + 'px';
+  _canvas.width  = W * dpr;
+  _canvas.height = H * dpr;
+  _ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // ── Left column positions ──────────────────────────────────────────
+  const plotX = M + (leftW - plotSize) / 2;
+  const plotY = headerH;
+
+  // ── Right column positions ─────────────────────────────────────────
   const radarCx  = rightX + rightW / 2;
   const radarCy  = 16 + radarH / 2;
   const radarR   = radarH * 0.42;
 
   const scopeTopY = 16 + radarH + 10;
-  const scopeH    = Math.min(60, H * 0.08);
   const scopeX    = rightX;
   const scopeW    = rightW;
 
@@ -534,9 +689,6 @@ function computeLayout() {
   const sparkSliderX = rightX + sparkLabelW + 2;
   const sparkX       = sparkSliderX + SLIDER_W + 8;
   const sparkW       = rightX + rightW - sparkX - 28;
-  const sparkH       = 72;
-  const sparkGap     = 6;
-  const sparkTotalH  = FEATURES.length * (sparkH + sparkGap);
   const footerY      = sparkY0 + sparkTotalH + 6;
 
   layout = {
@@ -554,9 +706,121 @@ function computeLayout() {
 
 // ── Drawing ──────────────────────────────────────────────────────────────────
 
+let _lastPinCount = 0;
+
+// ── Joystick physics extracted so it runs even when the panel is hidden ──
+// The radial morph reads S.gestureJoy every frame, so physics can't stop.
+function _updateJoystickPhysics() {
+  try {
+    const _gestureSlot = getByRole('gesture');
+    const _wandInertial = _gestureSlot?.inertial;
+    if (!_wandInertial) return;
+
+    // ── 2D joystick physics: selected hardware axes → X/Y ──
+    updatePhysicsParams();
+    const P = _phys;
+    const _joyInputX = joySignX * rawGyroByAxis(_wandInertial, JOY_AXIS_OPTIONS[joyAxisX]);
+    const _joyInputY = joySignY * rawGyroByAxis(_wandInertial, JOY_AXIS_OPTIONS[joyAxisY]);
+
+    // Push: gyro × gain-derived push rate
+    let pushX = _joyInputX * P.pushRate;
+    let pushY = _joyInputY * P.pushRate;
+
+    // Return suppression: when push opposes displacement (returning toward center),
+    // attenuate the active drive and let the spring handle the return passively.
+    // This prevents the "overshoot" where returning your hand sends the joystick
+    // to the opposite side.  joyReturn=0: raw bidirectional, joyReturn=1: outward-only.
+    if (joyReturn > 0) {
+      // Dot product of push and displacement: negative = pushing toward center
+      const dot = pushX * joyX + pushY * joyY;
+      if (dot < 0) {
+        const suppress = 1 - joyReturn;  // 0 at full suppress, 1 at no suppress
+        pushX *= suppress;
+        pushY *= suppress;
+      }
+    }
+
+    // Velocity: push with damping, smoothed by slew
+    joyVX += (pushX - joyVX * P.damping) * P.slew;
+    joyVY += (pushY - joyVY * P.damping) * P.slew;
+    // Friction: velocity retention per frame
+    joyVX *= P.friction;
+    joyVY *= P.friction;
+    // Spring: pull toward center
+    joyX -= joyX * P.spring;
+    joyY -= joyY * P.spring;
+
+    // Integrate
+    joyX += joyVX;
+    joyY += joyVY;
+
+    // Trail records unclamped position so you always see real movement
+    joyTrail.push({ x: joyX, y: joyY });
+    if (joyTrail.length > JOY_TRAIL_LEN) joyTrail.shift();
+
+    // ── Density grid + per-pair persistent trail accumulation ──
+    const _dk = pairKey(joyAxisX, joyAxisY);
+    const _ds = ensureDensity(_dk);
+    const _gCol = Math.floor((joyX + DENSITY_RANGE) / (2 * DENSITY_RANGE) * DENSITY_RES);
+    const _gRow = Math.floor((-joyY + DENSITY_RANGE) / (2 * DENSITY_RANGE) * DENSITY_RES);
+    if (_gCol >= 0 && _gCol < DENSITY_RES && _gRow >= 0 && _gRow < DENSITY_RES) {
+      _ds.grid[_gRow * DENSITY_RES + _gCol] += 1;
+    }
+    for (let _i = 0; _i < _ds.grid.length; _i++) {
+      _ds.grid[_i] *= DENSITY_DECAY;
+    }
+    let _peak = 0;
+    for (let _i = 0; _i < _ds.grid.length; _i++) {
+      if (_ds.grid[_i] > _peak) _peak = _ds.grid[_i];
+    }
+    _ds.peak = _peak;
+    if (joyTrailPersist) {
+      _ds.trail.push({ x: joyX, y: joyY });
+      if (_ds.trail.length > JOY_TRAIL_PERSIST_MAX) _ds.trail.shift();
+    }
+
+    // Output: limit to outer ring radius when joyLimit is on.
+    const rawMag = Math.sqrt(joyX * joyX + joyY * joyY);
+    let outX = joyX, outY = joyY;
+    if (joyLimit && rawMag > joyMaxRadius) {
+      const s = joyMaxRadius / rawMag;
+      outX = joyX * s; outY = joyY * s;
+    }
+
+    // Export to S.gestureJoy for other modules (preset morphing etc.)
+    // Gate: below threshold → zero.  Above → rescale so usable range starts at gate edge.
+    const outMag = Math.sqrt(outX * outX + outY * outY);
+    const normDist = outMag / joyMaxRadius;  // 0–1 (can exceed 1 when unclamped)
+    const gateThresh = joyGate;
+    const condDist = (!joyGateOn || gateThresh < 0.001) ? normDist
+      : normDist < gateThresh ? 0 : (normDist - gateThresh) / (1 - gateThresh);
+    const angle = Math.atan2(outY, outX);
+    if (S && S.gestureJoy) {
+      S.gestureJoy.x     = condDist > 0 ? Math.cos(angle) * condDist : 0;
+      S.gestureJoy.y     = condDist > 0 ? Math.sin(angle) * condDist : 0;
+      S.gestureJoy.dist  = condDist;
+      S.gestureJoy.angle = condDist > 0 ? angle : 0;
+      sendJoyUpdate();
+    }
+  } catch (e) {
+    // Sensor not available — no physics update this frame
+  }
+}
+
 function draw() {
   _rafId = requestAnimationFrame(draw);
+
+  // Physics runs every frame even when panel is hidden — morph depends on it
+  _updateJoystickPhysics();
+
   if (!_visible || !_canvas || !S.gesture) return;
+
+  // Recompute layout when pin count changes (canvas height needs to grow/shrink)
+  const currentPinCount = S.radialPins?.length ?? 0;
+  if (currentPinCount !== _lastPinCount) {
+    _lastPinCount = currentPinCount;
+    computeLayout();
+  }
 
   try {
   const ctx = _ctx;
@@ -578,93 +842,14 @@ function draw() {
   phaseTrailX[trailIdx % TRAIL_LEN] = disp[FEATURES[ap.x].key];
   phaseTrailY[trailIdx % TRAIL_LEN] = disp[FEATURES[ap.y].key];
 
-  // Record gyro XYZ + update sphere trail
+  // Record gyro XYZ for sphere trail display (physics now in _updateJoystickPhysics)
   try {
-    // Get inertial data from gesture role slot
     const _gestureSlot = getByRole('gesture');
     const _wandInertial = _gestureSlot?.inertial;
     if (_wandInertial) {
       gyroHistory[0][trailIdx % TRAIL_LEN] = _wandInertial.gx;
       gyroHistory[1][trailIdx % TRAIL_LEN] = _wandInertial.gy;
       gyroHistory[2][trailIdx % TRAIL_LEN] = _wandInertial.gz;
-
-      // ── 2D joystick physics: selected hardware axes → X/Y ──
-      updatePhysicsParams();
-      const P = _phys;
-      const _joyInputX = joySignX * rawGyroByAxis(_wandInertial, JOY_AXIS_OPTIONS[joyAxisX]);
-      const _joyInputY = joySignY * rawGyroByAxis(_wandInertial, JOY_AXIS_OPTIONS[joyAxisY]);
-
-      // Push: gyro × gain-derived push rate
-      const pushX = _joyInputX * P.pushRate;
-      const pushY = _joyInputY * P.pushRate;
-      // Velocity: push with damping, smoothed by slew
-      joyVX += (pushX - joyVX * P.damping) * P.slew;
-      joyVY += (pushY - joyVY * P.damping) * P.slew;
-      // Friction: velocity retention per frame
-      joyVX *= P.friction;
-      joyVY *= P.friction;
-      // Spring: pull toward center
-      joyX -= joyX * P.spring;
-      joyY -= joyY * P.spring;
-
-      // Integrate
-      joyX += joyVX;
-      joyY += joyVY;
-
-      // joyX/joyY are always unclamped — they track real physics.
-      // Trail records the unclamped position so you always see real movement.
-      joyTrail.push({ x: joyX, y: joyY });
-      // Live trail is always short — persistent data lives in per-pair store
-      if (joyTrail.length > JOY_TRAIL_LEN) joyTrail.shift();
-
-      // ── Density grid + per-pair persistent trail accumulation ──
-      const _dk = pairKey(joyAxisX, joyAxisY);
-      const _ds = ensureDensity(_dk);
-      // Map joystick position to grid cell
-      const _gCol = Math.floor((joyX + DENSITY_RANGE) / (2 * DENSITY_RANGE) * DENSITY_RES);
-      const _gRow = Math.floor((-joyY + DENSITY_RANGE) / (2 * DENSITY_RANGE) * DENSITY_RES);
-      if (_gCol >= 0 && _gCol < DENSITY_RES && _gRow >= 0 && _gRow < DENSITY_RES) {
-        _ds.grid[_gRow * DENSITY_RES + _gCol] += 1;
-      }
-      // Decay entire grid slowly so it adapts over time
-      for (let _i = 0; _i < _ds.grid.length; _i++) {
-        _ds.grid[_i] *= DENSITY_DECAY;
-      }
-      // Track peak for normalization
-      let _peak = 0;
-      for (let _i = 0; _i < _ds.grid.length; _i++) {
-        if (_ds.grid[_i] > _peak) _peak = _ds.grid[_i];
-      }
-      _ds.peak = _peak;
-      // Per-pair persistent trail (only when heatmap is on)
-      if (joyTrailPersist) {
-        _ds.trail.push({ x: joyX, y: joyY });
-        if (_ds.trail.length > JOY_TRAIL_PERSIST_MAX) _ds.trail.shift();
-      }
-
-      // Output: limit to outer ring radius when joyLimit is on.
-      const rawMag = Math.sqrt(joyX * joyX + joyY * joyY);
-      let outX = joyX, outY = joyY;
-      if (joyLimit && rawMag > joyMaxRadius) {
-        const s = joyMaxRadius / rawMag;
-        outX = joyX * s; outY = joyY * s;
-      }
-
-      // Export to S.gestureJoy for other modules (preset morphing etc.)
-      // Gate: below threshold → zero.  Above → rescale so usable range starts at gate edge.
-      const outMag = Math.sqrt(outX * outX + outY * outY);
-      const normDist = outMag / joyMaxRadius;  // 0–1 (can exceed 1 when unclamped)
-      const gateThresh = joyGate;
-      const condDist = (!joyGateOn || gateThresh < 0.001) ? normDist
-        : normDist < gateThresh ? 0 : (normDist - gateThresh) / (1 - gateThresh);
-      const angle = Math.atan2(outY, outX);
-      if (S && S.gestureJoy) {
-        S.gestureJoy.x     = condDist > 0 ? Math.cos(angle) * condDist : 0;
-        S.gestureJoy.y     = condDist > 0 ? Math.sin(angle) * condDist : 0;
-        S.gestureJoy.dist  = condDist;
-        S.gestureJoy.angle = condDist > 0 ? angle : 0;
-        sendJoyUpdate();
-      }
     } else {
       gyroHistory[0][trailIdx % TRAIL_LEN] = 0;
       gyroHistory[1][trailIdx % TRAIL_LEN] = 0;
@@ -988,6 +1173,52 @@ function draw() {
       _ctx.textAlign = 'left';
     }
 
+    // ── Draw radial morph pins on the joystick ──────────────────────────
+    // Pins are stored in normalized space (0–1 per axis from gestureJoy).
+    // Scale by joyMaxRadius to place them in data space for d2px(), so
+    // they sit at the same position as the dot was when placed and move
+    // dynamically if the ring (limit slider) is resized.
+    {
+      const pins = S.radialPins || [];
+      for (let pi = 0; pi < pins.length; pi++) {
+        const pin = pins[pi];
+        const pt = d2px(pin.x * joyMaxRadius, pin.y * joyMaxRadius);
+        const px = dCx + pt.px;
+        const py = dCy + pt.py;
+        const pinPreset = PRESETS[pin.presetIdx];
+        const pinName = pinPreset?.name ?? '?';
+        const isActive = S.radialMorphOn;
+
+        // Pin marker: diamond shape
+        const sz = 5;
+        _ctx.beginPath();
+        _ctx.moveTo(px, py - sz);
+        _ctx.lineTo(px + sz, py);
+        _ctx.lineTo(px, py + sz);
+        _ctx.lineTo(px - sz, py);
+        _ctx.closePath();
+        _ctx.fillStyle = isActive ? 'rgba(232, 160, 48, 0.7)' : 'rgba(232, 160, 48, 0.3)';
+        _ctx.fill();
+        _ctx.strokeStyle = isActive ? 'rgba(232, 160, 48, 0.9)' : 'rgba(232, 160, 48, 0.4)';
+        _ctx.lineWidth = 1;
+        _ctx.stroke();
+
+        // Pin label
+        _ctx.font = '8px monospace';
+        _ctx.fillStyle = isActive ? 'rgba(232, 160, 48, 0.9)' : 'rgba(232, 160, 48, 0.4)';
+        _ctx.textAlign = 'center';
+        _ctx.fillText(pinName, px, py - sz - 3);
+        _ctx.textAlign = 'left';
+
+        // Pin number
+        _ctx.font = '7px monospace';
+        _ctx.fillStyle = 'rgba(232, 160, 48, 0.6)';
+        _ctx.textAlign = 'center';
+        _ctx.fillText(`${pi + 1}`, px, py + sz + 8);
+        _ctx.textAlign = 'left';
+      }
+    }
+
     // ── Sliders below radial: toggles + physics + gate/limit controls ───
     {
       const slW = L.plotSize * 0.45;  // ~half the plot width
@@ -1038,6 +1269,7 @@ function draw() {
         { key: 'weight',   val: joyWeight, label: 'weight',   detail: `fric ${_phys.friction.toFixed(2)}  damp ${_phys.damping.toFixed(2)}` },
         { key: 'snap',     val: joySnap,   label: 'snap',     detail: `spring ${_phys.spring.toFixed(4)}` },
         { key: 'gain',     val: joyGain,   label: 'gain',     detail: `push ${(_phys.pushRate * 10000).toFixed(1)}e-4` },
+        { key: 'return',   val: joyReturn, label: 'return',   detail: `${Math.round(joyReturn * 100)}% suppress` },
         { key: 'gate',  val: gateNorm,  label: 'gate',  detail: `${(joyGate * 100).toFixed(0)}%` },
         { key: 'limit', val: limitNorm, label: 'limit', detail: `${joyMaxRadius.toFixed(2)}×` },
       ];
@@ -1064,6 +1296,167 @@ function draw() {
         joySliderRects[sl.key].x = slX; joySliderRects[sl.key].y = slY;
         joySliderRects[sl.key].w = slW; joySliderRects[sl.key].h = slH;
         slY += slGap;
+      }
+    }
+
+    // ── Morph toggle + drop pin + pin list ──────────────────────────────
+    {
+      const slX = L.plotX;
+      // Continue Y from where the sliders left off — read the last slider's Y.
+      // The sliders render in the block above; we continue from below them.
+      // Use the Y position tracked by the slider loop (stored in joySliderRects.limit.y)
+      let mY = (joySliderRects.limit.y || 0) + joySliderRects.limit.h + 14;
+
+      _ctx.font = '9px monospace';
+      _ctx.textAlign = 'left';
+
+      // Morph on/off toggle
+      const morphOn = S.radialMorphOn;
+      const morphLabel = morphOn ? '● morph' : '○ morph';
+      _ctx.fillStyle = morphOn ? '#e8a030' : 'rgba(232, 160, 48, 0.3)';
+      _ctx.fillText(morphLabel, slX, mY);
+      const morphW = _ctx.measureText(morphLabel).width + 6;
+      morphToggleRect.x = slX; morphToggleRect.y = mY - 10;
+      morphToggleRect.w = morphW; morphToggleRect.h = 14;
+
+      // Drop pin button
+      const dpLabel = '+ pin';
+      const dpX = slX + morphW + 14;
+      _ctx.fillStyle = 'rgba(232, 160, 48, 0.6)';
+      _ctx.fillText(dpLabel, dpX, mY);
+      const dpW = _ctx.measureText(dpLabel).width + 6;
+      dropPinRect.x = dpX; dropPinRect.y = mY - 10;
+      dropPinRect.w = dpW; dropPinRect.h = 14;
+
+      // Pin count
+      const pins = S.radialPins || [];
+      if (pins.length > 0) {
+        _ctx.fillStyle = COL_DIM;
+        _ctx.fillText(`(${pins.length})`, dpX + dpW + 6, mY);
+      }
+
+      mY += 16;
+
+      // Pin list — each pin shows: index, position indicator, preset name (clickable), delete [×]
+      pinDeleteRects.length = 0;
+      pinDropdownRects.length = 0;
+
+      const listW = L.plotSize * 0.75;
+      for (let pi = 0; pi < pins.length && pi < 8; pi++) {
+        const pin = pins[pi];
+        const pinPreset = PRESETS[pin.presetIdx];
+        const pName = pinPreset?.name ?? '—';
+
+        // Pin number
+        _ctx.font = '8px monospace';
+        _ctx.fillStyle = 'rgba(232, 160, 48, 0.5)';
+        _ctx.fillText(`${pi + 1}`, slX, mY);
+
+        // Position indicator (angle arrow + distance %)
+        const pinDist = Math.sqrt(pin.x * pin.x + pin.y * pin.y);
+        const pinAngle = Math.atan2(pin.y, pin.x);
+        const arrowChars = ['→', '↗', '↑', '↖', '←', '↙', '↓', '↘'];
+        const arrowIdx = Math.round(((pinAngle + Math.PI) / (Math.PI * 2)) * 8) % 8;
+        const arrow = arrowChars[(arrowIdx + 4) % 8];  // adjust so 0=right
+        _ctx.fillStyle = COL_DIM;
+        _ctx.fillText(`${arrow} ${(pinDist * 100).toFixed(0)}%`, slX + 14, mY);
+
+        // Preset name (clickable dropdown trigger)
+        const nameX = slX + 60;
+        _ctx.fillStyle = morphOn ? '#e8a030' : 'rgba(232, 160, 48, 0.5)';
+        _ctx.font = '9px monospace';
+        _ctx.fillText(pName, nameX, mY);
+        const nameW = Math.max(_ctx.measureText(pName).width + 8, 50);
+        // Underline to show it's clickable
+        _ctx.beginPath();
+        _ctx.moveTo(nameX, mY + 2);
+        _ctx.lineTo(nameX + nameW - 4, mY + 2);
+        _ctx.strokeStyle = 'rgba(232, 160, 48, 0.2)';
+        _ctx.lineWidth = 0.5;
+        _ctx.stroke();
+
+        pinDropdownRects.push({ x: nameX, y: mY - 10, w: nameW, h: 14, idx: pi });
+
+        // Delete button [×]
+        const delX = slX + listW - 10;
+        _ctx.fillStyle = 'rgba(255, 100, 100, 0.4)';
+        _ctx.font = '9px monospace';
+        _ctx.fillText('×', delX, mY);
+        pinDeleteRects.push({ x: delX - 2, y: mY - 10, w: 14, h: 14, idx: pi });
+
+        mY += 14;
+      }
+
+      // ── Open dropdown overlay (scrollable) ─────────────────────────────
+      if (pinDropdownOpen >= 0 && pinDropdownOpen < pinDropdownRects.length) {
+        const ddr = pinDropdownRects.find(r => r.idx === pinDropdownOpen);
+        if (ddr) {
+          const presets = getPresetList();
+          pinDropdownItems = [];
+          pinDdUpRect.h = 0;    // reset — only set if needed
+          pinDdDownRect.h = 0;
+
+          const ddX = ddr.x;
+          const ddW = 120;
+          const itemH = 16;
+          const arrowH = 14;
+
+          // Clamp scroll offset
+          const maxScroll = Math.max(0, presets.length - PIN_DD_MAX_VISIBLE);
+          pinDropdownScroll = Math.max(0, Math.min(pinDropdownScroll, maxScroll));
+
+          const visibleCount = Math.min(presets.length, PIN_DD_MAX_VISIBLE);
+          const hasUp = pinDropdownScroll > 0;
+          const hasDown = pinDropdownScroll + visibleCount < presets.length;
+          const totalH = visibleCount * itemH + (hasUp ? arrowH : 0) + (hasDown ? arrowH : 0);
+
+          // Position dropdown — prefer below, flip up if it would go off canvas
+          let ddY = ddr.y + ddr.h + 2;
+          if (ddY + totalH + 4 > L.H) {
+            ddY = ddr.y - totalH - 4;
+          }
+
+          // Background
+          _ctx.fillStyle = 'rgba(10, 15, 15, 0.95)';
+          _ctx.fillRect(ddX - 2, ddY - 2, ddW + 4, totalH + 4);
+          _ctx.strokeStyle = 'rgba(232, 160, 48, 0.3)';
+          _ctx.lineWidth = 1;
+          _ctx.strokeRect(ddX - 2, ddY - 2, ddW + 4, totalH + 4);
+
+          let curY = ddY;
+
+          // Scroll up arrow
+          if (hasUp) {
+            _ctx.font = '9px monospace';
+            _ctx.fillStyle = 'rgba(232, 160, 48, 0.6)';
+            _ctx.fillText('  ▲ more', ddX + 2, curY + 10);
+            pinDdUpRect.x = ddX; pinDdUpRect.y = curY;
+            pinDdUpRect.w = ddW; pinDdUpRect.h = arrowH;
+            curY += arrowH;
+          }
+
+          // Visible preset items
+          const startIdx = pinDropdownScroll;
+          const endIdx = Math.min(presets.length, startIdx + PIN_DD_MAX_VISIBLE);
+          for (let i = startIdx; i < endIdx; i++) {
+            const p = presets[i];
+            const isSelected = S.radialPins[pinDropdownOpen]?.presetIdx === p.idx;
+            _ctx.font = '9px monospace';
+            _ctx.fillStyle = isSelected ? '#e8a030' : COL_TEXT;
+            _ctx.fillText(isSelected ? `● ${p.name}` : `  ${p.name}`, ddX + 2, curY + 11);
+            pinDropdownItems.push({ x: ddX, y: curY, w: ddW, h: itemH, presetIdx: p.idx });
+            curY += itemH;
+          }
+
+          // Scroll down arrow
+          if (hasDown) {
+            _ctx.font = '9px monospace';
+            _ctx.fillStyle = 'rgba(232, 160, 48, 0.6)';
+            _ctx.fillText('  ▼ more', ddX + 2, curY + 10);
+            pinDdDownRect.x = ddX; pinDdDownRect.y = curY;
+            pinDdDownRect.w = ddW; pinDdDownRect.h = arrowH;
+          }
+        }
       }
     }
 
@@ -1454,9 +1847,11 @@ function onKeyDown(e) {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'x') {
     axisPairIdx = (axisPairIdx + 1) % AXIS_PAIRS.length;
+    _saveGestureSettings();
   }
   if (e.key === 'v') {
     showRadial = !showRadial;
+    _saveGestureSettings();
   }
 }
 
@@ -1500,6 +1895,13 @@ export function initGesturePanel() {
     onKeyDown(e);
   });
 
+  // Restore persisted settings before starting the loop
+  _loadGestureSettings();
+
+  // Start the rAF loop immediately — joystick physics must run even before
+  // the panel is first opened so radial morph works from the start.
+  if (!_rafId) _rafId = requestAnimationFrame(draw);
+
   console.log('[exp/gesture-panel] initialized');
 }
 
@@ -1510,11 +1912,11 @@ export function toggleGesturePanel(forceState) {
   if (_visible) {
     modal.classList.add('open');
     computeLayout();
-    if (!_rafId) _rafId = requestAnimationFrame(draw);
   } else {
     modal.classList.remove('open');
-    if (_rafId) { cancelAnimationFrame(_rafId); _rafId = null; }
   }
+  // Always keep the rAF loop alive — joystick physics must run for morph
+  if (!_rafId) _rafId = requestAnimationFrame(draw);
 }
 
 export function destroyGesturePanel() {

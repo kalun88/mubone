@@ -9,6 +9,7 @@ import {
 } from './state.js';
 import { ensureAudioContext } from './audio.js';
 import { requestMicAccess, startLiveRecording, stopLiveRecording } from './audio.js';
+import { toggleHandsfree } from './handsfree.js';
 import { screenToLonLat } from './sphere.js';
 import {
   recordStrokeStart, undoLastStroke, updateSampleListActiveState,
@@ -29,6 +30,12 @@ import { setScanMuted } from './ui-meters.js';
 // ── Erase-all triple-press state ────────────────────────────────────────────
 let _erasePressCount = 0;
 let _eraseLastPress  = 0;
+
+// ── Tap-toggle vs hold-momentary trace ─────────────────────────────────────
+// Quick tap (<200ms) = toggle trace on/off. Hold (≥200ms) = momentary.
+// When toggled on + handsfree armed + plain trace mode, gate segments buffers.
+const TRACE_TAP_MS  = 200;
+let _traceDownAt    = 0;   // performance.now() when spacebar/click went down
 
 // ── Focus helpers ───────────────────────────────────────────────────────────
 // Returns true when focus is on a text-entry element that should consume
@@ -78,6 +85,41 @@ function _syncCommitBtnLock(locked) {
   const drawBtn = document.getElementById('commitDrawBtn');
   if (dropBtn) { dropBtn.style.opacity = locked ? '0.35' : ''; dropBtn.style.pointerEvents = locked ? 'none' : ''; }
   if (drawBtn) { drawBtn.style.opacity = locked ? '0.35' : ''; drawBtn.style.pointerEvents = locked ? 'none' : ''; }
+}
+
+/** Stop toggle-trace: called when user taps space/click to toggle trace OFF,
+ *  or when trace mode changes away from plain trace. */
+function _stopToggleTrace() {
+  S._traceToggled = false;
+  S._traceActive  = false;
+  _traceDownAt    = 0;
+
+  // If handsfree gate is mid-capture, finalize it
+  if (S.hfRecording) {
+    const wasPainting = S.isPainting;
+    S.isPainting      = false;
+    S.currentStrokeId = -1;
+    if (S.isRecording) stopLiveRecording();
+    S.hfRecording = false;
+    S.hfGateOpen  = false;
+    // Only count if there was an active painting stroke
+    if (wasPainting) {
+      S.hfCaptureCount++;
+      S.hfCaptureFlashUntil = performance.now() + 400;
+      S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+    }
+  }
+
+  // If non-handsfree toggle trace was recording, stop it
+  if (S.isPainting || S.isRecording) {
+    S.isPainting      = false;
+    S.currentStrokeId = -1;
+    if (S.isRecording) stopLiveRecording();
+    S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+  }
+
+  _updateLiveRecUI();
+  S._syncHandsfreeUI?.();
 }
 
 export function setupEvents() {
@@ -336,6 +378,7 @@ export function setupEvents() {
         // Block D-loop while trace+loop is actively recording — trace owns the mic
         if (S._traceActive && S.traceMode === 'trace+loop') return;
         S._cLoopActive = true;
+        _traceDownAt = 0; // clear stale tap timestamp — D-loop owns recording now
         // Loop mode: start recording immediately (decision on keyup)
         if (!S.scanMuted) setScanMuted(true);
         const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
@@ -361,15 +404,27 @@ export function setupEvents() {
     }
 
     // Spacebar: live recording + painting (trace)
+    // Tap (<200ms) = toggle on/off. Hold (≥200ms) = momentary.
     if (e.code === 'Space' && !e.repeat) {
       e.preventDefault();
+
+      // If trace is already toggled on, this tap toggles it OFF
+      if (S._traceToggled) {
+        _stopToggleTrace();
+        return;
+      }
+
       S._traceActive = true;
+      _traceDownAt = performance.now();
       // If D-loop owns recording, just mark trace as held — don't touch audio
       if (!S._cLoopActive) {
         ensureAudioContext();
-        // In trace+loop mode, mute scan when trace fires
-        if (S.traceMode === 'trace+loop' && !S.scanMuted) setScanMuted(true);
-        if (S.traceMode === 'trace+loop') _syncCommitBtnLock(true);
+        // Mute scan + lock commit buttons immediately for trace+loop — don't wait
+        // for startLiveRecording to finish (worklet may load async on first press)
+        if (S.traceMode === 'trace+loop') {
+          if (!S.scanMuted) setScanMuted(true);
+          _syncCommitBtnLock(true);
+        }
         const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
         if (gotMic) startLiveRecording();
         recordStrokeStart('live', S.currentLiveBufferIdx);
@@ -453,6 +508,8 @@ export function setupEvents() {
     // A: cycle trace mode (trace → trace+loop → trace+cloud → trace)
     if (e.key === 'a' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
       e.preventDefault();
+      // If toggled trace is active, force-stop before mode change
+      if (S._traceToggled) _stopToggleTrace();
       const _modes = ['trace', 'trace+loop', 'trace+cloud'];
       const _idx = _modes.indexOf(S.traceMode);
       S.traceMode = _modes[(_idx + 1) % _modes.length];
@@ -472,6 +529,19 @@ export function setupEvents() {
     if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
       S._setMuted?.(!S.isMuted);
+    }
+
+    // X: toggle radial morph
+    if (e.key === 'x' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
+      e.preventDefault();
+      S.radialMorphOn = !S.radialMorphOn;
+      S._syncMorphBtnUI?.();
+    }
+
+    // H: toggle handsfree recording
+    if ((e.key === 'h' || e.key === 'H') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      e.preventDefault();
+      toggleHandsfree();
     }
 
     // - (minus): sweep
@@ -500,6 +570,13 @@ export function setupEvents() {
       } else {
         S._eraseAllProgress?.(_erasePressCount);
       }
+    }
+
+    // Shift+F: toggle projector mode
+    if (e.key === 'F' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      e.preventDefault();
+      if (S._dispatchAction) S._dispatchAction('projector', 127);
+      else toggleProjectorMode();
     }
   });
 
@@ -573,7 +650,11 @@ export function setupEvents() {
         const traceInd = document.getElementById('paintIndicatorBtn');
         if (traceInd) { traceInd.style.opacity = ''; traceInd.style.pointerEvents = ''; }
         // If trace (spacebar/mouse) is still held, resume recording
-        if (S._traceActive) {
+        if (S._traceActive && !S._traceToggled) {
+          if (S.traceMode === 'trace+loop') {
+            if (!S.scanMuted) setScanMuted(true);
+            _syncCommitBtnLock(true);
+          }
           startLiveRecording();
           recordStrokeStart('live', S.currentLiveBufferIdx);
           S.isPainting      = true;
@@ -598,6 +679,34 @@ export function setupEvents() {
     // Spacebar release: stop recording, end live paint stroke
     if (e.code === 'Space') {
       e.preventDefault();
+
+      // If trace is toggled on, release is a no-op — trace stays on
+      if (S._traceToggled) return;
+
+      // Tap (<200ms) = toggle trace on (don't stop recording)
+      const tapDuration = performance.now() - _traceDownAt;
+      if (_traceDownAt > 0 && tapDuration < TRACE_TAP_MS && !S._cLoopActive) {
+        // Only allow toggle in plain trace mode (not trace+loop or trace+cloud)
+        if (S.traceMode === 'trace') {
+          S._traceToggled = true;
+          // If handsfree is armed, hand off to the gate for segmentation:
+          // stop this initial recording (too short to keep) and let the gate manage
+          if (S.hfArmed) {
+            S.isPainting      = false;
+            S.currentStrokeId = -1;
+            if (S.isRecording) stopLiveRecording();
+            // Don't increment color — the gate will manage colors per segment
+          } else {
+            // No handsfree: just keep recording continuously (toggle trace without gate)
+            // Recording stays active, will be stopped by next tap
+          }
+          _updateLiveRecUI();
+          S._syncHandsfreeUI?.();
+          return;
+        }
+        // In locked modes (trace+loop, trace+cloud), fall through to normal momentary stop
+      }
+
       S._traceActive = false;
       _syncCommitBtnLock(false);
       // If D-loop owns recording, just mark trace as released — don't touch audio
@@ -627,6 +736,7 @@ export function setupEvents() {
         S.isPainting      = false;
         S.currentStrokeId = -1;
         if (S.isRecording) stopLiveRecording();
+        // Scan stays muted after trace+loop — performer controls scan manually
         S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
         _updateLiveRecUI();
       }
@@ -665,22 +775,34 @@ export function setupEvents() {
   }, { passive: false });
 
   // Left click: live rec + paint (trace)
+  // Tap (<200ms) = toggle on/off. Hold (≥200ms) = momentary.
   S.canvas.addEventListener('mousedown', async e => {
     if (S.altLocked) return;
     if (e.button !== 0) return;
     e.preventDefault();
+
+    // If trace is already toggled on, this click toggles it OFF
+    if (S._traceToggled) {
+      _stopToggleTrace();
+      return;
+    }
+
     S._traceActive = true;
+    _traceDownAt = performance.now();
     // If D-loop owns recording, just mark trace as held — don't touch audio
     if (S._cLoopActive) return;
     ensureAudioContext();
-    // In trace+loop mode, mute scan when trace fires
-    if (S.traceMode === 'trace+loop' && !S.scanMuted) setScanMuted(true);
-    if (S.traceMode === 'trace+loop') _syncCommitBtnLock(true);
     const hasInput = S.micPermissionGranted ||
                      (window.electronBridge?.isElectron && window._rtAudioInputListening);
     if (!hasInput) {
       await requestMicAccess();
       return;
+    }
+    // Mute scan + lock commits immediately for trace+loop — don't gate on
+    // S.isRecording which may be false if worklet is still loading (first press)
+    if (S.traceMode === 'trace+loop') {
+      if (!S.scanMuted) setScanMuted(true);
+      _syncCommitBtnLock(true);
     }
     startLiveRecording();
     recordStrokeStart('live', S.currentLiveBufferIdx);
@@ -692,6 +814,27 @@ export function setupEvents() {
   S.canvas.addEventListener('mouseup', e => {
     if (S.altLocked) return;
     if (e.button !== 0) return;
+
+    // If trace is toggled on, release is a no-op — trace stays on
+    if (S._traceToggled) return;
+
+    // Tap (<200ms) = toggle trace on
+    const tapDuration = performance.now() - _traceDownAt;
+    if (_traceDownAt > 0 && tapDuration < TRACE_TAP_MS && !S._cLoopActive) {
+      if (S.traceMode === 'trace') {
+        S._traceToggled = true;
+        if (S.hfArmed) {
+          // Hand off to gate: stop initial recording, gate manages from here
+          S.isPainting      = false;
+          S.currentStrokeId = -1;
+          if (S.isRecording) stopLiveRecording();
+        }
+        _updateLiveRecUI();
+        S._syncHandsfreeUI?.();
+        return;
+      }
+    }
+
     S._traceActive = false;
     _syncCommitBtnLock(false);
     // If D-loop owns recording, just mark trace as released — don't touch audio
@@ -720,6 +863,7 @@ export function setupEvents() {
     S.isPainting      = false;
     S.currentStrokeId = -1;
     if (S.isRecording) stopLiveRecording();
+    // Scan stays muted after trace+loop — performer controls scan manually
     S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
     _updateLiveRecUI();
   });
@@ -763,6 +907,217 @@ export function setupEvents() {
     window.electronBridge.onFullscreenChanged((isFs) => applyFullscreenState(isFs));
   }
 
+  // ── Projector mode (Shift+F) — popup mirror + compact laptop layout ─────
+  // Opens a popup that mirrors the main canvas each frame (drag to projector,
+  // double-click to fullscreen).  Main window switches to 4-column panel
+  // layout.  The canvas is moved into a mini tile inside the panel column
+  // flow so it sits alongside the control panels at panel size.
+
+  // Move the real canvas into / out of a mini wrapper inside the panel flow
+  let _miniWrapper = null;
+  let _origCanvasParent = null;
+  let _origCanvasNext = null;
+
+  function setProjectorLayout(on) {
+    const panel = document.querySelector('.right-panel');
+    const canvasWrapper = document.querySelector('.canvas-wrapper');
+    const canvas = S.canvas;
+    if (!panel || !canvasWrapper || !canvas) return;
+
+    if (on) {
+      // Remember original position so we can restore later
+      _origCanvasParent = canvas.parentElement;
+      _origCanvasNext = canvas.nextSibling;
+
+      // Create mini wrapper and move the real canvas into it
+      _miniWrapper = document.createElement('div');
+      _miniWrapper.className = 'projector-mini-canvas device';
+      const label = document.createElement('div');
+      label.className = 'device-label';
+      label.innerHTML = '<span class="device-name">projector</span>';
+      _miniWrapper.appendChild(label);
+      const miniBody = document.createElement('div');
+      miniBody.className = 'projector-mini-body';
+      miniBody.appendChild(canvas);
+      _miniWrapper.appendChild(miniBody);
+
+      // Insert at the top of the panel flow
+      panel.insertBefore(_miniWrapper, panel.firstChild);
+
+      document.body.classList.add('projector-mode');
+    } else {
+      document.body.classList.remove('projector-mode');
+
+      // Move canvas back to its original wrapper
+      if (_origCanvasParent) {
+        if (_origCanvasNext) _origCanvasParent.insertBefore(canvas, _origCanvasNext);
+        else _origCanvasParent.appendChild(canvas);
+      }
+      if (_miniWrapper) { _miniWrapper.remove(); _miniWrapper = null; }
+      _origCanvasParent = null;
+      _origCanvasNext = null;
+    }
+
+    requestAnimationFrame(() => resizeCanvas());
+  }
+
+  function toggleProjectorMode() {
+    const btn = document.getElementById('projectorModeBtn');
+
+    // If popup exists, close it
+    if (S.projectorPopup && !S.projectorPopup.closed) {
+      S.projectorPopup.close();
+      S.projectorPopup = null;
+      S.projectorCtx = null;
+      S.projectorMode = false;
+      setProjectorLayout(false);
+      if (btn) btn.classList.remove('active');
+      return;
+    }
+
+    // Open a popup — size it generously so user can drag to projector + fullscreen
+    const w = screen.width;
+    const h = screen.height;
+    const pop = window.open('', 'mubone_projector',
+      `width=${w},height=${h},left=0,top=0,menubar=no,toolbar=no,location=no,status=no,scrollbars=no,resizable=yes`);
+    if (!pop) {
+      console.warn('Popup blocked — allow popups for this site');
+      return;
+    }
+
+    pop.document.write(`<!DOCTYPE html>
+<html><head><title>mubone — projector</title>
+<style>
+  *{margin:0;padding:0;overflow:hidden;font-family:Inter,Helvetica,sans-serif}
+  body{background:#000}
+  canvas#mirror{display:block;width:100vw;height:100vh;object-fit:contain}
+  .hud{
+    position:fixed;
+    top:calc(18px * var(--hud-scale,1) + 0.75rem * var(--hud-scale,1));
+    left:1rem;right:1rem;
+    font-size:calc(1.1rem * var(--hud-scale,1));
+    color:#666;pointer-events:none;
+    display:flex;align-items:center;justify-content:space-between;
+    line-height:1;z-index:10;
+  }
+  .hud-left,.hud-right{display:flex;align-items:center;gap:calc(1rem * var(--hud-scale,1));flex:1}
+  .hud-left{justify-content:flex-start}
+  .hud-right{justify-content:flex-end}
+  .hud-center{flex:0 0 auto;text-align:center}
+  .vm-patch-info{color:#999;font-weight:600;font-size:calc(1.2rem * var(--hud-scale,1));white-space:nowrap;letter-spacing:0.03em}
+  #popCoords{white-space:pre;font-variant-numeric:tabular-nums}
+  .hf-hud-label{color:#50b850;font-size:calc(0.72rem * var(--hud-scale,1));letter-spacing:0.04em;margin-left:calc(6px * var(--hud-scale,1));opacity:0.85}
+  .vm-commit-dots{display:flex;align-items:center;gap:calc(3px * var(--hud-scale,1))}
+  .vm-commit-dot{width:calc(7px * var(--hud-scale,1));height:calc(7px * var(--hud-scale,1));border-radius:50%;flex-shrink:0}
+  .alt-lock{color:#f0c060}
+</style></head>
+<body>
+<canvas id="mirror"></canvas>
+<div class="hud" id="popHud">
+  <div class="hud-left">
+    <span id="popCoords">--,--</span>
+    <span id="popHfLabel" class="hf-hud-label" style="display:none">handsfree</span>
+    <span id="popAltLock" class="alt-lock" style="display:none">alt: locked</span>
+  </div>
+  <div class="hud-center">
+    <span id="popPatchInfo" class="vm-patch-info"></span>
+  </div>
+  <div class="hud-right">
+    <span id="popDots" class="vm-commit-dots"></span>
+    <span id="popBuffers"></span>
+  </div>
+</div>
+<script>
+  document.addEventListener('dblclick', () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
+    else document.exitFullscreen();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') window.close();
+  });
+</script></body></html>`);
+    pop.document.close();
+
+    const mirrorCanvas = pop.document.getElementById('mirror');
+    const resizeMirror = () => {
+      if (pop.closed) return;
+      mirrorCanvas.width = pop.innerWidth;
+      mirrorCanvas.height = pop.innerHeight;
+      resizeCanvas();
+    };
+    pop.addEventListener('resize', resizeMirror);
+    resizeMirror();
+
+    // Cache popup HUD element references for per-frame sync
+    const _popHud = {
+      root:      pop.document.getElementById('popHud'),
+      coords:    pop.document.getElementById('popCoords'),
+      hfLabel:   pop.document.getElementById('popHfLabel'),
+      altLock:   pop.document.getElementById('popAltLock'),
+      patchInfo: pop.document.getElementById('popPatchInfo'),
+      dots:      pop.document.getElementById('popDots'),
+      buffers:   pop.document.getElementById('popBuffers'),
+    };
+    // Apply initial HUD scale
+    pop.document.body.style.setProperty('--hud-scale', S.hudScale);
+    if (S.hudScale === 0 && _popHud.root) _popHud.root.style.display = 'none';
+
+    // Sync HUD content from main window → popup each frame
+    let _prevHudScale = S.hudScale;
+    S._syncProjectorHUD = () => {
+      if (pop.closed) { S._syncProjectorHUD = null; return; }
+      // Sync HUD scale — controls size of text overlay and hides at 0
+      if (S.hudScale !== _prevHudScale) {
+        _prevHudScale = S.hudScale;
+        pop.document.body.style.setProperty('--hud-scale', S.hudScale);
+        if (_popHud.root) _popHud.root.style.display = S.hudScale === 0 ? 'none' : '';
+      }
+      const src = {
+        coords:    document.getElementById('coordinates'),
+        hfLabel:   document.getElementById('hfHudLabel'),
+        altLock:   document.getElementById('altLockIndicator'),
+        patchInfo: document.getElementById('vmPatchInfo'),
+        dots:      document.getElementById('vmCommitDots'),
+        buffers:   document.getElementById('vmBuffers'),
+      };
+      if (src.coords && _popHud.coords)
+        _popHud.coords.textContent = src.coords.textContent;
+      if (src.hfLabel && _popHud.hfLabel)
+        _popHud.hfLabel.style.display = src.hfLabel.style.display;
+      if (src.altLock && _popHud.altLock)
+        _popHud.altLock.style.display = src.altLock.style.display;
+      if (src.patchInfo && _popHud.patchInfo)
+        _popHud.patchInfo.textContent = src.patchInfo.textContent;
+      if (src.dots && _popHud.dots)
+        _popHud.dots.innerHTML = src.dots.innerHTML;
+      if (src.buffers && _popHud.buffers)
+        _popHud.buffers.textContent = src.buffers.textContent;
+    };
+
+    S.projectorPopup = pop;
+    S.projectorCtx = mirrorCanvas.getContext('2d');
+    S.projectorMode = true;
+    setProjectorLayout(true);
+    if (btn) btn.classList.add('active');
+
+    // Clean up if user closes popup directly
+    pop.addEventListener('beforeunload', () => {
+      S.projectorPopup = null;
+      S.projectorCtx = null;
+      S.projectorMode = false;
+      S._syncProjectorHUD = null;
+      setProjectorLayout(false);
+      if (btn) btn.classList.remove('active');
+    });
+  }
+  S._toggleProjectorMode = toggleProjectorMode;
+  document.getElementById('projectorModeBtn')?.addEventListener('click', () => {
+    if (S._dispatchAction) S._dispatchAction('projector', 127);
+    else toggleProjectorMode();
+  });
+
+  // (Divider removed — projector mode uses mini canvas tile in panel flow)
+
   // ── Mute button ───────────────────────────────────────────────────────────
   const muteBtn = document.getElementById('muteBtn');
   function setMuted(muted) {
@@ -797,27 +1152,51 @@ export function setupEvents() {
   S._finalizeSeedPlant = finalizeSeedPlant;
   S._uprootSeed       = uprootNearestSeed;
   S._undo         = undoLastStroke;
+  // Expose toggle-trace cleanup so other modules (ui-meters commitLockBtn) can call it
+  S._stopToggleTrace  = _stopToggleTrace;
 
   // Expose slot-full check for inline indicator scripts (non-module context)
   window._loopSlotsFull = () =>
     S.seqOverflow === 'off' &&
     Array.from({ length: S.seqSlotCount }, (_, i) => S.seqSlots[i]).every(Boolean);
 
-  // Expose for osc.js — /record 1 starts live capture, /record 0 stops it.
-  // Mirrors the spacebar keydown/keyup logic exactly.
+  // Expose for osc.js — /trace 1 starts trace, /trace 0 stops it.
+  // OSC 1/0 is always toggle-style (sender controls timing).
+  // When handsfree is armed in plain trace mode, the gate segments buffers.
   S._setRecording = async (shouldRecord) => {
     ensureAudioContext();
     if (shouldRecord) {
+      // If already toggled on, ignore duplicate 1
+      if (S._traceToggled) return;
+      S._traceActive = true;
+
+      // In plain trace + handsfree armed: toggle on, let gate manage recording
+      if (S.traceMode === 'trace' && S.hfArmed) {
+        S._traceToggled = true;
+        S._syncHandsfreeUI?.();
+        _updateLiveRecUI();
+        return;
+      }
+      // Plain toggle trace (no handsfree): start one continuous recording
+      if (S.traceMode === 'trace') {
+        S._traceToggled = true;
+      }
       const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
       if (gotMic) startLiveRecording();
       recordStrokeStart('live', S.currentLiveBufferIdx);
       S.isPainting      = true;
       S.paintFrameCount = 0;
     } else {
+      // /trace 0 → stop
+      if (S._traceToggled) {
+        _stopToggleTrace();
+        return;
+      }
       S.isPainting      = false;
       S.currentStrokeId = -1;
       if (S.isRecording) stopLiveRecording();
       S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+      S._traceActive = false;
     }
     _updateLiveRecUI();
   };

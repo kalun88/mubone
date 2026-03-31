@@ -151,240 +151,181 @@ export const REC_LIMIT_SECONDS_DEFAULT = 600;
 // retriggerMs = per-particle debounce for seeder mode only (not cursor).
 
 export const PRESETS = [
-  // -- 0. wash -- default: smooth granular freeze, live-monitor feel
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FACTORY PRESETS 0–19 — core sonic palette
+  // Sparse: only character-defining grain params. Unset params pass through.
+  // panSpread kept tight (≤0.20) for VBAP precision unless spread IS the sound.
+  // All searchRadiusDeg ≤ 90.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // -- 0. wash -- smooth granular freeze, live-monitor feel
   //    Overlap ~3.8 (380ms/100ms) — safe headroom for hann+panner chain.
   {
     name:          'wash',
-    nearestMode:   false,
-    grainKAllMode: false,
-    grainKSeqMode: false,
     searchRadiusDeg: 12,
-    recencyN:      3,
     k:             8,
-    duration:      0.38,   // 380ms -- long enough to overlap smoothly
+    duration:      0.38,
     durJitter:     0.08,
     durVar:        0.04,
-    period:        0.10,   // 100ms -> dense but safe overlap ~3.8
+    period:        0.10,
     periodVar:     0.01,
-    fadeRatio:     0.32,   // attack+release each = 32% of dur
-    retriggerMs:   60,
-    pitchJitter:   0.01,   // low pitch jitter -> stays legible
-    pitchShift:    0,      // no base pitch shift
-    panSpread:     0.65,
+    fadeRatio:     0.32,
+    pitchJitter:   0.01,
+    panSpread:     0.15,
     volume:        0.50,
-    probability:   1.0,
-    direction:     'fwd',
-    curveType:     'hann',
   },
+
   // -- 1. vinyl -- lock+recency1: scrubbing a record, exact position tracking
   {
     name:          'vinyl',
     nearestMode:   true,
-    grainKAllMode: false,
-    grainKSeqMode: false,
     searchRadiusDeg: 12,
     recencyN:      1,
     k:             1,
-    duration:      0.14,   // 140ms -- tight grain
+    duration:      0.14,
     durJitter:     0.04,
-    durVar:        0.02,   // slight flutter +/-20ms
-    period:        0.10,   // 100ms -> near-continuous
+    durVar:        0.02,
+    period:        0.10,
     periodVar:     0.01,
     fadeRatio:     0.21,
-    retriggerMs:   80,
     pitchJitter:   0.015,
-    pitchShift:    0,      // no base pitch shift
-    panSpread:     0.2,
+    panSpread:     0.10,
     volume:        0.85,
-    probability:   1.0,
-    direction:     'fwd',
-    curveType:     'hann',
   },
-  // -- 2. seeder -- wide radius, long overlapping grains, atmospheric wash
+
+  // -- 2. cloud -- wide radius, long overlapping grains, atmospheric wash
+  //    panSpread 0.55 — spread is character-defining here.
   {
     name:          'cloud',
-    nearestMode:   false,
-    grainKAllMode: false,
-    grainKSeqMode: false,
     searchRadiusDeg: 55,
     recencyN:      4,
     k:             8,
-    duration:      0.85,   // 850ms -- very long, overlapping
+    duration:      0.85,
     durJitter:     0.3,
     durVar:        0.12,
-    period:        0.28,   // 280ms -> density
+    period:        0.28,
     periodVar:     0.04,
     fadeRatio:     0.28,
-    retriggerMs:   400,
     pitchJitter:   0.02,
-    pitchShift:    0,      // no base pitch shift
-    panSpread:     1.0,
+    panSpread:     0.55,
     volume:        0.55,
     probability:   0.9,
-    direction:     'fwd',
-    curveType:     'hann',
   },
+
   // -- 3. freeze -- lock+wide: drone, holds position in a wide halo
   {
     name:          'freeze',
     nearestMode:   true,
-    grainKAllMode: false,
-    grainKSeqMode: false,
     searchRadiusDeg: 40,
     recencyN:      5,
     k:             10,
-    duration:      2.0,    // 2s -- very long
+    duration:      2.0,
     durJitter:     0.35,
     durVar:        0.25,
-    period:        1.1,    // 1100ms
+    period:        1.1,
     periodVar:     0.08,
     fadeRatio:     0.25,
-    retriggerMs:   900,
-    pitchJitter:   0.004,
-    pitchShift:    0,      // no base pitch shift
-    panSpread:     0.85,
+    panSpread:     0.20,
     volume:        0.70,
-    probability:   1.0,
-    direction:     'fwd',
-    curveType:     'hann',
   },
+
   // -- 4. pulse -- rhythmic, medium grains with tight period, forward drive
   {
     name:          'pulse',
-    nearestMode:   false,
-    grainKAllMode: false,
-    grainKSeqMode: false,
     searchRadiusDeg: 18,
-    recencyN:      2,
     k:             4,
-    duration:      0.22,   // 220ms
+    duration:      0.22,
     durJitter:     0.05,
     durVar:        0.03,
-    period:        0.40,   // 400ms -> 2.5Hz beat
+    period:        0.40,
     periodVar:     0.02,
     fadeRatio:     0.23,
-    retriggerMs:   100,
-    pitchJitter:   0.0,
-    pitchShift:    0,      // no base pitch shift
-    panSpread:     0.4,
+    panSpread:     0.12,
     volume:        1.0,
-    probability:   1.0,
-    direction:     'fwd',
     curveType:     'tri',
   },
-  // -- 5. shimmer -- dense rapid onsets, heavy pitch scatter, stereo spread
-  //    Tuned to ~5 concurrent grains (350ms/70ms) to stay within Chrome's
-  //    audio-thread budget — original 420ms/55ms caused ~7.6 overlapping
-  //    hann+panner nodes which triggered dropout crackling on most hardware.
+
+  // -- 5. shimmer -- dense rapid onsets, pitch scatter
+  //    ~5 concurrent grains (350ms/70ms) — tuned for Chrome audio budget.
+  //    panSpread 0.45 — shimmer spread is part of the character.
   {
     name:          'shimmer',
-    nearestMode:   false,
-    grainKAllMode: false,
-    grainKSeqMode: false,
     searchRadiusDeg: 35,
-    recencyN:      3,
     k:             6,
-    duration:      0.35,   // 350ms -- still long enough for smooth overlap
+    duration:      0.35,
     durJitter:     0.18,
     durVar:        0.06,
-    period:        0.070,  // 70ms -> ~14Hz onset, ~5 concurrent grains
+    period:        0.070,
     periodVar:     0.015,
     fadeRatio:     0.30,
-    retriggerMs:   200,
-    pitchJitter:   0.025,  // ≈ ±43¢ — slightly gentler than before
-    pitchShift:    0,      // no base pitch shift
-    panSpread:     1.0,
+    pitchJitter:   0.025,
+    panSpread:     0.45,
     volume:        0.38,
     probability:   0.85,
-    direction:     'fwd',
-    curveType:     'hann',
   },
+
   // -- 6. ghost -- reverse, sparse, eerie smear from far-flung particles
+  //    panSpread 0.35 — eerie spatial drift is part of the character.
   {
     name:          'ghost',
-    nearestMode:   false,
-    grainKAllMode: false,
-    grainKSeqMode: false,
     searchRadiusDeg: 70,
     recencyN:      6,
     k:             6,
-    duration:      0.70,   // 700ms -- long reverse grains
+    duration:      0.70,
     durJitter:     0.25,
     durVar:        0.15,
-    period:        0.65,   // 650ms -> sparse
+    period:        0.65,
     periodVar:     0.10,
     fadeRatio:     0.31,
-    retriggerMs:   350,
     pitchJitter:   0.06,
-    pitchShift:    0,      // no base pitch shift
-    panSpread:     0.9,
+    panSpread:     0.35,
     volume:        0.85,
     probability:   0.6,
     direction:     'rev',
-    curveType:     'hann',
   },
+
   // -- 7. glitch -- ultra-short random bursts, dropout probability, wide pitch
   {
     name:          'glitch',
-    nearestMode:   false,
-    grainKAllMode: false,
-    grainKSeqMode: false,
     searchRadiusDeg: 80,
     recencyN:      8,
     k:             12,
-    duration:      0.018,  // 18ms -- micro grains
+    duration:      0.018,
     durJitter:     0.5,
     durVar:        0.01,
-    period:        0.04,   // 40ms
+    period:        0.04,
     periodVar:     0.03,
     fadeRatio:     0.22,
-    retriggerMs:   20,
     pitchJitter:   0.45,
-    pitchShift:    0,      // no base pitch shift
-    panSpread:     1.0,
+    panSpread:     0.18,
     volume:        1.0,
     probability:   0.55,
     direction:     'rnd',
     curveType:     'rect',
   },
+
   // -- 8. chop -- mechanical, short exact grains with long gap, no jitter
+  //    Defining: zero jitter everywhere, rect envelope.
   {
     name:          'chop',
-    nearestMode:   false,
-    grainKAllMode: false,
-    grainKSeqMode: false,
     searchRadiusDeg: 15,
-    recencyN:      2,
     k:             3,
-    duration:      0.095,  // 95ms -- consistent short chop
-    durJitter:     0.01,
-    durVar:        0.0,
-    period:        0.20,   // 200ms -> choppy rhythm
-    periodVar:     0.0,
+    duration:      0.095,
+    period:        0.20,
     fadeRatio:     0.08,
-    retriggerMs:   60,
-    pitchJitter:   0.0,
-    pitchShift:    0,
-    panSpread:     0.5,
+    panSpread:     0.12,
     volume:        1.0,
-    probability:   1.0,
-    direction:     'fwd',
     curveType:     'rect',
   },
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // FACTORY PRESETS 9–19 — designed for maximum sonic range
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  // -- 9. ocean -- massive ambient wash: full hemisphere, very long grains,
-  //    slow onset, everything bleeds together into an enveloping drone.
-  //    Think: standing inside a reverb tail.
-  //    k=10 (was 15) to reduce per-tick candidate sorting; period 1.0s
-  //    keeps overlap at ~3.2 (prob-adjusted ~2.4) — safe for hann+panner.
+  // -- 9. ocean -- massive ambient wash, very long grains, slow onset
+  //    Everything bleeds together into an enveloping drone.
+  //    panSpread 0.50 — ambient spread is character-defining.
+  //    Radius capped at 85 (was 120).
   {
     name:          'ocean',
-    nearestMode:   false,
-    searchRadiusDeg: 120,
+    searchRadiusDeg: 85,
     recencyN:      8,
     k:             10,
     duration:      3.2,
@@ -393,18 +334,12 @@ export const PRESETS = [
     period:        1.0,
     periodVar:     0.20,
     fadeRatio:     0.40,
-    retriggerMs:   700,
-    pitchJitter:   0.008,
-    pitchShift:    0,
-    panSpread:     1.0,
+    panSpread:     0.50,
     volume:        0.38,
     probability:   0.75,
-    direction:     'fwd',
-    curveType:     'hann',
   },
 
-  // -- 10. stutter -- CD-skip: lock, very fast repeat of nearly the same point.
-  //    Tight radius, low k, rapid fire — like a buffer glitch or digital stammer.
+  // -- 10. stutter -- CD-skip: lock, very fast repeat of nearly the same point
   {
     name:          'stutter',
     nearestMode:   true,
@@ -413,26 +348,18 @@ export const PRESETS = [
     k:             2,
     duration:      0.065,
     durJitter:     0.02,
-    durVar:        0.005,
     period:        0.060,
     periodVar:     0.005,
     fadeRatio:     0.15,
-    retriggerMs:   40,
-    pitchJitter:   0.01,
-    pitchShift:    0,
-    panSpread:     0.15,
+    panSpread:     0.08,
     volume:        0.90,
-    probability:   1.0,
-    direction:     'fwd',
     curveType:     'tri',
   },
 
-  // -- 11. tape -- k-seq: walks through particles in recording order.
-  //    Medium grains, slight pitch wander, gentle pan — like playing back
-  //    a worn cassette of your painting, slightly detuned and drifting.
+  // -- 11. tape -- k-seq: walks through particles in recording order
+  //    Like playing back a worn cassette, slightly detuned and drifting.
   {
     name:          'tape',
-    nearestMode:   false,
     grainKSeqMode: true,
     searchRadiusDeg: 30,
     recencyN:      5,
@@ -443,25 +370,18 @@ export const PRESETS = [
     period:        0.28,
     periodVar:     0.08,
     fadeRatio:     0.28,
-    retriggerMs:   120,
     pitchJitter:   0.04,
-    pitchShift:    0,
-    panSpread:     0.55,
+    panSpread:     0.15,
     volume:        0.70,
     probability:   0.92,
-    direction:     'fwd',
-    curveType:     'hann',
   },
 
   // -- 12. swarm -- k-all + wide radius: every particle within earshot fires
-  //    simultaneously. Dense insect-seeder texture that thickens as you paint
-  //    more. Tight grains so individual onsets fuse into a buzzing mass.
+  //    Dense insect texture that thickens as you paint more.
   {
     name:          'swarm',
-    nearestMode:   false,
     grainKAllMode: true,
     searchRadiusDeg: 45,
-    recencyN:      4,
     k:             20,
     duration:      0.055,
     durJitter:     0.3,
@@ -469,23 +389,18 @@ export const PRESETS = [
     period:        0.035,
     periodVar:     0.015,
     fadeRatio:     0.18,
-    retriggerMs:   25,
     pitchJitter:   0.12,
-    pitchShift:    0,
-    panSpread:     0.85,
+    panSpread:     0.20,
     volume:        0.30,
     probability:   0.7,
     direction:     'rnd',
     curveType:     'rect',
   },
 
-  // -- 13. haunt -- reverse + sparse + pitched down an octave.
-  //    Long ghostly swells that rise backwards out of silence, suboctave
-  //    weight gives it a spectral bass presence. Wide radius grazes
-  //    distant memories of painted sound.
+  // -- 13. haunt -- reverse + sparse + pitched down an octave
+  //    Long ghostly swells, suboctave spectral bass presence.
   {
     name:          'haunt',
-    nearestMode:   false,
     searchRadiusDeg: 90,
     recencyN:      6,
     k:             5,
@@ -495,50 +410,35 @@ export const PRESETS = [
     period:        1.2,
     periodVar:     0.30,
     fadeRatio:     0.35,
-    retriggerMs:   500,
     pitchJitter:   0.03,
     pitchShift:    -12,
-    panSpread:     0.8,
+    panSpread:     0.20,
     volume:        0.75,
     probability:   0.5,
     direction:     'rev',
-    curveType:     'hann',
   },
 
-  // -- 14. morse -- k-seq + lock: sequential walk through nearest particles
-  //    with rhythmic precision. Short rect grains with silence between —
-  //    like a telegraph or sonar ping scanning through your painted data.
+  // -- 14. morse -- k-seq + lock: sequential walk, telegraph precision
+  //    Short rect grains with silence between — sonar ping.
   {
     name:          'morse',
     nearestMode:   true,
     grainKSeqMode: true,
     searchRadiusDeg: 20,
-    recencyN:      3,
     k:             6,
     duration:      0.045,
-    durJitter:     0.0,
-    durVar:        0.0,
     period:        0.18,
-    periodVar:     0.0,
     fadeRatio:     0.05,
-    retriggerMs:   30,
-    pitchJitter:   0.0,
-    pitchShift:    0,
-    panSpread:     0.3,
+    panSpread:     0.10,
     volume:        1.0,
-    probability:   1.0,
-    direction:     'fwd',
     curveType:     'rect',
   },
 
-  // -- 15. smear -- ultra-long grains, high overlap, pitched up a fifth (+7).
-  //    Everything blurs into shimmering harmonic sustain. Like bowing glass
-  //    or a granular reverb frozen in mid-shimmer.
-  //    Tuned to ~4.3 concurrent grains (2.6s/0.60s) — original 2.8s/0.45s
-  //    produced 6.2 overlapping hann+panner nodes, well into crackle territory.
+  // -- 15. smear -- ultra-long grains, high overlap, pitched up a fifth (+7)
+  //    Everything blurs into shimmering harmonic sustain.
+  //    ~4.3 concurrent grains (2.6s/0.60s).
   {
     name:          'smear',
-    nearestMode:   false,
     searchRadiusDeg: 50,
     recencyN:      4,
     k:             7,
@@ -548,48 +448,32 @@ export const PRESETS = [
     period:        0.60,
     periodVar:     0.10,
     fadeRatio:     0.40,
-    retriggerMs:   400,
     pitchJitter:   0.015,
     pitchShift:    7,
-    panSpread:     0.9,
+    panSpread:     0.20,
     volume:        0.42,
     probability:   0.85,
-    direction:     'fwd',
-    curveType:     'hann',
   },
 
   // -- 16. drill -- audio-rate grains: period at 3ms pushes into pitched
-  //    buzzing territory. The grain stream itself becomes a tone whose
-  //    timbre is your painted audio. Tiny radius = focused, aggressive.
+  //    buzzing territory. The grain stream becomes a tone.
   {
     name:          'drill',
-    nearestMode:   false,
     searchRadiusDeg: 8,
-    recencyN:      2,
     k:             3,
     duration:      0.004,
-    durJitter:     0.0,
-    durVar:        0.0,
     period:        0.003,
-    periodVar:     0.0,
     fadeRatio:     0.10,
-    retriggerMs:   2,
-    pitchJitter:   0.0,
-    pitchShift:    0,
-    panSpread:     0.1,
+    panSpread:     0.05,
     volume:        0.65,
-    probability:   1.0,
-    direction:     'fwd',
     curveType:     'rect',
   },
 
-  // -- 17. scatter -- k-seq + reverse + high probability dropout.
-  //    Walks recording order backwards with random silences — sounds like
-  //    someone tearing up a tape and tossing fragments in the wind.
-  //    Wide pitch jitter scatters each piece into a different register.
+  // -- 17. scatter -- k-seq + reverse + high probability dropout
+  //    Walks recording order backwards with random silences.
+  //    panSpread 0.35 — scattered spatial fragments.
   {
     name:          'scatter',
-    nearestMode:   false,
     grainKSeqMode: true,
     searchRadiusDeg: 60,
     recencyN:      5,
@@ -600,24 +484,19 @@ export const PRESETS = [
     period:        0.32,
     periodVar:     0.12,
     fadeRatio:     0.20,
-    retriggerMs:   80,
     pitchJitter:   0.18,
-    pitchShift:    0,
-    panSpread:     1.0,
+    panSpread:     0.35,
     volume:        0.80,
     probability:   0.45,
     direction:     'rev',
     curveType:     'tri',
   },
 
-  // -- 18. wobble -- warped tape: slow period with heavy dur+period variation.
-  //    Unstable playback speed, grains stretch and compress like a cassette
-  //    player with dying batteries.
+  // -- 18. wobble -- warped tape: heavy dur+period variation
+  //    Unstable playback speed, like dying batteries.
   {
     name:          'wobble',
-    nearestMode:   false,
     searchRadiusDeg: 25,
-    recencyN:      3,
     k:             5,
     duration:      0.48,
     durJitter:     0.12,
@@ -625,24 +504,16 @@ export const PRESETS = [
     period:        0.38,
     periodVar:     0.15,
     fadeRatio:     0.25,
-    retriggerMs:   150,
     pitchJitter:   0.08,
-    pitchShift:    0,
-    panSpread:     0.65,
+    panSpread:     0.15,
     volume:        0.80,
     probability:   0.88,
-    direction:     'fwd',
-    curveType:     'hann',
   },
 
-  // -- 19. ritual -- slow, deep, deliberate. Pitched down a fourth (-5),
-  //    long grains with wide attack/release, sparse timing. Each grain
-  //    is an event. Low probability means silence between — meditative,
-  //    ceremonial weight. k-all so when grains do fire, the whole radius
-  //    speaks at once like a choir.
+  // -- 19. ritual -- slow, deep, deliberate. Pitched down a fourth (-5).
+  //    k-all so when grains fire, the whole radius speaks like a choir.
   {
     name:          'ritual',
-    nearestMode:   false,
     grainKAllMode: true,
     searchRadiusDeg: 35,
     recencyN:      6,
@@ -653,14 +524,136 @@ export const PRESETS = [
     period:        2.2,
     periodVar:     0.40,
     fadeRatio:     0.38,
-    retriggerMs:   800,
-    pitchJitter:   0.02,
     pitchShift:    -5,
-    panSpread:     0.7,
+    panSpread:     0.18,
     volume:        0.60,
     probability:   0.4,
-    direction:     'fwd',
-    curveType:     'hann',
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RADIAL MORPH PRESETS 20–25 — designed for gyro joystick morphing
+  // Pin these 6 on the radial joystick for full-spectrum gesture control.
+  // Each is an extreme pole; inverse-distance blending between any pair
+  // sweeps through musically meaningful intermediate territory.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // -- 20. shimmer-high -- ENERGY pole
+  //    Bright, dense, fast, pitched up an octave. Maximum liveliness.
+  //    Morph toward this = excite, accelerate, brighten.
+  {
+    name:          'shimmer-high',
+    searchRadiusDeg: 30,
+    k:             6,
+    duration:      0.25,
+    durJitter:     0.15,
+    durVar:        0.05,
+    period:        0.065,
+    periodVar:     0.012,
+    fadeRatio:     0.30,
+    pitchJitter:   0.03,
+    pitchShift:    12,
+    panSpread:     0.15,
+    volume:        0.35,
+    probability:   0.90,
+  },
+
+  // -- 21. deep-drone -- CALM pole
+  //    Long, slow, pitched down an octave, smooth. Maximum stillness.
+  //    Morph toward this = settle, deepen, sustain.
+  {
+    name:          'deep-drone',
+    searchRadiusDeg: 45,
+    recencyN:      5,
+    k:             8,
+    duration:      2.5,
+    durJitter:     0.20,
+    durVar:        0.30,
+    period:        1.4,
+    periodVar:     0.15,
+    fadeRatio:     0.38,
+    pitchShift:    -12,
+    panSpread:     0.12,
+    volume:        0.65,
+  },
+
+  // -- 22. glitch-burst -- CHAOS pole
+  //    Micro grains, random direction, wide pitch scatter, dropout.
+  //    Morph toward this = fragment, scatter, destabilize.
+  {
+    name:          'glitch-burst',
+    searchRadiusDeg: 75,
+    recencyN:      8,
+    k:             10,
+    duration:      0.020,
+    durJitter:     0.45,
+    durVar:        0.01,
+    period:        0.045,
+    periodVar:     0.025,
+    fadeRatio:     0.15,
+    pitchJitter:   0.40,
+    panSpread:     0.18,
+    volume:        0.90,
+    probability:   0.50,
+    direction:     'rnd',
+    curveType:     'rect',
+  },
+
+  // -- 23. crystal-seq -- ORDER pole
+  //    K-seq, clean, precise, no jitter. Maximum clarity and sequence.
+  //    Morph toward this = focus, clarify, articulate.
+  {
+    name:          'crystal-seq',
+    grainKSeqMode: true,
+    searchRadiusDeg: 20,
+    k:             5,
+    duration:      0.18,
+    period:        0.15,
+    fadeRatio:     0.22,
+    panSpread:     0.08,
+    volume:        0.85,
+    curveType:     'tri',
+  },
+
+  // -- 24. swarm-buzz -- DENSITY pole
+  //    K-all, short grains, many particles buzzing. Maximum saturation.
+  //    Morph toward this = thicken, swarm, saturate.
+  {
+    name:          'swarm-buzz',
+    grainKAllMode: true,
+    searchRadiusDeg: 40,
+    k:             20,
+    duration:      0.040,
+    durJitter:     0.25,
+    period:        0.030,
+    periodVar:     0.010,
+    fadeRatio:     0.15,
+    pitchJitter:   0.10,
+    panSpread:     0.15,
+    volume:        0.28,
+    probability:   0.75,
+    curveType:     'rect',
+  },
+
+  // -- 25. ghost-breath -- SPACE pole
+  //    Reverse, sparse, wide radius, low probability. Maximum openness.
+  //    Morph toward this = dissolve, haunt, open.
+  {
+    name:          'ghost-breath',
+    searchRadiusDeg: 85,
+    recencyN:      7,
+    k:             5,
+    duration:      1.0,
+    durJitter:     0.30,
+    durVar:        0.20,
+    period:        0.90,
+    periodVar:     0.20,
+    fadeRatio:     0.35,
+    pitchJitter:   0.04,
+    pitchShift:    -5,
+    panSpread:     0.18,
+    volume:        0.70,
+    probability:   0.45,
+    direction:     'rev',
   },
 
 ];
@@ -682,23 +675,82 @@ const _userDefault = n => ({
 // Insert 20 user slots at the front (indices 0–19), shifting factory to 20+
 for (let n = 20; n >= 1; n--) PRESETS.unshift(_userDefault(n));
 
+// Meta keys that every preset has (not parameter data).
+const _PRESET_META_KEYS = new Set(['name', 'userDefined']);
+
 // Load saved user presets from localStorage and overwrite the 20 slots in-place.
 // Call this before building the preset buttons so the UI reflects saved names.
+// Strips any stale keys that aren't in PARAM_REGISTRY (e.g. durJitter,
+// retriggerMs from old saves) so they can't silently trigger parameter
+// application in selectPreset.
 export function loadUserPresets() {
   try {
     const raw = localStorage.getItem('mubone_user_presets');
     if (!raw) return;
     const saved = JSON.parse(raw);
     if (!Array.isArray(saved)) return;
+
+    // Build the set of valid keys lazily (PARAM_REGISTRY may not exist yet
+    // at import time, so we defer to first call).
+    if (!_validParamKeys) _buildValidParamKeys();
+
+    let cleaned = false;
     saved.forEach((p, n) => {
       const idx = USER_PRESET_START + n;
       if (idx < FACTORY_PRESET_START && p && typeof p === 'object') {
+        // Strip unknown keys — prevents old saves from hiding data that
+        // selectPreset would silently apply (e.g. durJitter, retriggerMs).
+        for (const k of Object.keys(p)) {
+          if (!_PRESET_META_KEYS.has(k) && !_validParamKeys.has(k)) {
+            delete p[k];
+            cleaned = true;
+          }
+        }
         PRESETS[idx] = { ...PRESETS[idx], ...p, userDefined: true };
       }
     });
+    if (cleaned) {
+      console.info('[presets] stripped stale keys from user presets — re-saving');
+      saveUserPresets();
+    }
   } catch (e) {
     console.warn('[presets] could not load user presets from localStorage:', e);
   }
+}
+
+// Valid parameter keys — populated lazily from PARAM_REGISTRY on first use.
+let _validParamKeys = null;
+/** @param {Array} [registry] — pass PARAM_REGISTRY from ui-patch-table */
+export function _buildValidParamKeys(registry) {
+  if (registry) {
+    _validParamKeys = new Set(registry.map(p => p.key));
+  } else {
+    // Fallback: build from known keys until PARAM_REGISTRY is available.
+    // Must stay in sync with PARAM_REGISTRY in ui-patch-table.js.
+    _validParamKeys = new Set([
+      'duration', 'durVar', 'fadeRatio', 'period', 'periodVar',
+      'pitchJitter', 'pitchShift', 'panSpread', 'volume', 'k',
+      'probability', 'direction', 'curveType',
+      'nearestMode', 'grainKAllMode', 'grainKSeqMode',
+      'searchRadiusDeg', 'recencyN',
+      'radiusFadeEnabled', 'radiusFadeCurve',
+      'scanMuted', 'axisLockAz', 'axisLockEl',
+      'seqSlotCount', 'seqOverflow', 'seqModeEnabled',
+      'seqNextVolume', 'seqNextSpeed', 'seqNextDirection',
+      'seedSlotCount', 'seedOverflow', 'seedLockEnabled',
+      'seedMode', 'seedTether', 'seedXfade',
+      'seedAttack', 'seedRelease', 'seedLoopMode',
+    ]);
+  }
+}
+
+/** Check whether a preset has any actual parameter data (beyond name/meta). */
+export function presetHasParams(preset) {
+  if (!preset || typeof preset !== 'object') return false;
+  for (const k of Object.keys(preset)) {
+    if (!_PRESET_META_KEYS.has(k)) return true;
+  }
+  return false;
 }
 
 // Persist the 20 user slots to localStorage.
@@ -1141,6 +1193,27 @@ export const S = {
   fovDeg:        80,        // field of view (degrees) — match to projector throw for room-anchored use
   driftOffsetQ:  null,      // persistent [x,y,z,w] correction quaternion applied on recenter
 
+  // ── Handsfree recording ────────────────────────────────────────────────
+  // Pedal-armed auto-record: noise gate segments buffers within toggle-trace.
+  // Tap trace on → gate listens → each phrase becomes a separate buffer.
+  hfArmed:          false,   // true = handsfree armed (gate segmentation active in toggle-trace)
+  hfRecording:      false,   // true = handsfree gate has opened a buffer capture
+  hfGateOpen:       false,   // current gate state (after envelope processing)
+  _traceToggled:    false,   // true = trace was toggled on (tap), not momentary-held
+  hfHoldMs:         500,     // hold time (ms) — gate stays open through pauses shorter than this
+  hfReleaseMs:      200,     // release time (ms) — smooth gate close after hold expires
+  hfAttackMs:       3,       // attack time (ms) — how fast gate opens
+  hfMarginDb:       0,       // output-referenced threshold margin (dB above output RMS) — 0 = off
+  hfHpfFreq:        120,     // high-pass filter frequency (Hz) for gate sidechain
+  hfHpfEnabled:     true,    // enable HPF on gate sidechain
+  hfMinBufferMs:    150,     // reject gate opens shorter than this (ms)
+  hfMaxBufferSec:   30,      // auto-close after this many seconds
+  hfFeedbackDetect: true,    // enable rising-RMS feedback trend detection
+  hfCompEnabled:    false,   // optional pre-gate compressor (off by default)
+  hfCompRatio:      3,       // compressor ratio (2:1–4:1)
+  hfCaptureCount:   0,       // number of buffers auto-captured this session
+  hfCaptureFlashUntil: 0,    // performance.now() timestamp for HUD flash
+
   // ── Audio ──────────────────────────────────────────────────────────────
   audioCtx:   null,
   inputStream: null,   // shared MediaStream from mic (set by audio.js)
@@ -1313,6 +1386,10 @@ export const S = {
   // ── Output gain + mute ─────────────────────────────────────────────────
   outputGainValue: 0.9,  // linear gain (0–2), matches masterGain initial value
   isMuted:         false,
+  projectorMode:   false,  // true when projector layout is active (Shift+F)
+  projectorPopup:  null,   // popup Window reference for projector mirror
+  projectorCtx:    null,   // popup canvas 2D context for mirror blit
+  _syncProjectorHUD: null, // per-frame HUD sync callback (set when popup opens)
 
   // ── Mobile setup gate ──────────────────────────────────────────────────
   _mobileSetupDone: false, // true once orientation + gyro setup completes

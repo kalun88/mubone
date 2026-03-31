@@ -931,6 +931,11 @@ const MAX_GRAINS_PER_TICK = 12;
 
 // ── Moving seed helpers ────────────────────────────────────────────────────
 // Interpolate a moving seed's frame data at its current playhead position.
+// Interpolate a moving seed's current frame.  Reuses seed._currentFrame
+// when available to avoid allocating a 12-property object every 20ms tick
+// per moving seed (at 16 seeds × 50 ticks/sec = 800 objects/sec of GC
+// pressure).  When the effective time lands exactly on a keyframe,
+// returns that keyframe directly (no allocation either way).
 export function _interpolateMovingSeed(seed) {
   const { frames, duration, loopMode, _playheadMs } = seed;
   if (!frames.length) return null;
@@ -940,12 +945,9 @@ export function _interpolateMovingSeed(seed) {
     const pos = _playheadMs % cycle;
     effectiveT = pos <= duration ? pos : cycle - pos;
   } else if (loopMode === 'rev') {
-    // Reverse: traverse path end→start, looping. As playhead advances,
-    // effectiveT counts down from duration to 0, then wraps back to duration.
     const pos = _playheadMs % duration;
     effectiveT = duration - pos;
   } else {
-    // 'forward' (default): traverse path start→end, looping.
     effectiveT = _playheadMs % duration;
   }
   // Binary search for bounding frames
@@ -958,20 +960,28 @@ export function _interpolateMovingSeed(seed) {
   const a = frames[lo], b = frames[hi];
   if (lo === hi || a.t === b.t) return a;
   const frac = (effectiveT - a.t) / (b.t - a.t);
-  return {
-    lon:               a.lon + (b.lon - a.lon) * frac,
-    lat:               a.lat + (b.lat - a.lat) * frac,
-    grainParams:       frac < 0.5 ? a.grainParams : b.grainParams,
-    searchRadiusDeg:   a.searchRadiusDeg + (b.searchRadiusDeg - a.searchRadiusDeg) * frac,
-    nearestMode:       frac < 0.5 ? a.nearestMode : b.nearestMode,
-    kAllMode:          frac < 0.5 ? a.kAllMode : b.kAllMode,
-    kSeqMode:          frac < 0.5 ? a.kSeqMode : b.kSeqMode,
-    grainDirection:    frac < 0.5 ? a.grainDirection : b.grainDirection,
-    grainCurveType:    frac < 0.5 ? a.grainCurveType : b.grainCurveType,
-    grainProbability:  a.grainProbability + (b.grainProbability - a.grainProbability) * frac,
-    radiusFadeEnabled: frac < 0.5 ? a.radiusFadeEnabled : b.radiusFadeEnabled,
-    radiusFadeCurve:   a.radiusFadeCurve + (b.radiusFadeCurve - a.radiusFadeCurve) * frac,
-  };
+  // Wrap-aware longitude interpolation
+  let dLon = b.lon - a.lon;
+  if (dLon > Math.PI) dLon -= 2 * Math.PI;
+  else if (dLon < -Math.PI) dLon += 2 * Math.PI;
+  let lon = a.lon + dLon * frac;
+  if (lon > Math.PI) lon -= 2 * Math.PI;
+  else if (lon < -Math.PI) lon += 2 * Math.PI;
+  // Reuse existing _currentFrame object to avoid per-tick allocation
+  const out = seed._currentFrame || {};
+  out.lon               = lon;
+  out.lat               = a.lat + (b.lat - a.lat) * frac;
+  out.grainParams       = frac < 0.5 ? a.grainParams : b.grainParams;
+  out.searchRadiusDeg   = a.searchRadiusDeg + (b.searchRadiusDeg - a.searchRadiusDeg) * frac;
+  out.nearestMode       = frac < 0.5 ? a.nearestMode : b.nearestMode;
+  out.kAllMode          = frac < 0.5 ? a.kAllMode : b.kAllMode;
+  out.kSeqMode          = frac < 0.5 ? a.kSeqMode : b.kSeqMode;
+  out.grainDirection    = frac < 0.5 ? a.grainDirection : b.grainDirection;
+  out.grainCurveType    = frac < 0.5 ? a.grainCurveType : b.grainCurveType;
+  out.grainProbability  = a.grainProbability + (b.grainProbability - a.grainProbability) * frac;
+  out.radiusFadeEnabled = frac < 0.5 ? a.radiusFadeEnabled : b.radiusFadeEnabled;
+  out.radiusFadeCurve   = a.radiusFadeCurve + (b.radiusFadeCurve - a.radiusFadeCurve) * frac;
+  return out;
 }
 
 // Advance a moving seed's playhead.

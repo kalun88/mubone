@@ -35,10 +35,21 @@ docs/               — project reference documents (see below)
 ## Key architecture patterns
 
 - **Shared state object `S`** (in `state.js`): all modules read/write to `S`. Callback hooks (`S._funcName = handler`) avoid circular imports.
-- **Grain scheduler** runs on its own setInterval (10ms), independent of the render loop (30fps).
+- **Grain scheduler** runs on its own setInterval (20ms), independent of the render loop (30fps).
 - **VBAP** for spatial panning — pre-computed lookup table, O(1) per grain, works for any speaker count.
 - **Head-locked vs world-locked** spatial modes.
 - **Preset system** with 20 slots, save/load to localStorage.
+
+### Render-path performance — protect the scheduler
+
+The grain scheduler is timing-sensitive (20ms interval, audio-rate onset precision). The render loop (30fps RAF) shares the main thread and can starve it. **Moving cloud trail rendering was the #1 source of scheduler drift** until the Mar 29 optimization pass (#108). Key invariants to preserve:
+
+- **`projectInto()` + `updateProjectionCache()`** — zero-alloc projection for hot paths. Trail rendering must never use `project()` (allocates per call). The projection cache (focalLen, canvas half-dims) is set once per frame in `drawFrame()`.
+- **Batched canvas fills** — all trail dots go into a single `beginPath()/fill()`. Never revert to per-dot `beginPath()/arc()/fill()` triplets — that was the main GPU stall.
+- **`_TRAIL_BUDGET = 120`** — total trail projections per frame, shared across all moving seeds. Keep this low. The old value (200) caused measurable scheduler drift.
+- **`_interpolateMovingSeed()` reuses `seed._currentFrame`** — no per-tick object allocation in the scheduler. Don't change this to return a new object.
+
+If you add new per-frame work to the render loop (especially anything with trig, projection, or canvas calls), profile against scheduler drift first.
 
 ## Feature flag: experimental mode
 

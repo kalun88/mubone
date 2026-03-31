@@ -19,7 +19,7 @@
 					"maxclass" : "comment",
 					"numinlets" : 1,
 					"numoutlets" : 0,
-					"patching_rect" : [ 32.0, 67.0, 281.0, 74.0 ],
+					"patching_rect" : [ 32.0, 67.0, 282.0, 74.0 ],
 					"text" : "off = turns the LED assigned to that pad off,\nr = red, rs = red flashing slow, rf = red flashing fast, g = green, gs = green flashing slow,\ngf = green flashing fast\n"
 				}
 
@@ -415,7 +415,7 @@
 , 			{
 				"box" : 				{
 					"id" : "obj-38",
-					"items" : [ "AU DLS Synth 1", ",", "SoftStep Control Surface", ",", "SoftStep Expander", ",", "from Max 1", ",", "from Max 2" ],
+					"items" : [ "AU DLS Synth 1", ",", "SoftStep Control Surface", ",", "SoftStep Expander", ",", "nanoKONTROL Studio Bluetooth", ",", "from Max 1", ",", "from Max 2" ],
 					"maxclass" : "umenu",
 					"numinlets" : 1,
 					"numoutlets" : 3,
@@ -1085,7 +1085,7 @@
 
 			}
  ],
-		"originid" : "pat-1512"
+		"originid" : "pat-262"
 	}
 
 }

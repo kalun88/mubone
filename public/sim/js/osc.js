@@ -396,6 +396,7 @@ export function handleOSC(rawAddress, values) {
 
     // ── Trace mode ──────────────────────────────────────────────────────────
     case '/trace/mode':   S._dispatchAction?.('trace_mode', 127); break;
+    case '/trace/toggle': S._dispatchAction?.('trace_toggle', 127); break;
 
     case '/undo':         S._dispatchAction?.('undo', 127);       break;
     case '/sweep':        S._dispatchAction?.('sweep', 127);      break;
@@ -443,6 +444,7 @@ export function handleOSC(rawAddress, values) {
     }
 
     // ── App ─────────────────────────────────────────────────────────────────
+    case '/handsfree':      S._dispatchAction?.('handsfree', 127);  break;
     case '/app/perf':       S._dispatchAction?.('perf', 127);      break;
     case '/app/perfmode':   S._dispatchAction?.('perfmode', 127);  break;
     case '/app/darkmode':   S._dispatchAction?.('darkmode', 127);  break;
@@ -460,8 +462,8 @@ export function handleOSC(rawAddress, values) {
       break;
     }
     case '/search/radius':
-      S.searchRadiusDeg = clamp(values[0], SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX);
-      updatePlaybackControls();
+      S.searchRadiusDeg = Math.round(clamp(values[0], SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX));
+      scheduleUISync();
       break;
     case '/search/radius/inc': S._dispatchAction?.('radius_inc', 127); break;
     case '/search/radius/dec': S._dispatchAction?.('radius_dec', 127); break;
@@ -484,6 +486,30 @@ export function handleOSC(rawAddress, values) {
       break;
     case '/mixdown/house':
       setMixdownHouseGain(clamp(values[0], 0, 1));
+      break;
+
+    // ── Master volume & noise gate ──────────────────────────────────────────
+    // /master/volume f  — dB value (-60 to +6), drives the audio settings slider
+    case '/master/volume':
+      S._setOutputGainDb?.(clamp(values[0], -60, 6));
+      break;
+    // /gate/threshold f — linear RMS (0 to 0.06)
+    case '/gate/threshold':
+      S._setNoiseGateThreshold?.(clamp(values[0], 0, 0.06));
+      break;
+
+    // ── Cloud morph ─────────────────────────────────────────────────────────
+    // /morph/position f  — 0–1 morph position
+    case '/morph/position':
+      S._setDesktopMorphT?.(clamp(values[0], 0, 1));
+      break;
+    // /morph/sticky bang — toggle morph hold
+    case '/morph/sticky':
+      S._toggleDesktopMorphSticky?.();
+      break;
+    // /morph/return f — return-to-center glide time in ms (50–3000)
+    case '/morph/return':
+      S._setDesktopMorphReturnMs?.(clamp(values[0], 50, 3000));
       break;
 
     default:

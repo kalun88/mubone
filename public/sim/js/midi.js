@@ -9,6 +9,7 @@ import {
 } from './state.js';
 import { ensureAudioContext } from './audio.js';
 import { startLiveRecording, stopLiveRecording } from './audio.js';
+import { toggleHandsfree } from './handsfree.js';
 import {
   recordStrokeStart, undoLastStroke,
 } from './ui-samples.js';
@@ -31,10 +32,8 @@ import { getCursorLonLat, screenToLonLat } from './sphere.js';
 // osc: OSC path string or null
 const ACTIONS = [
 
-  // ── Transport ──────────────────────────────────────────────────────────────
-  { id: null, group: 'transport' },
-  { id: 'recpaint',     label: 'trace',                     key: 'click / space',     osc: '/trace',             fmt: 'int 0|1',          type: 'hold',
-    tip: 'hold to record mic input and paint particles on the sphere — release to stop' },
+  // ── Session ────────────────────────────────────────────────────────────────
+  { id: null, group: 'session' },
   { id: 'mute',         label: 'system mute',               key: 'M',                 osc: '/mute',              fmt: 'int 0|1',          type: 'trigger',
     tip: 'silence all audio output' },
   { id: 'undo',         label: 'undo last stroke',          key: 'right click / ⌘Z',  osc: '/undo',              fmt: 'bang',             type: 'trigger',
@@ -46,75 +45,8 @@ const ACTIONS = [
 
   // ── Patches ────────────────────────────────────────────────────────────────
   { id: null, group: 'patches' },
-  { id: 'preset_select', label: 'patch select (1–20)',      key: '1–0, shift+1–0',    osc: '/preset',        fmt: 'int 1–20',          type: 'cc',
+  { id: 'preset_select', label: 'patch select (1–20)',      key: '1–0, shift+1–0',    osc: '/preset',        fmt: 'int 1–46',          type: 'cc',
     ccFn: v => { const idx = Math.min(PRESETS.length - 1, Math.floor((v / 127) * PRESETS.length)); selectPreset(idx); } },
-
-  // ── Cursor / Scan (S) ─────────────────────────────────────────────────────
-  { id: null, group: 'cursor' },
-  { id: 'scan_toggle',  label: 'scan on/off (S)',            key: 'S',                 osc: '/cursor/scan',       fmt: 'int 0|1',          type: 'trigger',
-    tip: 'toggle scan — cursor spotlight on/off in the house output' },
-  { id: 'tare',         label: 'tare / zero (Z)',            key: '`',                 osc: '/cursor/tare',       fmt: 'bang',             type: 'trigger',
-    tip: 'zero the cursor sensor — set current orientation as center reference' },
-  { id: 'lock_az',      label: 'lock azimuth (toggle)',      key: '—',                 osc: '/cursor/lock_az',    fmt: 'int 0|1',          type: 'toggle',
-    tip: 'toggle azimuth lock — freezes horizontal position' },
-  { id: 'lock_el',      label: 'lock elevation (toggle)',    key: '—',                 osc: '/cursor/lock_el',    fmt: 'int 0|1',          type: 'toggle',
-    tip: 'toggle elevation lock — freezes vertical position' },
-  { id: 'radius_fade',  label: 'radius fade on/off',        key: '—',                 osc: '/cursor/radiusfade', fmt: 'int 0|1',          type: 'trigger',
-    tip: 'attenuate grains by distance from cursor centre' },
-  { id: 'radius_fade_curve', label: 'radius fade curve',    key: '—',                 osc: '/cursor/radiusfadecurve', fmt: 'float 0–1',   type: 'cc',
-    tip: '0 = gentle linear fade, 1 = steep sharp edge rolloff',
-    ccFn: v => { S.radiusFadeCurve = v / 127; S._syncRadiusFadeUI?.(); } },
-
-  // ── Trace (A) ─────────────────────────────────────────────────────────────
-  { id: null, group: 'trace (A)' },
-  { id: 'trace_mode',   label: 'trace mode cycle (A)',      key: 'A',                 osc: '/trace/mode',      fmt: 'bang',                             type: 'trigger',
-    tip: 'cycle trace mode: trace → trace+loop → trace+cloud' },
-
-  // ── Commit (D) ────────────────────────────────────────────────────────────
-  { id: null, group: 'commit (D)' },
-  { id: 'commit_mode',  label: 'commit mode cycle (⇧D)',    key: 'Shift+D',           osc: '/commit/mode',     fmt: 'bang',             type: 'trigger',
-    tip: 'cycle commit mode: cloud ↔ loop — what D key creates' },
-  { id: 'commit_drop',  label: 'drop commit (tap D)',       key: 'D',                 osc: '/commit/drop',     fmt: 'bang',             type: 'trigger',
-    tip: 'drop a stationary cloud or loop at the current cursor position' },
-  { id: 'commit_draw',  label: 'draw commit (hold D)',      key: 'hold D',            osc: '/commit/draw',     fmt: 'int 0|1',          type: 'hold',
-    tip: 'hold to draw a moving cloud path or record a loop — release to finalize' },
-  { id: 'commit_release', label: 'release nearest (⌘D)',    key: '⌘D',               osc: '/commit/release',  fmt: 'bang',             type: 'trigger',
-    tip: 'release the nearest commit (cloud or loop) from its slot' },
-  { id: 'commit_clear', label: 'clear all commits',         key: '—',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
-    tip: 'remove all clouds and loops from all slots' },
-  { id: 'commit_selection', label: 'selection mode (toggle)', key: '—',               osc: '/commit/selection', fmt: 'bang',                 type: 'trigger',
-    tip: 'toggle which commit is targeted for release and morph — closest or farthest from cursor' },
-  { id: 'commit_slots', label: 'commit slot count',         key: '—',                 osc: '/commit/slots',    fmt: 'int 1–16',         type: 'cc',
-    tip: 'number of active commit slots (1–16)',
-    ccFn: v => { S.commitSlotCount = Math.max(1, Math.min(16, Math.round(1 + v * 15 / 127))); const sel = document.getElementById('commitSlotCountSelect'); if (sel) sel.value = String(S.commitSlotCount); (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))(); } },
-  { id: 'commit_overflow', label: 'commit overflow (cycle)', key: '—',                osc: '/commit/overflow', fmt: 'bang',                   type: 'trigger',
-    tip: 'cycle overflow mode: off → oldest → nearest' },
-  { id: 'commit_dir',   label: 'commit movement dir',       key: '—',                 osc: '/commit/dir',      fmt: 'bang',                 type: 'trigger',
-    tip: 'how moving commits traverse their path — cycles fwd → rev → pingpong' },
-  { id: 'commit_volume', label: 'next commit volume',       key: '—',                 osc: '/commit/volume',   fmt: 'float 0–1',        type: 'cc',
-    tip: 'volume for the next commit — set before recording',
-    ccFn: v => { S.seqNextParams.volume = v / 127; const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume; const nb = document.getElementById('seqVolumeNum'); if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; } },
-  { id: 'commit_speed', label: 'next commit speed',         key: '—',                 osc: '/commit/speed',    fmt: 'float 0.25–4×',    type: 'cc',
-    tip: 'speed for the next commit — 1× = original, set before recording',
-    ccFn: v => { S.seqNextParams.speed = 0.25 + (v / 127) * 3.75; const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed; const nb = document.getElementById('seqSpeedNum'); if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; } },
-  { id: 'commit_attack', label: 'cloud fade in',             key: '—',                 osc: '/commit/attack',   fmt: 'float 0–10 s',     type: 'cc',
-    tip: 'cloud fade-in time — 0s instant, up to 10s swell',
-    ccFn: v => { S.seedAttack = (v / 127) * 10; const sl = document.getElementById('seedAttackSlider'); if (sl) sl.value = S.seedAttack; const nb = document.getElementById('seedAttackNum'); if (nb) nb.value = S.seedAttack < 1 ? (S.seedAttack * 1000).toFixed(0) + 'ms' : S.seedAttack.toFixed(1) + 's'; } },
-  { id: 'commit_release_time', label: 'cloud fade out',     key: '—',               osc: '/commit/release_time', fmt: 'float 0–10 s',  type: 'cc',
-    tip: 'cloud fade-out time — 0s instant, up to 10s fade',
-    ccFn: v => { S.seedRelease = (v / 127) * 10; const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.seedRelease; const nb = document.getElementById('seedReleaseNum'); if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; } },
-  { id: 'loop_release_mode', label: 'loop fade out mode',   key: '—',                 osc: '/commit/loop_release', fmt: 'bang',                 type: 'trigger',
-    tip: 'fade = fade out over time, play-to-end = loop finishes current pass then stops' },
-  { id: 'loop_fade_time', label: 'loop fade out time',    key: '—',                 osc: '/commit/loop_fade_time', fmt: 'float 0–2000 ms', type: 'cc',
-    tip: 'fade-out duration for loops when released — 0ms instant, up to 2000ms',
-    ccFn: v => { S.loopFadeTimeMs = Math.round((v / 127) * 2000); const sl = document.getElementById('loopFadeTimeSlider'); if (sl) sl.value = S.loopFadeTimeMs; const nb = document.getElementById('loopFadeTimeNum'); if (nb) nb.value = S.loopFadeTimeMs < 1000 ? S.loopFadeTimeMs + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; } },
-  { id: 'commit_blend', label: 'commit blend mode',         key: '—',                 osc: '/commit/blend',    fmt: 'bang',             type: 'trigger',
-    tip: 'all = equal weight, focus = distance-weighted blend toward closest' },
-  { id: 'commit_tether', label: 'commit tether',            key: '—',                 osc: '/commit/tether',   fmt: 'int 0|1',          type: 'trigger',
-    tip: 'on = commit always plays regardless of cursor distance, off = radius-gated' },
-  { id: 'commit_xfade', label: 'commit xfade',              key: '—',                 osc: '/commit/xfade',    fmt: 'float 0–1',        type: 'cc',
-    tip: '0 = hard snap to nearest commit, 1 = smooth distance-weighted crossfade',
-    ccFn: v => { S.seedXfade = v / 127; S._syncImprovUI?.(); } },
 
   // ── Search ─────────────────────────────────────────────────────────────────
   { id: null, group: 'search' },
@@ -125,7 +57,7 @@ const ACTIONS = [
   { id: 'k_seq',        label: 'order (step/random)',       key: '—',                 osc: '/search/order',   fmt: 'int 0|1',          type: 'trigger',
     tip: 'step through candidates one at a time in recording order instead of random' },
   { id: 'radius_cc',    label: 'radius',                    key: '—',                 osc: '/search/radius',  fmt: 'float 1–180 °',    type: 'cc',
-    ccFn: v => { S.searchRadiusDeg = SEARCH_RADIUS_MIN + (v / 127) * (SEARCH_RADIUS_MAX - SEARCH_RADIUS_MIN); updatePlaybackControls(); flashRadiusTooltip(); } },
+    ccFn: v => { S.searchRadiusDeg = Math.round(SEARCH_RADIUS_MIN + (v / 127) * (SEARCH_RADIUS_MAX - SEARCH_RADIUS_MIN)); updatePlaybackControls(); flashRadiusTooltip(); } },
   { id: 'radius_inc',   label: 'radius ↑',                  key: 'scroll ↑ / ]',      osc: '/search/radius/inc', fmt: 'bang',          type: 'trigger',
     tip: 'increase search radius by 2°' },
   { id: 'radius_dec',   label: 'radius ↓',                  key: 'scroll ↓ / [',      osc: '/search/radius/dec', fmt: 'bang',          type: 'trigger',
@@ -178,20 +110,104 @@ const ACTIONS = [
     tip: 'per-particle cooldown — prevents the same point from firing again within this window',
     ccFn: v => { S.grainOverrides.retriggerMs = (v / 127) * 500; S.syncGrainControlsUI?.(); } },
 
+  // ── Cursor / Scan (S) ─────────────────────────────────────────────────────
+  { id: null, group: 'cursor' },
+  { id: 'scan_toggle',  label: 'scan on/off (S)',            key: 'S',                 osc: '/cursor/scan',       fmt: 'int 0|1',          type: 'trigger',
+    tip: 'toggle scan — cursor spotlight on/off in the house output' },
+  { id: 'tare',         label: 'tare / zero (Z)',            key: '`',                 osc: '/cursor/tare',       fmt: 'bang',             type: 'trigger',
+    tip: 'zero the cursor sensor — set current orientation as center reference' },
+  { id: 'lock_az',      label: 'lock azimuth (toggle)',      key: '—',                 osc: '/cursor/lock_az',    fmt: 'int 0|1',          type: 'toggle',
+    tip: 'toggle azimuth lock — freezes horizontal position' },
+  { id: 'lock_el',      label: 'lock elevation (toggle)',    key: '—',                 osc: '/cursor/lock_el',    fmt: 'int 0|1',          type: 'toggle',
+    tip: 'toggle elevation lock — freezes vertical position' },
+  { id: 'radius_fade',  label: 'radius fade on/off',        key: '—',                 osc: '/cursor/radiusfade', fmt: 'int 0|1',          type: 'trigger',
+    tip: 'attenuate grains by distance from cursor centre' },
+  { id: 'radius_fade_curve', label: 'radius fade curve',    key: '—',                 osc: '/cursor/radiusfadecurve', fmt: 'float 0–1',   type: 'cc',
+    tip: '0 = gentle linear fade, 1 = steep sharp edge rolloff',
+    ccFn: v => { S.radiusFadeCurve = v / 127; S._syncRadiusFadeUI?.(); } },
+
+  // ── Trace (A) ─────────────────────────────────────────────────────────────
+  { id: null, group: 'trace (A)' },
+  { id: 'recpaint',     label: 'trace (hold/tap)',           key: 'click / space',     osc: '/trace',             fmt: 'int 0|1',          type: 'hold',
+    tip: 'hold = momentary record, tap = toggle on/off (handsfree segments when armed)' },
+  { id: 'trace_toggle', label: 'trace toggle',               key: '—',                 osc: '/trace/toggle',    fmt: 'bang',             type: 'trigger',
+    tip: 'directly toggle trace on/off (no tap timing — ideal for foot pedals)' },
+  { id: 'handsfree',   label: 'handsfree arm (H)',          key: 'H',                 osc: '/handsfree',         fmt: 'bang',             type: 'trigger',
+    tip: 'toggle handsfree arm — when on, toggle-trace segments buffers by noise gate' },
+  { id: 'trace_mode',   label: 'trace mode cycle (A)',      key: 'A',                 osc: '/trace/mode',      fmt: 'bang',                             type: 'trigger',
+    tip: 'cycle trace mode: trace → trace+loop → trace+cloud' },
+
+  // ── Commit (D) ────────────────────────────────────────────────────────────
+  { id: null, group: 'commit (D)' },
+  { id: 'commit_mode',  label: 'commit mode cycle (⇧D)',    key: 'Shift+D',           osc: '/commit/mode',     fmt: 'bang',             type: 'trigger',
+    tip: 'cycle commit mode: cloud ↔ loop — what D key creates' },
+  { id: 'commit_drop',  label: 'drop commit (tap D)',       key: 'D',                 osc: '/commit/drop',     fmt: 'bang',             type: 'trigger',
+    tip: 'drop a stationary cloud or loop at the current cursor position' },
+  { id: 'commit_draw',  label: 'draw commit (hold D)',      key: 'hold D',            osc: '/commit/draw',     fmt: 'int 0|1',          type: 'hold',
+    tip: 'hold to draw a moving cloud path or record a loop — release to finalize' },
+  { id: 'commit_release', label: 'release nearest (⌘D)',    key: '⌘D',               osc: '/commit/release',  fmt: 'bang',             type: 'trigger',
+    tip: 'release the nearest commit (cloud or loop) from its slot' },
+  { id: 'commit_clear', label: 'clear all commits',         key: '—',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
+    tip: 'remove all clouds and loops from all slots' },
+  { id: 'commit_selection', label: 'selection mode (toggle)', key: '—',               osc: '/commit/selection', fmt: 'bang',                 type: 'trigger',
+    tip: 'toggle which commit is targeted for release and morph — closest or farthest from cursor' },
+  { id: 'commit_slots', label: 'commit slot count',         key: '—',                 osc: '/commit/slots',    fmt: 'int 1–16',         type: 'cc',
+    tip: 'number of active commit slots (1–16)',
+    ccFn: v => { S.commitSlotCount = Math.max(1, Math.min(16, Math.round(1 + v * 15 / 127))); const sel = document.getElementById('commitSlotCountSelect'); if (sel) sel.value = String(S.commitSlotCount); (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))(); } },
+  { id: 'commit_overflow', label: 'commit overflow (cycle)', key: '—',                osc: '/commit/overflow', fmt: 'bang',                   type: 'trigger',
+    tip: 'cycle overflow mode: off → oldest → nearest' },
+  { id: 'commit_dir',   label: 'commit movement dir',       key: '—',                 osc: '/commit/dir',      fmt: 'bang',                 type: 'trigger',
+    tip: 'how moving commits traverse their path — cycles fwd → rev → pingpong' },
+  { id: 'commit_volume', label: 'next commit volume',       key: '—',                 osc: '/commit/volume',   fmt: 'float 0–1',        type: 'cc',
+    tip: 'volume for the next commit — set before recording',
+    ccFn: v => { S.seqNextParams.volume = v / 127; const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume; const nb = document.getElementById('seqVolumeNum'); if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; } },
+  { id: 'commit_speed', label: 'next commit speed',         key: '—',                 osc: '/commit/speed',    fmt: 'float 0.25–4×',    type: 'cc',
+    tip: 'speed for the next commit — 1× = original, set before recording',
+    ccFn: v => { S.seqNextParams.speed = 0.25 + (v / 127) * 3.75; const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed; const nb = document.getElementById('seqSpeedNum'); if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; } },
+  { id: 'commit_attack', label: 'cloud fade in',             key: '—',                 osc: '/commit/attack',   fmt: 'float 0–10 s',     type: 'cc',
+    tip: 'cloud fade-in time — 0s instant, up to 10s swell',
+    ccFn: v => { S.seedAttack = (v / 127) * 10; const sl = document.getElementById('seedAttackSlider'); if (sl) sl.value = S.seedAttack; const nb = document.getElementById('seedAttackNum'); if (nb) nb.value = S.seedAttack < 1 ? (S.seedAttack * 1000).toFixed(0) + 'ms' : S.seedAttack.toFixed(1) + 's'; } },
+  { id: 'commit_release_time', label: 'cloud fade out',     key: '—',               osc: '/commit/release_time', fmt: 'float 0–10 s',  type: 'cc',
+    tip: 'cloud fade-out time — 0s instant, up to 10s fade',
+    ccFn: v => { S.seedRelease = (v / 127) * 10; const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.seedRelease; const nb = document.getElementById('seedReleaseNum'); if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; } },
+  { id: 'loop_release_mode', label: 'loop fade out mode',   key: '—',                 osc: '/commit/loop_release', fmt: 'bang',                 type: 'trigger',
+    tip: 'fade = fade out over time, play-to-end = loop finishes current pass then stops' },
+  { id: 'loop_fade_time', label: 'loop fade out time',    key: '—',                 osc: '/commit/loop_fade_time', fmt: 'float 0–2000 ms', type: 'cc',
+    tip: 'fade-out duration for loops when released — 0ms instant, up to 2000ms',
+    ccFn: v => { S.loopFadeTimeMs = Math.round((v / 127) * 2000); const sl = document.getElementById('loopFadeTimeSlider'); if (sl) sl.value = S.loopFadeTimeMs; const nb = document.getElementById('loopFadeTimeNum'); if (nb) nb.value = S.loopFadeTimeMs < 1000 ? S.loopFadeTimeMs + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; } },
+  { id: 'commit_blend', label: 'commit blend mode',         key: '—',                 osc: '/commit/blend',    fmt: 'bang',             type: 'trigger',
+    tip: 'all = equal weight, focus = distance-weighted blend toward closest' },
+  { id: 'commit_tether', label: 'commit tether',            key: '—',                 osc: '/commit/tether',   fmt: 'int 0|1',          type: 'trigger',
+    tip: 'on = commit always plays regardless of cursor distance, off = radius-gated' },
+  { id: 'commit_xfade', label: 'commit xfade',              key: '—',                 osc: '/commit/xfade',    fmt: 'float 0–1',        type: 'cc',
+    tip: '0 = hard snap to nearest commit, 1 = smooth distance-weighted crossfade',
+    ccFn: v => { S.seedXfade = v / 127; S._syncImprovUI?.(); } },
+
+  // ── Cloud Morph ─────────────────────────────────────────────────────────────
+  { id: null, group: 'cloud morph' },
+  { id: 'morph_cc',        label: 'morph position',            key: '—',                 osc: '/morph/position', fmt: 'float 0–1',        type: 'cc',
+    tip: 'cloud morph slider — 0 = left preset, 0.5 = planted center, 1 = right preset',
+    ccFn: v => { S._setDesktopMorphT?.(v / 127); } },
+  { id: 'morph_sticky',    label: 'morph hold (toggle)',       key: '—',                 osc: '/morph/sticky',   fmt: 'bang',             type: 'trigger',
+    tip: 'toggle morph hold — sticky keeps position, return glides back to center' },
+  { id: 'morph_return',    label: 'morph return time',         key: '—',                 osc: '/morph/return',   fmt: 'float 50–3000 ms', type: 'cc',
+    tip: 'return-to-center glide time when hold is off',
+    ccFn: v => { S._setDesktopMorphReturnMs?.(50 + (v / 127) * 2950); } },
+
   // ── Levels ─────────────────────────────────────────────────────────────────
   { id: null, group: 'levels' },
-  { id: 'monitor_vol',  label: 'monitor volume',            key: '—',                 osc: '/monitor/volume', fmt: 'float 0–1',        type: 'cc',
-    tip: 'cursor-to-house send level — how much cursor audio goes to house speakers',
-    ccFn: v => { S._setMonitorVolume?.(v / 127); } },
-  { id: 'house_vol',    label: 'house volume',              key: '—',                 osc: '/house/volume',   fmt: 'float 0–2',        type: 'cc',
-    tip: 'seed bus master volume — house speaker output level',
-    ccFn: v => { S._setHouseVolume?.((v / 127) * 2); } },
+  { id: 'master_vol',   label: 'master volume',             key: '—',                 osc: '/master/volume',  fmt: 'float -60–+6 dB',  type: 'cc',
+    tip: 'master output gain — the master vol slider in audio settings (-60 to +6 dB)',
+    ccFn: v => { S._setOutputGainDb?.(-60 + (v / 127) * 66); } },
   { id: 'mixdown_cursor', label: 'headphone cursor level',  key: '—',                 osc: '/mixdown/cursor', fmt: 'float 0–1',        type: 'cc',
     tip: 'cursor grain level in the headphone stereo mix',
     ccFn: v => { setMixdownCursorGain(v / 127); } },
   { id: 'mixdown_house', label: 'headphone house level',    key: '—',                 osc: '/mixdown/house',  fmt: 'float 0–1',        type: 'cc',
     tip: 'house speaker fold-down level in the headphone stereo mix',
     ccFn: v => { setMixdownHouseGain(v / 127); } },
+  { id: 'noise_gate',   label: 'noise gate threshold',      key: '—',                 osc: '/gate/threshold', fmt: 'float 0–0.06 RMS', type: 'cc',
+    tip: 'noise gate threshold — signal below this RMS level is gated',
+    ccFn: v => { S._setNoiseGateThreshold?.(v / 127 * 0.06); } },
 
   // ── Spatial ────────────────────────────────────────────────────────────────
   { id: null, group: 'spatial' },
@@ -347,26 +363,54 @@ function _flash(el) {
 function dispatchAction(id, midiVal) {
   switch(id) {
     case 'recpaint': {
-      if (midiVal > 0 && !S.isPainting) {
-        // Press: start painting
-        ensureAudioContext(); startLiveRecording();
-        recordStrokeStart('live', S.currentLiveBufferIdx);
-        S.isPainting = true; S.paintFrameCount = 0;
-        S.updateLiveRecUI?.();
-      } else if (midiVal === 0 && S.isPainting) {
-        // Release: stop painting
-        if (S.seqModeEnabled && S.currentStrokeId > 0) {
-          try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+      // Tap-toggle vs hold-momentary: same logic as spacebar/click.
+      // val > 0 = press, val === 0 = release.
+      if (midiVal > 0) {
+        // If already toggled on, this is a tap-off — use canonical cleanup
+        if (S._traceToggled) {
+          S._stopToggleTrace?.();
+        } else if (!S.isPainting) {
+          // Press: start painting
+          S._traceActive = true;
+          S._midiTraceDownAt = performance.now();
+          ensureAudioContext(); startLiveRecording();
+          recordStrokeStart('live', S.currentLiveBufferIdx);
+          S.isPainting = true; S.paintFrameCount = 0;
+          S.updateLiveRecUI?.();
         }
-        S.isPainting      = false;
-        S.currentStrokeId = -1;
-        if (S.isRecording) stopLiveRecording();
-        S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-        S.updateLiveRecUI?.();
+      } else if (midiVal === 0) {
+        // Release — if toggled, no-op
+        if (S._traceToggled) break;
+        // Tap detection
+        const tapMs = performance.now() - (S._midiTraceDownAt || 0);
+        // Only allow toggle in plain trace mode (not trace+loop or trace+cloud)
+        if (S._midiTraceDownAt && tapMs < 200 && S.traceMode === 'trace') {
+          S._traceToggled = true;
+          if (S.hfArmed) {
+            S.isPainting = false; S.currentStrokeId = -1;
+            if (S.isRecording) stopLiveRecording();
+          }
+          S.updateLiveRecUI?.(); S._syncHandsfreeUI?.();
+          S._midiTraceDownAt = 0;
+          break;
+        }
+        S._midiTraceDownAt = 0;
+        // Momentary release: stop painting
+        if (S.isPainting) {
+          if (S.seqModeEnabled && S.currentStrokeId > 0) {
+            try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+          }
+          S.isPainting      = false;
+          S.currentStrokeId = -1;
+          if (S.isRecording) stopLiveRecording();
+          S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+          S.updateLiveRecUI?.();
+        }
+        S._traceActive = false;
       }
       // Sync trace indicator button with isPainting state (OSC/MIDI path)
       const _traceBtn = document.getElementById('paintIndicatorBtn');
-      if (_traceBtn) _traceBtn.classList.toggle('painting', S.isPainting);
+      if (_traceBtn) _traceBtn.classList.toggle('painting', S.isPainting || S._traceToggled);
       break;
     }
     case 'mute':
@@ -390,9 +434,47 @@ function dispatchAction(id, midiVal) {
       if (S._sessionSweep) S._sessionSweep();
       else sweep();
       break;
+    case 'handsfree':
+      toggleHandsfree();
+      break;
+
+    // ── View ─────────────────────────────────────────────────────────────────
+    case 'projector':
+      if (S._toggleProjectorMode) S._toggleProjectorMode();
+      _flash(document.getElementById('projectorModeBtn'));
+      break;
 
     // ── Trace ───────────────────────────────────────────────────────────────
+    case 'trace_toggle': {
+      // Direct toggle: no tap-timing required — ideal for foot pedals.
+      // Bang toggles trace on/off with same lifecycle as tap-toggle.
+      if (S._traceToggled || S.isPainting) {
+        // Currently on → turn off
+        S._stopToggleTrace?.();
+      } else if (S.traceMode === 'trace') {
+        // Currently off, plain trace mode → toggle on
+        S._traceToggled = true;
+        S._traceActive  = true;
+        // If handsfree armed, let the gate manage recording segments
+        if (S.hfArmed) {
+          S.updateLiveRecUI?.(); S._syncHandsfreeUI?.();
+        } else {
+          // No handsfree — start continuous recording immediately
+          ensureAudioContext(); startLiveRecording();
+          recordStrokeStart('live', S.currentLiveBufferIdx);
+          S.isPainting = true; S.paintFrameCount = 0;
+          S.updateLiveRecUI?.();
+        }
+      }
+      const _tb = document.getElementById('paintIndicatorBtn');
+      if (_tb) _tb.classList.toggle('painting', S.isPainting || S._traceToggled);
+      break;
+    }
     case 'trace_mode': {
+      // If toggled trace is active, force-stop before mode change
+      if (S._traceToggled) {
+        S._stopToggleTrace?.();
+      }
       const _modes = ['trace', 'trace+loop', 'trace+cloud'];
       const _idx = _modes.indexOf(S.traceMode);
       S.traceMode = _modes[(_idx + 1) % _modes.length];
@@ -499,6 +581,11 @@ function dispatchAction(id, midiVal) {
     case 'commit_tether':
       S.seedTether = !S.seedTether;
       S._syncImprovUI?.();
+      break;
+
+    // ── Cloud Morph ────────────────────────────────────────────────────────
+    case 'morph_sticky':
+      S._toggleDesktopMorphSticky?.();
       break;
 
     // ── Search ──────────────────────────────────────────────────────────────

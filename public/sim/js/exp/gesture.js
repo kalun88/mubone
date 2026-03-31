@@ -24,8 +24,9 @@
 //   energy:     sustained playing → builds, rest → decays over ~1–2 seconds
 // ============================================================================
 
-import { S, DEBUG } from '../state.js';
+import { S, DEBUG, PRESETS } from '../state.js';
 import { getByRole } from '../sensor-registry.js';
+import { isLocked } from '../param-lock.js';
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -378,6 +379,311 @@ export function updateGesture(source) {
   S.gesture = descriptor;
 }
 
+// ── Radial morph pin system ─────────────────────────────────────────────────
+// Pins are positions on the radial joystick, each assigned to a preset.
+// When the joystick moves near a pin, the grain params morph toward that
+// pin's preset.  Center = current GUI params (implicit, no pin needed).
+//
+// S.radialPins: [{ x, y, presetIdx }]  — joystick data-space coords
+// S.radialMorphOn: boolean — enable/disable the morph output
+// S.radialMorphFalloff: 1–4 — sharpness of inverse-distance weighting
+
+const RADIAL_MORPH_FALLOFF_DEFAULT = 2.0;
+
+// Snapshot the current GUI grain params (merged with overrides).
+// Returns the base GUI state WITHOUT morph overrides.
+// Used as the "center" preset for radial morph interpolation.
+// Must NOT read S.grainOverrides — that contains the morph's own output
+// and would create a feedback loop (morph reads its own previous frame).
+// Includes params that live outside grainParams (searchRadiusDeg, probability).
+function currentGrainSnapshot() {
+  const snap = { ...S.grainParams };
+  // These params live in special S.* locations, not in grainParams.
+  // When morph is off they reflect the preset/GUI state; when morph is on
+  // they've been overwritten by the morph — but we want the *base* value.
+  // Since these get written every morph frame, we stash the base values
+  // at morph-on time (see _morphBaseSearchRadius / _morphBaseProbability).
+  snap.searchRadiusDeg   = _morphBaseSearchRadius    ?? S.searchRadiusDeg;
+  snap.probability       = _morphBaseProbability     ?? S.grainProbability;
+  snap.recencyN          = _morphBaseRecencyN        ?? S.recencyN;
+  snap.radiusFadeCurve   = _morphBaseRadiusFadeCurve ?? S.radiusFadeCurve;
+  snap.nearestMode       = _morphBaseNearestMode     ?? S.nearestMode;
+  snap.grainKAllMode     = _morphBaseKAllMode        ?? S.grainKAllMode;
+  snap.grainKSeqMode     = _morphBaseKSeqMode        ?? S.grainKSeqMode;
+  snap.radiusFadeEnabled = _morphBaseRadiusFadeOn    ?? S.radiusFadeEnabled;
+  return snap;
+}
+
+// Get the full grain param object for a preset index.
+function presetParams(idx) {
+  if (idx < 0 || idx >= PRESETS.length) return null;
+  return PRESETS[idx];
+}
+
+// Build a list of available presets for pin assignment dropdowns.
+// Returns [{ idx, name }] for all user + factory presets that have a name.
+export function getPresetList() {
+  const list = [];
+  for (let i = 0; i < PRESETS.length; i++) {
+    const p = PRESETS[i];
+    if (p && p.name) list.push({ idx: i, name: p.name });
+  }
+  return list;
+}
+
+// Add a pin at the current joystick position.
+export function addRadialPin(presetIdx) {
+  if (!S.radialPins) S.radialPins = [];
+  const joy = S.gestureJoy;
+  S.radialPins.push({
+    x: joy.x,
+    y: joy.y,
+    presetIdx: presetIdx ?? 0,
+  });
+  saveRadialPins();
+}
+
+// Add a pin at a specific position (for UI placement).
+export function addRadialPinAt(x, y, presetIdx) {
+  if (!S.radialPins) S.radialPins = [];
+  S.radialPins.push({ x, y, presetIdx: presetIdx ?? 0 });
+  saveRadialPins();
+}
+
+// Remove a pin by index.
+export function removeRadialPin(idx) {
+  if (!S.radialPins) return;
+  S.radialPins.splice(idx, 1);
+  saveRadialPins();
+}
+
+// Update pin's assigned preset.
+export function setRadialPinPreset(pinIdx, presetIdx) {
+  if (!S.radialPins || !S.radialPins[pinIdx]) return;
+  S.radialPins[pinIdx].presetIdx = presetIdx;
+  saveRadialPins();
+}
+
+// Persistence
+function saveRadialPins() {
+  try {
+    localStorage.setItem('mubone_radial_pins', JSON.stringify(S.radialPins));
+  } catch (_) {}
+}
+
+function loadRadialPins() {
+  try {
+    const raw = localStorage.getItem('mubone_radial_pins');
+    if (raw) S.radialPins = JSON.parse(raw);
+  } catch (_) {}
+}
+
+// ── Radial morph apply — call every frame ───────────────────────────────────
+// Reads S.gestureJoy, computes inverse-distance weights to each pin,
+// blends pin presets with current GUI params, writes to S.grainOverrides.
+
+// Reusable output object to avoid allocations
+const _morphResult = {};
+
+// Throttle UI sync to ~15fps — don't overwhelm the DOM
+let _lastUISyncMs = 0;
+const UI_SYNC_INTERVAL = 66;
+
+// Base values for params that live outside grainOverrides.
+// Stashed when morph first engages so the center doesn't drift.
+let _morphBaseSearchRadius    = null;
+let _morphBaseProbability     = null;
+let _morphBaseRecencyN        = null;
+let _morphBaseRadiusFadeCurve = null;
+let _morphBaseNearestMode     = null;
+let _morphBaseKAllMode        = null;
+let _morphBaseKSeqMode        = null;
+let _morphBaseRadiusFadeOn    = null;
+let _morphWasOn = false;
+
+export function applyRadialMorph() {
+  if (!S.radialMorphOn) {
+    // Restore base values when morph turns off
+    if (_morphWasOn) {
+      if (_morphBaseSearchRadius    !== null) S.searchRadiusDeg   = _morphBaseSearchRadius;
+      if (_morphBaseProbability     !== null) S.grainProbability  = _morphBaseProbability;
+      if (_morphBaseRecencyN        !== null) S.recencyN          = _morphBaseRecencyN;
+      if (_morphBaseRadiusFadeCurve !== null) S.radiusFadeCurve   = _morphBaseRadiusFadeCurve;
+      if (_morphBaseNearestMode     !== null) S.nearestMode       = _morphBaseNearestMode;
+      if (_morphBaseKAllMode        !== null) S.grainKAllMode     = _morphBaseKAllMode;
+      if (_morphBaseKSeqMode        !== null) S.grainKSeqMode     = _morphBaseKSeqMode;
+      if (_morphBaseRadiusFadeOn    !== null) S.radiusFadeEnabled = _morphBaseRadiusFadeOn;
+      _morphBaseSearchRadius    = null;
+      _morphBaseProbability     = null;
+      _morphBaseRecencyN        = null;
+      _morphBaseRadiusFadeCurve = null;
+      _morphBaseNearestMode     = null;
+      _morphBaseKAllMode        = null;
+      _morphBaseKSeqMode        = null;
+      _morphBaseRadiusFadeOn    = null;
+      _morphWasOn = false;
+    }
+    // Clear morph indicators when off
+    if (S.radialMorphActiveParams && S.radialMorphActiveParams.size > 0) {
+      S.radialMorphActiveParams.clear();
+      S._syncRadialMorphUI?.();
+    }
+    return;
+  }
+  const pins = S.radialPins;
+  if (!pins || pins.length === 0) return;
+
+  // Stash base values on first active frame so center doesn't drift
+  if (!_morphWasOn) {
+    _morphBaseSearchRadius    = S.searchRadiusDeg;
+    _morphBaseProbability     = S.grainProbability;
+    _morphBaseRecencyN        = S.recencyN;
+    _morphBaseRadiusFadeCurve = S.radiusFadeCurve;
+    _morphBaseNearestMode     = S.nearestMode;
+    _morphBaseKAllMode        = S.grainKAllMode;
+    _morphBaseKSeqMode        = S.grainKSeqMode;
+    _morphBaseRadiusFadeOn    = S.radiusFadeEnabled;
+    _morphWasOn = true;
+  }
+
+  const joy = S.gestureJoy;
+  const dist = joy.dist;   // 0–1, gated — 0 when in dead zone
+
+  // At center (dist=0), no morph — current GUI params are the sound.
+  if (dist < 0.001) {
+    if (S.radialMorphActiveParams && S.radialMorphActiveParams.size > 0) {
+      S.radialMorphActiveParams.clear();
+      S._syncRadialMorphUI?.();
+    }
+    return;
+  }
+
+  const falloff = S.radialMorphFalloff ?? RADIAL_MORPH_FALLOFF_DEFAULT;
+  const jx = joy.x;
+  const jy = joy.y;
+
+  // Compute inverse-distance weight for each pin
+  const EPSILON = 0.01;
+  let sumW = 0;
+  const weights = [];
+  for (let i = 0; i < pins.length; i++) {
+    const pin = pins[i];
+    const dx = jx - pin.x;
+    const dy = jy - pin.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    const w = Math.pow(1 / (d + EPSILON), falloff);
+    weights.push(w);
+    sumW += w;
+  }
+
+  // Normalize pin weights, then scale by joystick distance from center.
+  // dist=0 → 100% current params.  dist=1 → full pin influence.
+  const centerWeight = 1 - dist;
+  const pinScale = 1 - centerWeight;  // = dist
+
+  // Get current GUI state as the "center" preset
+  const center = currentGrainSnapshot();
+
+  // Blend: accumulate weighted sum of pin presets
+  // Start from center * centerWeight, add each pin's contribution
+  // All numeric params that can be morphed between presets.
+  // Some live in grainOverrides, some in special S.* locations.
+  const NUMERIC_KEYS = [
+    'duration', 'period', 'searchRadiusDeg', 'pitchJitter', 'panSpread',
+    'volume', 'fadeRatio', 'k', 'probability', 'durJitter', 'durVar',
+    'periodVar', 'retriggerMs', 'pitchShift', 'recencyN', 'radiusFadeCurve',
+  ];
+
+  // Params that must remain integers after blending
+  const INTEGER_KEYS = new Set(['k', 'retriggerMs', 'pitchShift', 'searchRadiusDeg', 'recencyN']);
+
+  for (const key of NUMERIC_KEYS) {
+    // Locked params are untouchable — morph skips them entirely
+    if (isLocked(key)) continue;
+
+    const centerVal = center[key];
+    if (centerVal === undefined) continue;
+
+    let blended = centerVal * centerWeight;
+    for (let i = 0; i < pins.length; i++) {
+      const pinPreset = presetParams(pins[i].presetIdx);
+      if (!pinPreset) continue;
+      const pinVal = pinPreset[key];
+      if (typeof pinVal !== 'number') continue;
+      const normalizedW = sumW > 0 ? weights[i] / sumW : 0;
+      blended += pinVal * normalizedW * pinScale;
+    }
+
+    // Round integer params after blending
+    if (INTEGER_KEYS.has(key)) blended = Math.round(blended);
+
+    // Route to correct location — most go to grainOverrides,
+    // but some params live elsewhere on S
+    if (key === 'searchRadiusDeg') {
+      S.searchRadiusDeg = blended;
+    } else if (key === 'recencyN') {
+      S.recencyN = blended;
+    } else if (key === 'probability') {
+      S.grainProbability = blended;
+    } else if (key === 'radiusFadeCurve') {
+      S.radiusFadeCurve = blended;
+    } else {
+      S.grainOverrides[key] = blended;
+    }
+  }
+
+  // Handle non-numeric params — pick from dominant pin (nearest to joystick).
+  // Booleans and enums can't be interpolated, so they switch at >50% pin influence.
+  if (pinScale > 0.5) {
+    let maxW = 0, maxIdx = 0;
+    for (let i = 0; i < weights.length; i++) {
+      if (weights[i] > maxW) { maxW = weights[i]; maxIdx = i; }
+    }
+    const dominant = presetParams(pins[maxIdx].presetIdx);
+    if (dominant) {
+      // Enums
+      if (!isLocked('curveType') && dominant.curveType)  S.grainCurveType = dominant.curveType;
+      if (!isLocked('direction') && dominant.direction)  S.grainDirection = dominant.direction;
+      // Booleans — check both key variants (factory vs user preset naming)
+      if (!isLocked('nearestMode') && typeof dominant.nearestMode === 'boolean')
+        S.nearestMode = dominant.nearestMode;
+      const kAll = dominant.grainKAllMode ?? dominant.kAllMode;
+      if (!isLocked('grainKAllMode') && typeof kAll === 'boolean')
+        S.grainKAllMode = kAll;
+      // Enforce constraint: k-all not valid with nearest
+      if (S.nearestMode && S.grainKAllMode) S.grainKAllMode = false;
+      const kSeq = dominant.grainKSeqMode ?? dominant.kSeqMode;
+      if (!isLocked('grainKSeqMode') && typeof kSeq === 'boolean')
+        S.grainKSeqMode = kSeq;
+      if (!isLocked('radiusFadeEnabled') && typeof dominant.radiusFadeEnabled === 'boolean')
+        S.radiusFadeEnabled = dominant.radiusFadeEnabled;
+    }
+  }
+
+  // All params touched by morph (for orange indicators)
+  const BOOLEAN_KEYS = [
+    'nearestMode', 'grainKAllMode', 'grainKSeqMode', 'radiusFadeEnabled',
+    'curveType', 'direction',
+  ];
+
+  // Track which params are morphed (excluding locked ones) and sync main UI
+  if (!S.radialMorphActiveParams) S.radialMorphActiveParams = new Set();
+  S.radialMorphActiveParams.clear();
+  for (const key of NUMERIC_KEYS) {
+    if (!isLocked(key)) S.radialMorphActiveParams.add(key);
+  }
+  for (const key of BOOLEAN_KEYS) {
+    if (!isLocked(key)) S.radialMorphActiveParams.add(key);
+  }
+
+  const now = performance.now();
+  if (now - _lastUISyncMs > UI_SYNC_INTERVAL) {
+    _lastUISyncMs = now;
+    S.syncGrainControlsUI?.();
+    S._syncRadialMorphUI?.();
+  }
+}
+
 // ── Init ────────────────────────────────────────────────────────────────────
 
 let _rafId = null;
@@ -385,6 +691,10 @@ let _rafId = null;
 function rafPoll() {
   const slot = getByRole('gesture');
   if (slot?.inertial) updateGesture(slot);
+
+  // Apply radial morph every frame (lightweight when off or no pins)
+  applyRadialMorph();
+
   _rafId = requestAnimationFrame(rafPoll);
 }
 
@@ -401,6 +711,13 @@ export function initGesture() {
 
   // Joystick state — written by gesture-panel, readable by any module.
   S.gestureJoy = { x: 0, y: 0, dist: 0, angle: 0 };
+
+  // Radial morph pin system
+  S.radialPins = [];
+  S.radialMorphOn = false;
+  S.radialMorphFalloff = RADIAL_MORPH_FALLOFF_DEFAULT;
+  S.radialMorphActiveParams = new Set();
+  loadRadialPins();
 
   S._onGestureUpdate = () => updateGesture(getByRole('gesture'));
 
