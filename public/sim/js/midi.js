@@ -64,8 +64,8 @@ const ACTIONS = [
     tip: 'decrease search radius by 2°' },
   { id: 'grain_k',      label: 'k (nearest)',               key: '—',                 osc: '/search/k',       fmt: 'int 1–N',          type: 'cc',
     ccFn: v => { const mx = Math.max(1, S.particles.length); S.grainOverrides.k = Math.max(1, Math.round(1 + (v / 127) * (mx - 1))); S.syncGrainControlsUI?.(); } },
-  { id: 'recency_cc',   label: 'recency',                   key: '—',                 osc: '/search/recency', fmt: 'int 1–16',         type: 'cc',
-    ccFn: v => { const n = 1 + Math.round((v / 127) * 15); if (typeof S.setRecency === 'function') S.setRecency(n); else S.recencyN = n; const el = document.getElementById('recencyVal'); if (el) el.value = n; } },
+  { id: 'recency_cc',   label: 'recency',                   key: '—',                 osc: '/search/recency', fmt: 'int 1–16,0=all',   type: 'cc',
+    ccFn: v => { const raw = Math.round((v / 127) * 17); const n = raw >= 17 ? 0 : Math.max(1, raw); if (typeof S.setRecency === 'function') S.setRecency(n); else S.recencyN = n; } },
 
   // ── Grain ──────────────────────────────────────────────────────────────────
   { id: null, group: 'grain' },
@@ -208,6 +208,9 @@ const ACTIONS = [
   { id: 'noise_gate',   label: 'noise gate threshold',      key: '—',                 osc: '/gate/threshold', fmt: 'float 0–0.06 RMS', type: 'cc',
     tip: 'noise gate threshold — signal below this RMS level is gated',
     ccFn: v => { S._setNoiseGateThreshold?.(v / 127 * 0.06); } },
+  { id: 'dry_gain',    label: 'dry monitor gain',           key: '—',                 osc: '/dry/gain',       fmt: 'float 0–2',        type: 'cc',
+    tip: 'spatialized live input level in the house mix (0 = silent, 2 = +6dB)',
+    ccFn: v => { S._setDryMonitorGain?.(v / 127 * 2); } },
 
   // ── Spatial ────────────────────────────────────────────────────────────────
   { id: null, group: 'spatial' },

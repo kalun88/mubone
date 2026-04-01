@@ -74,11 +74,25 @@ let rtAudio    = null;
 let rtAudioIn  = null;   // separate RtAudio instance for input capture
 let audioDeviceId = -1;  // -1 = default device
 
+// Single RtAudio instance used only for device enumeration.
+// Creating throwaway instances while a stream is active can destabilise
+// CoreAudio on macOS (SIGBUS in the IO thread).
+let _rtEnum = null;
+function getEnumerator() {
+  if (!_rtEnum) _rtEnum = new RtAudio();
+  return _rtEnum;
+}
+
 // ── Audio output stream ───────────────────────────────────────────────────────
 
-function createOutputStream(deviceId, numChannels, bufferFrames) {
+const DEFAULT_BUFFER_FRAMES = 1024;  // safe default for 48 kHz on macOS
+
+function createOutputStream(deviceId, numChannels, bufferFrames, preferredRate) {
   // Close any existing stream first
   if (rtAudio) {
+    try {
+      if (rtAudio.isStreamRunning()) rtAudio.stop();
+    } catch (_) {}
     try {
       if (rtAudio.isStreamOpen()) rtAudio.closeStream();
     } catch (_) {}
@@ -86,8 +100,7 @@ function createOutputStream(deviceId, numChannels, bufferFrames) {
   }
   _expectedAudioBytes = 0;  // reset until new stream confirms its expected size
 
-  const rt      = new RtAudio();
-  const devices = rt.getDevices();
+  const devices = getEnumerator().getDevices();
   const device  = devices.find(d => d.id === deviceId);
 
   if (!device) {
@@ -102,20 +115,26 @@ function createOutputStream(deviceId, numChannels, bufferFrames) {
     return;
   }
 
-  // Try sample rates in preference order. Default AudioContext rate is 44100;
-  // some devices (e.g. MacBook built-in) reject other rates silently.
-  const ratesToTry = [...new Set([44100, 48000])];
+  const frames = bufferFrames || DEFAULT_BUFFER_FRAMES;
+
+  // Try sample rates in preference order. Match the AudioContext rate first
+  // to avoid resampling between Web Audio and RtAudio (causes crunchiness/delay).
+  const preferred = preferredRate || 48000;
+  const ratesToTry = [...new Set([preferred, 48000, 44100])];
   let openedRate = null;
+
+  // Reuse a single RtAudio instance across retry attempts — creating multiple
+  // instances in rapid succession can leave CoreAudio in a bad state on macOS.
+  rtAudio = new RtAudio();
 
   for (const rate of ratesToTry) {
     try {
-      rtAudio = new RtAudio();
       rtAudio.openStream(
         { deviceId, nChannels: nCh },
         null,
         RtAudioFormat.RTAUDIO_FLOAT32,
         rate,
-        bufferFrames || 512,
+        frames,
         'mubone-spatial',
         null,
         null
@@ -124,22 +143,22 @@ function createOutputStream(deviceId, numChannels, bufferFrames) {
       break; // success — stop trying
     } catch (e) {
       console.warn(`audify: ${rate} Hz failed on "${device.name}" — ${e.message}`);
-      try { if (rtAudio?.isStreamOpen()) rtAudio.closeStream(); } catch(_) {}
-      rtAudio = null;
+      try { if (rtAudio.isStreamOpen()) rtAudio.closeStream(); } catch(_) {}
     }
   }
 
-  if (!rtAudio) {
+  if (!openedRate) {
     console.error(`audify: could not open stream on "${device.name}" at any sample rate`);
+    rtAudio = null;
     return;
   }
 
   rtAudio.start();
-  // Float32 = 4 bytes/sample. audify expects exactly bufferFrames × nCh × 4 per write().
-  _expectedAudioBytes = (bufferFrames || 512) * nCh * 4;
+  // Float32 = 4 bytes/sample. audify expects exactly frames × nCh × 4 per write().
+  _expectedAudioBytes = frames * nCh * 4;
   _ipcAudioCredits = IPC_AUDIO_MAX_CREDITS;
   _ipcDropCount = 0;
-  console.log(`audify stream started — "${device.name}", ${nCh} ch @ ${openedRate} Hz, buffer ${bufferFrames || 512} frames (${_expectedAudioBytes} bytes/write)`);
+  console.log(`audify stream started — "${device.name}", ${nCh} ch @ ${openedRate} Hz, buffer ${frames} frames (${_expectedAudioBytes} bytes/write)`);
 }
 
 // ── Audio input stream (RtAudio) ──────────────────────────────────────────────
@@ -147,16 +166,16 @@ function createOutputStream(deviceId, numChannels, bufferFrames) {
 // to the renderer via webContents.send('audio-input-buffer') so the input-meter
 // worklet can feed AnalyserNodes for the multichannel meter strip.
 
-function createInputStream(deviceId, numChannels, bufferFrames, win) {
+function createInputStream(deviceId, numChannels, bufferFrames, win, preferredRate) {
   // Close previous input stream if any
   if (rtAudioIn) {
+    try { if (rtAudioIn.isStreamRunning()) rtAudioIn.stop(); } catch(_) {}
     try { if (rtAudioIn.isStreamOpen()) rtAudioIn.closeStream(); } catch(_) {}
     rtAudioIn = null;
   }
   if (!win || win.isDestroyed()) return;
 
-  const rt      = new RtAudio();
-  const devices = rt.getDevices();
+  const devices = getEnumerator().getDevices();
   const device  = devices.find(d => d.id === deviceId);
 
   if (!device) {
@@ -175,18 +194,24 @@ function createInputStream(deviceId, numChannels, bufferFrames, win) {
     return;
   }
 
-  const ratesToTry = [...new Set([44100, 48000])];
+  const frames = bufferFrames || DEFAULT_BUFFER_FRAMES;
+
+  // Match AudioContext sample rate first to avoid resampling
+  const preferred = preferredRate || 48000;
+  const ratesToTry = [...new Set([preferred, 48000, 44100])];
   let openedRate = null;
+
+  // Reuse a single instance across retry attempts (same reason as output)
+  rtAudioIn = new RtAudio();
 
   for (const rate of ratesToTry) {
     try {
-      rtAudioIn = new RtAudio();
       rtAudioIn.openStream(
         null,                         // no output
         { deviceId, nChannels: nCh }, // input parameters
         RtAudioFormat.RTAUDIO_FLOAT32,
         rate,
-        bufferFrames || 512,
+        frames,
         'mubone-input',
         (inputData) => {
           // inputData is a Node Buffer of interleaved Float32 samples
@@ -200,13 +225,13 @@ function createInputStream(deviceId, numChannels, bufferFrames, win) {
       break;
     } catch (e) {
       console.warn(`audify input: ${rate} Hz failed — ${e.message}`);
-      try { if (rtAudioIn?.isStreamOpen()) rtAudioIn.closeStream(); } catch(_) {}
-      rtAudioIn = null;
+      try { if (rtAudioIn.isStreamOpen()) rtAudioIn.closeStream(); } catch(_) {}
     }
   }
 
-  if (!rtAudioIn) {
+  if (!openedRate) {
     console.error(`audify input: could not open stream on "${device.name}"`);
+    rtAudioIn = null;
     return;
   }
 
@@ -244,7 +269,12 @@ function setupIPC() {
       return;
     }
     _ipcDropCount = 0;
-    rtAudio.write(buf);
+    try {
+      rtAudio.write(buf);
+    } catch (e) {
+      console.error(`[audio-buffer] write error: ${e.message}`);
+      return;
+    }
     // Send credit back to renderer so worklet can pace itself
     if (!event.sender.isDestroyed()) {
       event.sender.send('audio-credit', 1);
@@ -253,7 +283,7 @@ function setupIPC() {
 
   // List all output devices with channel counts, flagging the system default
   ipcMain.handle('get-audio-devices', () => {
-    const rt        = new RtAudio();
+    const rt        = getEnumerator();
     const defaultId = rt.getDefaultOutputDevice();
     return rt.getDevices()
       .filter(d => d.outputChannels > 0)
@@ -266,7 +296,7 @@ function setupIPC() {
 
   // List all input devices with true channel counts (via RtAudio, not WebRTC)
   ipcMain.handle('get-input-devices', () => {
-    const rt        = new RtAudio();
+    const rt        = getEnumerator();
     const defaultId = rt.getDefaultInputDevice();
     return rt.getDevices()
       .filter(d => d.inputChannels > 0)
@@ -278,9 +308,9 @@ function setupIPC() {
 
   // Open RtAudio input stream for multichannel metering
   // Returns { ok, nCh, sampleRate, name } or { ok: false, error }
-  ipcMain.handle('set-input-device', (event, deviceId, numChannels, bufferFrames) => {
+  ipcMain.handle('set-input-device', (event, deviceId, numChannels, bufferFrames, sampleRate) => {
     const win    = BrowserWindow.fromWebContents(event.sender);
-    const result = createInputStream(deviceId, numChannels, bufferFrames, win);
+    const result = createInputStream(deviceId, numChannels, bufferFrames, win, sampleRate);
     if (result) {
       return { ok: true, nCh: result.nCh, sampleRate: result.rate, name: result.name };
     }
@@ -288,9 +318,9 @@ function setupIPC() {
   });
 
   // Switch output device at runtime — accepts (deviceId, numChannels, bufferFrames)
-  ipcMain.handle('set-audio-device', (event, deviceId, numChannels, bufferFrames) => {
+  ipcMain.handle('set-audio-device', (event, deviceId, numChannels, bufferFrames, sampleRate) => {
     audioDeviceId = deviceId;
-    createOutputStream(deviceId, numChannels, bufferFrames);
+    createOutputStream(deviceId, numChannels, bufferFrames, sampleRate);
     const streaming  = !!(rtAudio && rtAudio.isStreamRunning());
     const actualRate = streaming ? (rtAudio.getStreamSampleRate?.() ?? null) : null;
     return { ok: true, streaming, sampleRate: actualRate };
@@ -358,11 +388,17 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  // Stop streams before closing — closing while the CoreAudio IO thread is
+  // still running can SIGBUS on macOS.
   if (rtAudio) {
+    try { if (rtAudio.isStreamRunning()) rtAudio.stop(); } catch (_) {}
     try { if (rtAudio.isStreamOpen()) rtAudio.closeStream(); } catch (_) {}
+    rtAudio = null;
   }
   if (rtAudioIn) {
+    try { if (rtAudioIn.isStreamRunning()) rtAudioIn.stop(); } catch (_) {}
     try { if (rtAudioIn.isStreamOpen()) rtAudioIn.closeStream(); } catch (_) {}
+    rtAudioIn = null;
   }
   if (process.platform !== 'darwin') app.quit();
 });

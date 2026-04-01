@@ -11,8 +11,8 @@ class QuadCaptureProcessor extends AudioWorkletProcessor {
     super();
 
     this._numChannels = 4;   // default; overridden by 'init' message
-    this._batchSize   = 4;   // accumulate N × 128-sample blocks before posting
-                             // default 4 → 512 frames, matching default audify buffer.
+    this._batchSize   = 8;   // accumulate N × 128-sample blocks before posting
+                             // default 8 → 1024 frames, matching default audify buffer.
                              // Overridden by 'init' batchSize to match audify bufferFrames.
     this._blockSize   = 128;
 

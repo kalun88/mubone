@@ -160,20 +160,29 @@ export const PRESETS = [
   // ═══════════════════════════════════════════════════════════════════════════
 
   // -- 0. wash -- smooth granular freeze, live-monitor feel
-  //    Overlap ~3.8 (380ms/100ms) — safe headroom for hann+panner chain.
+  //    Overlap ~9.7 (589ms/61ms) — dense cloud, full-sphere k=99.
   {
     name:          'wash',
-    searchRadiusDeg: 12,
-    k:             8,
-    duration:      0.38,
-    durJitter:     0.08,
+    nearestMode:   false,
+    grainKAllMode: false,
+    grainKSeqMode: false,
+    searchRadiusDeg: 10,
+    k:             99,
+    duration:      0.589,
+    durJitter:     0,
     durVar:        0.04,
-    period:        0.10,
-    periodVar:     0.01,
-    fadeRatio:     0.32,
-    pitchJitter:   0.01,
-    panSpread:     0.15,
-    volume:        0.50,
+    fadeRatio:     0.50,
+    period:        0.061,
+    periodVar:     0.025,
+    pitchShift:    0,
+    pitchJitter:   0.012,
+    recencyN:      0,
+    probability:   1.0,
+    panSpread:     0.05,
+    volume:        0.85,
+    direction:     'fwd',
+    curveType:     'hann',
+    seqOverflow:   'oldest',
   },
 
   // -- 1. vinyl -- lock+recency1: scrubbing a record, exact position tracking
@@ -767,10 +776,10 @@ export function saveUserPresets() {
 
 // ── Sample-rate-derived grain parameter floors ───────────────────────────────
 // Minimum grain duration = 2 samples; minimum inter-onset period = 2 samples.
-// Getter functions read the live AudioContext sample rate (falls back to 44100
+// Getter functions read the live AudioContext sample rate (falls back to 48000
 // before the context is created, e.g. during early UI initialisation).
-export const minGrainDurS    = () => 2 / (S.audioCtx?.sampleRate ?? 44100);
-export const minGrainPeriodS = () => 2 / (S.audioCtx?.sampleRate ?? 44100);
+export const minGrainDurS    = () => 2 / (S.audioCtx?.sampleRate ?? 48000);
+export const minGrainPeriodS = () => 2 / (S.audioCtx?.sampleRate ?? 48000);
 
 // ── Envelope curve builders ──────────────────────────────────────────────────
 
@@ -1382,6 +1391,17 @@ export const S = {
   mixdownHouseGainNodes:  null,  // [GainNode L, GainNode R] — house fold-down → mix sum
   mixdownCursorGainNodes: null,  // [GainNode L, GainNode R] — cursor → mix sum
   mixdownCursorInputs:    null,  // [GainNode L, GainNode R] — cursor grains connect here
+
+  // ── Dry monitor layer ──────────────────────────────────────────────────
+  // Continuous spatialized pass-through of the live input signal, panned to
+  // the cursor position.  Updates every frame — no recording, no buffering.
+  dryMonitorEnabled:  true,   // on/off toggle for the dry spatial layer
+  dryMonitorGainValue: 0.5,   // 0–2, dry signal level in the house mix
+  dryGainNode:         null,  // GainNode — dry level control
+  dryAnalyser:         null,  // AnalyserNode — dry level meter tap
+  dryVBAPGains:        null,  // [GainNode, ...] — one per speaker bus (Electron multi-ch)
+  dryPanner:           null,  // StereoPanner — stereo path (browser / 2-ch)
+  dryMixdownInputs:    null,  // [GainNode L, GainNode R] — dry → headphone mixdown (Electron)
 
   // ── Output gain + mute ─────────────────────────────────────────────────
   outputGainValue: 0.9,  // linear gain (0–2), matches masterGain initial value

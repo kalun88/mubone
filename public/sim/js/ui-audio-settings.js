@@ -98,6 +98,9 @@ async function setupRtAudioInputMeters(nCh) {
     return g;
   });
 
+  // Ensure dry monitor chain is connected (idempotent — Web Audio ignores dupes)
+  if (S.dryGainNode) S.inputGainNode.connect(S.dryGainNode);
+
   // Wire selected channel into the recording path (S.inputGainNode → S.inputAnalyser)
   // so spacebar records from whatever channel the dropdown shows.
   rewireRtAudioRecordingChannel(safeSel, nCh);
@@ -117,6 +120,7 @@ async function setupRtAudioInputMeters(nCh) {
 }
 
 // Switch which RtAudio channel feeds S.inputGainNode (recording path).
+// chIndex can be a number (single channel) or 'stereo' (sum ch 0 + ch 1).
 // Uses per-channel routing GainNodes (0/1) instead of disconnect() to avoid
 // the unreliable 3-arg disconnect(node, output, input) form.
 function rewireRtAudioRecordingChannel(chIndex, nCh) {
@@ -153,13 +157,21 @@ function rewireRtAudioRecordingChannel(chIndex, nCh) {
     S.inputGainNode.connect(S.inputAnalyser);
   }
 
-  // Flip routing gains: 1 for the chosen channel, 0 for all others.
+  // Flip routing gains: 1 for the chosen channel(s), 0 for all others.
   // The graph (splitter[i] → routingGain[i] → S.inputGainNode) was wired in
   // setupRtAudioInputMeters; we just change the gain values here.
-  const n = _rtInputRoutingGains.length || (nCh ?? as.inputAnalysers.length);
-  const safe = Math.max(0, Math.min(chIndex, n - 1));
-  _rtInputRoutingGains.forEach((g, i) => { g.gain.value = (i === safe) ? 1 : 0; });
-  DEBUG && console.log(`[input] recording from RtAudio ch ${safe + 1} (index ${safe})`);
+  const isStereo = chIndex === 'stereo';
+  if (isStereo) {
+    // Stereo sum: enable channels 0 and 1, silence the rest.
+    // The routing gains all feed S.inputGainNode (mono) which auto-sums.
+    _rtInputRoutingGains.forEach((g, i) => { g.gain.value = (i <= 1) ? 1 : 0; });
+    DEBUG && console.log(`[input] recording from RtAudio stereo (ch 1+2 sum)`);
+  } else {
+    const n = _rtInputRoutingGains.length || (nCh ?? as.inputAnalysers.length);
+    const safe = Math.max(0, Math.min(chIndex, n - 1));
+    _rtInputRoutingGains.forEach((g, i) => { g.gain.value = (i === safe) ? 1 : 0; });
+    DEBUG && console.log(`[input] recording from RtAudio ch ${safe + 1} (index ${safe})`);
+  }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -318,8 +330,10 @@ function renderInputMeters(selectedCh) {
   const numCh = as.inputAnalysers.length || 1;
   const devSel = document.getElementById('asInputDevice');
   const devLabel = devSel?.options[devSel.selectedIndex]?.text ?? '';
-  // Which bar(s) to highlight: use explicit arg, or fall back to S.mainInputChannel
-  const sel = selectedCh !== undefined ? selectedCh : (S.mainInputChannel ?? 0);
+  // Which bar(s) to highlight: use explicit arg, or fall back to S.mainInputChannel.
+  // Convert 'stereo' to [0, 1] for the highlight array.
+  let sel = selectedCh !== undefined ? selectedCh : (S.mainInputChannel ?? 0);
+  if (sel === 'stereo') sel = [0, 1];
   renderMeters('asInputMeters', numCh, makeInputLabels(numCh, devLabel), sel);
   // Keep main window input meter in sync (same channel layout + highlight)
   S._rebuildMainInputMeters?.();
@@ -381,10 +395,11 @@ function renderInputMappingTable() {
   const nCh = as.inputAnalysers.length;
   if (!nCh) { wrap.style.display = 'none'; return; }
 
-  // Build hardware channel options (ch 1 … ch N)
-  const hwOpts = Array.from({ length: nCh }, (_, i) =>
+  // Build hardware channel options (ch 1 … ch N, plus stereo sum if ≥ 2 ch)
+  let hwOpts = Array.from({ length: nCh }, (_, i) =>
     `<option value="${i}">ch ${i + 1}</option>`
   ).join('');
+  if (nCh >= 2) hwOpts += `<option value="stereo">stereo (L+R)</option>`;
 
   wrap.style.display = '';
   wrap.innerHTML = `
@@ -403,24 +418,26 @@ function renderInputMappingTable() {
       </div>
     </div>`;
 
-  // Restore current main channel
+  // Restore current main channel (may be numeric index or 'stereo')
   const mainSel = document.getElementById('asMainInputSel');
   if (mainSel) {
-    mainSel.value = String(S.mainInputChannel ?? 0);
+    mainSel.value = S.mainInputChannel === 'stereo' ? 'stereo' : String(S.mainInputChannel ?? 0);
     mainSel.addEventListener('change', () => {
-      const chIndex = parseInt(mainSel.value, 10);
-      S.mainInputChannel = chIndex;
-      // Rewire recording path to new channel
+      const val = mainSel.value;
+      const isStereo = val === 'stereo';
+      S.mainInputChannel = isStereo ? 'stereo' : parseInt(val, 10);
+      // Rewire recording path to new channel (or stereo sum)
       if (window.electronBridge?.isElectron) {
-        rewireRtAudioRecordingChannel(chIndex, nCh);
+        rewireRtAudioRecordingChannel(isStereo ? 'stereo' : parseInt(val, 10), nCh);
       } else if (S.inputStream) {
-        buildInputGraph(String(chIndex));
+        buildInputGraph(val);
       }
       // Update hidden compat dropdown so legacy channel-change handler still works
       const compat = document.getElementById('asInputChannel');
-      if (compat) compat.value = String(chIndex);
-      renderInputMeters(chIndex);
-      setStatus('asInputStatus', 'ok', `main → ch ${chIndex + 1}`);
+      if (compat) compat.value = val;
+      const highlight = isStereo ? [0, 1] : parseInt(val, 10);
+      renderInputMeters(highlight);
+      setStatus('asInputStatus', 'ok', isStereo ? 'main → stereo (L+R)' : `main → ch ${parseInt(val, 10) + 1}`);
     });
   }
 }
@@ -624,7 +641,7 @@ function stopAudio() {
 // ── Latency display ───────────────────────────────────────────────────────────
 function updateLatency() {
   const buf = parseInt(document.getElementById('asBufferSize')?.value ?? 512);
-  const sr  = S.audioCtx?.sampleRate ?? parseInt(document.getElementById('asSampleRate')?.value ?? 44100);
+  const sr  = S.audioCtx?.sampleRate ?? parseInt(document.getElementById('asSampleRate')?.value ?? 48000);
   const ms  = (buf / sr * 1000).toFixed(1);
   const lbl = document.getElementById('asLatencyLabel');
   const dot = document.getElementById('asLatencyDot');
@@ -636,13 +653,13 @@ function updateLatency() {
 
 async function applySampleRate() {
   const sel = document.getElementById('asSampleRate');
-  const newRate = parseInt(sel?.value ?? 44100);
+  const newRate = parseInt(sel?.value ?? 48000);
   if (newRate === S.audioCtx?.sampleRate) return; // no change
 
   const confirmed = window.confirm(
     `Change sample rate to ${newRate} Hz?\n\nThis will restart the audio engine. Any active recording will be lost.`
   );
-  if (!confirmed) { if (sel) sel.value = String(S.audioCtx?.sampleRate ?? 44100); return; }
+  if (!confirmed) { if (sel) sel.value = String(S.audioCtx?.sampleRate ?? 48000); return; }
 
   setStatus('asInputStatus',  'idle', 'restarting audio engine…');
   setStatus('asOutputStatus', 'idle', 'restarting audio engine…');
@@ -657,7 +674,7 @@ async function applySampleRate() {
     const current = devices.find(d => d.id === devId) || devices[0];
     if (current) {
       const nCh = current.outputChannels;
-      await window.electronBridge.setAudioDevice(current.id, nCh);
+      await window.electronBridge.setAudioDevice(current.id, nCh, undefined, S.audioCtx?.sampleRate);
       await initSpeakerBuses(nCh);
     }
   }
@@ -679,7 +696,7 @@ async function applyBufferSize() {
     const current = devices.find(d => d.isDefault) || devices[0];
     if (current) {
       const nCh = S.speakerBuses?.length ?? current.outputChannels;
-      const result = await window.electronBridge.setAudioDevice(current.id, nCh, buf);
+      const result = await window.electronBridge.setAudioDevice(current.id, nCh, buf, S.audioCtx?.sampleRate);
       const ok = result.streaming;
       setStatus('asOutputStatus', ok ? 'ok' : 'error',
         ok ? `buffer: ${buf} frames @ ${S.audioCtx?.sampleRate} Hz` : 'failed to reopen stream');
@@ -948,7 +965,7 @@ async function applyInputDevice() {
   // ── Electron: use RtAudio for true multichannel input metering ─────────────
   if (window.electronBridge?.setInputDevice) {
     const deviceId  = parseInt(devSel.value, 10);
-    const bufFrames = S.preferredBufferSize ?? 512;
+    const bufFrames = S.preferredBufferSize ?? 1024;
 
     // Find the device to know its channel count
     const devices = await window.electronBridge.getInputDevices();
@@ -958,7 +975,7 @@ async function applyInputDevice() {
       return;
     }
 
-    const result = await window.electronBridge.setInputDevice(deviceId, device.inputChannels, bufFrames);
+    const result = await window.electronBridge.setInputDevice(deviceId, device.inputChannels, bufFrames, S.audioCtx?.sampleRate);
     if (!result.ok) {
       setStatus('asInputStatus', 'error', result.error ?? 'failed to open input stream');
       return;
@@ -1007,7 +1024,7 @@ async function applyInputDevice() {
       audio: {
         deviceId:         { exact: deviceId },
         channelCount:     { ideal: 32 },   // ask for lots; browser caps at device max
-        sampleRate:       { ideal: S.audioCtx?.sampleRate ?? 44100 },
+        sampleRate:       { ideal: S.audioCtx?.sampleRate ?? 48000 },
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl:  false,
@@ -1041,6 +1058,8 @@ async function applyInputDevice() {
 
     monitorSrc.connect(S.inputGainNode);
     S.inputGainNode.connect(S.inputAnalyser);
+    // Reconnect dry monitor chain to the new inputGainNode
+    if (S.dryGainNode) S.inputGainNode.connect(S.dryGainNode);
     window._micMonitorSrc = monitorSrc;
 
     // Update channel dropdown to reflect actual channel count
@@ -1153,8 +1172,8 @@ async function applyOutputDevice() {
 
     // Open the hardware stream first so audify is ready for the correct channel
     // count before the Web Audio worklet starts posting buffers to it.
-    const bufFrames = S.preferredBufferSize ?? 512;
-    const result = await window.electronBridge.setAudioDevice(deviceId, numCh, bufFrames);
+    const bufFrames = S.preferredBufferSize ?? 1024;
+    const result = await window.electronBridge.setAudioDevice(deviceId, numCh, bufFrames, S.audioCtx?.sampleRate);
 
     // Now rebuild the Web Audio speaker bus graph — worklet posts start after this.
     await initSpeakerBuses(numCh);
@@ -1360,7 +1379,7 @@ export function loadAudioDefaults() {
       _outputDeviceId = d.outputDeviceId;
       S._savedOutputDeviceId = d.outputDeviceId;
     }
-    if (typeof d.mainInputChannel === 'number') S.mainInputChannel = d.mainInputChannel;
+    if (d.mainInputChannel === 'stereo' || typeof d.mainInputChannel === 'number') S.mainInputChannel = d.mainInputChannel;
 
     // Engine
     if (typeof d.sampleRate === 'number') S.savedSampleRate = d.sampleRate;
@@ -1558,7 +1577,8 @@ export function initAudioSettings() {
         renderInputMappingTable();
         if (as.started && _inputDeviceId != null) {
           const nCh = as.inputAnalysers.length;
-          setStatus('asInputStatus', 'ok', `${nCh} ch input active — recording ch ${(S.mainInputChannel ?? 0) + 1}`);
+          const chDesc = S.mainInputChannel === 'stereo' ? 'stereo (L+R)' : `ch ${(S.mainInputChannel ?? 0) + 1}`;
+          setStatus('asInputStatus', 'ok', `${nCh} ch input active — recording ${chDesc}`);
         }
       } else if (as.started && S.inputAnalyser) {
         // Browser path: mic granted via top-bar button — S.inputAnalyser exists
@@ -1830,7 +1850,7 @@ export function initAudioSettings() {
 
     // Keep S.mainInputChannel in sync so main UI meters and mapping table
     // reflect the user's actual selection (was missing — caused stale highlight)
-    if (!isStereo) S.mainInputChannel = chIndex;
+    S.mainInputChannel = isStereo ? 'stereo' : chIndex;
 
     // Restore the remembered gain for this channel and update the slider + gain node
     const savedGain = as.inputGains[val] ?? 0;

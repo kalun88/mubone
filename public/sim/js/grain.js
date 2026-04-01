@@ -36,6 +36,12 @@ export function buildVBAPLookup(speakers) {
   }
 }
 
+// Query the pre-computed VBAP lookup table for a given azimuth in degrees.
+// Returns { idxA, idxB, wA, wB } or null if the table isn't built yet.
+export function queryVBAPLookup(azDeg) {
+  return _vbapLUT?.[Math.round(azDeg) % 360] ?? null;
+}
+
 export function rand(min, max) { return min + Math.random() * (max - min); }
 
 // activeGrainMap: particle → { expiry, glowColor } — shared with renderer
@@ -574,6 +580,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       : startPos;
 
     const gain = actx.createGain();
+    gain.gain.value = 0;  // start silent — prevents 1-sample leak at default gain=1.0
     // When radius fade attenuation is active, force linear (triangle) envelope
     // so ep.volume (already scaled by _radiusFadeAtten) controls the peak directly.
     // Pre-built Hann curves are shared/pre-scaled to full volume and can't be
@@ -602,8 +609,8 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       // event at exactly t as overlapping with setValueCurveAtTime(…, t, fade)
       // (which also starts at t) and can throw InvalidStateError or silently
       // treat the curve as a no-op — both produce a loud rectangular burst.
-      // attackCurve[0] is already 0 and the gain node initialises to 0, so
-      // no additional "pre-zero" event is needed.
+      // attackCurve[0] is already 0 and gain.gain.value was set to 0 above,
+      // so no additional "pre-zero" event is needed.
       try {
         gain.gain.setValueCurveAtTime(attackCurve,  t,               fade);
         gain.gain.setValueCurveAtTime(releaseCurve, t + actualDur - fade, fade);
@@ -801,7 +808,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
         _deferDisconnect(source); _deferDisconnect(gain);
         if (elevGainNode) _deferDisconnect(elevGainNode);
         _deferDisconnect(gA); _deferDisconnect(gB);
-        for (const n of _extraNodes) _deferDisconnect(n);
+        if (_extraNodes) for (const n of _extraNodes) _deferDisconnect(n);
       }, { once: true });
       } // end normal VBAP
 

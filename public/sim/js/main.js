@@ -14,7 +14,7 @@ import { setupMappingModal, initMidi } from './midi.js';
 import { initMobileMode } from './mobile.js';
 import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
 import { resizeCanvas, animate } from './renderer.js';
-import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initMorphToggle, initRadiusFade, initSeqMode, initMixdownGains, setScanMuted, initGateMeter } from './ui-meters.js';
+import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initMorphToggle, initRadiusFade, initSeqMode, initMixdownGains, initDryMonitorGains, setScanMuted, initGateMeter } from './ui-meters.js';
 import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, recenterCursor } from './sensor-registry.js';
 import { initOSC } from './osc.js';
 import { initSensorsUI } from './ui-sensors.js';
@@ -377,6 +377,7 @@ function init() {
     initRadiusFade();      // wire radius fade toggle + curve slider
     initSeqMode();         // wire sequential (loop) mode toggle
     initMixdownGains();    // wire mixdown source gain sliders
+    initDryMonitorGains(); // wire dry monitor gain slider + enable checkbox
   });
 
   // Redraw waveforms when their containers resize (e.g. window resize or flex relayout)
@@ -398,7 +399,8 @@ function init() {
         if (best) {
           const nCh = best.outputChannels;
           await initSpeakerBuses(nCh);
-          const result = await window.electronBridge.setAudioDevice(best.id, nCh);
+          const bufFrames = S.preferredBufferSize ?? 1024;
+          const result = await window.electronBridge.setAudioDevice(best.id, nCh, bufFrames, S.audioCtx?.sampleRate);
           const tag = saved ? 'saved' : 'system default';
           DEBUG && console.log(`Output: "${best.name}" (${tag}) — ${nCh} ch — streaming: ${result.streaming}`);
         } else {
@@ -410,8 +412,8 @@ function init() {
           const inDevices = await window.electronBridge.getInputDevices();
           const inDev     = inDevices.find(d => d.id === S._savedInputDeviceId);
           if (inDev) {
-            const bufFrames = S.preferredBufferSize ?? 512;
-            const result = await window.electronBridge.setInputDevice(inDev.id, inDev.inputChannels, bufFrames);
+            const bufFrames = S.preferredBufferSize ?? 1024;
+            const result = await window.electronBridge.setInputDevice(inDev.id, inDev.inputChannels, bufFrames, S.audioCtx?.sampleRate);
             if (result.ok) {
               DEBUG && console.log(`Input: "${inDev.name}" (saved) — ${result.nCh} ch`);
               // Wire up the worklet, analysers, and recording chain so the

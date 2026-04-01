@@ -19,6 +19,10 @@ import { screenToLonLat, getCursorLonLat } from './sphere.js';
 import { applySparsePreset, syncAllUI, PARAM_REGISTRY } from './ui-patch-table.js';
 import { isLocked, onLockChange, loadLocks } from './param-lock.js';
 
+// ── Recency slider constants (module-level so both setupPresets & initGrainControls see them)
+const RECENCY_MIN = 1, RECENCY_MAX = 16;
+const RECENCY_SLIDER_ALL = RECENCY_MAX + 1;   // slider position for "all"
+
 // ── Shared time formatter (seconds → human-readable ms/s string) ─────────────
 export function fmtMs(v) {
   const ms = v * 1000;
@@ -214,40 +218,51 @@ export function setupPresets() {
   // ── Recency slider ────────────────────────────────────────────────────────
   const recencyValEl    = document.getElementById('recencyVal');
   const recencySliderEl = document.getElementById('recencySlider');
-  const RECENCY_MIN = 1, RECENCY_MAX = 16;
+  // RECENCY_MIN, RECENCY_MAX, RECENCY_SLIDER_ALL are module-level constants
 
   // keep S.drawRecencyDial a no-op so renderer.js call is safe
   S.drawRecencyDial = function() {};
 
   S.setRecency = function(n) {
-    S.recencyN = Math.max(RECENCY_MIN, Math.min(RECENCY_MAX, n));
-    if (recencySliderEl) recencySliderEl.value = S.recencyN;
-    if (recencyValEl)    recencyValEl.value    = S.recencyN;
+    // 0 (or <=0) = "all" — no recency filter
+    if (n <= 0) {
+      S.recencyN = 0;
+      if (recencySliderEl) recencySliderEl.value = RECENCY_SLIDER_ALL;
+      if (recencyValEl)    recencyValEl.value    = 'all';
+    } else {
+      S.recencyN = Math.max(RECENCY_MIN, Math.min(RECENCY_MAX, n));
+      if (recencySliderEl) recencySliderEl.value = S.recencyN;
+      if (recencyValEl)    recencyValEl.value    = S.recencyN;
+    }
   };
 
   if (recencySliderEl) {
-    recencySliderEl.value = S.recencyN;
+    recencySliderEl.value = S.recencyN === 0 ? RECENCY_SLIDER_ALL : S.recencyN;
     let _recencyTimerId = null;
     recencySliderEl.addEventListener('input', () => {
       if (_recencyTimerId === null)
         _recencyTimerId = setTimeout(() => {
           _recencyTimerId = null;
-          S.setRecency(parseInt(recencySliderEl.value));
+          const raw = parseInt(recencySliderEl.value);
+          S.setRecency(raw >= RECENCY_SLIDER_ALL ? 0 : raw);
         }, 50);
     });
   }
 
   // editable recency numbox — parse on commit
   if (recencyValEl) {
-    recencyValEl.value = S.recencyN;
+    recencyValEl.value = S.recencyN === 0 ? 'all' : S.recencyN;
     recencyValEl.addEventListener('focus', e => e.target.select());
     recencyValEl.addEventListener('blur', () => {
-      const v = parseInt(recencyValEl.value);
-      if (!isNaN(v)) S.setRecency(v); else recencyValEl.value = S.recencyN;
+      const raw = recencyValEl.value.trim().toLowerCase();
+      if (raw === 'all' || raw === '0') { S.setRecency(0); return; }
+      const v = parseInt(raw);
+      if (!isNaN(v)) S.setRecency(v);
+      else recencyValEl.value = S.recencyN === 0 ? 'all' : S.recencyN;
     });
     recencyValEl.addEventListener('keydown', e => {
       if (e.key === 'Enter') { recencyValEl.blur(); }
-      if (e.key === 'Escape') { recencyValEl.value = S.recencyN; recencyValEl.blur(); }
+      if (e.key === 'Escape') { recencyValEl.value = S.recencyN === 0 ? 'all' : S.recencyN; recencyValEl.blur(); }
     });
     recencyValEl.style.cursor = 'text';
   }
@@ -2243,7 +2258,9 @@ export function initGrainControls() {
     const kNum = document.getElementById('kBigNum');
     if (kNum) kNum.value = kVal;
     const recValEl = document.getElementById('recencyVal');
-    if (recValEl) recValEl.textContent = S.recencyN;
+    if (recValEl) recValEl.value = S.recencyN === 0 ? 'all' : S.recencyN;
+    const recSlider = document.getElementById('recencySlider');
+    if (recSlider) recSlider.value = S.recencyN === 0 ? RECENCY_SLIDER_ALL : S.recencyN;
     // Also sync the radius slider (morph writes to S.searchRadiusDeg directly)
     const radSlider = document.getElementById('radiusSlider');
     if (radSlider) radSlider.value = S.searchRadiusDeg;

@@ -5,6 +5,30 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.14 alpha — 2026-04-01
+
+### Fixed
+- **Electron SIGBUS crash on launch** — RtAudio's CoreAudio IO thread was crashing with `KERN_PROTECTION_FAILURE` in `_platform_memmove`. Three root causes: (1) throwaway `new RtAudio()` instances for device enumeration conflicted with active streams on macOS — replaced with a single persistent enumerator; (2) the sample-rate retry loop created a fresh RtAudio instance per attempt, destabilising CoreAudio — now reuses one instance; (3) `closeStream()` was called without `stop()` first, racing the IO thread. All three fixed.
+- **Grain clicking artifacts** — `createGain()` defaults to gain=1.0, but the Hann envelope path assumed gain started at 0. Within the same render quantum, a few samples of full-volume signal could leak before `setValueCurveAtTime` took over. Added `gain.gain.value = 0` at node creation so every grain is silent from birth.
+- **VBAP cleanup TypeError** — `_extraNodes` was null when mixdown inputs didn't exist, but the `ended` callback did `for (const n of _extraNodes)` unconditionally — threw TypeError on every grain in the multi-speaker path. Added null guard.
+- **48 kHz everywhere** — all `44100` fallbacks across the app changed to `48000`: `ensureAudioContext`, `getUserMedia`, `minGrainDurS`/`minGrainPeriodS`, `ui-audio-settings.js` (6 call sites), `index.html` sample rate dropdown default. Electron `createOutputStream`/`createInputStream` now try the AudioContext rate first.
+- **RECENCY_SLIDER_ALL scope bug** — `const` was declared inside `setupPresets()` but referenced from `initGrainControls()` (separate export), causing a ReferenceError that froze the entire app. Moved to module scope.
+- **Wash factory preset silent on load** — removing `durJitter` from the sparse preset left `S.grainParams.durJitter` as `undefined` → `rand(-undefined, undefined)` → NaN duration → silent grains. Preset now explicitly sets `durJitter: 0`.
+
+### Added
+- **Dry monitor layer** — continuous spatialized pass-through of the live input signal, panned to the cursor position. VBAP path for multi-channel (Electron), StereoPanner for browser stereo. Updated each frame (~30fps) with 30ms gain ramps to avoid zippering. Includes on/off toggle, gain slider, dedicated meter in the levels panel, and headphone mixdown feed.
+- **MIDI/OSC: dry monitor gain** — new `dry_gain` action (0–2) via `/dry/gain` OSC path, drives `S._setDryMonitorGain` callback.
+- **MIDI/OSC: recency=0 (all)** — recency CC and `/search/recency` OSC now support value 0 meaning "no recency filter" (all buffers eligible).
+- **Energy map UI** (experimental) — on/off toggle and gain slider in gesture panel, persisted to localStorage.
+- **Main-window dry meter** — single-bar dry monitor level meter alongside input and house meters.
+
+### Changed
+- **Wash factory preset updated** — k:99, duration:589ms, period:61ms, fadeRatio:0.50, pitchJitter:±12¢, panSpread:0.05, volume:0.85, hann envelope, fwd direction, recency:all, probability:100%.
+- **Default buffer size 512→1024** — safer default for 48 kHz on macOS CoreAudio. Updated in electron-main.js, audio.js worklet batchSize, main.js auto-open, ui-audio-settings.js, HTML dropdown, and quad-capture worklet default (4→8 blocks).
+- **Electron RtAudio hardened** — `rtAudio.write()` wrapped in try-catch to prevent native errors from crashing the process. Shutdown sequence now stops streams before closing.
+
+---
+
 ## 0.13 alpha — 2026-03-31
 
 ### Fixed

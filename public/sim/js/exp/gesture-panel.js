@@ -139,6 +139,11 @@ let dragGateStartDist = 0;
 let dragGateStartVal = 0;
 const radialGeom = { cx: 0, cy: 0, r: 0, dzR: 0 };  // updated each draw frame
 
+// ── Energy map UI state ─────────────────────────────────────────────────────
+const energyMapToggleRect = { x: 0, y: 0, w: 0, h: 0 };
+const energyGainSliderRect = { x: 0, y: 0, w: 0, h: 0 };
+let draggingEnergyGain = false;
+
 // ── Radial morph pin UI state ───────────────────────────────────────────────
 const morphToggleRect  = { x: 0, y: 0, w: 0, h: 0 };
 const dropPinRect      = { x: 0, y: 0, w: 0, h: 0 };
@@ -355,6 +360,20 @@ function onMouseDown(e) {
       pinDropdownScroll = 0;
       return;
     }
+    // Energy map on/off toggle
+    const em = energyMapToggleRect;
+    if (mx >= em.x && mx <= em.x + em.w && my >= em.y && my <= em.y + em.h) {
+      S.energyMapOn = !S.energyMapOn;
+      _saveGestureSettings();
+      return;
+    }
+    // Energy gain slider
+    const eg = energyGainSliderRect;
+    if (mx >= eg.x && mx <= eg.x + eg.w && my >= eg.y && my <= eg.y + eg.h) {
+      draggingEnergyGain = true;
+      S.energyGain = Math.max(0.1, Math.min(3.0, ((mx - eg.x) / eg.w) * 3.0));
+      return;
+    }
     // Morph on/off toggle
     const mt = morphToggleRect;
     if (mx >= mt.x && mx <= mt.x + mt.w && my >= mt.y && my <= mt.y + mt.h) {
@@ -448,6 +467,13 @@ function onMouseMove(e) {
     return;
   }
 
+  // Energy gain slider drag
+  if (draggingEnergyGain) {
+    const eg = energyGainSliderRect;
+    S.energyGain = Math.max(0.1, Math.min(3.0, ((mx - eg.x) / eg.w) * 3.0));
+    return;
+  }
+
   // Joystick physics slider drag
   if (draggingJoySlider) {
     const sr = joySliderRects[draggingJoySlider];
@@ -509,6 +535,12 @@ function onMouseMove(e) {
       if (mx >= sr.x && mx <= sr.x + sr.w && my >= sr.y - 4 && my <= sr.y + sr.h + 4) { overInteractive = true; break; }
     }
   }
+  // Check energy map UI elements
+  if (!overInteractive) {
+    for (const r of [energyMapToggleRect, energyGainSliderRect]) {
+      if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) { overInteractive = true; break; }
+    }
+  }
   // Check radial morph pin UI elements
   if (!overInteractive && showRadial) {
     for (const r of [morphToggleRect, dropPinRect]) {
@@ -540,9 +572,9 @@ function onMouseMove(e) {
 }
 
 function onMouseUp() {
-  // Save if any joystick param was being dragged (slider, ring, gate)
-  if (draggingJoySlider || draggingCircle || draggingGate) _saveGestureSettings();
-  draggingSlider = null; draggingJoySlider = null; draggingCircle = false; draggingGate = false; draggingThreshold = null;
+  // Save if any joystick param was being dragged (slider, ring, gate, energy gain)
+  if (draggingJoySlider || draggingCircle || draggingGate || draggingEnergyGain) _saveGestureSettings();
+  draggingSlider = null; draggingJoySlider = null; draggingCircle = false; draggingGate = false; draggingThreshold = null; draggingEnergyGain = false;
 }
 
 function setJoySliderValue(key, val) {
@@ -567,6 +599,7 @@ function _saveGestureSettings() {
       joyAxisX, joyAxisY, joySignX, joySignY,
       joyTrailPersist,
       axisPairIdx, showRadial,
+      energyMapOn: S.energyMapOn, energyGain: S.energyGain,
     }));
   } catch (_) { /* storage full */ }
 }
@@ -591,6 +624,8 @@ function _loadGestureSettings() {
     if (typeof s.joyTrailPersist === 'boolean') joyTrailPersist = s.joyTrailPersist;
     if (typeof s.axisPairIdx === 'number') axisPairIdx = s.axisPairIdx;
     if (typeof s.showRadial === 'boolean') showRadial = s.showRadial;
+    if (typeof s.energyMapOn === 'boolean') S.energyMapOn = s.energyMapOn;
+    if (typeof s.energyGain === 'number')   S.energyGain  = s.energyGain;
     updatePhysicsParams();
   } catch (_) { /* corrupt data — use defaults */ }
 }
@@ -648,7 +683,7 @@ function computeLayout() {
 
   // Left column: radial plot + controls below
   const pinCount = S.radialPins?.length ?? 0;
-  const controlsH = 130 + 18 + pinCount * 14 + 30;  // toggles + sliders + morph toggle + pin list
+  const controlsH = 130 + 18 + 14 + pinCount * 14 + 30;  // toggles + sliders + energy map + morph toggle + pin list
   const headerH   = 20;
   // Use a reasonable plot size based on width (not constrained by height)
   const plotSize = Math.max(100, Math.min(leftW - 8, 500));
@@ -1309,6 +1344,38 @@ function draw() {
 
       _ctx.font = '9px monospace';
       _ctx.textAlign = 'left';
+
+      // Energy map on/off toggle
+      const emOn = S.energyMapOn;
+      const emLabel = emOn ? '● energy map' : '○ energy map';
+      _ctx.fillStyle = emOn ? '#ff6b6b' : 'rgba(255, 107, 107, 0.3)';
+      _ctx.fillText(emLabel, slX, mY);
+      const emW = _ctx.measureText(emLabel).width + 6;
+      energyMapToggleRect.x = slX; energyMapToggleRect.y = mY - 10;
+      energyMapToggleRect.w = emW; energyMapToggleRect.h = 14;
+
+      // Energy gain slider (inline, right of toggle)
+      {
+        const egSlX = slX + emW + 10;
+        const egSlW = 60;
+        const egSlH = 8;
+        const egSlY = mY - 6;
+        const gainNorm = Math.max(0, Math.min(1, (S.energyGain ?? 1.0) / 3.0));
+        _ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        _ctx.fillRect(egSlX, egSlY, egSlW, egSlH);
+        _ctx.fillStyle = emOn ? 'rgba(255, 107, 107, 0.35)' : 'rgba(255, 107, 107, 0.12)';
+        _ctx.fillRect(egSlX, egSlY, egSlW * gainNorm, egSlH);
+        const egThX = egSlX + egSlW * gainNorm;
+        _ctx.fillStyle = emOn ? '#ff6b6b' : 'rgba(255, 107, 107, 0.4)';
+        _ctx.fillRect(egThX - 2, egSlY - 2, 4, egSlH + 4);
+        // Label
+        _ctx.fillStyle = COL_DIM;
+        _ctx.fillText(`gain ${(S.energyGain ?? 1.0).toFixed(1)}`, egSlX + egSlW + 6, mY);
+        energyGainSliderRect.x = egSlX; energyGainSliderRect.y = egSlY;
+        energyGainSliderRect.w = egSlW; energyGainSliderRect.h = egSlH;
+      }
+
+      mY += 14;
 
       // Morph on/off toggle
       const morphOn = S.radialMorphOn;

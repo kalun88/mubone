@@ -6,6 +6,7 @@
 import { S } from './state.js';
 import { dropSeqFromCursor, clearAllSeqs, releaseCommit, clearAllCommits, updateCommitBanksUI, updateSeqBanksUI } from './ui-presets.js';
 import { tickHandsfree } from './handsfree.js';
+import { updateDryMonitorPanning, setDryMonitorGain, setDryMonitorEnabled } from './audio.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
@@ -157,13 +158,22 @@ export function rebuildMainInputMeter() {
   if (!wrap) return;
   const analysers = S.inputAnalysers;
   if (analysers?.length) {
-    const sel = S.mainInputChannel ?? 0;
+    // Highlight both channels when stereo sum is selected
+    const sel = S.mainInputChannel === 'stereo' ? [0, 1] : (S.mainInputChannel ?? 0);
     const labels = Array.from({ length: analysers.length }, (_, i) => String(i + 1));
     renderMeters('mainInputMeters', analysers.length, labels, sel);
   } else {
     // No device yet — single placeholder bar
     renderMeters('mainInputMeters', 1, ['in']);
   }
+}
+
+// ── Main-window dry monitor meter ─────────────────────────────────────────────
+// Single-bar meter for the dry monitor level.
+export function rebuildMainDryMeter() {
+  const wrap = document.getElementById('mainDryMeters');
+  if (!wrap) return;
+  renderMeters('mainDryMeters', 1, ['dry']);
 }
 
 // ── Scan toggle (cursor spotlight on/off) ────────────────────────────────
@@ -483,6 +493,26 @@ export function initMixdownGains() {
   S._setMixdownHouseGain  = setMixdownHouseGain;
 }
 
+// ── Dry monitor gain controls ────────────────────────────────────────────────
+export function initDryMonitorGains() {
+  const slider = document.getElementById('dryMonitorGainSlider');
+  const chk    = document.getElementById('dryMonitorEnabledChk');
+
+  if (slider) {
+    slider.value = S.dryMonitorGainValue;
+    slider.addEventListener('input', () => setDryMonitorGain(parseFloat(slider.value)));
+  }
+  if (chk) {
+    chk.checked = S.dryMonitorEnabled;
+    chk.addEventListener('change', () => setDryMonitorEnabled(chk.checked));
+  }
+  const num = document.getElementById('dryMonitorGainNum');
+  if (num) num.textContent = Math.round(S.dryMonitorGainValue * 100) + '%';
+
+  // Expose setter for MIDI/OSC access
+  S._setDryMonitorGain = setDryMonitorGain;
+}
+
 // ── Main-window metering loop ────────────────────────────────────────────────
 // Drives tickMeters for main window via its own RAF loop, independent of
 // the sphere render loop. Call startMainMetering() once after init.
@@ -729,6 +759,7 @@ export function startMainMetering() {
   // via S._tickMainMeters(). Setup only.
   if (_mainMeterRAF) { cancelAnimationFrame(_mainMeterRAF); _mainMeterRAF = null; }
   rebuildMainInputMeter();
+  rebuildMainDryMeter();
   S._rebuildMainInputMeters  = rebuildMainInputMeter;
   S._rebuildMainOutputMeters = rebuildMainOutputMeters;
   // Expose the tick function for the unified RAF dispatcher
@@ -749,6 +780,9 @@ export function tickMainMeters() {
       tickMeters(mixAnalysers, 'mainMixMeters');
     }
   }
+  // Dry monitor: tick meter + update spatial panning
+  if (S.dryAnalyser) tickMeters([S.dryAnalyser], 'mainDryMeters');
+  updateDryMonitorPanning();
   updateGateLight();
   tickHandsfree();
 }

@@ -455,10 +455,10 @@ export function handleOSC(rawAddress, values) {
     case '/search/fill':    S._dispatchAction?.('k_all', 127);     break;
     case '/search/order':   S._dispatchAction?.('k_seq', 127);     break;
     case '/search/recency': {
-      const n = Math.max(1, Math.min(16, Math.round(values[0])));
+      const raw = Math.round(values[0]);
+      const n = raw <= 0 ? 0 : Math.min(16, raw);   // 0 = all (no filter)
       if (typeof S.setRecency === 'function') S.setRecency(n);
-      else S.recencyN = n;
-      const el = document.getElementById('recencyVal'); if (el) el.value = n;
+      else { S.recencyN = n; const el = document.getElementById('recencyVal'); if (el) el.value = n === 0 ? 'all' : n; }
       break;
     }
     case '/search/radius':

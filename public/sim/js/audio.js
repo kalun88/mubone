@@ -2,8 +2,9 @@
 // AUDIO SYSTEM  (extracted from index.html)
 // ============================================================================
 
-import { S, DEBUG, perf } from './state.js';
-import { buildVBAPLookup } from './grain.js';
+import { S, DEBUG, SPHERE_RADIUS, perf } from './state.js';
+import { buildVBAPLookup, queryVBAPLookup } from './grain.js';
+import { getCursorLonLat, screenToLonLat, spherePointInto, cameraTransformInto } from './sphere.js';
 
 // Track whether the recording-capture worklet module has been registered.
 // Reset to false on AudioContext recreation (new context needs fresh addModule).
@@ -29,9 +30,13 @@ export function makeSoftClipCurve(amount = 10) {
 
 export function ensureAudioContext() {
   if (!S.audioCtx) {
-    // Use caller-supplied preferred rate (set by audio settings UI) or default to 44100.
-    const sampleRate = S.preferredSampleRate ?? 44100;
-    S.audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+    // Use caller-supplied preferred rate (set by audio settings UI), then
+    // persisted rate from previous session, then 48000 (Chrome default,
+    // matches most USB interfaces).  Explicit 48000 avoids ambiguity when
+    // neither preference nor saved rate exist.
+    const sampleRate = S.preferredSampleRate ?? S.savedSampleRate ?? 48000;
+    const ctxOpts = { sampleRate };
+    S.audioCtx = new (window.AudioContext || window.webkitAudioContext)(ctxOpts);
 
     // On mobile, Web Audio defaults to the earpiece (call speaker, tiny & quiet).
     // Playing a silent looping <audio> element forces Chrome/Android to switch
@@ -144,6 +149,31 @@ export function ensureAudioContext() {
     S.houseBus           = houseBus;
     S.monitorToHouseGain = monitorToHouseGain;
     S.houseGainNode      = houseGainNode;
+
+    // ── Dry monitor layer (browser / stereo path) ──────────────────────────
+    // Continuous spatialized pass-through of live input, panned to cursor
+    // position via StereoPanner.  VBAP path is set up in initSpeakerBuses.
+    const dryGain = S.audioCtx.createGain();
+    dryGain.gain.value = S.dryMonitorEnabled ? S.dryMonitorGainValue : 0;
+    S.dryGainNode = dryGain;
+
+    const dryAnalyser = S.audioCtx.createAnalyser();
+    dryAnalyser.fftSize = 256;
+    dryAnalyser.smoothingTimeConstant = 0.75;
+    S.dryAnalyser = dryAnalyser;
+
+    // StereoPanner for browser / 2-ch mode — updated each frame by
+    // updateDryMonitorPanning().  Multi-ch VBAP replaces this in initSpeakerBuses.
+    const dryPanner = S.audioCtx.createStereoPanner();
+    dryPanner.pan.value = 0;
+    S.dryPanner = dryPanner;
+
+    // Chain: inputGainNode → dryGain → dryAnalyser → dryPanner → houseBus
+    // (houseBus so the dry signal goes to house like cursor + commits)
+    dryGain.connect(dryAnalyser);
+    dryAnalyser.connect(dryPanner);
+    dryPanner.connect(houseBus);
+    // inputGainNode → dryGain is connected when mic is granted (requestMicAccess)
 
     // Detect suspension → resumption so grain.js can reset onset clocks.
     // When Chrome auto-suspends the AudioContext (tab backgrounded, autoplay
@@ -282,7 +312,7 @@ export async function requestMicAccess() {
     // Build audio constraints — if the user pre-selected a device in settings,
     // honour it. Otherwise open the system default in mono.
     const audioConstraints = {
-      sampleRate:          { ideal: S.audioCtx?.sampleRate ?? 44100 },
+      sampleRate:          { ideal: S.audioCtx?.sampleRate ?? 48000 },
       channelCount:        { ideal: S.selectedInputChannels || 1 },
       echoCancellation:    false,
       noiseSuppression:    false,
@@ -319,6 +349,11 @@ export async function requestMicAccess() {
       S.inputAnalyser.smoothingTimeConstant = 0.6;
       S.inputGainNode.connect(S.inputAnalyser);
     }
+
+    // Wire inputGainNode → dryGainNode for the dry monitor layer.
+    // dryGainNode is created in ensureAudioContext; this connect is idempotent
+    // (Web Audio ignores duplicate connections between the same pair).
+    if (S.dryGainNode) S.inputGainNode.connect(S.dryGainNode);
 
     // Connect getUserMedia source into the gain node.
     // In Electron mode, rewireRtAudioRecordingChannel will disconnect this
@@ -599,6 +634,19 @@ export async function initSpeakerBuses(numChannels = 2) {
     S.mixdownCursorInputs.forEach(g => { try { g.disconnect(); } catch(_) {} });
     S.mixdownCursorInputs = null;
   }
+  // Tear down dry monitor VBAP nodes from previous initSpeakerBuses
+  if (S.dryVBAPGains) {
+    S.dryVBAPGains.forEach(g => { try { g.disconnect(); } catch(_) {} });
+    S.dryVBAPGains = null;
+  }
+  if (S.dryMixdownInputs) {
+    S.dryMixdownInputs.forEach(g => { try { g.disconnect(); } catch(_) {} });
+    S.dryMixdownInputs = null;
+  }
+  // Disconnect stereo dryPanner from houseBus — VBAP will replace it
+  if (S.dryPanner) {
+    try { S.dryPanner.disconnect(); } catch(_) {}
+  }
 
   const n = Math.max(1, numChannels);
 
@@ -695,6 +743,42 @@ export async function initSpeakerBuses(numChannels = 2) {
     ];
   })() : [];
 
+  // ── Dry monitor layer (multi-channel VBAP path) ──────────────────────────
+  // One persistent gain node per house speaker bus.  updateDryMonitorPanning()
+  // rewrites these gains each frame to track the cursor position.
+  // dryGainNode → dryAnalyser already exist from ensureAudioContext; we just
+  // need the fan-out to speaker buses and (optionally) the headphone mixdown.
+  {
+    const numSpeakers = buses.length;
+    const dryVBAP = Array.from({ length: numSpeakers }, () => {
+      const g = actx.createGain();
+      g.gain.value = 0;  // will be set by updateDryMonitorPanning
+      return g;
+    });
+    // Wire: dryAnalyser → each dryVBAP gain → corresponding speaker bus
+    // (disconnect stereo panner first — it was the browser-path output)
+    dryVBAP.forEach((g, i) => {
+      S.dryAnalyser.connect(g);
+      g.connect(buses[i].bus);
+    });
+    S.dryVBAPGains = dryVBAP;
+
+    // Dry → headphone mixdown (when stereo mixdown is active).
+    // Pan dry signal by cursor azimuth into L/R headphone pair, same as
+    // the house fold-down approach.  Uses dedicated input gain nodes so the
+    // dry level in the headphone mix tracks the house dry level by default.
+    if (hasMonitorCh) {
+      const dryMixL = actx.createGain(); dryMixL.gain.value = 0.707;
+      const dryMixR = actx.createGain(); dryMixR.gain.value = 0.707;
+      S.dryAnalyser.connect(dryMixL);
+      S.dryAnalyser.connect(dryMixR);
+      // Feed into the final mixdown sum alongside house and cursor
+      dryMixL.connect(monitorBuses[0].bus);
+      dryMixR.connect(monitorBuses[1].bus);
+      S.dryMixdownInputs = [dryMixL, dryMixR];
+    }
+  }
+
   // All buses for analyser creation and headphone downmix
   const allBuses = [...buses, ...monitorBuses];
 
@@ -734,7 +818,7 @@ export async function initSpeakerBuses(numChannels = 2) {
   // Tell the worklet how many channels and what batch size to use.
   // batchSize must equal bufferFrames / 128 so each posted buffer is exactly
   // one audify write-call's worth of frames (audify rejects mismatched sizes).
-  const bufferFrames = S.preferredBufferSize ?? 512;
+  const bufferFrames = S.preferredBufferSize ?? 1024;
   const batchSize    = Math.max(1, Math.round(bufferFrames / 128));
   _captureNode.port.postMessage({ type: 'init', numChannels: n, batchSize });
 
@@ -822,6 +906,113 @@ export async function initSpeakerBuses(numChannels = 2) {
   const houseDesc   = buses.map(b => b.angleDeg.toFixed(0) + '°').join(', ');
   const mixdownDesc = hasMonitorCh ? ` | stereo mixdown: ch ${hpPhysL}(L) ch ${hpPhysR}(R)` : '';
   DEBUG && console.log(`Speaker buses ready — ${n} ch, house[${numHouseCh}]: [${houseDesc}]${mixdownDesc} → audify`);
+}
+
+// ── Dry monitor panning update ────────────────────────────────────────────────
+// Called once per metering frame (≈30fps) to rewrite the dry signal's VBAP gains
+// (or stereo pan) based on the current cursor position.  Must be cheap: no
+// allocations, no scheduler interaction.  Reuses the same patterns as playGrain
+// for cursor position → spatial mapping.
+const _dryW = new Float32Array(3);  // scratch: world coords
+const _dryC = new Float32Array(3);  // scratch: camera coords
+
+export function updateDryMonitorPanning() {
+  if (!S.dryMonitorEnabled) return;
+  if (!S.audioCtx || S.audioCtx.state !== 'running') return;
+
+  // Compute cursor world-space position (same logic as scheduleGrains)
+  const { lon, lat } = S.cursorQ
+    ? getCursorLonLat()
+    : (S.mouseInCanvas || S.altLocked)
+      ? screenToLonLat(
+          S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
+          S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY)
+      : getCursorLonLat();
+
+  spherePointInto(lon, lat, _dryW);
+  const wx = _dryW[0], wy = _dryW[1], wz = _dryW[2];
+
+  let cx, cy, cz;
+  if (S.spatialPanning === 'worldlocked') {
+    cx = wx; cy = wy; cz = wz;
+  } else {
+    cameraTransformInto(wx, wy, wz, _dryC);
+    cx = _dryC[0]; cy = _dryC[1]; cz = _dryC[2];
+  }
+
+  const t = S.audioCtx.currentTime;
+  const RAMP = 0.03; // 30ms smooth transition to avoid zippering
+
+  // ── Multi-channel VBAP path ──────────────────────────────────────────────
+  if (S.dryVBAPGains?.length) {
+    const n = S.dryVBAPGains.length;
+    const rawAz  = Math.atan2(cx, cz);
+    const TWO_PI = 2 * Math.PI;
+    const az     = ((rawAz % TWO_PI) + TWO_PI) % TWO_PI;
+    const azDeg  = az * (180 / Math.PI);
+
+    const lut = queryVBAPLookup(azDeg);
+    let wA = lut ? lut.wA : 0.707;
+    let wB = lut ? lut.wB : 0.707;
+    const idxA = lut ? lut.idxA : 0;
+    const idxB = lut ? lut.idxB : Math.min(1, n - 1);
+
+    // Elevation-dependent center bias (same as playGrain)
+    const elevFrac = Math.abs(cy) * (1 / SPHERE_RADIUS);
+    const elevBias = elevFrac * elevFrac;
+    if (elevBias > 0.01) {
+      const eqGain = 1 / Math.sqrt(n);
+      wA = wA + (eqGain - wA) * elevBias;
+      wB = wB + (eqGain - wB) * elevBias;
+    }
+
+    // Set all gains to 0, then set the two active speakers
+    for (let i = 0; i < n; i++) {
+      const target = (i === idxA) ? wA : (i === idxB) ? wB : 0;
+      S.dryVBAPGains[i].gain.setTargetAtTime(target, t, RAMP);
+    }
+
+    // Update headphone mixdown L/R panning for dry signal
+    if (S.dryMixdownInputs) {
+      const pan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
+      const lW  = Math.cos((pan + 1) * Math.PI / 4);
+      const rW  = Math.sin((pan + 1) * Math.PI / 4);
+      S.dryMixdownInputs[0].gain.setTargetAtTime(lW, t, RAMP);
+      S.dryMixdownInputs[1].gain.setTargetAtTime(rW, t, RAMP);
+    }
+
+  // ── Stereo path (browser) ───────────────────────────────────────────────
+  } else if (S.dryPanner) {
+    const rawPan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
+    S.dryPanner.pan.setTargetAtTime(rawPan, t, RAMP);
+  }
+}
+
+// ── Dry monitor gain control ─────────────────────────────────────────────────
+export function setDryMonitorGain(v) {
+  v = Math.max(0, Math.min(2, v));
+  S.dryMonitorGainValue = v;
+  const t = S.audioCtx?.currentTime ?? 0;
+  if (S.dryGainNode) {
+    S.dryGainNode.gain.setTargetAtTime(
+      S.dryMonitorEnabled ? v : 0, t, 0.02
+    );
+  }
+  // Sync UI elements
+  const slider = document.getElementById('dryMonitorGainSlider');
+  if (slider) slider.value = v;
+  const num = document.getElementById('dryMonitorGainNum');
+  if (num) num.textContent = Math.round(v * 100) + '%';
+}
+
+export function setDryMonitorEnabled(on) {
+  S.dryMonitorEnabled = on;
+  const t = S.audioCtx?.currentTime ?? 0;
+  if (S.dryGainNode) {
+    S.dryGainNode.gain.setTargetAtTime(
+      on ? S.dryMonitorGainValue : 0, t, 0.02
+    );
+  }
 }
 
 // ── Speaker sweep helper ──────────────────────────────────────────────────────

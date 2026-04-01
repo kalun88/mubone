@@ -17,15 +17,15 @@ contextBridge.exposeInMainWorld('electronBridge', {
   getAudioDevices: () => ipcRenderer.invoke('get-audio-devices'),
 
   // Renderer → Main: select a specific output device by ID and channel count
-  setAudioDevice: (deviceId, numChannels, bufferFrames) =>
-    ipcRenderer.invoke('set-audio-device', deviceId, numChannels, bufferFrames),
+  setAudioDevice: (deviceId, numChannels, bufferFrames, sampleRate) =>
+    ipcRenderer.invoke('set-audio-device', deviceId, numChannels, bufferFrames, sampleRate),
 
   // Renderer → Main: request available input devices (true channel counts from RtAudio)
   getInputDevices: () => ipcRenderer.invoke('get-input-devices'),
 
   // Renderer → Main: open RtAudio input stream for multichannel metering
-  setInputDevice: (deviceId, numChannels, bufferFrames) =>
-    ipcRenderer.invoke('set-input-device', deviceId, numChannels, bufferFrames),
+  setInputDevice: (deviceId, numChannels, bufferFrames, sampleRate) =>
+    ipcRenderer.invoke('set-input-device', deviceId, numChannels, bufferFrames, sampleRate),
 
   // Main → Renderer: raw multichannel input PCM pushed from RtAudio input callback
   // cb(interleavedFloat32: Float32Array, numChannels: number)

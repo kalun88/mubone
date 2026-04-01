@@ -379,6 +379,93 @@ export function updateGesture(source) {
   S.gesture = descriptor;
 }
 
+// ── Energy map — modulate cursor grain params from accumulated energy ────────
+// Simple one-dimensional modulation: more energy → more variation, shorter
+// grains, wider spatial spread.  Cursor grains only (not seeds).
+// Writes to S.grainOverrides and S.searchRadiusDeg — same paths the grain
+// scheduler already reads.  Respects param locks.
+//
+// Hardcoded deltas for now.  S.energyMapOn toggles the whole thing.
+// S.energyGain scales the conditioned energy value before mapping (default 1.0).
+
+// Energy map delta table — each entry defines how a param responds to energy.
+// type 'add':   override = base + energy^curve × delta
+// type 'scale': override = base × (1 - energy × amount)
+const ENERGY_MAP = [
+  { key: 'pitchJitter', type: 'add',   delta: 0.04,  curve: 1.5 },
+  { key: 'duration',    type: 'scale', amount: 0.5,  curve: 1.0 },
+  { key: 'durJitter',   type: 'add',   delta: 0.3,   curve: 1.0 },
+  { key: 'period',      type: 'scale', amount: 0.35, curve: 1.0 },
+  { key: 'panSpread',   type: 'add',   delta: 0.3,   curve: 1.0 },
+];
+// searchRadiusDeg lives on S.*, not in grainOverrides — handled separately
+const ENERGY_MAP_RADIUS_DELTA = 25;  // degrees added at full energy
+
+// Stashed base searchRadiusDeg when energy map first engages
+let _energyMapBaseRadius = null;
+let _energyMapWasOn = false;
+
+function applyEnergyMap() {
+  if (!S.energyMapOn) {
+    // Restore base radius when turning off
+    if (_energyMapWasOn) {
+      if (_energyMapBaseRadius !== null) S.searchRadiusDeg = _energyMapBaseRadius;
+      _energyMapBaseRadius = null;
+      _energyMapWasOn = false;
+      // Clear overrides that energy map wrote
+      for (const entry of ENERGY_MAP) {
+        if (S.grainOverrides[entry.key] != null) S.grainOverrides[entry.key] = null;
+      }
+    }
+    return;
+  }
+
+  const g = S.gesture;
+  if (!g) return;
+
+  // Apply gain to conditioned energy (already 0–1 from conditioning chain)
+  const gain = S.energyGain ?? 1.0;
+  const energy = Math.min(1, g.accumulatedEnergy * gain);
+
+  // Stash base radius on first active frame
+  if (!_energyMapWasOn) {
+    _energyMapBaseRadius = S.searchRadiusDeg;
+    _energyMapWasOn = true;
+  }
+
+  const base = S.grainParams;
+
+  for (const entry of ENERGY_MAP) {
+    if (isLocked(entry.key)) continue;
+
+    const baseVal = base[entry.key];
+    if (baseVal === undefined) continue;
+
+    const e = entry.curve !== 1.0 ? Math.pow(energy, entry.curve) : energy;
+    let val;
+    if (entry.type === 'add') {
+      val = baseVal + e * entry.delta;
+    } else {
+      // scale: shrink toward zero as energy rises
+      val = baseVal * (1 - e * entry.amount);
+    }
+
+    // Clamp to sane ranges
+    if (entry.key === 'pitchJitter') val = Math.max(0, Math.min(1, val));
+    else if (entry.key === 'duration') val = Math.max(0.005, val);
+    else if (entry.key === 'durJitter') val = Math.max(0, Math.min(1, val));
+    else if (entry.key === 'period') val = Math.max(0.003, val);
+    else if (entry.key === 'panSpread') val = Math.max(0, Math.min(1, val));
+
+    S.grainOverrides[entry.key] = val;
+  }
+
+  // searchRadiusDeg — lives on S.*, not in grainOverrides
+  if (!isLocked('searchRadiusDeg')) {
+    S.searchRadiusDeg = _energyMapBaseRadius + energy * ENERGY_MAP_RADIUS_DELTA;
+  }
+}
+
 // ── Radial morph pin system ─────────────────────────────────────────────────
 // Pins are positions on the radial joystick, each assigned to a preset.
 // When the joystick moves near a pin, the grain params morph toward that
@@ -695,6 +782,9 @@ function rafPoll() {
   // Apply radial morph every frame (lightweight when off or no pins)
   applyRadialMorph();
 
+  // Apply energy map every frame (lightweight when off)
+  applyEnergyMap();
+
   _rafId = requestAnimationFrame(rafPoll);
 }
 
@@ -711,6 +801,10 @@ export function initGesture() {
 
   // Joystick state — written by gesture-panel, readable by any module.
   S.gestureJoy = { x: 0, y: 0, dist: 0, angle: 0 };
+
+  // Energy map — modulate cursor grains from accumulated energy
+  S.energyMapOn = false;
+  S.energyGain  = 1.0;    // gain applied to conditioned energy before mapping
 
   // Radial morph pin system
   S.radialPins = [];

@@ -57,7 +57,7 @@ If you add new per-frame work to the render loop (especially anything with trig,
 
 ## Versioning
 
-Current version: **0.9 alpha**. Two things must be updated on every release:
+Current version: **0.14 alpha**. Two things must be updated on every release:
 
 1. **`index.html`** line 17 — the `<span class="top-bar-version">` text shown in the UI
 2. **`CHANGELOG.md`** — add a new section at the top with the version, date, and what changed (grouped into Fixed / Added / Changed / Removed)

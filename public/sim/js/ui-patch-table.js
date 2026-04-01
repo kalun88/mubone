@@ -57,8 +57,8 @@ export const PARAM_REGISTRY = [
   { key: 'recencyN',       label: 'recency',          group: 'search', type: 'number',
     get: () => S.recencyN,
     set: v  => { if (typeof S.setRecency === 'function') S.setRecency(v); else S.recencyN = v; },
-    fmt: v  => String(v),
-    parse: s => { const n = parseInt(s); return isNaN(n) ? null : Math.max(1, Math.min(16, n)); } },
+    fmt: v  => v === 0 ? 'all' : String(v),
+    parse: s => { const t = s.trim().toLowerCase(); if (t === 'all') return 0; const n = parseInt(t); return isNaN(n) ? null : Math.max(0, Math.min(16, n)); } },
 
   // ── Grain ─────────────────────────────────────────────────────────────────
   { key: 'duration',   label: 'duration',     group: 'grain', type: 'number',
@@ -164,8 +164,8 @@ export const PARAM_REGISTRY = [
     },
     fmt: v  => v ? 'on' : 'off',
     parse: s => s.trim() === 'on' ? true : s.trim() === 'off' ? false : null },
-  // ── Commits (unified) ────────────────────────────────────────────────────
-  { key: 'seqSlotCount', label: 'commit slots', group: 'commits', type: 'number',
+  // ── Commits — shared params (matches commits panel in main GUI) ──────────
+  { key: 'seqSlotCount', label: 'slots', group: 'commits', type: 'number',
     get: () => S.commitSlotCount,
     set: v  => {
       S.commitSlotCount = Math.max(1, Math.min(16, Math.round(v)));
@@ -175,7 +175,7 @@ export const PARAM_REGISTRY = [
     },
     fmt: v  => String(v),
     parse: s => { const v = parseInt(s, 10); return isNaN(v) ? null : Math.max(1, Math.min(16, v)); } },
-  { key: 'seqOverflow', label: 'commit overflow', group: 'commits', type: 'enum', options: ['off', 'oldest', 'nearest'],
+  { key: 'seqOverflow', label: 'overflow', group: 'commits', type: 'enum', options: ['off', 'oldest', 'nearest'],
     get: () => S.commitOverflow,
     set: v  => {
       S.commitOverflow = v;
@@ -186,83 +186,65 @@ export const PARAM_REGISTRY = [
     },
     fmt: v  => v,
     parse: s => ['off', 'oldest', 'nearest'].includes(s.trim()) ? s.trim() : null },
-  { key: 'seqModeEnabled', label: 'commit mode',    group: 'commits', type: 'enum', options: ['cloud', 'loop'],
+  { key: 'seqModeEnabled', label: 'mode',    group: 'commits', type: 'enum', options: ['cloud', 'loop'],
     get: () => S.commitMode,
     set: v  => { S.commitMode = v; S._syncCommitUI?.(); },
     fmt: v  => v,
     parse: s => ['cloud', 'loop'].includes(s.trim()) ? s.trim() : null },
-  { key: 'seqNextVolume', label: 'loop volume',    group: 'looper', type: 'number',
-    get: () => S.seqNextParams.volume,
-    set: v  => { S.seqNextParams.volume = Math.max(0, Math.min(1, v)); },
-    fmt: v  => Math.round(v * 100) + '%',
-    parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
-  { key: 'seqNextSpeed', label: 'loop speed',      group: 'looper', type: 'number',
-    get: () => S.seqNextParams.speed,
-    set: v  => { S.seqNextParams.speed = Math.max(0.25, Math.min(4, v)); },
-    fmt: v  => '×' + v.toFixed(2),
-    parse: s => { const v = parseFloat(s.replace('×', '')); return isNaN(v) ? null : Math.max(0.25, Math.min(4, v)); } },
-  { key: 'seqNextDirection', label: 'loop dir',    group: 'looper', type: 'enum', options: ['fwd', 'rev', 'pingpong'],
-    get: () => S.seedLoopMode ?? 'forward',
-    set: v  => { S.seedLoopMode = v; },
-    fmt: v  => v,
-    parse: s => ['fwd', 'rev', 'pingpong'].includes(s.trim()) ? s.trim() : null },
-
-  // ── Seeder (legacy aliases — point to unified commit slots) ──────────────
-  { key: 'seedSlotCount', label: 'seed slots', group: 'commits', type: 'number',
-    get: () => S.commitSlotCount,
+  { key: 'selectionMode', label: 'select', group: 'commits', type: 'enum', options: ['closest', 'farthest'],
+    get: () => S.selectionMode,
     set: v  => {
-      S.commitSlotCount = Math.max(1, Math.min(16, Math.round(v)));
-      const sel = document.getElementById('commitSlotCountSelect');
-      if (sel) sel.value = String(S.commitSlotCount);
-      S._syncCommitUI?.();
-    },
-    fmt: v  => String(v),
-    parse: s => { const v = parseInt(s, 10); return isNaN(v) ? null : Math.max(1, Math.min(16, v)); } },
-  { key: 'seedOverflow', label: 'seed overflow', group: 'commits', type: 'enum', options: ['off', 'oldest', 'nearest'],
-    get: () => S.commitOverflow,
-    set: v  => {
-      S.commitOverflow = v;
-      const seg = document.getElementById('commitOverflowSeg');
+      S.selectionMode = v;
+      const seg = document.getElementById('commitSelectionSeg');
       if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active', b.dataset.overflow === v));
+        b.classList.toggle('active', b.dataset.selection === v));
     },
     fmt: v  => v,
-    parse: s => ['off', 'oldest', 'nearest'].includes(s.trim()) ? s.trim() : null },
-  { key: 'seedLockEnabled', label: 'commit lock',    group: 'commits', type: 'boolean',
-    get: () => S.commitLockEnabled,
-    set: v  => { S.commitLockEnabled = v; S._syncCommitUI?.(); },
-    fmt: v  => v ? 'on' : 'off',
-    parse: s => parseBool(s) },
-  { key: 'seedMode',         label: 'blend mode',      group: 'seeder', type: 'enum', options: ['all', 'focus'],
+    parse: s => ['closest', 'farthest'].includes(s.trim()) ? s.trim() : null },
+  { key: 'seedMode',         label: 'playback',      group: 'commits', type: 'enum', options: ['all', 'focus'],
     get: () => S.seedMode,
     set: v  => { S.seedMode = v; },
     fmt: v  => v,
     parse: s => ['all', 'focus'].includes(s.trim()) ? s.trim() : null },
-  { key: 'seedTether',       label: 'tether',         group: 'seeder', type: 'boolean',
+  { key: 'seedTether',       label: 'tether',         group: 'commits', type: 'boolean',
     get: () => S.seedTether,
     set: v  => { S.seedTether = v; },
     fmt: v  => v ? 'on' : 'off',
     parse: s => parseBool(s) },
-  { key: 'seedXfade',    label: 'xfade',      group: 'seeder', type: 'number',
+  { key: 'seedXfade',    label: 'xfade',      group: 'commits', type: 'number',
     get: () => S.seedXfade,
     set: v  => { S.seedXfade = Math.max(0, Math.min(1, v)); },
     fmt: v  => Math.round(v * 100) + '%',
     parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
-  { key: 'seedAttack',       label: 'fade in',         group: 'seeder', type: 'number',
+  { key: 'seedLoopMode',     label: 'path dir',       group: 'commits', type: 'enum', options: ['pingpong', 'forward', 'rev'],
+    get: () => S.seedLoopMode,
+    set: v  => { S.seedLoopMode = v; },
+    fmt: v  => v,
+    parse: s => ['pingpong', 'forward', 'rev'].includes(s.trim()) ? s.trim() : null },
+
+  // ── Cloud params ─────────────────────────────────────────────────────────
+  { key: 'seedAttack',       label: 'fade in',         group: 'cloud', type: 'number',
     get: () => S.seedAttack,
     set: v  => { S.seedAttack = Math.max(0, Math.min(10, v)); },
     fmt: v  => v.toFixed(1) + 's',
     parse: s => { const v = parseFloat(s.replace('s', '')); return isNaN(v) ? null : Math.max(0, Math.min(10, v)); } },
-  { key: 'seedRelease',      label: 'fade out',        group: 'seeder', type: 'number',
+  { key: 'seedRelease',      label: 'fade out',        group: 'cloud', type: 'number',
     get: () => S.seedRelease,
     set: v  => { S.seedRelease = Math.max(0, Math.min(10, v)); },
     fmt: v  => v.toFixed(1) + 's',
     parse: s => { const v = parseFloat(s.replace('s', '')); return isNaN(v) ? null : Math.max(0, Math.min(10, v)); } },
-  { key: 'seedLoopMode',     label: 'loop mode',       group: 'seeder', type: 'enum', options: ['pingpong', 'forward'],
-    get: () => S.seedLoopMode,
-    set: v  => { S.seedLoopMode = v; },
-    fmt: v  => v,
-    parse: s => ['pingpong', 'forward'].includes(s.trim()) ? s.trim() : null },
+
+  // ── Loop params ──────────────────────────────────────────────────────────
+  { key: 'seqNextVolume', label: 'volume',    group: 'loop', type: 'number',
+    get: () => S.seqNextParams.volume,
+    set: v  => { S.seqNextParams.volume = Math.max(0, Math.min(1, v)); },
+    fmt: v  => Math.round(v * 100) + '%',
+    parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
+  { key: 'seqNextSpeed', label: 'speed',      group: 'loop', type: 'number',
+    get: () => S.seqNextParams.speed,
+    set: v  => { S.seqNextParams.speed = Math.max(0.25, Math.min(4, v)); },
+    fmt: v  => '×' + v.toFixed(2),
+    parse: s => { const v = parseFloat(s.replace('×', '')); return isNaN(v) ? null : Math.max(0.25, Math.min(4, v)); } },
 
 ];
 
