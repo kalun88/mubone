@@ -182,6 +182,10 @@ export const PRESETS = [
     volume:        0.85,
     direction:     'fwd',
     curveType:     'hann',
+    hpfFreq:       20,       // 20 Hz = off (below audible, bypass)
+    lpfFreq:       20000,    // 20 kHz = off (above audible, bypass)
+    filterQ:       0.707,    // Butterworth (flat passband, no resonance)
+    filterFreqJitter: 0,     // no per-grain cutoff randomisation
     seqOverflow:   'oldest',
   },
 
@@ -739,6 +743,7 @@ export function _buildValidParamKeys(registry) {
     _validParamKeys = new Set([
       'duration', 'durVar', 'fadeRatio', 'period', 'periodVar',
       'pitchJitter', 'pitchShift', 'panSpread', 'volume', 'k',
+      'hpfFreq', 'lpfFreq', 'filterQ', 'filterFreqJitter',
       'probability', 'direction', 'curveType',
       'nearestMode', 'grainKAllMode', 'grainKSeqMode',
       'searchRadiusDeg', 'recencyN',
@@ -1262,6 +1267,10 @@ export const S = {
     panSpread:   null,
     volume:      null,
     retriggerMs: null,   // minimum re-trigger time for seeder grains (ms)
+    hpfFreq:     null,   // highpass filter cutoff Hz (20 = off, max 20000)
+    lpfFreq:     null,   // lowpass filter cutoff Hz  (20000 = off, min 20)
+    filterQ:     null,   // shared resonance for HPF/LPF (0.1–20, default 0.707)
+    filterFreqJitter: null, // per-grain cutoff randomisation (0–1, fraction of freq)
   },
   grainProbability: 1.0,   // 0-1: probability each candidate grain fires per tick
   grainDirection:   'fwd', // 'fwd' | 'rev' | 'rnd'
@@ -1453,6 +1462,11 @@ export const S = {
   // Physical output channel assignments for the stereo mixdown pair.
   // null = auto (last 2 physical channels of the device: [n-2, n-1]).
   headphoneRouting: null,   // [physChL, physChR] or null  (kept as headphoneRouting for compat)
+
+  // customSpeakerAngles[busIndex] = azimuth in degrees (0–360).
+  // null → use computed equal-spacing from speakerAngleDeg().
+  // Persisted independently in localStorage (room config, not per-patch).
+  customSpeakerAngles: null,
 
   // channelRouting[busIndex] = physical output channel (or -1 = mute).
   // null → identity (house bus i → physical ch i).

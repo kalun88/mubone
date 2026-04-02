@@ -5,6 +5,26 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.15 alpha — 2026-04-02
+
+### Added
+- **Per-grain HPF/LPF filtering** — 4 new grain parameters: `hpfFreq`, `lpfFreq`, `filterQ`, `filterFreqJitter`. Uses native `BiquadFilterNode` (highpass + lowpass) inserted per-grain between source and gain. Conditional bypass: no filter nodes created when HPF ≤ 22 Hz and LPF ≥ 19.5 kHz (zero overhead when off). Audio-rate skip at grain periods ≤ 5 ms (same pattern as panner skip). Filter nodes cleaned up via `_deferDisconnect` in all four `ended` callbacks.
+- **Filter UI sliders** — 4 new slider rows in the grain device panel with log-scale frequency conversion for HPF/LPF (20 Hz–20 kHz). Integrated into preset save/load, patch table (`PARAM_REGISTRY`), and wash factory preset defaults.
+- **Sensor mapping module** (`js/sensor-mapping.js`) — general-purpose mapping engine that maps IMU axes (roll, elevation, azimuth) to any grain parameter. Evaluates at 30 Hz in the render loop. Features: input normalization, curve shaping (linear/log/exp with adjustable exponent), log-aware output scaling for frequency params, one-mapping-per-param constraint, global persistence to localStorage (`mubone_sensorMappings`).
+- **Sensor mapping UI** (`js/ui-sensor-mapping.js`) — modal interface for configuring mappings. Each row: enable toggle, axis selector, input min/max with range bar, live raw axis readout (green, degrees), arrow, param selector, output min/max, curve selector, exponent numbox, mini curve canvas, live scaled output readout (amber), remove button. rAF-based live update loop runs only while modal is open.
+- **MIDI/OSC mapping toggles** — 4 mapping toggle actions (`mapping_toggle_1`–`mapping_toggle_4`) via MIDI CC and `/mapping/toggle/1`–`/mapping/toggle/4` OSC paths.
+- **Filter OSC paths** — `/grain/hpf`, `/grain/lpf`, `/grain/filterq`, `/grain/filterjitter`.
+- **Filter MIDI CC actions** — `grain_hpf`, `grain_lpf`, `grain_filterq`, `grain_filterjitter`.
+- **Electron packaging** — `electron-builder` config in package.json with DMG + ZIP targets for arm64 and x64. Build scripts: `npm run dist`, `dist:arm64`, `dist:x64`, `dist:universal`.
+- **INSTALL.md** — collaborator setup guide covering pre-built DMG install and run-from-source paths.
+
+### Changed
+- **AudioContext latency hint** — added `latencyHint: 'interactive'` to AudioContext constructor, reducing dry monitor round-trip latency from ~20–40 ms to ~5–10 ms.
+- **Latency display** — audio settings now shows real `baseLatency` + `outputLatency` from the browser instead of just the buffer-size estimate.
+- **Sensor mapping modal width** — widened from 780 px to 900 px to accommodate live readout columns.
+
+---
+
 ## 0.14 alpha — 2026-04-01
 
 ### Fixed

@@ -35,7 +35,11 @@ export function ensureAudioContext() {
     // matches most USB interfaces).  Explicit 48000 avoids ambiguity when
     // neither preference nor saved rate exist.
     const sampleRate = S.preferredSampleRate ?? S.savedSampleRate ?? 48000;
-    const ctxOpts = { sampleRate };
+    // 'interactive' tells the browser to use the smallest internal render
+    // buffer, minimising dry-monitor round-trip latency (~5-10ms vs 20-40ms
+    // with the default 'balanced').  Critical for live performers hearing
+    // themselves through the system.
+    const ctxOpts = { sampleRate, latencyHint: 'interactive' };
     S.audioCtx = new (window.AudioContext || window.webkitAudioContext)(ctxOpts);
 
     // On mobile, Web Audio defaults to the earpiece (call speaker, tiny & quiet).
@@ -174,6 +178,11 @@ export function ensureAudioContext() {
     dryAnalyser.connect(dryPanner);
     dryPanner.connect(houseBus);
     // inputGainNode → dryGain is connected when mic is granted (requestMicAccess)
+
+    // If initSpeakerBuses already ran (Electron startup), the VBAP fan-out
+    // gain nodes exist but weren't connected because dryAnalyser didn't
+    // exist yet.  Wire them now.
+    _wireDryVBAPInput();
 
     // Detect suspension → resumption so grain.js can reset onset clocks.
     // When Chrome auto-suspends the AudioContext (tab backgrounded, autoplay
@@ -648,16 +657,27 @@ export async function initSpeakerBuses(numChannels = 2) {
     try { S.dryPanner.disconnect(); } catch(_) {}
   }
 
-  const n = Math.max(1, numChannels);
+  // Web Audio spec caps createChannelMerger at 32 inputs.  If the device
+  // reports more (e.g. Yamaha TF5 = 34), clamp the Web Audio side to 32.
+  // RtAudio still opens the full device channel count; channels 33+ simply
+  // won't carry audio from the Web Audio graph (typically unused aux buses).
+  const WEB_AUDIO_MAX_CH = 32;
+  const n = Math.min(WEB_AUDIO_MAX_CH, Math.max(1, numChannels));
 
   // One GainNode bus per speaker.
   // For stereo (n=2) use the standard L/R arrangement: 270° (left) and 90° (right).
-  // For n=1 (mono) use 0° (front). For n≥3 space equally clockwise from front (0°).
-  // This ensures stereo headphone/laptop output pans correctly (front-center = equal L+R).
+  // For n=1 (mono) use 0° (front).
+  // For odd counts (3,5,7…): speaker 1 sits at 0° (true front center), rest CW.
+  // For even counts ≥4: offset by −half-step so 0° is phantom center between the
+  //   two front speakers (speaker 1 = front-left, speaker 2 = front-right),
+  //   consistent with stereo convention (ch 1 = L).
+  //   e.g. 8ch → 337.5°, 22.5°, 67.5°, 112.5°, 157.5°, 202.5°, 247.5°, 292.5°
   function speakerAngleDeg(i, total) {
     if (total === 1) return 0;
     if (total === 2) return i === 0 ? 270 : 90;   // 270 = left, 90 = right
-    return (360 / total) * i;                      // equal spacing from front
+    const step   = 360 / total;
+    const offset = (total % 2 === 0) ? -step / 2 : 0;  // phantom center for even
+    return ((step * i + offset) % 360 + 360) % 360;
   }
 
   // ── Split house / stereo mixdown when S.stereoMixdownEnabled is on ────────
@@ -677,8 +697,11 @@ export async function initSpeakerBuses(numChannels = 2) {
   const hpPhysR = hasMonitorCh ? (S.headphoneRouting?.[1] ?? numHouseCh + 1) : -1;
 
   const busGainInit = S.isMuted ? 0 : (S.outputGainValue ?? 1);
+  const custom = S.customSpeakerAngles;  // null or array of degrees
   const buses = Array.from({ length: numHouseCh }, (_, i) => {
-    const angleDeg = speakerAngleDeg(i, numHouseCh);
+    const angleDeg = (custom && typeof custom[i] === 'number')
+      ? ((custom[i] % 360) + 360) % 360
+      : speakerAngleDeg(i, numHouseCh);
     const angleRad = (angleDeg * Math.PI) / 180;
     const bus = actx.createGain();
     bus.gain.value = busGainInit;
@@ -746,8 +769,9 @@ export async function initSpeakerBuses(numChannels = 2) {
   // ── Dry monitor layer (multi-channel VBAP path) ──────────────────────────
   // One persistent gain node per house speaker bus.  updateDryMonitorPanning()
   // rewrites these gains each frame to track the cursor position.
-  // dryGainNode → dryAnalyser already exist from ensureAudioContext; we just
-  // need the fan-out to speaker buses and (optionally) the headphone mixdown.
+  // dryGainNode → dryAnalyser may not exist yet on first startup (created in
+  // ensureAudioContext on mic grant).  wireDryVBAP() is called here and again
+  // from requestMicAccess / ensureAudioContext once the dry chain is live.
   {
     const numSpeakers = buses.length;
     const dryVBAP = Array.from({ length: numSpeakers }, () => {
@@ -755,13 +779,13 @@ export async function initSpeakerBuses(numChannels = 2) {
       g.gain.value = 0;  // will be set by updateDryMonitorPanning
       return g;
     });
-    // Wire: dryAnalyser → each dryVBAP gain → corresponding speaker bus
-    // (disconnect stereo panner first — it was the browser-path output)
-    dryVBAP.forEach((g, i) => {
-      S.dryAnalyser.connect(g);
-      g.connect(buses[i].bus);
-    });
+    // Wire output side unconditionally (gain → speaker bus)
+    dryVBAP.forEach((g, i) => g.connect(buses[i].bus));
     S.dryVBAPGains = dryVBAP;
+
+    // Wire input side (dryAnalyser → gains) if analyser exists now;
+    // otherwise _wireDryVBAPInput() will be called later once it does.
+    if (S.dryAnalyser) _wireDryVBAPInput();
 
     // Dry → headphone mixdown (when stereo mixdown is active).
     // Pan dry signal by cursor azimuth into L/R headphone pair, same as
@@ -770,8 +794,10 @@ export async function initSpeakerBuses(numChannels = 2) {
     if (hasMonitorCh) {
       const dryMixL = actx.createGain(); dryMixL.gain.value = 0.707;
       const dryMixR = actx.createGain(); dryMixR.gain.value = 0.707;
-      S.dryAnalyser.connect(dryMixL);
-      S.dryAnalyser.connect(dryMixR);
+      if (S.dryAnalyser) {
+        S.dryAnalyser.connect(dryMixL);
+        S.dryAnalyser.connect(dryMixR);
+      }
       // Feed into the final mixdown sum alongside house and cursor
       dryMixL.connect(monitorBuses[0].bus);
       dryMixR.connect(monitorBuses[1].bus);
@@ -907,6 +933,21 @@ export async function initSpeakerBuses(numChannels = 2) {
   const mixdownDesc = hasMonitorCh ? ` | stereo mixdown: ch ${hpPhysL}(L) ch ${hpPhysR}(R)` : '';
   DEBUG && console.log(`Speaker buses ready — ${n} ch, house[${numHouseCh}]: [${houseDesc}]${mixdownDesc} → audify`);
 }
+
+// ── Deferred dry VBAP wiring ─────────────────────────────────────────────────
+// On Electron startup, initSpeakerBuses runs before mic grant, so S.dryAnalyser
+// doesn't exist yet.  This function wires (or re-wires) the input side of the
+// dry VBAP fan-out once the analyser is available.  Safe to call multiple times.
+function _wireDryVBAPInput() {
+  if (!S.dryAnalyser || !S.dryVBAPGains?.length) return;
+  // Connect analyser → each per-speaker gain (idempotent in Web Audio)
+  S.dryVBAPGains.forEach(g => S.dryAnalyser.connect(g));
+  // Also wire mixdown inputs if they exist but weren't connected yet
+  if (S.dryMixdownInputs) {
+    S.dryMixdownInputs.forEach(g => S.dryAnalyser.connect(g));
+  }
+}
+export { _wireDryVBAPInput as wireDryVBAPInput };
 
 // ── Dry monitor panning update ────────────────────────────────────────────────
 // Called once per metering frame (≈30fps) to rewrite the dry signal's VBAP gains

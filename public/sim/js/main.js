@@ -25,6 +25,7 @@ import { initVizUI } from './ui-viz.js';
 import { initSweepUI, initSessionPanel } from './ui-sweep.js';
 import { initExportImport } from './ui-export.js';
 import { initPatchTable } from './ui-patch-table.js';
+import { initMappingUI } from './ui-sensor-mapping.js';
 
 
 function init() {
@@ -61,6 +62,7 @@ function init() {
     S.driftOffsetQ = null;
   };
   initSensorsUI();
+  initMappingUI();
   initAudioSettings();
   initImprovUI();
   initVizUI();
@@ -397,7 +399,7 @@ function init() {
         const saved   = savedId != null ? devices.find(d => d.id === savedId) : null;
         const best    = saved || devices.find(d => d.isDefault) || devices[0];
         if (best) {
-          const nCh = best.outputChannels;
+          const nCh = Math.min(32, best.outputChannels);  // Web Audio merger caps at 32
           await initSpeakerBuses(nCh);
           const bufFrames = S.preferredBufferSize ?? 1024;
           const result = await window.electronBridge.setAudioDevice(best.id, nCh, bufFrames, S.audioCtx?.sampleRate);

@@ -394,6 +394,10 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
     if (ov.panSpread   != null) ce.panSpread   = ov.panSpread;
     if (ov.volume      != null) ce.volume      = ov.volume;
     if (ov.retriggerMs != null) ce.retriggerMs = ov.retriggerMs;
+    if (ov.hpfFreq     != null) ce.hpfFreq     = ov.hpfFreq;
+    if (ov.lpfFreq     != null) ce.lpfFreq     = ov.lpfFreq;
+    if (ov.filterQ     != null) ce.filterQ     = ov.filterQ;
+    if (ov.filterFreqJitter != null) ce.filterFreqJitter = ov.filterFreqJitter;
     // Apply radius fade distance attenuation (set by scheduleGrains)
     if (_radiusFadeAtten < 1.0) ce.volume *= _radiusFadeAtten;
     ep = ce;
@@ -693,7 +697,37 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       lastNode = elevGainNode;
     }
 
-    source.connect(gain);
+    // ── Per-grain filter chain ──────────────────────────────────────────────
+    // Insert BiquadFilterNode(s) between source and gain envelope when filter
+    // cutoffs are active. HPF bypass at ≤ 20Hz, LPF bypass at ≥ 20000Hz.
+    // At audio-rate periods (≤5ms) skip filtering — grains are too short for
+    // filtering to be perceptible and the node count cost dominates.
+    // filterFreqJitter: per-grain cutoff randomisation as a fraction of freq.
+    const hpf = ep.hpfFreq ?? 20;
+    const lpf = ep.lpfFreq ?? 20000;
+    const fJitter = ep.filterFreqJitter ?? 0;
+    const fQ  = ep.filterQ ?? 0.707;
+    const needsHPF = !audioRate && hpf > 22;
+    const needsLPF = !audioRate && lpf < 19500;
+    let _hpfNode = null, _lpfNode = null;
+    let filterChainEnd = source;
+    if (needsHPF) {
+      _hpfNode = actx.createBiquadFilter();
+      _hpfNode.type = 'highpass';
+      _hpfNode.frequency.value = fJitter > 0 ? hpf * Math.pow(2, rand(-fJitter, fJitter)) : hpf;
+      _hpfNode.Q.value = fQ;
+      filterChainEnd.connect(_hpfNode);
+      filterChainEnd = _hpfNode;
+    }
+    if (needsLPF) {
+      _lpfNode = actx.createBiquadFilter();
+      _lpfNode.type = 'lowpass';
+      _lpfNode.frequency.value = fJitter > 0 ? lpf * Math.pow(2, rand(-fJitter, fJitter)) : lpf;
+      _lpfNode.Q.value = fQ;
+      filterChainEnd.connect(_lpfNode);
+      filterChainEnd = _lpfNode;
+    }
+    filterChainEnd.connect(gain);
 
     if (S.speakerBuses?.length) {
       // ── Multi-channel speaker path (Electron) ─────────────────────────────
@@ -748,7 +782,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
           S._grainSourceCount++;
           source.addEventListener('ended', () => {
             S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-            _deferDisconnect(source); _deferDisconnect(gain);
+            _deferDisconnect(source); _deferDisconnect(gain); if (_hpfNode) _deferDisconnect(_hpfNode); if (_lpfNode) _deferDisconnect(_lpfNode);
             if (elevGainNode) _deferDisconnect(elevGainNode);
             if (_extraNodes) for (const n of _extraNodes) _deferDisconnect(n);
           }, { once: true });
@@ -765,7 +799,8 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       // Raw azimuth in radians, with pan-spread jitter, normalised to [0, 2π).
       // Camera space: cz>0 = in front of listener, cx>0 = to listener's right.
       // atan2(cx, cz): 0°=front, 90°=right, 180°=rear, 270°=left — matches the
-      // speaker bus layout (bus 0 = 0° = front for n≥3; R=90°/L=270° for n=2).
+      // speaker bus layout.  For even counts ≥4, 0° is phantom center between
+      // the two front speakers (bus 0 = front-left); for odd counts bus 0 = 0°.
       const TWO_PI = 2 * Math.PI;
       const rawAz  = Math.atan2(cx, cz);
       const jitter = rand(-ep.panSpread * 0.5, ep.panSpread * 0.5);
@@ -805,7 +840,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
       S._grainSourceCount++;
       source.addEventListener('ended', () => {
         S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-        _deferDisconnect(source); _deferDisconnect(gain);
+        _deferDisconnect(source); _deferDisconnect(gain); if (_hpfNode) _deferDisconnect(_hpfNode); if (_lpfNode) _deferDisconnect(_lpfNode);
         if (elevGainNode) _deferDisconnect(elevGainNode);
         _deferDisconnect(gA); _deferDisconnect(gB);
         if (_extraNodes) for (const n of _extraNodes) _deferDisconnect(n);
@@ -850,7 +885,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
         S._grainSourceCount++;
         source.addEventListener('ended', () => {
           S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-          _deferDisconnect(source); _deferDisconnect(gain);
+          _deferDisconnect(source); _deferDisconnect(gain); if (_hpfNode) _deferDisconnect(_hpfNode); if (_lpfNode) _deferDisconnect(_lpfNode);
           if (elevGainNode) _deferDisconnect(elevGainNode);
           _deferDisconnect(panner);
         }, { once: true });
@@ -862,7 +897,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
         S._grainSourceCount++;
         source.addEventListener('ended', () => {
           S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-          _deferDisconnect(source); _deferDisconnect(gain);
+          _deferDisconnect(source); _deferDisconnect(gain); if (_hpfNode) _deferDisconnect(_hpfNode); if (_lpfNode) _deferDisconnect(_lpfNode);
           if (elevGainNode) _deferDisconnect(elevGainNode);
           // lastNode is either gain (if no elevGainNode) or elevGainNode;
           // both are already queued above, so no extra disconnect needed.

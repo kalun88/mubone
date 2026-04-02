@@ -9,6 +9,7 @@ import { S, DEBUG, FACTORY_PRESET_START } from './state.js';
 import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, playSweepChannel, warmUpAudioEngine } from './audio.js';
 import { renderMeters, tickMeters, rebuildMainOutputMeters } from './ui-meters.js';
 import { armHandsfree, disarmHandsfree, updateHPFFreq } from './handsfree.js';
+import { getCursorLonLat, spherePointInto, cameraTransformInto } from './sphere.js';
 
 // ── RtAudio input meter worklet (Electron only) ───────────────────────────────
 // In Electron, getUserMedia is capped at 2ch by the browser. Instead, we open an
@@ -31,7 +32,12 @@ let _rtInputSplitter      = null;
 // Routing = set chosen gain to 1, all others to 0. Avoids disconnect() pitfalls.
 let _rtInputRoutingGains  = [];
 
-async function setupRtAudioInputMeters(nCh) {
+async function setupRtAudioInputMeters(rawCh) {
+  // Web Audio caps splitter/merger at 32 channels; clamp the metered/output count.
+  // RtAudio may still capture all hw channels — we meter the first 32, but the
+  // worklet must know the REAL hw channel count for correct deinterleaving stride.
+  const nCh    = Math.min(32, rawCh);   // Web Audio output channels
+  const hwCh   = rawCh;                 // real interleave stride from RtAudio
   const actx = ensureAudioContext();
   await ensureInputMeterWorklet(actx);
 
@@ -48,13 +54,16 @@ async function setupRtAudioInputMeters(nCh) {
   _rtInputRoutingGains = [];
   _rtInputSplitter = null;
 
-  // Create worklet node with N output channels
+  // Create worklet node with N output channels (clamped to 32)
   _inputWorkletNode = new AudioWorkletNode(actx, 'input-meter', {
     numberOfInputs:  0,
     numberOfOutputs: 1,
     outputChannelCount: [nCh],
   });
-  _inputWorkletNode.port.postMessage({ type: 'init', numChannels: nCh });
+  // Tell worklet the REAL hw channel count so it deinterleaves with the correct
+  // stride.  The worklet's process() loop is capped by outputs[0].length (= nCh),
+  // so channels beyond 32 are deinterleaved correctly but simply not output.
+  _inputWorkletNode.port.postMessage({ type: 'init', numChannels: hwCh });
 
   // ChannelSplitter fans out N channels — shared by both meter analysers and
   // the recording input tap (S.inputGainNode → S.inputAnalyser)
@@ -229,7 +238,7 @@ function buildInputGraph(channel) {
   const numCh = stream.getAudioTracks()[0]?.getSettings()?.channelCount || 1;
 
   as.sourceNode   = ctx.createMediaStreamSource(stream);
-  as.splitterNode = ctx.createChannelSplitter(Math.max(numCh, 2));
+  as.splitterNode = ctx.createChannelSplitter(Math.min(32, Math.max(numCh, 2)));
   as.sourceNode.connect(as.splitterNode);
 
   // Ensure S.inputGainNode exists (created by requestMicAccess; may not exist if
@@ -446,6 +455,78 @@ function renderInputMappingTable() {
 // Software-centric view: each software position has a dropdown for hardware out.
 // Rows: Position 1 … N (house VBAP), then Headphone L, Headphone R.
 // Always shown in Electron when speaker buses are active.
+// ── Custom speaker angle persistence ─────────────────────────────────────────
+// Room/installation config — persisted in localStorage, not per-patch.
+const _SPK_ANGLES_KEY = 'mubone_custom_speaker_angles';
+
+function loadCustomSpeakerAngles() {
+  try {
+    const raw = localStorage.getItem(_SPK_ANGLES_KEY);
+    if (raw) S.customSpeakerAngles = JSON.parse(raw);
+  } catch (_) {}
+}
+
+function saveCustomSpeakerAngles() {
+  try {
+    if (S.customSpeakerAngles) {
+      localStorage.setItem(_SPK_ANGLES_KEY, JSON.stringify(S.customSpeakerAngles));
+    } else {
+      localStorage.removeItem(_SPK_ANGLES_KEY);
+    }
+  } catch (_) {}
+}
+
+// Compute current cursor azimuth in degrees (0–360) from wand quat or mouse.
+// Same math as updateDryMonitorPanning / playGrain.
+const _capW = new Float32Array(3);
+const _capC = new Float32Array(3);
+function getCursorAzDeg() {
+  const { lon, lat } = getCursorLonLat();
+  spherePointInto(lon, lat, _capW);
+  const wx = _capW[0], wy = _capW[1], wz = _capW[2];
+  let cx, cz;
+  if (S.spatialPanning === 'worldlocked') {
+    cx = wx; cz = wz;
+  } else {
+    cameraTransformInto(wx, wy, wz, _capC);
+    cx = _capC[0]; cz = _capC[2];
+  }
+  const rawAz  = Math.atan2(cx, cz);
+  const TWO_PI = 2 * Math.PI;
+  return (((rawAz % TWO_PI) + TWO_PI) % TWO_PI) * (180 / Math.PI);
+}
+
+// Apply a single angle edit: update S.customSpeakerAngles, persist, rebuild.
+async function applySpeakerAngleEdit(busIdx, angleDeg) {
+  const n = S.speakerBuses?.length ?? 0;
+  if (!n) return;
+  // Ensure we have a full array (clone current computed angles as baseline)
+  if (!S.customSpeakerAngles) {
+    S.customSpeakerAngles = S.speakerBuses.map(b => b.angleDeg);
+  }
+  S.customSpeakerAngles[busIdx] = ((angleDeg % 360) + 360) % 360;
+  saveCustomSpeakerAngles();
+  // Rebuild speaker buses with new angles
+  const totalCh = S.speakerBuses.numChannels;
+  if (totalCh) {
+    await initSpeakerBuses(totalCh);
+    renderOutputMeters();
+    renderRoutingTable();
+  }
+}
+
+// Reset all custom angles back to computed defaults.
+async function resetSpeakerAngles() {
+  S.customSpeakerAngles = null;
+  saveCustomSpeakerAngles();
+  const totalCh = S.speakerBuses?.numChannels;
+  if (totalCh) {
+    await initSpeakerBuses(totalCh);
+    renderOutputMeters();
+    renderRoutingTable();
+  }
+}
+
 function renderRoutingTable() {
   const wrap = document.getElementById('asRoutingTable');
   if (!wrap) return;
@@ -471,12 +552,20 @@ function renderRoutingTable() {
   const hpL = S.headphoneRouting?.[0] ?? nHouse;
   const hpR = S.headphoneRouting?.[1] ?? nHouse + 1;
 
-  // Build house rows
+  const hasCustom = !!S.customSpeakerAngles;
+
+  // Build house rows — now with editable angle + capture button
   const houseRows = houseBuses.map((b, i) => {
     const name = `Position ${i + 1}`;
-    const deg  = b.angleDeg.toFixed(0);
+    const deg  = b.angleDeg.toFixed(1);
     return `<div class="as-io-row" title="${name} — ${deg}°">
-      <span class="as-io-sw">${name} <span class="as-io-angle">${deg}°</span></span>
+      <span class="as-io-sw">${name}</span>
+      <input type="number" class="as-io-angle-input" data-bus="${i}"
+             value="${deg}" min="0" max="359.9" step="0.5"
+             title="azimuth in degrees (0° = front, 90° = right)">
+      <span class="as-io-angle-unit">°</span>
+      <button class="as-io-capture-btn" data-bus="${i}"
+              title="capture current cursor/wand azimuth">⊕</button>
       <select class="as-io-sel as-io-house-sel" data-bus="${i}">${hwOpts}</select>
     </div>`;
   }).join('');
@@ -492,14 +581,24 @@ function renderRoutingTable() {
       <select class="as-io-sel as-io-hp-sel" data-side="R">${hwOpts}</select>
     </div>` : '';
 
+  // Reset button (only shown when custom angles are active)
+  const resetBtn = hasCustom
+    ? `<div class="as-io-row as-io-row--reset">
+         <button class="as-btn as-io-reset-btn" id="asResetSpeakerAngles"
+                 title="reset all angles to computed defaults">reset angles</button>
+       </div>`
+    : '';
+
   wrap.innerHTML = `
     <div class="as-io-table">
       <div class="as-io-hdr">
         <span class="as-io-col-sw">software output</span>
+        <span class="as-io-col-angle">azimuth</span>
         <span class="as-io-col-hw">hardware out</span>
       </div>
       ${houseRows}
       ${hpRows}
+      ${resetBtn}
     </div>`;
 
   // Set initial values for house dropdowns and attach listeners
@@ -508,6 +607,31 @@ function renderRoutingTable() {
     sel.value = String(houseRouting[busIdx] ?? busIdx);
     sel.addEventListener('change', applyOutputMapping);
   });
+
+  // Angle input change — apply on blur or Enter
+  wrap.querySelectorAll('.as-io-angle-input').forEach(inp => {
+    const busIdx = parseInt(inp.dataset.bus, 10);
+    const apply = () => {
+      const val = parseFloat(inp.value);
+      if (!isNaN(val)) applySpeakerAngleEdit(busIdx, val);
+    };
+    inp.addEventListener('change', apply);
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
+  });
+
+  // Capture button — snapshot cursor azimuth into angle field
+  wrap.querySelectorAll('.as-io-capture-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const busIdx = parseInt(btn.dataset.bus, 10);
+      const azDeg = getCursorAzDeg();
+      const inp = wrap.querySelector(`.as-io-angle-input[data-bus="${busIdx}"]`);
+      if (inp) inp.value = azDeg.toFixed(1);
+      applySpeakerAngleEdit(busIdx, azDeg);
+    });
+  });
+
+  // Reset button
+  document.getElementById('asResetSpeakerAngles')?.addEventListener('click', resetSpeakerAngles);
 
   // Set initial values for headphone dropdowns
   const hpSelL = wrap.querySelector('.as-io-hp-sel[data-side="L"]');
@@ -642,11 +766,27 @@ function stopAudio() {
 function updateLatency() {
   const buf = parseInt(document.getElementById('asBufferSize')?.value ?? 512);
   const sr  = S.audioCtx?.sampleRate ?? parseInt(document.getElementById('asSampleRate')?.value ?? 48000);
-  const ms  = (buf / sr * 1000).toFixed(1);
   const lbl = document.getElementById('asLatencyLabel');
   const dot = document.getElementById('asLatencyDot');
-  if (lbl) lbl.textContent = `≈ ${ms} ms  (${buf} frames / ${sr} Hz)`;
-  if (dot) dot.className = 'latency-dot ' + (ms < 8 ? 'ok' : ms < 20 ? 'warn' : 'bad');
+
+  // Prefer the real baseLatency + outputLatency reported by the browser
+  // (reflects the actual render buffer chosen by latencyHint: 'interactive').
+  // Fall back to the buffer-size estimate for Electron / older browsers.
+  const base = S.audioCtx?.baseLatency   ?? 0;
+  const out  = S.audioCtx?.outputLatency ?? 0;
+  if (base > 0) {
+    const realMs = ((base + out) * 1000).toFixed(1);
+    const bufMs  = (buf / sr * 1000).toFixed(1);
+    const label  = window.electronBridge?.isElectron
+      ? `≈ ${realMs} ms base + ${bufMs} ms buf`
+      : `≈ ${realMs} ms  (base ${(base*1000).toFixed(1)} + output ${(out*1000).toFixed(1)})`;
+    if (lbl) lbl.textContent = label;
+    if (dot) dot.className = 'latency-dot ' + (realMs < 8 ? 'ok' : realMs < 20 ? 'warn' : 'bad');
+  } else {
+    const ms = (buf / sr * 1000).toFixed(1);
+    if (lbl) lbl.textContent = `≈ ${ms} ms  (${buf} frames / ${sr} Hz)`;
+    if (dot) dot.className = 'latency-dot ' + (ms < 8 ? 'ok' : ms < 20 ? 'warn' : 'bad');
+  }
 }
 
 // ── Engine settings: sample rate + buffer size ────────────────────────────────
@@ -673,7 +813,7 @@ async function applySampleRate() {
     const devId   = _outputDeviceId ?? devices.find(d => d.isDefault)?.id ?? devices[0]?.id;
     const current = devices.find(d => d.id === devId) || devices[0];
     if (current) {
-      const nCh = current.outputChannels;
+      const nCh = Math.min(32, current.outputChannels);
       await window.electronBridge.setAudioDevice(current.id, nCh, undefined, S.audioCtx?.sampleRate);
       await initSpeakerBuses(nCh);
     }
@@ -695,7 +835,7 @@ async function applyBufferSize() {
     const devices = await window.electronBridge.getAudioDevices();
     const current = devices.find(d => d.isDefault) || devices[0];
     if (current) {
-      const nCh = S.speakerBuses?.length ?? current.outputChannels;
+      const nCh = Math.min(32, S.speakerBuses?.length ?? current.outputChannels);
       const result = await window.electronBridge.setAudioDevice(current.id, nCh, buf, S.audioCtx?.sampleRate);
       const ok = result.streaming;
       setStatus('asOutputStatus', ok ? 'ok' : 'error',
@@ -985,14 +1125,18 @@ async function applyInputDevice() {
     _inputDeviceId = deviceId;
     _inputNumCh    = nCh;
 
+    // Web Audio caps at 32 channels — meter/route the first 32, but the worklet
+    // deinterleaves all hw channels correctly (stride = nCh).
+    const meteredCh = Math.min(32, nCh);
     await setupRtAudioInputMeters(nCh);
-    repopulateChannelSelect(nCh);
+    repopulateChannelSelect(meteredCh);
     renderInputMeters(S.mainInputChannel ?? 0);
     renderInputMappingTable();  // show software-path → hardware-channel table
 
     as.started = true;
     const devLabel = devSel.options[devSel.selectedIndex]?.text || String(deviceId);
-    setStatus('asInputStatus', 'ok', `${devLabel} — ${nCh} ch — ${result.sampleRate} Hz`);
+    const chLabel = nCh > 32 ? `${meteredCh} of ${nCh} ch (Web Audio limit)` : `${nCh} ch`;
+    setStatus('asInputStatus', 'ok', `${devLabel} — ${chLabel} — ${result.sampleRate} Hz`);
     startMetering();
 
     // Sync mic button — input is now live
@@ -1161,7 +1305,9 @@ async function applyOutputDevice() {
   const device  = devices.find(d => d.id === deviceId);
   if (!device) return;
 
-  const numCh = device.outputChannels;
+  // Web Audio caps createChannelMerger at 32; clamp here so both RtAudio and
+  // the Web Audio graph agree on channel count (extra hw channels stay silent).
+  const numCh = Math.min(32, device.outputChannels);
 
   setStatus('asOutputStatus', 'idle', `opening ${numCh}-ch stream on "${device.name}"…`);
 
@@ -1520,6 +1666,9 @@ export async function activateSavedInputDevice(nCh) {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 export function initAudioSettings() {
+  // Hydrate custom speaker angles from localStorage before anything uses them
+  loadCustomSpeakerAngles();
+
   // Modal open/close
   const modal     = document.getElementById('audioSettingsModal');
   const openBtn   = document.getElementById('audioSettingsBtn');
@@ -1883,6 +2032,9 @@ export function initAudioSettings() {
     const n = parseInt(this.value, 10);
     if (isNaN(n)) return;
     S.numHouseSpeakers = n;
+    // Clear custom angles — they were for a different speaker count
+    S.customSpeakerAngles = null;
+    saveCustomSpeakerAngles();
     syncHouseSpeakersSeg();
     if (window.electronBridge?.isElectron && S.speakerBuses) {
       const totalCh = S.speakerBuses.numChannels;

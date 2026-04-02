@@ -14,7 +14,7 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.14 alpha</span>
+        <span class="top-bar-version">version 0.15 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -73,6 +73,7 @@
         <span class="sensor-group-label">sensor</span>
         <button id="sensorsBtn" class="top-bar-btn" title="sensor registry — view connected sensors, assign roles, calibrate">⊕ sensors</button>
         <button id="gestureBtn" class="top-bar-btn" title="gesture panel — IMU feature extraction, conditioning, joystick morpher (Shift+G)">◎ gesture</button>
+        <button id="mappingBtn" class="top-bar-btn" title="sensor mapping — map IMU axes to grain parameters">⇆ mapping</button>
 
       </div>
     </div>
@@ -335,6 +336,30 @@
             <input class="grain-slider" type="range" id="gcVolSlider" min="0.001" max="2.0" step="0.001" value="0.50">
             <input type="text" class="grain-numbox" id="gcVolNum" data-param="volume" value="0.50">
             <span class="param-lock-indicator" data-lock-key="volume" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+          </div>
+          <div class="grain-row" title="hpf — highpass filter cutoff frequency&#10;20 Hz = off (bypass)&#10;log scale 20 Hz – 20 kHz">
+            <span class="grain-label">hpf</span>
+            <input class="grain-slider grain-slider--log" type="range" id="gcHpfSlider" min="0" max="1000" step="1" value="0">
+            <input type="text" class="grain-numbox" id="gcHpfNum" data-param="hpfFreq" value="20 Hz">
+            <span class="param-lock-indicator" data-lock-key="hpfFreq" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+          </div>
+          <div class="grain-row" title="lpf — lowpass filter cutoff frequency&#10;20 kHz = off (bypass)&#10;log scale 20 Hz – 20 kHz">
+            <span class="grain-label">lpf</span>
+            <input class="grain-slider grain-slider--log" type="range" id="gcLpfSlider" min="0" max="1000" step="1" value="1000">
+            <input type="text" class="grain-numbox" id="gcLpfNum" data-param="lpfFreq" value="20.0k">
+            <span class="param-lock-indicator" data-lock-key="lpfFreq" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+          </div>
+          <div class="grain-row" title="Q — filter resonance (shared HPF/LPF)&#10;0.707 = Butterworth (flat)&#10;higher = resonant peak at cutoff">
+            <span class="grain-label">Q</span>
+            <input class="grain-slider" type="range" id="gcFilterQSlider" min="0.1" max="20" step="0.1" value="0.707">
+            <input type="text" class="grain-numbox" id="gcFilterQNum" data-param="filterQ" value="0.71">
+            <span class="param-lock-indicator" data-lock-key="filterQ" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+          </div>
+          <div class="grain-row" title="flt ± — per-grain filter cutoff randomisation&#10;0% = no jitter  100% = ±1 octave per grain">
+            <span class="grain-label">flt ±</span>
+            <input class="grain-slider" type="range" id="gcFilterJitterSlider" min="0" max="1" step="0.01" value="0">
+            <input type="text" class="grain-numbox" id="gcFilterJitterNum" data-param="filterFreqJitter" value="0%">
+            <span class="param-lock-indicator" data-lock-key="filterFreqJitter" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="dir — grain playback direction&#10;fwd: play sample forward&#10;rev: play sample backward&#10;rnd: random direction per grain">
             <span class="grain-label">dir</span>
@@ -880,6 +905,21 @@
   </div>
 </div>
 
+
+<!-- ── Sensor mapping modal ───────────────────────────────────────────────── -->
+<div id="sensorMappingModal" class="mu-overlay">
+  <div class="sensor-mapping-dialog mu-dialog">
+    <h2>sensor mapping <button class="close-btn" id="sensorMappingClose">✕</button></h2>
+    <div class="mapping-hint">map IMU axes to grain parameters — each mapping connects one sensor axis to one grain param</div>
+    <div id="sensorMappingList" class="mapping-list">
+      <!-- populated dynamically by ui-sensor-mapping.js -->
+    </div>
+    <div class="mapping-add-row">
+      <button id="sensorMappingAddBtn" class="mapping-add-btn" title="add a new axis-to-param mapping">+ add mapping</button>
+      <button id="sensorMappingClearBtn" class="mapping-clear-btn" title="remove all mappings">clear all</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── Viz settings modal ─────────────────────────────────────────────────── -->
 <div id="vizModal" class="mu-overlay">

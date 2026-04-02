@@ -8,6 +8,7 @@ import {
   LIVE_PAINT_COLORS, DEBUG, rebuildGrainCurves,
 } from './state.js';
 import { ensureAudioContext } from './audio.js';
+import { toggleMappingByIndex } from './sensor-mapping.js';
 import { startLiveRecording, stopLiveRecording } from './audio.js';
 import { toggleHandsfree } from './handsfree.js';
 import {
@@ -109,6 +110,18 @@ const ACTIONS = [
   { id: 'grain_retrig', label: 'retrigger (ms)',            key: '—',  osc: '/grain/retrigger',   fmt: 'float 0–500 ms',    type: 'cc',
     tip: 'per-particle cooldown — prevents the same point from firing again within this window',
     ccFn: v => { S.grainOverrides.retriggerMs = (v / 127) * 500; S.syncGrainControlsUI?.(); } },
+  { id: 'grain_hpf',    label: 'HPF cutoff',                key: '—',  osc: '/grain/hpf',         fmt: 'float 20–20000 Hz', type: 'cc',
+    tip: 'highpass filter cutoff — 20 Hz = off, log scale',
+    ccFn: v => { S.grainOverrides.hpfFreq = 20 * Math.pow(1000, v / 127); S.syncGrainControlsUI?.(); } },
+  { id: 'grain_lpf',    label: 'LPF cutoff',                key: '—',  osc: '/grain/lpf',         fmt: 'float 20–20000 Hz', type: 'cc',
+    tip: 'lowpass filter cutoff — 20 kHz = off, log scale',
+    ccFn: v => { S.grainOverrides.lpfFreq = 20 * Math.pow(1000, v / 127); S.syncGrainControlsUI?.(); } },
+  { id: 'grain_filterq', label: 'filter Q',                 key: '—',  osc: '/grain/filterq',     fmt: 'float 0.1–20',     type: 'cc',
+    tip: 'filter resonance — 0.707 = flat (Butterworth), higher = resonant peak',
+    ccFn: v => { S.grainOverrides.filterQ = 0.1 + (v / 127) * 19.9; S.syncGrainControlsUI?.(); } },
+  { id: 'grain_fltjit',  label: 'filter jitter',            key: '—',  osc: '/grain/filterjitter', fmt: 'float 0–1',        type: 'cc',
+    tip: 'per-grain cutoff randomisation — 0% = static, 100% = ±1 octave',
+    ccFn: v => { S.grainOverrides.filterFreqJitter = v / 127; S.syncGrainControlsUI?.(); } },
 
   // ── Cursor / Scan (S) ─────────────────────────────────────────────────────
   { id: null, group: 'cursor' },
@@ -120,6 +133,14 @@ const ACTIONS = [
     tip: 'toggle azimuth lock — freezes horizontal position' },
   { id: 'lock_el',      label: 'lock elevation (toggle)',    key: '—',                 osc: '/cursor/lock_el',    fmt: 'int 0|1',          type: 'toggle',
     tip: 'toggle elevation lock — freezes vertical position' },
+  { id: 'mapping_toggle_1', label: 'toggle mapping 1',       key: '—',                 osc: '/mapping/toggle/1',  fmt: 'bang',             type: 'trigger',
+    tip: 'toggle the first sensor-to-param mapping on/off' },
+  { id: 'mapping_toggle_2', label: 'toggle mapping 2',       key: '—',                 osc: '/mapping/toggle/2',  fmt: 'bang',             type: 'trigger',
+    tip: 'toggle the second sensor-to-param mapping on/off' },
+  { id: 'mapping_toggle_3', label: 'toggle mapping 3',       key: '—',                 osc: '/mapping/toggle/3',  fmt: 'bang',             type: 'trigger',
+    tip: 'toggle the third sensor-to-param mapping on/off' },
+  { id: 'mapping_toggle_4', label: 'toggle mapping 4',       key: '—',                 osc: '/mapping/toggle/4',  fmt: 'bang',             type: 'trigger',
+    tip: 'toggle the fourth sensor-to-param mapping on/off' },
   { id: 'radius_fade',  label: 'radius fade on/off',        key: '—',                 osc: '/cursor/radiusfade', fmt: 'int 0|1',          type: 'trigger',
     tip: 'attenuate grains by distance from cursor centre' },
   { id: 'radius_fade_curve', label: 'radius fade curve',    key: '—',                 osc: '/cursor/radiusfadecurve', fmt: 'float 0–1',   type: 'cc',
@@ -665,6 +686,10 @@ function dispatchAction(id, midiVal) {
           (b.dataset.val === 'on') === S[stateKey]));
       break;
     }
+    case 'mapping_toggle_1': if (midiVal === 0) break; toggleMappingByIndex(0); break;
+    case 'mapping_toggle_2': if (midiVal === 0) break; toggleMappingByIndex(1); break;
+    case 'mapping_toggle_3': if (midiVal === 0) break; toggleMappingByIndex(2); break;
+    case 'mapping_toggle_4': if (midiVal === 0) break; toggleMappingByIndex(3); break;
     case 'perf':
       S.perfMonitorVisible = !S.perfMonitorVisible;
       { const el = document.getElementById('perfMonitor'); if (el) el.style.display = S.perfMonitorVisible ? 'block' : 'none'; }

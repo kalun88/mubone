@@ -1,11 +1,17 @@
 {
   "name": "mubone",
-  "version": "0.1.0",
-  "description": "mubone granular simulator",
+  "version": "0.15.0-alpha",
+  "description": "mubone — spatial granular synthesizer",
   "main": "electron-main.js",
+  "author": "mubone",
   "scripts": {
     "electron": "electron .",
-    "start": "node server.js"
+    "start": "node server.js",
+    "rebuild": "electron-rebuild",
+    "dist": "electron-builder --mac",
+    "dist:arm64": "electron-builder --mac --arm64",
+    "dist:x64": "electron-builder --mac --x64",
+    "dist:universal": "electron-builder --mac --universal"
   },
   "dependencies": {
     "audify": "^1.10.1",
@@ -13,6 +19,58 @@
   },
   "devDependencies": {
     "electron": "^34.0.0",
+    "electron-builder": "^25.1.8",
     "electron-rebuild": "^3.2.9"
+  },
+  "build": {
+    "appId": "org.mubone.app",
+    "productName": "mubone",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron-main.js",
+      "electron-preload.js",
+      "index.html",
+      "gesture-window.html",
+      "sw.js",
+      "js/**/*",
+      "css/style.css",
+      "max/**/*",
+      "!max/node_modules/**/*",
+      "!**/*.bak",
+      "!**/*.bak2"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64", "x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64", "x64"]
+        }
+      ],
+      "category": "public.app-category.music",
+      "icon": null,
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "title": "mubone ${version}",
+      "contents": [
+        { "x": 130, "y": 220 },
+        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+      ]
+    },
+    "extraResources": [
+      {
+        "from": "max/",
+        "to": "max/",
+        "filter": ["**/*", "!node_modules/**"]
+      }
+    ]
   }
 }

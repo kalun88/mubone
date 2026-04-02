@@ -41,6 +41,7 @@ const STATIC_KEYS = [
   'mubone_gesture_panel',
   'mubone_radial_pins',
   'grainDiagSnapshot',
+  'mubone_sensorMappings',
 ];
 
 // ── WAV encoding / decoding helpers ─────────────────────────────────────────

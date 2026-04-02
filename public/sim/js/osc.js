@@ -18,6 +18,7 @@ import {
 import { updateGestureMorph } from './seed-morph.js';
 import { setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
 import { updatePlaybackControls } from './ui-presets.js';
+import { toggleMappingByIndex } from './sensor-mapping.js';
 
 const WS_URL            = 'ws://localhost:8080';
 const WS_RETRY_INTERVAL = 3000;  // ms between reconnect attempts
@@ -271,6 +272,26 @@ export function handleOSC(rawAddress, values) {
 
     case '/grain/curve':  S._dispatchAction?.('grain_curve', 127); break;
 
+    case '/grain/hpf':
+      // Incoming value in Hz (20–20000)
+      S.grainOverrides.hpfFreq     = clamp(values[0], 20, 20000);
+      scheduleUISync();
+      break;
+    case '/grain/lpf':
+      // Incoming value in Hz (20–20000)
+      S.grainOverrides.lpfFreq     = clamp(values[0], 20, 20000);
+      scheduleUISync();
+      break;
+    case '/grain/filterq':
+      S.grainOverrides.filterQ     = clamp(values[0], 0.1, 20);
+      scheduleUISync();
+      break;
+    case '/grain/filterjitter':
+      // Incoming value 0–1 (fraction)
+      S.grainOverrides.filterFreqJitter = clamp(values[0], 0, 1);
+      scheduleUISync();
+      break;
+
     // ── Preset ───────────────────────────────────────────────────────────────
     // Dispatches a CustomEvent so ui-presets.js can update its UI alongside
     // the state change. ui-presets.js listens for 'osc-preset'.
@@ -312,6 +333,12 @@ export function handleOSC(rawAddress, values) {
     case '/cursor/tare':    S._dispatchAction?.('tare', 127);        break;
     case '/cursor/lock_az': S._dispatchAction?.('lock_az', 127);     break;
     case '/cursor/lock_el': S._dispatchAction?.('lock_el', 127);     break;
+
+    // Sensor mapping toggles (1-indexed from Max → 0-indexed internally)
+    case '/mapping/toggle/1': toggleMappingByIndex(0); break;
+    case '/mapping/toggle/2': toggleMappingByIndex(1); break;
+    case '/mapping/toggle/3': toggleMappingByIndex(2); break;
+    case '/mapping/toggle/4': toggleMappingByIndex(3); break;
     case '/cursor/radiusfade': S._dispatchAction?.('radius_fade', 127); break;
 
     case '/cursor/radiusfadecurve': {

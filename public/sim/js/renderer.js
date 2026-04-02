@@ -12,6 +12,7 @@ import {
 } from './state.js';
 import { spherePoint, cameraTransform, project, projectInto, updateProjectionCache, getCursorLonLat, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto } from './sphere.js';
 import { rand, activeGrainMap, stampCartesian } from './grain.js';
+import { tickMappings } from './sensor-mapping.js';
 import { rebuildLiveBuffer, getRecordingDuration } from './audio.js';
 import { snapshotInputFeatures, featuresFromBuffer, normalise, featuresToHSL, tickPeakHold } from './audio-features.js';
 
@@ -1420,6 +1421,11 @@ export function animate() {
   S.frameQ = (S.cameraMode === 'sensor' && typeof S._getFrameQ === 'function')
     ? S._getFrameQ()
     : null;
+
+  // ── Sensor → grain-param mappings ──────────────────────────────────────
+  // Evaluate after camera/cursor quaternion updates so axis values are fresh.
+  // Writes mapped values to S.grainOverrides; grain scheduler reads on next tick.
+  tickMappings();
 
   // Drop particles while painting (alt-lock freezes view, not painting —
   // position uses frozen coords below when altLocked)

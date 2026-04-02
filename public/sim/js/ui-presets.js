@@ -2108,6 +2108,55 @@ export function initGrainControls() {
       internalToSlider: v => v,
       fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.001, Math.min(2.0, v)); },
     },
+    // ── Filter sliders ──────────────────────────────────────────────────────
+    // HPF/LPF use a log scale (20–20000 Hz) mapped to slider 0–1000.
+    // Log formula: freq = 20 * (1000)^(sv/1000)  →  sv = 1000 * log(freq/20) / log(1000)
+    {
+      sliderId: 'gcHpfSlider', numId: 'gcHpfNum', param: 'hpfFreq',
+      toDisplay: v => {
+        if (v >= 1000) return (v / 1000).toFixed(1) + 'k';
+        return Math.round(v) + ' Hz';
+      },
+      sliderToInternal: sv => 20 * Math.pow(1000, parseFloat(sv) / 1000),
+      internalToSlider: v  => Math.round(1000 * Math.log(Math.max(20, v) / 20) / Math.log(1000)),
+      fromDisplay: str => {
+        const s = str.trim().toLowerCase().replace('hz', '').trim();
+        let v;
+        if (s.endsWith('k')) v = parseFloat(s.replace('k', '')) * 1000;
+        else v = parseFloat(s);
+        return isNaN(v) ? null : Math.max(20, Math.min(20000, v));
+      },
+    },
+    {
+      sliderId: 'gcLpfSlider', numId: 'gcLpfNum', param: 'lpfFreq',
+      toDisplay: v => {
+        if (v >= 1000) return (v / 1000).toFixed(1) + 'k';
+        return Math.round(v) + ' Hz';
+      },
+      sliderToInternal: sv => 20 * Math.pow(1000, parseFloat(sv) / 1000),
+      internalToSlider: v  => Math.round(1000 * Math.log(Math.max(20, v) / 20) / Math.log(1000)),
+      fromDisplay: str => {
+        const s = str.trim().toLowerCase().replace('hz', '').trim();
+        let v;
+        if (s.endsWith('k')) v = parseFloat(s.replace('k', '')) * 1000;
+        else v = parseFloat(s);
+        return isNaN(v) ? null : Math.max(20, Math.min(20000, v));
+      },
+    },
+    {
+      sliderId: 'gcFilterQSlider', numId: 'gcFilterQNum', param: 'filterQ',
+      toDisplay: v => v.toFixed(2),
+      sliderToInternal: sv => parseFloat(sv),
+      internalToSlider: v => v,
+      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.1, Math.min(20, v)); },
+    },
+    {
+      sliderId: 'gcFilterJitterSlider', numId: 'gcFilterJitterNum', param: 'filterFreqJitter',
+      toDisplay: v => Math.round(v * 100) + '%',
+      sliderToInternal: sv => parseFloat(sv),
+      internalToSlider: v => v,
+      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
+    },
   ];
 
   // rAF-throttled waveform preview — avoids blocking the main thread with
