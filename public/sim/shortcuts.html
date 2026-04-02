@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>mubone — Keyboard Shortcuts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: "Roboto Mono", ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    background-color: #222222;
+    color: #ffffff;
+    padding: 3rem 4rem;
+    max-width: 720px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background-color: #faf9f5;
+    color: #222222;
+  }
+
+  h1 {
+    font-size: 13px;
+    font-weight: 400;
+    margin-bottom: 2rem;
+  }
+
+  h2 {
+    font-size: 13px;
+    font-weight: 400;
+    color: #555555;
+    margin-top: 2rem;
+    margin-bottom: 0.75rem;
+  }
+
+  p {
+    color: #aaaaaa;
+    margin-bottom: 0.75rem;
+  }
+
+  strong { color: #ffffff; font-weight: 500; }
+
+  hr {
+    border: none;
+    border-top: 1px dashed #444444;
+    margin: 1.5rem 0;
+  }
+
+  a {
+    color: #aaaaaa;
+    text-decoration: none;
+    transition: color 0.15s ease;
+  }
+  a:hover { color: #ffffff; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0.5rem;
+  }
+
+  th {
+    text-align: left;
+    color: #555555;
+    font-size: 11px;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+    padding: 0.4rem 0;
+    border-bottom: 1px dashed #444444;
+  }
+
+  td {
+    padding: 0.4rem 0;
+    border-bottom: 1px solid #2e2e2e;
+    font-size: 13px;
+    color: #aaaaaa;
+  }
+
+  td:first-child {
+    white-space: nowrap;
+    color: #ffffff;
+    font-weight: 400;
+    width: 40%;
+    padding-right: 1.5rem;
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  kbd {
+    background: #2e2e2e;
+    border: 1px solid #444444;
+    border-radius: 3px;
+    padding: 0.1em 0.4em;
+    font-family: "Roboto Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: #ffffff;
+  }
+
+  .callout {
+    background: #2e2e2e;
+    border-left: 2px solid #aaaaaa;
+    padding: 0.75rem 1rem;
+    margin: 0.75rem 0;
+    color: #aaaaaa;
+  }
+  .callout strong { color: #ffffff; }
+
+  .note {
+    color: #555555;
+    font-size: 12px;
+    margin-top: 1rem;
+  }
+
+  footer {
+    color: #555555;
+    font-size: 11px;
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px dashed #444444;
+  }
+
+  @media (max-width: 640px) {
+    body { padding: 2rem 1.5rem; }
+    td:first-child { white-space: normal; }
+  }
+</style>
+</head>
+<body>
+
+<h1>mubone — keyboard shortcuts</h1>
+
+<h2>cursor &amp; camera modes</h2>
+
+<p>In <strong>pull mode</strong> (default), your mouse controls the camera — drag to rotate the sphere.</p>
+
+<p>In <strong>surface mode</strong>, your trackpad/mouse position maps directly onto the sphere surface — move your finger and the cursor follows.</p>
+
+<p>Both modes use pointer lock. To access the UI or interact with panels, press <kbd>⌥ Option</kbd> to temporarily freeze the sphere and release your pointer. Press <kbd>⌥ Option</kbd> again to re-enter.</p>
+
+<div class="callout"><strong><kbd>⌥ Option</kbd> is the most important key to learn first</strong> — it's how you get in and out of cursor control.</div>
+
+<p>You can switch between pull, surface, and sensor modes from the camera mode button in the top bar.</p>
+
+<hr>
+
+<h2>recording &amp; painting</h2>
+<table>
+  <tr><th>key</th><th>action</th></tr>
+  <tr><td><kbd>Space</kbd> (tap) / <kbd>Left Click</kbd> (tap)</td><td>Toggle trace on/off</td></tr>
+  <tr><td><kbd>Space</kbd> (hold) / <kbd>Left Click</kbd> (hold)</td><td>Momentary trace (paint while held)</td></tr>
+  <tr><td><kbd>A</kbd></td><td>Cycle trace mode: trace → trace+loop → trace+cloud</td></tr>
+  <tr><td><kbd>Q</kbd> <kbd>W</kbd> <kbd>E</kbd> <kbd>R</kbd> <kbd>T</kbd> <kbd>Y</kbd> <kbd>U</kbd> <kbd>I</kbd> <kbd>O</kbd> <kbd>P</kbd></td><td>Momentary sample paint (slots 1–10)</td></tr>
+</table>
+
+<hr>
+
+<h2>commits (clouds &amp; loops)</h2>
+<table>
+  <tr><th>key</th><th>action</th></tr>
+  <tr><td><kbd>D</kbd> (tap)</td><td>Drop commit (cloud: plant at cursor / loop: drop from cursor)</td></tr>
+  <tr><td><kbd>D</kbd> (hold)</td><td>Draw commit (cloud: moving path / loop: record)</td></tr>
+  <tr><td><kbd>Shift</kbd>+<kbd>D</kbd></td><td>Cycle commit mode (cloud ↔ loop)</td></tr>
+  <tr><td><kbd>⌘D</kbd> / <kbd>Ctrl</kbd>+<kbd>D</kbd></td><td>Release nearest commit</td></tr>
+</table>
+
+<hr>
+
+<h2>playback &amp; navigation</h2>
+<table>
+  <tr><th>key</th><th>action</th></tr>
+  <tr><td><kbd>S</kbd></td><td>Toggle scan (cursor → house bus)</td></tr>
+  <tr><td><kbd>M</kbd></td><td>System mute</td></tr>
+  <tr><td><kbd>N</kbd></td><td>Toggle nearest/snap mode</td></tr>
+  <tr><td><kbd>X</kbd></td><td>Toggle radial morph (experimental, currently not functioning)</td></tr>
+  <tr><td><kbd>H</kbd></td><td>Toggle handsfree recording</td></tr>
+  <tr><td><kbd>[</kbd> / <kbd>]</kbd></td><td>Decrease / increase search radius</td></tr>
+  <tr><td><kbd>⌥ Option</kbd></td><td>Lock sphere position (freeze camera, release pointer)</td></tr>
+</table>
+
+<hr>
+
+<h2>presets</h2>
+<table>
+  <tr><th>key</th><th>action</th></tr>
+  <tr><td><kbd>1</kbd>–<kbd>9</kbd>, <kbd>0</kbd></td><td>Select user presets 1–10</td></tr>
+  <tr><td><kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>0</kbd></td><td>Select user presets 11–20</td></tr>
+</table>
+
+<hr>
+
+<h2>editing</h2>
+<table>
+  <tr><th>key</th><th>action</th></tr>
+  <tr><td><kbd>⌘Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo last stroke</td></tr>
+  <tr><td><kbd>Delete</kbd> / <kbd>Backspace</kbd> ×3</td><td>Erase all (triple-press within 800ms)</td></tr>
+  <tr><td><kbd>−</kbd> (minus)</td><td>Session sweep</td></tr>
+  <tr><td><kbd>`</kbd> (backtick)</td><td>Tare cursor sensor</td></tr>
+</table>
+
+<hr>
+
+<h2>display</h2>
+<table>
+  <tr><th>key</th><th>action</th></tr>
+  <tr><td><kbd>P</kbd></td><td>Toggle performance monitor</td></tr>
+  <tr><td><kbd>Shift</kbd>+<kbd>P</kbd></td><td>Toggle high-performance render mode</td></tr>
+  <tr><td><kbd>Shift</kbd>+<kbd>F</kbd></td><td>Toggle projector mode</td></tr>
+  <tr><td><kbd>Esc</kbd></td><td>Close topmost modal / blur focused field</td></tr>
+</table>
+
+<hr>
+
+<h2>custom bindings &amp; remote control</h2>
+<p>These are the default keyboard shortcuts. All bindings can be remapped via the learn mode in the <strong>keys / midi / osc</strong> module (top bar), which also shows the full list of available MIDI CCs and OSC addresses. Modifier combos (Shift, Ctrl, ⌘) and scroll wheel are also mappable. Blocked keys that can't be rebound: Escape, Tab, F5, F11, F12.</p>
+<p class="note">The in-app module is always the source of truth for the current state of all bindings.</p>
+
+<footer>
+  mubone v0.15 alpha · <a href="/sim">launch mubone</a>
+</footer>
+
+</body>
+</html>
