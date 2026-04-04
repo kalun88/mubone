@@ -503,7 +503,9 @@ export function initDryMonitorGains() {
     slider.addEventListener('input', () => setDryMonitorGain(parseFloat(slider.value)));
   }
   if (chk) {
-    chk.checked = S.dryMonitorEnabled;
+    // Always start with dry monitor OFF, regardless of persisted/preset state
+    S.dryMonitorEnabled = false;
+    chk.checked = false;
     chk.addEventListener('change', () => setDryMonitorEnabled(chk.checked));
   }
   const num = document.getElementById('dryMonitorGainNum');

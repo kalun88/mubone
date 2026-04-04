@@ -6,6 +6,28 @@ const { app, BrowserWindow, session, ipcMain } = require('electron');
 const path  = require('path');
 const dgram = require('dgram');
 
+// ── Serial (x-IMU3 USB CDC) ────────────────────────────────────────────────
+// Lazy-loaded — serialport is optional (WiFi-only setups don't need it).
+let SerialPort   = null;
+let ReadlineParser = null;
+let _serialReady = false;
+
+function requireSerial() {
+  if (SerialPort) return true;
+  try {
+    ({ SerialPort }     = require('serialport'));
+    ({ ReadlineParser }  = require('@serialport/parser-readline'));
+    _serialReady = true;
+    return true;
+  } catch (e) {
+    console.warn('[serial] serialport not installed — USB serial unavailable. Run: npm i serialport');
+    return false;
+  }
+}
+
+// Open serial ports, keyed by path (e.g. '/dev/tty.usbmodem1234')
+const _serialPorts = new Map();  // path → { port, parser }
+
 // ── OSC UDP receiver (BNO085 from Max) ────────────────────────────────────────
 // Max sends OSC to 127.0.0.1:7500. We parse it here and push to the renderer
 // via webContents.send('osc-sensor') — no WebSocket, no server script needed.
@@ -64,6 +86,205 @@ function startOSCReceiver() {
 
   sock.bind(OSC_PORT, '127.0.0.1', () => {
     console.log(`[OSC] listening on UDP 127.0.0.1:${OSC_PORT}`);
+  });
+}
+
+// ── x-IMU3 direct UDP (discovery + data + commands) ──────────────────────────
+// x-IMU3 broadcasts a JSON network announcement on UDP port 10000 at 1 Hz.
+// Data messages (Euler, quaternion, inertial) arrive on the device's configured
+// "send" port (default 8000).  Commands are sent to the device's "receive" port
+// (default 9000) as JSON terminated by LF.
+
+const XIMU3_DISCOVERY_PORT = 10000;
+let _ximu3DiscoverySock = null;
+let _ximu3DataSock      = null;   // listener for data messages
+let _ximu3DataPort      = 0;      // currently bound data port
+let _ximu3CmdSock       = null;   // socket for sending commands
+
+function startXIMU3Discovery() {
+  _ximu3DiscoverySock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+
+  _ximu3DiscoverySock.on('message', (msg, rinfo) => {
+    if (!_oscWin || _oscWin.isDestroyed()) return;
+    try {
+      const json = JSON.parse(msg.toString('utf8'));
+      // Attach the source IP so renderer knows where to send commands
+      json._sourceIP = rinfo.address;
+      _oscWin.webContents.send('ximu3-discovery', json);
+    } catch (_) {
+      // Not JSON — ignore (might be data on wrong port)
+    }
+  });
+
+  _ximu3DiscoverySock.on('error', (err) => {
+    console.warn(`[x-IMU3] discovery UDP error: ${err.message}`);
+  });
+
+  _ximu3DiscoverySock.bind(XIMU3_DISCOVERY_PORT, '0.0.0.0', () => {
+    console.log(`[x-IMU3] discovery listening on UDP 0.0.0.0:${XIMU3_DISCOVERY_PORT}`);
+  });
+}
+
+function startXIMU3DataListener(port) {
+  // Close existing data listener if port changed
+  if (_ximu3DataSock) {
+    try { _ximu3DataSock.close(); } catch (_) {}
+    _ximu3DataSock = null;
+  }
+  _ximu3DataPort = port;
+
+  _ximu3DataSock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+
+  // Buffer for accumulating partial ASCII messages (LF-terminated)
+  let _buf = '';
+
+  _ximu3DataSock.on('message', (msg) => {
+    if (!_oscWin || _oscWin.isDestroyed()) return;
+    // x-IMU3 data can be ASCII (LF-delimited) or binary.
+    // We handle ASCII mode here — multiple messages may arrive per packet.
+    _buf += msg.toString('utf8');
+    let nlIdx;
+    while ((nlIdx = _buf.indexOf('\n')) !== -1) {
+      const line = _buf.slice(0, nlIdx);
+      _buf = _buf.slice(nlIdx + 1);
+      if (line.length > 0) {
+        // Check if it looks like a JSON command response (starts with '{')
+        if (line[0] === '{') {
+          try {
+            const json = JSON.parse(line);
+            _oscWin.webContents.send('ximu3-command-response', json);
+          } catch (_) {}
+        } else {
+          // Data message — send raw line to renderer for parsing
+          _oscWin.webContents.send('ximu3-data', line);
+        }
+      }
+    }
+  });
+
+  _ximu3DataSock.on('error', (err) => {
+    console.warn(`[x-IMU3] data UDP error on port ${port}: ${err.message}`);
+  });
+
+  _ximu3DataSock.bind(port, '0.0.0.0', () => {
+    console.log(`[x-IMU3] data listening on UDP 0.0.0.0:${port}`);
+  });
+}
+
+function stopXIMU3DataListener() {
+  if (_ximu3DataSock) {
+    try { _ximu3DataSock.close(); } catch (_) {}
+    _ximu3DataSock = null;
+    _ximu3DataPort = 0;
+  }
+}
+
+function sendXIMU3Command(ip, port, jsonStr) {
+  if (!_ximu3CmdSock) {
+    _ximu3CmdSock = dgram.createSocket('udp4');
+    _ximu3CmdSock.on('error', (err) => {
+      console.warn(`[x-IMU3] command send error: ${err.message}`);
+    });
+  }
+  // Ensure LF termination
+  const payload = jsonStr.endsWith('\n') ? jsonStr : jsonStr + '\n';
+  const buf = Buffer.from(payload, 'utf8');
+  _ximu3CmdSock.send(buf, 0, buf.length, port, ip, (err) => {
+    if (err) console.warn(`[x-IMU3] failed to send command to ${ip}:${port} — ${err.message}`);
+  });
+}
+
+// ── x-IMU3 serial (USB CDC) ──────────────────────────────────────────────────
+// x-IMU3 appears as a USB CDC virtual COM port.  Same ASCII protocol as UDP:
+// data lines are TYPE,TIMESTAMP,args...\n, commands are JSON+LF.
+// Default baud rate: 115200.
+
+const XIMU3_SERIAL_BAUD = 115200;
+
+async function listSerialPortsFn() {
+  if (!requireSerial()) return [];
+  try {
+    const ports = await SerialPort.list();
+    return ports.map(p => ({
+      path:         p.path,
+      manufacturer: p.manufacturer || '',
+      serialNumber: p.serialNumber || '',
+      vendorId:     p.vendorId || '',
+      productId:    p.productId || '',
+    }));
+  } catch (e) {
+    console.warn(`[serial] list error: ${e.message}`);
+    return [];
+  }
+}
+
+function openSerialPortFn(portPath) {
+  if (!requireSerial()) return Promise.resolve(false);
+  if (_serialPorts.has(portPath)) return Promise.resolve(true);  // already open
+
+  return new Promise((resolve) => {
+    const port = new SerialPort({
+      path:     portPath,
+      baudRate: XIMU3_SERIAL_BAUD,
+      autoOpen: false,
+    });
+
+    const parser = port.pipe(new ReadlineParser({ delimiter: '\n' }));
+
+    parser.on('data', (line) => {
+      if (!_oscWin || _oscWin.isDestroyed()) return;
+      line = line.trim();
+      if (!line) return;
+
+      if (line[0] === '{') {
+        // JSON command response
+        try {
+          const json = JSON.parse(line);
+          _oscWin.webContents.send('ximu3-serial-response', portPath, json);
+        } catch (_) {}
+      } else {
+        // Data message — same format as UDP
+        _oscWin.webContents.send('ximu3-serial-data', portPath, line);
+      }
+    });
+
+    port.on('error', (err) => {
+      console.warn(`[serial] ${portPath} error: ${err.message}`);
+    });
+
+    port.on('close', () => {
+      console.log(`[serial] ${portPath} closed`);
+      _serialPorts.delete(portPath);
+    });
+
+    port.open((err) => {
+      if (err) {
+        console.warn(`[serial] failed to open ${portPath}: ${err.message}`);
+        _serialPorts.delete(portPath);
+        resolve(false);
+      } else {
+        console.log(`[serial] opened ${portPath} @ ${XIMU3_SERIAL_BAUD}`);
+        resolve(true);
+      }
+    });
+
+    _serialPorts.set(portPath, { port, parser });
+  });
+}
+
+function closeSerialPortFn(portPath) {
+  const entry = _serialPorts.get(portPath);
+  if (!entry) return;
+  try { entry.port.close(); } catch (_) {}
+  _serialPorts.delete(portPath);
+}
+
+function sendSerialCommandFn(portPath, jsonStr) {
+  const entry = _serialPorts.get(portPath);
+  if (!entry || !entry.port.isOpen) return;
+  const payload = jsonStr.endsWith('\n') ? jsonStr : jsonStr + '\n';
+  entry.port.write(payload, 'utf8', (err) => {
+    if (err) console.warn(`[serial] write error on ${portPath}: ${err.message}`);
   });
 }
 
@@ -326,6 +547,45 @@ function setupIPC() {
     return { ok: true, streaming, sampleRate: actualRate };
   });
 
+  // ── x-IMU3 IPC ──────────────────────────────────────────────────────────────
+  // Start/stop data listener, send commands to device
+
+  ipcMain.handle('ximu3-start-data', (_event, port) => {
+    startXIMU3DataListener(port);
+    return { ok: true, port };
+  });
+
+  ipcMain.handle('ximu3-stop-data', () => {
+    stopXIMU3DataListener();
+    return { ok: true };
+  });
+
+  ipcMain.handle('ximu3-send-command', (_event, ip, port, jsonStr) => {
+    sendXIMU3Command(ip, port, jsonStr);
+    return { ok: true };
+  });
+
+  // ── x-IMU3 serial IPC ────────────────────────────────────────────────────────
+
+  ipcMain.handle('serial-list-ports', async () => {
+    return await listSerialPortsFn();
+  });
+
+  ipcMain.handle('serial-open', async (_event, portPath) => {
+    const ok = await openSerialPortFn(portPath);
+    return { ok, path: portPath };
+  });
+
+  ipcMain.handle('serial-close', (_event, portPath) => {
+    closeSerialPortFn(portPath);
+    return { ok: true };
+  });
+
+  ipcMain.handle('serial-send-command', (_event, portPath, jsonStr) => {
+    sendSerialCommandFn(portPath, jsonStr);
+    return { ok: true };
+  });
+
   // Fullscreen toggle — native OS fullscreen on the current display.
   // Note: on macOS this creates a Space, which dims the other display.
   // This is a macOS limitation; simpleFullScreen avoids it but has sizing
@@ -379,6 +639,7 @@ app.whenReady().then(() => {
   const win = createWindow();
   _oscWin = win;
   startOSCReceiver();
+  startXIMU3Discovery();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -400,5 +661,15 @@ app.on('window-all-closed', () => {
     try { if (rtAudioIn.isStreamOpen()) rtAudioIn.closeStream(); } catch (_) {}
     rtAudioIn = null;
   }
+  // Close x-IMU3 sockets
+  if (_ximu3DiscoverySock) { try { _ximu3DiscoverySock.close(); } catch(_) {} }
+  if (_ximu3DataSock)      { try { _ximu3DataSock.close(); } catch(_) {} }
+  if (_ximu3CmdSock)       { try { _ximu3CmdSock.close(); } catch(_) {} }
+  // Close serial ports
+  for (const [, entry] of _serialPorts) {
+    try { entry.port.close(); } catch(_) {}
+  }
+  _serialPorts.clear();
+
   if (process.platform !== 'darwin') app.quit();
 });

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "audify": "^1.10.1",
+    "serialport": "^13.0.0",
     "ws": "^8.19.0"
   },
   "devDependencies": {
@@ -41,8 +42,15 @@
       "!**/*.bak",
       "!**/*.bak2"
     ],
+    "asarUnpack": [
+      "node_modules/serialport/**",
+      "node_modules/@serialport/**"
+    ],
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.music",
       "icon": null,
       "identity": null,
@@ -52,15 +60,26 @@
     "dmg": {
       "title": "mubone ${version}",
       "contents": [
-        { "x": 130, "y": 220 },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     },
     "extraResources": [
       {
         "from": "max/",
         "to": "max/",
-        "filter": ["**/*", "!node_modules/**"]
+        "filter": [
+          "**/*",
+          "!node_modules/**"
+        ]
       }
     ]
   }

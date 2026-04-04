@@ -4,7 +4,7 @@
 // When you bump the version, bump it here too — that triggers re-cache.
 // ============================================================================
 
-const CACHE_VERSION = 'mubone-0.13-alpha';
+const CACHE_VERSION = 'mubone-0.16-alpha';
 
 const APP_SHELL = [
   './',
@@ -18,7 +18,8 @@ const APP_SHELL = [
   './js/renderer.js',
   './js/sphere.js',
   './js/events.js',
-  './js/sensor.js',
+  './js/imu-setup.js',
+  './js/ui-imu-setup.js',
   './js/sensor-registry.js',
   './js/seed-morph.js',
   './js/midi.js',
@@ -33,7 +34,8 @@ const APP_SHELL = [
   './js/ui-presets.js',
   './js/ui-meters.js',
   './js/ui-audio-settings.js',
-  './js/ui-sensors.js',
+  './js/sensor-mapping.js',
+  './js/ui-sensor-mapping.js',
   './js/ui-sweep.js',
   './js/ui-trace.js',
   './js/ui-improv.js',

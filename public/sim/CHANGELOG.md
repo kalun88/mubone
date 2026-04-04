@@ -5,6 +5,29 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.16 alpha — 2026-04-03
+
+### Added
+- **Unified sensor module** (`js/imu-setup.js`, `js/ui-imu-setup.js`) — replaces the old sensors module. Single module owns all IMU device discovery, connection, and calibration for three transports: x-IMU3 via WiFi UDP, x-IMU3 via serial/USB, and OSC sensors from Max. Per-device cards with orientation readout, polarity toggles, tare, roll mute, role assignment, and feed-to-sphere toggle.
+- **Serial/USB transport for x-IMU3** — native serial port support via `serialport` npm package in Electron. Lazy-loaded so WiFi-only setups don't need the dependency. IPC bridge for open/close/send/list, auto-SN detection from device query response.
+- **OSC sensor auto-discovery** — first `/sensor/{name}/quaternion` or `/sensor/{name}/inertial` message auto-creates a DeviceState and card. Same calibration pipeline as direct connections. Feed-to-sphere button (previously OSC auto-fed with no toggle).
+- **NWU axis mapping readout** — orientation table shows three columns: semantic label (roll/pitch/yaw), NWU direction (N/W/U), and hardware axis mapping (+X/+Y/+Z) that updates dynamically when axes alignment changes.
+- **Roll mute** — per-device toggle that zeros roll before feeding to sphere. Propagates to registry axis map to activate the pole-safe forward-vector path (yaw hold near poles).
+- **Euler-space tare** — tare captures pitch and yaw offsets and subtracts them in Euler space rather than quaternion multiplication. Roll stays gravity-referenced — no cross-coupling when yawing with off-kilter mounts.
+- **Pole clamp** — calibrated pitch clamped to ±89.5° before quaternion recomposition, preventing gimbal lock twirl at the poles.
+- **Global tare wiring** — backtick key, MIDI tare action, OSC `/cursor/tare`, and top-bar tare button all routed through imu-setup to tare the cursor-role device.
+
+### Removed
+- **Old sensors module** — deleted `js/sensor.js` and `js/ui-sensors.js`. All sensor data now flows through imu-setup's calibration pipeline. Sensors button removed from top bar, sensorsModal removed from HTML, ~280 lines of `.sensor-*` CSS removed.
+- **Legacy Max patches** — removed `max/bno085.maxpat`, `max/mubone-controller.maxpat`, `max/sensor-mapping.maxpat`, and `mumath.*` utility patches (replaced by reorganised `max/bno085/` and `max/main.maxpat`).
+
+### Changed
+- **Top-bar button renamed** — "imu setup" → "sensors" now that it's the single entry point for all sensor configuration.
+- **Service worker updated** — `CACHE_VERSION` bumped to `mubone-0.16-alpha`, APP_SHELL updated to reflect new/removed files.
+- **Axes alignment auto-clears tare** — changing hardware axes alignment invalidates any existing tare captured in the old frame.
+
+---
+
 ## 0.15 alpha — 2026-04-02
 
 ### Added

@@ -17,7 +17,6 @@ import { resizeCanvas, animate } from './renderer.js';
 import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initMorphToggle, initRadiusFade, initSeqMode, initMixdownGains, initDryMonitorGains, setScanMuted, initGateMeter } from './ui-meters.js';
 import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, recenterCursor } from './sensor-registry.js';
 import { initOSC } from './osc.js';
-import { initSensorsUI } from './ui-sensors.js';
 import { initAudioSettings, loadAudioDefaults, activateSavedInputDevice, startAutoSave } from './ui-audio-settings.js';
 
 import { initImprovUI } from './ui-improv.js';
@@ -26,6 +25,7 @@ import { initSweepUI, initSessionPanel } from './ui-sweep.js';
 import { initExportImport } from './ui-export.js';
 import { initPatchTable } from './ui-patch-table.js';
 import { initMappingUI } from './ui-sensor-mapping.js';
+import { initIMUSetupUI } from './ui-imu-setup.js';
 
 
 function init() {
@@ -61,8 +61,8 @@ function init() {
   S._onTare = () => {                        // reset drift correction on fresh tare
     S.driftOffsetQ = null;
   };
-  initSensorsUI();
   initMappingUI();
+  initIMUSetupUI();
   initAudioSettings();
   initImprovUI();
   initVizUI();

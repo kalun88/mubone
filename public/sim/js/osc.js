@@ -11,10 +11,10 @@
 // ============================================================================
 
 import { S, DEBUG, PRESETS, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, rebuildGrainCurves } from './state.js';
+import { getOrCreateSlot } from './sensor-registry.js';
 import {
-  getOrCreateSlot, getByRole, assignQuatRole, assignInertialRole,
-  handleSlotQuaternion, handleSlotInertial,
-} from './sensor-registry.js';
+  handleOSCSensorQuaternion, handleOSCSensorInertial,
+} from './imu-setup.js';
 import { updateGestureMorph } from './seed-morph.js';
 import { setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
 import { updatePlaybackControls } from './ui-presets.js';
@@ -137,25 +137,21 @@ export function handleOSC(rawAddress, values) {
   // ── Generic sensor dispatch ─────────────────────────────────────────────────
   // New convention: /sensor/{name}/quaternion  (4 floats)
   //                 /sensor/{name}/inertial    (6 floats)
-  // The {name} is arbitrary — the app auto-discovers slots on first contact.
+  // Routed through imu-setup for unified calibration + UI card.
   {
     const parts = address.split('/');   // ["", "sensor", name, type]
     if (parts[1] === 'sensor' && parts.length === 4) {
       const name = parts[2];
       const type = parts[3];
-      const slot = getOrCreateSlot(name);
 
       if (type === 'quaternion' && values.length >= 4) {
-        handleSlotQuaternion(slot, values);
-        // If this slot's quat drives the cursor, send tare state
-        if (slot.quatRole === 'cursor') {
-          if (slot.zeroEuler) sendOSC('/sensor/' + name + '/0euler', [slot.zeroEuler.x, slot.zeroEuler.y, slot.zeroEuler.z]);
-        }
+        handleOSCSensorQuaternion(name, values);
         return;
       }
       if (type === 'inertial' && values.length >= 6) {
-        handleSlotInertial(slot, values);
+        handleOSCSensorInertial(name, values);
         // If this slot's inertial is gesture source, run downstream
+        const slot = getOrCreateSlot(name);
         if (slot.inertialRole === 'gesture') {
           updateGestureMorph();
           S._onGestureUpdate?.();
@@ -163,38 +159,6 @@ export function handleOSC(rawAddress, values) {
         return;
       }
     }
-  }
-
-  // ── Legacy /space/* aliases ──────────────────────────────────────────────────
-  // Map old addresses into the registry so existing Max patches keep working.
-  // /space/cursor → slot "cursor" quaternion
-  if (address === '/space/cursor' && values.length === 4) {
-    const slot = getOrCreateSlot('cursor');
-    if (slot.quatRole === 'unmapped') assignQuatRole('cursor', 'cursor');
-    handleSlotQuaternion(slot, values);
-    return;
-  }
-  // /space/frame → slot "frame" quaternion
-  if (address === '/space/frame' && values.length === 4) {
-    const slot = getOrCreateSlot('frame');
-    if (slot.quatRole === 'unmapped') assignQuatRole('frame', 'frame');
-    handleSlotQuaternion(slot, values);
-    return;
-  }
-  // /space/wand → slot "wand" quaternion
-  if (address === '/space/wand' && values.length === 4) {
-    const slot = getOrCreateSlot('wand');
-    handleSlotQuaternion(slot, values);
-    if (slot.zeroEuler) sendOSC('/space/wand/0euler', [slot.zeroEuler.x, slot.zeroEuler.y, slot.zeroEuler.z]);
-    return;
-  }
-  // /space/wand/inertial → slot "wand" inertial
-  if (address === '/space/wand/inertial' && values.length === 6) {
-    const slot = getOrCreateSlot('wand');
-    handleSlotInertial(slot, values);
-    updateGestureMorph();
-    S._onGestureUpdate?.();
-    return;
   }
 
   // ── Grain parameters ───────────────────────────────────────────────────────

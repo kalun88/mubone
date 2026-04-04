@@ -14,7 +14,7 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.15 alpha</span>
+        <span class="top-bar-version">version 0.16 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -71,7 +71,7 @@
       <div class="top-bar-row sensor-group no-sensor" id="sensorGroup">
         <span class="max-indicator" id="maxIndicator">● MAX</span>
         <span class="sensor-group-label">sensor</span>
-        <button id="sensorsBtn" class="top-bar-btn" title="sensor registry — view connected sensors, assign roles, calibrate">⊕ sensors</button>
+        <button id="imuSetupBtn" class="top-bar-btn" title="sensor setup — x-IMU3 WiFi/USB, OSC sensors, mounting alignment, polarity, tare">⚙ sensors</button>
         <button id="gestureBtn" class="top-bar-btn" title="gesture panel — IMU feature extraction, conditioning, joystick morpher (Shift+G)">◎ gesture</button>
         <button id="mappingBtn" class="top-bar-btn" title="sensor mapping — map IMU axes to grain parameters">⇆ mapping</button>
 
@@ -892,19 +892,34 @@
   </div>
 </div>
 
-<!-- ── Sensor registry modal ────────────────────────────────────────────── -->
-<div id="sensorsModal" class="mu-overlay">
-  <div class="sensors-dialog mu-dialog">
-    <h2><span class="mu-dialog-title-group">sensors <span class="sensor-info-btn" id="sensorInfoBtn" title="Tare: set current orientation as zero reference. Face front (speaker center) when taring — this aligns the sensor with the VBAP field (0° = front-center).&#10;&#10;Recenter: corrects IMU drift without recalibrating. Return your hand to the tare position and press recenter — the view snaps back to match.&#10;&#10;Mute: suppresses an axis using pole-safe math. Use for roll.&#10;&#10;Unmap: removes an axis from the viz mapping (Euler path — fine away from poles).&#10;&#10;± sign: reverses polarity of an axis.">?</span></span>
-      <button class="close-btn" id="sensorsClose">✕</button>
+<!-- ── x-IMU3 setup modal ───────────────────────────────────────────────── -->
+<div id="imuSetupModal" class="mu-overlay">
+  <div class="imu-setup-dialog mu-dialog">
+    <h2>x-IMU3 setup
+      <button class="close-btn" id="imuSetupClose">✕</button>
     </h2>
-    <div class="sensors-hint">sensors auto-discover from OSC:  /sensor/{name}/quaternion  ·  /sensor/{name}/inertial</div>
-    <div id="sensorsList" class="sensors-list">
-      <div class="sensors-empty">no sensors discovered yet — send /sensor/{name}/quaternion or /sensor/{name}/inertial from Max</div>
+    <div class="imu-setup-hint">x-IMU3 via WiFi or USB  ·  OSC sensors auto-discover  ·  alignment, polarity, tare</div>
+
+    <!-- x-IMU3 WiFi discovery -->
+    <div class="imu-setup-section">
+      <div class="imu-setup-section-label">x-IMU3 wifi</div>
+      <div id="imuSetupDiscovery" class="imu-setup-devices">
+        <div class="imu-setup-empty">searching for x-IMU3 devices on the network…</div>
+      </div>
     </div>
+
+    <!-- x-IMU3 serial / USB -->
+    <div class="imu-setup-section">
+      <div class="imu-setup-section-label">x-IMU3 serial / USB <button id="imuSetupSerialRescan" class="imu-setup-rescan-btn">rescan</button></div>
+      <div id="imuSetupSerial" class="imu-setup-devices">
+        <div class="imu-setup-empty">click rescan to list serial ports</div>
+      </div>
+    </div>
+
+    <!-- Per-device cards (built dynamically by ui-imu-setup.js) -->
+    <div id="imuSetupCards"></div>
   </div>
 </div>
-
 
 <!-- ── Sensor mapping modal ───────────────────────────────────────────────── -->
 <div id="sensorMappingModal" class="mu-overlay">
@@ -1280,7 +1295,7 @@
         <div class="as-meter-group-label">dry monitor</div>
         <div class="as-row" title="dry monitor — on/off toggle for spatialized live input">
           <span class="as-label">enabled</span>
-          <input type="checkbox" id="dryMonitorEnabledChk" checked style="margin-left:0.5rem">
+          <input type="checkbox" id="dryMonitorEnabledChk" style="margin-left:0.5rem">
         </div>
         <div class="as-row" title="dry gain — level of spatialized live input in the house mix">
           <span class="as-label">gain</span>

@@ -1404,7 +1404,7 @@ export const S = {
   // ── Dry monitor layer ──────────────────────────────────────────────────
   // Continuous spatialized pass-through of the live input signal, panned to
   // the cursor position.  Updates every frame — no recording, no buffering.
-  dryMonitorEnabled:  true,   // on/off toggle for the dry spatial layer
+  dryMonitorEnabled:  false,  // on/off toggle for the dry spatial layer (always starts OFF)
   dryMonitorGainValue: 0.5,   // 0–2, dry signal level in the house mix
   dryGainNode:         null,  // GainNode — dry level control
   dryAnalyser:         null,  // AnalyserNode — dry level meter tap
