@@ -14,7 +14,7 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.16 alpha</span>
+        <span class="top-bar-version">version 0.18 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -71,6 +71,7 @@
       <div class="top-bar-row sensor-group no-sensor" id="sensorGroup">
         <span class="max-indicator" id="maxIndicator">● MAX</span>
         <span class="sensor-group-label">sensor</span>
+        <span class="sensor-group-status" id="sensorGroupStatus"></span>
         <button id="imuSetupBtn" class="top-bar-btn" title="sensor setup — x-IMU3 WiFi/USB, OSC sensors, mounting alignment, polarity, tare">⚙ sensors</button>
         <button id="gestureBtn" class="top-bar-btn" title="gesture panel — IMU feature extraction, conditioning, joystick morpher (Shift+G)">◎ gesture</button>
         <button id="mappingBtn" class="top-bar-btn" title="sensor mapping — map IMU axes to grain parameters">⇆ mapping</button>
@@ -895,29 +896,61 @@
 <!-- ── x-IMU3 setup modal ───────────────────────────────────────────────── -->
 <div id="imuSetupModal" class="mu-overlay">
   <div class="imu-setup-dialog mu-dialog">
-    <h2>x-IMU3 setup
+    <h2>sensor setup
       <button class="close-btn" id="imuSetupClose">✕</button>
     </h2>
-    <div class="imu-setup-hint">x-IMU3 via WiFi or USB  ·  OSC sensors auto-discover  ·  alignment, polarity, tare</div>
 
-    <!-- x-IMU3 WiFi discovery -->
-    <div class="imu-setup-section">
-      <div class="imu-setup-section-label">x-IMU3 wifi</div>
-      <div id="imuSetupDiscovery" class="imu-setup-devices">
-        <div class="imu-setup-empty">searching for x-IMU3 devices on the network…</div>
+    <div class="imu-setup-columns">
+      <!-- ── Left column: transport sources ── -->
+      <div class="imu-setup-left">
+
+        <!-- Transport status bar -->
+        <div id="imuSetupTransports" class="imu-setup-transports">
+          <span class="imu-transport" id="imuTransportUDP"><span class="imu-transport-dot"></span>wifi AP</span>
+          <span class="imu-transport" id="imuTransportSerial"><span class="imu-transport-dot"></span>serial</span>
+          <span class="imu-transport" id="imuTransportOSC"><span class="imu-transport-dot"></span>osc</span>
+        </div>
+
+        <!-- x-IMU3 WiFi AP discovery -->
+        <div class="imu-setup-section">
+          <div class="imu-setup-section-label">wifi AP <span id="imuWifiStatus" class="imu-setup-status-hint"></span></div>
+          <div id="imuSetupDiscovery" class="imu-setup-devices">
+            <div class="imu-setup-empty">searching…</div>
+          </div>
+        </div>
+
+        <!-- x-IMU3 serial / USB -->
+        <div class="imu-setup-section">
+          <div class="imu-setup-section-label">serial / USB <button id="imuSetupSerialRescan" class="imu-setup-rescan-btn">rescan</button><button id="imuSetupSerialRequest" class="imu-setup-rescan-btn" style="display:none">add USB device</button></div>
+          <div id="imuSetupSerial" class="imu-setup-devices">
+            <div class="imu-setup-empty">click rescan to list serial ports</div>
+          </div>
+        </div>
+
+        <!-- OSC sensors (from Max bridge or proxy data channel) -->
+        <div class="imu-setup-section">
+          <div class="imu-setup-section-label">osc <span id="imuOSCStatus" class="imu-setup-status-hint"></span></div>
+          <div id="imuSetupOSC" class="imu-setup-devices">
+            <div class="imu-setup-empty">no OSC sensors detected</div>
+          </div>
+        </div>
+
+        <!-- Command log — shows commands sent to sensor hardware -->
+        <div class="imu-setup-section">
+          <div class="imu-setup-section-label">command log</div>
+          <div id="imuSetupCmdLog" class="imu-setup-cmd-log"></div>
+        </div>
+
       </div>
-    </div>
 
-    <!-- x-IMU3 serial / USB -->
-    <div class="imu-setup-section">
-      <div class="imu-setup-section-label">x-IMU3 serial / USB <button id="imuSetupSerialRescan" class="imu-setup-rescan-btn">rescan</button></div>
-      <div id="imuSetupSerial" class="imu-setup-devices">
-        <div class="imu-setup-empty">click rescan to list serial ports</div>
+      <!-- ── Right column: connected device cards ── -->
+      <div class="imu-setup-right">
+        <div id="imuSetupCards">
+          <div class="imu-setup-empty">no devices connected — connect a sensor from the left panel</div>
+        </div>
       </div>
-    </div>
 
-    <!-- Per-device cards (built dynamically by ui-imu-setup.js) -->
-    <div id="imuSetupCards"></div>
+    </div>
   </div>
 </div>
 
@@ -1086,13 +1119,14 @@
 
       <div class="as-row">
         <span class="as-label">buffer size</span>
-        <select id="asBufferSize" class="as-select">
+        <select id="asBufferSize" class="as-select" title="Web Audio uses a fixed 128-sample render quantum. Custom buffer sizes are only available in Electron mode for native multi-channel output.">
           <option value="128">128</option>
           <option value="256">256</option>
           <option value="512">512</option>
           <option value="1024" selected>1024</option>
         </select>
         <span class="as-dim">frames</span>
+        <button id="asBufferRestart" class="as-btn" style="display:none; margin-left:6px; font-size:11px; padding:2px 8px;" title="Restart the app to apply the new buffer size">restart to apply</button>
       </div>
 
       <div class="as-row">
@@ -1147,9 +1181,11 @@
       <span class="as-gate-light" id="asGateLight" style="display:none"></span>
       <span class="as-rms-readout" id="asRmsReadout" style="display:none">—</span>
 
-      <!-- ── Handsfree gate tuning ─────────────────────────────────────── -->
+      <!-- ── Handsfree gate tuning (collapsible) ────────────────────────── -->
       <!-- Arm toggle is in main UI (cursor panel). These are tuning params. -->
-      <div class="as-section-label" style="margin-top:0.6rem">handsfree gate</div>
+      <div class="seq-section seq-section--collapsible collapsed" data-collapse-key="hfGate" style="margin-top:0.6rem">
+        <span class="seq-section-label seq-section-toggle as-section-label" style="margin-bottom:0">handsfree gate</span>
+        <div class="seq-section-body">
       <div class="as-row">
         <span class="as-dim" id="hfCaptureCount" title="number of buffers captured by the gate this session">0 buffers</span>
       </div>
@@ -1198,6 +1234,8 @@
         <div id="hfFeedbackSeg" class="grain-seg">
           <button class="grain-seg-btn" data-fb="off">off</button>
           <button class="grain-seg-btn active" data-fb="on">on</button>
+        </div>
+      </div>
         </div>
       </div>
 

@@ -101,14 +101,12 @@
     margin-right: 0.15rem;
     line-height: 1;
   }
-  .sensor-group.no-sensor .sensor-group-label::after {
-    content: ' (not connected)';
+  .sensor-group-status {
     font-size: 0.5rem;
+    margin-left: 0.15rem;
   }
-  .sensor-group:not(.no-sensor) .sensor-group-label::after {
-    content: ' (connected)';
-    font-size: 0.5rem;
-  }
+  .sensor-group.no-sensor .sensor-group-status::before { content: '(not connected)'; }
+  .sensor-group:not(.no-sensor) .sensor-group-status { color: #7abc; }
   /* ── Action buttons — amber toggle style (cursor zero, wand on/off, tare) */
   .top-bar-btn.action-btn {
     color: #555;
@@ -3124,6 +3122,21 @@
   border-bottom: 1px solid rgba(255,255,255,0.06);
   margin-bottom: 0.1rem;
 }
+/* Collapsible section labels inside audio settings — larger + obvious toggle caret */
+.seq-section-toggle.as-section-label {
+  font-size: 0.85rem;
+  color: #999;
+  padding: 0.35rem 0;
+  cursor: pointer;
+}
+.seq-section-toggle.as-section-label::before {
+  font-size: 0.6rem;
+  margin-right: 0.15rem;
+}
+.seq-section--collapsible.collapsed .seq-section-toggle.as-section-label {
+  color: #666;
+  border-bottom-color: transparent;
+}
 .as-row {
   display: flex;
   align-items: center;
@@ -3495,6 +3508,10 @@
   color: #ffffff;
   background: rgba(255,255,255,0.05);
 }
+.as-io-capture-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
 /* Azimuth column header */
 .as-io-col-angle {
   width: 5.5rem;
@@ -3533,7 +3550,28 @@
 /* Reuse .as-section, .as-row, .as-label, .as-slider, .as-val inside viz-dialog */
 
 /* ── x-IMU3 setup modal ───────────────────────────────────────────────── */
-.imu-setup-dialog { width: min(560px, calc(100vw - 2rem)); }
+.imu-setup-dialog { width: min(1060px, calc(100vw - 2rem)); overflow-y: hidden; }
+.imu-setup-columns {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 0 20px;
+  min-height: 320px;
+}
+.imu-setup-left {
+  border-right: 1px solid rgba(122, 188, 188, 0.08);
+  padding-right: 16px;
+  overflow-y: auto;
+  max-height: 70vh;
+}
+.imu-setup-right {
+  overflow-y: auto;
+  max-height: 70vh;
+}
+.imu-setup-right > #imuSetupCards > .imu-setup-empty {
+  color: #444;
+  padding: 40px 16px;
+  text-align: center;
+}
 .imu-setup-hint {
   font: 10px/1.4 'Roboto Mono', monospace;
   color: #4a7a7a;
@@ -3598,7 +3636,73 @@
   background: rgba(122, 188, 188, 0.04);
   border-radius: 3px;
   gap: 8px;
+  position: relative;
 }
+.imu-setup-rssi-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 0 0 3px 3px;
+  opacity: 0.6;
+  transition: width 0.3s ease;
+}
+.imu-setup-transports {
+  display: flex;
+  gap: 12px;
+  padding: 6px 0 8px;
+  border-bottom: 1px solid rgba(122, 188, 188, 0.1);
+  margin-bottom: 8px;
+}
+.imu-transport {
+  font: 10px/1.2 'Roboto Mono', monospace;
+  color: #555;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.imu-transport.active { color: #aaa; }
+.imu-transport-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #333;
+  display: inline-block;
+}
+.imu-transport.active .imu-transport-dot { background: #4a4; }
+.imu-transport.partial .imu-transport-dot { background: #aa4; }
+.imu-setup-status-hint {
+  font: 9px/1.2 'Roboto Mono', monospace;
+  color: #555;
+  margin-left: 6px;
+}
+.imu-setup-hint-inline {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  line-height: 13px;
+  text-align: center;
+  font-size: 9px;
+  border-radius: 50%;
+  background: rgba(122, 188, 188, 0.15);
+  color: #7abc;
+  cursor: help;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.imu-setup-cmd-log {
+  max-height: 120px;
+  overflow-y: auto;
+  font: 9px/1.4 'Roboto Mono', monospace;
+  color: #777;
+  padding: 4px 0;
+}
+.imu-setup-cmd-log-entry {
+  padding: 1px 6px;
+}
+.imu-setup-cmd-log-entry .cmd-dir { color: #6a8; }
+.imu-setup-cmd-log-entry .cmd-resp { color: #a86; }
+.imu-setup-cmd-log-entry .cmd-key { color: #8ab; }
 .imu-setup-device-row.connected { background: rgba(122, 188, 188, 0.12); }
 .imu-setup-device-info {
   font: 10px/1.2 'Roboto Mono', monospace;
@@ -3735,9 +3839,10 @@
   border: 1px solid rgba(122, 188, 188, 0.12);
   border-radius: 4px;
   padding: 8px 12px;
-  margin-top: 10px;
+  margin-bottom: 10px;
   background: rgba(122, 188, 188, 0.03);
 }
+.imu-setup-card:last-child { margin-bottom: 0; }
 .imu-setup-card-header {
   font: 11px/1.2 'Roboto Mono', monospace;
   color: #7abcbc;
@@ -3753,6 +3858,11 @@
   border-radius: 3px;
   margin-left: 4px;
   text-transform: uppercase;
+}
+.imu-setup-wifi-info {
+  font: 9px/1.3 'Roboto Mono', monospace;
+  color: #888;
+  padding: 2px 0 4px;
 }
 
 /* Tare section */

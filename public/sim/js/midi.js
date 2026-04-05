@@ -46,7 +46,7 @@ const ACTIONS = [
 
   // ── Patches ────────────────────────────────────────────────────────────────
   { id: null, group: 'patches' },
-  { id: 'preset_select', label: 'patch select (1–20)',      key: '1–0, shift+1–0',    osc: '/preset',        fmt: 'int 1–46',          type: 'cc',
+  { id: 'preset_select', label: 'patch select (1–20)',      key: '1–0, shift+1–0',    osc: '/preset',        fmt: 'int 1–40',          type: 'cc',
     ccFn: v => { const idx = Math.min(PRESETS.length - 1, Math.floor((v / 127) * PRESETS.length)); selectPreset(idx); } },
 
   // ── Search ─────────────────────────────────────────────────────────────────

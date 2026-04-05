@@ -682,7 +682,9 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
     // range while restoring full spatial processing at ≥ 6ms (100Hz and below).
     const audioRate = ep.period <= 0.005;
 
-    // Elevation attenuation — fold into main gain to avoid a separate node
+    // Elevation attenuation — fold into main gain to avoid a separate node.
+    // Sources near the poles are acoustically ambiguous on a horizontal ring;
+    // reduce volume gently (up to 35%) so the spatial image doesn't jump.
     const elevNorm  = cz !== 0 ? Math.min(1, Math.abs(cy / Math.abs(cz))) : 0;
     const elevScale = 1 - elevNorm * 0.35;
     // Insert elevScale node only when meaningfully different from 1 (elevation
@@ -816,24 +818,39 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
 
       // ── Elevation-dependent center bias ──────────────────────────────────
       // With a single horizontal speaker ring, sources near the poles have
-      // ambiguous azimuth. Blend VBAP gains toward equal-power distribution
-      // as |elevation| increases.  Uses sin²(el) for a gentle onset — full
-      // VBAP below ~30°, gradual collapse above, fully centered at poles.
-      // |cy| / SPHERE_RADIUS = |sin(elevation)| — no extra trig needed.
+      // ambiguous azimuth.  As |elevation| increases, spread signal from
+      // the two bracketing speakers to ALL speakers, blending toward equal-
+      // power distribution.  Uses sin²(el) for a gentle onset — full VBAP
+      // below ~30°, gradual spread above, fully centered at poles.
       const elevFrac = Math.abs(cy) * (1 / SPHERE_RADIUS);  // 0 at equator, 1 at pole
       const elevBias = elevFrac * elevFrac;                  // sin²(el)
-      if (elevBias > 0.01) {
-        const eqGain = 1 / Math.sqrt(n);  // equal-power per speaker
+      const eqGain   = 1 / Math.sqrt(n);
+
+      // When elevation is significant, route to all speakers (not just the pair).
+      // Skip at audio rate — n gain nodes per grain at 1ms period would exceed
+      // the Web Audio node budget (~4000 ops/s) and crash the renderer.
+      let _vbapGrainNodes = null;
+      if (elevBias > 0.01 && n > 2 && !audioRate) {
         wA = wA + (eqGain - wA) * elevBias;
         wB = wB + (eqGain - wB) * elevBias;
+        const spreadGain = eqGain * elevBias;  // other speakers fade in
+        _vbapGrainNodes = [];
+        for (let si = 0; si < n; si++) {
+          const g = actx.createGain();
+          if (si === idxA)       g.gain.value = wA;
+          else if (si === idxB)  g.gain.value = wB;
+          else                   g.gain.value = spreadGain;
+          lastNode.connect(g); g.connect(speakers[si].bus);
+          _vbapGrainNodes.push(g);
+        }
+      } else {
+        // Normal 2-speaker VBAP (equator or stereo)
+        const gA = actx.createGain(); gA.gain.value = wA;
+        const gB = actx.createGain(); gB.gain.value = wB;
+        lastNode.connect(gA); gA.connect(speakers[idxA].bus);
+        lastNode.connect(gB); gB.connect(speakers[idxB].bus);
+        _vbapGrainNodes = [gA, gB];
       }
-
-      // Create per-grain gain nodes only for the two active speakers
-      const gA = actx.createGain(); gA.gain.value = wA;
-      const gB = actx.createGain(); gB.gain.value = wB;
-
-      lastNode.connect(gA); gA.connect(speakers[idxA].bus);
-      lastNode.connect(gB); gB.connect(speakers[idxB].bus);
 
       source.start(t, bufferStartPos);
       source.stop(t + sourceDur);
@@ -842,7 +859,7 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
         S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
         _deferDisconnect(source); _deferDisconnect(gain); if (_hpfNode) _deferDisconnect(_hpfNode); if (_lpfNode) _deferDisconnect(_lpfNode);
         if (elevGainNode) _deferDisconnect(elevGainNode);
-        _deferDisconnect(gA); _deferDisconnect(gB);
+        for (let gi = 0; gi < _vbapGrainNodes.length; gi++) _deferDisconnect(_vbapGrainNodes[gi]);
         if (_extraNodes) for (const n of _extraNodes) _deferDisconnect(n);
       }, { once: true });
       } // end normal VBAP
@@ -899,8 +916,6 @@ export function playGrain(particle, customParams, scheduledOnsetT) {
           S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
           _deferDisconnect(source); _deferDisconnect(gain); if (_hpfNode) _deferDisconnect(_hpfNode); if (_lpfNode) _deferDisconnect(_lpfNode);
           if (elevGainNode) _deferDisconnect(elevGainNode);
-          // lastNode is either gain (if no elevGainNode) or elevGainNode;
-          // both are already queued above, so no extra disconnect needed.
         }, { once: true });
       }
     }
@@ -1743,8 +1758,12 @@ export function scheduleGrains() {
             const iElF = Math.abs(iCy) * (1 / SPHERE_RADIUS);
             const iElB = iElF * iElF;
             const iEq  = 1 / Math.sqrt(n);
-            seq._vbapGains[iLut.idxA].gain.value = iElB > 0.01 ? iLut.wA + (iEq - iLut.wA) * iElB : iLut.wA;
-            seq._vbapGains[iLut.idxB].gain.value = iElB > 0.01 ? iLut.wB + (iEq - iLut.wB) * iElB : iLut.wB;
+            // Spread to all speakers at elevation — not just the bracketing pair
+            for (let si = 0; si < n; si++) {
+              if (si === iLut.idxA)       seq._vbapGains[si].gain.value = iElB > 0.01 ? iLut.wA + (iEq - iLut.wA) * iElB : iLut.wA;
+              else if (si === iLut.idxB)  seq._vbapGains[si].gain.value = iElB > 0.01 ? iLut.wB + (iEq - iLut.wB) * iElB : iLut.wB;
+              else                        seq._vbapGains[si].gain.value = iElB > 0.01 ? iEq * iElB : 0;
+            }
             seq._vbapLastIdxA = iLut.idxA;
             seq._vbapLastIdxB = iLut.idxB;
           }
@@ -1826,24 +1845,24 @@ export function scheduleGrains() {
           const spLut = _vbapLUT[spAzDeg];
           if (spLut) {
             const idxA = spLut.idxA, idxB = spLut.idxB;
-            if (idxA !== seq._vbapLastIdxA || idxB !== seq._vbapLastIdxB) {
-              // Smoothly fade out old pair
-              if (seq._vbapLastIdxA >= 0)
-                seq._vbapGains[seq._vbapLastIdxA].gain.setTargetAtTime(0, _panNow, _panRampTau);
-              if (seq._vbapLastIdxB >= 0)
-                seq._vbapGains[seq._vbapLastIdxB].gain.setTargetAtTime(0, _panNow, _panRampTau);
-              seq._vbapLastIdxA = idxA;
-              seq._vbapLastIdxB = idxB;
-            }
-            // Elevation center-bias: collapse toward equal-power at poles
+            // Elevation center-bias: spread to all speakers at poles
             const spElF = Math.abs(spCy) * (1 / SPHERE_RADIUS);
             const spElB = spElF * spElF;
             const spN   = S.speakerBuses.length;
             const spEq  = 1 / Math.sqrt(spN);
             const spWA  = spElB > 0.01 ? spLut.wA + (spEq - spLut.wA) * spElB : spLut.wA;
             const spWB  = spElB > 0.01 ? spLut.wB + (spEq - spLut.wB) * spElB : spLut.wB;
-            seq._vbapGains[idxA].gain.setTargetAtTime(spWA, _panNow, _panRampTau);
-            seq._vbapGains[idxB].gain.setTargetAtTime(spWB, _panNow, _panRampTau);
+            const spSpread = spElB > 0.01 ? spEq * spElB : 0;
+            // Update all speakers — bracketing pair + spread to others
+            for (let si = 0; si < spN; si++) {
+              let target;
+              if (si === idxA)       target = spWA;
+              else if (si === idxB)  target = spWB;
+              else                   target = spSpread;
+              seq._vbapGains[si].gain.setTargetAtTime(target, _panNow, _panRampTau);
+            }
+            seq._vbapLastIdxA = idxA;
+            seq._vbapLastIdxB = idxB;
           }
         } else if (seq._panner) {
           // Stereo: smoothly ramp pan position with elevation center-bias

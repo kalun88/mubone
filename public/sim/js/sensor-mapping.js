@@ -13,6 +13,7 @@
 
 import { S } from './state.js';
 import { getByRole } from './sensor-registry.js';
+import { getCursorLonLat, screenToLonLat } from './sphere.js';
 
 // ── Mapping data model ─────────────────────────────────────────────────────
 // Each mapping is a plain object:
@@ -139,15 +140,46 @@ export function toggleMappingByIndex(idx) {
 // Called once per render frame from animate().  Reads sensor data, applies
 // curve, writes to S.grainOverrides.
 
+// ── Unified cursor euler source ────────────────────────────────────────────
+// Returns {x, y, z} (roll, elevation, azimuth in degrees) from whatever is
+// driving the cursor — IMU sensor when available, otherwise derived from
+// the cursor's lon/lat on the sphere (pull / surface / mouse modes).
+// Roll is 0 when derived from lon/lat (no roll data without IMU).
+
+export function getCursorEuler() {
+  // 1. If an IMU sensor is assigned to cursor role, prefer its tare-relative euler
+  const slot = getByRole('cursor');
+  if (slot?.zeroEuler) return slot.zeroEuler;
+
+  // 2. Derive from cursor position on the sphere (same pattern used by
+  //    renderer, grain scheduler, seed-morph, etc.)
+  const { lon, lat } = S.cursorQ
+    ? getCursorLonLat()
+    : (S.mouseInCanvas || S.altLocked)
+      ? screenToLonLat(
+          S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
+          S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY
+        )
+      : getCursorLonLat();
+
+  // Convert lon/lat (radians) → degrees matching the AXIS_DEFS conventions:
+  //   elevation (y) = latitude  in degrees (-90..90)
+  //   azimuth   (z) = longitude in degrees (-180..180)
+  //   roll      (x) = 0 (no roll from mouse/trackpad)
+  const RAD2DEG = 180 / Math.PI;
+  return {
+    x: 0,
+    y: lat * RAD2DEG,
+    z: lon * RAD2DEG,
+  };
+}
+
 /** Evaluate all enabled mappings. Call from the render loop at 30fps. */
 export function tickMappings() {
   if (_mappings.length === 0) return;
 
-  // Get the cursor-role sensor slot
-  const slot = getByRole('cursor');
-  if (!slot?.zeroEuler) return;
-
-  const euler = slot.zeroEuler;
+  const euler = getCursorEuler();
+  if (!euler) return;
 
   for (let i = 0; i < _mappings.length; i++) {
     const m = _mappings[i];

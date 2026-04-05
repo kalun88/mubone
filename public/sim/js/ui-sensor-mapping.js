@@ -9,9 +9,8 @@
 import { S } from './state.js';
 import {
   getMappings, addMapping, updateMapping, removeMapping, toggleMapping,
-  MAPPABLE_PARAMS, AXIS_DEFS, applyCurve, clearAllMappings
+  MAPPABLE_PARAMS, AXIS_DEFS, applyCurve, clearAllMappings, getCursorEuler
 } from './sensor-mapping.js';
-import { getByRole } from './sensor-registry.js';
 
 // ── Axis options ───────────────────────────────────────────────────────────
 const AXIS_OPTIONS = [
@@ -50,8 +49,7 @@ function _stopLiveLoop() {
 function _updateLiveValues() {
   if (_liveSpans.length === 0) return;
 
-  const slot = getByRole('cursor');
-  const euler = slot?.zeroEuler;
+  const euler = getCursorEuler();
   const mappings = getMappings();
 
   for (const entry of _liveSpans) {
@@ -60,7 +58,7 @@ function _updateLiveValues() {
 
     // Raw axis value
     const axisDef = AXIS_DEFS[m.axis];
-    if (!axisDef || !euler) {
+    if (!axisDef) {
       entry.raw.textContent = '—';
       entry.scaled.textContent = '—';
       continue;

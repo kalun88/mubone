@@ -331,7 +331,6 @@ export function initSessionPanel() {
   }
   // Erase-all action — lives here so it shares _eraseFlashTimer with progress
   function doEraseAllLocal() {
-    if (S.isPainting) return;
     const count = eraseAll();
     if (eraseBtn) {
       eraseRestore();  // cancel any pending timer first

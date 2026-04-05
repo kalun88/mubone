@@ -138,11 +138,12 @@ function startXIMU3DataListener(port) {
   // Buffer for accumulating partial ASCII messages (LF-terminated)
   let _buf = '';
 
-  _ximu3DataSock.on('message', (msg) => {
+  _ximu3DataSock.on('message', (msg, rinfo) => {
     if (!_oscWin || _oscWin.isDestroyed()) return;
     // x-IMU3 data can be ASCII (LF-delimited) or binary.
     // We handle ASCII mode here — multiple messages may arrive per packet.
     _buf += msg.toString('utf8');
+    const sourceIP = rinfo.address;
     let nlIdx;
     while ((nlIdx = _buf.indexOf('\n')) !== -1) {
       const line = _buf.slice(0, nlIdx);
@@ -152,11 +153,11 @@ function startXIMU3DataListener(port) {
         if (line[0] === '{') {
           try {
             const json = JSON.parse(line);
-            _oscWin.webContents.send('ximu3-command-response', json);
+            _oscWin.webContents.send('ximu3-command-response', json, sourceIP);
           } catch (_) {}
         } else {
-          // Data message — send raw line to renderer for parsing
-          _oscWin.webContents.send('ximu3-data', line);
+          // Data message — send raw line + source IP to renderer for routing
+          _oscWin.webContents.send('ximu3-data', line, sourceIP);
         }
       }
     }
@@ -309,17 +310,18 @@ function getEnumerator() {
 const DEFAULT_BUFFER_FRAMES = 1024;  // safe default for 48 kHz on macOS
 
 function createOutputStream(deviceId, numChannels, bufferFrames, preferredRate) {
-  // Close any existing stream first
+  // Immediately block IPC writes — the stream is about to be torn down.
+  // The audio-buffer handler checks this and drops all incoming buffers,
+  // preventing writes to a half-closed or mismatched stream (which SIGBUS).
+  _expectedAudioBytes = 0;
+
+  // Close and destroy the old instance.  Safe now because the write guard
+  // above prevents any rtAudio.write() calls while _expectedAudioBytes === 0.
   if (rtAudio) {
-    try {
-      if (rtAudio.isStreamRunning()) rtAudio.stop();
-    } catch (_) {}
-    try {
-      if (rtAudio.isStreamOpen()) rtAudio.closeStream();
-    } catch (_) {}
+    try { if (rtAudio.isStreamRunning()) rtAudio.stop(); } catch (_) {}
+    try { if (rtAudio.isStreamOpen()) rtAudio.closeStream(); } catch (_) {}
     rtAudio = null;
   }
-  _expectedAudioBytes = 0;  // reset until new stream confirms its expected size
 
   const devices = getEnumerator().getDevices();
   const device  = devices.find(d => d.id === deviceId);
@@ -344,8 +346,8 @@ function createOutputStream(deviceId, numChannels, bufferFrames, preferredRate) 
   const ratesToTry = [...new Set([preferred, 48000, 44100])];
   let openedRate = null;
 
-  // Reuse a single RtAudio instance across retry attempts — creating multiple
-  // instances in rapid succession can leave CoreAudio in a bad state on macOS.
+  // Fresh instance for each device — channel count and config differ between
+  // devices and RtAudio's internal ring buffers are sized at openStream time.
   rtAudio = new RtAudio();
 
   for (const rate of ratesToTry) {
@@ -388,7 +390,7 @@ function createOutputStream(deviceId, numChannels, bufferFrames, preferredRate) 
 // worklet can feed AnalyserNodes for the multichannel meter strip.
 
 function createInputStream(deviceId, numChannels, bufferFrames, win, preferredRate) {
-  // Close previous input stream if any
+  // Close and destroy the old input instance.
   if (rtAudioIn) {
     try { if (rtAudioIn.isStreamRunning()) rtAudioIn.stop(); } catch(_) {}
     try { if (rtAudioIn.isStreamOpen()) rtAudioIn.closeStream(); } catch(_) {}
@@ -422,7 +424,7 @@ function createInputStream(deviceId, numChannels, bufferFrames, win, preferredRa
   const ratesToTry = [...new Set([preferred, 48000, 44100])];
   let openedRate = null;
 
-  // Reuse a single instance across retry attempts (same reason as output)
+  // Fresh instance — channel count and config differ between devices.
   rtAudioIn = new RtAudio();
 
   for (const rate of ratesToTry) {
@@ -480,8 +482,11 @@ function setupIPC() {
   // Drop the buffer silently rather than crashing audify.
   ipcMain.on('audio-buffer', (event, interleavedFloat32) => {
     if (!rtAudio || !rtAudio.isStreamRunning()) return;
+    // _expectedAudioBytes === 0 means the stream is being torn down / reopened —
+    // drop everything until the new stream sets the expected size.
+    if (_expectedAudioBytes === 0) return;
     const buf = Buffer.from(interleavedFloat32.buffer);
-    if (_expectedAudioBytes > 0 && buf.length !== _expectedAudioBytes) {
+    if (buf.length !== _expectedAudioBytes) {
       // Throttled mismatch warning (max 1 per second)
       _ipcDropCount++;
       if (_ipcDropCount === 1 || _ipcDropCount % 100 === 0) {
@@ -536,6 +541,12 @@ function setupIPC() {
       return { ok: true, nCh: result.nCh, sampleRate: result.rate, name: result.name };
     }
     return { ok: false, error: 'could not open input stream' };
+  });
+
+  // Restart the app (used by buffer-size change which can't safely reopen streams)
+  ipcMain.on('app-restart', () => {
+    app.relaunch();
+    app.exit(0);
   });
 
   // Switch output device at runtime — accepts (deviceId, numChannels, bufferFrames)

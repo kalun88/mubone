@@ -9,7 +9,7 @@ import { S, DEBUG, FACTORY_PRESET_START } from './state.js';
 import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, playSweepChannel, warmUpAudioEngine } from './audio.js';
 import { renderMeters, tickMeters, rebuildMainOutputMeters } from './ui-meters.js';
 import { armHandsfree, disarmHandsfree, updateHPFFreq } from './handsfree.js';
-import { getCursorLonLat, spherePointInto, cameraTransformInto } from './sphere.js';
+import { getCursorLonLat, screenToLonLat, spherePointInto, cameraTransformInto } from './sphere.js';
 
 // ── RtAudio input meter worklet (Electron only) ───────────────────────────────
 // In Electron, getUserMedia is capped at 2ch by the browser. Instead, we open an
@@ -476,12 +476,19 @@ function saveCustomSpeakerAngles() {
   } catch (_) {}
 }
 
-// Compute current cursor azimuth in degrees (0–360) from wand quat or mouse.
-// Same math as updateDryMonitorPanning / playGrain.
+// Compute current cursor azimuth in degrees (0–360) from the active cursor
+// source: sensor quaternion, mouse/pull/surface screen position, or fallback.
+// Same tri-state logic as scheduleGrains / updateDryMonitorPanning.
 const _capW = new Float32Array(3);
 const _capC = new Float32Array(3);
 function getCursorAzDeg() {
-  const { lon, lat } = getCursorLonLat();
+  const { lon, lat } = S.cursorQ
+    ? getCursorLonLat()                          // sensor/wand quaternion
+    : (S.mouseInCanvas || S.altLocked)
+      ? screenToLonLat(                          // mouse / pull / surface cursor
+          S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
+          S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY)
+      : getCursorLonLat();                       // fallback (camQ forward)
   spherePointInto(lon, lat, _capW);
   const wx = _capW[0], wy = _capW[1], wz = _capW[2];
   let cx, cz;
@@ -553,6 +560,7 @@ function renderRoutingTable() {
   const hpR = S.headphoneRouting?.[1] ?? nHouse + 1;
 
   const hasCustom = !!S.customSpeakerAngles;
+  const isHeadlocked = S.spatialPanning === 'headlocked';
 
   // Build house rows — now with editable angle + capture button
   const houseRows = houseBuses.map((b, i) => {
@@ -565,7 +573,7 @@ function renderRoutingTable() {
              title="azimuth in degrees (0° = front, 90° = right)">
       <span class="as-io-angle-unit">°</span>
       <button class="as-io-capture-btn" data-bus="${i}"
-              title="capture current cursor/wand azimuth">⊕</button>
+              ${isHeadlocked ? 'disabled title="capture only works in worldlocked mode — headlocked angles are relative to the listener, not the room"' : 'title="capture current cursor/wand azimuth"'}>⊕</button>
       <select class="as-io-sel as-io-house-sel" data-bus="${i}">${hwOpts}</select>
     </div>`;
   }).join('');
@@ -814,7 +822,8 @@ async function applySampleRate() {
     const current = devices.find(d => d.id === devId) || devices[0];
     if (current) {
       const nCh = Math.min(32, current.outputChannels);
-      await window.electronBridge.setAudioDevice(current.id, nCh, undefined, S.audioCtx?.sampleRate);
+      const bufFrames = S.preferredBufferSize ?? 1024;
+      await window.electronBridge.setAudioDevice(current.id, nCh, bufFrames, S.audioCtx?.sampleRate);
       await initSpeakerBuses(nCh);
     }
   }
@@ -827,27 +836,16 @@ async function applySampleRate() {
 async function applyBufferSize() {
   const buf = parseInt(document.getElementById('asBufferSize')?.value ?? 512);
 
-  // Store so initSpeakerBuses can compute the correct worklet batchSize
   S.preferredBufferSize = buf;
+  localStorage.setItem('mubone_bufferSize', buf);
 
   if (window.electronBridge?.isElectron) {
-    // Re-open the audify stream with the new buffer size
-    const devices = await window.electronBridge.getAudioDevices();
-    const current = devices.find(d => d.isDefault) || devices[0];
-    if (current) {
-      const nCh = Math.min(32, S.speakerBuses?.length ?? current.outputChannels);
-      const result = await window.electronBridge.setAudioDevice(current.id, nCh, buf, S.audioCtx?.sampleRate);
-      const ok = result.streaming;
-      setStatus('asOutputStatus', ok ? 'ok' : 'error',
-        ok ? `buffer: ${buf} frames @ ${S.audioCtx?.sampleRate} Hz` : 'failed to reopen stream');
-
-      if (ok) {
-        // Rebuild speaker buses so the worklet batchSize matches the new audify buffer
-        await initSpeakerBuses(nCh);
-      }
-    }
+    // Don't reopen streams — CoreAudio's HAL crashes on repeated close/open
+    // cycles for buffer size changes.  Show the restart button instead.
+    const restartBtn = document.getElementById('asBufferRestart');
+    if (restartBtn) restartBtn.style.display = 'inline-block';
+    setStatus('asOutputStatus', 'idle', `buffer size → ${buf} — restart to apply`);
   }
-  // Browser: Web Audio manages its own buffer — just update the latency display
   updateLatency();
 }
 
@@ -1669,6 +1667,12 @@ export function initAudioSettings() {
   // Hydrate custom speaker angles from localStorage before anything uses them
   loadCustomSpeakerAngles();
 
+  // Restore saved buffer size so the first device open uses the right value
+  const savedBuf = parseInt(localStorage.getItem('mubone_bufferSize'));
+  if (savedBuf && [128, 256, 512, 1024].includes(savedBuf)) {
+    S.preferredBufferSize = savedBuf;
+  }
+
   // Modal open/close
   const modal     = document.getElementById('audioSettingsModal');
   const openBtn   = document.getElementById('audioSettingsBtn');
@@ -1745,9 +1749,19 @@ export function initAudioSettings() {
         if (S.audioCtx) rateSel.value = String(S.audioCtx.sampleRate);
         else if (S.savedSampleRate) rateSel.value = String(S.savedSampleRate);
       }
-      // Sync buffer size selector to saved preference
+      // Sync buffer size selector to saved preference or lock to 128 in browser mode.
+      // Web Audio uses a fixed 128-sample render quantum — the buffer size dropdown
+      // only controls the native RtAudio/audify output buffer in Electron.
       const bufSel = document.getElementById('asBufferSize');
-      if (bufSel && S.preferredBufferSize) bufSel.value = String(S.preferredBufferSize);
+      if (bufSel) {
+        if (window.electronBridge?.isElectron) {
+          bufSel.disabled = false;
+          if (S.preferredBufferSize) bufSel.value = String(S.preferredBufferSize);
+        } else {
+          bufSel.value    = '128';
+          bufSel.disabled = true;
+        }
+      }
       updateLatency();
 
       // If mic was already enabled from the top-bar button, mark as started
@@ -1774,6 +1788,9 @@ export function initAudioSettings() {
   // Engine settings apply on change — DAW convention
   document.getElementById('asSampleRate')?.addEventListener('change',  applySampleRate);
   document.getElementById('asBufferSize')?.addEventListener('change', applyBufferSize);
+  document.getElementById('asBufferRestart')?.addEventListener('click', () => {
+    if (window.electronBridge?.restartApp) window.electronBridge.restartApp();
+  });
 
   // Recording limit slider
   const recLimitSlider = document.getElementById('asRecLimit');
@@ -2125,6 +2142,23 @@ export function initAudioSettings() {
     S.outputGainValue = lin;
   };
 
+  // Re-render routing table when spatial mode changes so capture buttons
+  // enable/disable based on headlocked vs worldlocked.
+  // Direct listener on dropdown covers UI changes; wrapping S._setSpatialPanning
+  // covers MIDI/OSC toggles that bypass the dropdown.
+  document.getElementById('asSpatialPanningSel')?.addEventListener('change', () => {
+    setTimeout(renderRoutingTable, 0);
+  });
+  setTimeout(() => {
+    const orig = S._setSpatialPanning;
+    if (orig) {
+      S._setSpatialPanning = (mode) => {
+        orig(mode);
+        renderRoutingTable();
+      };
+    }
+  }, 0);
+
 }
 
 // Sync the house-speakers dropdown + stereo mixdown checkbox to S state.
@@ -2132,10 +2166,20 @@ function syncHouseSpeakersSeg() {
   const n    = S.numHouseSpeakers ?? 2;
   const note = document.getElementById('asHouseSpeakersNote');
   const sel  = document.getElementById('asHouseSpeakersSel');
-  if (sel) sel.value = String(n);
+  const isBrowser = !window.electronBridge?.isElectron;
+  if (sel) {
+    sel.value = isBrowser ? '2' : String(n);
+    sel.disabled = isBrowser;
+    sel.title = isBrowser
+      ? 'multichannel output (4+) requires the desktop app — browser is limited to stereo'
+      : '';
+  }
+  if (isBrowser) S.numHouseSpeakers = 2;
   if (note) {
     const names = { 2: 'stereo field', 4: 'quad', 6: 'hexaphonic', 8: 'octaphonic', 16: '16-speaker field' };
-    note.textContent = names[n] ?? `${n}-speaker field`;
+    note.textContent = isBrowser
+      ? 'stereo — use desktop app for multichannel'
+      : (names[n] ?? `${n}-speaker field`);
   }
   // Also sync the mixdown checkbox + note
   const chk      = document.getElementById('asStereoMixdownChk');
@@ -2144,6 +2188,9 @@ function syncHouseSpeakersSeg() {
   const totalCh  = S.speakerBuses?.numChannels ?? 0;
   const canMix   = totalCh >= 4;  // need at least 4 outputs (2 house + 2 mixdown)
   if (mxRow) mxRow.style.display = '';
+  if (!canMix && S.stereoMixdownEnabled === true) {
+    S.stereoMixdownEnabled = false;  // force off when hardware can't support it
+  }
   if (chk) {
     chk.checked  = canMix && S.stereoMixdownEnabled === true;
     chk.disabled = !canMix;

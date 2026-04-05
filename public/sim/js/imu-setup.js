@@ -105,6 +105,11 @@ class DeviceState {
     // Hardware config (stored on the device)
     this.axesAlignment = 0;
 
+    // WiFi AP info (queried on connect for UDP devices)
+    this.wifiApChannel = null;
+    this.wifiApSsid    = null;
+    this.wifiRegion    = null;   // 1=US, 2=EU, 3=JP
+
     // Software calibration (local to this session)
     // Tare stored as Euler offsets (degrees) — subtracted in Euler space to avoid
     // quaternion cross-coupling (full-quat tare causes roll drift when yawing
@@ -188,6 +193,46 @@ class DeviceState {
 }
 
 
+// ── Per-device preferences (persisted in localStorage) ─────────────────────
+// Keyed by serial number.  Stores settings that are part of the rig setup
+// (polarity, roll mute, role) but NOT session-specific values (tare, feeding)
+// and NOT hardware-queried values (axes alignment, wifi info).
+const _LS_DEVICE_PREFS_KEY = 'mubone-sensor-prefs';
+
+function _loadDevicePrefs() {
+  try {
+    const raw = localStorage.getItem(_LS_DEVICE_PREFS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (_) { return {}; }
+}
+
+function _saveDevicePrefs() {
+  const prefs = {};
+  for (const [sn, dev] of _devices) {
+    // Only persist devices with a real serial number (not temp IDs)
+    prefs[sn] = {
+      polarity: { ...dev.polarity },
+      rollMute: dev.rollMute,
+      role:     dev.role,
+    };
+  }
+  // Merge with existing prefs so disconnected devices keep their settings
+  const existing = _loadDevicePrefs();
+  Object.assign(existing, prefs);
+  try {
+    localStorage.setItem(_LS_DEVICE_PREFS_KEY, JSON.stringify(existing));
+  } catch (_) {}
+}
+
+function _applyDevicePrefs(dev) {
+  const all = _loadDevicePrefs();
+  const p = all[dev.sn];
+  if (!p) return;
+  if (p.polarity) dev.polarity = { roll: p.polarity.roll ?? 1, pitch: p.polarity.pitch ?? 1, yaw: p.polarity.yaw ?? 1 };
+  if (p.rollMute !== undefined) dev.rollMute = p.rollMute;
+  if (p.role) dev.role = p.role;
+}
+
 // ── Global state ────────────────────────────────────────────────────────────
 
 // Discovered x-IMU3 devices via WiFi, keyed by serial number.
@@ -210,6 +255,7 @@ let _onSerialPortsChanged = null;
 let _onDeviceUpdated    = null;   // fired when a device's identity changes (SN re-key)
 let _onDataReceived     = null;
 let _onCommandResponse  = null;
+let _onCommandSent      = null;   // fired when a command is sent to a device
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
@@ -223,13 +269,272 @@ export function setOnSerialPortsChanged(cb){ _onSerialPortsChanged = cb; }
 export function setOnDeviceUpdated(cb)     { _onDeviceUpdated = cb; }
 export function setOnDataReceived(cb)      { _onDataReceived = cb; }
 export function setOnCommandResponse(cb)   { _onCommandResponse = cb; }
+export function setOnCommandSent(cb)       { _onCommandSent = cb; }
+
+// ── Browser-mode transport (WebSerial + proxy control channel) ──────────────
+// When not in Electron, we use:
+//   - WebSerial API (Chrome) for USB serial connections
+//   - WebSocket to proxy.js control channel (port 8081) for WiFi discovery/commands
+// The proxy data channel (port 8080) is handled by osc.js, same as Max bridge.
+
+let _proxyWs = null;
+let _proxyRetryTimer = null;
+const PROXY_CONTROL_URL = 'ws://localhost:8081';
+const PROXY_RETRY_MS = 3000;
+
+// Active WebSerial ports: portPath (identifier string) → { port, reader, writer, readLoop }
+const _webSerialPorts = new Map();
+
+function _initBrowserTransport() {
+  // Connect to proxy control channel for WiFi discovery
+  _connectProxyControl();
+
+  // WebSerial is available — serial scanning handled on demand via scanSerialPorts()
+  if (navigator.serial) {
+    DEBUG && console.log('[imu-setup] WebSerial API available');
+  } else {
+    DEBUG && console.log('[imu-setup] WebSerial API not available in this browser');
+  }
+}
+
+function _connectProxyControl() {
+  if (_proxyWs) {
+    _proxyWs.onclose = null;
+    try { _proxyWs.close(); } catch (_) {}
+  }
+
+  try {
+    _proxyWs = new WebSocket(PROXY_CONTROL_URL);
+  } catch (_) {
+    _scheduleProxyRetry();
+    return;
+  }
+
+  _proxyWs.onopen = () => {
+    DEBUG && console.log('[imu-setup] proxy control channel connected');
+    clearTimeout(_proxyRetryTimer);
+  };
+
+  _proxyWs.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      _handleProxyMessage(msg);
+    } catch (_) {}
+  };
+
+  _proxyWs.onclose = () => {
+    _proxyWs = null;
+    _scheduleProxyRetry();
+  };
+
+  _proxyWs.onerror = () => {};
+}
+
+function _scheduleProxyRetry() {
+  clearTimeout(_proxyRetryTimer);
+  _proxyRetryTimer = setTimeout(_connectProxyControl, PROXY_RETRY_MS);
+}
+
+function _sendProxyControl(obj) {
+  if (_proxyWs && _proxyWs.readyState === WebSocket.OPEN) {
+    _proxyWs.send(JSON.stringify(obj));
+  }
+}
+
+function _handleProxyMessage(msg) {
+  switch (msg.type) {
+    case 'discovery': {
+      const d = msg.data;
+      if (!d.sn) break;
+      const entry = {
+        name: d.name, sn: d.sn, ip: d.ip, port: d.port,
+        send: d.send, receive: d.receive,
+        battery: d.battery, rssi: d.rssi, status: d.status,
+        lastSeen: Date.now(),
+      };
+      _discovered.set(d.sn, entry);
+      const dev = _devices.get(d.sn);
+      if (dev) { dev.ip = entry.ip; dev.send = entry.send; dev.receive = entry.receive; }
+      _onDeviceDiscovered?.(entry);
+      break;
+    }
+    case 'discovery-lost':
+      _discovered.delete(msg.sn);
+      _onDeviceDiscovered?.(null);
+      break;
+    case 'data': {
+      // Raw data line from proxy (for direct-connected WiFi devices in browser mode)
+      // In browser mode, WiFi data also flows through osc.js via port 8080,
+      // but this path feeds imu-setup device cards for calibrated readout.
+      if (!msg.line || !msg.sourceIP) break;
+      let dev = null;
+      for (const d of _devices.values()) {
+        if (d.transport === 'udp' && d.ip === msg.sourceIP) { dev = d; break; }
+      }
+      if (!dev) {
+        for (const d of _devices.values()) {
+          if (d.transport === 'udp') { dev = d; break; }
+        }
+      }
+      if (dev) {
+        parseDataLine(dev, msg.line);
+        _onDataReceived?.(dev);
+        if (dev.feeding && dev.rawQuat) feedToRegistry(dev);
+      }
+      break;
+    }
+    case 'command-response': {
+      const json = msg.data;
+      let matched = null;
+      if (msg.sourceIP) {
+        for (const d of _devices.values()) {
+          if (d.transport === 'udp' && d.ip === msg.sourceIP) { matched = d; break; }
+        }
+      }
+      if (!matched) {
+        for (const d of _devices.values()) {
+          if (d.transport === 'udp') { matched = d; break; }
+        }
+      }
+      if (matched) {
+        _applyResponseFields(matched, json);
+      }
+      _onCommandResponse?.(json);
+      break;
+    }
+  }
+}
+
+// ── WebSerial helpers ────────────────────────────────────────────────────────
+
+async function _webSerialOpen(port) {
+  await port.open({ baudRate: 115200 });
+
+  const portId = _webSerialPortId(port);
+
+  // AbortController lets us cleanly kill the pipeTo pipes on disconnect,
+  // releasing the locks on port.readable / port.writable so port.close() works.
+  const abortController = new AbortController();
+
+  const encoder = new TextEncoderStream();
+  const writable = encoder.writable;
+  const encoderPipe = encoder.readable.pipeTo(port.writable, { signal: abortController.signal })
+    .catch(() => {});  // swallow abort error
+  const writer = writable.getWriter();
+
+  const decoder = new TextDecoderStream();
+  const decoderPipe = port.readable.pipeTo(decoder.writable, { signal: abortController.signal })
+    .catch(() => {});  // swallow abort error
+  const reader = decoder.readable.getReader();
+
+  let buf = '';
+  let running = true;
+
+  const readLoop = (async () => {
+    try {
+      while (running) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += value;
+        let nlIdx;
+        while ((nlIdx = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, nlIdx).trim();
+          buf = buf.slice(nlIdx + 1);
+          if (!line) continue;
+
+          const dev = _serialPathToDevice.get(portId);
+          if (!dev) continue;
+
+          if (line[0] === '{') {
+            try {
+              const json = JSON.parse(line);
+              // Handle device info responses
+              if (json.device_name !== undefined) dev.name = json.device_name;
+              if (json.serial_number !== undefined) {
+                const oldSn = dev.sn;
+                if (oldSn !== json.serial_number && oldSn.startsWith('serial-')) {
+                  _devices.delete(oldSn);
+                  dev.sn = json.serial_number;
+                  dev.slotName = `ximu3-${dev.sn}`;
+                  _devices.set(dev.sn, dev);
+                  _applyDevicePrefs(dev);  // re-apply with real SN
+                  _onDeviceUpdated?.(dev);
+                }
+              }
+              _applyResponseFields(dev, json);
+              _onCommandResponse?.(json);
+            } catch (_) {}
+          } else {
+            parseDataLine(dev, line);
+            _onDataReceived?.(dev);
+            if (dev.feeding && dev.rawQuat) feedToRegistry(dev);
+          }
+        }
+      }
+    } catch (e) {
+      if (running) console.warn(`[imu-setup] WebSerial read error: ${e.message}`);
+    }
+  })();
+
+  _webSerialPorts.set(portId, {
+    port, reader, writer, readLoop, running: true,
+    abortController, encoderPipe, decoderPipe,
+  });
+  return portId;
+}
+
+async function _webSerialClose(portId) {
+  const entry = _webSerialPorts.get(portId);
+  if (!entry) return;
+  entry.running = false;
+
+  // 1. Abort the pipeTo pipes — this releases the locks on port.readable / port.writable
+  entry.abortController.abort();
+
+  // 2. Wait for both pipes to settle (they resolve/reject via the .catch() above)
+  await Promise.allSettled([entry.encoderPipe, entry.decoderPipe]);
+
+  // 3. Release reader/writer locks (in case abort didn't fully propagate)
+  try { entry.reader.cancel(); } catch (_) {}
+  try { await entry.writer.close(); } catch (_) {}
+
+  // 4. Now port streams are unlocked — safe to close and reopen later
+  try { await entry.port.close(); } catch (e) {
+    DEBUG && console.warn(`[imu-setup] WebSerial port.close() error: ${e.message}`);
+  }
+  _webSerialPorts.delete(portId);
+}
+
+async function _webSerialSend(portId, str) {
+  const entry = _webSerialPorts.get(portId);
+  if (!entry) return;
+  const payload = str.endsWith('\n') ? str : str + '\n';
+  try { await entry.writer.write(payload); } catch (e) {
+    console.warn(`[imu-setup] WebSerial write error: ${e.message}`);
+  }
+}
+
+function _webSerialPortId(port) {
+  // WebSerial ports don't have a path — use object identity via a WeakMap
+  if (!_webSerialPortId._map) _webSerialPortId._map = new WeakMap();
+  if (!_webSerialPortId._counter) _webSerialPortId._counter = 0;
+  let id = _webSerialPortId._map.get(port);
+  if (!id) {
+    id = 'webserial-' + (++_webSerialPortId._counter);
+    _webSerialPortId._map.set(port, id);
+  }
+  return id;
+}
 
 // ── Init (called once from main.js) ─────────────────────────────────────────
 
 export function initIMUSetup() {
   const bridge = window.electronBridge;
+
   if (!bridge?.isElectron) {
-    DEBUG && console.log('[imu-setup] not in Electron — x-IMU3 direct UDP unavailable');
+    // Browser mode — use WebSerial + proxy control channel
+    DEBUG && console.log('[imu-setup] browser mode — WebSerial + proxy for WiFi');
+    _initBrowserTransport();
     return;
   }
 
@@ -260,31 +565,47 @@ export function initIMUSetup() {
     _onDeviceDiscovered?.(entry);
   });
 
-  // Listen for data messages
-  bridge.onXIMU3Data((line) => {
-    // Route to the first connected device for now.
-    // TODO: when multiple devices share a port, use source IP to route.
-    const dev = _devices.values().next().value;
+  // Listen for data messages — route by source IP to the correct device
+  bridge.onXIMU3Data((line, sourceIP) => {
+    let dev = null;
+    if (sourceIP) {
+      for (const d of _devices.values()) {
+        if (d.transport === 'udp' && d.ip === sourceIP) { dev = d; break; }
+      }
+    }
+    // Fallback: if no IP match (single device, or IP not yet known), use first UDP device
+    if (!dev) {
+      for (const d of _devices.values()) {
+        if (d.transport === 'udp') { dev = d; break; }
+      }
+    }
     if (!dev) return;
 
     parseDataLine(dev, line);
     _onDataReceived?.(dev);
 
-    // Feed to registry if enabled
     if (dev.feeding && dev.rawQuat) {
       feedToRegistry(dev);
     }
   });
 
-  // Listen for command responses (UDP)
-  bridge.onXIMU3CommandResponse?.((json) => {
-    DEBUG && console.log('[imu-setup] UDP command response:', json);
-    // Route to first connected UDP device
-    for (const dev of _devices.values()) {
-      if (dev.transport === 'udp') {
-        if (json.axes_alignment !== undefined) dev.axesAlignment = json.axes_alignment;
-        break;
+  // Listen for command responses (UDP) — route by source IP
+  bridge.onXIMU3CommandResponse?.((json, sourceIP) => {
+    DEBUG && console.log('[imu-setup] UDP command response:', json, sourceIP);
+    let matched = null;
+    if (sourceIP) {
+      for (const dev of _devices.values()) {
+        if (dev.transport === 'udp' && dev.ip === sourceIP) { matched = dev; break; }
       }
+    }
+    // Fallback: first UDP device
+    if (!matched) {
+      for (const dev of _devices.values()) {
+        if (dev.transport === 'udp') { matched = dev; break; }
+      }
+    }
+    if (matched) {
+      _applyResponseFields(matched, json);
     }
     _onCommandResponse?.(json);
   });
@@ -319,14 +640,11 @@ export function initIMUSetup() {
         dev.sn = json.serial_number;
         dev.slotName = `ximu3-${dev.sn}`;
         _devices.set(dev.sn, dev);
+        _applyDevicePrefs(dev);  // re-apply with real SN
         _onDeviceUpdated?.(dev);
       }
     }
-    // Also fire on name update so card header refreshes
-    if (json.device_name !== undefined) {
-      _onDeviceUpdated?.(dev);
-    }
-    if (json.axes_alignment !== undefined) dev.axesAlignment = json.axes_alignment;
+    _applyResponseFields(dev, json);
 
     _onCommandResponse?.(json);
   });
@@ -338,12 +656,55 @@ export function initIMUSetup() {
 
 export async function scanSerialPorts() {
   const bridge = window.electronBridge;
-  if (!bridge?.serialListPorts) return [];
 
-  _serialPortList = await bridge.serialListPorts();
-  _onSerialPortsChanged?.(_serialPortList);
-  DEBUG && console.log(`[imu-setup] found ${_serialPortList.length} serial ports`);
-  return _serialPortList;
+  // Electron mode — use IPC
+  if (bridge?.serialListPorts) {
+    _serialPortList = await bridge.serialListPorts();
+    _onSerialPortsChanged?.(_serialPortList);
+    DEBUG && console.log(`[imu-setup] found ${_serialPortList.length} serial ports`);
+    return _serialPortList;
+  }
+
+  // Browser mode — WebSerial API (Chrome only)
+  // WebSerial doesn't have a "list all ports" API — we need to prompt the user.
+  // getPorts() returns previously-granted ports only.
+  if (navigator.serial) {
+    try {
+      const ports = await navigator.serial.getPorts();
+      _serialPortList = ports.map((p, i) => {
+        const info = p.getInfo?.() || {};
+        return {
+          path: _webSerialPortId(p),
+          manufacturer: '',
+          serialNumber: '',
+          vendorId: info.usbVendorId ? '0x' + info.usbVendorId.toString(16) : '',
+          productId: info.usbProductId ? '0x' + info.usbProductId.toString(16) : '',
+          _webSerialPort: p,  // stash the actual port object
+        };
+      });
+      _onSerialPortsChanged?.(_serialPortList);
+      DEBUG && console.log(`[imu-setup] WebSerial: ${_serialPortList.length} previously-granted ports`);
+      return _serialPortList;
+    } catch (e) {
+      DEBUG && console.warn(`[imu-setup] WebSerial getPorts error: ${e.message}`);
+    }
+  }
+
+  return [];
+}
+
+// Browser mode: prompt user to select a serial port (WebSerial requires user gesture)
+export async function requestSerialPort() {
+  if (!navigator.serial) return null;
+  try {
+    const port = await navigator.serial.requestPort();
+    // Re-scan to pick up the newly granted port
+    await scanSerialPorts();
+    return port;
+  } catch (e) {
+    DEBUG && console.log(`[imu-setup] WebSerial port request cancelled or failed: ${e.message}`);
+    return null;
+  }
 }
 
 // ── Connect / disconnect ────────────────────────────────────────────────────
@@ -354,7 +715,6 @@ export async function connectDevice(sn) {
   if (!info) return false;
 
   const bridge = window.electronBridge;
-  if (!bridge) return false;
 
   const dev = new DeviceState(sn, info.name, {
     transport: 'udp',
@@ -363,30 +723,115 @@ export async function connectDevice(sn) {
     receive:  info.receive,
   });
   _devices.set(sn, dev);
+  _applyDevicePrefs(dev);  // restore polarity, rollMute, role from previous session
 
-  // Start listening on the device's send port
-  await bridge.ximu3StartData(info.send);
+  // Notify main page immediately — don't wait for handshake
+  _syncSensorStatus();
 
-  // Short delay to let the socket bind complete before sending commands
-  await _delay(300);
+  if (bridge?.isElectron) {
+    // Electron mode — start UDP data listener via IPC
+    await bridge.ximu3StartData(info.send);
+    await _delay(300);
 
-  // Read current settings and enforce quaternion output
-  sendCommandTo(dev, { axes_alignment: null });
-  requestQuatMode(dev);
+    // Read current settings
+    sendCommandTo(dev, { axes_alignment: null });
+    sendCommandTo(dev, { wi_fi_ap_channel: null });
+    sendCommandTo(dev, { wi_fi_ap_ssid: null });
+    sendCommandTo(dev, { wi_fi_region: null });
 
+    // Settings enforcement — ensure correct AHRS config regardless of GUI state
+    sendCommandTo(dev, { ahrs_ignore_magnetometer: true });
+    sendCommandTo(dev, { ahrs_acceleration_rejection_enabled: true });
+    sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
+    sendCommandTo(dev, { udp_low_latency: true });
+    sendCommandTo(dev, { ahrs_message_type: 0 });  // quaternion mode
+    sendCommandTo(dev, { ahrs_message_rate_divisor: 8 });  // 400Hz / 8 = 50Hz
+    await _delay(100);
+    sendCommandTo(dev, { apply: null });
+
+    // LED handshake — 5× blink for visual confirmation on the physical device
+    for (let i = 0; i < 5; i++) {
+      await _delay(200);
+      sendCommandTo(dev, { blink: null });
+    }
+  } else {
+    // Browser mode — tell proxy to connect (proxy handles UDP + settings + blink)
+    _sendProxyControl({ type: 'connect', sn });
+  }
+
+  _syncSensorStatus();
   DEBUG && console.log(`[imu-setup] UDP connected to ${info.name} (${sn}) at ${info.ip}`);
   return true;
 }
 
 // Connect a serial (USB) device by port path (e.g. '/dev/tty.usbmodem1234')
-export async function connectSerialDevice(portPath) {
+// In browser mode, portPath can also be a WebSerial port object or its ID string.
+export async function connectSerialDevice(portPathOrObj) {
   const bridge = window.electronBridge;
+
+  // ── Browser mode: WebSerial ──
+  if (!bridge?.isElectron && navigator.serial) {
+    let wsPort = portPathOrObj;
+    let portId;
+
+    // If passed a string ID, find the stashed port object from the scan list
+    if (typeof portPathOrObj === 'string') {
+      const found = _serialPortList.find(p => p.path === portPathOrObj);
+      if (found?._webSerialPort) {
+        wsPort = found._webSerialPort;
+      } else {
+        DEBUG && console.warn(`[imu-setup] WebSerial port not found: ${portPathOrObj}`);
+        return false;
+      }
+    }
+
+    try {
+      portId = await _webSerialOpen(wsPort);
+    } catch (e) {
+      DEBUG && console.warn(`[imu-setup] WebSerial open failed: ${e.message}`);
+      return false;
+    }
+
+    const tempSn = 'serial-' + portId.replace(/[^a-zA-Z0-9]/g, '');
+    const dev = new DeviceState(tempSn, portId, {
+      transport:  'serial',
+      serialPath: portId,
+    });
+    _devices.set(tempSn, dev);
+    _serialPathToDevice.set(portId, dev);
+
+    // Notify main page immediately — don't wait for handshake blinks
+    _syncSensorStatus();
+    DEBUG && console.log(`[imu-setup] WebSerial connected on ${portId}`);
+
+    await _delay(500);
+
+    // Query device info + settings enforcement + blink (same as Electron)
+    sendCommandTo(dev, { device_name: null });
+    sendCommandTo(dev, { serial_number: null });
+    sendCommandTo(dev, { axes_alignment: null });
+    sendCommandTo(dev, { ahrs_ignore_magnetometer: true });
+    sendCommandTo(dev, { ahrs_acceleration_rejection_enabled: true });
+    sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
+    sendCommandTo(dev, { ahrs_message_type: 0 });
+    sendCommandTo(dev, { ahrs_message_rate_divisor: 8 });  // 400Hz / 8 = 50Hz
+    await _delay(100);
+    sendCommandTo(dev, { apply: null });
+
+    for (let i = 0; i < 5; i++) {
+      await _delay(200);
+      sendCommandTo(dev, { blink: null });
+    }
+    return true;
+  }
+
+  // ── Electron mode: IPC serial ──
+  const portPath = portPathOrObj;
   if (!bridge?.serialOpen) return false;
 
   const result = await bridge.serialOpen(portPath);
   if (!result?.ok) return false;
 
-  // Use a temp serial number until the device responds with its real one
   const tempSn = 'serial-' + portPath.replace(/[^a-zA-Z0-9]/g, '');
   const dev = new DeviceState(tempSn, portPath, {
     transport:  'serial',
@@ -395,16 +840,31 @@ export async function connectSerialDevice(portPath) {
   _devices.set(tempSn, dev);
   _serialPathToDevice.set(portPath, dev);
 
-  // Short delay to let the serial port open complete
+  // Notify main page immediately — don't wait for handshake blinks
+  _syncSensorStatus();
+  DEBUG && console.log(`[imu-setup] serial connected on ${portPath}`);
+
   await _delay(500);
 
-  // Query device info and enforce quaternion output
+  // Query device info
   sendCommandTo(dev, { device_name: null });
   sendCommandTo(dev, { serial_number: null });
   sendCommandTo(dev, { axes_alignment: null });
-  requestQuatMode(dev);
 
-  DEBUG && console.log(`[imu-setup] serial connected on ${portPath}`);
+  // Settings enforcement
+  sendCommandTo(dev, { ahrs_ignore_magnetometer: true });
+  sendCommandTo(dev, { ahrs_acceleration_rejection_enabled: true });
+  sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
+  sendCommandTo(dev, { ahrs_message_type: 0 });
+  sendCommandTo(dev, { ahrs_message_rate_divisor: 8 });  // 400Hz / 8 = 50Hz
+  await _delay(100);
+  sendCommandTo(dev, { apply: null });
+
+  // LED handshake — 5× blink
+  for (let i = 0; i < 5; i++) {
+    await _delay(200);
+    sendCommandTo(dev, { blink: null });
+  }
   return true;
 }
 
@@ -419,28 +879,53 @@ export async function disconnectDevice(sn) {
 
   if (dev.transport === 'serial') {
     _serialPathToDevice.delete(dev.serialPath);
-    if (bridge?.serialClose) await bridge.serialClose(dev.serialPath);
+    if (bridge?.isElectron) {
+      // Electron mode
+      if (bridge.serialClose) await bridge.serialClose(dev.serialPath);
+    } else {
+      // Browser mode — close WebSerial port
+      await _webSerialClose(dev.serialPath);
+    }
     DEBUG && console.log(`[imu-setup] serial disconnected ${dev.serialPath}`);
   } else {
-    // Stop UDP data listener if no UDP devices left
-    const hasUdp = [..._devices.values()].some(d => d.transport === 'udp');
-    if (!hasUdp && bridge) await bridge.ximu3StopData();
+    if (bridge?.isElectron) {
+      // Electron mode — stop UDP listener if no UDP devices left
+      const hasUdp = [..._devices.values()].some(d => d.transport === 'udp');
+      if (!hasUdp) await bridge.ximu3StopData();
+    } else {
+      // Browser mode — tell proxy to disconnect
+      _sendProxyControl({ type: 'disconnect', sn });
+    }
     DEBUG && console.log(`[imu-setup] UDP disconnected ${sn}`);
   }
+  _syncSensorStatus();
 }
 
 // ── Send command to a specific device ───────────────────────────────────────
 
 export function sendCommandTo(dev, jsonObj) {
+  if (!dev) return;
   const bridge = window.electronBridge;
-  if (!bridge || !dev) return;
   const str = JSON.stringify(jsonObj);
 
   if (dev.transport === 'serial') {
-    bridge.serialSendCommand(dev.serialPath, str);
-  } else {
-    bridge.ximu3SendCommand(dev.ip, dev.receive, str);
+    if (bridge?.isElectron) {
+      bridge.serialSendCommand(dev.serialPath, str);
+    } else {
+      // Browser mode — WebSerial
+      _webSerialSend(dev.serialPath, str);
+    }
+  } else if (dev.transport === 'udp') {
+    if (bridge?.isElectron) {
+      bridge.ximu3SendCommand(dev.ip, dev.receive, str);
+    } else {
+      // Browser mode — relay through proxy control channel
+      _sendProxyControl({ type: 'command', ip: dev.ip, port: dev.receive, json: jsonObj });
+    }
   }
+  // OSC transport: no command sending (calibrated upstream)
+
+  _onCommandSent?.(dev, jsonObj);
 }
 
 // Convenience: send to first connected device
@@ -465,6 +950,7 @@ export function togglePolarity(dev, axis) {
   if (dev.polarity[axis] !== undefined) {
     dev.polarity[axis] *= -1;
   }
+  _saveDevicePrefs();
   return dev.polarity[axis];
 }
 
@@ -472,6 +958,7 @@ export function toggleRollMute(dev) {
   dev.rollMute = !dev.rollMute;
   // Propagate to registry slot so the forward-vector path handles pole safety
   _syncRollMuteToSlot(dev);
+  _saveDevicePrefs();
   return dev.rollMute;
 }
 
@@ -497,7 +984,24 @@ export function captureTare(dev) {
   const q = dev.rawQuat;
   const euler = quatToEulerDeg(q.x, q.y, q.z, q.w);
   dev.tareEuler = { pitch: euler.pitch, yaw: euler.yaw };
+
+  // NOTE: heading command ({ heading: 0 }) NOT sent here — it's a separate
+  // "zero heading" button in the UI. Sending it here would double-correct.
+  // It resets the hardware yaw reference, which causes the Euler-space tare
+  // offset to overcorrect (tare captures yaw=45°, heading zeros hardware,
+  // next frame: calibrated = 0° - 45° = -45°). Heading reset is useful for
+  // long-term drift but should be a separate action, not part of tare.
+
   DEBUG && console.log(`[imu-setup] tare captured for ${dev.sn}: pitch=${euler.pitch.toFixed(1)}° yaw=${euler.yaw.toFixed(1)}°`);
+}
+
+// Separate heading reset — call when yaw drift accumulates over a long session.
+// Clears tare first since the heading command changes the hardware reference frame.
+export function resetHeading(dev) {
+  if (dev.transport === 'osc') return;
+  dev.tareEuler = null;
+  sendCommandTo(dev, { heading: 0 });
+  DEBUG && console.log(`[imu-setup] heading reset for ${dev.sn} — tare cleared`);
 }
 
 export function clearTare(dev) {
@@ -536,10 +1040,12 @@ export function setFeeding(dev, enabled) {
     // Assign role
     assignQuatRole(dev.slotName, dev.role);
   }
+  _syncSensorStatus();
 }
 
 export function setRole(dev, role) {
   dev.role = role;
+  _saveDevicePrefs();
   if (dev.feeding) {
     assignQuatRole(dev.slotName, role);
   }
@@ -628,10 +1134,12 @@ export function handleOSCSensorQuaternion(name, values) {
   let dev = _devices.get('osc-' + name);
   if (!dev) {
     dev = new DeviceState('osc-' + name, name, { transport: 'osc' });
+    _applyDevicePrefs(dev);
     dev.feeding = true;  // auto-feed — OSC sensors are always live
     _devices.set('osc-' + name, dev);
     _initOscSlot(dev);
     _onDeviceUpdated?.(dev);
+    _syncSensorStatus();
     DEBUG && console.log(`[imu-setup] OSC sensor auto-discovered: ${name} (role: ${dev.role})`);
   }
 
@@ -661,10 +1169,12 @@ export function handleOSCSensorInertial(name, values) {
   let dev = _devices.get('osc-' + name);
   if (!dev) {
     dev = new DeviceState('osc-' + name, name, { transport: 'osc' });
+    _applyDevicePrefs(dev);
     dev.feeding = true;
     _devices.set('osc-' + name, dev);
     _initOscSlot(dev);
     _onDeviceUpdated?.(dev);
+    _syncSensorStatus();
     DEBUG && console.log(`[imu-setup] OSC sensor auto-discovered (inertial): ${name}`);
   }
 
@@ -698,6 +1208,49 @@ function _initOscSlot(dev) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+// Extract known fields from a command response and apply to the device.
+// Centralised so every response path (proxy, Electron UDP, Electron serial,
+// WebSerial) updates the same set of fields.
+function _applyResponseFields(dev, json) {
+  if (json.axes_alignment   !== undefined) dev.axesAlignment = json.axes_alignment;
+  if (json.wi_fi_ap_channel !== undefined) dev.wifiApChannel = json.wi_fi_ap_channel;
+  if (json.wi_fi_ap_ssid    !== undefined) dev.wifiApSsid    = json.wi_fi_ap_ssid;
+  if (json.wi_fi_region     !== undefined) dev.wifiRegion     = json.wi_fi_region;
+  if (json.device_name      !== undefined) { dev.name = json.device_name; _onDeviceUpdated?.(dev); }
+  if (json.serial_number    !== undefined) { _onDeviceUpdated?.(dev); }
+  // WiFi info triggers a card refresh so channel/SSID can display
+  if (json.wi_fi_ap_channel !== undefined || json.wi_fi_ap_ssid !== undefined) {
+    _onDeviceUpdated?.(dev);
+  }
+}
+
+// Notify the rest of the app that sensor connection state changed.
+// Any device feeding data counts as "sensor connected".
+function _syncSensorStatus() {
+  const devs = [..._devices.values()];
+  const hasFeeding = devs.some(d => d.feeding);
+  const hasAny     = _devices.size > 0;
+
+  // Build transport summary for the main-page indicator
+  const transports = new Set();
+  let count = 0;
+  for (const d of devs) {
+    count++;
+    if (d.transport === 'serial')    transports.add('serial');
+    else if (d.transport === 'udp')  transports.add('wifi AP');
+    else if (d.transport === 'osc')  transports.add('osc');
+  }
+
+  window.dispatchEvent(new CustomEvent('sensor-status', {
+    detail: {
+      connected: hasAny,
+      feeding:   hasFeeding,
+      count,
+      transports: [...transports],
+    },
+  }));
+}
 
 function _delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 

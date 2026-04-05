@@ -8,6 +8,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronBridge', {
   isElectron: true,
 
+  // Renderer → Main: restart the app (used after buffer-size change)
+  restartApp: () => ipcRenderer.send('app-restart'),
+
   // Renderer → Main: send a captured N-channel interleaved audio buffer to RtAudio
   sendAudioBuffer: (interleavedFloat32) => {
     ipcRenderer.send('audio-buffer', interleavedFloat32);
@@ -62,12 +65,14 @@ contextBridge.exposeInMainWorld('electronBridge', {
     ipcRenderer.on('ximu3-discovery', (_e, json) => cb(json)),
 
   // Main → Renderer: raw ASCII data line from x-IMU3 (e.g. "A,1000000,0.0000,0.0000,0.0000")
+  // sourceIP: originating device IP (for multi-device routing)
   onXIMU3Data: (cb) =>
-    ipcRenderer.on('ximu3-data', (_e, line) => cb(line)),
+    ipcRenderer.on('ximu3-data', (_e, line, sourceIP) => cb(line, sourceIP)),
 
   // Main → Renderer: JSON command response from x-IMU3
+  // sourceIP: originating device IP
   onXIMU3CommandResponse: (cb) =>
-    ipcRenderer.on('ximu3-command-response', (_e, json) => cb(json)),
+    ipcRenderer.on('ximu3-command-response', (_e, json, sourceIP) => cb(json, sourceIP)),
 
   // Renderer → Main: start listening for data on the device's send port
   ximu3StartData: (port) => ipcRenderer.invoke('ximu3-start-data', port),

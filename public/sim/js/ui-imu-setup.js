@@ -17,21 +17,36 @@ import {
   initIMUSetup,
   getDiscovered, getSerialPorts, getDevices, getDevice,
   connectDevice, connectSerialDevice, disconnectDevice,
-  scanSerialPorts,
+  scanSerialPorts, requestSerialPort,
   setAxesAlignment, togglePolarity, toggleRollMute,
-  captureTare, clearTare,
+  captureTare, clearTare, resetHeading,
   requestEulerMode, requestQuatMode,
   setFeeding, setRole,
   setOnDeviceDiscovered, setOnSerialPortsChanged, setOnDeviceUpdated,
-  setOnDataReceived, setOnCommandResponse,
+  setOnDataReceived, setOnCommandResponse, setOnCommandSent,
   sendCommandTo,
   AXES_ALIGNMENTS,
   getAlignmentLabel,
 } from './imu-setup.js';
 
-let _modal       = null;
-let _rafId       = null;
-let _initialized = false;
+let _modal        = null;
+let _rafId        = null;
+let _initialized  = false;
+let _oscConnected = false;
+
+const _WIFI_REGIONS = { 1: 'US', 2: 'EU', 3: 'JP' };
+
+function _wifiInfoText(dev) {
+  if (dev.wifiApChannel == null && dev.wifiApSsid == null) return 'querying wifi AP…';
+  const parts = [];
+  if (dev.wifiApSsid)    parts.push(`SSID: ${dev.wifiApSsid}`);
+  if (dev.wifiApChannel) {
+    const band = dev.wifiApChannel >= 36 ? '5 GHz' : '2.4 GHz';
+    parts.push(`ch ${dev.wifiApChannel} (${band})`);
+  }
+  if (dev.wifiRegion)    parts.push(_WIFI_REGIONS[dev.wifiRegion] || `region ${dev.wifiRegion}`);
+  return parts.join('  ·  ') || '';
+}
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -53,9 +68,27 @@ export function initIMUSetupUI() {
     _modal.classList.remove('open');
     onClose();
   });
-  rescan?.addEventListener('click', () => {
-    scanSerialPorts();
-  });
+  if (!window.electronBridge?.isElectron && navigator.serial) {
+    // Browser mode — "rescan" is useless (getPorts only returns already-granted ports).
+    // Repurpose the rescan button as "add USB device" which prompts the user to pick a port.
+    if (rescan) {
+      rescan.textContent = 'add USB device';
+      rescan.addEventListener('click', async () => {
+        const port = await requestSerialPort();
+        if (port) {
+          rebuildSerialList();
+        }
+      });
+    }
+    // Hide the separate request button — rescan IS the request button now
+    const reqBtn = document.getElementById('imuSetupSerialRequest');
+    if (reqBtn) reqBtn.style.display = 'none';
+  } else {
+    // Electron mode — rescan enumerates all ports via Node serialport
+    rescan?.addEventListener('click', () => {
+      scanSerialPorts();
+    });
+  }
   _modal.addEventListener('click', e => {
     if (e.target === _modal) {
       _modal.classList.remove('open');
@@ -63,23 +96,67 @@ export function initIMUSetupUI() {
     }
   });
 
-  // Re-render discovery list when a new WiFi device appears
+  // Re-render discovery list when a new WiFi AP device appears
   setOnDeviceDiscovered(() => {
-    if (_modal.classList.contains('open')) rebuildDiscoveryList();
+    if (_modal.classList.contains('open')) {
+      rebuildDiscoveryList();
+      updateTransportStatus();
+    }
   });
 
   // Re-render serial section when ports list changes
   setOnSerialPortsChanged(() => {
-    if (_modal.classList.contains('open')) rebuildSerialList();
+    if (_modal.classList.contains('open')) {
+      rebuildSerialList();
+      updateTransportStatus();
+    }
   });
 
-  // Rebuild cards when a serial device's identity updates (SN/name from query response)
+  // Rebuild cards when a device's identity updates (SN/name from query, or OSC auto-discover)
   setOnDeviceUpdated(() => {
-    if (_modal.classList.contains('open')) rebuildDeviceCards();
+    if (_modal.classList.contains('open')) {
+      rebuildDeviceCards();
+      rebuildOSCList();
+      updateTransportStatus();
+    }
   });
 
-  // Data callback — handled by rAF readout
-  setOnDataReceived(() => {});
+  // OSC connection events — update status
+  window.addEventListener('osc-connected', () => {
+    _oscConnected = true;
+    if (_modal.classList.contains('open')) {
+      updateTransportStatus();
+      rebuildOSCList();
+    }
+  });
+  window.addEventListener('osc-disconnected', () => {
+    _oscConnected = false;
+    if (_modal.classList.contains('open')) {
+      updateTransportStatus();
+      rebuildOSCList();
+    }
+  });
+
+  // Data callback — rAF readout handles display; also refresh OSC list on new device
+  let _lastDeviceCount = 0;
+  setOnDataReceived(() => {
+    const count = getDevices().size;
+    if (count !== _lastDeviceCount) {
+      _lastDeviceCount = count;
+      if (_modal.classList.contains('open')) {
+        rebuildOSCList();
+        updateTransportStatus();
+      }
+    }
+  });
+
+  // Command log — show every command sent and response received
+  setOnCommandSent((dev, jsonObj) => {
+    _appendCmdLog('→', dev, jsonObj);
+  });
+  setOnCommandResponse((json) => {
+    _appendCmdLog('←', null, json);
+  });
 
   // ── Global tare shortcut (backtick key, MIDI, top-bar button) ──
   // Tare whichever device is assigned to cursor role.
@@ -111,8 +188,10 @@ export function initIMUSetupUI() {
 // ── Modal lifecycle ─────────────────────────────────────────────────────────
 
 function onOpen() {
+  updateTransportStatus();
   rebuildDiscoveryList();
   rebuildSerialList();
+  rebuildOSCList();
   scanSerialPorts();  // async — will trigger rebuildSerialList via callback
   rebuildDeviceCards();
   startRAF();
@@ -148,7 +227,15 @@ function rebuildDiscoveryList() {
   const devices    = getDevices();
 
   if (discovered.size === 0) {
-    container.innerHTML = '<div class="imu-setup-empty">searching for x-IMU3 devices on the network…</div>';
+    const isElectron = !!window.electronBridge?.isElectron;
+    const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    let msg;
+    if (isElectron) {
+      msg = 'listening for x-IMU3 UDP broadcasts on port 10000…';
+    } else {
+      msg = 'WiFi AP is only available in the desktop app — for wireless sensors in the browser, use the Max patch OSC websocket bridge (see the <em>osc</em> section below)';
+    }
+    container.innerHTML = `<div class="imu-setup-empty">${msg}</div>`;
     return;
   }
 
@@ -162,6 +249,17 @@ function rebuildDiscoveryList() {
     label.className = 'imu-setup-device-info';
     label.textContent = `${info.name}  ·  ${sn}  ·  ${info.ip}`;
     if (info.battery !== undefined) label.textContent += `  ·  ${info.battery}%`;
+    if (info.rssi !== undefined && info.rssi >= 0) label.textContent += `  ·  ${info.rssi}% rssi`;
+
+    // RSSI bar (visual indicator)
+    if (info.rssi !== undefined && info.rssi >= 0) {
+      const rssiBar = document.createElement('div');
+      rssiBar.className = 'imu-setup-rssi-bar';
+      rssiBar.style.width = `${info.rssi}%`;
+      // Color code: green > 60%, yellow 30-60%, red < 30%
+      rssiBar.style.background = info.rssi > 60 ? '#4a4' : info.rssi > 30 ? '#aa4' : '#a44';
+      row.appendChild(rssiBar);
+    }
 
     const btn = document.createElement('button');
     btn.className = 'imu-setup-connect-btn';
@@ -198,7 +296,17 @@ function rebuildSerialList() {
   }
 
   if (ports.length === 0) {
-    container.innerHTML = '<div class="imu-setup-empty">no serial ports found — click rescan or plug in USB</div>';
+    const isElectron = !!window.electronBridge?.isElectron;
+    const hasWebSerial = !!navigator.serial;
+    let msg;
+    if (isElectron) {
+      msg = 'no serial ports found — click rescan or plug in USB';
+    } else if (hasWebSerial) {
+      msg = 'click "add USB device" to connect a sensor via USB';
+    } else {
+      msg = 'WebSerial not available — use Chrome, or connect via Electron';
+    }
+    container.innerHTML = `<div class="imu-setup-empty">${msg}</div>`;
     return;
   }
 
@@ -238,6 +346,107 @@ function rebuildSerialList() {
   }
 }
 
+// ── Transport status ────────────────────────────────────────────────────────
+
+function updateTransportStatus() {
+  const devices   = getDevices();
+  const discovered = getDiscovered();
+  const isElectron = !!window.electronBridge?.isElectron;
+
+  // WiFi AP/UDP: active if any UDP device connected, partial if devices discovered but not connected
+  const udpEl = document.getElementById('imuTransportUDP');
+  if (udpEl) {
+    const hasUdpDevice = [...devices.values()].some(d => d.transport === 'udp');
+    const hasDiscovery = discovered.size > 0;
+    udpEl.classList.toggle('active', hasUdpDevice);
+    udpEl.classList.toggle('partial', !hasUdpDevice && hasDiscovery);
+  }
+  // WiFi status hint
+  const wifiStatus = document.getElementById('imuWifiStatus');
+  if (wifiStatus) {
+    const udpCount = [...devices.values()].filter(d => d.transport === 'udp').length;
+    if (udpCount > 0) {
+      wifiStatus.textContent = `${udpCount} connected`;
+    } else if (discovered.size > 0) {
+      wifiStatus.textContent = `${discovered.size} found`;
+    } else if (isElectron) {
+      wifiStatus.textContent = 'listening';
+    } else {
+      wifiStatus.textContent = '';
+    }
+  }
+
+  // Serial: active if any serial device connected, partial if WebSerial available
+  const serialEl = document.getElementById('imuTransportSerial');
+  if (serialEl) {
+    const hasSerialDevice = [...devices.values()].some(d => d.transport === 'serial');
+    const hasSerial = isElectron || !!navigator.serial;
+    serialEl.classList.toggle('active', hasSerialDevice);
+    serialEl.classList.toggle('partial', !hasSerialDevice && hasSerial);
+  }
+
+  // OSC: active if any OSC device connected, partial if bridge/proxy connected
+  const oscEl = document.getElementById('imuTransportOSC');
+  if (oscEl) {
+    const hasOscDevice = [...devices.values()].some(d => d.transport === 'osc');
+    oscEl.classList.toggle('active', hasOscDevice);
+    oscEl.classList.toggle('partial', !hasOscDevice && _oscConnected);
+  }
+  // OSC status hint
+  const oscStatus = document.getElementById('imuOSCStatus');
+  if (oscStatus) {
+    const oscCount = [...devices.values()].filter(d => d.transport === 'osc').length;
+    if (oscCount > 0) {
+      oscStatus.textContent = `${oscCount} streaming`;
+    } else if (_oscConnected) {
+      oscStatus.textContent = isElectron ? 'bridge active' : 'connected';
+    } else {
+      oscStatus.textContent = '';
+    }
+  }
+}
+
+// ── OSC device list ────────────────────────────────────────────────────────
+
+function rebuildOSCList() {
+  const container = document.getElementById('imuSetupOSC');
+  if (!container) return;
+
+  const devices = getDevices();
+  const oscDevices = [...devices.values()].filter(d => d.transport === 'osc');
+
+  if (oscDevices.length === 0) {
+    const isElectron = !!window.electronBridge?.isElectron;
+    const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    let msg;
+    if (_oscConnected) {
+      msg = 'bridge connected — waiting for sensor data on /sensor/{name}/quaternion';
+    } else if (isElectron) {
+      msg = 'no OSC bridge — start Max or proxy on ws://localhost:8080';
+    } else if (isLocal) {
+      msg = 'no OSC sensors — connect via Max bridge or <code>node proxy.js</code>';
+    } else {
+      msg = 'OSC requires local setup — use USB serial, or run locally';
+    }
+    container.innerHTML = `<div class="imu-setup-empty">${msg}</div>`;
+    return;
+  }
+
+  container.innerHTML = '';
+  for (const dev of oscDevices) {
+    const row = document.createElement('div');
+    row.className = 'imu-setup-device-row connected';
+
+    const label = document.createElement('span');
+    label.className = 'imu-setup-device-info';
+    label.textContent = `${dev.name}  ·  ${dev.slotName}  ·  role: ${dev.role}`;
+    if (dev.feeding) label.textContent += '  ·  feeding';
+
+    row.appendChild(label);
+    container.appendChild(row);
+  }
+}
+
 // ── Per-device cards ────────────────────────────────────────────────────────
 
 function rebuildDeviceCards() {
@@ -247,7 +456,7 @@ function rebuildDeviceCards() {
   const devices = getDevices();
 
   if (devices.size === 0) {
-    container.innerHTML = '';
+    container.innerHTML = '<div class="imu-setup-empty">no devices connected — connect a sensor from the left panel</div>';
     return;
   }
 
@@ -266,7 +475,8 @@ function buildCard(dev) {
   const isDirect = !isOSC;  // udp or serial — can send hardware commands
 
   card.innerHTML = `
-    <div class="imu-setup-card-header">${dev.name}  ·  ${dev.sn}  <span class="imu-setup-transport-badge">${dev.transport}</span></div>
+    <div class="imu-setup-card-header">${dev.name}  ·  ${dev.sn}  <span class="imu-setup-transport-badge">${dev.transport === 'udp' ? 'wifi AP' : dev.transport}</span></div>
+    ${dev.transport === 'udp' ? `<div class="imu-setup-wifi-info js-wifi-info">${_wifiInfoText(dev)}</div>` : ''}
 
     ${isDirect ? `
     <!-- Axes alignment (hardware config — direct connection only) -->
@@ -317,10 +527,11 @@ function buildCard(dev) {
 
     <!-- Tare -->
     <div class="imu-setup-section">
-      <div class="imu-setup-section-label">tare</div>
+      <div class="imu-setup-section-label">tare <span class="imu-setup-hint-inline" title="Software tare zeros pitch + yaw in the calibrated output (instant, no hardware change). Zero heading resets the AHRS yaw reference on the hardware — the sensor must be pointing at your desired 0° when you press it.">?</span></div>
       <div class="imu-setup-row imu-setup-tare-row">
-        <button class="imu-setup-tare-btn js-tare-capture">capture tare</button>
+        <button class="imu-setup-tare-btn js-tare-capture" title="Capture current orientation as zero — software only, does not reset hardware heading">capture tare</button>
         <button class="imu-setup-tare-btn secondary js-tare-clear" disabled>clear tare</button>
+        <button class="imu-setup-tare-btn secondary js-heading-zero" title="Reset AHRS yaw reference to 0° on the hardware — sensor must be pointing at desired forward direction">zero heading</button>
         <span class="imu-setup-tare-status js-tare-status">no tare set</span>
       </div>
     </div>
@@ -380,10 +591,11 @@ function buildCard(dev) {
     updateMuteBtn(rollMuteBtn, dev.rollMute);
   });
 
-  // ── Tare buttons
-  const tareCapture = card.querySelector('.js-tare-capture');
-  const tareClear   = card.querySelector('.js-tare-clear');
-  const tareStatus  = card.querySelector('.js-tare-status');
+  // ── Tare + heading buttons
+  const tareCapture  = card.querySelector('.js-tare-capture');
+  const tareClear    = card.querySelector('.js-tare-clear');
+  const headingZero  = card.querySelector('.js-heading-zero');
+  const tareStatus   = card.querySelector('.js-tare-status');
 
   tareCapture.addEventListener('click', () => {
     captureTare(dev);
@@ -397,6 +609,15 @@ function buildCard(dev) {
     tareStatus.textContent = 'no tare set';
     tareStatus.classList.remove('active');
   });
+  headingZero.addEventListener('click', () => {
+    resetHeading(dev);
+    // resetHeading clears tare since the reference frame changed
+    tareClear.disabled = true;
+    tareStatus.textContent = 'heading zeroed';
+    tareStatus.classList.remove('active');
+  });
+  // Hide zero heading for OSC devices (no hardware command path)
+  if (dev.transport === 'osc') headingZero.style.display = 'none';
   // Reflect initial state
   if (dev.tareEuler) {
     tareClear.disabled = false;
@@ -489,4 +710,28 @@ function updateAllReadouts() {
     const badge = card.querySelector('.js-msg-badge');
     if (badge) badge.textContent = dev.lastMsgType || '—';
   }
+}
+
+// ── Command log helper ─────────────────────────────────────────────────────
+
+function _appendCmdLog(dir, dev, jsonObj) {
+  const log = document.getElementById('imuSetupCmdLog');
+  if (!log) return;
+
+  const keys = Object.keys(jsonObj);
+  // Show all key:value pairs in the object
+  const parts = keys.map(k => {
+    const v = jsonObj[k];
+    return `<span class="cmd-key">${k}</span>${v === null ? '' : ': ' + v}`;
+  }).join('  ');
+
+  const who = dev ? `  <span style="color:#555">${dev.name || dev.sn} · ${dev.transport}</span>` : '';
+  const dirClass = dir === '←' ? 'cmd-resp' : 'cmd-dir';
+
+  const entry = document.createElement('div');
+  entry.className = 'imu-setup-cmd-log-entry';
+  entry.innerHTML = `<span class="${dirClass}">${dir}</span> ${parts}${who}`;
+  log.appendChild(entry);
+  log.scrollTop = log.scrollHeight;
+  while (log.children.length > 80) log.removeChild(log.firstChild);
 }

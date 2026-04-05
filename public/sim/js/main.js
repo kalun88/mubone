@@ -429,10 +429,46 @@ function init() {
   }
 
   // ── Sensor group — dim when no sensor connected ─────────────────────────
-  const _sensorGroupEl = document.getElementById('sensorGroup');
+  // Reacts to OSC bridge status AND imu-setup device status (serial, WiFi, OSC).
+  // Any connected device = "sensor connected" in the top bar.
+  const _sensorGroupEl  = document.getElementById('sensorGroup');
+  const _sensorStatusEl = document.getElementById('sensorGroupStatus');
   if (_sensorGroupEl) {
-    window.addEventListener('osc-connected', () => _sensorGroupEl.classList.remove('no-sensor'));
-    window.addEventListener('osc-disconnected', () => _sensorGroupEl.classList.add('no-sensor'));
+    let _oscBridgeUp   = false;
+    let _sensorDetail  = null;   // latest sensor-status event detail
+
+    const _updateSensorGroup = () => {
+      const hasDevice = _sensorDetail?.connected || false;
+      const anyUp     = _oscBridgeUp || hasDevice;
+      _sensorGroupEl.classList.toggle('no-sensor', !anyUp);
+
+      // Build status text for the label  e.g. "(serial)" or "(wifi + osc · 3)"
+      if (_sensorStatusEl) {
+        if (!anyUp) {
+          _sensorStatusEl.textContent = '';   // CSS ::before handles "(not connected)"
+        } else {
+          const parts = [];
+          if (_oscBridgeUp) parts.push('max');
+          if (_sensorDetail?.transports) {
+            for (const t of _sensorDetail.transports) {
+              if (!parts.includes(t)) parts.push(t);
+            }
+          }
+          const label = parts.join(' + ');
+          const count = (_sensorDetail?.count || 0) + (_oscBridgeUp ? 1 : 0);
+          _sensorStatusEl.textContent =
+            count > 1 ? `(${label} · ${count})` : `(${label})`;
+        }
+      }
+    };
+
+    window.addEventListener('osc-connected',    () => { _oscBridgeUp = true;  _updateSensorGroup(); });
+    window.addEventListener('osc-disconnected', () => { _oscBridgeUp = false; _updateSensorGroup(); });
+    window.addEventListener('sensor-status', (e) => {
+      _sensorDetail = e.detail;
+      window._sensorConnected = e.detail?.connected;
+      _updateSensorGroup();
+    });
   }
 
   // ── First-run hint ──────────────────────────────────────────────────────

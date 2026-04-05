@@ -4,7 +4,7 @@
 // When you bump the version, bump it here too — that triggers re-cache.
 // ============================================================================
 
-const CACHE_VERSION = 'mubone-0.16-alpha';
+const CACHE_VERSION = 'mubone-0.18-alpha';
 
 const APP_SHELL = [
   './',

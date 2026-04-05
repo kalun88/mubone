@@ -686,8 +686,14 @@ export async function initSpeakerBuses(numChannels = 2) {
   // channels carry the VBAP spatial field — capped at n-2 so mixdown always fits.
   // When stereoMixdownEnabled is false: all n channels are house; cursor grains
   // use the stereo monitorBus path (monitorBus → masterGain → destination).
+  // Guard: mixdown needs at least 4 channels (2 house + 2 mixdown).  If saved
+  // state says mixdown=on but hardware only has 2 channels (e.g. switched from
+  // an interface to built-in stereo), force it off so the graph isn't broken.
+  if (S.stereoMixdownEnabled === true && n < 4) {
+    S.stereoMixdownEnabled = false;
+  }
   const requestedHouse  = S.numHouseSpeakers ?? 2;
-  const hasMonitorCh    = S.stereoMixdownEnabled === true && n >= 2;
+  const hasMonitorCh    = S.stereoMixdownEnabled === true && n >= 4;
   const numHouseCh      = hasMonitorCh
     ? Math.max(1, Math.min(requestedHouse, n - 2))
     : Math.min(requestedHouse, n);
@@ -998,24 +1004,33 @@ export function updateDryMonitorPanning() {
     const idxA = lut ? lut.idxA : 0;
     const idxB = lut ? lut.idxB : Math.min(1, n - 1);
 
-    // Elevation-dependent center bias (same as playGrain)
+    // Elevation-dependent center bias: with a horizontal speaker ring,
+    // sources near the poles have ambiguous azimuth.  Blend ALL speakers
+    // toward equal-power as |elevation| increases so the image spreads
+    // across the full ring rather than locking to one pair.
     const elevFrac = Math.abs(cy) * (1 / SPHERE_RADIUS);
-    const elevBias = elevFrac * elevFrac;
+    const elevBias = elevFrac * elevFrac;                  // sin²(el)
+    const eqGain   = 1 / Math.sqrt(n);
     if (elevBias > 0.01) {
-      const eqGain = 1 / Math.sqrt(n);
       wA = wA + (eqGain - wA) * elevBias;
       wB = wB + (eqGain - wB) * elevBias;
     }
 
-    // Set all gains to 0, then set the two active speakers
+    // Set per-speaker gains: bracketing pair gets blended VBAP weights,
+    // all other speakers fade in toward eqGain as elevation increases.
     for (let i = 0; i < n; i++) {
-      const target = (i === idxA) ? wA : (i === idxB) ? wB : 0;
+      let target;
+      if (i === idxA)       target = wA;
+      else if (i === idxB)  target = wB;
+      else                  target = elevBias > 0.01 ? eqGain * elevBias : 0;
       S.dryVBAPGains[i].gain.setTargetAtTime(target, t, RAMP);
     }
 
     // Update headphone mixdown L/R panning for dry signal
+    // Apply elevation center-bias to the stereo image too
     if (S.dryMixdownInputs) {
-      const pan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
+      const rawPan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
+      const pan = rawPan * (1 - elevBias);  // collapse toward center at poles
       const lW  = Math.cos((pan + 1) * Math.PI / 4);
       const rW  = Math.sin((pan + 1) * Math.PI / 4);
       S.dryMixdownInputs[0].gain.setTargetAtTime(lW, t, RAMP);
@@ -1025,7 +1040,10 @@ export function updateDryMonitorPanning() {
   // ── Stereo path (browser) ───────────────────────────────────────────────
   } else if (S.dryPanner) {
     const rawPan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
-    S.dryPanner.pan.setTargetAtTime(rawPan, t, RAMP);
+    // Elevation center-bias: collapse toward center at poles (worldlocked only)
+    const dryElF = S.spatialPanning === 'worldlocked' ? Math.abs(cy) * (1 / SPHERE_RADIUS) : 0;
+    const dryPan = rawPan * (1 - dryElF * dryElF);
+    S.dryPanner.pan.setTargetAtTime(dryPan, t, RAMP);
   }
 }
 

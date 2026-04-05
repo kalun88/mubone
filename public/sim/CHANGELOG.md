@@ -5,6 +5,37 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 0.18 alpha — 2026-04-05
+
+### Fixed
+- **Stereo mixdown crash on 2-channel hardware** — opening the app with saved multichannel+mixdown state on a stereo device created a broken 1-house + 2-monitor bus layout. `initSpeakerBuses()` now forces `S.stereoMixdownEnabled = false` when channel count < 4, and `syncHouseSpeakersSeg()` writes the state back (not just the UI checkbox).
+- **Buffer size switching no longer crashes Electron** — repeated buffer-size changes triggered `RtApiCore::closeStream()` SIGTRAP/SIGBUS in CoreAudio's HAL. Buffer size changes now save the preference and show a "restart to apply" button that cleanly relaunches the app (`app.relaunch()` + `app.exit(0)`). New buffer size persists to `localStorage` and is picked up on next launch.
+- **`applyBufferSize` used wrong device and channel count** — was finding the system default instead of the current device, and reading `S.speakerBuses.length` (house bus count) instead of `.numChannels` (total hardware channels).
+- **`applySampleRate` passed `undefined` for buffer size** — now reads `S.preferredBufferSize` so rate changes preserve the user's buffer size preference.
+
+### Changed
+- **Removed factory patches 41–46** — shimmer-high, deep-drone, glitch-burst, crystal-seq, swarm-buzz, ghost-breath (radial morph presets) removed from the preset array and MIDI range updated to 1–40.
+- **WiFi AP instructions for browser users** — no longer mentions `node proxy.js`; browser users are pointed to the Max patch OSC websocket bridge instead.
+
+---
+
+## 0.17 alpha — 2026-04-04
+
+### Added
+- **LED blink handshake on connect** — both WiFi and serial connections send 5× `{"blink":null}` with 200ms spacing after initial settings enforcement. Physical confirmation the device is talking to mubone.
+- **Settings enforcement on connect** — every connection (WiFi, serial, browser, Electron) auto-configures the sensor: ignore magnetometer, acceleration rejection enabled, gyro offset correction, UDP low latency, quaternion output mode, then apply.
+- **Heading command on tare** — `captureTare()` now sends `{"heading":0}` to the hardware (non-OSC devices), resetting accumulated yaw drift between tares.
+- **Multi-device UDP routing** — `electron-main.js` tags each UDP data packet with source IP. `electron-preload.js` passes `sourceIP` through IPC. `imu-setup.js` routes data to the correct device by matching source IP, with fallback to first UDP device. Enables multiple WiFi x-IMU3s on a shared network.
+- **Browser proxy (`proxy.js`)** — standalone Node.js script replacing Max bridge for browser-mode WiFi sensors. Port 8080 (data, `{ address, values }` JSON — drop-in for `osc.js`) + port 8081 (control: discovery list, connect/disconnect, commands). Converts x-IMU3 ASCII to `/sensor/{name}/quaternion` and `/sensor/{name}/inertial` OSC messages. Handles settings enforcement and LED blink server-side. Launch: `node proxy.js`.
+- **WebSerial for browser USB serial** — `imu-setup.js` no longer returns early in browser mode. Chrome WebSerial API support for direct USB serial connections without Electron. New `requestSerialPort()` export for user-gesture-triggered port selection. "Add USB device" button appears in the sensor setup modal when running in browser with WebSerial available.
+- **RSSI bar in discovery list** — WiFi device rows show RSSI percentage text and a color-coded bar (green > 60%, yellow 30–60%, red < 30%).
+
+### Changed
+- **`imu-setup.js` architecture** — all transport-dependent code now branches on `bridge?.isElectron` vs browser mode. `sendCommandTo()`, `connectDevice()`, `connectSerialDevice()`, `disconnectDevice()`, and `scanSerialPorts()` all support both Electron IPC and browser (WebSerial/proxy) paths.
+- **`electron-preload.js`** — `onXIMU3Data` and `onXIMU3CommandResponse` callbacks now receive `sourceIP` as second argument for multi-device routing.
+
+---
+
 ## 0.16 alpha — 2026-04-03
 
 ### Added
