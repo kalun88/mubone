@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Timing Margin — How the Safety Padding Works</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1818; color: #b0d4d4; font-family: 'SF Mono', 'Fira Code', monospace; padding: 24px; }
+  h1 { color: #7abcbc; font-size: 18px; margin-bottom: 8px; font-weight: 500; }
+  .subtitle { color: #4a7a7a; font-size: 13px; margin-bottom: 32px; }
+  .scenario { margin-bottom: 40px; }
+  .scenario-title { color: #7abcbc; font-size: 14px; margin-bottom: 12px; }
+  .scenario-desc { color: #6a9a9a; font-size: 12px; margin-bottom: 16px; line-height: 1.6; }
+  canvas { display: block; margin-bottom: 8px; border-radius: 4px; }
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 8px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #6a9a9a; }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 2px; }
+  .outcome { font-size: 13px; padding: 8px 12px; border-radius: 4px; margin-top: 8px; display: inline-block; }
+  .outcome-ok { background: #1a2e2a; color: #5cb85c; border: 1px solid #2a4a3a; }
+  .outcome-bad { background: #2e1a1a; color: #e06060; border: 1px solid #4a2a2a; }
+  .controls { margin-bottom: 24px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .controls label { font-size: 12px; color: #6a9a9a; }
+  .controls input[type=range] { width: 160px; accent-color: #7abcbc; }
+  .controls .val { color: #7abcbc; font-size: 12px; min-width: 40px; }
+  .divider { border-top: 1px solid #1a3030; margin: 32px 0; }
+</style>
+</head>
+<body>
+
+<h1>Timing Margin — Why Grains Need Future Padding</h1>
+<p class="subtitle">How the gap between JS reading the clock and the audio thread processing the command can cause crashes</p>
+
+<div class="controls">
+  <label>Main thread congestion:</label>
+  <input type="range" id="congestionSlider" min="0" max="12" step="0.5" value="1">
+  <span class="val" id="congestionVal">1ms</span>
+  <label style="margin-left: 16px;">Safety margin:</label>
+  <input type="range" id="marginSlider" min="1" max="15" step="0.5" value="10">
+  <span class="val" id="marginVal">10ms</span>
+</div>
+
+<div id="scenarios"></div>
+
+<script>
+const DPR = window.devicePixelRatio || 1;
+const W = Math.min(800, window.innerWidth - 48);
+const H = 120;
+
+// Colors
+const COL_BG       = '#111e1e';
+const COL_GRID     = '#1a3030';
+const COL_AUDIO_T  = '#e8a030';  // audio clock position
+const COL_JS_READ  = '#7abcbc';  // when JS reads currentTime
+const COL_SCHED    = '#5cb85c';  // scheduled start time
+const COL_PROCESS  = '#c070d0';  // when audio thread processes the call
+const COL_DANGER   = '#e06060';  // crash zone
+const COL_MARGIN   = 'rgba(92, 184, 92, 0.12)'; // margin band
+
+function createCanvas(parent) {
+  const c = document.createElement('canvas');
+  c.width = W * DPR;
+  c.height = H * DPR;
+  c.style.width = W + 'px';
+  c.style.height = H + 'px';
+  parent.appendChild(c);
+  const ctx = c.getContext('2d');
+  ctx.scale(DPR, DPR);
+  return { c, ctx };
+}
+
+function drawTimeline(ctx, opts) {
+  const { jsReadMs, congestionMs, marginMs, audioAdvanceMs } = opts;
+  const totalMs = Math.max(20, jsReadMs + congestionMs + marginMs + 6);
+  const msToX = (ms) => 60 + (ms / totalMs) * (W - 80);
+  const labelY = 20;
+  const lineY = 55;
+  const noteY = 90;
+
+  // Background
+  ctx.fillStyle = COL_BG;
+  ctx.fillRect(0, 0, W, H);
+
+  // Timeline axis
+  ctx.strokeStyle = COL_GRID;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(msToX(0), lineY);
+  ctx.lineTo(msToX(totalMs), lineY);
+  ctx.stroke();
+
+  // Tick marks every 2ms
+  ctx.fillStyle = '#2a4a4a';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  for (let ms = 0; ms <= totalMs; ms += 2) {
+    const x = msToX(ms);
+    ctx.beginPath();
+    ctx.moveTo(x, lineY - 3);
+    ctx.lineTo(x, lineY + 3);
+    ctx.stroke();
+    if (ms % 4 === 0) {
+      ctx.fillText(ms + 'ms', x, lineY + 14);
+    }
+  }
+
+  // Audio clock at time JS reads it
+  const audioAtRead = 0; // normalize to 0
+  const scheduledT = audioAtRead + marginMs;
+  const audioAtProcess = audioAdvanceMs + congestionMs; // audio clock when command is processed
+  const jsWorkEnd = congestionMs; // when the setValueCurveAtTime call actually happens
+
+  // Margin band
+  ctx.fillStyle = COL_MARGIN;
+  ctx.fillRect(msToX(audioAtRead), lineY - 25, msToX(scheduledT) - msToX(audioAtRead), 50);
+
+  // Danger zone (past audio clock at process time)
+  if (audioAtProcess > 0) {
+    ctx.fillStyle = 'rgba(224, 96, 96, 0.08)';
+    ctx.fillRect(msToX(0), lineY - 25, msToX(audioAtProcess) - msToX(0), 50);
+  }
+
+  // Draw markers
+  const drawMarker = (x, color, label, above) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, lineY - 20);
+    ctx.lineTo(x, lineY + 20);
+    ctx.stroke();
+
+    ctx.fillStyle = color;
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, x, above ? labelY - 2 : noteY + 8);
+
+    // Diamond
+    ctx.beginPath();
+    ctx.moveTo(x, lineY - 4);
+    ctx.lineTo(x + 4, lineY);
+    ctx.lineTo(x, lineY + 4);
+    ctx.lineTo(x - 4, lineY);
+    ctx.closePath();
+    ctx.fill();
+  };
+
+  drawMarker(msToX(audioAtRead), COL_JS_READ, 'JS reads clock', true);
+  drawMarker(msToX(scheduledT), COL_SCHED, 'scheduled start (t)', true);
+  drawMarker(msToX(audioAtProcess), COL_PROCESS, 'audio thread processes', false);
+
+  // Arrow showing margin
+  const mx1 = msToX(audioAtRead);
+  const mx2 = msToX(scheduledT);
+  ctx.strokeStyle = COL_SCHED;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  ctx.moveTo(mx1, lineY + 26);
+  ctx.lineTo(mx2, lineY + 26);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = COL_SCHED;
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(marginMs.toFixed(1) + 'ms margin', (mx1 + mx2) / 2, lineY + 36);
+
+  // Result: is scheduled time still in the future when processed?
+  const safe = scheduledT > audioAtProcess;
+  return safe;
+}
+
+function buildScenarios() {
+  const container = document.getElementById('scenarios');
+  container.innerHTML = '';
+
+  const congestion = parseFloat(document.getElementById('congestionSlider').value);
+  const margin = parseFloat(document.getElementById('marginSlider').value);
+
+  document.getElementById('congestionVal').textContent = congestion + 'ms';
+  document.getElementById('marginVal').textContent = margin + 'ms';
+
+  // Scenario 1: Normal conditions
+  {
+    const div = document.createElement('div');
+    div.className = 'scenario';
+
+    const title = document.createElement('div');
+    title.className = 'scenario-title';
+    title.textContent = 'Normal: light main thread load';
+    div.appendChild(title);
+
+    const desc = document.createElement('div');
+    desc.className = 'scenario-desc';
+    desc.textContent = 'JS reads the audio clock → adds margin → calls setValueCurveAtTime. Audio thread processes it almost immediately.';
+    div.appendChild(desc);
+
+    const legend = document.createElement('div');
+    legend.className = 'legend';
+    [
+      [COL_JS_READ, 'JS reads actx.currentTime'],
+      [COL_SCHED, 'Scheduled grain start (t)'],
+      [COL_PROCESS, 'Audio thread processes call'],
+      [COL_MARGIN, 'Safety margin'],
+    ].forEach(([col, label]) => {
+      const item = document.createElement('div');
+      item.className = 'legend-item';
+      const sw = document.createElement('div');
+      sw.className = 'legend-swatch';
+      sw.style.background = col;
+      item.appendChild(sw);
+      item.appendChild(document.createTextNode(label));
+      legend.appendChild(item);
+    });
+    div.appendChild(legend);
+
+    const { ctx } = createCanvas(div);
+    const safe = drawTimeline(ctx, {
+      jsReadMs: 0,
+      congestionMs: 0.5,  // normal: <1ms
+      marginMs: margin,
+      audioAdvanceMs: 0.5,
+    });
+
+    const outcome = document.createElement('div');
+    outcome.className = 'outcome ' + (safe ? 'outcome-ok' : 'outcome-bad');
+    outcome.textContent = safe
+      ? '✓ Safe — scheduled time is in the future when audio thread processes it'
+      : '✗ CRASH — scheduled time is in the past → error code 5';
+    div.appendChild(outcome);
+
+    container.appendChild(div);
+  }
+
+  // Scenario 2: Congested main thread
+  {
+    const div = document.createElement('div');
+    div.className = 'scenario';
+
+    const title = document.createElement('div');
+    title.className = 'scenario-title';
+    title.textContent = 'Congested: slider scrub + recording + scheduler + RAF';
+    div.appendChild(title);
+
+    const desc = document.createElement('div');
+    desc.className = 'scenario-desc';
+    desc.textContent = `JS reads the clock, but the event loop is backed up with ${congestion.toFixed(1)}ms of other work before setValueCurveAtTime actually fires. Meanwhile the audio clock keeps advancing.`;
+    div.appendChild(desc);
+
+    const { ctx } = createCanvas(div);
+    const safe = drawTimeline(ctx, {
+      jsReadMs: 0,
+      congestionMs: congestion,
+      marginMs: margin,
+      audioAdvanceMs: congestion * 0.9,  // audio clock advances ~same as wall clock
+    });
+
+    const outcome = document.createElement('div');
+    outcome.className = 'outcome ' + (safe ? 'outcome-ok' : 'outcome-bad');
+    outcome.textContent = safe
+      ? '✓ Safe — margin absorbs the delay'
+      : '✗ CRASH — congestion ate the margin, start time is in the past';
+    div.appendChild(outcome);
+
+    container.appendChild(div);
+  }
+
+  // Divider
+  const hr = document.createElement('div');
+  hr.className = 'divider';
+  container.appendChild(hr);
+
+  // Scenario 3: Old 2ms margin under congestion
+  {
+    const div = document.createElement('div');
+    div.className = 'scenario';
+
+    const title = document.createElement('div');
+    title.className = 'scenario-title';
+    title.textContent = 'Before fix: 2ms margin under same congestion';
+    div.appendChild(title);
+
+    const desc = document.createElement('div');
+    desc.className = 'scenario-desc';
+    desc.textContent = 'Same congestion level, but with the old 2ms safety margin. The audio thread sees a start time that\'s already passed.';
+    div.appendChild(desc);
+
+    const { ctx } = createCanvas(div);
+    const safe = drawTimeline(ctx, {
+      jsReadMs: 0,
+      congestionMs: congestion,
+      marginMs: 2,  // old value
+      audioAdvanceMs: congestion * 0.9,
+    });
+
+    const outcome = document.createElement('div');
+    outcome.className = 'outcome ' + (safe ? 'outcome-ok' : 'outcome-bad');
+    outcome.textContent = safe
+      ? '✓ Safe — even 2ms was enough here'
+      : '✗ CRASH — 2ms margin was too thin for this congestion level';
+    div.appendChild(outcome);
+
+    container.appendChild(div);
+  }
+}
+
+document.getElementById('congestionSlider').addEventListener('input', buildScenarios);
+document.getElementById('marginSlider').addEventListener('input', buildScenarios);
+buildScenarios();
+</script>
+</body>
+</html>

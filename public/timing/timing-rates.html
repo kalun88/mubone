@@ -1,0 +1,665 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>mubone — System Timing Rates</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1818; color: #b0d4d4; font-family: 'SF Mono', 'Fira Code', 'Menlo', monospace; padding: 16px; overflow-x: hidden; -webkit-text-size-adjust: 100%; }
+  h1 { color: #7abcbc; font-size: 16px; font-weight: 500; margin-bottom: 4px; }
+  .subtitle { color: #4a7a7a; font-size: 11px; margin-bottom: 16px; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; padding: 8px 12px; background: #111e1e; border: 1px solid #1a3030; border-radius: 6px; }
+  .controls label { font-size: 11px; color: #6a9a9a; }
+  .controls input[type=range] { width: 100px; accent-color: #7abcbc; vertical-align: middle; }
+  .controls .val { color: #7abcbc; font-size: 11px; min-width: 44px; display: inline-block; }
+  .controls select { background:#1a2e2e;color:#7abcbc;border:1px solid #2a5a5a;border-radius:3px;padding:2px 4px;font-family:inherit;font-size:11px; }
+  #mainCanvas { display: block; border-radius: 6px; cursor: crosshair; touch-action: none; }
+  .info-panel { position: fixed; background: #1a2e2e; border: 1px solid #2a5a5a; border-radius: 6px; padding: 12px 14px; font-size: 11px; line-height: 1.6; color: #b0d4d4; pointer-events: none; z-index: 100; max-width: 340px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); display: none; }
+  .info-panel .tt-name { color: #7abcbc; font-weight: bold; font-size: 12px; }
+  .info-panel .tt-val { color: #e8a030; }
+  .info-panel .tt-crit { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 6px; }
+  .info-panel .crit-high { background: #3a1a1a; color: #e06060; border: 1px solid #5a2a2a; }
+  .info-panel .crit-med { background: #3a2e1a; color: #e8a030; border: 1px solid #5a4a2a; }
+  .info-panel .crit-low { background: #1a2e2a; color: #5cb85c; border: 1px solid #2a4a3a; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; padding: 6px 12px; background: #111e1e; border: 1px solid #1a3030; border-radius: 6px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #6a9a9a; }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  /* iPad-friendly tap target for rows */
+  @media (pointer: coarse) {
+    .controls input[type=range] { width: 130px; height: 28px; }
+    .controls select { padding: 4px 8px; font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>mubone — System Timing Rates & Dependencies</h1>
+<p class="subtitle">Every rate, interval, buffer, and timing constant — tap/hover any row for details</p>
+
+<div class="controls">
+  <label>SR:</label>
+  <select id="srSelect">
+    <option value="44100">44.1k</option>
+    <option value="48000" selected>48k</option>
+    <option value="96000">96k</option>
+  </select>
+  <label>Period:</label>
+  <input type="range" id="periodSlider" min="1" max="200" value="50">
+  <span class="val" id="periodVal">50ms</span>
+  <label>Duration:</label>
+  <input type="range" id="durSlider" min="10" max="4000" value="500">
+  <span class="val" id="durVal">500ms</span>
+</div>
+
+<canvas id="mainCanvas"></canvas>
+
+<div class="legend" id="legend"></div>
+
+<div class="info-panel" id="infoPanel"></div>
+
+<script>
+// ── roundRect polyfill (Safari < 16 / older iPad) ──────────────────────────
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+    r = typeof r === 'number' ? r : (Array.isArray(r) ? r[0] : 0);
+    r = Math.min(r, w / 2, h / 2);
+    this.moveTo(x + r, y);
+    this.arcTo(x + w, y, x + w, y + h, r);
+    this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r);
+    this.arcTo(x, y, x + w, y, r);
+    this.closePath();
+  };
+}
+
+const DPR = window.devicePixelRatio || 1;
+const canvas = document.getElementById('mainCanvas');
+const ctx = canvas.getContext('2d');
+const infoEl = document.getElementById('infoPanel');
+const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+const CATS = {
+  audio:  { color: '#e8a030', label: 'Audio Thread' },
+  buffer: { color: '#d09050', label: 'Buffers & Memory' },
+  sched:  { color: '#7abcbc', label: 'Grain Scheduler' },
+  safety: { color: '#e06060', label: 'Safety Margins' },
+  render: { color: '#c070d0', label: 'Render / UI' },
+  input:  { color: '#5cb85c', label: 'Input / Events' },
+  imu:    { color: '#40b0e0', label: 'IMU / Sensors' },
+  net:    { color: '#6090c0', label: 'Network / IO' },
+};
+
+// Build legend
+const legendEl = document.getElementById('legend');
+for (const [k, v] of Object.entries(CATS)) {
+  const item = document.createElement('div');
+  item.className = 'legend-item';
+  const sw = document.createElement('div');
+  sw.className = 'legend-swatch';
+  sw.style.background = v.color;
+  item.appendChild(sw);
+  item.appendChild(document.createTextNode(v.label));
+  legendEl.appendChild(item);
+}
+
+function fmt(bytes) {
+  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+  if (bytes >= 1e3) return (bytes / 1e3).toFixed(1) + ' KB';
+  return bytes + ' B';
+}
+
+function getItems() {
+  const sr = parseInt(document.getElementById('srSelect').value);
+  const period = parseInt(document.getElementById('periodSlider').value);
+  const dur = parseInt(document.getElementById('durSlider').value);
+  const quantum = 128 / sr * 1000;
+  const minGrainDur = quantum * 2;
+  const effPeriod = Math.max(10, period);
+  const concurrentGrains = Math.min(150, Math.ceil(dur / effPeriod));
+  const grainsPerSec = Math.min(150, Math.round(1000 / effPeriod));
+  const audioRate = period <= 10;
+  const nodesPerGrain = audioRate ? 2 : 5;
+  const hannLen = 128; // HANN_LEN from state.js
+  const recInitSamples = sr * 300;
+  const recInitBytes = recInitSamples * 4;
+  const workletBatchSamples = 128 * 16;
+
+  return [
+    // ── Audio Thread ──
+    { id: 'quantum', cat: 'audio', name: 'Render Quantum', ms: quantum,
+      hz: sr / 128, crit: 'high',
+      desc: `128 samples at ${sr}Hz. The atomic unit — Chrome's audio thread must process ALL active nodes within this window. If processing exceeds this, audio glitches. At ${sr}Hz each quantum is ${quantum.toFixed(2)}ms. This constrains everything: min grain duration, min fade length, and how many nodes you can afford.`,
+      deps: ['minGrainDur', 'minFade', 'safetyMargin'] },
+
+    { id: 'baseLatency', cat: 'audio', name: 'Base Latency (typical)', ms: quantum * 3,
+      hz: null, crit: 'med',
+      desc: `Hardware output buffer (~3 quanta = ${(quantum*3).toFixed(1)}ms). The minimum time between scheduling a sound and it reaching the speakers. Varies by device — built-in speakers ~6 quanta, USB audio interfaces ~2-3 quanta. actx.baseLatency reports the actual value.`,
+      deps: ['quantum'] },
+
+    { id: 'workletBatch', cat: 'audio', name: 'Recording Worklet Batch', ms: quantum * 16,
+      hz: sr / workletBatchSamples, crit: 'med',
+      desc: `16 render quanta (${workletBatchSamples} samples = ${(quantum*16).toFixed(1)}ms) batched in the AudioWorklet before posting to the main thread. Each post sends a Float32Array of ${workletBatchSamples} samples (${fmt(workletBatchSamples * 4)}). These messages compete on the main-thread event loop with slider events, scheduler ticks, and RAF callbacks.`,
+      deps: ['quantum'] },
+
+    { id: 'minGrainDur', cat: 'audio', name: 'Min Grain Duration', ms: minGrainDur,
+      hz: null, crit: 'med',
+      desc: `2 render quanta (${minGrainDur.toFixed(2)}ms at ${sr}Hz). Shortest grain that gets a proper fade envelope. Below this, grains are 1-2 sample impulses (clicks). The fadeMode boundary: grains < 2×MIN_FADE use linear triangle envelope; longer grains use Hann setValueCurveAtTime.`,
+      deps: ['quantum'] },
+
+    { id: 'minFade', cat: 'audio', name: 'Min Fade (1 quantum)', ms: quantum,
+      hz: null, crit: 'med',
+      desc: `${quantum.toFixed(2)}ms — minimum duration for a setValueCurveAtTime call. Chrome requires curve duration ≥ 1 render quantum. Below this, the call either no-ops or mis-applies the curve. The grain engine uses 2×MIN_FADE as the boundary between linear and Hann envelopes.`,
+      deps: ['quantum'] },
+
+    { id: 'grainTail', cat: 'audio', name: 'Silent Grain Tail', ms: 10,
+      hz: null, crit: 'med',
+      desc: `10ms of silent source playback after the gain envelope reaches zero. The source keeps playing through a 0-gain node. Without this, the source's stop-sample and the envelope's zero-sample can land in different render quanta — the last few samples leak at non-zero gain → click. Sub-quantum grains use a shorter tail (1 quantum = ${quantum.toFixed(2)}ms) to reduce node lifetime.`,
+      deps: ['quantum'] },
+
+    // ── Buffers & Memory ──
+    { id: 'hannCurve', cat: 'buffer', name: 'Hann Envelope Curves', ms: null,
+      hz: null, crit: 'med', count: hannLen,
+      desc: `Two shared Float32Array(${hannLen}) — attack (0→1 half-Hann) and release (1→0 half-Hann). Pre-built once at init, reused for every cursor grain's setValueCurveAtTime call. Seed grains cache their own volume-scaled copies to avoid per-grain allocation. ${fmt(hannLen * 4 * 2)} total.`,
+      deps: [] },
+
+    { id: 'recBuffer', cat: 'buffer', name: 'Recording Raw Buffer', ms: null,
+      hz: null, crit: 'med',
+      bytes: recInitBytes,
+      desc: `Float32Array(${(recInitSamples/1e6).toFixed(1)}M) = ${fmt(recInitBytes)} initial allocation when recording starts. Holds 5 minutes of mono audio at ${sr}Hz. Doubles when exceeded (rare — 10min max). Freed (nulled) when recording stops. This is the single largest allocation in the app.`,
+      deps: [] },
+
+    { id: 'recAudioBuffer', cat: 'buffer', name: 'Sealed AudioBuffer', ms: null,
+      hz: null, crit: 'high',
+      desc: `Web Audio AudioBuffer created from the raw recording when you stop. Immutable once created — grains read from it. Size = recording duration × ${sr} samples × 4 bytes. A 30-second recording = ${fmt(30 * sr * 4)}. These persist for the session lifetime and are the primary memory consumer with many recordings.`,
+      deps: ['recBuffer'] },
+
+    { id: 'reverseCache', cat: 'buffer', name: 'Reversed Buffer Cache', ms: null,
+      hz: null, crit: 'low',
+      desc: `Lazy-cached reversed copy of each AudioBuffer, created on first reverse-grain playback. Same size as the original. Avoids per-grain reversal (which would be a full buffer copy every ${effPeriod}ms). WeakMap keyed on the original buffer — GC'd when the original is released.`,
+      deps: ['recAudioBuffer'] },
+
+    { id: 'workletMsg', cat: 'buffer', name: 'Worklet Message Size', ms: null,
+      hz: null, crit: 'low',
+      bytes: workletBatchSamples * 4,
+      desc: `Each worklet→main-thread message transfers a Float32Array of ${workletBatchSamples} samples = ${fmt(workletBatchSamples * 4)}. At ${sr}Hz, that's ${(sr / workletBatchSamples).toFixed(0)} messages/sec. These are transferred (zero-copy via Transferable) so the worklet doesn't retain the buffer. Main thread copies into recordingRaw.`,
+      deps: ['workletBatch'] },
+
+    { id: 'particleMem', cat: 'buffer', name: 'Particle Object (each)', ms: null,
+      hz: null, crit: 'low',
+      desc: `Each particle is a plain object with ~15 properties (lon, lat, grainStart, grainDuration, buffer ref, _cx, _cy, _cz, _ang, _cursorAng, etc.). ~200-300 bytes per particle including hidden class overhead. 1000 particles ≈ ${fmt(1000 * 250)}. The angular distance cache (_cursorAng) avoids recomputing trig per tick when the cursor hasn't moved.`,
+      deps: [] },
+
+    { id: 'nodeChain', cat: 'buffer', name: 'Grain Node Chain', ms: null,
+      hz: null, crit: 'high',
+      count: nodesPerGrain,
+      desc: `${nodesPerGrain} Web Audio nodes per grain at current settings.${audioRate ? ' AUDIO RATE (≤10ms): source + gain only — filters/panner skipped.' : ' Full chain: source + gain + HPF + LPF + panner (if filters active).'} At ${concurrentGrains} concurrent grains = ~${concurrentGrains * nodesPerGrain} total nodes. Each node is a C++ object on Chrome's audio thread — creation and GC both cost audio-thread time.`,
+      deps: ['quantum'] },
+
+    // ── Grain Scheduler ──
+    { id: 'schedTick', cat: 'sched', name: 'Scheduler Tick', ms: 20,
+      hz: 50, crit: 'high',
+      desc: `setInterval(scheduleGrains, 20). The heartbeat — 50×/sec. Each tick: angular distances for all particles, candidate selection, grain firing into the lookahead window. O(seeds × particles) per tick. Was 10ms but starved the render loop at high particle counts (16 seeds × 500 particles = 8000 distance calcs per tick).`,
+      deps: ['lookahead', 'safePeriod', 'maxGrainsPerTick'] },
+
+    { id: 'lookahead', cat: 'sched', name: 'Schedule Lookahead', ms: 40,
+      hz: null, crit: 'high',
+      desc: `How far ahead the scheduler pre-fires grain onsets (40ms). Must exceed the tick interval (20ms) so there's always ≥1 onset pre-scheduled. At period=10ms, this window holds 4 onsets. Was 120ms but grains were committed too far ahead — slider scrubbing felt sluggish because old-parameter grains were already queued.`,
+      deps: ['schedTick'] },
+
+    { id: 'safePeriod', cat: 'sched', name: 'Safe Period Floor', ms: 10,
+      hz: 100, crit: 'high',
+      desc: `SCHED_SAFE_PERIOD_S — the onset clock always advances by ≥10ms. Even if the slider reads 1ms, grains fire at most 100/sec from the cursor (plus seeds). Also the audioRate threshold: at ≤10ms, spatial nodes are skipped (2 nodes/grain instead of 5-6). Raised from 2ms after Chrome renderer crashes at extreme combos.`,
+      deps: [] },
+
+    { id: 'period', cat: 'sched', name: 'Current Grain Period', ms: effPeriod,
+      hz: 1000 / effPeriod, crit: 'med',
+      desc: `Slider: ${period}ms → effective: ${effPeriod}ms (after safe floor). ${grainsPerSec} grains/sec × ${dur}ms duration = ~${concurrentGrains} concurrent sources × ${nodesPerGrain} nodes = ~${concurrentGrains * nodesPerGrain} active Web Audio nodes.${audioRate ? ' AUDIO RATE — lightweight path.' : ''} Max 150 sources (MAX_GRAIN_NODES).`,
+      deps: ['safePeriod'] },
+
+    { id: 'maxGrainsPerTick', cat: 'sched', name: 'Max Grains Per Tick', ms: null,
+      hz: null, crit: 'med', count: 12,
+      desc: `12 grain-creation calls max per scheduler tick. 50 ticks/sec × 12 = 600 grain-creations/sec ceiling. Prevents a single congested tick from flooding the audio graph. The pressure throttle halves this to 6 when node pool exceeds 75% of MAX_GRAIN_NODES (112 sources).`,
+      deps: ['schedTick'] },
+
+    // ── Safety Margins ──
+    { id: 'safetyMargin', cat: 'safety', name: 'MIN_FUTURE_S', ms: 10,
+      hz: null, crit: 'high',
+      desc: `The crash-prevention margin. Every grain onset is clamped to ≥10ms in the future. Between JS reading actx.currentTime and Chrome's audio thread processing the setValueCurveAtTime command, the audio clock advances. Under load (slider scrub + recording + scheduler + RAF), this gap can reach 3-8ms. The old 2-4ms margin got eaten → start time in the past → native renderer crash (error code 5).`,
+      deps: ['quantum'] },
+
+    { id: 'curveGuard', cat: 'safety', name: 'Curve Guard (in playGrain)', ms: 10,
+      hz: null, crit: 'high',
+      desc: `Last-resort safety inside playGrain: re-reads actx.currentTime immediately before the setValueCurveAtTime call. If t < currentTime + 5ms, nudges to currentTime + 10ms. Catches margin erosion from JS work between the scheduler's audioNow read and the actual Web Audio API call.`,
+      deps: ['safetyMargin'] },
+
+    { id: 'snapGuard', cat: 'safety', name: 'Onset Snap Guard', ms: 10,
+      hz: null, crit: 'high',
+      desc: `In the scheduler while-loop: if _cursorNextOnsetT < audioNow (fell behind after suspension, clock reset, or period slider change), snaps forward to audioNow + 10ms. Without this, grains are scheduled in the past → setValueCurveAtTime crashes the renderer.`,
+      deps: ['safetyMargin'] },
+
+    { id: 'reanchor', cat: 'safety', name: 'FP Re-anchor', ms: 10000,
+      hz: 0.1, crit: 'low',
+      desc: `Every 10s, resets floating-point drift in the onset clock. _cursorNextOnsetT accumulates error from thousands of += period additions. Re-anchors to a fresh actx.currentTime + offset. Imperceptible — periodVar jitter is orders of magnitude larger than fp drift.`,
+      deps: [] },
+
+    { id: 'staleGuard', cat: 'safety', name: 'Stale Clock Guard', ms: 30000,
+      hz: null, crit: 'med',
+      desc: `If the onset clock is >30s ahead (AudioContext recreated, time reset to 0) or >0.5s behind (short suspension where statechange didn't fire), nulls the clock to force reinitialisation. Prevents the scheduler from being permanently stuck.`,
+      deps: [] },
+
+    // ── Render / UI ──
+    { id: 'renderFPS', cat: 'render', name: 'Render Target', ms: 1000/30,
+      hz: 30, crit: 'med',
+      desc: `Canvas heavy-draw capped at 30fps (${(1000/30).toFixed(1)}ms). requestAnimationFrame still fires at display rate (60-120Hz) for camera/input, but particle drawing, trails, and grid only run every other frame (or less). Protects the scheduler from render-loop starvation. Was the #1 source of scheduler drift before the Mar 29 optimization.`,
+      deps: [] },
+
+    { id: 'trailBudget', cat: 'render', name: 'Trail Budget', ms: null,
+      hz: null, crit: 'low', count: 120,
+      desc: `120 total trail projection points per frame across all moving seeds. Uses projectInto() (zero-alloc hot path) not project() (allocates). Caps at 40 points per seed. Moving trail rendering was the #1 scheduler drift source — batched fills into single beginPath()/fill() and enforced this budget to fix it.`,
+      deps: ['renderFPS'] },
+
+    { id: 'liveRebuild', cat: 'render', name: 'Curve Rebuild Debounce', ms: 200,
+      hz: 5, crit: 'low',
+      desc: `200ms debounce for rebuilding Hann envelope curves when preset params change. Prevents redundant Float32Array(128) allocation during slider drags. Curves are rebuilt at most 5×/sec while scrubbing — inaudible since the per-grain volume scaling handles the rest.`,
+      deps: [] },
+
+    // ── Input / Events ──
+    { id: 'sliderDebounce', cat: 'input', name: 'Slider Debounce', ms: 30,
+      hz: 33, crit: 'med',
+      desc: `Coalesces rapid slider input events via setTimeout(30ms). Browser fires 'input' at 60Hz+ during drag; this batches changes and only sends the latest value per param. Reduces main-thread pressure. However, resetCursorPeriod() still fires per raw input event for immediate onset response — that's what causes event-loop congestion during scrubbing.`,
+      deps: [] },
+
+    { id: 'browserInput', cat: 'input', name: 'Browser Input Rate', ms: 1000/60,
+      hz: 60, crit: 'low',
+      desc: `~60Hz typical browser input event rate during slider drag (iPad can be 120Hz on ProMotion displays). Each event: writes S.grainOverrides, calls resetCursorPeriod(), and the debounced path queues a UI update. This + worklet messages + scheduler + RAF = the full event-loop pressure during the crash scenario.`,
+      deps: [] },
+
+    { id: 'commitThresh', cat: 'input', name: 'Commit Threshold', ms: 200,
+      hz: null, crit: 'low',
+      desc: `Hold duration to distinguish a quick drop (<200ms → stationary point) from a moving seed trace (>200ms → records a path). Also guards against accidental taps — recordings shorter than 80ms are discarded.`,
+      deps: [] },
+
+    { id: 'seedFrameRate', cat: 'input', name: 'Seed Drawing Rate', ms: 66,
+      hz: 15, crit: 'low',
+      desc: `Seed path recording throttled to ~15fps. While holding to draw a moving seed, cursor position frames are captured every 66ms. Independent of the render loop. Lower rate = smoother interpolation with fewer keyframes stored.`,
+      deps: [] },
+
+    // ── IMU / Sensors ──
+    { id: 'ahrsInternal', cat: 'imu', name: 'x-IMU3 AHRS Internal', ms: 1000 / 400,
+      hz: 400, crit: 'low',
+      desc: `x-IMU3 internal AHRS (attitude-heading reference system) processing rate. The sensor fuses gyro, accelerometer, and magnetometer data at 400Hz on-chip. This is the raw fusion rate — output is decimated by the message rate divisor before transmission. You never see 400Hz on the wire.`,
+      deps: ['ahrsOutput'] },
+
+    { id: 'ahrsOutput', cat: 'imu', name: 'x-IMU3 Quaternion Output', ms: 1000 / 50,
+      hz: 50, crit: 'high',
+      desc: `x-IMU3 quaternion message rate: 400Hz ÷ 8 (ahrs_message_rate_divisor) = 50Hz. Each message is a [x, y, z, w] quaternion used for wand orientation. This is the effective sensor update rate for spatial cursor control. 50Hz is plenty for smooth gesture — doubling to 100Hz (divisor=4) increases main-thread message pressure for negligible perceptual gain.`,
+      deps: ['baudRate'] },
+
+    { id: 'deviceOrientation', cat: 'imu', name: 'Device Orientation (mobile)', ms: 16,
+      hz: 60, crit: 'med',
+      desc: `deviceorientation/devicemotion event rate on mobile. Typically 60Hz (matching display rate). iPad Pro with ProMotion may report 120Hz. The dt is clamped to max 50ms to prevent large integration jumps after tab suspension. Fallback: 16ms (62.5Hz) when e.interval is not reported. Used for mobile wand mode (phone-as-controller).`,
+      deps: [] },
+
+    { id: 'mobileReadout', cat: 'imu', name: 'Mobile Sensor Readout', ms: 100,
+      hz: 10, crit: 'low',
+      desc: `Mobile settings panel sensor readout refresh rate. Updates the orientation display text at 10Hz — intentionally slow to avoid DOM thrashing. The actual sensor data flows at 60Hz through deviceorientation events; this is just the debug readout.`,
+      deps: ['deviceOrientation'] },
+
+    { id: 'baudRate', cat: 'imu', name: 'WebSerial Baud Rate', ms: null,
+      hz: null, crit: 'med', count: 115200,
+      desc: `115200 baud for x-IMU3 USB serial. At 50Hz quaternion output, each message is ~40-60 bytes → ~2500-3000 bytes/sec, well under the 14.4 KB/sec baud capacity. The bottleneck is never serial throughput — it's the main-thread cost of parsing JSON messages from the serial read loop.`,
+      deps: [] },
+
+    { id: 'imuHandshake', cat: 'imu', name: 'Device Handshake Delay', ms: 500,
+      hz: null, crit: 'low',
+      desc: `500ms delay after opening a WebSerial/serial port before sending configuration commands. The x-IMU3 needs time to initialize its USB stack after connection. Followed by axis alignment, AHRS settings (100ms delay each), and LED blink confirmation (5 blinks × 200ms = 1 second handshake sequence). Total connect time: ~2 seconds.`,
+      deps: ['baudRate'] },
+
+    { id: 'imuLedBlink', cat: 'imu', name: 'LED Blink Interval', ms: 200,
+      hz: 5, crit: 'low',
+      desc: `200ms between LED blink commands during the x-IMU3 handshake. 5 blinks (1 second total) provide physical confirmation that the device received and applied configuration. Also used as a visual pairing indicator — the performer sees the wand blink when it connects.`,
+      deps: ['imuHandshake'] },
+
+    { id: 'proxyRetry', cat: 'imu', name: 'Proxy Reconnect Retry', ms: 3000,
+      hz: 0.33, crit: 'low',
+      desc: `3-second reconnection retry for the WebSocket proxy control channel (WiFi IMU discovery). Non-blocking — fires in background. Same interval as the OSC data WebSocket retry. If the proxy (Electron bridge) isn't running, this just quietly retries every 3s until it appears.`,
+      deps: [] },
+
+    { id: 'mobileTouchDebounce', cat: 'imu', name: 'Mobile Touch Release', ms: 200,
+      hz: null, crit: 'low',
+      desc: `200ms debounce after touch release in mobile live recording mode. Prevents premature stop when the performer briefly lifts their finger. Below this threshold, the recording continues. Ensures intentional stop gestures vs. accidental lifts during performance.`,
+      deps: [] },
+
+    // ── Network / IO ──
+    { id: 'wsRetry', cat: 'net', name: 'OSC WebSocket Retry', ms: 3000,
+      hz: 0.33, crit: 'low',
+      desc: `3-second reconnect delay after OSC WebSocket disconnect. Non-blocking — the app works fine without the Max/MSP bridge. Same interval used for IMU proxy reconnect.`,
+      deps: ['proxyRetry'] },
+
+    { id: 'settingsSave', cat: 'net', name: 'Settings Auto-save', ms: 2000,
+      hz: 0.5, crit: 'low',
+      desc: `Check-and-save audio settings to localStorage every 2 seconds. Compares current state to saved state; writes only on change. Minimal overhead — just JSON serialization of a small config object.`,
+      deps: [] },
+  ];
+}
+
+// ── Layout & Drawing ────────────────────────────────────────────────────────
+let items = [];
+let itemRects = [];
+
+function layout() {
+  const W = Math.min(1100, window.innerWidth - 32);
+  const ROW_H = isTouch ? 38 : 32;
+  const LEFT_MARGIN = Math.min(180, W * 0.25);
+  const RIGHT_MARGIN = 16;
+  const TOP_MARGIN = 36;
+  const BAR_H = isTouch ? 22 : 18;
+
+  items = getItems();
+
+  const catOrder = Object.keys(CATS);
+  items.sort((a, b) => {
+    const ca = catOrder.indexOf(a.cat), cb = catOrder.indexOf(b.cat);
+    if (ca !== cb) return ca - cb;
+    const am = a.ms ?? (a.bytes ? Math.log10(a.bytes) : 99999);
+    const bm = b.ms ?? (b.bytes ? Math.log10(b.bytes) : 99999);
+    return am - bm;
+  });
+
+  // Log scale
+  const allMs = items.filter(i => i.ms != null).map(i => i.ms);
+  const minMs = Math.min(...allMs);
+  const maxMs = Math.max(...allMs);
+  const logMin = Math.log10(Math.max(0.01, minMs));
+  const logMax = Math.log10(maxMs);
+  const barW = W - LEFT_MARGIN - RIGHT_MARGIN;
+
+  const msToBarW = (ms) => {
+    if (ms == null) return 0;
+    const log = Math.log10(Math.max(0.01, ms));
+    return Math.max(8, ((log - logMin) / (logMax - logMin)) * barW);
+  };
+
+  // Build row list with headers
+  let totalRows = 0;
+  let lastCat = null;
+  const rowData = [];
+  for (const item of items) {
+    if (item.cat !== lastCat) {
+      rowData.push({ type: 'header', cat: item.cat });
+      totalRows++;
+      lastCat = item.cat;
+    }
+    rowData.push({ type: 'item', item });
+    totalRows++;
+  }
+
+  const H = TOP_MARGIN + totalRows * ROW_H + 20;
+  canvas.width = W * DPR;
+  canvas.height = H * DPR;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  // Background
+  ctx.fillStyle = '#0d1818';
+  ctx.fillRect(0, 0, W, H);
+
+  // Axis
+  ctx.strokeStyle = '#1a3030';
+  ctx.lineWidth = 1;
+  const axisY = TOP_MARGIN - 8;
+  ctx.beginPath();
+  ctx.moveTo(LEFT_MARGIN, axisY);
+  ctx.lineTo(W - RIGHT_MARGIN, axisY);
+  ctx.stroke();
+
+  ctx.fillStyle = '#3a5a5a';
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'center';
+  const ticks = [0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 30000];
+  for (const t of ticks) {
+    if (t < minMs * 0.5 || t > maxMs * 1.5) continue;
+    const x = LEFT_MARGIN + msToBarW(t);
+    if (x > W - RIGHT_MARGIN + 10) continue;
+    ctx.beginPath();
+    ctx.moveTo(x, axisY - 4);
+    ctx.lineTo(x, axisY + 4);
+    ctx.stroke();
+    let label = t >= 1000 ? (t/1000) + 's' : t >= 1 ? t + 'ms' : (t*1000).toFixed(0) + 'µs';
+    ctx.fillText(label, x, axisY - 8);
+  }
+
+  // Grid
+  ctx.strokeStyle = '#0f1f1f';
+  for (const t of ticks) {
+    if (t < minMs * 0.5 || t > maxMs * 1.5) continue;
+    const x = LEFT_MARGIN + msToBarW(t);
+    if (x > W - RIGHT_MARGIN + 10) continue;
+    ctx.beginPath();
+    ctx.moveTo(x, TOP_MARGIN);
+    ctx.lineTo(x, H - 10);
+    ctx.stroke();
+  }
+
+  // Rows
+  itemRects = [];
+  let y = TOP_MARGIN;
+  for (const row of rowData) {
+    if (row.type === 'header') {
+      const cat = CATS[row.cat];
+      ctx.fillStyle = cat.color;
+      ctx.globalAlpha = 0.4;
+      ctx.font = 'bold 10px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(cat.label.toUpperCase(), 8, y + ROW_H * 0.62);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = '#1a3030';
+      ctx.beginPath(); ctx.moveTo(0, y + 2); ctx.lineTo(W, y + 2); ctx.stroke();
+      y += ROW_H;
+      continue;
+    }
+
+    const item = row.item;
+    const cat = CATS[item.cat];
+    const barY = y + (ROW_H - BAR_H) / 2;
+    const isHovered = item === hoveredItem;
+
+    // Highlight row on hover
+    if (isHovered) {
+      ctx.fillStyle = '#142828';
+      ctx.fillRect(0, y, W, ROW_H);
+    }
+
+    // Criticality dot
+    const critColors = { high: '#e06060', med: '#e8a030', low: '#2a5a5a' };
+    ctx.fillStyle = critColors[item.crit] || '#2a5a5a';
+    ctx.beginPath(); ctx.arc(10, y + ROW_H / 2, 3, 0, Math.PI * 2); ctx.fill();
+
+    // Label
+    ctx.fillStyle = isHovered ? '#c0e8e8' : '#8abcbc';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'right';
+    const labelText = item.name.length > LEFT_MARGIN / 6.5 ? item.name.slice(0, Math.floor(LEFT_MARGIN / 6.5) - 1) + '…' : item.name;
+    ctx.fillText(labelText, LEFT_MARGIN - 8, y + ROW_H / 2 + 3);
+
+    // Bar
+    if (item.ms != null) {
+      const bw = msToBarW(item.ms);
+      const grad = ctx.createLinearGradient(LEFT_MARGIN, 0, LEFT_MARGIN + bw, 0);
+      grad.addColorStop(0, cat.color + (isHovered ? 'ee' : 'cc'));
+      grad.addColorStop(1, cat.color + (isHovered ? '66' : '44'));
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.roundRect(LEFT_MARGIN, barY, bw, BAR_H, 3); ctx.fill();
+
+      ctx.fillStyle = isHovered ? '#ffffff' : '#d0e8e8';
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'left';
+      let valStr = item.ms >= 1000 ? (item.ms / 1000).toFixed(1) + 's'
+                 : item.ms >= 1 ? item.ms.toFixed(item.ms < 10 ? 2 : 0) + 'ms'
+                 : (item.ms * 1000).toFixed(0) + 'µs';
+      if (item.hz) valStr += `  ${item.hz >= 1 ? item.hz.toFixed(0) : item.hz.toFixed(2)}Hz`;
+      const textX = LEFT_MARGIN + bw + 6;
+      if (textX + 80 < W) ctx.fillText(valStr, textX, y + ROW_H / 2 + 3);
+      else { ctx.fillStyle = '#0d1818'; ctx.fillText(valStr, LEFT_MARGIN + 6, y + ROW_H / 2 + 3); }
+
+    } else if (item.count != null) {
+      ctx.fillStyle = cat.color + '60';
+      ctx.beginPath(); ctx.roundRect(LEFT_MARGIN, barY, 60, BAR_H, 3); ctx.fill();
+      ctx.fillStyle = '#d0e8e8'; ctx.font = '9px monospace'; ctx.textAlign = 'left';
+      ctx.fillText(`× ${item.count}`, LEFT_MARGIN + 8, y + ROW_H / 2 + 3);
+
+    } else if (item.bytes != null) {
+      // Buffer size — use a distinct bar width based on log(bytes)
+      const logBytes = Math.log10(item.bytes);
+      const bw = Math.max(20, (logBytes / 9) * barW * 0.6); // 9 = ~1GB
+      ctx.fillStyle = cat.color + '80';
+      ctx.beginPath(); ctx.roundRect(LEFT_MARGIN, barY, bw, BAR_H, 3); ctx.fill();
+      ctx.fillStyle = '#d0e8e8'; ctx.font = '9px monospace'; ctx.textAlign = 'left';
+      ctx.fillText(fmt(item.bytes), LEFT_MARGIN + 8, y + ROW_H / 2 + 3);
+    }
+
+    itemRects.push({ x: 0, y, w: W, h: ROW_H, item });
+    y += ROW_H;
+  }
+
+  // Dependency arrows for hovered item
+  if (hoveredItem) {
+    drawDeps(hoveredItem, LEFT_MARGIN, msToBarW, TOP_MARGIN, ROW_H, rowData, W);
+  }
+}
+
+let hoveredItem = null;
+
+function drawDeps(item, leftMargin, msToBarW, topMargin, rowH, rowData, W) {
+  if (!item.deps || !item.deps.length) return;
+  const findY = (id) => {
+    let y = topMargin;
+    for (const row of rowData) {
+      if (row.type === 'item' && row.item.id === id) return y + rowH / 2;
+      y += rowH;
+    }
+    return null;
+  };
+  const sourceY = findY(item.id);
+  if (sourceY == null) return;
+  const sourceX = leftMargin + (item.ms != null ? msToBarW(item.ms) : 40) + leftMargin * 0.1;
+
+  ctx.strokeStyle = '#7abcbc66';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 4]);
+
+  for (const depId of item.deps) {
+    const depItem = items.find(i => i.id === depId);
+    if (!depItem) continue;
+    const depY = findY(depId);
+    if (depY == null) continue;
+    const depX = leftMargin + (depItem.ms != null ? msToBarW(depItem.ms) : 40) + leftMargin * 0.1;
+    ctx.beginPath();
+    ctx.moveTo(Math.min(sourceX, W - 20), sourceY);
+    const midX = Math.max(sourceX, depX) + 30;
+    ctx.bezierCurveTo(midX, sourceY, midX, depY, Math.min(depX, W - 20), depY);
+    ctx.stroke();
+    ctx.fillStyle = '#7abcbc66';
+    const ax = Math.min(depX, W - 20);
+    ctx.beginPath(); ctx.moveTo(ax, depY); ctx.lineTo(ax - 6, depY - 3); ctx.lineTo(ax - 6, depY + 3); ctx.closePath(); ctx.fill();
+  }
+  ctx.setLineDash([]);
+}
+
+// ── Info panel (works for both mouse and touch) ─────────────────────────────
+function showInfo(item, clientX, clientY) {
+  const critLabel = { high: 'CRITICAL', med: 'IMPORTANT', low: 'LOW PRIORITY' };
+  const critClass = { high: 'crit-high', med: 'crit-med', low: 'crit-low' };
+
+  let html = `<div class="tt-name">${item.name}<span class="tt-crit ${critClass[item.crit]}">${critLabel[item.crit]}</span></div>`;
+  if (item.ms != null) {
+    let val = item.ms >= 1000 ? (item.ms/1000).toFixed(2) + 's' : item.ms.toFixed(2) + 'ms';
+    if (item.hz) val += ` = ${item.hz >= 1 ? item.hz.toFixed(1) : item.hz.toFixed(3)} Hz`;
+    html += `<div class="tt-val">${val}</div>`;
+  } else if (item.count != null) {
+    html += `<div class="tt-val">count: ${item.count}</div>`;
+  } else if (item.bytes != null) {
+    html += `<div class="tt-val">${fmt(item.bytes)}</div>`;
+  }
+  html += `<div style="margin-top:6px">${item.desc}</div>`;
+  if (item.deps?.length) html += `<div style="margin-top:6px;color:#4a7a7a;font-size:10px">Depends on: ${item.deps.join(', ')}</div>`;
+
+  infoEl.innerHTML = html;
+  infoEl.style.display = 'block';
+
+  // Position — keep on screen
+  const pw = 340, ph = 220;
+  let tx = clientX + 16, ty = clientY - 10;
+  if (tx + pw > window.innerWidth) tx = Math.max(8, clientX - pw - 8);
+  if (ty + ph > window.innerHeight) ty = Math.max(8, window.innerHeight - ph - 8);
+  if (ty < 8) ty = 8;
+  infoEl.style.left = tx + 'px';
+  infoEl.style.top = ty + 'px';
+}
+
+function hideInfo() {
+  infoEl.style.display = 'none';
+}
+
+function hitTest(px, py) {
+  for (const r of itemRects) {
+    if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return r.item;
+  }
+  return null;
+}
+
+// Mouse events
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const found = hitTest(e.clientX - rect.left, e.clientY - rect.top);
+  if (found !== hoveredItem) { hoveredItem = found; layout(); }
+  if (found) showInfo(found, e.clientX, e.clientY);
+  else hideInfo();
+});
+canvas.addEventListener('mouseleave', () => { hoveredItem = null; hideInfo(); layout(); });
+
+// Touch events (iPad)
+canvas.addEventListener('touchstart', (e) => {
+  const t = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  const found = hitTest(t.clientX - rect.left, t.clientY - rect.top);
+  if (found !== hoveredItem) { hoveredItem = found; layout(); }
+  if (found) { showInfo(found, t.clientX, t.clientY); e.preventDefault(); }
+  else hideInfo();
+}, { passive: false });
+canvas.addEventListener('touchmove', (e) => {
+  const t = e.touches[0];
+  const rect = canvas.getBoundingClientRect();
+  const found = hitTest(t.clientX - rect.left, t.clientY - rect.top);
+  if (found !== hoveredItem) { hoveredItem = found; layout(); }
+  if (found) showInfo(found, t.clientX, t.clientY);
+  else hideInfo();
+}, { passive: true });
+canvas.addEventListener('touchend', () => {
+  // Keep info visible until next tap — more useful on touch
+});
+document.addEventListener('touchstart', (e) => {
+  if (!canvas.contains(e.target) && !infoEl.contains(e.target)) {
+    hoveredItem = null; hideInfo(); layout();
+  }
+}, { passive: true });
+
+// ── Update ──────────────────────────────────────────────────────────────────
+function update() {
+  document.getElementById('periodVal').textContent = document.getElementById('periodSlider').value + 'ms';
+  document.getElementById('durVal').textContent = document.getElementById('durSlider').value + 'ms';
+  layout();
+}
+
+document.getElementById('srSelect').addEventListener('change', update);
+document.getElementById('periodSlider').addEventListener('input', update);
+document.getElementById('durSlider').addEventListener('input', update);
+window.addEventListener('resize', update);
+
+update();
+</script>
+</body>
+</html>
