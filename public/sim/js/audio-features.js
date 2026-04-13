@@ -12,8 +12,10 @@ const _freqBuf = new Uint8Array(128);
 
 // ── Peak-hold tracker ────────────────────────────────────────────────────────
 // The AnalyserNode only holds the last 256 samples (~5ms at 48kHz), but
-// particles are painted every 3rd render frame (~50ms at 60fps). A loud click
-// that happens between paints is gone before anyone reads it.
+// particles are painted every ~50ms. A loud click that happens between
+// paints would be gone before anyone reads it.  tickPeakHold() runs
+// every render frame and holds the peak with slow decay so transients
+// are still "hot" when the next snapshotInputFeatures() reads them.
 //
 // tickPeakHold() runs every render frame (called from animate()) and
 // continuously samples the analyser, holding the peak with slow decay so
@@ -129,17 +131,15 @@ export function featuresFromBuffer(buffer, startSec) {
   const rms = Math.max(rawRms, peak * 0.7);
 
   // ── Spectral centroid via simple DFT magnitude (128 bins) ──
-  // For 256 real samples we compute 128 frequency magnitudes.
-  // This is a one-shot cost (~16K multiply-adds) — negligible at paint rate.
   const halfN = 128;
   let weightedSum = 0;
   let totalEnergy = 0;
   for (let k = 0; k < halfN; k++) {
     let re = 0, im = 0;
-    for (let n = 0; n < len; n++) {
-      const angle = (2 * Math.PI * k * n) / len;
-      re += ch[off + n] * Math.cos(angle);
-      im -= ch[off + n] * Math.sin(angle);
+    for (let n = 0; n < cLen; n++) {
+      const angle = (2 * Math.PI * k * n) / cLen;
+      re += ch[cOff + n] * Math.cos(angle);
+      im -= ch[cOff + n] * Math.sin(angle);
     }
     const mag = Math.sqrt(re * re + im * im);
     weightedSum += k * mag;

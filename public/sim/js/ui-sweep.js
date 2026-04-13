@@ -5,7 +5,8 @@
 // ============================================================================
 
 import { S, MAX_COMMITS } from './state.js';
-import { angleBetweenSphere } from './grain.js';
+import { angleBetweenSphere, killAllGrains } from './grain.js';
+import { flushWorkletGrains } from './grain-worklet-bridge.js';
 
 // ── Sweep snapshot — allows one-level undo of sweep ──────────────────────────
 // Stashed on sweep, restored on undo, permanently discarded on next new action.
@@ -16,6 +17,9 @@ import { angleBetweenSphere } from './grain.js';
  */
 export function undoSweep() {
   if (!S._sweepSnapshot) return false;
+  // Kill in-flight grains from the previous state so they don't ring out
+  killAllGrains();
+  flushWorkletGrains();
   const snap = S._sweepSnapshot;
   S.particles            = snap.particles;
   S.liveRecBuffers       = snap.liveRecBuffers;
@@ -239,6 +243,10 @@ function eraseAll() {
     strokeHistory:        [...S.strokeHistory],
     commitSlots:          S.commitSlots.map(s => s),   // shallow copy of slot refs
   };
+  // Stop all in-flight grains so they don't ring out
+  killAllGrains();        // main-thread AudioBufferSourceNodes
+  flushWorkletGrains();   // worklet grain pool (exp mode)
+
   // Clear particles & buffers
   S.particles = [];
   S._particleVersion++;
@@ -258,6 +266,16 @@ function eraseAll() {
   (S.updateSeedBanksUI || (() => {}))();
   S.updateLiveRecUI?.();
   scheduleSweepAutoCommit();
+
+  // If recording is still active, re-create a fresh buffer slot so new
+  // particles from the ongoing recording have somewhere to land.
+  // Also re-init the provisional live buffer stream to the worklet.
+  if (S.isRecording) {
+    S.currentLiveBufferIdx = 0;
+    S.liveRecBuffers.push({ buffer: null, grainCursor: 0 });
+    S._beginProvisionalRecording?.();
+  }
+
   return count + (hadCommits ? 1 : 0);
 }
 

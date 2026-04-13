@@ -630,6 +630,19 @@ function createWindow() {
     callback(['media', 'midi', 'midiSysex', 'pointerLock'].includes(permission));
   });
 
+  // Enable SharedArrayBuffer in the renderer — required by Chromium 92+
+  // (Electron 34 / Chromium 132).  The grain-engine worklet uses SAB to
+  // share audio buffers between the main thread and the audio thread.
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Cross-Origin-Opener-Policy':   ['same-origin'],
+        'Cross-Origin-Embedder-Policy': ['require-corp'],
+      },
+    });
+  });
+
   win.loadFile('index.html');
 
   // Forward native fullscreen state changes to the renderer so the

@@ -6,15 +6,15 @@ import {
   S, BG_COLOR_DARK, BG_COLOR_LIGHT, GRID_COLOR, GRID_SEGMENTS_LON, GRID_SEGMENTS_LAT,
   SPHERE_RADIUS, FOV_DEG, PARTICLE_BASE_SIZE, PARTICLE_MAX_SIZE,
   SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, NEAREST_GLOW_COLOR,
-  MAX_SEEDS, MAX_SEQS, AUTO_ROTATION_SPEED, ROTATION_SPEED, PAINT_INTERVAL,
+  MAX_SEEDS, MAX_SEQS, AUTO_ROTATION_SPEED, ROTATION_SPEED,
   RENDER_TARGET_FPS, GRAIN_SCHEDULER_INTERVAL_MS,
   perf, perfTick, gp, rebuildGrainCurves, minGrainDurS
 } from './state.js';
 import { spherePoint, cameraTransform, project, projectInto, updateProjectionCache, getCursorLonLat, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto } from './sphere.js';
-import { rand, activeGrainMap, stampCartesian } from './grain.js';
+import { activeGrainMap } from './grain.js';
 import { tickMappings } from './sensor-mapping.js';
-import { rebuildLiveBuffer, getRecordingDuration } from './audio.js';
-import { snapshotInputFeatures, featuresFromBuffer, normalise, featuresToHSL, tickPeakHold } from './audio-features.js';
+import { rebuildLiveBuffer } from './audio.js';
+import { normalise, featuresToHSL, tickPeakHold } from './audio-features.js';
 
 // All VU metering moved to ui-meters.js (DOM-based, shared with audio settings modal).
 
@@ -1427,77 +1427,8 @@ export function animate() {
   // Writes mapped values to S.grainOverrides; grain scheduler reads on next tick.
   tickMappings();
 
-  // Drop particles while painting (alt-lock freezes view, not painting —
-  // position uses frozen coords below when altLocked)
-  if (S.isPainting) {
-    S.paintFrameCount++;
-    if (S.paintFrameCount % PAINT_INTERVAL === 0) {
-      // Detethered: paint at cursor IMU position, not mouse
-      const { lon, lat } = S.cursorQ
-        ? getCursorLonLat()
-        : screenToLonLat(
-            S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
-            S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY
-          );
-      const gpr = gp();
-      const durVariation = rand(-gpr.durJitter * 0.5, gpr.durJitter * 0.5);
-
-      let particle = null;
-
-      if (S.isRecording && S.currentLiveBufferIdx >= 0) {
-        const recTime = getRecordingDuration();
-        particle = {
-          lon, lat,
-          strokeId:      S.currentStrokeId,
-          lastTriggeredAt: undefined,
-          grainDuration: Math.max(minGrainDurS(), gpr.duration + durVariation),
-          source:        'live',
-          liveBufferIdx: S.currentLiveBufferIdx,
-          grainStart:    Math.max(0, recTime - gpr.duration),
-          color:         LIVE_PAINT_COLORS[S.liveColorIndex % LIVE_PAINT_COLORS.length]
-        };
-        // Snapshot audio features from input analyser (live path)
-        const feat = snapshotInputFeatures();
-        if (feat) {
-          // Noise floor gate — reject particle if signal is just room ambience
-          if (S.vizNoiseFloor > 0 && feat.rms < S.vizNoiseFloor) {
-            particle = null;
-          } else {
-            particle.rms = feat.rms; particle.centroid = feat.centroid; particle.zcr = feat.zcr;
-          }
-        }
-      } else if (S.activeSampleIndex >= 0 && S.samples[S.activeSampleIndex] && S.samples[S.activeSampleIndex].buffer) {
-        const s          = S.samples[S.activeSampleIndex];
-        const cropStart  = s.cropStart * s.duration;
-        const cropEnd    = s.cropEnd   * s.duration;
-        const cropLen    = cropEnd - cropStart;
-        let rawStart      = s.grainCursor;
-        if (cropLen > 0) rawStart = cropStart + ((rawStart - cropStart) % cropLen + cropLen) % cropLen;
-        const clampedStart = Math.max(cropStart, Math.min(rawStart, cropEnd - 0.01));
-        const grainDur     = Math.max(minGrainDurS(), Math.min(gpr.duration + durVariation, cropEnd - clampedStart));
-
-        particle = {
-          lon, lat,
-          strokeId:      S.currentStrokeId,
-          lastTriggeredAt: undefined,
-          source:        'sample',
-          sampleIndex:   S.activeSampleIndex,
-          grainStart:    clampedStart,
-          grainDuration: grainDur,
-          color:         SAMPLE_PAINT_COLORS[S.activeSampleIndex % SAMPLE_PAINT_COLORS.length]
-        };
-        // Snapshot audio features from sample buffer (offline path)
-        const feat = featuresFromBuffer(s.buffer, clampedStart);
-        if (feat) { particle.rms = feat.rms; particle.centroid = feat.centroid; particle.zcr = feat.zcr; }
-
-        const stride = gpr.period * rand(0.8, 1.2);
-        s.grainCursor += stride;
-        if (s.grainCursor > cropEnd) s.grainCursor = cropStart + ((s.grainCursor - cropStart) % cropLen);
-      }
-
-      if (particle) { stampCartesian(particle); S.particles.push(particle); S._particleVersion++; }
-    }
-  }
+  // Particle deposits are handled by paint-ticker.js (200Hz setInterval),
+  // independent of the render loop and input source.
 
   if (S.isRecording) rebuildLiveBuffer();
 

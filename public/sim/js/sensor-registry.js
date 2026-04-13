@@ -327,6 +327,13 @@ export function handleSlotQuaternion(slot, values) {
   if (slot.quatRole === 'custom') {
     dispatchCustomQuat(slot);
   }
+
+  // Fire paint-ticker callback on every cursor-role quaternion arrival.
+  // This drives velocity-adaptive particle deposition at IMU rate (up to 400Hz)
+  // instead of the old render-loop gate (10Hz).
+  if (slot.quatRole === 'cursor') {
+    S._onCursorQuatArrival?.();
+  }
 }
 
 

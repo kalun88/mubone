@@ -90,28 +90,6 @@ export const NEAREST_GLOW_COLOR = '#b8a0ff'; // soft violet
 // These were set conservatively during early CPU-load testing. Adjust here if
 // you want to change system-wide behaviour without hunting through call sites.
 
-// Hard cap on concurrent AudioBufferSourceNodes. Each live grain holds 3–5 nodes.
-// Hard ceiling on simultaneous AudioBufferSourceNodes.
-//
-// Why 200: each live source has 2–3 Web Audio nodes attached (source + gain,
-// optional panner/elev).  Chrome's audio thread becomes unstable above ~400–600
-// active nodes and will crash the tab.  200 sources × 2–3 nodes = 400–600
-// total — right at the safe ceiling.
-//
-// At sub-ms grain periods (audio-rate granulation) with duration riding up,
-// steady-state concurrency = ceil(duration / period).  Without this cap, at
-// period=0.1ms and duration=200ms that reaches 2000 concurrent sources and
-// 4000 nodes → reliable tab crash.  With 200 the scheduler throttles gracefully:
-// new grains are only scheduled as old ones expire, keeping node count stable.
-//
-// For all normal-use presets (period ≥ 30ms, duration ≤ 480ms) the steady-state
-// concurrent count stays ≤ 16 — this cap is never the binding constraint.
-// Lowered from 200 → 150: at extreme combos (2ms period × 4s duration) Chrome's
-// audio renderer processes all concurrent nodes per render quantum (2.9ms).
-// 150 concurrent chains + deferred disconnect batching keeps the audio thread
-// within budget.  Normal presets use < 20 nodes so this cap has zero effect.
-export const MAX_GRAIN_NODES = 150;
-
 // Grain scheduler tick rate in ms. 30ms ≈ 33 ticks/sec.
 // Grains are 25ms–2000ms so 30ms resolution is inaudible.
 // 20ms tick = 50 ticks/sec; with 40ms lookahead, grains overlap 2× (no gaps).
@@ -121,20 +99,27 @@ export const MAX_GRAIN_NODES = 150;
 // the 5ms audio-rate threshold.
 export const GRAIN_SCHEDULER_INTERVAL_MS = 20;
 
-// Minimum period for onset-clock advancement and the UI slider floor.
-// The scheduler can smoothly deliver grains down to
-// GRAIN_SCHEDULER_INTERVAL_MS / MAX_GRAINS_PER_TICK ≈ 0.83ms.
-// 10ms = 100 grains/sec max.  Raised from 2ms to prevent Chrome renderer
-// crashes at extreme period+duration combos (error code 5).
-export const SCHED_SAFE_PERIOD_S = 0.010; // 10 ms
+// Minimum period for the UI slider floor and seed onset-clock advancement.
+// With the AudioWorklet grain engine handling all synthesis on the audio thread,
+// there is no main-thread crash risk at sub-ms periods.  The slider log scale
+// extends down to 50µs (20kHz grain rate).  Below ~2.67ms (1 render quantum
+// @48kHz) grains lose individual identity — you're writing a continuous waveform.
+// Below ~0.05ms you're at audio rate.
+export const SCHED_SAFE_PERIOD_S = 0.00005; // 50µs
 
 // Render loop frame rate cap. The animate() loop throttles canvas redraws to
 // this rate while requestAnimationFrame still runs at full display rate (handling
 // painting and camera). Lower this (e.g. 20) to cut canvas draw cost on dense scenes.
 export const RENDER_TARGET_FPS = 30;
 
-// Live rebuild throttle
-export const LIVE_REBUILD_INTERVAL_MS = 200; // rebuild at most every 200ms
+// Live rebuild throttle — how often the provisional live buffer updates its
+// AudioBuffer reference for candidate offset resolution and UI.
+// With the direct mic input path (worklet accumulates audio at audio rate),
+// this no longer controls audio latency — only how stale the main-thread
+// AudioBuffer is for offset clamping in candidate posts.
+// 50ms is plenty: the scheduler (20ms) flushes before posting candidates,
+// and the worklet has the real data via its process() input.
+export const LIVE_REBUILD_INTERVAL_MS = 50;
 
 // Recording memory guard — warn performer when total recorded audio approaches
 // this ceiling.  At 48kHz mono, each minute ≈ 11.5MB of Float32 data.
@@ -567,9 +552,9 @@ const _PRESET_META_KEYS = new Set(['name', 'userDefined']);
 
 // Load saved user presets from localStorage and overwrite the 20 slots in-place.
 // Call this before building the preset buttons so the UI reflects saved names.
-// Strips any stale keys that aren't in PARAM_REGISTRY (e.g. durJitter,
-// retriggerMs from old saves) so they can't silently trigger parameter
-// application in selectPreset.
+// Strips any stale keys that aren't in PARAM_REGISTRY (e.g. retriggerMs
+// from old saves) so they can't silently trigger parameter application
+// in selectPreset.
 export function loadUserPresets() {
   try {
     const raw = localStorage.getItem('mubone_user_presets');
@@ -586,7 +571,7 @@ export function loadUserPresets() {
       const idx = USER_PRESET_START + n;
       if (idx < FACTORY_PRESET_START && p && typeof p === 'object') {
         // Strip unknown keys — prevents old saves from hiding data that
-        // selectPreset would silently apply (e.g. durJitter, retriggerMs).
+        // selectPreset would silently apply (e.g. retriggerMs).
         for (const k of Object.keys(p)) {
           if (!_PRESET_META_KEYS.has(k) && !_validParamKeys.has(k)) {
             delete p[k];
@@ -602,6 +587,9 @@ export function loadUserPresets() {
     }
   } catch (e) {
     console.warn('[presets] could not load user presets from localStorage:', e);
+    // If the data is corrupt JSON, remove it so we don't retry and fail
+    // on every subsequent load (was causing repeated console spam).
+    try { localStorage.removeItem('mubone_user_presets'); } catch (_) {}
   }
 }
 
@@ -615,7 +603,7 @@ export function _buildValidParamKeys(registry) {
     // Fallback: build from known keys until PARAM_REGISTRY is available.
     // Must stay in sync with PARAM_REGISTRY in ui-patch-table.js.
     _validParamKeys = new Set([
-      'duration', 'durVar', 'fadeRatio', 'period', 'periodVar',
+      'duration', 'durVar', 'durJitter', 'fadeRatio', 'period', 'overlap', 'periodVar',
       'pitchJitter', 'pitchShift', 'panSpread', 'volume', 'k',
       'hpfFreq', 'lpfFreq', 'filterQ', 'filterFreqJitter',
       'probability', 'direction', 'curveType',
@@ -650,6 +638,11 @@ export function saveUserPresets() {
     );
   } catch (e) {
     console.warn('[presets] could not save user presets to localStorage:', e);
+    // Surface quota errors to the user — silent failures leave them thinking
+    // their patches are saved when they're not.
+    if (e?.name === 'QuotaExceededError') {
+      S._showToast?.('Storage full — patch not saved. Clear browser data or export patches.');
+    }
   }
 }
 
@@ -716,11 +709,11 @@ export const perf = {
   schedulerDrift: 0,    // how late scheduleGrains fired vs GRAIN_SCHEDULER_INTERVAL_MS target
   schedulerMax:   0,
   schedulerMaxAt: 0,
-  grainsFired:    0,    // grains fired in last scheduler tick
-  activeNodes:    0,    // running AudioBufferSource count
-  grainsPerSec:   0,    // rolling 1s grain rate
-  _grainAccum:    0,    // accumulator fed by scheduleGrains
-  _grainRateTs:   0,    // wall time of last rate computation
+  schedulerAvg:   0,    // exponential moving average of drift (~1s window)
+  schedulerPeak:  0,    // manual peak hold — only resets on user click
+  _schedAvgInit:  false,
+  seedsPosted:    0,    // active seeds posted to worklet in last scheduler tick
+  activeNodes:    0,    // active grains in worklet pool (from feedback)
   _pmLastUpdate:  0,    // wall time of last perf monitor DOM update
   audioClockLast: 0,    // audioCtx.currentTime last check
   audioClockWall: 0,    // performance.now() at that check
@@ -745,6 +738,18 @@ export function perfTick() {
   perf.schedulerMax = Math.max(perf.schedulerMax, perf.schedulerDrift);
   perf.activeNodes  = S._grainSourceCount;
 
+  // Exponential moving average for sched drift (~1s time constant at 50Hz tick rate)
+  // α = 1 - e^(-dt/τ) ≈ 0.02 per tick gives ~1s smoothing
+  const α = 0.02;
+  if (!perf._schedAvgInit) {
+    perf.schedulerAvg = perf.schedulerDrift;
+    perf._schedAvgInit = true;
+  } else {
+    perf.schedulerAvg += α * (perf.schedulerDrift - perf.schedulerAvg);
+  }
+  // Peak hold — never auto-resets, only on user click
+  perf.schedulerPeak = Math.max(perf.schedulerPeak, perf.schedulerDrift);
+
   // Audio clock health -- skip first 3s while AudioContext warms up
   if (S.audioCtx && now > 3000) {
     const wallElapsed  = (now - perf.audioClockWall) / 1000;
@@ -766,10 +771,10 @@ export function perfTick() {
   const frameBad = perf.frameMs > frameTarget * 1.25;
   const hwBufMs  = (S.audioCtx?.baseLatency ?? 0) * 1000;
   const schedBad = perf.schedulerDrift > GRAIN_SCHEDULER_INTERVAL_MS * 0.60 + hwBufMs * 0.90;
-  const nodesBad = perf.activeNodes > MAX_GRAIN_NODES * 0.90;
+  const nodesBad = perf.activeNodes > 256 * 0.90;  // worklet pool = 256 slots
 
   if (barEl) {
-    const pct = Math.min(100, (perf.activeNodes / MAX_GRAIN_NODES) * 100);
+    const pct = Math.min(100, (perf.activeNodes / 256) * 100);  // worklet pool = 256
     barEl.style.width = `${pct}%`;
     barEl.style.backgroundColor = pct > 85 ? '#e06060' : pct > 55 ? '#e8a030' : '#7abcbc';
   }
@@ -788,15 +793,7 @@ export function perfTick() {
     }
   }
 
-  // Rolling grain rate: accumulate in _grainAccum (fed by scheduleGrains) and
-  // compute grains/sec once per second to avoid per-frame division noise.
-  if (perf._grainRateTs === 0) perf._grainRateTs = now;
-  const rateElapsed = now - perf._grainRateTs;
-  if (rateElapsed >= 1000) {
-    perf.grainsPerSec = Math.round(perf._grainAccum * 1000 / rateElapsed);
-    perf._grainAccum  = 0;
-    perf._grainRateTs = now;
-  }
+
 
   // Always update particle world count + dynamic k max
   const pCount = S.particles.length;
@@ -834,10 +831,12 @@ export function perfTick() {
   const hwBufMsDisp = (S.audioCtx?.baseLatency ?? 0) * 1000;
   const schedMax    = GRAIN_SCHEDULER_INTERVAL_MS * 2 + hwBufMsDisp;
 
-  // nodes: 0–200, warn at 55%, crit at 85%
+  // grains: worklet pool is 256 slots. Show active grain count vs pool size.
+  // Warn at 55% (141), crit at 85% (218) — pressure throttle kicks in at 75% (192).
+  const WORKLET_POOL = 256;
   setBar('pmNodesBar', 'pmNodesVal',
-    (perf.activeNodes / MAX_GRAIN_NODES) * 100,
-    `${perf.activeNodes} / ${MAX_GRAIN_NODES}`,
+    (perf.activeNodes / WORKLET_POOL) * 100,
+    `${perf.activeNodes} / ${WORKLET_POOL}`,
     55, 85);
 
   // frame: 60fps = 16.7ms baseline. Bar spans 16–50ms (0% = 16ms, 100% = 50ms).
@@ -850,17 +849,30 @@ export function perfTick() {
     (33 - frameBaseline) / (frameCap - frameBaseline) * 100,
     (50 - frameBaseline) / (frameCap - frameBaseline) * 100);
 
-  // sched drift: cap bar at 2× interval, warn at 60%, crit at 90%
+  // sched drift: bar shows rolling average, peak marker shows highest spike
+  const schedAvgPct = (perf.schedulerAvg / Math.max(schedMax, 1)) * 100;
   setBar('pmSchedBar', 'pmSchedVal',
-    (perf.schedulerDrift / Math.max(schedMax, 1)) * 100,
-    `+${perf.schedulerDrift.toFixed(1)}ms`,
+    schedAvgPct,
+    `+${perf.schedulerAvg.toFixed(1)}ms`,
     60, 90);
+  // Peak hold marker + value
+  const peakEl = document.getElementById('pmSchedPeak');
+  const peakValEl = document.getElementById('pmSchedPeakVal');
+  if (peakEl) {
+    const peakPct = Math.min(100, (perf.schedulerPeak / Math.max(schedMax, 1)) * 100);
+    peakEl.style.left = `${peakPct}%`;
+    peakEl.style.display = perf.schedulerPeak > 0.5 ? '' : 'none';
+  }
+  if (peakValEl) {
+    if (perf.schedulerPeak > 0.5) {
+      peakValEl.textContent = `pk ${perf.schedulerPeak.toFixed(1)}`;
+      peakValEl.style.color = perf.schedulerPeak > schedMax * 0.9 ? '#e06060'
+        : perf.schedulerPeak > schedMax * 0.6 ? '#e8a030' : '#7abcbc';
+    } else {
+      peakValEl.textContent = '';
+    }
+  }
 
-  // grains/sec: cap bar at 200/s, always teal (informational)
-  setBar('pmRateBar', 'pmRateVal',
-    (perf.grainsPerSec / 200) * 100,
-    `${perf.grainsPerSec}/s`,
-    101, 101);  // never warn
 
   // k display — visual grammar: / = k cap, () = radius pool, [] = world
   //   nearest:    "3 / 10 [42]"          X / k [world]
@@ -1123,6 +1135,11 @@ export const S = {
   // ── Performance monitor ────────────────────────────────────────────────
   perfMonitorVisible: false,
   _grainSourceCount: 0, // incremented on start, decremented on ended
+
+  // ── Grain period floor ──────────────────────────────────────────────────
+  // Mutable period floor — defaults to SCHED_SAFE_PERIOD_S (50µs).
+  // With the AudioWorklet grain engine, sub-ms periods are safe.
+  minPeriodS: SCHED_SAFE_PERIOD_S,
 
   // ── Grain params / overrides ───────────────────────────────────────────
   grainParams: null,          // initialised below

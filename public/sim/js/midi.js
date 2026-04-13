@@ -85,6 +85,9 @@ const ACTIONS = [
   { id: 'grain_period', label: 'period',                    key: '—',  osc: '/grain/per',         fmt: 'float 1–4000 ms',   type: 'cc',
     tip: 'time between grain onsets — log scale, 1ms to 4s',
     ccFn: v => { const lo = Math.log(0.001), hi = Math.log(4.0); S.grainOverrides.period = Math.exp(lo + (v / 127) * (hi - lo)); S.syncGrainControlsUI?.(); } },
+  { id: 'grain_overlap', label: 'overlap',                   key: '—',  osc: '/grain/overlap',     fmt: 'float 0.01–100×',   type: 'cc',
+    tip: 'grain overlap ratio (dur/period) — drives duration',
+    ccFn: v => { const ov = Math.pow(10, -2 + 4 * (v / 127)); const per = S.grainOverrides.period ?? S.grainParams?.period ?? 0.061; S.grainOverrides.duration = Math.max(0.001, per * ov); S.syncGrainControlsUI?.(); } },
   { id: 'grain_pervar', label: 'per ±',                     key: '—',  osc: '/grain/pervar',      fmt: 'float 0–500 ms',    type: 'cc',
     tip: 'additive period randomness per onset',
     ccFn: v => { S.grainOverrides.periodVar = (v / 127) * 0.5; S.syncGrainControlsUI?.(); } },
@@ -620,6 +623,7 @@ function dispatchAction(id, midiVal) {
     case 'k_seq':
       S.grainKSeqMode = !S.grainKSeqMode;
       updatePlaybackControls();
+      S._updateWorkletParams?.({ kSeqMode: S.grainKSeqMode });
       break;
     case 'radius_fade':
       S.radiusFadeEnabled = !S.radiusFadeEnabled;
@@ -721,6 +725,8 @@ function dispatchAction(id, midiVal) {
           if (S.seqModeEnabled && !S.scanMuted) S._setMuted?.(false) || setScanMuted?.(true);
           const s = S.samples[idx]; s.grainCursor = s.cropStart * s.duration;
           recordStrokeStart('sample'); S.isPainting = true; S.paintFrameCount = 0;
+          // Cold-start worklet if not yet running (e.g. sample paint as first action)
+          S._ensureWorkletForSample?.(S.samples[idx].buffer);
         } else if (midiVal === 0 && S.isPainting && S.activeSampleIndex === idx) {
           // Stop sample paint
           if (S.seqModeEnabled && S.currentStrokeId > 0) {

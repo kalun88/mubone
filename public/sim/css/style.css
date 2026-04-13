@@ -876,11 +876,12 @@
     flex-shrink: 0;
   }
   .pm-track {
+    position: relative;
     width: 80px;
     height: 3px;
     background: rgba(255,255,255,0.07);
     border-radius: 2px;
-    overflow: hidden;
+    overflow: visible;
     flex-shrink: 0;
   }
   .pm-fill {
@@ -896,6 +897,38 @@
     color: #7abcbc;
     min-width: 4rem;
   }
+  .pm-num-peak {
+    min-width: 3.2rem;
+    color: #e8a030;
+    font-size: 0.6rem;
+    opacity: 0.8;
+  }
+  .pm-peak {
+    position: absolute;
+    top: -1px;
+    width: 2px;
+    height: 5px;
+    background: #e8a030;
+    border-radius: 1px;
+    left: 0%;
+    transition: left 0.15s ease;
+  }
+  .pm-num-edit {
+    background: none;
+    border: none;
+    border-bottom: 1px solid rgba(122,188,188,0.2);
+    font: inherit;
+    color: #7abcbc;
+    padding: 0;
+    width: 3.5rem;
+    cursor: text;
+    outline: none;
+  }
+  .pm-num-edit:focus {
+    border-bottom-color: #7abcbc;
+  }
+  .pm-row-clickable { cursor: pointer; }
+  .pm-row-clickable:hover .pm-label { color: #888; }
   .pm-info {
     color: #3a3a3a;
     font-size: 0.63rem;
@@ -1258,6 +1291,26 @@
   .grain-row.param-morphed .grain-seg-btn.active {
     border-color: #e8a030;
     color: #e8a030;
+  }
+
+  /* Sensor mapping active — violet indicators (IMU-driven override) */
+  .grain-row.param-mapped .grain-slider::-webkit-slider-thumb {
+    background: #b07ee8;
+  }
+  .grain-row.param-mapped .grain-slider::-moz-range-thumb {
+    background: #b07ee8;
+  }
+  .grain-row.param-mapped .grain-slider::-webkit-slider-runnable-track {
+    background: rgba(176, 126, 232, 0.12);
+  }
+  .grain-row.param-mapped .grain-slider::-moz-range-track {
+    background: rgba(176, 126, 232, 0.12);
+  }
+  .grain-row.param-mapped .grain-numbox {
+    color: #b07ee8;
+  }
+  .grain-row.param-mapped .grain-label {
+    color: #b07ee8;
   }
 
   /* ── Patch table lock column ─────────────────────────────────────────── */

@@ -81,7 +81,7 @@ The mapping module lets you wire IMU orientation axes directly to grain paramete
 
 **Each mapping row** contains: an enable/disable toggle, an axis selector (Roll / Elevation / Azimuth), input range in degrees, a live raw readout, a target parameter selector, output range, curve type (linear / log / exp), curve exponent, a mini curve preview, and a live output readout.
 
-**Mappable parameters**: HPF cutoff, LPF cutoff, filter Q, filter jitter, volume, duration, period, pitch shift, pitch jitter, pan spread, and fade ratio.
+**Mappable parameters**: HPF cutoff, LPF cutoff, filter Q, filter jitter, volume, duration, duration jitter, period, pitch shift, pitch jitter, pan spread, and fade ratio.
 
 **Input axes**: Roll (±90°), Elevation (±90°), Azimuth (±180°) — read from the IMU with the "cursor" role.
 

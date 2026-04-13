@@ -9,6 +9,7 @@ import {
 } from './state.js';
 import { ensureAudioContext, getMasterBus, stopLiveRecording, startLiveRecording } from './audio.js';
 import { removeSeqByStrokeId } from './ui-presets.js';
+import { flushCursorGrains } from './grain-worklet-bridge.js';
 import { undoSweep, commitSweep } from './ui-sweep.js';
 
 // ── Sample Viewer (large waveform display) ────────────────────────────────────
@@ -345,12 +346,25 @@ export function undoLastStroke() {
   const wasRecording = S.isRecording && S.isPainting;
   if (wasRecording) stopLiveRecording();
 
+  // Don't flush the worklet — that kills ALL seeds (committed clouds) and
+  // causes an audible ~1s rebuild gap as the grain texture refills from zero.
+  // Instead, let in-flight grains from the undone stroke expire naturally
+  // through their envelopes (50-200ms). The next scheduler tick (≤20ms)
+  // rebuilds the candidate pool without the removed particles, so no new
+  // grains will fire from the undone stroke. Seeds are completely unaffected.
+
   // ── Normal undo ─────────────────────────────────────────────────────────
   const entry = S.strokeHistory.pop();
   const sid   = entry.strokeId;
+  console.log(`[undo] undoing strokeId=${sid}, type=${entry.type}, traceMode=${S.traceMode}, history remaining=${S.strokeHistory.length}`);
 
   // Stop and remove any loop spawned from this stroke
   removeSeqByStrokeId(sid);
+
+  // Flush cursor-originated grains so the undone stroke's audio stops
+  // immediately (~3ms fade).  Seeds are unaffected — they keep playing
+  // from their own candidate pools which are rebuilt on the next tick.
+  flushCursorGrains();
 
   S.particles = S.particles.filter(p => p.strokeId !== sid);
   S._particleVersion++;

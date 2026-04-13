@@ -3,9 +3,10 @@
 // ============================================================================
 
 import { S, DEBUG, EXP, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
+import { showWaveformOverlay } from './debug-waveform.js';
 import { scheduleGrains } from './grain.js';
 import { setupEvents, setupDragDrop } from './events.js';
-import { rebuildSampleListUI, buildSvTabs, drawSvWaveform, setupSvCropInteraction, initUndoBtn } from './ui-samples.js';
+import { rebuildSampleListUI, buildSvTabs, drawSvWaveform, initUndoBtn } from './ui-samples.js';
 import {
   setupPresets, initGrainControls, initDesktopMorph,
   drawPresetWaveform, updatePlaybackControls, selectPreset,
@@ -26,9 +27,96 @@ import { initExportImport } from './ui-export.js';
 import { initPatchTable } from './ui-patch-table.js';
 import { initMappingUI } from './ui-sensor-mapping.js';
 import { initIMUSetupUI } from './ui-imu-setup.js';
+import { qMul, qNormalize, qFromAxisAngle, qRotateVec } from './sphere.js';
+import { startPaintTicker, getPaintTickerState } from './paint-ticker.js';
+import {
+  startWorkletGrain, stopWorkletGrain, updateWorkletParams,
+  isCrossOriginIsolated, hotSwapRecording, getWorkletDiag,
+  isWorkletGrainActive,
+} from './grain-worklet-bridge.js';
 
+
+// ── Worklet grain engine — always-on startup/management ─────────────────────
+// Moved from exp-init.js (Phase 5): worklet is now the only grain engine.
+// Auto-starts on first recording. Sliders drive the worklet directly.
+
+async function _startWorkletEngine(buf, opts = {}) {
+  if (!S.audioCtx) {
+    console.warn('worklet: no AudioContext');
+    return false;
+  }
+  const ov = S.grainOverrides;
+  const base = S.grainParams || {};
+  const DIR_MAP  = { fwd: 0, rev: 1, rand: 2 };
+  const CURVE_MAP = { hann: 0, tri: 1, rect: 2 };
+
+  console.log(`worklet: starting — ${(buf.length / buf.sampleRate).toFixed(1)}s buffer, 256-slot pool`);
+
+  const node = await startWorkletGrain(S.audioCtx, buf, {
+    period:           opts.period           ?? ov.period           ?? base.period           ?? 0.050,
+    duration:         opts.duration         ?? ov.duration         ?? base.duration         ?? 0.100,
+    grainStart:       opts.grainStart       ?? Math.floor(buf.length * 0.25),
+    volume:           opts.volume           ?? ov.volume           ?? base.volume           ?? 0.6,
+    pitchShift:       opts.pitchShift       ?? ov.pitchShift       ?? base.pitchShift       ?? 0,
+    pitchJitter:      opts.pitchJitter      ?? ov.pitchJitter      ?? base.pitchJitter      ?? 0,
+    periodVar:        opts.periodVar        ?? ov.periodVar        ?? base.periodVar        ?? 0,
+    durVar:           opts.durVar           ?? ov.durVar           ?? base.durVar           ?? 0,
+    durJitter:        opts.durJitter        ?? ov.durJitter        ?? base.durJitter        ?? 0,
+    envShape:         opts.envShape         ?? CURVE_MAP[S.grainCurveType] ?? 0,
+    probability:      opts.probability      ?? S.grainProbability ?? 1.0,
+    direction:        opts.direction        ?? DIR_MAP[S.grainDirection] ?? 0,
+    hpfFreq:          opts.hpfFreq          ?? ov.hpfFreq          ?? base.hpfFreq          ?? 20,
+    lpfFreq:          opts.lpfFreq          ?? ov.lpfFreq          ?? base.lpfFreq          ?? 20000,
+    filterQ:          opts.filterQ          ?? ov.filterQ          ?? base.filterQ          ?? 0.707,
+    filterFreqJitter: opts.filterFreqJitter ?? ov.filterFreqJitter ?? base.filterFreqJitter ?? 0,
+    kSeqMode:         S.grainKSeqMode ?? false,
+  }, {
+    numChannels: S.speakerBuses?.numChannels || S.audioCtx.destination.channelCount || 2,
+    onFeedback: (data) => {
+      if (opts.verbose) {
+        console.log(`worklet: ${data.activeCount} active grains, ${data.grains.length} fired`);
+      }
+    },
+  });
+  if (node) {
+    console.log('worklet: engine running — sliders drive it directly');
+    return true;
+  }
+  console.warn('worklet: failed to start — check console for errors');
+  return false;
+}
+
+function _stopWorkletEngine() {
+  stopWorkletGrain();
+}
+
+// Restart the worklet with the current buffers but a new channel count.
+// Called via S._restartWorkletEngine when the output device changes.
+async function _restartWorkletEngine() {
+  if (!isWorkletGrainActive()) return;
+  // Grab the most recent recording buffer to use as primary SAB
+  const buffers = S.liveRecBuffers?.filter(b => b?.buffer) ?? [];
+  const buf = buffers.length > 0 ? buffers[buffers.length - 1].buffer : null;
+  if (!buf) return;
+
+  console.log(`worklet: restarting for channel count change (${S.speakerBuses?.numChannels ?? 2} ch)`);
+  _stopWorkletEngine();
+  await _startWorkletEngine(buf);
+
+  // Re-send all additional recording buffers (hot-swap each one)
+  for (let i = 0; i < buffers.length - 1; i++) {
+    hotSwapRecording(buffers[i].buffer);
+  }
+}
 
 function init() {
+  // Forward main-process logs to DevTools console
+  if (window.electronBridge?.onMainLog) {
+    window.electronBridge.onMainLog((level, msg) => {
+      (console[level] || console.log)(`[main] ${msg}`);
+    });
+  }
+
   S.canvas = document.getElementById('sphereCanvas');
   S.ctx    = S.canvas.getContext('2d');
 
@@ -61,6 +149,56 @@ function init() {
   S._onTare = () => {                        // reset drift correction on fresh tare
     S.driftOffsetQ = null;
   };
+
+  // ── IMU-driven cursor freshness ──────────────────────────────────────────
+  // On every cursor-role quaternion arrival (up to 400Hz), update S.cursorQ
+  // so the paint ticker's 200Hz poll reads a fresh position.
+  S._onCursorQuatArrival = () => {
+    if (S.cameraMode !== 'sensor') return;
+
+    // Same transforms as the render loop: drift correction + axis locks.
+    // Idempotent — the render loop will overwrite at 30fps for visuals.
+    const cq = getSensorCursorQ();   // non-null in detethered two-IMU mode
+    const sq = getSensorCamQ();      // non-null in single-IMU mode
+
+    if (cq) {
+      let q = cq;
+      if (S.driftOffsetQ) q = qNormalize(qMul(S.driftOffsetQ, q));
+      if (S.axisLockAz || S.axisLockEl) {
+        const fwd = qRotateVec(q, [0, 0, 1]);
+        let yaw   = Math.atan2(fwd[0], fwd[2]);
+        let pitch = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
+        if (S.axisLockAz && S._axisLockFrozenYaw != null) yaw = S._axisLockFrozenYaw;
+        if (S.axisLockEl && S._axisLockFrozenPitch != null) pitch = S._axisLockFrozenPitch;
+        const qY = qFromAxisAngle(0, 1, 0, yaw);
+        const qP = qFromAxisAngle(1, 0, 0, pitch);
+        S.cursorQ = qNormalize(qMul(qY, qP));
+      } else {
+        S.cursorQ = q;
+      }
+    } else if (sq) {
+      let q = sq;
+      if (S.driftOffsetQ) q = qNormalize(qMul(S.driftOffsetQ, q));
+      if (S.axisLockAz || S.axisLockEl) {
+        const fwd = qRotateVec(q, [0, 0, 1]);
+        let yaw   = Math.atan2(fwd[0], fwd[2]);
+        let pitch = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
+        if (S.axisLockAz && S._axisLockFrozenYaw != null) yaw = S._axisLockFrozenYaw;
+        if (S.axisLockEl && S._axisLockFrozenPitch != null) pitch = S._axisLockFrozenPitch;
+        const qY = qFromAxisAngle(0, 1, 0, yaw);
+        const qP = qFromAxisAngle(1, 0, 0, pitch);
+        S.camQ = qNormalize(qMul(qY, qP));
+      } else {
+        S.camQ = q;
+      }
+    }
+  };
+
+  // Paint ticker: single 200Hz timer polls cursor position and deposits
+  // particles via adaptive angular spacing. Works identically for all modes.
+  startPaintTicker();
+  window.paintTicker = getPaintTickerState;
+
   initMappingUI();
   initIMUSetupUI();
   initAudioSettings();
@@ -108,7 +246,10 @@ function init() {
         for (const d of devices.values()) panel.appendChild(d);
       }
     }
-  } catch (_) { /* ignore corrupt data */ }
+  } catch (_) {
+    // Corrupt panel order JSON — remove so it doesn't fail repeatedly
+    try { localStorage.removeItem('mubone_panel_order'); } catch (_2) {}
+  }
 
   for (const label of document.querySelectorAll('.device-label')) {
     const device = label.closest('.device');
@@ -516,6 +657,82 @@ function init() {
       });
     })
     .catch(e => console.warn('[gesture-panel] failed to load:', e));
+
+  // ── Worklet restart on output device change ────────────────────────────
+  // When the user switches output devices (different channel count), the
+  // AudioWorkletNode must be recreated — outputChannelCount is fixed at
+  // creation time.  _onVBAPRebuilt in the bridge detects the mismatch and
+  // calls this to stop + restart with the new channel count.
+  S._restartWorkletEngine = _restartWorkletEngine;
+
+  // ── Worklet grain engine: auto-start on sample paint ────────────────────
+  // When the user starts painting with a sample (QWERTYUIOP keys or MIDI)
+  // before any mic recording, the worklet hasn't been cold-started yet.
+  // This callback bootstraps the worklet using the sample's AudioBuffer.
+  S._ensureWorkletForSample = async (sampleBuffer) => {
+    if (isWorkletGrainActive()) return;  // already running
+    if (!S.audioCtx || !sampleBuffer) return;
+    console.log('worklet: sample paint triggered — cold-starting worklet with sample buffer');
+    await _startWorkletEngine(sampleBuffer);
+  };
+
+  // ── Worklet grain engine: auto-start on first recording ─────────────────
+  // Cold-start on recording START (not completion) so grains from the very
+  // first recording can play while painting.  Uses a tiny silent buffer as
+  // the initial SAB, then immediately begins provisional live streaming.
+  S._onRecordingStart = async () => {
+    if (isWorkletGrainActive()) return;  // already running — provisional streaming handles it
+    if (!S.audioCtx) return;
+    // Create a minimal silent buffer to bootstrap the worklet.
+    // The provisional live buffer will provide the actual audio.
+    const silentBuf = S.audioCtx.createBuffer(1, 128, S.audioCtx.sampleRate);
+    console.log('worklet: first recording started — cold-starting worklet');
+    const ok = await _startWorkletEngine(silentBuf);
+    if (ok) {
+      // Now that the worklet is running, begin provisional streaming for
+      // the recording that's already in progress.
+      S._beginProvisionalRecording?.();
+    }
+  };
+
+  // On recording completion: hot-swap the finished buffer into the worklet.
+  S._onRecordingComplete = async (audioBuffer, _bufIdx) => {
+    if (isWorkletGrainActive()) {
+      console.log(`worklet: new recording (${audioBuffer.duration.toFixed(1)}s) — hot-swapping into running worklet`);
+      hotSwapRecording(audioBuffer);
+    } else {
+      console.log(`worklet: new recording (${audioBuffer.duration.toFixed(1)}s) — starting worklet`);
+      await _startWorkletEngine(audioBuffer);
+    }
+  };
+
+  // Console API for manual worklet control (always available, not just exp)
+  window.wg = {
+    start: async (opts = {}) => {
+      const buffers = S.liveRecBuffers?.filter(b => b?.buffer) ?? [];
+      if (!buffers.length) {
+        console.warn('wg: no recordings — record something first');
+        return;
+      }
+      await _startWorkletEngine(buffers[buffers.length - 1].buffer, opts);
+    },
+    stop: () => { _stopWorkletEngine(); console.log('wg: stopped'); },
+    waveform: (bufIdx) => showWaveformOverlay(bufIdx),
+    set: (params) => { updateWorkletParams(params); console.log('wg: params updated', params); },
+    stress: (grains = 100) => {
+      const period = 0.001;
+      const duration = grains * period;
+      updateWorkletParams({ period, duration, volume: 0.3 });
+      console.log(`wg: stress test — period=${period*1000}ms, duration=${duration*1000}ms, target overlap=${grains}`);
+    },
+    status: () => {
+      console.log('wg: cross-origin isolated:', isCrossOriginIsolated());
+      console.log('wg: SharedArrayBuffer available:', typeof SharedArrayBuffer !== 'undefined');
+      console.log('wg: recordings:', S.liveRecBuffers?.filter(b => b?.buffer)?.length ?? 0);
+      console.log('wg: 256-slot pool, pitch shift, jitter, VBAP, feedback ring, per-seed onset clocks');
+    },
+    diag: () => getWorkletDiag(),
+  };
 
   // ── Experimental modules (?exp in URL) ─────────────────────────────────────
   // Lazy-loaded so they add zero overhead when EXP is off.  Each module

@@ -22,6 +22,9 @@ import { toggleMappingByIndex } from './sensor-mapping.js';
 
 const WS_URL            = 'ws://localhost:8080';
 const WS_RETRY_INTERVAL = 3000;  // ms between reconnect attempts
+const WS_MAX_SILENT_RETRIES = 3; // stop retrying after N failures if never connected
+let _retryCount = 0;
+let _everConnected = false;
 
 let _ws              = null;
 let _retryTimer      = null;
@@ -75,6 +78,8 @@ function connectWebSocket() {
 
   _ws.onopen = () => {
     _connected = true;
+    _everConnected = true;
+    _retryCount = 0;
     clearTimeout(_retryTimer);
     setIndicator(true);
     window.dispatchEvent(new CustomEvent('osc-connected'));
@@ -107,6 +112,12 @@ function connectWebSocket() {
 
 function scheduleRetry() {
   clearTimeout(_retryTimer);
+  // If we've never connected and already tried a few times, stop retrying
+  // to avoid flooding the console with WebSocket errors in browser-only dev mode.
+  if (!_everConnected) {
+    _retryCount++;
+    if (_retryCount > WS_MAX_SILENT_RETRIES) return;
+  }
   _retryTimer = setTimeout(connectWebSocket, WS_RETRY_INTERVAL);
 }
 
@@ -179,6 +190,14 @@ export function handleOSC(rawAddress, values) {
       // Incoming value in ms (1–4000) → convert to seconds internally
       S.grainOverrides.period      = clamp(values[0], 1, 4000) / 1000;
       scheduleUISync();
+      break;
+
+    case '/grain/overlap':
+      // Incoming value as ratio (0.01–100) → drives duration = period × overlap
+      { const ov = clamp(values[0], 0.01, 100);
+        const per = S.grainOverrides.period ?? S.grainParams?.period ?? 0.061;
+        S.grainOverrides.duration = Math.max(0.001, per * ov);
+        scheduleUISync(); }
       break;
 
     case '/grain/volume':

@@ -1,12 +1,13 @@
-import { S, HANN_LEN, HANN_ATTACK, HANN_RELEASE, MAX_SEEDS, MAX_SEQS, MAX_GRAIN_NODES, GRAIN_SCHEDULER_INTERVAL_MS, SCHED_SAFE_PERIOD_S, SPHERE_RADIUS, perf, gp, minGrainDurS, minGrainPeriodS, buildEnvelopeCurves } from './state.js';
+import { S, MAX_SEEDS, GRAIN_SCHEDULER_INTERVAL_MS, SPHERE_RADIUS, perf, gp } from './state.js';
 import { ensureAudioContext, getMasterBus } from './audio.js';
-import { spherePoint, qRotateVec, qConjugate, cameraTransform, getCursorLonLat, screenToLonLat, cameraTransformInto, spherePointInto, updateFusedCamQ } from './sphere.js';
+import { getCursorLonLat, screenToLonLat, cameraTransformInto, spherePointInto, updateFusedCamQ } from './sphere.js';
 import { tickSeedRecording } from './ui-presets.js';
+import { dlog } from './diag.js';
 
 // ── Pre-computed VBAP lookup table ──────────────────────────────────────────
 // Built once at initSpeakerBuses time. Maps integer degrees [0, 359] to
 // { idxA, idxB, wA, wB } — the two bracketing speakers and their gains.
-// playGrain uses this for O(1) VBAP instead of per-grain sort + search.
+// Worklet and sequential playback use this for O(1) VBAP speaker resolution.
 let _vbapLUT = null;
 
 export function buildVBAPLookup(speakers) {
@@ -42,10 +43,34 @@ export function queryVBAPLookup(azDeg) {
   return _vbapLUT?.[Math.round(azDeg) % 360] ?? null;
 }
 
+// Pack the VBAP lookup table into a flat Float32Array for the worklet.
+// 360 entries × 4 floats = 1440 values: [idxA, idxB, wA, wB] per degree.
+// Returns null if the LUT isn't built yet.
+export function packVBAPLookup() {
+  if (!_vbapLUT) return null;
+  const data = new Float32Array(1440);
+  for (let deg = 0; deg < 360; deg++) {
+    const e = _vbapLUT[deg];
+    const base = deg * 4;
+    data[base]     = e.idxA;
+    data[base + 1] = e.idxB;
+    data[base + 2] = e.wA;
+    data[base + 3] = e.wB;
+  }
+  return data;
+}
+
 export function rand(min, max) { return min + Math.random() * (max - min); }
 
 // activeGrainMap: particle → { expiry, glowColor } — shared with renderer
 export let activeGrainMap = new Map();
+
+/** Stop all in-flight grain source nodes immediately (erase-all, undo).
+ *  Legacy: with the worklet grain engine, main-thread source nodes are only
+ *  created for sequential/loop playback. Kept for callers that expect it. */
+export function killAllGrains() {
+  S._grainSourceCount = 0;
+}
 
 // ── Angular distance caches ────────────────────────────────────────────────
 // angleBetweenSphere costs 6 transcendental ops per particle. With 500
@@ -70,15 +95,10 @@ let _cursorAngCacheLat     = null;
 let _cursorAngCachePartVer = -1;
 let _cursorAngStampLen     = 0;
 
-// ── Reusable cursor effective-params object ──────────────────────────────────
-// Avoids the spread-operator allocation ({...p, duration: ...}) on every cursor
-// grain. Mutated in-place once per scheduleGrains tick; all cursor grains in
-// the same tick share the same reference (safe because playGrain reads ep
-// synchronously before returning).
-const _cursorEP = {};
-// Radius fade: per-grain distance attenuation set by scheduleGrains, read by playGrain.
-// 1.0 = no attenuation (centre), 0.0 = silent (edge). Reset after each playGrain call.
-let _radiusFadeAtten = 1.0;
+// ── Muted-scan visual glow accumulator ──────────────────────────────────────
+// Simulates grain onset timing for visual feedback when scan is muted.
+let _mutedGlowAccum  = 0;   // ms since last simulated onset
+let _mutedGlowSeqIdx = 0;   // k-seq index into candidate pool
 
 // ── DOM update throttling for scheduleGrains() ─────────────────────────────
 // Avoid invalidating caches by throttling grain count display to ~4Hz
@@ -86,17 +106,8 @@ let _gcEl = null;
 let _vmGrainsEl = null;
 let _domUpdateCounter = 0;
 
-// ── Node disconnect ───────────────────────────────────────────────────────
-// Disconnects are now done immediately in the `ended` callback.
-// Chrome has fixed the bulk-disconnect crash in recent versions, so we no
-// longer need to batch. Immediate disconnects with error handling are safe.
-function _deferDisconnect(node) {
-  try { node.disconnect(); } catch (_) {}
-}
-
-// ── Zero-allocation scratch buffers for per-grain spatial math ────────────
-// Avoids creating ~15 temporary arrays per playGrain call.  Updated in-place
-// by spherePointInto / cameraTransformInto; never leaked to closures.
+// ── Zero-allocation scratch buffers for spatial math ─────────────────────
+// Used by sequential/loop panning updates. Updated in-place; never leaked.
 const _grainScratchW = [0, 0, 0];   // world-space particle position
 const _grainScratchC = [0, 0, 0];   // camera-space panning position
 
@@ -105,74 +116,9 @@ const _grainScratchC = [0, 0, 0];   // camera-space panning position
 // every 10ms (was 100 allocs/sec → needless GC pressure).
 const _seedWeights = new Float32Array(MAX_SEEDS);
 
-// ── Reusable extra-nodes array for VBAP path ─────────────────────────────
-// playGrain's multi-channel path builds a list of extra gain nodes (mixdown
-// L/R) that need disconnecting on grain end.  Instead of allocating a new
-// array per grain, we reuse this module-level array — cleared at the start
-// of each playGrain call and snapshot-copied into the closure only when the
-// grain actually has extra nodes.
-const _extraNodesBuf = [];
 
-// ── Reversed buffer cache ──────────────────────────────────────────────────
-// Caches a full reversed copy of each source AudioBuffer to avoid per-grain
-// allocation. WeakMap so entries are automatically GC'd when the source buffer
-// (sample or live rec) is discarded.
-const _reversedBufferCache = new WeakMap();
-
-function getReversedBuffer(actx, buffer) {
-  let rev = _reversedBufferCache.get(buffer);
-  if (rev) return rev;
-
-  rev = actx.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
-  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-    const src = buffer.getChannelData(ch);
-    const dst = rev.getChannelData(ch);
-    for (let f = 0, len = src.length; f < len; f++) {
-      dst[f] = src[len - 1 - f];
-    }
-  }
-  _reversedBufferCache.set(buffer, rev);
-  return rev;
-}
-
-export function getBufferKey(p) {
+function getBufferKey(p) {
   return p.source === 'live' ? `live:${p.liveBufferIdx}` : `sample:${p.sampleIndex}`;
-}
-
-export function shuffleInPlace(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-export function applyRecencyFilter(candidates) {
-  if (S.recencyN <= 0 || candidates.length === 0) return candidates;
-  const bufRec = new Map();
-  for (const { p } of candidates) {
-    const key = getBufferKey(p);
-    if ((bufRec.get(key) ?? -Infinity) < p.strokeId) bufRec.set(key, p.strokeId);
-  }
-  const allowed = new Set(
-    [...bufRec.entries()].sort((a, b) => b[1] - a[1]).slice(0, S.recencyN).map(([k]) => k)
-  );
-  return candidates.filter(({ p }) => allowed.has(getBufferKey(p)));
-}
-
-// Recency filter that works directly on particle arrays (no {p} wrappers).
-// Returns the allowed-set for use by _buildCandidatePool helpers.
-function _recencyAllowedSet(particles, count) {
-  if (S.recencyN <= 0) return null; // null = allow all
-  const bufRec = new Map();
-  for (let i = 0; i < count; i++) {
-    const p = particles[i];
-    const key = getBufferKey(p);
-    if ((bufRec.get(key) ?? -Infinity) < p.strokeId) bufRec.set(key, p.strokeId);
-  }
-  return new Set(
-    [...bufRec.entries()].sort((a, b) => b[1] - a[1]).slice(0, S.recencyN).map(([k]) => k)
-  );
 }
 
 // Reusable candidate output buffer — avoids allocating a new array every tick.
@@ -348,643 +294,21 @@ export function findNearestSeedSlot(refLon, refLat, { skipReleasing = false } = 
   return nearestSlot;
 }
 
-export function playGrain(particle, customParams, scheduledOnsetT) {
-  const actx   = ensureAudioContext();
-  // Defensive: don't schedule grains while context is suspended/closed.
-  // The caller (scheduleGrains) already guards, but external callers or
-  // future refactors could bypass it.
-  if (actx.state !== 'running') return;
-  let   buffer = null;
-
-  if (particle.source === 'sample') {
-    if (particle.sampleIndex < 0 || particle.sampleIndex >= S.samples.length) return;
-    buffer = S.samples[particle.sampleIndex].buffer;
-  } else if (particle.source === 'live') {
-    if (particle.liveBufferIdx < 0 || particle.liveBufferIdx >= S.liveRecBuffers.length) return;
-    const slot = S.liveRecBuffers[particle.liveBufferIdx];
-    buffer = slot.buffer || slot.liveBuffer;
-  }
-  if (!buffer) return;
-
-  const p = customParams || gp();
-
-  // For seed grains, use customParams directly.
-  // For cursor grains, build effective params in the reusable _cursorEP object
-  // to avoid per-grain object allocation from the spread operator.
-  let ep;
-  if (customParams) {
-    ep = p;
-  } else {
-    const ov = S.grainOverrides;
-    const ce = _cursorEP;
-    // Copy all base preset keys into the reusable object
-    const keys = Object.keys(p);
-    for (let ki = 0; ki < keys.length; ki++) ce[keys[ki]] = p[keys[ki]];
-    // Apply overrides (use != null to match the original ?? semantics —
-    // grainOverrides values are null when unset, not undefined)
-    if (ov.duration    != null) ce.duration    = ov.duration;
-    if (ov.durJitter   != null) ce.durJitter   = ov.durJitter;
-    if (ov.durVar      != null) ce.durVar      = ov.durVar;
-    if (ov.fadeRatio   != null) ce.fadeRatio   = ov.fadeRatio;
-    if (ov.k           != null) ce.k           = ov.k;
-    if (ov.period      != null) ce.period      = ov.period;
-    if (ov.periodVar   != null) ce.periodVar   = ov.periodVar;
-    if (ov.pitchJitter != null) ce.pitchJitter = ov.pitchJitter;
-    if (ov.pitchShift  != null) ce.pitchShift  = ov.pitchShift;
-    if (ov.panSpread   != null) ce.panSpread   = ov.panSpread;
-    if (ov.volume      != null) ce.volume      = ov.volume;
-    if (ov.retriggerMs != null) ce.retriggerMs = ov.retriggerMs;
-    if (ov.hpfFreq     != null) ce.hpfFreq     = ov.hpfFreq;
-    if (ov.lpfFreq     != null) ce.lpfFreq     = ov.lpfFreq;
-    if (ov.filterQ     != null) ce.filterQ     = ov.filterQ;
-    if (ov.filterFreqJitter != null) ce.filterFreqJitter = ov.filterFreqJitter;
-    // Apply radius fade distance attenuation (set by scheduleGrains)
-    if (_radiusFadeAtten < 1.0) ce.volume *= _radiusFadeAtten;
-    ep = ce;
-  }
-
-  const audioNow = actx.currentTime;
-  if (customParams) {
-    const retriggerSec = ep.retriggerMs / 1000;
-    if (particle.seedTriggeredAt !== undefined && audioNow - particle.seedTriggeredAt < retriggerSec) return;
-    particle.seedTriggeredAt = audioNow;
-  }
-
-  const sampleDur    = buffer.duration;
-  const cropStartSec = particle.source === 'sample'
-    ? (S.samples[particle.sampleIndex].cropStart * sampleDur) : 0;
-  const cropEndSec   = particle.source === 'sample'
-    ? (S.samples[particle.sampleIndex].cropEnd   * sampleDur) : sampleDur;
-  // If a pre-scheduled onset time is provided (lookahead scheduler), use it directly.
-  // Otherwise fall back to a small immediate lookahead (seed / one-shot calls).
-  // Safety floor: clamp to at least 2ms in the future at call time.  The scheduler
-  // samples audioNow once at the top of its tick, then does O(N log N) candidate
-  // sorting before calling playGrain.  During that gap actx.currentTime advances,
-  // so scheduledOnsetT can slip into the past by call-time → setValueCurveAtTime
-  // throws InvalidStateError.  Math.max ensures t is always a live future value
-  // regardless of how much JS ran between audioNow being read and this call.
-  const LOOKAHEAD    = 0.015;
-  const MIN_FUTURE_S = 0.002; // 2ms safety floor
-  const baseTime  = scheduledOnsetT !== undefined
-    ? Math.max(scheduledOnsetT, actx.currentTime + MIN_FUTURE_S)
-    : actx.currentTime + LOOKAHEAD;
-
-  let attackCurve, releaseCurve;
-  if (customParams) {
-    // Seed grains: cache volume-scaled curves on the params object.
-    // Rebuilt only when volume or curveType changes — eliminates 2 × Float32Array(128)
-    // allocation per seed grain (was the #2 OOM contributor).
-    // Uses buildEnvelopeCurves so tri/rect curve types are respected (seeds snapshot
-    // the active preset's curveType at drop time).
-    const ctype = customParams.curveType || 'hann';
-    if (!customParams._cachedAtk || customParams._cachedVol !== ep.volume || customParams._cachedCurve !== ctype) {
-      const { atk, rel } = buildEnvelopeCurves(ctype, ep.volume);
-      customParams._cachedAtk   = atk;
-      customParams._cachedRel   = rel;
-      customParams._cachedVol   = ep.volume;
-      customParams._cachedCurve = ctype;
-    }
-    attackCurve  = customParams._cachedAtk;
-    releaseCurve = customParams._cachedRel;
-  } else {
-    attackCurve  = S.GRAIN_ATTACK_CURVE;
-    releaseCurve = S.GRAIN_RELEASE_CURVE;
-  }
-
-  const dir = customParams ? 'fwd' : S.grainDirection;
-
-  // Minimum grain duration: 2 render quanta (≈5.8ms at 44100Hz).
-  // This guarantees every grain gets a proper fade envelope — grains shorter
-  // than this would be 1–2 sample impulses that sound like clicks/crackle,
-  // especially when durVar pushes the raw duration negative and it clamps
-  // to the old floor of 2/sampleRate (≈0.045ms = literal impulse).
-  const MIN_GRAIN_DUR = (128 / actx.sampleRate) * 2;
-
-  const t = baseTime;
-
-    // pitchRate must be computed BEFORE startPos/actualDur because it determines
-    // how much buffer the source consumes: at pitchRate > 1 the source reads
-    // `dur * pitchRate` buffer-seconds in `dur` real-time seconds.  Without
-    // accounting for pitch here, startPos can be positioned such that the source
-    // exhausts the crop boundary early and AudioBufferSourceNode fires 'ended'
-    // while the gain envelope is still non-zero → abrupt hard cut → audible click.
-    // Clamping startPos so that `startPos + dur * pitchRate ≤ cropEndSec` prevents
-    // premature exhaustion for any pitch; pitch < 1 uses less buffer so no change.
-    // pitchJitter is stored as 2^(cents/1200) - 1, so (1 + pitchJitter) = 2^(cents/1200).
-    // Raising that to a uniform random in [-1, 1] gives a symmetric musical interval:
-    //   rand=+1 → maxRate    = 2^(+cents/1200)  (correct up-pitch)
-    //   rand=-1 → 1/maxRate  = 2^(-cents/1200)  (correct down-pitch)
-    // The old approach (1 + rand(-v, v)) made down-pitch far too extreme at high
-    // values — at 700¢ it produced 0.502× (≈ -1200¢) instead of 0.668× (-700¢).
-    // Base pitch shift (cents → rate multiplier): 2^(cents/1200).
-    // pitchShift=0 → 1.0 (no change), ±1200 → octave up/down.
-    const shiftRate = (ep.pitchShift ?? 0) !== 0 ? Math.pow(2, ep.pitchShift / 1200) : 1;
-    const pitchRate = Math.max(1e-6, shiftRate * Math.pow(1 + ep.pitchJitter, rand(-1, 1)));
-
-    let startPos = particle.grainStart;
-    const durVarSec = customParams ? 0 : (ep.durVar ?? 0);
-    const dur = Math.max(MIN_GRAIN_DUR,
-      ep.duration * (1 + rand(-ep.durJitter, ep.durJitter))
-      + rand(-durVarSec, durVarSec)
-    );
-
-    // How much buffer the source will read at this pitch (output seconds × rate).
-    // Include a 10ms silent tail — the source plays for (dur + tail) real-time
-    // seconds, consuming (dur + tail) * pitchRate buffer-seconds. Without this,
-    // pitched-up grains (pitchRate > 1) exhaust the crop boundary during the
-    // tail, causing the source to stop while the gain envelope is still non-zero
-    // → audible click. The tail ensures the gain reaches zero first.
-    const TAIL_BUDGET_S = 0.010;
-    const bufferNeeded = (dur + TAIL_BUDGET_S) * Math.max(pitchRate, 1);
-    const cropLen = cropEndSec - cropStartSec;
-    if (cropLen < bufferNeeded) {
-      startPos = cropStartSec;
-    } else {
-      startPos = Math.max(cropStartSec, Math.min(startPos, cropEndSec - bufferNeeded));
-    }
-
-    // actualDur: real-time envelope span. For pitchRate > 1, `cropEndSec - startPos`
-    // buffer-seconds only cover `(cropEndSec - startPos) / pitchRate` real-time
-    // seconds before the source exhausts — use that as the ceiling.
-    // Subtract the tail budget so the envelope fits entirely before the tail.
-    const availableRealTime = (cropEndSec - startPos) / Math.max(pitchRate, 1);
-    const actualDur = Math.min(dur, availableRealTime - TAIL_BUDGET_S);
-    if (actualDur < MIN_GRAIN_DUR) return;
-
-    const goReverse = dir === 'rev' || (dir === 'rnd' && Math.random() < 0.5);
-
-    const fadeRatio = ep.fadeRatio ?? 0.25;
-    // One Web Audio render quantum — the minimum source.start() duration that
-    // guarantees audio output (the browser rounds down to the nearest render block).
-    const MIN_FADE = MIN_GRAIN_DUR / 2;  // = 128 / actx.sampleRate
-    // Two tiers by grain length — 'rect' was removed because setValueAtTime(0)
-    // creates a hard gain discontinuity (audible click) when sweeping duration.
-    //
-    //   'linear' — grain < 2 quanta (< 2×MIN_FADE): symmetric triangle ramp.
-    //              Triangle covers the entire [0, 2×MIN_FADE) range smoothly,
-    //              including the sub-quantum zone where 'rect' used to live.
-    //              No hard step; no click anywhere in this region.
-    //
-    //   'curve'  — grain ≥ 2 quanta: setValueCurveAtTime Hann window.
-    //              Boundary kept at 2×MIN_FADE (not 1×) because Chrome's
-    //              setValueCurveAtTime requires duration ≥ 1 render quantum
-    //              (128/sampleRate) per call — at 2×MIN_FADE the fade value
-    //              is guaranteed ≥ MIN_FADE, satisfying that constraint.
-    //              Lowering to 1×MIN_FADE causes sub-quantum fade calls that
-    //              Chrome no-ops or mis-applies, producing snaps that persist
-    //              even after duration is raised (scheduler loop aborts early).
-    const fadeMode = actualDur < MIN_FADE * 2 ? 'linear' : 'curve';
-    const fade = fadeMode === 'curve'
-      ? Math.min(actualDur / 2 - 0.0001, Math.max(MIN_FADE, actualDur * Math.min(fadeRatio, 0.5)))
-      : 0;
-    // Silent tail: extend sourceDur past actualDur so the source outlives the
-    // gain envelope.  The release automation reaches 0 at t+actualDur and the
-    // GainNode holds there; GRAIN_TAIL_S extra seconds play silently through
-    // the 0-gain node, so when the source finally stops there is nothing to
-    // discontinue.  Without this tail, the source's stop-sample and the curve's
-    // final zero-sample can land in different render quanta → the last few
-    // samples run through a not-yet-zero gain → step discontinuity → click.
-    // If the buffer is exhausted early (crop too short), ended fires mid-tail
-    // but gain is already 0 at that point, so no click either way.
-    // Adaptive silent tail: sub-quantum grains (actualDur < MIN_FADE) reach gain=0
-    // within the very first render quantum, so a tail of just MIN_FADE (~3ms, 1 block)
-    // is sufficient. Longer grains need 10ms (3–4 quanta) because the release curve
-    // spans multiple blocks and the source must outlive the last non-zero sample.
-    // Using MIN_FADE for sub-quantum grains cuts concurrent node lifetime from 10ms
-    // to ~3ms, reducing live node count from ~10 to ~3 at 1ms period — lower GC load.
-    const GRAIN_TAIL_S = actualDur < MIN_FADE ? MIN_FADE : 0.010;
-    // sourceDur: how long the source should produce output in REAL-TIME seconds.
-    // The gain envelope spans actualDur; GRAIN_TAIL_S adds silent padding after.
-    const sourceDur = Math.max(MIN_FADE, actualDur + GRAIN_TAIL_S);
-    // sourceBufferDur: how many buffer-seconds the source will consume at this
-    // pitchRate.  Used for reverse-path offset calculation and startPos clamping.
-    const sourceBufferDur = sourceDur * Math.max(pitchRate, 1);
-    const source = actx.createBufferSource();
-
-    if (goReverse) {
-      // Use cached full-buffer reverse — zero per-grain allocation.
-      // The reversed buffer mirrors the original: sample at time t in the
-      // original is at time (bufferDuration - t) in the reversed copy.
-      // To play what was at [startPos, startPos+sourceBufferDur] in reverse,
-      // we play the reversed buffer starting from (bufferDuration - startPos - sourceBufferDur).
-      const revBuf = getReversedBuffer(actx, buffer);
-      source.buffer = revBuf;
-    } else {
-      source.buffer = buffer;
-    }
-
-    source.playbackRate.value = pitchRate; // pitchRate computed above, before startPos
-    // For reverse: map the original startPos into the reversed buffer.
-    // Original region [startPos, startPos+sourceBufferDur] maps to reversed region
-    // [bufDur - startPos - sourceBufferDur, bufDur - startPos]. We start at the
-    // beginning of that region and the source plays forward through the
-    // already-reversed samples, producing the original audio in reverse.
-    const bufferStartPos = goReverse
-      ? Math.max(0, buffer.duration - startPos - sourceBufferDur)
-      : startPos;
-
-    const gain = actx.createGain();
-    gain.gain.value = 0;  // start silent — prevents 1-sample leak at default gain=1.0
-    // When radius fade attenuation is active, force linear (triangle) envelope
-    // so ep.volume (already scaled by _radiusFadeAtten) controls the peak directly.
-    // Pre-built Hann curves are shared/pre-scaled to full volume and can't be
-    // per-grain attenuated without allocation. Triangle is inaudibly different
-    // on quieter grains and avoids an extra GainNode.
-    // Force linear envelope when per-grain volume varies to avoid Float32Array
-    // allocation per grain.  Cursor fade uses _radiusFadeAtten; seed fade uses
-    // per-particle _cFade{slot} which changes ep.volume each grain.
-    const useLinearFade = fadeMode === 'linear'
-      || (!customParams && _radiusFadeAtten < 1.0)
-      || (customParams && customParams._hasPerParticleFade);
-    if (useLinearFade) {
-      // Sub-quantum grain: symmetric triangle (0 → peak → 0) over actualDur.
-      // Source plays for sourceDur (≥ MIN_FADE) so the browser outputs audio;
-      // gain reaches 0 at actualDur and stays there for the silent tail.
-      gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(ep.volume, t + actualDur * 0.5);
-      gain.gain.linearRampToValueAtTime(0,         t + actualDur);
-    } else {
-      // Hann window: attack ramp then release ramp, with sustain in between.
-      // setValueCurveAtTime requires fade ≥ 1 render quantum; the boundary
-      // above guarantees this. The try/catch is a last-resort safety net so
-      // that a bad call can never throw and abort the scheduler's while loop
-      // (which would stall _cursorNextOnsetT and cause persistent snapping).
-      // NOTE: do NOT call setValueAtTime(0, t) here. Chrome treats a SetValue
-      // event at exactly t as overlapping with setValueCurveAtTime(…, t, fade)
-      // (which also starts at t) and can throw InvalidStateError or silently
-      // treat the curve as a no-op — both produce a loud rectangular burst.
-      // attackCurve[0] is already 0 and gain.gain.value was set to 0 above,
-      // so no additional "pre-zero" event is needed.
-      try {
-        gain.gain.setValueCurveAtTime(attackCurve,  t,               fade);
-        gain.gain.setValueCurveAtTime(releaseCurve, t + actualDur - fade, fade);
-      } catch (_) {
-        // Fallback: triangle ramp so the grain is never silent or unclamped.
-        // IMPORTANT: setValueAtTime(0, t) goes here (NOT in the try block above).
-        // The GainNode's default gain is 1.0 — without anchoring at 0 first,
-        // linearRampToValueAtTime ramps from 1.0 at actx.currentTime to ep.volume,
-        // so the grain starts at full volume and produces a loud burst/crackle.
-        // Placing the anchor only in the catch block avoids the original conflict:
-        // setValueAtTime(0, t) + setValueCurveAtTime(…, t, …) at the same time t
-        // can cause Chrome to treat the curve as overlapping with the SetValue event.
-        //
-        // Nested try/catch: linearRamp can also throw in rare Chrome edge-cases
-        // (e.g. during AudioContext resumption when event ordering is violated).
-        // An uncaught throw here would propagate out of playGrain and stall the
-        // onset clock in the scheduler while loop (see scheduleGrains guard).
-        try {
-          gain.gain.setValueAtTime(0, t);
-          gain.gain.linearRampToValueAtTime(ep.volume, t + actualDur * 0.5);
-          gain.gain.linearRampToValueAtTime(0,         t + actualDur);
-        } catch (_2) {
-          // Both curve and ramp automation failed entirely — cancel all events
-          // and hold gain at 0 (silent) so the scheduler can still advance.
-          gain.gain.cancelScheduledValues(0);
-          gain.gain.value = 0;
-        }
-      }
-    }
-
-    // Zero-alloc scratch for spatial panning (reused across grains)
-    const _gW = _grainScratchW, _gC = _grainScratchC;
-    spherePointInto(particle.lon, particle.lat, _gW);
-    const wx = _gW[0], wy = _gW[1], wz = _gW[2];
-
-    // Worldlocked:  particle's sphere-local position drives panning directly.
-    //               Speakers are fixed in the room — neither cursor nor frame
-    //               movement should change what you hear.
-    // Headlocked:   transform into the viewer's visual space — panning matches what
-    //               you see (left on screen = left in audio).  Uses cameraTransformInto
-    //               (fused quaternion, single rotation, zero allocs).  In 1-IMU mode
-    //               (no frameQ) this reduces to qRotateVec(conj(camQ), …).  In 2-IMU
-    //               mode the cursor determines WHAT plays but the FRAME (projector)
-    //               determines WHERE it's heard: cursor off-screen-left → audio left.
-    //
-    // frameQ is a VISUAL transform that MUST NOT enter worldlocked (it caused drift)
-    // but MUST enter headlocked — that's the whole point of view-relative panning.
-    let cx, cy, cz;
-    if (S.spatialPanning === 'worldlocked') {
-      cx = wx; cy = wy; cz = wz;
-    } else {
-      cameraTransformInto(wx, wy, wz, _gC);
-      cx = _gC[0]; cy = _gC[1]; cz = _gC[2];
-    }
-
-    // At dense grain periods (≤ 5ms, ≥ 200Hz repetition) spatial positioning is
-    // acoustically inaudible — the human auditory system integrates pan position
-    // over 2–5ms, so changes faster than 200Hz are heard as timbre, not movement.
-    // Skip the elevation-gain and stereo-panner nodes entirely to cut per-grain
-    // node creation by 1–2 Web Audio nodes per grain.
-    // IMPORTANT: the period minimum is now 1ms. Without this threshold covering ≥1ms,
-    // every grain at the new floor would use the full 4-node chain (source + gain +
-    // elevGain + panner) → ~4000 node ops/s → Chrome audio renderer crash.
-    // Threshold at 5ms keeps the lightweight path for the entire dense-granulation
-    // range while restoring full spatial processing at ≥ 6ms (100Hz and below).
-    const audioRate = ep.period <= 0.005;
-
-    // Elevation attenuation — fold into main gain to avoid a separate node.
-    // Sources near the poles are acoustically ambiguous on a horizontal ring;
-    // reduce volume gently (up to 35%) so the spatial image doesn't jump.
-    const elevNorm  = cz !== 0 ? Math.min(1, Math.abs(cy / Math.abs(cz))) : 0;
-    const elevScale = 1 - elevNorm * 0.35;
-    // Insert elevScale node only when meaningfully different from 1 (elevation
-    // > ~10°) and we're NOT in audio-rate mode where the node cost dominates.
-    const needsElevNode = !audioRate && elevScale < 0.98;
-    let lastNode = gain; // track the last node in the chain for connecting
-    let elevGainNode = null;
-    if (needsElevNode) {
-      elevGainNode = actx.createGain();
-      elevGainNode.gain.value = elevScale;
-      gain.connect(elevGainNode);
-      lastNode = elevGainNode;
-    }
-
-    // ── Per-grain filter chain ──────────────────────────────────────────────
-    // Insert BiquadFilterNode(s) between source and gain envelope when filter
-    // cutoffs are active. HPF bypass at ≤ 20Hz, LPF bypass at ≥ 20000Hz.
-    // At audio-rate periods (≤5ms) skip filtering — grains are too short for
-    // filtering to be perceptible and the node count cost dominates.
-    // filterFreqJitter: per-grain cutoff randomisation as a fraction of freq.
-    const hpf = ep.hpfFreq ?? 20;
-    const lpf = ep.lpfFreq ?? 20000;
-    const fJitter = ep.filterFreqJitter ?? 0;
-    const fQ  = ep.filterQ ?? 0.707;
-    const needsHPF = !audioRate && hpf > 22;
-    const needsLPF = !audioRate && lpf < 19500;
-    let _hpfNode = null, _lpfNode = null;
-    let filterChainEnd = source;
-    if (needsHPF) {
-      _hpfNode = actx.createBiquadFilter();
-      _hpfNode.type = 'highpass';
-      _hpfNode.frequency.value = fJitter > 0 ? hpf * Math.pow(2, rand(-fJitter, fJitter)) : hpf;
-      _hpfNode.Q.value = fQ;
-      filterChainEnd.connect(_hpfNode);
-      filterChainEnd = _hpfNode;
-    }
-    if (needsLPF) {
-      _lpfNode = actx.createBiquadFilter();
-      _lpfNode.type = 'lowpass';
-      _lpfNode.frequency.value = fJitter > 0 ? lpf * Math.pow(2, rand(-fJitter, fJitter)) : lpf;
-      _lpfNode.Q.value = fQ;
-      filterChainEnd.connect(_lpfNode);
-      filterChainEnd = _lpfNode;
-    }
-    filterChainEnd.connect(gain);
-
-    if (S.speakerBuses?.length) {
-      // ── Multi-channel speaker path (Electron) ─────────────────────────────
-      // Project grain's camera-space horizontal angle onto the speaker ring using
-      // angle-aware 2-D VBAP: find the two speakers that bracket the grain's
-      // azimuth by their actual angleDeg values (not by index), so any speaker
-      // layout — including stereo L/R at 270°/90° — pans correctly.
-      //
-      // Camera space: cx = right, cz = into screen (forward).
-      // Azimuth: atan2(cx, cz) → 0° = front, 90° = right, 180° = rear, 270° = left.
-
-      const isCursorGrain = !customParams;
-
-      // ── Cursor → mixdown direct feed (always, independent of house mute) ──
-      // When mixdownCursorInputs exist, cursor grains always get a dedicated
-      // L/R send so the mixdown cursor-gain slider works regardless of whether
-      // the cursor is muted in the house or not.
-      _extraNodesBuf.length = 0;  // reuse module-level array; snapshot below
-      const cursorDestL = isCursorGrain ? (S.mixdownCursorInputs?.[0] ?? null) : null;
-      const cursorDestR = isCursorGrain ? (S.mixdownCursorInputs?.[1] ?? null) : null;
-      if (cursorDestL && cursorDestR) {
-        const mxRawPan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
-        // Elevation center-bias only in worldlocked — headlocked cy is view-relative
-        const mxElF = S.spatialPanning === 'worldlocked' ? Math.abs(cy) * (1 / SPHERE_RADIUS) : 0;
-        const azimuthPan = mxRawPan * (1 - mxElF * mxElF);
-        const panJitter  = rand(-ep.panSpread * 0.5, ep.panSpread * 0.5);
-        const pan        = Math.max(-1, Math.min(1, azimuthPan + panJitter));
-        const lW = Math.cos((pan + 1) * Math.PI / 4);  // equal-power
-        const rW = Math.sin((pan + 1) * Math.PI / 4);
-
-        const gL = actx.createGain(); gL.gain.value = lW;
-        const gR = actx.createGain(); gR.gain.value = rW;
-
-        lastNode.connect(gL); gL.connect(cursorDestL);
-        lastNode.connect(gR); gR.connect(cursorDestR);
-        _extraNodesBuf.push(gL, gR);
-      }
-      // Snapshot: the ended callback fires asynchronously, so capture
-      // a local copy only when there are extra nodes to disconnect.
-      const _extraNodes = _extraNodesBuf.length > 0
-        ? _extraNodesBuf.slice()  // small (≤2 elements), only when mixdown active
-        : null;
-
-      // ── Scan off: skip house VBAP when scan is muted ──────────────────────
-      // When scan is off AND no mixdown exists → grain is simply not played
-      // (pared-down demo mode: only planted seeds are heard).
-      if (isCursorGrain && S.scanMuted) {
-        if (cursorDestL && cursorDestR) {
-          // Cursor already routed to mixdown above — just start & clean up
-          source.start(t, bufferStartPos);
-          source.stop(t + sourceDur);
-          S._grainSourceCount++;
-          source.addEventListener('ended', () => {
-            S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-            _deferDisconnect(source); _deferDisconnect(gain); if (_hpfNode) _deferDisconnect(_hpfNode); if (_lpfNode) _deferDisconnect(_lpfNode);
-            if (elevGainNode) _deferDisconnect(elevGainNode);
-            if (_extraNodes) for (const n of _extraNodes) _deferDisconnect(n);
-          }, { once: true });
-        }
-        // else: no mixdown, scan off → grain not played
-
-      } else {
-      // ── Normal VBAP routing (cursor unmuted, or seed grains always) ───────
-      // All grains spatialise through the house speaker field.
-      // Cursor grains additionally feed the mixdown cursor inputs (above).
-      const speakers = S.speakerBuses;
-      const n        = speakers.length;
-
-      // Raw azimuth in radians, with pan-spread jitter, normalised to [0, 2π).
-      // Camera space: cz>0 = in front of listener, cx>0 = to listener's right.
-      // atan2(cx, cz): 0°=front, 90°=right, 180°=rear, 270°=left — matches the
-      // speaker bus layout.  For even counts ≥4, 0° is phantom center between
-      // the two front speakers (bus 0 = front-left); for odd counts bus 0 = 0°.
-      const TWO_PI = 2 * Math.PI;
-      const rawAz  = Math.atan2(cx, cz);
-      const jitter = rand(-ep.panSpread * 0.5, ep.panSpread * 0.5);
-      let   az     = ((rawAz + jitter) % TWO_PI + TWO_PI) % TWO_PI;
-      const azDeg  = az * (180 / Math.PI);
-
-      // O(1) VBAP via pre-computed lookup table
-      const lut = _vbapLUT?.[Math.round(azDeg) % 360];
-      let wA = lut ? lut.wA : 0.707;
-      let wB = lut ? lut.wB : 0.707;
-      const idxA = lut ? lut.idxA : 0;
-      const idxB = lut ? lut.idxB : Math.min(1, n - 1);
-
-      // ── Elevation-dependent center bias ──────────────────────────────────
-      // With a single horizontal speaker ring, sources near the poles have
-      // ambiguous azimuth.  As |elevation| increases, spread signal from
-      // the two bracketing speakers to ALL speakers, blending toward equal-
-      // power distribution.  Uses sin²(el) for a gentle onset — full VBAP
-      // below ~30°, gradual spread above, fully centered at poles.
-      const elevFrac = Math.abs(cy) * (1 / SPHERE_RADIUS);  // 0 at equator, 1 at pole
-      const elevBias = elevFrac * elevFrac;                  // sin²(el)
-      const eqGain   = 1 / Math.sqrt(n);
-
-      // When elevation is significant, route to all speakers (not just the pair).
-      // Skip at audio rate — n gain nodes per grain at 1ms period would exceed
-      // the Web Audio node budget (~4000 ops/s) and crash the renderer.
-      let _vbapGrainNodes = null;
-      if (elevBias > 0.01 && n > 2 && !audioRate) {
-        wA = wA + (eqGain - wA) * elevBias;
-        wB = wB + (eqGain - wB) * elevBias;
-        const spreadGain = eqGain * elevBias;  // other speakers fade in
-        _vbapGrainNodes = [];
-        for (let si = 0; si < n; si++) {
-          const g = actx.createGain();
-          if (si === idxA)       g.gain.value = wA;
-          else if (si === idxB)  g.gain.value = wB;
-          else                   g.gain.value = spreadGain;
-          lastNode.connect(g); g.connect(speakers[si].bus);
-          _vbapGrainNodes.push(g);
-        }
-      } else {
-        // Normal 2-speaker VBAP (equator or stereo)
-        const gA = actx.createGain(); gA.gain.value = wA;
-        const gB = actx.createGain(); gB.gain.value = wB;
-        lastNode.connect(gA); gA.connect(speakers[idxA].bus);
-        lastNode.connect(gB); gB.connect(speakers[idxB].bus);
-        _vbapGrainNodes = [gA, gB];
-      }
-
-      source.start(t, bufferStartPos);
-      source.stop(t + sourceDur);
-      S._grainSourceCount++;
-      source.addEventListener('ended', () => {
-        S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-        _deferDisconnect(source); _deferDisconnect(gain); if (_hpfNode) _deferDisconnect(_hpfNode); if (_lpfNode) _deferDisconnect(_lpfNode);
-        if (elevGainNode) _deferDisconnect(elevGainNode);
-        for (let gi = 0; gi < _vbapGrainNodes.length; gi++) _deferDisconnect(_vbapGrainNodes[gi]);
-        if (_extraNodes) for (const n of _extraNodes) _deferDisconnect(n);
-      }, { once: true });
-      } // end normal VBAP
-
-    } else {
-      // ── Stereo path ────────────────────────────────────────────────────────
-      // Stereo placement: blend from sphere-position-based azimuth (panSpread=0)
-      // to a fully independent random position per grain (panSpread=1).
-      // This gives true shimmer/scatter behaviour — every grain fires at a new
-      // random pan position — rather than just widening a single azimuth point.
-      // At intermediate spread values, spatial positioning is gradually loosened.
-      // At audio-rate periods the panner is skipped entirely (see audioRate above).
-      const rawAzPan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
-      // Elevation center-bias: collapse stereo pan toward center at poles.
-      // Only in worldlocked — headlocked cy is view-relative, not world elevation.
-      const stElF = S.spatialPanning === 'worldlocked' ? Math.abs(cy) * (1 / SPHERE_RADIUS) : 0;
-      const stElB = stElF * stElF;
-      const azimuthPan = rawAzPan * (1 - stElB);
-      const finalPan   = audioRate ? 0 : Math.max(-1, Math.min(1,
-        azimuthPan * (1 - ep.panSpread) + rand(-1, 1) * ep.panSpread
-      ));
-      // Skip the StereoPanner node at audio rate, or when pan is effectively zero.
-      const needsPanner = !audioRate && (Math.abs(finalPan) > 0.01 || ep.panSpread > 0.01);
-
-      // Phase 1 bus routing: cursor grains → monitorBus, seed grains → houseBus.
-      // Falls back to masterBus if the improv buses haven't been created yet.
-      const isCursorGrain = !customParams;
-      const destBus = isCursorGrain
-        ? (S.monitorBus || getMasterBus())
-        : (S.houseBus   || getMasterBus());
-
-      if (needsPanner) {
-        const panner = actx.createStereoPanner();
-        panner.pan.value = finalPan;
-        lastNode.connect(panner);
-        panner.connect(destBus);
-
-        source.start(t, bufferStartPos);
-        source.stop(t + sourceDur);
-        S._grainSourceCount++;
-        source.addEventListener('ended', () => {
-          S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-          _deferDisconnect(source); _deferDisconnect(gain); if (_hpfNode) _deferDisconnect(_hpfNode); if (_lpfNode) _deferDisconnect(_lpfNode);
-          if (elevGainNode) _deferDisconnect(elevGainNode);
-          _deferDisconnect(panner);
-        }, { once: true });
-      } else {
-        lastNode.connect(destBus);
-
-        source.start(t, bufferStartPos);
-        source.stop(t + sourceDur);
-        S._grainSourceCount++;
-        source.addEventListener('ended', () => {
-          S._grainSourceCount = Math.max(0, S._grainSourceCount - 1);
-          _deferDisconnect(source); _deferDisconnect(gain); if (_hpfNode) _deferDisconnect(_hpfNode); if (_lpfNode) _deferDisconnect(_lpfNode);
-          if (elevGainNode) _deferDisconnect(elevGainNode);
-        }, { once: true });
-      }
-    }
-
-  if (particle.source === 'sample') {
-    // Fixed-capacity ring: overwrite the oldest slot by index instead of
-    // using push+shift (shift is O(N) and push allocates a new object).
-    // The ui-samples.js compaction loop reads entries up to .length and
-    // skips stale ones, so overwriting old entries is safe.
-    const AG_CAP = MAX_GRAIN_NODES * 2;
-    const ag = S.activeGrains;
-    const nowPerf = performance.now();
-    if (ag.length < AG_CAP) {
-      ag.push({
-        sampleIndex:   particle.sampleIndex,
-        grainStart:    startPos,
-        grainDuration: actualDur,
-        startTime:     nowPerf,
-        totalDuration: actualDur
-      });
-    } else {
-      // Reuse the slot at the write cursor — avoids object allocation
-      const slot = ag[S._agWriteIdx];
-      slot.sampleIndex   = particle.sampleIndex;
-      slot.grainStart    = startPos;
-      slot.grainDuration = actualDur;
-      slot.startTime     = nowPerf;
-      slot.totalDuration = actualDur;
-      S._agWriteIdx = (S._agWriteIdx + 1) % AG_CAP;
-    }
-  }
-}
 
 let _schedLastAt = 0;
-// Audio-clock time (actx.currentTime seconds) of the next cursor grain onset.
-// Using the audio clock instead of performance.now() allows sub-10ms periods:
-// each scheduler tick looks ahead by SCHED_LOOKAHEAD seconds and fires all
-// onsets that fall within that window, so periods much shorter than the
-// tick interval work correctly (comb/zipper effect into audio-rate territory).
-let _cursorNextOnsetT  = null;   // null = not yet initialised
-let _cursorNextPeriodS = null;   // next inter-onset interval in seconds
-let _cursorReanchorAt  = 0;      // audio-clock time of next fp re-anchor
-let _cursorSeqIdx      = 0;      // sequential K mode: index into sorted candidate pool
-let _cursorSeqPool     = [];     // sequential K mode: last sorted pool (for stable stepping)
+let _schedTickCount = 0;  // for periodic dlog snapshot
 
-// How far ahead we schedule grain onsets (seconds). Must be > scheduler interval
-// to guarantee grains are always scheduled before they need to play.
-// 40ms = 4× the 10ms scheduler interval — tight for low latency but enough
-// headroom for normal JS thread jitter. Grains are never more than 40ms stale
-// when parameters change, so slider scrubbing feels immediate.
-// (Was 120ms — caused sluggish parameter response during scrubbing because
-// grains were committed far ahead with stale values.)
-const SCHED_LOOKAHEAD = 0.040;   // 40ms lookahead window
-
-// Hard limit on grains created per scheduler call.  Each grain allocates 2–5
-// Web Audio nodes synchronously on the main thread.
+// ── Scheduler overview ──────────────────────────────────────────────────────
+// The grain scheduler runs at ~33Hz (GRAIN_SCHEDULER_INTERVAL_MS) on the main
+// thread.  It performs spatial search (cursor + seed candidate pools) and posts
+// candidate lists to the AudioWorklet grain engine via postMessage.  The worklet
+// handles all grain synthesis at sample rate.
 //
-// With SCHED_SAFE_PERIOD_S = 10ms and SCHED_LOOKAHEAD = 40ms, the window holds
-// 4 onsets.  12 per tick × 100 ticks/sec = 1 200 grain-creations/sec max.
-// Smooth delivery requires MAX_GRAINS_PER_TICK ≥ interval/period = 10ms/10ms = 1.
-// 12 gives generous headroom for catch-up after jitter.
+// Seed onset clocks (seed._nextOnsetT) are still maintained here so seed data
+// posting stays in sync and doesn't burst when weights change.
 //
-// The old burst-on-reset crash (slider drag → 20 clock nulls/sec × 12-grain
-// bursts = 240 burst grains/sec → OOM) is no longer possible because
-// resetCursorPeriod now clamps the clock forward instead of nulling it.
-const MAX_GRAINS_PER_TICK = 12;
-
-// SCHED_SAFE_PERIOD_S (2ms) is imported from state.js so both the grain
-// scheduler and the UI slider share the same floor.  See state.js for docs.
+// SCHED_LOOKAHEAD: how far ahead seed onset clocks advance per tick.
+const SCHED_LOOKAHEAD = 0.040;   // 40ms
 
 // ── Moving seed helpers ────────────────────────────────────────────────────
 // Interpolate a moving seed's frame data at its current playhead position.
@@ -1047,7 +371,7 @@ function _advanceMovingSeed(seed, deltaMs) {
 }
 
 export function scheduleGrains() {
-  // Refresh the fused camera quaternion so headlocked panning in playGrain
+  // Refresh the fused camera quaternion so headlocked panning in the worklet
   // uses the latest camQ/frameQ even if the scheduler fires between frames.
   updateFusedCamQ();
 
@@ -1064,23 +388,18 @@ export function scheduleGrains() {
 
   if (_schedLastAt > 0) perf.schedulerDrift = Math.max(0, (now - _schedLastAt) - GRAIN_SCHEDULER_INTERVAL_MS);
   _schedLastAt = now;
-
-  if (S._grainSourceCount >= MAX_GRAIN_NODES) return;
+  // Periodic state snapshot (~1/sec) so the event log always has recent context
+  if (++_schedTickCount % 50 === 0) {
+    dlog('sched', 'tick', { nodes: S._grainSourceCount, drift: perf.schedulerDrift.toFixed(1), particles: S.particles?.length, rec: S.isRecording, ctxState: S.audioCtx?.state });
+  }
 
   const actx = ensureAudioContext();
   // Don't attempt to schedule while the context is suspended or still resuming.
-  // ensureAudioContext() calls resume() but doesn't await it, so there is a
-  // window where state is still 'suspended' and currentTime is frozen.
-  // Scheduling in that window produces grains at t ≈ frozen-audioNow which,
-  // by the time setValueCurveAtTime() is called a few µs later, is already
-  // slightly in the past → Chrome throws InvalidStateError.
   if (actx.state !== 'running') {
     if (actx.state === 'suspended') actx.resume().catch(() => {});
     return;
   }
   const audioNow = actx.currentTime;
-  // Horizon: schedule all onsets up to this audio time
-  const scheduleUntil = audioNow + SCHED_LOOKAHEAD;
 
   const { lon: cursorLon, lat: cursorLat } =
     S.cursorQ
@@ -1093,28 +412,9 @@ export function scheduleGrains() {
   const searchRadiusRad = S.searchRadiusDeg * Math.PI / 180;
 
   S.liveGranulatingThisFrame = false;
-  perf.grainsFired = 0;
+  perf.seedsPosted = 0;
 
   if (S.particles.length && !(S.seqModeEnabled && S.isPainting)) {
-    const basePeriodS = S.grainOverrides.period ?? gp().period;
-    const periodVarS  = S.grainOverrides.periodVar ?? 0;
-
-    // Stale-clock guard: if the onset clock is far ahead of audioNow the
-    // AudioContext was likely recreated (currentTime reset to 0) and the old
-    // clock value is meaningless.  Reset so the scheduler reinitialises.
-    if (_cursorNextOnsetT !== null && (_cursorNextOnsetT - audioNow) > 30.0) {
-      _cursorNextOnsetT  = null;
-      _cursorNextPeriodS = null;
-    }
-
-    // Initialise next onset to just ahead of now on first call or after reset.
-    // Use audioNow + 0.005 (same forward margin as the snap guard) so the very
-    // first grain after a reset is never at exactly audioNow — by call-time that
-    // would already be in the past and cause setValueCurveAtTime to throw.
-    if (_cursorNextOnsetT === null) {
-      _cursorNextOnsetT  = audioNow + 0.005;
-      _cursorNextPeriodS = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS + rand(-periodVarS, periodVarS));
-    }
 
     // Pre-compute candidate pool once per scheduler tick (shared by all onsets in window).
     // Dirty-flag: skip the trig loop when the cursor position and particle set
@@ -1140,6 +440,7 @@ export function scheduleGrains() {
       // Copy cached values for already-stamped particles
       for (let pi = 0; pi < Math.min(stampFrom, pLen); pi++) {
         particles[pi]._ang = particles[pi]._cursorAng ?? 0;
+        particles[pi]._globalIdx = pi;
       }
       // Stamp new / invalidated particles
       for (let pi = stampFrom; pi < pLen; pi++) {
@@ -1148,6 +449,7 @@ export function scheduleGrains() {
         const ang = _angleFromCached(p, crx, cry, crz);
         p._cursorAng = ang;
         p._ang       = ang;
+        p._globalIdx = pi;
       }
       _cursorAngCacheLon     = cursorLon;
       _cursorAngCacheLat     = cursorLat;
@@ -1155,7 +457,10 @@ export function scheduleGrains() {
       _cursorAngStampLen     = pLen;
     } else {
       // Restore from per-particle cache — correct regardless of sort order.
-      for (let pi = 0; pi < pLen; pi++) particles[pi]._ang = particles[pi]._cursorAng ?? 0;
+      for (let pi = 0; pi < pLen; pi++) {
+        particles[pi]._ang = particles[pi]._cursorAng ?? 0;
+        particles[pi]._globalIdx = pi;
+      }
     }
 
     // Pre-sort / filter candidate pool once for all onsets in this tick window.
@@ -1176,119 +481,63 @@ export function scheduleGrains() {
     perf.kCount = S.nearestMode || effectiveKAll || candidatePool.length <= k
       ? candidatePool.length
       : k;
+    // Pre-select k candidates for radius mode with k cap — cursor position and
+    // candidate pool don't change between onsets within a single tick, so the
+    // k-selection result is identical for all onsets.  Previously this O(N)
+    // heap-select ran inside the while loop (up to 12× per tick), burning
+    // ~6000 comparisons/tick at 500 particles.
+    const _preSelectedPool = (!S.nearestMode && !effectiveKAll && candidatePool.length > k)
+      ? _buildCandidatePoolNearest(candidatePool, k, false, undefined)
+      : null;
 
-    // Budget: how many cursor grains to schedule this tick.
-    // Use the full SCHED_LOOKAHEAD window (120ms) — not just minAheadS (≈15ms).
-    // With minAheadS, short-period presets like shimmer (period≈55ms) only got
-    // budgetPerTick=1, so dynamicUntil ended up just 55ms ahead. Any JS jitter
-    // longer than one period caused audio gaps with a consistent rhythmic crackle.
-    // Using SCHED_LOOKAHEAD gives budgetPerTick≈3 for shimmer and advances
-    // scheduleUntil 120ms ahead, which is the intent of that constant.
-    // Floor period for budget calc only — prevents 2000+ grainsNeeded at sub-ms periods.
-    const schedPeriodS  = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS);
-    const grainsNeeded  = Math.ceil(SCHED_LOOKAHEAD / Math.max(schedPeriodS, minGrainPeriodS()));
-    const nodesBudget   = Math.max(0, MAX_GRAIN_NODES - S._grainSourceCount);
-    // Dynamic throttle: when the node pool is > 75% full, halve the per-tick
-    // budget.  This back-pressures creation during extreme combos (long dur +
-    // short period) so Chrome's audio renderer has time to process existing
-    // nodes instead of being flooded with new ones.  The 75% threshold is
-    // well above normal usage (~20-50 nodes) so musical presets are unaffected.
-    const poolPressure  = S._grainSourceCount / MAX_GRAIN_NODES;
-    const pressureCap   = poolPressure > 0.75 ? Math.max(2, MAX_GRAINS_PER_TICK >> 1) : MAX_GRAINS_PER_TICK;
-    const budgetPerTick = Math.min(grainsNeeded, nodesBudget, pressureCap);
-    // scheduleUntil (= audioNow + SCHED_LOOKAHEAD) was already computed above but
-    // was never used as the while-loop bound — use it now.
-
-    let iterations = 0;
-    while (_cursorNextOnsetT < scheduleUntil && iterations < budgetPerTick) {
-      // We're behind — snap forward by 5ms so t is safely in the future when
-      // setValueCurveAtTime() is called inside playGrain.  Using exactly
-      // audioNow risks a race: actx.currentTime advances a few µs between
-      // sampling audioNow here and the actual Web Audio API call, making
-      // Chrome consider t "in the past" and throw InvalidStateError.
-      if (_cursorNextOnsetT < audioNow) {
-        _cursorNextOnsetT = audioNow + 0.005;
-      }
-
-      let toGranulate;
-      if (S.nearestMode || effectiveKAll || candidatePool.length <= k) {
-        toGranulate = candidatePool;
-      } else {
-        // Radius mode with k cap: k-selection (O(N)) instead of sort+slice.
-        // Runs inside the onset while-loop, so must be cheap.
-        toGranulate = _buildCandidatePoolNearest(candidatePool, k, false, undefined);
-      }
-
-      if (toGranulate.length > 0) {
-        if (!(S.grainProbability < 1.0 && Math.random() > S.grainProbability)) {
-          let p;
-          if (S.grainKSeqMode && toGranulate.length > 1) {
-            // Sequential mode: sort candidates by grainStart (recording order)
-            // and step through them one by one. Rebuild the sorted pool when
-            // the candidate set changes (pool identity or length shift).
-            if (_cursorSeqPool !== toGranulate || _cursorSeqPool.length !== toGranulate.length) {
-              _cursorSeqPool = toGranulate.slice().sort((a, b) => a.grainStart - b.grainStart);
-              // Reset index unless the old particle is still in the new pool
-              const oldP = _cursorSeqPool[_cursorSeqIdx];
-              if (!oldP || toGranulate.indexOf(oldP) === -1) _cursorSeqIdx = 0;
+    // ── Post candidates to worklet grain engine ─────────────────────────
+    // S._postWorkletCandidates is set by the bridge when the worklet is running.
+    // Called once per tick (~50Hz) with a compact candidate list.
+    // The worklet handles all grain synthesis.
+    // When scan is muted, send an empty list so the worklet stops firing
+    // cursor grains (zeroing the output gain node alone leaves the worklet
+    // synthesising inaudible grains, wasting CPU and pool slots).
+    //
+    // Flush the live buffer first so the worklet has the freshest audio data
+    // before it receives new candidate offsets. Without this, frontier particles
+    // (deposited in the last 10-50ms) would reference offsets the worklet hasn't
+    // received yet, causing dropped grains and choppy sound during recording.
+    if (S.isRecording) S._flushLiveBuffer?.();
+    if (S._postWorkletCandidates) {
+      const pool = _preSelectedPool || candidatePool;
+      if (S.scanMuted) {
+        S._postWorkletCandidates([], cursorLon, cursorLat);
+        // Visual-only glow: simulate grain onsets from the candidate pool
+        // so the renderer shows muted-scan particles in faint grey.
+        // Uses an onset accumulator driven by the real grain period so
+        // the firing density, probability gate, and k-seq selection all
+        // match what the worklet would do.
+        if (pool.length > 0) {
+          const ov = S.grainOverrides;
+          const base = gp();
+          const periodMs = (ov.period ?? base.period ?? 0.050) * 1000;
+          const durMs    = (ov.duration ?? base.duration ?? 0.100) * 1000;
+          const prob     = S.grainProbability ?? 1.0;
+          const kSeq     = S.grainKSeqMode ?? false;
+          _mutedGlowAccum += GRAIN_SCHEDULER_INTERVAL_MS;
+          while (_mutedGlowAccum >= periodMs) {
+            _mutedGlowAccum -= periodMs;
+            if (prob < 1.0 && Math.random() > prob) continue;
+            let p;
+            if (kSeq) {
+              _mutedGlowSeqIdx = _mutedGlowSeqIdx % pool.length;
+              p = pool[_mutedGlowSeqIdx++];
+            } else {
+              p = pool[(Math.random() * pool.length) | 0];
             }
-            _cursorSeqIdx = _cursorSeqIdx % _cursorSeqPool.length;
-            p = _cursorSeqPool[_cursorSeqIdx];
-            _cursorSeqIdx = (_cursorSeqIdx + 1) % _cursorSeqPool.length;
-          } else {
-            p = toGranulate[Math.floor(Math.random() * toGranulate.length)];
+            activeGrainMap.set(p, { expiry: now + durMs, glowColor: '#ffffff' });
           }
-          const liveDurMs = (S.grainOverrides.duration ?? gp().duration) * 1000;
-          activeGrainMap.set(p, { expiry: now + liveDurMs, glowColor: '#ffffff' });
-          S._lastCursorGrainParticle = p;
-
-          // ── Radius fade: distance-based volume attenuation ──────────────
-          // Set _radiusFadeAtten for playGrain to read when building ep.volume.
-          // p._ang = angular distance (rad) from cursor; searchRadiusRad = max.
-          // t=0 at centre → full volume; t=1 at edge → near-silent.
-          // Curve exponent: 1 + curve*3 (0→linear, 0.5→quadratic, 1→quartic).
-          if (S.radiusFadeEnabled && !S.nearestMode && searchRadiusRad > 0) {
-            const t = Math.min(1, (p._ang ?? 0) / searchRadiusRad);
-            const exp = 1 + S.radiusFadeCurve * 3;
-            _radiusFadeAtten = Math.pow(1 - t, exp);  // 1 at centre, 0 at edge
-          } else {
-            _radiusFadeAtten = 1.0;
-          }
-
-          // Wrap playGrain so any unexpected throw never stalls the onset clock.
-          // Without this guard, an exception here exits the while loop before
-          // _cursorNextOnsetT advances; on the next tick the same onset is
-          // retried, throws again, and the clock is stuck permanently.
-          try {
-            playGrain(p, null, _cursorNextOnsetT);
-            perf.grainsFired++;
-            if (p.source === 'live') S.liveGranulatingThisFrame = true;
-          } catch (_) { /* clock still advances unconditionally below */ }
-          _radiusFadeAtten = 1.0;  // reset for safety
         }
+      } else {
+        _mutedGlowAccum = 0;
+        _mutedGlowSeqIdx = 0;
+        S._postWorkletCandidates(pool, cursorLon, cursorLat);
       }
-
-      // Advance to next onset — always runs, even if playGrain threw above.
-      // Floor at SCHED_SAFE_PERIOD_S (10ms) so the onset clock always advances.
-      // Without this, sub-10ms periods with many grains per tick could stall the
-      // clock, cause the snap guard to fire every tick, and spike node creation.
-      _cursorNextPeriodS = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS + rand(-periodVarS, periodVarS));
-      _cursorNextOnsetT += _cursorNextPeriodS;
-      iterations++;
-    }
-
-    // ── Onset clock re-anchoring ──────────────────────────────────────────
-    // Floating-point accumulation drift: after thousands of additions the
-    // onset time diverges from the true audio clock.  Every 30 seconds,
-    // snap the fractional offset (onset - audioNow) onto a fresh audioNow
-    // base so the accumulation error resets.  The musical effect is
-    // imperceptible — the jitter from periodVar already exceeds fp drift.
-    if (_cursorNextOnsetT !== null && audioNow > (_cursorReanchorAt ?? 0)) {
-      const offset = _cursorNextOnsetT - audioNow;
-      if (offset > 0 && offset < SCHED_LOOKAHEAD * 2) {
-        _cursorNextOnsetT = audioNow + offset; // re-anchor to fresh base
-      }
-      _cursorReanchorAt = audioNow + 30.0; // next re-anchor in 30s
     }
   } else {
     perf.kCount = 0;
@@ -1382,6 +631,9 @@ export function scheduleGrains() {
     S._dominantSeedSlot = -1;
   }
 
+  // Collect active seed data for worklet posting
+  const _workletSeedData = [];
+
   for (let i = 0; i < MAX_SEEDS; i++) {
     const seed = S.commitSlots[i];
     if (!seed || seed.type !== 'cloud' || i >= S.commitSlotCount) continue;
@@ -1434,7 +686,7 @@ export function scheduleGrains() {
       // Still advance the onset clock so it doesn't burst when weight returns
       if (seed._nextOnsetT !== undefined) {
         const cgpSkip = seed.grainParams;
-        const skipPeriod = Math.max(SCHED_SAFE_PERIOD_S, cgpSkip.period);
+        const skipPeriod = Math.max(S.minPeriodS, cgpSkip.period);
         const skipUntil = (ensureAudioContext().currentTime) + SCHED_LOOKAHEAD;
         while (seed._nextOnsetT < skipUntil) {
           seed._nextOnsetT += skipPeriod;
@@ -1542,99 +794,49 @@ export function scheduleGrains() {
       }
     }
 
-    const seedAudioNow   = ensureAudioContext().currentTime;
-    // Same fix as cursor path: use SCHED_LOOKAHEAD (120ms) for budget/window,
-    // not minAheadS (≈15ms), so seed grains are scheduled far enough ahead
-    // to survive JS timer jitter without rhythmic crackle.
-    const seedSchedUntil   = seedAudioNow + SCHED_LOOKAHEAD;
-    // Floor period for budget calc only — same OOM guard as cursor path.
-    const seedSchedPeriodS = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS);
-    const seedGrainsNeeded = Math.ceil(SCHED_LOOKAHEAD / Math.max(seedSchedPeriodS, minGrainPeriodS()));
-    const seedNodesBudget  = Math.max(0, MAX_GRAIN_NODES - S._grainSourceCount);
-    const seedBudget = Math.min(seedGrainsNeeded, seedNodesBudget, MAX_GRAINS_PER_TICK);
+    // Advance onset clock horizon — keep it roughly current for smooth
+    // transition if the seed's weight changes (avoids burst on re-entry).
+    const seedSchedUntil = audioNow + SCHED_LOOKAHEAD;
 
     if (!pool.length) {
       // Still advance the clock even if no particles in range.
-      // Floor at SCHED_SAFE_PERIOD_S to match the OOM guard on the firing path.
+      // Floor at S.minPeriodS to match the OOM guard on the firing path.
       while (seed._nextOnsetT < seedSchedUntil) {
-        const p = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS + rand(-periodVarS, periodVarS));
+        const p = Math.max(S.minPeriodS, basePeriodS + rand(-periodVarS, periodVarS));
         seed._nextOnsetT += p;
       }
       continue;
     }
 
-    // Reset per-seed seq pool each tick (pool is rebuilt fresh each tick)
-    if (cKSeqMode) seed._seqPool = null;
-
-    let seedIter = 0;
-    while (seed._nextOnsetT < seedSchedUntil && seedIter < seedBudget) {
-      if (seed._nextOnsetT < seedAudioNow) {
-        seed._nextOnsetT = seedAudioNow + 0.005; // 5ms forward margin (same race-guard as cursor)
-      }
-
-      // Select grain: sequential (kSeqMode) or random
-      let p;
-      if (cKSeqMode && pool.length > 1) {
-        // Per-seed sequential state — rebuild sorted pool when candidate set changes
-        if (!seed._seqPool || seed._seqPoolLen !== pool.length) {
-          seed._seqPool = pool.slice().sort((a, b) => a.grainStart - b.grainStart);
-          seed._seqPoolLen = pool.length;
-          seed._seqIdx = seed._seqIdx || 0;
-          if (seed._seqIdx >= pool.length) seed._seqIdx = 0;
-        }
-        seed._seqIdx = seed._seqIdx % seed._seqPool.length;
-        p = seed._seqPool[seed._seqIdx];
-        seed._seqIdx = (seed._seqIdx + 1) % seed._seqPool.length;
-      } else {
-        p = pool[Math.floor(Math.random() * pool.length)];
-      }
-      try {
-        // Phase 3: scale seed volume by navigation weight.
-        // When seedWeight < 1 (nearest-seed mode), attenuate the grain volume.
-        // Also apply per-particle radius fade attenuation captured at drop time.
-        // Reuse cgp directly when weight is 1 AND no fade to avoid allocation.
-        // Moving seeds don't use per-particle fade (position changes each tick)
-        const cFadeEnabled = isMoving ? false : seed.radiusFadeEnabled;
-        const fadeKey  = cFadeEnabled ? `_cFade${seed.slotIndex}` : null;
-        const fadeAtt  = fadeKey ? (p[fadeKey] ?? 1.0) : 1.0;
-        const needsCopy = seedWeight < 0.999 || fadeAtt < 0.999 || seedEnvGain < 0.999;
-        let effectiveParams;
-        if (needsCopy) {
-          const ep = seed._effectiveParams;
-          // Copy all properties from cgp (shallow, avoids prototype chain)
-          const keys = Object.keys(cgp);
-          for (let ki = 0; ki < keys.length; ki++) ep[keys[ki]] = cgp[keys[ki]];
-          // Also copy prototype properties (from baseGP through Object.create chain)
-          // Skip for moving seeds since cgp is already a flat object from the frame.
-          if (!isMoving) {
-            const baseKeys = Object.keys(seed.grainParams);
-            for (let ki = 0; ki < baseKeys.length; ki++) {
-              if (!(baseKeys[ki] in ep)) ep[baseKeys[ki]] = seed.grainParams[baseKeys[ki]];
-            }
-          }
-          ep.volume = cgp.volume * seedWeight * fadeAtt * seedEnvGain;
-          // Flag per-particle fade so playGrain uses zero-alloc linear envelope
-          ep._hasPerParticleFade = fadeAtt < 0.999;
-          // Invalidate envelope cache when volume actually changed
-          const volKey = seedWeight * 1000 + fadeAtt;  // cheap composite key
-          if (ep._lastVolKey !== volKey) {
-            ep._cachedAtk = null;
-            ep._lastVolKey = volKey;
-          }
-          effectiveParams = ep;
-        } else {
-          effectiveParams = cgp;
-        }
-        playGrain(p, effectiveParams, seed._nextOnsetT);
-        activeGrainMap.set(p, { expiry: now + cgp.duration * 1000, glowColor: seed.color });
-        perf.grainsFired++;
-        if (p.source === 'live') S.liveGranulatingThisFrame = true;
-      } catch (_) { /* clock still advances below */ }
-
-      const nextPeriod = Math.max(SCHED_SAFE_PERIOD_S, basePeriodS + rand(-periodVarS, periodVarS));
-      seed._nextOnsetT += nextPeriod;
-      seedIter++;
+    // ── Collect seed data for worklet ────────────────────────────────────
+    // Worklet handles all grain synthesis; main thread just posts candidates.
+    // pool.slice() — _buildCandidatePoolRadius / _buildCandidatePoolNearest
+    // return a shared module-level _candidateBuf.  Without cloning, the next
+    // seed's iteration overwrites this seed's pool before _postWorkletSeeds
+    // can iterate it (all seeds would share the last seed's particles).
+    _workletSeedData.push({
+      slotIndex: i,
+      pool: pool.slice(),
+      gain: _seedWeights[i] * seedEnvGain,
+      grainParams: cgp,
+      kSeqMode: cKSeqMode,
+    });
+    // Advance the onset clock so it stays current
+    while (seed._nextOnsetT < seedSchedUntil) {
+      const p = Math.max(S.minPeriodS, basePeriodS + rand(-periodVarS, periodVarS));
+      seed._nextOnsetT += p;
     }
+    perf.seedsPosted++;   // count for diagnostics
+    if (pool.some(p => p.source === 'live')) S.liveGranulatingThisFrame = true;
+  }
+
+  // ── Post collected seed data to worklet ─────────────────────────────────
+  // Always post — even an empty list must reach the worklet so it deactivates
+  // all seeds (line 251 of grain-engine.worklet.js).  Without this, removing
+  // the last cloud leaves a stale seed.active=true in the worklet that keeps
+  // firing grains from old candidates indefinitely.
+  if (S._postWorkletSeeds) {
+    S._postWorkletSeeds(_workletSeedData);
   }
 
   // ── Moving seed recording tick ───────────────────────────────────────────
@@ -1658,8 +860,13 @@ export function scheduleGrains() {
       continue;
     }
 
-    // Create the looping source node on first tick (or after context recreate)
-    if (!seq._sourceNode || seq._sourceNode._stopped) {
+    // Create the looping source node on first tick (or after context recreate).
+    // Also recreate if the AudioContext changed (sample rate switch) — the old
+    // source node belongs to the previous context and is unusable.
+    const needsNewSource = !seq._sourceNode
+      || seq._sourceNode._stopped
+      || (seq._sourceCtx && seq._sourceCtx !== S.audioCtx);
+    if (needsNewSource) {
       const actx = ensureAudioContext();
       const buffer = seq.buffer;
       if (!buffer) continue;
@@ -1788,6 +995,7 @@ export function scheduleGrains() {
       src.start(startAt, playLoopStart + offset);
 
       seq._sourceNode = src;
+      seq._sourceCtx  = actx;  // track which context owns this node
       seq._gainNode   = gain;
       seq._startedAt  = startAt - offset;  // adjust so playhead tracking stays correct
 
@@ -1876,8 +1084,6 @@ export function scheduleGrains() {
     }
   }
 
-  // Feed rolling grain rate accumulator (read by perfTick in state.js).
-  perf._grainAccum += perf.grainsFired;
 
   // Throttle DOM updates to ~4Hz (every 25th tick at 10ms interval)
   if (++_domUpdateCounter >= 25) {
@@ -1903,22 +1109,13 @@ export function scheduleGrains() {
 // scheduler sees exactly one grain due on the next tick.  With the tighter 40ms
 // lookahead, this gives immediate response without burst risk.
 export function resetCursorPeriod() {
-  const audioNow = S.audioCtx?.currentTime ?? 0;
-  if (_cursorNextOnsetT === null) return;
-  const newPeriod = Math.max(SCHED_SAFE_PERIOD_S, S.grainOverrides.period ?? gp().period);
-  _cursorNextOnsetT  = audioNow + newPeriod;
-  _cursorNextPeriodS = newPeriod;
+  // No-op: cursor onset timing is handled by the AudioWorklet.
+  // Kept as an export so callers (ui-presets.js) don't break.
 }
 
-// Register the global onset-clock reset callback so audio.js can invoke it
-// when the AudioContext transitions from 'suspended' → 'running'.  Resetting
-// here prevents the scheduler from trying to schedule grains at the frozen
-// pre-suspension audioNow, which would be in the past by call-time and cause
-// setValueCurveAtTime to throw (→ persistent snapping / "stuck on triangle").
+// Reset onset clocks when AudioContext transitions from 'suspended' → 'running'.
+// Cursor onset timing is handled by the worklet; only seed onset clocks need reset.
 S._resetOnsetClocks = () => {
-  _cursorNextOnsetT  = null;
-  _cursorNextPeriodS = null;
-  // Also reset seed onset clocks so they reinitialise cleanly from resumed time
   if (S.seedSlots) {
     for (let i = 0; i < S.seedSlots.length; i++) {
       const seed = S.seedSlots[i];

@@ -3,9 +3,9 @@
 // ============================================================================
 
 import {
-  S,
+  S, perf,
   PRESETS, COMMIT_COLORS, MAX_COMMITS,
-  SEED_COLORS, MAX_SEEDS, SEQ_COLORS, MAX_SEQS, SCHED_SAFE_PERIOD_S,
+  SEED_COLORS, MAX_SEEDS, SEQ_COLORS, MAX_SEQS,
   COMMIT_DRAW_THRESHOLD_MS, MOVING_SEED_THRESHOLD_MS,
   gp, rebuildGrainCurves, minGrainDurS, minGrainPeriodS,
   SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
@@ -18,6 +18,7 @@ import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
 import { applySparsePreset, syncAllUI, PARAM_REGISTRY } from './ui-patch-table.js';
 import { isLocked, onLockChange, loadLocks } from './param-lock.js';
+import { getMappings } from './sensor-mapping.js';
 
 // ── Recency slider constants (module-level so both setupPresets & initGrainControls see them)
 const RECENCY_MIN = 1, RECENCY_MAX = 16;
@@ -30,8 +31,45 @@ export function fmtMs(v) {
   if (ms < 0.01)   return ms.toFixed(4) + 'ms';
   if (ms < 0.1)    return ms.toFixed(3) + 'ms';
   if (ms < 1)      return ms.toFixed(2) + 'ms';
-  if (ms < 10)     return ms.toFixed(1) + 'ms';
+  if (ms < 100)    return ms.toFixed(2) + 'ms';
   return Math.round(ms) + 'ms';
+}
+
+// ── Sample-exact period: threshold, display, snapping ───────────────────────
+// Threshold: 1 render quantum (128 samples = 2.67ms @48kHz).
+// Below this, ±1 sample makes an audible pitch step — the grain onset rate
+// is in pitched territory and every integer sample count is a distinct note
+// (harmonic series of the sample rate: sr/N Hz for period N).
+const _SAMPLE_EXACT_THRESHOLD = 128;  // samples — one render quantum
+
+function _fmtPeriodSmart(v) {
+  const sr = S.audioCtx?.sampleRate ?? 48000;
+  const samples = Math.round(v * sr);
+  if (samples <= _SAMPLE_EXACT_THRESHOLD && samples > 0) {
+    const hz = sr / samples;
+    // Compact format to fit narrow numboxes
+    if (hz >= 1000) return `${samples}smp ${(hz / 1000).toFixed(1)}k`;
+    return `${samples}smp ${Math.round(hz)}Hz`;
+  }
+  return fmtMs(v);
+}
+
+// Snap to integer sample count when below threshold.
+function _snapPeriodToSamples(seconds) {
+  const sr = S.audioCtx?.sampleRate ?? 48000;
+  const samples = seconds * sr;
+  if (samples <= _SAMPLE_EXACT_THRESHOLD) {
+    return Math.max(1, Math.round(samples)) / sr;
+  }
+  return seconds;
+}
+
+// Step by ±1 sample (arrow keys in sample-exact zone).
+function _stepPeriodBySamples(currentSeconds, direction) {
+  const sr = S.audioCtx?.sampleRate ?? 48000;
+  const currentSamples = Math.round(currentSeconds * sr);
+  const newSamples = Math.max(1, currentSamples + direction);
+  return newSamples / sr;
 }
 
 // ── Grain presets UI ─────────────────────────────────────────────────────────
@@ -211,6 +249,7 @@ export function setupPresets() {
       btn.addEventListener('click', () => {
         S.grainKSeqMode = (btn.dataset.kseq === 'on');
         updatePlaybackControls();
+        S._updateWorkletParams?.({ kSeqMode: S.grainKSeqMode });
       });
     });
   }
@@ -356,6 +395,47 @@ export function setupPresets() {
     const btn = document.getElementById('perfMonBtn');
     if (btn) btn.classList.toggle('active', S.perfMonitorVisible);
   });
+
+  // Sched row click → reset peak hold (like tapping a peak meter in a DAW)
+  document.getElementById('pmSchedRow')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    perf.schedulerPeak = 0;
+    const peakEl = document.getElementById('pmSchedPeak');
+    const peakValEl = document.getElementById('pmSchedPeakVal');
+    if (peakEl) { peakEl.style.left = '0%'; peakEl.style.display = 'none'; }
+    if (peakValEl) peakValEl.textContent = '';
+  });
+
+  // Drop rate numbox — editable ms value for particle deposit interval.
+  // Writes to S.paintTicker.intervalMs (consumed by paint-ticker.js).
+  const _dropEl = document.getElementById('pmDropVal');
+  if (_dropEl) {
+    // Initialise from current state (exp-toggles may have set it)
+    if (!S.paintTicker) S.paintTicker = {};
+    const initMs = S.paintTicker.intervalMs ?? 50;
+    _dropEl.value = `${initMs}ms`;
+
+    _dropEl.addEventListener('focus', () => _dropEl.select());
+    _dropEl.addEventListener('change', () => {
+      const v = parseInt(_dropEl.value.replace(/[^0-9]/g, ''), 10);
+      if (!isNaN(v) && v >= 5 && v <= 500) {
+        if (!S.paintTicker) S.paintTicker = {};
+        S.paintTicker.intervalMs = v;
+        _dropEl.value = `${v}ms`;
+      } else {
+        // Revert to current value
+        _dropEl.value = `${S.paintTicker?.intervalMs ?? 50}ms`;
+      }
+    });
+    _dropEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { _dropEl.blur(); e.preventDefault(); }
+      if (e.key === 'Escape') {
+        _dropEl.value = `${S.paintTicker?.intervalMs ?? 50}ms`;
+        _dropEl.blur();
+        e.preventDefault();
+      }
+    });
+  }
 
   // Fullscreen — delegates to the same fullscreenBtn click handler in events.js
   document.getElementById('fullscreenBtn2')?.addEventListener('click', () => {
@@ -881,6 +961,10 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
   const n = seqParticles.length;
   const loopStart = seqParticles[0].grainStart;
   const lastP     = seqParticles[n - 1];
+  // Use the full buffer duration — stopLiveRecording() already clamped all
+  // particle times to fit the finalized buffer, and the loop crossfade
+  // handles the wrap-point seam.  (An earlier safeDur trim removed 50 ms
+  // from the tail but that audibly cut off the performer's last beat.)
   const loopEnd   = Math.min(buffer.duration, lastP.grainStart + lastP.grainDuration);
 
   // ── Build a crossfaded loop buffer ─────────────────────────────────────
@@ -892,8 +976,10 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
   const actx = S.audioCtx || new AudioContext();
   const sr   = buffer.sampleRate;
   const nCh  = buffer.numberOfChannels;
-  const startSamp = Math.floor(loopStart * sr);
-  const endSamp   = Math.min(buffer.length, Math.ceil(loopEnd * sr));
+  // Symmetric rounding — the old floor/ceil pair biased the region longer,
+  // padding the tail with extra (possibly silent) samples.
+  const startSamp = Math.round(loopStart * sr);
+  const endSamp   = Math.min(buffer.length, Math.round(loopEnd * sr));
   const regionLen = endSamp - startSamp;
   // Guard against degenerate regions (e.g. noise gate rejected most particles,
   // leaving a near-zero region that createBuffer would reject).
@@ -1022,10 +1108,22 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
 /**
  * Stop and remove a single sequence by slot index.
  */
-export function removeSeq(slotIndex) {
+export function removeSeq(slotIndex, immediate = false) {
   const slot = S.commitSlots[slotIndex];
   if (!slot) return;
-  if (slot.type === 'loop') _stopSeqAudio(slot);
+  if (slot.type === 'loop') {
+    if (immediate) {
+      // Hard-stop: kill audio NOW (no fade) — used by undo
+      const src = slot._sourceNode;
+      if (src && !src._stopped) {
+        try { src.stop(); } catch (_) {}
+        src._stopped = true;
+      }
+      _cleanupSeqNodes(slot);
+    } else {
+      _stopSeqAudio(slot);
+    }
+  }
   S.commitSlots[slotIndex] = null;
   S._syncCommitUI?.();
 }
@@ -1035,11 +1133,20 @@ export function removeSeq(slotIndex) {
  * Called from undoLastStroke to clean up sequences when their stroke is undone.
  */
 export function removeSeqByStrokeId(strokeId) {
-  for (let i = 0; i < S.commitSlotCount; i++) {
+  // Scan the full array (not just commitSlotCount) — a slot may have been
+  // created when the active count was higher and still be alive.
+  let found = 0;
+  for (let i = 0; i < MAX_COMMITS; i++) {
     const slot = S.commitSlots[i];
-    if (slot && slot.type === 'loop' && slot.strokeId === strokeId) {
-      removeSeq(i);
+    if (slot && slot.strokeId === strokeId) {
+      console.log(`[undo] removing commit slot ${i} (type=${slot.type}, strokeId=${strokeId}, src=${!!slot._sourceNode})`);
+      removeSeq(i, /* immediate */ true);
+      found++;
     }
+  }
+  if (!found) {
+    console.warn(`[undo] no commit slot found for strokeId=${strokeId}. Slots:`,
+      S.commitSlots.map((s, i) => s ? `${i}:${s.type}(sid=${s.strokeId})` : null).filter(Boolean));
   }
 }
 
@@ -1641,9 +1748,8 @@ export function selectPreset(index) {
   // fallback chain (grainOverrides → grainParams).
 
   // Check which grain-engine keys are present in this preset
-  // durJitter + retriggerMs are not in PARAM_REGISTRY (no patch table row)
-  // but factory presets define them — keep here so factory recall still works.
-  // User presets won't have them: loadUserPresets strips unknown keys on load.
+  // retriggerMs is not in PARAM_REGISTRY (no patch table row)
+  // but factory presets may define it — keep here so factory recall still works.
   const GRAIN_KEYS = ['duration', 'durJitter', 'durVar', 'fadeRatio', 'period',
     'periodVar', 'pitchJitter', 'pitchShift', 'panSpread', 'volume', 'k',
     'retriggerMs'];
@@ -2002,10 +2108,46 @@ export function updatePresetStats() {
 // Registers S.syncGrainControlsUI so selectPreset can call it.
 
 export function initGrainControls() {
-  const _LOG_MIN_MS = 1; // 1ms — bottom of the log slider range for both duration and period
-  const _LOG_MIN = Math.log(_LOG_MIN_MS), _LOG_MAX = Math.log(4000);
-  const _sliderToMs = sv => Math.exp(_LOG_MIN + (parseFloat(sv) / 1000) * (_LOG_MAX - _LOG_MIN));
-  const _msToSlider = ms => Math.round(((Math.log(Math.max(_LOG_MIN_MS, ms)) - _LOG_MIN) / (_LOG_MAX - _LOG_MIN)) * 1000);
+  // ── Hybrid slider: linear-in-samples below threshold, log above ─────────
+  // Below _SAMPLE_EXACT_THRESHOLD (128 samples = 2.67ms @48k), each slider
+  // tick = one integer sample count. Above, smooth log scale to 4000ms.
+  //
+  // Slider layout (0–1000):
+  //   [0 .. threshold-1]  → sample counts [1 .. threshold]  (linear, 1:1)
+  //   [threshold .. 1000] → [threshold_ms .. 4000ms]         (log)
+  //
+  const _LOG_MAX = Math.log(4000);
+  const _sr = () => S.audioCtx?.sampleRate ?? 48000;
+  const _threshMs = () => _SAMPLE_EXACT_THRESHOLD / _sr() * 1000;
+  const _logThresh = () => Math.log(_threshMs());
+
+  // Slider value → milliseconds (hybrid)
+  const _sliderToMs = sv => {
+    const v = parseFloat(sv);
+    if (v < _SAMPLE_EXACT_THRESHOLD) {
+      // Linear zone: slider tick N → (N+1) samples → ms
+      const samples = Math.max(1, Math.round(v + 1));
+      return samples / _sr() * 1000;
+    }
+    // Log zone: map [threshold..1000] → [threshMs..4000ms]
+    const t = (v - _SAMPLE_EXACT_THRESHOLD) / (1000 - _SAMPLE_EXACT_THRESHOLD);
+    return Math.exp(_logThresh() + t * (_LOG_MAX - _logThresh()));
+  };
+
+  // Milliseconds → slider value (hybrid inverse)
+  const _msToSlider = ms => {
+    const sr = _sr();
+    const threshMs = _SAMPLE_EXACT_THRESHOLD / sr * 1000;
+    if (ms <= threshMs) {
+      // Linear zone: ms → samples → slider tick
+      const samples = Math.max(1, Math.round(ms / 1000 * sr));
+      return Math.max(0, Math.min(_SAMPLE_EXACT_THRESHOLD - 1, samples - 1));
+    }
+    // Log zone: ms → [threshold..1000]
+    const logThresh = Math.log(threshMs);
+    const t = (Math.log(Math.max(threshMs, ms)) - logThresh) / (_LOG_MAX - logThresh);
+    return Math.round(_SAMPLE_EXACT_THRESHOLD + t * (1000 - _SAMPLE_EXACT_THRESHOLD));
+  };
   const _fmtMs = fmtMs;
   const _parseMs = str => {
     const s = str.trim();
@@ -2017,17 +2159,45 @@ export function initGrainControls() {
   const SLIDER_DEFS = [
     {
       sliderId: 'gcDurSlider', numId: 'gcDurNum', param: 'duration',
-      toDisplay: _fmtMs,
+      toDisplay: _fmtPeriodSmart,
       sliderToInternal: sv => Math.max(minGrainDurS(), _sliderToMs(sv) / 1000),
       internalToSlider: v  => _msToSlider(v * 1000),
-      fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(minGrainDurS(), Math.min(4, v)); },
+      fromDisplay: str => {
+        const smpMatch = str.trim().match(/^(\d+)\s*smp/i);
+        if (smpMatch) {
+          const sr = S.audioCtx?.sampleRate ?? 48000;
+          const n = parseInt(smpMatch[1]);
+          return isNaN(n) ? null : Math.max(minGrainDurS(), n / sr);
+        }
+        const v = _parseMs(str);
+        return isNaN(v) ? null : Math.max(minGrainDurS(), Math.min(4, v));
+      },
+      _sampleStep: true,
     },
     {
       sliderId: 'gcDurVarSlider', numId: 'gcDurVarNum', param: 'durVar',
-      toDisplay: v => Math.round(v * 1000) + 'ms',
-      sliderToInternal: sv => parseFloat(sv) / 1000,
-      internalToSlider: v  => Math.round(v * 1000),
-      fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(0, Math.min(0.5, v)); },
+      // Hybrid mapping with zero-able: slider 0 = off, slider 1+ uses hybrid scale offset by 1
+      toDisplay: v => v === 0 ? '0' : _fmtPeriodSmart(v),
+      sliderToInternal: sv => { const v = parseFloat(sv); return v <= 0 ? 0 : _sliderToMs(v - 1) / 1000; },
+      internalToSlider: v  => v <= 0 ? 0 : _msToSlider(v * 1000) + 1,
+      fromDisplay: str => {
+        if (str.trim() === '0') return 0;
+        const smpMatch = str.trim().match(/^(\d+)\s*smp/i);
+        if (smpMatch) {
+          const n = parseInt(smpMatch[1]);
+          return isNaN(n) ? null : Math.max(0, n / _sr());
+        }
+        const v = _parseMs(str);
+        return isNaN(v) ? null : Math.max(0, Math.min(0.5, v));
+      },
+      _sampleStep: true,
+    },
+    {
+      sliderId: 'gcDurJitterSlider', numId: 'gcDurJitterNum', param: 'durJitter',
+      toDisplay: v => Math.round(v * 100) + '%',
+      sliderToInternal: sv => parseFloat(sv) / 100,
+      internalToSlider: v  => Math.round(v * 100),
+      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
     },
     {
       sliderId: 'gcFadeSlider', numId: 'gcFadeNum', param: 'fadeRatio',
@@ -2038,17 +2208,60 @@ export function initGrainControls() {
     },
     {
       sliderId: 'gcPeriodSlider', numId: 'gcPeriodNum', param: 'period',
-      toDisplay: _fmtMs,
-      sliderToInternal: sv => Math.max(SCHED_SAFE_PERIOD_S, _sliderToMs(sv) / 1000),
+      toDisplay: _fmtPeriodSmart,
+      sliderToInternal: sv => Math.max(S.minPeriodS, _sliderToMs(sv) / 1000),
       internalToSlider: v  => _msToSlider(v * 1000),
-      fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(SCHED_SAFE_PERIOD_S, Math.min(4, v)); },
+      fromDisplay: str => {
+        // Accept "Nsmp" format (e.g. "20smp" → 20/sr seconds)
+        const smpMatch = str.trim().match(/^(\d+)\s*smp/i);
+        if (smpMatch) {
+          const sr = S.audioCtx?.sampleRate ?? 48000;
+          const n = parseInt(smpMatch[1]);
+          return isNaN(n) ? null : Math.max(S.minPeriodS, n / sr);
+        }
+        const v = _parseMs(str);
+        return isNaN(v) ? null : Math.max(S.minPeriodS, Math.min(4, v));
+      },
+      _sampleStep: true,
+    },
+    {
+      sliderId: 'gcOverlapSlider', numId: 'gcOverlapNum', param: 'overlap',
+      // Log scale: slider 0–1000 → overlap 0.01× to 100×
+      // mid-point (500) = 1.0×
+      toDisplay: v => v.toFixed(2) + '×',
+      sliderToInternal: sv => {
+        const t = parseFloat(sv) / 1000;  // 0–1
+        // Log mapping: 10^(-2 + 4*t) → 0.01 to 100
+        return Math.pow(10, -2 + 4 * t);
+      },
+      internalToSlider: v => {
+        // Inverse: v = 10^(-2+4t) → t = (log10(v)+2)/4
+        const t = (Math.log10(Math.max(0.01, Math.min(100, v))) + 2) / 4;
+        return Math.round(t * 1000);
+      },
+      fromDisplay: str => {
+        const v = parseFloat(str.replace('×', '').replace('x', ''));
+        return isNaN(v) ? null : Math.max(0.01, Math.min(100, v));
+      },
+      _isOverlap: true,  // flag for special linking behaviour
     },
     {
       sliderId: 'gcPeriodVarSlider', numId: 'gcPeriodVarNum', param: 'periodVar',
-      toDisplay: v => Math.round(v * 1000) + 'ms',
-      sliderToInternal: sv => parseFloat(sv) / 1000,
-      internalToSlider: v  => Math.round(v * 1000),
-      fromDisplay: str => { const v = _parseMs(str); return isNaN(v) ? null : Math.max(0, Math.min(0.5, v)); },
+      // Hybrid mapping with zero-able: slider 0 = off, slider 1+ uses hybrid scale offset by 1
+      toDisplay: v => v === 0 ? '0' : _fmtPeriodSmart(v),
+      sliderToInternal: sv => { const v = parseFloat(sv); return v <= 0 ? 0 : _sliderToMs(v - 1) / 1000; },
+      internalToSlider: v  => v <= 0 ? 0 : _msToSlider(v * 1000) + 1,
+      fromDisplay: str => {
+        if (str.trim() === '0') return 0;
+        const smpMatch = str.trim().match(/^(\d+)\s*smp/i);
+        if (smpMatch) {
+          const n = parseInt(smpMatch[1]);
+          return isNaN(n) ? null : Math.max(0, n / _sr());
+        }
+        const v = _parseMs(str);
+        return isNaN(v) ? null : Math.max(0, Math.min(0.5, v));
+      },
+      _sampleStep: true,
     },
     {
       sliderId: 'gcPitchShiftSlider', numId: 'gcPitchShiftNum', param: 'pitchShift',
@@ -2170,24 +2383,83 @@ export function initGrainControls() {
     });
   }
 
+  // ── Forward grain params to worklet when active ────────────────────────
+  // Maps main-thread param names/values to worklet message format.
+  // Called on every slider change, preset selection, and direction/curve switch.
+  const _DIR_MAP  = { fwd: 0, rev: 1, rand: 2, rnd: 2 };
+  const _CURVE_MAP = { hann: 0, tri: 1, rect: 2 };
+
+  function _syncWorkletParams() {
+    // Always sync — worklet is the only grain engine
+    const ov = S.grainOverrides;
+    const base = gp();
+    const msg = {
+      period:           ov.period           ?? base.period,
+      duration:         ov.duration         ?? base.duration,
+      volume:           ov.volume           ?? base.volume,
+      pitchShift:       ov.pitchShift       ?? base.pitchShift       ?? 0,
+      pitchJitter:      ov.pitchJitter      ?? base.pitchJitter      ?? 0,
+      periodVar:        ov.periodVar        ?? base.periodVar        ?? 0,
+      durVar:           ov.durVar           ?? base.durVar           ?? 0,
+      durJitter:        ov.durJitter        ?? base.durJitter        ?? 0,
+      probability:      S.grainProbability ?? 1.0,
+      direction:        _DIR_MAP[S.grainDirection]   ?? 0,
+      envShape:         _CURVE_MAP[S.grainCurveType] ?? 0,
+      hpfFreq:          ov.hpfFreq          ?? base.hpfFreq          ?? 20,
+      lpfFreq:          ov.lpfFreq          ?? base.lpfFreq          ?? 20000,
+      filterQ:          ov.filterQ          ?? base.filterQ          ?? 0.707,
+      filterFreqJitter: ov.filterFreqJitter ?? base.filterFreqJitter ?? 0,
+      kSeqMode:         S.grainKSeqMode ?? false,
+      panSpread:        ov.panSpread        ?? base.panSpread        ?? 0,
+    };
+    S._updateWorkletParams?.(msg);
+  }
+
   function setGrainParam(param, internalVal) {
+    if (param === 'overlap') {
+      // Overlap is a virtual param — drives duration = period × overlap
+      const per = S.grainOverrides.period ?? gp().period;
+      const newDur = Math.max(minGrainDurS(), per * internalVal);
+      S.grainOverrides.duration = newDur;
+      // Update duration slider/numbox to reflect new value
+      const durDef = SLIDER_DEFS.find(d => d.param === 'duration');
+      if (durDef) syncSliderFromInternal(durDef);
+      requestWaveformRedraw();
+      _syncWorkletParams();
+      return;
+    }
     if (param === 'probability') {
       S.grainProbability = Math.max(0, Math.min(1, internalVal));
     } else {
       if (param === 'duration') internalVal = Math.max(minGrainDurS(), internalVal);
-      if (param === 'period')   internalVal = Math.max(SCHED_SAFE_PERIOD_S, internalVal);
+      if (param === 'period')   internalVal = Math.max(S.minPeriodS, internalVal);
       S.grainOverrides[param] = internalVal;
       if (param === 'volume') rebuildGrainCurves();
       if (param === 'duration' || param === 'period' || param === 'fadeRatio') requestWaveformRedraw();
       if (param === 'period' || param === 'periodVar') resetCursorPeriod();
     }
+    // When period or duration changes independently, passively update the overlap display
+    if (param === 'duration' || param === 'period') _syncOverlapDisplay();
+    _syncWorkletParams();
+  }
+
+  function _getOverlapRatio() {
+    const dur = S.grainOverrides.duration ?? gp().duration;
+    const per = S.grainOverrides.period   ?? gp().period;
+    return per > 0 ? dur / per : 1;
+  }
+
+  function _syncOverlapDisplay() {
+    const olDef = SLIDER_DEFS.find(d => d.param === 'overlap');
+    if (olDef) syncSliderFromInternal(olDef);
   }
 
   function syncSliderFromInternal(def) {
     const slider = document.getElementById(def.sliderId);
     const numbox = document.getElementById(def.numId);
     if (!slider || !numbox) return;
-    const val = def.param === 'probability' ? S.grainProbability
+    const val = def.param === 'overlap'     ? _getOverlapRatio()
+              : def.param === 'probability' ? S.grainProbability
               : (S.grainOverrides[def.param] ?? gp()[def.param] ?? 0);
     slider.value = def.internalToSlider(val);
     if (document.activeElement !== numbox) numbox.value = def.toDisplay(val);
@@ -2221,6 +2493,20 @@ export function initGrainControls() {
       // Coalesce grain engine updates — only the latest value per param is kept.
       _pendingSliderUpdates.set(def.param, internal);
       if (_sliderTimerId === null) _sliderTimerId = setTimeout(_flushSliderUpdates, 30);
+      // When period or duration slider is dragged, update overlap readout in real-time
+      if (def.param === 'period' || def.param === 'duration') {
+        // Peek at what the ratio will be once this value is committed
+        const dur = def.param === 'duration' ? internal : (S.grainOverrides.duration ?? gp().duration);
+        const per = def.param === 'period'   ? internal : (S.grainOverrides.period   ?? gp().period);
+        const ratio = per > 0 ? dur / per : 1;
+        const olSlider = document.getElementById('gcOverlapSlider');
+        const olNum    = document.getElementById('gcOverlapNum');
+        const olDef    = SLIDER_DEFS.find(d => d.param === 'overlap');
+        if (olSlider && olNum && olDef) {
+          olSlider.value = olDef.internalToSlider(ratio);
+          if (document.activeElement !== olNum) olNum.value = olDef.toDisplay(ratio);
+        }
+      }
     });
 
     const commitNumbox = () => {
@@ -2237,6 +2523,30 @@ export function initGrainControls() {
     numbox.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); commitNumbox(); numbox.blur(); }
       if (e.key === 'Escape') { syncSliderFromInternal(def); numbox.blur(); }
+      // ── Arrow keys: ±1 sample stepping for period in sub-ms zone ──────
+      if (def._sampleStep && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        const currentVal = def.param === 'probability' ? S.grainProbability
+          : (S.grainOverrides[def.param] ?? gp()[def.param] ?? 0);
+        const sr = S.audioCtx?.sampleRate ?? 48000;
+        const currentSamples = Math.round(currentVal * sr);
+        // In sample-exact zone (≤128 samples), step by ±1 sample
+        // Above that, step by ±1ms
+        if (currentSamples <= _SAMPLE_EXACT_THRESHOLD) {
+          const dir = e.key === 'ArrowUp' ? 1 : -1;
+          const newVal = _stepPeriodBySamples(currentVal, dir);
+          setGrainParam(def.param, Math.max(S.minPeriodS, newVal));
+          slider.value = def.internalToSlider(newVal);
+          numbox.value = def.toDisplay(newVal);
+        } else {
+          // Above threshold (~2.67ms): step by 1ms
+          const step = e.key === 'ArrowUp' ? 0.001 : -0.001;
+          const newVal = Math.max(S.minPeriodS, currentVal + step);
+          setGrainParam(def.param, newVal);
+          slider.value = def.internalToSlider(newVal);
+          numbox.value = def.toDisplay(newVal);
+        }
+      }
     });
     numbox.addEventListener('blur', commitNumbox);
   });
@@ -2246,6 +2556,7 @@ export function initGrainControls() {
       btn.addEventListener('click', () => {
         S.grainDirection = btn.dataset.dir;
         dirSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+        _syncWorkletParams();
       });
     });
   }
@@ -2257,6 +2568,7 @@ export function initGrainControls() {
         curveSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.curve === S.grainCurveType));
         rebuildGrainCurves();
         drawPresetWaveform();
+        _syncWorkletParams();
       });
     });
   }
@@ -2332,6 +2644,7 @@ export function initGrainControls() {
     drawRadiusViz();
     drawPresetWaveform();
     updatePresetStats();
+    _syncWorkletParams();
   };
 
   // Init display from default preset
@@ -2384,6 +2697,44 @@ export function initGrainControls() {
       row.classList.toggle('param-morphed', morphed?.has(def.param) ?? false);
     });
   };
+
+  // ── Sensor mapping visual indicator ──────────────────────────────────────
+  // When an IMU sensor mapping is enabled for a param, toggle .param-mapped
+  // on each affected grain-row so the slider/label turn violet.
+  // Driven by S._syncMappingHighlights(), called from sensor-mapping.js
+  // whenever mappings are added, removed, or toggled.
+
+  /** Build a Set of param keys with at least one enabled mapping. */
+  function _activeMappedParams() {
+    const mappings = getMappings();
+    const active = new Set();
+    for (let i = 0; i < mappings.length; i++) {
+      if (mappings[i].enabled) active.add(mappings[i].targetParam);
+    }
+    return active;
+  }
+
+  S._syncMappingHighlights = function() {
+    const mapped = _activeMappedParams();
+    SLIDER_DEFS.forEach(def => {
+      const slider = document.getElementById(def.sliderId);
+      if (!slider) return;
+      const row = slider.closest('.grain-row');
+      if (!row) return;
+      row.classList.toggle('param-mapped', mapped.has(def.param));
+    });
+    // Also mark non-SLIDER_DEF slider controls (k, radius, recency, fade curve)
+    EXTRA_MORPH_SLIDERS.forEach(def => {
+      const el = document.getElementById(def.sliderId);
+      if (!el) return;
+      const row = el.closest('.grain-row');
+      if (!row) return;
+      row.classList.toggle('param-mapped', mapped.has(def.param));
+    });
+  };
+
+  // Initial sync — pick up any persisted mappings from localStorage
+  S._syncMappingHighlights();
 }
 
 // ============================================================================
@@ -2452,7 +2803,7 @@ function _applyDesktopMorph(seed) {
     }
   }
 
-  // Invalidate envelope curve cache so playGrain picks up new fadeRatio
+  // Invalidate envelope curve cache so the worklet picks up new fadeRatio
   if (seed.grainParams._cachedAtk) seed.grainParams._cachedAtk = null;
 }
 

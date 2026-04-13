@@ -314,7 +314,7 @@ function handleControlMessage(msg) {
       sendCommand(info.ip, rcv, { gyroscope_offset_correction_enabled: true });
       sendCommand(info.ip, rcv, { udp_low_latency: true });
       sendCommand(info.ip, rcv, { ahrs_message_type: 0 });  // quaternion mode
-      sendCommand(info.ip, rcv, { ahrs_message_rate_divisor: 8 });  // 400Hz / 8 = 50Hz
+      sendCommand(info.ip, rcv, { ahrs_message_rate_divisor: 1 });  // 400Hz / 1 = 400Hz (paint-ticker adaptive spacing)
       setTimeout(() => {
         sendCommand(info.ip, rcv, { apply: null });
         // Heading zero NOT sent on connect — user controls it via "zero heading" button

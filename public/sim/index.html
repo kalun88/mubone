@@ -14,7 +14,7 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 0.18 alpha</span>
+        <span class="top-bar-version">version 1.1 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -115,15 +115,14 @@
           <span class="pm-track"><span class="pm-fill" id="pmFrameBar"></span></span>
           <span class="pm-num" id="pmFrameVal">0ms</span>
         </div>
-        <div class="pm-row">
+        <div class="pm-row pm-row-clickable" id="pmSchedRow" title="click to reset peak">
           <span class="pm-label">sched</span>
-          <span class="pm-track"><span class="pm-fill" id="pmSchedBar"></span></span>
+          <span class="pm-track">
+            <span class="pm-fill" id="pmSchedBar"></span>
+            <span class="pm-peak" id="pmSchedPeak"></span>
+          </span>
           <span class="pm-num" id="pmSchedVal">+0ms</span>
-        </div>
-        <div class="pm-row">
-          <span class="pm-label">rate</span>
-          <span class="pm-track"><span class="pm-fill" id="pmRateBar"></span></span>
-          <span class="pm-num" id="pmRateVal">0/s</span>
+          <span class="pm-num pm-num-peak" id="pmSchedPeakVal"></span>
         </div>
         <div class="pm-row">
           <span class="pm-label">k</span>
@@ -134,6 +133,11 @@
           <span class="pm-label">rec</span>
           <span class="pm-track"><span class="pm-fill" id="pmRecBar"></span></span>
           <span class="pm-num" id="pmRecVal">0s</span>
+        </div>
+        <div class="pm-row" title="particle drop interval — ms between deposits while painting&#10;lower = denser cloud, higher = sparser&#10;click number to edit">
+          <span class="pm-label">drop</span>
+          <span class="pm-track" style="visibility:hidden"></span>
+          <input type="text" class="pm-num pm-num-edit" id="pmDropVal" value="50ms">
         </div>
         <div class="pm-info" id="pmInfo"></div>
         <div class="pm-warn" id="pmUnderruns" style="display:none"></div>
@@ -283,9 +287,15 @@
           </div>
           <div class="grain-row" title="dur ± — duration randomness&#10;min: 0ms  max: 500ms">
             <span class="grain-label">dur ±</span>
-            <input class="grain-slider" type="range" id="gcDurVarSlider" min="0" max="500" step="1" value="0">
+            <input class="grain-slider" type="range" id="gcDurVarSlider" min="0" max="750" step="1" value="0">
             <input type="text" class="grain-numbox" id="gcDurVarNum" data-param="durVar" value="0ms">
             <span class="param-lock-indicator" data-lock-key="durVar" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+          </div>
+          <div class="grain-row" title="dur jit — per-grain duration jitter (proportional)&#10;0% = no jitter  100% = ±100% of base duration">
+            <span class="grain-label">dur jit</span>
+            <input class="grain-slider" type="range" id="gcDurJitterSlider" min="0" max="100" step="1" value="0">
+            <input type="text" class="grain-numbox" id="gcDurJitterNum" data-param="durJitter" value="0%">
+            <span class="param-lock-indicator" data-lock-key="durJitter" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
           <div class="grain-row" title="fade — attack + release each as % of grain duration&#10;min: 0% (instant on/off)  max: 50% (pure envelope, no sustain)">
             <span class="grain-label">fade</span>
@@ -299,9 +309,15 @@
             <input type="text" class="grain-numbox" id="gcPeriodNum" data-param="period" value="160ms">
             <span class="param-lock-indicator" data-lock-key="period" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>
+          <div class="grain-row" title="overlap — grain overlap ratio = duration / period&#10;&lt;1 = gaps between grains  1 = grains just touch  &gt;1 = overlapping grains&#10;moving this slider adjusts duration to match">
+            <span class="grain-label">overlap</span>
+            <input class="grain-slider" type="range" id="gcOverlapSlider" min="0" max="1000" step="1" value="500">
+            <input type="text" class="grain-numbox" id="gcOverlapNum" data-param="overlap" value="1.0×">
+            <span class="param-lock-indicator" data-lock-key="overlap" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+          </div>
           <div class="grain-row" title="per ± — period randomness&#10;min: 0ms  max: 500ms">
             <span class="grain-label">per ±</span>
-            <input class="grain-slider" type="range" id="gcPeriodVarSlider" min="0" max="500" step="1" value="0">
+            <input class="grain-slider" type="range" id="gcPeriodVarSlider" min="0" max="750" step="1" value="0">
             <input type="text" class="grain-numbox" id="gcPeriodVarNum" data-param="periodVar" value="0ms">
             <span class="param-lock-indicator" data-lock-key="periodVar" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
           </div>

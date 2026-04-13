@@ -58,6 +58,9 @@ let _hpfRmsBuf = null;
 let _lastUISyncTime = 0;
 const UI_SYNC_INTERVAL = 100; // ms
 
+// Debug throttle
+let _dbgLastLog = 0;
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /** Convert dB to linear gain */
@@ -189,10 +192,13 @@ export function tickHandsfree() {
       const half = Math.floor(_TREND_WINDOW / 2);
       let firstHalfAvg = 0, secondHalfAvg = 0;
       for (let i = 0; i < half; i++) {
-        const idx1 = (_rmsHistoryIdx - _TREND_WINDOW + i) % _TREND_WINDOW;
-        const idx2 = (_rmsHistoryIdx - half + i) % _TREND_WINDOW;
-        firstHalfAvg  += _rmsHistory[Math.abs(idx1) % _TREND_WINDOW];
-        secondHalfAvg += _rmsHistory[Math.abs(idx2) % _TREND_WINDOW];
+        // Use ((x % n) + n) % n to guarantee non-negative modulo —
+        // plain JS % returns negative for negative operands, which
+        // caused overlapping sample windows and false feedback detection.
+        const idx1 = ((_rmsHistoryIdx - _TREND_WINDOW + i) % _TREND_WINDOW + _TREND_WINDOW) % _TREND_WINDOW;
+        const idx2 = ((_rmsHistoryIdx - half + i) % _TREND_WINDOW + _TREND_WINDOW) % _TREND_WINDOW;
+        firstHalfAvg  += _rmsHistory[idx1];
+        secondHalfAvg += _rmsHistory[idx2];
       }
       firstHalfAvg  /= half;
       secondHalfAvg /= half;
@@ -220,10 +226,24 @@ export function tickHandsfree() {
     S.hfRecording = false;
   }
 
+  // ── Debug: log why gate isn't re-opening (throttled ~1/s) ──────────
+  if (!S.hfRecording && !S.hfGateOpen && inputRms > 0.001 && now - (_dbgLastLog || 0) > 1000) {
+    _dbgLastLog = now;
+    console.log(`hf: gate blocked? inputRms=${inputRms.toFixed(4)} thresh=${effectiveThreshold.toFixed(4)} outputRms=${outputRms.toFixed(4)} margin=${marginLinear.toFixed(2)} gateLevel=${_gateLevel.toFixed(3)} isPaint=${S.isPainting} isRec=${S.isRecording} hfRec=${S.hfRecording}`);
+  }
+
   // GATE CLOSED (or forced close) → finalize buffer segment
-  const shouldClose = (!S.hfGateOpen && prevOpen) || feedbackDetected || bufferTooLong;
+  const forcedClose = feedbackDetected || bufferTooLong;
+  const shouldClose = (!S.hfGateOpen && prevOpen) || forcedClose;
   if (shouldClose && S.hfRecording) {
     _stopSegment(now);
+    // If this was a forced close (max length or feedback) and the gate is still
+    // open (player is still playing), immediately start a new segment so there's
+    // no gap in recording.  Without this, the gate waits for a close→open
+    // transition that never comes while the player holds a continuous note.
+    if (forcedClose && S.hfGateOpen) {
+      _startSegment(now);
+    }
   }
 
   // ── 9. Update UI state (throttled to ~10fps) ──────────────────────────

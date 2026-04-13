@@ -281,6 +281,9 @@ let _proxyWs = null;
 let _proxyRetryTimer = null;
 const PROXY_CONTROL_URL = 'ws://localhost:8081';
 const PROXY_RETRY_MS = 3000;
+const PROXY_MAX_SILENT_RETRIES = 3;
+let _proxyRetryCount = 0;
+let _proxyEverConnected = false;
 
 // Active WebSerial ports: portPath (identifier string) → { port, reader, writer, readLoop }
 const _webSerialPorts = new Map();
@@ -311,6 +314,8 @@ function _connectProxyControl() {
   }
 
   _proxyWs.onopen = () => {
+    _proxyEverConnected = true;
+    _proxyRetryCount = 0;
     DEBUG && console.log('[imu-setup] proxy control channel connected');
     clearTimeout(_proxyRetryTimer);
   };
@@ -332,6 +337,10 @@ function _connectProxyControl() {
 
 function _scheduleProxyRetry() {
   clearTimeout(_proxyRetryTimer);
+  if (!_proxyEverConnected) {
+    _proxyRetryCount++;
+    if (_proxyRetryCount > PROXY_MAX_SILENT_RETRIES) return;
+  }
   _proxyRetryTimer = setTimeout(_connectProxyControl, PROXY_RETRY_MS);
 }
 
@@ -745,7 +754,7 @@ export async function connectDevice(sn) {
     sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
     sendCommandTo(dev, { udp_low_latency: true });
     sendCommandTo(dev, { ahrs_message_type: 0 });  // quaternion mode
-    sendCommandTo(dev, { ahrs_message_rate_divisor: 8 });  // 400Hz / 8 = 50Hz
+    sendCommandTo(dev, { ahrs_message_rate_divisor: 1 });  // 400Hz / 1 = 400Hz (paint-ticker adaptive spacing)
     await _delay(100);
     sendCommandTo(dev, { apply: null });
 
@@ -814,7 +823,7 @@ export async function connectSerialDevice(portPathOrObj) {
     sendCommandTo(dev, { ahrs_acceleration_rejection_enabled: true });
     sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
     sendCommandTo(dev, { ahrs_message_type: 0 });
-    sendCommandTo(dev, { ahrs_message_rate_divisor: 8 });  // 400Hz / 8 = 50Hz
+    sendCommandTo(dev, { ahrs_message_rate_divisor: 1 });  // 400Hz / 1 = 400Hz (paint-ticker adaptive spacing)
     await _delay(100);
     sendCommandTo(dev, { apply: null });
 
@@ -856,7 +865,7 @@ export async function connectSerialDevice(portPathOrObj) {
   sendCommandTo(dev, { ahrs_acceleration_rejection_enabled: true });
   sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
   sendCommandTo(dev, { ahrs_message_type: 0 });
-  sendCommandTo(dev, { ahrs_message_rate_divisor: 8 });  // 400Hz / 8 = 50Hz
+  sendCommandTo(dev, { ahrs_message_rate_divisor: 1 });  // 400Hz / 1 = 400Hz (paint-ticker adaptive spacing)
   await _delay(100);
   sendCommandTo(dev, { apply: null });
 

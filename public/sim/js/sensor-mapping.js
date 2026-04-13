@@ -43,6 +43,7 @@ export const MAPPABLE_PARAMS = [
   { key: 'period',          label: 'period',          min: 0.010, max: 4.0,   default: 0.06,  unit: 's',   log: true },
   { key: 'pitchShift',      label: 'pitch shift',    min: -2400, max: 2400,  default: 0,     unit: '¢',   log: false },
   { key: 'pitchJitter',     label: 'pitch jitter',   min: 0,     max: 0.498, default: 0,     unit: '¢',   log: false },
+  { key: 'durJitter',       label: 'dur jitter',     min: 0,     max: 1,     default: 0,     unit: '%',   log: false },
   { key: 'panSpread',       label: 'pan spread',     min: 0,     max: 1,     default: 0.05,  unit: '%',   log: false },
   { key: 'fadeRatio',       label: 'fade',            min: 0,     max: 0.5,   default: 0.25,  unit: '%',   log: false },
 ];
@@ -84,6 +85,7 @@ export function addMapping(opts = {}) {
   _mappings.push(m);
   _saveMappings();
   S._syncMappingUI?.();
+  S._syncMappingHighlights?.();
   return m;
 }
 
@@ -98,6 +100,7 @@ export function updateMapping(id, updates) {
   Object.assign(m, updates);
   _saveMappings();
   S._syncMappingUI?.();
+  S._syncMappingHighlights?.();
 }
 
 /** Remove a mapping by ID. */
@@ -111,6 +114,7 @@ export function removeMapping(id) {
   _mappings.splice(idx, 1);
   _saveMappings();
   S._syncMappingUI?.();
+  S._syncMappingHighlights?.();
 }
 
 /** Toggle a mapping's enabled state by ID. Returns new enabled state. */
@@ -125,6 +129,7 @@ export function toggleMapping(id) {
   }
   _saveMappings();
   S._syncMappingUI?.();
+  S._syncMappingHighlights?.();
   return m.enabled;
 }
 
@@ -274,6 +279,7 @@ export function importMappings(json) {
       _mappings = arr;
       _saveMappings();
       S._syncMappingUI?.();
+      S._syncMappingHighlights?.();
     }
   } catch (_) { /* invalid JSON — ignore */ }
 }
@@ -287,6 +293,7 @@ export function clearAllMappings() {
   _saveMappings();
   S.syncGrainControlsUI?.();
   S._syncMappingUI?.();
+  S._syncMappingHighlights?.();
 }
 
 // ── Initialise on import ───────────────────────────────────────────────────

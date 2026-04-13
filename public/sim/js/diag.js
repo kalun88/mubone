@@ -1,5 +1,5 @@
 // ============================================================================
-// DIAG — crash / overload diagnostic reporter
+// DIAG — crash / overload diagnostic reporter + rolling event log
 //
 // Captures a snapshot of all CPU / audio / grain state into a plain-text
 // report you can copy and paste.
@@ -8,9 +8,63 @@
 //   • Automatic — window.onerror and unhandledrejection (JS crash)
 //   • Manual    — press Shift+D anywhere in the app
 //   • Console   — window.diagReport()  (returns the text; also shows overlay)
+//
+// Rolling event log (ring buffer):
+//   dlog(tag, msg)  — always writes to buffer, console.log when ?debug active
+//   dlogDump()      — returns last DLOG_SIZE events as formatted text
+//   window.dlog()   — console access to the buffer
+//
+// The ring buffer runs even without ?debug so crash reports always include
+// the event timeline.  Overhead is negligible (array push + modulo).
 // ============================================================================
 
-import { S, perf, PRESETS, MAX_GRAIN_NODES, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
+import { S, DEBUG, perf, PRESETS, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
+
+// ── Rolling event log (ring buffer) ─────────────────────────────────────────
+
+const DLOG_SIZE = 500;          // keep last 500 events
+const _dlogBuf  = new Array(DLOG_SIZE);
+let   _dlogIdx  = 0;
+let   _dlogLen  = 0;            // how many entries written (caps at DLOG_SIZE)
+
+/**
+ * Log a diagnostic event.  Always written to the ring buffer.
+ * When ?debug is active, also printed to the console.
+ *
+ * @param {string} tag   Short module tag, e.g. 'grain', 'audio', 'ctx'
+ * @param {string} msg   Human-readable description
+ * @param {object} [data] Optional numeric snapshot (kept as-is, no cloning)
+ */
+export function dlog(tag, msg, data) {
+  const t = performance.now();
+  const entry = { t, tag, msg, data: data || null };
+  _dlogBuf[_dlogIdx] = entry;
+  _dlogIdx = (_dlogIdx + 1) % DLOG_SIZE;
+  if (_dlogLen < DLOG_SIZE) _dlogLen++;
+  if (DEBUG) {
+    const prefix = `[${tag}] ${t.toFixed(1)}ms`;
+    if (data) console.log(prefix, msg, data);
+    else      console.log(prefix, msg);
+  }
+}
+
+/**
+ * Return the ring buffer contents as a formatted string (oldest → newest).
+ * @param {number} [last=100] How many recent entries to include.
+ */
+export function dlogDump(last = 100) {
+  const count = Math.min(last, _dlogLen);
+  const start = (_dlogIdx - count + DLOG_SIZE) % DLOG_SIZE;
+  const lines = [];
+  for (let i = 0; i < count; i++) {
+    const e = _dlogBuf[(start + i) % DLOG_SIZE];
+    if (!e) continue;
+    const ts   = (e.t / 1000).toFixed(3);           // seconds since page load
+    const data = e.data ? '  ' + JSON.stringify(e.data) : '';
+    lines.push(`${ts}s [${e.tag}] ${e.msg}${data}`);
+  }
+  return lines.join('\n');
+}
 
 // ── Report generator ─────────────────────────────────────────────────────────
 
@@ -89,8 +143,8 @@ export function generateDiagReport(triggerLabel = 'manual', error = null) {
     `  scheduler drift: ${ms2(perf.schedulerDrift)}  (max ${ms2(perf.schedulerMax)})`,
     `  scheduler interval target: ${GRAIN_SCHEDULER_INTERVAL_MS} ms`,
     `  audio underruns: ${perf.underruns}`,
-    `  active nodes   : ${perf.activeNodes} / ${MAX_GRAIN_NODES}  (${pct(perf.activeNodes, MAX_GRAIN_NODES)})`,
-    `  grains fired   : ${perf.grainsFired} (last scheduler tick)`,
+    `  active grains  : ${perf.activeNodes} / 256  (${pct(perf.activeNodes, 256)})  [worklet pool]`,
+    `  seeds posted   : ${perf.seedsPosted} (active seeds → worklet, last tick)`,
     '',
     '── GRAIN PARAMETERS ───────────────────────────────────────────',
     `  preset         : ${presetLabel}`,
@@ -100,6 +154,7 @@ export function generateDiagReport(triggerLabel = 'manual', error = null) {
     `  attack         : ${(effAtk * 100).toFixed(0)}%`,
     `  release        : ${(effRel * 100).toFixed(0)}%`,
     `  dur variance   : ${(effDurVar * 1000).toFixed(1)} ms`,
+    `  dur jitter     : ${Math.round((S.grainOverrides.durJitter ?? S.grainParams.durJitter ?? 0) * 100)}%`,
     `  pan spread     : ${effPan}`,
     `  volume         : ${effVol}`,
     `  probability    : ${(effProb * 100).toFixed(0)}%`,
@@ -146,6 +201,14 @@ export function generateDiagReport(triggerLabel = 'manual', error = null) {
     } else {
       lines.push(`  ${String(error)}`);
     }
+  }
+
+  // ── Event timeline (last 80 ring-buffer entries) ──
+  const timeline = dlogDump(80);
+  if (timeline) {
+    lines.push('');
+    lines.push('── EVENT TIMELINE (newest at bottom) ───────────────────────────');
+    lines.push(timeline);
   }
 
   lines.push('');
@@ -303,10 +366,14 @@ export function initDiag() {
     }
   });
 
-  // ── Console helper ──
+  // ── Console helpers ──
   window.diagReport = () => {
     const txt = generateDiagReport('console');
     showDiagOverlay('console (window.diagReport)');
     return txt;
   };
+  // Event log access from console:
+  //   dlog()      — print last 100 events
+  //   dlog(300)   — print last 300 events
+  window.dlog = (n) => { const txt = dlogDump(n || 100); console.log(txt); return txt; };
 }

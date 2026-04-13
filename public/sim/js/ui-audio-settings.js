@@ -1667,10 +1667,13 @@ export function initAudioSettings() {
   // Hydrate custom speaker angles from localStorage before anything uses them
   loadCustomSpeakerAngles();
 
-  // Restore saved buffer size so the first device open uses the right value
+  // Restore saved buffer size so the first device open uses the right value.
+  // Electron default is 128 (lowest latency); browser default is 1024 (safe).
   const savedBuf = parseInt(localStorage.getItem('mubone_bufferSize'));
   if (savedBuf && [128, 256, 512, 1024].includes(savedBuf)) {
     S.preferredBufferSize = savedBuf;
+  } else if (window.electronBridge?.isElectron) {
+    S.preferredBufferSize = 128;
   }
 
   // Modal open/close

@@ -4,7 +4,7 @@
 // When you bump the version, bump it here too — that triggers re-cache.
 // ============================================================================
 
-const CACHE_VERSION = 'mubone-0.18-alpha';
+const CACHE_VERSION = 'mubone-1.1-alpha';
 
 const APP_SHELL = [
   './',
@@ -13,6 +13,7 @@ const APP_SHELL = [
   './js/main.js',
   './js/state.js',
   './js/grain.js',
+  './js/grain-worklet-bridge.js',
   './js/audio.js',
   './js/audio-features.js',
   './js/renderer.js',
@@ -28,6 +29,8 @@ const APP_SHELL = [
   './js/mobile.js',
   './js/handsfree.js',
   './js/diag.js',
+  './js/debug-waveform.js',
+  './js/paint-ticker.js',
   './js/ui-learn.js',
   './js/ui-export.js',
   './js/ui-samples.js',
@@ -44,7 +47,9 @@ const APP_SHELL = [
   './js/worklets/recording-capture.worklet.js',
   './js/worklets/quad-capture.worklet.js',
   './js/worklets/input-meter.worklet.js',
+  './js/worklets/grain-engine.worklet.js',
   './js/exp/exp-init.js',
+  './js/exp/exp-toggles.js',
   './js/exp/gesture.js',
   './js/exp/gesture-panel.js',
   './js/exp/gesture-viz.js',

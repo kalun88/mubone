@@ -35,7 +35,7 @@ docs/               — project reference documents (see below)
 ## Key architecture patterns
 
 - **Shared state object `S`** (in `state.js`): all modules read/write to `S`. Callback hooks (`S._funcName = handler`) avoid circular imports.
-- **Grain scheduler** runs on its own setInterval (20ms), independent of the render loop (30fps).
+- **AudioWorklet grain engine** (`js/worklets/grain-engine.worklet.js`): all grain synthesis runs on the audio thread with sample-accurate onset timing. The main-thread scheduler (`grain.js`, 30ms interval) only performs spatial search and posts candidate lists to the worklet via `postMessage` at ~33Hz. Bridge code in `grain-worklet-bridge.js`.
 - **VBAP** for spatial panning — pre-computed lookup table, O(1) per grain, works for any speaker count.
 - **Head-locked vs world-locked** spatial modes.
 - **Preset system** with 20 slots, save/load to localStorage.
@@ -57,10 +57,11 @@ If you add new per-frame work to the render loop (especially anything with trig,
 
 ## Versioning
 
-Current version: **0.18 alpha**. Two things must be updated on every release:
+Current version: **1.1 alpha**. Three things must be updated on every release:
 
 1. **`index.html`** line 17 — the `<span class="top-bar-version">` text shown in the UI
-2. **`CHANGELOG.md`** — add a new section at the top with the version, date, and what changed (grouped into Fixed / Added / Changed / Removed)
+2. **`package.json`** line 3 — the `"version"` field (semver format, e.g. `"1.1.0-alpha"`)
+3. **`CHANGELOG.md`** — add a new section at the top with the version, date, and what changed (grouped into Fixed / Added / Changed / Removed)
 
 Bump the minor number (0.2 → 0.3) for feature work or meaningful bug fixes. Bump the patch if we ever need one (0.2.1). Stay on "alpha" until public beta.
 
@@ -82,6 +83,10 @@ Bump the minor number (0.2 → 0.3) for feature work or meaningful bug fixes. Bu
 2. **Gesture quality over axis mapping.** IMU mapping should translate movement qualities (smoothness, effort, periodicity) into sonic qualities, not axis values into knob values.
 3. **The system has memory.** Gestures deposit energy that decays over time. The system has inertia like a physical instrument.
 4. **Collaborator-safe.** Don't break `main`. Use the `?exp` flag for anything untested. Experimental code lives in `js/exp/`.
+
+## Debugging approach
+
+When audio or worklet issues are hard to diagnose from code alone, **add diagnostic data to the worklet feedback message** (`_diag` object in `grain-engine.worklet.js` → feedback handler in `grain-worklet-bridge.js`). Log key values at ~1Hz so the performer can share console output. This bridges the gap between code-level reasoning and what's actually happening at runtime — the worklet runs on a separate thread and can't use `console.log` directly. Example: adding `liveBufLen`, `liveRec`, `activeCount` to the feedback revealed that only 2 grains were active (should be ~10), immediately pointing to the duration clamping as the root cause.
 
 ## Code style
 

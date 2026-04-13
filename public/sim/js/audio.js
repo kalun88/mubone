@@ -2,7 +2,8 @@
 // AUDIO SYSTEM  (extracted from index.html)
 // ============================================================================
 
-import { S, DEBUG, SPHERE_RADIUS, perf } from './state.js';
+import { S, DEBUG, SPHERE_RADIUS, perf, LIVE_REBUILD_INTERVAL_MS } from './state.js';
+import { dlog } from './diag.js';
 import { buildVBAPLookup, queryVBAPLookup } from './grain.js';
 import { getCursorLonLat, screenToLonLat, spherePointInto, cameraTransformInto } from './sphere.js';
 
@@ -195,8 +196,30 @@ export function ensureAudioContext() {
     let _prevCtxState = S.audioCtx.state;
     S.audioCtx.addEventListener('statechange', () => {
       const next = S.audioCtx?.state;
+      dlog('ctx', `statechange: ${_prevCtxState} → ${next}`, { nodes: S._grainSourceCount });
       if (next === 'running' && _prevCtxState === 'suspended') {
         S._resetOnsetClocks?.();
+      }
+      // ── Error code 5 recovery ──────────────────────────────────────────
+      // Chrome's native audio renderer can crash (error code 5) under heavy
+      // load — the AudioContext state goes to 'closed' with no JS error.
+      // Detect this and automatically recreate the context so the user can
+      // keep working.  A short delay lets Chrome finish tearing down the
+      // dead context before we build a new one.
+      if (next === 'closed' && _prevCtxState === 'running') {
+        dlog('ctx', 'CRASH — AudioContext closed unexpectedly (error code 5)', { nodes: S._grainSourceCount, rec: S.isRecording });
+        console.warn('AudioContext closed unexpectedly (renderer crash) — recovering…');
+        S._showToast?.('Audio engine recovered from a renderer crash.');
+        setTimeout(() => {
+          S.audioCtx = null;  // force ensureAudioContext to rebuild
+          S._grainSourceCount = 0;  // dead nodes won't fire 'ended'
+          ensureAudioContext();
+          S._resetOnsetClocks?.();
+          // Re-request mic if it was active — keeps recording workflow intact
+          if (S.micRequested && !S.isRecording) {
+            requestMicAccess?.().catch(() => {});
+          }
+        }, 200);
       }
       _prevCtxState = next;
     });
@@ -246,6 +269,20 @@ export async function recreateAudioContext(newSampleRate) {
   // Reset worklet registration — new AudioContext needs fresh addModule calls
   _recWorkletReady = false;
 
+  // Release AudioBuffer references from the old context — these buffers were
+  // created from the old context's sample rate and can't be used with the new
+  // one.  Without this, they stay in memory indefinitely (unreachable but not
+  // GC'd because liveRecBuffers holds strong references).  Particles that
+  // reference these buffers via .bufferIndex will get fresh buffers when the
+  // user re-records, and sweep will clean up orphaned particles.
+  if (S.liveRecBuffers?.length) {
+    for (const slot of S.liveRecBuffers) {
+      slot.buffer     = null;
+      slot.liveBuffer = null;
+    }
+  }
+  S.currentLiveBufferIdx = -1;
+
   // Reset dependent state
   S.masterBus       = null;
   S.masterAnalyser  = null;
@@ -274,7 +311,7 @@ export async function recreateAudioContext(newSampleRate) {
 
 export function warmUpAudioEngine() {
   // Fire a zero-length silent buffer through the full grain chain so V8 JIT-compiles
-  // playGrain, the WaveShaper, and all AudioNode constructors before the first real recording.
+  // the WaveShaper and all AudioNode constructors before the first real recording.
   // This eliminates the CPU spike that causes clipping on the very first spacebar press.
   const actx = ensureAudioContext();
   const silentBuf = actx.createBuffer(1, 1, actx.sampleRate);
@@ -355,7 +392,7 @@ export async function requestMicAccess() {
     if (!S.inputAnalyser) {
       S.inputAnalyser = actx.createAnalyser();
       S.inputAnalyser.fftSize = 256;
-      S.inputAnalyser.smoothingTimeConstant = 0.6;
+      S.inputAnalyser.smoothingTimeConstant = 0.3;
       S.inputGainNode.connect(S.inputAnalyser);
     }
 
@@ -471,8 +508,11 @@ export function startLiveRecording() {
 
   S.recordingStartTime = performance.now();
 
-  // Receive batched PCM chunks from the worklet's audio thread
+  // Receive batched PCM chunks from the worklet's audio thread.
+  // Guard: the worklet runs on the audio thread and may send a few more
+  // messages after stopRecording() nulls S.recordingRaw on the main thread.
   S.recordingNode.port.onmessage = ({ data }) => {
+    if (!S.recordingRaw) return;           // recording already stopped
     const { samples, frames } = data;
     if (S.recordingWritePos + frames > S.recordingRaw.length) {
       const grown = new Float32Array(S.recordingRaw.length * 2);
@@ -491,10 +531,18 @@ export function startLiveRecording() {
   S.inputAnalyser.connect(S.recordingNode);
 
   S.isRecording = true;
+  dlog('audio', 'recording started', { sampleRate: S.recordingSampleRate, nodes: S._grainSourceCount });
 
   // Reserve a slot in liveRecBuffers — placeholder with null buffer
   S.currentLiveBufferIdx = S.liveRecBuffers.length;
   S.liveRecBuffers.push({ buffer: null, grainCursor: 0 });
+
+  // If the worklet engine is running, init a provisional live buffer so grains
+  // from the in-progress recording can be played by the worklet (not main thread).
+  S._beginProvisionalRecording?.();
+
+  // Notify main.js so it can cold-start the worklet on the first recording.
+  S._onRecordingStart?.();
 
   S.updateLiveRecUI?.();
 }
@@ -502,16 +550,25 @@ export function startLiveRecording() {
 export function stopLiveRecording() {
   if (!S.isRecording) return;
   S.isRecording = false;
+  dlog('audio', 'recording stopped', { writePos: S.recordingWritePos, nodes: S._grainSourceCount });
 
   // Only tear down the recording-specific nodes.
   // inputGainNode and inputAnalyser are persistent (created in requestMicAccess)
   // so the meter and knob stay active between recordings.
   if (S.recordingNode) {
-    // Tell the worklet to flush any partial batch and stop
-    try { S.recordingNode.port.postMessage({ type: 'stop' }); } catch(_) {}
-    S.recordingNode.port.onmessage = null;
-    try { S.inputAnalyser && S.inputAnalyser.disconnect(S.recordingNode); } catch(_) {}
-    S.recordingNode.disconnect();
+    // Tell the worklet to flush any partial batch and stop.
+    // Delay disconnect by one render quantum (~3ms at 48kHz) so the worklet's
+    // process() has time to see the stop message and flush its final buffer.
+    // Previously, immediate disconnect could yank the input before the flush,
+    // losing the last ~128 samples and creating an abrupt tail.
+    const nodeToClean = S.recordingNode;
+    const analyserRef = S.inputAnalyser;
+    try { nodeToClean.port.postMessage({ type: 'stop' }); } catch(_) {}
+    setTimeout(() => {
+      nodeToClean.port.onmessage = null;
+      try { analyserRef && analyserRef.disconnect(nodeToClean); } catch(_) {}
+      try { nodeToClean.disconnect(); } catch(_) {}
+    }, 5); // 5ms > one render quantum (2.67ms at 48kHz)
     S.recordingNode = null;
   }
   if (S.recordingSourceNode) { S.recordingSourceNode.disconnect(); S.recordingSourceNode = null; }
@@ -561,15 +618,21 @@ export function stopLiveRecording() {
   }
 
   // Clamp any particles that were painted beyond the final duration
+  const bufIdx = S.currentLiveBufferIdx;
+  const dur = audioBuffer.duration;
   S.particles.forEach(p => {
-    if (p.liveBufferIdx === S.currentLiveBufferIdx) {
-      const dur = audioBuffer.duration;
+    if (p.liveBufferIdx === bufIdx) {
       if (p.grainStart > dur) p.grainStart = Math.max(0, dur - 0.01);
       if (p.grainStart + p.grainDuration > dur) p.grainDuration = dur - p.grainStart;
     }
   });
 
-  DEBUG && console.log(`Live rec buffer ${S.currentLiveBufferIdx}: ${audioBuffer.duration.toFixed(2)}s`);
+  // Notify listeners that a recording was completed.
+  // Hot-swap path: _onRecordingComplete adds finalized buffer to running worklet
+  // and handles provisional buffer cleanup with deferred drain.
+  // Cold-start path: _onRecordingComplete starts the worklet fresh.
+  S._onRecordingComplete?.(audioBuffer, S.currentLiveBufferIdx);
+
   S.recordingRaw         = null;
   S.recordingWritePos    = 0;
   S.liveBufferSampleCount = 0;
@@ -925,8 +988,12 @@ export async function initSpeakerBuses(numChannels = 2) {
   S.speakerBuses.numChannels = n;
   S.monitorSpeakerBuses = hasMonitorCh ? monitorBuses : null;
 
-  // Pre-compute VBAP lookup table for O(1) speaker pair resolution in playGrain
+  // Pre-compute VBAP lookup table for O(1) speaker pair resolution
   buildVBAPLookup(buses);
+
+  // If the worklet grain engine is running, re-send the VBAP LUT so it
+  // uses the new speaker layout.  Uses a callback to avoid circular import.
+  S._onVBAPRebuilt?.(n);
 
   // Legacy alias — keeps any remaining S.quadBuses references from crashing
   S.quadBuses = null;
@@ -944,24 +1011,39 @@ export async function initSpeakerBuses(numChannels = 2) {
 // On Electron startup, initSpeakerBuses runs before mic grant, so S.dryAnalyser
 // doesn't exist yet.  This function wires (or re-wires) the input side of the
 // dry VBAP fan-out once the analyser is available.  Safe to call multiple times.
+// Snapshot the gains array at wire time so a concurrent initSpeakerBuses()
+// teardown doesn't leave the analyser connected to orphaned nodes.
 function _wireDryVBAPInput() {
   if (!S.dryAnalyser || !S.dryVBAPGains?.length) return;
-  // Connect analyser → each per-speaker gain (idempotent in Web Audio)
-  S.dryVBAPGains.forEach(g => S.dryAnalyser.connect(g));
-  // Also wire mixdown inputs if they exist but weren't connected yet
-  if (S.dryMixdownInputs) {
-    S.dryMixdownInputs.forEach(g => S.dryAnalyser.connect(g));
-  }
+  const gains = S.dryVBAPGains;   // capture reference
+  const mixin = S.dryMixdownInputs;
+  // Defer to next microtask so any in-progress initSpeakerBuses() finishes
+  // tearing down old nodes first.  Re-check that our captured reference is
+  // still the live one before wiring — if initSpeakerBuses ran in between,
+  // gains !== S.dryVBAPGains and we skip the stale nodes.
+  queueMicrotask(() => {
+    if (!S.dryAnalyser || gains !== S.dryVBAPGains) return;
+    gains.forEach(g => S.dryAnalyser.connect(g));
+    if (mixin && mixin === S.dryMixdownInputs) {
+      mixin.forEach(g => S.dryAnalyser.connect(g));
+    }
+  });
 }
 export { _wireDryVBAPInput as wireDryVBAPInput };
 
 // ── Dry monitor panning update ────────────────────────────────────────────────
 // Called once per metering frame (≈30fps) to rewrite the dry signal's VBAP gains
 // (or stereo pan) based on the current cursor position.  Must be cheap: no
-// allocations, no scheduler interaction.  Reuses the same patterns as playGrain
-// for cursor position → spatial mapping.
+// allocations, no scheduler interaction.  Uses cursor position → spatial mapping.
 const _dryW = new Float32Array(3);  // scratch: world coords
 const _dryC = new Float32Array(3);  // scratch: camera coords
+// Cache last-written VBAP targets so we skip redundant setTargetAtTime calls.
+// Without this, 30 ramps/sec with 30ms time constant stack up under frame
+// jitter, causing zipper/granulation noise on the dry monitor signal.
+let _dryLastTargets = null;  // Float32Array(n) for VBAP, or null
+let _dryLastPanL = -999, _dryLastPanR = -999;  // for mixdown
+let _dryLastStereoPan = -999;  // for browser stereo path
+const _DRY_EPSILON = 0.005;  // threshold below which we skip updates
 
 export function updateDryMonitorPanning() {
   if (!S.dryMonitorEnabled) return;
@@ -1018,12 +1100,21 @@ export function updateDryMonitorPanning() {
 
     // Set per-speaker gains: bracketing pair gets blended VBAP weights,
     // all other speakers fade in toward eqGain as elevation increases.
+    // Skip speakers whose target hasn't changed meaningfully — prevents
+    // stacking 30 overlapping ramps/sec that cause zipper noise.
+    if (!_dryLastTargets || _dryLastTargets.length !== n) {
+      _dryLastTargets = new Float32Array(n);
+      _dryLastTargets.fill(-1); // force first update
+    }
     for (let i = 0; i < n; i++) {
       let target;
       if (i === idxA)       target = wA;
       else if (i === idxB)  target = wB;
       else                  target = elevBias > 0.01 ? eqGain * elevBias : 0;
-      S.dryVBAPGains[i].gain.setTargetAtTime(target, t, RAMP);
+      if (Math.abs(target - _dryLastTargets[i]) > _DRY_EPSILON) {
+        S.dryVBAPGains[i].gain.setTargetAtTime(target, t, RAMP);
+        _dryLastTargets[i] = target;
+      }
     }
 
     // Update headphone mixdown L/R panning for dry signal
@@ -1033,8 +1124,12 @@ export function updateDryMonitorPanning() {
       const pan = rawPan * (1 - elevBias);  // collapse toward center at poles
       const lW  = Math.cos((pan + 1) * Math.PI / 4);
       const rW  = Math.sin((pan + 1) * Math.PI / 4);
-      S.dryMixdownInputs[0].gain.setTargetAtTime(lW, t, RAMP);
-      S.dryMixdownInputs[1].gain.setTargetAtTime(rW, t, RAMP);
+      if (Math.abs(lW - _dryLastPanL) > _DRY_EPSILON || Math.abs(rW - _dryLastPanR) > _DRY_EPSILON) {
+        S.dryMixdownInputs[0].gain.setTargetAtTime(lW, t, RAMP);
+        S.dryMixdownInputs[1].gain.setTargetAtTime(rW, t, RAMP);
+        _dryLastPanL = lW;
+        _dryLastPanR = rW;
+      }
     }
 
   // ── Stereo path (browser) ───────────────────────────────────────────────
@@ -1043,7 +1138,10 @@ export function updateDryMonitorPanning() {
     // Elevation center-bias: collapse toward center at poles (worldlocked only)
     const dryElF = S.spatialPanning === 'worldlocked' ? Math.abs(cy) * (1 / SPHERE_RADIUS) : 0;
     const dryPan = rawPan * (1 - dryElF * dryElF);
-    S.dryPanner.pan.setTargetAtTime(dryPan, t, RAMP);
+    if (Math.abs(dryPan - _dryLastStereoPan) > _DRY_EPSILON) {
+      S.dryPanner.pan.setTargetAtTime(dryPan, t, RAMP);
+      _dryLastStereoPan = dryPan;
+    }
   }
 }
 
@@ -1174,6 +1272,12 @@ export async function initQuadBuses() {
 
 export function getRecordingDuration() {
   if (!S.isRecording) return 0;
+  // Wall-clock for particle timestamps — stays in sync with the AnalyserNode
+  // that provides RMS/feature snapshots.  recordingWritePos updates in ~43ms
+  // batches (2048 samples), so using it here shifts grainStart ~3 particles
+  // behind the analyser features, making visual particle size misalign with
+  // the actual audio.  The loop-end precision issue is solved by the reorder
+  // fix (stopLiveRecording finalises the buffer before createSeqFromStroke).
   return (performance.now() - S.recordingStartTime) / 1000;
 }
 
@@ -1185,12 +1289,14 @@ let _liveCopiedUpTo  = 0;  // samples already copied — only copy the delta
 
 export function rebuildLiveBuffer() {
   // Build a running AudioBuffer from raw PCM so grains can play during recording.
-  // Throttled: createBuffer + set() on a growing array is expensive — don't do it every frame.
+  // Also registered as S._flushLiveBuffer so the grain scheduler can flush
+  // before posting candidates (minimises frontier latency).
+  // Throttled to LIVE_REBUILD_INTERVAL_MS — the incremental copy is cheap
   if (!S.isRecording || S.recordingWritePos === 0) return;
   if (S.recordingWritePos === S.liveBufferSampleCount) return;
 
   const now = performance.now();
-  if (now - S.lastLiveRebuildTime < S.LIVE_REBUILD_INTERVAL_MS) return;
+  if (now - S.lastLiveRebuildTime < LIVE_REBUILD_INTERVAL_MS) return;
   S.lastLiveRebuildTime = now;
 
   const actx = ensureAudioContext();
@@ -1222,7 +1328,12 @@ export function rebuildLiveBuffer() {
     S.liveRecBuffers[S.currentLiveBufferIdx].liveBuffer = _liveAudioBuf;
     S.liveRecBuffers[S.currentLiveBufferIdx].duration   = len / S.recordingSampleRate;
   }
+
+  // Stream the updated liveBuffer data to the worklet engine (delta append)
+  S._onLiveBufferRebuilt?.();
 }
+// Register on S so the grain scheduler can flush before posting candidates.
+S._flushLiveBuffer = rebuildLiveBuffer;
 
 // ── Mic button label ────────────────────────────────────────────────────────
 

@@ -215,7 +215,7 @@ export function updateGestureMorph() {
       }
     }
 
-    // Invalidate envelope curve cache so playGrain rebuilds with new fade
+    // Invalidate envelope curve cache so the worklet rebuilds with new fade
     if (seed.grainParams._cachedAtk) seed.grainParams._cachedAtk = null;
   }
 }

@@ -71,6 +71,11 @@ export const PARAM_REGISTRY = [
     set: v  => { S.grainOverrides.durVar = v; },
     fmt: v  => Math.round(v * 1000) + 'ms',
     parse: s => { const v = parseMs(s); return v === null ? null : Math.max(0, Math.min(0.5, v)); } },
+  { key: 'durJitter',  label: 'dur jitter',   group: 'grain', type: 'number',
+    get: () => S.grainOverrides.durJitter ?? S.grainParams.durJitter ?? 0,
+    set: v  => { S.grainOverrides.durJitter = v; },
+    fmt: v  => Math.round(v * 100) + '%',
+    parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
   { key: 'fadeRatio',  label: 'fade',         group: 'grain', type: 'number',
     get: () => S.grainOverrides.fadeRatio ?? S.grainParams.fadeRatio,
     set: v  => { S.grainOverrides.fadeRatio = v; },
@@ -81,6 +86,18 @@ export const PARAM_REGISTRY = [
     set: v  => { S.grainOverrides.period = v; resetCursorPeriod(); },
     fmt: v  => fmtMs(v),
     parse: s => parseMs(s) },
+  { key: 'overlap',    label: 'overlap',      group: 'grain', type: 'number',
+    get: () => {
+      const dur = S.grainOverrides.duration ?? S.grainParams.duration;
+      const per = S.grainOverrides.period   ?? S.grainParams.period;
+      return per > 0 ? dur / per : 1;
+    },
+    set: v  => {
+      const per = S.grainOverrides.period ?? S.grainParams.period;
+      S.grainOverrides.duration = Math.max(2 / (S.audioCtx?.sampleRate ?? 48000), per * v);
+    },
+    fmt: v  => v.toFixed(2) + '×',
+    parse: s => { const v = parseFloat(s.replace('×', '').replace('x', '')); return isNaN(v) ? null : Math.max(0.01, Math.min(100, v)); } },
   { key: 'periodVar',  label: 'period var',   group: 'grain', type: 'number',
     get: () => S.grainOverrides.periodVar ?? S.grainParams.periodVar,
     set: v  => { S.grainOverrides.periodVar = v; resetCursorPeriod(); },

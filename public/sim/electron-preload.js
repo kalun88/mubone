@@ -54,6 +54,10 @@ contextBridge.exposeInMainWorld('electronBridge', {
   onFullscreenChanged: (cb) =>
     ipcRenderer.on('fullscreen-changed', (_e, isFullscreen) => cb(isFullscreen)),
 
+  // Main → Renderer: forwarded main-process log for DevTools visibility
+  onMainLog: (cb) =>
+    ipcRenderer.on('main-log', (_e, level, msg) => cb(level, msg)),
+
   // ── x-IMU3 direct UDP bridge ──────────────────────────────────────────────
   // Discovery announcements arrive at 1 Hz on UDP 10000 (auto-started).
   // Data messages arrive on the device's configured "send" port.

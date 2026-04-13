@@ -449,6 +449,8 @@ export function setupEvents() {
         recordStrokeStart('sample');
         S.isPainting      = true;
         S.paintFrameCount = 0;
+        // Cold-start worklet if not yet running (e.g. sample paint as first action)
+        S._ensureWorkletForSample?.(S.samples[_sampleIdx].buffer);
         if (S.traceMode === 'trace+cloud') startSeedPlant();
         switchSvTab(_sampleIdx);
         updateSampleListActiveState();
@@ -636,13 +638,15 @@ export function setupEvents() {
           // Drop the stroke under cursor into a loop slot
           dropSeqFromCursor();
         } else {
-          // Long hold → draw loop: finalize the recorded loop
-          if (S.currentStrokeId > 0) {
-            try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
-          }
-          S.isPainting      = false;
+          // Long hold → draw loop: finalize recording first so the loop
+          // gets the sealed buffer (exact sample count, not over-allocated).
+          S.isPainting = false;
+          const savedStrokeId = S.currentStrokeId;
           S.currentStrokeId = -1;
           if (S.isRecording) stopLiveRecording();
+          if (savedStrokeId > 0) {
+            try { createSeqFromStroke(savedStrokeId); } catch (_) {}
+          }
           S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
         }
         // D-loop done — restore trace indicator
@@ -711,9 +715,17 @@ export function setupEvents() {
       _syncCommitBtnLock(false);
       // If D-loop owns recording, just mark trace as released — don't touch audio
       if (!S._cLoopActive) {
+        S.isPainting      = false;
+        // Finalize recording BEFORE creating the loop so createSeqFromStroke
+        // sees the sealed buffer (exact sample count) instead of the over-
+        // allocated live buffer whose duration extends into silence.
+        const savedStrokeId = S.currentStrokeId;
+        S.currentStrokeId = -1;
+        if (S.isRecording) stopLiveRecording();
+
         // Auto-commit based on trace mode
-        if (S.traceMode === 'trace+loop' && S.currentStrokeId > 0) {
-          try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+        if (S.traceMode === 'trace+loop' && savedStrokeId > 0) {
+          try { createSeqFromStroke(savedStrokeId); } catch (_) {}
         }
         if (S.traceMode === 'trace+cloud') {
           if (S._shelvedSeed) {
@@ -733,9 +745,6 @@ export function setupEvents() {
             finalizeSeedPlant();
           }
         }
-        S.isPainting      = false;
-        S.currentStrokeId = -1;
-        if (S.isRecording) stopLiveRecording();
         // Scan stays muted after trace+loop — performer controls scan manually
         S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
         _updateLiveRecUI();
@@ -839,8 +848,14 @@ export function setupEvents() {
     _syncCommitBtnLock(false);
     // If D-loop owns recording, just mark trace as released — don't touch audio
     if (S._cLoopActive) return;
-    if (S.traceMode === 'trace+loop' && S.currentStrokeId > 0) {
-      try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
+    S.isPainting = false;
+    // Finalize recording BEFORE creating the loop (same fix as spacebar path)
+    const savedStrokeId = S.currentStrokeId;
+    S.currentStrokeId = -1;
+    if (S.isRecording) stopLiveRecording();
+
+    if (S.traceMode === 'trace+loop' && savedStrokeId > 0) {
+      try { createSeqFromStroke(savedStrokeId); } catch (_) {}
     }
     if (S.traceMode === 'trace+cloud') {
       if (S._shelvedSeed) {
@@ -860,9 +875,6 @@ export function setupEvents() {
         finalizeSeedPlant();
       }
     }
-    S.isPainting      = false;
-    S.currentStrokeId = -1;
-    if (S.isRecording) stopLiveRecording();
     // Scan stays muted after trace+loop — performer controls scan manually
     S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
     _updateLiveRecUI();

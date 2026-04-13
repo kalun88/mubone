@@ -27,6 +27,7 @@ export function shortAngleName(deg) {
 export function renderMeters(containerId, numCh, labels, selectedCh, separatorBefore) {
   const wrap = document.getElementById(containerId);
   if (!wrap) return;
+  invalidateMeterCache(containerId);  // DOM is about to be rebuilt
   const highlighted = Array.isArray(selectedCh) ? selectedCh : (selectedCh !== undefined ? [selectedCh] : []);
   wrap.innerHTML = '';
   for (let i = 0; i < numCh; i++) {
@@ -62,8 +63,51 @@ export function renderMeters(containerId, numCh, labels, selectedCh, separatorBe
 }
 
 // Draw one frame of meters for an array of AnalyserNodes into a given container.
+// DOM refs and gradients are cached per containerId to avoid per-frame lookups
+// and allocations — previously ~500 getElementById calls/sec and 240 gradient
+// allocations/sec were stealing main-thread time from the grain scheduler.
 const _meterBuf = new Float32Array(256);
+const _meterCache = new Map(); // containerId → { canvases, clips, ctxs, grads }
+
+function _getMeterCache(containerId, count) {
+  let entry = _meterCache.get(containerId);
+  if (entry && entry.count === count) return entry;
+  // Build / rebuild cache
+  const canvases = [], clips = [], ctxs = [], grads = [];
+  for (let i = 0; i < count; i++) {
+    const cv   = document.getElementById(`${containerId}-cv-${i}`);
+    const clip = document.getElementById(`${containerId}-clip-${i}`);
+    canvases.push(cv);
+    clips.push(clip);
+    if (cv) {
+      const c2 = cv.getContext('2d');
+      ctxs.push(c2);
+      // Pre-create gradient (height-dependent but canvas height is fixed at 56)
+      const grad = c2.createLinearGradient(0, cv.height, 0, 0);
+      grad.addColorStop(0,    '#2a7070');
+      grad.addColorStop(0.6,  '#3a9090');
+      grad.addColorStop(0.8,  '#7abcbc');
+      grad.addColorStop(0.93, '#e8c840');
+      grad.addColorStop(1.0,  '#e06060');
+      grads.push(grad);
+    } else {
+      ctxs.push(null);
+      grads.push(null);
+    }
+  }
+  entry = { count, canvases, clips, ctxs, grads };
+  _meterCache.set(containerId, entry);
+  return entry;
+}
+
+// Call when meters are rebuilt (renderMeters) to invalidate stale DOM refs.
+export function invalidateMeterCache(containerId) {
+  if (containerId) _meterCache.delete(containerId);
+  else _meterCache.clear();
+}
+
 export function tickMeters(analysers, containerId) {
+  const cache = _getMeterCache(containerId, analysers.length);
   for (let i = 0; i < analysers.length; i++) {
     const an = analysers[i];
     if (!an) continue;
@@ -73,25 +117,17 @@ export function tickMeters(analysers, containerId) {
     const db  = peak > 0 ? Math.max(-60, 20 * Math.log10(peak)) : -60;
     const pct = clamp((db + 60) / 60, 0, 1);  // 0 = -60 dBFS, 1 = 0 dBFS
 
-    const canvas = document.getElementById(`${containerId}-cv-${i}`);
-    const clip   = document.getElementById(`${containerId}-clip-${i}`);
-
-    if (canvas) {
-      const c2 = canvas.getContext('2d');
-      const w  = canvas.width;
-      const h  = canvas.height;
+    const cv = cache.canvases[i];
+    const c2 = cache.ctxs[i];
+    if (cv && c2) {
+      const w  = cv.width;
+      const h  = cv.height;
       c2.clearRect(0, 0, w, h);
       c2.fillStyle = '#1a1a1a';
       c2.fillRect(0, 0, w, h);
       const fillH = Math.round(pct * h);
       if (fillH > 0) {
-        const grad = c2.createLinearGradient(0, h, 0, 0);
-        grad.addColorStop(0,    '#2a7070');
-        grad.addColorStop(0.6,  '#3a9090');
-        grad.addColorStop(0.8,  '#7abcbc');
-        grad.addColorStop(0.93, '#e8c840');
-        grad.addColorStop(1.0,  '#e06060');
-        c2.fillStyle = grad;
+        c2.fillStyle = cache.grads[i];
         c2.fillRect(0, h - fillH, w, fillH);
       }
       // Tick marks at -12, -6, -3 dBFS
@@ -102,6 +138,7 @@ export function tickMeters(analysers, containerId) {
       }
     }
 
+    const clip = cache.clips[i];
     if (clip) {
       clip.classList.toggle('clipping', db >= -1);
     }

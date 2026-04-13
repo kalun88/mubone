@@ -5,6 +5,94 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 1.1 alpha — 2026-04-11
+
+### Fixed
+- **Particle RMS/visual size misaligned with audible loudness** — paint ticker's `grainStart` now offsets back by one deposit interval so the particle marker sits in the centre of the recording window its RMS snapshot represents, aligning visual size with audible transient position.
+- **Random grain direction only played forward** — HTML button uses `data-dir="rnd"` but the direction maps in `ui-presets.js` and `grain-worklet-bridge.js` only had `"rand"`. Added `rnd: 2` to both `_DIR_MAP` / `DIR_MAP` so the worklet receives `direction=2`.
+- **Grains near buffer end sounded too short** — duration clamping truncated grains whose read window extended past the buffer. Now slides `bufOffset` backward so the full grain duration is preserved; character stays consistent across all particles.
+
+### Changed
+- **Input analyser smoothing** — reduced `smoothingTimeConstant` from 0.6 to 0.3 for more responsive spectral colours (particle timbral differentiation).
+- **Reverse grain readPos** — reverse grains now start at `bufOffset + durSamples * absRate` (end of grain window) instead of end of buffer, matching the forward grain's audio region in reverse order.
+- **Duration clamping direction-independent** — available-space calculation uses `bufLen - bufOffset` for both forward and reverse grains (was direction-dependent).
+
+### Added
+- **Debug waveform overlay (`debug-waveform.js`)** — full-screen overlay showing audio waveform, particle marker lines, and RMS bars. Hover shows particle details (idx, grainStart, dur, rms, centroid). Invoke via `wg.waveform()` in console.
+- **Direction diagnostic feedback** — worklet feedback includes `dir`, `dirFwd`, `dirRev` counts; bridge logs `[dir]` at ~1Hz for runtime verification.
+
+---
+
+## 1.0 alpha — 2026-04-11
+
+### Added
+- **AudioWorklet grain engine (`grain-engine.worklet.js`)** — all grain synthesis now runs on the audio thread via a 256-slot pool with sample-accurate onset timing. Zero main-thread AudioBufferSourceNode creation for granular playback. VBAP panning computed in the worklet from a packed Float32Array lookup table (`packVBAPLookup()`).
+- **Grain worklet bridge (`grain-worklet-bridge.js`)** — main-thread ↔ worklet communication layer. Handles parameter forwarding, candidate posting, feedback (active grain count, diagnostics), hot-swap recording buffers, and flush commands.
+- **Paint ticker (`paint-ticker.js`)** — velocity-adaptive particle deposition driven by IMU quaternion arrival at up to 400Hz (was render-loop gated at ~10Hz). Decouples particle density from frame rate.
+- **Sample-exact period control** — below 128 samples (one render quantum, ~2.67ms @48kHz), the period/duration sliders snap to integer sample counts. Display shows `Nsmp` + Hz. Arrow keys step ±1 sample. Every integer sample count is a distinct pitch in the harmonic series of the sample rate.
+- **Overlap slider** — new grain parameter (`overlap = duration / period`) on a log scale from 0.01× to 100×. Moving the overlap slider adjusts duration to maintain the ratio. MIDI CC and OSC (`/grain/overlap`) support.
+- **Duration jitter (`durJitter`)** — per-grain proportional jitter (0–100%). New slider row, MIDI CC, OSC path (`/grain/filterjitter`), sensor mapping target, preset save/load, patch table integration.
+- **Scheduler peak hold meter** — perf monitor sched row now shows an EMA average + sticky peak marker (like a DAW peak meter). Click the row to reset peak.
+- **Drop rate numbox** — editable particle deposit interval in the perf monitor (5–500ms). Writes to `S.paintTicker.intervalMs`.
+- **AudioContext crash recovery** — detects Chrome error code 5 (renderer crash, context goes to `closed`). Auto-rebuilds the AudioContext, resets grain state, re-requests mic if it was active. Shows toast notification.
+- **Rolling diagnostic event log (`dlog`)** — 500-entry ring buffer in `diag.js`. Always active (not gated by `?debug`). `dlog(tag, msg, data)` from any module; `window.dlog(N)` in console; last 80 entries appended to crash reports. Bridges audio-thread opacity.
+- **Debug waveform overlay (`debug-waveform.js`)** — visual debug tool for inspecting audio buffers.
+- **Exp toggles panel (`exp-toggles.js`)** — runtime feature toggle UI for experimental mode. `window.expToggles` console access.
+- **Exp test fixtures** — `?exp` now auto-loads a 440Hz sine wave into sampler slot Q and a clean-conditions test patch (k=1, zero variation) into user slot 1.
+- **Meter DOM caching** — `tickMeters()` now caches canvas refs, contexts, and gradient objects per container. Eliminates ~500 `getElementById` calls/sec and 240 gradient allocations/sec that were starving the grain scheduler.
+
+### Fixed
+- **Recording tail truncation** — `stopLiveRecording()` now delays worklet disconnect by one render quantum (~3ms) so the flush message is processed before the input is yanked. Preserves the last ~128 samples.
+- **Loop buffer sealed before seq creation** — spacebar-up, D-loop release, and touch-end paths now call `stopLiveRecording()` *before* `createSeqFromStroke()`, so loops get the finalized buffer with exact sample count instead of the over-allocated live buffer whose tail extends into silence.
+- **Undo removes all commit slot types** — `removeSeqByStrokeId()` now scans the full `MAX_COMMITS` array (not just `commitSlotCount`) and removes all slot types matching the stroke ID, not just loops. Hard-stops audio immediately (no fade) on undo.
+- **Handsfree feedback detection modulo bug** — trend window index calculation used JS `%` which returns negative for negative operands, causing overlapping sample windows and false feedback detection. Fixed with `((x % n) + n) % n`.
+- **Handsfree forced-close gap** — when max recording length or feedback triggers a forced close while the gate is still open, a new segment now starts immediately. Previously the gate waited for a close→open transition that never came during sustained notes.
+- **WebSocket/proxy retry flood** — OSC and IMU proxy WebSocket connections now stop retrying after 3 failures if they never connected. Eliminates console spam in browser-only dev mode.
+- **Corrupt preset localStorage handling** — `loadUserPresets()` now removes corrupt JSON on parse failure instead of retrying and failing every load. `saveUserPresets()` surfaces `QuotaExceededError` to the user via toast.
+- **Recording guard race** — `recordingNode.port.onmessage` now early-returns if `S.recordingRaw` is null (recording already stopped while worklet still sending).
+- **Erase-all during recording** — re-creates a fresh buffer slot and re-inits the provisional live buffer stream so new particles from the ongoing recording have somewhere to land.
+- **AudioBuffer leak on context recreation** — `recreateAudioContext()` now nulls out all `liveRecBuffers` slot references so old-context buffers can be GC'd.
+- **Input analyser smoothing** — reduced `smoothingTimeConstant` from 0.6 to 0.3 for snappier meter/gate response.
+
+### Changed
+- **Main-thread grain synthesis fully removed** — `playGrain()`, `_cursorNextOnsetT` onset clock, `SCHED_LOOKAHEAD`, `MAX_GRAIN_NODES`, node creation budget/throttle, `_deferDisconnect()`, and all per-grain Web Audio node creation stripped from `grain.js`. ~800 lines removed.
+- **Particle deposition moved out of render loop** — `animate()` no longer drops particles. Paint ticker and `paint-ticker.js` handle deposition at IMU rate, decoupled from canvas frame rate. Eliminates the main source of scheduler-vs-renderer contention.
+- **Period floor lowered to 50µs** — `SCHED_SAFE_PERIOD_S` dropped from 10ms to 50µs (20kHz grain rate). Safe now that the worklet handles all synthesis — no main-thread crash risk at sub-ms periods.
+- **Live rebuild interval reduced** — `LIVE_REBUILD_INTERVAL_MS` lowered from 200ms to 50ms. Only controls main-thread AudioBuffer staleness for offset clamping; the worklet has real-time audio via `process()` input.
+- **IMU report rate raised to 400Hz** — `ahrs_message_rate_divisor` changed from 8 (50Hz) to 1 (400Hz) across WiFi and serial transports. Paint ticker handles adaptive spacing.
+- **Perf monitor reworked** — removed grains/sec rate row (meaningless with worklet). Added scheduler EMA average, peak hold, seeds-posted count. Perf counters updated to reflect worklet pool feedback.
+- **Slider ranges extended** — durVar and periodVar sliders expanded from 0–500 to 0–750 to accommodate hybrid linear/log scale with sample-exact zone.
+- **`fmtMs()` precision bump** — now shows two decimal places up to 100ms (was one decimal up to 10ms). Better visibility at audio-rate grain periods.
+- **Loop region rounding** — `createSeqFromStroke()` uses symmetric `Math.round` for start/end samples instead of `floor`/`ceil` which biased the region longer.
+- **k-seq mode forwarded to worklet** — toggling k-seq via UI or MIDI now sends `kSeqMode` to the worklet.
+- **Sensor mapping highlights** — all mapping add/update/remove/toggle/import/clear paths now call `S._syncMappingHighlights?.()` for consistent UI feedback.
+- **Service worker updated** — `CACHE_VERSION` bumped to `mubone-1.0-alpha`, APP_SHELL updated with new modules (`grain-worklet-bridge.js`, `paint-ticker.js`, `debug-waveform.js`, `grain-engine.worklet.js`, `exp-toggles.js`).
+
+### Removed
+- Main-thread grain synthesis path (`playGrain()`, per-grain AudioBufferSourceNode/GainNode/BiquadFilterNode/StereoPannerNode creation, `_deferDisconnect` batching, `_cursorEP` reusable params object, `_radiusFadeAtten`)
+- `MAX_GRAIN_NODES` constant (worklet has its own 256-slot pool)
+- `SCHED_SAFE_PERIOD_S` 10ms floor (replaced with 50µs)
+- Grains-per-second rate display and `perf.grainsFired`/`perf.grainsPerSec`/`perf._grainAccum`/`perf._grainRateTs` counters
+- Particle deposition code from `renderer.js` `animate()` (~70 lines)
+- `PAINT_INTERVAL` import in renderer (deposition no longer frame-gated)
+
+---
+
+## 0.19 alpha — 2026-04-09
+
+### Changed
+- **AudioWorklet grain engine promoted to always-on** — the worklet grain engine (previously behind `?exp` flag) is now the only grain engine. All grain synthesis runs on the audio thread with sample-accurate onset timing. The main-thread `playGrain()` / `setInterval` scheduler / lookahead onset clock path has been removed.
+- **Worklet startup moved to main.js** — `_startWorkletEngine()`, `S._onRecordingComplete` auto-start hook, and `window.wg` console API moved from `exp-init.js` to `main.js`. Worklet starts on first recording regardless of `?exp` flag.
+- **`S.useWorkletEngine` flag removed** — replaced with `isWorkletGrainActive()` runtime check from the bridge module. No more feature flag gating.
+- **Scheduler simplified** — `scheduleGrains()` now only performs spatial search (cursor + seed candidate pools) and posts results to the worklet. Cursor onset clock, budget calculations, node creation throttling, and main-thread `playGrain()` calls all removed. Seed onset clocks retained for data posting sync.
+
+### Removed
+- Main-thread grain synthesis path (`playGrain()` calls from scheduler, `_cursorNextOnsetT` onset clock, `SCHED_LOOKAHEAD` budget calculations, node creation budget/throttle logic)
+- `S.useWorkletEngine` state flag and all conditional branches across `grain.js`, `ui-presets.js`, `state.js`, `exp-init.js`
+- Worklet-related code from `exp-init.js` (engine start/stop, `S._onRecordingComplete`, `window.wg` API, `wg.toggle()` A/B switch)
+
+---
+
 ## 0.18 alpha — 2026-04-05
 
 ### Fixed
