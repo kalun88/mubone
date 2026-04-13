@@ -1,0 +1,5 @@
+# Cross-origin isolation for SharedArrayBuffer (grain engine worklet)
+# mubone has zero cross-origin dependencies — safe to enable
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp

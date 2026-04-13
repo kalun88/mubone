@@ -3,8 +3,8 @@
 ## Option A: Pre-built app (no dev tools needed)
 
 Ask for the `.dmg` or `.zip` for your Mac architecture:
-- **Apple Silicon** (M1/M2/M3/M4): `mubone-0.14.0-alpha-arm64.dmg`
-- **Intel Mac**: `mubone-0.14.0-alpha-x64.dmg`
+- **Apple Silicon** (M1/M2/M3/M4): `mubone-1.1.0-alpha-arm64.dmg`
+- **Intel Mac**: `mubone-1.1.0-alpha-x64.dmg`
 
 Open the DMG and drag **mubone** to your Applications folder. On first launch, macOS will warn about an unidentified developer — right-click the app and choose **Open**, then click **Open** again in the dialog. You only need to do this once.
 

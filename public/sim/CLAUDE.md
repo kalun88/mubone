@@ -75,7 +75,9 @@ Bump the minor number (0.2 → 0.3) for feature work or meaningful bug fixes. Bu
 | `docs/IMPROV-FEATURE-PLAN.md` | Working on improv mode, seeds, monitor/house bus, gesture morph |
 | `docs/EULER-VS-QUAT.md` | Working on sensor input format, Euler vs quaternion tradeoffs, roll-mute pole fix, `/euler` OSC path |
 | `docs/EXP-NOTES.md` | Working on experimental modules — gesture extraction, processing chain, new synthesis modes |
-| `docs/DETETHER-PLAN.md` | Working on two-IMU detethered cursor, frame sensor, conjugation fix, projection calibration |
+| `docs/TIMING-REFERENCE.md` | Working on timing-sensitive code — master table of all intervals, rates, scheduling values |
+| `docs/INTERACTION-MODEL.md` | Working on trace / scan / commit interaction model |
+| `docs/archive/` | Completed plans and audits (DETETHER-PLAN, WORKLET plans, BUFFER-AUDIT, TIMING-AUDIT, etc.) |
 
 ## Design principles
 
