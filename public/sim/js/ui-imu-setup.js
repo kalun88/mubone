@@ -24,7 +24,7 @@ import {
   setFeeding, setRole,
   setOnDeviceDiscovered, setOnSerialPortsChanged, setOnDeviceUpdated,
   setOnDataReceived, setOnCommandResponse, setOnCommandSent,
-  sendCommandTo,
+  sendCommandTo, blinkDevice,
   AXES_ALIGNMENTS,
   getAlignmentLabel,
 } from './imu-setup.js';
@@ -37,15 +37,33 @@ let _oscConnected = false;
 const _WIFI_REGIONS = { 1: 'US', 2: 'EU', 3: 'JP' };
 
 function _wifiInfoText(dev) {
-  if (dev.wifiApChannel == null && dev.wifiApSsid == null) return 'querying wifi AP…';
-  const parts = [];
-  if (dev.wifiApSsid)    parts.push(`SSID: ${dev.wifiApSsid}`);
-  if (dev.wifiApChannel) {
-    const band = dev.wifiApChannel >= 36 ? '5 GHz' : '2.4 GHz';
-    parts.push(`ch ${dev.wifiApChannel} (${band})`);
+  // The x-IMU3 has no wi_fi_mode setting — but the manual says RSSI is -1 in AP
+  // mode and a valid percentage (0–100) in client mode. RSSI comes in via the
+  // discovery broadcast, so it's populated immediately on first sight of the
+  // device, before any settings queries complete.
+  const rssi = dev.rssi;
+  const isClient = (rssi != null && rssi >= 0);
+  const isAp     = (rssi === -1);
+
+  // Nothing queried yet and no RSSI — show placeholder
+  const noAp     = dev.wifiApChannel == null && dev.wifiApSsid == null;
+  const noClient = dev.wifiClientChannel == null && dev.wifiClientSsid == null;
+  if (noAp && noClient && rssi == null) return 'querying wifi…';
+
+  const ssid    = isClient ? dev.wifiClientSsid    : dev.wifiApSsid;
+  const channel = isClient ? dev.wifiClientChannel : dev.wifiApChannel;
+  const modeLabel = isClient ? 'client' : (isAp ? 'AP' : 'wifi');
+
+  const parts = [modeLabel];
+  if (ssid) parts.push(`SSID: ${ssid}`);
+  // Client channel 0 means "All"/scan — device picks based on SSID. Skip channel label.
+  if (channel) {
+    const band = channel >= 36 ? '5 GHz' : '2.4 GHz';
+    parts.push(`ch ${channel} (${band})`);
   }
-  if (dev.wifiRegion)    parts.push(_WIFI_REGIONS[dev.wifiRegion] || `region ${dev.wifiRegion}`);
-  return parts.join('  ·  ') || '';
+  if (isClient && rssi != null) parts.push(`RSSI ${rssi}%`);
+  if (dev.wifiRegion) parts.push(_WIFI_REGIONS[dev.wifiRegion] || `region ${dev.wifiRegion}`);
+  return parts.join('  ·  ');
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -233,7 +251,7 @@ function rebuildDiscoveryList() {
     if (isElectron) {
       msg = 'listening for x-IMU3 UDP broadcasts on port 10000…';
     } else {
-      msg = 'WiFi AP is only available in the desktop app — for wireless sensors in the browser, use the Max patch OSC websocket bridge (see the <em>osc</em> section below)';
+      msg = 'WiFi is only available in the desktop app — for wireless sensors in the browser, use the Max patch OSC websocket bridge (see the <em>osc</em> section below)';
     }
     container.innerHTML = `<div class="imu-setup-empty">${msg}</div>`;
     return;
@@ -475,7 +493,7 @@ function buildCard(dev) {
   const isDirect = !isOSC;  // udp or serial — can send hardware commands
 
   card.innerHTML = `
-    <div class="imu-setup-card-header">${dev.name}  ·  ${dev.sn}  <span class="imu-setup-transport-badge">${dev.transport === 'udp' ? 'wifi AP' : dev.transport}</span></div>
+    <div class="imu-setup-card-header">${dev.name}  ·  ${dev.sn}  <span class="imu-setup-transport-badge">${dev.transport === 'udp' ? 'wifi' : dev.transport}</span> <button class="imu-setup-blink-btn js-blink" title="blink LED on this device to identify it">blink</button></div>
     ${dev.transport === 'udp' ? `<div class="imu-setup-wifi-info js-wifi-info">${_wifiInfoText(dev)}</div>` : ''}
 
     ${isDirect ? `
@@ -640,6 +658,14 @@ function buildCard(dev) {
       const nowFeeding = !dev.feeding;
       setFeeding(dev, nowFeeding);
       updateFeedBtn(feedBtn, nowFeeding);
+    });
+  }
+
+  // ── Blink button — send LED blinks to identify physical device
+  const blinkBtn = card.querySelector('.js-blink');
+  if (blinkBtn) {
+    blinkBtn.addEventListener('click', () => {
+      blinkDevice(dev, 5, 200);
     });
   }
 

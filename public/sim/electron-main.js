@@ -658,6 +658,43 @@ function createWindow() {
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
+// Centralised cleanup — called from both window-all-closed and before-quit.
+// Must be safe to call more than once.
+function cleanupBeforeQuit() {
+  // Block further IPC audio writes immediately
+  _expectedAudioBytes = 0;
+
+  // Stop and destroy RtAudio output
+  if (rtAudio) {
+    try { if (rtAudio.isStreamRunning()) rtAudio.stop(); } catch (_) {}
+    try { if (rtAudio.isStreamOpen()) rtAudio.closeStream(); } catch (_) {}
+    rtAudio = null;
+  }
+  // Stop and destroy RtAudio input — this is the main crash culprit.
+  // Its native callback uses a ThreadSafeFunction that must be released
+  // before node::FreeEnvironment() runs its final uv_run().
+  if (rtAudioIn) {
+    try { if (rtAudioIn.isStreamRunning()) rtAudioIn.stop(); } catch (_) {}
+    try { if (rtAudioIn.isStreamOpen()) rtAudioIn.closeStream(); } catch (_) {}
+    rtAudioIn = null;
+  }
+  // Destroy the enumerator instance — it holds a live RtAudio C++ object
+  if (_rtEnum) {
+    try { if (_rtEnum.isStreamOpen()) _rtEnum.closeStream(); } catch (_) {}
+    _rtEnum = null;
+  }
+
+  // Close x-IMU3 sockets
+  if (_ximu3DiscoverySock) { try { _ximu3DiscoverySock.close(); } catch(_) {} _ximu3DiscoverySock = null; }
+  if (_ximu3DataSock)      { try { _ximu3DataSock.close(); } catch(_) {} _ximu3DataSock = null; }
+  if (_ximu3CmdSock)       { try { _ximu3CmdSock.close(); } catch(_) {} _ximu3CmdSock = null; }
+  // Close serial ports
+  for (const [, entry] of _serialPorts) {
+    try { entry.port.close(); } catch(_) {}
+  }
+  _serialPorts.clear();
+}
+
 app.whenReady().then(() => {
   setupIPC();
   const win = createWindow();
@@ -673,27 +710,15 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  // Stop streams before closing — closing while the CoreAudio IO thread is
-  // still running can SIGBUS on macOS.
-  if (rtAudio) {
-    try { if (rtAudio.isStreamRunning()) rtAudio.stop(); } catch (_) {}
-    try { if (rtAudio.isStreamOpen()) rtAudio.closeStream(); } catch (_) {}
-    rtAudio = null;
-  }
-  if (rtAudioIn) {
-    try { if (rtAudioIn.isStreamRunning()) rtAudioIn.stop(); } catch (_) {}
-    try { if (rtAudioIn.isStreamOpen()) rtAudioIn.closeStream(); } catch (_) {}
-    rtAudioIn = null;
-  }
-  // Close x-IMU3 sockets
-  if (_ximu3DiscoverySock) { try { _ximu3DiscoverySock.close(); } catch(_) {} }
-  if (_ximu3DataSock)      { try { _ximu3DataSock.close(); } catch(_) {} }
-  if (_ximu3CmdSock)       { try { _ximu3CmdSock.close(); } catch(_) {} }
-  // Close serial ports
-  for (const [, entry] of _serialPorts) {
-    try { entry.port.close(); } catch(_) {}
-  }
-  _serialPorts.clear();
+  cleanupBeforeQuit();
+  // mubone is a single-window app — quit immediately on all platforms.
+  // Lingering on macOS left stale RtAudio ThreadSafeFunction refs that
+  // crashed during node::FreeEnvironment() (SIGABRT in audify.node).
+  app.quit();
+});
 
-  if (process.platform !== 'darwin') app.quit();
+// Safety net: runs once right before the app exits, in case window-all-closed
+// was skipped (e.g. app.quit() called directly, or Cmd+Q before window close).
+app.on('before-quit', () => {
+  cleanupBeforeQuit();
 });

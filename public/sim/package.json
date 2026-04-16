@@ -1,6 +1,6 @@
 {
   "name": "mubone",
-  "version": "1.1.0-alpha",
+  "version": "1.2.0-alpha",
   "description": "mubone — spatial granular synthesizer",
   "main": "electron-main.js",
   "author": "mubone",

@@ -16,7 +16,7 @@ import { initMobileMode } from './mobile.js';
 import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
 import { resizeCanvas, animate } from './renderer.js';
 import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initMorphToggle, initRadiusFade, initSeqMode, initMixdownGains, initDryMonitorGains, setScanMuted, initGateMeter } from './ui-meters.js';
-import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, recenterCursor } from './sensor-registry.js';
+import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, recenterCursor, assignQuatRole } from './sensor-registry.js';
 import { initOSC } from './osc.js';
 import { initAudioSettings, loadAudioDefaults, activateSavedInputDevice, startAutoSave } from './ui-audio-settings.js';
 
@@ -609,7 +609,46 @@ function init() {
       _sensorDetail = e.detail;
       window._sensorConnected = e.detail?.connected;
       _updateSensorGroup();
+      _rebuildSwitchBtns(e.detail);
     });
+
+    // ── Quick-switch sensor buttons ──────────────────────────────────────
+    // One button per connected+feeding sensor. Click = assign as cursor.
+    const _switchBtnsEl = document.getElementById('sensorSwitchBtns');
+    const _rebuildSwitchBtns = (detail) => {
+      if (!_switchBtnsEl) return;
+      const devices = detail?.devices;
+      if (!devices || devices.length === 0) {
+        _switchBtnsEl.innerHTML = '';
+        return;
+      }
+      // Only show buttons for feeding devices (connected to sphere)
+      const feedingDevs = devices.filter(d => d.feeding);
+      if (feedingDevs.length < 1) {
+        // No feeding sensors — nothing to show
+        _switchBtnsEl.innerHTML = '';
+        return;
+      }
+      // Build one button per feeding device
+      // Use short label: device name, or number if names are identical
+      const names = feedingDevs.map(d => d.name);
+      const allSameName = names.every(n => n === names[0]);
+      _switchBtnsEl.innerHTML = '';
+      feedingDevs.forEach((d, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'sensor-switch-btn';
+        if (d.role === 'cursor') btn.classList.add('active');
+        const label = allSameName
+          ? `${i + 1}`
+          : d.name.replace(/^x-IMU3\s*/i, '').trim() || `${i + 1}`;
+        btn.textContent = label;
+        btn.title = `${d.name} (${d.sn}) — click to make cursor`;
+        btn.addEventListener('click', () => {
+          assignQuatRole(d.slotName, 'cursor');
+        });
+        _switchBtnsEl.appendChild(btn);
+      });
+    };
   }
 
   // ── First-run hint ──────────────────────────────────────────────────────

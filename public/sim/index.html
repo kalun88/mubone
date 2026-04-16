@@ -14,7 +14,7 @@
   <div class="top-bar">
     <div class="top-bar-left">
       <div class="top-bar-row">
-        <span class="top-bar-version">version 1.1 alpha</span>
+        <span class="top-bar-version">version 1.2 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -72,6 +72,7 @@
         <span class="max-indicator" id="maxIndicator">● MAX</span>
         <span class="sensor-group-label">sensor</span>
         <span class="sensor-group-status" id="sensorGroupStatus"></span>
+        <span class="sensor-switch-btns" id="sensorSwitchBtns"></span>
         <button id="imuSetupBtn" class="top-bar-btn" title="sensor setup — x-IMU3 WiFi/USB, OSC sensors, mounting alignment, polarity, tare">⚙ sensors</button>
         <button id="gestureBtn" class="top-bar-btn" title="gesture panel — IMU feature extraction, conditioning, joystick morpher (Shift+G)">◎ gesture</button>
         <button id="mappingBtn" class="top-bar-btn" title="sensor mapping — map IMU axes to grain parameters">⇆ mapping</button>
@@ -181,7 +182,7 @@
             <button class="session-btn" id="sessionSweepBtn" title="sweep — remove particles not used by active seeds or loops (-)&#10;if no seeds/loops active, clears all particles"><span>sweep</span> <span class="paint-key-badge">−</span></button>
           </div>
           <div style="display:flex;gap:0.4rem;">
-            <button class="session-btn" id="cursorZeroTopBtn" title="tare cursor — set current sensor orientation as zero reference (`)"><span>tare</span> <span class="paint-key-badge">`</span></button>
+            <button class="session-btn" id="cursorZeroTopBtn" title="tare cursor — set the cursor-assigned sensor's current orientation as zero reference. does not affect other sensors or send a hardware heading reset (`)"><span>tare cursor</span> <span class="paint-key-badge">`</span></button>
             <button class="session-btn" id="sessionAltLockBtn" title="cursor lock — freeze cursor position to interact with UI&#10;hold Alt/Option while cursor is in the visualizer" disabled><span>lock cursor</span> <span class="paint-key-badge">Alt</span></button>
             <button class="session-btn session-btn--danger" id="sessionEraseBtn" title="erase all — clear all particles, buffers and stroke history&#10;press Backspace ×3 to trigger from keyboard"><span>erase all</span> <span class="paint-key-badge">⌫×3</span></button>
           </div>
@@ -922,14 +923,14 @@
 
         <!-- Transport status bar -->
         <div id="imuSetupTransports" class="imu-setup-transports">
-          <span class="imu-transport" id="imuTransportUDP"><span class="imu-transport-dot"></span>wifi AP</span>
+          <span class="imu-transport" id="imuTransportUDP"><span class="imu-transport-dot"></span>wifi</span>
           <span class="imu-transport" id="imuTransportSerial"><span class="imu-transport-dot"></span>serial</span>
           <span class="imu-transport" id="imuTransportOSC"><span class="imu-transport-dot"></span>osc</span>
         </div>
 
-        <!-- x-IMU3 WiFi AP discovery -->
+        <!-- x-IMU3 WiFi discovery -->
         <div class="imu-setup-section">
-          <div class="imu-setup-section-label">wifi AP <span id="imuWifiStatus" class="imu-setup-status-hint"></span></div>
+          <div class="imu-setup-section-label">wifi <span id="imuWifiStatus" class="imu-setup-status-hint"></span></div>
           <div id="imuSetupDiscovery" class="imu-setup-devices">
             <div class="imu-setup-empty">searching…</div>
           </div>

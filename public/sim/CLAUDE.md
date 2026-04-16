@@ -72,7 +72,6 @@ Bump the minor number (0.2 → 0.3) for feature work or meaningful bug fixes. Bu
 | `CHANGELOG.md` | **Update on every release** — version history, what changed |
 | `docs/TODO.md` | **Always check this** — current tasks, priorities, what's done |
 | `docs/mubone-architecture-notes.md` | Working on audio routing, multi-channel, VBAP, Electron bridge |
-| `docs/IMPROV-FEATURE-PLAN.md` | Working on improv mode, seeds, monitor/house bus, gesture morph |
 | `docs/EULER-VS-QUAT.md` | Working on sensor input format, Euler vs quaternion tradeoffs, roll-mute pole fix, `/euler` OSC path |
 | `docs/EXP-NOTES.md` | Working on experimental modules — gesture extraction, processing chain, new synthesis modes |
 | `docs/TIMING-REFERENCE.md` | Working on timing-sensitive code — master table of all intervals, rates, scheduling values |

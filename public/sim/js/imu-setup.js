@@ -105,10 +105,16 @@ class DeviceState {
     // Hardware config (stored on the device)
     this.axesAlignment = 0;
 
-    // WiFi AP info (queried on connect for UDP devices)
-    this.wifiApChannel = null;
-    this.wifiApSsid    = null;
-    this.wifiRegion    = null;   // 1=US, 2=EU, 3=JP
+    // WiFi info (queried on connect for UDP devices)
+    // AP = device's own hotspot config; client = router the device joined.
+    // The x-IMU3 has no wi_fi_mode setting — AP vs client is a boot state (LED colour,
+    // cyan=client, magenta=AP). But we can infer mode reliably from RSSI: the manual
+    // states RSSI is -1 in AP mode and a valid percentage in client mode.
+    this.wifiApChannel     = null;
+    this.wifiApSsid        = null;
+    this.wifiClientChannel = null;
+    this.wifiClientSsid    = null;
+    this.wifiRegion        = null;   // 1=US, 2=EU, 3=JP
 
     // Software calibration (local to this session)
     // Tare stored as Euler offsets (degrees) — subtracted in Euler space to avoid
@@ -538,6 +544,8 @@ function _webSerialPortId(port) {
 // ── Init (called once from main.js) ─────────────────────────────────────────
 
 export function initIMUSetup() {
+  _installRoleChangeListener();
+
   const bridge = window.electronBridge;
 
   if (!bridge?.isElectron) {
@@ -746,6 +754,8 @@ export async function connectDevice(sn) {
     sendCommandTo(dev, { axes_alignment: null });
     sendCommandTo(dev, { wi_fi_ap_channel: null });
     sendCommandTo(dev, { wi_fi_ap_ssid: null });
+    sendCommandTo(dev, { wi_fi_client_channel: null });
+    sendCommandTo(dev, { wi_fi_client_ssid: null });
     sendCommandTo(dev, { wi_fi_region: null });
 
     // Settings enforcement — ensure correct AHRS config regardless of GUI state
@@ -754,7 +764,7 @@ export async function connectDevice(sn) {
     sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
     sendCommandTo(dev, { udp_low_latency: true });
     sendCommandTo(dev, { ahrs_message_type: 0 });  // quaternion mode
-    sendCommandTo(dev, { ahrs_message_rate_divisor: 1 });  // 400Hz / 1 = 400Hz (paint-ticker adaptive spacing)
+    sendCommandTo(dev, { ahrs_message_rate_divisor: 4 });  // 400Hz / 4 = 100Hz (matches paint-ticker 200Hz; device averages intermediate samples)
     await _delay(100);
     sendCommandTo(dev, { apply: null });
 
@@ -823,7 +833,7 @@ export async function connectSerialDevice(portPathOrObj) {
     sendCommandTo(dev, { ahrs_acceleration_rejection_enabled: true });
     sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
     sendCommandTo(dev, { ahrs_message_type: 0 });
-    sendCommandTo(dev, { ahrs_message_rate_divisor: 1 });  // 400Hz / 1 = 400Hz (paint-ticker adaptive spacing)
+    sendCommandTo(dev, { ahrs_message_rate_divisor: 4 });  // 400Hz / 4 = 100Hz (matches paint-ticker 200Hz; device averages intermediate samples)
     await _delay(100);
     sendCommandTo(dev, { apply: null });
 
@@ -865,7 +875,7 @@ export async function connectSerialDevice(portPathOrObj) {
   sendCommandTo(dev, { ahrs_acceleration_rejection_enabled: true });
   sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
   sendCommandTo(dev, { ahrs_message_type: 0 });
-  sendCommandTo(dev, { ahrs_message_rate_divisor: 1 });  // 400Hz / 1 = 400Hz (paint-ticker adaptive spacing)
+  sendCommandTo(dev, { ahrs_message_rate_divisor: 4 });  // 400Hz / 4 = 100Hz (matches paint-ticker 200Hz; device averages intermediate samples)
   await _delay(100);
   sendCommandTo(dev, { apply: null });
 
@@ -935,6 +945,24 @@ export function sendCommandTo(dev, jsonObj) {
   // OSC transport: no command sending (calibrated upstream)
 
   _onCommandSent?.(dev, jsonObj);
+}
+
+// ── LED blink — visual identification / role-switch feedback ────────────────
+
+export async function blinkDevice(dev, count = 3, intervalMs = 150) {
+  if (!dev) return;
+  for (let i = 0; i < count; i++) {
+    if (i > 0) await _delay(intervalMs);
+    sendCommandTo(dev, { blink: null });
+  }
+}
+
+// Find device by slot name (for role-switch blink trigger)
+export function getDeviceBySlotName(slotName) {
+  for (const dev of _devices.values()) {
+    if (dev.slotName === slotName) return dev;
+  }
+  return null;
 }
 
 // Convenience: send to first connected device
@@ -1058,6 +1086,27 @@ export function setRole(dev, role) {
   if (dev.feeding) {
     assignQuatRole(dev.slotName, role);
   }
+}
+
+// ── Sync DeviceState.role when registry roles change externally ─────────────
+// Called when assignQuatRole() is invoked directly (e.g. quick-switch buttons).
+// Keeps DeviceState.role in sync with the registry slot's quatRole.
+// Installed by initIMUSetup() to ensure _devices map is available.
+function _installRoleChangeListener() {
+  S._onSensorRoleChanged = (slot) => {
+    for (const dev of _devices.values()) {
+      if (dev.slotName === slot.name) {
+        dev.role = slot.quatRole;
+        _saveDevicePrefs();
+        // Blink the device that just became cursor — 3× fast blink
+        if (slot.quatRole === 'cursor') {
+          blinkDevice(dev, 3, 150);
+        }
+        break;
+      }
+    }
+    _syncSensorStatus();  // rebuild switch buttons via sensor-status event
+  };
 }
 
 // ── ASCII data parser ───────────────────────────────────────────────────────
@@ -1222,14 +1271,17 @@ function _initOscSlot(dev) {
 // Centralised so every response path (proxy, Electron UDP, Electron serial,
 // WebSerial) updates the same set of fields.
 function _applyResponseFields(dev, json) {
-  if (json.axes_alignment   !== undefined) dev.axesAlignment = json.axes_alignment;
-  if (json.wi_fi_ap_channel !== undefined) dev.wifiApChannel = json.wi_fi_ap_channel;
-  if (json.wi_fi_ap_ssid    !== undefined) dev.wifiApSsid    = json.wi_fi_ap_ssid;
-  if (json.wi_fi_region     !== undefined) dev.wifiRegion     = json.wi_fi_region;
-  if (json.device_name      !== undefined) { dev.name = json.device_name; _onDeviceUpdated?.(dev); }
-  if (json.serial_number    !== undefined) { _onDeviceUpdated?.(dev); }
+  if (json.axes_alignment       !== undefined) dev.axesAlignment      = json.axes_alignment;
+  if (json.wi_fi_ap_channel     !== undefined) dev.wifiApChannel      = json.wi_fi_ap_channel;
+  if (json.wi_fi_ap_ssid        !== undefined) dev.wifiApSsid         = json.wi_fi_ap_ssid;
+  if (json.wi_fi_client_channel !== undefined) dev.wifiClientChannel  = json.wi_fi_client_channel;
+  if (json.wi_fi_client_ssid    !== undefined) dev.wifiClientSsid     = json.wi_fi_client_ssid;
+  if (json.wi_fi_region         !== undefined) dev.wifiRegion         = json.wi_fi_region;
+  if (json.device_name          !== undefined) { dev.name = json.device_name; _onDeviceUpdated?.(dev); }
+  if (json.serial_number        !== undefined) { _onDeviceUpdated?.(dev); }
   // WiFi info triggers a card refresh so channel/SSID can display
-  if (json.wi_fi_ap_channel !== undefined || json.wi_fi_ap_ssid !== undefined) {
+  if (json.wi_fi_ap_channel     !== undefined || json.wi_fi_ap_ssid    !== undefined ||
+      json.wi_fi_client_channel !== undefined || json.wi_fi_client_ssid !== undefined) {
     _onDeviceUpdated?.(dev);
   }
 }
@@ -1247,7 +1299,7 @@ function _syncSensorStatus() {
   for (const d of devs) {
     count++;
     if (d.transport === 'serial')    transports.add('serial');
-    else if (d.transport === 'udp')  transports.add('wifi AP');
+    else if (d.transport === 'udp')  transports.add('wifi');
     else if (d.transport === 'osc')  transports.add('osc');
   }
 
@@ -1257,6 +1309,14 @@ function _syncSensorStatus() {
       feeding:   hasFeeding,
       count,
       transports: [...transports],
+      devices: devs.map(d => ({
+        sn: d.sn,
+        name: d.name,
+        slotName: d.slotName,
+        role: d.role,
+        feeding: d.feeding,
+        transport: d.transport,
+      })),
     },
   }));
 }

@@ -170,7 +170,6 @@ docs/
   QUICK-START.md        — getting started walkthrough
   KEYBOARD-SHORTCUTS.md — keybinding reference
   INTERACTION-MODEL.md  — trace / scan / commit interaction model
-  IMPROV-FEATURE-PLAN.md — improv mode feature plan
   EXP-NOTES.md          — experimental module design notes
   GESTURE-MAPPING-PLAN.md — gesture-to-synthesis mapping design
   TIMING-REFERENCE.md   — master table of all timing intervals and rates

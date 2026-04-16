@@ -5,6 +5,23 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 1.2 alpha — 2026-04-15
+
+### Fixed
+- **Electron shutdown crash (SIGABRT in audify.node)** — RtAudio input stream's native ThreadSafeFunction callback fired during `node::FreeEnvironment()` after the JS context had started tearing down. Centralised all cleanup into an idempotent `cleanupBeforeQuit()` called from both `window-all-closed` and `before-quit`. App now quits immediately on all platforms (mubone is single-window) instead of lingering on macOS with stale native refs. Also destroys the RtAudio enumerator instance (`_rtEnum`) which held a live C++ object through shutdown.
+- **WiFi info showed "AP" when sensor was in client mode** — `_wifiInfoText()` now uses RSSI from discovery broadcasts to detect mode (RSSI −1 = AP, 0–100 = client) instead of assuming AP. Queries `wi_fi_client_ssid` and `wi_fi_client_channel` on connect; displays correct mode label, SSID, channel, band, and signal strength.
+- **WiFi transport label said "wifi AP"** — changed to just "wifi" since sensors can be in either AP or client mode.
+
+### Changed
+- **AHRS message rate reduced from 400Hz to 100Hz** — `ahrs_message_rate_divisor` changed from 1 to 4 across all three connect paths (UDP, serial Electron, serial Web). The device's internal AHRS still runs at 400Hz and averages intermediate samples (anti-aliasing), so orientation quality is preserved. 100Hz is well above the paint ticker's 200Hz consumption rate and gives 3× WiFi headroom for multi-sensor shows.
+- **Tare button renamed to "tare cursor"** — clarifies that it only tares the cursor-assigned sensor's orientation, not all sensors, and does not send a hardware heading reset. Tooltip expanded.
+- **Sensor switch buttons visible with a single connected sensor** — previously required ≥2 feeding sensors to show. Now shows with ≥1, so the performer can always see which sensor is assigned to cursor.
+
+### Added
+- **WiFi client-mode fields in DeviceState** — `wifiClientChannel`, `wifiClientSsid` tracked alongside existing AP fields. Queried on connect for UDP devices.
+
+---
+
 ## 1.1 alpha — 2026-04-11
 
 ### Fixed

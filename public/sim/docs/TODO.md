@@ -7,6 +7,17 @@
 
 ## Backlog
 
+### Apr 15
+
+- [ ] **#123 Multi-cursor / live-seed — multiple sensors granulating simultaneously** — Allow 2–3 sensor cursors to scan/granulate the sphere at the same time, each spatialized independently in the octophonic array. One cursor still controls the camera; additional cursors are "live seeds" — seed slots whose position is driven by a sensor's quaternion in real-time instead of pre-recorded keyframes. The existing seed architecture (grain.js:637–831) already supports up to 16 independent granulating points with per-seed onset clocks, candidate pools, and VBAP spatialization, so the main work is wiring sensor input to seed position rather than building a new scheduling path.
+  - **New sensor role:** Add `'scan'` to `QUAT_ROLES` (sensor-registry.js:24) allowing multiple simultaneous assignments (same exclusivity skip as `'custom'`/`'unmapped'` at line 193). Each `'scan'`-role slot drives one live seed.
+  - **Live seed slot:** New seed type in grain.js that reads position from a sensor slot's quaternion (via `getByRole()` → `getCursorLonLat()`-equivalent) instead of interpolating `seed.frames[]` keyframes. Update position every scheduler tick (~20ms). The seed scheduling loop (grain.js:637–831) iterates it identically to committed clouds — angular distance search, candidate posting, worklet onset clock, VBAP.
+  - **Worklet impact:** None expected. The worklet already handles cursor + 16 seeds. Live seeds post candidates the same way committed seeds do (grain-worklet-bridge.js:434–506). The 256-grain pool has headroom for 3 cursors at typical rates (~30–50 grains/sec each = 90–150 out of 256).
+  - **State changes:** No change to `S.camQ`/`S.cursorQ` (camera remains single-cursor). Live seeds track their own lon/lat derived from their bound sensor slot. Add `S.liveSeeds[]` or flag on existing seed slots.
+  - **UI:** Minimal — the 3D viz already renders seed positions. Optionally add colored dot per live seed. The main need is the role dropdown in the IMU setup card gaining a `'scan'` option alongside `'cursor'`/`'frame'`.
+  - **Interaction model:** Performer A paints (trace) and scans from one position. Performer B enters the same material from a different angle — different grains, different spatial direction in the octophonic array. Audience hears two (or three) performers navigating the same spatial score simultaneously. Camera follows one cursor; all cursors granulate independently.
+  - **Estimated effort:** ~2–3 days. (1) live-seed concept + sensor binding ~0.5d, (2) new role + role wiring ~0.5d, (3) UI indicator ~0.5d, (4) multi-sensor testing ~1d.
+
 ### Apr 6
 
 - [ ] **#122 OSC values out — sensor/parameter thru to external apps** — Add an OSC output path so mubone can forward live sensor values (quaternion, Euler, gyro, accel, gesture features) and mapped parameter values out to Max, SuperCollider, or any OSC-capable app. Essentially a thru/mirror: incoming sensor data and derived values (cursor position, gesture energy, mapped param outputs) get re-sent as OSC messages on a configurable host/port. Useful for parallel processing, visualization in another tool, or hybrid setups where mubone handles spatial audio but another app handles effects/synthesis. Needs: configurable destination (IP + port) in audio/sensor settings, toggle on/off, selectable streams (raw sensor, derived cursor, mapped params), OSC address namespace (e.g. `/out/sensor/{name}/quat`, `/out/cursor/lonlat`, `/out/param/{key}`). WebSocket or UDP output from Electron; browser mode could use WebSocket relay.
@@ -17,12 +28,12 @@
 - [ ] **#118 Expose gesture energy as a mappable source** — The gesture module already tracks movement energy internally. Surface this as a first-class mapping source in the mapping module so it can drive any target parameter. Energy should appear in the mapping source dropdown alongside IMU axes, envelope, etc. Normalize to 0–1 range with configurable smoothing/decay so it's usable for both slow swells and sharp transient response.
 - [ ] **#119 Spatialization chaos modes** — Inspired by Bethany's feedback at the Dartmouth workshop. Add options for mapping gesture energy (or other sources) to speaker position randomization — e.g. energy → VBAP azimuth/elevation jitter, so calm playing stays spatially stable and intense playing scatters grains across the speaker array. Could also include a standalone "spatial chaos" parameter (0 = deterministic VBAP, 1 = fully random speaker assignment) exposed in PARAM_REGISTRY with MIDI/OSC path `/spatial/chaos`. Consider additional modes: energy → spin rate, energy → spatial spread width.
 - [ ] **#120 Investigate cloud drop volume spike** — Cloud drops sometimes sound noticeably louder than expected. Suspect the committed cloud isn't inheriting the current volume/gain state, or something is off with scan gain staging or headphone mix routing at the moment of drop. Audit the signal path from cloud commit through to output: check whether `S.volume`, bus sends (monitor/house), and headphone mix level are all applied correctly to newly dropped clouds. Compare RMS of a cloud drop vs. live scan at matched settings. Could also be a normalization issue if the cloud buffer has a different peak level than the live buffer.
-- [ ] **#121 Highlight actively mapped parameters in main UI** — When a mapping is active (enabled and receiving control), the corresponding parameter's label/slider in the main UI should get a visual highlight — e.g. a colored dot, outline glow, or subtle background tint — so the performer can see at a glance which controls are under mapping control vs. manual. Update highlight state reactively when mappings are toggled on/off or when macro groups (#117) switch. Keep it lightweight — CSS class toggle driven by a Set of active param keys, no per-frame DOM thrash.
+- [x] **#121 Highlight actively mapped parameters in main UI** — **Done (Apr 12).**
 
 ### Apr 4
 
-- [ ] **#113 Add overlap ratio parameter** — Add a single "overlap" control that links period and duration, where 1.0 = grains just touch (duration equals period), >1.0 = overlapping grains, <1.0 = gaps between grains. Similar to MuBu CataRT / Granulator II approach. Period and duration sliders should still be independently adjustable, but the overlap slider provides a single-control alternative for changing texture density. When the overlap slider moves, compute `duration = period × overlap` (or vice versa — TBD which one is driven). When period or duration is changed independently, the overlap display updates to reflect the current ratio but does not force the other parameter. Add to PARAM_REGISTRY, patch table, MIDI/OSC mappable.
-- [ ] **#115 Expose durJitter in main UI** — `durJitter` (±% randomization of grain duration) currently only exists in factory presets and seed `grainOverrides` — it's in `GRAIN_KEYS` but not in `PARAM_REGISTRY`, so it has no patch table row, no slider, and no MIDI/OSC path. Add it to `PARAM_REGISTRY` with a slider in the grain controls section (range 0–100%, internal 0–1), patch table column, preset save/load, MIDI/OSC mappable as `/grain/dur_jitter`. Currently used by all factory presets (typical values 0.02–0.50) and by seed morph (`AGITATE_DELTAS.durJitter = 0.5`, `SMOOTH_DELTAS.durJitter = -0.3`).
+- [x] **#113 Add overlap ratio parameter** — **Done (Apr 12).**
+- [x] **#115 Expose durJitter in main UI** — **Done (Apr 12).**
 - [ ] **#116 Skip meter computation when panels are collapsed** — Collapsing UI panels (levels, cursor, etc.) is CSS-only — the JS meter loops keep running at full rate. `tickMainMeters()` (ui-meters.js:771) still calls `analyser.getFloatTimeDomainData()` and draws to hidden canvases every other frame (~30fps). The audio-settings modal meter loop (`startMetering()`, ui-audio-settings.js:352) runs its own rAF at ~60fps whenever the modal has been opened once. Fix: add early-return guards that check `panel.classList.contains('collapsed')` (or a visibility flag) before reading analyser data and drawing. The AnalyserNodes stay connected (disconnect/reconnect churn isn't worth it), but skipping `getFloatTimeDomainData()` + canvas draws saves meaningful main-thread time — especially relevant for #114's goal of reducing main-thread load during performance. Apply to: main input/output meters, dry monitor meter, noise gate meter canvas, and the audio-settings modal meters.
 
 ---
@@ -37,18 +48,18 @@
 
 - [ ] **#6 Sample painting doesn't contribute to buffer count** — painted samples don't show in the recording meter. Confirm whether intentional or a gap.
 - [ ] **#7 Crashes from too many loops/seeds** — happens on speech1, also general overload. Error code 5. Hard to isolate — likely AudioContext or node limit. Needs investigation.
-- [ ] **#9 Surface mode yaws one direction after pole** — orientation snaps or drifts after passing through a pole. *Note (Mar 27):* the forward-vector path pole fix now covers sensor mode with roll muted OR unmapped — surface mode (trackpad) uses a separate incremental rotation path that should already handle poles. If this persists in surface mode specifically, investigate the trackpad delta path in renderer.js.
+- [x] **#9 Surface mode yaws one direction after pole** — **Fixed (Apr 12).**
 - [ ] **#11 Upside-down indicator in viz** — something in the 3D view showing when wand is inverted, helps diagnose whether orienter is reversed.
 - [ ] **#14 Cursor fade in/out time** — smooth fade when muting/unmuting cursor playback instead of hard on/off.
 - [ ] **#16 Particles remember their patch/grain settings** — each painted particle stores which patch was active when painted, so playback uses original settings.
 - [ ] **#17 Glide time between patches** — crossfade/interpolation when switching patches rather than hard cut.
-- [ ] **#19 Radius display needs better contrast** — border display with colour barely visible. Needs stronger visual treatment.
+- [x] **#19 Radius display needs better contrast** — **Fixed (Apr 12).**
 - [ ] **#20 Tether seed visual** — visual connection between seed and its source or trajectory.
-- [ ] **#22 Fade in/out for picked-up loops** — at minimum fade-out to eliminate clicks when loops stop. Fade-in less critical but nice.
+- [x] **#22 Fade in/out for picked-up loops** — **Done (Apr 12).**
 
 ### From Workshop Prep (Dartmouth, week of Mar 30)
 
-- [ ] **#35 Verify `sweep` actually frees memory** — test that sweep releases AudioBuffer references and allows GC.
+- [x] **#35 Verify `sweep` actually frees memory** — **Verified (Apr 12).**
 - [ ] **#36 Stress-test long sessions** — record continuously for 15–30 min in Chrome, monitor memory in DevTools.
 - [ ] **#39 Stretch: test 42-channel VBAP** — try the full Dartmouth layout. Identify any performance cliffs (lookup table size, per-grain cost). Have a fallback plan if 42 is too heavy.
 - [ ] **#40 Electron multi-channel setup docs** — write a short checklist for getting Electron + multi-channel output running on a fresh machine (students may need to set this up).
@@ -61,23 +72,7 @@
 
 ## Deferred — Later Fixes
 
-- [ ] **#91 Normal-mode renderer stalls with 16 moving clouds during recording** — Performance mode (Shift+P) eliminates the issue instantly, so the bottleneck is renderer-side, not scheduler. Scenario: recording live mic + painting a moving cloud trail (cloud lock on) + scanning + 16 moving seed slots active + frame IMU rotated away from clouds. Stalls get worse when clouds are off-screen (edge indicators still render). **What's been done so far (Mar 28):**
-  - Depth sort removed globally (was O(N log N) per frame, unnecessary with transparent particles)
-  - `rebuildLiveBuffer` changed to incremental copy (was copying entire recording buffer every 200ms)
-  - Frame-skip under CPU pressure: skips `drawFrame()` when `perf.schedulerDrift > 1.5× interval`
-  - Trail budget: 200 total trail projections/frame shared across all moving seeds (was 50 per seed uncapped)
-  - Off-screen trail skip: trails not drawn when seed's current position is behind camera
-  - Reuse `seed._currentFrame` from scheduler instead of redundant `_interpolateMovingSeed` per frame
-  - Incremental angular distance stamps: new particles only stamp new distances (was recomputing ALL N×16 distances when `_particleVersion` bumped during painting)
-  - `_captureSeedFrame` throttled from 50/sec to ~15/sec
-  - **What still needs investigation:**
-    - Edge indicator rendering for off-screen moving clouds — runs trig math (atan2, sqrt) for all 16 seeds even when off-screen. May need budgeting or simplification.
-    - `drawSeeds` still does `spherePointInto + cameraTransformInto + project` per seed per frame even for off-screen seeds (to compute edge indicator position). Consider early-out for seeds behind the camera.
-    - Moving seeds in scheduler: each recomputes angular distances for ALL particles every tick (position changes, can't cache). 16 seeds × 500 particles × 50 ticks = 400K acos/sec. Could replace `Math.acos(dot)` with raw dot product comparison (cos is monotonic on [0,π]) — needs `_buildCandidatePoolNearest` and `_buildCandidatePoolRadius` refactored to use cosine threshold instead of angle threshold.
-    - `project()` function still allocates a return object per call (~1,800/frame) — not yet converted to zero-alloc `projectInto`.
-    - The `_drawVelocityDotTrail` function still runs `project()` per sample point, each returning an object. Could use scratch buffer.
-  - **Key files:** `js/renderer.js` (drawSeeds, drawFrame, _drawVelocityDotTrail, drawParticles), `js/grain.js` (scheduleGrains angular stamp loops ~line 1404, _buildCandidatePoolNearest), `js/state.js` (perf object, perfMode flag)
-  - **Toggle:** Shift+P = perfMode on/off, OSC `/app/perfmode`
+- [x] **#91 Normal-mode renderer stalls with 16 moving clouds during recording** — **Fixed (Apr 12).**
 - [ ] **#75 Roll mute/unmap pole bug** — when roll axis is muted or unmapped in the sensor axis map, the cursor can never reach the poles and yaws excessively / flips. Works fine with all 3 axes active. Root cause: forward-vector decomposition in `applyAxisMapQuat` has a coordinate-system mismatch preventing pitch from reaching ±90°. Roll mute button disabled in UI with tooltip. Downstream roll-lock approach also failed (same decomposition issue) — roll lock code removed. See `docs/EULER-VS-QUAT.md` § "Proposed fixes for 2-DOF gimbal lock" for two approaches:
   - [ ] **#75a Explore pitch clamp** — clamp pitch to ±85° (configurable) when roll is muted, preventing the gimbal lock singularity. Quick win that could re-enable the roll mute button immediately. Tradeoff: poles become unreachable (small dead zone).
   - [ ] **#75b Explore delta/incremental rotation path** — compute frame-to-frame quaternion deltas (always small angles, never hit poles), apply axis remap and roll-mute to the delta, accumulate into camera orientation. Avoids gimbal lock entirely. Would also fix #9 (surface mode yaw after pole). Tradeoff: drift from float accumulation (mitigate with periodic normalization and slow blend toward absolute orientation).
@@ -115,6 +110,8 @@
 - [ ] **#91 Multi-IMU router for 2+ sensors** — when running two or more x-IMU3s (e.g. cursor + frame), need a routing layer that receives multiple UDP streams and dispatches each to the correct sensor slot. Could be a lightweight Node.js UDP server in Electron (ties into #74's direct-reception approach), or a small standalone router app/script that forwards tagged OSC to the WebSocket bridge. Key questions: discovery/identification of each IMU (by IP, serial, or x-IMU3 device name), mapping to sensor-registry slots, and whether this replaces Max entirely or supplements it.
 
 ## Completed
+
+**Apr 12:** #113, #115, #121, #9, #19, #22, #35, #91
 
 **Sprint Mar 30 onward:** #112 (in progress), #111, #93, #38, #41, #106, #24
 
