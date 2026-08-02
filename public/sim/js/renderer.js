@@ -978,9 +978,13 @@ export function drawCursor() {
 
   // ─── ZONE 3: Radius circle ─────────────────────────────────────────────
 
-  // Scan off uses amber tint matching the scan button, otherwise neutral grey
-  const _rFill   = scanOff ? 'rgba(232,160,48,0.10)' : 'rgba(180,180,180,0.10)';
-  const _rStroke = scanOff ? 'rgba(232,160,48,0.55)' : 'rgba(200,200,200,0.55)';
+  // Erase brush held: red tint (danger). Scan off: amber matching the scan
+  // button. Otherwise neutral grey. Pure color swap — no extra draw calls.
+  const erasing  = S.eraseHeld;
+  const _rFill   = erasing ? 'rgba(224,64,64,0.12)'
+    : scanOff ? 'rgba(232,160,48,0.10)' : 'rgba(180,180,180,0.10)';
+  const _rStroke = erasing ? 'rgba(224,64,64,0.85)'
+    : scanOff ? 'rgba(232,160,48,0.55)' : 'rgba(200,200,200,0.55)';
 
   const kAll = S.grainKAllMode;
 
@@ -1266,7 +1270,7 @@ export function animate() {
   //
   //   pull    — mouse offset from canvas centre (absolute, below)
   //   surface — pointer-lock trackpad deltas, incremental world-yaw × local-pitch
-  //   sensor  — BNO085 frame-to-frame deltas, same incremental pattern
+  //   sensor  — x-imu3 frame-to-frame deltas, same incremental pattern
   //
   // DESIGN NOTE (gimbal-lock-free rotation):
   // Surface and sensor modes both use INCREMENTAL rotation to avoid gimbal
@@ -1331,7 +1335,7 @@ export function animate() {
     }
   }
 
-  // ── BNO085 sensor override ─────────────────────────────────────────────────
+  // ── Sensor (x-imu3) override ───────────────────────────────────────────────
   // Always uses the absolute path via getSensorCamQ() → applyAxisMapQuat().
   // applyAxisMapQuat already has a pole-safe forward-vector path for when
   // roll is muted — no need for a second delta-tracking layer here.
@@ -1362,17 +1366,11 @@ export function animate() {
         S._axisLockFrozenPitch = null;
         S.camQ = sq;
       }
-
-      // Auto-recenter after gravity-aligned tare — fires once on next frame
-      if (S._pendingRecenter) {
-        S._pendingRecenter = false;
-        if (typeof S._recenterCursor === 'function') {
-          S._recenterCursor();
-          sq = S._getSensorCamQ();
-          if (sq && S.driftOffsetQ) sq = _qNorm(_qMul(S.driftOffsetQ, sq));
-          if (sq) S.camQ = sq;
-        }
-      }
+      // (An auto-recenter branch lived here, armed by S._pendingRecenter from
+      // sensor-registry's slotTare. That tare was removed 2026-08-01 — see the
+      // note in sensor-registry.js — so nothing could ever set the flag, and
+      // this was per-frame work in the render loop that never ran. Recenter
+      // itself is still reachable as S._recenterCursor() from the console.)
     }
 
     // ── Detethered cursor — two-IMU mode ──────────────────────────────────
@@ -1413,13 +1411,21 @@ export function animate() {
     S.cursorQ = null;
   }
 
-  // ── Frame sensor — world rotation ──────────────────────────────────────────
-  // The frame-role sensor rotates the virtual sphere.  Only active in sensor
-  // mode — surface and pull are mouse/trackpad only, no IMU world rotation.
-  // Stored on S.frameQ; sphere.js applies it per-point in cameraTransform /
-  // getCursorLonLat / screenToLonLat.
-  S.frameQ = (S.cameraMode === 'sensor' && typeof S._getFrameQ === 'function')
-    ? S._getFrameQ()
+  // ── Camera sensor — world rotation (projector-aim) ─────────────────────────
+  // A 'camera' role sensor rotates the virtual sphere, producing projector-
+  // aim behaviour: turning the sensor pans the viewport while the world stays
+  // in world coords.  Stored on S.frameQ; sphere.js applies it per-point in
+  // cameraTransform / getCursorLonLat / screenToLonLat.  Only active in
+  // sensor mode — surface and pull are mouse/trackpad only.
+  //
+  // A 'frame' role sensor (body-reference) does NOT go here — that mode feeds
+  // the delta quat directly into S.cursorQ via getSensorCursorQ(), and leaves
+  // S.frameQ null so cameraTransform skips world rotation.  Result: rotating
+  // cursor + frame together leaves both the cursor AND the grid visually
+  // stationary, attaching the whole granular field to the performer's body.
+  // See sensor-registry.getSensorCursorQ() for the dispatch.
+  S.frameQ = (S.cameraMode === 'sensor' && typeof S._getCameraQ === 'function')
+    ? S._getCameraQ()
     : null;
 
   // ── Sensor → grain-param mappings ──────────────────────────────────────

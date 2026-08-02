@@ -305,7 +305,7 @@ function getItems() {
 
     { id: 'ahrsOutput', cat: 'imu', name: 'Quat Output', ms: 1000 / 50,
       hz: 50, crit: 'high',
-      desc: `The effective wand update rate: 400Hz ÷ 8 (divisor) = 50 quaternion messages per second. Each message is a [x, y, z, w] quaternion representing the wand's absolute orientation in 3D space. On the main thread, each message: (1) arrives via WebSerial read loop or WebSocket, (2) gets JSON-parsed, (3) is converted to Euler angles or applied as a quaternion to the cursor position on the sphere, (4) updates S.wand state which the renderer reads next frame. At 50Hz these are another 50 events/sec on the main-thread event loop — comparable to the scheduler's 50 ticks/sec. In detethered mode (two IMUs), this doubles to 100 messages/sec total. This is the primary input for spatial cursor control during live performance.`,
+      desc: `The effective sensor update rate: 400Hz ÷ 8 (divisor) = 50 quaternion messages per second. Each message is a [x, y, z, w] quaternion representing the sensor's absolute orientation in 3D space. On the main thread, each message: (1) arrives via WebSerial read loop or WebSocket, (2) gets JSON-parsed, (3) is converted to Euler angles or applied as a quaternion to the cursor position on the sphere, (4) updates the sensor registry slot which the renderer reads next frame. At 50Hz these are another 50 events/sec on the main-thread event loop — comparable to the scheduler's 50 ticks/sec. In detethered mode (two sensors), this doubles to 100 messages/sec total. This is the primary input for spatial cursor control during live performance.`,
       deps: ['baudRate'] },
 
     { id: 'baudRate', cat: 'imu', name: 'Serial 115200', ms: null,
@@ -315,7 +315,7 @@ function getItems() {
 
     { id: 'deviceOrientation', cat: 'imu', name: 'Device Orient.', ms: 16,
       hz: 60, crit: 'med',
-      desc: `Mobile wand mode — the phone/iPad itself is the controller. The browser fires deviceorientation events at the display refresh rate (~60Hz, or 120Hz on iPad Pro with ProMotion). Each event carries alpha/beta/gamma Euler angles. The handler: reads the angles, computes a dt (clamped to max 50ms to prevent huge integration jumps after a tab switch or lock screen), applies the orientation to the sphere cursor, and updates S.wand state. The 50ms clamp is important — without it, returning from a 2-second screen lock would apply a 2000ms dt in one step, teleporting the cursor.`,
+      desc: `Mobile sensor mode — the phone/iPad itself is the controller. The browser fires deviceorientation events at the display refresh rate (~60Hz, or 120Hz on iPad Pro with ProMotion). Each event carries alpha/beta/gamma Euler angles. The handler: reads the angles, computes a dt (clamped to max 50ms to prevent huge integration jumps after a tab switch or lock screen), applies the orientation to the sphere cursor, and updates the cursor state. The 50ms clamp is important — without it, returning from a 2-second screen lock would apply a 2000ms dt in one step, teleporting the cursor.`,
       deps: ['mobileReadout'] },
 
     { id: 'mobileReadout', cat: 'imu', name: 'Sensor Readout', ms: 100,

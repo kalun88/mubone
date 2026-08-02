@@ -15,6 +15,18 @@
 // Send "setmode browser" or "setmode electron" to node.script to switch.
 // The mode is logged to the Max console on change.
 //
+// Multi-station (electron mode) — each mubone instance listens on its own
+// port (a=7500, b=7510, c=7520, … matching scripts/run-stations.sh):
+//
+//   [setstations a b c]   → define the roster "all" refers to (default a b c)
+//   [setstation b]        → subsequent messages go to station b (default: a)
+//   [setstation all]      → subsequent messages go to every roster station
+//   [to b /trace 1]       → one-shot: send to station b, ignore current station
+//   [to all /sweep]       → one-shot broadcast to the roster
+//
+// Defaults (station a, port 7500) are identical to the old single-instance
+// behaviour — solo patches need no changes.
+//
 // Max patch inlet format — same regardless of mode:
 //   [list 0.1 -0.2 0.3 0.9]        → { address: "list",           values: [0.1, -0.2, 0.3, 0.9] }
 //   [/grain/dur 380]                → { address: "/grain/dur",      values: [380]  }
@@ -32,9 +44,17 @@ const dgram     = require('dgram');
 
 const WS_PORT   = 8080;
 const UDP_HOST  = '127.0.0.1';
-const UDP_PORT  = 7500;
 
-let mode = 'browser';   // 'browser' | 'electron'
+// Station name → port, matching scripts/run-stations.sh: a=7500, b=7510, …
+const STATION_NAMES = 'abcdefghi';
+function stationPort(name) {
+  const i = STATION_NAMES.indexOf(name);
+  return i === -1 ? null : 7500 + i * 10;
+}
+
+let mode     = 'browser';         // 'browser' | 'electron'
+let station  = 'a';               // current target: 'a'…'i' | 'all'
+let roster   = ['a', 'b', 'c'];   // what 'all' expands to
 
 // ── WebSocket server (browser mode) ───────────────────────────────────────────
 
@@ -123,11 +143,25 @@ function encodeOSC(address, values) {
   return Buffer.concat([padStr(address), padStr(',' + types), ...argBufs]);
 }
 
-function sendUDP(address, values) {
+function sendUDPToPort(address, values, port) {
   const packet = encodeOSC(address, values);
-  udpSocket.send(packet, 0, packet.length, UDP_PORT, UDP_HOST, (err) => {
+  udpSocket.send(packet, 0, packet.length, port, UDP_HOST, (err) => {
     if (err) Max.post(`[bridge] UDP send error: ${err.message}`);
   });
+}
+
+// Send to a station name or 'all' (roster fan-out)
+function sendUDP(address, values, target = station) {
+  if (target === 'all') {
+    for (const name of roster) sendUDPToPort(address, values, stationPort(name));
+    return;
+  }
+  const port = stationPort(target);
+  if (port === null) {
+    Max.post(`[bridge] unknown station "${target}" — use a–i or all`);
+    return;
+  }
+  sendUDPToPort(address, values, port);
 }
 
 // ── Receive from Max patch ────────────────────────────────────────────────────
@@ -146,6 +180,43 @@ Max.addHandler(Max.MESSAGE_TYPES.ALL, (_key, ...args) => {
     } else {
       Max.post(`[bridge] unknown mode "${newMode}" — use browser or electron`);
     }
+    return;
+  }
+
+  // Station select — consumed here, not forwarded (electron mode only concept;
+  // harmless to set in browser mode)
+  if (address === 'setstation') {
+    const name = String(values[0]);
+    if (name === 'all' || stationPort(name) !== null) {
+      station = name;
+      Max.post(`[bridge] station → ${station}${station === 'all' ? ` (${roster.join(' ')})` : ` (port ${stationPort(station)})`}`);
+    } else {
+      Max.post(`[bridge] unknown station "${name}" — use a–i or all`);
+    }
+    return;
+  }
+
+  // Roster definition for 'all' — [setstations a b c]
+  if (address === 'setstations') {
+    const names = values.map(String).filter(n => stationPort(n) !== null);
+    if (names.length) {
+      roster = names;
+      Max.post(`[bridge] roster → ${roster.join(' ')}`);
+    } else {
+      Max.post('[bridge] setstations needs station names a–i');
+    }
+    return;
+  }
+
+  // One-shot target — [to b /trace 1] or [to all /sweep]
+  if (address === 'to') {
+    const [target, realAddress, ...realValues] = values;
+    if (typeof realAddress !== 'string') {
+      Max.post('[bridge] usage: to <station|all> </address> [args…]');
+      return;
+    }
+    if (mode === 'electron') sendUDP(realAddress, realValues, String(target));
+    else broadcastWS(realAddress, realValues);   // browser mode has no stations
     return;
   }
 

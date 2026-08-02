@@ -24,9 +24,9 @@
 //   energy:     sustained playing → builds, rest → decays over ~1–2 seconds
 // ============================================================================
 
-import { S, DEBUG, PRESETS } from '../state.js';
-import { getByRole } from '../sensor-registry.js';
-import { isLocked } from '../param-lock.js';
+import { S, DEBUG, PRESETS } from './state.js';
+import { getByRole } from './sensor-registry.js';
+import { isLocked } from './param-lock.js';
 
 // ── Configuration ───────────────────────────────────────────────────────────
 

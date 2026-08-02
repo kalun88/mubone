@@ -8,10 +8,9 @@
 //      can see each feature's temporal contour at a glance.
 //
 // Press G to toggle visibility.  Press X to cycle phase plot axis pairs.
-// Only loaded when ?exp is in the URL.
 // ============================================================================
 
-import { S, DEBUG } from '../state.js';
+import { S, DEBUG } from './state.js';
 
 let _canvas  = null;
 let _ctx     = null;
@@ -331,7 +330,7 @@ export function initGestureViz() {
 
   _rafId = requestAnimationFrame(draw);
 
-  DEBUG && console.log('[exp/gesture-viz] initialized — G toggle, X cycle axes');
+  DEBUG && console.log('[gesture-viz] initialized — G toggle, X cycle axes');
 }
 
 export function destroyGestureViz() {

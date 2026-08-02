@@ -5,8 +5,8 @@
 // ============================================================================
 
 import { S, MAX_COMMITS } from './state.js';
-import { angleBetweenSphere, killAllGrains } from './grain.js';
-import { flushWorkletGrains } from './grain-worklet-bridge.js';
+import { angleBetweenSphere, killAllGrains, releaseSeqNodes } from './grain.js';
+import { flushWorkletGrains, resyncWorkletBuffers } from './grain-worklet-bridge.js';
 
 // ── Sweep snapshot — allows one-level undo of sweep ──────────────────────────
 // Stashed on sweep, restored on undo, permanently discarded on next new action.
@@ -43,7 +43,13 @@ export function undoSweep() {
 let _sweepAutoCommitTimer = null;
 export function commitSweep() {
   if (_sweepAutoCommitTimer) { clearTimeout(_sweepAutoCommitTimer); _sweepAutoCommitTimer = null; }
+  const hadSnapshot = !!S._sweepSnapshot;
   S._sweepSnapshot = null;
+  // Undo is no longer possible — release worklet/bridge buffers the erased
+  // recordings were pinning (group-show noise-glitch fix, Jul 2026).
+  // Guarded so the resync only runs when a sweep/erase was actually pending
+  // (commitSweep fires on every stroke start via recordStrokeStart).
+  if (hadSnapshot) resyncWorkletBuffers();
 }
 
 /**
@@ -51,11 +57,14 @@ export function commitSweep() {
  * Frees buffer memory even if the performer never paints again.
  * 30s is long enough to undo a mistake, short enough to reclaim RAM.
  */
-function scheduleSweepAutoCommit() {
+export function scheduleSweepAutoCommit() {
   if (_sweepAutoCommitTimer) clearTimeout(_sweepAutoCommitTimer);
   _sweepAutoCommitTimer = setTimeout(() => {
     S._sweepSnapshot = null;
     _sweepAutoCommitTimer = null;
+    // Undo window closed — release buffers pinned by the erased recordings
+    // (group-show noise-glitch fix, Jul 2026).
+    resyncWorkletBuffers();
     S.updateLiveRecUI?.(); // refresh HUD (recTotalSec may have dropped)
   }, 30000);
 }
@@ -245,7 +254,7 @@ function eraseAll() {
   };
   // Stop all in-flight grains so they don't ring out
   killAllGrains();        // main-thread AudioBufferSourceNodes
-  flushWorkletGrains();   // worklet grain pool (exp mode)
+  flushWorkletGrains();   // worklet grain pool
 
   // Clear particles & buffers
   S.particles = [];
@@ -255,12 +264,12 @@ function eraseAll() {
     S.currentLiveBufferIdx = 0;
   }
   S.strokeHistory = [];
-  // Clear all commits (instant, no release ramp)
+  // Clear all commits (instant, no release ramp).
+  // Full node release (perf audit M2, Jul 2026) — stop() alone left the
+  // loop's gain + per-speaker VBAP fan-out connected to the buses.
   for (let i = 0; i < MAX_COMMITS; i++) {
     const slot = S.commitSlots[i];
-    if (slot && slot.type === 'loop' && slot._sourceNode) {
-      try { slot._sourceNode.stop(); } catch (_) {}
-    }
+    if (slot && slot.type === 'loop') releaseSeqNodes(slot);
     S.commitSlots[i] = null;
   }
   (S.updateSeedBanksUI || (() => {}))();
@@ -269,11 +278,22 @@ function eraseAll() {
 
   // If recording is still active, re-create a fresh buffer slot so new
   // particles from the ongoing recording have somewhere to land.
-  // Also re-init the provisional live buffer stream to the worklet.
+  //
+  // Do NOT re-init the provisional live buffer (S._beginProvisionalRecording).
+  // That reset the worklet's live accumulator to zero while the main-thread
+  // recording (recordingRaw/writePos) kept counting from the spacebar press —
+  // desyncing the two by the pre-erase duration. Post-erase particles carry
+  // continuous-time offsets, so their grains pointed past the end of the
+  // restarted worklet buffer (dropped → silence), then read time-shifted
+  // audio as it regrew, only snapping right at record release when the
+  // finalized buffer hot-swapped in. Keeping the worklet accumulator
+  // continuous keeps offsets valid on both sides; erased material is simply
+  // unreachable (no particles reference it) and is freed at snapshot commit.
+  // The _bufferMap liveBuffer entry (cleared by flushWorkletGrains above) is
+  // re-registered by the next rebuildLiveBuffer tick via _onLiveBufferRebuilt.
   if (S.isRecording) {
     S.currentLiveBufferIdx = 0;
     S.liveRecBuffers.push({ buffer: null, grainCursor: 0 });
-    S._beginProvisionalRecording?.();
   }
 
   return count + (hadCommits ? 1 : 0);
@@ -281,6 +301,7 @@ function eraseAll() {
 
 function doSweep(sweepBtn) {
   if (S.isPainting) return;
+  window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'sweep' } }));
   const hasActive = S.commitSlots.some(c => c !== null);
   if (!hasActive) {
     const count = eraseAll();
@@ -349,6 +370,7 @@ export function initSessionPanel() {
   }
   // Erase-all action — lives here so it shares _eraseFlashTimer with progress
   function doEraseAllLocal() {
+    window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'erase_all' } }));
     const count = eraseAll();
     if (eraseBtn) {
       eraseRestore();  // cancel any pending timer first

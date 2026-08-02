@@ -1,5 +1,7 @@
 # Multi-IMU Live Show — Implementation Plan
 
+> **Status: HISTORICAL** — written for the April 2026 group show (5 students, 3 shared sensors, one cursor at a time). **Superseded by `MULTI-INSTANCE-PLAN.md`** for the current 3-station installation, which uses one instance per sensor instead of role-switching a single instance. Items 3–7 shipped; 1 (dropout watchdog) and 2 (battery display) are still deferred and still worth doing.
+
 > Context: 5 students sharing 3 x-IMU3 sensors, octophonic VBAP, Electron app.
 > WiFi client mode on a shared router. One active cursor at a time, instant switching.
 > Sweep/clear between performers — no crossfade or smoothing needed on switch.

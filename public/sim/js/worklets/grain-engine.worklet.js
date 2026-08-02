@@ -460,6 +460,48 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         }
         break;
 
+      // Compact _sampleBufs, dropping buffers whose recordings were erased.
+      // Sent by the bridge at sweep-snapshot commit time (undo no longer
+      // possible), NOT at erase time — see resyncWorkletBuffers() in
+      // grain-worklet-bridge.js and docs/GROUP-SHOW-NOISE-GLITCH.md.
+      // data.keep = old indices to retain, ascending. Indices -1 (SAB) and
+      // -2 (live chunks) are unaffected. Must stay in lockstep with the
+      // bridge's _bufferMap rebuild or grains read from the wrong buffer.
+      case 'compactBuffers': {
+        const keep = data.keep || [];
+        const remap = new Map();  // old index → new index
+        const next = [];
+        for (let k = 0; k < keep.length; k++) {
+          const old = keep[k];
+          if (old >= 0 && old < this._sampleBufs.length) {
+            remap.set(old, next.length);
+            next.push(this._sampleBufs[old]);
+          }
+        }
+        this._sampleBufs = next;
+        // Remap in-flight grains to new indices; free grains whose buffer
+        // was dropped (its data is gone — can't fade what we can't read).
+        for (let i = 0; i < POOL_SIZE; i++) {
+          if (!this._gActive[i]) continue;
+          const bi = this._gBufIndex[i];
+          if (bi < 0) continue;  // SAB / live buffer — untouched
+          const ni = remap.get(bi);
+          if (ni === undefined) this._freeGrain(i);
+          else this._gBufIndex[i] = ni;
+        }
+        // Clear candidate lists — they carry old indices. The main-thread
+        // scheduler reposts cursor + seed candidates within ~20ms, built
+        // against the rebuilt _bufferMap. Seeds stay active (unlike 'flush')
+        // so granulation resumes seamlessly on the next post.
+        this._candidates = [];
+        this._candidateCount = 0;
+        for (let si = 0; si < MAX_SEEDS; si++) {
+          this._seeds[si].candidates = [];
+          this._seeds[si].candidateCount = 0;
+        }
+        break;
+      }
+
       // Cursor-only flush: kill cursor grains, leave seeds alive.
       // Used by undo — the undone stroke's particles are gone but in-flight
       // grains would keep playing for up to the grain duration.
@@ -1107,6 +1149,11 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
           dir: this._direction,
           dirFwd: this._diagDirFwd,
           dirRev: this._diagDirRev,
+          // Buffer retention diagnostics (group-show noise glitch investigation):
+          // _sampleBufs only grows within a node lifetime — erase-all never
+          // clears it. Expose count + retained MB to confirm/refute the leak.
+          sampleBufs: this._sampleBufs.length,
+          sampleBufMB: this._sampleBufs.reduce((s, b) => s + b.data.byteLength, 0) / 1048576,
         },
       });
       this._feedbackLen = 0;

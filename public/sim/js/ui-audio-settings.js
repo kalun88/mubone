@@ -5,7 +5,7 @@
 // No monitoring — graph ends at analyser (dead end), MOTU handles monitoring.
 // ============================================================================
 
-import { S, DEBUG, FACTORY_PRESET_START } from './state.js';
+import { S, DEBUG, PRESET_COUNT } from './state.js';
 import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, playSweepChannel, warmUpAudioEngine } from './audio.js';
 import { renderMeters, tickMeters, rebuildMainOutputMeters } from './ui-meters.js';
 import { armHandsfree, disarmHandsfree, updateHPFFreq } from './handsfree.js';
@@ -351,6 +351,15 @@ function renderInputMeters(selectedCh) {
 // ── VU metering (unified RAF loop) ────────────────────────────────────────────
 function startMetering() {
   if (as.meterRAF) cancelAnimationFrame(as.meterRAF);
+  // Only run while the audio-settings modal is actually open (perf audit M3 /
+  // TODO #116). startMetering() is also called from device-activation paths
+  // (startup restore, device switch) with the modal closed — the RAF then ran
+  // at ~60fps for the rest of the session, reading analysers and drawing into
+  // a hidden modal. stopMetering() is already wired to both close paths, so
+  // gating start on the 'open' class fully bounds the loop's lifetime.
+  // Revert: delete this guard block.
+  const _asModal = document.getElementById('audioSettingsModal');
+  if (_asModal && !_asModal.classList.contains('open')) return;
   function tick() {
     // Input meters
     if (as.inputAnalysers.length > 0) {
@@ -483,7 +492,7 @@ const _capW = new Float32Array(3);
 const _capC = new Float32Array(3);
 function getCursorAzDeg() {
   const { lon, lat } = S.cursorQ
-    ? getCursorLonLat()                          // sensor/wand quaternion
+    ? getCursorLonLat()                          // sensor quaternion
     : (S.mouseInCanvas || S.altLocked)
       ? screenToLonLat(                          // mouse / pull / surface cursor
           S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
@@ -573,7 +582,7 @@ function renderRoutingTable() {
              title="azimuth in degrees (0° = front, 90° = right)">
       <span class="as-io-angle-unit">°</span>
       <button class="as-io-capture-btn" data-bus="${i}"
-              ${isHeadlocked ? 'disabled title="capture only works in worldlocked mode — headlocked angles are relative to the listener, not the room"' : 'title="capture current cursor/wand azimuth"'}>⊕</button>
+              ${isHeadlocked ? 'disabled title="capture only works in worldlocked mode — headlocked angles are relative to the listener, not the room"' : 'title="capture current cursor azimuth"'}>⊕</button>
       <select class="as-io-sel as-io-house-sel" data-bus="${i}">${hwOpts}</select>
     </div>`;
   }).join('');
@@ -875,7 +884,27 @@ async function runSpeakerSweep() {
 
   const stepMs  = 600;   // ms per speaker
   const fadeMs  = 40;    // fade in + out each burst
-  const vol     = 0.06;  // fixed low level — just audible for speaker identification
+  // Base level, before master. 0.06 → 0.03 → 0.015 over two rounds of Ek
+  // listening on the actual rig (2026-08-01). White noise is broadband, so it
+  // reads far louder through a PA than the same nominal gain of granulated
+  // material — the original value had only ever been judged on a laptop.
+  //
+  // 0.015 ≈ −36 dBFS here, ≈ −42 dBFS at his usual −6 dB master. That is the
+  // right order for "identify which box is making noise" rather than "test
+  // the system", which is what the level had been behaving like.
+  const vol     = 0.015;
+
+  // Master volume applies to the sweep, but only the Electron path has to do
+  // it by hand. The browser path connects through getMasterBus(), which
+  // already carries master gain — scaling there would apply it twice.
+  // Electron writes straight to the ChannelMerger, bypassing the speakerBuses
+  // whose gain is where master lives, so the sweep was previously the one
+  // sound in the app the master slider couldn't touch.
+  //
+  // Read per burst, not once at the top: the sweep loops until stopped, so
+  // this makes the slider live while it's running — ride it down until the
+  // speakers are at a comfortable identification level.
+  const electronVol = () => vol * (S.outputGainValue ?? 1);
 
   const buses = S.speakerBuses;  // may be null in browser
 
@@ -903,7 +932,7 @@ async function runSpeakerSweep() {
       for (const entry of sweepList) {
         if (_sweepStopFlag) break;
         setStatus('asOutputStatus', 'warn', `sweep — ${entry.label}`);
-        await playSweepChannel(entry.ch, stepMs, fadeMs, vol);
+        await playSweepChannel(entry.ch, stepMs, fadeMs, electronVol());
       }
     }
   } else {
@@ -1041,6 +1070,10 @@ function repopulateChannelSelect(numCh) {
   }
 
   sel.value = '0'; // default to ch 1
+
+  // Mirror the new options into the main-UI audio panel's dropdown so the
+  // two stay in lockstep without the panel needing device-detection logic.
+  S._syncAudioPanelChannels?.();
 }
 
 async function applyInputDevice() {
@@ -1354,94 +1387,124 @@ async function applyOutputDevice() {
 }
 
 // ── Save / Load audio settings defaults ───────────────────────────────────────
+// Four keys, not one. `mubone_audio_defaults` used to also carry viz
+// calibration, dark mode, the seed settings, the active patch index and a
+// sensor calibration — so "reset audio settings" would silently have reset the
+// theme and the particle sizing too. Split 2026-08-01 so the reset categories
+// in js/storage-registry.js mean what they say. One-shot migration lives in
+// loadAudioDefaults(); after it runs the old blob holds audio fields only.
+//
+// Two fields left persistence entirely in that split:
+//   darkMode   — ui-viz.js already owned `mubone_darkMode`, and both wrote it.
+//                Load order decided which won. ui-viz is now the sole owner.
+//   sensor3Cal — nothing in the app ever assigned to it (gesture-window.html
+//                only reads it off live S), so it was always the state.js
+//                default. Persisting it was dead weight. If a UI for it ever
+//                lands, add persistence back deliberately — under `sensor`.
 const LS_AUDIO_DEFAULTS = 'mubone_audio_defaults';
+const LS_SEED_SETTINGS  = 'mubone_seed_settings';
+const LS_VIZ_CAL        = 'mubone_viz_calibration';
+const LS_ACTIVE_PATCH   = 'mubone_active_patch';
 
 // Legacy export — kept so existing imports don't break (no-op now)
 export function wireSaveDefaultBtn(_btnId) {}
 
-export function saveAllDefaults() {
-  const defaults = {
-    // Devices
-    inputDeviceId:   _inputDeviceId,
-    outputDeviceId:  _outputDeviceId,
-    mainInputChannel: S.mainInputChannel ?? 0,
+// The one field list. Both saveAllDefaults() and the auto-save dirty check
+// consume this — that is the whole point. They used to be two hand-written
+// lists and had drifted: the nine handsfree fields and `recLimitSeconds` were
+// written by the save but absent from the dirty check, so changing only a
+// handsfree setting or the recording limit never marked state dirty and was
+// never persisted until some unrelated setting changed. Meanwhile `fovDeg` sat
+// in the dirty check but was written by ui-viz.js under `mubone_fovDeg`, so it
+// was watched here for nothing. Add a field to one of these objects and both
+// the save and the dirty check pick it up.
+//
+// No timestamp in here — the dirty check hashes the result, and a `ts` field
+// would make every tick look changed.
+function _buildPayloads() {
+  return {
+    audio: {
+      // Devices
+      inputDeviceId:    _inputDeviceId,
+      outputDeviceId:   _outputDeviceId,
+      mainInputChannel: S.mainInputChannel ?? 0,
 
-    // Engine
-    sampleRate:       S.audioCtx?.sampleRate ?? null,
-    bufferSize:       S.preferredBufferSize ?? null,
+      // Engine
+      sampleRate:       S.audioCtx?.sampleRate ?? null,
+      bufferSize:       S.preferredBufferSize ?? null,
 
-    // Gains
-    outputGain:       as.outputGain,
-    inputGains:       { ...as.inputGains },
+      // Gains
+      outputGain:       as.outputGain,
+      inputGains:       { ...as.inputGains },
 
-    // Noise gate
-    vizNoiseFloor:    S.vizNoiseFloor,
+      // Noise gate
+      vizNoiseFloor:    S.vizNoiseFloor,
 
-    // Handsfree
-    hfHoldMs:         S.hfHoldMs,
-    hfReleaseMs:      S.hfReleaseMs,
-    hfMarginDb:       S.hfMarginDb,
-    hfHpfFreq:        S.hfHpfFreq,
-    hfHpfEnabled:     S.hfHpfEnabled,
-    hfMinBufferMs:    S.hfMinBufferMs,
-    hfMaxBufferSec:   S.hfMaxBufferSec,
-    hfFeedbackDetect: S.hfFeedbackDetect,
-    hfCompEnabled:    S.hfCompEnabled,
+      // Handsfree
+      hfHoldMs:         S.hfHoldMs,
+      hfReleaseMs:      S.hfReleaseMs,
+      hfMarginDb:       S.hfMarginDb,
+      hfHpfFreq:        S.hfHpfFreq,
+      hfHpfEnabled:     S.hfHpfEnabled,
+      hfMinBufferMs:    S.hfMinBufferMs,
+      hfMaxBufferSec:   S.hfMaxBufferSec,
+      hfFeedbackDetect: S.hfFeedbackDetect,
+      hfCompEnabled:    S.hfCompEnabled,
 
-    // Viz calibration
-    darkMode:         S.darkMode,
-    vizMinSize:       S.vizMinSize,
-    vizMaxSize:       S.vizMaxSize,
-    vizRmsMin:        S.vizRmsMin,
-    vizRmsMax:        S.vizRmsMax,
-    vizCentroidMin:   S.vizCentroidMin,
-    vizCentroidMax:   S.vizCentroidMax,
+      // Spatial panning
+      spatialPanning:   S.spatialPanning,
 
-    // Radius fade
-    radiusFadeEnabled: S.radiusFadeEnabled,
-    radiusFadeCurve:   S.radiusFadeCurve,
+      // Speaker layout + routing
+      numHouseSpeakers:     S.numHouseSpeakers,
+      stereoMixdownEnabled: S.stereoMixdownEnabled,
+      channelRouting:       S.channelRouting ?? null,
+      headphoneRouting:     S.headphoneRouting ?? null,
 
-    // Camera + spatial panning
-    cameraMode:       S.cameraMode,
-    spatialPanning:   S.spatialPanning,
+      // Headphone mix balance
+      mixdownCursorGainValue: S.mixdownCursorGainValue ?? 1.0,
+      mixdownHouseGainValue:  S.mixdownHouseGainValue ?? 1.0,
 
-    // Speaker layout + routing
-    numHouseSpeakers:     S.numHouseSpeakers,
-    stereoMixdownEnabled: S.stereoMixdownEnabled,
-    channelRouting:       S.channelRouting ?? null,
-    headphoneRouting:     S.headphoneRouting ?? null,
+      // Recording limit
+      recLimitSeconds: S.recLimitSeconds,
+    },
 
-    // Sensor calibration
-    sensorCal:   JSON.parse(JSON.stringify(S.sensorCal)),
-    sensor2Cal:  JSON.parse(JSON.stringify(S.sensor2Cal)),
-    wandCal:     JSON.parse(JSON.stringify(S.wandCal)),
+    // Seed / loop playback setup — persisted as rig setup, not live performance
+    seed: {
+      seedMode:        S.seedMode ?? 'all',
+      seedTether:      S.seedTether ?? false,
+      seedXfade:       S.seedXfade ?? 0.5,
+      seedAttack:      S.seedAttack ?? 0,
+      seedRelease:     S.seedRelease ?? 0,
+      seedLoopMode:    S.seedLoopMode ?? 'pingpong',
+      loopReleaseMode: S.loopReleaseMode ?? 'fade',
+      loopFadeTimeMs:  S.loopFadeTimeMs ?? 15,
+    },
 
-    // Seed settings (persist as setup, not live performance)
-    seedMode:           S.seedMode ?? 'all',
-    seedTether:         S.seedTether ?? false,
-    seedXfade:      S.seedXfade ?? 0.5,
-    seedAttack:         S.seedAttack ?? 0,
-    seedRelease:        S.seedRelease ?? 0,
-    seedLoopMode:       S.seedLoopMode ?? 'pingpong',
-    loopReleaseMode:    S.loopReleaseMode ?? 'fade',
-    loopFadeTimeMs:     S.loopFadeTimeMs ?? 15,
+    // How particles are drawn — belongs with the other UI keys, not with audio
+    viz: {
+      vizMinSize:        S.vizMinSize,
+      vizMaxSize:        S.vizMaxSize,
+      vizRmsMin:         S.vizRmsMin,
+      vizRmsMax:         S.vizRmsMax,
+      vizCentroidMin:    S.vizCentroidMin,
+      vizCentroidMax:    S.vizCentroidMax,
+      radiusFadeEnabled: S.radiusFadeEnabled,
+      radiusFadeCurve:   S.radiusFadeCurve,
+      cameraMode:        S.cameraMode,
+    },
 
-    // Headphone mix balance
-    mixdownCursorGainValue: S.mixdownCursorGainValue ?? 1.0,
-    mixdownHouseGainValue:  S.mixdownHouseGainValue ?? 1.0,
-
-    // Recording limit
-    recLimitSeconds: S.recLimitSeconds,
-
-    // Last active preset
-    activePresetIndex: S.activePresetIndex ?? FACTORY_PRESET_START,
-
-    ts: Date.now(),
+    activePatch: S.activePresetIndex ?? 0,
   };
+}
 
+export function saveAllDefaults() {
+  const p = _buildPayloads();
   try {
-    const json = JSON.stringify(defaults);
+    const json = JSON.stringify({ ...p.audio, ts: Date.now() });
     localStorage.setItem(LS_AUDIO_DEFAULTS, json);
+    localStorage.setItem(LS_SEED_SETTINGS, JSON.stringify(p.seed));
+    localStorage.setItem(LS_VIZ_CAL,       JSON.stringify(p.viz));
+    localStorage.setItem(LS_ACTIVE_PATCH,  String(p.activePatch));
     DEBUG && console.log('[defaults] auto-saved:', json.length, 'bytes');
     return true;
   } catch (e) {
@@ -1451,42 +1514,18 @@ export function saveAllDefaults() {
 }
 
 // ── Auto-persist via dirty check ────────────────────────────────────────────
-// Every 2s, snapshot the persisted settings and compare to last save.
-// Only writes to localStorage when something actually changed.
-// This avoids needing 59+ individual scheduleAutoSave() call sites.
+// Every 2s, hash the persisted settings and compare to the last save. Only
+// writes to localStorage when something actually changed, which avoids needing
+// 59+ individual scheduleAutoSave() call sites.
+//
+// Hashes _buildPayloads() — the same object the save writes — so a field can no
+// longer be saved-but-unwatched. Don't reintroduce a separate snapshot builder
+// here; that split is exactly how the handsfree fields stopped persisting.
 let _lastSavedJson = '';
-
-function _buildSettingsSnapshot() {
-  const snap = {
-    inputDeviceId: _inputDeviceId, outputDeviceId: _outputDeviceId,
-    mainInputChannel: S.mainInputChannel ?? 0,
-    sampleRate: S.audioCtx?.sampleRate ?? null, bufferSize: S.preferredBufferSize ?? null,
-    outputGain: as.outputGain, inputGains: { ...as.inputGains },
-    fovDeg: S.fovDeg,
-    vizNoiseFloor: S.vizNoiseFloor, darkMode: S.darkMode,
-    vizMinSize: S.vizMinSize, vizMaxSize: S.vizMaxSize,
-    vizRmsMin: S.vizRmsMin, vizRmsMax: S.vizRmsMax,
-    vizCentroidMin: S.vizCentroidMin, vizCentroidMax: S.vizCentroidMax,
-    radiusFadeEnabled: S.radiusFadeEnabled, radiusFadeCurve: S.radiusFadeCurve,
-    cameraMode: S.cameraMode, spatialPanning: S.spatialPanning,
-    numHouseSpeakers: S.numHouseSpeakers, stereoMixdownEnabled: S.stereoMixdownEnabled,
-    channelRouting: S.channelRouting ?? null, headphoneRouting: S.headphoneRouting ?? null,
-    seedMode: S.seedMode ?? 'all', seedTether: S.seedTether ?? false,
-    seedXfade: S.seedXfade ?? 0.5, seedAttack: S.seedAttack ?? 0, seedRelease: S.seedRelease ?? 0,
-    seedLoopMode: S.seedLoopMode ?? 'pingpong', loopReleaseMode: S.loopReleaseMode ?? 'fade', loopFadeTimeMs: S.loopFadeTimeMs ?? 15,
-    mixdownCursorGainValue: S.mixdownCursorGainValue ?? 1.0,
-    mixdownHouseGainValue: S.mixdownHouseGainValue ?? 1.0,
-    activePresetIndex: S.activePresetIndex ?? FACTORY_PRESET_START,
-  };
-  if (S.sensorCal)   snap.sensorCal  = S.sensorCal;
-  if (S.sensor2Cal)  snap.sensor2Cal = S.sensor2Cal;
-  if (S.wandCal)     snap.wandCal    = S.wandCal;
-  return snap;
-}
 
 function _checkAndSave() {
   try {
-    const json = JSON.stringify(_buildSettingsSnapshot());
+    const json = JSON.stringify(_buildPayloads());
     if (json !== _lastSavedJson) {
       _lastSavedJson = json;
       saveAllDefaults();
@@ -1497,15 +1536,119 @@ function _checkAndSave() {
 // Start the dirty-check loop after a short delay so page init settles
 export function startAutoSave() {
   // Capture initial snapshot so we don't re-save on first tick
-  try { _lastSavedJson = JSON.stringify(_buildSettingsSnapshot()); } catch (_) {}
+  try { _lastSavedJson = JSON.stringify(_buildPayloads()); } catch (_) {}
   setInterval(_checkAndSave, 2000);
 }
 
 // Legacy export — kept so existing imports don't break
 export function scheduleAutoSave() { _checkAndSave(); }
 
+// ── Pre-split blob normalisation (2026-08-01) ───────────────────────────────
+// The old single blob carried viz calibration, seed settings and the active
+// patch index; those now live in their own keys so the reset categories are
+// honest. Read old → write new → strip from old.
+//
+// darkMode and sensor3Cal are dropped rather than moved — see the note above
+// LS_AUDIO_DEFAULTS. darkMode already had a home in ui-viz.js, and the value
+// here could only ever be a duplicate of it or the state.js default.
+//
+// This runs against an abstract store rather than localStorage directly,
+// because it has TWO callers with the same problem:
+//
+//   1. loadAudioDefaults() — migrating this machine's own localStorage, once.
+//   2. applySettingsPayload() in ui-export.js — normalising a v1–v3 setup or
+//      session file on the way in. A pre-v4 file carries the grab-bag blob and
+//      none of the successor keys, so it MUST be reshaped before its keys are
+//      written. Doing it afterwards silently lost the imported seed settings,
+//      viz calibration and active patch on any machine that had already
+//      migrated: the destination key existed, so `overwrite:false` skipped the
+//      write while the strip still removed the fields from the blob.
+//
+// `overwrite` is the difference between them. Migrating in place must never
+// clobber already-split data (a second run would wipe it); an import is an
+// explicit instruction to take the file's values, so it overwrites.
+const SPLIT_MOVED = {
+  seed: ['seedMode', 'seedTether', 'seedXfade', 'seedAttack', 'seedRelease',
+         'seedLoopMode', 'loopReleaseMode', 'loopFadeTimeMs',
+         // legacy aliases _loadSeedSettings still honours
+         'seedNearestAlways', 'seedSnapFade', 'seedCrossfade'],
+  viz:  ['vizMinSize', 'vizMaxSize', 'vizRmsMin', 'vizRmsMax',
+         'vizCentroidMin', 'vizCentroidMax',
+         'radiusFadeEnabled', 'radiusFadeCurve', 'cameraMode'],
+};
+const SPLIT_DROPPED = ['darkMode', 'vizMode', 'sensor3Cal', 'wandCal', 'fovDeg'];
+
+/** localStorage as a `{get,set,has}` store, for splitLegacyAudioBlob. */
+const LS_STORE = {
+  get: k => { try { return localStorage.getItem(k); } catch (_) { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} },
+  has: k => { try { return localStorage.getItem(k) !== null; } catch (_) { return false; } },
+};
+
+/** A plain `{key: rawString}` map (an import payload) as the same store. */
+export function objectStore(obj) {
+  return {
+    get: k => (k in obj ? obj[k] : null),
+    set: (k, v) => { obj[k] = v; },
+    has: k => k in obj && obj[k] != null,
+  };
+}
+
+/**
+ * Reshape a pre-v4 `mubone_audio_defaults` blob in `store` into the four keys
+ * it was split into. No-op when the blob is absent or already split.
+ * Returns the number of fields moved or dropped.
+ */
+export function splitLegacyAudioBlob(store, { overwrite = false } = {}) {
+  let d;
+  try {
+    const raw = store.get(LS_AUDIO_DEFAULTS);
+    if (!raw) return 0;
+    d = JSON.parse(raw);
+  } catch (_) { return 0; }
+  if (!d || typeof d !== 'object') return 0;
+
+  const DEST = { seed: LS_SEED_SETTINGS, viz: LS_VIZ_CAL };
+  let touched = 0;
+
+  for (const [group, fields] of Object.entries(SPLIT_MOVED)) {
+    const destKey = DEST[group];
+    const carried = {};
+    for (const f of fields) if (f in d) { carried[f] = d[f]; touched++; }
+    if (!Object.keys(carried).length) continue;
+    if (overwrite || !store.has(destKey)) store.set(destKey, JSON.stringify(carried));
+    for (const f of fields) delete d[f];
+  }
+
+  if ('activePresetIndex' in d) {
+    if (overwrite || !store.has(LS_ACTIVE_PATCH)) {
+      store.set(LS_ACTIVE_PATCH, String(d.activePresetIndex));
+    }
+    delete d.activePresetIndex;
+    touched++;
+  }
+
+  for (const f of SPLIT_DROPPED) if (f in d) { delete d[f]; touched++; }
+
+  if (touched) {
+    store.set(LS_AUDIO_DEFAULTS, JSON.stringify(d));
+    console.log(`[defaults] split ${touched} field(s) out of the legacy audio blob`);
+  }
+  return touched;
+}
+
 export function loadAudioDefaults() {
   try {
+    // Split first, then load — so the three loaders below see the successor
+    // keys whether they were already there or created a moment ago. In-place
+    // migration never overwrites: a second run would wipe split data.
+    splitLegacyAudioBlob(LS_STORE);
+    // These three keys stand alone — a reset of `audio` wipes the blob but must
+    // leave viz calibration and the active patch intact, so they can't sit
+    // behind an early return on the blob's absence.
+    _loadSeedSettings();
+    _loadVizCalibration();
+    _loadActivePatch();
     const raw = localStorage.getItem(LS_AUDIO_DEFAULTS);
     if (!raw) return;
     const d = JSON.parse(raw);
@@ -1552,25 +1695,8 @@ export function loadAudioDefaults() {
     if (typeof d.hfFeedbackDetect === 'boolean') S.hfFeedbackDetect = d.hfFeedbackDetect;
     if (typeof d.hfCompEnabled    === 'boolean') S.hfCompEnabled    = d.hfCompEnabled;
 
-    // FOV
-    if (typeof d.fovDeg         === 'number')  S.fovDeg          = d.fovDeg;
-
-    // Viz calibration
-    if (typeof d.darkMode       === 'boolean') S.darkMode        = d.darkMode;
-    if (typeof d.vizMode        === 'boolean') S.darkMode        = true; // legacy compat
-    if (typeof d.vizMinSize    === 'number')  S.vizMinSize     = d.vizMinSize;
-    if (typeof d.vizMaxSize     === 'number')  S.vizMaxSize      = d.vizMaxSize;
-    if (typeof d.vizRmsMin      === 'number')  S.vizRmsMin       = d.vizRmsMin;
-    if (typeof d.vizRmsMax      === 'number')  S.vizRmsMax       = d.vizRmsMax;
-    if (typeof d.vizCentroidMin === 'number')  S.vizCentroidMin  = d.vizCentroidMin;
-    if (typeof d.vizCentroidMax === 'number')  S.vizCentroidMax  = d.vizCentroidMax;
-
-    // Radius fade
-    if (typeof d.radiusFadeEnabled === 'boolean') S.radiusFadeEnabled = d.radiusFadeEnabled;
-    if (typeof d.radiusFadeCurve   === 'number')  S.radiusFadeCurve   = d.radiusFadeCurve;
-
-    // Camera + spatial panning
-    if (typeof d.cameraMode === 'string' && ['pull', 'surface', 'sensor'].includes(d.cameraMode)) S.cameraMode = d.cameraMode;
+    // Spatial panning. (FOV, dark mode and viz calibration used to be read
+    // here — they moved to ui-viz.js / mubone_viz_calibration.)
     if (typeof d.spatialPanning === 'string' && ['headlocked', 'worldlocked'].includes(d.spatialPanning)) S.spatialPanning = d.spatialPanning;
 
     // Speaker layout + routing
@@ -1579,26 +1705,6 @@ export function loadAudioDefaults() {
     if (Array.isArray(d.channelRouting))              S.channelRouting       = d.channelRouting;
     if (Array.isArray(d.headphoneRouting))             S.headphoneRouting     = d.headphoneRouting;
 
-    // Sensor calibration
-    if (d.sensorCal?.axisMap)  Object.assign(S.sensorCal.axisMap,  d.sensorCal.axisMap);
-    if (d.sensor2Cal?.axisMap) Object.assign(S.sensor2Cal.axisMap, d.sensor2Cal.axisMap);
-    if (d.wandCal?.axisMap)    Object.assign(S.wandCal.axisMap,    d.wandCal.axisMap);
-
-    // Seed settings (with backward compat for old names)
-    if (typeof d.seedMode === 'string')        S.seedMode        = d.seedMode;
-    if (typeof d.seedTether === 'boolean')     S.seedTether      = d.seedTether;
-    else if (typeof d.seedNearestAlways === 'boolean') S.seedTether = d.seedNearestAlways;  // backward compat
-    if (typeof d.seedXfade === 'number')   S.seedXfade   = d.seedXfade;
-    else if (typeof d.seedSnapFade === 'number') S.seedXfade = d.seedSnapFade;  // backward compat
-    else if (typeof d.seedCrossfade === 'number') S.seedXfade = d.seedCrossfade;  // backward compat
-    if (typeof d.seedAttack === 'number')          S.seedAttack         = d.seedAttack;
-    if (typeof d.seedRelease === 'number')         S.seedRelease        = d.seedRelease;
-    if (typeof d.seedLoopMode === 'string' && ['pingpong', 'forward'].includes(d.seedLoopMode))
-      S.seedLoopMode = d.seedLoopMode;
-    if (typeof d.loopReleaseMode === 'string' && ['fade', 'play-to-end'].includes(d.loopReleaseMode))
-      S.loopReleaseMode = d.loopReleaseMode;
-    if (typeof d.loopFadeTimeMs === 'number') S.loopFadeTimeMs = Math.max(0, Math.min(2000, d.loopFadeTimeMs));
-
     // Headphone mix balance
     if (typeof d.mixdownCursorGainValue === 'number') S.mixdownCursorGainValue = d.mixdownCursorGainValue;
     if (typeof d.mixdownHouseGainValue === 'number')  S.mixdownHouseGainValue  = d.mixdownHouseGainValue;
@@ -1606,13 +1712,73 @@ export function loadAudioDefaults() {
     // Recording limit
     if (typeof d.recLimitSeconds === 'number') S.recLimitSeconds = d.recLimitSeconds;
 
-    // Last active preset
-    if (typeof d.activePresetIndex === 'number') S.activePresetIndex = d.activePresetIndex;
-
     DEBUG && console.log('[defaults] restored saved defaults');
   } catch (e) {
     console.warn('[audio-settings] could not load defaults:', e);
   }
+}
+
+// ── mubone_seed_settings ────────────────────────────────────────────────────
+// The legacy-alias reads (seedNearestAlways / seedSnapFade / seedCrossfade)
+// stay because pre-split blobs carried those names and the migration moves them
+// across verbatim. Once a bucket has been migrated and saved once, only the
+// canonical names get written.
+function _loadSeedSettings() {
+  try {
+    const raw = localStorage.getItem(LS_SEED_SETTINGS);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (typeof d.seedMode === 'string')    S.seedMode   = d.seedMode;
+    if (typeof d.seedTether === 'boolean') S.seedTether = d.seedTether;
+    else if (typeof d.seedNearestAlways === 'boolean') S.seedTether = d.seedNearestAlways;
+    if (typeof d.seedXfade === 'number')         S.seedXfade = d.seedXfade;
+    else if (typeof d.seedSnapFade === 'number') S.seedXfade = d.seedSnapFade;
+    else if (typeof d.seedCrossfade === 'number') S.seedXfade = d.seedCrossfade;
+    if (typeof d.seedAttack === 'number')  S.seedAttack  = d.seedAttack;
+    if (typeof d.seedRelease === 'number') S.seedRelease = d.seedRelease;
+    if (typeof d.seedLoopMode === 'string' && ['pingpong', 'forward'].includes(d.seedLoopMode))
+      S.seedLoopMode = d.seedLoopMode;
+    if (typeof d.loopReleaseMode === 'string' && ['fade', 'play-to-end'].includes(d.loopReleaseMode))
+      S.loopReleaseMode = d.loopReleaseMode;
+    if (typeof d.loopFadeTimeMs === 'number') S.loopFadeTimeMs = Math.max(0, Math.min(2000, d.loopFadeTimeMs));
+  } catch (e) {
+    console.warn('[defaults] could not load seed settings:', e);
+  }
+}
+
+// ── mubone_viz_calibration ──────────────────────────────────────────────────
+function _loadVizCalibration() {
+  try {
+    const raw = localStorage.getItem(LS_VIZ_CAL);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (typeof d.vizMinSize     === 'number') S.vizMinSize     = d.vizMinSize;
+    if (typeof d.vizMaxSize     === 'number') S.vizMaxSize     = d.vizMaxSize;
+    if (typeof d.vizRmsMin      === 'number') S.vizRmsMin      = d.vizRmsMin;
+    if (typeof d.vizRmsMax      === 'number') S.vizRmsMax      = d.vizRmsMax;
+    if (typeof d.vizCentroidMin === 'number') S.vizCentroidMin = d.vizCentroidMin;
+    if (typeof d.vizCentroidMax === 'number') S.vizCentroidMax = d.vizCentroidMax;
+    if (typeof d.radiusFadeEnabled === 'boolean') S.radiusFadeEnabled = d.radiusFadeEnabled;
+    if (typeof d.radiusFadeCurve   === 'number')  S.radiusFadeCurve   = d.radiusFadeCurve;
+    if (typeof d.cameraMode === 'string' && ['pull', 'surface', 'sensor'].includes(d.cameraMode))
+      S.cameraMode = d.cameraMode;
+  } catch (e) {
+    console.warn('[defaults] could not load viz calibration:', e);
+  }
+}
+
+// ── mubone_active_patch ─────────────────────────────────────────────────────
+// Bounds-checked against the bank this build actually has — trimming the
+// factory bank (20 → 10 on 2026-07-31) left saved indices pointing past the
+// end, which crashed startup inside selectPreset(). Out of range falls back to
+// patch 1.
+function _loadActivePatch() {
+  try {
+    const raw = localStorage.getItem(LS_ACTIVE_PATCH);
+    if (raw === null) return;
+    const i = parseInt(raw, 10);
+    S.activePresetIndex = (Number.isInteger(i) && i >= 0 && i < PRESET_COUNT) ? i : 0;
+  } catch (_) { /* corrupt — leave the state default */ }
 }
 
 // ── Startup device activation (called from main.js after hardware is opened) ──
@@ -1715,6 +1881,19 @@ export function initAudioSettings() {
         if (gv) gv.textContent = S.vizNoiseFloor.toFixed(4);
       }
 
+      // Browser mode: speaker buses never come up (initSpeakerBuses is an
+      // Electron no-op), so the branch below never ran and the house-speaker
+      // and mixdown rows stayed invisible — the multichannel story just wasn't
+      // in the UI at all. Show them, disabled, with the reason: an absent
+      // control reads as "this app is stereo", a greyed one reads as "this is
+      // the desktop feature". syncHouseSpeakersSeg already writes the disabled
+      // state + explanatory note for browser mode; it just needed calling.
+      if (!window.electronBridge?.isElectron) {
+        const houseRow = document.getElementById('asHouseSpeakersRow');
+        if (houseRow) houseRow.style.display = '';
+        syncHouseSpeakersSeg();
+      }
+
       // If speaker buses are already running (startup auto-select), show meters + routing
       if (S.speakerAnalysers?.length) {
         renderOutputMeters();
@@ -1759,10 +1938,21 @@ export function initAudioSettings() {
       if (bufSel) {
         if (window.electronBridge?.isElectron) {
           bufSel.disabled = false;
+          bufSel.style.opacity = '';
+          bufSel.style.cursor  = '';
           if (S.preferredBufferSize) bufSel.value = String(S.preferredBufferSize);
         } else {
+          // Locked to the Web Audio render quantum. It was already `disabled`
+          // but looked identical to an enabled select, so it read as a setting
+          // that silently ignores you. Dim it so the state is legible; the
+          // explanation is the tooltip already on the element in index.html.
+          // NB: tooltips live in `data-title` — ui-learn.js runs a
+          // MutationObserver that moves every `title` there and strips the
+          // attribute, so read/write data-title, not title.
           bufSel.value    = '128';
           bufSel.disabled = true;
+          bufSel.style.opacity = '0.35';
+          bufSel.style.cursor  = 'not-allowed';
         }
       }
       updateLatency();
@@ -2173,9 +2363,18 @@ function syncHouseSpeakersSeg() {
   if (sel) {
     sel.value = isBrowser ? '2' : String(n);
     sel.disabled = isBrowser;
-    sel.title = isBrowser
-      ? 'multichannel output (4+) requires the desktop app — browser is limited to stereo'
-      : '';
+    // Tooltips live in `data-title`: ui-learn.js moves every `title` there and
+    // strips the attribute, so writing `.title` here would be swallowed.
+    if (isBrowser) {
+      sel.setAttribute('data-title',
+        'multichannel output (4+) requires the desktop app — browser is limited to stereo');
+    } else {
+      sel.removeAttribute('data-title');
+    }
+    // `disabled` alone barely reads on a dark-themed select — dim it so the
+    // row is legibly "unavailable here" rather than "broken".
+    sel.style.opacity = isBrowser ? '0.35' : '';
+    sel.style.cursor  = isBrowser ? 'not-allowed' : '';
   }
   if (isBrowser) S.numHouseSpeakers = 2;
   if (note) {
@@ -2204,7 +2403,9 @@ function syncHouseSpeakersSeg() {
   const mxLabel = document.querySelector('label[for="asStereoMixdownChk"]');
   if (mxLabel) mxLabel.style.opacity = canMix ? '' : '0.35';
   if (mxNote) {
-    mxNote.textContent = !canMix
+    mxNote.textContent = isBrowser
+      ? 'desktop app only — needs 4+ hardware outputs'
+      : !canMix
       ? 'requires 4 or more output channels'
       : S.stereoMixdownEnabled
         ? 'on — last 2 outputs reserved for stereo mixdown'

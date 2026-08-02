@@ -60,6 +60,7 @@ let _lastPostedCandidates = [];  // for console debugging
 // SAB (primary) buffer → -1, provisional live buffer → -2, additional buffers → 0, 1, 2, ...
 // Rebuilt on every start/restart when all live recordings are sent to the worklet.
 let _bufferMap = new Map();   // AudioBuffer → worklet bufIndex
+let _lastWorkletDiag = null;  // most recent _diag from worklet feedback (~30Hz)
 
 // Provisional live buffer: streamed to worklet during active recording (bufIndex -2).
 // Allows grains from in-progress recording to play via the worklet instead of
@@ -153,6 +154,7 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
   _workletNode.port.onmessage = ({ data }) => {
     if (data?.type === 'feedback') {
       if (_feedbackCallback) _feedbackCallback(data);
+      if (data._diag) _lastWorkletDiag = data._diag;
 
       // Push worklet pool utilisation into the perf monitor so the node
       // meter shows active grain count (replaces stale main-thread node count).
@@ -174,13 +176,16 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
         }
       }
 
-      // Log direction diagnostics at ~1Hz when direction is random (dir=2)
+      // Log direction diagnostics at ~1Hz when direction is random (dir=2).
+      // dlog (debug-gated) instead of console.log — an ungated 1Hz log
+      // accumulates thousands of retained console entries over a long show
+      // when DevTools is open (perf audit, Jul 2026).
       if (data._diag && (data._diag.dirFwd + data._diag.dirRev) > 0) {
         const nowDir = performance.now();
         if (nowDir - _lastDirLog > 1000) {
           _lastDirLog = nowDir;
           const d = data._diag;
-          console.log(`[dir] fwd=${d.dirFwd} rev=${d.dirRev} dir=${d.dir}`);
+          dlog('worklet', `[dir] fwd=${d.dirFwd} rev=${d.dirRev} dir=${d.dir}`);
         }
       }
 
@@ -650,8 +655,14 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
     }
   }
   if (otherBufs.length > 0) {
-    _workletNode.port.postMessage({ type: 'buffers', list: otherBufs });
-    dlog('worklet', `sent ${otherBufs.length} additional buffers to worklet`);
+    // Transfer list (perf audit H2, Jul 2026): avoids structured-cloning
+    // every retained recording on engine start. The Float32Array views
+    // arrive intact on the worklet side, backed by the transferred buffers.
+    _workletNode.port.postMessage(
+      { type: 'buffers', list: otherBufs },
+      otherBufs.map(b => b.data.buffer)
+    );
+    dlog('worklet', `sent ${otherBufs.length} additional buffers to worklet (transferred)`);
   }
 
   dlog('worklet', 'grain engine started', {
@@ -709,14 +720,20 @@ export function postSampleBuffers(buffers) {
 export function hotSwapRecording(audioBuffer) {
   if (!_workletNode || !audioBuffer) return false;
 
-  // Send finalized buffer data to the worklet
+  // Send finalized buffer data to the worklet.
+  // Transfer the copy's ArrayBuffer (perf audit H2, Jul 2026): without the
+  // transfer list, postMessage structured-clones the entire recording — a
+  // third full copy of the take, deserialized ON THE AUDIO THREAD at the
+  // exact moment provisional grains are still playing. With the transfer,
+  // the worklet receives the same Float32Array view zero-copy.
   const data = audioBuffer.getChannelData(0);
   const newIndex = _sampleBufsCount();
+  const copy = new Float32Array(data);
   _workletNode.port.postMessage({
     type: 'addBuffer',
-    data: new Float32Array(data),
+    data: copy,
     length: data.length,
-  });
+  }, [copy.buffer]);
 
   // Register in _bufferMap so candidate posting resolves it
   _bufferMap.set(audioBuffer, newIndex);
@@ -779,8 +796,75 @@ export function flushWorkletGrains() {
   }
   // Only clear provisional state — the live recording may have been removed
   // by the undo path.  Finalized buffer mappings stay intact.
+  // Delete the map entry BEFORE nulling the ref: erasing mid-recording
+  // abandons the in-progress liveBuffer, and nulling the handle without
+  // deleting the entry orphaned it in _bufferMap forever (group-show noise
+  // glitch investigation, Jul 2026). If recording continues, the next
+  // _onLiveBufferRebuilt tick (~50ms) re-registers the current liveBuffer.
+  if (_provisionalLiveRef) _bufferMap.delete(_provisionalLiveRef);
   _provisionalLiveRef = null;
   _provisionalSentLen = 0;
+}
+
+// ── Release dead buffers (sweep-snapshot commit) ────────────────────────────
+// THE group-show noise-glitch fix (docs/GROUP-SHOW-NOISE-GLITCH.md, Jul 2026).
+// Erase-all / sweep keep worklet buffers alive so undo can restore them.
+// Once the snapshot is committed (new stroke, or 30s auto-commit), the
+// erased recordings are provably unreachable — but nothing dropped them:
+// _sampleBufs in the worklet and _bufferMap here grew monotonically for the
+// life of the engine (~200MB over a 50-min show → GC pauses > the 2.7ms
+// audio deadline at 128-frame buffers → garbled output).
+//
+// This walks _bufferMap, keeps buffers still reachable from main-thread
+// state (S.liveRecBuffers, S.samples), and drops the rest — posting a
+// 'compactBuffers' message so the worklet compacts _sampleBufs with the
+// SAME index remapping. The two sides MUST change together: positional
+// indices desync otherwise and grains read from the wrong recording.
+// Candidate lists carrying old indices are cleared by the worklet and
+// reposted by the scheduler within ~20ms.
+// Returns the number of buffers dropped.
+export function resyncWorkletBuffers() {
+  if (!_workletNode) return 0;
+
+  // Buffers still reachable from main-thread state
+  const live = new Set();
+  if (S.liveRecBuffers) {
+    for (const rec of S.liveRecBuffers) {
+      if (rec?.buffer) live.add(rec.buffer);
+      if (rec?.liveBuffer) live.add(rec.liveBuffer);
+    }
+  }
+  if (S.samples) {
+    for (const smp of S.samples) {
+      if (smp?.buffer) live.add(smp.buffer);
+    }
+  }
+
+  // Partition map entries. Negative indices (-1 SAB primary, -2 provisional
+  // live) are engine-lifetime slots — never dropped here.
+  const keepOld = [];
+  const dropKeys = [];
+  _bufferMap.forEach((idx, buf) => {
+    if (idx < 0) return;
+    if (live.has(buf)) keepOld.push(idx);
+    else dropKeys.push(buf);
+  });
+  if (dropKeys.length === 0) return 0;
+  keepOld.sort((a, b) => a - b);
+
+  // Worklet first (message is queued in order — any 'candidates' post that
+  // follows is built against the rebuilt map below, so indices agree).
+  _workletNode.port.postMessage({ type: 'compactBuffers', keep: keepOld });
+
+  // Rebuild _bufferMap with the same remapping
+  const newIdx = new Map(keepOld.map((old, i) => [old, i]));
+  for (const buf of dropKeys) _bufferMap.delete(buf);
+  _bufferMap.forEach((idx, buf) => {
+    if (idx >= 0) _bufferMap.set(buf, newIdx.get(idx));
+  });
+
+  dlog('worklet', `resync: dropped ${dropKeys.length} dead buffers, kept ${keepOld.length}`);
+  return dropKeys.length;
 }
 
 /**
@@ -820,6 +904,7 @@ export function stopWorkletGrain() {
   }
   _sab = null;
   _bufferMap = new Map();
+  _lastWorkletDiag = null;
   _provisionalLiveRef = null;
   _provisionalSentLen = 0;
   if (_deferredClearId) { clearTimeout(_deferredClearId); _deferredClearId = 0; }
@@ -840,6 +925,10 @@ export function getWorkletDiag() {
     candidates: _lastPostedCandidates,
     candidateCount: _lastPostedCandidates.length,
     running: _workletNode !== null,
+    // Buffer retention (group-show noise glitch): bridge-side AudioBuffer refs
+    // and the worklet's own view of its _sampleBufs (via feedback _diag).
+    bufMapSize: _bufferMap.size,
+    workletDiag: _lastWorkletDiag,
   };
 }
 

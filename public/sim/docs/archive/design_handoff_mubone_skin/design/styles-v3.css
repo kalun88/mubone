@@ -1,0 +1,732 @@
+/* ── v2 racks layout — Ableton-style with knobs ─────────────────── */
+
+.stage-view-switch { display: none !important; }
+.view { display: none; position: absolute; inset: 0; }
+.view.is-visible { display: block; }
+.sphere-wrap {
+  position: relative;
+  display: flex; align-items: stretch; justify-content: center;
+  padding: 8px;
+  min-height: 0;
+  overflow: hidden;
+}
+.sphere-canvas {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  background: #000;
+  border-radius: var(--r-3);
+  overflow: hidden;
+}
+.stage { grid-template-rows: auto 1fr auto !important; }
+
+/* Stage foot */
+.stage-foot.stacked {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) 1fr;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+}
+.stage-foot.stacked .io-stack {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+}
+.stage-foot.stacked .io-stack .io-meter {
+  display: grid;
+  grid-template-columns: 28px 1fr 60px;
+  align-items: center;
+  gap: 8px;
+}
+.stage-foot.stacked .keys {
+  display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end;
+}
+
+/* ── Transport (under sphere) ────────────────────────────────────
+   Single source of truth for all player actions. Two keyboard-ordered
+   rows: shortcuts, then commits + session. */
+.stage-foot.stacked .transport {
+  display: flex; flex-direction: column; gap: 6px;
+  justify-content: center;
+  min-width: 0;
+}
+.transport-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+/* Keyboard-style action button — bigger, clearer than a chip */
+.tbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 4px;
+  background: var(--ink-2);
+  border: 1px solid color-mix(in oklab, var(--ink-4) 80%, transparent);
+  border-radius: var(--r-2);
+  color: var(--ink-7);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: all 0.1s;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 6%, transparent),
+    0 1px 0 rgba(0,0,0,0.4);
+  min-height: 26px;
+  white-space: nowrap;
+}
+.tbtn:hover {
+  border-color: var(--teal);
+  color: var(--ink-8);
+}
+.tbtn:active { transform: translateY(1px); box-shadow: none; }
+.tbtn .tk {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 26px; height: 20px; padding: 0 6px;
+  background: var(--ink-0);
+  border: 1px solid color-mix(in oklab, var(--ink-4) 90%, transparent);
+  border-radius: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--ink-7);
+  text-transform: uppercase;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 4%, transparent),
+    0 1px 0 rgba(0,0,0,0.4);
+}
+.tbtn .tl {
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+.tbtn.on {
+  border-color: var(--teal);
+  background: color-mix(in oklab, var(--teal) 14%, var(--ink-2));
+  color: var(--teal);
+}
+.tbtn.on .tk {
+  color: var(--teal);
+  border-color: color-mix(in oklab, var(--teal) 60%, var(--ink-4) 40%);
+  background: color-mix(in oklab, var(--teal) 15%, var(--ink-0));
+}
+.tbtn.accent {
+  border-color: color-mix(in oklab, var(--amber) 60%, var(--ink-4));
+  color: var(--amber);
+}
+.tbtn.accent .tk {
+  color: var(--amber);
+  border-color: color-mix(in oklab, var(--amber) 60%, var(--ink-4));
+}
+.tbtn.accent:hover {
+  background: color-mix(in oklab, var(--amber) 13%, var(--ink-2));
+}
+.tbtn.danger { color: var(--ink-6); }
+.tbtn.danger:hover { border-color: var(--red); color: var(--red); }
+.tbtn.danger:hover .tk { color: var(--red); border-color: color-mix(in oklab, var(--red) 60%, var(--ink-4)); }
+
+.t-sep {
+  width: 1px; height: 20px;
+  background: color-mix(in oklab, var(--ink-4) 80%, transparent);
+  margin: 0 4px;
+}
+
+/* ── Commit bank (under sphere) ─────────────────────────────────── */
+.commit-bank {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--ink-0);
+  border: 1px solid color-mix(in oklab, var(--ink-4) 80%, transparent);
+  border-radius: var(--r-2);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.4);
+}
+.cbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 22px;
+  border: 1px solid color-mix(in oklab, var(--ink-4) 80%, transparent);
+  border-radius: 2px;
+  background: var(--ink-2);
+  color: var(--ink-5);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.1s;
+  position: relative;
+}
+.cbtn:hover { border-color: var(--ink-5); color: var(--ink-7); }
+.cbtn.on.cloud {
+  border-color: var(--teal);
+  background: color-mix(in oklab, var(--teal) 18%, var(--ink-2));
+  color: var(--teal);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--teal) 25%, transparent);
+}
+.cbtn.on.loop {
+  border-color: var(--violet);
+  background: color-mix(in oklab, var(--violet) 18%, var(--ink-2));
+  color: var(--violet);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--violet) 25%, transparent);
+}
+.cbtn .ck { pointer-events: none; }
+
+/* Main grid: sphere hero top, racks scrollable below */
+.main {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: var(--stage-h, 38vh) 1fr;
+  gap: var(--gap);
+  padding: var(--gap);
+  min-height: 0;
+  overflow: hidden;
+}
+.stage {
+  grid-column: 1; grid-row: 1;
+  min-height: 0;
+  position: relative;
+}
+.stage-resize {
+  position: absolute;
+  left: 0; right: 0; bottom: -6px;
+  height: 10px;
+  cursor: ns-resize;
+  z-index: 20;
+  display: flex; align-items: center; justify-content: center;
+}
+.stage-resize::before {
+  content: '';
+  width: 56px; height: 3px;
+  border-radius: 2px;
+  background: color-mix(in oklab, var(--ink-4) 60%, transparent);
+  transition: background 0.12s;
+}
+.stage-resize:hover::before,
+.stage-resize.dragging::before {
+  background: var(--teal);
+}
+body.stage-resizing { cursor: ns-resize; user-select: none; }
+.racks {
+  grid-column: 1; grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 4px;
+  align-content: start;
+}
+.overlay.perf, .overlay.sensor-card { display: none; }
+
+/* ── Rack shell ──────────────────────────────────────────────────
+   Module-as-card: elevated surface, top header bar w/ controls on right,
+   inner devices as recessed sub-panels. */
+.rack {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-rows: 22px 1fr;
+  background: var(--ink-1);
+  border: 1px solid color-mix(in oklab, var(--ink-4) 70%, transparent);
+  border-radius: var(--r-3);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 3%, transparent),
+    0 1px 0 rgba(0,0,0,0.5),
+    0 3px 8px rgba(0,0,0,0.25);
+  overflow: hidden;
+}
+.rack.dragging { opacity: 0.4; }
+
+.rack-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 0 4px;
+  background: var(--ink-2);
+  border-bottom: 1px solid color-mix(in oklab, var(--ink-4) 60%, transparent);
+  cursor: grab;
+  user-select: none;
+  min-height: 22px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.rack-head:active { cursor: grabbing; }
+.rack-head-l {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+}
+.rack-head-r {
+  display: flex; align-items: center; gap: 2px;
+}
+.rack-head-label {
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-7, #cbd3d8);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.rack:hover .rack-head-label { color: var(--teal); }
+.rack-head-hint {
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: lowercase;
+  color: var(--ink-5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.rack-head .strip-collapse,
+.rack-head .strip-up,
+.rack-head .strip-dn {
+  background: transparent;
+  border: none;
+  color: var(--ink-5);
+  font-size: 9px;
+  line-height: 1;
+  padding: 3px 5px;
+  cursor: pointer;
+  transition: color 0.1s;
+  border-radius: 2px;
+}
+.rack-head .strip-collapse { font-size: 10px; color: var(--ink-6); padding: 3px 4px 3px 2px; }
+.rack-head .strip-collapse:hover,
+.rack-head .strip-up:hover,
+.rack-head .strip-dn:hover { color: var(--teal); background: color-mix(in oklab, var(--teal) 10%, transparent); }
+.rack-head .strip-up:disabled,
+.rack-head .strip-dn:disabled { opacity: 0.25; cursor: default; }
+.rack-head .strip-up:disabled:hover,
+.rack-head .strip-dn:disabled:hover { color: var(--ink-5); background: transparent; }
+
+.rack-body {
+  display: flex;
+  min-height: 0;
+  background: var(--ink-0);
+  padding: 4px;
+  gap: 4px;
+}
+.rack.collapsed .rack-body { display: none; }
+
+/* ── Device (grouped section inside a rack) ─────────────────────── */
+.dv {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 10px 8px;
+  background: var(--ink-2);
+  border: 1px solid color-mix(in oklab, var(--ink-4) 50%, transparent);
+  border-radius: var(--r-2);
+  min-width: 0;
+}
+.dv-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-6);
+  padding-bottom: 4px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid color-mix(in oklab, var(--ink-4) 40%, transparent);
+  white-space: nowrap;
+  min-height: 14px;
+  font-weight: 600;
+}
+.dv-head .chip { font-size: 8px; padding: 1px 4px; font-weight: 500; }
+.dv-head .tag {
+  font-size: 9px;
+  color: var(--teal);
+  letter-spacing: 0.1em;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Knob row — this is the core Ableton-style primitive */
+.knobs {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 44px;
+  gap: 6px;
+  align-items: start;
+}
+.knob {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.knob .kl {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--ink-5);
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  line-height: 1;
+  white-space: nowrap;
+}
+.knob .kdial {
+  position: relative;
+  width: 30px;
+  height: 30px;
+}
+.knob .kdial svg {
+  position: absolute; inset: 0;
+  transform: rotate(-135deg);
+}
+.knob .kdial .kv-center {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  color: var(--ink-7);
+  font-weight: 500;
+  pointer-events: none;
+}
+.knob .kvalue {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--ink-7);
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+.knob.accent .kl { color: var(--teal); }
+.knob.accent .kvalue { color: var(--teal); }
+.knob.warm .kvalue { color: var(--amber); }
+.knob.locked .kl { color: var(--teal); }
+
+/* Vertical mini-slider (for dB / meter-style controls) */
+.vslider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 44px;
+}
+.vslider .kl {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--ink-5);
+  letter-spacing: 0.04em;
+}
+.vslider .vtrack {
+  position: relative;
+  width: 4px;
+  height: 32px;
+  background: var(--ink-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.vslider .vfill {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: var(--val, 50%);
+  background: var(--teal);
+}
+.vslider .kvalue {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--ink-7);
+}
+
+/* Pill toggle (segmented, small) */
+.pill {
+  display: inline-flex;
+  background: var(--ink-0);
+  border: 1px solid var(--ink-2);
+  border-radius: 2px;
+  overflow: hidden;
+  font-family: 'JetBrains Mono', monospace;
+}
+.pill button {
+  background: transparent;
+  border: none;
+  color: var(--ink-6);
+  padding: 3px 7px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  text-transform: lowercase;
+  border-right: 1px solid var(--ink-2);
+}
+.pill button:last-child { border-right: none; }
+.pill button:hover { color: var(--ink-7); }
+.pill button.on {
+  background: color-mix(in oklab, var(--teal) 20%, transparent);
+  color: var(--teal);
+}
+.pill-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--ink-5);
+  letter-spacing: 0.06em;
+}
+.pill-row > .pk {
+  white-space: nowrap;
+  text-transform: lowercase;
+}
+.pill-row > .pill { justify-self: end; }
+
+/* Small button (for action lists) */
+.act-btn {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--surface-1);
+  border: 1px solid var(--ink-2);
+  border-radius: 2px;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-7);
+  text-align: left;
+  transition: all 0.08s;
+  white-space: nowrap;
+}
+.act-btn:hover { border-color: var(--teal); color: var(--teal); }
+.act-btn.on {
+  border-color: var(--teal);
+  background: color-mix(in oklab, var(--teal) 12%, var(--surface-1) 88%);
+  color: var(--teal);
+}
+.act-btn.armed { border-color: var(--amber); color: var(--amber); }
+.act-btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+.act-btn .ak {
+  font-size: 8px;
+  color: var(--ink-5);
+  letter-spacing: 0.04em;
+  padding: 1px 4px;
+  border: 1px solid var(--ink-3);
+  border-radius: 2px;
+}
+.act-btn.on .ak { color: var(--teal); border-color: color-mix(in oklab, var(--teal) 40%, transparent); }
+.act-btn.armed .ak { color: var(--amber); border-color: color-mix(in oklab, var(--amber) 40%, transparent); }
+
+/* Basic/Advanced hide */
+body:not([data-detail="advanced"]) .rack .is-adv { display: none; }
+
+/* ── PATCHES rack — 2 rows of 20, key-cap focal numbers ──────────── */
+.rack[data-rack="patches"] .rack-body { display: grid; grid-template-columns: 1fr auto; align-items: stretch; gap: 4px; }
+.rack[data-rack="patches"] .dv-patches { padding: 6px 10px 8px; min-width: 0; display: flex; flex-direction: column; }
+.rack[data-rack="patches"] .patches-strip {
+  display: grid;
+  grid-template-columns: repeat(20, minmax(0, 1fr));
+  grid-template-rows: repeat(2, 1fr);
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+  align-content: stretch;
+}
+.rack[data-rack="patches"] .patch {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  justify-items: center;
+  align-items: center;
+  gap: 1px;
+  padding: 3px 2px;
+  background: var(--ink-2);
+  border: 1px solid color-mix(in oklab, var(--ink-4) 80%, transparent);
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  cursor: pointer;
+  transition: all 0.08s;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 5%, transparent),
+    0 1px 0 rgba(0,0,0,0.4);
+  min-height: 38px;
+}
+.rack[data-rack="patches"] .patch:hover { border-color: color-mix(in oklab, var(--teal) 60%, var(--ink-4) 40%); }
+.rack[data-rack="patches"] .patch.on {
+  border-color: var(--teal);
+  background: color-mix(in oklab, var(--teal) 16%, var(--ink-2));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklab, var(--teal) 35%, transparent);
+}
+.rack[data-rack="patches"] .patch.on.dirty::after {
+  content: ''; position: absolute; top: 2px; right: 2px;
+  width: 4px; height: 4px; border-radius: 50%; background: var(--amber);
+}
+.rack[data-rack="patches"] .patch.empty {
+  border-style: dashed;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0.45;
+}
+.rack[data-rack="patches"] .patch.empty:hover { opacity: 0.7; }
+.rack[data-rack="patches"] .patch .idx {
+  /* Key-cap style: this IS the keyboard shortcut, make it the focal point */
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-7);
+  letter-spacing: 0.02em;
+  line-height: 1;
+  padding: 1px 3px;
+  background: var(--ink-0);
+  border: 1px solid color-mix(in oklab, var(--ink-4) 90%, transparent);
+  border-radius: 2px;
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 4%, transparent), 0 1px 0 rgba(0,0,0,0.4);
+  min-width: 18px;
+  text-align: center;
+}
+.rack[data-rack="patches"] .patch.on .idx {
+  color: var(--teal);
+  border-color: color-mix(in oklab, var(--teal) 60%, var(--ink-4) 40%);
+  background: color-mix(in oklab, var(--teal) 15%, var(--ink-0));
+}
+.rack[data-rack="patches"] .patch.empty .idx {
+  color: var(--ink-5);
+  background: transparent;
+  border-color: color-mix(in oklab, var(--ink-4) 50%, transparent);
+  box-shadow: none;
+}
+.rack[data-rack="patches"] .patch .nm {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 8.5px;
+  color: var(--ink-6);
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  letter-spacing: 0.01em;
+  font-weight: 500;
+}
+.rack[data-rack="patches"] .patch.on .nm { color: var(--ink-8); }
+.rack[data-rack="patches"] .patch.empty .nm { display: none; }
+
+.rack[data-rack="patches"] .dv-session {
+  min-width: 140px;
+}
+.rack[data-rack="patches"] .dv-session .ses-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+}
+
+.rack[data-rack="patches"] .dv-stats { min-width: 110px; }
+.rack[data-rack="patches"] .dv-stats .stats-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 10px;
+}
+.rack[data-rack="patches"] .dv-stats .s {
+  display: flex; flex-direction: column; gap: 1px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.rack[data-rack="patches"] .dv-stats .s .sk { font-size: 9px; color: var(--ink-5); letter-spacing: 0.06em; }
+.rack[data-rack="patches"] .dv-stats .s .sv { font-size: 11px; color: var(--ink-7); font-weight: 600; }
+
+/* ── GRAIN rack — envelope + knob clusters ──────────────────────── */
+.rack[data-rack="grain"] .rack-body { display: grid; grid-template-columns: 200px 1fr; gap: 4px; }
+.rack[data-rack="grain"] .dv-env { padding: 6px 10px 8px; display: flex; flex-direction: column; gap: 4px; }
+.rack[data-rack="grain"] .dv-env .env-canvas {
+  position: relative;
+  background: var(--ink-0);
+  border: 1px solid var(--ink-2);
+  border-radius: 2px;
+  padding: 0;
+  overflow: hidden;
+  flex: 1;
+  min-height: 70px;
+  display: flex; align-items: center; justify-content: center;
+}
+.rack[data-rack="grain"] .dv-env .env-canvas svg { width: 100%; height: 100%; display: block; }
+.rack[data-rack="grain"] .dv-env .env-label {
+  position: absolute; top: 3px; left: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; color: var(--ink-5); letter-spacing: 0.06em;
+}
+.rack[data-rack="grain"] .dv-env .env-stats {
+  display: flex; justify-content: space-between;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; color: var(--ink-6);
+}
+.rack[data-rack="grain"] .dv-env .env-stats b { color: var(--ink-7); font-weight: 600; }
+
+.rack[data-rack="grain"] .grain-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 8px;
+}
+.rack[data-rack="grain"] .grain-row {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+}
+.rack[data-rack="grain"] .grain-row .grp {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-right: 12px;
+  border-right: 1px dashed color-mix(in oklab, var(--ink-3) 40%, transparent);
+}
+.rack[data-rack="grain"] .grain-row .grp:last-child { border-right: none; padding-right: 0; }
+.rack[data-rack="grain"] .grain-row .grp-head {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; color: var(--ink-5); letter-spacing: 0.12em;
+  text-transform: uppercase; font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── CURSOR+SEARCH rack ─────────────────────────────────────────── */
+.rack[data-rack="cursor-search"] .rack-body { display: grid; grid-template-columns: 240px 1fr; gap: 4px; }
+.rack[data-rack="cursor-search"] .dv-cursor-acts { display: flex; flex-direction: column; gap: 3px; }
+.rack[data-rack="cursor-search"] .dv-cursor-mode { display: flex; flex-direction: column; gap: 4px; }
+.rack[data-rack="cursor-search"] .dv-search { display: flex; flex-direction: column; gap: 6px; }
+.rack[data-rack="cursor-search"] .dv-search .search-knobs-row { display: flex; gap: 8px; align-items: flex-start; }
+.rack[data-rack="cursor-search"] .dv-search .search-knobs-row .pill-stack {
+  display: flex; flex-direction: column; gap: 3px; margin-left: auto;
+}
+
+/* ── COMMITS rack ────────────────────────────────────────────────── */
+.rack[data-rack="commits"] .rack-body { display: grid; grid-template-columns: auto 1fr auto; gap: 4px; }
+.rack[data-rack="commits"] .dv-slots { padding: 6px 10px 8px; }
+.rack[data-rack="commits"] .slot-bank {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.rack[data-rack="commits"] .slot {
+  aspect-ratio: 1;
+  min-height: 32px;
+  background: var(--surface-1);
+  border: 1px solid var(--ink-2);
+  border-radius: 3px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+  position: relative;
+}
+.rack[data-rack="commits"] .slot.cloud {
+  border-color: color-mix(in oklab, var(--teal) 55%, transparent);
+  background: color-mix(in oklab, var(--teal) calc(var(--life) * 22%), var(--surface-1));
+  color: var(--teal);
+}
+.rack[data-rack="commits"] .slot.loop {
+  border-color: color-mix(in oklab, var(--violet) 55%, transparent);
+  background: color-mix(in oklab, var(--violet) calc(var(--life) * 22%), var(--surface-1));
+  color: var(--violet);
+}
+.rack[data-rack="commits"] .dv-slots .commit-stats {
+  display: flex; gap: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; color: var(--ink-6);
+}
+.rack[data-rack="commits"] .dv-slots .commit-stats b { color: var(--ink-7); font-weight: 600; }
+
+.rack[data-rack="commits"] .dv-actions { display: flex; flex-direction: column; gap: 3px; }
+.rack[data-rack="commits"] .dv-timing { display: flex; flex-direction: column; gap: 6px; }

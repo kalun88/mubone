@@ -231,6 +231,10 @@ function routeDataLine(line, sourceIP) {
     case 'W':
       broadcastControl({ type: 'sensor-status', sn: dev.sn, line, sourceIP });
       break;
+
+    // No case for 'S' (serial accessory) on purpose.  The raw-line forward
+    // below already carries it to imu-setup.parseDataLine, which owns the
+    // accessory hook — adding a case here would double-deliver it.
   }
 
   // Also forward raw line on control channel for imu-setup.js browser mode
@@ -307,24 +311,17 @@ function handleControlMessage(msg) {
         startDataListener(sendPort);
       }
 
-      // Settings enforcement
-      const rcv = info.receive || CMD_PORT_DEFAULT;
-      sendCommand(info.ip, rcv, { ahrs_ignore_magnetometer: true });
-      sendCommand(info.ip, rcv, { ahrs_acceleration_rejection_enabled: true });
-      sendCommand(info.ip, rcv, { gyroscope_offset_correction_enabled: true });
-      sendCommand(info.ip, rcv, { udp_low_latency: true });
-      sendCommand(info.ip, rcv, { ahrs_message_type: 0 });  // quaternion mode
-      sendCommand(info.ip, rcv, { ahrs_message_rate_divisor: 1 });  // 400Hz / 1 = 400Hz (paint-ticker adaptive spacing)
-      setTimeout(() => {
-        sendCommand(info.ip, rcv, { apply: null });
-        // Heading zero NOT sent on connect — user controls it via "zero heading" button
-        // LED handshake — 5× blink
-        let blinks = 0;
-        const blinkTimer = setInterval(() => {
-          sendCommand(info.ip, rcv, { blink: null });
-          if (++blinks >= 5) clearInterval(blinkTimer);
-        }, 200);
-      }, 100);
+      // Settings enforcement and the LED handshake deliberately do NOT happen
+      // here.  The proxy is a transport: it owns the sockets and relays
+      // commands, nothing more.  imu-setup.js runs the same enforcement pass
+      // for browser mode as it does for Electron, sending through the
+      // { type: 'command' } relay below, so there is exactly one copy of the
+      // settings table (js/ximu-settings.js) rather than two that drift.
+      //
+      // They did drift: this handler used to write ahrs_message_rate_divisor 1
+      // (400 Hz) while Electron wrote 4 (100 Hz), and never wrote
+      // binary_mode_enabled or axes_alignment at all — so the same sensor was
+      // configured differently depending on how mubone was launched.
 
       broadcastControl({ type: 'connected', data: connected.get(sn) });
       console.log(`[proxy] connected to ${info.name} (${sn}) at ${info.ip}`);

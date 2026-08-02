@@ -1,0 +1,244 @@
+  /* ══════════════════════════════════════════════════════════════════════════
+     tokens.css — design tokens for mubone
+     ──────────────────────────────────────────────────────────────────────────
+     Single source of truth for colors, typography, spacing, radius, and
+     control dimensions. style.css (and any future controls.css) should
+     reference these via var(--name) rather than hardcoding values.
+
+     Values extracted from existing style.css as of this audit — no visual
+     changes yet. Migration of style.css to use var() is a separate pass.
+
+     Naming conventions:
+       --bg-*       surfaces (opaque)
+       --surface-* translucent white overlays (layered over bg)
+       --text-*    text colors
+       --accent-*  semantic accents — match the interaction model
+                   (lock / action / sensor / sweep / danger / warn / mic)
+       --border-*  border lines (translucent white)
+       --fs-*      font size scale
+       --ls-*      letter-spacing scale
+       --sp-*      spacing scale
+       --r-*       border-radius scale
+       --trans-*   transition durations
+       --slider-*  slider dimensions (Ableton-style thin thumb)
+       --focus-*   focus ring
+     ══════════════════════════════════════════════════════════════════════════ */
+
+  :root {
+    /* ── Surfaces (opaque backgrounds) ──────────────────────────────────── */
+    /* Three-tier dark hierarchy:
+         --bg-canvas (#000)   pure black — viz / mini-canvas content
+         --bg-app    (#161616) soft dark grey — body, top-bar, bottom-bar,
+                               inter-panel gutter, modals, scrollbars
+         chrome-bg-raised (#262626) lighter grey — panel cards
+       The gap between --bg-app and --chrome-bg-raised (16 values) is what
+       makes the panels read as distinct cards without needing borders. */
+    --bg-app:        #161616;   /* body, bars, modals, dropdowns, scrollbars */
+    --bg-deep:       #111111;   /* envelope-waveform, deeper wells          */
+    --bg-panel:      #1e1e1e;   /* preset-dropdown                          */
+    --bg-canvas:     #000000;   /* canvas-wrapper, viz background           */
+    --bg-tooltip:    rgba(10, 12, 14, 0.88);  /* learn-tooltip backdrop     */
+
+    /* ── Translucent overlays (layer over --bg-app / card bg) ─────────────
+       Bumped on 2026-04-22 with the panel-bg change. The lighter card
+       (#262626) compresses the perceived delta of these white overlays, so
+       alpha values were raised ~50–80% to keep buttons + inputs reading as
+       distinct surfaces rather than dissolving into the card. */
+    --surface-0:     rgba(255,255,255,0.04);  /* numbox focus tint          */
+    --surface-1:     rgba(255,255,255,0.06);  /* session-btn resting        */
+    --surface-2:     rgba(255,255,255,0.07);  /* device-header, grain-select*/
+    --surface-3:     rgba(255,255,255,0.09);  /* factory-reset-btn resting  */
+    --surface-4:     rgba(255,255,255,0.11);  /* session-btn hover, slider  */
+    --surface-5:     rgba(255,255,255,0.14);  /* top-bar-btn active         */
+    --surface-6:     rgba(255,255,255,0.17);  /* factory-reset hover        */
+
+    /* ── Text ──────────────────────────────────────────────────────────────
+       Bumped up a step on 2026-04-22 when the panel background moved from
+       #1a1a1a to #262626 (a lighter grey). Every legibility calibration in
+       this scale was tuned for the darker card, so readers lost contrast
+       all the way down the hierarchy once panels brightened. Values here
+       are ~10–15% brighter than the pre-bump scale. */
+    --text-highlight:#ffffff;   /* top-bar-btn.active, modal headings       */
+    --text-emphasis: #e0e0e0;   /* numbox focus, option text                */
+    --text-primary:  #c8c8c8;   /* body, most buttons                       */
+    --text-light:    #eaeaea;   /* learn-tooltip, modal body, bright labels */
+    --text-bright:   #d0d0d0;   /* session-btn hover                        */
+    --text-secondary:#a8a8a8;   /* labels, sensor-group, live-count         */
+    --text-tertiary: #9a9a9a;   /* session-btn resting, numbox resting      */
+    --text-muted:    #808080;   /* top-bar-btn resting, loadIndicator       */
+    --text-dim:      #707070;   /* preset-view-toggle, tare-btn             */
+    --text-faint:    #555555;   /* pm-key, very low-contrast hints          */
+    --text-dimmer:   #5e5e5e;   /* mapping unassigned cells, very faint      */
+    --text-subtle:   #909090;   /* io-monitor controls, secondary labels     */
+    --text-hover:    #b0b0b0;   /* slider-thumb hover, seg-btn hover         */
+
+    /* Dark chrome surfaces (less common than --bg-* but still recurring)   */
+    --chrome-bg-raised:   #262626;  /* device raised tile, table backdrop   */
+    --chrome-bg-hover:    #2c2c2c;  /* mic/mute btn hover                   */
+    --chrome-bg-option:   #222222;  /* select option                        */
+    --chrome-bg-idle:     #181818;  /* status-strip idle                    */
+    --chrome-bg-well:     #242424;  /* sample-slot, as-btn, io-monitor tile */
+    --chrome-bg-sunk:     #141414;  /* deepest well — as-rms-row backdrop   */
+    --chrome-bg-flat:     #111111;  /* flat dark panel — loops, readouts    */
+    --chrome-border-dim:  #333333;  /* subtle dark border                   */
+    --chrome-border-dark: #2a2a2a;  /* darker separator                     */
+
+    /* ── Accents (semantic — match interaction model) ───────────────────── */
+    --accent-lock:   #7abcbc;   /* teal — locked params, learn mode, mute icon on */
+    --accent-action: #f26415;   /* orange — action buttons, morph active, mute off.
+                                   Swapped 2026-04-22 from #e8a030 (amber) to match
+                                   SolarEdge-inspired redesign palette. Warmer/punchier. */
+    --accent-sensor: #b07ee8;   /* violet — IMU-mapped param override       */
+    --accent-sweep:  #76ff03;   /* green — sweep flash, export success      */
+    --accent-danger: #e06060;   /* red — destructive confirm                */
+    --accent-warn:   #c86020;   /* orange — load warn                       */
+    --accent-violet-soft: #8888cc;  /* preset-dropdown-save hover           */
+
+    /* Status / legend palette — secondary to --accent-*. These are used
+       for *informational* color (categorical labels in mapping tables,
+       status strips, diagnostic readouts) rather than *interactive*
+       color (button lock/action states). Lighter and higher-chroma than
+       the accents, which are tuned for contrast on the dark chrome.    */
+    --status-info:     #4fc3f7;   /* cyan — active/selected in mapping+staging */
+    --status-error:    #e57373;   /* light red — delete/remove action          */
+    --status-warn:     #ffb74d;   /* light amber — MIDI output, warning        */
+    --status-accent:   #ff6b9d;   /* pink — sequencer pulse, step trigger      */
+    --status-ok:       #81c784;   /* light green — OSC output, sensor positive */
+
+    /* Mic states (red family — own scale because it cycles through shades) */
+    --mic-idle-bg:     #5a2a2a;
+    --mic-idle-border: #7a3a3a;
+    --mic-hover-bg:    #8a3a3a;
+    --mic-hover-border:#aa4a4a;
+    --mic-live-bg:     #cc2222;
+    --mic-live-border: #ee3333;
+    --mic-ready:       #cc5555;
+
+    /* Accent-tint backgrounds (for active/flashing button states)          */
+    --tint-lock-soft:    rgba(122, 188, 188, 0.08);
+    --tint-lock-medium:  rgba(122, 188, 188, 0.15);
+    --tint-lock-border:  rgba(122, 188, 188, 0.30);
+    --tint-lock-strong:  rgba(122, 188, 188, 0.50);
+
+    /* Tint RGB matches --accent-action: #f26415 = rgb(242, 100, 21). */
+    --tint-action-soft:   rgba(242, 100, 21, 0.10);
+    --tint-action-medium: rgba(242, 100, 21, 0.15);
+    --tint-action-border: rgba(242, 100, 21, 0.30);
+    --tint-action-strong: rgba(242, 100, 21, 0.55);
+
+    --tint-sensor-soft:   rgba(176, 126, 232, 0.12);
+    --tint-sensor-medium: rgba(176, 126, 232, 0.15);
+
+    --tint-sweep-soft:    rgba(118, 255, 3, 0.10);
+    --tint-sweep-medium:  rgba(118, 255, 3, 0.15);
+    --tint-sweep-border:  rgba(118, 255, 3, 0.40);
+
+    --tint-danger-soft:   rgba(224, 96, 96, 0.06);
+    --tint-danger-border: rgba(224, 96, 96, 0.30);
+
+    /* ── Borders (translucent white) ──────────────────────────────────────
+       Strengthened on 2026-04-22 alongside the panel-bg bump. Against the
+       lighter #262626 card these translucent whites needed more opacity to
+       stay visible as control edges (the card now "absorbs" more of the
+       overlay tint, so the same alpha reads as less of an edge). */
+    --border-faint:    rgba(255,255,255,0.05);
+    --border-subtle:   rgba(255,255,255,0.08);
+    --border-base:     rgba(255,255,255,0.10);
+    --border-soft:     rgba(255,255,255,0.13);
+    --border-medium:   rgba(255,255,255,0.17);
+    --surface-7:       rgba(255,255,255,0.20);  /* morph-slider peak         */
+    --border-hover:    rgba(255,255,255,0.24);  /* hover borders on inputs   */
+    --border-emphasis: rgba(255,255,255,0.28);
+    --border-focus:    rgba(255,255,255,0.32);  /* focused input borders     */
+    --border-strong:   rgba(255,255,255,0.38);
+
+    /* ── Typography ──────────────────────────────────────────────────────
+       Unified on Urbanist for the whole UI (body, display, and numeric
+       readouts) — the redesign moved away from mixing Inter + Roboto Mono
+       so the app reads as a single typographic voice. Numeric readouts use
+       `font-variant-numeric: tabular-nums` (see style.css) to preserve
+       column alignment without falling back to a true monospace face.
+       Inter and Roboto Mono are no longer loaded. */
+    --font-sans:    'Urbanist', 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    --font-mono:    'Urbanist', 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    --font-display: 'Urbanist', 'Inter', 'Helvetica Neue', sans-serif;
+
+    /* Size scale — twelve steps that together cover the actual values used
+       in style.css. The ~rem values are pinned; rounding of very close
+       neighbours (e.g. 0.58 → 0.6, 0.63 → 0.65) introduces sub-pixel drift
+       (<0.5px at the default 15px root) which is not perceptible on-screen.
+
+       Usage hints reflect where each size is currently dominant — not
+       contracts. If you change one of these values, every site scales.  */
+    --fs-nano:    0.5rem;    /* tiny dots / sub-label meta (rare)         */
+    --fs-micro:   0.55rem;   /* osc indicator, commit dots, tiny legends  */
+    --fs-xxs:     0.62rem;   /* top-bar-version                           */
+    --fs-2xs:     0.6rem;    /* sub-label small text (device meta, dim)   */
+    --fs-xs:      0.68rem;   /* session-btn, grain-select, tooltip body   */
+    --fs-body:    0.65rem;   /* workhorse body text inside panels         */
+    --fs-sm:      0.72rem;   /* grain-label, grain-numbox                 */
+    --fs-base:    0.7rem;    /* io-monitor, readouts, modal body          */
+    --fs-md:      0.75rem;   /* primary buttons, mob-readout, live-count  */
+    --fs-lg:      0.80rem;   /* play-mute-btn                             */
+    --fs-readout: 0.82rem;   /* mobile-readout, section-title             */
+    --fs-xl:      0.85rem;   /* device labels, section headers            */
+
+    /* Letter-spacing scale — matches the six spacings actually used in style.css.
+       0.06em is the most common "uppercase label" tracking; 0.07em appears only
+       on display-sized text (lock-surface main label, session mode toggles). */
+    --ls-tight:     0.02em;
+    --ls-normal:    0.03em;
+    --ls-wide:      0.04em;
+    --ls-wider:     0.05em;
+    --ls-uppercase: 0.06em;
+    --ls-display:   0.07em;
+    --ls-widest:    0.08em;
+
+    /* ── Spacing (rem-based — all controls scale with root font size) ──── */
+    --sp-0:  0.1rem;
+    --sp-1:  0.15rem;
+    --sp-2:  0.25rem;
+    --sp-3:  0.3rem;
+    --sp-4:  0.4rem;
+    --sp-5:  0.55rem;
+    --sp-6:  0.7rem;
+    --sp-7:  1rem;
+    --sp-8:  1.2rem;
+
+    /* ── Border radius ─────────────────────────────────────────────────── */
+    --r-0: 0;       /* sharp — top-bar-btn, grain-slider track             */
+    --r-1: 2px;     /* subtle — grain-select, main-meter-dom               */
+    --r-2: 3px;     /* normal — session-btn                                */
+    --r-3: 5px;     /* soft — learn-tooltip                                */
+    /* Card-scale radius — out-of-band from the control scale above.
+       Used on hero surfaces / large panels, not controls. Driven by
+       the 2026-04-22 redesign brief (SolarEdge / Route Covered refs). */
+    --r-card: 20px; /* rounded hero container (canvas-wrapper)             */
+
+    /* ── Transitions ───────────────────────────────────────────────────── */
+    --trans-fast: 0.1s;     /* snappy state swaps (dot indicators, hover)  */
+    --trans-quick: 0.12s;   /* slider thumb                                */
+    --trans-base: 0.15s;    /* most button hover/active                    */
+    --trans-slow: 0.3s;     /* flash animations (sweep, export success)    */
+
+    /* ── Control dimensions ────────────────────────────────────────────── */
+    /* Ableton-style thin sliders — preserve the project's sonic-instrument
+       feel. The hover grows the thumb slightly for feedback without shifting
+       layout (only vertical height changes). */
+    --slider-track-h:        2px;
+    --slider-track-h-morph:  3px;      /* morph-slider is visually weightier */
+    --slider-thumb-w:        2px;
+    --slider-thumb-w-morph:  4px;
+    --slider-thumb-h:        12px;
+    --slider-thumb-h-hover:  14px;
+    --slider-thumb-h-morph-hover: 16px;
+
+    /* Checkbox — native, amber-accented */
+    --checkbox-size: 14px;
+    --checkbox-accent: var(--accent-action);
+
+    /* ── Focus ring ────────────────────────────────────────────────────── */
+    --focus-ring-color:  rgba(122,188,188,0.5);  /* teal — matches mute-on  */
+    --focus-ring-width:  1px;
+    --focus-ring-offset: 1px;
+  }

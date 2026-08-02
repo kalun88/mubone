@@ -1,11 +1,12 @@
 {
   "name": "mubone",
-  "version": "1.2.0-alpha",
+  "version": "1.12.0-alpha",
   "description": "mubone — spatial granular synthesizer",
   "main": "electron-main.js",
   "author": "mubone",
   "scripts": {
     "electron": "electron .",
+    "stations": "sh scripts/run-stations.sh",
     "start": "node server.js",
     "rebuild": "electron-rebuild",
     "dist": "electron-builder --mac",
@@ -37,6 +38,7 @@
       "sw.js",
       "js/**/*",
       "css/style.css",
+      "css/fonts/**/*",
       "max/**/*",
       "!max/node_modules/**/*",
       "!**/*.bak",

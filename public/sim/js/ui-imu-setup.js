@@ -36,6 +36,32 @@ let _oscConnected = false;
 
 const _WIFI_REGIONS = { 1: 'US', 2: 'EU', 3: 'JP' };
 
+// ── Tare-button flash ───────────────────────────────────────────────────────
+// Swaps the session button's label for a short confirmation, matching the
+// pattern sweep/erase already use. Local rather than imported: ui-sweep.js's
+// version is private to that module, and this is six lines.
+let _tareFlashTimer = null;
+let _tareFlashHtml  = null;
+
+function _flashTareBtn(msg, cls) {
+  const btn = document.getElementById('cursorTareBtn');
+  if (!btn) return;
+  // Snapshot the REAL label once. Without this guard, hitting ` twice inside
+  // the window would capture "✓ tared" as the label and restore that
+  // permanently — the button would keep its confirmation forever.
+  if (_tareFlashHtml === null) _tareFlashHtml = btn.innerHTML;
+  clearTimeout(_tareFlashTimer);
+  btn.classList.remove('flashing', 'sweep-flash');
+  btn.textContent = msg;
+  btn.classList.add(cls);
+  _tareFlashTimer = setTimeout(() => {
+    btn.innerHTML = _tareFlashHtml;
+    btn.classList.remove('flashing', 'sweep-flash');
+    _tareFlashHtml  = null;
+    _tareFlashTimer = null;
+  }, 900);
+}
+
 function _wifiInfoText(dev) {
   // The x-IMU3 has no wi_fi_mode setting — but the manual says RSSI is -1 in AP
   // mode and a valid percentage (0–100) in client mode. RSSI comes in via the
@@ -177,11 +203,25 @@ export function initIMUSetupUI() {
   });
 
   // ── Global tare shortcut (backtick key, MIDI, top-bar button) ──
+  // (helper above the handler so both the hit and miss paths can reach it)
   // Tare whichever device is assigned to cursor role.
+  //
+  // Tare is silent and instantaneous — nothing on screen moves unless the
+  // sensor had already drifted, so without this the ` key is indistinguishable
+  // from a key that isn't bound. Green + "✓ tared" on success, orange + "no
+  // cursor sensor" when there was nothing to tare: the same honest-signal rule
+  // the LED dispatch below follows, since a silent no-op is exactly the case
+  // you need to know about mid-set.
   const tareCursorFn = () => {
+    let tared = false;
     for (const dev of getDevices().values()) {
       if (dev.role === 'cursor' && dev.feeding) {
         captureTare(dev);
+        // Dispatch from inside the loop, not from a wrapper: the top-bar button
+        // binds this function directly, so a wrapper would only cover the
+        // key/MIDI/OSC paths. Also means no LED when there's no cursor sensor
+        // to tare, which is the honest signal.
+        window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'tare' } }));
         // Update card tare UI if modal is open
         if (_modal.classList.contains('open')) {
           const card = document.querySelector(`.imu-setup-card[data-sn="${dev.sn}"]`);
@@ -192,12 +232,18 @@ export function initIMUSetupUI() {
             if (tareStatus) { tareStatus.textContent = 'tare active'; tareStatus.classList.add('active'); }
           }
         }
+        tared = true;
         break;
       }
     }
+    // Placed here rather than inside the loop so the miss case gets feedback
+    // too — the button is bound to this function directly, so every entry
+    // point (click, `, MIDI, OSC) lands on it.
+    _flashTareBtn(tared ? '✓ tared' : 'no cursor sensor',
+                  tared ? 'sweep-flash' : 'flashing');
   };
   S._tareCursor = tareCursorFn;
-  document.getElementById('cursorZeroTopBtn')?.addEventListener('click', tareCursorFn);
+  document.getElementById('cursorTareBtn')?.addEventListener('click', tareCursorFn);
 
   _initialized = true;
   DEBUG && console.log('[ui-imu-setup] initialized');
@@ -250,8 +296,17 @@ function rebuildDiscoveryList() {
     let msg;
     if (isElectron) {
       msg = 'listening for x-IMU3 UDP broadcasts on port 10000…';
+    } else if (isLocal) {
+      // Browser WiFi is NOT desktop-only: imu-setup.js `_initBrowserTransport`
+      // opens a control channel to proxy.js on ws://localhost:8081, which does
+      // the UDP discovery and relays connect/disconnect/command. The only
+      // requirement is that the proxy is running.
+      msg = 'no sensors found — a browser can\'t open UDP sockets directly, so WiFi discovery goes through the local proxy. Run <code>node proxy.js</code> and this list will populate. Or use <em>serial / USB</em>, which needs nothing extra.';
     } else {
-      msg = 'WiFi is only available in the desktop app — for wireless sensors in the browser, use the Max patch OSC websocket bridge (see the <em>osc</em> section below)';
+      // Remote origin (mubone.org/sim): the proxy would have to run on the
+      // visitor's own machine and be reachable from this page — not the case
+      // for a hosted demo. USB is the realistic path here.
+      msg = 'WiFi sensors need the desktop app or a local proxy — neither is reachable from a hosted page. Use <em>serial / USB</em> to connect an x-imu3 over WebSerial.';
     }
     container.innerHTML = `<div class="imu-setup-empty">${msg}</div>`;
     return;
@@ -474,7 +529,7 @@ function rebuildDeviceCards() {
   const devices = getDevices();
 
   if (devices.size === 0) {
-    container.innerHTML = '<div class="imu-setup-empty">no devices connected — connect a sensor from the left panel</div>';
+    container.innerHTML = '<div class="imu-setup-empty">no devices connected — connect a sensor from the list</div>';
     return;
   }
 
@@ -547,7 +602,7 @@ function buildCard(dev) {
     <div class="imu-setup-section">
       <div class="imu-setup-section-label">tare <span class="imu-setup-hint-inline" title="Software tare zeros pitch + yaw in the calibrated output (instant, no hardware change). Zero heading resets the AHRS yaw reference on the hardware — the sensor must be pointing at your desired 0° when you press it.">?</span></div>
       <div class="imu-setup-row imu-setup-tare-row">
-        <button class="imu-setup-tare-btn js-tare-capture" title="Capture current orientation as zero — software only, does not reset hardware heading">capture tare</button>
+        <button class="imu-setup-tare-btn js-tare-capture" title="Store this sensor's current orientation as its zero reference — software only, does not touch the hardware heading. Same operation as 'tare cursor' (\`) in the session panel, which aims at whichever sensor holds the cursor role.">tare sensor</button>
         <button class="imu-setup-tare-btn secondary js-tare-clear" disabled>clear tare</button>
         <button class="imu-setup-tare-btn secondary js-heading-zero" title="Reset AHRS yaw reference to 0° on the hardware — sensor must be pointing at desired forward direction">zero heading</button>
         <span class="imu-setup-tare-status js-tare-status">no tare set</span>
@@ -558,8 +613,10 @@ function buildCard(dev) {
     <div class="imu-setup-section imu-setup-feed-section">
       <div class="imu-setup-row imu-setup-role-row">
         <label class="imu-setup-sublabel">role</label>
-        <select class="imu-setup-select imu-setup-role-select js-role">
+        <select class="imu-setup-select imu-setup-role-select js-role"
+                title="cursor = drives the granular cursor. camera = projector-aim: rotating the sensor pans the viewport. frame = body-reference: the sphere is attached to this sensor, cursor moves relative to it.">
           <option value="cursor">cursor</option>
+          <option value="camera">camera</option>
           <option value="frame">frame</option>
         </select>
       </div>
@@ -740,7 +797,31 @@ function updateAllReadouts() {
 
 // ── Command log helper ─────────────────────────────────────────────────────
 
+// Consecutive-repeat coalescing. `sig` identifies "same shape of command to the
+// same device"; a repeat updates the existing row's count instead of appending.
+let _cmdLogLast = null;   // { sig, count, el }
+
+// ── Command log ─────────────────────────────────────────────────────────────
+// Two things make this handler worth guarding rather than leaving naive:
+//
+//   1. It runs on EVERY command. That was harmless when commands were a dozen
+//      settings writes at connect time, but the x-IMU3 LED sends a colour
+//      command continuously — up to 10/s while the timbre readout tracks the
+//      cursor. Without the visibility gate, a closed modal still paid for
+//      string building, createElement and an innerHTML parse ten times a
+//      second, on the same main thread as the grain scheduler.
+//   2. `scrollTop = scrollHeight` immediately after `appendChild` forces a
+//      synchronous layout flush. Reading the scroll position *before* the
+//      mutation instead keeps the read and the write on opposite sides of it,
+//      which is the difference between one layout pass and two.
+//
+// Coalescing then stops colour traffic from evicting the interesting entries:
+// at 10/s an 80-row buffer holds 8 seconds of history, so the connect handshake
+// you actually wanted to read would scroll away before you could open the modal.
 function _appendCmdLog(dir, dev, jsonObj) {
+  // Nothing is visible — don't build DOM for a hidden element.
+  if (!_modal?.classList.contains('open')) { _cmdLogLast = null; return; }
+
   const log = document.getElementById('imuSetupCmdLog');
   if (!log) return;
 
@@ -753,11 +834,28 @@ function _appendCmdLog(dir, dev, jsonObj) {
 
   const who = dev ? `  <span style="color:#555">${dev.name || dev.sn} · ${dev.transport}</span>` : '';
   const dirClass = dir === '←' ? 'cmd-resp' : 'cmd-dir';
+  const html = `<span class="${dirClass}">${dir}</span> ${parts}${who}`;
+
+  // Same command shape to the same device, back to back — fold into the last
+  // row. Keeps the newest value visible (colour changes as you move) while
+  // costing one innerHTML write and no layout.
+  const sig = `${dir}|${keys.join(',')}|${dev?.sn ?? ''}`;
+  if (_cmdLogLast && _cmdLogLast.sig === sig && _cmdLogLast.el.isConnected) {
+    _cmdLogLast.count++;
+    _cmdLogLast.el.innerHTML = `${html} <span class="cmd-count">×${_cmdLogLast.count}</span>`;
+    return;
+  }
+
+  // Read scroll state before mutating, so the autoscroll write doesn't force a
+  // second layout — and so it doesn't fight a user who has scrolled up to read.
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
 
   const entry = document.createElement('div');
   entry.className = 'imu-setup-cmd-log-entry';
-  entry.innerHTML = `<span class="${dirClass}">${dir}</span> ${parts}${who}`;
+  entry.innerHTML = html;
   log.appendChild(entry);
-  log.scrollTop = log.scrollHeight;
+  _cmdLogLast = { sig, count: 1, el: entry };
+
   while (log.children.length > 80) log.removeChild(log.firstChild);
+  if (atBottom) log.scrollTop = log.scrollHeight;
 }

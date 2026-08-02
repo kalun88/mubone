@@ -3,7 +3,7 @@
 //
 // Drops a particle at the current cursor position every N milliseconds while
 // painting.  The interval is adjustable at runtime via S.paintTicker.intervalMs
-// (set from the exp-toggles panel or console).
+// (editable from the perf-monitor dropdown or DevTools console).
 //
 // A single setInterval at 200Hz polls whether enough time has elapsed since
 // the last deposit.  The high poll rate ensures deposit timing stays tight

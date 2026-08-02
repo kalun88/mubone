@@ -1,5 +1,7 @@
 # Euler vs Quaternion Input — x-IMU3 Analysis
 
+> **Status: CURRENT** · reference analysis · the tradeoffs and the roll-mute pole fix still hold. Written against x-IMU3 manual v1.11.
+
 > Written Mar 28, 2025. Reference: [x-IMU3 User Manual v1.11](https://x-io.co.uk/downloads/x-IMU3-User-Manual-v1.11.pdf), mubone sensor-registry.js, TODO.md bugs #9, #75, #76.
 
 ---
@@ -44,6 +46,15 @@ The AHRS message rate is configurable via `ahrs_message_rate_divisor` (400 Hz ÷
 **Current approach (quat):** `slotTare()` extracts only the yaw heading from the raw quaternion, stores it as `tareQuat`, and separately captures the roll offset (`tareRollOffset`) for later subtraction. The roll offset is subtracted before Euler decomposition in `applyAxisMapQuat()` (line 670) to prevent pitch↔yaw coupling from the tilted roll axis. This only works when X maps to roll (ZYX innermost rotation).
 
 > **⚠ Update (Mar 28):** `slotTare()` now auto-selects between gravity-aligned tare (flat mount, X=roll) and full-quaternion tare (non-flat mount, Y/Z=roll). Full-quat tare captures the entire raw orientation — after tare the quaternion is near-identity at rest, so the Euler decomposition works cleanly for any mounting angle. This eliminates the "only works when X maps to roll" limitation for non-default mounts. The gravity-aligned path is unchanged for the default flat case. See `_isFlatMount()` in sensor-registry.js.
+
+> **⚠ Superseded (Aug 1):** both notes above are now history. `slotTare()` and
+> `_isFlatMount()` were deleted — they had no caller, and `setFeeding()` in
+> imu-setup.js nulled the fields they wrote on every connect. **The shipped tare
+> is already the Euler one this document argues for:** `captureTare()` in
+> `imu-setup.js` stores `{ pitch, yaw }` and subtracts them directly, with roll
+> left gravity-referenced. So the "with Euler input" column below describes
+> current behaviour for tare, not a proposal — the remaining open items are the
+> `/euler` OSC input path and wrapping (#83–#87).
 
 **With Euler input:** Tare becomes simpler — capture `(tareRoll, tarePitch, tareYaw)` and subtract. No conjugate multiplication, no decomposition order dependency, no roll-offset special case. Gravity alignment is already baked in by the AHRS.
 

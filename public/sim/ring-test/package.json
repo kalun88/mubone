@@ -1,0 +1,9 @@
+{
+  "name": "ring-test",
+  "version": "0.0.1",
+  "description": "Throwaway: verify node-hid exclusive-grab blocks macOS cursor for BLE rings",
+  "private": true,
+  "dependencies": {
+    "node-hid": "^3.2.0"
+  }
+}

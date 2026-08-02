@@ -1,10 +1,32 @@
-# mubone — Collaborator Install Guide
+# mubone — Install Guide
+
+> **Status: CURRENT** · user-facing install guide · verified 2026-07-28 against 1.11 alpha.
+
+## Running multiple stations (installed app)
+
+macOS won't launch a second copy of an app when you double-click it — it just
+activates the one that's already running. To run several stations (each with
+its own settings profile, sensor, and OSC port), use the double-clickable
+launcher instead:
+
+    scripts/launch-stations.command      ← double-click; edit COUNT inside for how many
+
+Or by hand, one command per station:
+
+    open -n -a /Applications/mubone.app --args --instance=a --osc-port=7500
+    open -n -a /Applications/mubone.app --args --instance=b --osc-port=7510
+    open -n -a /Applications/mubone.app --args --instance=c --osc-port=7520
+
+Each window shows its station name in the title bar and top bar. From a dev
+checkout the equivalent is `npm run stations`. See `docs/MULTI-INSTANCE-PLAN.md`.
+
+---
 
 ## Option A: Pre-built app (no dev tools needed)
 
 Ask for the `.dmg` or `.zip` for your Mac architecture:
-- **Apple Silicon** (M1/M2/M3/M4): `mubone-1.1.0-alpha-arm64.dmg`
-- **Intel Mac**: `mubone-1.1.0-alpha-x64.dmg`
+- **Apple Silicon** (M1/M2/M3/M4): `mubone-1.11.0-alpha-arm64.dmg`
+- **Intel Mac**: `mubone-1.11.0-alpha-x64.dmg`
 
 Open the DMG and drag **mubone** to your Applications folder. On first launch, macOS will warn about an unidentified developer — right-click the app and choose **Open**, then click **Open** again in the dialog. You only need to do this once.
 
@@ -20,7 +42,7 @@ Open the DMG and drag **mubone** to your Applications folder. On first launch, m
 
 The Max patches are bundled inside the app at `mubone.app/Contents/Resources/max/`. Copy the `max/` folder out if you want to run the controller patch. Requires Max 8+.
 
-Inside Max, open `mubone-controller.maxpat`. The bridge script (`bridge.js`) sends OSC over UDP to `127.0.0.1:7500` — the Electron app listens automatically, no configuration needed.
+Inside Max, open `max/main.maxpat` (the consolidated controller; `mubone-controller.maxpat` was removed in the Max reorg). The bridge script (`bridge.js`) sends OSC over UDP to `127.0.0.1:7500` — the Electron app listens automatically, no configuration needed.
 
 ---
 

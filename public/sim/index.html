@@ -7,14 +7,51 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>mubone — simulation (preview)</title>
+<link rel="stylesheet" href="css/tokens.css">
 <link rel="stylesheet" href="css/style.css">
+<script>
+// ── Boot bootstrap — must run before first paint ────────────────────────────
+// main.js is a module, so it runs AFTER the document is parsed and painted. It
+// then applies four things from localStorage that all move the UI: the UI
+// scale (root font-size), panel order, per-panel collapse state, and the
+// projector column partition. Each was a separate reflow the user could see —
+// measured as three distinct paints with the first panel landing at x=1094,
+// then 973, then 23, before settling. In Electron, with ~40 ES modules to
+// load, that spread is long enough to read as the app "loading twice".
+//
+// So: veil .main-layout until main.js says the layout is settled, and apply
+// the root font-size here so the scale never reflows at all.
+//
+// Everything below is defensive — this file must never be able to leave the
+// app invisible. The failsafe lifts the veil regardless of what main.js does.
+(function () {
+  var d = document.documentElement;
+  d.classList.add('booting');
+
+  // Keep in sync with BASE_FONT_PX in ui-viz.js (15).
+  try {
+    var s = parseFloat(localStorage.getItem('mubone_uiScale'));
+    if (s >= 0.7 && s <= 1.6) d.style.fontSize = (15 * s) + 'px';
+  } catch (e) {}
+
+  // Failsafe: if main.js throws before it reveals, show the app anyway. An
+  // unstyled flash is a papercut; a permanently blank window mid-show is not.
+  setTimeout(function () {
+    if (d.classList.contains('booting')) {
+      d.classList.remove('booting');
+      console.warn('[boot] layout-settled signal never arrived — revealing on failsafe');
+    }
+  }, 4000);
+})();
+</script>
 </head>
 <body>
   <!-- Top bar -->
   <div class="top-bar">
     <div class="top-bar-left">
-      <div class="top-bar-row">
-        <span class="top-bar-version">version 1.2 alpha</span>
+      <div class="top-bar-brand">
+        <span class="top-bar-logo">mubone</span>
+        <span class="top-bar-version">1.12 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -35,12 +72,19 @@
           </svg>
           mute
         </button>
-        <button id="cameraModeBtn" class="top-bar-btn" title="camera control mode: pull / surface / sensor">
-          <svg class="camera-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" width="13" height="13">
-            <path d="M4 2 L4 13 L8 10 L10 14 L12 13 L10 9 L14 9 Z" fill="currentColor"/>
-          </svg>
-          <span class="camera-mode-label">pull</span>
-        </button>
+        <!-- Camera control mode. A segmented picker rather than a button
+             showing the current value: all three modes are visible, so the
+             control reads as "camera is a choice" instead of a status word.
+             Each chip's tooltip carries what that mode does — this replaced
+             the camera modal, which was the only place that copy lived. -->
+        <div class="top-bar-seg-group">
+          <span class="top-bar-seg-label">camera</span>
+          <div class="grain-seg top-bar-seg" id="cameraModeSeg">
+            <button class="grain-seg-btn active" data-mode="pull" title="pull — mouse or trackpad pulls the sphere from center. cursor follows the mouse. default mode.">pull</button>
+            <button class="grain-seg-btn" data-mode="surface" title="surface — pointer lock captures the trackpad or mouse. swipe to rotate freely around the sphere. cursor hidden, paint target is center. Alt to unlock.">surface</button>
+            <button class="grain-seg-btn" data-mode="sensor" title="sensor — the x-imu3 drives camera orientation. cursor hidden, paint target is center, mouse free for the UI.">sensor</button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="top-bar-right">
@@ -65,18 +109,8 @@
         </button>
         <button id="exportSetupBtn" class="top-bar-btn" title="export all settings, patches and key mappings as a JSON file">↑ export</button>
         <button id="importSetupBtn" class="top-bar-btn" title="import settings from a previously exported JSON file">↓ import</button>
-        <button id="factoryResetBtn" class="top-bar-btn" title="Full factory reset — clears everything including patches">↺ factory reset</button>
+        <button id="resetBtn" class="top-bar-btn" title="reset stored settings to defaults — pick what to clear, or select all for a full factory reset">↺ reset</button>
         <button id="learnModeBtn" class="top-bar-btn" title="learning mode — instant tooltips on hover">? learn</button>
-      </div>
-      <div class="top-bar-row sensor-group no-sensor" id="sensorGroup">
-        <span class="max-indicator" id="maxIndicator">● MAX</span>
-        <span class="sensor-group-label">sensor</span>
-        <span class="sensor-group-status" id="sensorGroupStatus"></span>
-        <span class="sensor-switch-btns" id="sensorSwitchBtns"></span>
-        <button id="imuSetupBtn" class="top-bar-btn" title="sensor setup — x-IMU3 WiFi/USB, OSC sensors, mounting alignment, polarity, tare">⚙ sensors</button>
-        <button id="gestureBtn" class="top-bar-btn" title="gesture panel — IMU feature extraction, conditioning, joystick morpher (Shift+G)">◎ gesture</button>
-        <button id="mappingBtn" class="top-bar-btn" title="sensor mapping — map IMU axes to grain parameters">⇆ mapping</button>
-
       </div>
     </div>
   </div>
@@ -175,17 +209,50 @@
 
       <div class="device device--session">
         <div class="device-label">session</div>
-        <div class="device-body session-body" style="flex-direction:column;gap:0.3rem;padding:0.4rem 0.5rem;">
-          <div style="display:flex;gap:0.4rem;">
-            <button class="session-btn" id="sessionMuteBtn" title="mute — silence all audio output (M)"><span>mute</span> <span class="paint-key-badge">M</span></button>
-            <button class="session-btn" id="sessionUndoBtn" title="undo — remove last painted stroke, particles, buffer and any loop spawned from it"><span>undo</span> <span class="paint-key-badge">⌃Z</span></button>
-            <button class="session-btn" id="sessionSweepBtn" title="sweep — remove particles not used by active seeds or loops (-)&#10;if no seeds/loops active, clears all particles"><span>sweep</span> <span class="paint-key-badge">−</span></button>
+        <div class="device-body session-body">
+
+          <div class="seq-section">
+            <button class="session-btn" id="sessionUndoBtn" title="undo — remove last painted stroke, particles, buffer and any loop spawned from it">
+              <svg class="session-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h11a6 6 0 0 1 0 12h-4"/><polyline points="7 3 3 7 7 11"/></svg>
+              <span>undo</span> <span class="paint-key-badge">⌃Z</span>
+            </button>
           </div>
-          <div style="display:flex;gap:0.4rem;">
-            <button class="session-btn" id="cursorZeroTopBtn" title="tare cursor — set the cursor-assigned sensor's current orientation as zero reference. does not affect other sensors or send a hardware heading reset (`)"><span>tare cursor</span> <span class="paint-key-badge">`</span></button>
-            <button class="session-btn" id="sessionAltLockBtn" title="cursor lock — freeze cursor position to interact with UI&#10;hold Alt/Option while cursor is in the visualizer" disabled><span>lock cursor</span> <span class="paint-key-badge">Alt</span></button>
-            <button class="session-btn session-btn--danger" id="sessionEraseBtn" title="erase all — clear all particles, buffers and stroke history&#10;press Backspace ×3 to trigger from keyboard"><span>erase all</span> <span class="paint-key-badge">⌫×3</span></button>
+
+          <div class="seq-section seq-section--row">
+            <button class="session-btn" id="sessionSweepBtn" title="sweep — remove particles not used by active seeds or loops (-)&#10;if no seeds/loops active, clears all particles">
+              <svg class="session-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="3" x2="11" y2="11"/><path d="M11 11l-6 6c-1 1-1 3 0 4s3 1 4 0l6-6z"/><line x1="6" y1="18" x2="8" y2="20"/><line x1="14" y1="4" x2="20" y2="10"/></svg>
+              <span>sweep</span> <span class="paint-key-badge">−</span>
+            </button>
+            <button class="session-btn session-btn--danger" id="sessionEraseBtn" title="erase all — clear all particles, buffers and stroke history&#10;press Backspace ×3 to trigger from keyboard">
+              <svg class="session-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+              <span>erase all</span> <span class="paint-key-badge">⌫×3</span>
+            </button>
           </div>
+
+          <div class="seq-section seq-section--row">
+            <button class="session-btn" id="cursorTareBtn" title="tare cursor (`) — same as 'tare sensor' in the sensor modal, aimed at whichever sensor holds the cursor role.&#10;software only: stores the current pitch + yaw as the zero reference. does NOT send the hardware 'zero heading' command, and does not affect other sensors.">
+              <svg class="session-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><line x1="12" y1="3" x2="12" y2="7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="3" y1="12" x2="7" y2="12"/><line x1="17" y1="12" x2="21" y2="12"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></svg>
+              <span>tare cursor</span> <span class="paint-key-badge">`</span>
+            </button>
+            <button class="session-btn" id="sessionAltLockBtn" title="cursor lock — freeze cursor position to interact with UI&#10;hold Alt/Option while cursor is in the visualizer" disabled>
+              <svg class="session-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+              <span>lock cursor</span> <span class="paint-key-badge">Alt</span>
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="device device--erase">
+        <div class="device-label">erase</div>
+        <div class="device-body erase-body">
+          <div class="seq-section">
+            <button class="session-btn session-btn--danger" id="eraseHoldBtn" title="erase brush — hold to erase particles under the cursor.&#10;follows the cursor's search radius + recency: erases what the scan can hear, revealing older buffers underneath.&#10;hold F from keyboard · one-level undo (⌃Z) within 30s">
+              <svg class="session-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20H8"/><path d="M8.6 19.4l-5-5a2 2 0 0 1 0-2.8l8.8-8.8a2 2 0 0 1 2.8 0l5 5a2 2 0 0 1 0 2.8l-8.8 8.8a2 2 0 0 1-2.8 0z"/><line x1="8.5" y1="7.5" x2="16.5" y2="15.5"/></svg>
+              <span>erase</span> <span class="paint-key-badge">hold F</span>
+            </button>
+          </div>
+          <div class="erase-status">follows cursor · radius + recency</div>
         </div>
       </div>
 
@@ -211,6 +278,51 @@
         <div class="device-body envelope-body">
           <div class="envelope-waveform-wrap">
             <canvas id="presetWaveform"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Audio — exposes the most-used controls from the audio settings
+           modal (input channel, input gain, noise gate, master volume, dry
+           monitor). Every control here mirrors a modal element with the
+           same underlying state — panel drives modal via dispatched `input`
+           events so the modal's existing handlers do the actual work.
+           No live metering: the levels rail in .bottom-bar owns that. -->
+      <div class="device device--audio">
+        <div class="device-label">audio</div>
+        <div class="device-body audio-body">
+          <div class="grain-row" title="input — hardware channel routed into the main recording path">
+            <span class="grain-label">input</span>
+            <select class="grain-select" id="apInputChannelSelect">
+              <option value="0">ch 1</option>
+            </select>
+          </div>
+          <div class="grain-row" title="input gain — dB applied before the noise gate. In Electron, trim at the hardware interface; this row is hidden there. (double-click slider to reset)">
+            <span class="grain-label">in gain</span>
+            <input class="grain-slider" type="range" id="apInputGainSlider" min="-24" max="24" step="0.5" value="0" data-default="0">
+            <input type="text" class="grain-numbox" id="apInputGainNum" value="0.0 dB" readonly>
+          </div>
+          <div class="grain-row" title="noise gate — minimum RMS for the gate to open. Drag the threshold marker on the meter in the audio settings modal for a visual set. (double-click slider to reset)">
+            <span class="grain-label">gate</span>
+            <input class="grain-slider" type="range" id="apNoiseGateSlider" min="0" max="0.06" step="0.0001" value="0.002" data-default="0.002">
+            <input type="text" class="grain-numbox" id="apNoiseGateNum" value="0.002" readonly>
+          </div>
+          <div class="grain-row" title="dry monitor — spatialized live input pass-through to the house mix">
+            <span class="grain-label">dry mon</span>
+            <div class="grain-seg" id="apDryEnableSeg">
+              <button class="grain-seg-btn active" data-dry="off">off</button>
+              <button class="grain-seg-btn" data-dry="on">on</button>
+            </div>
+          </div>
+          <div class="grain-row" title="dry gain — spatialized input level in the house mix (double-click slider to reset)">
+            <span class="grain-label">dry gain</span>
+            <input class="grain-slider" type="range" id="apDryGainSlider" min="0" max="2" step="0.01" value="0.5" data-default="0.5">
+            <input type="text" class="grain-numbox" id="apDryGainNum" value="50%" readonly>
+          </div>
+          <div class="grain-row" title="master volume — global output gain (double-click slider to reset)">
+            <span class="grain-label">master</span>
+            <input class="grain-slider" type="range" id="apMasterGainSlider" min="-60" max="6" step="0.5" value="-6" data-default="-6">
+            <input type="text" class="grain-numbox" id="apMasterGainNum" value="−6.0 dB" readonly>
           </div>
         </div>
       </div>
@@ -251,15 +363,15 @@
             <!-- area — only visible when scope = area -->
             <div id="areaOnlyParams">
               <span class="seq-section-label" style="margin-top:6px">area</span>
-              <div class="grain-row" title="radius — search cone half-angle in degrees&#10;1° narrow beam to 180° full hemisphere">
+              <div class="grain-row" title="radius — search cone half-angle in degrees&#10;1° narrow beam to 180° full hemisphere (double-click slider to reset to 15°)">
                 <span class="grain-label">radius</span>
-                <input class="grain-slider" type="range" id="radiusSlider" min="1" max="180" step="1" value="10">
+                <input class="grain-slider" type="range" id="radiusSlider" min="1" max="180" step="1" value="10" data-default="15">
                 <input type="text" class="grain-numbox" id="radiusVal" value="10°">
                 <span class="param-lock-indicator" data-lock-key="searchRadiusDeg" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
-              <div class="grain-row" title="recency — limit selection to the n most recent recording buffers&#10;lower = only recent recordings, higher = older buffers included&#10;max position = all (no filter)">
+              <div class="grain-row" title="recency — limit selection to the n most recent recording buffers&#10;lower = only recent recordings, higher = older buffers included&#10;max position = all (no filter) (double-click slider to reset to 3)">
                 <span class="grain-label">recency</span>
-                <input class="grain-slider" type="range" id="recencySlider" min="1" max="17" step="1" value="3">
+                <input class="grain-slider" type="range" id="recencySlider" min="1" max="17" step="1" value="3" data-default="3">
                 <input type="text" class="grain-numbox" id="recencyVal" value="3">
                 <span class="param-lock-indicator" data-lock-key="recencyN" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
@@ -271,6 +383,24 @@
                 </div>
                 <span class="param-lock-indicator" data-lock-key="grainKAllMode" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
               </div>
+              <!-- fade + fade curve — moved here from the cursor panel (they
+                   describe how the search *area* attenuates at its edge, so
+                   they belong alongside radius / recency / fill). IDs kept
+                   so ui-search.js / patch-table bindings continue to work. -->
+              <div class="grain-row" title="radius fade — attenuate grains by distance from cursor centre&#10;ON: smooth volume fade at radius edge (no abrupt silence)&#10;OFF: all grains in radius play at full volume">
+                <span class="grain-label">fade</span>
+                <div class="grain-seg" id="radiusFadeSeg">
+                  <button class="grain-seg-btn" data-fade="on" title="on — volume fades with distance from cursor">on</button>
+                  <button class="grain-seg-btn active" data-fade="off" title="off — all grains in radius at full volume">off</button>
+                </div>
+                <span class="param-lock-indicator" data-lock-key="radiusFadeEnabled" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+              </div>
+              <div class="grain-row" id="radiusFadeCurveRow" style="opacity:0.35" title="fade curve — how aggressively volume drops based on distance from cursor centre to radius edge&#10;0% = gentle (linear)&#10;100% = steep (sharp edge rolloff)">
+                <span class="grain-label">curve</span>
+                <input class="grain-slider" type="range" id="radiusFadeCurveSlider" min="0" max="1" step="0.01" value="0.5">
+                <input type="text" class="grain-numbox" id="radiusFadeCurveNum" value="50%" readonly>
+                <span class="param-lock-indicator" data-lock-key="radiusFadeCurve" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+              </div>
             </div>
           </div>
 
@@ -280,123 +410,161 @@
       <div class="device device--grain">
         <div class="device-label">grain</div>
         <div class="device-body grain-body">
-          <div class="grain-row" title="dur — grain duration&#10;min: 2 samples (~0.045ms)  max: 4s&#10;log scale">
-            <span class="grain-label">dur</span>
-            <input class="grain-slider grain-slider--log" type="range" id="gcDurSlider" min="0" max="1000" step="1" value="432">
-            <input type="text" class="grain-numbox" id="gcDurNum" data-param="duration" value="180ms">
-            <span class="param-lock-indicator" data-lock-key="duration" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="dur ± — duration randomness&#10;min: 0ms  max: 500ms">
-            <span class="grain-label">dur ±</span>
-            <input class="grain-slider" type="range" id="gcDurVarSlider" min="0" max="750" step="1" value="0">
-            <input type="text" class="grain-numbox" id="gcDurVarNum" data-param="durVar" value="0ms">
-            <span class="param-lock-indicator" data-lock-key="durVar" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="dur jit — per-grain duration jitter (proportional)&#10;0% = no jitter  100% = ±100% of base duration">
-            <span class="grain-label">dur jit</span>
-            <input class="grain-slider" type="range" id="gcDurJitterSlider" min="0" max="100" step="1" value="0">
-            <input type="text" class="grain-numbox" id="gcDurJitterNum" data-param="durJitter" value="0%">
-            <span class="param-lock-indicator" data-lock-key="durJitter" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="fade — attack + release each as % of grain duration&#10;min: 0% (instant on/off)  max: 50% (pure envelope, no sustain)">
-            <span class="grain-label">fade</span>
-            <input class="grain-slider" type="range" id="gcFadeSlider" min="0" max="50" step="1" value="25">
-            <input type="text" class="grain-numbox" id="gcFadeNum" data-param="fadeRatio" value="25%">
-            <span class="param-lock-indicator" data-lock-key="fadeRatio" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="period — time between grains&#10;min: 1ms  max: 4s&#10;log scale">
-            <span class="grain-label">period</span>
-            <input class="grain-slider grain-slider--log" type="range" id="gcPeriodSlider" min="0" max="1000" step="1" value="389">
-            <input type="text" class="grain-numbox" id="gcPeriodNum" data-param="period" value="160ms">
-            <span class="param-lock-indicator" data-lock-key="period" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="overlap — grain overlap ratio = duration / period&#10;&lt;1 = gaps between grains  1 = grains just touch  &gt;1 = overlapping grains&#10;moving this slider adjusts duration to match">
-            <span class="grain-label">overlap</span>
-            <input class="grain-slider" type="range" id="gcOverlapSlider" min="0" max="1000" step="1" value="500">
-            <input type="text" class="grain-numbox" id="gcOverlapNum" data-param="overlap" value="1.0×">
-            <span class="param-lock-indicator" data-lock-key="overlap" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="per ± — period randomness&#10;min: 0ms  max: 500ms">
-            <span class="grain-label">per ±</span>
-            <input class="grain-slider" type="range" id="gcPeriodVarSlider" min="0" max="750" step="1" value="0">
-            <input type="text" class="grain-numbox" id="gcPeriodVarNum" data-param="periodVar" value="0ms">
-            <span class="param-lock-indicator" data-lock-key="periodVar" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="pitch — base pitch shift (semitones)&#10;centre: 0  range: ±24 semitones (2 octaves)">
-            <span class="grain-label">pitch</span>
-            <input class="grain-slider" type="range" id="gcPitchShiftSlider" min="-2400" max="2400" step="1" value="0">
-            <input type="text" class="grain-numbox" id="gcPitchShiftNum" data-param="pitchShift" value="0¢">
-            <button class="oct-btn" id="octDownBtn" title="−1 octave">−oct</button>
-            <button class="oct-btn" id="octResetBtn" title="reset pitch to 0">0</button>
-            <button class="oct-btn" id="octUpBtn" title="+1 octave">+oct</button>
-            <span class="param-lock-indicator" data-lock-key="pitchShift" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="pitch ± — random pitch spread per grain (±cents)&#10;min: 0¢  max: ±700¢">
-            <span class="grain-label">pitch ±</span>
-            <input class="grain-slider" type="range" id="gcPitchSlider" min="0" max="700" step="1" value="0">
-            <input type="text" class="grain-numbox" id="gcPitchNum" data-param="pitchJitter" value="±0¢">
-            <span class="param-lock-indicator" data-lock-key="pitchJitter" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="prob — probability of firing each grain&#10;min: 0% (never)  max: 100% (always)">
-            <span class="grain-label">prob</span>
-            <input class="grain-slider" type="range" id="gcProbSlider" min="0" max="1" step="0.01" value="1">
-            <input type="text" class="grain-numbox" id="gcProbNum" data-param="probability" value="100%">
-            <span class="param-lock-indicator" data-lock-key="probability" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="spread — stereo spread&#10;min: 0% (mono)  max: 100% (full spread)">
-            <span class="grain-label">spread</span>
-            <input class="grain-slider" type="range" id="gcPanSlider" min="0" max="1" step="0.01" value="0.6">
-            <input type="text" class="grain-numbox" id="gcPanNum" data-param="panSpread" value="60%">
-            <span class="param-lock-indicator" data-lock-key="panSpread" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="vol — grain volume (1.0 = unity / input parity)&#10;min: 0.001  max: 2.0">
-            <span class="grain-label">vol</span>
-            <input class="grain-slider" type="range" id="gcVolSlider" min="0.001" max="2.0" step="0.001" value="0.50">
-            <input type="text" class="grain-numbox" id="gcVolNum" data-param="volume" value="0.50">
-            <span class="param-lock-indicator" data-lock-key="volume" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="hpf — highpass filter cutoff frequency&#10;20 Hz = off (bypass)&#10;log scale 20 Hz – 20 kHz">
-            <span class="grain-label">hpf</span>
-            <input class="grain-slider grain-slider--log" type="range" id="gcHpfSlider" min="0" max="1000" step="1" value="0">
-            <input type="text" class="grain-numbox" id="gcHpfNum" data-param="hpfFreq" value="20 Hz">
-            <span class="param-lock-indicator" data-lock-key="hpfFreq" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="lpf — lowpass filter cutoff frequency&#10;20 kHz = off (bypass)&#10;log scale 20 Hz – 20 kHz">
-            <span class="grain-label">lpf</span>
-            <input class="grain-slider grain-slider--log" type="range" id="gcLpfSlider" min="0" max="1000" step="1" value="1000">
-            <input type="text" class="grain-numbox" id="gcLpfNum" data-param="lpfFreq" value="20.0k">
-            <span class="param-lock-indicator" data-lock-key="lpfFreq" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="Q — filter resonance (shared HPF/LPF)&#10;0.707 = Butterworth (flat)&#10;higher = resonant peak at cutoff">
-            <span class="grain-label">Q</span>
-            <input class="grain-slider" type="range" id="gcFilterQSlider" min="0.1" max="20" step="0.1" value="0.707">
-            <input type="text" class="grain-numbox" id="gcFilterQNum" data-param="filterQ" value="0.71">
-            <span class="param-lock-indicator" data-lock-key="filterQ" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="flt ± — per-grain filter cutoff randomisation&#10;0% = no jitter  100% = ±1 octave per grain">
-            <span class="grain-label">flt ±</span>
-            <input class="grain-slider" type="range" id="gcFilterJitterSlider" min="0" max="1" step="0.01" value="0">
-            <input type="text" class="grain-numbox" id="gcFilterJitterNum" data-param="filterFreqJitter" value="0%">
-            <span class="param-lock-indicator" data-lock-key="filterFreqJitter" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="dir — grain playback direction&#10;fwd: play sample forward&#10;rev: play sample backward&#10;rnd: random direction per grain">
-            <span class="grain-label">dir</span>
-            <div class="grain-seg" id="gcDirSeg">
-              <button class="grain-seg-btn active" data-dir="fwd" title="forward">▶</button>
-              <button class="grain-seg-btn" data-dir="rev" title="reverse">◀</button>
-              <button class="grain-seg-btn" data-dir="rnd" title="random direction per grain">⇄</button>
+
+          <!-- envelope: the composite grain shape — what each grain looks
+               like, how often it fires, and how grains stitch together. -->
+          <div class="seq-section">
+            <span class="seq-section-label">envelope</span>
+            <div class="grain-row" title="dur — grain duration&#10;min: 2 samples (~0.045ms)  max: 4s&#10;log scale">
+              <span class="grain-label">dur</span>
+              <input class="grain-slider grain-slider--log" type="range" id="gcDurSlider" min="0" max="1000" step="1" value="432">
+              <input type="text" class="grain-numbox" id="gcDurNum" data-param="duration" value="180ms">
+              <span class="param-lock-indicator" data-lock-key="duration" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
             </div>
-            <span class="param-lock-indicator" data-lock-key="direction" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-          </div>
-          <div class="grain-row" title="curve — grain envelope shape&#10;hann: smooth bell curve (default)&#10;tri: linear ramp up/down&#10;rect: flat (instant on/off, clicks at short durations)">
-            <span class="grain-label">curve</span>
-            <div class="grain-seg" id="gcCurveSeg">
-              <button class="grain-seg-btn active" data-curve="hann" title="hann — smooth bell curve">∿</button>
-              <button class="grain-seg-btn" data-curve="tri" title="triangle — linear ramp">⋀</button>
-              <button class="grain-seg-btn" data-curve="rect" title="rectangular — flat, instant on/off">⊓</button>
+            <div class="grain-row" title="period — time between grains&#10;min: 1ms  max: 4s&#10;log scale">
+              <span class="grain-label">period</span>
+              <input class="grain-slider grain-slider--log" type="range" id="gcPeriodSlider" min="0" max="1000" step="1" value="389">
+              <input type="text" class="grain-numbox" id="gcPeriodNum" data-param="period" value="160ms">
+              <span class="param-lock-indicator" data-lock-key="period" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
             </div>
-            <span class="param-lock-indicator" data-lock-key="curveType" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            <div class="grain-row" title="overlap — grain overlap ratio = duration / period&#10;&lt;1 = gaps between grains  1 = grains just touch  &gt;1 = overlapping grains&#10;moving this slider adjusts duration to match">
+              <span class="grain-label">overlap</span>
+              <input class="grain-slider" type="range" id="gcOverlapSlider" min="0" max="1000" step="1" value="500">
+              <input type="text" class="grain-numbox" id="gcOverlapNum" data-param="overlap" value="1.0×">
+              <span class="param-lock-indicator" data-lock-key="overlap" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+            <div class="grain-row" title="curve — grain envelope shape&#10;hann: smooth bell curve (default)&#10;tri: linear ramp up/down&#10;rect: flat (instant on/off, clicks at short durations)">
+              <span class="grain-label">curve</span>
+              <div class="grain-seg" id="gcCurveSeg">
+                <button class="grain-seg-btn active" data-curve="hann" title="hann — smooth bell curve">∿</button>
+                <button class="grain-seg-btn" data-curve="tri" title="triangle — linear ramp">⋀</button>
+                <button class="grain-seg-btn" data-curve="rect" title="rectangular — flat, instant on/off">⊓</button>
+              </div>
+              <span class="param-lock-indicator" data-lock-key="curveType" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+            <div class="grain-row" title="fade — attack + release each as % of grain duration&#10;min: 0% (instant on/off)  max: 50% (pure envelope, no sustain)">
+              <span class="grain-label">fade</span>
+              <input class="grain-slider" type="range" id="gcFadeSlider" min="0" max="50" step="1" value="25">
+              <input type="text" class="grain-numbox" id="gcFadeNum" data-param="fadeRatio" value="25%">
+              <span class="param-lock-indicator" data-lock-key="fadeRatio" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
           </div>
+
+          <!-- variation: randomness applied over the envelope — dur/period
+               jitter and firing probability. Separated from pitch ± / flt ±,
+               which stay with their own sections (a variation param's
+               domain matters more than its "jitter-ness" for legibility). -->
+          <div class="seq-section">
+            <span class="seq-section-label">variation</span>
+            <div class="grain-row" title="dur ± — duration randomness&#10;min: 0ms  max: 500ms">
+              <span class="grain-label">dur ±</span>
+              <input class="grain-slider" type="range" id="gcDurVarSlider" min="0" max="750" step="1" value="0">
+              <input type="text" class="grain-numbox" id="gcDurVarNum" data-param="durVar" value="0ms">
+              <span class="param-lock-indicator" data-lock-key="durVar" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+            <div class="grain-row" title="per ± — period randomness&#10;min: 0ms  max: 500ms">
+              <span class="grain-label">per ±</span>
+              <input class="grain-slider" type="range" id="gcPeriodVarSlider" min="0" max="750" step="1" value="0">
+              <input type="text" class="grain-numbox" id="gcPeriodVarNum" data-param="periodVar" value="0ms">
+              <span class="param-lock-indicator" data-lock-key="periodVar" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+            <div class="grain-row" title="dur jit — per-grain duration jitter (proportional)&#10;0% = no jitter  100% = ±100% of base duration">
+              <span class="grain-label">dur jit</span>
+              <input class="grain-slider" type="range" id="gcDurJitterSlider" min="0" max="100" step="1" value="0">
+              <input type="text" class="grain-numbox" id="gcDurJitterNum" data-param="durJitter" value="0%">
+              <span class="param-lock-indicator" data-lock-key="durJitter" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+            <div class="grain-row" title="prob — probability of firing each grain&#10;min: 0% (never)  max: 100% (always)">
+              <span class="grain-label">prob</span>
+              <input class="grain-slider" type="range" id="gcProbSlider" min="0" max="1" step="0.01" value="1">
+              <input type="text" class="grain-numbox" id="gcProbNum" data-param="probability" value="100%">
+              <span class="param-lock-indicator" data-lock-key="probability" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+          </div>
+
+          <!-- pitch: transposition + playback direction -->
+          <div class="seq-section">
+            <span class="seq-section-label">pitch</span>
+            <div class="grain-row" title="pitch — base pitch shift (cents)&#10;centre: 0  range: ±2400¢ (2 octaves)">
+              <span class="grain-label">pitch</span>
+              <input class="grain-slider" type="range" id="gcPitchShiftSlider" min="-2400" max="2400" step="1" value="0">
+              <input type="text" class="grain-numbox" id="gcPitchShiftNum" data-param="pitchShift" value="0¢">
+              <span class="param-lock-indicator" data-lock-key="pitchShift" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+            <!-- Octave shortcuts get their own row: the seg is flex:0 0 auto and
+                 never shrinks, so sharing a row with the slider starved the
+                 slider to zero width in the narrow tiers. Unlabeled + right-
+                 aligned, so it reads as a continuation of the pitch row above. -->
+            <div class="grain-row grain-row--oct" title="octave shortcuts — jump the pitch shift by ±1200¢, or reset to 0">
+              <div class="grain-seg oct-seg">
+                <button class="oct-btn" id="octDownBtn" title="−1 octave">−oct</button>
+                <button class="oct-btn" id="octResetBtn" title="reset pitch to 0">0</button>
+                <button class="oct-btn" id="octUpBtn" title="+1 octave">+oct</button>
+              </div>
+            </div>
+            <div class="grain-row" title="pitch ± — random pitch spread per grain (±cents)&#10;min: 0¢  max: ±700¢">
+              <span class="grain-label">pitch ±</span>
+              <input class="grain-slider" type="range" id="gcPitchSlider" min="0" max="700" step="1" value="0">
+              <input type="text" class="grain-numbox" id="gcPitchNum" data-param="pitchJitter" value="±0¢">
+              <span class="param-lock-indicator" data-lock-key="pitchJitter" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+            <div class="grain-row" title="dir — grain playback direction&#10;fwd: play sample forward&#10;rev: play sample backward&#10;rnd: random direction per grain">
+              <span class="grain-label">dir</span>
+              <div class="grain-seg" id="gcDirSeg">
+                <button class="grain-seg-btn active" data-dir="fwd" title="forward">▶</button>
+                <button class="grain-seg-btn" data-dir="rev" title="reverse">◀</button>
+                <button class="grain-seg-btn" data-dir="rnd" title="random direction per grain">⇄</button>
+              </div>
+              <span class="param-lock-indicator" data-lock-key="direction" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+          </div>
+
+          <!-- filter: spectral shaping -->
+          <div class="seq-section">
+            <span class="seq-section-label">filter</span>
+            <div class="grain-row" title="hpf — highpass filter cutoff frequency&#10;20 Hz = off (bypass)&#10;log scale 20 Hz – 20 kHz">
+              <span class="grain-label">hpf</span>
+              <input class="grain-slider grain-slider--log" type="range" id="gcHpfSlider" min="0" max="1000" step="1" value="0">
+              <input type="text" class="grain-numbox" id="gcHpfNum" data-param="hpfFreq" value="20 Hz">
+              <span class="param-lock-indicator" data-lock-key="hpfFreq" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+            <div class="grain-row" title="lpf — lowpass filter cutoff frequency&#10;20 kHz = off (bypass)&#10;log scale 20 Hz – 20 kHz">
+              <span class="grain-label">lpf</span>
+              <input class="grain-slider grain-slider--log" type="range" id="gcLpfSlider" min="0" max="1000" step="1" value="1000">
+              <input type="text" class="grain-numbox" id="gcLpfNum" data-param="lpfFreq" value="20.0k">
+              <span class="param-lock-indicator" data-lock-key="lpfFreq" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+            <div class="grain-row" title="Q — filter resonance (shared HPF/LPF)&#10;0.707 = Butterworth (flat)&#10;higher = resonant peak at cutoff">
+              <span class="grain-label">Q</span>
+              <input class="grain-slider" type="range" id="gcFilterQSlider" min="0.1" max="20" step="0.1" value="0.707">
+              <input type="text" class="grain-numbox" id="gcFilterQNum" data-param="filterQ" value="0.71">
+              <span class="param-lock-indicator" data-lock-key="filterQ" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+            <div class="grain-row" title="flt ± — per-grain filter cutoff randomisation&#10;0% = no jitter  100% = ±1 octave per grain">
+              <span class="grain-label">flt ±</span>
+              <input class="grain-slider" type="range" id="gcFilterJitterSlider" min="0" max="1" step="0.01" value="0">
+              <input type="text" class="grain-numbox" id="gcFilterJitterNum" data-param="filterFreqJitter" value="0%">
+              <span class="param-lock-indicator" data-lock-key="filterFreqJitter" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+          </div>
+
+          <!-- output: gain + stereo spread -->
+          <div class="seq-section">
+            <span class="seq-section-label">output</span>
+            <div class="grain-row" title="spread — stereo spread&#10;min: 0% (mono)  max: 100% (full spread)">
+              <span class="grain-label">spread</span>
+              <input class="grain-slider" type="range" id="gcPanSlider" min="0" max="1" step="0.01" value="0.6">
+              <input type="text" class="grain-numbox" id="gcPanNum" data-param="panSpread" value="60%">
+              <span class="param-lock-indicator" data-lock-key="panSpread" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+            <div class="grain-row" title="vol — grain volume (1.0 = unity / input parity)&#10;min: 0.001  max: 2.0">
+              <span class="grain-label">vol</span>
+              <input class="grain-slider" type="range" id="gcVolSlider" min="0.001" max="2.0" step="0.001" value="0.50">
+              <input type="text" class="grain-numbox" id="gcVolNum" data-param="volume" value="0.50">
+              <span class="param-lock-indicator" data-lock-key="volume" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -504,20 +672,6 @@
           <div class="seq-section seq-section--collapsible" data-collapse-key="cursorAllParams">
             <span class="seq-section-label seq-section-toggle">params</span>
             <div class="seq-section-body">
-              <div class="grain-row" title="radius fade — attenuate grains by distance from cursor centre&#10;ON: smooth volume fade at radius edge (no abrupt silence)&#10;OFF: all grains in radius play at full volume">
-                <span class="grain-label">fade</span>
-                <div class="grain-seg" id="radiusFadeSeg">
-                  <button class="grain-seg-btn" data-fade="on" title="on — volume fades with distance from cursor">on</button>
-                  <button class="grain-seg-btn active" data-fade="off" title="off — all grains in radius at full volume">off</button>
-                </div>
-                <span class="param-lock-indicator" data-lock-key="radiusFadeEnabled" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-              </div>
-              <div class="grain-row" id="radiusFadeCurveRow" style="opacity:0.35" title="fade curve — how aggressively volume drops based on distance from cursor centre to radius edge&#10;0% = gentle (linear)&#10;100% = steep (sharp edge rolloff)">
-                <span class="grain-label">curve</span>
-                <input class="grain-slider" type="range" id="radiusFadeCurveSlider" min="0" max="1" step="0.01" value="0.5">
-                <input type="text" class="grain-numbox" id="radiusFadeCurveNum" value="50%" readonly>
-                <span class="param-lock-indicator" data-lock-key="radiusFadeCurve" title="locked — this param holds through preset changes and is excluded from patch saves. lock/unlock in patch table." style="display:none">🔒</span>
-              </div>
               <div class="grain-row" title="lock azimuth — toggle to freeze horizontal position&#10;only elevation will move while locked">
                 <span class="grain-label">azimuth</span>
                 <div class="grain-seg" id="axisLockAzSeg">
@@ -639,12 +793,14 @@
             <div class="seq-section-body">
               <div class="grain-row" title="number of active commit slots (1–16)">
                 <span class="grain-label">count</span>
-                <select class="grain-select" id="commitSlotCountSelect">
-                  <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
-                  <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8" selected>8</option>
-                  <option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option>
-                  <option value="13">13</option><option value="14">14</option><option value="15">15</option><option value="16">16</option>
-                </select>
+                <!-- Slider keeps the legacy `commitSlotCountSelect` ID so existing
+                     code that does `sel.value = String(S.commitSlotCount)` (from
+                     osc.js, midi.js, ui-patch-table.js) continues to work on a
+                     range input without edits. The numbox is editable and lets
+                     the performer type an exact value; both elements stay in
+                     sync via _wireCommitSlotCountCount() in ui-meters.js. -->
+                <input class="grain-slider" type="range" id="commitSlotCountSelect" min="1" max="16" step="1" value="8">
+                <input type="text" class="grain-numbox" id="commitSlotCountNum" value="8">
                 <span class="param-lock-indicator" data-lock-key="commitSlotCount" title="locked" style="display:none">🔒</span>
               </div>
               <div class="grain-row" title="overflow — what happens when all slots are full&#10;off: can't add more&#10;oldest: replace the oldest commit&#10;nearest: replace the commit closest to cursor">
@@ -750,7 +906,7 @@
           </div>
 
           <!-- Morph (collapsible) -->
-          <div class="seq-section seq-section--collapsible seed-section--morph" id="desktopMorphSection" data-collapse-key="seedMorph">
+          <div class="seq-section seq-section--collapsible seed-section--morph collapsed" id="desktopMorphSection" data-collapse-key="seedMorph">
             <span class="seq-section-label seq-section-toggle">cloud morph</span>
             <div class="seq-section-body">
               <div class="morph-slider-row">
@@ -778,47 +934,66 @@
       </div>
 
 
-      <!-- Levels: input + output meters -->
-      <div class="device device--meters">
-        <div class="device-label">levels</div>
-        <div class="device-body meters-body-v2">
-
-          <!-- noise gate meter (read-only — set threshold in audio settings) -->
-          <div class="seq-section levels-section--gate">
-            <span class="seq-section-label">noise gate</span>
-            <canvas id="mainGateMeter" class="as-gate-meter main-gate-meter" width="400" height="28"
-              title="noise gate level — adjust threshold in audio settings"></canvas>
-            <span class="as-val main-gate-val" id="mainNoiseGateVal"></span>
-          </div>
-
-          <!-- meters row -->
-          <div class="seq-section levels-section--meters">
-            <div class="levels-meters-row">
-              <div class="levels-meter-col">
-                <span class="seq-section-label">input</span>
-                <div id="mainInputMeters" class="as-multi-meter-wrap main-meter-dom"></div>
-              </div>
-              <div class="levels-meter-col" id="mainHouseGroup">
-                <span class="seq-section-label">house</span>
-                <div id="mainHouseMeters" class="as-multi-meter-wrap main-meter-dom"></div>
-              </div>
-              <div class="levels-meter-col" id="mainMixGroup" hidden>
-                <span class="seq-section-label">phones</span>
-                <div id="mainMixMeters" class="as-multi-meter-wrap main-meter-dom"></div>
-              </div>
-              <div class="levels-meter-col" id="mainDryGroup">
-                <span class="seq-section-label">dry</span>
-                <div id="mainDryMeters" class="as-multi-meter-wrap main-meter-dom"></div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
-
     </div><!-- end .right-panel -->
 
   </div><!-- end .main-layout -->
+
+  <!-- Always-on-top bottom footer: levels + sensor controls.
+       Replaces the former .device--meters panel and the top-bar sensor-group
+       row — both are persistent monitoring widgets that belong together in a
+       pinned bar rather than competing for panel real estate. -->
+  <div class="bottom-bar">
+    <div class="bottom-bar-left">
+      <!-- Mute (kept on the bar so it's reachable during performance) -->
+      <button class="session-btn bottom-bar-mute" id="sessionMuteBtn" title="mute — silence all audio output (M)">
+        <svg class="session-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>
+        <span>mute</span> <span class="paint-key-badge">M</span>
+      </button>
+
+      <!-- Levels rail — order: input, gate, dry, phones, house.
+           The gate sits in the same row as the level meters (rather than
+           off on its own) so the whole rail reads as a single unified
+           set of vertical monitors. Gate canvas keeps the .bottom-bar-gate
+           class for its specific styling (fixed 12px × 48px). -->
+      <div class="levels-meters-row bottom-bar-meters">
+        <div class="levels-meter-col">
+          <span class="bottom-bar-label">input</span>
+          <div id="mainInputMeters" class="as-multi-meter-wrap main-meter-dom"></div>
+        </div>
+        <div class="levels-meter-col bottom-bar-gate">
+          <span class="bottom-bar-label">gate</span>
+          <canvas id="mainGateMeter" class="as-gate-meter main-gate-meter" width="400" height="28"
+            title="noise gate level — adjust threshold in audio settings"></canvas>
+          <span class="as-val main-gate-val" id="mainNoiseGateVal"></span>
+        </div>
+        <div class="levels-meter-col" id="mainDryGroup">
+          <span class="bottom-bar-label">dry</span>
+          <div id="mainDryMeters" class="as-multi-meter-wrap main-meter-dom"></div>
+        </div>
+        <div class="levels-meter-col" id="mainMixGroup" hidden>
+          <span class="bottom-bar-label">phones</span>
+          <div id="mainMixMeters" class="as-multi-meter-wrap main-meter-dom"></div>
+        </div>
+        <div class="levels-meter-col" id="mainHouseGroup">
+          <span class="bottom-bar-label">house</span>
+          <div id="mainHouseMeters" class="as-multi-meter-wrap main-meter-dom"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bottom-bar-right sensor-group no-sensor" id="sensorGroup">
+      <span class="osc-indicator" id="oscIndicator" title="OSC bridge active — any OSC peer (Max, joycon GUI, etc.)">● OSC</span>
+      <span class="sensor-group-label">sensor</span>
+      <span class="sensor-group-status" id="sensorGroupStatus"></span>
+      <span class="sensor-switch-btns" id="sensorSwitchBtns"></span>
+      <button id="imuSetupBtn" class="top-bar-btn" title="sensor setup — x-IMU3 WiFi/USB, OSC sensors, mounting alignment, polarity, tare">⚙ sensors</button>
+      <button id="ximuLedBtn" class="top-bar-btn" title="x-IMU3 LED feedback — off. click to open the mapping table.">○ feedback</button>
+      <button id="gestureBtn" class="top-bar-btn" title="gesture panel — IMU feature extraction, conditioning, joystick morpher (Shift+G)">◎ gesture</button>
+      <button id="mappingBtn" class="top-bar-btn" title="sensor mapping — map IMU axes to grain parameters">⇆ mapping</button>
+      <button id="stagingBtn" class="top-bar-btn" title="staging — snapshot-based posture macros">◇ staging</button>
+      <button id="accessoryBtn" class="top-bar-btn" title="accessory — x-IMU3 serial accessory (SA-A8): 8 analogue channels, pots / sliders / buttons.&#10;nothing arriving — plug it into the sensor.">○ accessory</button>
+    </div>
+  </div>
 
   <!-- Sample instrument modal -->
   <div id="sampleModal" class="mu-overlay">
@@ -843,36 +1018,181 @@
 
   <!-- Legacy meter canvases removed — DOM-based meters used throughout -->
 
-<!-- ── Camera mode modal ──────────────────────────────────────────────────── -->
-<div id="cameraModal" class="mu-overlay">
-  <div class="camera-dialog mu-dialog">
-    <h2>camera <button class="close-btn" id="cameraModalClose">✕</button></h2>
-    <div class="camera-modes">
-      <button class="camera-mode-option active" data-mode="pull">
-        <span class="camera-mode-name">pull</span>
-        <span class="camera-mode-desc">mouse or trackpad pulls the sphere from center. cursor follows mouse position. default mode.</span>
-      </button>
-      <button class="camera-mode-option" data-mode="surface">
-        <span class="camera-mode-name">surface</span>
-        <span class="camera-mode-desc">pointer lock captures trackpad or mouse. swipe to rotate freely around the sphere. cursor hidden, paint target is center. alt to unlock.</span>
-      </button>
-      <button class="camera-mode-option" data-mode="sensor">
-        <span class="camera-mode-name">sensor</span>
-        <span class="camera-mode-desc">mubone IMU sensor drives camera orientation. cursor hidden, paint target is center. mouse is free for UI.</span>
-        <span class="camera-sensor-subtitle" style="display:none"></span>
-      </button>
+<!-- Camera mode modal removed 2026-08-01 — replaced by the segmented picker in
+     the top bar. Its per-mode descriptions now live in the chip tooltips. -->
+
+<!-- ── MIDI / Keyboard mapping modal ──────────────────────────────────────── -->
+<!-- ── Accessory modal (x-IMU3 serial accessory) ───────────────────────────── -->
+<div id="accessoryModal" class="mu-overlay">
+  <div class="accessory-dialog mu-dialog">
+    <h2>
+      accessory — 8 analogue channels
+      <button class="close-btn" id="accessoryClose">✕</button>
+    </h2>
+    <div class="accessory-status">
+      <span class="acc-pill" id="accStatusPill">no accessory</span>
+      <span class="acc-meta" id="accStatusMeta"></span>
+      <button class="learn-btn" id="accModeBtn" hidden>set serial mode to accessory</button>
     </div>
+    <table class="mapping-table accessory-table">
+      <thead>
+        <tr>
+          <th>pad</th>
+          <th>volts</th>
+          <th>value</th>
+          <th>type</th>
+          <th>destination</th>
+          <th title="hardware sweep learned by calibrate — the raw voltage span of the pot">input</th>
+          <th title="output window in the destination's own units — where the two ends of the pot's travel land">min</th>
+          <th title="output window in the destination's own units — where the two ends of the pot's travel land">max</th>
+          <th title="response curve exponent — 1 linear, above 1 gives fine control at the bottom of the throw, below 1 at the top">curve</th>
+          <th>calibrate</th>
+          <th>invert</th>
+        </tr>
+      </thead>
+      <tbody id="accessoryTableBody"></tbody>
+    </table>
+    <p class="mapping-legend">
+      <strong>pad</strong> — matches the silkscreen on the accessory board.
+      <code>−</code> and <code>+</code> are ground and the 3.0 V rail; pads 1–8 are the inputs.
+      <br>
+      <strong>type</strong> — <code>pot</code> and <code>slider</code> are continuous and can
+      drive any value destination. <code>button</code> is on/off and can only target
+      bang or hold actions. Changing the type re-filters the destination list.
+      <br>
+      <strong>calibrate</strong> — click, sweep the control through its full travel, click again.
+      Pots rarely reach the rails, so this maps whatever range the hardware actually
+      produces onto 0–1. Buttons don't need it. A sweep narrower than 0.05 V is
+      rejected as a mis-click rather than saved.
+      <br>
+      <strong>min / max</strong> — where the two ends of the pot's travel land, in the
+      destination's own units. Leave them at the full span for the whole range, or
+      narrow them to spend the entire throw on the part you actually play —
+      <code>−600 ¢</code> to <code>+600 ¢</code> turns a two-octave pitch control into
+      a usable semitone one. Swapping them so min is above max reverses the throw.
+      <br>
+      <strong>curve</strong> — response exponent. <code>1</code> is linear; above 1 packs
+      more travel into the bottom of the range (fine control down low, coarse up top),
+      below 1 does the reverse. Double-click to reset min, max and curve together.
+      <br>
+      <strong>bangs vs holds</strong> — a bang action (undo, sweep) fires on press only.
+      A hold action (erase brush) is on while held and releases when you let go —
+      including if the accessory is unplugged mid-hold, so nothing sticks on.
+      Continuous channels freeze at their last value on unplug rather than dropping to zero.
+    </p>
   </div>
 </div>
 
-<!-- ── MIDI / Keyboard mapping modal ──────────────────────────────────────── -->
+<!-- ── x-IMU3 LED mapping modal ────────────────────────────────────────────── -->
+<div id="ledModal" class="mu-overlay">
+  <div class="led-dialog mu-dialog">
+    <h2>
+      x-imu3 led mapping
+      <button class="close-btn" id="ledClose">✕</button>
+    </h2>
+    <div class="accessory-status">
+      <span class="acc-pill" id="ledMasterPill">feedback off</span>
+      <span class="acc-meta" id="ledStatusMeta"></span>
+      <span class="led-swatch led-timbre-chip" id="ledTimbreChip" hidden></span>
+      <span class="acc-meta led-activity" id="ledTimbreStatus" hidden></span>
+      <span class="acc-meta led-activity" id="ledActivity"></span>
+      <button class="learn-btn" id="ledMasterToggle">turn on</button>
+      <button class="learn-btn" id="ledResetBtn">reset to defaults</button>
+    </div>
+    <table class="mapping-table led-table">
+      <thead>
+        <tr>
+          <th>on</th>
+          <th>function</th>
+          <th>colour</th>
+          <th>pattern</th>
+          <th>count</th>
+          <th>rate</th>
+          <th>test</th>
+        </tr>
+      </thead>
+      <tbody id="ledTableBody"></tbody>
+    </table>
+    <p class="mapping-legend">
+      <strong>states vs events</strong> — a state is held for as long as its condition is
+      true, and exactly one is active at a time. An event fires once and then the
+      current state resumes. An event interrupts a running state pattern rather than
+      layering over it.
+      <br>
+      <strong>patterns</strong> — <code>solid</code> is a held colour.
+      <code>slow</code> (1.5 Hz) and <code>fast</code> (5 Hz) are on/off blinks.
+      <code>pulse</code> breathes through eight brightness steps per cycle.
+      <code>flash</code> is the crisp 90 ms blip used for events.
+      For events, <strong>count</strong> is how many times the pattern repeats.
+      <br>
+      <strong>slow ⇄ timbre</strong> and <strong>fast ⇄ timbre</strong> alternate the
+      row's colour with the live scan timbre instead of with black, so the LED carries
+      two facts at once — e.g. muted on white/fast tells you the output is dead
+      <em>and</em> what you'd be hearing if it weren't. Costs no more than plain
+      slow/fast: same two edges per cycle, the off-phase is just a different colour.
+      Falls back to black when nothing is under the cursor rather than holding a stale
+      colour. Not offered on <code>scan</code>, where it would interleave timbre with
+      itself.
+      <br>
+      <strong>timbre</strong> is offered on the <code>scan</code> row only — it's a
+      colour <em>source</em> rather than a pattern, and it can only mean something
+      while the cursor is granulating. It paints the LED with the same colour the
+      visualiser gives <em>the particles the cursor would fire from right now</em> —
+      the scheduler's own candidate pool, weighted so material at the centre of the
+      radius dominates. Bass regions blue, bright regions orange, noisy material
+      desaturated. Reading the pool rather than the grains that happen to be sounding
+      keeps the response independent of <code>dur</code> and <code>period</code>: the
+      colour tracks the cursor, not the grain clock. When nothing is in radius the
+      state falls back to <code>idle</code>, so silence reads as whatever idle is set
+      to (black by default). The readout up top shows the live colour and how many
+      particles are in range, or names what's missing. Hue matches the screen exactly;
+      saturation is stretched and lightness lowered because the emitter washes the
+      viz's pale end out to white. When the cursor isn't firing, the last colour is
+      held rather than going dark.
+      <br>
+      <strong>rate</strong> — messages per second sent to the sensor while the row is
+      running (plus burst length, for events). The x-IMU3 has no device-side blink
+      with colour or rate control, so every on and off edge is a message from here.
+      On WiFi those share the radio with the inbound data frames: if raw readings ever
+      start looking glitchy, this column is where to look first. Only the sensor
+      holding the <code>cursor</code> role ever animates — the others get a single
+      solid idle write.
+      <br>
+      <strong>disabling a state</strong> falls back to idle rather than to the
+      firmware's own colour. Disabling <code>idle</code> itself releases the override
+      entirely and hands the LED back to the firmware.
+      <br>
+      <strong>live readout</strong> — the state row driving the LED right now carries a
+      <code>▸</code> marker, and events flash their row as they fire. The defaults
+      reproduce the palette that used to be hardcoded, so this is how you confirm the
+      table is what's actually driving the sensor. If an event doesn't fire, the
+      readout up top says why (<code>row off</code>, <code>no cursor x-imu3</code>,
+      <code>feedback off</code>).
+    </p>
+  </div>
+</div>
+
 <div id="mappingModal" class="mu-overlay">
   <div class="mapping-dialog mu-dialog">
-    <h2>
-      keys / midi / osc
-      <button class="close-btn" id="mappingClose">✕</button>
-    </h2>
-    <div class="mapping-status" id="mappingStatus"></div>
+    <!-- Header + filter are one sticky block: the dialog is the scroll
+         container, so anything not pinned here scrolls away from a 100-row
+         table.  Filter exists because cmd+F is a no-op in the Electron build
+         (no app menu, no findInPage) — it matches every column of the row
+         plus its group heading. -->
+    <div class="mapping-header">
+      <h2>
+        keys / midi / osc
+        <button class="close-btn" id="mappingClose">✕</button>
+      </h2>
+      <div class="mapping-filter-row">
+        <input type="text" id="mappingFilter" class="mapping-filter"
+               placeholder="filter — name, group, key, midi or osc path (space = AND)"
+               autocomplete="off" spellcheck="false">
+        <button id="mappingFilterClear" class="mapping-filter-clear" title="clear filter (esc)">✕</button>
+        <span class="mapping-filter-count" id="mappingFilterCount"></span>
+      </div>
+      <div class="mapping-status" id="mappingStatus"></div>
+    </div>
     <table class="mapping-table">
       <thead>
         <tr>
@@ -881,17 +1201,68 @@
           <th>key override</th>
           <th>key learn</th>
           <th>midi</th>
-          <th>midi learn</th>
-          <th>osc</th>
-          <th>data</th>
+          <th class="col-flex">midi learn</th>
+          <th class="col-right">osc</th>
+          <th class="col-right">data</th>
         </tr>
       </thead>
       <tbody id="mappingTableBody"></tbody>
     </table>
+    <p class="mapping-legend">
+      <strong>data column</strong> — describes what the OSC endpoint accepts.
+      <code>bang</code> = zero-argument message (just the address, no value).
+      <code>int n|m</code> = integer with listed options.
+      <code>int a–b</code> / <code>float a–b u</code> = numeric range in unit <code>u</code>.
+      <br>
+      <strong>how bangs are triggered</strong> —
+      <em>OSC</em>: send the address with no args (any args are accepted but ignored).
+      <em>MIDI</em>: bang-type actions mapped to a CC fire once on press (value &gt; 0);
+      the matching value-0 release is dropped, so Softwave-style "trigger" mode
+      (sends 127 then 0) produces exactly one action per tap.
+      Note-on/off works the same way — note-on fires, note-off is ignored for bangs.
+    </p>
+    <p class="mapping-legend">
+      <strong>driving this window from Max</strong> —
+      simplest: <code>[udpsend 127.0.0.1 <span class="js-osc-port">7500</span>]</code>
+      and send messages exactly as the osc column shows, e.g. <code>/preset 3</code>
+      or <code>/trace 1</code>. This window is <strong><span id="oscStationInline">solo</span></strong>.
+      <br>
+      <strong>multi-station via max/bridge.js</strong> —
+      run <code>[node.script bridge.js]</code> in the patch, send <code>setmode electron</code>
+      once, then every message routes to the selected station
+      (a=7500&ensp;b=7510&ensp;c=7520):
+      <code>setstation b</code> = following messages go to station b ·
+      <code>setstation all</code> = go to every station ·
+      <code>to b /trace 1</code> = one-shot to b without changing the selection ·
+      <code>setstations a b c</code> = define what "all" means.
+      Anything else passes through to the station unchanged.
+    </p>
     <div class="mapping-footer">
+      <span>osc in: <span id="oscPortDisplay">—</span></span>
       <span>midi in: <span id="midiPortName">—</span></span>
+      <button id="midiInputToggle" title="enable/disable MIDI input for this instance&#10;multi-station: turn OFF on stations driven by OSC — a shared MIDI pedal is otherwise heard by every instance at once">midi: on</button>
       <button id="clearAllKeys">clear all keys</button>
       <button id="clearAllMidi">clear all midi</button>
+    </div>
+
+    <!-- Live monitor — shows every inbound MIDI + OSC message.  Updates only
+         while the modal is open (listener is gated by modal visibility). -->
+    <div class="io-monitor">
+      <div class="io-monitor-header">
+        <span class="io-monitor-title">live monitor</span>
+        <label class="io-monitor-pause"><input type="checkbox" id="ioMonPause"> pause</label>
+        <button id="ioMonClear" class="io-monitor-clear">clear</button>
+      </div>
+      <div class="io-monitor-cols">
+        <div class="io-monitor-col">
+          <div class="io-monitor-col-label">midi <span id="ioMonMidiCount" class="io-monitor-count">0</span></div>
+          <pre id="ioMonMidiLog" class="io-monitor-log"></pre>
+        </div>
+        <div class="io-monitor-col">
+          <div class="io-monitor-col-label">osc <span id="ioMonOscCount" class="io-monitor-count">0</span></div>
+          <pre id="ioMonOscLog" class="io-monitor-log"></pre>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -963,7 +1334,7 @@
       <!-- ── Right column: connected device cards ── -->
       <div class="imu-setup-right">
         <div id="imuSetupCards">
-          <div class="imu-setup-empty">no devices connected — connect a sensor from the left panel</div>
+          <div class="imu-setup-empty">no devices connected — connect a sensor from the list</div>
         </div>
       </div>
 
@@ -975,13 +1346,24 @@
 <div id="sensorMappingModal" class="mu-overlay">
   <div class="sensor-mapping-dialog mu-dialog">
     <h2>sensor mapping <button class="close-btn" id="sensorMappingClose">✕</button></h2>
-    <div class="mapping-hint">map IMU axes to grain parameters — each mapping connects one sensor axis to one grain param</div>
+    <div class="mapping-hint">map IMU axes to grain parameters, MIDI CC, or OSC — one sensor axis per destination</div>
     <div id="sensorMappingList" class="mapping-list">
       <!-- populated dynamically by ui-sensor-mapping.js -->
     </div>
     <div class="mapping-add-row">
       <button id="sensorMappingAddBtn" class="mapping-add-btn" title="add a new axis-to-param mapping">+ add mapping</button>
       <button id="sensorMappingClearBtn" class="mapping-clear-btn" title="remove all mappings">clear all</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Staging modal (exp: posture-snapshot engine) ───────────────────────── -->
+<div id="stagingModal" class="mu-overlay">
+  <div class="staging-dialog mu-dialog">
+    <h2>staging — posture snapshots <button class="close-btn" id="stagingClose">✕</button></h2>
+    <div class="mapping-hint">drop snapshots at postures, each with per-channel values — live output is interpolated between snapshots by relational Δ-euler distance</div>
+    <div class="staging-dialog-body">
+      <!-- populated dynamically by js/ui-staging.js -->
     </div>
   </div>
 </div>
@@ -1180,10 +1562,10 @@
       <div id="asInputMappingTable" style="display:none"></div>
 
       <!-- Input gain (browser only; hidden in Electron — use hardware trim) -->
-      <div class="as-row">
+      <div class="as-row" title="double-click slider to reset to 0 dB">
         <span class="as-label">input gain</span>
         <input type="range" id="asInputGain" class="as-slider"
-               min="-24" max="24" step="0.5" value="0">
+               min="-24" max="24" step="0.5" value="0" data-default="0">
         <span class="as-val" id="asInputGainVal">0.0 dB</span>
       </div>
 
@@ -1312,20 +1694,23 @@
       <!-- Hidden in browser (no device picker, no explicit routing) -->
       <div id="asRoutingTable" style="display:none"></div>
 
+      <!-- Sweep sits directly ABOVE master vol: its level follows that slider,
+           so the control you reach for while it loops is the next thing down
+           rather than two rows away past the status strip. -->
+      <div class="as-row as-row--sweep">
+        <button class="as-btn" id="asTestBtn" title="play a noise burst through each output channel in turn, so you can check every speaker is live and in the position you think it is.&#10;level follows the master vol slider below — ride it while the sweep loops.">speaker sweep</button>
+      </div>
+
       <!-- Master volume -->
-      <div class="as-row">
+      <div class="as-row" title="double-click slider to reset to −6 dB">
         <span class="as-label">master vol</span>
         <input type="range" id="asOutputGain" class="as-slider"
-               min="-60" max="6" step="0.5" value="-6">
+               min="-60" max="6" step="0.5" value="-6" data-default="-6">
         <span class="as-val" id="asOutputGainVal">−6.0 dB</span>
       </div>
 
       <div class="status-strip idle" id="asOutputStatus">no output active</div>
       <div class="as-note" id="asOutputNote">output device: set in System Settings → Sound</div>
-
-      <div class="as-row as-row--sweep">
-        <button class="as-btn" id="asTestBtn">speaker sweep</button>
-      </div>
 
       <!-- ── Headphone mix (stereo mixdown bus) ──────────────────────────── -->
       <div id="mainMixdownGroup" hidden style="margin-top: 0.6rem">
@@ -1352,10 +1737,10 @@
           <span class="as-label">enabled</span>
           <input type="checkbox" id="dryMonitorEnabledChk" style="margin-left:0.5rem">
         </div>
-        <div class="as-row" title="dry gain — level of spatialized live input in the house mix">
+        <div class="as-row" title="dry gain — level of spatialized live input in the house mix (double-click slider to reset to 50%)">
           <span class="as-label">gain</span>
           <input type="range" id="dryMonitorGainSlider" class="as-slider"
-                 min="0" max="2" step="0.01" value="0.5">
+                 min="0" max="2" step="0.01" value="0.5" data-default="0.5">
           <span class="as-val" id="dryMonitorGainNum">50%</span>
         </div>
       </div>
@@ -1534,7 +1919,7 @@
 })();
 </script>
 
-<!-- ── Gesture panel (exp mode only — injected by exp-init.js) ──────────── -->
+<!-- ── Gesture panel (populated by js/gesture-panel.js at startup) ────────── -->
 <div id="gestureModal" class="mu-overlay">
   <div class="mu-dialog" style="width:96vw; max-width:1600px; max-height:92vh; padding:0.8rem; overflow-y:auto;">
     <h2>gesture <button class="close-btn" id="gestureClose">✕</button></h2>
@@ -1542,13 +1927,43 @@
   </div>
 </div>
 
-<!-- Service worker for offline support (production only — skip localhost) -->
+<!-- Service worker — hosted browser build only.
+     The old gate was `hostname !== 'localhost' && hostname !== '127.0.0.1'`,
+     which silently included Electron: a file:// URL has an EMPTY hostname, so
+     both tests passed and the worker registered inside the desktop app. It
+     then served the packaged app out of its own stale cache — the desktop
+     build was being shadowed by whatever the browser build last cached.
+     Gate on protocol instead, and explicitly tear down any registration that
+     the old gate left behind. -->
 <script>
-if ('serviceWorker' in navigator && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+(function () {
+  if (!('serviceWorker' in navigator)) return;
+
+  const isHttp     = location.protocol === 'http:' || location.protocol === 'https:';
+  const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  const isElectron = !!window.electronBridge?.isElectron || location.protocol === 'file:';
+
+  if (isElectron || !isHttp) {
+    // Clean up after the old gate. Without this, an existing registration
+    // keeps intercepting every load of the desktop app forever.
+    navigator.serviceWorker.getRegistrations()
+      .then(regs => {
+        if (!regs.length) return;
+        console.warn(`[SW] removing ${regs.length} stray registration(s) — service worker does not belong in the desktop app`);
+        return Promise.all(regs.map(r => r.unregister()))
+          .then(() => caches?.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))))
+          .then(() => console.warn('[SW] cleared — reload once more for a clean load'));
+      })
+      .catch(err => console.warn('[SW] cleanup failed:', err));
+    return;
+  }
+
+  if (isLocalDev) return;   // dev server: always want live files
+
   navigator.serviceWorker.register('./sw.js')
     .then(reg => console.log('[SW] registered, scope:', reg.scope))
     .catch(err => console.warn('[SW] registration failed:', err));
-}
+})();
 </script>
 
 </body>

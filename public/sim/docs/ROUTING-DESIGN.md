@@ -1,5 +1,7 @@
 # Signal Routing Design
 
+> **Status: DESIGN INTENT — PARTIALLY IMPLEMENTED.** The registry/calibration/role pipeline ships. The custom-routing layer (`'custom'` role, `'gesture chain'` / `'morph'` / `'world reference'` destinations) is **scaffolding only — those destinations are no-ops**. Don't assume anything in the routing table is wired end-to-end without checking `js/sensor-registry.js`.
+
 ## Pipeline
 
 ```
@@ -111,15 +113,20 @@ Each stream row in the sensor registry panel now contains:
    - **custom**: destination column shows live dropdowns with all available destinations
    - **unmapped**: breakout table hidden entirely
 
-Implementation files:
-- `js/sensor-registry.js` — `QUAT_SIGNALS`, `INERTIAL_SIGNALS`, `QUAT_DESTINATIONS`, `INERTIAL_DESTINATIONS`, `CURSOR_DEFAULTS`, `FRAME_DEFAULTS`, `GESTURE_DEFAULTS`, `getEffectiveRoutes()`, `setCustomRoute()`, `dispatchCustomQuat()`, `dispatchCustomInertial()`
-- `js/ui-sensors.js` — `buildStreamBlock()`, `buildRoutingBreakout()`
-- `css/style.css` — `.sensor-stream-block`, `.sensor-routing-breakout`, `.sensor-route-table`, etc.
+Implementation files (current state):
+- `js/sensor-registry.js` — has the scaffolding: `QUAT_SIGNALS`, `INERTIAL_SIGNALS`, `QUAT_DESTINATIONS`, `INERTIAL_DESTINATIONS`, `CURSOR_DEFAULTS`, `FRAME_DEFAULTS`, `GESTURE_DEFAULTS`, `getEffectiveRoutes()`, `setCustomRoute()`, `dispatchCustomQuat()`, `dispatchCustomInertial()`
+- UI layer — **not currently implemented.** The `js/ui-sensors.js` module referenced in earlier drafts was deleted in the Mar 28 refactor; no replacement is wired yet.
+- `css/style.css` — `.sensor-stream-block`, `.sensor-routing-breakout`, `.sensor-route-table` classes exist but no JS renders them.
 
-Custom routes persist to localStorage alongside calibration data. Factory reset clears everything.
+Custom routes would persist to localStorage alongside calibration data. Factory reset clears everything.
 
-### Dispatch hooks for custom routing (S._ callbacks)
-- `S._onCustomToGesture(signal, value)` — euler angle fed into gesture chain
-- `S._onCustomToMorph(signal, value)` — signal fed into morph parameter
-- `S._onCustomVizUpdate(slot)` — custom viz euler data available on `slot._customVizEuler`
-- `S._onCustomToViz(signal, dest, value)` — inertial signal routed direct to viz
+### What's wired today vs. what's aspirational
+
+The sensor-registry **dispatch side** is partly wired:
+- `dispatchCustomQuat()` accumulates viz-destination signals into `slot._customVizEuler` (rendered by nothing yet).
+- `dispatchCustomInertial()` builds a virtual inertial object for gesture-chain signals.
+- Destinations `'gesture chain'`, `'morph'`, `'world reference'` are no-ops — the comment in sensor-registry.js marks them as "future / no-op".
+
+The `QUAT_ROLES` / `INERTIAL_ROLES` arrays in sensor-registry.js (lines ~24-25) currently **exclude** `'custom'` even though the code branches on it throughout. Treat that as a known inconsistency — either the arrays need `'custom'` added when the UI ships, or the custom-branch code is dead. App works either way because no path exercises the custom branch without a UI to assign it.
+
+No `S._onCustomTo*` dispatch hooks exist. The earlier draft of this doc named `S._onCustomToGesture`, `S._onCustomToMorph`, `S._onCustomVizUpdate`, `S._onCustomToViz` — those callbacks were never added to the codebase. When the custom UI ships, the dispatch shape is still TBD.

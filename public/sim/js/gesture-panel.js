@@ -3,8 +3,8 @@
 // Reads from the gesture role slot in the sensor registry.
 // ============================================================================
 
-import { S, PRESETS } from '../state.js';
-import { getByRole } from '../sensor-registry.js';
+import { S, PRESETS } from './state.js';
+import { getByRole } from './sensor-registry.js';
 import {
   addRadialPin, removeRadialPin, setRadialPinPreset, getPresetList,
 } from './gesture.js';
@@ -748,14 +748,14 @@ let _lastPinCount = 0;
 function _updateJoystickPhysics() {
   try {
     const _gestureSlot = getByRole('gesture');
-    const _wandInertial = _gestureSlot?.inertial;
-    if (!_wandInertial) return;
+    const _sensorInertial = _gestureSlot?.inertial;
+    if (!_sensorInertial) return;
 
     // ── 2D joystick physics: selected hardware axes → X/Y ──
     updatePhysicsParams();
     const P = _phys;
-    const _joyInputX = joySignX * rawGyroByAxis(_wandInertial, JOY_AXIS_OPTIONS[joyAxisX]);
-    const _joyInputY = joySignY * rawGyroByAxis(_wandInertial, JOY_AXIS_OPTIONS[joyAxisY]);
+    const _joyInputX = joySignX * rawGyroByAxis(_sensorInertial, JOY_AXIS_OPTIONS[joyAxisX]);
+    const _joyInputY = joySignY * rawGyroByAxis(_sensorInertial, JOY_AXIS_OPTIONS[joyAxisY]);
 
     // Push: gyro × gain-derived push rate
     let pushX = _joyInputX * P.pushRate;
@@ -880,11 +880,11 @@ function draw() {
   // Record gyro XYZ for sphere trail display (physics now in _updateJoystickPhysics)
   try {
     const _gestureSlot = getByRole('gesture');
-    const _wandInertial = _gestureSlot?.inertial;
-    if (_wandInertial) {
-      gyroHistory[0][trailIdx % TRAIL_LEN] = _wandInertial.gx;
-      gyroHistory[1][trailIdx % TRAIL_LEN] = _wandInertial.gy;
-      gyroHistory[2][trailIdx % TRAIL_LEN] = _wandInertial.gz;
+    const _sensorInertial = _gestureSlot?.inertial;
+    if (_sensorInertial) {
+      gyroHistory[0][trailIdx % TRAIL_LEN] = _sensorInertial.gx;
+      gyroHistory[1][trailIdx % TRAIL_LEN] = _sensorInertial.gy;
+      gyroHistory[2][trailIdx % TRAIL_LEN] = _sensorInertial.gz;
     } else {
       gyroHistory[0][trailIdx % TRAIL_LEN] = 0;
       gyroHistory[1][trailIdx % TRAIL_LEN] = 0;
@@ -1969,7 +1969,7 @@ export function initGesturePanel() {
   // the panel is first opened so radial morph works from the start.
   if (!_rafId) _rafId = requestAnimationFrame(draw);
 
-  console.log('[exp/gesture-panel] initialized');
+  console.log('[gesture-panel] initialized');
 }
 
 export function toggleGesturePanel(forceState) {

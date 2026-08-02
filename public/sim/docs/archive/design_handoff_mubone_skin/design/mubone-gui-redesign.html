@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mubone — redesigned GUI (v2)</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles-v3.css?v=4">
+</head>
+<body data-mode="studio" data-density="compact" data-detail="advanced">
+
+<div class="app">
+
+  <!-- ──────────────────────────────────────────────── TOP RAIL ───── -->
+  <header class="rail">
+    <div class="brand">
+      <span class="brand-mark">mubone</span>
+      <span class="brand-ver">v1.7 ALPHA · SIM</span>
+    </div>
+
+    <div class="rail-c">
+      <div class="mode-switch" id="modeSwitch">
+        <button data-mode="studio" class="on">◨ studio</button>
+        <button data-mode="performance">◉ performance</button>
+      </div>
+
+      <div class="status-chip live" title="mic armed, signal flowing">
+        <span class="led"></span><span>MIC 48K · −12 DBFS</span>
+      </div>
+      <div class="status-chip ok">
+        <span class="led"></span><span>OSC · X-IMU3</span>
+      </div>
+      <div class="status-chip ok">
+        <span class="led"></span><span>8CH HOUSE · VBAP</span>
+      </div>
+    </div>
+
+    <div class="rail-r">
+      <button class="tb-btn rec on compactable" title="mic enabled"><span class="dot"></span><span>mic</span></button>
+      <button class="tb-btn compactable" title="mute (M)"><span class="glyph">◐</span><span>mute</span></button>
+      <button class="tb-btn compactable" title="camera mode"><span class="glyph">◬</span><span>pull</span></button>
+      <div class="tb-sep"></div>
+      <button class="tb-btn compactable" title="audio settings"><span class="glyph">♪</span><span>audio</span></button>
+      <button class="tb-btn compactable" title="viz settings"><span class="glyph">◉</span><span>viz</span></button>
+      <button class="tb-btn compactable" title="sensor setup"><span class="glyph">⊞</span><span>sensors</span></button>
+      <button class="tb-btn compactable" title="patch table"><span class="glyph">▦</span><span>patches</span></button>
+      <button class="tb-btn compactable" title="key / midi / osc"><span class="glyph">◈</span><span>map</span></button>
+      <div class="tb-sep"></div>
+      <button class="tb-btn compactable" title="performance monitor"><span class="glyph">⋮</span><span>perf</span></button>
+      <button class="tb-btn compactable" title="learn mode"><span class="glyph">?</span><span>learn</span></button>
+    </div>
+  </header>
+
+  <!-- ──────────────────────────────────────────────── MAIN ───────── -->
+  <main class="main" id="main">
+
+    <!-- ─ Stage (sphere) ───────────────────────────────────────────── -->
+    <section class="stage" id="stage">
+
+      <div class="stage-hud">
+        <div class="stage-hud-l">
+          <span class="hud-kv"><span class="hud-k">cur</span><span class="hud-v mono">+34°, −12°</span></span>
+          <span class="hud-kv"><span class="hud-k">yaw</span><span class="hud-v mono">+127.4°</span></span>
+          <span class="hud-kv"><span class="hud-k">buf</span><span class="hud-v mono">17 / 8:32</span></span>
+        </div>
+        <div class="stage-hud-c">
+          <div class="patch-tag"><span class="num">03</span><span>wash · bell decay</span></div>
+        </div>
+        <div class="stage-hud-r">
+          <span class="hud-kv"><span class="hud-k">k</span><span class="hud-v mono">12</span></span>
+          <span class="hud-kv"><span class="hud-k">part</span><span class="hud-v mono">4,812</span></span>
+          <span class="hud-kv"><span class="hud-k">cmts</span><span class="hud-v mono">5 / 8</span></span>
+        </div>
+      </div>
+
+      <div class="sphere-wrap">
+        <div class="sphere-canvas" id="sphereCanvas">
+          <!-- POV view — only view -->
+          <div class="view view-pov is-visible">
+            <svg viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <radialGradient id="povVign" cx="50%" cy="50%" r="55%">
+                  <stop offset="0%" stop-color="rgba(8,12,15,0)"/>
+                  <stop offset="75%" stop-color="rgba(6,10,13,0.5)"/>
+                  <stop offset="100%" stop-color="#060a0d"/>
+                </radialGradient>
+                <radialGradient id="povFov" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%"  stop-color="rgba(122,188,188,0.06)"/>
+                  <stop offset="100%" stop-color="rgba(122,188,188,0)"/>
+                </radialGradient>
+                <radialGradient id="povCloud" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stop-color="rgba(122,188,188,0.9)"/>
+                  <stop offset="100%" stop-color="rgba(122,188,188,0)"/>
+                </radialGradient>
+                <radialGradient id="povLoop" cx="50%" cy="50%" r="50%">
+                  <stop offset="0%" stop-color="rgba(190,150,240,0.9)"/>
+                  <stop offset="100%" stop-color="rgba(190,150,240,0)"/>
+                </radialGradient>
+              </defs>
+
+              <rect x="0" y="0" width="1200" height="700" fill="#060a0d"/>
+              <rect x="0" y="0" width="1200" height="700" fill="url(#povFov)"/>
+
+              <!-- curved horizon + meridians -->
+              <g stroke="rgba(122,188,188,0.08)" fill="none" stroke-width="1">
+                <path d="M 0 120 Q 600 70 1200 120"/>
+                <path d="M 0 230 Q 600 200 1200 230"/>
+                <path d="M 0 350 Q 600 350 1200 350" stroke="rgba(122,188,188,0.22)" stroke-dasharray="4 4"/>
+                <path d="M 0 470 Q 600 500 1200 470"/>
+                <path d="M 0 580 Q 600 630 1200 580"/>
+                <path d="M 200 0 Q 250 350 200 700"/>
+                <path d="M 450 0 Q 485 350 450 700"/>
+                <path d="M 600 0 L 600 700" stroke="rgba(122,188,188,0.22)" stroke-dasharray="4 4"/>
+                <path d="M 750 0 Q 715 350 750 700"/>
+                <path d="M 1000 0 Q 950 350 1000 700"/>
+              </g>
+
+              <!-- particles -->
+              <g>
+                <g fill="#9dd6d6" opacity="0.9">
+                  <circle cx="540" cy="320" r="2.8"/><circle cx="565" cy="310" r="2.2"/>
+                  <circle cx="580" cy="330" r="3.2"/><circle cx="610" cy="315" r="2.6"/>
+                  <circle cx="625" cy="340" r="2.4"/><circle cx="655" cy="325" r="2.9"/>
+                  <circle cx="555" cy="295" r="1.9"/><circle cx="595" cy="355" r="2.1"/>
+                  <circle cx="680" cy="345" r="2.2"/><circle cx="520" cy="340" r="2"/>
+                </g>
+                <g fill="#e0b678" opacity="0.65">
+                  <circle cx="720" cy="370" r="2.4"/><circle cx="740" cy="385" r="3.2"/>
+                  <circle cx="765" cy="400" r="2.2"/><circle cx="790" cy="412" r="3.6"/>
+                  <circle cx="710" cy="355" r="2"/>
+                </g>
+                <g fill="#50706f" opacity="0.35">
+                  <circle cx="170" cy="300" r="1.8"/><circle cx="140" cy="420" r="2"/>
+                  <circle cx="1040" cy="280" r="1.9"/><circle cx="1070" cy="430" r="2.1"/>
+                  <circle cx="300" cy="180" r="1.6"/><circle cx="900" cy="200" r="1.7"/>
+                  <circle cx="320" cy="560" r="1.6"/><circle cx="880" cy="560" r="1.7"/>
+                </g>
+              </g>
+
+              <!-- cloud 01 -->
+              <g>
+                <circle cx="600" cy="320" r="180" fill="url(#povCloud)" opacity="0.35"/>
+                <circle cx="600" cy="320" r="22" fill="#7abcbc"/>
+                <circle cx="600" cy="320" r="22" fill="none" stroke="#7abcbc" stroke-opacity="0.45" stroke-width="2"/>
+                <g transform="translate(600 170)">
+                  <rect x="-60" y="-15" width="120" height="22" rx="2" fill="#0c1216" stroke="#7abcbc" stroke-opacity="0.35"/>
+                  <text x="0" y="1" text-anchor="middle" fill="#9dd6d6" font-size="14" font-family="JetBrains Mono, monospace" letter-spacing="0.12em">01 · CLOUD</text>
+                </g>
+              </g>
+
+              <!-- loop 04 -->
+              <g>
+                <circle cx="960" cy="440" r="100" fill="url(#povLoop)" opacity="0.3"/>
+                <circle cx="960" cy="440" r="14" fill="#c9a8ef"/>
+                <path d="M 900 440 Q 960 410 1020 445" fill="none" stroke="#c9a8ef" stroke-width="2" stroke-opacity="0.7"/>
+              </g>
+
+              <!-- fixed cursor at center -->
+              <g>
+                <circle cx="600" cy="350" r="24" fill="none" stroke="#f5c56d" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.85"/>
+                <circle cx="600" cy="350" r="52" fill="none" stroke="#f5c56d" stroke-width="1" stroke-dasharray="2 5" opacity="0.5"/>
+                <circle cx="600" cy="350" r="5" fill="#f5c56d"/>
+                <line x1="600" y1="330" x2="600" y2="322" stroke="#f5c56d" stroke-width="1.5"/>
+                <line x1="600" y1="370" x2="600" y2="378" stroke="#f5c56d" stroke-width="1.5"/>
+                <line x1="580" y1="350" x2="572" y2="350" stroke="#f5c56d" stroke-width="1.5"/>
+                <line x1="620" y1="350" x2="628" y2="350" stroke="#f5c56d" stroke-width="1.5"/>
+              </g>
+
+              <rect x="0" y="0" width="1200" height="700" fill="url(#povVign)"/>
+
+              <g font-family="JetBrains Mono, monospace" font-size="11" fill="rgba(122,188,188,0.7)" letter-spacing="0.1em">
+                <text x="600" y="30" text-anchor="middle">▲ +90° ZENITH</text>
+                <text x="600" y="685" text-anchor="middle">▼ −90° NADIR</text>
+                <text x="25" y="355">◀ −90°</text>
+                <text x="1125" y="355">+90° ▶</text>
+              </g>
+              <g font-family="JetBrains Mono, monospace" font-size="12" fill="#f5c56d" letter-spacing="0.1em">
+                <text x="600" y="660" text-anchor="middle">yaw +127.4°  ·  pitch −12.8°</text>
+              </g>
+            </svg>
+
+            <div class="pov-lock-chip">◉ cursor locked · world moves</div>
+          </div>
+
+          <!-- Perf overlay (studio only) -->
+          <div class="overlay perf only-studio">
+            <span class="k">nodes</span><span class="b"><i style="--lvl: 38%"></i></span><span class="v">78/200</span>
+            <span class="k">frame</span><span class="b"><i style="--lvl: 22%"></i></span><span class="v">4.2ms</span>
+            <span class="k">sched</span><span class="b warn"><i style="--lvl: 48%"></i></span><span class="v">+1.1ms</span>
+            <span class="k">rec</span>  <span class="b"><i style="--lvl: 28%"></i></span><span class="v">2:51</span>
+            <span class="k">drop</span> <span class="b"><i style="--lvl: 50%"></i></span><span class="v">50ms</span>
+          </div>
+
+          <!-- Sensor card (studio only) -->
+          <div class="overlay sensor-card only-studio">
+            <h4>cursor sensor <span class="led"></span></h4>
+            <div class="quat">
+              <div class="q"><span class="qk">qx</span><span class="qv">+0.127</span></div>
+              <div class="q"><span class="qk">qy</span><span class="qv">−0.884</span></div>
+              <div class="q"><span class="qk">qz</span><span class="qv">+0.412</span></div>
+              <div class="q"><span class="qk">qw</span><span class="qv">+0.188</span></div>
+            </div>
+            <div class="mini-meter">
+              <span>gyro</span>
+              <div class="mm-bar"><i style="--lvl: 62%; background: var(--amber)"></i></div>
+              <span class="mono">2.8°/s</span>
+            </div>
+            <div class="mini-meter">
+              <span>accel</span>
+              <div class="mm-bar"><i style="--lvl: 34%"></i></div>
+              <span class="mono">0.48g</span>
+            </div>
+          </div>
+
+          <!-- Commit legend -->
+          <div class="commit-legend">
+            <span class="d cloud">cloud</span>
+            <span class="d loop">loop</span>
+            <span class="d seed">cursor · k=12 · r=24°</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stage foot: meters stacked left, transport on right (keyboard-order rows) -->
+      <div class="stage-foot stacked">
+        <div class="io-stack">
+          <div class="io-meter" title="input level">
+            <span class="caps">in</span>
+            <div class="io-bar"><i style="--lvl: 58%"></i></div>
+            <span class="mono">−9.2 db</span>
+          </div>
+          <div class="io-meter" title="output level">
+            <span class="caps">out</span>
+            <div class="io-bar"><i style="--lvl: 42%"></i></div>
+            <span class="mono">−14.8 db</span>
+          </div>
+        </div>
+
+        <div class="transport" role="group" aria-label="transport">
+          <!-- Row 1 — keyboard-ordered shortcuts -->
+          <div class="transport-row">
+            <button class="tbtn on" title="trace cursor path"><span class="tk">space</span><span class="tl">trace</span></button>
+            <button class="tbtn"      title="cycle cloud mode"><span class="tk">A</span><span class="tl">mode</span></button>
+            <button class="tbtn on"   title="scan mode"><span class="tk">S</span><span class="tl">scan</span></button>
+            <button class="tbtn accent" title="drop cloud at cursor"><span class="tk">D</span><span class="tl">drop cloud</span></button>
+            <button class="tbtn"      title="hold to draw cloud"><span class="tk">hold D</span><span class="tl">draw</span></button>
+            <button class="tbtn danger" title="release / delete cloud"><span class="tk">⇧D</span><span class="tl">release</span></button>
+            <button class="tbtn"      title="lock cursor · world moves"><span class="tk">ALT</span><span class="tl">lock cursor</span></button>
+          </div>
+
+          <!-- Row 2 — commits + session -->
+          <div class="transport-row">
+            <div class="commit-bank" role="group" aria-label="commits">
+              <button class="cbtn on cloud"  title="recall commit 1 · cloud"><span class="ck">1</span></button>
+              <button class="cbtn on loop"   title="recall commit 2 · loop"><span class="ck">2</span></button>
+              <button class="cbtn on cloud"  title="recall commit 3 · cloud"><span class="ck">3</span></button>
+              <button class="cbtn on loop"   title="recall commit 4 · loop"><span class="ck">4</span></button>
+              <button class="cbtn on cloud"  title="recall commit 5 · cloud"><span class="ck">5</span></button>
+              <button class="cbtn"           title="commit 6 · empty"><span class="ck">6</span></button>
+              <button class="cbtn"           title="commit 7 · empty"><span class="ck">7</span></button>
+              <button class="cbtn"           title="commit 8 · empty"><span class="ck">8</span></button>
+            </div>
+            <div class="t-sep"></div>
+            <button class="tbtn"        title="mute output"><span class="tk">M</span><span class="tl">mute</span></button>
+            <button class="tbtn"        title="undo last cloud"><span class="tk">⌘Z</span><span class="tl">undo</span></button>
+            <button class="tbtn"        title="tare sensor"><span class="tk">T</span><span class="tl">tare</span></button>
+            <button class="tbtn"        title="sweep buffer"><span class="tk">W</span><span class="tl">sweep</span></button>
+            <button class="tbtn danger" title="erase all commits"><span class="tk">⇧E</span><span class="tl">erase</span></button>
+            <button class="tbtn"        title="lock patch bank"><span class="tk">L</span><span class="tl">lock</span></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resize handle: drag to change stage height only -->
+      <div class="stage-resize" id="stageResize" title="drag to resize sphere pane"></div>
+    </section>
+
+    <!-- ─ Racks (horizontal rows, Ableton-style) ─────────────────── -->
+    <section class="racks" id="rackStack">
+      <!-- rows inserted by JS -->
+    </section>
+
+  </main>
+
+  <!-- ──────────────────────────────────────────────── DOCK ───────── -->
+  <footer class="dock">
+    <div class="dock-l">
+      <div class="master-knob">
+        <span class="k">master</span>
+        <div class="bar"><i></i></div>
+        <span class="v">−6.0 db</span>
+      </div>
+      <div class="master-knob">
+        <span class="k">dry</span>
+        <div class="bar" style="width: 80px;"><i style="width: 38%; background: var(--amber)"></i></div>
+        <span class="v">−18.4</span>
+      </div>
+    </div>
+
+    <div class="dock-c buf-strip">
+      <span class="caps">buffers</span>
+      <div class="buf-segments">
+        <div class="buf-seg live" title="recording now"></div>
+        <div class="buf-seg fresh"></div><div class="buf-seg fresh"></div><div class="buf-seg fresh"></div>
+        <div class="buf-seg used"></div><div class="buf-seg used"></div><div class="buf-seg used"></div>
+        <div class="buf-seg used"></div><div class="buf-seg used"></div><div class="buf-seg used"></div>
+        <div class="buf-seg"></div><div class="buf-seg"></div><div class="buf-seg"></div>
+        <div class="buf-seg"></div><div class="buf-seg"></div><div class="buf-seg"></div>
+        <div class="buf-seg"></div>
+      </div>
+      <span class="mono">17 · 8:32 / 10:00</span>
+    </div>
+
+    <div class="dock-r">
+      <span class="mono dim" style="font-size: var(--fs-xs);">sample rate 48k · buf 1024 · ≈ 21.3 ms</span>
+      <button class="tb-btn" title="fullscreen"><span class="glyph">⛶</span></button>
+      <button class="tb-btn" title="projector"><span class="glyph">⊟</span></button>
+    </div>
+  </footer>
+</div>
+
+<!-- Module templates live inside this hidden container -->
+<template id="tpl-modules">
+
+  <!-- SESSION -->
+  <div class="module" data-mod="session" data-mod-title="session">
+    <div class="module-head">
+      <div class="module-title"><span class="glyph">◈</span>session</div>
+      <div class="module-tools">
+        <span class="chip mono">lockable</span>
+        <span class="mod-ord"></span>
+      </div>
+    </div>
+    <div class="module-body">
+      <div class="session-grid">
+        <button class="sess-btn" title="mute"><span class="lbl">mute</span><span class="kb">M</span></button>
+        <button class="sess-btn" title="undo"><span class="lbl">undo</span><span class="kb">⌃Z</span></button>
+        <button class="sess-btn" title="sweep"><span class="lbl">sweep</span><span class="kb">−</span></button>
+        <button class="sess-btn" title="tare cursor"><span class="lbl">tare</span><span class="kb">`</span></button>
+        <button class="sess-btn" title="lock cursor"><span class="lbl">lock</span><span class="kb">alt</span></button>
+        <button class="sess-btn danger" title="erase all"><span class="lbl">erase</span><span class="kb">⌫×3</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PATCHES -->
+  <div class="module" data-mod="patches" data-mod-title="patches">
+    <div class="module-head">
+      <div class="module-title"><span class="glyph">▦</span>patches<span class="n">20</span></div>
+      <div class="module-tools">
+        <button class="chip">grid</button>
+        <button class="chip on">compact</button>
+        <span class="mod-ord"></span>
+      </div>
+    </div>
+    <div class="module-body">
+      <div class="patch-grid">
+        <div class="patch"><span class="idx">01</span><span class="nm">wash</span></div>
+        <div class="patch"><span class="idx">02</span><span class="nm">bell</span></div>
+        <div class="patch on dirty"><span class="idx">03</span><span class="nm">bell decay</span></div>
+        <div class="patch"><span class="idx">04</span><span class="nm">grit</span></div>
+        <div class="patch"><span class="idx">05</span><span class="nm">freeze</span></div>
+        <div class="patch"><span class="idx">06</span><span class="nm">glass</span></div>
+        <div class="patch"><span class="idx">07</span><span class="nm">choir</span></div>
+        <div class="patch"><span class="idx">08</span><span class="nm">swarm</span></div>
+        <div class="patch"><span class="idx">09</span><span class="nm">breath</span></div>
+        <div class="patch"><span class="idx">10</span><span class="nm">reverse</span></div>
+        <div class="patch"><span class="idx">11</span><span class="nm">dust</span></div>
+        <div class="patch"><span class="idx">12</span><span class="nm">drone</span></div>
+        <div class="patch empty"><span class="idx">13</span><span class="nm">—</span></div>
+        <div class="patch empty"><span class="idx">14</span><span class="nm">—</span></div>
+        <div class="patch empty"><span class="idx">15</span><span class="nm">—</span></div>
+        <div class="patch empty"><span class="idx">16</span><span class="nm">—</span></div>
+        <div class="patch empty"><span class="idx">17</span><span class="nm">—</span></div>
+        <div class="patch empty"><span class="idx">18</span><span class="nm">—</span></div>
+        <div class="patch empty"><span class="idx">19</span><span class="nm">—</span></div>
+        <div class="patch empty"><span class="idx">20</span><span class="nm">—</span></div>
+      </div>
+      <div class="patch-stats">
+        <div class="s"><span>dur</span><b>180ms</b></div>
+        <div class="s"><span>k</span><b>12</b></div>
+        <div class="s"><span>pan</span><b>60%</b></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ENVELOPE -->
+  <div class="module is-adv" data-mod="envelope" data-mod-title="envelope">
+    <div class="module-head">
+      <div class="module-title"><span class="glyph">∿</span>grain envelope</div>
+      <div class="module-tools"><span class="mod-ord"></span></div>
+    </div>
+    <div class="module-body">
+      <div class="env-canvas">
+        <span class="env-label">hann · 25% fade</span>
+        <svg viewBox="0 0 200 60" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="envFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#7abcbc" stop-opacity="0.5"/>
+              <stop offset="100%" stop-color="#7abcbc" stop-opacity="0.05"/>
+            </linearGradient>
+          </defs>
+          <line x1="0" y1="55" x2="200" y2="55" stroke="rgba(255,255,255,0.08)"/>
+          <path d="M 0 55 C 40 55, 55 8, 100 8 C 145 8, 160 55, 200 55 Z" fill="url(#envFill)" stroke="#9dd6d6" stroke-width="1.4"/>
+          <line x1="100" y1="0" x2="100" y2="60" stroke="#f5c56d" stroke-dasharray="2 2" stroke-width="1"/>
+        </svg>
+        <div class="env-readouts">
+          <span>dur <b>180</b>ms</span>
+          <span>per <b>160</b>ms</span>
+          <span>ovl <b>1.12×</b></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SEARCH -->
+  <div class="module" data-mod="search" data-mod-title="search">
+    <div class="module-head">
+      <div class="module-title"><span class="glyph">◎</span>search</div>
+      <div class="module-tools"><span class="chip mono">k=12</span><span class="mod-ord"></span></div>
+    </div>
+    <div class="module-body">
+      <div class="row seg-row">
+        <span class="k">scope</span><span></span>
+        <div class="seg"><button class="on">area</button><button>nearest</button></div>
+        <span class="lock">◉</span>
+      </div>
+      <div class="row locked">
+        <span class="k">k</span>
+        <div class="slider teal"><div class="track"><div class="fill" style="--val: 55%"></div></div><div class="thumb" style="--val: 55%"></div></div>
+        <span class="v">12 / 4812</span>
+        <span class="lock">◉</span>
+      </div>
+      <div class="row seg-row is-adv">
+        <span class="k">order</span><span></span>
+        <div class="seg"><button class="on">random</button><button>step</button></div>
+        <span class="lock">◉</span>
+      </div>
+      <div class="row">
+        <span class="k">radius</span>
+        <div class="slider"><div class="track"><div class="fill" style="--val: 15%"></div></div><div class="thumb" style="--val: 15%"></div></div>
+        <span class="v">24°</span><span class="lock">◉</span>
+      </div>
+      <div class="row is-adv">
+        <span class="k">recency</span>
+        <div class="slider"><div class="track"><div class="fill" style="--val: 20%"></div></div><div class="thumb" style="--val: 20%"></div></div>
+        <span class="v">3</span><span class="lock">◉</span>
+      </div>
+      <div class="row seg-row is-adv">
+        <span class="k">fill</span><span></span>
+        <div class="seg"><button class="on">k</button><button>all</button></div>
+        <span class="lock">◉</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- GRAIN -->
+  <div class="module" data-mod="grain" data-mod-title="grain">
+    <div class="module-head">
+      <div class="module-title"><span class="glyph">◌</span>grain</div>
+      <div class="module-tools"><button class="chip on">lfo</button><button class="chip">rand</button><span class="mod-ord"></span></div>
+    </div>
+    <div class="module-body">
+      <div class="row"><span class="k">dur</span><div class="slider teal"><div class="track"><div class="fill" style="--val: 42%"></div></div><div class="thumb" style="--val: 42%"></div></div><span class="v">180 ms</span><span class="lock">◉</span></div>
+      <div class="row is-adv"><span class="k">dur ±</span><div class="slider"><div class="track"><div class="fill" style="--val: 8%"></div></div><div class="thumb" style="--val: 8%"></div></div><span class="v">12 ms</span><span class="lock">◉</span></div>
+      <div class="row is-adv"><span class="k">dur jit</span><div class="slider"><div class="track"><div class="fill" style="--val: 18%"></div></div><div class="thumb" style="--val: 18%"></div></div><span class="v">18 %</span><span class="lock">◉</span></div>
+      <div class="row"><span class="k">fade</span><div class="slider"><div class="track"><div class="fill" style="--val: 50%"></div></div><div class="thumb" style="--val: 50%"></div></div><span class="v">25 %</span><span class="lock">◉</span></div>
+      <div class="row"><span class="k">period</span><div class="slider teal"><div class="track"><div class="fill" style="--val: 38%"></div></div><div class="thumb" style="--val: 38%"></div></div><span class="v">160 ms</span><span class="lock">◉</span></div>
+      <div class="row locked"><span class="k">overlap</span><div class="slider"><div class="track"><div class="fill" style="--val: 56%"></div></div><div class="thumb" style="--val: 56%"></div></div><span class="v">1.12 ×</span><span class="lock">◉</span></div>
+      <div class="row is-adv"><span class="k">per ±</span><div class="slider"><div class="track"><div class="fill" style="--val: 4%"></div></div><div class="thumb" style="--val: 4%"></div></div><span class="v">6 ms</span><span class="lock">◉</span></div>
+      <div class="row"><span class="k">pitch</span><div class="slider amber"><div class="track"><div class="fill" style="--val: 50%"></div></div><div class="thumb" style="--val: 50%"></div></div><span class="v">0 ¢</span><span class="lock">◉</span></div>
+      <div class="row is-adv"><span class="k">pitch ±</span><div class="slider"><div class="track"><div class="fill" style="--val: 14%"></div></div><div class="thumb" style="--val: 14%"></div></div><span class="v">±98 ¢</span><span class="lock">◉</span></div>
+      <div class="row is-adv"><span class="k">prob</span><div class="slider"><div class="track"><div class="fill" style="--val: 100%"></div></div><div class="thumb" style="--val: 100%"></div></div><span class="v">100 %</span><span class="lock">◉</span></div>
+      <div class="row"><span class="k">spread</span><div class="slider"><div class="track"><div class="fill" style="--val: 60%"></div></div><div class="thumb" style="--val: 60%"></div></div><span class="v">60 %</span><span class="lock">◉</span></div>
+      <div class="row"><span class="k">vol</span><div class="slider teal"><div class="track"><div class="fill" style="--val: 50%"></div></div><div class="thumb" style="--val: 50%"></div></div><span class="v">0.50</span><span class="lock">◉</span></div>
+      <div class="row is-adv"><span class="k">hpf</span><div class="slider"><div class="track"><div class="fill" style="--val: 12%"></div></div><div class="thumb" style="--val: 12%"></div></div><span class="v">82 hz</span><span class="lock">◉</span></div>
+      <div class="row is-adv"><span class="k">lpf</span><div class="slider"><div class="track"><div class="fill" style="--val: 78%"></div></div><div class="thumb" style="--val: 78%"></div></div><span class="v">6.4 k</span><span class="lock">◉</span></div>
+      <div class="row is-adv"><span class="k">Q</span><div class="slider"><div class="track"><div class="fill" style="--val: 10%"></div></div><div class="thumb" style="--val: 10%"></div></div><span class="v">0.71</span><span class="lock">◉</span></div>
+      <div class="row seg-row">
+        <span class="k">dir</span><span></span>
+        <div class="seg"><button class="on">▶</button><button>◀</button><button>⇄</button></div>
+        <span class="lock">◉</span>
+      </div>
+      <div class="row seg-row is-adv">
+        <span class="k">curve</span><span></span>
+        <div class="seg"><button class="on">∿</button><button>⋀</button><button>⊓</button></div>
+        <span class="lock">◉</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- CURSOR -->
+  <div class="module" data-mod="cursor" data-mod-title="cursor">
+    <div class="module-head">
+      <div class="module-title"><span class="glyph">◉</span>cursor</div>
+      <div class="module-tools"><span class="chip on mono">trace · on</span><span class="mod-ord"></span></div>
+    </div>
+    <div class="module-body" style="gap: 6px;">
+      <button class="act on" title="trace">
+        <span class="gl">✎</span><span>trace</span><span class="kb">SPACE</span>
+      </button>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+        <button class="act armed" title="handsfree"><span class="gl">◉</span><span>handsfree</span><span class="kb">H</span></button>
+        <button class="act" title="trace mode cycle"><span class="gl">⟲</span><span>trace+loop</span><span class="kb">A</span></button>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 4px;" class="is-adv">
+        <button class="act on"><span class="gl">◎</span><span>scan</span><span class="kb">S</span></button>
+        <button class="act"><span class="gl">◐</span><span>morph</span><span class="kb">X</span></button>
+      </div>
+      <div class="row seg-row is-adv">
+        <span class="k">fade</span><span></span>
+        <div class="seg"><button>on</button><button class="on">off</button></div>
+        <span class="lock">◉</span>
+      </div>
+      <div class="row seg-row is-adv">
+        <span class="k">azimuth</span><span></span>
+        <div class="seg"><button class="on">free</button><button>lock</button></div>
+        <span class="lock">◉</span>
+      </div>
+      <div class="row seg-row is-adv">
+        <span class="k">elev</span><span></span>
+        <div class="seg"><button class="on">free</button><button>lock</button></div>
+        <span class="lock">◉</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMMITS -->
+  <div class="module" data-mod="commits" data-mod-title="commits">
+    <div class="module-head">
+      <div class="module-title"><span class="glyph">◍</span>commits</div>
+      <div class="module-tools"><span class="chip mono">5 / 8</span><span class="mod-ord"></span></div>
+    </div>
+    <div class="module-body">
+      <div class="slot-bank">
+        <div class="slot cloud" style="--life: 0.9"><span class="g">◉</span></div>
+        <div class="slot cloud" style="--life: 0.62"><span class="g">◉</span></div>
+        <div class="slot loop"  style="--life: 0.44"><span class="g">⟲</span></div>
+        <div class="slot cloud" style="--life: 0.28"><span class="g">◉</span></div>
+        <div class="slot loop"  style="--life: 0.12"><span class="g">⟲</span></div>
+        <div class="slot"></div>
+        <div class="slot"></div>
+        <div class="slot"></div>
+      </div>
+      <div class="row seg-row" style="margin-top:8px;">
+        <span class="k">mode</span><span class="mono dim" style="font-size:var(--fs-xs); text-align:right;">⇧D</span>
+        <div class="seg"><button class="on">cloud</button><button>loop</button></div>
+        <span class="lock">◉</span>
+      </div>
+      <button class="act"><span class="gl">◉</span><span>drop cloud</span><span class="kb">D</span></button>
+      <button class="act"><span class="gl">◌</span><span>draw cloud</span><span class="kb">hold D</span></button>
+      <button class="act"><span class="gl">✕</span><span>release nearest</span><span class="kb">⌘D</span></button>
+      <div class="row seg-row is-adv">
+        <span class="k">select</span><span></span>
+        <div class="seg"><button class="on">nearest</button><button>farthest</button></div>
+        <span class="lock">◉</span>
+      </div>
+      <div class="row is-adv"><span class="k">xfade</span><div class="slider"><div class="track"><div class="fill" style="--val: 28%"></div></div><div class="thumb" style="--val: 28%"></div></div><span class="v">280 ms</span><span class="lock">◉</span></div>
+      <div class="row is-adv"><span class="k">attack</span><div class="slider"><div class="track"><div class="fill" style="--val: 8%"></div></div><div class="thumb" style="--val: 8%"></div></div><span class="v">80 ms</span><span class="lock">◉</span></div>
+      <div class="row is-adv"><span class="k">release</span><div class="slider"><div class="track"><div class="fill" style="--val: 32%"></div></div><div class="thumb" style="--val: 32%"></div></div><span class="v">320 ms</span><span class="lock">◉</span></div>
+    </div>
+  </div>
+
+  <!-- SENSORS -->
+  <div class="module is-adv" data-mod="sensors" data-mod-title="sensors">
+    <div class="module-head">
+      <div class="module-title"><span class="glyph">⊞</span>sensors &amp; gesture</div>
+      <div class="module-tools"><span class="chip on">x-imu3</span><span class="chip">osc</span><span class="mod-ord"></span></div>
+    </div>
+    <div class="module-body">
+      <div class="sensors">
+        <div class="sensor"><div class="lbl">cursor <b>ximu.01</b></div><div class="val">yaw +127.4°</div><div class="val">pitch −12.8°</div></div>
+        <div class="sensor"><div class="lbl">frame <b>ximu.02</b></div><div class="val">yaw +004.1°</div><div class="val">pitch +01.2°</div></div>
+        <div class="sensor off"><div class="lbl">wand <b>— off —</b></div><div class="val">---</div><div class="val">---</div></div>
+        <div class="sensor"><div class="lbl">osc <b>max 7500</b></div><div class="val">32.4 msg/s</div><div class="val">rtt 3.1 ms</div></div>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px; margin-top:6px;">
+        <div>
+          <div class="caps" style="margin-bottom:4px;">morph xy</div>
+          <div class="xy"><div class="xy-cross h"></div><div class="xy-cross v"></div><div class="xy-dot" style="--x: 63%; --y: 38%"></div></div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <div class="caps" style="margin-bottom:2px;">mapped axes</div>
+          <div class="mini-meter"><span>yaw</span><div class="mm-bar"><i style="--lvl: 72%; background: var(--teal)"></i></div><span class="mono">→ pitch</span></div>
+          <div class="mini-meter"><span>pitch</span><div class="mm-bar"><i style="--lvl: 45%; background: var(--amber)"></i></div><span class="mono">→ per</span></div>
+          <div class="mini-meter"><span>roll</span><div class="mm-bar"><i style="--lvl: 30%; background: var(--violet)"></i></div><span class="mono">→ spread</span></div>
+          <div class="mini-meter"><span>|a|</span><div class="mm-bar"><i style="--lvl: 22%"></i></div><span class="mono">→ prob</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</template>
+
+<script src="app-v3.js"></script>
+</body>
+</html>

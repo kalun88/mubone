@@ -2,7 +2,7 @@
 // ELECTRON MAIN PROCESS — mubone desktop wrapper
 // ============================================================================
 
-const { app, BrowserWindow, session, ipcMain } = require('electron');
+const { app, BrowserWindow, session, ipcMain, screen } = require('electron');
 const path  = require('path');
 const dgram = require('dgram');
 
@@ -28,12 +28,148 @@ function requireSerial() {
 // Open serial ports, keyed by path (e.g. '/dev/tty.usbmodem1234')
 const _serialPorts = new Map();  // path → { port, parser }
 
-// ── OSC UDP receiver (BNO085 from Max) ────────────────────────────────────────
+// ── Instance identity (multi-station setups) ─────────────────────────────────
+// `electron . --instance=a --osc-port=7510` gives this process its own
+// userData profile (isolated localStorage: presets, sensor calibration, audio
+// defaults) and its own OSC listen port, so several stations can run on one
+// machine without sharing state. No flags → identical to solo use: default
+// profile, OSC port 7500. See docs/MULTI-INSTANCE-PLAN.md.
+
+function argValue(name) {
+  const pre = `--${name}=`;
+  const hit = process.argv.find(a => a.startsWith(pre));
+  return hit ? hit.slice(pre.length) : null;
+}
+
+const INSTANCE = (argValue('instance') || '').replace(/[^A-Za-z0-9_-]/g, '') || null;
+
+// Multi-station tiling: when the launcher passes --station-count=N, each
+// instance sizes itself to 1/N of the display and parks in its own column
+// (a leftmost). At 3-across on a laptop each column lands under the 700px
+// breakpoint, so windows come up already in narrow mode. Ignored for solo use.
+const STATION_NAMES = 'abcdefghi';
+const STATION_COUNT = parseInt(argValue('station-count') || '', 10) || 0;
+const STATION_INDEX = INSTANCE ? STATION_NAMES.indexOf(INSTANCE) : -1;
+
+function stationBounds() {
+  if (STATION_COUNT < 2 || STATION_INDEX < 0 || STATION_INDEX >= STATION_COUNT) return null;
+  // workArea excludes the menu bar and Dock, so nothing is hidden under them.
+  const { x, y, width, height } = screen.getPrimaryDisplay().workArea;
+  const colW = Math.floor(width / STATION_COUNT);
+  return {
+    x: x + STATION_INDEX * colW,
+    y,
+    width: colW,
+    height,
+  };
+}
+if (INSTANCE) {
+  app.setPath('userData', path.join(app.getPath('userData'), 'instances', INSTANCE));
+  console.log(`[instance] "${INSTANCE}" — userData: ${app.getPath('userData')}`);
+}
+
+// ── OSC UDP receiver (x-imu3 from Max) ────────────────────────────────────────
 // Max sends OSC to 127.0.0.1:7500. We parse it here and push to the renderer
 // via webContents.send('osc-sensor') — no WebSocket, no server script needed.
+// Multi-station: each instance listens on its own port (--osc-port); the port
+// is the instance address — OSC address strings are identical across stations.
 
-const OSC_PORT = 7500;
+const OSC_PORT = parseInt(argValue('osc-port') || '', 10) || 7500;
 let   _oscWin  = null;   // set once the BrowserWindow is ready
+
+// ── OSC UDP uplink (renderer → main → UDP → relay) ──────────────────────────
+// Outbound hop used by the status publisher (js/status-publisher.js) to send
+// /status/* messages to the joycon GUI. The relay listens on this port and
+// rebroadcasts over its WS hub. JSON on the wire — both ends are our own
+// Node processes, so no OSC encoder/decoder needed.
+const OSC_OUT_PORT = 7501;
+let _oscOutSock = null;
+
+function initOSCUplink() {
+  _oscOutSock = dgram.createSocket('udp4');
+  _oscOutSock.on('error', (err) => {
+    console.warn(`[OSC-out] UDP error: ${err.message}`);
+  });
+  console.log(`[OSC-out] uplink to udp://127.0.0.1:${OSC_OUT_PORT}`);
+}
+
+function sendOSCUplink(address, values) {
+  if (!_oscOutSock) return;
+  if (typeof address !== 'string') return;
+  const frame = Buffer.from(JSON.stringify({
+    address, values: Array.isArray(values) ? values : [],
+  }));
+  _oscOutSock.send(frame, 0, frame.length, OSC_OUT_PORT, '127.0.0.1');
+}
+
+// ── OSC UDP external (renderer → main → UDP → arbitrary peer) ────────────────
+// Separate from the uplink above: real OSC 1.0 binary sent to a user-configured
+// host:port. Used by the staging module to drive oVox / VocalSynth / Ableton /
+// hardware. Each unique host:port destination gets its own dgram socket, reused
+// across messages.
+//
+// Encoding: OSC 1.0 binary — null-terminated address string, null-terminated
+// type tag string (starts with ','), then big-endian args. All three sections
+// padded to 4-byte boundaries. Numbers are sent as 32-bit floats (f), strings
+// as OSC strings (s). Int support can be added later if needed.
+
+const _oscExtSocks = new Map();   // 'host:port' → dgram socket
+
+function _padTo4(n) { return (n + 3) & ~3; }
+
+function _encodeOSCString(s) {
+  const raw = Buffer.from(s + '\0', 'utf8');
+  const padLen = _padTo4(raw.length);
+  if (padLen === raw.length) return raw;
+  const padded = Buffer.alloc(padLen);
+  raw.copy(padded);
+  return padded;
+}
+
+function _encodeOSC(address, values) {
+  const addrBuf = _encodeOSCString(address);
+  let tags = ',';
+  const argBufs = [];
+  for (const v of values) {
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      tags += 'f';
+      const b = Buffer.alloc(4);
+      b.writeFloatBE(v, 0);
+      argBufs.push(b);
+    } else if (typeof v === 'string') {
+      tags += 's';
+      argBufs.push(_encodeOSCString(v));
+    }
+    // other types silently skipped
+  }
+  const tagsBuf = _encodeOSCString(tags);
+  return Buffer.concat([addrBuf, tagsBuf, ...argBufs]);
+}
+
+function _getOrCreateExtSock(host, port) {
+  const key = `${host}:${port}`;
+  let sock = _oscExtSocks.get(key);
+  if (sock) return sock;
+  sock = dgram.createSocket('udp4');
+  sock.on('error', (err) => {
+    console.warn(`[OSC-ext ${key}] UDP error: ${err.message}`);
+  });
+  _oscExtSocks.set(key, sock);
+  return sock;
+}
+
+function sendOSCExternal(host, port, address, values) {
+  if (typeof host !== 'string' || !host) return;
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) return;
+  if (typeof address !== 'string' || !address.startsWith('/')) return;
+  try {
+    const sock = _getOrCreateExtSock(host, port);
+    const frame = _encodeOSC(address, Array.isArray(values) ? values : []);
+    sock.send(frame, 0, frame.length, port, host);
+  } catch (e) {
+    console.warn('[OSC-ext] send failed:', e);
+  }
+}
 
 function parseOSC(buf) {
   try {
@@ -97,8 +233,13 @@ function startOSCReceiver() {
 
 const XIMU3_DISCOVERY_PORT = 10000;
 let _ximu3DiscoverySock = null;
-let _ximu3DataSock      = null;   // listener for data messages
-let _ximu3DataPort      = 0;      // currently bound data port
+// Map of port → { sock, refs, bufs: Map<sourceIP, string> }.
+// Multiple x-IMU3 devices can share a data port (e.g. factory default 9000),
+// so we reference-count and only close when the last caller releases the port.
+// This is the fix for "connecting 3rd device freezes first two" — the old code
+// held a single socket and closed/rebound it on every connect, orphaning any
+// devices whose data port differed from the newest connect.
+const _ximu3DataSocks  = new Map();
 let _ximu3CmdSock       = null;   // socket for sending commands
 
 function startXIMU3Discovery() {
@@ -126,28 +267,32 @@ function startXIMU3Discovery() {
 }
 
 function startXIMU3DataListener(port) {
-  // Close existing data listener if port changed
-  if (_ximu3DataSock) {
-    try { _ximu3DataSock.close(); } catch (_) {}
-    _ximu3DataSock = null;
+  // Ref-counted: if a socket is already bound to this port, just bump the
+  // count and return.  This lets multiple devices share one data port.
+  let entry = _ximu3DataSocks.get(port);
+  if (entry) {
+    entry.refs++;
+    return;
   }
-  _ximu3DataPort = port;
 
-  _ximu3DataSock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+  // Per-source buffers — we can't share one buffer across devices, because
+  // their LF-terminated frames would interleave on a partial-packet boundary
+  // and produce garbage lines.  Each source IP accumulates into its own buf.
+  entry = { sock, refs: 1, bufs: new Map() };
+  _ximu3DataSocks.set(port, entry);
 
-  // Buffer for accumulating partial ASCII messages (LF-terminated)
-  let _buf = '';
-
-  _ximu3DataSock.on('message', (msg, rinfo) => {
+  sock.on('message', (msg, rinfo) => {
     if (!_oscWin || _oscWin.isDestroyed()) return;
+    const sourceIP = rinfo.address;
+    let buf = entry.bufs.get(sourceIP) || '';
     // x-IMU3 data can be ASCII (LF-delimited) or binary.
     // We handle ASCII mode here — multiple messages may arrive per packet.
-    _buf += msg.toString('utf8');
-    const sourceIP = rinfo.address;
+    buf += msg.toString('utf8');
     let nlIdx;
-    while ((nlIdx = _buf.indexOf('\n')) !== -1) {
-      const line = _buf.slice(0, nlIdx);
-      _buf = _buf.slice(nlIdx + 1);
+    while ((nlIdx = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, nlIdx);
+      buf = buf.slice(nlIdx + 1);
       if (line.length > 0) {
         // Check if it looks like a JSON command response (starts with '{')
         if (line[0] === '{') {
@@ -161,22 +306,34 @@ function startXIMU3DataListener(port) {
         }
       }
     }
+    entry.bufs.set(sourceIP, buf);
   });
 
-  _ximu3DataSock.on('error', (err) => {
+  sock.on('error', (err) => {
     console.warn(`[x-IMU3] data UDP error on port ${port}: ${err.message}`);
   });
 
-  _ximu3DataSock.bind(port, '0.0.0.0', () => {
+  sock.bind(port, '0.0.0.0', () => {
     console.log(`[x-IMU3] data listening on UDP 0.0.0.0:${port}`);
   });
 }
 
-function stopXIMU3DataListener() {
-  if (_ximu3DataSock) {
-    try { _ximu3DataSock.close(); } catch (_) {}
-    _ximu3DataSock = null;
-    _ximu3DataPort = 0;
+function stopXIMU3DataListener(port) {
+  // If no port is passed, close every listener (e.g. on app quit).
+  if (port === undefined || port === null) {
+    for (const entry of _ximu3DataSocks.values()) {
+      try { entry.sock.close(); } catch (_) {}
+    }
+    _ximu3DataSocks.clear();
+    return;
+  }
+  const entry = _ximu3DataSocks.get(port);
+  if (!entry) return;
+  entry.refs--;
+  if (entry.refs <= 0) {
+    try { entry.sock.close(); } catch (_) {}
+    _ximu3DataSocks.delete(port);
+    console.log(`[x-IMU3] data listener on UDP ${port} closed`);
   }
 }
 
@@ -379,7 +536,6 @@ function createOutputStream(deviceId, numChannels, bufferFrames, preferredRate) 
   rtAudio.start();
   // Float32 = 4 bytes/sample. audify expects exactly frames × nCh × 4 per write().
   _expectedAudioBytes = frames * nCh * 4;
-  _ipcAudioCredits = IPC_AUDIO_MAX_CREDITS;
   _ipcDropCount = 0;
   console.log(`audify stream started — "${device.name}", ${nCh} ch @ ${openedRate} Hz, buffer ${frames} frames (${_expectedAudioBytes} bytes/write)`);
 }
@@ -470,21 +626,50 @@ function createInputStream(deviceId, numChannels, bufferFrames, win, preferredRa
 let _expectedAudioBytes = 0;
 
 // Credit-based flow control for IPC audio path.
-// Main process sends credits back to renderer; worklet pauses when exhausted.
-let _ipcAudioCredits = 8;         // start with 8 buffer credits
-const IPC_AUDIO_MAX_CREDITS = 8;  // max outstanding buffers
+// Main process sends credits back to renderer; renderer pauses when exhausted.
+// The credit BALANCE lives renderer-side (audio.js) — main just refunds one
+// credit per CONSUMED buffer, whether written or dropped. (Dead
+// `_ipcAudioCredits` mirror removed in the Jul 2026 perf audit — it was
+// written but never read.)
 let _ipcDropCount = 0;            // consecutive drops — throttled warning
 
 function setupIPC() {
+  // Renderer → main: outbound OSC (status uplink to relay/joycon GUI).
+  // Fire-and-forget (.on, not .handle) — called from grain-adjacent hot paths,
+  // renderer should never await a confirmation.
+  ipcMain.on('osc-send', (_e, address, values) => {
+    sendOSCUplink(address, values);
+  });
+
+  // Renderer → main: outbound real OSC binary to an arbitrary external peer.
+  // Used by the staging module (MIDI/OSC-out) to drive oVox / VocalSynth /
+  // Ableton / hardware via OSC. Distinct from 'osc-send' above, which targets
+  // the internal relay in JSON format for joycon-GUI feedback.
+  ipcMain.on('osc-send-external', (_e, host, port, address, values) => {
+    sendOSCExternal(host, port, address, values);
+  });
+
   // Receive N-channel interleaved Float32Array from renderer and push to RtAudio.
   // Guard against size mismatches — these happen transiently when the output device
   // is switched (worklet and audify briefly disagree on channel count or buffer size).
   // Drop the buffer silently rather than crashing audify.
   ipcMain.on('audio-buffer', (event, interleavedFloat32) => {
-    if (!rtAudio || !rtAudio.isStreamRunning()) return;
+    // Refund one credit for every CONSUMED buffer — written OR dropped
+    // (perf audit H3, Jul 2026). Credits were previously only refunded on a
+    // successful rtAudio.write(), so every buffer dropped during stream
+    // teardown or a size mismatch permanently destroyed a credit; enough
+    // device/buffer-size switches could drain all 8 and silence output until
+    // the user re-picked the device. Refunding on drops keeps the pipeline
+    // flowing (drops during teardown are intentional); backpressure is still
+    // enforced because the refund only arrives after main has processed the
+    // buffer — a blocked rtAudio.write() delays it exactly as before.
+    const refund = () => {
+      if (!event.sender.isDestroyed()) event.sender.send('audio-credit', 1);
+    };
+    if (!rtAudio || !rtAudio.isStreamRunning()) return refund();
     // _expectedAudioBytes === 0 means the stream is being torn down / reopened —
     // drop everything until the new stream sets the expected size.
-    if (_expectedAudioBytes === 0) return;
+    if (_expectedAudioBytes === 0) return refund();
     const buf = Buffer.from(interleavedFloat32.buffer);
     if (buf.length !== _expectedAudioBytes) {
       // Throttled mismatch warning (max 1 per second)
@@ -492,19 +677,16 @@ function setupIPC() {
       if (_ipcDropCount === 1 || _ipcDropCount % 100 === 0) {
         console.warn(`[audio-buffer] size mismatch: got ${buf.length}, expected ${_expectedAudioBytes} — dropped ${_ipcDropCount} buffers`);
       }
-      return;
+      return refund();
     }
     _ipcDropCount = 0;
     try {
       rtAudio.write(buf);
     } catch (e) {
       console.error(`[audio-buffer] write error: ${e.message}`);
-      return;
+      return refund();
     }
-    // Send credit back to renderer so worklet can pace itself
-    if (!event.sender.isDestroyed()) {
-      event.sender.send('audio-credit', 1);
-    }
+    refund();
   });
 
   // List all output devices with channel counts, flagging the system default
@@ -566,8 +748,9 @@ function setupIPC() {
     return { ok: true, port };
   });
 
-  ipcMain.handle('ximu3-stop-data', () => {
-    stopXIMU3DataListener();
+  ipcMain.handle('ximu3-stop-data', (_event, port) => {
+    // Ref-counted per port; if port is omitted, close every listener.
+    stopXIMU3DataListener(port);
     return { ok: true };
   });
 
@@ -611,17 +794,27 @@ function setupIPC() {
 // ── Window ────────────────────────────────────────────────────────────────────
 
 function createWindow() {
+  const tile = stationBounds();   // null unless --station-count says to tile
   const win = new BrowserWindow({
-    width:     1440,
-    height:    900,
-    minWidth:  800,
-    minHeight: 600,
-    title:     'mubone',
+    ...(tile || {}),
+    width:     tile ? tile.width  : 1440,
+    height:    tile ? tile.height : 900,
+    // Narrow enough for the multi-station side-by-side layout (CSS flips to
+    // a stacked column below 700px — see NARROW-WINDOW MODE in style.css)
+    minWidth:  380,
+    minHeight: 500,
+    title:     INSTANCE ? `mubone [${INSTANCE}]` : 'mubone',
     backgroundColor: '#000000',
     webPreferences: {
       nodeIntegration:  false,
       contextIsolation: true,
       preload: path.join(__dirname, 'electron-preload.js'),
+      // Instance name + OSC listen port ride into the preload's process.argv —
+      // no IPC round-trip. Port is always passed so the UI can display it.
+      additionalArguments: [
+        `--mubone-osc-port=${OSC_PORT}`,
+        ...(INSTANCE ? [`--mubone-instance=${INSTANCE}`] : []),
+      ],
     },
   });
 
@@ -642,6 +835,15 @@ function createWindow() {
       },
     });
   });
+
+  // Keep the instance suffix — index.html's <title> would otherwise
+  // overwrite the window title on load, making the 3 stations look identical.
+  if (INSTANCE) {
+    win.on('page-title-updated', (e, pageTitle) => {
+      e.preventDefault();
+      win.setTitle(`${pageTitle} [${INSTANCE}]`);
+    });
+  }
 
   win.loadFile('index.html');
 
@@ -686,7 +888,8 @@ function cleanupBeforeQuit() {
 
   // Close x-IMU3 sockets
   if (_ximu3DiscoverySock) { try { _ximu3DiscoverySock.close(); } catch(_) {} _ximu3DiscoverySock = null; }
-  if (_ximu3DataSock)      { try { _ximu3DataSock.close(); } catch(_) {} _ximu3DataSock = null; }
+  for (const entry of _ximu3DataSocks.values()) { try { entry.sock.close(); } catch(_) {} }
+  _ximu3DataSocks.clear();
   if (_ximu3CmdSock)       { try { _ximu3CmdSock.close(); } catch(_) {} _ximu3CmdSock = null; }
   // Close serial ports
   for (const [, entry] of _serialPorts) {
@@ -700,6 +903,7 @@ app.whenReady().then(() => {
   const win = createWindow();
   _oscWin = win;
   startOSCReceiver();
+  initOSCUplink();
   startXIMU3Discovery();
 
   app.on('activate', () => {

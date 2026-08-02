@@ -1,6 +1,8 @@
 # Sensor Mounting & Calibration
 
-How to set up two BNO085 IMUs in different physical orientations — one as **cursor** (wand/hand), one as **frame** (body reference) — so they agree in the visualization.
+> **Status: CURRENT** · reference · physical mounting + axis alignment. Unaffected by the 1.11 changes.
+
+How to set up two sensors in different physical orientations — one as **cursor** (hand), one as **frame** (body reference) — so they agree in the visualization.
 
 ---
 
@@ -14,7 +16,7 @@ After tare, the sensor reports rotation relative to its pose at tare time — ex
 
 Attach each sensor in its performance position. Typical setups:
 
-- **Cursor** — wrist, hand, or wand (pointing roughly forward)
+- **Cursor** — wrist or hand (pointing roughly forward)
 - **Frame** — chest, belly, belt clip, or music stand (may point up, forward, or sideways)
 
 Orientation doesn't need to be precise. The calibration below handles any mounting angle.

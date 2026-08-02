@@ -95,7 +95,10 @@ function _getMeterCache(containerId, count) {
       grads.push(null);
     }
   }
-  entry = { count, canvases, clips, ctxs, grads };
+  // Cache the container element so tickMeters can cheaply check whether the
+  // meters are inside a collapsed panel (perf audit M3 / TODO #116).
+  const container = document.getElementById(containerId);
+  entry = { count, canvases, clips, ctxs, grads, container };
   _meterCache.set(containerId, entry);
   return entry;
 }
@@ -108,6 +111,12 @@ export function invalidateMeterCache(containerId) {
 
 export function tickMeters(analysers, containerId) {
   const cache = _getMeterCache(containerId, analysers.length);
+  // Skip analyser reads + canvas draws when the meters sit inside a collapsed
+  // panel or section (perf audit M3 / TODO #116). Collapse is CSS-only — the
+  // loops used to keep running at full rate against hidden canvases. The
+  // AnalyserNodes stay connected (disconnect/reconnect churn isn't worth it);
+  // closest('.collapsed') is a few-ancestor walk, trivial vs the work saved.
+  if (cache.container && cache.container.closest('.collapsed')) return;
   for (let i = 0; i < analysers.length; i++) {
     const an = analysers[i];
     if (!an) continue;
@@ -222,9 +231,11 @@ export function rebuildMainDryMeter() {
 // Exported so MIDI/OSC can call it programmatically.
 
 export function setScanMuted(muted) {
+  const changed = S.scanMuted !== muted;
   S.scanMuted = muted;
+  if (changed) window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'scan_toggle' } }));
   const t = S.audioCtx?.currentTime ?? 0;
-  const ramp = 0.02; // 20ms smooth transition
+  const ramp = S.scanFadeS ?? 0.02; // #14: configurable fade (τ), default 20ms
 
   // Mute/unmute the monitorBus → masterGain path (affects stereo mode)
   if (S.cursorMasterGain && S.audioCtx) {
@@ -269,7 +280,6 @@ export function initScanToggle() {
 
 // ── Radial morph toggle ──────────────────────────────────────────────────────
 // Mirror of the gesture-panel morph toggle, available in the main cursor panel.
-// Only visible in exp mode (S.exp === true).
 export function initMorphToggle() {
   const btn = document.getElementById('morphBtn');
   if (!btn) return;
@@ -432,13 +442,58 @@ export function initSeqMode() {
   // Controls are always visible — no need for a sync toggle.
   S._syncSeqControls = function syncSeqControls() {};
 
-  // ── Commit slot count select (unified) ──
+  // ── Commit slot count slider + editable numbox (unified) ──
+  // The range input keeps the legacy `commitSlotCountSelect` id so every
+  // other call site (main.js change listener, osc.js, midi.js, patch-table
+  // recall) that does `sel.value = String(...)` still works on the slider.
+  // The numbox stays in sync live during drag, and typing a value commits
+  // on Enter/blur (clamped 1–16). Both are refreshable from external
+  // state changes via S._syncCommitSlotCount().
   const commitSlotSelect = document.getElementById('commitSlotCountSelect');
+  const commitSlotNum    = document.getElementById('commitSlotCountNum');
+
+  function _clampSlotCount(v) {
+    const n = parseInt(v, 10);
+    if (!Number.isFinite(n)) return S.commitSlotCount;
+    return Math.max(1, Math.min(16, n));
+  }
+  function _applySlotCount(v) {
+    const n = _clampSlotCount(v);
+    S.commitSlotCount = n;
+    if (commitSlotSelect) commitSlotSelect.value = String(n);
+    if (commitSlotNum)    commitSlotNum.value    = String(n);
+    S._syncCommitUI?.();
+  }
+  // Exposed for external callers (osc.js, midi.js, ui-patch-table.js) that
+  // used to do `sel.value = String(S.commitSlotCount)` — a single call
+  // now updates both slider and numbox.
+  S._syncCommitSlotCount = () => {
+    if (commitSlotSelect) commitSlotSelect.value = String(S.commitSlotCount);
+    if (commitSlotNum)    commitSlotNum.value    = String(S.commitSlotCount);
+  };
+
   if (commitSlotSelect) {
     commitSlotSelect.value = S.commitSlotCount;
+    // Live numbox update during drag so the readout tracks the slider.
+    commitSlotSelect.addEventListener('input', () => {
+      if (commitSlotNum) commitSlotNum.value = commitSlotSelect.value;
+    });
+    // Commit on release — pushes state + fires downstream sync.
     commitSlotSelect.addEventListener('change', () => {
-      S.commitSlotCount = parseInt(commitSlotSelect.value, 10);
-      S._syncCommitUI?.();
+      _applySlotCount(commitSlotSelect.value);
+    });
+  }
+
+  if (commitSlotNum) {
+    commitSlotNum.value = S.commitSlotCount;
+    const commit = () => { _applySlotCount(commitSlotNum.value); };
+    commitSlotNum.addEventListener('blur', commit);
+    commitSlotNum.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { commit(); commitSlotNum.blur(); }
+      else if (e.key === 'Escape') {
+        commitSlotNum.value = String(S.commitSlotCount);
+        commitSlotNum.blur();
+      }
     });
   }
 
@@ -550,6 +605,203 @@ export function initDryMonitorGains() {
 
   // Expose setter for MIDI/OSC access
   S._setDryMonitorGain = setDryMonitorGain;
+}
+
+// ── Audio panel (main UI) ────────────────────────────────────────────────────
+// Mirrors the most-used controls from the audio settings modal into a
+// persistent panel. Panel controls drive the modal's existing event handlers
+// by calling setters directly (for state managed here) or by dispatching
+// `input` events on the modal's slider (for gain/gate controls whose handlers
+// live in ui-audio-settings.js). A one-way listener on the modal's inputs
+// refreshes the panel's display when the user interacts with the modal.
+//
+// No live metering here — the .bottom-bar levels rail is the single source
+// for metering; panel just exposes the knobs.
+export function initAudioPanel() {
+  const fmtDb      = db => (db >= 0 ? '+' : '−') + Math.abs(db).toFixed(1) + ' dB';
+  const fmtGate    = v  => parseFloat(v).toFixed(4);
+  const fmtPercent = v  => Math.round(parseFloat(v) * 100) + '%';
+
+  // ── Input channel ──
+  const apChanSel    = document.getElementById('apInputChannelSelect');
+  const modalChanSel = document.getElementById('asInputChannel');
+  if (apChanSel && modalChanSel) {
+    // Panel drives modal — dispatch change so existing modal handler fires
+    apChanSel.addEventListener('change', () => {
+      if (modalChanSel.value !== apChanSel.value) {
+        modalChanSel.value = apChanSel.value;
+        modalChanSel.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    // Modal drives panel — when modal's options repopulate or value changes,
+    // mirror to the panel. Options repopulate through repopulateChannelSelect;
+    // we re-sync via S._syncAudioPanelChannels() (exposed below).
+    modalChanSel.addEventListener('change', () => {
+      if (apChanSel.value !== modalChanSel.value) {
+        // Skip if our own options list is missing this value — wait for sync.
+        if ([...apChanSel.options].some(o => o.value === modalChanSel.value)) {
+          apChanSel.value = modalChanSel.value;
+        }
+      }
+    });
+  }
+
+  // Helper: sync the panel's channel <select> options + value from the modal's.
+  // Called from ui-audio-settings.js after repopulateChannelSelect so the two
+  // dropdowns carry identical options (ch 1…N plus optional 'stereo').
+  S._syncAudioPanelChannels = () => {
+    if (!apChanSel || !modalChanSel) return;
+    apChanSel.innerHTML = '';
+    for (const opt of modalChanSel.options) {
+      const clone = document.createElement('option');
+      clone.value = opt.value;
+      clone.textContent = opt.textContent;
+      apChanSel.appendChild(clone);
+    }
+    apChanSel.value = modalChanSel.value;
+  };
+
+  // ── Input gain ──
+  // Hidden in Electron (trim at hardware interface, same as the modal row).
+  const apInputGainRow    = document.getElementById('apInputGainSlider')?.closest('.grain-row');
+  if (window.electronBridge?.isElectron && apInputGainRow) {
+    apInputGainRow.style.display = 'none';
+  }
+  const apInputGain    = document.getElementById('apInputGainSlider');
+  const apInputGainNum = document.getElementById('apInputGainNum');
+  const modalInputGain = document.getElementById('asInputGain');
+  if (apInputGain && modalInputGain) {
+    apInputGain.value = modalInputGain.value;
+    if (apInputGainNum) apInputGainNum.value = fmtDb(parseFloat(modalInputGain.value));
+
+    apInputGain.addEventListener('input', () => {
+      modalInputGain.value = apInputGain.value;
+      modalInputGain.dispatchEvent(new Event('input', { bubbles: true }));
+      if (apInputGainNum) apInputGainNum.value = fmtDb(parseFloat(apInputGain.value));
+    });
+    modalInputGain.addEventListener('input', () => {
+      if (document.activeElement === apInputGain) return;  // panel is driving
+      apInputGain.value = modalInputGain.value;
+      if (apInputGainNum) apInputGainNum.value = fmtDb(parseFloat(modalInputGain.value));
+    });
+  }
+
+  // ── Noise gate ──
+  // The modal has a canvas meter with draggable threshold; we give a simple
+  // slider here and keep the hidden `asNoiseGateSlider` in sync (the modal
+  // treats that hidden input as the persistence source of truth).
+  const apGate       = document.getElementById('apNoiseGateSlider');
+  const apGateNum    = document.getElementById('apNoiseGateNum');
+  const modalGate    = document.getElementById('asNoiseGateSlider');  // hidden
+  const modalGateVal = document.getElementById('asNoiseGateVal');
+  if (apGate) {
+    apGate.value = S.vizNoiseFloor;
+    if (apGateNum) apGateNum.value = fmtGate(S.vizNoiseFloor);
+    apGate.addEventListener('input', () => {
+      const v = parseFloat(apGate.value);
+      S.vizNoiseFloor = v;
+      if (apGateNum)    apGateNum.value    = fmtGate(v);
+      if (modalGate)    modalGate.value    = String(v);
+      if (modalGateVal) modalGateVal.textContent = fmtGate(v);
+    });
+  }
+  // Note: panel sync on modal-drag / MIDI / OSC happens inside _syncGateVal()
+  // upstream — the panel slider + numbox are mirrored there alongside the
+  // modal readout so no extra wrapping of _setNoiseGateThreshold is needed.
+
+  // ── Master volume ──
+  const apMaster       = document.getElementById('apMasterGainSlider');
+  const apMasterNum    = document.getElementById('apMasterGainNum');
+  const modalMaster    = document.getElementById('asOutputGain');
+  if (apMaster && modalMaster) {
+    apMaster.value = modalMaster.value;
+    if (apMasterNum) apMasterNum.value = fmtDb(parseFloat(modalMaster.value));
+    apMaster.addEventListener('input', () => {
+      modalMaster.value = apMaster.value;
+      modalMaster.dispatchEvent(new Event('input', { bubbles: true }));
+      if (apMasterNum) apMasterNum.value = fmtDb(parseFloat(apMaster.value));
+    });
+    modalMaster.addEventListener('input', () => {
+      if (document.activeElement === apMaster) return;
+      apMaster.value = modalMaster.value;
+      if (apMasterNum) apMasterNum.value = fmtDb(parseFloat(modalMaster.value));
+    });
+  }
+
+  // ── Dry monitor enable (on/off segmented toggle) ──
+  const apDrySeg   = document.getElementById('apDryEnableSeg');
+  const modalDryChk = document.getElementById('dryMonitorEnabledChk');
+  function _syncDryToggleFromState() {
+    if (!apDrySeg) return;
+    const on = !!S.dryMonitorEnabled;
+    apDrySeg.querySelectorAll('.grain-seg-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.dry === (on ? 'on' : 'off'));
+    });
+  }
+  if (apDrySeg) {
+    _syncDryToggleFromState();
+    apDrySeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const on = btn.dataset.dry === 'on';
+        setDryMonitorEnabled(on);       // canonical setter in audio.js
+        if (modalDryChk) modalDryChk.checked = on;
+        _syncDryToggleFromState();
+      });
+    });
+  }
+  if (modalDryChk) {
+    modalDryChk.addEventListener('change', _syncDryToggleFromState);
+  }
+
+  // ── Dry gain ──
+  const apDryGain    = document.getElementById('apDryGainSlider');
+  const apDryGainNum = document.getElementById('apDryGainNum');
+  const modalDryGain = document.getElementById('dryMonitorGainSlider');
+  const modalDryNum  = document.getElementById('dryMonitorGainNum');
+  if (apDryGain) {
+    apDryGain.value = S.dryMonitorGainValue;
+    if (apDryGainNum) apDryGainNum.value = fmtPercent(S.dryMonitorGainValue);
+    apDryGain.addEventListener('input', () => {
+      const v = parseFloat(apDryGain.value);
+      setDryMonitorGain(v);
+      if (apDryGainNum) apDryGainNum.value = fmtPercent(v);
+      if (modalDryGain) modalDryGain.value = String(v);
+      if (modalDryNum)  modalDryNum.textContent = fmtPercent(v);
+    });
+  }
+  if (modalDryGain) {
+    modalDryGain.addEventListener('input', () => {
+      if (document.activeElement === apDryGain) return;
+      const v = parseFloat(modalDryGain.value);
+      if (apDryGain)    apDryGain.value    = String(v);
+      if (apDryGainNum) apDryGainNum.value = fmtPercent(v);
+    });
+  }
+
+  // ── Exposed refresh hook ──
+  // Called from audio-settings when device activation / channel repopulation
+  // happens outside the panel (initial startup, device change, etc.) so the
+  // panel mirrors the new state without needing to re-init.
+  S._syncAudioPanel = () => {
+    if (modalInputGain && apInputGain) {
+      apInputGain.value = modalInputGain.value;
+      if (apInputGainNum) apInputGainNum.value = fmtDb(parseFloat(modalInputGain.value));
+    }
+    if (modalMaster && apMaster) {
+      apMaster.value = modalMaster.value;
+      if (apMasterNum) apMasterNum.value = fmtDb(parseFloat(modalMaster.value));
+    }
+    if (apGate) {
+      apGate.value = S.vizNoiseFloor;
+      if (apGateNum) apGateNum.value = fmtGate(S.vizNoiseFloor);
+    }
+    if (apDryGain) {
+      apDryGain.value = S.dryMonitorGainValue;
+      if (apDryGainNum) apDryGainNum.value = fmtPercent(S.dryMonitorGainValue);
+    }
+    _syncDryToggleFromState();
+    S._syncAudioPanelChannels?.();
+  };
 }
 
 // ── Main-window metering loop ────────────────────────────────────────────────
@@ -670,20 +922,78 @@ function _syncGateVal() {
   // Keep hidden slider in sync for persistence
   const hs = document.getElementById('asNoiseGateSlider');
   if (hs) hs.value = S.vizNoiseFloor;
+  // Mirror into the main-UI audio panel too — the canvas-drag path
+  // bypasses slider events, so we push values through explicitly.
+  const apGate    = document.getElementById('apNoiseGateSlider');
+  const apGateNum = document.getElementById('apNoiseGateNum');
+  if (apGate) apGate.value = String(S.vizNoiseFloor);
+  if (apGateNum) apGateNum.value = txt;
 }
 
-/** Draw the gate meter onto a given canvas context at CSS-space w×h. */
+/** Draw the gate meter onto a given canvas context at CSS-space w×h.
+ *  Auto-orients: tall-and-narrow canvases (h > w) draw vertically for the
+ *  footer rail; wide canvases stay horizontal for the audio-settings modal. */
 function _drawGateMeter(ctx, w, h) {
   ctx.clearRect(0, 0, w, h);
 
   const gated = S.vizNoiseFloor > 0 && _smoothedRms < S.vizNoiseFloor;
+
+  // Background track — same for both orientations
+  ctx.fillStyle = 'rgba(255,255,255,0.03)';
+  ctx.fillRect(0, 0, w, h);
+
+  if (h > w) {
+    // ── Vertical layout (footer rail) ──────────────────────────────────
+    // Level fills from the bottom up; threshold is a horizontal line.
+    // Too cramped for labels/triangles, so we keep it to just three
+    // elements: threshold line, RMS fill, peak tick. Colour already
+    // encodes gated vs. open.
+    const threshY = h - (S.vizNoiseFloor / GATE_METER_MAX) * h;
+    const barY    = h - (_smoothedRms   / GATE_METER_MAX) * h;
+    const peakY   = h - (_peakRms       / GATE_METER_MAX) * h;
+
+    // RMS bar — full width, from bottom up to barY
+    if (barY < h - 0.5) {
+      if (gated) {
+        ctx.fillStyle = 'rgba(224, 80, 80, 0.5)';
+        ctx.fillRect(0, Math.max(barY, 0), w, h - Math.max(barY, 0));
+      } else {
+        // Segment below threshold in dimmer teal (below the "gate is
+        // closed" line) and segment above in brighter teal.
+        if (threshY < h) {
+          ctx.fillStyle = 'rgba(122, 188, 188, 0.2)';
+          ctx.fillRect(0, Math.max(barY, threshY, 0), w, h - Math.max(barY, threshY, 0));
+        }
+        ctx.fillStyle = 'rgba(122, 188, 188, 0.6)';
+        const topSegY = Math.max(barY, 0);
+        const topSegH = Math.max(0, Math.min(threshY, h) - topSegY);
+        if (topSegH > 0) ctx.fillRect(0, topSegY, w, topSegH);
+      }
+    }
+
+    // Peak marker — thin horizontal line
+    if (peakY < h - 1) {
+      ctx.fillStyle = gated ? 'rgba(224, 80, 80, 0.8)' : 'rgba(122, 188, 188, 0.9)';
+      ctx.fillRect(0, Math.max(peakY, 0), w, 1.5);
+    }
+
+    // Threshold marker — horizontal line across full width
+    if (S.vizNoiseFloor > 0 && threshY > 0 && threshY < h) {
+      const ty = Math.round(threshY);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.lineWidth   = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, ty + 0.5);
+      ctx.lineTo(w, ty + 0.5);
+      ctx.stroke();
+    }
+    return;
+  }
+
+  // ── Horizontal layout (audio-settings modal — original) ────────────────
   const threshX = (S.vizNoiseFloor / GATE_METER_MAX) * w;
   const barX    = (_smoothedRms / GATE_METER_MAX) * w;
   const peakX   = (_peakRms / GATE_METER_MAX) * w;
-
-  // Background track
-  ctx.fillStyle = 'rgba(255,255,255,0.03)';
-  ctx.fillRect(0, 0, w, h);
 
   // RMS bar
   if (barX > 0.5) {
@@ -754,6 +1064,15 @@ function updateGateLight() {
   if (!_gateMeterInited) _ensureGateMeterSized();
   if (!_mainGateInited)  _ensureMainGateSized();
 
+  // Skip the analyser read + RMS + draws when no gate canvas is actually
+  // visible (perf audit M3 / TODO #116) — modal closed AND main panel
+  // collapsed/hidden. offsetParent === null covers display:none from either
+  // the modal or a collapsed ancestor panel. The asGateLight element is only
+  // consumed by CSS, so letting it go stale while hidden is harmless.
+  const _modalGateVisible = !!(_gateMeterCanvas && _gateMeterCanvas.offsetParent !== null);
+  const _mainGateVisible  = !!(_mainGateCanvas  && _mainGateCanvas.offsetParent  !== null);
+  if (!_modalGateVisible && !_mainGateVisible) return;
+
   // Compute RMS
   an.getFloatTimeDomainData(_gateBuf);
   let sumSq = 0;
@@ -779,13 +1098,13 @@ function updateGateLight() {
   if (_gateLightEl) _gateLightEl.classList.toggle('closed', rms < S.vizNoiseFloor);
 
   // Draw on modal canvas (if visible / sized)
-  if (_gateMeterInited && _gateMeterCtx) {
+  if (_gateMeterInited && _gateMeterCtx && _modalGateVisible) {
     const r = _gateMeterCanvas.getBoundingClientRect();
     _drawGateMeter(_gateMeterCtx, r.width, r.height);
   }
 
-  // Draw on main UI canvas (always visible)
-  if (_mainGateInited && _mainGateCtx) {
+  // Draw on main UI canvas (skipped while its panel is collapsed — M3/#116)
+  if (_mainGateInited && _mainGateCtx && _mainGateVisible) {
     const r = _mainGateCanvas.getBoundingClientRect();
     _drawGateMeter(_mainGateCtx, r.width, r.height);
   }

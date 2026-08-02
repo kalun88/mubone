@@ -9,8 +9,19 @@
 // both quaternion and inertial can have its quat assigned to 'cursor' and
 // its inertial assigned to 'gesture' independently.
 //
-// Quaternion roles: cursor, frame, custom, unmapped
+// Quaternion roles: cursor, camera, frame, custom, unmapped
 // Inertial roles:   gesture, custom, unmapped
+//
+// "camera" — projector-aim: the sensor rotates the viewport.  Turning the
+//            sensor right pans the view right, same as head-tracking VR.
+//            World/grain field stays in world coords; the performer chooses
+//            which part to look at.  This is what the original "frame" role
+//            always did mechanically — just renamed so the semantics are clear.
+// "frame"  — body-reference: the sphere is attached to this sensor's tare
+//            pose.  Moving the sensor rotates the sphere *with it*, so the
+//            performer sees no visual change when they turn their body.
+//            Cursor is drawn at the delta direction (cursor-relative-to-frame).
+//            Rotating cursor + frame together → nothing moves on screen.
 //
 // "custom" opens per-signal routing — individual euler axes or inertial
 // signals can be sent to arbitrary destinations.
@@ -21,7 +32,7 @@
 import { S, DEBUG } from './state.js';
 
 // ── Roles ────────────────────────────────────────────────────────────────────
-export const QUAT_ROLES     = ['cursor', 'frame', 'unmapped'];
+export const QUAT_ROLES     = ['cursor', 'camera', 'frame', 'unmapped'];
 export const INERTIAL_ROLES = ['gesture', 'unmapped'];
 // Future: add 'custom' to both arrays when custom routing is wired end-to-end.
 // Scaffolding exists below (dispatch, routes, destinations) — see docs/ROUTING-DESIGN.md
@@ -61,6 +72,16 @@ export const CURSOR_DEFAULTS = {
   'euler yaw':   'viz azimuth',
   'euler roll':  'viz roll',
 };
+export const CAMERA_DEFAULTS = {
+  'euler pitch': 'world reference',
+  'euler yaw':   'world reference',
+  'euler roll':  'world reference',
+};
+// FRAME_DEFAULTS identical to CAMERA_DEFAULTS for now — both feed the world-
+// reference quaternion.  The difference between camera and frame is how the
+// renderer *applies* that quat (world rotation vs. cursor delta), not what
+// signals feed it.  Kept as a separate export so UI copy can differ and so
+// future work can diverge their routing if it ever needs to.
 export const FRAME_DEFAULTS = {
   'euler pitch': 'world reference',
   'euler yaw':   'world reference',
@@ -175,7 +196,7 @@ export function getOrCreateSlot(name) {
 }
 
 // Get the slot whose quaternion or inertial stream has a given role (or null).
-// Quaternion roles: 'cursor', 'frame'
+// Quaternion roles: 'cursor', 'camera', 'frame'
 // Inertial roles:   'gesture'
 export function getByRole(role) {
   for (const slot of _registry.values()) {
@@ -189,10 +210,16 @@ export function getByRole(role) {
 export function assignQuatRole(slotName, role) {
   if (!QUAT_ROLES.includes(role)) return;
 
-  // Unassign from previous holder (except 'unmapped' and 'custom' — multiple custom allowed)
+  // Unassign from previous holder (except 'unmapped' and 'custom' — multiple custom allowed).
+  // Fire _onSensorRoleChanged for every slot that just lost the role — otherwise downstream
+  // consumers (DeviceState.role, UI "active" highlight, etc.) never learn about the clear
+  // and stale "this is the cursor" state accumulates across switches.
   if (role !== 'unmapped' && role !== 'custom') {
     for (const slot of _registry.values()) {
-      if (slot.quatRole === role) slot.quatRole = 'unmapped';
+      if (slot.name !== slotName && slot.quatRole === role) {
+        slot.quatRole = 'unmapped';
+        S._onSensorRoleChanged?.(slot);
+      }
     }
   }
 
@@ -209,10 +236,14 @@ export function assignQuatRole(slotName, role) {
 export function assignInertialRole(slotName, role) {
   if (!INERTIAL_ROLES.includes(role)) return;
 
-  // Unassign from previous holder (except 'unmapped' and 'custom')
+  // Unassign from previous holder (except 'unmapped' and 'custom').
+  // Notify on every clear so DeviceState + UI stay in sync — same fix as assignQuatRole.
   if (role !== 'unmapped' && role !== 'custom') {
     for (const slot of _registry.values()) {
-      if (slot.inertialRole === role) slot.inertialRole = 'unmapped';
+      if (slot.name !== slotName && slot.inertialRole === role) {
+        slot.inertialRole = 'unmapped';
+        S._onSensorRoleChanged?.(slot);
+      }
     }
   }
 
@@ -252,6 +283,7 @@ export function setCustomRoute(slotName, signal, destination) {
 export function getEffectiveRoutes(slot, stream) {
   if (stream === 'quat') {
     if (slot.quatRole === 'cursor') return { ...CURSOR_DEFAULTS };
+    if (slot.quatRole === 'camera') return { ...CAMERA_DEFAULTS };
     if (slot.quatRole === 'frame')  return { ...FRAME_DEFAULTS };
     if (slot.quatRole === 'custom') return { ...slot.quatRoutes };
     // unmapped
@@ -462,73 +494,28 @@ export function getCustomGestureSlots() {
 }
 
 
-// ── Tare ─────────────────────────────────────────────────────────────────────
-// Two strategies, selected automatically based on the axis map:
+// ── Tare — NOT owned by this module ─────────────────────────────────────────
+// The registry used to implement its own quaternion tare here (`slotTare` /
+// `slotClearTare`, gravity-aligned for flat mounts and full-quat otherwise).
+// It was superseded by the Euler-space tare in imu-setup.js — `captureTare()`,
+// which stores { pitch, yaw } on the DEVICE and is what the `tare sensor`
+// button, the `tare cursor` button, the ` key and the `tare` action all call.
 //
-// 1. Gravity-aligned tare (flat mount — default axis map, X = roll/forward):
-//    Captures only the heading (yaw around world-Z / gravity).  Keeps pitch=0
-//    aligned with the horizon.  tareRollOffset compensates for wrist tilt.
+// The pair was removed (2026-08-01) rather than left as a second entry point,
+// because it could not have worked even if something had called it:
+// `setFeeding()` in imu-setup.js nulls `quatCal.tareQuat` and
+// `quatCal.tareRollOffset` on every connect — "imu-setup owns calibration, so
+// the registry should just pass data through". Anything slotTare wrote was
+// erased the next time the device started feeding.
 //
-// 2. Full quaternion tare (non-flat mount — forward axis is Y or Z):
-//    Captures the entire raw orientation.  After tare the quaternion is near
-//    identity at rest, so the Euler decomposition works cleanly regardless of
-//    how the IMU is mounted.  Gravity alignment is sacrificed — "level" is
-//    wherever the IMU was at tare time — but for non-flat mounts that's what
-//    you want since the whole reference frame is being redefined.
+// `applyTare()` below and the `tareQuat` reads through this file STAY: they are
+// the mechanism, they no-op on null, and `tareQuat` is still in the persisted
+// calibration schema. Don't drop it from there — `mubone_sensor_cal_v` is the
+// key whose omission from the settings export silently rewrote frame-role
+// sensors (see docs/EXPORT-IMPORT-AUDIT-2026-07.md, finding on schema flags).
 //
-// The axis map is the signal: if the user remapped the forward/roll axis away
-// from X (the default), the IMU isn't flat and we use full-quat tare.
-// In detethered (two-IMU) mode, roll is naturally muted on the cursor anyway,
-// so the gravity tare's roll handling has no effect — full tare works fine.
-
-function _isFlatMount(cal) {
-  // Default axis map: X=roll (forward), Y=pitch, Z=yaw → flat mounting.
-  // Any other configuration means the IMU is mounted non-standard.
-  if (!cal?.axisMap) return true;
-  const xViz = cal.axisMap.x?.viz;
-  return xViz === 'roll';
-}
-
-export function slotTare(slot) {
-  if (!slot.quat) return;
-  const [qx, qy, qz, qw] = slot.quat;
-
-  if (_isFlatMount(slot.quatCal)) {
-    // ── Gravity-aligned tare (flat mount) ──────────────────────────────
-    // Store only the heading (yaw around Z/up) so the tare reference stays
-    // level with gravity.  Tilted mounting won't skew the pitch axis.
-    const heading = Math.atan2(2*(qw*qz + qx*qy), 1 - 2*(qy*qy + qz*qz));
-    slot.quatCal.tareQuat = eulerAxisToQuat(0, 0, 1, heading);
-
-    // Store the X-roll angle at tare time so the Euler path can subtract it
-    // before decomposition (prevents pitch↔yaw coupling from static roll).
-    const euler = quatToEulerDeg(qx, qy, qz, qw);
-    slot.quatCal.tareRollOffset = euler.x * (Math.PI / 180);
-  } else {
-    // ── Full quaternion tare (non-flat mount) ──────────────────────────
-    // Capture the entire raw orientation.  applyTare will left-multiply by
-    // the conjugate, zeroing out the full mounting rotation.  The tared
-    // quaternion will be near-identity at rest, so Euler decomposition and
-    // axis remap work cleanly for any physical mounting orientation.
-    slot.quatCal.tareQuat = [qx, qy, qz, qw];
-    slot.quatCal.tareRollOffset = 0;  // not needed — full tare handles everything
-  }
-
-  // Auto-recenter on next render frame so cursor snaps to center
-  if (slot.quatRole === 'cursor') {
-    S.driftOffsetQ = null;
-    S._pendingRecenter = true;
-  }
-  saveCalibration();
-  S._onTare?.();
-}
-
-export function slotClearTare(slot) {
-  slot.quatCal.tareQuat = null;
-  slot.quatCal.tareRollOffset = 0;
-  S.driftOffsetQ = null;
-  saveCalibration();
-}
+// If a quaternion tare is ever wanted again, it belongs in imu-setup.js beside
+// captureTare, not here — one owner.
 
 // ── Recenter — correct accumulated drift without changing tare ───────────────
 // Computes a rotation offset that maps the current camera direction back to
@@ -730,14 +717,24 @@ function applyAxisMapQuat(q, cal) {
 // ── getSensorCamQ — called from renderer ────────────────────────────────────
 // Returns [x, y, z, w] camera-space quaternion for the cursor role, or null.
 // Also picks up custom-role quat slots that route signals to viz.
-// Frame compensation is applied separately by the renderer via getFrameQ().
+//
+// Returns null whenever a 'camera' or 'frame' role sensor is active — in both
+// of those multi-IMU modes the main S.camQ is forced to identity, and the
+// viewport/body compensation comes from getCameraQ() / body-frame delta math
+// instead.  getSensorCursorQ() then drives the cursor.
 
 export function getSensorCamQ() {
-  // ── Detethered mode: when frame-role is active, cursor-role drives cursorQ
-  // instead of camQ. Camera stays at identity — frame provides the view.
-  // getSensorCursorQ() handles the cursor path in that case.
+  // ── Camera role (projector-aim): camera sensor rotates the world via
+  // getCameraQ().  S.camQ stays at identity; cursor is driven by
+  // getSensorCursorQ() returning the cursor's world quat.
+  const cameraSlot = getByRole('camera');
+  if (cameraSlot?.quat) return null;
+
+  // ── Frame role (body-reference): frame sensor anchors the sphere to the
+  // body via body-frame delta math.  S.camQ stays at identity; cursor is
+  // driven by getSensorCursorQ() returning the delta quat.
   const frameSlot = getByRole('frame');
-  if (frameSlot?.quat) return null;   // detethered — nothing for camQ
+  if (frameSlot?.quat) return null;
 
   let camQ = null;
 
@@ -773,23 +770,47 @@ export function getSensorCamQ() {
   return camQ;
 }
 
-// ── getSensorCursorQ — cursor quaternion for detethered two-IMU mode ────────
-// Returns the cursor-role quaternion when frame-role is also active (detethered
-// mode). When only one IMU is assigned, returns null — cursor is locked to
-// camera center and getSensorCamQ() handles everything.
-// Same tare + axis-map + custom-layer pipeline as getSensorCamQ.
+// ── getSensorCursorQ — cursor quaternion for multi-IMU modes ────────────────
+// Returns the cursor quaternion consumed by the main renderer in whichever
+// multi-IMU mode is active.  Single-IMU returns null (cursor is locked to
+// camera center; getSensorCamQ() handles everything).
+//
+//   camera-role active → cursor's tared+axis-mapped world quat (projector mode:
+//     cursor position is in world coords; cameraTransform rotates the world
+//     by conj(F_camera), so the cursor visually appears at the delta direction
+//     without extra math).
+//
+//   frame-role active  → delta quat conj(F_frame)·C_world (body-frame mode:
+//     no world rotation, so the cursor quat IS the delta — rotating both
+//     sensors together leaves the cursor at a fixed screen position AND the
+//     grid stays put).  Produces cursorQ = identity when cursor and frame are
+//     aligned at their tare poses.
+//
+// Custom-role viz signals are layered on top in both modes, same as before.
 export function getSensorCursorQ() {
-  const frameSlot = getByRole('frame');
-  if (!frameSlot?.quat) return null;   // single IMU — not detethered
+  const cameraSlot = getByRole('camera');
+  const frameSlot  = getByRole('frame');
+  const inCameraMode = !!(cameraSlot?.quat);
+  const inFrameMode  = !!(frameSlot?.quat);
+  if (!inCameraMode && !inFrameMode) return null;   // single IMU
 
   let curQ = null;
-
   const cursorSlot = getByRole('cursor');
   if (cursorSlot?.quat) {
-    curQ = applyAxisMapQuat(
+    const cWorld = applyAxisMapQuat(
       applyTare(cursorSlot.quat, cursorSlot.quatCal.tareQuat),
       cursorSlot.quatCal
     );
+    if (inFrameMode && cWorld) {
+      // Body-frame mode: cursor = conj(F_frame) · C_world = the delta.
+      // getFrameQ() already returns conj(F_frame), so multiply directly.
+      const fConj = getFrameQ();
+      curQ = fConj ? qMulQ(fConj, cWorld) : cWorld;
+    } else {
+      // Camera mode: cursor stays in world coords, cameraTransform handles
+      // the frame rotation visually.
+      curQ = cWorld;
+    }
   }
 
   // Custom path: layer custom-role viz signals on top
@@ -838,34 +859,69 @@ export function getCursorAxisSigns() {
   return { yaw: yawSign, pitch: pitchSign, rollMuted };
 }
 
-// ── getFrameQ — world rotation quaternion from frame-role sensor ───────────
-// Returns the calibrated quaternion for the frame-role sensor, or null.
-// Stored on S.frameQ by the renderer; sphere.js applies it per-point in
-// cameraTransform / getCursorLonLat / screenToLonLat.
+// ── Shared helper: calibrated conj(F_world) for a slot ──────────────────────
+// Used by both getCameraQ() and getFrameQ().  Returns the tared+axis-mapped
+// quaternion, conjugated for renderer convention.
 //
-// Uses the exact same tare + axis-map pipeline as getSensorCamQ (cursor path).
-// The output is conjugated because cameraTransform applies frameQ directly
-// (qRotateVec(frameQ, point)) while camQ is conjugated (qRotateVec(conj(camQ),
-// point)).  Conjugating here makes both sensors produce identical visual
-// behaviour — same Euler path, same artifact profile, same feel.
-//
-// Works without a tare (applyTare passes through raw quat), but taring is
-// recommended — without one the raw BNO085 magnetometer heading drifts
-// slowly, causing a creeping spiral toward the pole.
-export function getFrameQ() {
-  const frameSlot = getByRole('frame');
-  if (!frameSlot?.quat) return null;
+// ⚠ CRITICAL — DO NOT REMOVE THE CONJUGATION.
+// cameraTransform applies this quat directly but camQ conjugated.  Without
+// this conjugation, the sensor exhibits gimbal lock (pitch→roll coupling at
+// 90° yaw) while the cursor does not.  Tested and verified Mar 28.
+// See cameraTransform() in sphere.js for the matching comment.
+function _worldRefQuat(slot) {
+  if (!slot?.quat) return null;
   const q = applyAxisMapQuat(
-    applyTare(frameSlot.quat, frameSlot.quatCal.tareQuat),
-    frameSlot.quatCal
+    applyTare(slot.quat, slot.quatCal.tareQuat),
+    slot.quatCal
   );
   if (!q) return null;
-  // ⚠ CRITICAL — DO NOT REMOVE THIS CONJUGATION.
-  // cameraTransform applies frameQ directly but camQ conjugated.  Without this
-  // conjugation, the frame sensor exhibits gimbal lock (pitch→roll coupling at
-  // 90° yaw) while the cursor does not.  This was tested and verified Mar 28.
-  // See cameraTransform() in sphere.js for the matching comment.
   return [-q[0], -q[1], -q[2], q[3]];
+}
+
+// ── getCameraQ — viewport-rotating quaternion from camera-role sensor ───────
+// Returns conj(C_world) for the sensor assigned the 'camera' role, or null.
+// Consumed by the main renderer and stored on S.frameQ; sphere.cameraTransform
+// rotates every world point by this quat, producing a projector-aim feel:
+// rotating the camera sensor pans the viewport while the world stays fixed
+// in world coords.
+//
+// This is the behaviour the role originally named 'frame' had.  It was
+// renamed on 2026-04-23 to distinguish from body-reference 'frame'.
+export function getCameraQ() {
+  return _worldRefQuat(getByRole('camera'));
+}
+
+// ── getFrameQ — body-reference quaternion from frame-role sensor ────────────
+// Returns conj(F_world) for the sensor assigned the 'frame' role, or null.
+// Consumed by:
+//   - the staging sphere (relational-features + ui-posture-map) for computing
+//     the Δ between cursor and body, and
+//   - the main renderer's body-frame path, where the cursor is drawn at the
+//     delta direction and no world rotation is applied.
+//
+// Same math as getCameraQ() — the difference is how the renderer uses the
+// result, not what the quat contains.
+export function getFrameQ() {
+  return _worldRefQuat(getByRole('frame'));
+}
+
+// ── getCursorWorldQ — cursor in the same world convention as getFrameQ ──────
+// Same pipeline as getFrameQ (tare → axis-map) but WITHOUT the final
+// conjugation.  Used by the staging engine's relational-features.js to compute
+// Δ = getFrameQ() * getCursorWorldQ() = conj(F_world) * C_world, which is zero
+// when both sensors rotate together.
+//
+// Parallel to getSensorRawCursorQ (tare only, no axis-map) — the two serve
+// different callers: the delta-based renderer uses the raw-tared quat because
+// it feeds sphere.cameraTransform which applies its own conventions; the
+// relational/staging path needs axis-mapped world-frame matching getFrameQ.
+export function getCursorWorldQ() {
+  const cursorSlot = getByRole('cursor');
+  if (!cursorSlot?.quat) return null;
+  return applyAxisMapQuat(
+    applyTare(cursorSlot.quat, cursorSlot.quatCal.tareQuat),
+    cursorSlot.quatCal
+  );
 }
 
 // Helper: quaternion from axis-angle (used for custom euler → quat)
@@ -907,7 +963,9 @@ function qConjugate(q) {
 // Save/load calibration + role assignments to localStorage so they survive
 // page reloads.  Saved per slot name; applied to slots as they're discovered.
 
-const LS_KEY = 'mubone_sensor_cal';
+const LS_KEY          = 'mubone_sensor_cal';
+const LS_VERSION_KEY  = 'mubone_sensor_cal_v';   // schema version flag
+const CURRENT_VERSION = '1';                     // bumped 2026-04-23: frame→camera split
 let _restoring = false;   // true while applying saved cal — suppresses re-saves
 
 // Serialise just the bits we need to restore
@@ -947,6 +1005,40 @@ function loadSavedCal() {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) _savedCal = JSON.parse(raw);
   } catch (_) { _savedCal = null; }
+  _migrateSavedCal();
+}
+
+// One-shot schema migrations.  Runs once per localStorage bucket — gated by
+// LS_VERSION_KEY so re-loading after a successful migration is a no-op.
+//
+// v→1 (2026-04-23): the original 'frame' role did projector-aim rendering
+// (rotating the viewport with the sensor).  That semantic is now named
+// 'camera' so the new 'frame' role can mean body-reference.  Any slot saved
+// with quatRole='frame' before this migration is the OLD semantic → rewrite
+// to 'camera' so the live-set keeps behaving identically.
+function _migrateSavedCal() {
+  try {
+    const v = localStorage.getItem(LS_VERSION_KEY);
+    if (v === CURRENT_VERSION) return;
+
+    if (_savedCal) {
+      let migrated = 0;
+      for (const name of Object.keys(_savedCal)) {
+        const slot = _savedCal[name];
+        if (slot && slot.quatRole === 'frame') {
+          slot.quatRole = 'camera';
+          migrated++;
+        }
+      }
+      if (migrated > 0) {
+        console.log(`[sensor-registry] migrated ${migrated} slot(s) frame → camera`);
+        try { localStorage.setItem(LS_KEY, JSON.stringify(_savedCal)); } catch (_) {}
+      }
+    }
+    try { localStorage.setItem(LS_VERSION_KEY, CURRENT_VERSION); } catch (_) {}
+  } catch (e) {
+    console.warn('[sensor-registry] migration failed:', e);
+  }
 }
 
 // Apply saved calibration to a slot (called when slot is first created).

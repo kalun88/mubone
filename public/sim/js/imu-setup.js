@@ -16,6 +16,9 @@ import { S, DEBUG } from './state.js';
 import {
   getOrCreateSlot, handleSlotQuaternion, handleSlotInertial, assignQuatRole,
 } from './sensor-registry.js';
+import {
+  settingsFor, EXPECTED_MESSAGE_TYPES, VERIFY_TIMEOUT_MS, VERIFY_DELAY_MS,
+} from './ximu-settings.js';
 
 // ── Axes alignment table ────────────────────────────────────────────────────
 // From x-IMU3 User Manual Table 42.  Each entry: [value, label, description].
@@ -134,9 +137,26 @@ class DeviceState {
     this.lastMsgType = null;
     this.lastTimestamp = 0;
 
+    // Serial accessory (x-IMU3-SA-A8 etc).  serialMode is read back from the
+    // device on connect — never written automatically.  2 = Accessory.
+    // Presence of an accessory is observed from data flow, not configuration:
+    // the adapter hot-plugs, so lastAccessoryAt going stale IS the unplug event.
+    this.serialMode      = null;
+    this.lastAccessoryAt = 0;
+
+    // Settings enforcement result, filled in by verifySettings() after connect.
+    // null = never verified (OSC devices, or a connect still in flight).
+    // { ok, mismatched: [{ key, want, got }], unanswered: [key], at }
+    this.settingsVerify = null;
+
+    // Data message types seen that mubone does not consume.  A non-empty map
+    // after connect means enforcement did not take — the device is still
+    // streaming something the app throws away.  Keyed by type letter.
+    this.unexpectedTypes = new Map();
+
     // Registry integration
-    // OSC devices keep their original slot name (e.g. 'wand', 'cursor')
-    // so legacy Max patches continue to work
+    // OSC devices keep their original slot name (e.g. 'cursor')
+    // so the Max patch's slot name flows through unchanged.
     this.slotName   = transport === 'osc' ? sn : `ximu3-${sn}`;
     this.role       = 'cursor';     // default role — user can change
     this.feeding    = false;        // whether data is being pushed to registry
@@ -204,6 +224,10 @@ class DeviceState {
 // (polarity, roll mute, role) but NOT session-specific values (tare, feeding)
 // and NOT hardware-queried values (axes alignment, wifi info).
 const _LS_DEVICE_PREFS_KEY = 'mubone-sensor-prefs';
+
+// Data lines dropped because their source IP matched no connected device
+// while >1 UDP device was connected (misrouted / foreign-instance traffic).
+let _unknownSourceDrops = 0;
 
 function _loadDevicePrefs() {
   try {
@@ -295,8 +319,17 @@ let _proxyEverConnected = false;
 const _webSerialPorts = new Map();
 
 function _initBrowserTransport() {
-  // Connect to proxy control channel for WiFi discovery
-  _connectProxyControl();
+  // Connect to proxy control channel for WiFi discovery.
+  // Same reasoning as osc.js: PROXY_CONTROL_URL is a localhost address, so on a
+  // hosted origin (mubone.org/sim) it can only fail. Skip it there rather than
+  // spraying connection errors into a demo visitor's console — WebSerial below
+  // is the path that actually works from a hosted page.
+  const h = location.hostname;
+  if (h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '') {
+    _connectProxyControl();
+  } else {
+    DEBUG && console.log('[imu-setup] hosted origin — skipping local proxy control channel');
+  }
 
   // WebSerial is available — serial scanning handled on demand via scanSerialPorts()
   if (navigator.serial) {
@@ -584,16 +617,26 @@ export function initIMUSetup() {
 
   // Listen for data messages — route by source IP to the correct device
   bridge.onXIMU3Data((line, sourceIP) => {
-    let dev = null;
-    if (sourceIP) {
-      for (const d of _devices.values()) {
-        if (d.transport === 'udp' && d.ip === sourceIP) { dev = d; break; }
-      }
+    let dev = null, udpCount = 0, firstUdp = null;
+    for (const d of _devices.values()) {
+      if (d.transport !== 'udp') continue;
+      udpCount++;
+      if (!firstUdp) firstUdp = d;
+      if (sourceIP && d.ip === sourceIP) { dev = d; break; }
     }
-    // Fallback: if no IP match (single device, or IP not yet known), use first UDP device
+    // Fallback only when exactly ONE UDP device is connected (its IP may not
+    // be known yet).  With several devices — or several instances sharing a
+    // data port — an unknown-source line must never be attributed to an
+    // arbitrary device: two quaternion streams would fight over one cursor.
     if (!dev) {
-      for (const d of _devices.values()) {
-        if (d.transport === 'udp') { dev = d; break; }
+      if (udpCount === 1) {
+        dev = firstUdp;
+      } else {
+        _unknownSourceDrops++;
+        if (DEBUG && (_unknownSourceDrops === 1 || _unknownSourceDrops % 400 === 0)) {
+          console.warn(`[imu-setup] dropped ${_unknownSourceDrops} data lines from unknown source ${sourceIP} — is another device sending to this port?`);
+        }
+        return;
       }
     }
     if (!dev) return;
@@ -745,38 +788,35 @@ export async function connectDevice(sn) {
   // Notify main page immediately — don't wait for handshake
   _syncSensorStatus();
 
+  // Bring the UDP data listener up.  Command responses arrive on the same
+  // socket as data, so nothing can be read back until this is running.
   if (bridge?.isElectron) {
-    // Electron mode — start UDP data listener via IPC
     await bridge.ximu3StartData(info.send);
-    await _delay(300);
-
-    // Read current settings
-    sendCommandTo(dev, { axes_alignment: null });
-    sendCommandTo(dev, { wi_fi_ap_channel: null });
-    sendCommandTo(dev, { wi_fi_ap_ssid: null });
-    sendCommandTo(dev, { wi_fi_client_channel: null });
-    sendCommandTo(dev, { wi_fi_client_ssid: null });
-    sendCommandTo(dev, { wi_fi_region: null });
-
-    // Settings enforcement — ensure correct AHRS config regardless of GUI state
-    sendCommandTo(dev, { ahrs_ignore_magnetometer: true });
-    sendCommandTo(dev, { ahrs_acceleration_rejection_enabled: true });
-    sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
-    sendCommandTo(dev, { udp_low_latency: true });
-    sendCommandTo(dev, { ahrs_message_type: 0 });  // quaternion mode
-    sendCommandTo(dev, { ahrs_message_rate_divisor: 4 });  // 400Hz / 4 = 100Hz (matches paint-ticker 200Hz; device averages intermediate samples)
-    await _delay(100);
-    sendCommandTo(dev, { apply: null });
-
-    // LED handshake — 5× blink for visual confirmation on the physical device
-    for (let i = 0; i < 5; i++) {
-      await _delay(200);
-      sendCommandTo(dev, { blink: null });
-    }
   } else {
-    // Browser mode — tell proxy to connect (proxy handles UDP + settings + blink)
+    // Browser mode — the proxy owns the socket.  It starts the listener and
+    // relays our commands; enforcement itself stays here so there is exactly
+    // one copy of it (see ximu-settings.js).
     _sendProxyControl({ type: 'connect', sn });
   }
+  await _delay(300);
+
+  // Read current settings
+  sendCommandTo(dev, { axes_alignment: null });
+  sendCommandTo(dev, { wi_fi_ap_channel: null });
+  sendCommandTo(dev, { wi_fi_ap_ssid: null });
+  sendCommandTo(dev, { wi_fi_client_channel: null });
+  sendCommandTo(dev, { wi_fi_client_ssid: null });
+  sendCommandTo(dev, { wi_fi_region: null });
+
+  // Settings enforcement — see ximu-settings.js for the table and why.
+  // serial_mode is read there too, as part of the verification sweep.
+  await _enforceAndVerify(dev);
+
+  // LED handshake — 5× blink for visual confirmation on the physical device.
+  // Route through blinkDevice() so it goes through the LED-feedback module
+  // when enabled (firmware's white {blink:null} strobe is invisible against
+  // our grey idle — the module flashes red/black instead).
+  await blinkDevice(dev, 5, 200);
 
   _syncSensorStatus();
   DEBUG && console.log(`[imu-setup] UDP connected to ${info.name} (${sn}) at ${info.ip}`);
@@ -829,18 +869,13 @@ export async function connectSerialDevice(portPathOrObj) {
     sendCommandTo(dev, { device_name: null });
     sendCommandTo(dev, { serial_number: null });
     sendCommandTo(dev, { axes_alignment: null });
-    sendCommandTo(dev, { ahrs_ignore_magnetometer: true });
-    sendCommandTo(dev, { ahrs_acceleration_rejection_enabled: true });
-    sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
-    sendCommandTo(dev, { ahrs_message_type: 0 });
-    sendCommandTo(dev, { ahrs_message_rate_divisor: 4 });  // 400Hz / 4 = 100Hz (matches paint-ticker 200Hz; device averages intermediate samples)
-    await _delay(100);
-    sendCommandTo(dev, { apply: null });
 
-    for (let i = 0; i < 5; i++) {
-      await _delay(200);
-      sendCommandTo(dev, { blink: null });
-    }
+    // Settings enforcement — see ximu-settings.js for the table and why.
+    // serial_mode is read there too, as part of the verification sweep.
+    await _enforceAndVerify(dev);
+
+    // LED handshake — route through blinkDevice() so LED-feedback module handles it
+    await blinkDevice(dev, 5, 200);
     return true;
   }
 
@@ -870,20 +905,12 @@ export async function connectSerialDevice(portPathOrObj) {
   sendCommandTo(dev, { serial_number: null });
   sendCommandTo(dev, { axes_alignment: null });
 
-  // Settings enforcement
-  sendCommandTo(dev, { ahrs_ignore_magnetometer: true });
-  sendCommandTo(dev, { ahrs_acceleration_rejection_enabled: true });
-  sendCommandTo(dev, { gyroscope_offset_correction_enabled: true });
-  sendCommandTo(dev, { ahrs_message_type: 0 });
-  sendCommandTo(dev, { ahrs_message_rate_divisor: 4 });  // 400Hz / 4 = 100Hz (matches paint-ticker 200Hz; device averages intermediate samples)
-  await _delay(100);
-  sendCommandTo(dev, { apply: null });
+  // Settings enforcement — see ximu-settings.js for the table and why.
+  // serial_mode is read there too, as part of the verification sweep.
+  await _enforceAndVerify(dev);
 
-  // LED handshake — 5× blink
-  for (let i = 0; i < 5; i++) {
-    await _delay(200);
-    sendCommandTo(dev, { blink: null });
-  }
+  // LED handshake — route through blinkDevice() so LED-feedback module handles it
+  await blinkDevice(dev, 5, 200);
   return true;
 }
 
@@ -908,9 +935,10 @@ export async function disconnectDevice(sn) {
     DEBUG && console.log(`[imu-setup] serial disconnected ${dev.serialPath}`);
   } else {
     if (bridge?.isElectron) {
-      // Electron mode — stop UDP listener if no UDP devices left
-      const hasUdp = [..._devices.values()].some(d => d.transport === 'udp');
-      if (!hasUdp) await bridge.ximu3StopData();
+      // Electron mode — release our ref on the UDP data listener for this
+      // device's send port.  Main-side is ref-counted, so the socket only
+      // closes when the last device using that port disconnects.
+      await bridge.ximu3StopData(dev.send);
     } else {
       // Browser mode — tell proxy to disconnect
       _sendProxyControl({ type: 'disconnect', sn });
@@ -947,10 +975,136 @@ export function sendCommandTo(dev, jsonObj) {
   _onCommandSent?.(dev, jsonObj);
 }
 
+// ── Settings enforcement ────────────────────────────────────────────────────
+// mubone does not trust the device's stored configuration.  The x-IMU3 GUI and
+// the Max patches both write settings that persist in flash — max/x-imu3.maxpat
+// leaves inertial messages at 400 Hz, max/x-imu3 copy.maxpat turns the
+// magnetometer stream on — and a device that has been through either arrives
+// streaming data mubone parses and discards.  Every connect re-asserts the
+// whole table from ximu-settings.js, then reads it back.
+//
+// Not saved to flash: enforcement is per-connect by design, so the device stays
+// usable with the x-IMU3 GUI at its own settings between mubone sessions.
+
+export async function enforceSettings(dev) {
+  if (!dev || dev.transport === 'osc') return;
+  const want = settingsFor(dev.transport);
+  for (const [key, value] of Object.entries(want)) {
+    sendCommandTo(dev, { [key]: value });
+  }
+  await _delay(100);
+  sendCommandTo(dev, { apply: null });
+}
+
+// ── Read-back verification ──────────────────────────────────────────────────
+// Writes to the x-IMU3 are unacknowledged in any useful sense: the device
+// echoes the key, but nothing in mubone ever looked at the echo, so a rejected
+// or misspelled setting failed in complete silence.  After apply, re-read every
+// enforced key and compare.
+//
+// A missing response is reported separately from a mismatch — UDP command
+// responses can simply be dropped, and treating that as a failed setting would
+// cry wolf before every show.
+
+const _verifyPending = new Map();   // dev.sn → { want, got }
+
+export async function verifySettings(dev) {
+  if (!dev || dev.transport === 'osc') return null;
+
+  const want = settingsFor(dev.transport);
+  const state = { want, got: {} };
+  _verifyPending.set(dev.sn, state);
+
+  // Let the write echoes drain first, or they'd be counted as read responses.
+  // (They carry the desired value, so they could only ever mask a failure.)
+  await _delay(VERIFY_DELAY_MS);
+
+  for (const key of Object.keys(want)) {
+    sendCommandTo(dev, { [key]: null });
+  }
+
+  await _delay(VERIFY_TIMEOUT_MS);
+  _verifyPending.delete(dev.sn);
+
+  const mismatched = [];
+  const unanswered = [];
+  for (const [key, wantVal] of Object.entries(want)) {
+    if (!(key in state.got)) { unanswered.push(key); continue; }
+    const gotVal = state.got[key];
+    // Loose compare: the device returns 4 for a divisor written as 4, but
+    // numeric types can arrive as strings depending on transport.
+    if (String(gotVal) !== String(wantVal)) {
+      mismatched.push({ key, want: wantVal, got: gotVal });
+    }
+  }
+
+  const result = { ok: mismatched.length === 0, mismatched, unanswered, at: Date.now() };
+  dev.settingsVerify = result;
+
+  if (mismatched.length) {
+    console.warn(
+      `[imu-setup] ${dev.name} (${dev.sn}): ${mismatched.length} setting(s) did not take —`,
+      mismatched.map(m => `${m.key}: wanted ${m.want}, device reports ${m.got}`).join('; ')
+    );
+    // serial_mode failing is the one that bites silently.  SA-A8s get swapped on
+    // and off mid-show, so a device stuck out of Accessory mode looks identical
+    // to one that simply has nothing plugged in right now.
+    if (mismatched.some(m => m.key === 'serial_mode')) {
+      console.warn(
+        `[imu-setup] ${dev.name} (${dev.sn}) is not in serial Accessory mode — it cannot receive an SA-A8, ` +
+        `whether or not one is attached now.  Try:  acc.setAccessoryMode(true, '${dev.sn}')  (writes with save)`
+      );
+    }
+  }
+
+  if (unanswered.length) {
+    DEBUG && console.warn(
+      `[imu-setup] ${dev.name} (${dev.sn}): no read-back for ${unanswered.length} key(s) — ${unanswered.join(', ')}`
+    );
+  }
+  if (result.ok && !unanswered.length) {
+    DEBUG && console.log(`[imu-setup] ${dev.name} (${dev.sn}): all settings verified`);
+  }
+
+  _onDeviceUpdated?.(dev);
+  return result;
+}
+
+// Called from _applyResponseFields for every command response.
+function _noteVerifyResponse(dev, json) {
+  const state = _verifyPending.get(dev.sn);
+  if (!state) return;
+  for (const key of Object.keys(json)) {
+    if (key in state.want) state.got[key] = json[key];
+  }
+}
+
+// Run enforcement then verification.  Awaited by the connect paths so the LED
+// handshake blink lands after the device is actually configured.
+async function _enforceAndVerify(dev) {
+  await enforceSettings(dev);
+  await verifySettings(dev);
+}
+
 // ── LED blink — visual identification / role-switch feedback ────────────────
 
 export async function blinkDevice(dev, count = 3, intervalMs = 150) {
   if (!dev) return;
+  // If LED feedback owns this device's colour, defer to it — the firmware's
+  // {blink:null} white strobe would be cancelled by our next baseline write and
+  // visually swamped by the idle colour. The module runs the `identify` row
+  // instead, so the colour and rate follow whatever the LED mapping table says.
+  // `intervalMs` is ignored on that path for the same reason: the row's pattern
+  // owns the timing. It still applies to the firmware-strobe fallback below.
+  try {
+    const ledMod = await import('./ximu-led-feedback.js');
+    if (ledMod.isXimuLedEnabled?.()) {
+      window.dispatchEvent(new CustomEvent('mubone-led', {
+        detail: { id: 'identify', sn: dev.sn, count }
+      }));
+      return;
+    }
+  } catch (_) {}
   for (let i = 0; i < count; i++) {
     if (i > 0) await _delay(intervalMs);
     sendCommandTo(dev, { blink: null });
@@ -1158,19 +1312,41 @@ function parseDataLine(dev, line) {
       break;
     }
 
-    case 'I': // Inertial: gx, gy, gz, ax, ay, az
-      if (parts.length >= 8) {
-        dev.rawInertial.gx = parseFloat(parts[2]);
-        dev.rawInertial.gy = parseFloat(parts[3]);
-        dev.rawInertial.gz = parseFloat(parts[4]);
-        dev.rawInertial.ax = parseFloat(parts[5]);
-        dev.rawInertial.ay = parseFloat(parts[6]);
-        dev.rawInertial.az = parseFloat(parts[7]);
-      }
+    case 'S': {
+      // Serial accessory payload — x-IMU3 manual §8.2.14.  Unlike Q/I we can't
+      // check a field count: the payload is passed through verbatim and may
+      // itself contain commas (the SA-A8 emits 8 CSVs).  Everything after the
+      // timestamp is payload; interpreting it is the accessory type's job.
+      dev.lastAccessoryAt = performance.now();
+      S._onAccessoryData?.(dev, parts.slice(2), timestamp);
       break;
+    }
 
     default:
+      // Anything else — inertial ('I'), magnetometer ('M'), high-g, temperature,
+      // battery, RSSI — is disabled at the device by ximu-settings.js.  Arriving
+      // here means enforcement did not take, so count it rather than silently
+      // dropping it: this is the cheapest signal that the handshake failed.
+      _noteUnexpectedType(dev, type);
       break;
+  }
+}
+
+// Warn once per message type per device, then keep counting quietly.  A device
+// mid-handshake can legitimately emit a few stale messages before `apply` lands,
+// so the first few are absorbed before saying anything.
+const _UNEXPECTED_GRACE = 20;
+
+function _noteUnexpectedType(dev, type) {
+  if (!type || EXPECTED_MESSAGE_TYPES.includes(type)) return;
+  const n = (dev.unexpectedTypes.get(type) || 0) + 1;
+  dev.unexpectedTypes.set(type, n);
+  if (n === _UNEXPECTED_GRACE) {
+    console.warn(
+      `[imu-setup] ${dev.name} (${dev.sn}) is streaming '${type}' messages that mubone does not consume — ` +
+      `settings enforcement did not take.  Check the console for setting mismatches, and check whether a ` +
+      `Max patch or the x-IMU3 GUI has written a message rate divisor since.`
+    );
   }
 }
 
@@ -1271,12 +1447,14 @@ function _initOscSlot(dev) {
 // Centralised so every response path (proxy, Electron UDP, Electron serial,
 // WebSerial) updates the same set of fields.
 function _applyResponseFields(dev, json) {
+  _noteVerifyResponse(dev, json);
   if (json.axes_alignment       !== undefined) dev.axesAlignment      = json.axes_alignment;
   if (json.wi_fi_ap_channel     !== undefined) dev.wifiApChannel      = json.wi_fi_ap_channel;
   if (json.wi_fi_ap_ssid        !== undefined) dev.wifiApSsid         = json.wi_fi_ap_ssid;
   if (json.wi_fi_client_channel !== undefined) dev.wifiClientChannel  = json.wi_fi_client_channel;
   if (json.wi_fi_client_ssid    !== undefined) dev.wifiClientSsid     = json.wi_fi_client_ssid;
   if (json.wi_fi_region         !== undefined) dev.wifiRegion         = json.wi_fi_region;
+  if (json.serial_mode          !== undefined) { dev.serialMode = json.serial_mode; _onDeviceUpdated?.(dev); }
   if (json.device_name          !== undefined) { dev.name = json.device_name; _onDeviceUpdated?.(dev); }
   if (json.serial_number        !== undefined) { _onDeviceUpdated?.(dev); }
   // WiFi info triggers a card refresh so channel/SSID can display

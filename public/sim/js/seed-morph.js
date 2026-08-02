@@ -1,7 +1,8 @@
 // ============================================================================
 // seed-morph.js — Seed morph engine + preset interpolation utilities
 //
-// Extracted from wand.js.  Contains:
+// Originally extracted from the since-deleted wand.js during the Mar 28 2026
+// sensor-registry refactor.  Contains:
 //   - lerpPresets() family: generic preset interpolation (2/3/4/5 point)
 //   - updateGestureMorph(): gyro-driven seed agitation/smoothing
 //

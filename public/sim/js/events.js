@@ -26,6 +26,7 @@ import { resizeCanvas } from './renderer.js';
 import { loadAudioFile } from './ui-samples.js';
 
 import { setScanMuted } from './ui-meters.js';
+import { startEraseStroke, stopEraseStroke } from './erase.js';
 
 // ── Erase-all triple-press state ────────────────────────────────────────────
 let _erasePressCount = 0;
@@ -48,6 +49,14 @@ function _focusedOnFormField() {
   if (tag === 'TEXTAREA') return true;
   if (tag === 'INPUT' && el.type !== 'range') return true;
   return false;
+}
+
+// True when this keypress would insert a character — i.e. it belongs to whoever
+// is typing, not to the shortcut layer. Used to decide which side wins when a
+// text field has focus: printable keys yield to typing, everything else
+// (function keys, Page Up/Down, Home/End, arrows) still fires its binding.
+function _producesText(e) {
+  return e.key.length === 1 && !e.ctrlKey && !e.metaKey;
 }
 
 // ── Input event coalescing ──────────────────────────────────────────────────
@@ -153,19 +162,63 @@ export function setupEvents() {
 
   S._showSurfaceOverlay = _showSurfaceOverlay;
 
+  // Where canvas overlays must be appended.
+  //
+  // NOT #canvasWrapper. In projector mode — which is the DEFAULT layout —
+  // setProjectorLayout() moves the real canvas out into .projector-mini-body
+  // and collapses .canvas-wrapper to `height: 0; overflow: hidden`. Anything
+  // appended to the wrapper is then clipped to nothing: present in the DOM,
+  // computed styles all "visible", zero pixels on screen. This is exactly how
+  // the perf monitor broke (#141) — it had to be carried into the mini tile.
+  //
+  // Following the live canvas's parent works in both layouts and survives any
+  // future re-nesting. Both hosts are `position: relative`, which is what the
+  // absolutely-positioned overlays need.
+  function _canvasHost() {
+    return S.canvas?.parentElement || document.getElementById('canvasWrapper');
+  }
+
+  // Release alt-lock: resume camera control, re-enter pointer lock in surface
+  // mode. Shared by the Alt keypress and the overlay's click — clicking the
+  // overlay while alt-locked must clear the lock too, or the pointer would be
+  // recaptured with S.altLocked still true and the two would disagree.
+  function _releaseAltLock() {
+    S.altLocked = false;
+    if (S.cameraMode === 'surface') {
+      S._requestSurfaceLock?.();     // also hides the overlay
+    } else {
+      const host = _canvasHost();
+      if (host) { host.style.cursor = ''; S.canvas.style.cursor = ''; }
+    }
+    const ind = document.getElementById('altLockIndicator');
+    if (ind) ind.style.display = 'none';
+    S._syncSessionAltLock?.(false);
+  }
+
   function _showSurfaceOverlay() {
     if (_surfaceOverlay) return;
-    const wrapper = document.getElementById('canvasWrapper');
+    const wrapper = _canvasHost();
     if (!wrapper) return;
     const altKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌥ option' : 'Alt';
+    // Same overlay, two situations — the copy has to say which one you're in.
+    // Alt-lock is a deliberate "let me use the UI"; a dropped lock (Esc, focus
+    // loss, boot) is not. Telling someone who just pressed Alt to "use Alt to
+    // free the cursor" would be describing what they already did.
+    const viaAlt = !!S.altLocked;
     _surfaceOverlay = document.createElement('div');
     _surfaceOverlay.id = 'surfaceLockOverlay';
-    _surfaceOverlay.innerHTML =
-      `<span class="surface-overlay-main">click to re-enter surface mode</span>` +
-      `<span class="surface-overlay-hint">tip: use ${altKey} to free the cursor without leaving surface mode</span>`;
+    _surfaceOverlay.innerHTML = viaAlt
+      ? `<span class="surface-overlay-main">cursor freed — the UI is yours</span>` +
+        `<span class="surface-overlay-hint">click here or press ${altKey} again to re-enter surface mode</span>`
+      : `<span class="surface-overlay-main">click to re-enter surface mode</span>` +
+        `<span class="surface-overlay-hint">tip: use ${altKey} to free the cursor without leaving surface mode</span>`;
     wrapper.appendChild(_surfaceOverlay);
     _surfaceOverlay.addEventListener('click', () => {
-      S._requestSurfaceLock?.();
+      // Clicking is equivalent to pressing Alt again when alt-locked, so route
+      // through the same release — otherwise the alt-lock indicator would
+      // stay lit and the camera stay frozen with the pointer recaptured.
+      if (S.altLocked) _releaseAltLock();
+      else             S._requestSurfaceLock?.();
     });
   }
 
@@ -178,10 +231,64 @@ export function setupEvents() {
     }
   }
 
+  // ── "How to get out" banner, shown on ENTERING surface mode ──────────────
+  // The overlay above only appears once pointer lock has already been lost —
+  // it tells you how to get back IN. Entering is the moment that needs the
+  // opposite: the pointer is captured, the mouse no longer reaches the UI, and
+  // nothing on screen says which key releases it.
+  //
+  // A banner rather than a modal on purpose: a dialog that has to be dismissed
+  // is the wrong thing to put in front of someone who just changed camera mode
+  // mid-performance. This states the escape hatch and gets out of the way.
+  let _surfaceHint = null;
+  let _surfaceHintTimer = null;
+
+  function _showSurfaceEntryHint() {
+    const wrapper = _canvasHost();   // see _canvasHost — never #canvasWrapper
+    if (!wrapper) return;
+    const altKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌥ option' : 'Alt';
+    clearTimeout(_surfaceHintTimer);
+    _surfaceHint?.remove();
+
+    _surfaceHint = document.createElement('div');
+    _surfaceHint.id = 'surfaceEntryHint';
+    _surfaceHint.innerHTML =
+      `<span class="surface-hint-title">surface mode</span>` +
+      `<span class="surface-hint-body">the pointer is captured — hold <kbd>${altKey}</kbd> ` +
+      `to free the cursor, or press <kbd>Esc</kbd> to release the lock</span>`;
+    wrapper.appendChild(_surfaceHint);
+    // Non-interactive (pointer-events: none in CSS) so it can never swallow a
+    // click meant for the canvas underneath it.
+    requestAnimationFrame(() => _surfaceHint?.classList.add('visible'));
+
+    // 4s was too short to read twice — long enough to notice, not long enough
+    // to absorb. This is a message you read once and act on, so it holds until
+    // it's been used or clearly ignored. Pressing Alt dismisses it early (see
+    // the keydown handler), which is the real exit for anyone who already
+    // knows the shortcut.
+    _surfaceHintTimer = setTimeout(() => {
+      _surfaceHint?.classList.remove('visible');
+      // Outlast the fade before removing, so it doesn't disappear mid-transition.
+      setTimeout(() => { _surfaceHint?.remove(); _surfaceHint = null; }, 400);
+    }, 12000);
+  }
+  S._showSurfaceEntryHint = _showSurfaceEntryHint;
+
+  function _hideSurfaceEntryHint() {
+    clearTimeout(_surfaceHintTimer);
+    _surfaceHint?.remove();
+    _surfaceHint = null;
+  }
+  S._hideSurfaceEntryHint = _hideSurfaceEntryHint;
+
   document.addEventListener('pointerlockchange', () => {
     _pointerLocked = document.pointerLockElement === S.canvas;
-    if (!_pointerLocked && S.cameraMode === 'surface' && !S.altLocked) {
-      // Pointer lock lost (Escape or browser) — show re-enter overlay
+    if (!_pointerLocked && S.cameraMode === 'surface') {
+      // One rule: in surface mode, no pointer lock ⇒ show the way back in.
+      // This used to skip the alt-lock case, which meant pressing Alt dropped
+      // you into a state with a free cursor, a frozen camera and nothing on
+      // screen saying how to resume. Alt-locking is the most common way to
+      // leave the lock, so it was the case that needed the overlay most.
       _showSurfaceOverlay();
     }
   });
@@ -286,19 +393,19 @@ export function setupEvents() {
     // Skip all default handling while key learn mode is active
     if (S._isKeyLearning?.()) return;
 
-    // Skip shortcuts when a text input, select, or textarea has focus —
-    // the user is typing into a form field, not issuing app commands.
-    // Escape blurs the focused field and stops — it shouldn't also fire
-    // any app-level Escape action.
-    if (_focusedOnFormField()) {
-      if (e.key === 'Escape') document.activeElement.blur();
-      return;
-    }
-
     // ── Custom key bindings (overrides) ─────────────────────────────────
     // Check user-defined key mappings before hardcoded defaults.
     // If a custom binding matches, dispatch it and skip the rest.
-    if (S._keyMappings && S._dispatchAction && !e.repeat) {
+    //
+    // This runs BEFORE the text-entry guard below. Foot pedals and external
+    // controllers send ordinary keystrokes, and hands are often still on a
+    // panel field when the pedal fires — bailing on focus first would skip the
+    // binding and let the raw key reach the browser, so a pedal bound to Page
+    // Down would scroll the panel instead of firing its action. Printable keys
+    // still yield to typing (a binding on "d" must not eat text entry); keys
+    // that don't insert a character always win.
+    const typingIntoField = _focusedOnFormField() && _producesText(e);
+    if (S._keyMappings && S._dispatchAction && !e.repeat && !typingIntoField) {
       for (const [actionId, km] of Object.entries(S._keyMappings)) {
         if (km.type !== 'key') continue;
         if (km.code !== e.code) continue;
@@ -311,6 +418,15 @@ export function setupEvents() {
       }
     }
 
+    // Skip the hardcoded shortcuts below when a text input or textarea has
+    // focus — the user is typing into a form field, not issuing app commands.
+    // Escape blurs the focused field and stops — it shouldn't also fire
+    // any app-level Escape action.
+    if (_focusedOnFormField()) {
+      if (e.key === 'Escape') document.activeElement.blur();
+      return;
+    }
+
     // Alt: toggle-lock sphere at current position
     // Only meaningful in pull and surface modes (sensor mode has free mouse already)
     if ((e.code === 'AltLeft' || e.code === 'AltRight') && !e.repeat) {
@@ -321,24 +437,27 @@ export function setupEvents() {
         S.altLocked            = true;
         S.altFrozenMousePixelX = S.mousePixelX;
         S.altFrozenMousePixelY = S.mousePixelY;
-        if (S.cameraMode === 'surface') S._exitSurfaceLock?.();
-        const wrapper = document.getElementById('canvasWrapper');
-        if (wrapper) { wrapper.style.cursor = 'auto'; S.canvas.style.cursor = 'auto'; }
+        // The banner exists to teach exactly this key. Using it is proof the
+        // message landed, so retire it early instead of making it sit out its
+        // full timeout over the canvas.
+        _hideSurfaceEntryHint();
+        if (S.cameraMode === 'surface') {
+          S._exitSurfaceLock?.();
+          // Raise the overlay here rather than leaning on the
+          // pointerlockchange that exitPointerLock triggers: that event only
+          // fires if the lock was actually held, and alt-lock is reachable
+          // from states where it wasn't (lock request denied, window never
+          // focused). The event path still runs and no-ops on the early
+          // return, so locked and unlocked entries agree.
+          _showSurfaceOverlay();
+        }
+        const host = _canvasHost();   // NOT #canvasWrapper — see _canvasHost
+        if (host) { host.style.cursor = 'auto'; S.canvas.style.cursor = 'auto'; }
         const ind = document.getElementById('altLockIndicator');
         if (ind) ind.style.display = '';
         S._syncSessionAltLock?.(true);
       } else {
-        // Unlock: resume camera control, re-enter pointer lock (surface)
-        S.altLocked = false;
-        if (S.cameraMode === 'surface') {
-          S._requestSurfaceLock?.();
-        } else {
-          const wrapper = document.getElementById('canvasWrapper');
-          if (wrapper) { wrapper.style.cursor = ''; S.canvas.style.cursor = ''; }
-        }
-        const ind = document.getElementById('altLockIndicator');
-        if (ind) ind.style.display = 'none';
-        S._syncSessionAltLock?.(false);
+        _releaseAltLock();
       }
       return;
     }
@@ -536,14 +655,22 @@ export function setupEvents() {
     // X: toggle radial morph
     if (e.key === 'x' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
       e.preventDefault();
-      S.radialMorphOn = !S.radialMorphOn;
-      S._syncMorphBtnUI?.();
+      // Route through dispatchAction so keyboard, MIDI and /morph/radial OSC
+      // all share one code path (and the mapping UI flash).
+      if (S._dispatchAction) S._dispatchAction('radial_morph', 127);
+      else { S.radialMorphOn = !S.radialMorphOn; S._syncMorphBtnUI?.(); }
     }
 
     // H: toggle handsfree recording
     if ((e.key === 'h' || e.key === 'H') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
       toggleHandsfree();
+    }
+
+    // F (hold): erase brush — momentary erase at cursor (radius + recency)
+    if (e.key === 'f' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
+      e.preventDefault();
+      startEraseStroke();
     }
 
     // - (minus): sweep
@@ -600,6 +727,11 @@ export function setupEvents() {
       for (const [, km] of Object.entries(S._keyMappings)) {
         if (km.type === 'key' && km.code === e.code) return;
       }
+    }
+
+    // F release: end erase stroke
+    if (e.key === 'f' && !e.metaKey && !e.ctrlKey) {
+      stopEraseStroke();
     }
 
     // D release: finalize commit (tap = drop, hold = draw)
@@ -767,7 +899,22 @@ export function setupEvents() {
     }
   });
 
-  window.addEventListener('resize', () => { resizeCanvas(); drawPresetWaveform(); });
+  // Coalesce resize handling to one run per frame — macOS fires resize
+  // continuously during a window drag, and each un-throttled handler run
+  // reallocates the canvas buffer. Those main-thread stalls starve the
+  // renderer→RtAudio IPC audio hop (audible as zipper noise while
+  // resizing). One rAF-batched run per frame keeps the drag smooth; the
+  // final geometry is always applied.
+  let _resizeQueued = false;
+  window.addEventListener('resize', () => {
+    if (_resizeQueued) return;
+    _resizeQueued = true;
+    requestAnimationFrame(() => {
+      _resizeQueued = false;
+      resizeCanvas();
+      drawPresetWaveform();
+    });
+  });
 
   // Scroll: custom scroll bindings only (radius is [ ] keys only)
   S.canvas.addEventListener('wheel', e => {
@@ -919,16 +1066,220 @@ export function setupEvents() {
     window.electronBridge.onFullscreenChanged((isFs) => applyFullscreenState(isFs));
   }
 
-  // ── Projector mode (Shift+F) — popup mirror + compact laptop layout ─────
-  // Opens a popup that mirrors the main canvas each frame (drag to projector,
-  // double-click to fullscreen).  Main window switches to 4-column panel
-  // layout.  The canvas is moved into a mini tile inside the panel column
-  // flow so it sits alongside the control panels at panel size.
+  // ── Projector mode ────────────────────────────────────────────────────
+  // The 4-column layout (canvas mini-tile + device columns) is the DEFAULT
+  // view — it is applied once at the end of setupEvents and never torn down.
+  // Shift+F / the projector button only opens/closes the mirrored popup that
+  // drives an external display (drag to projector, double-click to fullscreen).
+  //
+  // Column partition: each .device tile lives in one of four flex columns
+  // ([ leftCol ][ centerWrap( canvas, [ cLeftCol, cRightCol ] ) ][ rightCol ]).
+  // Initial column membership comes from DEFAULT_PROJECTOR_LAYOUT (or the
+  // saved layout in localStorage); the up/down arrows on each tile header
+  // reorder across columns and persist via _saveProjectorLayoutFromDom.
 
   // Move the real canvas into / out of a mini wrapper inside the panel flow
   let _miniWrapper = null;
   let _origCanvasParent = null;
   let _origCanvasNext = null;
+
+  // Default projector-mode column layout — applied on first entry when there
+  // is no saved layout in localStorage. Keys match the `device--KEY` class
+  // suffix in index.html. Unlisted tiles fall into the right column so they
+  // remain reachable.
+  // 5-column projector layout. Outer ratio is 1 : 3 : 1 — the center takes
+  // 3 sub-columns (cleft, cmid, cright) under the canvas, so the whole
+  // panel rail reads as five equal-width slices. Tuned 2026-04-23 to
+  // avoid over-wide panels at laptop-and-up viewport widths where the
+  // old 4-column (1:2:1) layout left each panel ~25% of the viewport.
+  // v2 layout model (2026-07-06, drag-rearrange work): five POSITIONAL
+  // columns (slots 0–4) plus a canvas position. The canvas block spans two
+  // adjacent slots (canvasPos, canvasPos+1); those two columns nest under it,
+  // the other three stand at root level. Moving the canvas re-nests columns —
+  // tiles never move with it ("canvas alone" semantics, chosen by Ek).
+  // Old named-key format (left/cleft/cmid/cright/right) migrates one-shot.
+  const DEFAULT_PROJECTOR_LAYOUT = {
+    canvasPos: 0,
+    cols: [
+      ['audio', 'session'],                // slot 0 — under canvas
+      ['play', 'erase'],                   // slot 1 — under canvas
+      ['envelope', 'preset', 'search'],    // slot 2
+      ['grain'],                           // slot 3
+      ['commit'],                          // slot 4
+    ],
+  };
+
+  function _loadProjectorLayout() {
+    // v2 format
+    try {
+      const saved = JSON.parse(localStorage.getItem('mubone_projector_layout_v2'));
+      if (saved && Array.isArray(saved.cols) && saved.cols.length === 5) {
+        saved.canvasPos = Math.max(0, Math.min(3, saved.canvasPos ?? 1));
+        return saved;
+      }
+    } catch (_) {}
+    // One-shot migration from the old named-key format (canvas was fixed at
+    // slots 1–2): read old → write v2 → delete old.
+    try {
+      const old = JSON.parse(localStorage.getItem('mubone_projector_layout'));
+      if (old && typeof old === 'object' && 'cmid' in old) {
+        const v2 = {
+          canvasPos: 1,
+          cols: [old.left || [], old.cleft || [], old.cmid || [],
+                 old.cright || [], old.right || []],
+        };
+        localStorage.setItem('mubone_projector_layout_v2', JSON.stringify(v2));
+        localStorage.removeItem('mubone_projector_layout');
+        return v2;
+      }
+      localStorage.removeItem('mubone_projector_layout');
+    } catch (_) {}
+    return null;
+  }
+  function _saveProjectorLayoutFromDom() {
+    const panel = document.querySelector('.right-panel');
+    if (!panel) return;
+    const cols = [[], [], [], [], []];
+    panel.querySelectorAll('.projector-col').forEach(col => {
+      const i = parseInt(col.dataset.col, 10);
+      if (i < 0 || i > 4 || Number.isNaN(i)) return;
+      cols[i] = [...col.children]
+        .map(d => d.className.match?.(/device--(\S+)/)?.[1])
+        .filter(Boolean);
+    });
+    try {
+      localStorage.setItem('mubone_projector_layout_v2',
+        JSON.stringify({ canvasPos: _canvasPos, cols }));
+    } catch (_) {}
+  }
+
+  // Move device tiles into five positional flex-column wrappers (slots 0–4)
+  // so each column packs its tiles independently (true masonry). The canvas
+  // block (projector-center) spans two adjacent slots — canvasPos and
+  // canvasPos+1 — and those two columns nest inside it, below the canvas:
+  //
+  //    canvasPos = 1 (default):
+  //    [ col0 ][        centerWrap         ][ col3 ][ col4 ]
+  //    [      ][   projector-mini-canvas   ][      ][      ]
+  //    [      ][   col1   ][    col2       ][      ][      ]
+  //
+  // Moving the canvas (S._moveCanvasTo) re-nests which two columns sit under
+  // it; column CONTENTS never move with the canvas. Columns keep stable
+  // identity via data-col regardless of nesting.
+  //
+  // querySelectorAll('.device') walks depth-first in document order, so
+  // _savePanelOrder in main.js continues to see tiles in the correct order.
+  let _canvasPos = 1;   // canvas spans slots (_canvasPos, _canvasPos + 1)
+
+  function _projectorCols(panel) {
+    const cols = [];
+    for (let i = 0; i < 5; i++) {
+      let col = panel.querySelector(`.projector-col[data-col="${i}"]`);
+      if (!col) {
+        col = document.createElement('div');
+        col.className = 'projector-col';
+        col.dataset.col = String(i);
+      }
+      cols.push(col);
+    }
+    return cols;
+  }
+
+  // Arrange the outer row + centerWrap nesting for the current _canvasPos.
+  // Idempotent — safe to call after any reorder or canvas move.
+  function _arrangeProjectorColumns(panel) {
+    const ensureDiv = (sel, cls) =>
+      panel.querySelector(sel) || Object.assign(document.createElement('div'), { className: cls });
+    const centerWrap = ensureDiv('.projector-center',      'projector-center');
+    const centerRow  = ensureDiv('.projector-center-cols', 'projector-center-cols');
+    const cols = _projectorCols(panel);
+
+    const mini = panel.querySelector('.projector-mini-canvas');
+    if (mini && mini.parentNode !== centerWrap) {
+      centerWrap.insertBefore(mini, centerWrap.firstChild);
+    }
+    if (centerRow.parentNode !== centerWrap) centerWrap.appendChild(centerRow);
+
+    // Nest the two spanned columns inside centerRow, in slot order; all
+    // others go to the panel root, with centerWrap taking the spanned pair's
+    // place in the outer row.
+    for (let i = 0; i < 5; i++) {
+      if (i === _canvasPos) {
+        panel.appendChild(centerWrap);
+        centerRow.appendChild(cols[i]);
+        centerRow.appendChild(cols[i + 1]);
+        i++;  // skip the second spanned slot — already nested
+      } else {
+        panel.appendChild(cols[i]);
+      }
+    }
+    return cols;
+  }
+
+  function _repartitionProjectorPanels() {
+    const panel = document.querySelector('.right-panel');
+    if (!panel) return;
+
+    // Collect tiles in document order across all existing wrappers.
+    const tiles = [...panel.querySelectorAll('.device')]
+      .filter(d => !d.classList.contains('projector-mini-canvas'));
+
+    // Column membership is assigned ONCE (on initial entry, when tiles are
+    // still flat in .right-panel). After that, drag-and-drop reorders tiles
+    // freely across columns — we do not re-distribute. The saved layout
+    // (or the default if none exists) decides the initial columns AND the
+    // initial canvas position.
+    const needsInitial = tiles.some(d => !d.closest('.projector-col'));
+    const layout = needsInitial ? (_loadProjectorLayout() || DEFAULT_PROJECTOR_LAYOUT) : null;
+    if (layout) _canvasPos = Math.max(0, Math.min(3, layout.canvasPos ?? 1));
+
+    const cols = _arrangeProjectorColumns(panel);
+
+    if (needsInitial) {
+      const deviceByKey = new Map();
+      tiles.forEach(d => {
+        const k = d.className.match(/device--(\S+)/)?.[1];
+        if (k) deviceByKey.set(k, d);
+      });
+      const placed = new Set();
+      for (let i = 0; i < 5; i++) {
+        for (const k of (layout.cols[i] || [])) {
+          const d = deviceByKey.get(k);
+          if (d) { cols[i].appendChild(d); placed.add(d); }
+        }
+      }
+      // Any unlisted tiles spill into the last column so they stay visible.
+      tiles.forEach(d => { if (!placed.has(d)) cols[4].appendChild(d); });
+    }
+
+    // Persist the current layout so it survives reloads.
+    _saveProjectorLayoutFromDom();
+  }
+
+  // Move the canvas block to span slots (pos, pos+1). Tiles stay in their
+  // columns — only the nesting changes. Exposed for panel-drag.js.
+  function _moveCanvasTo(pos) {
+    pos = Math.max(0, Math.min(3, pos | 0));
+    if (pos === _canvasPos) return;
+    const panel = document.querySelector('.right-panel');
+    if (!panel) return;
+    _canvasPos = pos;
+    _arrangeProjectorColumns(panel);
+    _saveProjectorLayoutFromDom();
+    requestAnimationFrame(() => resizeCanvas());
+  }
+
+  function _clearProjectorPartition() {
+    const panel = document.querySelector('.right-panel');
+    if (!panel) return;
+    // Flatten: move every device (including mini) back out as a direct child
+    // of panel in document order, then drop all (now empty) scaffolding
+    // wrappers. Mini is subsequently removed by setProjectorLayout itself.
+    [...panel.querySelectorAll('.device')].forEach(t => panel.appendChild(t));
+    panel.querySelectorAll(
+      '.projector-col, .projector-center-cols, .projector-center'
+    ).forEach(el => el.remove());
+  }
 
   function setProjectorLayout(on) {
     const panel = document.querySelector('.right-panel');
@@ -936,27 +1287,58 @@ export function setupEvents() {
     const canvas = S.canvas;
     if (!panel || !canvasWrapper || !canvas) return;
 
+    // Idempotent: no-op if already in the requested state. Protects against
+    // double-entry from the boot path + any legacy callers.
+    if (on && _miniWrapper) return;
+    if (!on && !_miniWrapper) return;
+
     if (on) {
       // Remember original position so we can restore later
       _origCanvasParent = canvas.parentElement;
       _origCanvasNext = canvas.nextSibling;
 
-      // Create mini wrapper and move the real canvas into it
+      // Create mini wrapper and move the real canvas into it.
+      // No device-label here — the sphere render fills the tile edge-to-edge.
+      // A slim hover-reveal grab handle (top center) lets the performer drag
+      // the whole canvas block left/right between column slots (panel-drag.js
+      // → S._moveCanvasTo); it must NOT cover much canvas since the canvas
+      // itself is the paint surface.
       _miniWrapper = document.createElement('div');
       _miniWrapper.className = 'projector-mini-canvas device';
-      const label = document.createElement('div');
-      label.className = 'device-label';
-      label.innerHTML = '<span class="device-name">projector</span>';
-      _miniWrapper.appendChild(label);
       const miniBody = document.createElement('div');
       miniBody.className = 'projector-mini-body';
       miniBody.appendChild(canvas);
+      // Everything that overlays the canvas has to travel WITH the canvas, or
+      // it stays marooned in the now-collapsed (height:0, overflow:hidden)
+      // .canvas-wrapper — present in the DOM, computed styles all "visible",
+      // zero pixels on screen. That was #141 for the perf monitor (p appeared
+      // to do nothing) and it recurred for the surface overlays, which main.js
+      // can create at boot BEFORE this rAF runs.
+      //
+      // Listed by id rather than "move every child": .canvas-wrapper also
+      // holds the HUD, the drop overlay and the first-run hint, which are
+      // positioned against the wrapper and must not follow the canvas.
+      for (const id of ['perfMonitor', 'surfaceLockOverlay', 'surfaceEntryHint']) {
+        const el = document.getElementById(id);
+        if (el) miniBody.appendChild(el);
+      }
       _miniWrapper.appendChild(miniBody);
+      const miniHandle = document.createElement('div');
+      miniHandle.className = 'canvas-drag-handle';
+      miniHandle.title = 'drag to move the viz between columns';
+      _miniWrapper.appendChild(miniHandle);
 
       // Insert at the top of the panel flow
       panel.insertBefore(_miniWrapper, panel.firstChild);
 
       document.body.classList.add('projector-mode');
+
+      // Assign left/right columns to device tiles, and expose the partition
+      // fn so the reorder handlers in main.js can re-run it after each move.
+      _repartitionProjectorPanels();
+      S._repartitionProjector = _repartitionProjectorPanels;
+      S._moveCanvasTo = _moveCanvasTo;
+      S._saveProjectorLayout = _saveProjectorLayoutFromDom;
     } else {
       document.body.classList.remove('projector-mode');
 
@@ -964,17 +1346,33 @@ export function setupEvents() {
       if (_origCanvasParent) {
         if (_origCanvasNext) _origCanvasParent.insertBefore(canvas, _origCanvasNext);
         else _origCanvasParent.appendChild(canvas);
+        // Perf monitor rides with the canvas (see enable branch)
+        const _pmBack = document.getElementById('perfMonitor');
+        if (_pmBack) _origCanvasParent.appendChild(_pmBack);
       }
       if (_miniWrapper) { _miniWrapper.remove(); _miniWrapper = null; }
       _origCanvasParent = null;
       _origCanvasNext = null;
+
+      // Drop partition classes so normal-mode .right-panel flow resumes
+      _clearProjectorPartition();
+      S._repartitionProjector = null;
+      S._moveCanvasTo = null;
+      S._saveProjectorLayout = null;
     }
 
     requestAnimationFrame(() => resizeCanvas());
   }
+  // Expose so the boot path (end of setupEvents) can flip layout on once
+  // the DOM is fully wired.
+  S._setProjectorLayout = setProjectorLayout;
 
   function toggleProjectorMode() {
     const btn = document.getElementById('projectorModeBtn');
+
+    // Projector LAYOUT is the default view (applied once at boot). This
+    // toggle now only opens/closes the mirrored popup — it no longer flips
+    // the panel partition or moves the canvas back into .canvas-wrapper.
 
     // If popup exists, close it
     if (S.projectorPopup && !S.projectorPopup.closed) {
@@ -982,7 +1380,6 @@ export function setupEvents() {
       S.projectorPopup = null;
       S.projectorCtx = null;
       S.projectorMode = false;
-      setProjectorLayout(false);
       if (btn) btn.classList.remove('active');
       return;
     }
@@ -1109,7 +1506,6 @@ export function setupEvents() {
     S.projectorPopup = pop;
     S.projectorCtx = mirrorCanvas.getContext('2d');
     S.projectorMode = true;
-    setProjectorLayout(true);
     if (btn) btn.classList.add('active');
 
     // Clean up if user closes popup directly
@@ -1118,7 +1514,6 @@ export function setupEvents() {
       S.projectorCtx = null;
       S.projectorMode = false;
       S._syncProjectorHUD = null;
-      setProjectorLayout(false);
       if (btn) btn.classList.remove('active');
     });
   }
@@ -1133,6 +1528,9 @@ export function setupEvents() {
   // ── Mute button ───────────────────────────────────────────────────────────
   const muteBtn = document.getElementById('muteBtn');
   function setMuted(muted) {
+    // OSC sends an explicit 0|1 rather than a toggle, so a repeat of the
+    // current value is a no-op and shouldn't flash the LED.
+    const ledChanged = S.isMuted !== muted;
     S.isMuted = muted;
     ensureAudioContext();
     const t      = S.audioCtx.currentTime;
@@ -1153,6 +1551,7 @@ export function setupEvents() {
       if (span) span.textContent = S.isMuted ? 'unmute' : 'mute';
     }
     S._syncSessionMute?.();
+    if (ledChanged) window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'mute_toggle' } }));
   }
   if (muteBtn) muteBtn.addEventListener('click', () => setMuted(!S.isMuted));
   // Expose for osc.js so /mute also ramps the audio gain and updates the button
@@ -1212,6 +1611,13 @@ export function setupEvents() {
     }
     _updateLiveRecUI();
   };
+
+  // ── Projector layout = default view ─────────────────────────────────────
+  // The projector column layout (mini canvas + 4 device columns) is the
+  // primary layout for the app. Apply it once at the end of init so every
+  // cold-load lands in this view without the user pressing Shift+F. The
+  // Shift+F / projector button now only toggles the mirrored popup.
+  requestAnimationFrame(() => setProjectorLayout(true));
 
 }
 

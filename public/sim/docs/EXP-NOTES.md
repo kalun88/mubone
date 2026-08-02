@@ -1,17 +1,17 @@
 # Experimental Modules — Design Notes
 
+> **Status: MIXED — check before trusting.** Gesture extraction, the snapshot engine, and the staging UI **shipped** in 1.11 (always-on, no longer `?exp`-gated). The rest of this document is still unbuilt idea-space. See § Implementation Status near the bottom, and treat everything else as proposal.
+
 Status: planning / early prototyping
-Feature flag: `?exp` in URL (see `js/state.js` EXP const, `js/main.js` lazy loader)
-Code location: `js/exp/` — lazy-loaded via `exp-init.js`, zero overhead when flag is off
-Badge: small orange "exp" text at top-center of viewport when active
+Code location: `js/` (flat — the `js/exp/` subfolder and the `?exp` URL flag were removed; modules that were once gated are either always-loaded or reachable via `await import('./js/<module>.js')` from the DevTools console)
 
 ---
 
 ## Context
 
-mubone is a spatial granular synthesizer for live acoustic instrumentalists. The performer plays into a mic, the system records audio into a particle cloud on a 3D sphere, and grains are spatialized via VBAP to a multi-channel speaker array. An IMU (BNO085) tracks wand orientation; a second optional IMU provides world-frame reference. Gyro + accelerometer inertial data is also available.
+mubone is a spatial granular synthesizer for live acoustic instrumentalists. The performer plays into a mic, the system records audio into a particle cloud on a 3D sphere, and grains are spatialized via VBAP to a multi-channel speaker array. An x-imu3 sensor tracks orientation for the cursor; additional sensors can register via the generic sensor registry. Gyro + accelerometer inertial data is also available.
 
-The published version (`main` branch, deployed to mubone.org/sim) is stable and used by collaborators. All experimental work lives behind the `?exp` flag so collaborators never see it until modules graduate.
+The published version (`main` branch, deployed to mubone.org/sim) is the stable baseline. Research/experimental work that isn't ready to auto-wire into the main UI should stay as a standalone module that you pull in from the DevTools console rather than being imported by `main.js`.
 
 ---
 
@@ -25,13 +25,13 @@ The published version (`main` branch, deployed to mubone.org/sim) is stable and 
 
 ---
 
-## Gesture Extraction Layer (js/exp/gesture.js) — BUILT, NEEDS LIVE TESTING
+## Gesture Extraction Layer (js/gesture.js) — BUILT, NEEDS LIVE TESTING
 
 The foundation everything else plugs into. Runs every frame (~60hz), derives high-level gesture descriptors from raw IMU data.
 
 ### Input
-- Quaternion orientation (from sensor.js)
-- Angular velocity / gyro (from wand inertial data via OSC)
+- Quaternion orientation (from the sensor registry's assigned cursor slot)
+- Angular velocity / gyro (from sensor inertial data via OSC)
 
 ### Derived Features
 
@@ -66,7 +66,7 @@ The foundation everything else plugs into. Runs every frame (~60hz), derives hig
 
 ### Data Flow
 ```
-sensor.js (raw quat + gyro)
+sensor-registry.js (raw quat + gyro via /sensor/{name}/{type})
   → gesture.js (compute features each frame)
     → S.gesture = { smoothness, effort, periodicity, periodicityPeriod,
                     accumulatedEnergy, directness }
@@ -76,8 +76,8 @@ sensor.js (raw quat + gyro)
 ```
 
 ### Integration
-- Sits between sensor.js and wand.js
-- wand.js can read from S.gesture instead of (or in addition to) raw axis values
+- Sits between sensor-registry.js and sensor-mapping.js
+- sensor-mapping.js can read from S.gesture instead of (or in addition to) raw axis values
 - Does NOT replace existing axis mapping — layers on top as an alternative mapping mode
 
 ---
@@ -119,7 +119,7 @@ All of these process live acoustic input or granular output. None generate sound
 
 ### Waveshaping / Distortion (low priority, easy)
 - WaveShaperNode with transfer curves mapped to IMU effort/weight
-- Gentle saturation at rest, aggressive fold-over when wand swings hard
+- Gentle saturation at rest, aggressive fold-over when the sensor swings hard
 - Nearly zero cost, layers on existing soft clipper
 
 ---
@@ -322,7 +322,7 @@ Several existing tools solve the same "organize audio segments by timbral simila
 
 ### Feedback delay network, site-specific
 - Sax multiphonic feeds delay network, taps routed to speakers via VBAP
-- Circular wand motion → system detects periodicity → delay feedback rises, times modulate in sync with rotation
+- Circular sensor motion → system detects periodicity → delay feedback rises, times modulate in sync with rotation
 - Stop moving → cessation detected (high deceleration) → feedback drops below unity, delays freeze → wash decays with inertia
 
 ### Accumulated state / energy
@@ -338,19 +338,19 @@ Several existing tools solve the same "organize audio segments by timbral simila
 
 | Module | File | Status |
 |---|---|---|
-| Feature flag | `js/state.js` (EXP const) | done |
-| Lazy loader | `js/main.js` (dynamic import) | done |
-| Bootstrap | `js/exp/exp-init.js` | done |
-| Gesture extraction | `js/exp/gesture.js` | built — needs live testing with wand |
-| Gesture visualization | `js/exp/gesture-viz.js` | built — overlay panel, press G to toggle |
-| OSC hook | `js/osc.js` line 191 | done — `S._onGestureUpdate?.()` (no-op when exp off) |
-| Resonant filter bank | `js/exp/resonant-filters.js` | not started |
-| Convolution reverb | `js/exp/convolver.js` | not started |
-| Feedback delay network | `js/exp/fdn.js` | not started |
-| Spectral freeze | `js/exp/spectral-freeze.js` | not started |
-| Gesture → sonic mapping | `js/exp/gesture-map.js` | not started |
-| Gesture-influenced painting | `js/exp/gesture-paint.js` | not started — design doc written |
-| Self-organizing sphere | `js/exp/organized-paint.js` | not started — design doc written |
+| Gesture extraction | `js/gesture.js` | built — needs live testing with sensor |
+| Gesture visualization | `js/gesture-viz.js` | built — overlay panel, press G to toggle |
+| Gesture panel UI | `js/gesture-panel.js` | built — Shift+G to toggle |
+| Snapshot engine | `js/snapshot-engine.js` | built — posture macros, auto-start off by default |
+| Staging UI | `js/ui-staging.js` | built — ◇ staging button always visible |
+| OSC hook | `js/osc.js` | done — `S._onGestureUpdate?.()` fires per inertial tick |
+| Resonant filter bank | `js/resonant-filters.js` | not started |
+| Convolution reverb | `js/convolver.js` | not started |
+| Feedback delay network | `js/fdn.js` | not started |
+| Spectral freeze | `js/spectral-freeze.js` | not started |
+| Gesture → sonic mapping | `js/gesture-map.js` | not started |
+| Gesture-influenced painting | `js/gesture-paint.js` | not started — design doc written |
+| Self-organizing sphere | `js/organized-paint.js` | not started — design doc written |
 
 ---
 
@@ -375,12 +375,11 @@ monitorBus / houseBus → masterBus → softClipper (WaveShaper) → masterAnaly
 ### Accessing existing infrastructure from exp modules
 - `S` object: import from `'../state.js'` — all shared state lives here
 - Audio context: `import { ensureAudioContext } from '../audio.js'`
-- Sensor data: available on `S` after sensor.js processes each frame
-- Wand inertial: gyro/accel arrive via OSC, stored on wand state
-- VBAP: `import { vbapGains } from '../grain.js'` for speaker routing
+- Sensor data: access via the sensor registry — `import { getByRole } from '../sensor-registry.js'`, then `getByRole('cursor')?.quat` etc.
+- Sensor inertial: gyro/accel arrive via OSC, stored on the sensor slot (`slot.inertial`) in the sensor registry
+- VBAP: handled in the grain worklet via a pre-computed LUT (see `grain.js` / `grain-worklet-bridge.js`)
 - Presets: experimental params can be added to preset save/load via S
 
 ### Node budget
-- MAX_GRAIN_NODES = 150 concurrent AudioBufferSourceNodes
-- BiquadFilter, Gain, Delay nodes are much cheaper than source nodes
-- A 6-filter resonant bank + convolver + 4-tap FDN adds maybe 15 persistent nodes — negligible
+- Grain engine runs in the AudioWorklet; the worklet's grain pool budgets concurrency on the audio thread. No main-thread `MAX_GRAIN_NODES` cap anymore.
+- BiquadFilter, Gain, Delay nodes on the master bus are cheap. A 6-filter resonant bank + convolver + 4-tap FDN adds maybe 15 persistent nodes — negligible.

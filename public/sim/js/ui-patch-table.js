@@ -8,7 +8,7 @@
 
 import {
   S,
-  PRESETS, FACTORY_PRESET_START, USER_PRESET_START,
+  PRESETS, isUserPreset, USER_PRESET_START,
   saveUserPresets, rebuildGrainCurves, _buildValidParamKeys,
 } from './state.js';
 import { resetCursorPeriod } from './grain.js';
@@ -206,8 +206,7 @@ export const PARAM_REGISTRY = [
     get: () => S.commitSlotCount,
     set: v  => {
       S.commitSlotCount = Math.max(1, Math.min(16, Math.round(v)));
-      const sel = document.getElementById('commitSlotCountSelect');
-      if (sel) sel.value = String(S.commitSlotCount);
+      S._syncCommitSlotCount?.();    // syncs slider + numbox
       S._syncCommitUI?.();
     },
     fmt: v  => String(v),
@@ -486,9 +485,9 @@ function _renderTable() {
     th.className = 'pt-preset-col';
     th.dataset.idx = i;
     if (i === S.activePresetIndex) th.classList.add('pt-active');
-    if (i < FACTORY_PRESET_START) th.classList.add('pt-user');
+    if (isUserPreset(i)) th.classList.add('pt-user');
 
-    if (i < FACTORY_PRESET_START) {
+    if (isUserPreset(i)) {
       // Editable name for user presets
       const nameSpan = document.createElement('span');
       nameSpan.className = 'pt-preset-name pt-editable-name';
@@ -595,7 +594,7 @@ function _renderTable() {
 // ── Preset name editing ─────────────────────────────────────────────────
 
 function _editPresetName(presetIdx, nameSpan) {
-  if (presetIdx >= FACTORY_PRESET_START) return;
+  if (!isUserPreset(presetIdx)) return;   // factory names are not editable
   if (nameSpan.querySelector('input')) return; // already editing
 
   const currentName = PRESETS[presetIdx].name;
@@ -635,7 +634,7 @@ function _editPresetName(presetIdx, nameSpan) {
 // ── Cell interaction ────────────────────────────────────────────────────
 
 function _onCellClick(e, param, presetIdx, td) {
-  if (presetIdx >= FACTORY_PRESET_START) return;
+  if (!isUserPreset(presetIdx)) return;   // factory patches are read-only
 
   const preset = PRESETS[presetIdx];
   const hasValue = preset && param.key in preset && preset[param.key] !== undefined && preset[param.key] !== null;
@@ -653,7 +652,7 @@ function _onCellClick(e, param, presetIdx, td) {
 }
 
 function _clearCell(param, presetIdx, td) {
-  if (presetIdx >= FACTORY_PRESET_START) return;
+  if (!isUserPreset(presetIdx)) return;   // factory patches are read-only
   const preset = PRESETS[presetIdx];
   if (preset) {
     delete preset[param.key];

@@ -18,7 +18,16 @@ import {
 import { updateGestureMorph } from './seed-morph.js';
 import { setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
 import { updatePlaybackControls } from './ui-presets.js';
-import { toggleMappingByIndex } from './sensor-mapping.js';
+import { toggleMappingByIndex, setMappingInput } from './sensor-mapping.js';
+
+// #105: multi-option controls accept either a bang (cycle to next mode) or a
+// string argument (set that mode directly, e.g. `/camera/mode sensor`).
+// Returns the string arg when present, else 127 (the bang convention that
+// dispatchAction's cycle paths expect).
+function _bangOrStr(values) {
+  const v = values?.[0];
+  return (typeof v === 'string' && v.length) ? v : 127;
+}
 
 const WS_URL            = 'ws://localhost:8080';
 const WS_RETRY_INTERVAL = 3000;  // ms between reconnect attempts
@@ -29,13 +38,16 @@ let _everConnected = false;
 let _ws              = null;
 let _retryTimer      = null;
 let _connected       = false;
-let _electronMsgSeen = false;  // Electron: show indicator on first message
+let _electronMsgSeen = false;  // Electron: show OSC indicator on first inbound message
 
-// ── MAX indicator ─────────────────────────────────────────────────────────────
+// ── OSC bridge indicator ──────────────────────────────────────────────────────
 // Inline in the sensor group bar. Toggled by connection state via CSS class.
+// Called "OSC" rather than "MAX" because the bridge (WebSocket in browser,
+// UDP relay in Electron) now carries traffic from any OSC peer — Max patches,
+// mubone-joycon-gui, a MIDI→OSC pedal bridge, etc. — not only Max/MSP.
 
 function setIndicator(visible) {
-  const el = document.getElementById('maxIndicator');
+  const el = document.getElementById('oscIndicator');
   if (el) el.classList.toggle('visible', visible);
 }
 
@@ -44,7 +56,7 @@ function setIndicator(visible) {
 export function initOSC() {
   if (window.electronBridge?.isElectron) {
     window.electronBridge.onOSC((address, values) => {
-      // Show indicator on the first message received from Max
+      // Show the bridge indicator on the first inbound message from any peer.
       if (!_electronMsgSeen) {
         _electronMsgSeen = true;
         setIndicator(true);
@@ -56,8 +68,24 @@ export function initOSC() {
     return;
   }
 
-  // Browser: try to connect to the Max bridge
+  // Browser: try to connect to the OSC bridge (any relay on WS_URL — Max,
+  // mubone-joycon-gui, etc.). Only meaningful when the page itself is served
+  // locally: WS_URL points at localhost, so on a hosted origin like
+  // mubone.org/sim it can only ever fail, and every attempt writes a red
+  // ERR_CONNECTION_REFUSED into the console of a first-time visitor who has no
+  // bridge and no reason to want one.
+  if (!_bridgeReachable()) {
+    DEBUG && console.log('[osc] hosted origin — skipping local WebSocket bridge');
+    return;
+  }
   connectWebSocket();
+}
+
+// The local bridge (Max bridge.js / proxy.js) listens on localhost, so it is
+// only reachable when mubone is itself being served from this machine.
+export function _bridgeReachable() {
+  const h = location.hostname;
+  return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '';
 }
 
 // ── WebSocket transport (browser) ─────────────────────────────────────────────
@@ -83,7 +111,7 @@ function connectWebSocket() {
     clearTimeout(_retryTimer);
     setIndicator(true);
     window.dispatchEvent(new CustomEvent('osc-connected'));
-    DEBUG && console.log('[osc] Max bridge connected — ws://localhost:8080');
+    DEBUG && console.log('[osc] OSC bridge connected — ws://localhost:8080');
   };
 
   _ws.onmessage = (event) => {
@@ -97,7 +125,7 @@ function connectWebSocket() {
 
   _ws.onclose = () => {
     if (_connected) {
-      DEBUG && console.log('[osc] Max bridge disconnected');
+      DEBUG && console.log('[osc] OSC bridge disconnected');
       setIndicator(false);
       window.dispatchEvent(new CustomEvent('osc-disconnected'));
     }
@@ -144,6 +172,23 @@ export function handleOSC(rawAddress, values) {
   // Electron's parseOSC strips the leading '/' from OSC addresses.
   // Normalize so both transports produce the same /address strings.
   const address = rawAddress.startsWith('/') ? rawAddress : '/' + rawAddress;
+
+  // Broadcast every inbound OSC message for the keys/midi/osc live monitor.
+  // Fires before dispatch so unhandled addresses are visible too (critical for
+  // debugging mapping issues — you can see the raw address hitting the app).
+  try {
+    window.dispatchEvent(new CustomEvent('mubone-osc-in', {
+      detail: { address, values: Array.isArray(values) ? values : [values], ts: performance.now() },
+    }));
+  } catch (_) {}
+
+  // Opt-in console trace for diagnosing "no OSC arriving" — set
+  // `localStorage.muboneOscTrace = '1'` in DevTools, then reload.  Prints
+  // every inbound message to the console (browser AND Electron DevTools).
+  // Turn off with `localStorage.removeItem('muboneOscTrace')`.
+  if (localStorage.getItem('muboneOscTrace') === '1') {
+    console.log('[osc:in]', address, values);
+  }
 
   // ── Generic sensor dispatch ─────────────────────────────────────────────────
   // New convention: /sensor/{name}/quaternion  (4 floats)
@@ -223,7 +268,13 @@ export function handleOSC(rawAddress, values) {
       scheduleUISync();
       break;
 
-    case '/grain/dir':    S._dispatchAction?.('grain_dir', 127);   break;
+    case '/grain/dir':    S._dispatchAction?.('grain_dir', _bangOrStr(values));   break;
+
+    case '/scan/fade':
+      // #14: cursor mute/unmute fade time-constant. Incoming value in ms
+      // (0–2000) → seconds internally. Applies to the next mute/unmute.
+      S.scanFadeS = clamp(values[0], 0, 2000) / 1000;
+      break;
 
     case '/grain/fade':
       // Incoming value in percent (0–50, matching UI slider max) → 0–0.5 internal
@@ -253,7 +304,7 @@ export function handleOSC(rawAddress, values) {
       scheduleUISync();
       break;
 
-    case '/grain/curve':  S._dispatchAction?.('grain_curve', 127); break;
+    case '/grain/curve':  S._dispatchAction?.('grain_curve', _bangOrStr(values)); break;
 
     case '/grain/hpf':
       // Incoming value in Hz (20–20000)
@@ -278,6 +329,11 @@ export function handleOSC(rawAddress, values) {
     // ── Preset ───────────────────────────────────────────────────────────────
     // Dispatches a CustomEvent so ui-presets.js can update its UI alongside
     // the state change. ui-presets.js listens for 'osc-preset'.
+    //
+    // Two forms, both 1-indexed. `/preset N` stays because sequencing patches
+    // from Max is far easier with one address and a number than with twenty
+    // addresses; `/preset/N` exists because that is the shape every other
+    // per-patch binding takes (one action, one address, bang to fire).
     case '/preset': {
       const idx = Math.round(values[0]) - 1;  // 1-indexed from Max
       if (idx >= 0 && idx < PRESETS.length) {
@@ -286,14 +342,14 @@ export function handleOSC(rawAddress, values) {
       break;
     }
 
-    // ── Camera mode (bang → cycle) ──────────────────────────────────────────
+    // ── Camera mode (bang → cycle, string → set: e.g. `/camera/mode sensor`) ─
     case '/camera/mode':
-      S._dispatchAction?.('camera_mode', 127);
+      S._dispatchAction?.('camera_mode', _bangOrStr(values));
       break;
 
-    // ── Spatial panning (bang → toggle) ──────────────────────────────────────
+    // ── Spatial panning (bang → toggle, string → set) ────────────────────────
     case '/spatial/panning':
-      S._dispatchAction?.('spatial_panning', 127);
+      S._dispatchAction?.('spatial_panning', _bangOrStr(values));
       break;
 
     // ── Legacy spatial mode (bang → toggle sim/physical compound state) ──────
@@ -312,6 +368,8 @@ export function handleOSC(rawAddress, values) {
     // ── Transport & cursor controls ────────────────────────────────────────
     // Trigger/bang actions route through dispatchAction for consistent UI feedback.
     case '/mute':           S._dispatchAction?.('mute', 127);        break;
+    // Momentary counterpart — 1 = mute, 0 = restore the pre-press state.
+    case '/mute/hold':      S._dispatchAction?.('mute_hold', values[0] ? 127 : 0); break;
     case '/cursor/scan':    S._dispatchAction?.('scan_toggle', values[0] ?? 127); break;
     case '/cursor/tare':    S._dispatchAction?.('tare', 127);        break;
     case '/cursor/lock_az': S._dispatchAction?.('lock_az', 127);     break;
@@ -322,6 +380,15 @@ export function handleOSC(rawAddress, values) {
     case '/mapping/toggle/2': toggleMappingByIndex(1); break;
     case '/mapping/toggle/3': toggleMappingByIndex(2); break;
     case '/mapping/toggle/4': toggleMappingByIndex(3); break;
+
+    // Generic external mapping inputs — any peer (joycon GUI, Max patch, etc.)
+    // can emit a float on these addresses and the value shows up as an
+    // additional axis in the mapping modal. No fixed target — the user picks
+    // a grain param in the modal. Value is stored raw; curve + input range
+    // in the mapping evaluate it the same as any other axis.
+    case '/mapping1': setMappingInput('mapping1', values[0]); break;
+    case '/mapping2': setMappingInput('mapping2', values[0]); break;
+    case '/mapping3': setMappingInput('mapping3', values[0]); break;
     case '/cursor/radiusfade': S._dispatchAction?.('radius_fade', 127); break;
 
     case '/cursor/radiusfadecurve': {
@@ -360,8 +427,8 @@ export function handleOSC(rawAddress, values) {
     case '/commit/draw':    S._dispatchAction?.('commit_draw', values[0] ? 127 : 0); break;
     case '/commit/release': S._dispatchAction?.('commit_release', 127); break;
     case '/commit/clear':   S._dispatchAction?.('commit_clear', 127);   break;
-    case '/commit/mode':    S._dispatchAction?.('commit_mode', 127);    break;
-    case '/commit/blend':   S._dispatchAction?.('commit_blend', 127);   break;
+    case '/commit/mode':    S._dispatchAction?.('commit_mode', _bangOrStr(values));    break;
+    case '/commit/blend':   S._dispatchAction?.('commit_blend', _bangOrStr(values));   break;
     case '/commit/tether':  S._dispatchAction?.('commit_tether', 127);  break;
     case '/commit/xfade':
       S.seedXfade = clamp(values[0], 0, 1);
@@ -395,21 +462,27 @@ export function handleOSC(rawAddress, values) {
 
     case '/commit/slots':
       S.commitSlotCount = Math.max(1, Math.min(16, Math.round(values[0])));
-      { const sel = document.getElementById('commitSlotCountSelect');
-        if (sel) sel.value = String(S.commitSlotCount); }
+      S._syncCommitSlotCount?.();    // syncs slider + numbox
       (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))();
       break;
-    case '/commit/overflow':  S._dispatchAction?.('commit_overflow', 127);  break;
-    case '/commit/selection': S._dispatchAction?.('commit_selection', 127); break;
-    case '/commit/dir':       S._dispatchAction?.('commit_dir', 127);      break;
-    case '/commit/loop_release': S._dispatchAction?.('loop_release_mode', 127); break;
+    case '/commit/overflow':  S._dispatchAction?.('commit_overflow', _bangOrStr(values));  break;
+    case '/commit/selection': S._dispatchAction?.('commit_selection', _bangOrStr(values)); break;
+    case '/commit/dir':       S._dispatchAction?.('commit_dir', _bangOrStr(values));      break;
+    case '/commit/loop_release': S._dispatchAction?.('loop_release_mode', _bangOrStr(values)); break;
 
     // ── Trace mode ──────────────────────────────────────────────────────────
-    case '/trace/mode':   S._dispatchAction?.('trace_mode', 127); break;
+    case '/trace/mode':   S._dispatchAction?.('trace_mode', _bangOrStr(values)); break;
     case '/trace/toggle': S._dispatchAction?.('trace_toggle', 127); break;
 
     case '/undo':         S._dispatchAction?.('undo', 127);       break;
     case '/sweep':        S._dispatchAction?.('sweep', 127);      break;
+    case '/erase/hold':   S._dispatchAction?.('erase_brush', values[0] ? 127 : 0); break;
+    case '/erase/toggle': S._dispatchAction?.('erase_toggle', 127); break;
+
+    // ── Octave shortcuts (discrete steps on the base pitch shift) ──────────
+    case '/grain/oct/down':  S._dispatchAction?.('pitch_oct_down', 127);  break;
+    case '/grain/oct/reset': S._dispatchAction?.('pitch_oct_reset', 127); break;
+    case '/grain/oct/up':    S._dispatchAction?.('pitch_oct_up', 127);    break;
 
     // ── Paint (live rec + sample painting) ─────────────────────────────────
     // Routed through dispatchAction for full lifecycle (mic, stroke, seq mode).
@@ -456,6 +529,7 @@ export function handleOSC(rawAddress, values) {
     // ── App ─────────────────────────────────────────────────────────────────
     case '/handsfree':      S._dispatchAction?.('handsfree', 127);  break;
     case '/app/perf':       S._dispatchAction?.('perf', 127);      break;
+    case '/app/projector':  S._dispatchAction?.('projector', 127); break;
     case '/app/perfmode':   S._dispatchAction?.('perfmode', 127);  break;
     case '/app/darkmode':   S._dispatchAction?.('darkmode', 127);  break;
     case '/session/erase':  S._dispatchAction?.('erase_all', 127); break;
@@ -486,7 +560,8 @@ export function handleOSC(rawAddress, values) {
 
     // ── Pitch shift ─────────────────────────────────────────────────────────
     case '/grain/pitchshift':
-      S.grainOverrides.pitchShift = clamp(values[0], -24, 24);
+      // cents, not semitones — matches the slider / sensor mapping / worklet
+      S.grainOverrides.pitchShift = Math.round(clamp(values[0], -2400, 2400));
       scheduleUISync();
       break;
 
@@ -507,6 +582,10 @@ export function handleOSC(rawAddress, values) {
     case '/gate/threshold':
       S._setNoiseGateThreshold?.(clamp(values[0], 0, 0.06));
       break;
+    // /dry/gain f — spatialized live-input gain in the house mix (0 to 2; 1 = unity)
+    case '/dry/gain':
+      S._setDryMonitorGain?.(clamp(values[0], 0, 2));
+      break;
 
     // ── Cloud morph ─────────────────────────────────────────────────────────
     // /morph/position f  — 0–1 morph position
@@ -521,18 +600,48 @@ export function handleOSC(rawAddress, values) {
     case '/morph/return':
       S._setDesktopMorphReturnMs?.(clamp(values[0], 50, 3000));
       break;
+    // /morph/radial bang — toggle gesture-joystick morph (X key)
+    case '/morph/radial':
+      S._dispatchAction?.('radial_morph', 127);
+      break;
 
-    default:
+    default: {
+      // /preset/N — the per-patch addresses, one per generated preset_N action.
+      // Handled here rather than as twenty cases for the same reason the actions
+      // are generated: the bank size lives in state.js and nothing else should
+      // hard-code it. A bare bang selects; an explicit 0 does not, matching how
+      // every other trigger treats a release edge.
+      const patch = /^\/preset\/(\d+)$/.exec(address);
+      if (patch) {
+        const n = parseInt(patch[1], 10);
+        if (n >= 1 && n <= PRESETS.length && !(values.length && Number(values[0]) === 0)) {
+          S._selectPreset?.(n - 1);
+        }
+        break;
+      }
       DEBUG && console.log(`[osc] unhandled: ${address}`, values);
+    }
   }
 }
 
-// ── Outbound (browser → Max) ──────────────────────────────────────────────────
-// Sends an OSC-style message back to the Max bridge over the same WebSocket.
-// Silently dropped when not connected (browser mode only; Electron not supported).
+// ── Outbound (browser → Max, or Electron → relay uplink) ─────────────────────
+// Sends an OSC-style message out. Transport depends on runtime:
+//   Electron — IPC to main, which forwards over UDP 7501 to the relay.
+//              The relay rebroadcasts to its WS peers (e.g. the joycon GUI).
+//   Browser  — the same WebSocket we use for inbound; relay fans it out to
+//              every other peer. Silently dropped when the WS isn't open.
+// Used by js/status-publisher.js to push /status/* messages so the joycon GUI
+// can drive LED/rumble feedback in response to app state.
 // Usage: sendOSC('/my/address', [1, 2, 3])
 
 export function sendOSC(address, values = []) {
+  const bridge = typeof window !== 'undefined' ? window.electronBridge : null;
+  if (bridge?.sendOSC) {
+    try { bridge.sendOSC(address, values); } catch (e) {
+      console.warn('[osc] sendOSC (electron) failed:', e);
+    }
+    return;
+  }
   if (!_ws || _ws.readyState !== WebSocket.OPEN) return;
   try {
     _ws.send(JSON.stringify({ address, values }));

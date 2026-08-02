@@ -2,7 +2,7 @@
 // MAIN — entry point: wire up all modules and start the app
 // ============================================================================
 
-import { S, DEBUG, EXP, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
+import { S, DEBUG, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
 import { showWaveformOverlay } from './debug-waveform.js';
 import { scheduleGrains } from './grain.js';
 import { setupEvents, setupDragDrop } from './events.js';
@@ -12,23 +12,31 @@ import {
   drawPresetWaveform, updatePlaybackControls, selectPreset,
 } from './ui-presets.js';
 import { setupMappingModal, initMidi } from './midi.js';
+import { initAccessory } from './accessory-registry.js';
+import { initAccessoryUI } from './ui-accessory.js';
 import { initMobileMode } from './mobile.js';
 import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
 import { resizeCanvas, animate } from './renderer.js';
-import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initMorphToggle, initRadiusFade, initSeqMode, initMixdownGains, initDryMonitorGains, setScanMuted, initGateMeter } from './ui-meters.js';
-import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, recenterCursor, assignQuatRole } from './sensor-registry.js';
+import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initMorphToggle, initRadiusFade, initSeqMode, initMixdownGains, initDryMonitorGains, initAudioPanel, setScanMuted, initGateMeter } from './ui-meters.js';
+import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, getCameraQ, recenterCursor, assignQuatRole } from './sensor-registry.js';
 import { initOSC } from './osc.js';
+import { initStatusPublisher } from './status-publisher.js';
+import { initXimuLedFeedback } from './ximu-led-feedback.js';
+import { initLedMapUI } from './ui-led-map.js';
 import { initAudioSettings, loadAudioDefaults, activateSavedInputDevice, startAutoSave } from './ui-audio-settings.js';
 
 import { initImprovUI } from './ui-improv.js';
 import { initVizUI } from './ui-viz.js';
 import { initSweepUI, initSessionPanel } from './ui-sweep.js';
+import { initEraseUI } from './erase.js';
 import { initExportImport } from './ui-export.js';
 import { initPatchTable } from './ui-patch-table.js';
 import { initMappingUI } from './ui-sensor-mapping.js';
 import { initIMUSetupUI } from './ui-imu-setup.js';
 import { qMul, qNormalize, qFromAxisAngle, qRotateVec } from './sphere.js';
 import { startPaintTicker, getPaintTickerState } from './paint-ticker.js';
+import { initPanelDrag } from './panel-drag.js';
+import { CATEGORIES, keysFor, unregisteredKeys } from './storage-registry.js';
 import {
   startWorkletGrain, stopWorkletGrain, updateWorkletParams,
   isCrossOriginIsolated, hotSwapRecording, getWorkletDiag,
@@ -37,7 +45,8 @@ import {
 
 
 // ── Worklet grain engine — always-on startup/management ─────────────────────
-// Moved from exp-init.js (Phase 5): worklet is now the only grain engine.
+// Worklet is the only grain engine (main-thread grain scheduler was removed
+// in the Mar 28 Phase 5 refactor).
 // Auto-starts on first recording. Sliders drive the worklet directly.
 
 async function _startWorkletEngine(buf, opts = {}) {
@@ -109,12 +118,114 @@ async function _restartWorkletEngine() {
   }
 }
 
+// Rebuild the worklet's buffer map after S.samples / S.liveRecBuffers were
+// replaced wholesale (session import). Two failure modes the import path has
+// to repair:
+//
+//   1. Worklet was running before import — its _bufferMap is keyed on the
+//      pre-import AudioBuffer references, so every imported particle's
+//      audioBuf misses (bufIndex === undefined) and candidate posts get
+//      filtered out at the bridge.
+//   2. Worklet was NOT running before import (e.g. fresh page then import
+//      session) — S._postWorkletCandidates is null, so the cursor's
+//      grain scheduler posts to a no-op and never fires grains, even
+//      though buffers, particles, and clouds all populated correctly.
+//
+// Both cases are repaired by (re)starting the worklet with an imported
+// buffer — startWorkletGrain rebuilds _bufferMap from current S.samples /
+// S.liveRecBuffers and reattaches S._postWorkletCandidates.
+async function _reloadWorkletEngine() {
+  // Pick a buffer to seed the SAB. Prefer the latest live recording, then
+  // fall back to a sample so import works even when the export carried
+  // only painted samples (no mic recordings).
+  const liveBuf = (S.liveRecBuffers?.filter(b => b?.buffer) ?? []).slice(-1)[0]?.buffer ?? null;
+  const sampleBuf = S.samples?.find(s => s?.buffer)?.buffer ?? null;
+  const buf = liveBuf || sampleBuf;
+  if (!buf) {
+    // No audio in the import — nothing to play. Make sure any stale
+    // worklet (with pre-import buffer map) is torn down; next paint or
+    // recording will cold-start it cleanly.
+    if (isWorkletGrainActive()) _stopWorkletEngine();
+    return;
+  }
+  console.log('worklet: reloading after session import — refreshing buffer map');
+  if (isWorkletGrainActive()) _stopWorkletEngine();
+  await _startWorkletEngine(buf);
+}
+
 function init() {
   // Forward main-process logs to DevTools console
   if (window.electronBridge?.onMainLog) {
     window.electronBridge.onMainLog((level, msg) => {
       (console[level] || console.log)(`[main] ${msg}`);
     });
+  }
+
+  // Multi-station: show which instance this window is (solo = no badge)
+  const _instName = window.electronBridge?.instanceName;
+  const _oscPort  = window.electronBridge?.oscPort;
+  if (_instName) {
+    const badge = document.createElement('span');
+    badge.className   = 'top-bar-instance';
+    badge.textContent = `[${_instName}]`;
+    badge.title       = `instance ${_instName} — own settings profile, OSC port ${_oscPort ?? '?'}`;
+    document.querySelector('.top-bar-brand')?.appendChild(badge);
+  }
+  // OSC listen port display in the keys/midi/osc modal — which port THIS
+  // window answers on (Electron UDP; browser mode uses the WS bridge instead)
+  {
+    const _isElectron = !!window.electronBridge?.isElectron;
+    const el = document.getElementById('oscPortDisplay');
+    if (el) el.textContent = _isElectron ? `udp ${_oscPort ?? 7500}` : 'ws 8080';
+    // Fill the Max setup help text: literal port in the [udpsend] example…
+    for (const s of document.querySelectorAll('.js-osc-port')) {
+      s.textContent = String(_oscPort ?? 7500);
+    }
+    // …and which station this window is.
+    // Browser mode has no UDP listener at all — OSC arrives over the WebSocket
+    // bridge (Max's bridge.js or proxy.js) on 8080, so quoting a UDP port here
+    // sends people to configure a [udpsend] that nothing is listening on.
+    const st = document.getElementById('oscStationInline');
+    if (st) {
+      st.textContent = !_isElectron
+        ? 'browser — OSC arrives over the ws://localhost:8080 bridge, not UDP'
+        : _instName
+          ? `station ${_instName} (port ${_oscPort ?? '?'})`
+          : `solo (port ${_oscPort ?? 7500})`;
+    }
+  }
+
+  // ── Narrow-mode canvas hoist ────────────────────────────────────────────
+  // At narrow widths the panel column becomes a two-column multicol so tiles
+  // PACK (flex-wrap banded every row to its tallest member, which left big
+  // dead gaps). A multicol spanner can't be position:sticky and it splits the
+  // flow, so the canvas tile is moved out to .main-layout for the duration —
+  // sibling of the panel, sticky against the same scroller. Purely positional;
+  // the canvas element and its context are untouched, so no re-render.
+  {
+    const NARROW_MAX = 700;
+    let hoisted = false;
+    const syncCanvasHoist = () => {
+      const mini   = document.querySelector('.projector-mini-canvas');
+      const layout = document.querySelector('.main-layout');
+      const panel  = document.querySelector('.right-panel');
+      if (!mini || !layout || !panel) return;          // pre-partition, retry next resize
+      const narrow = window.innerWidth <= NARROW_MAX;
+      if (narrow && !hoisted) {
+        layout.insertBefore(mini, panel);
+        hoisted = true;
+        resizeCanvas();
+      } else if (!narrow && hoisted) {
+        panel.insertBefore(mini, panel.firstChild);    // back inside before re-nesting
+        hoisted = false;
+        S._repartitionProjector?.();                   // restores centerWrap nesting
+        resizeCanvas();
+      }
+    };
+    S._syncCanvasHoist = syncCanvasHoist;
+    window.addEventListener('resize', syncCanvasHoist);
+    // Partition runs on a rAF at boot; land after it.
+    requestAnimationFrame(() => requestAnimationFrame(syncCanvasHoist));
   }
 
   S.canvas = document.getElementById('sphereCanvas');
@@ -131,6 +242,10 @@ function init() {
   initDesktopMorph();
   setupMappingModal();
   initMidi();
+  // Accessory must init after setupMappingModal — it binds against the ACTIONS
+  // registry that publishes S._actions / S._dispatchAction.
+  initAccessory();
+  initAccessoryUI();
   // Prompt for mic permission on load — but skip in Electron where RtAudio
   // handles input (getUserMedia always fails there → spurious "mic denied").
   // Electron input is activated asynchronously below via activateSavedInputDevice.
@@ -142,13 +257,22 @@ function init() {
   // Sensor + OSC + audio settings
   initSensor();
   initOSC();   // connects Electron IPC or browser WebSocket transport
+  initStatusPublisher();  // publishes /status/* so joycon GUI etc. can mirror app state on LEDs/rumble
+  initXimuLedFeedback();  // RGB LED engine — drives the cursor-assigned x-IMU3 from the LED mapping table
+  initLedMapUI();         // the mapping table modal itself (top-bar LED button)
   S._getSensorCamQ    = getSensorCamQ;       // hook renderer without a circular import
-  S._getSensorCursorQ = getSensorCursorQ;    // detethered cursor quat (two-IMU mode)
-  S._getFrameQ        = getFrameQ;           // world-frame compensation from frame-role sensor
-  S._recenterCursor   = recenterCursor;      // drift correction — called from sensors UI
-  S._onTare = () => {                        // reset drift correction on fresh tare
-    S.driftOffsetQ = null;
-  };
+  S._getSensorCursorQ = getSensorCursorQ;    // cursor quat (multi-IMU: world in camera mode, delta in frame mode)
+  S._getCameraQ       = getCameraQ;          // projector-aim: rotates the viewport (camera-role sensor)
+  S._getFrameQ        = getFrameQ;           // body-reference: attaches sphere to body (frame-role sensor) — staging + new main path
+  // Drift correction. NO UI caller — the button is disabled pending #76 and the
+  // auto-recenter path went away with sensor-registry's slotTare (2026-08-01).
+  // Kept exposed deliberately: this is the handle for investigating #76 from
+  // the console. S.driftOffsetQ stays null until someone calls it, so every
+  // read of it downstream is an inert null-check.
+  S._recenterCursor   = recenterCursor;
+  // (S._onTare hung here to clear driftOffsetQ on a fresh tare. Only slotTare
+  // ever called it; imu-setup's captureTare — the tare that actually runs —
+  // never did. Removed with slotTare rather than left as a hook nothing fires.)
 
   // ── IMU-driven cursor freshness ──────────────────────────────────────────
   // On every cursor-role quaternion arrival (up to 400Hz), update S.cursorQ
@@ -199,6 +323,21 @@ function init() {
   startPaintTicker();
   window.paintTicker = getPaintTickerState;
 
+  // ── Double-click any slider with `data-default="X"` to reset it ────────
+  // Opt-in: only sliders that carry a data-default attribute respond. The
+  // reset dispatches `input` + `change` events so the slider's own handlers
+  // run exactly as if the user dragged it — state updates, mirror sliders
+  // sync, readouts refresh, no special-casing per control.
+  document.addEventListener('dblclick', (e) => {
+    const slider = e.target.closest('input[type="range"][data-default]');
+    if (!slider) return;
+    const def = parseFloat(slider.dataset.default);
+    if (!Number.isFinite(def)) return;
+    slider.value = String(def);
+    slider.dispatchEvent(new Event('input',  { bubbles: true }));
+    slider.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+
   initMappingUI();
   initIMUSetupUI();
   initAudioSettings();
@@ -206,6 +345,7 @@ function init() {
   initVizUI();
   initSweepUI();
   initSessionPanel();
+  initEraseUI();
   initUndoBtn();
   initExportImport();
   initPatchTable(updatePlaybackControls, setScanMuted, selectPreset);
@@ -225,6 +365,9 @@ function init() {
     const order = [...panel.querySelectorAll('.device')]
       .map(d => _panelKey(d)).filter(Boolean);
     localStorage.setItem('mubone_panel_order', JSON.stringify(order));
+    // In projector mode the left/right column partition follows document
+    // order — re-run it after each reorder so the split tracks the move.
+    S._repartitionProjector?.();
   }
 
   // Restore saved panel order on load
@@ -256,42 +399,27 @@ function init() {
     if (!device) continue;
     const key = _panelKey(device);
     if (key && localStorage.getItem(`mubone_panel_${key}`) === '1') device.classList.add('collapsed');
-    label.addEventListener('click', (e) => {
-      // don't collapse when clicking reorder arrows
-      if (e.target.closest('.device-reorder')) return;
+    label.addEventListener('click', () => {
       device.classList.toggle('collapsed');
       if (key) localStorage.setItem(`mubone_panel_${key}`, device.classList.contains('collapsed') ? '1' : '0');
     });
-
-    // Reorder arrows
-    const wrap = document.createElement('span');
-    wrap.className = 'device-reorder';
-    const upBtn = document.createElement('button');
-    upBtn.className = 'device-reorder-btn';
-    upBtn.textContent = '▲';
-    upBtn.title = 'move panel up';
-    const dnBtn = document.createElement('button');
-    dnBtn.className = 'device-reorder-btn';
-    dnBtn.textContent = '▼';
-    dnBtn.title = 'move panel down';
-    upBtn.addEventListener('click', () => {
-      const prev = device.previousElementSibling;
-      if (prev) { device.parentNode.insertBefore(device, prev); _savePanelOrder(); }
-    });
-    dnBtn.addEventListener('click', () => {
-      const next = device.nextElementSibling;
-      if (next) { next.parentNode.insertBefore(next, device); _savePanelOrder(); }
-    });
-    wrap.appendChild(upBtn);
-    wrap.appendChild(dnBtn);
-    label.appendChild(wrap);
   }
+  // Panel rearrangement is click-and-drag (panel-drag.js, 2026-07-06 —
+  // replaced the old ▲▼ reorder arrows). Expose the saver so drops persist
+  // through the same path the arrows used: document order + a repartition,
+  // which writes the v2 projector layout from the DOM.
+  S._savePanelOrder = _savePanelOrder;
+  initPanelDrag();
 
   // ── Collapsible sections (within devices) ─────────────────────────────
   // Click section-toggle labels to collapse/expand subsections.
   for (const section of document.querySelectorAll('.seq-section--collapsible')) {
     const key = section.dataset.collapseKey;
-    if (key && localStorage.getItem(`mubone_sec_${key}`) === '1') section.classList.add('collapsed');
+    // A section may ship collapsed in the markup (the default state). Only a
+    // STORED value overrides it — and it must be able to override in both
+    // directions, or expanding a markup-collapsed section would never stick.
+    const stored = key ? localStorage.getItem(`mubone_sec_${key}`) : null;
+    if (stored !== null) section.classList.toggle('collapsed', stored === '1');
     const toggle = section.querySelector('.seq-section-toggle');
     if (toggle) {
       toggle.addEventListener('click', () => {
@@ -301,55 +429,157 @@ function init() {
     }
   }
 
-  // ── Factory reset ──────────────────────────────────────────────────────────
-  function _showResetDialog(title, desc, onConfirm) {
-    const overlay = document.createElement('div');
-    overlay.className = 'factory-reset-overlay';
-    overlay.innerHTML = `
-      <div class="factory-reset-dialog">
-        <div class="factory-reset-title">${title}</div>
-        <p class="factory-reset-desc">${desc}</p>
-        <div class="factory-reset-btns">
-          <button class="factory-reset-btn factory-reset-cancel">cancel</button>
-          <button class="factory-reset-btn factory-reset-confirm">reset</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-    overlay.querySelector('.factory-reset-cancel').addEventListener('click', () => overlay.remove());
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-    overlay.querySelector('.factory-reset-confirm').addEventListener('click', () => {
-      onConfirm();
-      location.reload();
-    });
+  // ── Layout settled — lift the boot veil ────────────────────────────────
+  // Everything that moves the UI from its markup position has now run:
+  // initVizUI (root font-size), the panel-order restore + repartition, the
+  // per-panel collapse restore, and the section collapse restore above.
+  // Reveal on the next frame so the browser paints the settled layout once,
+  // instead of the three reflows the veil is hiding. See the bootstrap in
+  // index.html <head> — it has a 4s failsafe if we never get here.
+  requestAnimationFrame(() => {
+    const d = document.documentElement;
+    d.classList.add('booting-reveal');
+    d.classList.remove('booting');
+    // Drop the transition again once it has played — .main-layout wraps the
+    // canvas and the render loop is timing-sensitive, so nothing permanent.
+    setTimeout(() => d.classList.remove('booting-reveal'), 400);
+  });
+
+  // ── Reset ──────────────────────────────────────────────────────────────────
+  // The app persists to localStorage ONLY — no IndexedDB, no sessionStorage.
+  // Keep it that way: everything below assumes it.
+  //
+  // This used to be a single nuclear `localStorage.clear()` with one "keep my
+  // patches" escape hatch, deliberately list-free because an enumerated key
+  // list rots every time a module adds a key (exactly what happened to the
+  // export's STATIC_KEYS — docs/EXPORT-IMPORT-AUDIT-2026-07.md). Per-category
+  // reset needs a list, so the list now lives in ONE place with a drift
+  // detector behind it: js/storage-registry.js, asserted by
+  // scripts/browser-audit.js. Unregistered keys are still wiped by a select-all
+  // (the safe direction) but get warned about, so a missing entry surfaces
+  // instead of quietly making a key un-keepable.
+  //
+  // Everything here works by deleting keys and reloading — there is no
+  // "apply defaults live" path, because defaults are just what the modules
+  // initialise to on a cold boot. Don't add one; the reload IS the mechanism.
+  //
+  // The one thing key deletion does NOT reach is Cache Storage + the service
+  // worker (browser mode). Those survive and keep serving the previous build,
+  // which makes "back to day one" untrue precisely when someone is resetting
+  // because something is behaving strangely — so select-all tears them down.
+  async function _clearOfflineCache() {
+    try {
+      if (typeof caches !== 'undefined') {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+    } catch (_) {}
+    try {
+      const regs = await navigator.serviceWorker?.getRegistrations?.() ?? [];
+      await Promise.all(regs.map(r => r.unregister()));
+    } catch (_) {}
   }
 
-  // Factory reset — nuclear, clears everything (with option to keep patches)
-  document.getElementById('factoryResetBtn')?.addEventListener('click', () => {
+  // Reset — pick which storage categories go back to defaults. Select-all is
+  // the old factory reset (everything + offline cache + service worker).
+  document.getElementById('resetBtn')?.addEventListener('click', () => {
     const overlay = document.createElement('div');
     overlay.className = 'factory-reset-overlay';
+    const rows = CATEGORIES.map(c => `
+      <label class="reset-cat">
+        <input type="checkbox" data-cat="${c.id}">
+        <span class="reset-cat-text">
+          <span class="reset-cat-label">${c.label}</span>
+          <span class="reset-cat-hint">${c.hint}</span>
+        </span>
+      </label>
+    `).join('');
+
+    // Surface drift rather than hiding it: if a key is in localStorage but not
+    // in the registry, say so in the dialog. Select-all still clears it.
+    const orphans = unregisteredKeys();
+    const warn = orphans.length
+      ? `<p class="reset-warn">${orphans.length} stored key(s) aren't in the registry
+         (${orphans.join(', ')}) — only <em>select all</em> clears these.
+         They should be added to js/storage-registry.js.</p>`
+      : '';
+
     overlay.innerHTML = `
       <div class="factory-reset-dialog">
-        <div class="factory-reset-title">factory reset</div>
-        <p class="factory-reset-desc">Clears <strong>everything</strong> — settings, mappings, calibration. Back to day one.</p>
-        <label class="factory-reset-check">
-          <input type="checkbox" id="keepPatchesChk" checked>
-          <span>keep my patches</span>
-        </label>
+        <div class="factory-reset-title">reset</div>
+        <p class="factory-reset-desc">Return the checked items to their defaults. The page reloads afterwards.</p>
+        <div class="reset-cats">
+          ${rows}
+          <label class="reset-cat reset-cat-all">
+            <input type="checkbox" data-all="1">
+            <span class="reset-cat-text">
+              <span class="reset-cat-label">select all + clear offline cache</span>
+              <span class="reset-cat-hint">full factory reset — also drops the service worker and cached build</span>
+            </span>
+          </label>
+        </div>
+        ${warn}
         <div class="factory-reset-btns">
           <button class="factory-reset-btn factory-reset-cancel">cancel</button>
-          <button class="factory-reset-btn factory-reset-confirm">reset</button>
+          <button class="factory-reset-btn factory-reset-confirm" disabled>reset</button>
         </div>
       </div>
     `;
     document.body.appendChild(overlay);
+
+    const catBoxes = [...overlay.querySelectorAll('input[data-cat]')];
+    const allBox   = overlay.querySelector('input[data-all]');
+    const confirm  = overlay.querySelector('.factory-reset-confirm');
+
+    // Select-all drives the category boxes; unticking any one of them releases
+    // select-all (so you can't end up with the cache teardown armed while the
+    // categories it belongs with are unchecked).
+    const sync = () => {
+      const n = catBoxes.filter(b => b.checked).length;
+      confirm.disabled = n === 0 && !allBox.checked;
+      confirm.textContent = allBox.checked ? 'factory reset' : 'reset';
+    };
+    allBox.addEventListener('change', () => {
+      catBoxes.forEach(b => { b.checked = allBox.checked; });
+      sync();
+    });
+    catBoxes.forEach(b => b.addEventListener('change', () => {
+      if (!b.checked) allBox.checked = false;
+      else if (catBoxes.every(x => x.checked)) allBox.checked = true;
+      sync();
+    }));
+
     overlay.querySelector('.factory-reset-cancel').addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-    overlay.querySelector('.factory-reset-confirm').addEventListener('click', () => {
-      const keepPatches = overlay.querySelector('#keepPatchesChk').checked;
-      const savedPresets = keepPatches ? localStorage.getItem('mubone_user_presets') : null;
-      localStorage.clear();
-      if (savedPresets) localStorage.setItem('mubone_user_presets', savedPresets);
+
+    confirm.addEventListener('click', async () => {
+      confirm.disabled = true;
+      confirm.textContent = 'resetting…';
+
+      const cats     = catBoxes.filter(b => b.checked).map(b => b.dataset.cat);
+      const wipeAll  = allBox.checked;
+
+      if (wipeAll) {
+        // clear() rather than the key list, so anything unregistered goes too.
+        // This is the one path where being exhaustive beats being precise.
+        localStorage.clear();
+      } else {
+        for (const k of keysFor(cats)) {
+          try { localStorage.removeItem(k); } catch (_) {}
+        }
+      }
+      console.log(`[reset] cleared: ${wipeAll ? 'everything' : cats.join(', ') || 'nothing'}`);
+
+      // Cache teardown is async, browser-only (no-op in Electron), and only
+      // part of a full reset. Race it against a timeout — a hang before
+      // location.reload() would leave the app half-wiped, which is worse than
+      // an uncleared cache.
+      if (wipeAll) {
+        await Promise.race([
+          _clearOfflineCache(),
+          new Promise(r => setTimeout(r, 1500)),
+        ]);
+      }
       location.reload();
     });
   });
@@ -391,29 +621,31 @@ function init() {
 
   // ── Camera mode modal ──────────────────────────────────────────────────────
   // Camera mode: pull / surface / sensor (independent of audio spatialization)
-  const cameraModal    = document.getElementById('cameraModal');
-  const cameraModeBtn  = document.getElementById('cameraModeBtn');
-  const cameraCloseBtn = document.getElementById('cameraModalClose');
+  // Segmented picker in the top bar — replaced the camera modal on 2026-08-01,
+  // so this is now the only camera-mode UI.
+  const cameraModeSeg = document.getElementById('cameraModeSeg');
+
+  // Base tooltip per chip, captured from the markup once so the sensor chip's
+  // dynamic suffix can be re-appended without compounding. ui-learn.js has
+  // already relocated `title` → `data-title` by the time this runs.
+  const _camTips = new Map();
 
   function updateCameraModeBtn() {
-    const label = cameraModeBtn?.querySelector('.camera-mode-label');
-    if (label) label.textContent = S.cameraMode;
-    // Update active state on modal buttons
-    cameraModal?.querySelectorAll('.camera-mode-option').forEach(btn => {
+    cameraModeSeg?.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.mode === S.cameraMode);
-    });
-    // Dynamic subtitle for sensor mode — shows 1-sensor vs 2-sensor state
-    const sub = cameraModal?.querySelector('.camera-sensor-subtitle');
-    if (sub) {
-      if (S.cameraMode === 'sensor') {
-        sub.textContent = S.detethered
-          ? '2 sensors — cursor free'
-          : '1 sensor — cursor locked';
-        sub.style.display = '';
-      } else {
-        sub.style.display = 'none';
+      if (!_camTips.has(btn)) _camTips.set(btn, btn.getAttribute('data-title') || '');
+      // Sensor mode carries a 1-vs-2-sensor state that used to be a subtitle
+      // in the modal. Written to data-title directly, not `title`: ui-learn.js
+      // moves any title it sees, so setting title here would work but reading
+      // it back never does — data-title is the honest field.
+      if (btn.dataset.mode === 'sensor') {
+        const state = S.cameraMode === 'sensor'
+          ? (S.detethered ? '\ncurrently: 2 sensors — cursor free'
+                          : '\ncurrently: 1 sensor — cursor locked')
+          : '';
+        btn.setAttribute('data-title', _camTips.get(btn) + state);
       }
-    }
+    });
   }
 
   function applyCameraMode(mode) {
@@ -431,15 +663,20 @@ function init() {
       // Reset camera to canonical forward and surface position to center
       S.camQ = [0, 0, 0, 1];
       S._resetSurfacePosition?.();
-      // Request pointer lock (the modal click qualifies as a user gesture)
+      // Request pointer lock (the chip click qualifies as a user gesture)
       S._requestSurfaceLock?.();
+      // Say how to get back out — the pointer is now captured and nothing else
+      // on screen names the key that releases it.
+      S._showSurfaceEntryHint?.();
     } else if (mode === 'sensor') {
+      S._hideSurfaceEntryHint?.();
       // Exit pointer lock + overlay if leaving surface mode
       S._exitSurfaceLock?.();
       S._hideSurfaceOverlay?.();
       // Sensor: hide cursor, mouse is free for UI
       if (S.canvas) S.canvas.style.cursor = 'none';
     } else {
+      S._hideSurfaceEntryHint?.();
       // Exit pointer lock + overlay if leaving surface mode
       S._exitSurfaceLock?.();
       S._hideSurfaceOverlay?.();
@@ -450,25 +687,11 @@ function init() {
     DEBUG && console.log(`[camera] mode: ${S.cameraMode}`);
   }
 
-  if (cameraModeBtn && cameraModal) {
-    cameraModeBtn.addEventListener('click', () => {
-      updateCameraModeBtn();  // refresh subtitle with current sensor state
-      cameraModal.classList.add('open');
-    });
-    cameraCloseBtn?.addEventListener('click', () => {
-      cameraModal.classList.remove('open');
-    });
-    cameraModal.addEventListener('click', e => {
-      if (e.target === cameraModal) cameraModal.classList.remove('open');
-    });
-    // Mode option buttons
-    cameraModal.querySelectorAll('.camera-mode-option').forEach(btn => {
-      btn.addEventListener('click', () => {
-        applyCameraMode(btn.dataset.mode);
-        cameraModal.classList.remove('open');
-      });
-    });
-  }
+  // The chip click is the user gesture that surface mode's pointer-lock
+  // request needs — same role the modal option click used to play.
+  cameraModeSeg?.querySelectorAll('.grain-seg-btn').forEach(btn => {
+    btn.addEventListener('click', () => applyCameraMode(btn.dataset.mode));
+  });
   S._setCameraMode = applyCameraMode;
   updateCameraModeBtn();
 
@@ -516,11 +739,12 @@ function init() {
     startMainMetering();  // start DOM-based VU meter loop for main window
     initGateMeter();    // wire noise gate visual meter (canvas + drag)
     initScanToggle(); // wire scan (cursor spotlight) on/off toggle
-    initMorphToggle(); // wire radial morph on/off toggle (exp only)
+    initMorphToggle(); // wire radial morph on/off toggle
     initRadiusFade();      // wire radius fade toggle + curve slider
     initSeqMode();         // wire sequential (loop) mode toggle
     initMixdownGains();    // wire mixdown source gain sliders
     initDryMonitorGains(); // wire dry monitor gain slider + enable checkbox
+    initAudioPanel();      // wire main-UI audio panel — mirrors modal controls
   });
 
   // Redraw waveforms when their containers resize (e.g. window resize or flex relayout)
@@ -589,14 +813,23 @@ function init() {
           _sensorStatusEl.textContent = '';   // CSS ::before handles "(not connected)"
         } else {
           const parts = [];
-          if (_oscBridgeUp) parts.push('max');
+          // Label the bridge as "osc" rather than "max" — the same WebSocket
+          // /UDP relay now carries traffic from any peer (Max, joycon GUI,
+          // foot pedal via MIDI→OSC, etc.), so "max" was misleading when the
+          // only live sender was the joycon GUI.
+          if (_oscBridgeUp) parts.push('osc');
           if (_sensorDetail?.transports) {
             for (const t of _sensorDetail.transports) {
               if (!parts.includes(t)) parts.push(t);
             }
           }
           const label = parts.join(' + ');
-          const count = (_sensorDetail?.count || 0) + (_oscBridgeUp ? 1 : 0);
+          // Count only real sensors. Used to add +1 for _oscBridgeUp on the
+          // assumption that the bridge was fronting a Max patch sending
+          // /sensor/*, but the bridge now carries any OSC peer — the joycon
+          // GUI holds it open with zero sensor traffic — so a bridge-up on
+          // its own shouldn't inflate the count.
+          const count = (_sensorDetail?.count || 0);
           _sensorStatusEl.textContent =
             count > 1 ? `(${label} · ${count})` : `(${label})`;
         }
@@ -676,12 +909,11 @@ function init() {
     }
   }
 
-  // ── Gesture modules (always loaded) ──────────────────────────────────────
-  // Gesture extraction + panel are core features, loaded for all users.
-  import('./exp/gesture.js')
+  // ── Gesture modules ──────────────────────────────────────────────────────
+  import('./gesture.js')
     .then(({ initGesture }) => initGesture())
     .catch(e => console.warn('[gesture] failed to load:', e));
-  import('./exp/gesture-panel.js')
+  import('./gesture-panel.js')
     .then(({ initGesturePanel, toggleGesturePanel }) => {
       initGesturePanel();
       // Wire the top-bar gesture button
@@ -703,6 +935,7 @@ function init() {
   // creation time.  _onVBAPRebuilt in the bridge detects the mismatch and
   // calls this to stop + restart with the new channel count.
   S._restartWorkletEngine = _restartWorkletEngine;
+  S._reloadWorkletEngine  = _reloadWorkletEngine;
 
   // ── Worklet grain engine: auto-start on sample paint ────────────────────
   // When the user starts painting with a sample (QWERTYUIOP keys or MIDI)
@@ -745,7 +978,8 @@ function init() {
     }
   };
 
-  // Console API for manual worklet control (always available, not just exp)
+  // Console API for manual worklet control.  Type `wg.status()` in DevTools
+  // for a summary; `wg.start()`, `wg.stop()`, `wg.set({params})` for control.
   window.wg = {
     start: async (opts = {}) => {
       const buffers = S.liveRecBuffers?.filter(b => b?.buffer) ?? [];
@@ -773,15 +1007,22 @@ function init() {
     diag: () => getWorkletDiag(),
   };
 
-  // ── Experimental modules (?exp in URL) ─────────────────────────────────────
-  // Lazy-loaded so they add zero overhead when EXP is off.  Each module
-  // self-registers its hooks on S and wires its own UI (if any).
-  if (EXP) {
-    console.log('%c[exp] experimental mode active', 'color:#e8a030;font-weight:bold');
-    import('./exp/exp-init.js')
-      .then(m => m.initExp())
-      .catch(e => console.warn('[exp] failed to load experimental modules:', e));
-  }
+  // ── Staging engine (posture-snapshot macros) ──────────────────────────────
+  // Loads persisted snapshots + mapping preset from localStorage; does not
+  // auto-start the tick loop — user enables via the in-modal start button.
+  // The UI binds the button, engine toggle, and live-readout plumbing.
+  import('./snapshot-engine.js')
+    .then(({ initSnapshotEngine }) => initSnapshotEngine({ autoStart: false }))
+    .catch(e => console.warn('[staging] snapshot-engine failed to load:', e));
+  // OSC stream-out — pumps /delta + /sensor/<name> to an external host (Max,
+  // SuperCollider, etc.) so mapping logic can live there.  Will auto-restart
+  // if it was running last session.
+  import('./osc-stream.js')
+    .then(({ initOSCStream }) => initOSCStream())
+    .catch(e => console.warn('[staging] osc-stream failed to load:', e));
+  import('./ui-staging.js')
+    .then(({ initStagingUI }) => initStagingUI())
+    .catch(e => console.warn('[staging] ui failed to load:', e));
 
   // Grain scheduler — independent of render loop so slow frames don't delay grains.
   // Interval set by GRAIN_SCHEDULER_INTERVAL_MS in state.js (default 30ms ≈ 33 ticks/sec).
@@ -831,12 +1072,38 @@ function init() {
     });
   }
 
+  // ── Global backdrop click → close that modal ─────────────────────────────
+  // Every .mu-overlay closes when its backdrop is clicked. Delegated and
+  // generic so a new modal gets the behaviour for free — the LED and accessory
+  // modals were both added without a backdrop handler and could only be
+  // dismissed from the ✕ or Escape.
+  //
+  // Routes through the ✕ for the same reason the Escape handler does: several
+  // modals hang cleanup off that button (metering, live-tick timers, row
+  // highlight state), and removing `.open` directly would leak it.
+  //
+  // `e.target === overlay` means the click landed on the backdrop and not
+  // inside .mu-dialog. The `.open` re-check keeps this a no-op for the modals
+  // that already carry their own backdrop handler — those run first (their
+  // listener is on the modal, this one bubbles to document) and have already
+  // dropped the class by the time we look.
+  document.addEventListener('click', (e) => {
+    const overlay = e.target.closest?.('.mu-overlay');
+    if (!overlay || e.target !== overlay || !overlay.classList.contains('open')) return;
+    // Click the ✕ first, then make sure it actually took. Some modals wire
+    // their ✕ lazily on first open (patch table), so a click can land on a
+    // button with no listener yet — without the fallback the backdrop would
+    // silently do nothing.
+    overlay.querySelector('.close-btn')?.click();
+    overlay.classList.remove('open');
+  });
+
   window.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
 
-    // Factory-reset / export / import overlays (dynamic, highest z-index)
-    const factoryOverlay = document.querySelector('.factory-reset-overlay');
-    if (factoryOverlay) { factoryOverlay.remove(); return; }
+    // Reset / export / import overlays (dynamic, highest z-index)
+    const dialogOverlay = document.querySelector('.factory-reset-overlay');
+    if (dialogOverlay) { dialogOverlay.remove(); return; }
 
     // Static .mu-overlay modals — close the last open one
     const openModals = document.querySelectorAll('.mu-overlay.open');

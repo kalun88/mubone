@@ -7,12 +7,6 @@
 // Set to true (or add ?debug to the URL) to enable verbose console logging.
 export const DEBUG = new URLSearchParams(window.location.search).has('debug');
 
-// ── Experimental mode ────────────────────────────────────────────────────────
-// Add ?exp to the URL to enable experimental modules (gesture engine,
-// processing chain, etc.).  Off by default — collaborators on the published
-// build never see these features until they graduate to main.
-export const EXP = new URLSearchParams(window.location.search).has('exp');
-
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const SPHERE_RADIUS       = 1200;
@@ -127,6 +121,29 @@ export const LIVE_REBUILD_INTERVAL_MS = 50;
 // Mutable at runtime via audio settings slider (stored on S.recLimitSeconds).
 export const REC_LIMIT_SECONDS_DEFAULT = 600;
 
+// ── Serial accessory (x-IMU3-SA-A8) ───────────────────────────────────────────
+// 8 analogue inputs, 12-bit, fixed 100 Hz, arriving as comma-separated volts in
+// the x-IMU3's serial-accessory message (manual §8.2.14).  See accessory-registry.js.
+
+export const ACC_CHANNEL_COUNT = 8;      // pads 1–8 on the A8
+export const ACC_RAIL_VOLTS    = 3.0;    // low-noise rail feeding the pads
+
+// The adapter hot-plugs with no event, so silence IS the unplug signal.  500ms
+// is five missed samples at 100Hz — long enough not to trip on a dropped WiFi
+// packet, short enough that a held button releases before it's musically odd.
+export const ACC_STALE_MS      = 500;
+export const ACC_WATCHDOG_MS   = 250;    // staleness poll — half the stale window
+export const ACC_RATE_WINDOW_MS = 1000;  // window for the observed-rate readout
+
+// Per-channel defaults, applied to every new channel and used as the reset value.
+// Tuned against measured hardware noise: an idle pot jitters a few mV, so the
+// deadband sits just above that.  Raising smoothing past ~0.5 is audible as lag
+// on grain duration; dropping deadband below ~0.001 lets dither through.
+export const ACC_DEFAULT_SMOOTH   = 0.25;   // one-pole coeff: 1 = raw, lower = smoother
+export const ACC_DEFAULT_DEADBAND = 0.002;  // normalised; below this we don't dispatch
+export const ACC_DEFAULT_HI       = 0.66;   // schmitt upper threshold (normalised)
+export const ACC_DEFAULT_LO       = 0.33;   // schmitt lower threshold (normalised)
+
 // ── Presets ───────────────────────────────────────────────────────────────────
 // k    = neighbourhood pool size -- how many nearest particles are candidates.
 //        One grain fires per cursor onset, chosen randomly from the k pool.
@@ -138,7 +155,7 @@ export const REC_LIMIT_SECONDS_DEFAULT = 600;
 export const PRESETS = [
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // FACTORY PRESETS 0–19 — core sonic palette
+  // FACTORY PRESETS 0–9 — core sonic palette (patches 1–10, keys 1–0)
   // Sparse: only character-defining grain params. Unset params pass through.
   // panSpread kept tight (≤0.20) for VBAP precision unless spread IS the sound.
   // All searchRadiusDeg ≤ 90.
@@ -211,24 +228,7 @@ export const PRESETS = [
     probability:   0.9,
   },
 
-  // -- 3. freeze -- lock+wide: drone, holds position in a wide halo
-  {
-    name:          'freeze',
-    nearestMode:   true,
-    searchRadiusDeg: 40,
-    recencyN:      5,
-    k:             10,
-    duration:      2.0,
-    durJitter:     0.35,
-    durVar:        0.25,
-    period:        1.1,
-    periodVar:     0.08,
-    fadeRatio:     0.25,
-    panSpread:     0.20,
-    volume:        0.70,
-  },
-
-  // -- 4. pulse -- rhythmic, medium grains with tight period, forward drive
+  // -- 3. pulse -- rhythmic, medium grains with tight period, forward drive
   {
     name:          'pulse',
     searchRadiusDeg: 18,
@@ -244,7 +244,7 @@ export const PRESETS = [
     curveType:     'tri',
   },
 
-  // -- 5. shimmer -- dense rapid onsets, pitch scatter
+  // -- 4. shimmer -- dense rapid onsets, pitch scatter
   //    ~5 concurrent grains (350ms/70ms) — tuned for Chrome audio budget.
   //    panSpread 0.45 — shimmer spread is part of the character.
   {
@@ -263,27 +263,7 @@ export const PRESETS = [
     probability:   0.85,
   },
 
-  // -- 6. ghost -- reverse, sparse, eerie smear from far-flung particles
-  //    panSpread 0.35 — eerie spatial drift is part of the character.
-  {
-    name:          'ghost',
-    searchRadiusDeg: 70,
-    recencyN:      6,
-    k:             6,
-    duration:      0.70,
-    durJitter:     0.25,
-    durVar:        0.15,
-    period:        0.65,
-    periodVar:     0.10,
-    fadeRatio:     0.31,
-    pitchJitter:   0.06,
-    panSpread:     0.35,
-    volume:        0.85,
-    probability:   0.6,
-    direction:     'rev',
-  },
-
-  // -- 7. glitch -- ultra-short random bursts, dropout probability, wide pitch
+  // -- 5. glitch -- ultra-short random bursts, dropout probability, wide pitch
   {
     name:          'glitch',
     searchRadiusDeg: 80,
@@ -303,7 +283,7 @@ export const PRESETS = [
     curveType:     'rect',
   },
 
-  // -- 8. chop -- mechanical, short exact grains with long gap, no jitter
+  // -- 6. chop -- mechanical, short exact grains with long gap, no jitter
   //    Defining: zero jitter everywhere, rect envelope.
   {
     name:          'chop',
@@ -317,7 +297,7 @@ export const PRESETS = [
     curveType:     'rect',
   },
 
-  // -- 9. ocean -- massive ambient wash, very long grains, slow onset
+  // -- 7. ocean -- massive ambient wash, very long grains, slow onset
   //    Everything bleeds together into an enveloping drone.
   //    panSpread 0.50 — ambient spread is character-defining.
   //    Radius capped at 85 (was 120).
@@ -337,7 +317,7 @@ export const PRESETS = [
     probability:   0.75,
   },
 
-  // -- 10. stutter -- CD-skip: lock, very fast repeat of nearly the same point
+  // -- 8. stutter -- CD-skip: lock, very fast repeat of nearly the same point
   {
     name:          'stutter',
     nearestMode:   true,
@@ -354,143 +334,7 @@ export const PRESETS = [
     curveType:     'tri',
   },
 
-  // -- 11. tape -- k-seq: walks through particles in recording order
-  //    Like playing back a worn cassette, slightly detuned and drifting.
-  {
-    name:          'tape',
-    grainKSeqMode: true,
-    searchRadiusDeg: 30,
-    recencyN:      5,
-    k:             4,
-    duration:      0.32,
-    durJitter:     0.10,
-    durVar:        0.12,
-    period:        0.28,
-    periodVar:     0.08,
-    fadeRatio:     0.28,
-    pitchJitter:   0.04,
-    panSpread:     0.15,
-    volume:        0.70,
-    probability:   0.92,
-  },
-
-  // -- 12. swarm -- k-all + wide radius: every particle within earshot fires
-  //    Dense insect texture that thickens as you paint more.
-  {
-    name:          'swarm',
-    grainKAllMode: true,
-    searchRadiusDeg: 45,
-    k:             20,
-    duration:      0.055,
-    durJitter:     0.3,
-    durVar:        0.02,
-    period:        0.035,
-    periodVar:     0.015,
-    fadeRatio:     0.18,
-    pitchJitter:   0.12,
-    panSpread:     0.20,
-    volume:        0.30,
-    probability:   0.7,
-    direction:     'rnd',
-    curveType:     'rect',
-  },
-
-  // -- 13. haunt -- reverse + sparse + pitched down an octave
-  //    Long ghostly swells, suboctave spectral bass presence.
-  {
-    name:          'haunt',
-    searchRadiusDeg: 90,
-    recencyN:      6,
-    k:             5,
-    duration:      1.4,
-    durJitter:     0.3,
-    durVar:        0.25,
-    period:        1.2,
-    periodVar:     0.30,
-    fadeRatio:     0.35,
-    pitchJitter:   0.03,
-    pitchShift:    -12,
-    panSpread:     0.20,
-    volume:        0.75,
-    probability:   0.5,
-    direction:     'rev',
-  },
-
-  // -- 14. morse -- k-seq + lock: sequential walk, telegraph precision
-  //    Short rect grains with silence between — sonar ping.
-  {
-    name:          'morse',
-    nearestMode:   true,
-    grainKSeqMode: true,
-    searchRadiusDeg: 20,
-    k:             6,
-    duration:      0.045,
-    period:        0.18,
-    fadeRatio:     0.05,
-    panSpread:     0.10,
-    volume:        1.0,
-    curveType:     'rect',
-  },
-
-  // -- 15. smear -- ultra-long grains, high overlap, pitched up a fifth (+7)
-  //    Everything blurs into shimmering harmonic sustain.
-  //    ~4.3 concurrent grains (2.6s/0.60s).
-  {
-    name:          'smear',
-    searchRadiusDeg: 50,
-    recencyN:      4,
-    k:             7,
-    duration:      2.6,
-    durJitter:     0.30,
-    durVar:        0.25,
-    period:        0.60,
-    periodVar:     0.10,
-    fadeRatio:     0.40,
-    pitchJitter:   0.015,
-    pitchShift:    7,
-    panSpread:     0.20,
-    volume:        0.42,
-    probability:   0.85,
-  },
-
-  // -- 16. drill -- audio-rate grains: period at 3ms pushes into pitched
-  //    buzzing territory. The grain stream becomes a tone.
-  {
-    name:          'drill',
-    searchRadiusDeg: 8,
-    k:             3,
-    duration:      0.004,
-    period:        0.003,
-    fadeRatio:     0.10,
-    panSpread:     0.05,
-    volume:        0.65,
-    curveType:     'rect',
-  },
-
-  // -- 17. scatter -- k-seq + reverse + high probability dropout
-  //    Walks recording order backwards with random silences.
-  //    panSpread 0.35 — scattered spatial fragments.
-  {
-    name:          'scatter',
-    grainKSeqMode: true,
-    searchRadiusDeg: 60,
-    recencyN:      5,
-    k:             8,
-    duration:      0.25,
-    durJitter:     0.20,
-    durVar:        0.10,
-    period:        0.32,
-    periodVar:     0.12,
-    fadeRatio:     0.20,
-    pitchJitter:   0.18,
-    panSpread:     0.35,
-    volume:        0.80,
-    probability:   0.45,
-    direction:     'rev',
-    curveType:     'tri',
-  },
-
-  // -- 18. wobble -- warped tape: heavy dur+period variation
+  // -- 9. wobble -- warped tape: heavy dur+period variation
   //    Unstable playback speed, like dying batteries.
   {
     name:          'wobble',
@@ -507,36 +351,31 @@ export const PRESETS = [
     volume:        0.80,
     probability:   0.88,
   },
-
-  // -- 19. ritual -- slow, deep, deliberate. Pitched down a fourth (-5).
-  //    k-all so when grains fire, the whole radius speaks like a choir.
-  {
-    name:          'ritual',
-    grainKAllMode: true,
-    searchRadiusDeg: 35,
-    recencyN:      6,
-    k:             20,
-    duration:      1.8,
-    durJitter:     0.25,
-    durVar:        0.20,
-    period:        2.2,
-    periodVar:     0.40,
-    fadeRatio:     0.38,
-    pitchShift:    -5,
-    panSpread:     0.18,
-    volume:        0.60,
-    probability:   0.4,
-  },
-
 ];
 
-// ── User-defined preset slots (indices 0–19) ────────────────────────────────
-// 20 user slots are prepended to factory presets.  On startup they hold
-// neutral wash-like defaults; loadUserPresets() overwrites them from localStorage
-// so any saves from a previous session survive a page reload.
-// Positions 0–19 = user (keyboard 1–0, shift+1–0), positions 20+ = factory.
-export const USER_PRESET_START = 0;
-export const FACTORY_PRESET_START = 20;
+// ── Preset layout: 10 factory then 10 user ─────────────────────────────────
+// Factory occupies 0–9 (patches 1–10, keys 1–0) and user occupies 10–19
+// (patches 11–20, shift+1–0).  This ORDER IS LOAD-BEARING: the keyboard handler
+// derives the index arithmetically from the digit and the shift key, so factory
+// has to come first for `3` to mean "the third factory patch".
+//
+// Until 2026-07-31 it was the other way round — 20 user slots at 0–19 and 20
+// factory at 20–39 — so any index persisted by an older build points at the
+// wrong patch.  _migratePresetIndices() below rewrites the three keys that
+// store one.  If you add a fourth, migrate it there.
+//
+// There is no FACTORY_PRESET_START any more.  It was 20 and is now 0, so every
+// `i < FACTORY_PRESET_START` test would have silently inverted rather than
+// failed; the constant was deleted so those call sites broke loudly instead.
+// Use isUserPreset().
+export const FACTORY_PRESET_COUNT = 10;
+export const USER_PRESET_COUNT    = 10;
+export const USER_PRESET_START    = FACTORY_PRESET_COUNT;
+export const PRESET_COUNT         = FACTORY_PRESET_COUNT + USER_PRESET_COUNT;
+
+/** True if this index is a user slot (editable, saveable) rather than factory. */
+export const isUserPreset = i => i >= USER_PRESET_START;
+
 // User slots start empty (sparse) — no parameter values by default.
 // When selected, an empty slot changes nothing (all params pass through).
 // Users populate slots via the save button or the patch table editor.
@@ -544,8 +383,8 @@ const _userDefault = n => ({
   name:           `user ${n}`,
   userDefined:    true,
 });
-// Insert 20 user slots at the front (indices 0–19), shifting factory to 20+
-for (let n = 20; n >= 1; n--) PRESETS.unshift(_userDefault(n));
+// Append the user slots after factory (indices 10–19).
+for (let n = 1; n <= USER_PRESET_COUNT; n++) PRESETS.push(_userDefault(n));
 
 // Meta keys that every preset has (not parameter data).
 const _PRESET_META_KEYS = new Set(['name', 'userDefined']);
@@ -561,6 +400,16 @@ export function loadUserPresets() {
     if (!raw) return;
     const saved = JSON.parse(raw);
     if (!Array.isArray(saved)) return;
+    // A save from the 20-user-slot layout can't be mapped onto 10 slots without
+    // guessing which ten to keep, so it is discarded rather than silently
+    // truncated. Ek confirmed the old slots were empty; if that ever stops being
+    // true for someone, the right fix is an export before the upgrade, not a
+    // guess here.
+    if (saved.length !== USER_PRESET_COUNT) {
+      console.info(`[presets] discarding a ${saved.length}-slot user bank — this build has ${USER_PRESET_COUNT}`);
+      localStorage.removeItem('mubone_user_presets');
+      return;
+    }
 
     // Build the set of valid keys lazily (PARAM_REGISTRY may not exist yet
     // at import time, so we defer to first call).
@@ -569,7 +418,7 @@ export function loadUserPresets() {
     let cleaned = false;
     saved.forEach((p, n) => {
       const idx = USER_PRESET_START + n;
-      if (idx < FACTORY_PRESET_START && p && typeof p === 'object') {
+      if (idx < PRESET_COUNT && p && typeof p === 'object') {
         // Strip unknown keys — prevents old saves from hiding data that
         // selectPreset would silently apply (e.g. retriggerMs).
         for (const k of Object.keys(p)) {
@@ -620,6 +469,83 @@ export function _buildValidParamKeys(registry) {
   }
 }
 
+// ── One-shot migration: old 40-slot layout → new 20-slot layout ────────────
+// Before 2026-07-31: indices 0–19 were user, 20–39 were the 20 factory presets.
+// Now: 0–9 are the 10 surviving factory presets, 10–19 are user.
+//
+// Only three stored keys hold a preset INDEX (as opposed to preset data), and
+// all three are rewritten here.  Anything pointing at a retired factory preset
+// or at an old user slot falls back to 0 (wash) — the alternative is a dangling
+// index that silently selects the wrong patch mid-performance.
+//
+// Runs once, gated on a schema key, then never again.  The old-index tables are
+// deliberately literal rather than derived: they describe a layout that no
+// longer exists in the code, so there is nothing left to derive them from.
+const _PRESET_LAYOUT_KEY = 'mubone_preset_layout_v';
+const _PRESET_LAYOUT_V   = 2;
+
+// old factory index (20–39) → new index (0–9). Absent = retired.
+const _OLD_FACTORY_TO_NEW = {
+  20: 0,  // wash      21: vinyl   22: cloud    (23 freeze retired)
+  21: 1,
+  22: 2,
+  24: 3,  // pulse
+  25: 4,  // shimmer               (26 ghost retired)
+  27: 5,  // glitch
+  28: 6,  // chop
+  29: 7,  // ocean
+  30: 8,  // stutter    (31 tape, 32 swarm, 33 haunt, 34 morse,
+  38: 9,  // wobble      35 smear, 36 drill, 37 scatter, 39 ritual retired)
+};
+
+const _remapPresetIndex = old =>
+  (typeof old === 'number' && _OLD_FACTORY_TO_NEW[old] !== undefined)
+    ? _OLD_FACTORY_TO_NEW[old]
+    : 0;
+
+export function migratePresetIndices() {
+  try {
+    if (Number(localStorage.getItem(_PRESET_LAYOUT_KEY)) >= _PRESET_LAYOUT_V) return;
+
+    // Radial morph pins — each pin holds a presetIdx.
+    const rawPins = localStorage.getItem('mubone_radial_pins');
+    if (rawPins) {
+      const pins = JSON.parse(rawPins);
+      if (Array.isArray(pins)) {
+        let moved = 0;
+        for (const pin of pins) {
+          if (!pin || typeof pin.presetIdx !== 'number') continue;
+          const next = _remapPresetIndex(pin.presetIdx);
+          if (next !== pin.presetIdx) moved++;
+          pin.presetIdx = next;
+        }
+        localStorage.setItem('mubone_radial_pins', JSON.stringify(pins));
+        if (moved) console.info(`[presets] remapped ${moved} radial pin(s) to the new patch layout`);
+      }
+    }
+
+    // Desktop morph endpoints.
+    const rawMorph = localStorage.getItem('mubone_desktop_morph');
+    if (rawMorph) {
+      const m = JSON.parse(rawMorph);
+      if (m && typeof m === 'object') {
+        if (typeof m.presetL === 'number') m.presetL = _remapPresetIndex(m.presetL);
+        if (typeof m.presetR === 'number') m.presetR = _remapPresetIndex(m.presetR);
+        localStorage.setItem('mubone_desktop_morph', JSON.stringify(m));
+      }
+    }
+
+    // The user bank itself is handled by loadUserPresets(), which discards a
+    // bank of the wrong length rather than guessing at a mapping.
+
+    localStorage.setItem(_PRESET_LAYOUT_KEY, String(_PRESET_LAYOUT_V));
+  } catch (e) {
+    console.warn('[presets] patch-layout migration failed:', e);
+    // Don't set the version key — a failed run should retry next load rather
+    // than leaving half-migrated indices marked as done.
+  }
+}
+
 /** Check whether a preset has any actual parameter data (beyond name/meta). */
 export function presetHasParams(preset) {
   if (!preset || typeof preset !== 'object') return false;
@@ -629,12 +555,12 @@ export function presetHasParams(preset) {
   return false;
 }
 
-// Persist the 20 user slots to localStorage.
+// Persist the user slots to localStorage.
 export function saveUserPresets() {
   try {
     localStorage.setItem(
       'mubone_user_presets',
-      JSON.stringify(PRESETS.slice(USER_PRESET_START, FACTORY_PRESET_START))
+      JSON.stringify(PRESETS.slice(USER_PRESET_START, PRESET_COUNT))
     );
   } catch (e) {
     console.warn('[presets] could not save user presets to localStorage:', e);
@@ -989,6 +915,14 @@ export const S = {
   setRecency:      null,     // same
   setSearchK:      null,     // set during setup -- module-level so selectPreset can call it
 
+  // ── Erase brush ────────────────────────────────────────────────────────
+  // Momentary hold-to-erase at the cursor (hold F / /erase/hold).  Follows
+  // the cursor's search radius and the same local recency filter the scan
+  // uses, so it erases exactly what is currently audible — clearing the
+  // newest buffers under the cursor reveals older ones.  See erase.js.
+  eraseHeld: false,          // true while the erase input is held
+  _syncEraseUI: null,        // set by initEraseUI — reflects held state + count
+
   // ── Commit system (unified clouds + loops) ─────────────────────────────
   // Each slot is either a cloud (particle-based granular) or a loop (buffer-based).
   // type: 'cloud' | 'loop' stored on each slot object.
@@ -1047,24 +981,10 @@ export const S = {
   currentLiveBufferIdx: -1,   // index into liveRecBuffers being recorded
 
   // ── Sensor calibration ─────────────────────────────────────────────────
-  sensorCal: {
-    axisMap: {
-      x: { viz: 'roll',  sign: -1, mute: false },
-      y: { viz: 'pitch', sign:  1, mute: false },
-      z: { viz: 'yaw',   sign: -1, mute: false },
-    }
-  },
-
-  sensor2Cal: {
-    axisMap: {
-      x: { viz: 'roll',  sign: -1, mute: false },
-      y: { viz: 'pitch', sign:  1, mute: false },
-      z: { viz: 'yaw',   sign: -1, mute: false },
-    }
-  },
-
-  // /space/wand — wand controller (viz-invisible, forwarded to Max)
-  wandCal: {
+  // Sensor calibration for gesture-window.html's raw-gyro remap.
+  // (Formerly one of three slots; the other two were unused and removed
+  // 2026-04-23. Per-slot calibration is owned by sensor-registry.js.)
+  sensor3Cal: {
     axisMap: {
       x: { viz: 'roll',  sign:  1, mute: false },
       y: { viz: 'pitch', sign: -1, mute: false },
@@ -1143,7 +1063,7 @@ export const S = {
 
   // ── Grain params / overrides ───────────────────────────────────────────
   grainParams: null,          // initialised below
-  activePresetIndex: 20,  // first factory preset (wash)
+  activePresetIndex: 0,   // wash — factory is first now, so this is index 0
   _patchFlashUntil: 0,    // performance.now() — flash patch number on change
   grainOverrides: {
     duration:    null,
@@ -1239,6 +1159,11 @@ export const S = {
   // In stereo mode this mutes cursorMasterGain (only seeds are heard).
   // In multi-ch mode this also zeros monitorToHouseGain (cursor stays on monitor outputs).
   scanMuted: false,
+  // #14: mute/unmute fade time-constant in seconds (setTargetAtTime τ —
+  // perceived fade ≈ 4–5× this value). Default matches the historical 20ms
+  // click-guard; raise for a musical fade (e.g. 0.1 ≈ half-second swell).
+  // Set live via OSC `/scan/fade <ms>` or console `S.scanFadeS = 0.1`.
+  scanFadeS: 0.02,
   cursorMasterGain: null,   // GainNode inserted between monitorBus and masterGain
 
   // ── Radius fade (distance attenuation within cursor radius) ───────────
@@ -1306,7 +1231,11 @@ export const S = {
   // ── Output gain + mute ─────────────────────────────────────────────────
   outputGainValue: 0.9,  // linear gain (0–2), matches masterGain initial value
   isMuted:         false,
-  projectorMode:   false,  // true when projector layout is active (Shift+F)
+  projectorMode:   false,  // true when the mirrored projector popup is open.
+                           // The projector column LAYOUT is the default view
+                           // (applied once at boot in events.js); this flag
+                           // now tracks the popup only, so renderer.js knows
+                           // when to mirror each frame.
   projectorPopup:  null,   // popup Window reference for projector mirror
   projectorCtx:    null,   // popup canvas 2D context for mirror blit
   _syncProjectorHUD: null, // per-frame HUD sync callback (set when popup opens)
@@ -1375,7 +1304,7 @@ export const S = {
 };
 
 // ── Initialise grainParams from first factory preset (index 20 = wash) ───────
-S.grainParams = { ...PRESETS[FACTORY_PRESET_START] };
+S.grainParams = { ...PRESETS[0] };   // wash — the default patch
 
 // Init scaled Hann curves, then rebuild with correct curve type
 rebuildHannCurves(S.grainParams.volume);

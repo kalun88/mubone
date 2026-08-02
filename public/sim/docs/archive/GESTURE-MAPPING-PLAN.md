@@ -1,5 +1,9 @@
 # Gesture Mapping — Tier 2 Design
 
+> **Status: ARCHIVED / HISTORICAL.** This plan or audit is complete — kept as the record of what was decided, what changed, and how to revert it. **It does not describe current behaviour** and may use superseded terminology. Do not use it to learn how the system works today; read the reference docs listed in CLAUDE.md instead.
+
+> **Note (2026-04-23):** Written against the old `wand.js` / `ui-wand.js` architecture. The Mar 28 sensor-registry refactor deleted those files and moved the mapping engine to `sensor-mapping.js` and the morph helpers to `seed-morph.js`. References below have been updated to the current module names, but the overall plan predates the refactor — verify against the code before implementing.
+
 ## Where we are
 
 The gesture chain (gesture.js) runs every inertial tick and produces:
@@ -39,9 +43,9 @@ Conditioned gesture features → synthesis parameter destinations. The gesture p
 
 ### Dispatch model
 
-A new function `applyGestureMapping()` runs every frame after `S.gesture` is updated. It reads the mapping config, reads conditioned feature values, and writes to synthesis parameters using the same `applyParam()` mechanism from wand.js (writes to `S.grainOverrides`, `S.searchRadiusDeg`, etc.).
+A new function `applyGestureMapping()` runs every frame after `S.gesture` is updated. It reads the mapping config, reads conditioned feature values, and writes to synthesis parameters using the same `applyParam()` mechanism from `sensor-mapping.js` (writes to `S.grainOverrides`, `S.searchRadiusDeg`, etc.).
 
-This is *separate* from the wand system. The wand maps euler orientation (where you're pointing). Gesture maps movement quality (how you're moving). They can coexist — gesture writes first as a baseline, wand layers on top if enabled.
+This is *separate* from the sensor mapping system. Sensor mapping maps euler orientation (where you're pointing). Gesture maps movement quality (how you're moving). They can coexist — gesture writes first as a baseline, sensor mapping layers on top if enabled.
 
 ### Mapping config on S
 
@@ -79,7 +83,7 @@ Stored on `S` and saved/loaded alongside presets or as a separate localStorage k
 
 ## Feature → parameter mapping (scalar features)
 
-Each conditioned feature (0–1) maps to one synthesis parameter. Simple dropdown per feature in the gesture page, same parameter list as wand.js `PARAM_DEFS`:
+Each conditioned feature (0–1) maps to one synthesis parameter. Simple dropdown per feature in the gesture page, same parameter list as `sensor-mapping.js` `PARAM_DEFS`:
 
 - duration, period, searchRadiusDeg, pitchJitter, panSpread, volume, fadeRatio, k, probability, durJitter, durVar, periodVar
 
@@ -105,7 +109,7 @@ The radial joystick (pitch × roll) is the most expressive 2D space. Three modes
 
 ### Mode 1: Bilinear (simple)
 
-Same math as wand's `xy2d` but driven by the gesture radial instead of euler angles. Pin four presets at corners, optional center. `lerpPresets5()` already exists in wand.js.
+Same math as the sensor mapping's `xy2d` but driven by the gesture radial instead of euler angles. Pin four presets at corners, optional center. `lerpPresets5()` already exists in `seed-morph.js`.
 
 Good starting point. Limitation: the presets are at fixed corners — doesn't match how you actually move.
 
@@ -218,7 +222,7 @@ Let the gesture mapping itself evolve. accumulatedEnergy is already a slow-movin
 
 ### Phase 1 — Scalar feature mapping
 - Add `S.gestureMapping.features` config
-- Add destination dropdown per feature in gesture panel (reuse PARAM_DEFS from wand.js)
+- Add destination dropdown per feature in gesture panel (reuse PARAM_DEFS from `sensor-mapping.js`)
 - Add `applyGestureMapping()` dispatch function
 - Wire into the frame loop (after gesture update, before render)
 - Persist to localStorage
@@ -252,7 +256,7 @@ Let the gesture mapping itself evolve. accumulatedEnergy is already a slow-movin
 
 1. **Per-preset or global?** Is the gesture mapping config per-preset-slot or one global config? Global seems right for now — it's about your movement vocabulary, not the current patch. But "save mapping with preset" could be useful for prepared performances.
 
-2. **Gesture + wand conflict resolution.** If both gesture and wand try to write the same parameter, who wins? Options: last-write-wins (wand runs after gesture, so wand wins), additive (gesture sets baseline, wand adds delta), or priority system. Simplest start: gesture writes first, wand overwrites. User avoids conflicts by not mapping the same param in both.
+2. **Gesture + sensor mapping conflict resolution.** If both gesture and sensor mapping try to write the same parameter, who wins? Options: last-write-wins (sensor mapping runs after gesture, so sensor mapping wins), additive (gesture sets baseline, sensor mapping adds delta), or priority system. Simplest start: gesture writes first, sensor mapping overwrites. Avoid conflicts by not mapping the same param in both.
 
 3. **Feature count.** Five conditioned features + radial XY might be too many simultaneous mappings. In practice, performers will probably use 2–3 at most. The UI should make it easy to leave things on "none."
 

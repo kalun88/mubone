@@ -1,5 +1,7 @@
 # Direct x-IMU3 Connection Plan
 
+> **Status: ARCHIVED / HISTORICAL.** This plan or audit is complete — kept as the record of what was decided, what changed, and how to revert it. **It does not describe current behaviour** and may use superseded terminology. Do not use it to learn how the system works today; read the reference docs listed in CLAUDE.md instead.
+
 > Eliminate Max/MSP from the sensor pipeline. Connect x-IMU3 to mubone via Wi-Fi (UDP) or USB serial directly, with a lightweight Node.js proxy for browser mode.
 
 ---

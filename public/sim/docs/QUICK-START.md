@@ -1,5 +1,7 @@
 # mubone — Quick Start Guide
 
+> **Status: CURRENT** · user-facing guide · verified 2026-07-28 against 1.11 alpha.
+
 ## What is mubone?
 
 mubone is a browser-based spatial granular synthesizer. You play into a mic, your audio gets painted as particles on a 3D sphere, and grains are continuously synthesized from particles near your cursor. In a multi-speaker setup, grains are spatialized across the array via VBAP panning.
@@ -12,7 +14,7 @@ mubone is a browser-based spatial granular synthesizer. You play into a mic, you
 
 **Paint particles** — press and hold **Space** to trace. Your live audio is captured and painted as colored dots onto the sphere at the cursor position. Release to stop. A quick tap toggles trace on/off; a hold (≥200ms) is momentary (trace only while held).
 
-**Move the cursor** — by default the camera is in **pull mode**: drag your mouse to rotate the sphere. The cursor stays at center and the sphere rotates around it. You can switch to **surface mode** (finger/trackpad position maps directly to sphere coordinates) or **sensor mode** (IMU wand) from the top bar.
+**Move the cursor** — by default the camera is in **pull mode**: drag your mouse to rotate the sphere. The cursor stays at center and the sphere rotates around it. You can switch to **surface mode** (finger/trackpad position maps directly to sphere coordinates) or **sensor mode** (x-imu3) from the top bar.
 
 **Listen** — as the cursor passes over painted particles, grains are synthesized from the audio stored at those positions. Adjust the **search radius** with `[` and `]` to widen or narrow the area of particles the cursor picks up.
 
@@ -52,9 +54,11 @@ Press **A** to cycle through three trace modes:
 
 ## Presets
 
-mubone has 20 user preset slots. Factory presets start after those.
+mubone has 20 patch slots: **10 factory presets** (1–10) followed by **10 user slots** (11–20).
 
-**Select** a preset with the number keys: `1`–`9` and `0` select slots 1–10. `Shift+1`–`0` select slots 11–20. You can also use the dropdown in the right panel.
+The factory patches are wash, vinyl, cloud, pulse, shimmer, glitch, chop, ocean, stutter and wobble. They're read-only — saving always goes to a user slot.
+
+**Select** a patch with the number keys: `1`–`9` and `0` select the factory patches 1–10. `Shift+1`–`0` select your own slots 11–20. You can also use the dropdown in the right panel.
 
 **Save** your current grain settings to a slot by clicking the save icon next to the preset selector. You'll be prompted to name it.
 
@@ -69,9 +73,8 @@ Append these to the URL as query params:
 | Param | Effect |
 |-------|--------|
 | `?debug` | Enables verbose console logging |
-| `?exp` | Loads experimental modules (gesture engine, processing chain) from `js/exp/` |
 
-These are checked once at startup. Example: `mubone.org/sim?exp&debug`
+Checked once at startup. Example: `mubone.org/sim?debug`. The legacy `?exp` flag was removed — experimental modules either always load now (gesture, snapshot/staging) or are reachable from the DevTools console via `await import('./js/<module>.js')`.
 
 ## Sensor Mapping Module
 
@@ -159,4 +162,4 @@ Any key can be remapped via the MIDI mapping modal (learn mode). Modifier combos
 
 ---
 
-*mubone v0.14 alpha*
+*mubone v1.11 alpha*

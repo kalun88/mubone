@@ -72,6 +72,37 @@ export function killAllGrains() {
   S._grainSourceCount = 0;
 }
 
+/** Disconnect and release a loop (seq) playback subgraph — source, gain, and
+ *  the per-speaker VBAP fan-out / stereo panner. Idempotent and safe on
+ *  partially-built slots.
+ *  (Perf audit M2, Jul 2026.) Mute/unmute cycles and erase-all previously
+ *  only called `.stop()` on the source — the N-per-speaker GainNodes stayed
+ *  connected to the buses until GC decided the island was dead. At 8 channels
+ *  that's 8 orphaned gains per loop cycle; at the 42-channel Dartmouth layout
+ *  (#39) it's 42, and repeated cycles are a plausible contributor to crash
+ *  #7. Explicit disconnect makes teardown deterministic. */
+export function releaseSeqNodes(seq) {
+  if (!seq) return;
+  if (seq._sourceNode) {
+    if (!seq._sourceNode._stopped) {
+      try { seq._sourceNode.stop(); } catch (_) {}
+      seq._sourceNode._stopped = true;
+    }
+    try { seq._sourceNode.disconnect(); } catch (_) {}
+    seq._sourceNode = null;
+  }
+  if (seq._gainNode) {
+    try { seq._gainNode.disconnect(); } catch (_) {}
+    seq._gainNode = null;
+  }
+  if (seq._extraNodes) {
+    for (const n of seq._extraNodes) { try { n.disconnect(); } catch (_) {} }
+    seq._extraNodes = null;
+  }
+  seq._vbapGains = null;
+  seq._panner = null;
+}
+
 // ── Angular distance caches ────────────────────────────────────────────────
 // angleBetweenSphere costs 6 transcendental ops per particle. With 500
 // particles and 33 ticks/sec that's ~99 000 trig calls/sec for the cursor
@@ -117,7 +148,7 @@ const _grainScratchC = [0, 0, 0];   // camera-space panning position
 const _seedWeights = new Float32Array(MAX_SEEDS);
 
 
-function getBufferKey(p) {
+export function getBufferKey(p) {
   return p.source === 'live' ? `live:${p.liveBufferIdx}` : `sample:${p.sampleIndex}`;
 }
 
@@ -505,6 +536,13 @@ export function scheduleGrains() {
     if (S.isRecording) S._flushLiveBuffer?.();
     if (S._postWorkletCandidates) {
       const pool = _preSelectedPool || candidatePool;
+      // Publish the pool for read-only consumers (the x-IMU3 LED timbre
+      // readout). Two assignments per tick, no copy: the buffer is reused next
+      // tick by design, and every consumer wants the *current* pool anyway.
+      // The timestamp is what lets them tell a live pool from a stale one after
+      // the scheduler stops. Do not mutate S._cursorPool.
+      S._cursorPool   = pool;
+      S._cursorPoolAt = now;
       if (S.scanMuted) {
         S._postWorkletCandidates([], cursorLon, cursorLat);
         // Visual-only glow: simulate grain onsets from the candidate pool
@@ -542,6 +580,18 @@ export function scheduleGrains() {
   } else {
     perf.kCount = 0;
     perf.kPool  = 0;
+    // When particles drop to 0 (e.g. undoing the last buffer while the cursor
+    // is over those particles), the worklet still has the previous tick's
+    // candidate list and keeps firing cursor grains from it — visual particles
+    // are gone but audio continues until something repopulates S.particles.
+    // Post an empty list so the worklet stops cursor grains immediately.
+    // Mirror of the unconditional _postWorkletSeeds post below (same fix
+    // pattern that was already applied to seeds — see the comment there).
+    // Deliberately scoped to particles===0 so the seq-mode-painting skip case
+    // (the other reason this else branch fires) keeps its existing behaviour.
+    if (S.particles.length === 0 && S._postWorkletCandidates) {
+      S._postWorkletCandidates([], cursorLon, cursorLat);
+    }
   }
 
   // ── Pre-advance moving seed playheads ──────────────────────────────────
@@ -851,12 +901,11 @@ export function scheduleGrains() {
   for (let si = 0; si < MAX_SEEDS; si++) {
     const seq = S.commitSlots[si];
     if (!seq || seq.type !== 'loop' || !seq.playing || !seq.particles.length) continue;
-    // Mute loops beyond active slot count (data preserved, audio paused)
+    // Mute loops beyond active slot count (data preserved, audio paused).
+    // Full node release, not just stop (perf audit M2) — idempotent, cheap
+    // after the first call (all refs nulled).
     if (si >= S.commitSlotCount) {
-      if (seq._sourceNode && !seq._sourceNode._stopped) {
-        try { seq._sourceNode.stop(); } catch (e) {}
-        seq._sourceNode._stopped = true;
-      }
+      releaseSeqNodes(seq);
       continue;
     }
 
@@ -867,6 +916,10 @@ export function scheduleGrains() {
       || seq._sourceNode._stopped
       || (seq._sourceCtx && seq._sourceCtx !== S.audioCtx);
     if (needsNewSource) {
+      // Release the previous subgraph before building a new one (perf audit
+      // M2) — recreation after mute/unmute or a context switch used to
+      // orphan the old per-speaker gain fan-out, still connected to buses.
+      releaseSeqNodes(seq);
       const actx = ensureAudioContext();
       const buffer = seq.buffer;
       if (!buffer) continue;

@@ -1,0 +1,180 @@
+diagnose.js — 2026-04-29T20:05:42.522Z
+looking for VID=0x5d6 PID=0x22c (R1)
+
+======================================================================
+ 1. environment
+======================================================================
+node version:         v24.7.0
+node-hid version:     3.3.0
+platform:             darwin arm64
+macOS version:        15.5
+shell pid:            1280
+script cwd:           /Users/kalun/Documents/GitHub/muboneapp/ring-test
+
+======================================================================
+ 2. potential grabber processes
+======================================================================
+-- karabiner / hammerspoon / hid daemons --
+kalun             1280  18.4  0.5 411708880  44912 s000  S+    4:05PM   0:00.08 node diagnose.js
+_driverkit         570   0.8  0.0 426854048   1872   ??  Ss    4:01PM   0:04.12 /System/Library/DriverExtensions/com.apple.AppleUserHIDDrivers.dext/com.apple.AppleUserHIDDrivers com.apple.driverkit.AppleUserHIDDrivers 0x100000cec com.apple.AppleUserHIDDrivers
+_hidd              404   0.0  0.0 426916128   2016   ??  Ss    4:01PM   0:00.02 /usr/libexec/hidd
+
+-- launchd daemons matching karabiner --
+[ERROR running 'launchctl list | grep -iE 'karabiner|hammerspoon|pqrs'']: Command failed: launchctl list | grep -iE 'karabiner|hammerspoon|pqrs'
+
+
+-- other node processes (could be lingering ring-seize-test) --
+[ERROR running 'pgrep -fl 'node ' | grep -v 'diagnose.js'']: Command failed: pgrep -fl 'node ' | grep -v 'diagnose.js'
+
+
+======================================================================
+ 3. bluetooth state
+======================================================================
+b_off",
+        "controller_firmwareVersion": "22.5.614.3437",
+        "controller_productID": "0x4A2C",
+        "controller_state": "attrib_on",
+        "controller_supportedServices": "0x392039 < HFP AVRCP A2DP HID Braille LEA AACP GATT SerialPort >",
+        "controller_transport": "PCIe",
+        "controller_vendorID": "0x004C (Apple)"
+      },
+      "device_connected": [
+        {
+          "R1": {
+            "device_address": "25:08:04:D1:AC:24",
+            "device_firmwareVersion": "0.0.1",
+            "device_minorType": "Mouse",
+            "device_productID": "0x022C",
+            "device_services": "0x400000 < BLE >",
+            "device_vendorID": "0x05D6"
+          }
+        }
+      ],
+      "device_not_connected": [
+        {
+          "Bose NC 700 Headphones": {
+            "device_address": "60:AB:D2:24:03:25",
+            "device_firmwareVersion": "1.8.2",
+            "device_minorType": "Headphones",
+            "device_productID": "0x4024",
+            "device_vendorID": "0x009E"
+          }
+        },
+        {
+          "D01 Pro": {
+            "device_address": "D9:0A:8D:07:78:99",
+            "device_firmwareVersion": "1.1.11",
+            "device_minorType
+
+======================================================================
+ 4. hidutil state for R1
+======================================================================
+RegistryID  Key                   Value
+100000f82   UserKeyMapping   (
+        {
+        HIDKeyboardModifierMappingDst = 30064771182;
+        HIDKeyboardModifierMappingSrc = 51539607785;
+    },
+        {
+        HIDKeyboardModifierMappingDst = 30064771183;
+        HIDKeyboardModifierMappingSrc = 51539607786;
+    },
+        {
+        HIDKeyboardModifierMappingDst = 30064771184;
+        HIDKeyboardModifierMappingSrc = 51539607778;
+    }
+)
+
+======================================================================
+ 5. HID enumeration (full)
+======================================================================
+total HID devices visible to node-hid: 34
+  [0] Apple                Apple Internal Keyboard / Trackp VID=0x0000 PID=0x0000 usage=6 usagePage=1 path=DevSrvsID:4294969627
+  [1] Apple                Apple Internal Keyboard / Trackp VID=0x0000 PID=0x0000 usage=1 usagePage=12 path=DevSrvsID:4294969627
+  [2] Apple                Apple Internal Keyboard / Trackp VID=0x0000 PID=0x0000 usage=6 usagePage=65280 path=DevSrvsID:4294969627
+  [3] ?                    Keyboard Backlight               VID=0x05ac PID=0x0000 usage=15 usagePage=65280 path=DevSrvsID:4294970403
+  [4] Apple                ?                                VID=0x0000 PID=0x0000 usage=4 usagePage=65280 path=DevSrvsID:4294969013
+  [5] Apple                ?                                VID=0x0000 PID=0x0000 usage=1 usagePage=65292 path=DevSrvsID:4294968901
+  [6] Apple                Headset                          VID=0x0000 PID=0x0000 usage=1 usagePage=12 path=DevSrvsID:4294969079
+  [7] Apple                ?                                VID=0x0000 PID=0x0000 usage=5 usagePage=65292 path=DevSrvsID:4294968899
+  [8] Apple                Apple Internal Keyboard / Trackp VID=0x0000 PID=0x0000 usage=95 usagePage=65280 path=DevSrvsID:4294969641
+  [9] Apple                Apple Internal Keyboard / Trackp VID=0x0000 PID=0x0000 usage=11 usagePage=65280 path=DevSrvsID:4294969643
+  [10] MOSART Semi.         2.4G Keyboard Mouse              VID=0x062a PID=0x4101 usage=6 usagePage=1 path=DevSrvsID:4294971202
+  [11] Apple                Apple Internal Keyboard / Trackp VID=0x0000 PID=0x0000 usage=3 usagePage=65280 path=DevSrvsID:4294969629
+  [12] zhuhai_jieli         R1                               VID=0x05d6 PID=0x022c usage=6 usagePage=1 path=DevSrvsID:4294971263
+  [13] zhuhai_jieli         R1                               VID=0x05d6 PID=0x022c usage=4 usagePage=13 path=DevSrvsID:4294971263
+  [14] zhuhai_jieli         R1                               VID=0x05d6 PID=0x022c usage=2 usagePage=1 path=DevSrvsID:4294971263
+  [15] zhuhai_jieli         R1                               VID=0x05d6 PID=0x022c usage=1 usagePage=1 path=DevSrvsID:4294971263
+  [16] zhuhai_jieli         R1                               VID=0x05d6 PID=0x022c usage=1 usagePage=12 path=DevSrvsID:4294971263
+  [17] zhuhai_jieli         R1                               VID=0x05d6 PID=0x022c usage=233 usagePage=12 path=DevSrvsID:4294971263
+  [18] Apple                ?                                VID=0x05ac PID=0x8104 usage=138 usagePage=32 path=DevSrvsID:4294968983
+  [19] Apple                ?                                VID=0x05ac PID=0x8104 usage=5 usagePage=65280 path=DevSrvsID:4294968900
+  [20] APPL                 BTM                              VID=0x0000 PID=0x0000 usage=72 usagePage=65280 path=DevSrvsID:4294969242
+  [21] Apple                ?                                VID=0x0000 PID=0x0000 usage=255 usagePage=65280 path=DevSrvsID:4294968891
+  [22] Apple                Apple Internal Keyboard / Trackp VID=0x0000 PID=0x0000 usage=2 usagePage=1 path=DevSrvsID:4294969726
+  [23] Apple                Apple Internal Keyboard / Trackp VID=0x0000 PID=0x0000 usage=1 usagePage=1 path=DevSrvsID:4294969726
+  [24] Apple                Apple Internal Keyboard / Trackp VID=0x0000 PID=0x0000 usage=5 usagePage=13 path=DevSrvsID:4294969726
+  [25] Apple                Apple Internal Keyboard / Trackp VID=0x0000 PID=0x0000 usage=12 usagePage=65280 path=DevSrvsID:4294969726
+  [26] Apple                ?                                VID=0x05ac PID=0x8104 usage=3 usagePage=65280 path=DevSrvsID:4294968982
+  [27] Apple                ?                                VID=0x05ac PID=0x8104 usage=9 usagePage=65280 path=DevSrvsID:4294969012
+  [28] Apple                Apple Internal Keyboard / Trackp VID=0x0000 PID=0x0000 usage=13 usagePage=65280 path=DevSrvsID:4294969631
+  [29] MOSART Semi.         2.4G Keyboard Mouse              VID=0x062a PID=0x4101 usage=2 usagePage=1 path=DevSrvsID:4294971201
+  [30] MOSART Semi.         2.4G Keyboard Mouse              VID=0x062a PID=0x4101 usage=1 usagePage=1 path=DevSrvsID:4294971201
+  [31] MOSART Semi.         2.4G Keyboard Mouse              VID=0x062a PID=0x4101 usage=1 usagePage=12 path=DevSrvsID:4294971201
+  [32] MOSART Semi.         2.4G Keyboard Mouse              VID=0x062a PID=0x4101 usage=128 usagePage=1 path=DevSrvsID:4294971201
+  [33] MOSART Semi.         2.4G Keyboard Mouse              VID=0x062a PID=0x4101 usage=61938 usagePage=61938 path=DevSrvsID:4294971201
+
+======================================================================
+ 6. R1 interfaces — attempt to open each
+======================================================================
+matching interfaces: 6
+
+-- usage=6 usagePage=1 path=DevSrvsID:4294971263 --
+   product="R1" manufacturer="zhuhai_jieli" interface=-1 serialNumber="000000"
+   ✗ exclusive open failed: cannot open device with path DevSrvsID:4294971263
+   ✓ NON-exclusive open succeeded (something else has it exclusively)
+
+-- usage=4 usagePage=13 path=DevSrvsID:4294971263 --
+   product="R1" manufacturer="zhuhai_jieli" interface=-1 serialNumber="000000"
+   ✗ exclusive open failed: cannot open device with path DevSrvsID:4294971263
+   ✓ NON-exclusive open succeeded (something else has it exclusively)
+
+-- usage=2 usagePage=1 path=DevSrvsID:4294971263 --
+   product="R1" manufacturer="zhuhai_jieli" interface=-1 serialNumber="000000"
+   ✗ exclusive open failed: cannot open device with path DevSrvsID:4294971263
+   ✓ NON-exclusive open succeeded (something else has it exclusively)
+
+-- usage=1 usagePage=1 path=DevSrvsID:4294971263 --
+   product="R1" manufacturer="zhuhai_jieli" interface=-1 serialNumber="000000"
+   ✗ exclusive open failed: cannot open device with path DevSrvsID:4294971263
+   ✓ NON-exclusive open succeeded (something else has it exclusively)
+
+-- usage=1 usagePage=12 path=DevSrvsID:4294971263 --
+   product="R1" manufacturer="zhuhai_jieli" interface=-1 serialNumber="000000"
+   ✗ exclusive open failed: cannot open device with path DevSrvsID:4294971263
+   ✓ NON-exclusive open succeeded (something else has it exclusively)
+
+-- usage=233 usagePage=12 path=DevSrvsID:4294971263 --
+   product="R1" manufacturer="zhuhai_jieli" interface=-1 serialNumber="000000"
+   ✗ exclusive open failed: cannot open device with path DevSrvsID:4294971263
+   ✓ NON-exclusive open succeeded (something else has it exclusively)
+   data events received in ~50ms (nonExclusive): 0
+   closed
+   data events received in ~50ms (nonExclusive): 0
+   closed
+   data events received in ~50ms (nonExclusive): 0
+   closed
+   data events received in ~50ms (nonExclusive): 0
+   closed
+   data events received in ~50ms (nonExclusive): 0
+   closed
+   data events received in ~50ms (nonExclusive): 0
+   closed
+
+======================================================================
+ 7. summary
+======================================================================
+log written to: /Users/kalun/Documents/GitHub/muboneapp/ring-test/diag.log
+share that file with me to diagnose the open failures.
+
+done.

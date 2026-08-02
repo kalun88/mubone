@@ -9,7 +9,7 @@ import {
   COMMIT_DRAW_THRESHOLD_MS, MOVING_SEED_THRESHOLD_MS,
   gp, rebuildGrainCurves, minGrainDurS, minGrainPeriodS,
   SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
-  USER_PRESET_START, FACTORY_PRESET_START, loadUserPresets, saveUserPresets,
+  USER_PRESET_START, isUserPreset, migratePresetIndices, loadUserPresets, saveUserPresets,
   presetHasParams,
 } from './state.js';
 import { angleBetweenSphere, findNearestSeedSlot, resetCursorPeriod } from './grain.js';
@@ -105,16 +105,24 @@ function saveToUserPreset(index) {
   if (S.activePresetIndex === index) selectPreset(index);
 }
 
+// selectPreset() also runs on startup, after a session import, and when a slot
+// is renamed — none of which are a performer changing patch. Without this gate
+// the LED would flash on every page load. Armed at the end of setupPresets().
+let _patchLedArmed = false;
+
 export function setupPresets() {
+  // Before loadUserPresets: the migration rewrites stored indices written by the
+  // old 40-slot layout, and a stale index read first would select the wrong patch.
+  migratePresetIndices();
   loadUserPresets();   // hydrate user slots from localStorage before building buttons
   const container = document.getElementById('presetButtons');
   PRESETS.forEach((preset, i) => {
     const btn = document.createElement('button');
-    const startIdx = S.activePresetIndex ?? FACTORY_PRESET_START;
+    const startIdx = S.activePresetIndex ?? 0;
     btn.className = 'preset-btn' + (i === startIdx ? ' active' : '');
 
-    if (i < FACTORY_PRESET_START) {
-      // User-defined slot (indices 0–19) — name span + save icon
+    if (isUserPreset(i)) {
+      // User-defined slot (indices 10–19) — name span + save icon
       btn.classList.add('user-preset');
       btn.innerHTML =
         `<span class="preset-num">${i + 1}</span>` +
@@ -137,7 +145,8 @@ export function setupPresets() {
   });
   // Activate saved preset (or first factory preset "wash") on startup so all
   // ancillary state is fully synced from the preset definition.
-  selectPreset(S.activePresetIndex ?? FACTORY_PRESET_START);
+  selectPreset(S.activePresetIndex ?? 0);
+  _patchLedArmed = true;   // startup restore done — later selects are real changes
 
   // ── Preset view toggle (grid ↔ dropdown) ──────────────────────────────
   const _pvToggle      = document.getElementById('presetViewToggle');
@@ -157,11 +166,13 @@ export function setupPresets() {
       const opt = document.createElement('option');
       opt.value = i;
       opt.textContent = `${i + 1}  ${p.name}`;
-      if (i < FACTORY_PRESET_START) userGroup.appendChild(opt);
+      if (isUserPreset(i)) userGroup.appendChild(opt);
       else factoryGroup.appendChild(opt);
     });
-    _pvDropdown.appendChild(userGroup);
+    // Factory first — matches the patch numbering and the key layout now that
+    // factory occupies 1–10 and user 11–20.
     _pvDropdown.appendChild(factoryGroup);
+    _pvDropdown.appendChild(userGroup);
     _pvDropdown.value = S.activePresetIndex;
   }
 
@@ -179,7 +190,7 @@ export function setupPresets() {
   S._syncPresetDropdown = () => {
     if (_pvDropdown) _pvDropdown.value = S.activePresetIndex;
     if (_pvDropSave) {
-      const isFactory = S.activePresetIndex >= FACTORY_PRESET_START;
+      const isFactory = !isUserPreset(S.activePresetIndex);
       _pvDropSave.disabled = isFactory;
       _pvDropSave.title = isFactory ? 'factory presets cannot be overwritten' : 'save current state to this patch slot';
     }
@@ -189,7 +200,7 @@ export function setupPresets() {
   if (_pvDropSave) {
     _pvDropSave.addEventListener('click', () => {
       const idx = S.activePresetIndex;
-      if (idx < FACTORY_PRESET_START) saveToUserPreset(idx);
+      if (isUserPreset(idx)) saveToUserPreset(idx);
     });
   }
   S._syncPresetDropdown();   // initial disabled state for save button
@@ -410,7 +421,7 @@ export function setupPresets() {
   // Writes to S.paintTicker.intervalMs (consumed by paint-ticker.js).
   const _dropEl = document.getElementById('pmDropVal');
   if (_dropEl) {
-    // Initialise from current state (exp-toggles may have set it)
+    // Initialise from current state (may already be set from console / preset load)
     if (!S.paintTicker) S.paintTicker = {};
     const initMs = S.paintTicker.intervalMs ?? 50;
     _dropEl.value = `${initMs}ms`;
@@ -507,7 +518,7 @@ function getMouseLonLat() {
 }
 
 /** Cursor position on the sphere — detethered-aware.
- *  In two-IMU mode the wand drives position; otherwise mouse or camQ. */
+ *  In two-sensor mode the cursor sensor drives position; otherwise mouse or camQ. */
 function getCursorPos() {
   return S.cursorQ ? getCursorLonLat()
     : S.mouseInCanvas ? getMouseLonLat()
@@ -613,7 +624,11 @@ function _findSeedSlot(lon, lat) { return _findCommitSlot(lon, lat); }
 export function startSeedPlant() {
   const { lon, lat } = getCursorPos();
   const slotIndex = _findSeedSlot(lon, lat);
-  if (slotIndex === -1) return;
+  if (slotIndex === -1) {
+    // Slots full with overflow=off — signal the rejected attempt for LED feedback.
+    window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'full' } }));
+    return;
+  }
   // If replacing an existing commit, clean it up first
   if (S.commitSlots[slotIndex]) {
     const existing = S.commitSlots[slotIndex];
@@ -656,21 +671,7 @@ export function startSeedPlant() {
   };
 
   // Stamp per-particle fade attenuation for this seed (stationary path)
-  if (S.radiusFadeEnabled) {
-    const searchRadiusRad = S.searchRadiusDeg * Math.PI / 180;
-    const exp = 1 + S.radiusFadeCurve * 3;
-    const fadeKey = `_cFade${slotIndex}`;
-    for (let pi = 0; pi < S.particles.length; pi++) {
-      const p = S.particles[pi];
-      const ang = angleBetweenSphere(lon, lat, p.lon, p.lat);
-      if (ang <= searchRadiusRad && searchRadiusRad > 0) {
-        const t = Math.min(1, ang / searchRadiusRad);
-        p[fadeKey] = Math.pow(1 - t, exp);
-      } else {
-        p[fadeKey] = 1.0;
-      }
-    }
-  }
+  stampSeedRadiusFade(S.commitSlots[slotIndex]);
 
   // Start recording cursor path for potential moving seed
   S._seedRecordingFrames = [_captureSeedFrame()];
@@ -678,6 +679,33 @@ export function startSeedPlant() {
   S._seedRecordingSlot   = slotIndex;
 
   (S.updateSeedBanksUI || updateSeedBanksUI)();
+
+  // Signal the commit for LED feedback on the cursor x-IMU3 (1 yellow blink).
+  window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'commit' } }));
+}
+
+/**
+ * Stamp per-particle radius-fade attenuation for a cloud slot.
+ * Reads geometry from the slot (identical values to the globals at plant
+ * time, since plantSeed copies them into the slot) so it also works for
+ * session import, which restores clouds without stamps (export/import
+ * audit C2, `docs/EXPORT-IMPORT-AUDIT-2026-07.md`).
+ */
+export function stampSeedRadiusFade(slot) {
+  if (!slot || slot.type !== 'cloud' || !slot.radiusFadeEnabled) return;
+  const searchRadiusRad = slot.searchRadiusDeg * Math.PI / 180;
+  const exp = 1 + (slot.radiusFadeCurve ?? 0.5) * 3;
+  const fadeKey = `_cFade${slot.slotIndex}`;
+  for (let pi = 0; pi < S.particles.length; pi++) {
+    const p = S.particles[pi];
+    const ang = angleBetweenSphere(slot.lon, slot.lat, p.lon, p.lat);
+    if (ang <= searchRadiusRad && searchRadiusRad > 0) {
+      const t = Math.min(1, ang / searchRadiusRad);
+      p[fadeKey] = Math.pow(1 - t, exp);
+    } else {
+      p[fadeKey] = 1.0;
+    }
+  }
 }
 
 /** Capture a frame during ↓ hold. Called from grain scheduler tick (50/sec).
@@ -749,23 +777,30 @@ export function uprootNearestSeed() {
     seed._releasingAt = performance.now() / 1000;
   }
   (S.updateSeedBanksUI || updateSeedBanksUI)();
+
+  // Signal the release for LED feedback on the cursor x-IMU3 (2 yellow blinks).
+  window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'release' } }));
 }
 
 export function clearAllSeeds() {
   const now = performance.now() / 1000;
   // Use the current release time for all cloud-type commits being cleared
   const rel = S.commitRelease || 0;
+  let released = false;
   for (let i = 0; i < MAX_COMMITS; i++) {
     const seed = S.commitSlots[i];
     if (!seed || seed.type !== 'cloud') continue;
     if (rel > 0 && !seed._releasingAt) {
       seed._envRelease  = rel;
       seed._releasingAt = now;
+      released = true;
     } else if (rel <= 0) {
       S.commitSlots[i] = null;
+      released = true;
     }
   }
   (S.updateSeedBanksUI || updateSeedBanksUI)();
+  if (released) window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'release' } }));
 }
 
 // ── Sequence (loop) system ──────────────────────────────────────────────────────
@@ -928,7 +963,13 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
   }
 
   const slotIndex = _findSeqSlot(anchorLon, anchorLat);
-  if (slotIndex === -1) return;  // all slots full, overflow off
+  if (slotIndex === -1) {
+    // All slots full with overflow=off — signal the rejected attempt.
+    // Loops reach the slot pool through here rather than startSeedPlant(), so
+    // this needs its own dispatch or committing a loop when full is silent.
+    window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'full' } }));
+    return;
+  }
   // If replacing an existing seq, stop its audio first
   if (S.seqSlots[slotIndex]) {
     _stopSeqAudio(S.seqSlots[slotIndex]);
@@ -1062,7 +1103,11 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
 function addPlayheadFromExisting(sourceSeq, anchorParticle) {
   const { lon: aLon, lat: aLat } = getCursorPos();
   const slotIndex = _findSeqSlot(aLon, aLat);
-  if (slotIndex === -1) return;  // all slots full, overflow off
+  if (slotIndex === -1) {
+    // All slots full, overflow off — signal the rejected attempt.
+    window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'full' } }));
+    return;
+  }
   // If replacing an existing commit, clean it up first
   if (S.commitSlots[slotIndex]) {
     const existing = S.commitSlots[slotIndex];
@@ -1113,13 +1158,46 @@ export function removeSeq(slotIndex, immediate = false) {
   if (!slot) return;
   if (slot.type === 'loop') {
     if (immediate) {
-      // Hard-stop: kill audio NOW (no fade) — used by undo
-      const src = slot._sourceNode;
+      // Near-instant kill with a 10 ms gain ramp to mask the click that a bare
+      // `src.stop()` on a running AudioBufferSourceNode produces on the main
+      // output bus.  Used by undo — the slot is nulled immediately below so the
+      // seed scheduler/UI stop referencing this loop right away; the gain node
+      // and source stay alive just long enough to finish the fade, then clean
+      // themselves up via the `ended` listener.  10 ms is imperceptible as a
+      // delay but decisive enough to kill the transient.
+      const src  = slot._sourceNode;
+      const gain = slot._gainNode;
+      const actx = S.audioCtx;
       if (src && !src._stopped) {
-        try { src.stop(); } catch (_) {}
-        src._stopped = true;
+        if (gain && actx) {
+          const now     = actx.currentTime;
+          const fadeSec = 0.010; // 10 ms
+          try {
+            gain.gain.cancelScheduledValues(now);
+            gain.gain.setValueAtTime(gain.gain.value, now);
+            gain.gain.linearRampToValueAtTime(0, now + fadeSec);
+          } catch (_) {}
+          try { src.stop(now + fadeSec + 0.002); } catch (_) {}
+          src._stopped = true;
+          // Defer extra-node cleanup until the source actually ends so the
+          // fade has somewhere to run through.
+          src.addEventListener('ended', () => {
+            if (slot._extraNodes) {
+              for (const n of slot._extraNodes) { try { n.disconnect(); } catch (_) {} }
+              slot._extraNodes = null;
+            }
+            slot._sourceNode = null;
+            slot._gainNode   = null;
+          }, { once: true });
+        } else {
+          // No gain node or context — fall back to the old hard stop.
+          try { src.stop(); } catch (_) {}
+          src._stopped = true;
+          _cleanupSeqNodes(slot);
+        }
+      } else {
+        _cleanupSeqNodes(slot);
       }
-      _cleanupSeqNodes(slot);
     } else {
       _stopSeqAudio(slot);
     }
@@ -1213,6 +1291,12 @@ export function releaseCommit() {
   }
   S._syncCommitUI?.();
   (S.updateSeedBanksUI || updateSeedBanksUI)();
+
+  // Signal the release for LED feedback on the cursor x-IMU3 (2 green blinks).
+  // releaseCommit() is the unified pickup path used by the keyboard shortcut,
+  // MIDI, and UI buttons — uprootNearestSeed() only fires for the legacy seed
+  // path, so without this dispatch picking up a cloud/loop showed no blink.
+  window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'release' } }));
 }
 
 /**
@@ -1221,6 +1305,7 @@ export function releaseCommit() {
 export function clearAllCommits() {
   const now = performance.now() / 1000;
   const rel = S.commitRelease || 0;
+  let released = false;
   for (let i = 0; i < MAX_COMMITS; i++) {
     const slot = S.commitSlots[i];
     if (!slot) continue;
@@ -1228,16 +1313,23 @@ export function clearAllCommits() {
       if (rel > 0 && !slot._releasingAt) {
         slot._envRelease  = rel;
         slot._releasingAt = now;
+        released = true;
       } else if (rel <= 0) {
         S.commitSlots[i] = null;
+        released = true;
       }
     } else {
       // Both fade and play-to-end defer slot removal to 'ended' event
       _stopSeqAudio(slot, S.loopReleaseMode === 'play-to-end');
+      released = true;
     }
   }
   S._syncCommitUI?.();
   (S.updateSeedBanksUI || updateSeedBanksUI)();
+  // Releasing everything is still a release — releasing one commit blinked but
+  // clearing the board didn't, which read as the LED having missed the action.
+  // Guarded so clearing an already-empty board stays silent.
+  if (released) window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'release' } }));
 }
 
 // ── Sequence panel helpers ────────────────────────────────────────────────
@@ -1717,23 +1809,62 @@ export function updateSeqBanksUI()  { updateCommitBanksUI(); }
 export function updateSeedBanksUI() { updateCommitBanksUI(); }
 
 export function selectPreset(index) {
+  // Reject a slot that doesn't exist before touching any state. Callers reach
+  // here with indices from persisted settings, OSC, MIDI and the accessory —
+  // anything that outlives a change to the bank size. This used to throw on
+  // `preset.name` below, and because setupPresets() runs at main.js:239 the
+  // throw took the whole rest of init() with it: no animate(), no UI wiring,
+  // and the boot veil left to the 4s failsafe. Leaving the previous patch
+  // selected is the safe failure.
+  const preset = PRESETS[index];
+  if (!preset) {
+    console.warn(`[presets] patch ${index + 1} does not exist — bank has ${PRESETS.length} slots; ignoring`);
+    return;
+  }
+
   S.activePresetIndex = index;
   S._patchFlashUntil = performance.now() + 1200;
-  const preset = PRESETS[index];
+  if (_patchLedArmed) {
+    window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'patch' } }));
+  }
 
   // Update HUD patch info
   const patchEl = document.getElementById('vmPatchInfo');
   if (patchEl) patchEl.textContent = `${index + 1} ${preset.name || ''}`;
 
+  document.querySelectorAll('.preset-btn').forEach((btn, i) => {
+    btn.classList.toggle('active', i === index);
+  });
+
+  applyPresetObject(preset);
+}
+
+/**
+ * Apply a patch's parameters to live state, with no reference to the bank.
+ *
+ * Split out of selectPreset so a session import can restore the patch it was
+ * played on **without depending on the preset bank** (docs/EXPORT-IMPORT-AUDIT-2026-08.md
+ * § E4). A session used to store only `activePresetIndex` and re-select it on
+ * import, which silently meant "whatever patch happens to live in slot N on
+ * this machine" — wrong on any other rig, and the reason session import needed
+ * the whole user bank shipped alongside it. Sessions now embed the resolved
+ * patch object and call this directly.
+ *
+ * Everything here is deliberately sparse (`'key' in preset`): a user patch
+ * saves only what it overrides, and an absent key must leave live state alone
+ * rather than reset it to a default.
+ *
+ * Callers own the bank-facing side — active index, button highlight, HUD label.
+ * This function must not touch them, or it stops being usable for a patch that
+ * isn't in the bank at all.
+ */
+export function applyPresetObject(preset) {
+  if (!preset || typeof preset !== 'object') return;
+
   // ── Empty-preset guard ────────────────────────────────────────────────
   // If the preset has no parameter data (only name/userDefined), skip all
   // parameter application — selecting an empty slot should change nothing.
-  const hasParams = presetHasParams(preset);
-  if (!hasParams) {
-    // Still update UI indicators (active button, HUD) but touch no state.
-    document.querySelectorAll('.preset-btn').forEach((btn, i) => {
-      btn.classList.toggle('active', i === index);
-    });
+  if (!presetHasParams(preset)) {
     syncAllUI();
     drawPresetWaveform();
     updatePresetStats();
@@ -1799,10 +1930,6 @@ export function selectPreset(index) {
   // ── Apply all additional sparse params (cursor, seed, looper, morph) ──
   applySparsePreset(preset);
 
-  document.querySelectorAll('.preset-btn').forEach((btn, i) => {
-    btn.classList.toggle('active', i === index);
-  });
-
   // Sync all UI controls
   syncAllUI();
   drawPresetWaveform();
@@ -1816,11 +1943,17 @@ export function selectPreset(index) {
 }
 
 /** Refresh all preset button labels from the in-memory PRESETS array.
- *  Call after loadUserPresets() to sync the DOM without a full page reload. */
+ *  Call after loadUserPresets() to sync the DOM without a full page reload.
+ *
+ *  ⚠ Currently UNCALLED. Its only caller was session import, which stopped
+ *  loading the user bank when sessions were decoupled from settings
+ *  (docs/EXPORT-IMPORT-AUDIT-2026-08.md § E4). Kept because it's the piece any
+ *  future runtime `loadUserPresets()` re-apply path needs — see the § E2 loader
+ *  inventory. Delete it if that path never materialises. */
 export function refreshPresetButtons() {
   const btns = document.querySelectorAll('.preset-btn');
   btns.forEach((btn, i) => {
-    if (i < FACTORY_PRESET_START) {
+    if (isUserPreset(i)) {
       // User-defined slot — update the .preset-name span
       const nameEl = btn.querySelector('.preset-name');
       if (nameEl) nameEl.textContent = PRESETS[i].name;
@@ -1958,7 +2091,11 @@ export function drawPresetWaveform() {
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
   c.clearRect(0, 0, w, h);
 
+  // Reached from a ResizeObserver and from syncGrainControlsUI, neither of
+  // which validates the index first — so a stale S.activePresetIndex must not
+  // be able to throw out of the render path.
   const pr = PRESETS[S.activePresetIndex];
+  if (!pr) return;
 
   const liveDur    = Math.max(0.00001, S.grainOverrides.duration ?? pr.duration ?? gp().duration);
   const livePeriod = Math.max(0.00001, S.grainOverrides.period   ?? pr.period   ?? gp().period);
@@ -2091,6 +2228,7 @@ export function drawPresetWaveform() {
 
 export function updatePresetStats() {
   const pr = PRESETS[S.activePresetIndex];
+  if (!pr) return;
   const durEl = document.getElementById('psDur');
   const kEl   = document.getElementById('psK');
   const panEl = document.getElementById('psPan');
@@ -2583,23 +2721,20 @@ export function initGrainControls() {
     const psDef = SLIDER_DEFS.find(d => d.param === 'pitchShift');
     if (psDef) syncSliderFromInternal(psDef);
   };
-  if (octDownBtn) {
-    octDownBtn.addEventListener('click', () => {
-      const cur = S.grainOverrides.pitchShift ?? gp().pitchShift ?? 0;
-      _setPitchShift(cur - 1200);
-    });
-  }
-  if (octResetBtn) {
-    octResetBtn.addEventListener('click', () => {
-      _setPitchShift(0);
-    });
-  }
-  if (octUpBtn) {
-    octUpBtn.addEventListener('click', () => {
-      const cur = S.grainOverrides.pitchShift ?? gp().pitchShift ?? 0;
-      _setPitchShift(cur + 1200);
-    });
-  }
+  // Single implementation behind the three buttons AND the three bindable
+  // actions (pitch_oct_down / _reset / _up in midi.js) — a key, pad or pedal
+  // must land on exactly the same clamped value the button does, so the
+  // dispatcher calls this rather than synthesising a click.
+  //   dir < 0 → down an octave · dir > 0 → up an octave · dir === 0 → reset
+  S._pitchOctave = (dir) => {
+    if (!dir) { _setPitchShift(0); return; }
+    const cur = S.grainOverrides.pitchShift ?? gp().pitchShift ?? 0;
+    _setPitchShift(cur + (dir > 0 ? 1200 : -1200));
+  };
+
+  if (octDownBtn)  octDownBtn .addEventListener('click', () => S._pitchOctave(-1));
+  if (octResetBtn) octResetBtn.addEventListener('click', () => S._pitchOctave(0));
+  if (octUpBtn)    octUpBtn   .addEventListener('click', () => S._pitchOctave(1));
 
   // Register syncGrainControlsUI on S so selectPreset can call it
   S.syncGrainControlsUI = function() {
@@ -2704,12 +2839,19 @@ export function initGrainControls() {
   // Driven by S._syncMappingHighlights(), called from sensor-mapping.js
   // whenever mappings are added, removed, or toggled.
 
-  /** Build a Set of param keys with at least one enabled mapping. */
+  /** Build a Set of param keys with at least one enabled mapping.
+   *  Only grain-kind rows count — MIDI/OSC rows don't drive grain params and
+   *  shouldn't violet-highlight a slider that isn't actually being modulated. */
   function _activeMappedParams() {
     const mappings = getMappings();
     const active = new Set();
     for (let i = 0; i < mappings.length; i++) {
-      if (mappings[i].enabled) active.add(mappings[i].targetParam);
+      const m = mappings[i];
+      if (!m.enabled) continue;
+      const kind = m.output?.kind || 'grain';
+      if (kind !== 'grain') continue;
+      const param = m.output?.param || m.targetParam;
+      if (param) active.add(param);
     }
     return active;
   }

@@ -458,6 +458,19 @@ export async function requestMicAccess() {
 
 // ── Live recording ──────────────────────────────────────────────────────────
 
+// ── Reusable recording backing buffer (perf audit H1, Jul 2026) ─────────────
+// Allocating `new Float32Array(sr * 300)` (57.6 MB at 48 kHz) on EVERY record
+// press was the biggest GC hammer in the app — a 57.6 MB alloc+zero at the
+// musically-critical record onset, dropped to GC at stop (~1.2 GB of heap
+// churn over a 20-take set). The pool is allocated once per session and
+// reused; stale data beyond recordingWritePos is never read (finalize and
+// rebuildLiveBuffer both use subarray(0, writePos)). If a take outgrows the
+// pool (> 5 min), the grown buffer becomes the new pool so each size is paid
+// at most once. Revert: replace the pool block in startLiveRecording with the
+// original `S.recordingRaw = new Float32Array(S.recordingSampleRate * 300)`.
+let _recRawPool = null;
+let _recRawPoolRate = 0;
+
 export function startLiveRecording() {
   if (S.isRecording) return;
   // Allow recording if we have a browser MediaStream OR Electron RtAudio input active.
@@ -491,7 +504,12 @@ export function startLiveRecording() {
   }
 
   S.recordingSampleRate   = actx.sampleRate;
-  S.recordingRaw          = new Float32Array(S.recordingSampleRate * 300); // 5 min headroom
+  // Reuse the persistent pool (perf audit H1) — see comment above.
+  if (!_recRawPool || _recRawPoolRate !== S.recordingSampleRate) {
+    _recRawPool     = new Float32Array(S.recordingSampleRate * 300); // 5 min headroom
+    _recRawPoolRate = S.recordingSampleRate;
+  }
+  S.recordingRaw          = _recRawPool;
   S.recordingWritePos     = 0;
   S.liveBufferSampleCount = 0;
 
@@ -518,6 +536,7 @@ export function startLiveRecording() {
       const grown = new Float32Array(S.recordingRaw.length * 2);
       grown.set(S.recordingRaw);
       S.recordingRaw = grown;
+      _recRawPool    = grown;  // grown buffer becomes the pool (perf audit H1)
     }
     S.recordingRaw.set(samples, S.recordingWritePos);
     S.recordingWritePos += frames;
@@ -633,16 +652,30 @@ export function stopLiveRecording() {
   // Cold-start path: _onRecordingComplete starts the worklet fresh.
   S._onRecordingComplete?.(audioBuffer, S.currentLiveBufferIdx);
 
-  S.recordingRaw         = null;
+  S.recordingRaw         = null;   // gate for late worklet messages; pool retained
   S.recordingWritePos    = 0;
   S.liveBufferSampleCount = 0;
   S.currentLiveBufferIdx = -1;
-  // Release the reusable live buffer — the final audioBuffer is now in the slot
-  _liveAudioBuf    = null;
-  _liveAudioBufLen = 0;
+  // Keep the reusable live buffer across recordings (perf audit H1, Jul 2026).
+  // It was released here, so every take re-grew it from scratch via amortised
+  // doubling — each doubling a full alloc+copy on the main thread MID-TAKE
+  // (a 4-min take pays a ~55 MB copy around the 2-min mark). Retaining it
+  // means subsequent takes start at the largest size seen so far and never
+  // reallocate unless they exceed it. Safe to share the object across takes:
+  // candidate resolution prefers slot.buffer over slot.liveBuffer, so stale
+  // liveBuffer refs on finalized slots are never read. Only the copy cursor
+  // resets. Revert: restore `_liveAudioBuf = null; _liveAudioBufLen = 0;`.
   _liveCopiedUpTo  = 0;
   S.updateLiveRecUI?.();
 }
+
+// ── IPC audio credit state (perf audit H4, Jul 2026) ─────────────────────────
+// Module-level so re-running initSpeakerBuses resets the balance instead of
+// stacking a fresh closure + listener per call. See comment at the
+// registration site in initSpeakerBuses.
+const IPC_CREDIT_MAX = 8;
+let _ipcCreditBalance = IPC_CREDIT_MAX;
+let _creditListenerRegistered = false;
 
 // ── Multi-channel speaker bus setup (Electron only) ──────────────────────────
 // Creates N persistent GainNode buses, one per output channel, evenly spaced
@@ -919,16 +952,25 @@ export async function initSpeakerBuses(numChannels = 2) {
 
   _merger.connect(_captureNode);
 
-  // Credit-based flow control: don't send if credits are exhausted
-  let _audioCredits = 8;
-  if (window.electronBridge.onAudioCredit) {
+  // Credit-based flow control: don't send if credits are exhausted.
+  // Register-once + module-level balance (perf audit H4, Jul 2026).
+  // Previously `_audioCredits` was a closure local and onAudioCredit was
+  // registered on EVERY initSpeakerBuses call (device/channel change) with
+  // no removal path in the preload — stale listeners stacked forever, each
+  // updating its own dead closure. Now the balance lives at module scope,
+  // is reset to max on each re-init, and the IPC listener is registered
+  // exactly once per session. Revert: restore the closure-local
+  // `let _audioCredits = 8` + unconditional onAudioCredit registration.
+  _ipcCreditBalance = IPC_CREDIT_MAX;
+  if (!_creditListenerRegistered && window.electronBridge.onAudioCredit) {
+    _creditListenerRegistered = true;
     window.electronBridge.onAudioCredit((credits) => {
-      _audioCredits = Math.min(_audioCredits + credits, 8);
+      _ipcCreditBalance = Math.min(_ipcCreditBalance + credits, IPC_CREDIT_MAX);
     });
   }
   _captureNode.port.onmessage = ({ data }) => {
-    if (_audioCredits > 0) {
-      _audioCredits--;
+    if (_ipcCreditBalance > 0) {
+      _ipcCreditBalance--;
       window.electronBridge.sendAudioBuffer(data.interleaved);
     }
     // else: drop this buffer — backpressure from main process

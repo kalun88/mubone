@@ -1,5 +1,7 @@
 # Mubone — Audio Architecture Notes
 
+> **Status: CURRENT** · reference · audio routing, multi-channel, VBAP, Electron bridge. Describes shipped behaviour.
+
 ## Status
 
 The Electron multi-channel audio path is implemented and working. The browser stereo path is unchanged. Both share the same codebase with no branching in the granular engine itself.
@@ -55,31 +57,24 @@ Output meter (both contexts)
 
 ---
 
-## Spatial Modes: Sim vs Physical
+## Spatial panning: head-locked vs world-locked
 
-`S.spatialMode` is `'sim'` (default) or `'physical'`. The switch lives in `grain.js` at the point where the grain's world-space position is resolved to a panning coordinate:
+`S.spatialPanning` is `'headlocked'` (default) or `'worldlocked'`. The switch lives in `grain.js`, `audio.js`, and `grain-worklet-bridge.js` at the point where each grain's world-space position is resolved to a panning coordinate.
 
-```js
-// Sim:      rotate grain into camera space — panning is view-relative
-// Physical: use world-space position directly — speakers are room-fixed
-const [cx, cy, cz] = S.spatialMode === 'physical'
-  ? [wx, wy, wz]
-  : qRotateVec(qConjugate(S.camQ), [wx, wy, wz]);
-```
-
-**Sim mode** (`'sim'`)
+**Head-locked** (`'headlocked'`)
 - Audio is panned relative to the current camera orientation.
 - Rotating the view (mouse or sensor) rotates the sound world with you — like a first-person video game. A grain painted at the front of the sphere always sounds in front of wherever you're looking.
 - Intended for headphone listening, browser demos, and stereo monitoring.
-- Always produces stereo output (or N-channel with the same view-relative behaviour).
+- Works for any channel count with the same view-relative behaviour.
 
-**Physical mode** (`'physical'`)
+**World-locked** (`'worldlocked'`)
 - Grain positions are in world space. The VBAP azimuth is computed from the grain's fixed position relative to the room, ignoring camera orientation.
 - Rotating your body (sensor) turns the visual sphere but does not pan the audio — the sounds stay anchored to physical speaker positions.
 - Intended for real installations and performances where speakers are fixed in the room and the performer moves within the space.
-- Requires at least 2 physical output channels; works up to any N.
-- In Electron: the BNO085 sensor drives camera rotation AND the paint cursor position.
-- In browser: physical mode can be selected but without the sensor the camera is mouse-driven; the panning behaviour is the same (world-space) but the performer can't "turn" into it.
+- In Electron with the x-imu3 assigned to the cursor role, the sensor drives camera rotation AND the paint cursor position.
+- In browser: world-locked mode works without a sensor (mouse-driven camera) — the panning behaviour is the same, the performer just can't "turn" into it.
+
+**Legacy "sim / physical" shorthand.** The `/spatial/mode` OSC handler flips a compound state: "physical" = `cameraMode = 'sensor'` + `spatialPanning = 'worldlocked'`; "sim" = `cameraMode = 'pull'` + `spatialPanning = 'headlocked'`. The two underlying keys (`S.cameraMode`, `S.spatialPanning`) are what code reads; `/spatial/mode` is a convenience toggle.
 
 ---
 
@@ -95,7 +90,7 @@ const [cx, cy, cz] = S.spatialMode === 'physical'
 
 Pre-multiplying yaw keeps the vertical axis world-fixed (no roll).  Post-multiplying pitch keeps it local (clean pole traversal).
 
-**Sensor mode** (BNO085, renderer.js + sensor-registry.js) — when roll is muted (the default for cursor sensors), the renderer computes the delta between the current and previous raw tared quaternion: `delta = prev⁻¹ × current`.  The delta's forward vector `[1,0,0]` is decomposed into `dYaw = atan2(fy, fx)` and `dPitch = asin(−fz)`, then applied with the same world-yaw × local-pitch pattern.  Frame-to-frame deltas are always small, so the decomposition is well-conditioned (no gimbal lock).  When roll is *not* muted, the full 3DOF sensor quaternion from `getSensorCamQ()` is passed through directly.
+**Sensor mode** (x-imu3, renderer.js + sensor-registry.js) — when roll is muted (the default for cursor sensors), the renderer computes the delta between the current and previous raw tared quaternion: `delta = prev⁻¹ × current`.  The delta's forward vector `[1,0,0]` is decomposed into `dYaw = atan2(fy, fx)` and `dPitch = asin(−fz)`, then applied with the same world-yaw × local-pitch pattern.  Frame-to-frame deltas are always small, so the decomposition is well-conditioned (no gimbal lock).  When roll is *not* muted, the full 3DOF sensor quaternion from `getSensorCamQ()` is passed through directly.
 
 **Why not absolute Euler reconstruction?**  Decomposing a quaternion into yaw/pitch Euler angles and rebuilding from those fails at the poles: `asin` clamps pitch to ±90° (view bounces back), `atan2` for yaw becomes singular (view spins).  The incremental delta approach avoids both because it only decomposes *small* rotations.
 
@@ -139,7 +134,24 @@ Key files: `sensor-registry.js` (`getSensorCursorQ`, `getFrameQ`), `renderer.js`
 
 ## Tare Strategy: Gravity-Aligned vs Full-Quaternion
 
-`slotTare()` in sensor-registry.js auto-selects between two tare strategies based on the axis map. The axis map is the signal — it implicitly encodes the physical mounting orientation.
+> **⚠ HISTORICAL as of 2026-08-01 — this describes code that no longer exists.**
+> `slotTare()` / `slotClearTare()` / `_isFlatMount()` were removed from
+> `sensor-registry.js`. They had no caller, and could not have worked if they
+> had: `setFeeding()` in `imu-setup.js` nulls `quatCal.tareQuat` and
+> `tareRollOffset` on every connect, because imu-setup owns calibration and the
+> registry is meant to pass data through.
+>
+> **The tare that actually runs is `captureTare()` in `imu-setup.js`** — an
+> Euler-space tare storing `{ pitch, yaw }` on the *device*, called by the
+> `tare sensor` button, the `tare cursor` button, the `` ` `` key and the `tare`
+> action. See `docs/TARE-RECENTER-ZERO.md`.
+>
+> `applyTare()` and the `tareQuat` reads remain (inert on null, and `tareQuat`
+> is still in the persisted calibration schema — don't drop it from there). The
+> two strategies below are kept as the design record: if a quaternion tare is
+> ever wanted again, it belongs beside `captureTare`, not in the registry.
+
+`slotTare()` auto-selected between two tare strategies based on the axis map. The axis map is the signal — it implicitly encodes the physical mounting orientation.
 
 **Gravity-aligned tare** (flat mount — default axis map, X = roll/forward):
 
@@ -153,7 +165,7 @@ Captures the entire raw orientation. `applyTare` left-multiplies by the conjugat
 
 **Detethered mode interaction:** In two-IMU mode, roll is naturally muted on the cursor (forward-vector projection ignores roll), so the gravity-aligned tare's roll handling has no effect on the cursor. Full-quat tare works fine for either sensor in detethered mode.
 
-Key file: `sensor-registry.js` (`slotTare`, `_isFlatMount`, `applyTare`).
+Key file: `imu-setup.js` (`captureTare`, `resetHeading`, `clearTare`) for the tare that runs; `sensor-registry.js` (`applyTare`) for the still-live application step.
 
 ---
 
@@ -176,7 +188,7 @@ This works identically for any N: stereo (2), quad (4), octaphonic (8), Dante (4
 | Context | Use | Audio output | Sensor input |
 |---|---|---|---|
 | Browser | Development, demos, link sharing | Stereo via Web Audio destination | Unavailable (mouse/touch fallback) |
-| Electron | Live performance, installation | N-channel via audify / RtAudio | BNO085 via Max OSC → UDP → IPC |
+| Electron | Live performance, installation | N-channel via audify / RtAudio | x-imu3 via Max OSC → UDP → IPC |
 
 The granular engine (`grain.js`) checks `S.speakerBuses` at render time. If present, it routes via VBAP to the speaker buses. If null, it falls through to the stereo panner path. No other code changes between contexts.
 
@@ -204,35 +216,15 @@ Browser:   Max → [node.script bridge.js]  (setmode browser)
 
 The browser tries `ws://localhost:8080` on load and retries every 3 seconds — graceful no-op if Max isn't running. A `● MAX` indicator appears in the UI top-right corner on first message received (either transport).
 
-**Sensor path:** `handleOSC` routes `/orientation` with 4 floats to `handleSensorOSC(values)` in `sensor.js`, which populates `sensor.quat`. This works identically in both contexts.
+**Sensor path:** `handleOSC` routes `/sensor/{name}/quaternion` with 4 floats through the sensor registry (`sensor-registry.js`), which auto-creates the slot on first receipt, applies tare + axis map, and dispatches to the assigned role (cursor / frame / gesture). This works identically in both contexts.
 
 **Grain params:** Written directly to `S.grainOverrides`, which `grain.js` reads on each scheduler tick. OSC changes also call `scheduleUISync()` to flush updated values back to the panel sliders and controls in the next animation frame.
 
-**Preset / mode changes:** `S._selectPreset` and `S._setSpatialMode` are registered by the relevant UI modules and called directly — no CustomEvent needed.
+**Preset / mode changes:** `S._selectPreset`, `S._setCameraMode`, and `S._setSpatialPanning` are registered by the relevant UI modules and called directly from the OSC dispatcher — no CustomEvent needed.
 
-**Seed / undo controls:** Bang-style messages. `/seed/plant` and `/seed/uproot` call `S._plantSeed` and `S._uprootSeed` registered by `events.js`. `/undo` calls `S._undo`. Any incoming value (or no value) triggers the action.
+**Commit / undo controls:** Bang-style messages on the `/commit/*` namespace (`/commit/drop`, `/commit/draw`, `/commit/release`, `/commit/clear`, etc.) route through `S._dispatchAction` in `events.js` for consistent UI feedback. `/undo` → `S._dispatchAction('undo', 127)`. Any incoming value (or no value) triggers the action.
 
-### Full OSC namespace
-
-| Address | Args | Description |
-|---|---|---|
-| `/orientation` | `f f f f` | BNO085 quaternion `[qx, qy, qz, qw]` |
-| `/grain/duration` | `f` | Grain duration in seconds |
-| `/grain/period` | `f` | Onset period in seconds |
-| `/grain/volume` | `f` | Grain volume (0–2) |
-| `/grain/pitch` | `f` | Pitch jitter (0–1) |
-| `/grain/pan` | `f` | Pan spread (0–1) |
-| `/grain/radius` | `f` | Search radius in degrees (1–180) |
-| `/grain/k` | `i` | Pool size |
-| `/grain/prob` | `f` | Fire probability (0–1) |
-| `/grain/dir` | `s` | `fwd` / `rev` / `rnd` |
-| `/preset` | `i` | Select preset (1-based: 1=wash … 11=wobble) |
-| `/spatial/mode` | `s` | `sim` / `physical` |
-| `/record` | `i` | `1` = start, `0` = stop |
-| `/mute` | `i` | `1` = mute, `0` = unmute |
-| `/seed/plant` | *(bang)* | Plant a seed at current cursor position |
-| `/seed/uproot` | *(bang)* | Uproot (remove) the nearest seed |
-| `/undo` | *(bang)* | Undo the last particle paint action |
+> **Full OSC namespace:** see the expanded table in `README.md`. Source of truth is the dispatch `switch` in `js/osc.js` — any address not handled there is silently dropped, even if it appears in older docs.
 
 ---
 
@@ -254,12 +246,13 @@ When speaker buses are active, `audio.js` also wires a stereo headphone downmix:
 
 | File | Role |
 |---|---|
-| `electron-main.js` | Electron main process. Manages audify output stream (device selection, channel count, buffer size, sample rate negotiation) and a separate RtAudio input stream. Receives BNO085 OSC over UDP and pushes to renderer via IPC. |
+| `electron-main.js` | Electron main process. Manages audify output stream (device selection, channel count, buffer size, sample rate negotiation) and a separate RtAudio input stream. Receives x-imu3 OSC over UDP and pushes to renderer via IPC. |
 | `electron-preload.js` | IPC bridge. Exposes `window.electronBridge` to renderer (see API table below). |
-| `js/audio.js` | `ensureAudioContext` (44100 Hz default), `initSpeakerBuses(N)` (builds N-channel Web Audio graph + headphone downmix + meter tap), `recreateAudioContext` (sample rate change), `rewireChannelMerger` (apply `S.channelRouting` without full rebuild). |
+| `js/audio.js` | `ensureAudioContext` (48000 Hz default), `initSpeakerBuses(N)` (builds N-channel Web Audio graph + headphone downmix + meter tap), `recreateAudioContext` (sample rate change), `rewireChannelMerger` (apply `S.channelRouting` without full rebuild). |
 | `js/grain.js` | `playGrain` — VBAP routing when `S.speakerBuses` is set, stereo panner fallback otherwise. |
 | `js/osc.js` | `initOSC()` selects transport (Electron IPC or browser WebSocket). `handleOSC(address, values)` dispatches all incoming OSC to sensor, grain params, preset, etc. |
-| `js/sensor.js` | `handleSensorOSC(values)` — called by `osc.js` for `address === 'list'`. Populates `sensor.quat` and `sensor.euler`. |
+| `js/sensor-registry.js` | Sensor slot registry. `/sensor/{name}/{type}` OSC messages register slots on first receipt, track per-sensor calibration (tare, axis map, flat-mount detection), and dispatch to role consumers (cursor, frame, gesture). Exposes `getByRole()`, `applyAxisMapQuat()`, `getSensorCursorQ()`, `getFrameQ()`. Tare itself lives in `imu-setup.js`, not here. |
+| `js/sphere.js` | 3D math — `getCursorLonLat()`, `screenToLonLat()`, `cameraTransform()`, `qRotateVec`, quaternion helpers. |
 | `max/bridge.js` | Node for Max script. Runs via `[node.script bridge.js]` in both modes. In browser mode: starts a WebSocket server on `ws://localhost:8080` and broadcasts all incoming messages to connected tabs. In Electron mode: encodes messages as OSC binary and sends UDP to `127.0.0.1:7500`. Send `setmode browser` or `setmode electron` to switch transport at runtime. |
 | `js/worklets/quad-capture.worklet.js` | Batches N-channel audio into interleaved Float32Array and posts to main thread. N and batchSize configured at runtime via `{ type: 'init', numChannels: N, batchSize: B }`. batchSize = bufferFrames / 128 so each post is exactly one audify write. |
 | `js/ui-audio-settings.js` | Input device picker (WebRTC in browser; RtAudio device list in Electron). Output device picker (Electron only). Channel routing dropdowns. Speaker sweep. Sample rate and buffer size controls. |
@@ -294,7 +287,7 @@ When speaker buses are active, `audio.js` also wires a stereo headphone downmix:
 
 **Buffer size** — passed as `bufferFrames` to `createOutputStream()` in the main process and used directly in `rtAudio.openStream()`. Also controls the worklet's `batchSize` (`bufferFrames / 128`). In the browser it's informational only (Web Audio manages its own internal buffer).
 
-**Sample rate negotiation** — audify tries rates in order `[44100, 48000]`. If a device rejects a rate, the error is caught and the next rate is tried silently. The negotiated rate is returned to the renderer and shown in the output status strip. A ⚠ warning appears if the audify rate differs from the AudioContext rate.
+**Sample rate negotiation** — audify tries rates in order `[preferred, 48000, 44100]` (deduped). If a device rejects a rate, the error is caught and the next rate is tried silently. The negotiated rate is returned to the renderer and shown in the output status strip. A ⚠ warning appears if the audify rate differs from the AudioContext rate.
 
 **Speaker sweep** — fires a 600ms white noise burst through each speaker bus in sequence with 40ms fades, logging the angle of each speaker in the status strip. In browser stereo mode, sweeps left → centre → right. Clicking the button again during a sweep stops it.
 
@@ -308,20 +301,20 @@ All system-wide performance knobs are exported from `js/state.js`. They were set
 
 | Constant | Default | Where used | Notes |
 |---|---|---|---|
-| `MAX_GRAIN_NODES` | `250` | `grain.js` `scheduleGrains()` | Hard cap on concurrent `AudioBufferSourceNode`s. Each live grain holds 3–5 nodes (source, envelope gain, elevGain + 2 VBAP gains). Dense presets (cloud, shimmer, glitch sprayCount=3) hit this cap fastest. |
-| `GRAIN_SCHEDULER_INTERVAL_MS` | `30` | `main.js` `setInterval` | Tick rate for the grain scheduler. Decoupled from the render loop so dropped frames don't delay grain onsets. At 30ms the scheduling jitter is inaudible (all grains are ≥25ms). |
+| `GRAIN_SCHEDULER_INTERVAL_MS` | `20` | `main.js` `setInterval` | Tick rate for the grain scheduler. Decoupled from the render loop so dropped frames don't delay grain onsets. At 20ms the scheduling jitter is inaudible; the worklet does the sample-accurate timing. |
+| `SCHED_SAFE_PERIOD_S` | `0.00005` (50 µs) | `state.js` — UI slider floor + onset-clock minimum | UI slider floor and onset-clock advancement minimum. With the AudioWorklet grain engine on the audio thread there's no main-thread crash risk at sub-ms periods. |
 | `RENDER_TARGET_FPS` | `30` | `renderer.js` `animate()` | Canvas redraw cap. `requestAnimationFrame` still runs at display rate to keep painting and camera responsive; only `drawFrame()` is throttled. Lowering to 20 meaningfully reduces draw cost on scenes with many particles. |
-| `LIVE_REBUILD_INTERVAL_MS` | `200` | `audio.js` | How often the live mic buffer is resampled into a playable `AudioBuffer` during recording. Lower = more responsive; higher = less CPU overhead during live capture. |
+| `LIVE_REBUILD_INTERVAL_MS` | `50` | `audio.js` | How often the main-thread `AudioBuffer` snapshot is refreshed from the recording ring for candidate offset resolution and UI. The worklet has the real-time data via its `process()` input; this only affects staleness in candidate posts. |
 
-**CPU load profile:** The grain scheduler (`grain.js`) is the dominant CPU consumer — each tick does an O(n) distance pass over all particles + a sort. `MAX_GRAIN_NODES` is the primary lever. The canvas renderer is the second consumer and scales with particle count and canvas resolution. `RENDER_TARGET_FPS` is the lever there.
+**CPU load profile:** The grain engine runs entirely in the AudioWorklet (`grain-engine.worklet.js`) on the audio thread. The main-thread scheduler (`grain.js`) only does spatial search and posts candidate lists via `postMessage` at ~33Hz — cheap. The canvas renderer is the main CPU consumer and scales with particle count and canvas resolution. `RENDER_TARGET_FPS` is the primary lever there.
 
-**Known headroom:** `MAX_GRAIN_NODES = 250` was chosen when the VBAP path wasn't yet implemented and each grain cost more nodes. With the current 2-node VBAP scheme the real ceiling may be higher on modern hardware. Worth testing at 400 with a dense preset.
+**Previous `MAX_GRAIN_NODES` constant:** removed during the worklet migration. Concurrency is now budgeted inside the worklet's grain pool, not by a main-thread cap.
 
 ---
 
 ## Sample Rate History
 
-The AudioContext was originally created at 22050 Hz to halve CPU load. This caused hardware negotiation failures (Core Audio rejects 22050 on MacBook built-in) and pitch/timing mismatches with audify. The default is now 44100 Hz in all contexts. 22050 Hz is still selectable in Audio Settings for CPU-constrained use.
+The AudioContext was originally created at 22050 Hz to halve CPU load. This caused hardware negotiation failures (Core Audio rejects 22050 on MacBook built-in) and pitch/timing mismatches with audify. The default is now 48000 Hz in all contexts (matches Chrome's default and most USB interfaces). 44100 Hz and 22050 Hz are still selectable in Audio Settings.
 
 ---
 
@@ -329,4 +322,4 @@ The AudioContext was originally created at 22050 Hz to halve CPU load. This caus
 
 Max is no longer in the audio chain. It is a controller: sensor data, grain parameters, presets, transport, seed placement, and undo — all via OSC. The same namespace works in both contexts; `bridge.js` handles the transport switch (UDP in Electron, WebSocket in browser). Max patches live in `max/`.
 
-The mubone-controller patch (`max/mubone-controller.maxpat`) exposes the full control surface: all 11 presets by name, grain parameter sliders, direction segmented control, transport buttons (record, mute), spatial mode toggle, and seed/undo bangs. The BNO085 sensor path runs through a separate `bno085.maxpat` abstraction and feeds `/orientation` quaternion data upstream.
+The consolidated Max patch (`max/main.maxpat`) is the control surface today (legacy `mubone-controller.maxpat` was deleted in the Max reorg per CHANGELOG). The x-imu3 sensor path runs through `max/x-imu3.maxpat` and feeds `/sensor/{name}/quaternion` upstream.

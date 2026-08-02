@@ -1,5 +1,7 @@
 # Grain Engine → AudioWorklet Migration Audit
 
+> **Status: ARCHIVED / HISTORICAL.** This plan or audit is complete — kept as the record of what was decided, what changed, and how to revert it. **It does not describe current behaviour** and may use superseded terminology. Do not use it to learn how the system works today; read the reference docs listed in CLAUDE.md instead.
+
 > Deep architectural analysis for moving mubone's grain scheduler and synthesis engine from the main thread into an AudioWorklet. Generated 2026-04-04 from codebase v0.17 alpha.
 
 ---

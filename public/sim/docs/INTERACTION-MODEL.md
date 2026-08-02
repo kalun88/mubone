@@ -1,5 +1,7 @@
 # Interaction Model — Three-Function System
 
+> **Status: DESIGN INTENT** · largely implemented (trace / scan / commit all ship). Read for *why* the interaction works this way; for *what* the code does, read the modules. Where the two disagree, the code wins.
+
 > Design doc for mubone's core performer interaction model.
 > Started Mar 26, 2026. Update as thinking evolves.
 

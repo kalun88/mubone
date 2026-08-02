@@ -25,7 +25,7 @@
 </style>
 </head>
 <body>
-<div id="status">waiting for parent window…<br><span style="font-size:10px;opacity:0.5">open this from mubone ?exp mode</span></div>
+<div id="status">waiting for parent window…<br><span style="font-size:10px;opacity:0.5">open this from mubone</span></div>
 <canvas id="vizCanvas"></canvas>
 
 <script>
@@ -52,9 +52,13 @@ const ctx     = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
 
 // ── Connection to parent via BroadcastChannel ────────────────────────────────
-// The parent (exp-init.js) broadcasts state at ~30fps on 'mubone-gesture'.
-// We maintain a local proxy S object updated from those messages.
-// Writes (conditioning, joystick, cal) are sent back via the same channel.
+// The parent mubone tab is expected to broadcast state at ~30fps on the
+// 'mubone-gesture' channel. We maintain a local proxy S object updated from
+// those messages. Writes (conditioning, joystick, cal) are sent back via the
+// same channel.
+// (Note 2026-04-23: the historical sender lived in the since-deleted
+// exp-init.js. If this secondary window stops receiving updates, the sender
+// needs to be re-hooked into the main tab's startup.)
 // Falls back to window.opener if BroadcastChannel isn't available.
 
 // Local proxy state — looks like S to the rest of this file
@@ -70,7 +74,7 @@ const S = {
 let _connected = false;
 let _channel = null;
 let _useChannel = false;  // true once we receive a state-update via channel
-let _lastWandData = null; // wand inertial data from channel broadcasts
+let _lastSensorData = null; // sensor inertial data from channel broadcasts
 
 // ── BroadcastChannel: primary connection method ─────────────────────────────
 try {
@@ -83,7 +87,7 @@ try {
     // Update local proxy from parent's broadcast
     S.gesture = msg.gesture;
     S.gestureCal = msg.gestureCal;
-    if (msg.wand) _lastWandData = msg.wand;
+    if (msg.sensor) _lastSensorData = msg.sensor;
 
     // Merge gestureCondition — keep local values if user just changed them,
     // but accept parent's values for keys we haven't touched
@@ -142,7 +146,7 @@ const connectInterval = setInterval(() => {
   } catch (e) { /* cross-origin */ }
   if (_connectAttempts > 30) {
     statusEl.innerHTML = 'could not connect to parent<br>' +
-      '<span style="font-size:10px;opacity:0.5">make sure mubone is open with ?exp flag</span>';
+      '<span style="font-size:10px;opacity:0.5">make sure mubone is open</span>';
     clearInterval(connectInterval);
   }
 }, 200);
@@ -202,9 +206,9 @@ let axisPairIdx = 0;
 
 let showRadial = true;
 
-// Remap raw gyro [gx, gy, gz] to semantic [roll, pitch, yaw] using wandCal.axisMap.
+// Remap raw gyro [gx, gy, gz] to semantic [roll, pitch, yaw] using sensor3Cal.axisMap.
 function remapGyroToSemantic(gx, gy, gz) {
-  const cal = S?.wandCal?.axisMap;
+  const cal = S?.sensor3Cal?.axisMap;
   if (!cal) return { roll: gx, pitch: gy, yaw: gz };
   const raw = { x: gx, y: gy, z: gz };
   let roll = 0, pitch = 0, yaw = 0;
@@ -624,17 +628,17 @@ function draw() {
 
   // Record gyro XYZ + update sphere trail
   try {
-    // Get wand data — from channel message or direct reference
-    const _wandRef = window._mubone_wand || (window.opener && window.opener._wand);
-    const _wandInertial = _lastWandData || (_wandRef && _wandRef.inertial);
-    if (_wandInertial) {
-      gyroHistory[0][trailIdx % TRAIL_LEN] = _wandInertial.gx;
-      gyroHistory[1][trailIdx % TRAIL_LEN] = _wandInertial.gy;
-      gyroHistory[2][trailIdx % TRAIL_LEN] = _wandInertial.gz;
+    // Get sensor inertial data — from channel message or direct reference
+    const _sensorRef = window._mubone_sensor || (window.opener && window.opener._sensor);
+    const _sensorInertial = _lastSensorData || (_sensorRef && _sensorRef.inertial);
+    if (_sensorInertial) {
+      gyroHistory[0][trailIdx % TRAIL_LEN] = _sensorInertial.gx;
+      gyroHistory[1][trailIdx % TRAIL_LEN] = _sensorInertial.gy;
+      gyroHistory[2][trailIdx % TRAIL_LEN] = _sensorInertial.gz;
 
       // ── 2D joystick physics: roll (X) + pitch (Y) ──
       const { roll: _roll, pitch: _pitch } = remapGyroToSemantic(
-        _wandInertial.gx, _wandInertial.gy, _wandInertial.gz
+        _sensorInertial.gx, _sensorInertial.gy, _sensorInertial.gz
       );
 
       // Sensitivity: inertia slider scales from 1.0 down to 0.15
@@ -1157,8 +1161,7 @@ function draw() {
     const btnsTotal = btnH * 4 + btnGap * 3;
     const btn0Y = sy + (L.sparkH - btnsTotal) / 2;
 
-    const inMin  = cond.inMin  ?? 0;
-    const inMax  = cond.inMax  ?? 1;
+    // inMin / inMax already declared above at the input-range-markers block
     const outMin = cond.outMin ?? 0;
     const outMax = cond.outMax ?? 1;
 

@@ -7,7 +7,7 @@ import {
   MAX_SAMPLES, SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, DEBUG,
   gp, perf,
 } from './state.js';
-import { ensureAudioContext, getMasterBus, stopLiveRecording, startLiveRecording } from './audio.js';
+import { ensureAudioContext, getMasterBus } from './audio.js';
 import { removeSeqByStrokeId } from './ui-presets.js';
 import { flushCursorGrains } from './grain-worklet-bridge.js';
 import { undoSweep, commitSweep } from './ui-sweep.js';
@@ -334,17 +334,31 @@ export function recordStrokeStart(type, liveBufferIndex) {
 
 export function undoLastStroke() {
   // If a sweep just happened, undo restores the sweep instead of a stroke
-  if (undoSweep()) { _flashUndoBtn(); return; }
+  if (undoSweep()) {
+    _flashUndoBtn();
+    window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'undo' } }));
+    return;
+  }
 
   if (S.strokeHistory.length === 0) { _flashUndoBtn(); return; }
 
-  // ── Mid-recording undo ──────────────────────────────────────────────────
-  // Stop the active recording first so its buffer is finalized (or removed
-  // if too short).  Then normal undo removes the stroke + buffer + particles
-  // cleanly.  Finally restart recording + a fresh stroke so the performer
-  // keeps painting without lifting their finger.
+  // ── Mid-recording: skip past the in-progress stroke ────────────────────
+  // If the performer is still actively painting + recording, the top of
+  // strokeHistory is that in-progress stroke. Undoing it would require
+  // stopLiveRecording() → startLiveRecording(), which disconnects and
+  // reconnects the mic to the grain worklet (~10-50ms gap) and audibly dips
+  // the cursor grain stream. Instead, reach past the top and undo the
+  // previously committed stroke — matches the performer's mental model
+  // ("undo removes something older, not what I'm doing right now") and
+  // leaves the live recording path completely undisturbed.
   const wasRecording = S.isRecording && S.isPainting;
-  if (wasRecording) stopLiveRecording();
+  if (wasRecording && S.strokeHistory.length < 2) {
+    _flashUndoBtn();
+    return;
+  }
+
+  // Signal the undo for LED feedback on the cursor x-IMU3 (1 off blink).
+  window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'undo' } }));
 
   // Don't flush the worklet — that kills ALL seeds (committed clouds) and
   // causes an audible ~1s rebuild gap as the grain texture refills from zero.
@@ -354,18 +368,36 @@ export function undoLastStroke() {
   // grains will fire from the undone stroke. Seeds are completely unaffected.
 
   // ── Normal undo ─────────────────────────────────────────────────────────
-  const entry = S.strokeHistory.pop();
+  const entry = wasRecording
+    ? S.strokeHistory.splice(S.strokeHistory.length - 2, 1)[0]
+    : S.strokeHistory.pop();
   const sid   = entry.strokeId;
-  console.log(`[undo] undoing strokeId=${sid}, type=${entry.type}, traceMode=${S.traceMode}, history remaining=${S.strokeHistory.length}`);
+  console.log(`[undo] sid=${sid} type=${entry.type} bufIdx=${entry.liveBufferIndex} | wasRec=${wasRecording} isRec=${S.isRecording} isPaint=${S.isPainting} trTog=${S._traceToggled} hfArm=${S.hfArmed} hfRec=${S.hfRecording} | parts=${S.particles.length} bufs=${S.liveRecBuffers.length} curLiveIdx=${S.currentLiveBufferIdx} slots=${S.commitSlots.filter(Boolean).length} | histLeft=${S.strokeHistory.length} | traceMode=${S.traceMode}`);
 
   // Stop and remove any loop spawned from this stroke
   removeSeqByStrokeId(sid);
 
-  // Flush cursor-originated grains so the undone stroke's audio stops
-  // immediately (~3ms fade).  Seeds are unaffected — they keep playing
-  // from their own candidate pools which are rebuilt on the next tick.
-  flushCursorGrains();
-
+  // Do NOT flush cursor grains here.  The earlier "flush so the undone stroke
+  // stops immediately" rule treated every undo the same as a lifted-pen +
+  // erase, but in the common case the performer is *scanning* (just moving
+  // the cursor over particles with no paint or trace held) when they undo,
+  // and `flush-cursor` fades out every in-flight cursor grain in ~3ms — not
+  // just the ones reading from the undone particles.  The next grain onset
+  // is up to one period (50-100ms) away, so the scan audibly fades out and
+  // comes back in.  The user's report: "the sound of the buffer one cursor
+  // granulation fades out for like 100ms, then it comes back in."
+  //
+  // Skipping the flush is safe because:
+  //  - We remove the undone stroke's particles from `S.particles` right below.
+  //    The next scheduler tick (≤20ms) rebuilds the candidate pool without
+  //    them, so no NEW cursor grains fire from undone material.
+  //  - In-flight grains that *were* reading from the undone particles finish
+  //    their natural hann/tri envelope (≤200ms, typically ≤80ms).  That's
+  //    identical to the tail the performer already hears whenever they
+  //    lift the pen off a cluster — it's not a new artefact.
+  //  - Seeds are unaffected either way (separate candidate list).
+  //
+  // Net effect: no scan dip, undone-material tail matches a lifted-pen tail.
   S.particles = S.particles.filter(p => p.strokeId !== sid);
   S._particleVersion++;
 
@@ -377,19 +409,18 @@ export function undoLastStroke() {
       S.particles.forEach(p => {
         if (p.liveBufferIdx > idx) p.liveBufferIdx--;
       });
-      // If another recording was active above the removed slot, keep its
-      // index in sync (shouldn't happen here since we stopped first, but
-      // guard against future paths)
+      // Reindex any other strokeHistory entries whose captured
+      // liveBufferIndex sat above the removed slot — otherwise a later
+      // undo of the in-progress (or any still-alive) stroke would splice
+      // the wrong buffer.  Particularly matters for mid-recording undo.
+      for (const h of S.strokeHistory) {
+        if (h.type === 'live' && h.liveBufferIndex > idx) h.liveBufferIndex--;
+      }
+      // If another recording is active above the removed slot, keep its
+      // live-buffer pointer in sync.
       if (S.currentLiveBufferIdx > idx) S.currentLiveBufferIdx--;
     }
     updateLiveRecUI();
-  }
-
-  // ── Restart recording if we interrupted one ─────────────────────────────
-  if (wasRecording) {
-    startLiveRecording();
-    recordStrokeStart('live', S.currentLiveBufferIdx);
-    S.paintFrameCount = 0;
   }
 
   _flashUndoBtn();

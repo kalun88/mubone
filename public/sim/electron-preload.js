@@ -5,8 +5,19 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Instance name + OSC listen port (multi-station setups) — passed via
+// additionalArguments in electron-main.js createWindow().
+const _instArg = process.argv.find(a => a.startsWith('--mubone-instance='));
+const _oscPortArg = process.argv.find(a => a.startsWith('--mubone-osc-port='));
+
 contextBridge.exposeInMainWorld('electronBridge', {
   isElectron: true,
+
+  // Multi-station: this process's instance name ('a'|'b'|'c'|…) or null (solo)
+  instanceName: _instArg ? _instArg.slice('--mubone-instance='.length) : null,
+
+  // This process's OSC listen port (7500 solo; 7500/7510/7520 per station)
+  oscPort: _oscPortArg ? parseInt(_oscPortArg.slice('--mubone-osc-port='.length), 10) : 7500,
 
   // Renderer → Main: restart the app (used after buffer-size change)
   restartApp: () => ipcRenderer.send('app-restart'),
@@ -40,6 +51,20 @@ contextBridge.exposeInMainWorld('electronBridge', {
   // osc.js dispatches to sensor, grain params, preset, etc.
   onOSC: (cb) =>
     ipcRenderer.on('osc-message', (_e, address, values) => cb(address, values)),
+
+  // Renderer → Main: send an outbound OSC-style message via the UDP uplink
+  // (udp://127.0.0.1:7501). Relay.js listens on that port and rebroadcasts to
+  // its WS peers. Used by js/status-publisher.js to push /status/* messages
+  // back to the joycon GUI for LED/rumble feedback.
+  sendOSC: (address, values = []) =>
+    ipcRenderer.send('osc-send', address, values),
+
+  // Renderer → Main: send outbound real OSC binary to an arbitrary host:port.
+  // Used by the staging module (js/osc-out.js) to drive external apps like
+  // oVox / VocalSynth / Ableton / hardware via OSC. Distinct from sendOSC above
+  // which targets the local relay in JSON format.
+  sendOSCExternal: (host, port, address, values = []) =>
+    ipcRenderer.send('osc-send-external', host, port, address, values),
 
   // Main → Renderer: credit-based flow control for audio buffer backpressure
   onAudioCredit: (cb) => ipcRenderer.on('audio-credit', (_, credits) => cb(credits)),
@@ -81,8 +106,9 @@ contextBridge.exposeInMainWorld('electronBridge', {
   // Renderer → Main: start listening for data on the device's send port
   ximu3StartData: (port) => ipcRenderer.invoke('ximu3-start-data', port),
 
-  // Renderer → Main: stop the data listener
-  ximu3StopData: () => ipcRenderer.invoke('ximu3-stop-data'),
+  // Renderer → Main: stop the data listener on a specific port (ref-counted).
+  // If called with no port, every listener is closed.
+  ximu3StopData: (port) => ipcRenderer.invoke('ximu3-stop-data', port),
 
   // Renderer → Main: send a JSON command string to the device
   // ip: device IP, port: device receive port, jsonStr: e.g. '{"axes_alignment":16}'
