@@ -3,10 +3,15 @@
 // Used by: ui-audio-settings.js (modal meters) and main window (in/out meters)
 // ============================================================================
 
-import { S } from './state.js';
+import {
+  S, GATE_METER_MAX, GATE_METER_GAMMA,
+  GATE_METER_TICK_MS, GATE_METER_ATTACK_MS, GATE_METER_RELEASE_MS,
+  GATE_METER_PEAK_HOLD_MS, GATE_METER_PEAK_FALL_MS,
+} from './state.js';
 import { dropSeqFromCursor, clearAllSeqs, releaseCommit, clearAllCommits, updateCommitBanksUI, updateSeqBanksUI } from './ui-presets.js';
 import { tickHandsfree } from './handsfree.js';
-import { updateDryMonitorPanning, setDryMonitorGain, setDryMonitorEnabled } from './audio.js';
+import { readGateLoudness } from './audio-features.js';
+import { updateDryMonitorPanning, setDryMonitorGain, setDryMonitorMode, isDryMonitorDucked } from './audio.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
@@ -39,16 +44,17 @@ export function renderMeters(containerId, numCh, labels, selectedCh, separatorBe
 
     const ch = document.createElement('div');
     ch.className = 'as-vchan';
-    if (highlighted.includes(i)) {
-      ch.style.outline = '1px solid #7abcbc';
-      ch.style.borderRadius = '2px';
-    }
+    // Selection is styled in CSS, not inline: the settings modal wants an
+    // outlined box, the footer rail wants an underline (a box around a bare
+    // 12px bar reads as a stray rectangle there).
+    if (highlighted.includes(i)) ch.classList.add('is-selected');
 
     const clip = document.createElement('div');
     clip.className = 'as-vchan-clip';
     clip.id = `${containerId}-clip-${i}`;
 
     const canvas = document.createElement('canvas');
+    // Backing store, not display size — CSS decides how wide the bar reads.
     canvas.width  = 14;
     canvas.height = 56;
     canvas.id = `${containerId}-cv-${i}`;
@@ -82,13 +88,29 @@ function _getMeterCache(containerId, count) {
     if (cv) {
       const c2 = cv.getContext('2d');
       ctxs.push(c2);
-      // Pre-create gradient (height-dependent but canvas height is fixed at 56)
+      // ── The meter ramp (#264, Ek: "pretty much exactly like Ableton's") ──
+      // The gradient is fixed to the SCALE, not to the level: the top of the
+      // bar is always red and rising level reveals more of the ramp, which is
+      // what makes a meter readable at a glance — a colour means a dB, always
+      // the same dB. (A ramp keyed to the current level instead just changes
+      // hue as it moves and tells you nothing.)
+      // Stops are placed in dB, not in fractions of the bar: the canvas maps
+      // -60…0 dBFS over its height, so 0.80 is -12 dB and 0.90 is -6 dB.
+      // The ramp reads as TEMPERATURE, not as a traffic light (2026-08-29).
+      // Green → yellow → red is a mixing-console convention inherited from
+      // hardware that had LEDs in three colours; on a stage whose whole palette
+      // is warm ivory and terracotta it was the loudest and coldest object on
+      // screen, and it was drawing the eye to a meter instead of to the sphere.
+      // The CONTRACT is untouched — a colour still means a dB, always the same
+      // dB — only the family changed: ash at the floor, the horizon's own bone
+      // through the useful range, ember as it gets hot, brick for the last 3.
       const grad = c2.createLinearGradient(0, cv.height, 0, 0);
-      grad.addColorStop(0,    '#2a7070');
-      grad.addColorStop(0.6,  '#3a9090');
-      grad.addColorStop(0.8,  '#7abcbc');
-      grad.addColorStop(0.93, '#e8c840');
-      grad.addColorStop(1.0,  '#e06060');
+      grad.addColorStop(0.00, '#77856c');   // −60 dB  ash-sage floor
+      grad.addColorStop(0.50, '#94a37e');   // −30 dB  sage
+      grad.addColorStop(0.80, '#d8caa5');   // −12 dB  bone — the good-level zone
+      grad.addColorStop(0.90, '#e07b3c');   //  −6 dB  ember
+      grad.addColorStop(0.95, '#cc6a55');   //  −3 dB  brick — the last 3 dB are
+      grad.addColorStop(1.00, '#cc6a55');   //   0 dB  unambiguously hot
       grads.push(grad);
     } else {
       ctxs.push(null);
@@ -132,17 +154,18 @@ export function tickMeters(analysers, containerId) {
       const w  = cv.width;
       const h  = cv.height;
       c2.clearRect(0, 0, w, h);
-      c2.fillStyle = '#1a1a1a';
+      c2.fillStyle = '#131110';
       c2.fillRect(0, 0, w, h);
       const fillH = Math.round(pct * h);
       if (fillH > 0) {
         c2.fillStyle = cache.grads[i];
         c2.fillRect(0, h - fillH, w, fillH);
       }
-      // Tick marks at -12, -6, -3 dBFS
-      c2.fillStyle = '#111a1a';
-      for (const tickDb of [-12, -6, -3]) {
-        const ty = h - Math.round((tickDb + 60) / 60 * h);
+      // One mark, at −12 dB, and only where the bar is not already covering
+      // it: three ticks across a 5px bar was noise, not scale.
+      const ty = h - Math.round((-12 + 60) / 60 * h);
+      if (h - fillH < ty) {
+        c2.fillStyle = 'rgba(0,0,0,0.45)';
         c2.fillRect(0, ty, w, 1);
       }
     }
@@ -181,7 +204,9 @@ export function rebuildMainOutputMeters() {
   // Audio-settings modal mixdown meters
   if (mixGroup) mixGroup.hidden = !hasMixdown;
   if (hasMixdown && mixWrap) {
-    renderMeters('mainMixdownMeters', 2, ['L', 'R']);
+    // On the audio PAGE, so it is the meter element — not the footer's canvases.
+    renderSetMeters('mainMixdownMeters', ['L', 'R']);
+    setMeterSources('mainMixdownMeters', S.speakerAnalysers.slice(nHouse));
   } else if (mixWrap) {
     mixWrap.innerHTML = '';
   }
@@ -230,9 +255,20 @@ export function rebuildMainDryMeter() {
 //   Cursor remains audible on the dedicated monitor/headphone outputs.
 // Exported so MIDI/OSC can call it programmatically.
 
+// Exposed on S so modules that would otherwise import ui-meters.js (and pull a
+// circular dependency with it) can reach it — e.g. the trigger tool muting scan
+// when it takes over. Assigned after the declaration; see the bottom of the fn.
 export function setScanMuted(muted) {
   const changed = S.scanMuted !== muted;
   S.scanMuted = muted;
+  // THE CAP IS THE ONE MUTE (2026-09-07). The cursor reads nothing when it is
+  // on — granular and hits alike. The gains below only gate the CURSOR bus,
+  // and a hit plays through the loop commit engine instead, so silencing it
+  // is a separate call rather than a consequence; the trigger gate reads
+  // `S.scanMuted` directly from here on. See trigger.js for why there is no
+  // second flag any more.
+  if (changed && muted) S._silenceTriggers?.();
+  if (changed) S._syncTriggerUI?.();
   if (changed) window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'scan_toggle' } }));
   const t = S.audioCtx?.currentTime ?? 0;
   const ramp = S.scanFadeS ?? 0.02; // #14: configurable fade (τ), default 20ms
@@ -260,6 +296,7 @@ export function setScanMuted(muted) {
   if (monNum && muted) monNum.value = '(muted)';
   else if (monNum) monNum.value = Math.round(S.monitorGainValue * 100) + '%';
 }
+S._setScanMuted = setScanMuted;
 
 export function initScanToggle() {
   const btn = document.getElementById('scanBtn');
@@ -275,26 +312,6 @@ export function initScanToggle() {
   // ── Sync hook for patch table preset recall ─────────────────────────────
   S._syncScanUI = () => {
     btn.classList.toggle('active', !S.scanMuted);
-  };
-}
-
-// ── Radial morph toggle ──────────────────────────────────────────────────────
-// Mirror of the gesture-panel morph toggle, available in the main cursor panel.
-export function initMorphToggle() {
-  const btn = document.getElementById('morphBtn');
-  if (!btn) return;
-
-  // Restore state
-  btn.classList.toggle('active', !!S.radialMorphOn);
-
-  btn.addEventListener('click', () => {
-    S.radialMorphOn = !S.radialMorphOn;
-    btn.classList.toggle('active', S.radialMorphOn);
-  });
-
-  // Sync hook so the gesture panel toggle stays in sync
-  S._syncMorphBtnUI = () => {
-    btn.classList.toggle('active', !!S.radialMorphOn);
   };
 }
 
@@ -319,11 +336,18 @@ export function initRadiusFade() {
     });
     if (curveRow) curveRow.style.opacity = effectiveOn ? '1' : '0.35';
     if (slider)   slider.disabled = !effectiveOn;
+    // Reflect the curve value too. Every remote writer (MIDI cc, OSC
+    // /cursor/radiusfadecurve, accessory pots) writes S.radiusFadeCurve and
+    // then calls this — without these two lines the pot moves the real curve
+    // while the thumb and the % readout stay frozen. No feedback loop: the
+    // slider's own input handler updates numBox directly and never calls here.
+    if (slider) slider.value = S.radiusFadeCurve;
+    if (numBox) numBox.value = Math.round(S.radiusFadeCurve * 100) + '%';
     // Dim the whole section when lock overrides fade
     seg.style.opacity = S.nearestMode ? '0.4' : '';
   };
   syncUI();
-  // Expose so toggleNearestMode / selectPreset can refresh the fade UI
+  // Expose so toggleNearestMode / applyPresetObject can refresh the fade UI
   S._syncRadiusFadeUI = syncUI;
 
   // Toggle
@@ -361,35 +385,11 @@ export function initSeqMode() {
     });
   }
 
-  // ── Trace mode cycle button (cursor panel) — bang, not toggle ──
-  const commitLockBtn = document.getElementById('commitLockBtn');
-  if (commitLockBtn) {
-    commitLockBtn.addEventListener('click', () => {
-      // If toggled trace is active, force-stop before mode change
-      if (S._traceToggled) {
-        S._stopToggleTrace?.();
-      }
-      const _modes = ['trace', 'trace+loop', 'trace+cloud'];
-      const _idx = _modes.indexOf(S.traceMode);
-      S.traceMode = _modes[(_idx + 1) % _modes.length];
-      commitLockBtn.classList.add('flashing');
-      setTimeout(() => commitLockBtn.classList.remove('flashing'), 180);
-      S._syncCommitUI?.();
-    });
-  }
-
   // Legacy compat — old button IDs still wired if present
   const legacyModeBtn = document.getElementById('seqModeBtn');
   if (legacyModeBtn) {
     legacyModeBtn.addEventListener('click', () => {
       S.seqModeEnabled = !S.seqModeEnabled;
-      S._syncCommitUI?.();
-    });
-  }
-  const legacyLockBtn = document.getElementById('seedLockBtn');
-  if (legacyLockBtn) {
-    legacyLockBtn.addEventListener('click', () => {
-      S.seedLockEnabled = !S.seedLockEnabled;
       S._syncCommitUI?.();
     });
   }
@@ -464,7 +464,7 @@ export function initSeqMode() {
     if (commitSlotNum)    commitSlotNum.value    = String(n);
     S._syncCommitUI?.();
   }
-  // Exposed for external callers (osc.js, midi.js, ui-patch-table.js) that
+  // Exposed for external callers (osc.js, midi.js, param-registry.js) that
   // used to do `sel.value = String(S.commitSlotCount)` — a single call
   // now updates both slider and numbox.
   S._syncCommitSlotCount = () => {
@@ -588,17 +588,19 @@ export function initMixdownGains() {
 // ── Dry monitor gain controls ────────────────────────────────────────────────
 export function initDryMonitorGains() {
   const slider = document.getElementById('dryMonitorGainSlider');
-  const chk    = document.getElementById('dryMonitorEnabledChk');
+  const sel    = document.getElementById('dryMonitorModeSel');
 
   if (slider) {
     slider.value = S.dryMonitorGainValue;
     slider.addEventListener('input', () => setDryMonitorGain(parseFloat(slider.value)));
   }
-  if (chk) {
-    // Always start with dry monitor OFF, regardless of persisted/preset state
-    S.dryMonitorEnabled = false;
-    chk.checked = false;
-    chk.addEventListener('change', () => setDryMonitorEnabled(chk.checked));
+  // Always start OFF, regardless of persisted/preset state — the mode is a
+  // session setting on purpose (state.js, dryMonitorMode).
+  S.dryMonitorMode    = 'off';
+  S.dryMonitorEnabled = false;
+  if (sel) {
+    sel.value = 'off';
+    sel.addEventListener('change', () => setDryMonitorMode(sel.value));
   }
   const num = document.getElementById('dryMonitorGainNum');
   if (num) num.textContent = Math.round(S.dryMonitorGainValue * 100) + '%';
@@ -686,28 +688,19 @@ export function initAudioPanel() {
     });
   }
 
-  // ── Noise gate ──
-  // The modal has a canvas meter with draggable threshold; we give a simple
-  // slider here and keep the hidden `asNoiseGateSlider` in sync (the modal
-  // treats that hidden input as the persistence source of truth).
-  const apGate       = document.getElementById('apNoiseGateSlider');
-  const apGateNum    = document.getElementById('apNoiseGateNum');
-  const modalGate    = document.getElementById('asNoiseGateSlider');  // hidden
-  const modalGateVal = document.getElementById('asNoiseGateVal');
+  // ── Paint gate ──
+  // The panel's gate control is the canvas meter (registered in
+  // GATE_METER_TARGETS below); `apPaintGateSlider` is a hidden value carrier,
+  // the same arrangement the modal uses with `asPaintGateSlider`. Nothing
+  // listens on it — every write lands via _syncGateVal(), which the canvas
+  // drag, MIDI, OSC and the modal all funnel through. Seed it here so the
+  // first paint and the first cc-mirror snapshot read the saved threshold.
+  const apGate    = document.getElementById('apPaintGateSlider');
+  const apGateNum = document.getElementById('apPaintGateNum');
   if (apGate) {
-    apGate.value = S.vizNoiseFloor;
-    if (apGateNum) apGateNum.value = fmtGate(S.vizNoiseFloor);
-    apGate.addEventListener('input', () => {
-      const v = parseFloat(apGate.value);
-      S.vizNoiseFloor = v;
-      if (apGateNum)    apGateNum.value    = fmtGate(v);
-      if (modalGate)    modalGate.value    = String(v);
-      if (modalGateVal) modalGateVal.textContent = fmtGate(v);
-    });
+    apGate.value = S.paintGateThreshold;
+    if (apGateNum) apGateNum.value = fmtGate(S.paintGateThreshold);
   }
-  // Note: panel sync on modal-drag / MIDI / OSC happens inside _syncGateVal()
-  // upstream — the panel slider + numbox are mirrored there alongside the
-  // modal readout so no extra wrapping of _setNoiseGateThreshold is needed.
 
   // ── Master volume ──
   const apMaster       = document.getElementById('apMasterGainSlider');
@@ -728,30 +721,29 @@ export function initAudioPanel() {
     });
   }
 
-  // ── Dry monitor enable (on/off segmented toggle) ──
-  const apDrySeg   = document.getElementById('apDryEnableSeg');
-  const modalDryChk = document.getElementById('dryMonitorEnabledChk');
-  function _syncDryToggleFromState() {
-    if (!apDrySeg) return;
-    const on = !!S.dryMonitorEnabled;
-    apDrySeg.querySelectorAll('.grain-seg-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.dry === (on ? 'on' : 'off'));
-    });
+  // ── Dry monitor mode (off | on | auto segmented picker, #245) ──
+  // Both surfaces show the SETTING; the seg also shows the effective state —
+  // under auto the active pill dims while a granular take has it ducked, so
+  // "dry is on but I can't hear it" reads as intended rather than broken.
+  const apDrySeg    = document.getElementById('apDryEnableSeg');
+  const modalDrySel = document.getElementById('dryMonitorModeSel');
+  function _syncDryModeFromState() {
+    const mode = S.dryMonitorMode ?? 'off';
+    if (apDrySeg) {
+      apDrySeg.querySelectorAll('.grain-seg-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.dry === mode);
+      });
+      apDrySeg.classList.toggle('ducked', isDryMonitorDucked());
+    }
+    if (modalDrySel && modalDrySel.value !== mode) modalDrySel.value = mode;
   }
   if (apDrySeg) {
-    _syncDryToggleFromState();
     apDrySeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const on = btn.dataset.dry === 'on';
-        setDryMonitorEnabled(on);       // canonical setter in audio.js
-        if (modalDryChk) modalDryChk.checked = on;
-        _syncDryToggleFromState();
-      });
+      btn.addEventListener('click', () => setDryMonitorMode(btn.dataset.dry));
     });
   }
-  if (modalDryChk) {
-    modalDryChk.addEventListener('change', _syncDryToggleFromState);
-  }
+  S._syncDryMonitorUI = _syncDryModeFromState;   // audio.js calls it on every change
+  _syncDryModeFromState();
 
   // ── Dry gain ──
   const apDryGain    = document.getElementById('apDryGainSlider');
@@ -778,27 +770,37 @@ export function initAudioPanel() {
     });
   }
 
-  // ── Exposed refresh hook ──
+  // ── Exposed refresh hooks ──
+  // The panel mirrors normally ride the modal element's `input` event. Setters
+  // driven by MIDI/OSC assign `el.value` directly and dispatch nothing, so the
+  // mirror never fires and the panel slider sits still while the modal one
+  // moves. Those setters call _syncAudioPanelLevels instead — sliders and
+  // readouts only, no channel-select rebuild, so it is cheap enough to run on
+  // every cc tick (a cc knob sends up to 127 messages a second).
+  S._syncAudioPanelLevels = () => {
+    if (modalInputGain && apInputGain && document.activeElement !== apInputGain) {
+      apInputGain.value = modalInputGain.value;
+      if (apInputGainNum) apInputGainNum.value = fmtDb(parseFloat(modalInputGain.value));
+    }
+    if (modalMaster && apMaster && document.activeElement !== apMaster) {
+      apMaster.value = modalMaster.value;
+      if (apMasterNum) apMasterNum.value = fmtDb(parseFloat(modalMaster.value));
+    }
+    if (apGate && document.activeElement !== apGate) {
+      apGate.value = S.paintGateThreshold;
+      if (apGateNum) apGateNum.value = fmtGate(S.paintGateThreshold);
+    }
+    if (apDryGain && document.activeElement !== apDryGain) {
+      apDryGain.value = S.dryMonitorGainValue;
+      if (apDryGainNum) apDryGainNum.value = fmtPercent(S.dryMonitorGainValue);
+    }
+  };
+
   // Called from audio-settings when device activation / channel repopulation
   // happens outside the panel (initial startup, device change, etc.) so the
   // panel mirrors the new state without needing to re-init.
   S._syncAudioPanel = () => {
-    if (modalInputGain && apInputGain) {
-      apInputGain.value = modalInputGain.value;
-      if (apInputGainNum) apInputGainNum.value = fmtDb(parseFloat(modalInputGain.value));
-    }
-    if (modalMaster && apMaster) {
-      apMaster.value = modalMaster.value;
-      if (apMasterNum) apMasterNum.value = fmtDb(parseFloat(modalMaster.value));
-    }
-    if (apGate) {
-      apGate.value = S.vizNoiseFloor;
-      if (apGateNum) apGateNum.value = fmtGate(S.vizNoiseFloor);
-    }
-    if (apDryGain) {
-      apDryGain.value = S.dryMonitorGainValue;
-      if (apDryGainNum) apDryGainNum.value = fmtPercent(S.dryMonitorGainValue);
-    }
+    S._syncAudioPanelLevels();
     _syncDryToggleFromState();
     S._syncAudioPanelChannels?.();
   };
@@ -809,124 +811,162 @@ export function initAudioPanel() {
 // the sphere render loop. Call startMainMetering() once after init.
 let _mainMeterRAF = null;
 
-// ── Noise gate visual meter ──────────────────────────────────────────────────
+// ── Paint gate visual meter ──────────────────────────────────────────────────
 // Canvas-drawn meter: input RMS bar + draggable threshold marker.
-// Drawn on up to two canvases: modal (asGateMeter) and main UI (mainGateMeter).
-const _gateBuf = new Float32Array(256);
-const GATE_METER_MAX = 0.06;     // RMS scale ceiling (covers typical mic range)
-let _gateMeterCanvas = null;     // modal canvas
-let _gateMeterCtx    = null;
-let _gateValEl       = null;     // modal value readout
-let _mainGateCanvas  = null;     // main UI canvas
-let _mainGateCtx     = null;
-let _mainGateValEl   = null;     // main UI value readout
-let _mainGateInited  = false;    // lazy DPR sizing for main UI canvas
-let _smoothedRms     = 0;        // exponential smooth for bar
-let _peakRms         = 0;        // peak-hold for peak marker
-let _peakDecay       = 0;        // frames since peak was set
-let _gateDragging    = false;    // threshold drag state
+// The same meter is drawn onto every registered canvas — audio settings modal,
+// the footer levels rail, and the audio device panel. They differ only in size,
+// and _drawGateMeter picks its orientation from the rect, so one registry with
+// per-entry DPR state covers all three rather than a global per canvas.
+// Smoothed in the DRAWN POSITION (0–1 along the meter), not in RMS — see the
+// ballistics block in state.js for why that distinction is the whole ballgame
+// on a curved axis.
+let _smoothedFrac    = 0;        // exponential smooth for bar
+let _peakFrac        = 0;        // peak-hold for peak marker
+let _peakDecay       = 0;        // ticks since peak was set
+
+// One-pole coefficient for a given time constant at the meter's tick rate.
+const _gateCoeff = tauMs => 1 - Math.exp(-GATE_METER_TICK_MS / tauMs);
+const GATE_ATTACK      = _gateCoeff(GATE_METER_ATTACK_MS);
+const GATE_RELEASE     = _gateCoeff(GATE_METER_RELEASE_MS);
+const GATE_PEAK_FALL   = _gateCoeff(GATE_METER_PEAK_FALL_MS);
+const GATE_PEAK_TICKS  = Math.round(GATE_METER_PEAK_HOLD_MS / GATE_METER_TICK_MS);
+let _gateDragging    = null;     // entry currently being dragged, or null
 
 // Also update hidden elements for backward compat
 let _gateLightEl = null;
 let _rmsReadoutEl = null;
 
-let _gateMeterInited = false;
+// Registered canvases. Each: { canvas, ctx, valEl, sized }.
+const _gateMeters = [];
 
-/** Wire drag events on gate meter canvases (modal + main UI).
- *  Modal canvas sizing is deferred until it becomes visible. */
+// ── Meter axis ──────────────────────────────────────────────────────────────
+// Position along the meter (0–1) ⇄ RMS.  The axis is a power curve, not linear:
+// see GATE_METER_GAMMA in state.js for why.  Every consumer of a meter position
+// goes through this pair — bar, peak tick, threshold marker, mouse drag, and
+// the noise_gate cc action, which imports gateFracToRms from here.  If the cc
+// and the draw ever stop sharing it, the pot stops agreeing with the picture.
+
+export function gateFracToRms(frac) {
+  const f = frac < 0 ? 0 : frac > 1 ? 1 : frac;
+  return Math.pow(f, GATE_METER_GAMMA) * GATE_METER_MAX;
+}
+
+export function gateRmsToFrac(rms) {
+  const v = rms / GATE_METER_MAX;
+  if (!(v > 0)) return 0;
+  return Math.pow(v > 1 ? 1 : v, 1 / GATE_METER_GAMMA);
+}
+
+// id → { val: readout element id, drag: is the threshold draggable here }
+// The audio settings modal's gate is no longer here: it is the meter element
+// (a DOM row, #asGateMeterRow), driven by _tickSetGate() from the same
+// ballistics below. What is left is the two canvases outside the dialog.
+const GATE_METER_TARGETS = [
+  { id: 'mainGateMeter', val: 'mainPaintGateVal', drag: false },  // footer rail (12px wide — too narrow to aim at)
+  { id: 'apGateMeter',   val: null,               drag: true  },  // audio device panel (value shown in the row above)
+];
+
+/** Register every gate meter canvas present and wire threshold drag on the
+ *  ones that allow it. Canvas sizing is deferred until each becomes visible. */
 export function initGateMeter() {
-  // ── Modal canvas (audio settings) ──────────────────────────────────────
-  _gateMeterCanvas = document.getElementById('asGateMeter');
-  if (_gateMeterCanvas) {
-    _gateMeterCtx = _gateMeterCanvas.getContext('2d');
-    _gateValEl    = document.getElementById('asNoiseGateVal');
-  }
+  _gateMeters.length = 0;
 
-  // ── Main UI canvas (levels panel) ──────────────────────────────────────
-  _mainGateCanvas = document.getElementById('mainGateMeter');
-  if (_mainGateCanvas) {
-    _mainGateCtx   = _mainGateCanvas.getContext('2d');
-    _mainGateValEl = document.getElementById('mainNoiseGateVal');
-  }
-
-  // Drag to set threshold — only on the modal canvas (audio settings is source of truth).
-  // Main UI canvas is read-only visual mirror.
-  if (_gateMeterCanvas) {
-    const xToThreshold = (clientX) => {
-      const r = _gateMeterCanvas.getBoundingClientRect();
-      if (r.width === 0) return S.vizNoiseFloor;
-      return Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * GATE_METER_MAX;
+  for (const t of GATE_METER_TARGETS) {
+    const canvas = document.getElementById(t.id);
+    if (!canvas) continue;
+    const entry = {
+      canvas,
+      ctx:   canvas.getContext('2d'),
+      valEl: t.val ? document.getElementById(t.val) : null,
+      sized: false,
     };
-    _gateMeterCanvas.addEventListener('mousedown', e => {
-      _gateDragging = true;
-      S.vizNoiseFloor = xToThreshold(e.clientX);
-      _syncGateVal();
-    });
-    window.addEventListener('mousemove', e => {
-      if (!_gateDragging) return;
-      S.vizNoiseFloor = xToThreshold(e.clientX);
-      _syncGateVal();
-    });
-    window.addEventListener('mouseup', () => { _gateDragging = false; });
+    _gateMeters.push(entry);
+
+    if (t.drag) _wireGateDrag(entry);
+    else canvas.style.cursor = 'default';
+
+    // Size now if it is already laid out; hidden ones retry from updateGateLight.
+    _ensureGateSized(entry);
   }
 
-  // Main UI canvas: no drag, just default cursor
-  if (_mainGateCanvas) _mainGateCanvas.style.cursor = 'default';
+  // A drag started on any canvas keeps tracking until the button comes up,
+  // so these two live on the window rather than per canvas.
+  window.addEventListener('mousemove', e => {
+    if (!_gateDragging) return;
+    S.paintGateThreshold = _pointToThreshold(_gateDragging, e);
+    _syncGateVal();
+  });
+  window.addEventListener('mouseup', () => { _gateDragging = null; });
 
-  // Lazy-init main UI canvas DPR sizing (always visible, so do it now)
-  _ensureMainGateSized();
+  // The settings page's gate is the meter element — wired here so every gate
+  // meter, canvas or row, is registered in one place.
+  initSetGateMeter();
+
   // Show saved threshold value
   _syncGateVal();
 
-  // ── S callback for MIDI / OSC access to noise gate threshold ────────────
+  // ── S callback for MIDI / OSC access to paint gate threshold ────────────
   // Accepts linear RMS value (0 to GATE_METER_MAX), syncs readouts + hidden slider.
-  S._setNoiseGateThreshold = (v) => {
-    S.vizNoiseFloor = Math.max(0, Math.min(GATE_METER_MAX, v));
+  S._setPaintGateThreshold = (v) => {
+    S.paintGateThreshold = Math.max(0, Math.min(GATE_METER_MAX, v));
     _syncGateVal();
   };
 }
 
-/** Lazy DPR scaling — called once when the canvas first becomes visible */
-function _ensureGateMeterSized() {
-  if (_gateMeterInited || !_gateMeterCanvas) return false;
-  const rect = _gateMeterCanvas.getBoundingClientRect();
-  if (rect.width === 0) return false; // still hidden
-  const dpr = window.devicePixelRatio || 1;
-  _gateMeterCanvas.width  = Math.round(rect.width * dpr);
-  _gateMeterCanvas.height = Math.round(rect.height * dpr);
-  _gateMeterCtx.scale(dpr, dpr);
-  _gateMeterInited = true;
-  return true;
+/** Pointer position → threshold, along whichever axis this canvas is drawn on.
+ *  Vertical canvases run bottom-up, matching the fill direction in the draw. */
+function _pointToThreshold(entry, e) {
+  const r = entry.canvas.getBoundingClientRect();
+  if (r.width === 0 || r.height === 0) return S.paintGateThreshold;
+  const frac = (r.height > r.width)
+    ? 1 - (e.clientY - r.top) / r.height
+    : (e.clientX - r.left) / r.width;
+  return gateFracToRms(frac);
 }
 
-function _ensureMainGateSized() {
-  if (!_mainGateCanvas) return false;
-  const rect = _mainGateCanvas.getBoundingClientRect();
-  if (rect.width === 0) return false;
+function _wireGateDrag(entry) {
+  entry.canvas.addEventListener('mousedown', e => {
+    _gateDragging = entry;
+    S.paintGateThreshold = _pointToThreshold(entry, e);
+    _syncGateVal();
+  });
+  // Double-click to reset, matching the slider reset in main.js — that one
+  // only matches input[type="range"], so a canvas control needs its own.
+  entry.canvas.addEventListener('dblclick', () => {
+    const def = parseFloat(entry.canvas.dataset.default);
+    if (!Number.isFinite(def)) return;
+    S.paintGateThreshold = Math.max(0, Math.min(GATE_METER_MAX, def));
+    _syncGateVal();
+  });
+}
+
+/** DPR scaling — no-ops while the canvas is hidden (rect width 0), and
+ *  re-runs when the box changes size (panel resize, projector mode toggle). */
+function _ensureGateSized(entry) {
+  const rect = entry.canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return false;
   const dpr = window.devicePixelRatio || 1;
   const needW = Math.round(rect.width * dpr);
   const needH = Math.round(rect.height * dpr);
-  // Re-size if dimensions changed (panel resize, projector mode toggle)
-  if (_mainGateInited && _mainGateCanvas.width === needW && _mainGateCanvas.height === needH) return true;
-  _mainGateCanvas.width  = needW;
-  _mainGateCanvas.height = needH;
-  _mainGateCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  _mainGateInited = true;
+  if (entry.sized && entry.canvas.width === needW && entry.canvas.height === needH) return true;
+  entry.canvas.width  = needW;
+  entry.canvas.height = needH;
+  entry.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  entry.sized = true;
   return true;
 }
 
 function _syncGateVal() {
-  const txt = S.vizNoiseFloor.toFixed(4);
-  if (_gateValEl) _gateValEl.textContent = txt;
-  if (_mainGateValEl) _mainGateValEl.textContent = txt;
+  const txt = S.paintGateThreshold.toFixed(4);
+  for (const m of _gateMeters) if (m.valEl) m.valEl.textContent = txt;
   // Keep hidden slider in sync for persistence
-  const hs = document.getElementById('asNoiseGateSlider');
-  if (hs) hs.value = S.vizNoiseFloor;
+  const hs = document.getElementById('asPaintGateSlider');
+  if (hs) hs.value = S.paintGateThreshold;
   // Mirror into the main-UI audio panel too — the canvas-drag path
   // bypasses slider events, so we push values through explicitly.
-  const apGate    = document.getElementById('apNoiseGateSlider');
-  const apGateNum = document.getElementById('apNoiseGateNum');
-  if (apGate) apGate.value = String(S.vizNoiseFloor);
+  const apGate    = document.getElementById('apPaintGateSlider');
+  const apGateNum = document.getElementById('apPaintGateNum');
+  if (apGate) apGate.value = String(S.paintGateThreshold);
   if (apGateNum) apGateNum.value = txt;
 }
 
@@ -936,10 +976,13 @@ function _syncGateVal() {
 function _drawGateMeter(ctx, w, h) {
   ctx.clearRect(0, 0, w, h);
 
-  const gated = S.vizNoiseFloor > 0 && _smoothedRms < S.vizNoiseFloor;
+  // Threshold as a position, so the comparison happens in the same domain the
+  // bar is smoothed and drawn in.
+  const threshF = gateRmsToFrac(S.paintGateThreshold);
+  const gated = S.paintGateThreshold > 0 && _smoothedFrac < threshF;
 
   // Background track — same for both orientations
-  ctx.fillStyle = 'rgba(255,255,255,0.03)';
+  ctx.fillStyle = 'rgba(255,240,224,0.035)';
   ctx.fillRect(0, 0, w, h);
 
   if (h > w) {
@@ -948,23 +991,23 @@ function _drawGateMeter(ctx, w, h) {
     // Too cramped for labels/triangles, so we keep it to just three
     // elements: threshold line, RMS fill, peak tick. Colour already
     // encodes gated vs. open.
-    const threshY = h - (S.vizNoiseFloor / GATE_METER_MAX) * h;
-    const barY    = h - (_smoothedRms   / GATE_METER_MAX) * h;
-    const peakY   = h - (_peakRms       / GATE_METER_MAX) * h;
+    const threshY = h - threshF       * h;
+    const barY    = h - _smoothedFrac * h;
+    const peakY   = h - _peakFrac     * h;
 
     // RMS bar — full width, from bottom up to barY
     if (barY < h - 0.5) {
       if (gated) {
-        ctx.fillStyle = 'rgba(224, 80, 80, 0.5)';
+        ctx.fillStyle = 'rgba(204, 106, 85, 0.50)';
         ctx.fillRect(0, Math.max(barY, 0), w, h - Math.max(barY, 0));
       } else {
         // Segment below threshold in dimmer teal (below the "gate is
         // closed" line) and segment above in brighter teal.
         if (threshY < h) {
-          ctx.fillStyle = 'rgba(122, 188, 188, 0.2)';
+          ctx.fillStyle = 'rgba(127, 168, 174, 0.20)';
           ctx.fillRect(0, Math.max(barY, threshY, 0), w, h - Math.max(barY, threshY, 0));
         }
-        ctx.fillStyle = 'rgba(122, 188, 188, 0.6)';
+        ctx.fillStyle = 'rgba(127, 168, 174, 0.60)';
         const topSegY = Math.max(barY, 0);
         const topSegH = Math.max(0, Math.min(threshY, h) - topSegY);
         if (topSegH > 0) ctx.fillRect(0, topSegY, w, topSegH);
@@ -973,12 +1016,12 @@ function _drawGateMeter(ctx, w, h) {
 
     // Peak marker — thin horizontal line
     if (peakY < h - 1) {
-      ctx.fillStyle = gated ? 'rgba(224, 80, 80, 0.8)' : 'rgba(122, 188, 188, 0.9)';
+      ctx.fillStyle = gated ? 'rgba(204, 106, 85, 0.82)' : 'rgba(127, 168, 174, 0.92)';
       ctx.fillRect(0, Math.max(peakY, 0), w, 1.5);
     }
 
     // Threshold marker — horizontal line across full width
-    if (S.vizNoiseFloor > 0 && threshY > 0 && threshY < h) {
+    if (S.paintGateThreshold > 0 && threshY > 0 && threshY < h) {
       const ty = Math.round(threshY);
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
       ctx.lineWidth   = 1;
@@ -991,35 +1034,35 @@ function _drawGateMeter(ctx, w, h) {
   }
 
   // ── Horizontal layout (audio-settings modal — original) ────────────────
-  const threshX = (S.vizNoiseFloor / GATE_METER_MAX) * w;
-  const barX    = (_smoothedRms / GATE_METER_MAX) * w;
-  const peakX   = (_peakRms / GATE_METER_MAX) * w;
+  const threshX = threshF       * w;
+  const barX    = _smoothedFrac * w;
+  const peakX   = _peakFrac     * w;
 
   // RMS bar
   if (barX > 0.5) {
     const barH = h * 0.55;
     const barY = (h - barH) / 2;
     if (gated) {
-      ctx.fillStyle = 'rgba(224, 80, 80, 0.5)';
+      ctx.fillStyle = 'rgba(204, 106, 85, 0.50)';
       ctx.fillRect(0, barY, Math.min(barX, w), barH);
     } else {
       if (threshX > 0) {
-        ctx.fillStyle = 'rgba(122, 188, 188, 0.2)';
+        ctx.fillStyle = 'rgba(127, 168, 174, 0.20)';
         ctx.fillRect(0, barY, Math.min(threshX, barX, w), barH);
       }
-      ctx.fillStyle = 'rgba(122, 188, 188, 0.5)';
+      ctx.fillStyle = 'rgba(127, 168, 174, 0.50)';
       ctx.fillRect(Math.min(threshX, barX), barY, Math.max(0, Math.min(barX, w) - threshX), barH);
     }
   }
 
   // Peak marker (thin bright line)
   if (peakX > 1) {
-    ctx.fillStyle = gated ? 'rgba(224, 80, 80, 0.7)' : 'rgba(122, 188, 188, 0.8)';
+    ctx.fillStyle = gated ? 'rgba(204, 106, 85, 0.72)' : 'rgba(127, 168, 174, 0.80)';
     ctx.fillRect(Math.min(peakX, w - 1), (h - h * 0.55) / 2, 1.5, h * 0.55);
   }
 
   // Threshold marker — vertical line with small triangles top and bottom
-  if (S.vizNoiseFloor > 0 && threshX > 0 && threshX < w) {
+  if (S.paintGateThreshold > 0 && threshX > 0 && threshX < w) {
     const tx = Math.round(threshX);
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
     ctx.lineWidth   = 1;
@@ -1028,7 +1071,7 @@ function _drawGateMeter(ctx, w, h) {
     ctx.lineTo(tx + 0.5, h);
     ctx.stroke();
 
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.fillStyle = 'rgba(244, 235, 222, 0.7)';
     ctx.beginPath();
     ctx.moveTo(tx - 3, 0);
     ctx.lineTo(tx + 4, 0);
@@ -1047,66 +1090,66 @@ function _drawGateMeter(ctx, w, h) {
   // Gate state label — small text in top-right
   ctx.font = '9px Inter, Helvetica, sans-serif';
   ctx.textAlign = 'right';
-  ctx.fillStyle = gated ? 'rgba(224, 80, 80, 0.7)' : 'rgba(122, 188, 188, 0.6)';
+  ctx.fillStyle = gated ? 'rgba(204, 106, 85, 0.72)' : 'rgba(127, 168, 174, 0.60)';
   ctx.fillText(gated ? 'gated' : 'open', w - 4, 10);
 }
 
 function updateGateLight() {
   const an = S.inputAnalyser;
-  if (!_gateMeterCanvas && !_mainGateCanvas) {
+  if (_gateMeters.length === 0) {
     if (!_gateLightEl) _gateLightEl = document.getElementById('asGateLight');
     if (!an && _gateLightEl) _gateLightEl.classList.remove('closed');
     return;
   }
   if (!an) return;
 
-  // Lazy canvas sizing
-  if (!_gateMeterInited) _ensureGateMeterSized();
-  if (!_mainGateInited)  _ensureMainGateSized();
-
   // Skip the analyser read + RMS + draws when no gate canvas is actually
-  // visible (perf audit M3 / TODO #116) — modal closed AND main panel
-  // collapsed/hidden. offsetParent === null covers display:none from either
-  // the modal or a collapsed ancestor panel. The asGateLight element is only
-  // consumed by CSS, so letting it go stale while hidden is harmless.
-  const _modalGateVisible = !!(_gateMeterCanvas && _gateMeterCanvas.offsetParent !== null);
-  const _mainGateVisible  = !!(_mainGateCanvas  && _mainGateCanvas.offsetParent  !== null);
-  if (!_modalGateVisible && !_mainGateVisible) return;
+  // visible (perf audit M3 / TODO #116) — modal closed AND every main-UI
+  // host panel collapsed/hidden. offsetParent === null covers display:none
+  // from either the modal or a collapsed ancestor panel. The asGateLight
+  // element is only consumed by CSS, so letting it go stale is harmless.
+  // Sizing is lazy for the same reason: a hidden canvas has a zero rect.
+  // The settings page's gate is a DOM row now, not a canvas, and it reads the
+  // ballistics this function advances — so it counts as a visible meter here.
+  let anyVisible = setGateVisible();
+  for (const m of _gateMeters) {
+    m.visible = m.canvas.offsetParent !== null;
+    if (!m.visible) continue;
+    anyVisible = true;
+    _ensureGateSized(m);
+  }
+  if (!anyVisible) return;
 
-  // Compute RMS
-  an.getFloatTimeDomainData(_gateBuf);
-  let sumSq = 0;
-  for (let i = 0; i < _gateBuf.length; i++) sumSq += _gateBuf[i] * _gateBuf[i];
-  const rms = Math.sqrt(sumSq / _gateBuf.length);
+  // The number the paint gate actually tests — same analyser, same formula, via
+  // audio-features. This used to compute plain RMS from S.inputAnalyser, which
+  // is a different quantity AND a different window (256 samples vs 2048), so
+  // the bar and the threshold line were never commensurable.
+  const rms = readGateLoudness();
+  if (rms === null) return;
 
-  // Smooth RMS for bar (fast attack, slower release)
-  _smoothedRms = rms > _smoothedRms
-    ? _smoothedRms * 0.3 + rms * 0.7
-    : _smoothedRms * 0.85 + rms * 0.15;
+  // Ballistics run on the position, not the RMS (state.js): fast attack so a
+  // transient is never missed, slower release so the bar is readable.
+  const frac = gateRmsToFrac(rms);
+  _smoothedFrac += (frac - _smoothedFrac) * (frac > _smoothedFrac ? GATE_ATTACK : GATE_RELEASE);
 
-  // Peak hold (decays after ~20 frames)
-  if (rms > _peakRms) {
-    _peakRms   = rms;
+  // Peak marker: jump to any new high, sit still, then fall slower than the bar.
+  if (frac > _peakFrac) {
+    _peakFrac  = frac;
     _peakDecay = 0;
   } else {
     _peakDecay++;
-    if (_peakDecay > 20) _peakRms *= 0.95;
+    if (_peakDecay > GATE_PEAK_TICKS) _peakFrac -= _peakFrac * GATE_PEAK_FALL;
   }
 
   // Update hidden elements for backward compat
   if (!_gateLightEl) _gateLightEl = document.getElementById('asGateLight');
-  if (_gateLightEl) _gateLightEl.classList.toggle('closed', rms < S.vizNoiseFloor);
+  if (_gateLightEl) _gateLightEl.classList.toggle('closed', rms < S.paintGateThreshold);
 
-  // Draw on modal canvas (if visible / sized)
-  if (_gateMeterInited && _gateMeterCtx && _modalGateVisible) {
-    const r = _gateMeterCanvas.getBoundingClientRect();
-    _drawGateMeter(_gateMeterCtx, r.width, r.height);
-  }
-
-  // Draw on main UI canvas (skipped while its panel is collapsed — M3/#116)
-  if (_mainGateInited && _mainGateCtx && _mainGateVisible) {
-    const r = _mainGateCanvas.getBoundingClientRect();
-    _drawGateMeter(_mainGateCtx, r.width, r.height);
+  // Draw every visible, sized canvas (hidden ones skipped — M3/#116)
+  for (const m of _gateMeters) {
+    if (!m.visible || !m.sized) continue;
+    const r = m.canvas.getBoundingClientRect();
+    _drawGateMeter(m.ctx, r.width, r.height);
   }
 }
 
@@ -1128,13 +1171,17 @@ export function tickMainMeters() {
   // Run at half rate (every other call ≈ 30fps when called from 60fps RAF)
   if (++_meterTickCount & 1) return;
   const inAnalysers = S.inputAnalysers?.length ? S.inputAnalysers : (S.inputAnalyser ? [S.inputAnalyser] : null);
+  // One place, both layouts (#253): the source TILES no longer carry meters —
+  // a live canvas among static glyphs read as a different kind of control —
+  // so the bottom bar's input column is visible under the tile layout again
+  // and is the only input meter there is.
   if (inAnalysers) tickMeters(inAnalysers, 'mainInputMeters');
   if (S.speakerAnalysers?.length) {
     const nHouse = S.speakerBuses?.length ?? S.speakerAnalysers.length;
     tickMeters(S.speakerAnalysers.slice(0, nHouse), 'mainHouseMeters');
     const mixAnalysers = S.speakerAnalysers.slice(nHouse);
     if (mixAnalysers.length) {
-      tickMeters(mixAnalysers, 'mainMixdownMeters');
+      // mainMixdownMeters is the audio page's, driven by the settings loop.
       tickMeters(mixAnalysers, 'mainMixMeters');
     }
   }
@@ -1147,4 +1194,273 @@ export function tickMainMeters() {
 
 export function stopMainMetering() {
   if (_mainMeterRAF) { cancelAnimationFrame(_mainMeterRAF); _mainMeterRAF = null; }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE SETTINGS PAGE'S METERS — element eleven (docs/SETTINGS-GUI.md § 3)
+//
+// Horizontal, one row per channel, ONE ruler per group, and no canvas: a row is
+// four elements and a frame writes two style properties and a string into each.
+// The canvas meters this replaces cost a clearRect + fillRect + gradient per
+// channel per frame; these cost a width and a left.
+//
+// ONE loop drives every meter on the page — the groups and the gate row — so
+// the page's cost is one rAF callback whatever it is showing. The grain
+// scheduler shares this thread (CLAUDE.md, render-path performance), which is
+// why the per-frame work is counted rather than assumed: `S._setMeterCost`
+// carries a rolling average in ms for anyone who wants to read it.
+// ════════════════════════════════════════════════════════════════════════════
+
+// The scale, in one place. x(db) is the curve — pow 1.5 — so the top 20 dB take
+// half the track; the ruler's tick positions come from the same function, so a
+// tick can never drift from the level it labels.
+const SET_METER_FLOOR = -60;
+const SET_METER_CURVE = 1.5;
+export function setMeterX(db) {
+  const f = (db - SET_METER_FLOOR) / -SET_METER_FLOOR;
+  return Math.pow(f < 0 ? 0 : f > 1 ? 1 : f, SET_METER_CURVE) * 100;
+}
+const SET_METER_TICKS = [-60, -40, -30, -20, -12, -6, 0];
+
+// Ballistics, in frames. Attack is instant — a transient you cannot see is a
+// transient you cannot fix — and the release is slow enough to read.
+const SET_RELEASE   = 0.16;
+const SET_PEAK_HOLD = 700;    // ms the tick sits before it starts to fall
+const SET_PEAK_FALL = 0.35;   // dB per frame after that
+const SET_CLIP_HOLD = 1400;   // ms the clip pip stays lit
+const SET_SIZE_EVERY = 30;    // frames between background-size re-reads
+
+const _setGroups = new Map();   // containerId → { el, rows, analysers, sizeAt }
+let   _setRAF    = null;
+let   _setFrame  = 0;
+
+const _setBuf = new Float32Array(256);
+
+/** minus sign, not a hyphen: a hyphen in a column of numbers is a different
+ *  glyph width and reads as a dash. */
+function _setDb(db) {
+  if (db <= -89) return '−∞';
+  const s = db < 0 ? '−' : '';
+  return s + Math.abs(db).toFixed(1);
+}
+
+/** Build one meter group: a ruler, then a row per channel. */
+export function renderSetMeters(containerId, labels, opts = {}) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  _setGroups.delete(containerId);
+  el.className = 'set-meters';
+  el.innerHTML = '';
+
+  const ruler = document.createElement('div');
+  ruler.className = 'set-meter-ruler';
+  const rl = document.createElement('span');
+  rl.className = 'set-meter-label';
+  const scale = document.createElement('div');
+  scale.className = 'set-meter-scale';
+  for (const db of SET_METER_TICKS) {
+    const t = document.createElement('span');
+    t.style.left = setMeterX(db).toFixed(1) + '%';
+    t.textContent = db === 0 ? '0' : '−' + Math.abs(db);
+    scale.appendChild(t);
+  }
+  const rv = document.createElement('span');
+  rv.className = 'set-meter-val';
+  const rc = document.createElement('span');
+  rc.className = 'set-meter-clip';
+  ruler.append(rl, scale, rv, rc);
+  el.appendChild(ruler);
+
+  const rows = [];
+  labels.forEach((label, i) => {
+    const row = document.createElement('div');
+    row.className = 'set-meter-row';
+    const off = opts.off?.includes(i);
+    if (off) row.classList.add('set-meter-row--off');
+
+    const lbl = document.createElement('span');
+    lbl.className = 'set-meter-label';
+    lbl.textContent = label;
+
+    const track = document.createElement('div');
+    track.className = 'set-meter-track';
+    const band = document.createElement('div');
+    band.className = 'set-meter-band';
+    const fill = document.createElement('div');
+    fill.className = 'set-meter-fill';
+    const peak = document.createElement('div');
+    peak.className = 'set-meter-peak';
+    track.append(band, fill, peak);
+
+    const val = document.createElement('span');
+    val.className = 'set-meter-val';
+    val.textContent = off ? 'off' : _setDb(-Infinity);
+
+    const clip = document.createElement('span');
+    clip.className = 'set-meter-clip';
+
+    row.append(lbl, track, val, clip);
+    el.appendChild(row);
+    rows.push({ track, fill, peak, val, clip, off, lvl: -60, pk: -60, pkAt: 0, clipAt: 0, lastTxt: '' });
+  });
+
+  _setGroups.set(containerId, { el, rows, sizeAt: -1 });
+}
+
+/** Point the group at the analysers it should read. Kept apart from the build
+ *  so a device change can swap the sources without rebuilding the DOM. */
+export function setMeterSources(containerId, analysers) {
+  const g = _setGroups.get(containerId);
+  if (g) g.analysers = analysers;
+}
+
+export function clearSetMeters(containerId) {
+  const g = _setGroups.get(containerId);
+  if (!g) return;
+  for (const r of g.rows) {
+    r.lvl = r.pk = -60;
+    r.fill.style.width = '0%';
+    r.peak.style.opacity = '0';
+    r.clip.classList.remove('set-meter-clip--lit');
+    if (!r.off) { r.val.textContent = _setDb(-Infinity); r.lastTxt = r.val.textContent; }
+  }
+}
+
+function _tickSetGroup(g, now) {
+  const an = g.analysers;
+  if (!an?.length) return;
+  // The heat ramp is anchored to the SCALE, so the fill's background-size is the
+  // track's width — read every SET_SIZE_EVERY frames, not every frame: it is a
+  // layout read, and doing it per channel per frame is what a meter must never
+  // cost.
+  if (_setFrame - g.sizeAt >= SET_SIZE_EVERY) {
+    g.sizeAt = _setFrame;
+    const w = g.rows[0]?.track.clientWidth || 0;
+    if (w) for (const r of g.rows) r.fill.style.backgroundSize = w + 'px 100%';
+  }
+  for (let i = 0; i < g.rows.length; i++) {
+    const r = g.rows[i];
+    const a = an[i];
+    if (!a || r.off) continue;
+    a.getFloatTimeDomainData(_setBuf);
+    let pk = 0;
+    for (let s = 0; s < _setBuf.length; s++) { const v = _setBuf[s] < 0 ? -_setBuf[s] : _setBuf[s]; if (v > pk) pk = v; }
+    const db = pk > 0 ? 20 * Math.log10(pk) : -120;
+
+    // attack instant, release exponential
+    r.lvl = db > r.lvl ? db : r.lvl + (db - r.lvl) * SET_RELEASE;
+    if (r.lvl < -60) r.lvl = -60;
+
+    if (r.lvl >= r.pk) { r.pk = r.lvl; r.pkAt = now; }
+    else if (now - r.pkAt > SET_PEAK_HOLD) { r.pk -= SET_PEAK_FALL; if (r.pk < r.lvl) r.pk = r.lvl; }
+
+    r.fill.style.width = setMeterX(r.lvl).toFixed(2) + '%';
+    r.peak.style.left  = setMeterX(r.pk).toFixed(2) + '%';
+    r.peak.style.opacity = r.pk > -59.5 ? '1' : '0';
+
+    const txt = _setDb(r.lvl <= -59.9 ? -Infinity : r.lvl);
+    if (txt !== r.lastTxt) { r.val.textContent = txt; r.lastTxt = txt; }
+
+    if (pk >= 0.999) r.clipAt = now;
+    const lit = now - r.clipAt < SET_CLIP_HOLD;
+    r.clip.classList.toggle('set-meter-clip--lit', lit);
+    r.val.classList.toggle('set-meter-val--over', lit);
+  }
+}
+
+// ── The gate row ────────────────────────────────────────────────────────────
+// Same element, carrying a threshold. Its axis is the GATE curve (gamma, from
+// state.js) rather than the dB curve above — the noise floor is the part you
+// aim with, so it takes most of the track — and its ballistics are the ones
+// updateGateLight() already runs, so there is exactly one set.
+let _setGate = null;
+
+export function initSetGateMeter() {
+  const row = document.getElementById('asGateMeterRow');
+  if (!row) { _setGate = null; return; }
+  _setGate = {
+    row,
+    track:  row.querySelector('.set-meter-track'),
+    fill:   row.querySelector('.set-meter-fill'),
+    peak:   row.querySelector('.set-meter-peak'),
+    gated:  row.querySelector('.set-meter-gated'),
+    thresh: row.querySelector('.set-meter-thresh'),
+    tval:   row.querySelector('.set-meter-thresh-val'),
+    val:    row.querySelector('.set-meter-val'),
+    lastT:  '',
+  };
+
+  // The drag writes S.paintGateThreshold through gateFracToRms — the same
+  // curve and the same setter the canvas used, so a pot, a drag and the
+  // readout cannot disagree.
+  const toThreshold = e => {
+    const r = _setGate.track.getBoundingClientRect();
+    if (!r.width) return S.paintGateThreshold;
+    return gateFracToRms((e.clientX - r.left) / r.width);
+  };
+  let dragging = false;
+  _setGate.track.addEventListener('mousedown', e => {
+    dragging = true;
+    S.paintGateThreshold = toThreshold(e);
+    _syncGateVal();
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    S.paintGateThreshold = toThreshold(e);
+    _syncGateVal();
+  });
+  window.addEventListener('mouseup', () => { dragging = false; });
+  // Double-click resets, matching every other control on the page.
+  _setGate.track.addEventListener('dblclick', () => {
+    const def = parseFloat(_setGate.row.dataset.default);
+    if (!Number.isFinite(def)) return;
+    S.paintGateThreshold = Math.max(0, Math.min(GATE_METER_MAX, def));
+    _syncGateVal();
+  });
+}
+
+/** Is the DOM gate row on screen? updateGateLight() advances the ballistics
+ *  this row reads, and it skips the work when nothing is visible. */
+export function setGateVisible() {
+  return !!_setGate?.row.offsetParent;
+}
+
+function _rmsToDb(rms) { return rms > 0 ? 20 * Math.log10(rms) : -Infinity; }
+
+function _tickSetGate() {
+  if (!_setGate || !_setGate.row.offsetParent) return;
+  const threshF = gateRmsToFrac(S.paintGateThreshold);
+  _setGate.fill.style.width  = (_smoothedFrac * 100).toFixed(2) + '%';
+  _setGate.peak.style.left   = (_peakFrac * 100).toFixed(2) + '%';
+  _setGate.peak.style.opacity = _peakFrac > 0.005 ? '1' : '0';
+  _setGate.gated.style.width = (threshF * 100).toFixed(2) + '%';
+  _setGate.thresh.style.left = (threshF * 100).toFixed(2) + '%';
+  const t = _setDb(_rmsToDb(S.paintGateThreshold)) + ' dB';
+  if (t !== _setGate.lastT) { _setGate.tval.textContent = t; _setGate.lastT = t; }
+  if (_setGate.val) _setGate.val.textContent = _setDb(_rmsToDb(gateFracToRms(_smoothedFrac)));
+  _setGate.row.classList.toggle('is-gated', _smoothedFrac < threshF && S.paintGateThreshold > 0);
+}
+
+// ── One loop ────────────────────────────────────────────────────────────────
+
+export function startSetMeters() {
+  if (_setRAF) return;
+  let acc = 0, n = 0;
+  const tick = () => {
+    const t0 = performance.now();
+    _setFrame++;
+    for (const g of _setGroups.values()) _tickSetGroup(g, t0);
+    _tickSetGate();
+    // Rolling cost, so "does this steal from the scheduler" is a number.
+    acc += performance.now() - t0; n++;
+    if (n === 60) { S._setMeterCost = acc / n; acc = 0; n = 0; }
+    _setRAF = requestAnimationFrame(tick);
+  };
+  _setRAF = requestAnimationFrame(tick);
+}
+
+export function stopSetMeters() {
+  if (_setRAF) { cancelAnimationFrame(_setRAF); _setRAF = null; }
+  for (const id of _setGroups.keys()) clearSetMeters(id);
 }

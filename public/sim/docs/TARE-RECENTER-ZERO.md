@@ -1,6 +1,6 @@
 # Tare, Recenter & Spatial Alignment
 
-> **Status: CURRENT** · reference · how tare / recenter / zero heading relate, and which of them you can actually reach. The Recenter section carries its own warning — it describes design intent, not shipped behaviour.
+> **Status: CURRENT** · reference · how mount calibration / heading zero / recenter relate, and which of them you can actually reach. Rewritten 2026-08-31 when the single Euler-space tare was replaced by two quaternion operations. The Recenter section carries its own warning — it describes design intent, not shipped behaviour.
 
 Reference doc for how sensor calibration, drift correction, and VBAP spatialization relate to each other.
 
@@ -18,82 +18,83 @@ The viz frame and speaker frame share the same 0° = front convention, so they'r
 
 ---
 
-## Tare (sensor calibration)
+## Two operations, not one
 
-**What it does:** Stores the current sensor quaternion as the reference orientation. All subsequent readings are expressed relative to this pose: `conj(Q_tare) * Q_current`.
+Calibration is **two** gestures on opposite sides of the sensor quaternion, and keeping them apart is the whole design:
 
-**When to use:** Once per session, or whenever the sensor is remounted. Hold the sensor in the position you consider "front-center" and press tare.
+```
+output = conj(H) · q · conj(B)
+```
 
-**Where the button is.** One operation, two entry points — both call `captureTare(dev)`:
+| | **B — mount** | **H — heading** |
+|---|---|---|
+| answers | how does the sensor sit on the thing it is strapped to | which way is the stage |
+| set | once per mounting — aim, then bow | whenever you like, one press |
+| where | Settings → Sensors → **Mounting → Calibrate** | `` ` ``, the `tare` action, `/cursor/tare`, or **Heading → Zero heading** |
+| stored | `slot.quatCal.mountQuat` | `slot.quatCal.headingQuat` |
+| side | body (right) | world (left) |
 
-- **`tare sensor`** in the sensor modal's tare row — aimed at the one device whose card you're looking at.
-- **`tare cursor`** in the session panel (and the `` ` `` key, and the `tare` action over MIDI/OSC) — aimed at whichever sensor currently holds the **cursor** role, so it works without opening the modal mid-set. It does not touch any other sensor.
+Both live in `sensor-registry.js`, and **the sides are the design**. H is constrained to a pure rotation about world Z, so it **commutes** with a performer turning on the spot:
 
-They were called "capture tare" and "tare cursor" until the labels were unified; if you find the old name in a doc or comment, it means this.
+```
+conj(H) · Rz(φ) · H · B · conj(B)  =  Rz(φ)
+```
 
-**Tare is auto-cleared when the axes-alignment dropdown changes** — the reference frame moved, so the stored offset no longer means anything. Re-tare after any mounting change.
+A turn therefore reads as yaw and nothing else, **at every mounting angle**. Put the mount on the left instead and the output frame becomes the *device's* rest frame, whose Z is the device's up rather than the world's — level mounts survive that because the two coincide, and a sensor worn vertically on a back reads a turn as **pitch**. That shipped once and is guarded by `scripts/sensor-audit.js` § G, which tests five named mountings plus 200 random ones.
 
-**What it defines:**
-- The sensor's identity orientation (no rotation = the tare pose)
-- The center of the viz — the tare pose maps to lon=0, lat=0 on the sphere
-- By extension, alignment with the VBAP field — lon=0 maps to 0° in the speaker layout
+### Mount calibration — a bow, counted in
 
-**Facing direction matters.** When you tare, face where you consider "front of the room" to be. This is NOT necessarily where speaker 1 is — it's the center of the spatial field. For stereo, front is the phantom center between L/R speakers. For multi-channel, front is the geometric center of the speaker array.
+Press **Calibrate** and follow the clock. Four steps, five seconds each:
 
-**Tare does not change the speaker layout.** Speakers are configured independently (equal spacing from 0° for standard layouts). Tare aligns the sensor to the existing speaker field.
+1. *Get ready* — hold it as it will be worn, aimed the way you play
+2. *HOLD — aimed forward*
+3. *Now BOW it forward* — rotate it forwards, the way you would take a bow
+4. *HOLD — bowed forward*
 
----
+**It is the rotation that is measured, not two snapshots.** That distinction matters, because gravity alone gives only *up* — the azimuth of a level sensor is unknowable from any single sample, however long you hold it. Bowing forwards is the only way mubone can learn which horizontal direction is forward. Bow it sideways and forward is defined 90° off. This is information-theoretic, not a quirk of the method: something has to declare forward, and the rotation is the only thing that can.
 
-## Zero heading (hardware yaw reference)
+| step | what it yields |
+|---|---|
+| hold 1 | gravity → the performer's **up**, in sensor coordinates |
+| the bow | the rotation axis → the performer's **left-right**, with sign |
 
-**What it does:** Sends a `heading: 0` command to the x-IMU3 itself, resetting the **AHRS yaw reference in firmware**. Everything above this line is software; this one changes what the sensor reports.
+`up × left-right` gives forward — a full orthonormal frame, the true `B`. Then `H = twist(q₁ · conj(B))` is the real heading, because `B` is real.
 
-**When to use:** Long-term yaw drift that tare keeps having to re-correct. Point the sensor at your desired 0° *before* pressing it — the command zeroes whatever it is looking at.
+**A countdown, not a stillness detector.** The first build advanced automatically when the sensor went still. It worked, and it was the wrong design: pressing Calibrate either silently advanced or silently did nothing, with no way to tell which while the sensor is on your back (Ek, 2026-08-31). A clock you can see beats cleverness you cannot. Each hold window is **averaged** rather than sampled once, so a wobbling hand contributes its mean, and a hold that drifted more than 8° says so instead of quietly producing a bad frame.
 
-**It clears tare, deliberately.** The two corrections stack in the wrong direction if both are live: tare captures yaw = 45°, zero heading then makes the hardware report 0°, and the next frame calibrates to `0° − 45° = −45°`. `captureTare()` therefore does **not** send the heading command, and `resetHeading()` drops the stored tare. Re-tare afterwards if you want a pitch offset too.
+**Why two positions at all.** Splitting a single rest pose by its twist about world Z gives `H_est = twist(H_true · B)` — which absorbs whatever rotation about vertical the **strap itself** carries. The estimated heading is then wrong by that amount and the performer's pitch smears into roll by the same angle: measured 2026-08-31 at **95% cross-axis leak** on a flat inverted mount, ~55% on a twisted vertical one. A *turn* is immune, because `H` commutes with `Rz(φ)` whether or not it is the right `H` — which is how a suite that tested only turns passed a broken calibration twice.
 
-**Where the button is:** sensor modal only, per device (`zero heading`). There is no main-UI shortcut and no MIDI/OSC action — it is a setup operation, not a performance one, and it talks to hardware.
+It works for a hand, a rotated wrist, a head, a back, a tuba bell, and a strap with its own twist — `sensor-audit.js` § H drives all six and requires pitch to stay pitch and roll to stay roll. The bow also fixes the **sign**, so bowing forward is a negative pitch on every mounting and no polarity flip is needed to get there.
 
-**Naming trap:** "zero heading" is the *only* thing in mubone that "zero" should refer to. The session-panel button next to it is a **tare**, not a heading reset — its element id was `cursorZeroTopBtn` for a while, which is where the confusion came from. It is now `cursorTareBtn`.
+**The two sign flips are not yours to make.** `defaultQuatAxisMap()` ships pitch and yaw at `-1`, because `applyAxisMapQuat` decomposes Z-up (`quatToEulerDeg`, yaw about Z) and recomposes in the sphere's Y-up graphics convention (yaw about `(0,1,0)`, pitch about `(1,0,0)`, roll about `(0,0,1)`). That relabelling is mount-independent, so the correction belongs in the default once rather than in the player's hands on every mounting. Reset them to `+1` and every fresh calibration needs the same two manual flips — which is how the cause was found. Guarded by `sensor-audit.js` § I.
 
----
+**Refused, rather than fudged:** a bow shallower than `MOUNT_POSE_MIN_DEG` (20°), or a rotation about *vertical* rather than a bow — there is no frame in either, and a calibration built from one would be worse than none.
 
-## Recenter (drift correction)
+### Zero heading
 
-> ⚠️ **Not reachable at all.** The recenter button is disabled pending **#76** (the logic is unverified — tare works, recenter's behaviour is unclear), and the auto-recenter path is gone too: it was armed only by `sensor-registry.js`'s `slotTare()`, which had no caller and was removed on 2026-08-01. `recenterCursor()` survives and is exposed as `S._recenterCursor()` for console investigation of #76, but nothing in the UI, keys, MIDI or OSC calls it, so `S.driftOffsetQ` stays null. **Tare is the only drift correction that exists in practice** — which is why it has a panel button and a key. The rest of this section describes intended design, not today's behaviour.
+Face the audience and press. Re-derives **H only**, from `q · conj(B)` — how far the world has turned since the mount was calibrated. **B is untouched, so the mounting survives.**
 
-**What it does:** Applies a persistent offset to the sensor→camera pipeline so the cursor snaps back to the center reference point (lon=0, lat=0) defined at tare time.
+**H is the yaw the app reads, not the swing-twist** (2026-09-10). `H = Rz(yaw(q · conj(B)))`, where yaw is `quatToEulerDeg`'s — the azimuth of the forward axis — so the cursor sits at lon 0 the instant after the press whatever the pitch and roll held. It was `twist(q · conj(B))` before, which is the heading only at a level pose: the swing left over has a yaw of its own once pitch and roll are both non-zero (0.9° at 10°/10°, 8° at 20°/45°), and near a 180° roll — an **uncalibrated upside-down mount** — the twist lives in two vanishing components, so 4° of pitch at zero time moved the residual by 72° and a zero landed at lon −69°. Pitch and roll after a zero are still the attitude actually held: it cannot level a tilted board, only a mount calibration can. `sensor-audit.js` § B2.
 
-**When to use:** During performance, whenever you notice drift. Physically return your hand to the tare position and press recenter. The view corrects to match your physical position.
+This is both your drift correction and your **speaker alignment**: the viz frame and the VBAP field share 0° = front, so setting the heading is what puts the performer's forward and the room's forward in the same place. Safe to bind to a key and press mid-set — which is exactly what `` ` `` does.
 
-**How it differs from tare:**
-- Tare resets the full sensor reference frame — it redefines what "zero" means
-- Recenter preserves the existing tare and just applies a small rotational offset to compensate for accumulated IMU drift
-- Tare is a calibration step; recenter is a correction step
+It is a **software** operation. The sensor is never written to, so it survives a sensor reset and cannot be persisted into the hardware in a state you can't clear.
 
-**Mechanically:** `correctedCamQ = driftOffset * sensorCamQ`. On recenter, the system computes the rotation between the current camera direction and the stored center reference, stores that as `driftOffset`, and applies it every frame going forward.
+### What happened to `captureTare`
 
-**Recenter does not move particles.** It adjusts the camera/view, not the world. From the performer's perspective, the cursor jumps back to center — which is correct because your hand IS physically at center.
+Removed, along with `DeviceState.tareEuler`, `polarity` and `rollMute`. All four were applied in `getCalibratedQuat()` — **upstream** of the registry, so setting any of them changed the very quaternion the registry's calibration had been captured against, and the two composed instead of one replacing the other.
 
----
+`tareEuler` in particular could never have done this job: it decomposed to Euler, subtracted yaw, then recomposed, and subtracting an angle **after** a decomposition cannot rotate the frame the decomposition was done in. Axis signs and roll mute now live in `slot.quatCal.axisMap`, which is applied *downstream* of B and H and therefore cannot disturb them.
 
-## Center reference marker
+## Zero heading on the hardware
 
-A visual indicator on the sphere showing where lon=0, lat=0 is — the point defined at tare time. Its purpose is to let the performer see how far drift has accumulated. If the center marker is far from where the cursor rests when you return to the tare pose, it's time to recenter.
+The BNO's own `/BNO085/tare_sensor` is `tare_now(Axes::XYZ)` — a **mounting-alignment** command whose firmware docstring says outright that it is *"not for setting the direction of the stage"*. Don't use it for that. See `docs/BNO085-CONTROL.md` § 3.2: there is no `zero_heading` endpoint, no clear-tare, and a persisted tare survives `reset`.
 
----
+The software heading zero above is better on every axis that matters here — instant, reversible, no flash wear, and it works with the magnetometer disabled, where a hardware Z-axis tare cannot be persisted at all.
 
-## VBAP speaker layout
+## Recenter — deleted 2026-09-05
 
-Speakers are positioned automatically based on channel count:
-
-| Channels | Layout |
-|----------|--------|
-| 1 (mono) | 0° (front) |
-| 2 (stereo) | 270° (left), 90° (right) — no speaker at front, phantom center |
-| 3+ | Equal spacing starting from 0° — e.g. quad: 0°, 90°, 180°, 270° |
-
-0° in the VBAP field = lon=0 on the sphere = "front." This alignment is automatic and fixed. Tare brings the sensor into agreement with it; it doesn't change the speaker positions.
+There was a third operation, **recenter**: a drift-offset quaternion composed onto the sensor every frame so the cursor snapped back to centre without re-taring. It had no caller from 2026-08-01 (the button was disabled pending #76, the auto path went with `slotTare`) and was deleted on 2026-09-05 (#170). The drift an IMU accumulates is in **yaw** — pitch and roll come from gravity and do not drift — and yaw is exactly what **Zero heading** corrects, so recenter was a second control for the one correction. `recenterCursor()` and `S.driftOffsetQ` are git history.
 
 ---
 
@@ -101,16 +102,19 @@ Speakers are positioned automatically based on channel count:
 
 | Operation | What it does | Software / hardware | Where | Frequency |
 |-----------|-------------|---------------------|-------|-----------|
-| **Tare** (`tare sensor` / `tare cursor`, `` ` ``) | Sets sensor reference + defines center | Software | Sensor modal *and* session panel | Once per mount / session start — and, until #76, as the mid-show drift fix too |
-| **Clear tare** | Drops the stored offset | Software | Sensor modal | Rarely |
-| **Zero heading** | Resets the AHRS yaw reference in firmware; clears tare | **Hardware** | Sensor modal only | Long-term drift, setup only |
-| **Recenter** | Corrects drift back to tare-defined center | Software | ⚠️ no button — auto-fires after a gravity-aligned tare (#76) | Intended: as needed during performance |
+| **Calibrate mounting** | Stores how the sensor sits on the body (`B`) | Software | Settings → Sensors → Mounting | Once per mounting |
+| **Clear** | Drops `M`; the sensor reads raw again | Software | Settings → Sensors → Mounting | Rarely |
+| **Zero heading** | Sets which way is forward (`H`); corrects yaw drift. Cannot move pitch or roll | Software | `` ` ``, the `tare` action, `/cursor/tare`, or Settings → Sensors → Heading | Freely, mid-set |
+| **Axis signs / roll mute** | Flips a channel's direction, downstream of `B` and `H` | Software | Settings → Sensors, on the selected sensor | Setup |
 | **Speaker config** | Sets channel count and layout | Software | Audio settings | Once per venue |
+| `/BNO085/tare_sensor` | Mounting alignment **in the sensor**. Not for stage direction, no clear-tare, survives `reset` | **Hardware** | Settings → Sensors, instrument block | Avoid — see § Zero heading on the hardware |
 
 ---
 
 ## Per-sensor applicability
 
-- **Cursor sensor:** Tare and recenter both apply. This is the primary use case.
-- **Frame sensor:** Tare and recenter both apply. Corrects drift in the sphere's world rotation.
-- **Gesture sensor:** Tare applies (sensor calibration). Recenter does not apply — gesture feeds into the processing chain, not a spatial view.
+- **Cursor sensor:** both operations apply, plus recenter. This is the primary use case.
+- **Frame sensor:** both apply. Heading zero corrects drift in the sphere's world rotation.
+- **Gesture sensor:** mount calibration applies. Heading is meaningless for a stream that feeds the processing chain rather than a spatial view, and recenter does not apply either.
+
+Calibration is **per slot**, keyed by slot name in `mubone_sensor_cal`, so two sensors on one rig are calibrated independently — which is the point when one is on a wrist and the other on a music stand.

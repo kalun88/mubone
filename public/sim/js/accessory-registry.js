@@ -36,7 +36,7 @@ import {
   ACC_DEFAULT_SMOOTH, ACC_DEFAULT_DEADBAND, ACC_DEFAULT_HI, ACC_DEFAULT_LO,
 } from './state.js';
 import { getDevices, sendCommandTo } from './imu-setup.js';
-import { scaleControl } from './scale.js';
+import { scaleControl, GAMMA_LIMITS } from './scale.js';
 
 // ── Tuning ──────────────────────────────────────────────────────────────────
 // Constants live in state.js per CLAUDE.md; aliased here for readability.
@@ -366,10 +366,7 @@ const NUMERIC_OPTIONS = {
   lo:       [0, 1],
   outLo:    [0, 1],
   outHi:    [0, 1],
-  // A curve of 0 or below would collapse the whole throw onto one value, and
-  // beyond ~10 the bottom of the pot is dead travel. Clamp rather than reject:
-  // a numbox that silently refuses your input is worse than one that clips.
-  curve:    [0.1, 10],
+  curve:    GAMMA_LIMITS,
 };
 
 export function setOption(pad, key, value) {

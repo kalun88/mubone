@@ -59,13 +59,34 @@ import { sendOSCExternal, isOSCOutAvailable } from './osc-out.js';
 //   _lastError?:   string       // last transport error message, if any
 // }
 
+// ── Mappable cursor axes ───────────────────────────────────────────────────
+// Destinations for the 'cursor' output kind.  Values are DEGREES in the same
+// convention AXIS_DEFS reads, so an identity row (elevation → cursor elevation,
+// -90..90 → -90..90) leaves the cursor where it already is.
+//
+// The axis only listens while its S.<x>Source is 'mapped'; the renderer owns
+// that check.  Writing here unconditionally keeps the dispatcher dumb and means
+// switching the segmented control to 'mapped' picks up a live value instantly.
+export const MAPPABLE_CURSOR_AXES = [
+  { key: 'azimuth',   label: 'cursor azimuth',   min: -180, max: 180, source: 'azSource' },
+  { key: 'elevation', label: 'cursor elevation', min:  -90, max:  90, source: 'elSource' },
+  // 'cursor roll' was the third entry until 2026-09-01. The sphere has no roll
+  // channel any more (applyAxisSources strips it — Ek: "the roll should not
+  // make it to the actual sphere"), so a row targeting it could change nothing
+  // a player can see or hear, and an advertised destination that does nothing
+  // reads as a bug. A STALE saved row with param 'roll' degrades gracefully:
+  // every lookup here uses find()?.  with a fallback, and its writes land in
+  // cursorOverrides.roll, which nothing reads any more.
+];
+
 // ── Mappable grain params registry ─────────────────────────────────────────
 // Each entry describes a param that can be targeted by a mapping.
 // label: display name, min/max: valid range, default: bypass value, unit: display suffix.
 export const MAPPABLE_PARAMS = [
   { key: 'hpfFreq',         label: 'HPF cutoff',     min: 20,    max: 20000, default: 20,    unit: 'Hz',  log: true },
   { key: 'lpfFreq',         label: 'LPF cutoff',     min: 20,    max: 20000, default: 20000, unit: 'Hz',  log: true },
-  { key: 'filterQ',         label: 'filter Q',       min: 0.1,   max: 20,    default: 0.707, unit: '',    log: false },
+  { key: 'hpfQ',            label: 'hpf Q',          min: 0.1,   max: 20,    default: 0.707, unit: '',    log: false },
+  { key: 'lpfQ',            label: 'lpf Q',          min: 0.1,   max: 20,    default: 0.707, unit: '',    log: false },
   { key: 'filterFreqJitter',label: 'filter jitter',  min: 0,     max: 1,     default: 0,     unit: '%',   log: false },
   { key: 'volume',          label: 'volume',          min: 0.001, max: 2.0,   default: 0.5,   unit: '',    log: false },
   { key: 'duration',        label: 'duration',        min: 0.002, max: 4.0,   default: 0.1,   unit: 's',   log: true },
@@ -73,6 +94,7 @@ export const MAPPABLE_PARAMS = [
   { key: 'pitchShift',      label: 'pitch shift',    min: -2400, max: 2400,  default: 0,     unit: '¢',   log: false },
   { key: 'pitchJitter',     label: 'pitch jitter',   min: 0,     max: 0.498, default: 0,     unit: '¢',   log: false },
   { key: 'durJitter',       label: 'dur jitter',     min: 0,     max: 1,     default: 0,     unit: '%',   log: false },
+  { key: 'startJitter',     label: 'start jitter',   min: 0,     max: 0.5,   default: 0,     unit: 's',   log: false },
   { key: 'panSpread',       label: 'pan spread',     min: 0,     max: 1,     default: 0.05,  unit: '%',   log: false },
   { key: 'fadeRatio',       label: 'fade',            min: 0,     max: 0.5,   default: 0.25,  unit: '%',   log: false },
 ];
@@ -144,6 +166,9 @@ function _destKey(m) {
   if (out.kind === 'osc') {
     return `osc:${out.host || ''}:${out.port || 0}:${out.address || ''}`;
   }
+  if (out.kind === 'cursor') {
+    return 'cursor:' + (out.param || '');
+  }
   return 'unknown:' + m.id;
 }
 
@@ -178,6 +203,7 @@ export function addMapping(opts = {}) {
     axis:        opts.axis        || 'elevation',
     inputMin:    opts.inputMin    ?? -45,
     inputMax:    opts.inputMax    ?? 45,
+    absInput:    opts.absInput    ?? false,
     curveType:   opts.curveType   || 'linear',
     curveExp:    opts.curveExp    ?? 1.0,
     // Legacy field — still populated for grain rows so other modules that read
@@ -287,14 +313,6 @@ export function toggleMapping(id) {
   return m.enabled;
 }
 
-/** Toggle a mapping by its index (0-based). For OSC/MIDI. */
-export function toggleMappingByIndex(idx) {
-  if (idx >= 0 && idx < _mappings.length) {
-    return toggleMapping(_mappings[idx].id);
-  }
-  return false;
-}
-
 // ── Evaluation engine ──────────────────────────────────────────────────────
 // Called once per render frame from animate().  Reads sensor data, applies
 // curve, writes to S.grainOverrides.
@@ -302,8 +320,14 @@ export function toggleMappingByIndex(idx) {
 // ── Unified cursor euler source ────────────────────────────────────────────
 // Returns {x, y, z} (roll, elevation, azimuth in degrees) from whatever is
 // driving the cursor — IMU sensor when available, otherwise derived from
-// the cursor's lon/lat on the sphere (pull / surface / mouse modes).
+// the cursor's lon/lat on the sphere (steer / surface / mouse modes).
 // Roll is 0 when derived from lon/lat (no roll data without IMU).
+
+// (_gateRoll, _rollHold and S.rollSource lived here until 2026-09-01: the
+// footer's RO button muted roll as a MAPPING INPUT. Retired with the button —
+// the camera takes no roll at all, so mapping rows are the only readers, and
+// a row you don't want is disabled per-row in Settings → Mapping rather than
+// through a global gate.)
 
 export function getCursorEuler() {
   // 1. If an IMU sensor is assigned to cursor role, prefer its tare-relative euler
@@ -333,12 +357,48 @@ export function getCursorEuler() {
   };
 }
 
+// ── Input conditioning ─────────────────────────────────────────────────────
+// `absInput` folds the axis at zero: |x|.  One shared reader so the modal's
+// live readout and the evaluator can never disagree about what a row sees.
+//
+// This exists because the euler axes are CIRCULAR but the mapping engine
+// treats every axis as a line.  Roll at the half-turn reads -179 or +179
+// essentially at random, and a linear input range clamps those to opposite
+// ends — so a sensor flipped a half-turn lands on whichever end it feels like.
+// Folding maps both to 180, and the two representations stop mattering.
+//
+// The general case: use it on any ± symmetric axis where magnitude is the
+// meaningful quantity and sign is not (|pitch| = how far from level, in
+// either direction).  It is NOT a fix for wrap in general — an axis that
+// needs to cross ±180 continuously wants unwrapping, not folding.
+export function readMappingInput(m, euler, axisDef) {
+  const def = axisDef || AXIS_DEFS[m.axis];
+  const raw = def?.read(euler);
+  if (!Number.isFinite(raw)) return raw;
+  return m.absInput ? Math.abs(raw) : raw;
+}
+
 /** Evaluate all enabled mappings. Call from the render loop at 30fps. */
 export function tickMappings() {
+  // Cleared every tick and rewritten below by whichever rows are live, so a
+  // row that gets disabled, deleted or retargeted stops feeding its axis
+  // without any teardown bookkeeping. The axis then holds its last position
+  // (renderer), which is the documented unfed-'mapped' behaviour.
+  S.cursorOverrides.azimuth   = null;
+  S.cursorOverrides.elevation = null;
+  S.cursorOverrides.roll      = null;
+
   if (_mappings.length === 0) return;
 
   const euler = getCursorEuler();
   if (!euler) return;
+
+  // A 'cursor' row is only safe to evaluate when the euler came from a real
+  // sensor.  getCursorEuler() falls back to deriving euler from the cursor's
+  // own lon/lat, so in mouse/steer/surface mode a row reading `elevation` and
+  // writing cursor elevation would read back its own output and run away.
+  // With a cursor-role sensor the read is in sensor space and no loop exists.
+  const sensorBacked = !!getByRole('cursor')?.zeroEuler;
 
   let anyGrain = false;
 
@@ -349,8 +409,8 @@ export function tickMappings() {
     const axisDef = AXIS_DEFS[m.axis];
     if (!axisDef) continue;
 
-    // Read the axis value (degrees)
-    const raw = axisDef.read(euler);
+    // Read the axis value (degrees), with the row's input conditioning
+    const raw = readMappingInput(m, euler, axisDef);
 
     // Normalise to [0, 1] within the input range
     const range = m.inputMax - m.inputMin;
@@ -369,6 +429,8 @@ export function tickMappings() {
       _dispatchMidi(m, out, curved);
     } else if (out.kind === 'osc') {
       _dispatchOsc(m, out, curved);
+    } else if (out.kind === 'cursor') {
+      _dispatchCursor(m, out, curved, sensorBacked);
     }
   }
 
@@ -402,6 +464,30 @@ function _dispatchGrain(m, out, curved) {
   m._lastWireValue = value;
   m._lastTxAt = _now();
   m._lastTxStatus = 'sent';
+}
+
+function _dispatchCursor(m, out, curved, sensorBacked) {
+  const axisDef = MAPPABLE_CURSOR_AXES.find(a => a.key === out.param);
+  if (!axisDef) return;
+
+  if (!sensorBacked) {
+    // Refuse rather than feed back. Reported on the row so "my mapping does
+    // nothing in mouse mode" is answerable without reading this file.
+    S.cursorOverrides[axisDef.key] = null;
+    m._lastTxStatus = 'unavailable';
+    m._lastError    = 'cursor rows need a cursor-role sensor (would feed back otherwise)';
+    return;
+  }
+
+  const value = Math.max(axisDef.min, Math.min(axisDef.max,
+    m.outputMin + curved * (m.outputMax - m.outputMin)));
+
+  S.cursorOverrides[axisDef.key] = value;
+  m._lastEmitted   = value;
+  m._lastWireValue = value;
+  m._lastTxAt      = _now();
+  m._lastTxStatus  = 'sent';
+  m._lastError     = undefined;
 }
 
 function _dispatchMidi(m, out, curved) {

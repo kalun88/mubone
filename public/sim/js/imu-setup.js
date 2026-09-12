@@ -3,18 +3,23 @@
 //
 // This module replaces the sensor panel's calibration role for x-IMU3 devices.
 // It owns: device discovery, connection (WiFi UDP or serial), hardware config
-// (axes alignment), and software calibration (tare, polarity).
+// (axes alignment).  Software calibration lives in sensor-registry.js.
 //
-// Output: pre-calibrated quaternion → sensor-registry (role assignment only).
-// The sensor-registry slot is set to identity calibration so it passes through.
+// Output: the sensor's raw quaternion → sensor-registry, which owns the
+// calibration (mount, heading, axis signs) and applies it in one place.
 //
 // Protocol reference: x-IMU3 User Manual v1.11, sections 8–11.
 // ============================================================================
 
 import { S, DEBUG } from './state.js';
-// quaternion helpers no longer needed — tare is now Euler-space
 import {
-  getOrCreateSlot, handleSlotQuaternion, handleSlotInertial, assignQuatRole,
+  getOrCreateSlot, handleSlotQuaternion, handleSlotInertial, assignQuatRole, forgetSlot,
+  saveCalibration,
+  captureMountPose1 as regMountPose1,
+  captureMountPose2 as regMountPose2,
+  cancelMountCapture as regCancelMount,
+  captureHeading as regCaptureHeading,
+  clearMount as regClearMount,
 } from './sensor-registry.js';
 import {
   settingsFor, EXPECTED_MESSAGE_TYPES, VERIFY_TIMEOUT_MS, VERIFY_DELAY_MS,
@@ -90,12 +95,27 @@ function eulerDegToQuat(rollDeg, pitchDeg, yawDeg) {
 // Each connected device has its own calibration.  Keyed by serial number.
 
 class DeviceState {
-  constructor(sn, name, { transport, ip, send, receive, serialPath }) {
+  constructor(sn, name, { transport, ip, send, receive, serialPath, kind }) {
     this.sn      = sn;
     this.name    = name;
 
     // Transport: 'udp', 'serial', or 'osc'
     this.transport  = transport || 'udp';
+
+    // KIND is what the thing IS; transport is how the app reaches it. They are
+    // not the same question and nothing on the wire answers the first one: an
+    // 'osc' transport is any peer sending /sensor/{name}/…, which is a Max
+    // patch, a proxy, or a first-party mubone instrument on its own cable.
+    // Whoever owns the connection declares it — see declareSensorKind().
+    //   'x-imu3' — the third-party unit; settings enforcement, LED, accessory
+    //   'mubone'  — first-party instrument (js/sygaldry.js)
+    //   'osc'     — anything else on the wire; we know nothing about it
+    this.kind = kind || (this.transport === 'osc' ? 'osc' : 'x-imu3');
+
+    // How it is reached, in a word, when 'osc' would be a lie — a cabled
+    // instrument arrives as OSC but is not an OSC peer. Null falls back to the
+    // transport's own word.
+    this.via = null;
 
     // UDP-specific
     this.ip      = ip || null;
@@ -119,23 +139,26 @@ class DeviceState {
     this.wifiClientSsid    = null;
     this.wifiRegion        = null;   // 1=US, 2=EU, 3=JP
 
-    // Software calibration (local to this session)
-    // Tare stored as Euler offsets (degrees) — subtracted in Euler space to avoid
-    // quaternion cross-coupling (full-quat tare causes roll drift when yawing
-    // with an off-kilter mount).
-    this.tareEuler = null;   // { pitch, yaw } or null = no tare
-    this.polarity = { roll: 1, pitch: 1, yaw: 1 };  // 1 or -1 per axis
-    this.rollMute = false;  // when true, roll is zeroed before feeding to sphere
+    // Software calibration lives in the REGISTRY, not here (2026-08-31).
+    // `tareEuler`, `polarity` and `rollMute` were removed: all three were
+    // applied in getCalibratedQuat(), i.e. UPSTREAM of the registry's own
+    // calibration, so setting any of them changed the very quaternion the
+    // registry's mount rotation had been captured against — the two composed
+    // instead of one replacing the other. Signs and mute now live in
+    // `slot.quatCal.axisMap`, which is applied downstream of the mount and
+    // heading rotations and cannot disturb them.
     // Convention note: x-IMU3 outputs NWU (X=West, Y=North, Z=Up).
-    // The sphere expects right-handed graphics coords (X=right, Y=up, Z=forward).
-    // For default x-IMU3 orientation, flip X and Z polarity to correct the mismatch.
+    // The sphere expects right-handed graphics coords (X=right, Y=up, Z=forward),
+    // which the axis map's signs express.
 
     // Latest raw data from this device
     this.rawQuat  = { w: 1, x: 0, y: 0, z: 0 };
     this.rawEuler = { roll: 0, pitch: 0, yaw: 0 };
     this.rawInertial = { gx: 0, gy: 0, gz: 0, ax: 0, ay: 0, az: 0 };
     this.lastMsgType = null;
-    this.lastTimestamp = 0;
+    this.lastTimestamp = 0;      // the DEVICE's clock — an x-imu3 stamps µs since boot
+    this.lastSeenAt = 0;         // OUR clock — Date.now() of the last packet, any stream
+    this.live = false;           // packets within LIVE_MS; the connection state (Ek, 2026-09-09)
 
     // Serial accessory (x-IMU3-SA-A8 etc).  serialMode is read back from the
     // device on connect — never written automatically.  2 = Accessory.
@@ -162,67 +185,24 @@ class DeviceState {
     this.feeding    = false;        // whether data is being pushed to registry
   }
 
-  // Calibrated Euler: tare + polarity applied (Euler-space tare)
-  getCalibratedEuler() {
-    const e = quatToEulerDeg(this.rawQuat.x, this.rawQuat.y, this.rawQuat.z, this.rawQuat.w);
-
-    let roll  = e.roll;
-    let pitch = e.pitch;
-    let yaw   = e.yaw;
-
-    // Euler-space tare: subtract pitch and yaw offsets directly.
-    // Roll stays gravity-referenced — no cross-coupling when yawing off-kilter.
-    if (this.tareEuler) {
-      pitch -= this.tareEuler.pitch;
-      yaw   -= this.tareEuler.yaw;
-      // Wrap yaw to [-180, 180]
-      if (yaw >  180) yaw -= 360;
-      if (yaw < -180) yaw += 360;
-    }
-
-    return {
-      roll:  roll  * this.polarity.roll,
-      pitch: pitch * this.polarity.pitch,
-      yaw:   yaw   * this.polarity.yaw,
-    };
+  // Raw Euler, straight from the quaternion. The device layer no longer
+  // calibrates: the registry owns tare, signs and mute, and applies them in
+  // one place where they cannot fight each other.
+  getRawEuler() {
+    return quatToEulerDeg(this.rawQuat.x, this.rawQuat.y, this.rawQuat.z, this.rawQuat.w);
   }
 
-  // Calibrated quaternion: tare + polarity + roll mute applied (for feeding to registry)
-  getCalibratedQuat() {
-    const e = quatToEulerDeg(this.rawQuat.x, this.rawQuat.y, this.rawQuat.z, this.rawQuat.w);
-
-    let roll  = e.roll;
-    let pitch = e.pitch;
-    let yaw   = e.yaw;
-
-    // Euler-space tare
-    if (this.tareEuler) {
-      pitch -= this.tareEuler.pitch;
-      yaw   -= this.tareEuler.yaw;
-      if (yaw >  180) yaw -= 360;
-      if (yaw < -180) yaw += 360;
-    }
-
-    // Polarity + roll mute
-    roll  = this.rollMute ? 0 : roll * this.polarity.roll;
-    pitch = pitch * this.polarity.pitch;
-    yaw   = yaw   * this.polarity.yaw;
-
-    // Clamp pitch away from exact ±90° to prevent Euler singularity (gimbal lock).
-    // At the pole, yaw becomes undefined and the cursor twirls. Clamping to ±89.5°
-    // keeps the quaternion recomposition stable while being visually imperceptible.
-    const POLE_CLAMP = 89.5;
-    pitch = Math.max(-POLE_CLAMP, Math.min(POLE_CLAMP, pitch));
-
-    return eulerDegToQuat(roll, pitch, yaw);
+  // What gets fed to the registry: the sensor's own quaternion, untouched.
+  getFeedQuat() {
+    return [this.rawQuat.x, this.rawQuat.y, this.rawQuat.z, this.rawQuat.w];
   }
 }
 
 
 // ── Per-device preferences (persisted in localStorage) ─────────────────────
-// Keyed by serial number.  Stores settings that are part of the rig setup
-// (polarity, roll mute, role) but NOT session-specific values (tare, feeding)
-// and NOT hardware-queried values (axes alignment, wifi info).
+// Keyed by serial number.  Stores the ROLE only — signs, mute and tare moved
+// to the registry's per-slot calibration (`mubone_sensor_cal`), which is the
+// one place quaternion calibration lives now.
 const _LS_DEVICE_PREFS_KEY = 'mubone-sensor-prefs';
 
 // Data lines dropped because their source IP matched no connected device
@@ -236,30 +216,65 @@ function _loadDevicePrefs() {
   } catch (_) { return {}; }
 }
 
+// A serial device is keyed `serial-<path>` until it answers with its real
+// serial number. An x-imu3 answers within a second; anything else never does,
+// so the temp key becomes permanent — keyed on a tty path that is not even
+// stable across reboots. This function has always CLAIMED to skip those and
+// never did, which is how a BNO connected once through the wrong door left a
+// phantom x-imu3 in the prefs forever. `osc-<name>` is NOT a temp key: that
+// name is the sensor's own and is what it will be called next time.
+function _isTempKey(sn) { return sn.startsWith('serial-'); }
+
 function _saveDevicePrefs() {
   const prefs = {};
   for (const [sn, dev] of _devices) {
-    // Only persist devices with a real serial number (not temp IDs)
+    if (_isTempKey(sn)) continue;
     prefs[sn] = {
-      polarity: { ...dev.polarity },
-      rollMute: dev.rollMute,
+
       role:     dev.role,
     };
   }
   // Merge with existing prefs so disconnected devices keep their settings
   const existing = _loadDevicePrefs();
   Object.assign(existing, prefs);
+  // One-shot prune of what the missing filter already wrote.
+  for (const sn of Object.keys(existing)) if (_isTempKey(sn)) delete existing[sn];
   try {
     localStorage.setItem(_LS_DEVICE_PREFS_KEY, JSON.stringify(existing));
   } catch (_) {}
+}
+
+// Signs read out of the OLD prefs key, waiting for the slot to exist.
+const _migratedSigns = new Map();   // slotName → { polarity, rollMute }
+
+// Fold a migrated polarity/rollMute into the slot's axis map. Called once,
+// when the slot is created; the prefs key is rewritten without them after.
+function _applyMigratedSigns(slot) {
+  const mig = _migratedSigns.get(slot.name);
+  if (!mig) return;
+  _migratedSigns.delete(slot.name);
+  const map = slot.quatCal.axisMap;
+  if (mig.polarity) {
+    for (const a of Object.values(map)) {
+      const sgn = mig.polarity[a.viz];
+      if (sgn === -1) a.sign = -a.sign;
+    }
+  }
+  // (mig.rollMute is deliberately dropped: the Mute control is gone, so a
+  // migrated mute would be invisible and unremovable.)
+  saveCalibration();
+  _saveDevicePrefs();   // rewrites without polarity/rollMute
 }
 
 function _applyDevicePrefs(dev) {
   const all = _loadDevicePrefs();
   const p = all[dev.sn];
   if (!p) return;
-  if (p.polarity) dev.polarity = { roll: p.polarity.roll ?? 1, pitch: p.polarity.pitch ?? 1, yaw: p.polarity.yaw ?? 1 };
-  if (p.rollMute !== undefined) dev.rollMute = p.rollMute;
+  // One-shot migration: a stored polarity/rollMute from before 2026-08-31
+  // becomes axis-map signs on the slot, then is dropped from prefs.
+  if (p.polarity || p.rollMute !== undefined) {
+    _migratedSigns.set(dev.slotName, { polarity: p.polarity, rollMute: p.rollMute });
+  }
   if (p.role) dev.role = p.role;
 }
 
@@ -578,6 +593,8 @@ function _webSerialPortId(port) {
 
 export function initIMUSetup() {
   _installRoleChangeListener();
+  // The falling edge of liveness has no event to ride; both modes tick it.
+  setInterval(_liveTick, 500);
 
   const bridge = window.electronBridge;
 
@@ -783,7 +800,7 @@ export async function connectDevice(sn) {
     receive:  info.receive,
   });
   _devices.set(sn, dev);
-  _applyDevicePrefs(dev);  // restore polarity, rollMute, role from previous session
+  _applyDevicePrefs(dev);  // restore role from previous session
 
   // Notify main page immediately — don't wait for handshake
   _syncSensorStatus();
@@ -951,6 +968,8 @@ export async function disconnectDevice(sn) {
 // ── Send command to a specific device ───────────────────────────────────────
 
 export function sendCommandTo(dev, jsonObj) {
+  S._cmdLog.push({ t: Date.now(), what: Object.keys(jsonObj || {}).join(' ') });
+  if (S._cmdLog.length > 200) S._cmdLog.shift();
   if (!dev) return;
   const bridge = window.electronBridge;
   const str = JSON.stringify(jsonObj);
@@ -1129,75 +1148,103 @@ export function sendCommand(jsonObj) {
 
 export function setAxesAlignment(dev, value) {
   dev.axesAlignment = value;
-  // Clear tare — it was captured in the old alignment frame and is no longer valid
-  dev.tareEuler = null;
+  // Drop the mount calibration — it was captured in the old alignment frame
+  // and describes a rotation the sensor no longer reports.
+  clearMountCal(dev);
   sendCommandTo(dev, { axes_alignment: value });
   setTimeout(() => sendCommandTo(dev, { apply: null }), 100);
 }
 
-// ── Polarity reversal ───────────────────────────────────────────────────────
+// ── Axis signs and mute — thin wrappers over the slot's axis map ────────────
+// These used to write DeviceState.polarity, which was applied upstream of the
+// registry's mount rotation and therefore silently invalidated it. They now
+// write the map itself, which is applied downstream and cannot.
+
+function _slotFor(dev) {
+  return dev?.feeding ? getOrCreateSlot(dev.slotName) : null;
+}
+
+function _entryFor(slot, viz) {
+  if (!slot?.quatCal?.axisMap) return null;
+  return Object.values(slot.quatCal.axisMap).find(a => a.viz === viz) || null;
+}
 
 export function togglePolarity(dev, axis) {
-  if (dev.polarity[axis] !== undefined) {
-    dev.polarity[axis] *= -1;
-  }
-  _saveDevicePrefs();
-  return dev.polarity[axis];
-}
-
-export function toggleRollMute(dev) {
-  dev.rollMute = !dev.rollMute;
-  // Propagate to registry slot so the forward-vector path handles pole safety
-  _syncRollMuteToSlot(dev);
-  _saveDevicePrefs();
-  return dev.rollMute;
-}
-
-function _syncRollMuteToSlot(dev) {
-  if (!dev.feeding) return;
-  const slot = getOrCreateSlot(dev.slotName);
-  if (!slot?.quatCal?.axisMap) return;
-  slot.quatCal.axisMap.x.mute = dev.rollMute;  // x = roll in identity map
+  const e = _entryFor(_slotFor(dev), axis);
+  if (!e) return 1;
+  e.sign = -e.sign;
+  saveCalibration();
+  return e.sign;
 }
 
 export function setPolarity(dev, axis, sign) {
-  if (dev.polarity[axis] !== undefined) {
-    dev.polarity[axis] = sign >= 0 ? 1 : -1;
-  }
+  const e = _entryFor(_slotFor(dev), axis);
+  if (!e) return;
+  e.sign = sign >= 0 ? 1 : -1;
+  saveCalibration();
 }
 
-// ── Tare ────────────────────────────────────────────────────────────────────
-
-export function captureTare(dev) {
-  // Euler-space tare: store current pitch and yaw as offsets.
-  // Subtracted directly from Euler angles — no quaternion multiplication,
-  // so roll stays gravity-referenced and can't drift when yawing off-kilter.
-  const q = dev.rawQuat;
-  const euler = quatToEulerDeg(q.x, q.y, q.z, q.w);
-  dev.tareEuler = { pitch: euler.pitch, yaw: euler.yaw };
-
-  // NOTE: heading command ({ heading: 0 }) NOT sent here — it's a separate
-  // "zero heading" button in the UI. Sending it here would double-correct.
-  // It resets the hardware yaw reference, which causes the Euler-space tare
-  // offset to overcorrect (tare captures yaw=45°, heading zeros hardware,
-  // next frame: calibrated = 0° - 45° = -45°). Heading reset is useful for
-  // long-term drift but should be a separate action, not part of tare.
-
-  DEBUG && console.log(`[imu-setup] tare captured for ${dev.sn}: pitch=${euler.pitch.toFixed(1)}° yaw=${euler.yaw.toFixed(1)}°`);
+export function getPolarity(dev, axis) {
+  return _entryFor(_slotFor(dev), axis)?.sign ?? 1;
 }
 
-// Separate heading reset — call when yaw drift accumulates over a long session.
-// Clears tare first since the heading command changes the hardware reference frame.
-export function resetHeading(dev) {
-  if (dev.transport === 'osc') return;
-  dev.tareEuler = null;
-  sendCommandTo(dev, { heading: 0 });
-  DEBUG && console.log(`[imu-setup] heading reset for ${dev.sn} — tare cleared`);
+// The calibrated euler as the sensors card displays it — the slot's
+// zeroEuler (post-cal, post-axis-map), renamed into viz terms. Null while the
+// sensor is not feeding; the card prints "—".
+// (toggleRollMute/getRollMute lived here until 2026-09-01 — the Mute column
+// left the axes table with the footer's RO button.)
+export function getCalibratedEuler(dev) {
+  const e = _slotFor(dev)?.zeroEuler;
+  return e ? { roll: e.x, pitch: e.y, yaw: e.z } : null;
 }
 
-export function clearTare(dev) {
-  dev.tareEuler = null;
-  DEBUG && console.log(`[imu-setup] tare cleared for ${dev.sn}`);
+// ── Calibration — two gestures, both in the registry ────────────────────────
+// Mount calibration is SETUP and takes TWO poses — neutral/forward, then
+// pointing down — because one pose leaves the strap's own twist about vertical
+// indistinguishable from the performer's heading. captureHeading is
+// PERFORMANCE: face the stage, as often as you like, and it cannot disturb the
+// mounting.
+
+// Two poses, because one cannot determine a mounting — see sensor-registry.js.
+// Pose 1 is neutral/forward, pose 2 is pointing down at the earth.
+export function captureMountPose1(dev, quat = null) {
+  const slot = _slotFor(dev);
+  return slot ? regMountPose1(slot, quat) : null;
+}
+
+export function captureMountPose2(dev, quat = null) {
+  const slot = _slotFor(dev);
+  if (!slot) return null;
+  const r = regMountPose2(slot, quat);
+  DEBUG && console.log(`[imu-setup] mount ${r ? 'calibrated' : 'REJECTED (poses too close)'} for ${dev.sn}`);
+  return r;
+}
+
+export function cancelMountCapture(dev) {
+  const slot = _slotFor(dev);
+  if (slot) regCancelMount(slot);
+}
+
+// The live quaternion, for the UI's stillness detector.
+export function slotQuat(dev) {
+  return _slotFor(dev)?.quat || null;
+}
+
+export function captureHeading(dev) {
+  const slot = _slotFor(dev);
+  if (!slot) return null;
+  const r = regCaptureHeading(slot);
+  DEBUG && console.log(`[imu-setup] heading zeroed for ${dev.sn}`);
+  return r;
+}
+
+export function clearMountCal(dev) {
+  const slot = _slotFor(dev);
+  if (slot) regClearMount(slot);
+}
+
+export function hasMountCal(dev) {
+  return !!_slotFor(dev)?.quatCal?.mountQuat;
 }
 
 // ── AHRS message type ───────────────────────────────────────────────────────
@@ -1217,18 +1264,12 @@ export function requestQuatMode(dev) {
 export function setFeeding(dev, enabled) {
   dev.feeding = enabled;
   if (enabled) {
-    // Create registry slot with identity calibration — imu-setup owns calibration,
-    // so the registry should just pass data through.
+    // The slot keeps whatever calibration it restored from localStorage.
+    // This used to reset it to identity on every connect, on the old rule that
+    // "imu-setup owns calibration" — which meant a mounting calibration did
+    // not survive a reload, or even a feeding toggle. The registry owns it now.
     const slot = getOrCreateSlot(dev.slotName);
-    // Reset registry calibration to identity so it doesn't interfere
-    slot.quatCal.tareQuat       = null;
-    slot.quatCal.tareRollOffset = 0;
-    slot.quatCal.axisMap = {
-      x: { viz: 'roll',  sign: 1, mute: dev.rollMute },
-      y: { viz: 'pitch', sign: 1, mute: false },
-      z: { viz: 'yaw',   sign: 1, mute: false },
-    };
-    // Assign role
+    _applyMigratedSigns(slot);
     assignQuatRole(dev.slotName, dev.role);
   }
   _syncSensorStatus();
@@ -1237,9 +1278,10 @@ export function setFeeding(dev, enabled) {
 export function setRole(dev, role) {
   dev.role = role;
   _saveDevicePrefs();
-  if (dev.feeding) {
-    assignQuatRole(dev.slotName, role);
-  }
+  // Ek, 2026-09-01: "when you've selected the drop down it should just work."
+  // Feeding is implied by having a role — the separate toggle is gone.
+  if (!dev.feeding) setFeeding(dev, true);
+  else assignQuatRole(dev.slotName, role);
 }
 
 // ── Sync DeviceState.role when registry roles change externally ─────────────
@@ -1273,6 +1315,7 @@ function parseDataLine(dev, line) {
   const timestamp = parseInt(parts[1], 10);
   dev.lastTimestamp = timestamp;
   dev.lastMsgType = type;
+  _stampSeen(dev);
 
   switch (type) {
     case 'A': { // Euler angles: roll, pitch, yaw (degrees)
@@ -1280,15 +1323,12 @@ function parseDataLine(dev, line) {
         const r = parseFloat(parts[2]);
         const p = parseFloat(parts[3]);
         const y = parseFloat(parts[4]);
-        dev.rawEuler.roll  = r;
-        dev.rawEuler.pitch = p;
-        dev.rawEuler.yaw   = y;
+        // Whole-object replacement, not field-by-field — see the note in
+        // handleOSCSensorQuaternion. A partial write is a pose nothing measured.
+        dev.rawEuler = { roll: r, pitch: p, yaw: y };
         // Cross-populate quaternion so getCalibratedEuler/Quat always works
         const q = eulerDegToQuat(r, p, y);
-        dev.rawQuat.x = q[0];
-        dev.rawQuat.y = q[1];
-        dev.rawQuat.z = q[2];
-        dev.rawQuat.w = q[3];
+        dev.rawQuat = { x: q[0], y: q[1], z: q[2], w: q[3] };
       }
       break;
     }
@@ -1299,15 +1339,9 @@ function parseDataLine(dev, line) {
         const x = parseFloat(parts[3]);
         const y = parseFloat(parts[4]);
         const z = parseFloat(parts[5]);
-        dev.rawQuat.w = w;
-        dev.rawQuat.x = x;
-        dev.rawQuat.y = y;
-        dev.rawQuat.z = z;
+        dev.rawQuat  = { x, y, z, w };
         // Cross-populate Euler so raw readout always works
-        const e = quatToEulerDeg(x, y, z, w);
-        dev.rawEuler.roll  = e.roll;
-        dev.rawEuler.pitch = e.pitch;
-        dev.rawEuler.yaw   = e.yaw;
+        dev.rawEuler = quatToEulerDeg(x, y, z, w);
       }
       break;
     }
@@ -1353,16 +1387,56 @@ function _noteUnexpectedType(dev, type) {
 // ── Feed pre-calibrated quaternion to sensor-registry ───────────────────────
 
 function feedToRegistry(dev) {
-  const q = dev.getCalibratedQuat();
-  const slot = getOrCreateSlot(dev.slotName);
-  // Feed pre-calibrated quaternion — registry's identity calibration passes it through
-  handleSlotQuaternion(slot, [q[0], q[1], q[2], q[3]]);
+  // The sensor's own quaternion, uncalibrated. Everything — mount, heading,
+  // signs, mute — is applied once, inside the registry, in a fixed order.
+  const q = dev.getFeedQuat();
+  handleSlotQuaternion(getOrCreateSlot(dev.slotName), q);
 }
 
 // ── OSC sensor intake ───────────────────────────────────────────────────────
 // Called by osc.js when a /sensor/{name}/quaternion or /sensor/{name}/inertial
 // message arrives.  Auto-creates a DeviceState on first contact, runs
 // calibration, and feeds to registry — same pipeline as WiFi/serial devices.
+
+// A sensor that arrives over OSC is anonymous by construction — the address
+// namespace carries a name, never a make. So the module that owns the
+// connection says what it is, once, as soon as it knows: sygaldry.js calls this
+// when the instrument reports its own name. Without it a first-party instrument
+// is indistinguishable from a Max bridge, which is exactly how one came to be
+// listed as "x-imu3 · osc" while sitting on a USB cable.
+export function declareSensorKind(name, kind, via = null) {
+  const dev = _devices.get('osc-' + name);
+  if (!dev) return null;
+  if (dev.kind === kind && dev.via === via) return dev;   // nothing to repaint
+  dev.kind = kind;
+  dev.via  = via;
+  _onDeviceUpdated?.(dev);
+  // The wire word just changed — S.rig and the pill derive from the
+  // sensor-status event, and the last one was dispatched before this
+  // declaration existed (the pill read "osc" for a wifi instrument, Ek).
+  _syncSensorStatus();
+  return dev;
+}
+
+// Forget an OSC sensor entirely: the device, its registry slot, its saved
+// calibration and its saved role. An OSC sensor is auto-discovered by its
+// first packet and, until this existed, could never be un-discovered — the
+// prefs and the calibration table both MERGE on save, so a name seen once
+// was kept for good. The align audit's `__rt10__` probe is the case that
+// found it; a renamed instrument is the other.
+export function forgetOscSensor(name) {
+  const sn = 'osc-' + name;
+  const dev = _devices.get(sn);
+  if (dev) { dev.feeding = false; _devices.delete(sn); }
+  forgetSlot(sn);
+  const prefs = _loadDevicePrefs();
+  if (sn in prefs) {
+    delete prefs[sn];
+    try { localStorage.setItem(_LS_DEVICE_PREFS_KEY, JSON.stringify(prefs)); } catch (_) {}
+  }
+  if (dev) { _onDeviceUpdated?.(dev); _syncSensorStatus(); }
+  return !!dev;
+}
 
 export function handleOSCSensorQuaternion(name, values) {
   let dev = _devices.get('osc-' + name);
@@ -1379,18 +1453,20 @@ export function handleOSCSensorQuaternion(name, values) {
 
   // Store raw quaternion — osc.js sends [qx, qy, qz, qw] or [w, x, y, z]
   // Registry convention from Max is [qx, qy, qz, qw] (same as sphere.js)
-  dev.rawQuat.x = values[0];
-  dev.rawQuat.y = values[1];
-  dev.rawQuat.z = values[2];
-  dev.rawQuat.w = values[3];
+  //
+  // Replaced whole, never field by field. Four separate assignments leave the
+  // object briefly holding two packets at once, and any async reader — a rAF
+  // readout, a probe — can sample the seam and see a quaternion that was never
+  // measured. Observed as 1°+ spikes on a sensor sitting still (2026-08-31).
+  // The engine never saw them (feedToRegistry runs synchronously below), but
+  // "never" should not depend on who happens to read it.
+  dev.rawQuat = { x: values[0], y: values[1], z: values[2], w: values[3] };
   dev.lastMsgType = 'Q';
   dev.lastTimestamp = Date.now();
+  _stampSeen(dev);
 
-  // Cross-populate Euler
-  const e = quatToEulerDeg(values[0], values[1], values[2], values[3]);
-  dev.rawEuler.roll  = e.roll;
-  dev.rawEuler.pitch = e.pitch;
-  dev.rawEuler.yaw   = e.yaw;
+  // Cross-populate Euler — replaced whole, for the reason above.
+  dev.rawEuler = quatToEulerDeg(values[0], values[1], values[2], values[3]);
 
   _onDataReceived?.(dev);
 
@@ -1412,13 +1488,14 @@ export function handleOSCSensorInertial(name, values) {
     DEBUG && console.log(`[imu-setup] OSC sensor auto-discovered (inertial): ${name}`);
   }
 
-  dev.rawInertial.gx = values[0];
-  dev.rawInertial.gy = values[1];
-  dev.rawInertial.gz = values[2];
-  dev.rawInertial.ax = values[3];
-  dev.rawInertial.ay = values[4];
-  dev.rawInertial.az = values[5];
+  dev.rawInertial = { gx: values[0], gy: values[1], gz: values[2],
+                      ax: values[3], ay: values[4], az: values[5] };
   dev.lastMsgType = 'I';
+  // Liveness is per DEVICE, not per stream: a peer sending only /inertial is
+  // as connected as one sending only /quaternion, and the sources badge greys
+  // on this field. Stamped here too or such a peer reads as silent forever.
+  dev.lastTimestamp = Date.now();
+  _stampSeen(dev);
 
   _onDataReceived?.(dev);
 
@@ -1430,14 +1507,13 @@ export function handleOSCSensorInertial(name, values) {
 }
 
 function _initOscSlot(dev) {
+  // getOrCreateSlot() primes a NEW slot from saved calibration, so this must
+  // not overwrite it. Wiping here is what made a calibration last exactly
+  // until the next reload: the first OSC packet arrives, the slot is created
+  // with its saved mount and heading, and the old code nulled both on the
+  // very next line (2026-08-31).
   const slot = getOrCreateSlot(dev.slotName);
-  slot.quatCal.tareQuat       = null;
-  slot.quatCal.tareRollOffset = 0;
-  slot.quatCal.axisMap = {
-    x: { viz: 'roll',  sign: 1, mute: false },
-    y: { viz: 'pitch', sign: 1, mute: false },
-    z: { viz: 'yaw',   sign: 1, mute: false },
-  };
+  _applyMigratedSigns(slot);
   assignQuatRole(dev.slotName, dev.role);
 }
 
@@ -1464,27 +1540,68 @@ function _applyResponseFields(dev, json) {
   }
 }
 
+// ── Liveness: the connection state IS packets arriving (Ek, 2026-09-09) ────
+// "when i disconnected the usb the header icon and the sensor page still
+// show connected. it's clearly sending 0 hz." A device in the map is one that
+// has been seen, not one that is here: an OSC device has no socket to close,
+// a cable pulled mid-set closes nothing on our side, and the link object's own
+// loss detection never reached the map. So a device is UP while a packet has
+// arrived within LIVE_MS, on OUR clock (lastSeenAt — never lastTimestamp,
+// which for an x-imu3 is its own µs-since-boot), and everything that says
+// "connected" — the header readout, S.rig, the list's badge and count — reads
+// that. Two seconds is well clear of the slowest stream that matters and
+// short enough that a pulled cable is seen before anyone finishes looking.
+// The rising edge is immediate (first packet); the falling edge is the tick.
+export const LIVE_MS = 2000;
+export function isLive(dev) {
+  return !!dev.lastSeenAt && (Date.now() - dev.lastSeenAt) < LIVE_MS;
+}
+function _stampSeen(dev) {
+  dev.lastSeenAt = Date.now();
+  if (!dev.live) { dev.live = true; _onDeviceUpdated?.(dev); _syncSensorStatus(); }
+}
+function _liveTick() {
+  let changed = false;
+  for (const dev of _devices.values()) {
+    const now = isLive(dev);
+    if (now === dev.live) continue;
+    dev.live = now; changed = true;
+    _onDeviceUpdated?.(dev);
+  }
+  if (changed) _syncSensorStatus();
+}
+
 // Notify the rest of the app that sensor connection state changed.
-// Any device feeding data counts as "sensor connected".
+// A device is "connected" while it is LIVE — see isLive.
 function _syncSensorStatus() {
   const devs = [..._devices.values()];
-  const hasFeeding = devs.some(d => d.feeding);
-  const hasAny     = _devices.size > 0;
+  const live = devs.filter(d => d.live);
+  const hasFeeding = live.some(d => d.feeding);
+  const hasAny     = live.length > 0;
 
-  // Build transport summary for the main-page indicator
+  // Build transport summary for the main-page indicator — live devices only
   const transports = new Set();
   let count = 0;
-  for (const d of devs) {
+  for (const d of live) {
     count++;
-    if (d.transport === 'serial')    transports.add('serial');
-    else if (d.transport === 'udp')  transports.add('wifi');
-    else if (d.transport === 'osc')  transports.add('osc');
+    // A sygaldry instrument is FILED under transport 'osc' whatever the wire
+    // was; `via` carries the real one ('wifi' / 'cable'). Every word shown to
+    // a person derives from via first — an instrument on wifi is a wifi
+    // sensor, and OSC is the rare case, not the default answer (Ek).
+    const wire = d.via === 'cable' ? 'serial' : (d.via || d.transport);
+    if (wire === 'serial')    transports.add('serial');
+    else if (wire === 'udp' || wire === 'wifi') transports.add('wifi');
+    else if (wire === 'osc')  transports.add('osc');
   }
 
+  // Announcing but not connected — the pill's 'found' state (R9).
+  let found = 0;
+  for (const sn of _discovered.keys()) if (!_devices.has(sn)) found++;
   window.dispatchEvent(new CustomEvent('sensor-status', {
     detail: {
       connected: hasAny,
       feeding:   hasFeeding,
+      found,
       count,
       transports: [...transports],
       devices: devs.map(d => ({
@@ -1493,7 +1610,9 @@ function _syncSensorStatus() {
         slotName: d.slotName,
         role: d.role,
         feeding: d.feeding,
+        live: d.live,
         transport: d.transport,
+        via: d.via || null,
       })),
     },
   }));

@@ -97,11 +97,20 @@ export const GESTURE_DEFAULTS = {
 };
 
 // ── Default calibration ─────────────────────────────────────────────────────
+// The pitch and yaw signs are NOT arbitrary defaults — they are a fixed
+// convention offset, and leaving them at +1 makes every freshly calibrated
+// mount need the same two manual flips (Ek, 2026-08-31, across four different
+// mountings). The cause is in applyAxisMapQuat: it DECOMPOSES with
+// quatToEulerDeg, which is Z-up ZYX (yaw about Z), and RECOMPOSES in the
+// sphere's Y-up graphics convention (yaw about (0,1,0), pitch about (1,0,0),
+// roll about (0,0,1)). That relabelling is mount-independent, so its correction
+// belongs here once rather than in the player's hands every time.
+// Guarded by scripts/sensor-audit.js § I.
 function defaultQuatAxisMap() {
   return {
-    x: { viz: 'roll',  sign: 1, mute: false },
-    y: { viz: 'pitch', sign: 1, mute: false },
-    z: { viz: 'yaw',   sign: 1, mute: false },
+    x: { viz: 'roll',  sign:  1, mute: false },
+    y: { viz: 'pitch', sign: -1, mute: false },
+    z: { viz: 'yaw',   sign: -1, mute: false },
   };
 }
 
@@ -160,9 +169,18 @@ export function makeSensorSlot(name) {
 
     // Calibration
     quatCal: {
-      axisMap:        defaultQuatAxisMap(),
-      tareQuat:       null,
-      tareRollOffset: 0,
+      axisMap:     defaultQuatAxisMap(),
+      _pose1:      null,   // scratch, between the two calibration poses; never persisted
+      // The calibration is two rotations on OPPOSITE sides of the sensor
+      // quaternion, which is what lets them be set independently:
+      //   output = conj(H) · q · conj(B)
+      // B (mount) is BODY-side — how the sensor sits on the hand, wrist, head
+      //   or back. Arbitrary, set once per mounting.
+      // H (heading) is WORLD-side and constrained to true vertical — where the
+      //   stage is. Re-zeroed freely; it cannot invalidate B because it is
+      //   captured relative to it, and it commutes with a turn.
+      mountQuat:   null,
+      headingQuat: null,
     },
     inertialCal: {
       axisMap:    defaultInertialAxisMap(),
@@ -346,10 +364,11 @@ export function handleSlotQuaternion(slot, values) {
   if (!slot.hasQuat) {
     slot.hasQuat = true;
     autoAssignQuatIfNeeded(slot);
+    S._onSensorFirstQuat?.();   // a persisted sensor camera waits for this (main.js)
   }
 
   // Apply tare
-  const tared = applyTare(slot.quat, slot.quatCal.tareQuat);
+  const tared = applyCal(slot.quat, slot.quatCal);
   const rawEuler = quatToEulerDeg(tared[0], tared[1], tared[2], tared[3]);
 
   // Apply axis remap → semantic roll/pitch/yaw
@@ -472,7 +491,6 @@ function dispatchCustomInertial(slot) {
     gi.gyroMag     = Math.sqrt(gi.gx*gi.gx + gi.gy*gi.gy + gi.gz*gi.gz);
     gi.accelDynMag = Math.sqrt(gi.ax*gi.ax + gi.ay*gi.ay + gi.az*gi.az);
     slot._customGestureInertial = gi;
-    S._onGestureUpdate?.();
   } else {
     slot._customGestureInertial = null;
   }
@@ -494,86 +512,215 @@ export function getCustomGestureSlots() {
 }
 
 
-// ── Tare — NOT owned by this module ─────────────────────────────────────────
-// The registry used to implement its own quaternion tare here (`slotTare` /
-// `slotClearTare`, gravity-aligned for flat mounts and full-quat otherwise).
-// It was superseded by the Euler-space tare in imu-setup.js — `captureTare()`,
-// which stores { pitch, yaw } on the DEVICE and is what the `tare sensor`
-// button, the `tare cursor` button, the ` key and the `tare` action all call.
+// ── Quaternion calibration IS owned by this module (2026-08-31) ─────────────
+// The ownership above was reversed. It used to read "imu-setup owns
+// calibration, so the registry should just pass data through", and imu-setup
+// enforced that by nulling quatCal on every connect — which is why the older
+// registry tare could not have worked even if something had called it.
 //
-// The pair was removed (2026-08-01) rather than left as a second entry point,
-// because it could not have worked even if something had called it:
-// `setFeeding()` in imu-setup.js nulls `quatCal.tareQuat` and
-// `quatCal.tareRollOffset` on every connect — "imu-setup owns calibration, so
-// the registry should just pass data through". Anything slotTare wrote was
-// erased the next time the device started feeding.
+// The reason it moved: an Euler-space tare CANNOT fix a heading offset. It
+// decomposes, subtracts yaw, recomposes — and subtracting an angle after the
+// decomposition cannot rotate the frame the decomposition was done in. A
+// sensor 45° off the reference X axis therefore smears one physical tilt
+// across pitch AND roll, and no sign flip or channel remap can undo it
+// (measured 2026-08-31: one nod produced 64° pitch and 54° yaw). Only a
+// quaternion applied BEFORE quatToEulerDeg can, and that is applyCal() here.
 //
-// `applyTare()` below and the `tareQuat` reads through this file STAY: they are
-// the mechanism, they no-op on null, and `tareQuat` is still in the persisted
-// calibration schema. Don't drop it from there — `mubone_sensor_cal_v` is the
-// key whose omission from the settings export silently rewrote frame-role
-// sensors (see docs/EXPORT-IMPORT-AUDIT-2026-07.md, finding on schema flags).
-//
-// If a quaternion tare is ever wanted again, it belongs in imu-setup.js beside
-// captureTare, not here — one owner.
+// So imu-setup no longer resets quatCal, `mubone_sensor_cal` is the one place
+// quaternion calibration lives, and captureMount / captureHeading below are
+// the only two entry points. Keep `mubone_sensor_cal_v` in the settings
+// export — its omission silently rewrote frame-role sensors once already
+// (docs/archive/EXPORT-IMPORT-AUDIT-2026-07.md, finding on schema flags).
 
-// ── Recenter — correct accumulated drift without changing tare ───────────────
-// Computes a rotation offset that maps the current camera direction back to
-// front-center [0,0,1] (lon=0, lat=0). Applied every frame in the renderer.
-export function recenterCursor() {
-  if (!S.camQ) return;
-  // Current camera direction as a unit vector (forward = [0,0,1] rotated by camQ)
-  const [cx, cy, cz, cw] = S.camQ;
-  const curFwd = [
-    2 * (cx * cz + cw * cy),
-    2 * (cy * cz - cw * cx),
-    1 - 2 * (cx * cx + cy * cy)
-  ];
-  // Target is always front-center: [0, 0, 1]
-  const tgtFwd = [0, 0, 1];
-  // Rotation from curFwd to tgtFwd (shortest arc quaternion)
-  const dot = curFwd[0] * tgtFwd[0] + curFwd[1] * tgtFwd[1] + curFwd[2] * tgtFwd[2];
-  let qOff;
-  if (dot > 0.999999) {
-    qOff = [0, 0, 0, 1]; // already aligned
-  } else if (dot < -0.999999) {
-    // 180° — pick arbitrary perpendicular axis
-    qOff = [0, 1, 0, 0];
-  } else {
-    const cross = [
-      curFwd[1] * tgtFwd[2] - curFwd[2] * tgtFwd[1],
-      curFwd[2] * tgtFwd[0] - curFwd[0] * tgtFwd[2],
-      curFwd[0] * tgtFwd[1] - curFwd[1] * tgtFwd[0]
-    ];
-    const w = 1 + dot;
-    const len = Math.sqrt(cross[0] ** 2 + cross[1] ** 2 + cross[2] ** 2 + w * w);
-    qOff = [cross[0] / len, cross[1] / len, cross[2] / len, w / len];
-  }
-  // Compose with existing drift offset
-  if (S.driftOffsetQ) {
-    const [ax, ay, az, aw] = S.driftOffsetQ;
-    const [bx, by, bz, bw] = qOff;
-    const composed = [
-      bw * ax + bx * aw + by * az - bz * ay,
-      bw * ay - bx * az + by * aw + bz * ax,
-      bw * az + bx * ay - by * ax + bz * aw,
-      bw * aw - bx * ax - by * ay - bz * az
-    ];
-    const cl = Math.sqrt(composed[0] ** 2 + composed[1] ** 2 + composed[2] ** 2 + composed[3] ** 2);
-    S.driftOffsetQ = [composed[0] / cl, composed[1] / cl, composed[2] / cl, composed[3] / cl];
-  } else {
-    S.driftOffsetQ = qOff;
-  }
+
+// Swing-twist: the component of `q` that is a rotation about world +Z.
+// The BNO's rotation vector is Z-up, so this IS the heading, whatever angle
+// the sensor is mounted at — the vertical comes from gravity, never from a
+// device axis. That is what makes a head or tuba mount behave like a hand.
+//
+// Degenerate at 180° about a horizontal axis, where z and w both vanish and
+// the twist is undefined. Returns identity there rather than a normalised
+// zero — an upside-down mount is exactly the case that hits this (2026-08-31).
+// Used where the pose is LEVEL by construction (mountFromPoses: pose 1 is
+// level in B's own frame; the v1 migration). Not for the heading zero — see
+// headingAboutZ, and why (2026-09-10).
+const _TWIST_EPS = 1e-6;
+function twistAboutZ(q) {
+  const z = q[2], w = q[3];
+  const n = Math.hypot(z, w);
+  if (n < _TWIST_EPS) return [0, 0, 0, 1];
+  return [0, 0, z / n, w / n];
 }
 
-// applyTare — works for BOTH tare strategies:
-//   Gravity-aligned: tareQuat is a pure heading rotation → conjugate removes heading only
-//   Full-quaternion:  tareQuat is the entire raw orientation → conjugate zeros everything
-// Result is always conj(tareQuat) * currentQuat = rotation FROM tare TO current.
-function applyTare(quat, tareQuat) {
-  if (!tareQuat) return quat;
-  const [tx, ty, tz, tw] = tareQuat;
-  return qMulQ([-tx, -ty, -tz, tw], quat);
+// The pure rotation about world Z that carries q's forward (body X) axis to
+// azimuth 0 — quatToEulerDeg's yaw, as a quaternion. Defined at every pitch
+// and roll; only a forward axis pointing straight up or down leaves it
+// arbitrary, and the next zero fixes that.
+function headingAboutZ(q) {
+  const [x, y, z, w] = q;
+  const yaw = Math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z));
+  return [0, 0, Math.sin(yaw / 2), Math.cos(yaw / 2)];
+}
+
+// output = conj(H) · q · conj(B). Both no-op on null, so an uncalibrated slot
+// passes its quaternion through untouched.
+//
+// The two sides are the whole design, and the reason is one line of algebra:
+// H is constrained to be a PURE rotation about world Z, so it COMMUTES with a
+// performer turning on the spot. conj(H)·Rz(φ)·H·B·conj(B) = Rz(φ) — a turn
+// reads as yaw and nothing else, for EVERY mounting angle.
+//
+// Putting the mount on the left instead (conj(M)·q) makes the output frame the
+// device's own rest frame, whose Z is the device's up rather than the world's.
+// Level mounts survive that because the two coincide; a sensor worn vertically
+// on a back does not, and its turn comes out as pitch (Ek, 2026-08-31 — the
+// bug this shape fixes). § G of scripts/sensor-audit.js is that case.
+export function applyCal(quat, cal) {
+  let q = quat;
+  if (cal?.mountQuat)   q = qMulQ(q, qConjugate(cal.mountQuat));
+  if (cal?.headingQuat) q = qMulQ(qConjugate(cal.headingQuat), q);
+  return q;
+}
+
+// ── Calibration capture ─────────────────────────────────────────────────────
+// Two gestures, and only two. Mount is setup; heading is performance.
+
+// ── Two-pose mount calibration ──────────────────────────────────────────────
+// ONE pose cannot determine a mounting, and this is not a tuning problem but a
+// missing degree of freedom. Splitting the rest pose by its twist about world Z
+// gives `H_est = twist(H_true · B)`, which picks up whatever Z-rotation the
+// STRAP itself carries — so the estimated heading is wrong by that amount and a
+// performer's pitch smears into roll by the same angle. Measured 2026-08-31:
+// exact for a level mount, 26° of false roll for a twisted one. A turn is immune
+// (H commutes with Rz whether or not it is the right H), which is why a suite
+// that only tested turns passed it.
+//
+// Two poses give two independent directions, which pin the frame completely:
+//   pose 1  neutral, pointing forward  → gravity is the performer's UP
+//   pose 2  pointing down at the earth → the rotation axis is LEFT-RIGHT
+// Standard N-pose/T-pose construction, and it exists for exactly this reason.
+
+function _v3norm(v) { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0]/n, v[1]/n, v[2]/n]; }
+function _v3cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+function _v3dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+
+// Rotate a WORLD vector into the body frame: conj(q) · v · q
+function _worldToBody(q, v) {
+  const t = [2*(q[1]*v[2] - q[2]*v[1]), 2*(q[2]*v[0] - q[0]*v[2]), 2*(q[0]*v[1] - q[1]*v[0])];
+  return [v[0] - q[3]*t[0] + (q[1]*t[2] - q[2]*t[1]),
+          v[1] - q[3]*t[1] + (q[2]*t[0] - q[0]*t[2]),
+          v[2] - q[3]*t[2] + (q[0]*t[1] - q[1]*t[0])];
+}
+
+// Quaternion for the rotation whose matrix has these three COLUMNS.
+function _quatFromCols(cx, cy, cz) {
+  const m = [[cx[0], cy[0], cz[0]], [cx[1], cy[1], cz[1]], [cx[2], cy[2], cz[2]]];
+  const tr = m[0][0] + m[1][1] + m[2][2];
+  let x, y, z, w, s;
+  if (tr > 0) {
+    s = Math.sqrt(tr + 1) * 2; w = 0.25*s;
+    x = (m[2][1]-m[1][2])/s; y = (m[0][2]-m[2][0])/s; z = (m[1][0]-m[0][1])/s;
+  } else if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) {
+    s = Math.sqrt(1 + m[0][0] - m[1][1] - m[2][2]) * 2; w = (m[2][1]-m[1][2])/s;
+    x = 0.25*s; y = (m[0][1]+m[1][0])/s; z = (m[0][2]+m[2][0])/s;
+  } else if (m[1][1] > m[2][2]) {
+    s = Math.sqrt(1 + m[1][1] - m[0][0] - m[2][2]) * 2; w = (m[0][2]-m[2][0])/s;
+    x = (m[0][1]+m[1][0])/s; y = 0.25*s; z = (m[1][2]+m[2][1])/s;
+  } else {
+    s = Math.sqrt(1 + m[2][2] - m[0][0] - m[1][1]) * 2; w = (m[1][0]-m[0][1])/s;
+    x = (m[0][2]+m[2][0])/s; y = (m[1][2]+m[2][1])/s; z = 0.25*s;
+  }
+  return [x, y, z, w];
+}
+
+// How far apart the two poses must be for the axis to mean anything. Below
+// this the cross product is noise and the calibration would be worse than none.
+export const MOUNT_POSE_MIN_DEG = 20;
+
+// Pure: two quaternions in, calibration out. `null` if the poses are too close
+// together or too nearly colinear with gravity to define a frame.
+export function mountFromPoses(q1, q2) {
+  if (!q1 || !q2) return null;
+  const up = _v3norm(_worldToBody(q1, [0, 0, 1]));   // performer UP, sensor coords
+  const d  = qMulQ(qConjugate(q1), q2);              // pose 1 → pose 2, sensor coords
+  const sgn = d[3] < 0 ? -1 : 1;                     // shortest arc
+  let ax = [d[0]*sgn, d[1]*sgn, d[2]*sgn];
+  const axLen = Math.hypot(ax[0], ax[1], ax[2]);
+  const angDeg = 2 * Math.atan2(axLen, Math.abs(d[3])) * 180 / Math.PI;
+  if (angDeg < MOUNT_POSE_MIN_DEG) return null;
+  ax = _v3norm(ax);
+  // Tipping DOWN is a negative pitch, so the measured axis is −Y.
+  let yp = [-ax[0], -ax[1], -ax[2]];
+  const along = _v3dot(yp, up);
+  yp = _v3norm([yp[0] - along*up[0], yp[1] - along*up[1], yp[2] - along*up[2]]);
+  if (!Number.isFinite(yp[0]) || Math.hypot(...yp) < 0.5) return null;  // tipped about vertical
+  const zp = up;
+  const xp = _v3cross(yp, zp);                       // right-handed: X = Y × Z
+  const B = qConjugate(_quatFromCols(xp, yp, zp));   // sensor → performer
+  const H = twistAboutZ(qMulQ(q1, qConjugate(B)));   // now the TRUE heading
+  return { mountQuat: B, headingQuat: H };
+}
+
+// Pose 1 — neutral, pointing forward. Stashed until pose 2 arrives; nothing is
+// written to the calibration yet, so an abandoned run changes nothing.
+export function captureMountPose1(slot, quat = null) {
+  const q = quat || slot?.quat;
+  if (!q) return null;
+  slot.quatCal._pose1 = q.slice();
+  return slot.quatCal._pose1;
+}
+
+// Pose 2 — pointing down at the earth. Completes the calibration, or returns
+// null if the two poses are too close to define a frame.
+export function captureMountPose2(slot, quat = null) {
+  const q = quat || slot?.quat;
+  if (!q || !slot?.quatCal?._pose1) return null;
+  const cal = mountFromPoses(slot.quatCal._pose1, q);
+  if (!cal) return null;
+  slot.quatCal.mountQuat   = cal.mountQuat;
+  slot.quatCal.headingQuat = cal.headingQuat;
+  slot.quatCal._pose1 = null;
+  saveCalibration();
+  return cal;
+}
+
+export function cancelMountCapture(slot) {
+  if (slot?.quatCal) slot.quatCal._pose1 = null;
+}
+
+// Face the stage, then call this. Re-derives H ONLY — B is untouched, so the
+// mounting survives. H is the yaw the app READS from q·conj(B) — the azimuth
+// of the forward axis, which is what quatToEulerDeg calls yaw — as a pure
+// rotation about world Z, so zeroEuler.z is 0 the instant after the press.
+//
+// It was twistAboutZ(q·conj(B)) until 2026-09-10. The twist is the heading
+// only when the pose is LEVEL: the swing left after removing it has a yaw of
+// its own whenever pitch and roll are both non-zero (0.9° at 10°/10°, 8° at
+// 20°/45°), and near a 180° roll — an uncalibrated upside-down mount — the
+// twist lives in two vanishing components, so 4° of pitch at zero time moved
+// the residual by 72° and a zero could land at lon −69° (Ek, 2026-09-10:
+// "it doesn't go back to 0 0, always a bit off, only sometimes"). The forward
+// axis has a well-defined azimuth at every roll. sensor-audit.js § B2.
+export function captureHeading(slot) {
+  if (!slot?.quat) return null;
+  const turned = slot.quatCal.mountQuat
+    ? qMulQ(slot.quat, qConjugate(slot.quatCal.mountQuat))
+    : slot.quat;
+  slot.quatCal.headingQuat = headingAboutZ(turned);
+  saveCalibration();
+  return slot.quatCal.headingQuat;
+}
+
+export function clearMount(slot) {
+  if (!slot) return;
+  slot.quatCal.mountQuat = null;
+  saveCalibration();
+}
+
+export function clearHeading(slot) {
+  if (!slot) return;
+  slot.quatCal.headingQuat = null;
+  saveCalibration();
 }
 
 
@@ -684,22 +831,11 @@ function applyAxisMapQuat(q, cal) {
   }
 
   // ── Euler path (all three axes active) ────────────────────────────────
-  // Roll offset subtraction only applies to GRAVITY-ALIGNED tare (flat mount).
-  // With full-quaternion tare (non-flat mount), tareRollOffset is 0 — the full
-  // tare already zeroed the entire mounting rotation, so the tared quaternion
-  // is near-identity at rest and decomposes cleanly without any correction.
-  let qIn = q;
-  const rollOffset = cal.tareRollOffset ?? 0;
-  if (rollOffset !== 0) {
-    // Gravity-aligned tare only: subtract the static X-roll captured at tare
-    // time.  Right-multiplying by Qx(-offset) cleanly removes the innermost
-    // rotation in the ZYX Euler decomposition, preventing pitch↔yaw coupling
-    // from tilted mount.  Skipped for full-quat tare (rollOffset === 0).
-    const qRollOff = eulerAxisToQuat(1, 0, 0, -rollOffset);
-    qIn = qMulQ(q, qRollOff);
-  }
-
-  const euler = quatToEulerDeg(qIn[0], qIn[1], qIn[2], qIn[3]);
+  // `tareRollOffset` used to sit here, subtracting a static X-roll captured at
+  // tare time to stop a tilted mount coupling pitch into yaw. It is gone: the
+  // mount rotation B is a full quaternion applied on the body side, so a
+  // tilted mount is zeroed properly rather than patched one axis at a time.
+  const euler = quatToEulerDeg(q[0], q[1], q[2], q[3]);
   const mapped = { roll: 0, pitch: 0, yaw: 0 };
   for (const phys of ['x', 'y', 'z']) {
     const { viz, sign, mute } = cal.axisMap[phys];
@@ -742,7 +878,7 @@ export function getSensorCamQ() {
   const cursorSlot = getByRole('cursor');
   if (cursorSlot?.quat) {
     camQ = applyAxisMapQuat(
-      applyTare(cursorSlot.quat, cursorSlot.quatCal.tareQuat),
+      applyCal(cursorSlot.quat, cursorSlot.quatCal),
       cursorSlot.quatCal
     );
   }
@@ -798,7 +934,7 @@ export function getSensorCursorQ() {
   const cursorSlot = getByRole('cursor');
   if (cursorSlot?.quat) {
     const cWorld = applyAxisMapQuat(
-      applyTare(cursorSlot.quat, cursorSlot.quatCal.tareQuat),
+      applyCal(cursorSlot.quat, cursorSlot.quatCal),
       cursorSlot.quatCal
     );
     if (inFrameMode && cWorld) {
@@ -840,7 +976,7 @@ export function getSensorCursorQ() {
 export function getSensorRawCursorQ() {
   const cursorSlot = getByRole('cursor');
   if (!cursorSlot?.quat) return null;
-  return applyTare(cursorSlot.quat, cursorSlot.quatCal.tareQuat);
+  return applyCal(cursorSlot.quat, cursorSlot.quatCal);
 }
 
 // ── getCursorAxisSigns — yaw/pitch sign multipliers + rollMuted flag ─────────
@@ -871,7 +1007,7 @@ export function getCursorAxisSigns() {
 function _worldRefQuat(slot) {
   if (!slot?.quat) return null;
   const q = applyAxisMapQuat(
-    applyTare(slot.quat, slot.quatCal.tareQuat),
+    applyCal(slot.quat, slot.quatCal),
     slot.quatCal
   );
   if (!q) return null;
@@ -919,7 +1055,7 @@ export function getCursorWorldQ() {
   const cursorSlot = getByRole('cursor');
   if (!cursorSlot?.quat) return null;
   return applyAxisMapQuat(
-    applyTare(cursorSlot.quat, cursorSlot.quatCal.tareQuat),
+    applyCal(cursorSlot.quat, cursorSlot.quatCal),
     cursorSlot.quatCal
   );
 }
@@ -965,7 +1101,7 @@ function qConjugate(q) {
 
 const LS_KEY          = 'mubone_sensor_cal';
 const LS_VERSION_KEY  = 'mubone_sensor_cal_v';   // schema version flag
-const CURRENT_VERSION = '1';                     // bumped 2026-04-23: frame→camera split
+const CURRENT_VERSION = '2';                     // bumped 2026-08-31: tareQuat → mountQuat + headingQuat
 let _restoring = false;   // true while applying saved cal — suppresses re-saves
 
 // Serialise just the bits we need to restore
@@ -976,9 +1112,9 @@ function slotToJSON(slot) {
     quatRoutes:     slot.quatRoutes,
     inertialRoutes: slot.inertialRoutes,
     quatCal: {
-      axisMap:        slot.quatCal.axisMap,
-      tareQuat:       slot.quatCal.tareQuat,
-      tareRollOffset: slot.quatCal.tareRollOffset ?? 0,
+      axisMap:     slot.quatCal.axisMap,
+      mountQuat:   slot.quatCal.mountQuat,
+      headingQuat: slot.quatCal.headingQuat,
     },
     inertialCal: {
       axisMap:    slot.inertialCal.axisMap,
@@ -989,18 +1125,27 @@ function slotToJSON(slot) {
 
 export function saveCalibration() {
   if (_restoring) return;   // don't re-save while restoring from localStorage
-  const data = {};
-  for (const [name, slot] of _registry) {
-    data[name] = slotToJSON(slot);
-  }
+  // MERGE, never replace. This used to serialise the registry and overwrite
+  // the stored map wholesale, so any save while a slot had not yet restored
+  // erased that slot's calibration — reachable whenever the first OSC packet
+  // beats initSensor(), which a websocket instrument reconnecting after a
+  // reload does easily (2026-08-31). A slot the registry has never heard of
+  // must keep whatever is on disk.
+  loadSavedCal();
+  const data = { ..._savedCal };
+  for (const [name, slot] of _registry) data[name] = slotToJSON(slot);
+  _savedCal = data;
   try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (_) {}
   DEBUG && console.log('[sensor-registry] calibration saved');
 }
 
 // Returns the saved map (or null) — used by getOrCreateSlot to prime new slots
 let _savedCal = null;
+let _savedCalLoaded = false;   // distinct from "loaded and empty"
 
 function loadSavedCal() {
+  if (_savedCalLoaded) return;
+  _savedCalLoaded = true;
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) _savedCal = JSON.parse(raw);
@@ -1045,6 +1190,10 @@ function _migrateSavedCal() {
 // Slot must already be in _registry so assignQuatRole/assignInertialRole
 // can find it and properly unassign conflicting holders.
 function applySavedCal(slot) {
+  // Lazily, in case a sensor's first packet arrives before initSensor(). The
+  // early return on a null _savedCal used to mean the slot came up
+  // uncalibrated and the next save wrote that emptiness to disk.
+  loadSavedCal();
   if (!_savedCal) return;
   const saved = _savedCal[slot.name];
   if (!saved) return;
@@ -1052,8 +1201,25 @@ function applySavedCal(slot) {
   // Restore calibration data (no conflict concerns)
   if (saved.quatCal) {
     if (saved.quatCal.axisMap)  slot.quatCal.axisMap  = saved.quatCal.axisMap;
-    if (saved.quatCal.tareQuat) slot.quatCal.tareQuat = saved.quatCal.tareQuat;
-    if (saved.quatCal.tareRollOffset != null) slot.quatCal.tareRollOffset = saved.quatCal.tareRollOffset;
+    // A map stored before the convention offset moved into the default (2026-08-31)
+    // carries whatever the player flipped by hand to compensate. Restoring it
+    // verbatim would double-apply the correction, so an all-+1 map — the old
+    // default, which never worked without manual flips — is replaced.
+    if (saved.quatCal.axisMap &&
+        Object.values(saved.quatCal.axisMap).every(a => a.sign === 1 && !a.mute)) {
+      slot.quatCal.axisMap = defaultQuatAxisMap();
+    }
+    if (saved.quatCal.mountQuat)   slot.quatCal.mountQuat   = saved.quatCal.mountQuat;
+    if (saved.quatCal.headingQuat) slot.quatCal.headingQuat = saved.quatCal.headingQuat;
+    // One-shot migration: a v1 `tareQuat` was the whole orientation at tare
+    // time and was left-multiplied, which is exactly what mountQuat is now.
+    // Carry it across verbatim — the behaviour is identical, so a rig that was
+    // calibrated before this change keeps its calibration.
+    if (!saved.quatCal.mountQuat && saved.quatCal.tareQuat) {
+      const H = twistAboutZ(saved.quatCal.tareQuat);
+      slot.quatCal.headingQuat = H;
+      slot.quatCal.mountQuat   = qMulQ(qConjugate(H), saved.quatCal.tareQuat);
+    }
   }
   if (saved.inertialCal) {
     if (saved.inertialCal.axisMap)    slot.inertialCal.axisMap    = saved.inertialCal.axisMap;
@@ -1076,6 +1242,22 @@ function applySavedCal(slot) {
   _restoring = false;
 
   DEBUG && console.log(`[sensor-registry] restored cal for "${slot.name}"`);
+}
+
+// Forget ONE slot, live and saved. The saved table is merged with the live
+// slots on every save, so a slot that has stopped existing is otherwise kept
+// forever — and its saved role is a claim on the next boot. This is how the
+// align audit's synthetic `__rt10__` sensor came to hold the cursor role in
+// Ek's storage across three sessions (2026-09-09).
+export function forgetSlot(name) {
+  loadSavedCal();
+  const hadLive  = _registry.delete(name);
+  const hadSaved = !!(_savedCal && name in _savedCal);
+  if (hadSaved) {
+    delete _savedCal[name];
+    try { localStorage.setItem(LS_KEY, JSON.stringify(_savedCal)); } catch (_) {}
+  }
+  return hadLive || hadSaved;
 }
 
 export function clearSavedCalibration() {

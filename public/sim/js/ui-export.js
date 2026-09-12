@@ -8,20 +8,45 @@
 //                 acousmatic performance — load and it's ready to play)
 // ============================================================================
 
-import { S, MAX_COMMITS, PRESET_COUNT, PRESETS, loadUserPresets, saveUserPresets } from './state.js';
+import { S, MAX_COMMITS } from './state.js';
 import { ensureAudioContext } from './audio.js';
 import { stampCartesian, killAllGrains, releaseSeqNodes } from './grain.js';
-import { rebuildSampleListUI, buildSvTabs, drawSvWaveform } from './ui-samples.js';
+import { rebuildSampleListUI } from './ui-samples.js';
 import { loadAudioDefaults, saveAllDefaults, splitLegacyAudioBlob, objectStore } from './ui-audio-settings.js';
-import { applyPresetObject, selectPreset, updatePlaybackControls, stampSeedRadiusFade } from './ui-presets.js';
-import { loadLocks } from './param-lock.js';
+import { applyPresetObject, updatePlaybackControls, buildOverdubLayer } from './ui-presets.js';
+import { snapshotCurrentState } from './param-registry.js';
 import { loadMappings } from './sensor-mapping.js';
 import { loadConfig as loadAccessoryConfig } from './accessory-registry.js';
-import { loadStaging } from './snapshot-engine.js';
-import { renderAll as renderAccessoryTable } from './ui-accessory.js';
-import { commitSweep } from './ui-sweep.js';
+import * as history from './history.js';
 import { allKeys, allPrefixes, keysFor, CATEGORIES } from './storage-registry.js';
+import { restoreTrigger, stopTriggerAudio } from './trigger.js';
+import { exportGroups, restoreGroups, applyMix } from './pins.js';
 
+/** A pin's `mute` from a slot record of any version: v13 writes it; before
+ *  that `_preGroupOn === false` (v7-v9: `_preLayerOn`) meant "silenced by
+ *  hand before its group went down", `true` meant the group did it, and with
+ *  neither the engine flag (`silentByEngine`) is the only witness. */
+function _pinMuteFrom(c, silentByEngine) {
+  if (typeof c.mute === 'boolean') return c.mute;
+  const pre = typeof c._preGroupOn === 'boolean' ? c._preGroupOn
+            : typeof c._preLayerOn === 'boolean' ? c._preLayerOn : undefined;
+  if (pre === false) return true;
+  if (pre === true)  return false;
+  return !!silentByEngine;
+}
+import { exportVoicings, restoreVoicings, voicingFromLegacyPatch, migrateBlockKeys } from './brush-voicing.js';
+
+// v8 (2026-08-25): frozen brushes. Adds `live.voicings` (the interned table of
+// resolved grain param blocks) and `_vo` per particle — which brush setting
+// plays that mark. Written only when non-zero, like `trig`, because the
+// particle array is the biggest thing in the file. v7-and-earlier sessions get
+// ONE voicing built from the `patch` they already embed (v5, § E4), so imported
+// material plays with the settings it was really painted with rather than
+// following whatever brush happens to be selected.
+//
+// v7 (2026-08-25, superseded by v10): arrangement layers — `live.layers` and a
+// per-slot `layerId`. See v10 for why none of that is read any more.
+//
 // v5 (2026-08-01, audit § E4): **a session no longer carries settings.** It has
 // `patch` (the resolved patch object it was played on) + `patchIndex` (label
 // only) instead of relying on `settings.mubone_user_presets` and re-selecting an
@@ -42,7 +67,54 @@ import { allKeys, allPrefixes, keysFor, CATEGORIES } from './storage-registry.js
 // `startOffset`. v1/v2 files import fine — every v3 field reads with a
 // fallback. Bump this ONLY with a matching read-path fallback or migration
 // in the import handler's version gate.
-const EXPORT_VERSION = 5;
+//
+// v13 (2026-09-05): audibility is DERIVED (js/pins.js). A pin carries its own
+// `mute` and `solo`, a group its `muted` and `solo`, and nothing else about
+// silence is stored: `_preGroupOn` (the write-through model's restore rule)
+// is gone from the file. Reading older files: `_preGroupOn === false` (or its
+// v7-v9 spelling `_preLayerOn`) meant "already silent when the group went
+// down", so it becomes `mute: true`; absent, a cloud's `playing === false` or
+// a loop's `composerMuted` is the mute. `applyMix()` runs after the slots are
+// built so the engine agrees with the flags.
+//
+// v10 (2026-08-30): pins group by KIND, so there is no membership to store.
+// `live.layers` (the named group set) and every slot's `layerId` are gone, and
+// `_preLayerOn` is now `_preGroupOn` — same restore rule, a name that says what
+// it holds. `live.pinGroups` replaces the layer set with the only thing the
+// groups actually carry: each one's muted/solo flag. A v7–v9 file imports with
+// its groups discarded, which is the correct outcome rather than a lossy one —
+// the groups it names no longer exist — and its `_preLayerOn` is read into
+// `_preGroupOn` so a session saved mid-mute still restores honestly.
+//
+// v9 (2026-08-28, #247): misc block carries `sourceKind` + `samplerIndex`
+// instead of `activeSampleIndex` + `sampleColorIndex`. One-shot migration on
+// import: an old stored activeSampleIndex >= 0 becomes samplerIndex (the
+// source stays 'live' — the old key was transient paint state, not a
+// selection); sampleColorIndex is dropped (it was never written).
+// v11 (2026-09-03): the patch bank is gone. `patch` is now a SNAPSHOT of the
+// live parameter set at export (param-registry.js snapshotCurrentState — the
+// same sparse vocabulary a bank slot used), and `patchIndex` is not written.
+// Import applies `patch` exactly as before; a v4-and-earlier file with only an
+// index has nothing to resolve it against and keeps whatever sound is live.
+const EXPORT_VERSION = 14;   // v14 (2026-09-07): `filterQ` split into `hpfQ` / `lpfQ` — one Q per filter
+
+/**
+ * Pack one loop/trigger particle as a flat array. Only the four fields
+ * playback and drawing actually read — a stroke can run to hundreds of
+ * particles and an object per particle triples the file for no gain.
+ *
+ * v6 exists because of what this replaces. Loop slots used to serialise
+ * `particleIndices: slot.particles.map(p => S.particles.indexOf(p))`, but loop
+ * particles are DETACHED COPIES with rebased grainStart (see buildLoopPayload)
+ * and are not in S.particles at all — so every index was -1, the import
+ * filtered them all out, and the scheduler's `!seq.particles.length` guard then
+ * skipped the slot entirely. Imported loops came back silent and without a
+ * playhead, buffer intact. Storing the values rather than a reference into a
+ * different array is the fix; identity was never available to lean on here.
+ */
+function _packParticle(p) {
+  return [p.lon, p.lat, p.grainStart, p.grainDuration];
+}
 const SETUP_MAGIC    = 'mubone-setup';
 const SESSION_MAGIC  = 'mubone-session';
 
@@ -50,7 +122,7 @@ const SESSION_MAGIC  = 'mubone-session';
 // js/storage-registry.js rather than hand-maintained.
 //
 // The hand-written list this replaces had drifted twice. The 2026-07-15
-// export/import audit found 9 keys missing (docs/EXPORT-IMPORT-AUDIT-2026-07.md
+// export/import audit found 9 keys missing (docs/archive/EXPORT-IMPORT-AUDIT-2026-07.md
 // § B) and listed a registry refactor as deliberately deferred; by 2026-08-01
 // four more had gone missing — `mubone-accessory-a8` and `mubone-ximu-led-map`
 // among them, so a setup export silently carried none of the A8 accessory
@@ -169,7 +241,6 @@ function buildSettingsPayload() {
 function exportSettings() {
   // Flush live state → localStorage before reading keys
   saveAllDefaults();
-  saveUserPresets();
   const json = JSON.stringify(buildSettingsPayload(), null, 2);
   downloadJSON(json, 'mubone-setup');
 }
@@ -242,16 +313,12 @@ function buildSessionPayload() {
     _version:    EXPORT_VERSION,
     _exportedAt: new Date().toISOString(),
 
-    // ── The patch this was played on ──
-    // v5: the resolved patch OBJECT, not an index into the bank. Sessions used
-    // to embed the whole settings payload (including the user bank) purely so
-    // that re-selecting `activePresetIndex` on import would find the right
-    // patch — which still meant "whatever lives in slot N on this machine".
-    // Carrying the patch itself makes the session self-contained and is what
-    // let settings come out of the format entirely (audit § E4).
-    // The index rides along for the HUD label only; nothing resolves through it.
-    patch:      PRESETS[S.activePresetIndex] ? JSON.parse(JSON.stringify(PRESETS[S.activePresetIndex])) : null,
-    patchIndex: S.activePresetIndex ?? 0,
+    // ── The sound this was played on ──
+    // v5 made this a resolved patch OBJECT rather than an index into the bank,
+    // which is what let a session be self-contained (audit § E4); v11 makes it
+    // a snapshot of the live parameter set, because there is no bank left to
+    // copy a slot out of. Same sparse vocabulary, applied by the same function.
+    patch:      snapshotCurrentState(),
 
     // ── Samples (audio + metadata) ──
     samples: S.samples.map(s => ({
@@ -284,6 +351,19 @@ function buildSessionPayload() {
       rms:           p.rms ?? 0,
       centroid:      p.centroid ?? 0,
       zcr:           p.zcr ?? 0,
+      // Trigger-vs-granular is a property of the material, so it has to travel
+      // with the particle. Omitting it would import a percussion map as
+      // granulation fodder. Written only when true — it's absent on the large
+      // majority of particles and this array is the biggest thing in the file.
+      ...(p.trig ? { trig: 1 } : {}),
+      // Which frozen brush voices this mark (v8). Same "write only when set"
+      // reasoning as `trig` above — 0 means "follow the live params" and is
+      // both the default and, after v8, vanishingly rare.
+      ...(p._vo ? { vo: p._vo } : {}),
+      // Path order for a looping sample trigger stroke (#247) — its
+      // grainStart rewinds each pass, so without takeT an imported stroke
+      // re-meshes. Only sampler trigger marks carry it.
+      ...(p.takeT !== undefined ? { takeT: p.takeT } : {}),
     })),
 
     // ── Commits (unified cloud + loop slots) ──
@@ -293,8 +373,15 @@ function buildSessionPayload() {
         return {
           type:             'cloud',
           slotIndex:        slot.slotIndex,
+          // v13: the pin's own two flags. Which group it is in is not
+          // written — that is `type`, three lines up.
+          mute:             !!slot.mute,
+          solo:             !!slot.solo,
           lon:              slot.lon,
           lat:              slot.lat,
+          // v13: where the pin gesture released (pins.js pinAnchorInto).
+          anchorLon:        slot.anchorLon,
+          anchorLat:        slot.anchorLat,
           color:            slot.color,
           searchRadiusDeg:  slot.searchRadiusDeg,
           nearestMode:      slot.nearestMode,
@@ -306,6 +393,11 @@ function buildSessionPayload() {
           radiusFadeCurve:  slot.radiusFadeCurve,
           _envAttack:       slot._envAttack,
           _envRelease:      slot._envRelease,
+          // Composer mode can hold a cloud at silence with its slot intact.
+          // Without these two the arrangement is lost on reload and every
+          // commit comes back sounding at once.
+          playing:          slot.playing,
+          _composerHold:    slot._composerHold,
           // Moving seed fields
           frames:           slot.frames,
           duration:         slot.duration,
@@ -315,6 +407,8 @@ function buildSessionPayload() {
         return {
           type:          'loop',
           slotIndex:     slot.slotIndex,
+          mute:          !!slot.mute,         // v13 — see the cloud branch
+          solo:          !!slot.solo,
           strokeId:      slot.strokeId,
           color:         slot.color,
           anchorLon:     slot.anchorLon,
@@ -322,46 +416,89 @@ function buildSessionPayload() {
           speed:         slot.speed,
           direction:     slot.direction,
           playing:       slot.playing,
+          // A muted loop is still `playing` — the mute is its own flag.
+          composerMuted: slot.composerMuted,
           playheadIndex: slot.playheadIndex,
           startOffset:   slot.startOffset ?? 0,
           loopStart:     slot.loopStart,
           loopEnd:       slot.loopEnd,
           grainParams:   slot.grainParams,
           wav:           slot.buffer ? audioBufferToBase64Wav(slot.buffer) : null,
-          particleIndices: slot.particles.map(p => S.particles.indexOf(p)),
+          particles:     slot.particles.map(_packParticle),
+          // v12: the takes, not the layers — a layer is rebuilt from its take
+          // and phase against the master on import (attachOverdub's maths).
+          overdubs:      (slot.overdubs || []).map(o => ({ strokeId: o.strokeId, phase0: o.phase0,
+                           wav: o.buffer ? audioBufferToBase64Wav(o.buffer) : null })),
         };
       }
       return null;
     }),
 
+    // ── Triggers ──
+    // A trigger is a VIEW onto a painted stroke, not an owner of material — its
+    // particles are the live objects in S.particles and its buffer is the
+    // stroke's source buffer, both of which this payload already carries. So a
+    // trigger serialises as a strokeId plus its own settings, and no audio: the
+    // particles are restored with everything else and the trigger re-derives
+    // itself from them on import. Storing the audio again would duplicate it
+    // AND let the two drift apart, which is the class of bug that made loop
+    // slots import silent (see § E9 in the export audit).
+    //
+    // How a trigger is TOUCHED is global and live (dwell/start/release on
+    // S.triggerParams, in the live block below). What it froze at arm time —
+    // speed, volume, passes — belongs to the trigger itself, and since the
+    // edit filter can change them per stroke they are carried here. Absent
+    // in older files; restoreTrigger falls back to the live params.
+    triggers: (S.triggers || []).map(t => ({
+      strokeId: t.strokeId,
+      color:    t.color,
+      speed:    t.speed,
+      volume:   t.grainParams?.volume,
+      passes:   t.passes,
+      endCap:   t.endCap,   // a slice's cut at the next onset (undefined on a plain line — JSON drops it)
+    })),
+
     // ── Misc live state ──
     currentStrokeId:   S.currentStrokeId,
     strokeIdCounter:   S.strokeIdCounter,
-    activeSampleIndex: S.activeSampleIndex,
-    sampleColorIndex:  S.sampleColorIndex,
+    sourceKind:        S.sourceKind,
+    samplerIndex:      S.samplerIndex,
     liveColorIndex:    S.liveColorIndex,
 
     // ── Live performance state (v3, audit C1) ──
     // Everything audible-but-not-in-the-preset. Import re-applies the active
     // preset, so without this block the session wouldn't sound like it did
     // at export unless the performer had saved a patch first. Applied AFTER
-    // selectPreset in the import handler. scanMuted is deliberately excluded
+    // applyPresetObject in the import handler. scanMuted is deliberately excluded
     // — restoring a muted scan on load reads as "import broke the sound".
     live: {
       searchRadiusDeg:  S.searchRadiusDeg,
       recencyN:         S.recencyN,
       nearestMode:      S.nearestMode,
+      lensReads:        S.lensReads,
       grainKAllMode:    S.grainKAllMode,
       grainKSeqMode:    S.grainKSeqMode,
       grainOverrides:   { ...S.grainOverrides },
       grainProbability: S.grainProbability,
       scanFadeS:        S.scanFadeS,
       traceMode:        S.traceMode,
+      // Trigger playback params are performance state, like the grain params
+      // above — they belong with the music, not the rig.
+      triggerParams:    { ...S.triggerParams },
       commitMode:       S.commitMode,
       commitSlotCount:  S.commitSlotCount,
       commitOverflow:   S.commitOverflow,
       selectionMode:    S.selectionMode,
       paintTickerMs:    S.paintTicker?.intervalMs ?? null,
+      // v10: the two pin groups' mute/solo. Unlike the v7 layer set this does
+      // NOT have to be read before the slots exist — a group is a pin's kind, so
+      // there is no id to resolve and no window in which a repaint could resolve
+      // one wrongly. It is still read in applySessionPayload rather than
+      // applyLiveState so that muting a restored group finds its pins.
+      pinGroups:        exportGroups(),
+      // v8. Read back early alongside the pin groups — see applySessionPayload
+      // step 4, which needs it before the particles are built.
+      voicings:         exportVoicings(),
     },
   };
 
@@ -372,6 +509,11 @@ function buildSessionPayload() {
 // actually contains (no settings block, resolved patch) rather than trusting the
 // comments above. Not used by the app.
 export const __testBuildSessionPayload = buildSessionPayload;
+
+// The other half of the same seam, added with v7 so the pin-group round trip
+// can be asserted end to end rather than by inspecting the payload and hoping
+// the read path agrees. scripts/pins-audit.js is the only caller.
+export const __testApplySessionPayload = (d) => applySessionPayload(d);
 
 async function exportSession(statusFn) {
   // Audit C5: an in-progress recording serializes as { wav: null } — its
@@ -413,7 +555,7 @@ async function applySessionPayload(data) {
   //  - strokeHistory reset: undo history does not survive import; stale
   //    entries would splice imported buffers at pre-import indices.
   // (Worklet grains are handled by _reloadWorkletEngine at the end.)
-  commitSweep();
+  history.clear();       // undo history does not survive import: its entries name the old world
   killAllGrains();
   for (let i = 0; i < MAX_COMMITS; i++) {
     const slot = S.commitSlots[i];
@@ -439,14 +581,17 @@ async function applySessionPayload(data) {
       data._version ?? '?', EXPORT_VERSION);
     applySettingsPayload(data.settings);
     loadAudioDefaults();
-    loadUserPresets();
-    loadLocks();
     loadMappings();
     loadAccessoryConfig();
-    loadStaging();
+    // loadStaging() SUNSET 2026-08-28 (#269). A setup file may still CARRY a
+    // staging block — it is read into nothing and written back untouched, so
+    // an old file survives a round trip and staging can be revived from one.
     S._syncMappingUI?.();
     S._syncMappingHighlights?.();
-    renderAccessoryTable();  // loadConfig mutates channels in place; the table won't notice
+    S._syncGazeTrailUI?.();  // in-process path — no reload to re-light the preset button
+    // renderAccessoryTable() SUNSET with the accessory table (#269). The
+    // registry above still loads the config, so the channels are live and the
+    // setup file is unchanged; only the table that displayed them is gone.
   }
 
   // 2. Restore samples
@@ -475,6 +620,20 @@ async function applySessionPayload(data) {
   }
 
   // 4. Restore particles
+  //
+  // Voicings first: the particles about to be built carry `vo` ids that have to
+  // resolve against THIS file's table, not the previous session's. Keeping every
+  // restore in front of the things that reference it is the rule worth having.
+  restoreVoicings(data.live?.voicings);
+
+  // A v7-or-earlier session predates frozen brushes. Rather than leave its
+  // material following whatever brush is selected now, give it one voicing
+  // built from the patch the file already carries — the resolved patch it was
+  // genuinely played on (v5, audit § E4). One-shot: v8 files skip this.
+  const _legacyVo = (data._version ?? 0) < 8
+    ? voicingFromLegacyPatch(data.patch, data.patch?.name || 'imported')
+    : 0;
+
   S.particles.length = 0;
   for (const p of (data.particles || [])) {
     const particle = {
@@ -491,12 +650,27 @@ async function applySessionPayload(data) {
     };
     if (p.source === 'sample') particle.sampleIndex = p.sampleIndex;
     if (p.source === 'live')   particle.liveBufferIdx = p.liveBufferIdx;
+    if (p.trig)                particle.trig = true;   // trigger material, never granulated
+    if (typeof p.takeT === 'number') particle.takeT = p.takeT;  // path order (#247)
+    particle._vo = typeof p.vo === 'number' ? p.vo : _legacyVo;
     stampCartesian(particle);
     S.particles.push(particle);
   }
   S._particleVersion = (S._particleVersion || 0) + 1;
 
   // 5. Restore commits (unified cloud + loop slots)
+  //
+  // The two groups' flags go in before the slots. This used to be a genuine
+  // hazard — v7 stored a `layerId` per hold, the rail repaints on its own 6 Hz
+  // timer, and the loop below AWAITS a WAV decode per loop slot, so a repaint
+  // landing mid-import could resolve imported ids against the PREVIOUS session's
+  // layer set and silently flatten the arrangement. Deriving the group from the
+  // pin's kind removed the hazard rather than guarding it: there is no id to
+  // resolve. The order is kept because a restored `muted` flag should be in
+  // place before the pins it applies to appear, not because a race depends on
+  // it.
+  restoreGroups(data.live?.pinGroups);
+
   for (let i = 0; i < MAX_COMMITS; i++) {
     const c = data.commits?.[i];
     if (!c) { S.commitSlots[i] = null; continue; }
@@ -505,14 +679,21 @@ async function applySessionPayload(data) {
       S.commitSlots[i] = {
         type:             'cloud',
         slotIndex:        c.slotIndex,
+        // v13; older files are read through _pinMuteFrom (the header says how).
+        mute:             _pinMuteFrom(c, c.playing === false),
+        solo:             !!c.solo,
         lon:              c.lon,
         lat:              c.lat,
+        // v13; an older file's cloud is anchored at the end of its path, or
+        // where it sits — the rule pinAnchorInto applies.
+        anchorLon:        c.anchorLon ?? (Array.isArray(c.frames) && c.frames.length ? c.frames[c.frames.length - 1].lon : c.lon),
+        anchorLat:        c.anchorLat ?? (Array.isArray(c.frames) && c.frames.length ? c.frames[c.frames.length - 1].lat : c.lat),
         color:            c.color,
         searchRadiusDeg:  c.searchRadiusDeg,
         nearestMode:      c.nearestMode,
         kAllMode:         c.kAllMode,
         kSeqMode:         c.kSeqMode,
-        grainParams:      c.grainParams,
+        grainParams:      migrateBlockKeys(c.grainParams),
         grainOverrides:   c.grainOverrides ?? {},
         morphT:           0.5,
         morphVelocity:    0,
@@ -524,7 +705,12 @@ async function applySessionPayload(data) {
         _releasingAt:     0,
         _envAttack:       c._envAttack ?? 0,
         _envRelease:      c._envRelease ?? 0,
-        _envGainCurrent:  1,
+        // A cloud held silent by composer mode comes back held, not sounding.
+        // `playing` is undefined for every cloud saved before composer mode
+        // existed, and undefined means playing — only an explicit false holds.
+        playing:          c.playing === false ? false : undefined,
+        _composerHold:    c.playing === false ? true : false,
+        _envGainCurrent:  c.playing === false ? 0 : 1,
         frames:           c.frames,
         duration:         c.duration ?? 0,
         loopMode:         c.loopMode ?? 'pingpong',
@@ -533,13 +719,19 @@ async function applySessionPayload(data) {
       };
     } else if (c.type === 'loop') {
       const buf = c.wav ? await base64WavToAudioBuffer(c.wav) : null;
-      const particles = (c.particleIndices || [])
-        .map(idx => S.particles[idx])
-        .filter(p => p != null);
+      // v6+ stores the particle values; v1–v5 stored indices into S.particles,
+      // which never resolved (see _packParticle). Those files simply have no
+      // recoverable playhead data — the fallback is kept so they still import
+      // their buffer rather than throwing, not because it produces anything.
+      const particles = Array.isArray(c.particles)
+        ? c.particles.map(a => ({ lon: a[0], lat: a[1], grainStart: a[2], grainDuration: a[3] }))
+        : (c.particleIndices || []).map(idx => S.particles[idx]).filter(p => p != null);
 
       S.commitSlots[i] = {
         type:          'loop',
         slotIndex:     c.slotIndex,
+        mute:          _pinMuteFrom(c, !!c.composerMuted),                    // v13
+        solo:          !!c.solo,
         strokeId:      c.strokeId,
         color:         c.color,
         anchorLon:     c.anchorLon,
@@ -547,11 +739,15 @@ async function applySessionPayload(data) {
         speed:         c.speed ?? 1,
         direction:     c.direction ?? 1,
         playing:       false, // start stopped — user activates manually
+        // Carried so the mute survives, even though an imported loop starts
+        // stopped: when the performer starts it, it starts in the state the
+        // arrangement was saved in rather than unexpectedly sounding.
+        composerMuted: !!c.composerMuted,
         playheadIndex: c.playheadIndex ?? 0,
         startOffset:   c.startOffset ?? 0,
         loopStart:     c.loopStart ?? 0,
         loopEnd:       c.loopEnd ?? (buf ? buf.duration : 0),
-        grainParams:   c.grainParams ?? { volume: 1 },
+        grainParams:   migrateBlockKeys(c.grainParams) ?? { volume: 1 },
         buffer:        buf,
         particles:     particles,
         _sourceNode:   null,
@@ -559,26 +755,54 @@ async function applySessionPayload(data) {
         _revBuffer:    null,
         _startedAt:    0,
       };
+      // v12: the family. Each take's layer is rebuilt against THIS slot's
+      // cycle; the layers start with the master's source (grain.js).
+      if (Array.isArray(c.overdubs) && c.overdubs.length) {
+        const seq = S.commitSlots[i];
+        seq.overdubs = [];
+        for (const o of c.overdubs) {
+          const tb = o?.wav ? await base64WavToAudioBuffer(o.wav) : null;
+          if (!tb) continue;
+          const layer = buildOverdubLayer(seq, tb, +o.phase0 || 0);
+          if (layer) seq.overdubs.push({ strokeId: o.strokeId, phase0: +o.phase0 || 0, buffer: tb, layer, _src: null });
+        }
+      }
     } else {
       S.commitSlots[i] = null;
     }
+
   }
 
-  // 6. Re-stamp per-particle radius-fade attenuation (audit C2).  The
-  // `_cFade${slot}` stamps live on particles, which were rebuilt in step 4;
-  // without this, imported fade clouds play edge grains at full volume
-  // (bridge falls back to `?? 1.0`).
-  for (let i = 0; i < MAX_COMMITS; i++) {
-    stampSeedRadiusFade(S.commitSlots[i]);
-  }
+  // 5a. The mix: every restored pin's engine state follows its flags and its
+  // group's, now that both halves are in place (v13, js/pins.js).
+  applyMix();
 
-  // 7. Restore misc state
+  // 5b. Triggers. Restored through trigger.js so the particle lookup, Cartesian
+  // stamps, bounding cap and playback region are all derived by the same code
+  // the live path uses — a trigger carries no audio of its own, so this is the
+  // only thing that makes it playable again.
+  if (S.triggers) {
+    for (const t of S.triggers) stopTriggerAudio(t, 'fade');
+    S.triggers.length = 0;
+  }
+  for (const c of (data.triggers || [])) restoreTrigger(c);
+  S._syncTriggerUI?.();
+
+  // 6. Restore misc state
+  // (Radius fade needs no re-stamp on import — audit C2's `_cFade${slot}`
+  // stamps are gone; the bridge now resolves fade live from the scheduler's
+  // per-slot angle cache, so imported clouds fade correctly on the first tick.)
   if (typeof data.currentStrokeId === 'number')   S.currentStrokeId   = data.currentStrokeId;
-  if (typeof data.activeSampleIndex === 'number')  S.activeSampleIndex = data.activeSampleIndex;
-  if (typeof data.sampleColorIndex === 'number')   S.sampleColorIndex  = data.sampleColorIndex;
+  if (data.sourceKind === 'live' || data.sourceKind === 'sampler') S.sourceKind = data.sourceKind;
+  if (typeof data.samplerIndex === 'number' && data.samplerIndex >= 0) S.samplerIndex = data.samplerIndex;
+  // One-shot migration (≤ v8): activeSampleIndex was transient paint state,
+  // not a selection — a stored slot becomes the sampler's current sample,
+  // but the source stays live. sampleColorIndex is dropped (never written).
+  else if (typeof data.activeSampleIndex === 'number' && data.activeSampleIndex >= 0)
+    S.samplerIndex = data.activeSampleIndex;
   if (typeof data.liveColorIndex === 'number')     S.liveColorIndex    = data.liveColorIndex;
 
-  // 7b. Stroke-id continuity (audit A1).  Recency ranks by strokeId and undo
+  // 6b. Stroke-id continuity (audit A1).  Recency ranks by strokeId and undo
   // filters by it — if the counter restarts below the imported ids, every new
   // stroke ranks OLDER than the imported material (inaudible under recency)
   // and undo of a new stroke deletes imported particles sharing its id.
@@ -590,7 +814,7 @@ async function applySessionPayload(data) {
   }
   if (maxSid > S.strokeIdCounter) S.strokeIdCounter = maxSid;
 
-  // 8. Refresh the worklet's buffer map.
+  // 7. Refresh the worklet's buffer map.
   // The worklet keys its _bufferMap on AudioBuffer object identity. Steps 2–3
   // above swapped in fresh AudioBuffers decoded from the import payload, so
   // every candidate's audioBuf lookup now misses → all candidates filtered
@@ -603,9 +827,9 @@ async function applySessionPayload(data) {
 
 /**
  * Apply the v3 `live` block — performance state that isn't part of the
- * active preset (audit C1).  MUST run after selectPreset in the import
- * handler, since selectPreset overwrites radius/recency/k from the preset.
- * v1/v2 files have no `live` block → no-op (preset values stand, as before).
+ * patch object (audit C1).  MUST run after applyPresetObject in the import
+ * handler, since the patch overwrites the grain block.
+ * v1/v2 files have no `live` block → no-op (patch values stand, as before).
  */
 function applyLiveState(live) {
   if (!live || typeof live !== 'object') return;
@@ -615,6 +839,7 @@ function applyLiveState(live) {
     else S.recencyN = live.recencyN;
   }
   if (typeof live.nearestMode === 'boolean')      S.nearestMode      = live.nearestMode;
+  if (['both', 'grains', 'tape'].includes(live.lensReads)) S.lensReads   = live.lensReads;
   if (typeof live.grainKAllMode === 'boolean')    S.grainKAllMode    = live.grainKAllMode;
   if (typeof live.grainKSeqMode === 'boolean')    S.grainKSeqMode    = live.grainKSeqMode;
   if (live.grainOverrides && typeof live.grainOverrides === 'object') {
@@ -622,15 +847,43 @@ function applyLiveState(live) {
   }
   if (typeof live.grainProbability === 'number')  S.grainProbability = live.grainProbability;
   if (typeof live.scanFadeS === 'number')         S.scanFadeS        = live.scanFadeS;
-  if (typeof live.traceMode === 'string')         S.traceMode        = live.traceMode;
+  // 'trace+loop' was cut 2026-09-05; a file carrying it reads as scratch.
+  if (typeof live.traceMode === 'string')         S.traceMode        = live.traceMode === 'trace+cloud' ? 'trace+cloud' : 'trace';
+  // Per-field, and validated: the gate divides by hysteresis and multiplies by
+  // radius every tick, so a hand-edited file putting a string in either would
+  // turn every comparison into NaN and silently kill the whole trigger set.
+  if (live.triggerParams && typeof live.triggerParams === 'object') {
+    const tp = S.triggerParams, f = live.triggerParams;
+    if (typeof f.hysteresis === 'number') tp.hysteresis = Math.max(1, Math.min(3, f.hysteresis));
+    if (typeof f.rearmMs    === 'number') tp.rearmMs    = Math.max(0, Math.min(5000, f.rearmMs));
+    if (typeof f.volume     === 'number') tp.volume     = Math.max(0, Math.min(1, f.volume));
+    if (typeof f.speed      === 'number') tp.speed      = Math.max(0.25, Math.min(4, f.speed));
+    if (['oneshot', 'loop', 'grain'].includes(f.dwell)) tp.dwell = f.dwell;
+    if (['top', 'touch', 'ends'].includes(f.start))  tp.start   = f.start;
+    if (['cut', 'layer'].includes(f.retrig))         tp.retrig  = f.retrig;
+    if (typeof f.chop === 'number')  tp.chop = Math.max(0, Math.min(2000, f.chop));
+    if (typeof f.chopOn === 'boolean') tp.chopOn = f.chopOn;
+    if (['play-to-end', 'fade'].includes(f.release)) tp.release = f.release;
+  }
   if (typeof live.commitMode === 'string')        S.commitMode       = live.commitMode;
   if (typeof live.commitSlotCount === 'number')   S.commitSlotCount  = live.commitSlotCount;
   if (typeof live.commitOverflow === 'string')    S.commitOverflow   = live.commitOverflow;
-  if (typeof live.selectionMode === 'string')     S.selectionMode    = live.selectionMode;
+  // v13 renamed `closest` to `nearest` and deleted `farthest` (Ek, 2026-09-05).
+  if (typeof live.selectionMode === 'string')
+    S.selectionMode = ['oldest', 'farthest'].includes(live.selectionMode) ? live.selectionMode : 'nearest';
   if (typeof live.paintTickerMs === 'number' && S.paintTicker) {
     S.paintTicker.intervalMs = live.paintTickerMs;
   }
+  // `paintAlignMs` (sessions before 2026-09-02) is ignored: the offset it
+  // hand-set is derived from the stroke's brush now.
+  // `live.pinGroups` is deliberately NOT read here — it is consumed in
+  // applySessionPayload() step 5, before the slots exist. Do not "complete" the
+  // block by adding it here as well: that would restore the groups twice and
+  // reset every `muted` flag the arrangement was saved with.
+  // `live.voicings` is skipped here for the same reason — step 4 needs it
+  // before the particles that point at it exist.
   S._syncCommitUI?.();
+  S._pinsDirty = true;
 }
 
 
@@ -693,27 +946,27 @@ export function initExportImport() {
     exportBtn.addEventListener('click', () => {
       // Show choice dialog: settings or session
       const overlay = document.createElement('div');
-      overlay.className = 'factory-reset-overlay';
+      overlay.className = 'dlg-overlay';
       overlay.innerHTML = `
-        <div class="factory-reset-dialog">
-          <div class="factory-reset-title">export</div>
-          <p class="factory-reset-desc">Choose what to export:</p>
-          <div class="factory-reset-btns" style="flex-direction:column;gap:8px;">
-            <button class="factory-reset-btn export-choice" data-mode="settings" style="width:100%">
+        <div class="dlg-dialog">
+          <div class="dlg-title">export</div>
+          <p class="dlg-desc">Choose what to export:</p>
+          <div class="dlg-btns" style="flex-direction:column;gap:8px;">
+            <button class="dlg-btn export-choice" data-mode="settings" style="width:100%">
               setup
-              <span style="display:block;font-size:10px;opacity:0.6;margin-top:2px">the rig — audio config, sensor cal, key/MIDI/OSC, mappings, patches, layout</span>
+              <span style="display:block;font-size:10px;opacity:0.6;margin-top:2px">the rig — audio config, sensor cal, key/MIDI/OSC, mappings, tools, layout</span>
             </button>
-            <button class="factory-reset-btn export-choice" data-mode="session" style="width:100%">
+            <button class="dlg-btn export-choice" data-mode="session" style="width:100%">
               session
-              <span style="display:block;font-size:10px;opacity:0.6;margin-top:2px">the music — samples, particles, seeds, loops, the patch it was played on (includes audio)</span>
+              <span style="display:block;font-size:10px;opacity:0.6;margin-top:2px">the music — samples, particles, seeds, loops, the sound it was played on (includes audio)</span>
             </button>
-            <button class="factory-reset-btn factory-reset-cancel" style="width:100%">cancel</button>
+            <button class="dlg-btn dlg-cancel" style="width:100%">cancel</button>
           </div>
         </div>
       `;
       document.body.appendChild(overlay);
 
-      overlay.querySelector('.factory-reset-cancel').addEventListener('click', () => overlay.remove());
+      overlay.querySelector('.dlg-cancel').addEventListener('click', () => overlay.remove());
       overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
       overlay.querySelectorAll('.export-choice').forEach(btn => {
@@ -726,8 +979,8 @@ export function initExportImport() {
             setTimeout(() => exportBtn.classList.remove('export-flash'), 600);
           } else {
             // Session export — show progress
-            const desc = overlay.querySelector('.factory-reset-desc');
-            const btns = overlay.querySelector('.factory-reset-btns');
+            const desc = overlay.querySelector('.dlg-desc');
+            const btns = overlay.querySelector('.dlg-btns');
             btns.style.display = 'none';
             desc.textContent = 'encoding audio...';
             try {
@@ -738,8 +991,8 @@ export function initExportImport() {
             } catch (e) {
               desc.textContent = 'export failed: ' + e.message;
               btns.style.display = '';
-              btns.innerHTML = '<button class="factory-reset-btn factory-reset-cancel" style="width:100%">close</button>';
-              btns.querySelector('.factory-reset-cancel').addEventListener('click', () => overlay.remove());
+              btns.innerHTML = '<button class="dlg-btn dlg-cancel" style="width:100%">close</button>';
+              btns.querySelector('.dlg-cancel').addEventListener('click', () => overlay.remove());
             }
           }
         });
@@ -770,11 +1023,11 @@ export function initExportImport() {
         } else if (data._magic === SESSION_MAGIC) {
           // Session import — show progress, decode audio, rebuild state
           const overlay = document.createElement('div');
-          overlay.className = 'factory-reset-overlay';
+          overlay.className = 'dlg-overlay';
           overlay.innerHTML = `
-            <div class="factory-reset-dialog">
-              <div class="factory-reset-title">importing session</div>
-              <p class="factory-reset-desc">decoding audio...</p>
+            <div class="dlg-dialog">
+              <div class="dlg-title">importing session</div>
+              <p class="dlg-desc">decoding audio...</p>
             </div>
           `;
           document.body.appendChild(overlay);
@@ -784,24 +1037,14 @@ export function initExportImport() {
             // Refresh all UI without reload — state is already in memory
             try {
               rebuildSampleListUI();
-              buildSvTabs();
-              requestAnimationFrame(drawSvWaveform);
               S.updateSeedBanksUI?.();
-              // Restore the patch the session was played on. v5 carries the
-              // resolved patch object, so this no longer resolves an index
-              // through the bank — which is what made a session portable
-              // between rigs (audit § E4). It also drops the old
-              // "index past the end of this build's bank" fallback: there is
-              // no index to be out of range.
-              if (data.patch) {
-                applyPresetObject(data.patch);
-              } else {
-                // v4 and earlier: only an index, meaning "whatever is in slot N
-                // here". Keep working, but this is the imprecise path.
-                const _pi = data.patchIndex ?? S.activePresetIndex ?? 0;
-                selectPreset(_pi >= 0 && _pi < PRESET_COUNT ? _pi : 0);
-              }
-              // v3: live performance tweaks override the preset (audit C1)
+              // Restore the sound the session was played on. v5+ carries the
+              // resolved patch object (audit § E4); v11 a live snapshot — both
+              // apply the same way. A v4-and-earlier file carried only a bank
+              // index, and the bank is gone (2026-09-03): its material still
+              // plays with its own voicings, and the live block stays as it is.
+              if (data.patch) applyPresetObject(data.patch);
+              // v3: live performance tweaks override the patch (audit C1)
               applyLiveState(data.live);
               updatePlaybackControls?.();
               S._syncImprovUI?.();
@@ -813,31 +1056,31 @@ export function initExportImport() {
             // Only pre-v5 files still carry settings, and those mostly need a
             // restart. v5 sessions carry none, so there is nothing to warn about.
             const waitingHtml = data.settings ? `
-              <p class="factory-reset-desc" style="opacity:0.75">
+              <p class="dlg-desc" style="opacity:0.75">
                 This file also carried settings (pre-v${EXPORT_VERSION} format) —
                 most of those apply on the next restart. Re-export to update it.
               </p>` : '';
             const summary = overlay.cloneNode(false);
-            summary.className = 'factory-reset-overlay';
+            summary.className = 'dlg-overlay';
             summary.innerHTML = `
-              <div class="factory-reset-dialog">
-                <div class="factory-reset-title">session loaded</div>
-                <p class="factory-reset-desc">
+              <div class="dlg-dialog">
+                <div class="dlg-title">session loaded</div>
+                <p class="dlg-desc">
                   ${S.samples.length} sample(s), ${S.particles.length} particle(s),
                   ${S.commitSlots.filter(c => c && c.type === 'cloud').length} cloud(s),
                   ${S.commitSlots.filter(c => c && c.type === 'loop').length} loop(s)
                 </p>
                 ${waitingHtml}
-                <div class="factory-reset-btns">
-                  <button class="factory-reset-btn factory-reset-confirm">ok</button>
+                <div class="dlg-btns">
+                  <button class="dlg-btn dlg-go">ok</button>
                 </div>
               </div>
             `;
             document.body.appendChild(summary);
-            summary.querySelector('.factory-reset-confirm').addEventListener('click', () => summary.remove());
+            summary.querySelector('.dlg-go').addEventListener('click', () => summary.remove());
             summary.addEventListener('click', (e) => { if (e.target === summary) summary.remove(); });
           } catch (e) {
-            overlay.querySelector('.factory-reset-desc').textContent = 'import failed: ' + e.message;
+            overlay.querySelector('.dlg-desc').textContent = 'import failed: ' + e.message;
             setTimeout(() => overlay.remove(), 3000);
           }
 
@@ -870,11 +1113,11 @@ function showSetupImportDialog(name, data) {
   const untouched = Math.max(0, localCount - inFile);
 
   const overlay = document.createElement('div');
-  overlay.className = 'factory-reset-overlay';
+  overlay.className = 'dlg-overlay';
   overlay.innerHTML = `
-    <div class="factory-reset-dialog">
-      <div class="factory-reset-title">import settings</div>
-      <p class="factory-reset-desc">
+    <div class="dlg-dialog">
+      <div class="dlg-title">import settings</div>
+      <p class="dlg-desc">
         <strong>${name}</strong> carries ${inFile} setting group(s).
       </p>
       <div class="reset-cats">
@@ -893,16 +1136,16 @@ function showSetupImportDialog(name, data) {
           </span>
         </label>
       </div>
-      <div class="factory-reset-btns">
-        <button class="factory-reset-btn factory-reset-cancel">cancel</button>
-        <button class="factory-reset-btn factory-reset-confirm">import</button>
+      <div class="dlg-btns">
+        <button class="dlg-btn dlg-cancel">cancel</button>
+        <button class="dlg-btn dlg-go">import</button>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
-  overlay.querySelector('.factory-reset-cancel').addEventListener('click', () => overlay.remove());
+  overlay.querySelector('.dlg-cancel').addEventListener('click', () => overlay.remove());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-  overlay.querySelector('.factory-reset-confirm').addEventListener('click', () => {
+  overlay.querySelector('.dlg-go').addEventListener('click', () => {
     const replace = overlay.querySelector('input[value="replace"]').checked;
     overlay.remove();
     if (replace) clearGovernedKeys();
@@ -914,17 +1157,17 @@ function showSetupImportDialog(name, data) {
 
 function showReloadDialog(html) {
   const overlay = document.createElement('div');
-  overlay.className = 'factory-reset-overlay';
+  overlay.className = 'dlg-overlay';
   overlay.innerHTML = `
-    <div class="factory-reset-dialog">
-      <div class="factory-reset-title">imported</div>
-      <p class="factory-reset-desc">${html}<br><br>The page will reload to apply changes.</p>
-      <div class="factory-reset-btns">
-        <button class="factory-reset-btn factory-reset-confirm">reload</button>
+    <div class="dlg-dialog">
+      <div class="dlg-title">imported</div>
+      <p class="dlg-desc">${html}<br><br>The page will reload to apply changes.</p>
+      <div class="dlg-btns">
+        <button class="dlg-btn dlg-go">reload</button>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
-  overlay.querySelector('.factory-reset-confirm').addEventListener('click', () => location.reload());
+  overlay.querySelector('.dlg-go').addEventListener('click', () => location.reload());
   overlay.addEventListener('click', (e) => { if (e.target === overlay) location.reload(); });
 }

@@ -1,0 +1,1721 @@
+<title>mubone Interface Directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Urbanist:wght@300;400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;1,6..72,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   mubone — interface directions. A prototype viewer, not a document.
+   Palette is mubone's own css/tokens.css. Committed single dark
+   world on purpose: every screen contains a pure-black instrument
+   canvas, and a light ground would make the mockups lie.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  --canvas:#000; --app:#131313; --app-2:#191919; --card:#242424;
+  --card-2:#2b2b2b; --well:#111; --sunk:#0b0b0b;
+  --ink:#f2f5f5; --ink-1:#d3dada; --ink-2:#a8b1b1; --ink-3:#7d8686;
+  --ink-4:#5a6262; --ink-5:#3c4242;
+  --teal:#7abcbc; --orange:#f26415; --violet:#b07ee8; --green:#81c784;
+  --red:#e57373; --amber:#e8a030; --cyan:#4fc3f7; --pink:#ff6b9d;
+  --rule:rgba(255,255,255,.09); --rule-2:rgba(255,255,255,.15);
+  --sans:'Urbanist','Helvetica Neue',Helvetica,Arial,sans-serif;
+  --serif:'Newsreader',Georgia,'Times New Roman',serif;
+  --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,monospace;
+  --pad:clamp(1rem,3.5vw,2rem);
+  --bc:var(--teal);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--app);color:var(--ink-1);
+  font-family:var(--serif);font-size:1rem;line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{width:min(1240px,100%);margin:0 auto;padding:0 var(--pad)}
+h1,h2,h3,h4,.ui,button,input,select{font-family:var(--sans)}
+code,.m{font-family:var(--mono);font-size:.85em;color:var(--amber);
+  background:rgba(255,255,255,.05);padding:.06em .32em;border-radius:2px}
+a{color:var(--teal)}
+:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+
+/* ── masthead ───────────────────────────────────────────────── */
+.mast{border-bottom:1px solid var(--rule);background:var(--canvas);padding-block:clamp(1.6rem,4vw,2.6rem) 0}
+.mast-top{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap;margin-bottom:.9rem}
+.mast-top b{font-family:var(--sans);font-weight:700;font-size:1.05rem;letter-spacing:-.02em;color:var(--ink)}
+.mast-top span{font-family:var(--sans);font-size:.62rem;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-5)}
+.mast h1{
+  font-size:clamp(1.9rem,4.6vw,3rem);font-weight:600;line-height:1.03;
+  letter-spacing:-.03em;margin:0 0 .55rem;color:var(--ink);text-wrap:balance;max-width:22ch;
+}
+.mast p{max-width:62ch;color:var(--ink-3);margin:0 0 1.6rem;font-size:1.02rem}
+.mast p b{color:var(--ink-1);font-weight:400}
+
+/* ── tab strip ──────────────────────────────────────────────── */
+.tabs{display:flex;gap:0;overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{
+  appearance:none;background:transparent;border:0;border-bottom:2px solid transparent;
+  color:var(--ink-4);font-size:.82rem;font-weight:500;letter-spacing:.01em;
+  padding:.6rem .95rem .55rem;cursor:pointer;white-space:nowrap;
+  transition:color .15s,border-color .15s;
+}
+.tab:first-child{padding-left:0}
+.tab:hover{color:var(--ink-1)}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--tc,var(--teal))}
+.tab i{font-style:normal;display:block;font-size:.6rem;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--ink-5);margin-top:.1rem}
+.tab[aria-selected="true"] i{color:var(--tc,var(--teal))}
+
+/* ── screen shell ───────────────────────────────────────────── */
+.screens{padding-block:clamp(1.4rem,3.5vw,2.4rem)}
+.screen[hidden]{display:none}
+.frame{
+  background:var(--canvas);border:1px solid var(--rule-2);border-radius:18px;
+  overflow:hidden;font-family:var(--sans);color:var(--ink-2);user-select:none;
+  box-shadow:0 24px 70px -30px rgba(0,0,0,.9);
+}
+.readout{
+  display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);
+  gap:clamp(1rem,3vw,2.4rem);margin-top:1.4rem;
+}
+@media(max-width:760px){.readout{grid-template-columns:1fr}}
+.readout h2{font-size:1.28rem;font-weight:600;letter-spacing:-.02em;margin:0 0 .5rem;color:var(--ink)}
+.readout .kicker{font-size:.64rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--kc,var(--teal));margin-bottom:.5rem;font-family:var(--sans)}
+.readout p{margin:0 0 .9rem;color:var(--ink-2);font-size:1.01rem}
+.readout p:last-child{margin-bottom:0}
+.tries{display:flex;flex-wrap:wrap;gap:.4rem;margin:.2rem 0 1rem;list-style:none;padding:0}
+.tries li{
+  font-family:var(--sans);font-size:.72rem;color:var(--ink-2);
+  background:rgba(255,255,255,.05);border:1px solid var(--rule);
+  border-radius:20px;padding:.24rem .68rem;
+}
+.tries li b{color:var(--ink);font-weight:500}
+.trade{border-top:1px solid var(--rule);padding-top:.9rem;margin-top:.2rem;
+  font-family:var(--sans);font-size:.86rem;line-height:1.55;color:var(--ink-3)}
+.trade b{color:var(--ink-1);font-weight:500;display:block;margin-bottom:.2rem;
+  font-size:.64rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-5)}
+
+/* ── instrument chrome (shared by directions) ───────────────── */
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;
+  padding:.62rem .9rem;border-bottom:1px solid var(--rule);background:var(--app);
+}
+.brandwrap{display:flex;align-items:baseline;gap:.45rem}
+.brandwrap b{font-size:.92rem;font-weight:700;letter-spacing:-.02em;color:var(--ink)}
+.brandwrap i{font-style:normal;font-size:.56rem;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-5)}
+.docchip{display:flex;align-items:center;gap:.42rem;font-size:.74rem;color:var(--ink-3)}
+.docchip .dot{width:5px;height:5px;border-radius:50%;background:var(--orange);flex:none}
+.docchip .dot.clean{background:var(--green)}
+.docchip b{color:var(--ink-1);font-weight:500}
+.docchip em{font-style:normal;color:var(--ink-5);font-size:.68rem}
+.segbar{display:flex;gap:2px;background:var(--rule);padding:2px;border-radius:3px}
+.segbar button{
+  font:inherit;font-size:.68rem;font-weight:500;letter-spacing:.06em;text-transform:uppercase;
+  background:transparent;color:var(--ink-4);border:0;padding:.28rem .7rem;border-radius:2px;cursor:pointer;
+}
+.segbar button[aria-pressed="true"]{background:var(--card-2);color:var(--ink)}
+.segbar button:hover{color:var(--ink-1)}
+
+.stagebox{position:relative;min-width:0;overflow:hidden;background:var(--canvas);touch-action:none;cursor:crosshair}
+.stagebox canvas{display:block;width:100%;height:100%;max-width:100%}
+.hud{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;
+  gap:1rem;padding:.5rem .8rem;font-size:.63rem;letter-spacing:.07em;text-transform:uppercase;
+  color:var(--ink-4);pointer-events:none;font-variant-numeric:tabular-nums}
+.hud b{color:var(--ink-2);font-weight:500}
+.hint{position:absolute;top:.6rem;left:.8rem;font-size:.62rem;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-5);pointer-events:none}
+.hint b{color:var(--bc);font-weight:500}
+
+/* brush list (rail form) */
+.brushlist{display:flex;flex-direction:column;gap:1px;background:var(--rule)}
+.bitem{
+  display:grid;grid-template-columns:1.5rem 1fr auto;align-items:center;gap:.6rem;
+  background:var(--app);border:0;border-left:2px solid transparent;text-align:left;
+  padding:.58rem .85rem;cursor:pointer;font:inherit;color:var(--ink-3);
+  transition:background .14s,color .14s,border-color .14s;
+}
+.bitem:hover{background:var(--app-2);color:var(--ink-1)}
+.bitem[aria-pressed="true"]{background:var(--card);color:var(--ink);border-left-color:var(--c)}
+.bitem svg{width:1.5rem;height:1.5rem;display:block}
+.bitem .nm{font-size:.81rem;font-weight:500}
+.bitem .nm small{display:block;font-size:.62rem;font-weight:400;color:var(--ink-5);margin-top:.05rem}
+.bitem[aria-pressed="true"] .nm small{color:var(--ink-4)}
+.bitem kbd{font-family:var(--mono);font-size:.58rem;color:var(--ink-5);
+  background:rgba(255,255,255,.05);border:1px solid var(--rule);border-radius:2px;padding:.08rem .3rem}
+.bitem.sep{border-top:1px solid var(--rule-2)}
+
+/* params */
+.params{padding:.85rem}
+.params .ph{font-size:.6rem;letter-spacing:.15em;text-transform:uppercase;color:var(--bc);margin-bottom:.65rem}
+.prow{display:grid;grid-template-columns:4.3rem 1fr 2.9rem;align-items:center;gap:.5rem;
+  margin-bottom:.5rem;font-size:.69rem;color:var(--ink-4)}
+.prow .tr{height:2px;background:rgba(255,255,255,.13);position:relative;border-radius:1px;cursor:ew-resize}
+.prow .tr i{position:absolute;top:-5px;width:2px;height:12px;background:var(--ink-2);border-radius:1px}
+.prow .tr.live i{background:var(--bc)}
+.prow .vv{text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums;font-size:.67rem}
+.seg{display:flex;gap:2px;background:rgba(255,255,255,.06);padding:2px;border-radius:3px}
+.seg span{flex:1;text-align:center;font-size:.62rem;padding:.18rem .1rem;border-radius:2px;
+  color:var(--ink-5);cursor:pointer}
+.seg span.on{background:var(--card-2);color:var(--ink)}
+.foot{padding:.65rem .85rem;border-top:1px solid var(--rule);font-size:.62rem;color:var(--ink-5);line-height:1.5}
+.foot b{color:var(--ink-3);font-weight:500}
+
+/* ── S0: today, with hotspots ───────────────────────────────── */
+.today{position:relative;line-height:0}
+.today img{display:block;width:100%;height:auto}
+.hs{position:absolute;border:1px solid transparent;border-radius:3px;background:transparent;
+  cursor:pointer;padding:0;transition:background .15s,border-color .15s;color:inherit}
+.hs:hover,.hs[aria-pressed="true"]{background:rgba(242,100,21,.18);border-color:rgba(242,100,21,.75)}
+.hs span{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  font-family:var(--sans);font-size:.62rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:#fff;background:rgba(0,0,0,.72);border:1px solid rgba(242,100,21,.8);
+  padding:.12rem .4rem;border-radius:2px;opacity:0;transition:opacity .15s;white-space:nowrap;line-height:1.3;
+}
+.hs:hover span,.hs[aria-pressed="true"] span{opacity:1}
+.todaybar{display:flex;flex-wrap:wrap;gap:.5rem 1.1rem;padding:.7rem .9rem;
+  border-top:1px solid var(--rule);background:var(--app);font-size:.7rem;color:var(--ink-4)}
+.todaybar b{color:var(--ink-2);font-weight:500}
+.verdictline{padding:.75rem .9rem;background:var(--sunk);border-top:1px solid var(--rule);
+  font-size:.78rem;color:var(--ink-2);min-height:2.9rem}
+.verdictline b{color:var(--ink);font-weight:600}
+.verdictline em{font-style:normal;color:var(--orange)}
+
+/* ── S2: dock ───────────────────────────────────────────────── */
+.dockstage{position:relative}
+.dock{
+  position:absolute;left:50%;bottom:2.1rem;transform:translateX(-50%);
+  display:flex;gap:2px;background:rgba(14,14,14,.86);border:1px solid var(--rule-2);
+  border-radius:12px;padding:4px;backdrop-filter:blur(8px);
+}
+.dockbtn{
+  appearance:none;background:transparent;border:0;border-radius:9px;cursor:pointer;
+  width:2.9rem;height:2.9rem;display:grid;place-items:center;color:var(--ink-4);
+  transition:background .14s,color .14s;position:relative;
+}
+.dockbtn:hover{background:rgba(255,255,255,.07);color:var(--ink-1)}
+.dockbtn[aria-pressed="true"]{background:rgba(255,255,255,.12);color:var(--c)}
+.dockbtn svg{width:1.35rem;height:1.35rem}
+.dockbtn em{
+  position:absolute;bottom:-1.35rem;left:50%;transform:translateX(-50%);
+  font-style:normal;font-size:.58rem;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--c);opacity:0;transition:opacity .14s;white-space:nowrap;
+}
+.dockbtn[aria-pressed="true"] em{opacity:1}
+.floatcard{
+  position:absolute;left:1rem;bottom:1rem;width:190px;
+  background:rgba(14,14,14,.88);border:1px solid var(--rule-2);border-radius:10px;
+  backdrop-filter:blur(8px);
+}
+.floatcard .params{padding:.7rem .75rem}
+.floattop{
+  position:absolute;left:1rem;top:1rem;right:1rem;display:flex;justify-content:space-between;
+  align-items:flex-start;gap:1rem;pointer-events:none;
+}
+.floattop .docchip{background:rgba(14,14,14,.8);border:1px solid var(--rule);
+  border-radius:20px;padding:.24rem .7rem;backdrop-filter:blur(8px)}
+.reachpill{
+  background:rgba(14,14,14,.8);border:1px solid var(--rule);border-radius:20px;
+  padding:.24rem .7rem;font-size:.66rem;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-4);
+  font-variant-numeric:tabular-nums;
+}
+.reachpill b{color:var(--ink-1);font-weight:500}
+@media(max-width:640px){.floatcard{display:none}}
+
+/* ── S3: compose ────────────────────────────────────────────── */
+.heldlist{display:flex;flex-direction:column;gap:1px;background:var(--rule);overflow-y:auto}
+.hrow{
+  display:grid;grid-template-columns:1.15rem 1fr auto auto;align-items:center;gap:.6rem;
+  background:var(--app);border:0;text-align:left;padding:.5rem .8rem;cursor:pointer;font:inherit;
+  color:var(--ink-2);transition:background .14s;
+}
+.hrow:hover{background:var(--app-2)}
+.hrow.silent{color:var(--ink-5)}
+.hrow svg{width:1.15rem;height:1.15rem;display:block}
+.hrow .nm{font-size:.76rem;font-weight:500;color:var(--ink-1)}
+.hrow.silent .nm{color:var(--ink-4)}
+.hrow .nm small{display:block;font-size:.6rem;font-weight:400;color:var(--ink-5);
+  font-variant-numeric:tabular-nums;margin-top:.04rem}
+.hrow .lv{width:44px;height:2px;background:rgba(255,255,255,.12);position:relative;border-radius:1px}
+.hrow .lv i{position:absolute;left:0;top:0;height:2px;background:var(--c);border-radius:1px}
+.hrow.silent .lv i{background:var(--ink-5)}
+.hrow .st{font-size:.58rem;letter-spacing:.09em;text-transform:uppercase;width:3.1rem;text-align:right}
+.hrow .st.on{color:var(--green)}
+.hrow .st.off{color:var(--ink-5)}
+.listhead{display:flex;justify-content:space-between;align-items:center;
+  padding:.62rem .8rem;font-size:.6rem;letter-spacing:.15em;text-transform:uppercase;color:var(--ink-5)}
+.listhead button{
+  font:inherit;font-size:.6rem;letter-spacing:.09em;text-transform:uppercase;
+  background:rgba(255,255,255,.06);border:1px solid var(--rule);color:var(--ink-3);
+  border-radius:3px;padding:.16rem .5rem;cursor:pointer;
+}
+.listhead button:hover{color:var(--ink);border-color:var(--rule-2)}
+.emptynote{padding:1.4rem .9rem;font-size:.72rem;color:var(--ink-5);line-height:1.6;text-align:center}
+
+/* ── S4: documents ──────────────────────────────────────────── */
+.menubar{display:flex;gap:.2rem;align-items:center;padding:.4rem .7rem;
+  border-bottom:1px solid var(--rule);background:var(--app);position:relative;z-index:5}
+.mbtn{font:inherit;font-size:.74rem;background:transparent;border:0;color:var(--ink-3);
+  padding:.26rem .6rem;border-radius:3px;cursor:pointer}
+.mbtn:hover{background:rgba(255,255,255,.07);color:var(--ink)}
+.mbtn[aria-expanded="true"]{background:var(--card-2);color:var(--ink)}
+.menu{
+  position:absolute;top:calc(100% + 2px);left:.6rem;min-width:250px;
+  background:#1c1c1c;border:1px solid var(--rule-2);border-radius:6px;
+  padding:.28rem;box-shadow:0 18px 44px -14px rgba(0,0,0,.95);z-index:20;
+}
+.menu[hidden]{display:none}
+.mi{
+  display:flex;justify-content:space-between;align-items:center;gap:1.2rem;width:100%;
+  font:inherit;font-size:.76rem;background:transparent;border:0;color:var(--ink-2);
+  padding:.34rem .55rem;border-radius:3px;cursor:pointer;text-align:left;
+}
+.mi:hover{background:rgba(255,255,255,.09);color:var(--ink)}
+.mi kbd{font-family:var(--mono);font-size:.64rem;color:var(--ink-5)}
+.mi.dis{color:var(--ink-5);cursor:default}
+.mi.dis:hover{background:transparent;color:var(--ink-5)}
+.msep{height:1px;background:var(--rule);margin:.28rem .3rem}
+.mlabel{font-size:.58rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-5);
+  padding:.4rem .55rem .18rem}
+.mi small{color:var(--ink-5);font-size:.64rem;font-variant-numeric:tabular-nums}
+
+.recover{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(390px,90%);
+  background:#1a1a1a;border:1px solid rgba(242,100,21,.4);border-radius:9px;
+  padding:1.15rem 1.2rem;box-shadow:0 30px 70px -18px rgba(0,0,0,.95);z-index:15;text-align:left;
+}
+.recover[hidden]{display:none}
+.recover h4{margin:0 0 .4rem;font-size:.94rem;font-weight:600;color:var(--ink)}
+.recover p{margin:0 0 1rem;font-size:.78rem;color:var(--ink-3);line-height:1.55;font-family:var(--sans)}
+.recover p b{color:var(--ink-1);font-weight:500}
+.rbtns{display:flex;gap:.5rem;justify-content:flex-end}
+.rbtn{font:inherit;font-size:.74rem;padding:.34rem .8rem;border-radius:3px;cursor:pointer;
+  background:rgba(255,255,255,.07);border:1px solid var(--rule);color:var(--ink-2)}
+.rbtn.pri{background:rgba(242,100,21,.2);border-color:rgba(242,100,21,.55);color:#ffcda9}
+.rbtn:hover{border-color:var(--rule-2);color:var(--ink)}
+
+.filetypes{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--rule);
+  border-top:1px solid var(--rule)}
+@media(max-width:560px){.filetypes{grid-template-columns:1fr}}
+.ftype{background:var(--app);padding:.9rem 1rem}
+.ftype h5{margin:0 0 .3rem;font-size:.74rem;font-weight:600;color:var(--ink);letter-spacing:-.01em}
+.ftype h5 code{font-size:.72rem}
+.ftype p{margin:0;font-size:.7rem;color:var(--ink-4);line-height:1.55;font-family:var(--sans)}
+.ftype ul{margin:.45rem 0 0;padding-left:.95rem;font-size:.68rem;color:var(--ink-4);font-family:var(--sans);line-height:1.5}
+.ftype li{margin-bottom:.12rem}
+.ftype li::marker{color:var(--ink-5)}
+
+/* ── footer ─────────────────────────────────────────────────── */
+footer{border-top:1px solid var(--rule);background:var(--canvas);padding-block:2.4rem;
+  font-family:var(--sans);font-size:.78rem;color:var(--ink-5)}
+footer p{margin:0 0 .5rem;max-width:70ch}
+footer b{color:var(--ink-3);font-weight:500}
+
+@media(max-width:720px){
+  .sixbody,.arrbody{grid-template-columns:1fr!important}
+  .sixbody>div:last-child,.arrbody>div:last-child{border-left:0!important;border-top:1px solid var(--rule)}
+  .heldlist{max-height:260px}
+}
+@media(prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important}}
+
+/* ── the tile row — the play surface ──────────────────────────── */
+.tilebar{display:flex;gap:1px;background:var(--rule);border-top:1px solid var(--rule-2);
+  overflow-x:auto;flex:0 0 auto}
+.tilebar::-webkit-scrollbar{height:0}
+.tile{position:relative;flex:1 0 6.6rem;min-width:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:.3rem;background:var(--app);border:0;
+  border-top:2px solid transparent;padding:.7rem .4rem .55rem;cursor:grab;color:var(--ink-4);
+  transition:background .14s,color .14s,border-color .14s;font-family:var(--sans)}
+.tile:hover{background:var(--app-2);color:var(--ink-1)}
+.tile.active{background:var(--card);color:var(--ink);border-top-color:var(--c)}
+.tile.active svg{color:var(--c)}
+.tile.fired{background:var(--card-2);color:var(--ink)}
+.tile.ghost{opacity:.5}
+.tile.ghost .tile-nm{font-style:italic}
+.tile.dragging{opacity:.35;cursor:grabbing}
+.tile.over{background:var(--card-2);border-top-color:var(--ink-3)}
+.tile svg{width:1.3rem;height:1.3rem;color:var(--ink-4);transition:color .14s;flex:none}
+.tile-nm{font-size:.66rem;font-weight:500;max-width:100%;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.tile kbd{position:absolute;top:.3rem;left:.42rem;font-family:var(--mono);
+  font-size:.55rem;color:var(--ink-5)}
+.tile.active kbd{color:var(--c)}
+
+/* ── options bar ──────────────────────────────────────────────── */
+.optbar{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;padding:.5rem .8rem;
+  background:var(--app);border-bottom:1px solid var(--rule);font-family:var(--sans)}
+.opt-name{font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;font-weight:600;
+  flex:0 0 auto;min-width:5rem}
+.opt-none{font-size:.7rem;color:var(--ink-5)}
+.opt-none b{color:var(--ink-3);font-weight:500}
+.opt{display:flex;align-items:center;gap:.4rem;font-size:.67rem;color:var(--ink-4)}
+.opt > i{font-style:normal}
+.opt > b{color:var(--ink-2);font-weight:500;font-variant-numeric:tabular-nums;min-width:2.6rem}
+.opt .tr{width:52px;height:2px;background:rgba(255,255,255,.14);position:relative;
+  border-radius:1px;cursor:ew-resize;flex:none}
+.opt .tr .thumb{position:absolute;top:-5px;width:2px;height:12px;background:var(--ink-2);border-radius:1px}
+.opt .tr.live .thumb{background:var(--teal)}
+.opt .seg{display:flex;gap:2px;background:rgba(255,255,255,.06);padding:2px;border-radius:3px}
+.opt .seg span{font-size:.61rem;padding:.14rem .42rem;border-radius:2px;color:var(--ink-5);cursor:pointer}
+.opt .seg span.on{background:var(--card-2);color:var(--ink)}
+
+/* ── layers rail ──────────────────────────────────────────────── */
+.lyrrail{border-left:1px solid var(--rule);background:var(--app);display:flex;
+  flex-direction:column;min-height:0}
+.lyrrail .lyr-bar{display:flex;align-items:center;justify-content:space-between;gap:.5rem;
+  padding:.62rem .75rem;border-bottom:1px solid var(--rule)}
+.lyrrail .lyr-title{font-family:var(--sans);font-size:.6rem;letter-spacing:.15em;
+  text-transform:uppercase;color:var(--ink-5)}
+.lyrrail .lyr-bar button{font-family:var(--sans);font-size:.58rem;letter-spacing:.09em;
+  text-transform:uppercase;background:rgba(255,255,255,.06);border:1px solid var(--rule);
+  color:var(--ink-3);border-radius:3px;padding:.16rem .5rem;cursor:pointer}
+.lyrrail .lyr-bar button:hover{color:var(--ink);border-color:var(--rule-2)}
+.lyrrail .lyr-list{flex:1;overflow-y:auto;min-height:0}
+.lyrrail .lyr-foot{padding:.6rem .75rem;border-top:1px solid var(--rule);
+  font-family:var(--sans);font-size:.6rem;color:var(--ink-5);line-height:1.5}
+.lyrrail .lyr-foot b{color:var(--ink-3);font-weight:500}
+
+.lyrgroup{border-top:1px solid var(--rule)}
+.lyrgroup:first-child{border-top:0}
+.lyrgroup.muted{opacity:.5}
+.lyrgroup-h{display:flex;align-items:center;gap:.5rem;padding:.45rem .75rem;
+  background:var(--app-2);font-family:var(--sans);font-size:.63rem;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--ink-2)}
+.lyrdot{width:.62rem;height:.62rem;border-radius:50%;flex:none;padding:0;cursor:pointer;
+  background:var(--c);border:1px solid var(--c)}
+.lyrgroup.muted .lyrdot{background:transparent}
+.lyrn{margin-left:auto;color:var(--ink-5);font-variant-numeric:tabular-nums}
+
+@media(max-width:820px){
+  .sixbody{grid-template-columns:1fr!important}
+  .lyrrail{border-left:0;border-top:1px solid var(--rule);max-height:220px}
+  .tile{flex:1 0 5rem}
+  .optbar{gap:.7rem}
+}
+
+.lyrkey{font-family:var(--mono);font-size:.55rem;color:var(--ink-5);
+  background:rgba(255,255,255,.05);border:1px solid var(--rule);
+  border-radius:2px;padding:.06rem .28rem;margin-left:.3rem}
+.lyrgroup:not(.muted) .lyrkey{color:var(--c);border-color:var(--c)}
+.optbar{border-bottom:0;border-top:1px solid var(--rule)}
+
+/* ── layer mute / solo ────────────────────────────────────────── */
+.lyrgroup-h{display:grid;grid-template-columns:auto 1fr auto auto auto;align-items:center;gap:.42rem}
+.lyrname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lyrsolo{
+  font-family:var(--sans);font-size:.58rem;font-weight:600;letter-spacing:.04em;
+  width:1.15rem;height:1.15rem;display:grid;place-items:center;padding:0;
+  background:rgba(255,255,255,.06);border:1px solid var(--rule);
+  color:var(--ink-5);border-radius:2px;cursor:pointer;
+}
+.lyrsolo:hover{color:var(--ink-1);border-color:var(--rule-2)}
+.lyrsolo[aria-pressed="true"]{
+  background:rgba(242,100,21,.22);border-color:var(--orange);color:#ffcda9;
+}
+.lyr--muted{opacity:.45}
+.lyr--ducked{opacity:.55}
+.lyr--solo{box-shadow:inset 2px 0 0 var(--orange)}
+.lyrwhy{
+  padding:.28rem .75rem .34rem 1.85rem;font-family:var(--sans);font-size:.57rem;
+  letter-spacing:.05em;color:var(--orange);background:rgba(242,100,21,.06);
+}
+.hrow .st.off{color:var(--ink-5)}
+
+/* ── scan, beside mute in the chrome ──────────────────────────── */
+.scanbtn{
+  display:flex;align-items:center;gap:.4rem;font-family:var(--sans);
+  font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;
+  background:rgba(255,255,255,.05);border:1px solid var(--rule);
+  color:var(--ink-4);border-radius:999px;padding:.26rem .72rem;cursor:pointer;
+}
+.scanbtn i{width:6px;height:6px;border-radius:50%;background:var(--ink-5);flex:none;transition:background .15s}
+.scanbtn.on{color:var(--ink-1);border-color:rgba(122,188,188,.4)}
+.scanbtn.on i{background:var(--teal)}
+.scanbtn:hover{border-color:var(--rule-2)}
+
+/* ── layer fade dial ──────────────────────────────────────────── */
+.fadeRow{
+  display:grid;grid-template-columns:4.4rem 1fr 2.4rem;align-items:center;gap:.5rem;
+  padding:.5rem .75rem;border-bottom:1px solid var(--rule);
+  font-family:var(--sans);font-size:.63rem;color:var(--ink-4);
+}
+.fadeRow .tr{height:2px;background:rgba(255,255,255,.14);position:relative;border-radius:1px;cursor:ew-resize}
+.fadeRow .tr .thumb{position:absolute;top:-5px;width:2px;height:12px;background:var(--violet);border-radius:1px}
+.fadeRow b{text-align:right;color:var(--ink-2);font-weight:500;font-variant-numeric:tabular-nums}
+</style>
+<header class="mast">
+  <div class="wrap">
+    <div class="mast-top"><b>mubone</b> <span>interface directions · aug 2026 · nothing built</span></div>
+    <h1>One hand paints, the other commits — at the same time</h1>
+    <p>No rooms, no modes. <b>Numbers are tiles</b> — hold <b>1</b>, <b>2</b> or <b>3</b> and move over the sphere; <b>4, 5, 6</b> scrape; <b>7, 8</b> undo and redo. <b>Q, W, E are the layers.</b> Hold them together: <b>1 + Q</b> records a line and loops it as it goes. Hold <b>2</b> sweeping a circle and tap <b>E</b> as you go to drop clouds mid-gesture. <b>Drag tiles to reorder; the number follows the position.</b></p>
+
+    <div style="display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;margin-bottom:1.1rem">
+      <span style="font-family:var(--sans);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-5)">Vocabulary</span>
+      <div class="segbar" id="vocabSwitch" role="group" aria-label="Vocabulary system">
+        <button type="button" data-v="paint"   aria-pressed="true">Paint</button>
+        <button type="button" data-v="voice"   aria-pressed="false">Voice</button>
+        <button type="button" data-v="tape"    aria-pressed="false">Tape</button>
+        <button type="button" data-v="current" aria-pressed="false">Today</button>
+      </div>
+      <span id="vocabNote" style="font-family:var(--sans);font-size:.72rem;color:var(--ink-4)"></span><span style="flex:1"></span><button type="button" id="resetMat" style="font-family:var(--sans);font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;background:rgba(255,255,255,.06);border:1px solid var(--rule);color:var(--ink-4);border-radius:3px;padding:.28rem .7rem;cursor:pointer">reset material</button>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label="Interface directions">
+      <button class="tab" role="tab" id="t-today"  aria-controls="s-today"  aria-selected="false" style="--tc:var(--ink-3)">Today<i>1.13 alpha</i></button>
+      <button class="tab" role="tab" id="t-six"    aria-controls="s-six"    aria-selected="true"  style="--tc:var(--teal)">The instrument<i>one screen</i></button>
+      <button class="tab" role="tab" id="t-sets"   aria-controls="s-sets"   aria-selected="false" style="--tc:var(--green)">Sets<i>real files</i></button>
+      <button class="tab" role="tab" id="t-words"  aria-controls="s-words"  aria-selected="false" style="--tc:var(--cyan)">Words<i>naming systems</i></button>
+    </div>
+  </div>
+</header>
+
+<div class="screens"><div class="wrap">
+
+<!-- ══════════════════ TODAY ══════════════════ -->
+<section class="screen" id="s-today" role="tabpanel" aria-labelledby="t-today" hidden>
+  <div class="frame">
+    <div class="today">
+      <img id="todayImg" alt="The mubone 1.13 alpha window: a sphere canvas at top left and eleven control panels arranged in four columns." src="" data-note="screenshot of the 1.13 window stripped from the repo copy — see the live artifact">
+      <div id="hotspots"></div>
+    </div>
+    <div class="verdictline" id="todayVerdict"><b>Hover any region.</b> Eleven panels, eleven modals, and no single place that answers what the cursor is for.</div>
+    <div class="todaybar">
+      <span><b>11</b> panels</span><span><b>11</b> modals</span><span><b>101</b> actions</span>
+      <span><b>141</b> buttons</span><span><b>62</b> sliders</span><span><b>75</b> switches</span>
+      <span><b>1,056</b> cursor states</span>
+    </div>
+  </div>
+  <div class="readout" style="--kc:var(--ink-3)">
+    <div>
+      <div class="kicker">Where it stands</div>
+      <h2>The real window, at 1.13 alpha</h2>
+      <p>This is not a redrawing — it is the app, captured on 23 August. Worth looking at with one question in mind: <em>if you had to point at the thing that decides what happens when you move the sensor, where would you point?</em></p>
+      <p>The honest answer is that you would point at five places. That is the whole argument, and every direction that follows is a different way of making the answer a single place.</p>
+    </div>
+    <div>
+      <ul class="tries">
+        <li>Hover the <b>cursor</b> panel</li>
+        <li>Hover <b>commits</b></li>
+        <li>Hover <b>search</b>, <b>grain</b>, <b>envelope</b></li>
+      </ul>
+      <div class="trade"><b>What survives</b>
+        Almost all of it. The controls are good and you need them — they just stop being eleven peers and become one tool's settings, one brush's contents, or one rig's configuration.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════ THE INSTRUMENT ══════════════════ -->
+<section class="screen" id="s-six" role="tabpanel" aria-labelledby="t-six">
+  <div class="frame">
+    <div class="topbar">
+      <div class="brandwrap"><b>mubone</b> <i>1.14</i></div>
+      <div class="docchip"><span class="dot"></span> <b class="docName">dartmouth-set-2</b> <em class="docState">— edited</em></div>
+      <button type="button" class="scanbtn on" id="scanBtn" aria-pressed="true"
+        title="does the cursor sound the material it passes? — lives beside mute because it is true of every tile"><i></i><span>scan</span></button>
+      <div class="reachpill" style="position:static;backdrop-filter:none"><span class="tReach">reach</span> <b class="oReach">18°</b></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) 246px" class="sixbody">
+      <div class="stagebox" id="stage-six" style="min-height:430px">
+        <canvas width="880" height="530" aria-label="Sphere. Hold a tile number and move to paint; shift-number holds into a layer."></canvas>
+        <div class="hint" id="hint-six"></div>
+        <div class="hud">
+          <span class="oTool" style="color:var(--teal)">spray</span>
+          <span></span>
+          <span><span class="tMat">scratch</span> <b class="oMat">0</b> · <span class="tHeld">held</span> <b class="oHeld">0</b></span>
+        </div>
+      </div>
+
+      <!-- Layers — the right bar is theirs, permanently. No second room. -->
+      <aside class="lyrrail" aria-label="layers">
+        <div class="lyr-bar">
+          <span class="lyr-title tHeldHead">Layers</span>
+          <button type="button" id="allOn" title="bring everything back">all on</button>
+        </div>
+        <div class="fadeRow" id="fadeRow"></div>
+        <div class="lyr-list" id="held-arr"></div>
+        <div class="lyr-foot" id="foot-arr"></div>
+      </aside>
+    </div>
+
+    <div class="tilebar" id="tileBar" role="toolbar" aria-label="tiles"></div>
+    <!-- The selected tile's settings sit directly under its tile, so the thing
+         you are adjusting is next to the thing you pressed. -->
+    <div class="optbar" id="optBar"></div>
+    <div class="foot" id="foot-six"></div>
+  </div>
+
+  <div class="readout" style="--kc:var(--teal)">
+    <div>
+      <div class="kicker">One screen</div>
+      <h2>Tiles below, their settings under them, layers beside</h2>
+      <p>Photoshop's layout, with the options bar moved under the tiles so the thing you are adjusting sits next to the thing you pressed. Everything you touch while playing is in one row along the bottom: <b>brushes, erasers, undo, redo</b>, and a <code>+</code> to make more. Numbers run left to right, so <b>the tile's position is its key</b> — nothing to memorise past "first tile is 1".</p>
+      <p>Numbers rather than letters on purpose: a letter row is a keyboard-layout accident, a number row isn't. <b>Drag a tile and its number follows</b> — the way forScore lets you arrange the tools you actually reach for.</p>
+      <p>The right bar belongs to <b>layers</b>, permanently — <b>Q, W, E</b>. No arrange room, no mode: the arrangement is always visible, the way a layers panel always is.</p>
+      <p><b>The two hands are the point.</b> Numbers and letters sit on different rows so they can be held together, and holding <em>while painting</em> is not a special case — it's the main way to play. <b>1 + Q</b> is a line recorded and looped in one motion, the way a looper pedal works. Hold <b>2</b> through a long sweeping gesture and tap <b>E</b> three times as you go: three clouds dropped into layer 3, mid-stroke, without stopping.</p>
+      <p>That is what <code>⇧</code> would have cost. A modifier makes the second gesture a variation on the first; two separate rows make them <em>independent</em>, and independence is what lets you record and commit at once.</p>
+      <p><b>There is no sample bank any more.</b> A stamp tile <em>is</em> a loaded sample — make another and point it at another file. Same for brushes and erasers. That's the whole replacement for twenty presets and ten sample slots: <em>make a tile, keep a tile.</em></p>
+    </div>
+    <div>
+      <ul class="tries">
+        <li>Hold <b>1 + Q</b> — line, looped as you draw</li>
+        <li>Hold <b>2</b>, tap <b>E</b> a few times mid-sweep</li>
+        <li>Hold <b>2</b> then <b>W</b> — a drawn cloud</li>
+        <li><b>4</b> to scrape, <b>7</b> to undo</li>
+        <li>Drag a tile to reorder</li>
+        <li>Click a layer's dot to mute, <b>S</b> to solo</li>
+        <li>Raise <b>layer fade</b>, then move</li>
+        <li>Hold <b>7</b> and sweep — layers flip</li>
+      </ul>
+      <div class="trade"><b>What the brush owns</b>
+        Both halves of a mark — how it goes down <em>and</em> how it reads back forever. That's why there's no mode: a line loops when you touch it because it's a line, not because a switch says loop.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════ SETS ══════════════════ -->
+<section class="screen" id="s-sets" role="tabpanel" aria-labelledby="t-sets" hidden>
+  <div class="frame">
+    <div class="menubar">
+      <button class="mbtn" id="fileBtn" aria-expanded="false" aria-haspopup="true"><span class="tFileMenu">Set</span></button>
+      <button class="mbtn" id="rigBtn" aria-expanded="false" aria-haspopup="true"><span class="tRigMenu">Rig</span></button>
+      <span style="flex:1"></span>
+      <div class="docchip" style="margin-right:.4rem"><span class="dot" id="setsDot"></span> <b class="docName">dartmouth-set-2</b> <em class="docState">— edited</em></div>
+      <div class="menu" id="fileMenu" hidden></div>
+      <div class="menu" id="rigMenu" hidden style="left:auto"></div>
+    </div>
+    <div class="stagebox" id="stage-sets" style="min-height:360px;cursor:default">
+      <canvas width="1120" height="460" aria-label="Sphere showing the material of the currently open set."></canvas>
+      <div class="hint" id="hint-sets"></div>
+      <div class="hud">
+        <span id="setsPath" style="text-transform:none;letter-spacing:.02em;font-family:var(--mono);font-size:.6rem">~/Music/mubone/dartmouth-set-2.mubone</span>
+        <span></span>
+        <span><span class="tHeld">holds</span> <b class="oHeld">0</b> · <span class="tMat">paint</span> <b class="oMat">0</b></span>
+      </div>
+      <div class="recover" id="recover" hidden>
+        <h4>Recover unsaved work?</h4>
+        <p>mubone closed unexpectedly during <b class="docName">dartmouth-set-2</b>. An autosave from <b>14:52</b> is available — 3 minutes of material after your last save.</p>
+        <div class="rbtns">
+          <button class="rbtn" id="recDiscard">Discard</button>
+          <button class="rbtn pri" id="recRestore">Restore</button>
+        </div>
+      </div>
+    </div>
+    <div class="filetypes">
+      <div class="ftype">
+        <h5><code>.mubone</code> — <span class="tDocTitle">the set</span></h5>
+        <p>The music. Everything you played and where it sits.</p>
+        <ul>
+          <li>Strokes: material, position, brush stamp</li>
+          <li>Audio as raw WAV inside the container, not base64</li>
+          <li>Which holds are sounding</li>
+          <li>The brushes it was played with, resolved — not indices into your bank</li>
+        </ul>
+      </div>
+      <div class="ftype">
+        <h5><code>.mubonerig</code> — <span class="tRigTitle">the rig</span></h5>
+        <p>The machine. Everything you set up before a show and never touch during one.</p>
+        <ul>
+          <li>Audio devices, channel counts, speaker angles</li>
+          <li>Sensor roles, axis maps, calibration</li>
+          <li>Key / MIDI / OSC bindings, accessory config</li>
+          <li>UI scale, layout, viz calibration</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="readout" style="--kc:var(--green)">
+    <div>
+      <div class="kicker">Direction four</div>
+      <h2>A set you can name, reopen and survive a crash with</h2>
+      <p>The concept is already finished in the code — two file types, disjoint on purpose, a version gate, a payload normaliser. What is missing is that <b>the Electron preload exposes 22 IPC methods and not one of them touches the filesystem</b>, so saving is a browser download into <code>~/Downloads</code> with a timestamp for a name.</p>
+      <p>Open a recent set from the menu and watch the sphere load different material. That is the whole feature: a thing with a name that you can come back to.</p>
+    </div>
+    <div>
+      <ul class="tries">
+        <li>Open the <b class="tFileMenu">Set</b> menu</li>
+        <li>Open a recent set</li>
+        <li>Trigger the <b>recovery</b> dialog</li>
+        <li>Compare with <b class="tRigMenu">Rig</b></li>
+      </ul>
+      <div class="trade"><b>Trade-off</b>
+        Do this <em>after</em> the material model, not before. A set today is a snapshot of memory; a set under the brush model is a list of strokes — smaller, diffable, and the version worth designing the container around. Building files first means writing the format twice.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════ WORDS ══════════════════ -->
+<section class="screen" id="s-words" role="tabpanel" aria-labelledby="t-words" hidden>
+  <div class="frame" style="padding:clamp(1.3rem,3.5vw,2.2rem);font-family:var(--serif)">
+    <div style="max-width:70ch">
+      <div style="font-family:var(--sans);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--cyan);margin-bottom:.5rem">Starting point</div>
+      <h2 style="font-family:var(--sans);font-size:clamp(1.4rem,3.2vw,2rem);font-weight:600;letter-spacing:-.025em;line-height:1.1;margin:0 0 .8rem;color:var(--ink)">Why <em style="font-style:italic;font-family:var(--serif);font-weight:300;color:var(--orange)">trace</em> is the wrong word, with receipts</h2>
+      <p style="color:var(--ink-2);margin:0 0 1rem">You are right to be annoyed by it, and the reason is stronger than taste: <b style="color:var(--ink);font-weight:400">the codebase already disagrees with the UI.</b></p>
+      <div style="background:var(--sunk);border-left:2px solid var(--orange);border-radius:0 4px 4px 0;padding:.9rem 1.1rem;margin:0 0 1.2rem;font-family:var(--sans);font-size:.85rem;line-height:1.65;color:var(--ink-3)">
+        <code>js/paint-ticker.js</code> — <i>"Drops a particle at the current cursor position every N milliseconds <b style="color:var(--ink-1);font-weight:500">while painting</b>."</i><br>
+        <code>paintGateThreshold</code> · <code>SAMPLE_PAINT_COLORS</code> · <code>LIVE_PAINT_COLORS</code> · <code>updatePaintIndicator()</code> · actions <code>paint1</code>–<code>paint10</code><br>
+        <code>index.html</code>, the first-run hint the app shows a new user: <i>"click and drag on the canvas to <b style="color:var(--ink-1);font-weight:500">paint sound</b>."</i>
+      </div>
+      <p style="color:var(--ink-2);margin:0 0 1rem"><b style="color:var(--ink);font-weight:400">The app tells new users it paints and then labels the button "trace".</b> Trace is the outlier, not the incumbent — it appears in <code>traceMode</code>, one button, and a doc, and it collides twice: with <code>ui-trace.js</code> (a dead module sharing only the word) and with its own three sub-modes, where "trace" means both the verb and one of the three things the verb can be.</p>
+      <p style="color:var(--ink-2);margin:0 0 1.4rem">It is also weak as a verb. You <em>trace</em> something that already exists — a shape, an outline. What you actually do here is put new sound into a place. Every candidate below is a stronger verb than that.</p>
+    </div>
+
+    <div style="height:1px;background:var(--rule);margin:1.6rem 0"></div>
+
+    <div style="max-width:70ch">
+      <div style="font-family:var(--sans);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--cyan);margin-bottom:.5rem">Four systems</div>
+      <h3 style="font-family:var(--sans);font-size:1.3rem;font-weight:600;letter-spacing:-.02em;margin:0 0 .5rem;color:var(--ink)">Pick a metaphor and commit to it all the way down</h3>
+      <p style="color:var(--ink-2);margin:0 0 1.3rem">The failure mode is not a bad word — it is <em>three metaphors at once</em>, which is what the app has now (a drawing word, a version-control word, a gardening word). Each system below is internally consistent. Flip the switch at the top of the page to wear one for a while.</p>
+    </div>
+
+    <div style="overflow-x:auto;border:1px solid var(--rule);border-radius:5px;margin-bottom:1.6rem">
+      <table style="border-collapse:collapse;width:100%;font-family:var(--sans);font-size:.82rem;min-width:660px">
+        <thead>
+          <tr>
+            <th style="text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--rule);background:var(--app-2);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-5);font-weight:500;width:9.5rem">Concept</th>
+            <th style="text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--rule);background:var(--app-2);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--teal);font-weight:500">Paint <span style="color:var(--ink-5)">· recommended</span></th>
+            <th style="text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--rule);background:var(--app-2);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--pink);font-weight:500">Voice</th>
+            <th style="text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--rule);background:var(--app-2);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--amber);font-weight:500">Tape</th>
+            <th style="text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--rule);background:var(--app-2);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-4);font-weight:500">Today</th>
+          </tr>
+        </thead>
+        <tbody id="vocabTable"></tbody>
+      </table>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1rem;margin-bottom:1.8rem">
+      <div style="background:var(--app-2);border:1px solid var(--rule);border-top:2px solid var(--teal);border-radius:5px;padding:1.1rem 1.15rem">
+        <div style="font-family:var(--sans);font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:var(--teal);margin-bottom:.45rem">Paint</div>
+        <p style="margin:0;font-size:.94rem;color:var(--ink-2);line-height:1.55">Matches the brush model exactly, and every word already appears somewhere in the code. <b style="color:var(--ink);font-weight:400">Nothing has to be taught.</b> Risk: it is a visual metaphor for an audible instrument, and "paint" as a mass noun ("there's paint here") takes a beat to land.</p>
+      </div>
+      <div style="background:var(--app-2);border:1px solid var(--rule);border-top:2px solid var(--pink);border-radius:5px;padding:1.1rem 1.15rem">
+        <div style="font-family:var(--sans);font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:var(--pink);margin-bottom:.45rem">Voice</div>
+        <p style="margin:0;font-size:.94rem;color:var(--ink-2);line-height:1.55">Honest to what mubone is for — a performer sounding into a room. <b style="color:var(--ink);font-weight:400">Conduct</b> is the best single word in any of these systems. Risk: <i>hush</i> and <i>earshot</i> are charming in a design doc and precious at a soundcheck.</p>
+      </div>
+      <div style="background:var(--app-2);border:1px solid var(--rule);border-top:2px solid var(--amber);border-radius:5px;padding:1.1rem 1.15rem">
+        <div style="font-family:var(--sans);font-size:.6rem;letter-spacing:.14em;text-transform:uppercase;color:var(--amber);margin-bottom:.45rem">Tape</div>
+        <p style="margin:0;font-size:.94rem;color:var(--ink-2);line-height:1.55">Anyone who has opened a DAW is fluent on sight. Zero teaching cost, zero personality — and it quietly reframes the instrument as a recorder, which is the one thing you have consistently said it is not.</p>
+      </div>
+    </div>
+
+    <div style="max-width:70ch">
+      <div style="font-family:var(--sans);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--cyan);margin-bottom:.5rem">The shorter list</div>
+      <h3 style="font-family:var(--sans);font-size:1.3rem;font-weight:600;letter-spacing:-.02em;margin:0 0 .5rem;color:var(--ink)">The best renames are deletions</h3>
+      <p style="color:var(--ink-2);margin:0 0 1.2rem">Counting what a player currently has to hold in their head — every noun and verb the UI, keyboard doc and OSC namespace expose — comes to about <b style="color:var(--ink);font-weight:400">forty terms</b>. Most of them do not need better names. They need to stop existing.</p>
+    </div>
+
+    <div style="overflow-x:auto;border:1px solid var(--rule);border-radius:5px;margin-bottom:1.6rem">
+      <table style="border-collapse:collapse;width:100%;font-family:var(--sans);font-size:.82rem;min-width:600px">
+        <thead><tr>
+          <th style="text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--rule);background:var(--app-2);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-5);font-weight:500;width:15rem">Today's words</th>
+          <th style="text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--rule);background:var(--app-2);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-5);font-weight:500;width:8rem">Becomes</th>
+          <th style="text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--rule);background:var(--app-2);font-size:.6rem;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-5);font-weight:500">Why</th>
+        </tr></thead>
+        <tbody>
+          <tr><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-4)">seed · seq · cloud · loop · playhead · commit · plant · drop · draw · uproot · lift</td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule)"><b style="color:var(--orange);font-weight:500">hold</b></td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-3)">Eleven words for one idea: material that keeps sounding after the cursor leaves. What kind it is follows from the brush, so it never needed a name.</td></tr>
+          <tr style="background:rgba(255,255,255,.018)"><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-4)">scan · scan on/off · triggers on/off</td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule)"><b style="color:var(--green);font-weight:500">deleted</b></td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-3)">The cursor always plays what it reaches. The only state left to name is silence, and that word is already <b style="color:var(--ink-1);font-weight:400">mute</b>.</td></tr>
+          <tr><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-4)">trace mode · commit mode · composer mode</td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule)"><b style="color:var(--green);font-weight:500">deleted</b></td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-3)">Three mode-cycles that all answer "what is the cursor for". The tool answers it once.</td></tr>
+          <tr style="background:rgba(255,255,255,.018)"><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-4)">patch · preset · user patch · factory patch</td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule)"><b style="color:var(--teal);font-weight:500">brush</b></td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-3)">A saved parameter set <em>is</em> a brush. One concept where there were two, and it is the concept you asked for.</td></tr>
+          <tr><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-4)">recency · recency depth</td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule)"><b style="color:var(--teal);font-weight:500">layers</b></td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-3)">It limits how many of the newest buffers under the cursor are audible. That is a layer stack, and every painter already knows what one is.</td></tr>
+          <tr style="background:rgba(255,255,255,.018)"><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-4)">search radius · trigger radius · erase radius</td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule)"><b style="color:var(--teal);font-weight:500">reach</b></td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-3)">Already unified in code (#185) — one cursor, one reach. The name just has not caught up. "Radius" describes the geometry; "reach" describes the gesture.</td></tr>
+          <tr><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-4)">trigger</td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule)"><b style="color:var(--pink);font-weight:500">hit</b></td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-3)">"Trigger" is a mechanism; "hit" is a musical event. One syllable, obvious verb, and a percussionist already owns the word.</td></tr>
+          <tr style="background:rgba(255,255,255,.018)"><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-4)">sweep · erase all · undo stroke</td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule)"><b style="color:var(--red);font-weight:500">erase</b> + <b style="color:var(--ink-1);font-weight:500">clear</b></td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-3)">Sweep is erase with a filter; folding it in leaves two destructive words instead of three, and undo is undo.</td></tr>
+          <tr><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-4)">session export · setup export · import</td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule)"><b style="color:var(--green);font-weight:500">set</b> · <b style="color:var(--green);font-weight:500">rig</b></td><td style="padding:.6rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-3)">The audit already wrote the sentence: <i>setup is the rig, session is the music</i>. A musician calls the music "a set" and the machine "the rig". Export and import become Save and Open.</td></tr>
+          <tr style="background:rgba(255,255,255,.018)"><td style="padding:.6rem .8rem;color:var(--ink-4)">morph · radial morph · staging · snapshot · pin</td><td style="padding:.6rem .8rem"><b style="color:var(--violet);font-weight:500">blend</b></td><td style="padding:.6rem .8rem;color:var(--ink-3)">Five names for interpolating between saved parameter sets. Under brushes there is one verb: you <em>blend</em> between brushes, however the blend is being steered.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="max-width:70ch">
+      <div style="background:linear-gradient(180deg,rgba(122,188,188,.09),rgba(122,188,188,.02));border:1px solid rgba(122,188,188,.28);border-radius:5px;padding:1.3rem 1.4rem">
+        <div style="font-family:var(--sans);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;color:var(--teal);margin-bottom:.6rem">The sentence to test it against</div>
+        <p style="margin:0 0 .9rem;font-size:1.06rem;color:var(--ink);line-height:1.5">A player should be able to describe a whole set in one breath, using only words they were never taught:</p>
+        <p style="margin:0 0 .9rem;font-family:var(--serif);font-style:italic;font-size:1.14rem;color:var(--teal);line-height:1.5">"I painted a wash across the top, held it, painted three hits low and left, then arranged them out one at a time until only the wash was left."</p>
+        <p style="margin:0;font-size:.95rem;color:var(--ink-3)">Fourteen terms, no manual. The same sentence today needs <i>trace, trace+cloud, commit, cloud, drop, seed slot, trigger, arm, composer mode, latch</i> — and a person who already knows the app.</p>
+      </div>
+    </div>
+  </div>
+  <div class="readout" style="--kc:var(--cyan)">
+    <div>
+      <div class="kicker">How to land it</div>
+      <h2>Rename in one commit, not gradually</h2>
+      <p>This is the one place where the project's own rule helps: <b>no compat hedging, no legacy aliases.</b> A half-renamed vocabulary is worse than either, because both words are then correct and neither is trusted.</p>
+      <p>The one to do first and alone is <code>commit</code> → <code>hold</code>, because it is already carrying eleven synonyms and it is the word you already like. Do it as its own pass, delete <code>seedSlots</code>, <code>seqSlots</code> and the rest of the legacy getters in <code>state.js</code> at the same time, and the diff tells you honestly how much of the old model is still load-bearing.</p>
+    </div>
+    <div>
+      <ul class="tries">
+        <li>Flip the switch to <b>Voice</b> and reread the mockups</li>
+        <li>Then <b>Today</b>, to feel the difference</li>
+      </ul>
+      <div class="trade"><b>Watch out for</b>
+        <code>state.js</code> still carries getter/setter aliases mapping <code>seedSlots</code>, <code>seqSlots</code>, <code>seedLockEnabled</code> and friends onto the commit pool. Renaming on top of those means three names for one field. Delete them in the same commit — the project's own note on <code>AXIS_SOURCES</code> says why: delete the name, break loudly.</div>
+    </div>
+  </div>
+</section>
+
+</div></div>
+
+<footer>
+  <div class="wrap">
+    <p><b>Nothing here is built.</b> Read against <code>main</code> at 1.13 alpha on 25 Aug 2026 — <code>index.html</code>, all 59 modules under <code>js/</code>, <code>CLAUDE.md</code> and <code>docs/TODO.md</code> through #200. No files were modified.</p>
+    <p>The "Today" screen is a real capture of the running Electron window, not a redrawing. Every other screen is a simulation: the sphere renders and responds, and nothing is wired to audio.</p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ═════════════ vocabulary ═════════════ */
+  var VOCAB = {
+    paint: {
+      tiles: ["line", "spray", "stamp", "scrape top", "scrape bottom", "scrape all", "toggle", "undo", "redo", "new tile"],
+      note: 'the words the codebase already uses',
+      tools:   ['line','spray','stamp','+','scrape top','scrape bottom','scrape all','+'],
+      toolSub: ['loop · one buffer + a path','grain · marks on a tick','sampler · a placed file','new brush',
+                'newest first','oldest first','everything in reach','new tool'],
+      reach:'reach', scratch:'scratch', held:'held', layer:'layer',
+      brushHead:'Brushes', editHead:'Edit', heldHead:'Layers',
+      setMenu:'Set', rigMenu:'Rig', docTitle:'the set', rigTitle:'the rig'
+    },
+    voice: {
+      tiles: ["phrase", "breath", "quote", "clear newest", "clear oldest", "clear all", "conduct", "undo", "redo", "new voice"],
+      note: 'honest to a performer sounding into a room',
+      tools:   ['phrase','breath','quote','+','clear newest','clear oldest','clear all','+'],
+      toolSub: ['a sung line, looped','sounded and granulated','prepared material','new voice',
+                'newest first','oldest first','everything in earshot','new tool'],
+      reach:'earshot', scratch:'unsung', held:'sounding', layer:'choir',
+      brushHead:'Voices', editHead:'Clear', heldHead:'Choirs',
+      setMenu:'Piece', rigMenu:'Stage', docTitle:'the piece', rigTitle:'the stage'
+    },
+    tape: {
+      tiles: ["loop", "grain", "drop-in", "wipe newest", "wipe oldest", "wipe all", "mix", "undo", "redo", "new preset"],
+      note: 'fluent on sight to anyone from a DAW',
+      tools:   ['loop','grain','drop-in','+','wipe newest','wipe oldest','wipe all','+'],
+      toolSub: ['one take, looped','windows onto the take','a placed file','new preset',
+                'newest first','oldest first','everything in the window','new tool'],
+      reach:'window', scratch:'scratch', held:'running', layer:'bus',
+      brushHead:'Presets', editHead:'Wipe', heldHead:'Buses',
+      setMenu:'Session', rigMenu:'Setup', docTitle:'the session', rigTitle:'the setup'
+    },
+    current: {
+      tiles: ["⇧space", "space", "Q–P", "hold F", "—", "⌫×3", "⇧K composer", "⌘Z", "—", "—"],
+      note: 'what the app says today — and what has no name at all',
+      tools:   ['⇧space','space','Q–P','—','hold F','—','⌫×3','—'],
+      toolSub: ['records a trigger buffer','trace, in one of three modes','sample paint','no such thing',
+                'erase brush · newest first','does not exist','erase all — the session','no such thing'],
+      reach:'search radius', scratch:'particles', held:'commits', layer:'—',
+      brushHead:'Keys', editHead:'Keys', heldHead:'Commits',
+      setMenu:'Session', rigMenu:'Setup', docTitle:'the session export', rigTitle:'the setup export'
+    }
+  };
+  var vocab = 'paint';
+  function V() { return VOCAB[vocab]; }
+
+  /* ═════════════ glyphs ═════════════ */
+  var G = {
+    line:  '<path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+    spray: '<circle cx="12" cy="12" r="1.5"/><circle cx="6.6" cy="8.2" r="1"/><circle cx="17.4" cy="7.8" r="1"/><circle cx="7.6" cy="16.8" r="1"/><circle cx="16.6" cy="16.4" r="1"/><circle cx="12" cy="5" r=".75"/><circle cx="4.6" cy="13" r=".75"/><circle cx="19.4" cy="12.6" r=".75"/>',
+    stamp: '<rect x="5" y="5" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 15l3-4 2.4 3 1.6-2 3 3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+    erase: '<path d="M20 19H9l-4.2-4.2a1.6 1.6 0 010-2.3l7.5-7.5a1.6 1.6 0 012.3 0l4.6 4.6a1.6 1.6 0 010 2.3L13 19" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>',
+    erase2:'<path d="M20 19H9l-4.2-4.2a1.6 1.6 0 010-2.3l7.5-7.5a1.6 1.6 0 012.3 0l4.6 4.6a1.6 1.6 0 010 2.3L13 19" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5 21.4h15" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+    erase3:'<path d="M20 19H9l-4.2-4.2a1.6 1.6 0 010-2.3l7.5-7.5a1.6 1.6 0 012.3 0l4.6 4.6a1.6 1.6 0 010 2.3L13 19" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="12" cy="12" r="10.4" fill="none" stroke="currentColor" stroke-width=".9" stroke-dasharray="2 2.6"/>',
+    toggle:'<path d="M4 12h3.5M16.5 12H20" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="12" cy="12" r="3.6" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="12" cy="12" r="1.15"/>',
+    undo:  '<path d="M4 8h10a5 5 0 010 10H9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M7.5 4.5L4 8l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
+    redo:  '<path d="M20 8H10a5 5 0 000 10h5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M16.5 4.5L20 8l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
+    add:   '<path d="M12 6.5v11M6.5 12h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
+  };
+
+  var TYPEC = { line:'#ff6b9d', spray:'#e8a030', stamp:'#4fc3f7' };
+  var LAYERC = { 1:'#7abcbc', 2:'#f26415', 3:'#b07ee8' };
+
+  /* ═════════════ the two sets ═════════════
+     Brushes ADD to scratch. Edit tools TAKE AWAY. Hold is a gesture, not a
+     tool; Arrange is a room. That is the whole correction this pass makes. */
+  var TILES = [
+    { id:'line',   kind:'brush', g:'line',   c:TYPEC.line,  dep:'line'  },
+    { id:'spray',  kind:'brush', g:'spray',  c:TYPEC.spray, dep:'spray' },
+    { id:'stamp',  kind:'brush', g:'stamp',  c:TYPEC.stamp, dep:'stamp' },
+    { id:'top',    kind:'edit',  g:'erase',  c:'#e57373' },
+    { id:'bottom', kind:'edit',  g:'erase2', c:'#e57373' },
+    { id:'all',    kind:'edit',  g:'erase3', c:'#e57373' },
+    { id:'toggle', kind:'arr',   g:'toggle', c:'#b07ee8' },
+    { id:'undo',   kind:'act',   g:'undo',   c:'#a8b1b1' },
+    { id:'redo',   kind:'act',   g:'redo',   c:'#a8b1b1' },
+    { id:'add',    kind:'add',   g:'add',    c:'#5a6262' }
+  ];
+  var ERASERS = { top:1, bottom:1, all:1 };
+
+  var P = {
+    line:  [['s','@reach',.30,'18°'],['g','on touch',['touch','top','ends'],2],
+            ['g','on dwell',['loop','once'],0],['g','while painting',['dry','off'],0],['s','speed',.5,'1.00×']],
+    spray: [['s','@reach',.30,'18°'],['s','grain',.58,'589ms'],['s','period',.34,'61ms'],
+            ['s','tick',.4,'50ms'],['g','while painting',['live','off'],0],['s','pitch',.5,'0¢']],
+    stamp: [['s','@reach',.30,'18°'],['g','source',['bell','tape','choir'],1],
+            ['s','crop in',.12,'0.4s'],['s','crop out',.86,'3.1s'],['g','on dwell',['once','loop'],0]],
+    top:   [['s','@reach',.44,'26°'],['s','depth',.25,'3 newest'],['s','strength',.8,'80%']],
+    bottom:[['s','@reach',.44,'26°'],['s','depth',.25,'3 oldest'],['s','strength',.8,'80%']],
+    all:   [['s','@reach',.44,'26°'],['s','strength',1,'100%']]
+  };
+  var FOOT = {
+    line:  'One continuous buffer and a path — <b>no deposit tick</b>. Touch it and it loops. Hold a layer number over it and that loop clones into the layer.',
+    spray: 'Marks on a tick, each a window into the buffer. Granulates what is in reach. <b>The only brush the 50 ms deposit clock belongs to.</b>',
+    stamp: 'One placed instance of a loaded file — <b>no tick</b>. Fires on touch; loops if you stay.',
+    top:   'Removes the newest material under the cursor, revealing what was beneath. Today&rsquo;s erase brush, unchanged.',
+    bottom:'The inverse — digs out the oldest first and leaves recent material standing.',
+    all:   'Everything inside the reach, no recency filter at all. The one that pairs with a scratch layer you want cleared fast.',
+    addb:  'Factory brushes are a starting point. <b>Duplicate one, change its contract, keep it.</b> This is what replaces the twenty granular presets.',
+    toggle:'<b>Hold it and sweep.</b> Every layer the cursor reaches flips \u2014 sounding to silent, silent to sounding. Momentary on purpose: composer mode is a latch today, and a latch is why it has to mute scan on entry and remember what to restore on exit.',
+    adde:  'Same for edit tools. Later: erase by criterion — all bass, all bright, all percussive. <code>audio-features.js</code> already computes centroid and RMS per mark.'
+  };
+
+  /* ═════════════ material ═════════════ */
+  var M = { strokes:[], holds:[], layers:[{n:1,k:'q'},{n:2,k:'w'},{n:3,k:'e'}], next:1, reach:.30, layerFade:0 };
+  var LAYERKEY = { q:1, w:2, e:3 };
+  var scanOn = true;        // does the cursor sound scratch material?
+
+  /* ═════════════ layer fade ═════════════
+     A CONTINUOUS behaviour, so it is an amount rather than a mode — at 0 the
+     cursor does not touch the balance at all, which is what "arranger mode
+     off" would have meant. A layer's level follows the cursor's distance to
+     the NEAREST thing in it: acting on a family at once is the point of
+     layers, and per-hold distance is what commitXfade already does. */
+  var NEAR = .10, FAR = .55;
+  function layerGain(L) {
+    if (!M.layerFade) return 1;
+    var best = Infinity;
+    M.holds.forEach(function(h){
+      if (h.layer !== L.n) return;
+      var last = h.path[h.path.length-1];
+      var d = Math.hypot(last.x-cursor.x, (last.y-cursor.y)*.62);
+      if (d < best) best = d;
+    });
+    if (best === Infinity) return 1;
+    var t = Math.max(0, Math.min(1, (best - NEAR) / (FAR - NEAR)));
+    return 1 - M.layerFade * t;
+  }
+
+  /* ═════════════ mute / solo ═════════════
+     Audibility is DERIVED from three flags, never written into the holds.
+     That is the whole trick, and v1 got it wrong: there, muting a layer wrote
+     `silent` onto every hold and had to remember what was already off so
+     unmuting could restore it. Compute it instead and the restore problem does
+     not exist — a hold you silenced by hand stays silenced through any number
+     of layer mutes and solos, because nothing ever touched it. */
+  function layerOf(n) { return M.layers.filter(function(L){ return L.n===n; })[0]; }
+  function anySolo()  { return M.layers.some(function(L){ return L.solo; }); }
+  function audible(h) {
+    var L = layerOf(h.layer);
+    if (h.silent) return false;                  // this hold, muted by hand
+    if (L && L.muted) return false;              // its layer, muted
+    if (anySolo() && !(L && L.solo)) return false;  // someone else is soloed
+    return true;
+  }
+  /** Why a layer is quiet — the rail says which, because they undo differently. */
+  function layerState(L) {
+    if (L.solo) return 'solo';
+    if (L.muted) return 'muted';
+    if (anySolo()) return 'ducked';
+    return 'on';
+  }
+  function toggleMute(n) { var L=layerOf(n); if(L){ L.muted=!L.muted; if(L.muted) L.solo=false; sync(); } }
+  function toggleSolo(n) {
+    var L=layerOf(n); if(!L) return;
+    var on = !L.solo;
+    // Blunt on purpose: one soloed layer at a time. A cumulative solo set reads
+    // well in a mixer and badly at speed, where the question is "just this, now".
+    M.layers.forEach(function(x){ x.solo = on ? (x===L) : false; });
+    sync();
+  }
+  var REDO = [];   // strokes popped by undo, waiting to be pushed back
+  var cursor = { x:.52, y:.46, in:false };
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function rng(seed){ var s=seed>>>0; return function(){ s=(s*1664525+1013904223)>>>0; return s/4294967296; }; }
+
+  var SETS = {
+    'dartmouth-set-2': { seed:20260825, defs:[
+      ['spray',74,.30,.40,.20], ['spray',58,.66,.32,.15], ['stamp',14,.74,.62,.10],
+      ['line', 30,.42,.70,.09], ['line', 26,.20,.66,.07], ['spray',40,.52,.24,.13]] },
+    'ferry-building':   { seed:8811, defs:[
+      ['spray',96,.48,.38,.30], ['line',34,.22,.58,.09], ['stamp',18,.72,.46,.14]] },
+    'workshop-perc':    { seed:4242, defs:[
+      ['line',18,.50,.24,.05], ['line',16,.76,.42,.05], ['line',17,.50,.68,.05],
+      ['line',15,.24,.42,.05], ['spray',44,.50,.46,.18]] }
+  };
+
+  function loadSet(name) {
+    var cfg = SETS[name]; if (!cfg) return;
+    var r = rng(cfg.seed);
+    M.strokes = []; M.holds = []; M.next = 1;
+    cfg.defs.forEach(function (d) {
+      var type=d[0], n=d[1], cx=d[2], cy=d[3], sp=d[4];
+      var pts=[], a0=r()*6.283, dr=(r()-.5)*1.4;
+      for (var i=0;i<n;i++){
+        var t=i/n, a=a0+t*(2.4+dr), k=.35+t*.9;
+        pts.push({ x:cx+Math.cos(a)*sp*k+(r()-.5)*.014,
+                   y:cy+Math.sin(a)*sp*.62*k+(r()-.5)*.012,
+                   s: type==='spray' ? 1.4+r()*3 : 2.2 });
+      }
+      M.strokes.push({ id:M.next++, type:type, pts:pts, c:TYPEC[type] });
+    });
+  }
+
+  /* ═════════════ hold — the gesture ═════════════
+     Clones what the cursor is currently sounding HERE and files it into the
+     numbered layer. A line clones its buffer; a spray clones THIS POSITION'S
+     granulation, which may span several strokes. Nothing leaves scratch, and
+     values are copied rather than indices — the E9 lesson. */
+  function nearestStroke(rad) {
+    var best=null, bd=1e9;
+    M.strokes.forEach(function(st){
+      st.pts.forEach(function(p){
+        var d = Math.hypot(p.x-cursor.x, (p.y-cursor.y)*.62);
+        if (d<bd) { bd=d; best=st; }
+      });
+    });
+    return bd < rad ? best : null;
+  }
+  function beginHold(n) {
+    var rad = M.reach*.19 + .03;
+    // The stroke under the cursor — or the one being painted RIGHT NOW. That
+    // second case is the whole gesture: 1+Q records a line and loops it as it
+    // goes, the way a looper pedal does, and tapping E mid-sweep drops a cloud
+    // out of material that does not exist yet.
+    var st = _keyStroke || nearestStroke(rad);
+    if (!st || !st.pts.length) return null;
+    var span = [];
+    if (st.type === 'spray') {
+      M.strokes.forEach(function(s2){ if (s2.type!=='spray') return;
+        s2.pts.forEach(function(p){
+          if (Math.hypot(p.x-cursor.x,(p.y-cursor.y)*.62) < rad) span.push({x:p.x,y:p.y,s:p.s});
+        }); });
+    } else {
+      span = st.pts.map(function(p){ return {x:p.x,y:p.y,s:p.s}; });
+    }
+    if (!span.length) return null;
+    var h = { id:M.next++, layer:n, type:st.type, span:span,
+              x:cursor.x, y:cursor.y, path:[{x:cursor.x,y:cursor.y}], silent:false,
+              // A line held while it is still being drawn keeps growing with it.
+              // Released material is finished, so it does not.
+              growing: (st === _keyStroke && st.type === 'line') ? st : null,
+              name:(st.type==='spray'?'cloud':st.type==='line'?'loop':'stamp')+' '+(M.holds.length+1) };
+    M.holds.push(h);
+    return h;
+  }
+  /* ═════════════ key painting ═════════════
+     Hold the letter, move, release. Symmetric with the layer keys — letters
+     paint, numbers hold, and neither needs a mode switch first. The app
+     already does exactly this for samples (`paint1`–`paint10` on Q–P); this
+     is that gesture generalised to every brush. */
+  var _keyStroke = null;
+  function startKeyPaint(i) {
+    var b = TILES[i]; if (!b || !b.dep) return;
+    sel = i; renderTiles(); renderOptions();
+    _keyStroke = { id:M.next++, type:b.dep, pts:[{ x:cursor.x, y:cursor.y,
+                     s: b.dep==='spray' ? 1.5+Math.random()*3 : 2.2 }], c:TYPEC[b.dep] };
+    M.strokes.push(_keyStroke);
+    sync();
+  }
+  function moveKeyPaint() {
+    if (!_keyStroke) return;
+    var last = _keyStroke.pts[_keyStroke.pts.length-1];
+    var gap = _keyStroke.type === 'spray' ? .011 : .006;
+    if (Math.hypot(last.x-cursor.x, last.y-cursor.y) > gap) {
+      _keyStroke.pts.push({ x:cursor.x, y:cursor.y,
+        s: _keyStroke.type==='spray' ? 1.5+Math.random()*3 : 2.2 });
+      sync();
+    }
+  }
+  function endKeyPaint() {
+    if (_keyStroke) {
+      // A hold still growing from this stroke keeps the material it captured;
+      // the stroke itself is finished, so the hold stops tracking it.
+      if (_liveHold && _liveHold.growing === _keyStroke) {
+        _liveHold.span = _keyStroke.pts.map(function(p){ return {x:p.x,y:p.y,s:p.s}; });
+        _liveHold.growing = null;
+      }
+      if (_keyStroke.pts.length < 3) {
+        var i = M.strokes.indexOf(_keyStroke); if (i>-1) M.strokes.splice(i,1);
+      }
+    }
+    _keyStroke = null; sync();
+  }
+
+  /* Hold the toggle tile and sweep: every LAYER the cursor reaches flips. The
+     inside-flags are seeded on press so pressing it while already standing on
+     something does not toggle that thing — the #193 lesson, which a momentary
+     tile shrinks the exposure to but does not remove. */
+  var _toggling = false, _tIn = {};
+  function toggleSeed() {
+    _tIn = {}; _toggling = true;
+    M.layers.forEach(function(L){ _tIn[L.n] = layerReached(L); });
+  }
+  function layerReached(L) {
+    var rad = M.reach*.19 + .03;
+    return M.holds.some(function(h){
+      if (h.layer !== L.n) return false;
+      var last = h.path[h.path.length-1];
+      return Math.hypot(last.x-cursor.x, (last.y-cursor.y)*.62) < rad;
+    });
+  }
+  function toggleTick() {
+    if (!_toggling) return;
+    var changed = false;
+    M.layers.forEach(function(L){
+      var now = layerReached(L);
+      if (now && !_tIn[L.n]) { L.muted = !L.muted; if (L.muted) L.solo = false; changed = true; }
+      _tIn[L.n] = now;
+    });
+    if (changed) sync();
+  }
+
+  var _liveHold = null;
+  function holdDown(n) { _liveHold = beginHold(n); sync(); }
+  function holdMove() {
+    if (!_liveHold) return;
+    var l = _liveHold.path[_liveHold.path.length-1];
+    if (Math.hypot(l.x-cursor.x, l.y-cursor.y) > .012) _liveHold.path.push({x:cursor.x,y:cursor.y});
+    if (_liveHold.growing) {
+      _liveHold.span = _liveHold.growing.pts.map(function(p){ return {x:p.x,y:p.y,s:p.s}; });
+    }
+  }
+  function holdUp() {
+    if (_liveHold && _liveHold.growing) {
+      _liveHold.span = _liveHold.growing.pts.map(function(p){ return {x:p.x,y:p.y,s:p.s}; });
+      _liveHold.growing = null;
+    }
+    _liveHold = null; sync();
+  }
+
+  /* ═════════════ sphere ═════════════ */
+  var STAGES = [];
+  function reg(id, opts) {
+    var el = document.getElementById(id); if (!el) return null;
+    var cv = el.querySelector('canvas');
+    var s = { el:el, cv:cv, ctx:cv.getContext('2d'), w:0, h:0, opts:opts||{} };
+    STAGES.push(s);
+    if (!s.opts.static) bindPaint(s);
+    return s;
+  }
+  function fit(s) {
+    var r = s.cv.getBoundingClientRect(); if (!r.width) return false;
+    var d = Math.min(window.devicePixelRatio||1, 2);
+    var w = Math.max(300, Math.round(r.width*d)), h = Math.max(180, Math.round(r.height*d));
+    if (w!==s.w || h!==s.h) { s.cv.width=s.w=w; s.cv.height=s.h=h; }
+    s.dpr = r.width ? s.w/r.width : 1;
+    return true;
+  }
+
+  function drawSphere(s, t) {
+    if (!fit(s)) return;
+    var ctx=s.ctx, W=s.w, H=s.h, d=s.dpr;
+    ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+    var cxp=W*.5, cyp=H*.5;
+    ctx.lineWidth=1*d; ctx.strokeStyle='rgba(122,188,188,0.12)';
+    for (var i=-4;i<=4;i++){ var x=cxp+i*(W*.145); ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+    for (var j=-3;j<=3;j++){
+      if (!j) continue;
+      var yy=cyp+j*(H*.155), bow=j*H*.075;
+      ctx.strokeStyle = j<0 ? 'rgba(96,150,210,0.19)' : 'rgba(200,120,48,0.19)';
+      ctx.beginPath(); ctx.moveTo(-W*.05, yy+bow*.9);
+      ctx.quadraticCurveTo(cxp, yy-bow*1.1, W*1.05, yy+bow*.9); ctx.stroke();
+    }
+    ctx.strokeStyle='rgba(122,188,188,0.32)';
+    ctx.beginPath(); ctx.moveTo(0,cyp); ctx.lineTo(W,cyp); ctx.stroke();
+
+    var tool = s.opts.tool ? s.opts.tool() : null;
+    var bc   = s.opts.color ? s.opts.color() : '#7abcbc';
+    var cx=cursor.x*W, cy=cursor.y*H;
+    var rad = M.reach*W*.19 + W*.03;
+    var reads = scanOn && tool && !ERASERS[tool];
+
+    M.strokes.forEach(function (st) {
+      ctx.globalAlpha = .8;
+      if (st.type === 'line') {
+        ctx.strokeStyle = st.c; ctx.lineWidth = 2.4*d; ctx.lineJoin='round'; ctx.lineCap='round';
+        ctx.beginPath();
+        st.pts.forEach(function(p,k){ var px=p.x*W, py=p.y*H; k ? ctx.lineTo(px,py) : ctx.moveTo(px,py); });
+        ctx.stroke();
+      } else if (st.type === 'stamp') {
+        ctx.fillStyle = st.c;
+        st.pts.forEach(function(p,k){ if (k % 6) return;
+          var px=p.x*W, py=p.y*H, r=5.5*d;
+          ctx.fillRect(px-r, py-r, r*2, r*2); });
+      } else {
+        ctx.fillStyle = st.c;
+        ctx.beginPath();
+        st.pts.forEach(function(p){ var px=p.x*W, py=p.y*H;
+          ctx.moveTo(px+p.s*d, py); ctx.arc(px, py, p.s*d, 0, 6.2832); });
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      if (reads && cursor.in && st.type === 'spray') {
+        st.pts.forEach(function (p,k) {
+          var px=p.x*W, py=p.y*H;
+          if (Math.hypot(px-cx, py-cy) > rad) return;
+          if (Math.sin(t*7 + k*1.7 + p.x*30) < .72) return;
+          ctx.globalAlpha=.9; ctx.fillStyle='#fff';
+          ctx.beginPath(); ctx.arc(px,py,1.9*d,0,6.2832); ctx.fill();
+          ctx.globalAlpha=.5; ctx.strokeStyle='#fff'; ctx.lineWidth=1.05*d;
+          ctx.beginPath(); ctx.arc(px,py,6.2*d,0,6.2832); ctx.stroke();
+          ctx.globalAlpha=1;
+        });
+      }
+    });
+
+    M.holds.forEach(function (h) {
+      var live = audible(h);
+      var gain = live ? layerGain(layerOf(h.layer) || {n:h.layer}) : 0;
+      var col = live ? (LAYERC[h.layer] || '#7abcbc') : 'rgba(122,128,128,0.55)';
+      if (h.path.length > 1) {
+        ctx.strokeStyle = col; ctx.globalAlpha=live?.45:.2; ctx.lineWidth=1.4*d;
+        ctx.setLineDash([3*d,3*d]);
+        ctx.beginPath();
+        h.path.forEach(function(p,k){ var px=p.x*W, py=p.y*H; k?ctx.lineTo(px,py):ctx.moveTo(px,py); });
+        ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha=1;
+      }
+      var last = h.path[h.path.length-1];
+      var hx = last.x*W, hy = last.y*H;
+      ctx.strokeStyle = col; ctx.lineWidth = 1.6*d;
+      ctx.beginPath(); ctx.arc(hx, hy, 11*d, 0, 6.2832); ctx.stroke();
+      if (live && gain > .04) {
+        ctx.globalAlpha=.3*gain;
+        ctx.beginPath(); ctx.arc(hx, hy, (14+Math.sin(t*2.2+h.id)*2)*d, 0, 6.2832); ctx.stroke();
+        ctx.globalAlpha=1;
+      }
+      ctx.fillStyle = col;
+      ctx.font = (9*d) + 'px system-ui, sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(String(h.layer), hx, hy);
+    });
+
+    if (!s.opts.static) {
+      ctx.strokeStyle='rgba(122,188,188,0.40)'; ctx.lineWidth=1*d;
+      ctx.beginPath();
+      ctx.moveTo(cx-21*d,cy); ctx.lineTo(cx+21*d,cy);
+      ctx.moveTo(cx,cy-21*d); ctx.lineTo(cx,cy+21*d); ctx.stroke();
+      if (ERASERS[tool]) { ctx.fillStyle='rgba(229,115,115,0.10)'; ctx.beginPath(); ctx.arc(cx,cy,rad,0,6.2832); ctx.fill(); }
+      ctx.setLineDash([4*d,4*d]);
+      ctx.strokeStyle=bc; ctx.globalAlpha=.8; ctx.lineWidth=1.2*d;
+      ctx.beginPath(); ctx.arc(cx,cy,rad,0,6.2832); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=1;
+      ctx.fillStyle=bc; ctx.beginPath(); ctx.arc(cx,cy,2.4*d,0,6.2832); ctx.fill();
+    }
+  }
+
+  /* ═════════════ painting ═════════════ */
+  function bindPaint(s) {
+    var live=null;
+    function pos(e){ var r=s.cv.getBoundingClientRect();
+      return { x:(e.clientX-r.left)/r.width, y:(e.clientY-r.top)/r.height }; }
+    function act() {
+      var tool=s.opts.tool(), rad=M.reach*.19+.03;
+      if (ERASERS[tool]) {
+        for (var i=M.strokes.length-1;i>=0;i--) {
+          var st=M.strokes[i];
+          st.pts = st.pts.filter(function(p){
+            return Math.hypot(p.x-cursor.x,(p.y-cursor.y)*.62) >= rad*.62;
+          });
+          if (st.pts.length < 3) M.strokes.splice(i,1);
+        }
+        sync();
+      } else if (live) {
+        var last=live.pts[live.pts.length-1];
+        var gap = live.type === 'spray' ? .011 : .006;
+        if (!last || Math.hypot(last.x-cursor.x,last.y-cursor.y) > gap) {
+          live.pts.push({ x:cursor.x, y:cursor.y,
+                          s: live.type==='spray' ? 1.5+Math.random()*3 : 2.2 });
+          sync();
+        }
+      }
+    }
+    s.el.addEventListener('pointerdown', function (e) {
+      if (s.opts.noPaint) return;
+      s.el.setPointerCapture && s.el.setPointerCapture(e.pointerId);
+      var p=pos(e); cursor.x=p.x; cursor.y=p.y; cursor.in=true;
+      var dep = s.opts.dep ? s.opts.dep() : null;
+      if (dep) { live={ id:M.next++, type:dep, pts:[], c:TYPEC[dep] }; M.strokes.push(live); }
+      act(); e.preventDefault();
+    });
+    s.el.addEventListener('pointermove', function (e) {
+      var p=pos(e); cursor.x=p.x; cursor.y=p.y; cursor.in=true;
+      holdMove(); moveKeyPaint(); toggleTick();
+      if (e.buttons) act();
+    });
+    s.el.addEventListener('pointerenter', function(){ cursor.in=true; });
+    s.el.addEventListener('pointerleave', function(){ cursor.in=false; });
+    function end() {
+      if (live && live.pts.length<3) { var i=M.strokes.indexOf(live); if(i>-1) M.strokes.splice(i,1); }
+      live=null; sync();
+    }
+    s.el.addEventListener('pointerup', end);
+    s.el.addEventListener('pointercancel', end);
+  }
+
+  /* ═════════════ readouts ═════════════ */
+  function each(sel2, fn){ Array.prototype.forEach.call(document.querySelectorAll(sel2), fn); }
+  function sync() {
+    var marks=0; M.strokes.forEach(function(s){ marks+=s.pts.length; });
+    each('.oScratch', function(e){ e.textContent=marks; });
+    each('.oHeld',    function(e){ e.textContent=M.holds.length; });
+    each('.oMat',     function(e){ e.textContent=marks; });
+    each('.oSounding',function(e){ e.textContent=M.holds.filter(audible).length; });
+    each('.oMuted',   function(e){ e.textContent=M.holds.filter(function(h){return !audible(h);}).length; });
+    each('.oReach',   function(e){ e.textContent=Math.round(6+M.reach*90)+'°'; });
+    renderArrange();
+    markDirty();
+  }
+
+  /* ═════════════ params ═════════════ */
+  function label(l){ return l.charAt(0)==='@' ? V()[l.slice(1)] : l; }
+  /* ═════════════ tiles ═════════════
+     One row. The tile's POSITION is its key — 1 is leftmost — so reordering
+     the row remaps the keyboard, and there is nothing else to remember.
+     Numbers rather than letters because a letter row is a keyboard-layout
+     accident and a number row is not. */
+  var sel = 1;
+  function tileLabel(i){ return V().tiles[TILES[i] ? ['line','spray','stamp','top','bottom','all','toggle','undo','redo','add'].indexOf(TILES[i].id) : 0]; }
+
+  function fireTile(i) {
+    var t = TILES[i]; if (!t) return;
+    if (t.kind === 'act') {
+      if (t.id === 'undo' && M.strokes.length) REDO.push(M.strokes.pop());
+      if (t.id === 'redo' && REDO.length)      M.strokes.push(REDO.pop());
+      sync(); flashTile(i); return;
+    }
+    if (t.kind === 'arr') { sel = i; renderTiles(); renderOptions(); return; }
+    sel = i; renderTiles(); renderOptions();
+  }
+  function flashTile(i) {
+    var el = document.querySelector('#tileBar [data-i="'+i+'"]');
+    if (!el) return;
+    el.classList.add('fired');
+    setTimeout(function(){ el.classList.remove('fired'); }, 180);
+  }
+
+  function renderTiles() {
+    var bar = document.getElementById('tileBar'); if (!bar) return;
+    bar.innerHTML = TILES.map(function(t,i){
+      return '<button type="button" class="tile'+(i===sel?' active':'')+(t.kind==='add'?' ghost':'')+
+        '" style="--c:'+t.c+'" data-i="'+i+'" draggable="true" aria-pressed="'+(i===sel)+'"'+
+        ' title="'+tileLabel(i)+'  ·  key '+(i+1)+'">'+
+        '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'+G[t.g]+'</svg>'+
+        '<span class="tile-nm">'+tileLabel(i)+'</span>'+
+        '<kbd>'+(i+1)+'</kbd></button>';
+    }).join('');
+    bar.querySelectorAll('.tile').forEach(function(b){
+      b.addEventListener('click', function(){ fireTile(+b.dataset.i); });
+    });
+    each('.oTool', function(e){ e.textContent = tileLabel(sel); e.style.color = TILES[sel].c; });
+    var hint=document.getElementById('hint-six');
+    if (hint) {
+      var t=TILES[sel];
+      hint.innerHTML = t.kind==='add' ? 'make a tile — a stamp tile <b>is</b> a loaded sample'
+        : t.kind==='act' ? 'tap, or press <b>'+(sel+1)+'</b>'
+        : 'hold <b>'+(sel+1)+'</b> and move · add <b>Q W E</b> to hold into a layer';
+    }
+    document.getElementById('foot-six').innerHTML = FOOT[TILES[sel].id] || '';
+  }
+
+  /* drag to reorder — the number follows the position */
+  (function wireTileDrag(){
+    var bar = document.getElementById('tileBar'); if (!bar) return;
+    var from = -1;
+    bar.addEventListener('dragstart', function(e){
+      var t = e.target.closest('.tile'); if (!t) return;
+      from = +t.dataset.i; t.classList.add('dragging');
+      e.dataTransfer.effectAllowed='move';
+      try { e.dataTransfer.setData('text/plain', String(from)); } catch(_) {}
+    });
+    bar.addEventListener('dragend', function(){
+      from=-1; bar.querySelectorAll('.dragging,.over').forEach(function(el){ el.classList.remove('dragging','over'); });
+    });
+    bar.addEventListener('dragover', function(e){
+      var t = e.target.closest('.tile'); if (!t || from<0) return;
+      e.preventDefault();
+      bar.querySelectorAll('.over').forEach(function(el){ el.classList.remove('over'); });
+      t.classList.add('over');
+    });
+    bar.addEventListener('drop', function(e){
+      var t = e.target.closest('.tile'); if (!t || from<0) return;
+      e.preventDefault();
+      var to = +t.dataset.i;
+      var moved = TILES.splice(from,1)[0];
+      TILES.splice(to,0,moved);
+      sel = to; from=-1;
+      renderTiles(); renderOptions();
+    });
+  })();
+
+  /* ═════════════ options bar — the selected tile's settings ═════════════ */
+  function renderOptions() {
+    var box = document.getElementById('optBar'); if (!box) return;
+    var t = TILES[sel];
+    var rows = P[t.id] || [];
+    var head = '<span class="opt-name" style="color:'+t.c+'">'+tileLabel(sel)+'</span>';
+    if (!rows.length) {
+      box.innerHTML = head + '<span class="opt-none">' +
+        (t.kind==='act' ? 'no settings — it just happens'
+         : 'duplicate any tile and change its contract. <b>A stamp tile is a loaded sample.</b>') + '</span>';
+      return;
+    }
+    box.innerHTML = head + rows.map(function(r, idx){
+      if (r[0]==='s') {
+        var live = r[1]==='@reach';
+        var v = live ? M.reach : r[2];
+        var val = live ? (Math.round(6+M.reach*90)+'°') : r[3];
+        return '<span class="opt"><i>'+label(r[1])+'</i>'+
+               '<span class="tr'+(live?' live':'')+'"'+(live?' data-reach="1" role="slider" tabindex="0" aria-label="reach"':'')+'>'+
+               '<i class="thumb" style="left:calc('+(v*100)+'% - 1px)"></i></span>'+
+               '<b'+(live?' data-reachval="1"':'')+'>'+val+'</b></span>';
+      }
+      var segs = r[2].map(function(o,k){ return '<span class="'+(k===r[3]?'on':'')+'" data-seg="'+idx+'" data-k="'+k+'">'+o+'</span>'; }).join('');
+      return '<span class="opt"><i>'+label(r[1])+'</i><span class="seg">'+segs+'</span></span>';
+    }).join('');
+
+    var tr = box.querySelector('[data-reach]');
+    if (tr) {
+      var drag=function(e){
+        var r=tr.getBoundingClientRect();
+        M.reach=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+        tr.querySelector('.thumb').style.left='calc('+(M.reach*100)+'% - 1px)';
+        var vv=box.querySelector('[data-reachval]'); if(vv) vv.textContent=Math.round(6+M.reach*90)+'°';
+        sync();
+      };
+      tr.addEventListener('pointerdown', function(e){ tr.setPointerCapture(e.pointerId); drag(e); e.preventDefault(); });
+      tr.addEventListener('pointermove', function(e){ if(e.buttons) drag(e); });
+    }
+    box.querySelectorAll('.seg').forEach(function(seg){
+      seg.addEventListener('click', function(e){
+        var tt=e.target.closest('[data-seg]'); if(!tt) return;
+        seg.querySelectorAll('span').forEach(function(x){ x.classList.remove('on'); });
+        tt.classList.add('on');
+        var row=rows[+tt.dataset.seg]; if(row) row[3]=+tt.dataset.k;
+      });
+    });
+  }
+
+  /* ═════════════ ARRANGE ═════════════ */
+  function renderFade() {
+    var el = document.getElementById('fadeRow'); if (!el) return;
+    el.innerHTML =
+      '<span>layer fade</span>' +
+      '<span class="tr" id="fadeTrack" role="slider" tabindex="0" aria-label="layer fade"' +
+      ' aria-valuenow="'+Math.round(M.layerFade*100)+'"><i class="thumb" style="left:calc('+(M.layerFade*100)+'% - 1px)"></i></span>' +
+      '<b>'+(M.layerFade ? Math.round(M.layerFade*100)+'%' : 'off')+'</b>';
+    var tr = document.getElementById('fadeTrack');
+    var drag = function(e){
+      var r = tr.getBoundingClientRect();
+      M.layerFade = Math.max(0, Math.min(1, (e.clientX-r.left)/r.width));
+      renderFade(); renderArrange();
+    };
+    tr.addEventListener('pointerdown', function(e){ tr.setPointerCapture(e.pointerId); drag(e); e.preventDefault(); });
+    tr.addEventListener('pointermove', function(e){ if (e.buttons) drag(e); });
+    tr.addEventListener('keydown', function(e){
+      var d = e.key==='ArrowRight'?.05 : e.key==='ArrowLeft'?-.05 : 0;
+      if (!d) return;
+      M.layerFade = Math.max(0, Math.min(1, M.layerFade+d));
+      renderFade(); renderArrange(); e.preventDefault();
+    });
+  }
+
+  function renderArrange() {
+    renderFade();
+    var box=document.getElementById('held-arr'); if(!box) return;
+    var v=V();
+    if (!M.holds.length) {
+      box.innerHTML='<div class="emptynote">Nothing held yet.<br>Hold a brush number and press <b style="color:var(--teal)">Q</b>, <b style="color:var(--orange)">W</b> or <b style="color:var(--violet)">E</b> — together.</div>';
+      return;
+    }
+    var out = '';
+    M.layers.forEach(function(L){
+      var hs = M.holds.filter(function(h){ return h.layer===L.n; });
+      if (!hs.length) return;
+      var st = layerState(L);
+      out += '<div class="lyrgroup lyr--'+st+'" style="--c:'+LAYERC[L.n]+'"><div class="lyrgroup-h">'+
+        '<button type="button" class="lyrdot" data-mute="'+L.n+'" aria-pressed="'+(!L.muted)+'"'+
+          ' title="'+(L.muted?'unmute':'mute')+' this '+v.layer+'"></button>'+
+        '<span class="lyrname">'+v.layer+' '+L.n+'</span>'+
+        '<kbd class="lyrkey">'+L.k.toUpperCase()+'</kbd>'+
+        '<button type="button" class="lyrsolo" data-solo="'+L.n+'" aria-pressed="'+(!!L.solo)+'"'+
+          ' title="solo this '+v.layer+'">S</button>'+
+        '<span class="lyrn">'+hs.length+'</span></div>' +
+        (st==='ducked' ? '<div class="lyrwhy">quiet — another '+v.layer+' is soloed</div>' : '') +
+        hs.map(function(h){
+          var az = Math.round(((h.x-0.5)*360+360)%360), el = Math.round((0.5-h.y)*120);
+          var live = audible(h);
+          return '<button type="button" class="hrow'+(live?'':' silent')+'" style="--c:'+LAYERC[L.n]+'" data-id="'+h.id+'">'+
+            '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style="color:'+(live?LAYERC[L.n]:'var(--ink-5)')+'">'+G[h.type]+'</svg>'+
+            '<span class="nm">'+h.name+'<small>'+az+'° · '+(el>=0?'+':'')+el+'° · '+h.span.length+' marks'+(h.path.length>1?' · path':'')+'</small></span>'+
+            '<span class="lv"><i style="width:'+(live ? Math.round(layerGain(L)*88) : 0)+'%"></i></span>'+
+            '<span class="st '+(live?'on':'off')+'">'+(h.silent?'muted':live?'on':'—')+'</span></button>';
+        }).join('') + '</div>';
+    });
+    box.innerHTML = out;
+    box.querySelectorAll('.hrow').forEach(function(r){
+      r.addEventListener('click', function(){
+        var h=M.holds.filter(function(x){ return x.id===+r.dataset.id; })[0];
+        if (h) { h.silent=!h.silent; sync(); }
+      });
+    });
+    // A layer's dot mutes everything in it, and remembers what was already
+    // silent so unmuting does not resurrect holds you quieted one at a time.
+    box.querySelectorAll('[data-mute]').forEach(function(b){
+      b.addEventListener('click', function(e){ e.stopPropagation(); toggleMute(+b.dataset.mute); });
+    });
+    box.querySelectorAll('[data-solo]').forEach(function(b){
+      b.addEventListener('click', function(e){ e.stopPropagation(); toggleSolo(+b.dataset.solo); });
+    });
+  }
+
+  /* ═════════════ SETS ═════════════ */
+  var doc = { name:'dartmouth-set-2', dirty:true };
+  function markDirty(){
+    each('.docName', function(e){ e.textContent=doc.name; });
+    each('.docState', function(e){ e.textContent = doc.dirty ? '— edited' : '— saved'; });
+    each('.docchip .dot', function(e){ e.classList.toggle('clean', !doc.dirty); });
+    var p=document.getElementById('setsPath');
+    if (p) p.textContent='~/Music/mubone/'+doc.name+'.mubone';
+  }
+  var RECENTS=[['dartmouth-set-2','today 14:55'],['ferry-building','21 Aug'],['workshop-perc','9 Aug']];
+  function buildMenus() {
+    var v=V();
+    var fm = document.getElementById('fileMenu'), rm = document.getElementById('rigMenu');
+    if (!fm || !rm) return;
+    fm.innerHTML =
+      '<button class="mi" data-a="new">New '+v.setMenu.toLowerCase()+'<kbd>⌘N</kbd></button>'+
+      '<button class="mi" data-a="open">Open…<kbd>⌘O</kbd></button>'+
+      '<button class="mi" data-a="save">Save<kbd>⌘S</kbd></button>'+
+      '<button class="mi" data-a="saveas">Save As…<kbd>⇧⌘S</kbd></button>'+
+      '<div class="msep"></div><div class="mlabel">Open recent</div>'+
+      RECENTS.map(function(r){ return '<button class="mi" data-open="'+r[0]+'">'+r[0]+'<small>'+r[1]+'</small></button>'; }).join('')+
+      '<div class="msep"></div>'+
+      '<button class="mi" data-a="recover">Recover autosave…<small>14:52</small></button>';
+    rm.innerHTML =
+      '<div class="mlabel">'+v.rigTitle+'</div>'+
+      '<button class="mi dis">Audio devices &amp; speakers</button>'+
+      '<button class="mi dis">Sensors &amp; calibration</button>'+
+      '<button class="mi dis">Keys / MIDI / OSC</button>'+
+      '<button class="mi dis">Accessory &amp; LED</button>'+
+      '<button class="mi dis">Visualisation</button>'+
+      '<div class="msep"></div>'+
+      '<button class="mi dis">Save rig…<kbd>—</kbd></button>'+
+      '<button class="mi dis">Load rig…<kbd>—</kbd></button>';
+    fm.querySelectorAll('.mi').forEach(function(b){
+      b.addEventListener('click', function(){
+        closeMenus();
+        if (b.dataset.open) { doc.name=b.dataset.open; doc.dirty=false; loadSet(b.dataset.open); sync(); }
+        else if (b.dataset.a==='save') { doc.dirty=false; markDirty(); }
+        else if (b.dataset.a==='new')  { doc.name='untitled'; doc.dirty=false; M.strokes=[]; M.holds=[]; sync(); }
+        else if (b.dataset.a==='recover') document.getElementById('recover').hidden=false;
+      });
+    });
+    each('.tFileMenu', function(e){ e.textContent=v.setMenu; });
+    each('.tRigMenu',  function(e){ e.textContent=v.rigMenu; });
+    each('.tDocTitle', function(e){ e.textContent=v.docTitle; });
+    each('.tRigTitle', function(e){ e.textContent=v.rigTitle; });
+    var hs=document.getElementById('hint-sets');
+    if (hs) hs.innerHTML='open a recent <b>'+v.setMenu.toLowerCase()+'</b> — the material changes with it';
+  }
+  function closeMenus(){
+    ['fileMenu','rigMenu'].forEach(function(id){ var m=document.getElementById(id); if(m) m.hidden=true; });
+    ['fileBtn','rigBtn'].forEach(function(id){ var b=document.getElementById(id); if(b) b.setAttribute('aria-expanded','false'); });
+  }
+  function wireMenu(btnId, menuId) {
+    var b=document.getElementById(btnId), m=document.getElementById(menuId);
+    if (!b||!m) return;
+    b.addEventListener('click', function(e){
+      e.stopPropagation();
+      var open=m.hidden; closeMenus();
+      if (open) { m.hidden=false; b.setAttribute('aria-expanded','true'); m.style.left=(b.offsetLeft)+'px'; }
+    });
+  }
+  wireMenu('fileBtn','fileMenu'); wireMenu('rigBtn','rigMenu');
+  document.addEventListener('click', closeMenus);
+  var rd = document.getElementById('recDiscard');
+  if (rd) rd.addEventListener('click', function(){ document.getElementById('recover').hidden=true; });
+  var rr = document.getElementById('recRestore');
+  if (rr) rr.addEventListener('click', function(){
+    document.getElementById('recover').hidden=true; doc.dirty=true; sync();
+  });
+
+  /* ═════════════ TODAY hotspots ═════════════ */
+  var HS=[
+    [0,0,100,8.7,'top bar','15 buttons, five of which open modals. <b>Becomes</b> the chrome: document name, mute, one settings door.'],
+    [1.2,9.7,38.6,36.5,'the sphere','<em>Untouched.</em> Same grid, same reach ring, same dot-plus-ring firing grains.'],
+    [1.2,46.4,19.1,23.8,'audio','Input, gate and dry monitor are <b>rig</b>. Master stays in the chrome.'],
+    [1.2,70.6,19.1,19.4,'session','Undo and clear are chrome. Sweep becomes an <b>edit tool</b>. Tare belongs with the sensor.'],
+    [20.8,46.4,19,36.2,'cursor','<b>Dissolved.</b> Trace becomes the brush gesture, and scan becomes each brush&rsquo;s <i>while painting</i> answer.'],
+    [20.8,83.2,19,7.2,'erase','Becomes three <b>edit tools</b> — scrape top, bottom, all — with a <code>+</code> for more.'],
+    [40.3,10.1,19.1,16.2,'grain envelope','Stays as drawn. It is one brush&rsquo;s readout — <b>spray&rsquo;s</b>.'],
+    [40.3,26.8,19.1,15.3,'patches','<b>Retired.</b> Twenty grain presets were an artifact of one brush type owning every parameter.'],
+    [40.3,43.4,19.1,36.7,'search','Reach is the one shared parameter (#185 unified it already). The rest become brush settings.'],
+    [59.9,10.1,19,80.3,'grain','<b>Spray&rsquo;s</b> settings. A line brush has a different contract entirely.'],
+    [79.5,10.1,19.3,80.3,'commits','<b>Becomes the hold gesture.</b> Slots, overflow, cloud-vs-loop — all consequences of the stroke not knowing what it was.'],
+    [0,90.8,100,9.2,'footer','Meters stay. Six of these are doors into <b>rig</b>.']
+  ];
+  var hsBox=document.getElementById('hotspots'), verdict=document.getElementById('todayVerdict');
+  var DEFAULT_V='<b>Hover any region.</b> Eleven panels, eleven modals, and no single place that answers what the cursor is for.';
+  HS.forEach(function(h){
+    var b=document.createElement('button');
+    b.type='button'; b.className='hs'; b.setAttribute('aria-pressed','false');
+    b.style.cssText='left:'+h[0]+'%;top:'+h[1]+'%;width:'+h[2]+'%;height:'+h[3]+'%';
+    b.innerHTML='<span>'+h[4]+'</span>';
+    b.setAttribute('aria-label', h[4]);
+    function show(){ verdict.innerHTML='<b>'+h[4]+'</b> — '+h[5];
+      hsBox.querySelectorAll('.hs').forEach(function(x){ x.setAttribute('aria-pressed', String(x===b)); }); }
+    b.addEventListener('mouseenter', show); b.addEventListener('focus', show); b.addEventListener('click', show);
+    hsBox.appendChild(b);
+  });
+  hsBox.addEventListener('mouseleave', function(){
+    verdict.innerHTML=DEFAULT_V;
+    hsBox.querySelectorAll('.hs').forEach(function(x){ x.setAttribute('aria-pressed','false'); });
+  });
+
+  /* ═════════════ vocabulary table ═════════════ */
+  var VROWS=[
+    ['put material down','Paint','Sing','Record','Trace'],
+    ['where it lands','scratch','the unsung','scratch','nowhere — there is no name'],
+    ['a mark that loops','a line','a phrase','a loop','a trigger'],
+    ['a mark that granulates','a spray','a breath','a grain','particles'],
+    ['a mark from a file','a stamp','a quote','a drop-in','a loaded sample'],
+    ['make it sound on its own','hold it into a layer','hold it into a choir','hold it onto a bus','commit / plant / drop / draw'],
+    ['the thing that results','a hold','a drone','a loop','a seed, a seq, a cloud, a playhead'],
+    ['take material away','an edit tool','clearing','wiping','erase, sweep, uproot, lift'],
+    ['decide what is audible','Arrange','Conduct','Mix','composer mode'],
+    ['the cursor&rsquo;s range','reach','earshot','window','search radius'],
+    ['a saved tool','a brush','a voice','a preset','a patch'],
+    ['the music, saved','a set','a piece','a session','a session export'],
+    ['the machine, saved','the rig','the stage','the setup','a setup export']
+  ];
+  var COLS=['var(--teal)','var(--pink)','var(--amber)','var(--ink-4)'];
+  var vt = document.getElementById('vocabTable');
+  if (vt) vt.innerHTML = VROWS.map(function(r,i){
+    var bg = i%2 ? ' style="background:rgba(255,255,255,.018)"' : '';
+    var cells = r.slice(1).map(function(c,k){
+      return '<td style="padding:.55rem .8rem;border-bottom:1px solid var(--rule);color:'+COLS[k]+
+             (k===0?';font-weight:500':'')+'">'+c+'</td>';
+    }).join('');
+    return '<tr'+bg+'><td style="padding:.55rem .8rem;border-bottom:1px solid var(--rule);color:var(--ink-3)">'+r[0]+'</td>'+cells+'</tr>';
+  }).join('');
+
+  /* ═════════════ tabs ═════════════ */
+  var TABS=[['t-today','s-today'],['t-six','s-six'],['t-sets','s-sets'],['t-words','s-words']];
+  function showTab(id) {
+    TABS.forEach(function(p){
+      var on = p[0]===id;
+      document.getElementById(p[0]).setAttribute('aria-selected', String(on));
+      document.getElementById(p[1]).hidden = !on;
+    });
+    closeMenus();
+  }
+  TABS.forEach(function(p){
+    document.getElementById(p[0]).addEventListener('click', function(){ showTab(p[0]); });
+  });
+  var ao = document.getElementById('allOn');
+  if (ao) ao.addEventListener('click', function(e){
+    e.stopPropagation();
+    M.holds.forEach(function(h){ h.silent=false; });
+    M.layers.forEach(function(L){ L.muted=false; L.solo=false; });
+    sync();
+  });
+
+  /* ═════════════ vocabulary switch ═════════════ */
+  (function wireScan(){
+    var b = document.getElementById('scanBtn'); if (!b) return;
+    function paint(){ b.classList.toggle('on', scanOn); b.setAttribute('aria-pressed', String(scanOn));
+      b.querySelector('span').textContent = scanOn ? 'scan' : 'scan off'; }
+    b.addEventListener('click', function(){ scanOn = !scanOn; paint(); });
+    paint();
+  })();
+
+  function applyVocab() {
+    var v=V();
+    document.getElementById('vocabNote').textContent = '— ' + v.note;
+    each('.tReach', function(e){ e.textContent=v.reach; });
+    each('.tHeld',  function(e){ e.textContent=v.held; });
+    each('.tMat',   function(e){ e.textContent=v.scratch; });
+    each('.tHeldHead', function(e){ e.textContent=v.heldHead; });
+    each('.oToolArr', function(e){ e.textContent='arrange'; });
+    var fa = document.getElementById('foot-arr');
+    if (fa) fa.innerHTML = '<b>Three levels, one answer.</b> A hold is audible unless you muted it, ' +
+      'its ' + v.layer + ' is muted, or another is soloed. Nothing is written into the holds, so a ' +
+      'hold you silenced by hand survives any number of ' + v.layer + ' mutes.';
+    renderTiles(); renderOptions(); buildMenus(); sync();
+  }
+  document.getElementById('vocabSwitch').querySelectorAll('button').forEach(function(b){
+    b.addEventListener('click', function(){
+      vocab=b.dataset.v;
+      document.getElementById('vocabSwitch').querySelectorAll('button').forEach(function(x){
+        x.setAttribute('aria-pressed', String(x===b));
+      });
+      applyVocab();
+    });
+  });
+  var rm2 = document.getElementById('resetMat');
+  if (rm2) rm2.addEventListener('click', function(){
+    loadSet(doc.name in SETS ? doc.name : 'dartmouth-set-2'); sync();
+  });
+
+  /* ═════════════ keyboard — the hold gesture ═════════════ */
+  /* Numbers and letters are on different rows so they can be held together —
+     that independence is the feature. A modifier would have made the second
+     gesture a variation on the first; two rows make them simultaneous. */
+  var _downNum = null, _downLayer = null;
+  function onStage() { return !document.getElementById('s-six').hidden; }
+  document.addEventListener('keydown', function(e){
+    if (e.metaKey||e.ctrlKey||e.altKey||e.repeat) return;
+    var tag=(e.target.tagName||'').toLowerCase();
+    if (tag==='input'||tag==='textarea') return;
+    if (!onStage()) return;
+
+    var k = (e.key||'').toLowerCase();
+    if (k in LAYERKEY) {
+      if (_downLayer !== null) return;
+      _downLayer = k; holdDown(LAYERKEY[k]); e.preventDefault(); return;
+    }
+    var n = parseInt(e.code && e.code.indexOf('Digit')===0 ? e.code.slice(5) : e.key, 10);
+    if (!(n>=1 && n<=9)) return;
+    e.preventDefault();
+    if (_downNum !== null) return;
+    var t = TILES[n-1]; if (!t) return;
+    if (t.kind === 'act') { fireTile(n-1); return; }
+    _downNum = n;
+    sel = n-1; renderTiles(); renderOptions();
+    if (t.dep) startKeyPaint(n-1);
+    if (t.kind === 'arr') toggleSeed();
+  });
+  document.addEventListener('keyup', function(e){
+    var k = (e.key||'').toLowerCase();
+    if (_downLayer !== null && k === _downLayer) { _downLayer=null; holdUp(); return; }
+    if (_downNum === null) return;
+    var n = parseInt(e.code && e.code.indexOf('Digit')===0 ? e.code.slice(5) : e.key, 10);
+    if (_downNum === n) { _downNum=null; _toggling=false; endKeyPaint(); }
+  });
+
+  /* ═════════════ boot ═════════════ */
+  reg('stage-six',  { tool:function(){ return TILES[sel].id; },
+                      color:function(){ return TILES[sel].c; },
+                      dep:function(){ return TILES[sel].dep; } });
+  reg('stage-sets', { tool:function(){ return null; }, color:function(){ return '#7abcbc'; },
+                      dep:function(){ return null; }, noPaint:true, static:true });
+
+  loadSet('dartmouth-set-2');
+  applyVocab();
+  showTab('t-six');
+
+  var t0=performance.now(), raf=null;
+  function tick(){
+    var t=(performance.now()-t0)/1000;
+    STAGES.forEach(function(s){
+      var sc=s.el.closest('.screen');
+      if (sc && !sc.hidden) drawSphere(s, t);
+    });
+    raf = reduce ? null : requestAnimationFrame(tick);
+  }
+  tick();
+  window.addEventListener('resize', function(){ if (reduce) tick(); });
+})();
+</script>

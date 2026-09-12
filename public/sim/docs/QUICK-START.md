@@ -12,9 +12,13 @@ mubone is a browser-based spatial granular synthesizer. You play into a mic, you
 
 **Enable your mic** — click the mic button in the top-left. The browser will ask for microphone permission. Once granted, audio begins recording into the internal buffer.
 
-**Paint particles** — press and hold **Space** to trace. Your live audio is captured and painted as colored dots onto the sphere at the cursor position. Release to stop. A quick tap toggles trace on/off; a hold (≥200ms) is momentary (trace only while held).
+**Set the latency once** — Settings → Audio → Latency shows what the app knows about the time in and out through your interface; press **Measure** with the output reaching the mic (speakers, or a cable) and the loop engine steers by the real figure from then on, per device pair.
 
-**Move the cursor** — by default the camera is in **pull mode**: drag your mouse to rotate the sphere. The cursor stays at center and the sphere rotates around it. You can switch to **surface mode** (finger/trackpad position maps directly to sphere coordinates) or **sensor mode** (x-imu3) from the top bar.
+**Paint particles** — press **Space** to trace. Your live audio is captured and painted as colored dots onto the sphere at the cursor position. Press again to stop (the button is a toggle by default; Settings → keys + MIDI → *Main button* makes it momentary: paint only while held).
+
+**Move the cursor** — by default the camera is in **steer mode**: drag your mouse to rotate the sphere. The cursor stays at center and the sphere rotates around it. You can switch to **surface mode** (finger/trackpad position maps directly to sphere coordinates) or **sensor mode** (x-imu3) from the top bar.
+
+**See the whole sphere** — the viz panel's **camera pull-back** slider moves the camera out from the sphere's centre (0 = inside, the original view; 1 = on the surface; above that you are outside and the sphere has a silhouette). This is a dolly, not a zoom — the FOV slider above it is the zoom, and no FOV value can get you outside. Pulling back changes only what you see: what the cursor reaches, and what you hear, are unaffected.
 
 **Listen** — as the cursor passes over painted particles, grains are synthesized from the audio stored at those positions. Adjust the **search radius** with `[` and `]` to widen or narrow the area of particles the cursor picks up.
 
@@ -42,15 +46,16 @@ Press **⌘D / Ctrl+D** to release (remove) the nearest seed.
 
 The right panel's **commits** section lets you set the slot count (up to 16), overflow behavior (what happens when slots are full), and playback direction for moving seeds.
 
-## Trace Modes
+## What a stroke becomes
 
-Press **A** to cycle through three trace modes:
+Every grain brush's sheet has an **on end** row — what the stroke turns into when you let go:
 
-**trace** — plain recording mode. Space paints particles at the cursor. The left HUD dot is dim white.
+**scratch** — it stays on the sphere for the cursor to read. The default.
 
-**trace+loop** — while tracing, audio also records into a loop commit. The dot turns pink.
+**cloud** — it is pinned at once as a moving cloud that loops the path you drew. The **wash**
+brush ships this way, with a reverb-like block: paint a phrase and it stays in the room.
 
-**trace+cloud** — while tracing, a cloud seed is automatically planted and follows your path. The dot turns blue.
+The tile remembers the choice. There is no key that cycles it.
 
 ## Presets
 
@@ -84,7 +89,7 @@ The mapping module lets you wire IMU orientation axes directly to grain paramete
 
 **Each mapping row** contains: an enable/disable toggle, an axis selector (Roll / Elevation / Azimuth), input range in degrees, a live raw readout, a target parameter selector, output range, curve type (linear / log / exp), curve exponent, a mini curve preview, and a live output readout.
 
-**Mappable parameters**: HPF cutoff, LPF cutoff, filter Q, filter jitter, volume, duration, duration jitter, period, pitch shift, pitch jitter, pan spread, and fade ratio.
+**Mappable parameters**: HPF cutoff, LPF cutoff, hpf Q, lpf Q (one per filter since 2026-09-07), filter jitter, volume, duration, duration jitter, period, pitch shift, pitch jitter, pan spread, and fade ratio.
 
 **Input axes**: Roll (±90°), Elevation (±90°), Azimuth (±180°) — read from the IMU with the "cursor" role.
 
@@ -96,7 +101,7 @@ The mapping module lets you wire IMU orientation axes directly to grain paramete
 
 **Persistence**: mappings save to localStorage globally (not per-preset). They survive reloads.
 
-**Remote toggle**: the first 4 mappings can be toggled via MIDI (`mapping_toggle_1`–`4`) or OSC (`/mapping/toggle/1`–`4`).
+**Remote toggle**: none — the `mapping_toggle_1`–`4` actions and `/mapping/toggle/N` addresses were deleted 2026-09-05, never having been bound; a mapping is switched on its row.
 
 ## Keyboard Shortcut Cheatsheet
 
@@ -106,8 +111,6 @@ The mapping module lets you wire IMU orientation axes directly to grain paramete
 |-----|--------|
 | **Space** (tap) | Toggle trace on/off |
 | **Space** (hold) | Momentary trace (paint while held) |
-| **A** | Cycle trace mode: trace → trace+loop → trace+cloud |
-| **Q W E R T Y U I O P** | Momentary sample paint (slots 1–10) |
 
 ### Commits (Seeds)
 
@@ -141,7 +144,7 @@ The mapping module lets you wire IMU orientation axes directly to grain paramete
 
 | Key | Action |
 |-----|--------|
-| **⌘Z / Ctrl+Z** | Undo last stroke |
+| **⌘Z / Ctrl+Z** | Undo the last thing you did — a stroke, a pin, an unpin, an erase; keep going to the top of the show |
 | **Delete / Backspace** ×3 | Erase all (triple-press within 800ms) |
 | **−** (minus) | Session sweep |
 | **`** (backtick) | Tare cursor sensor |
@@ -153,7 +156,7 @@ The mapping module lets you wire IMU orientation axes directly to grain paramete
 | **P** | Toggle performance monitor |
 | **Shift+P** | Toggle high-performance render mode |
 | **Shift+G** | Toggle gesture panel |
-| **Shift+F** | Toggle projector mode |
+| **Shift+F** | Projector mirror — a popup window showing the sphere, for an external display |
 | **Esc** | Close topmost modal / blur focused field |
 
 ### Custom Bindings

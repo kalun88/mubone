@@ -2,10 +2,10 @@
 // AUDIO SYSTEM  (extracted from index.html)
 // ============================================================================
 
-import { S, DEBUG, SPHERE_RADIUS, perf, LIVE_REBUILD_INTERVAL_MS } from './state.js';
+import { S, DEBUG, SPHERE_RADIUS, perf, LIVE_REBUILD_INTERVAL_MS, MASTER_DEFAULT_GAIN, MAX_SAMPLES } from './state.js';
 import { dlog } from './diag.js';
 import { buildVBAPLookup, queryVBAPLookup } from './grain.js';
-import { getCursorLonLat, screenToLonLat, spherePointInto, cameraTransformInto } from './sphere.js';
+import { getCursorLonLat, screenToLonLat, spherePointInto, cameraRotateInto } from './sphere.js';
 
 // Track whether the recording-capture worklet module has been registered.
 // Reset to false on AudioContext recreation (new context needs fresh addModule).
@@ -57,9 +57,11 @@ export function ensureAudioContext() {
     }
 
     // Master gain — on mobile push harder to compensate for loudspeaker distance.
-    // Desktop uses saved outputGainValue if available (from save-as-default), else 0.9.
+    // Desktop uses saved outputGainValue if available (from save-as-default),
+    // else the -6 dB cold-boot default the sliders show. Both come from
+    // MASTER_DEFAULT_GAIN in state.js — do not reintroduce a literal here.
     const masterGain = S.audioCtx.createGain();
-    masterGain.gain.value = S.isMobile ? 3.0 : (S.outputGainValue ?? 0.9);
+    masterGain.gain.value = S.isMobile ? 3.0 : (S.outputGainValue ?? MASTER_DEFAULT_GAIN);
 
     // Soft clipper (WaveShaper with tanh curve) — sample-accurate, no attack time,
     // frequency-transparent. Replaces DynamicsCompressor which was too slow for
@@ -229,6 +231,22 @@ export function ensureAudioContext() {
 }
 
 export function getMasterBus() { ensureAudioContext(); return S.masterBus; }
+
+// Where a sample PREVIEW should connect to be heard (#247). masterBus is a
+// dead end in Electron — grains reach hardware straight through the VBAP
+// speaker/monitor buses, and the master chain ends at a meter tap — so a
+// preview into getMasterBus() was silent on the rig (and had been since
+// multi-channel landed; the audible sampler preview memory is browser mode).
+// Browser → the master chain. Electron → the headphone monitor pair when
+// configured, else the first two house buses, else masterBus (silent, but
+// nothing else exists until a device is selected).
+export function getPreviewSinks() {
+  ensureAudioContext();
+  if (!window.electronBridge) return [S.masterBus];
+  if (S.monitorSpeakerBuses?.length) return S.monitorSpeakerBuses.map(b => b.bus);
+  if (S.speakerBuses?.length)        return S.speakerBuses.slice(0, 2).map(b => b.bus);
+  return [S.masterBus];
+}
 
 // Tear down the AudioContext and all dependent state so ensureAudioContext()
 // will recreate it at the new S.preferredSampleRate on next call.
@@ -471,13 +489,176 @@ export async function requestMicAccess() {
 let _recRawPool = null;
 let _recRawPoolRate = 0;
 
+// ── Generic capture core (#247) ─────────────────────────────────────────────
+// The machinery shared by a live paint stroke and a sampler take: pool
+// acquire, worklet node + PCM writer, and the finalize/declick that turns
+// the raw ring into an AudioBuffer. Uses the module singletons — ONE capture
+// at a time, enforced by the callers' isRecording / isSamplerCapturing
+// guards. The wrappers own everything stroke- or sampler-shaped.
+function _captureStart(actx) {
+  S.recordingSampleRate = actx.sampleRate;
+  // Reuse the persistent pool (perf audit H1) — see comment above.
+  if (!_recRawPool || _recRawPoolRate !== S.recordingSampleRate) {
+    _recRawPool     = new Float32Array(S.recordingSampleRate * 300); // 5 min headroom
+    _recRawPoolRate = S.recordingSampleRate;
+  }
+  S.recordingRaw      = _recRawPool;
+  S.recordingWritePos = 0;
+
+  // inputGainNode and inputAnalyser are created once in requestMicAccess and persist.
+  // We don't need a separate MediaStreamSource for recording — tap the already-connected
+  // inputAnalyser output and route it through the AudioWorklet for capture.
+  S.recordingNode = new AudioWorkletNode(actx, 'recording-capture', {
+    numberOfInputs:   1,
+    numberOfOutputs:  0,    // no output needed — worklet is a pure sink
+    channelCount:     1,
+    channelCountMode: 'explicit',
+  });
+
+  S.recordingStartTime = performance.now();
+
+  // Receive batched PCM chunks from the worklet's audio thread. The stop
+  // path swaps this handler for one that also watches for the worklet's
+  // `done` (see _captureStop); bundles keep landing until then.
+  S.recordingNode.port.onmessage = ({ data }) => _acceptBundle(data);
+
+  // Tell worklet to start capturing
+  S.recordingNode.port.postMessage({ type: 'init', batchSize: 16 });
+
+  // Chain: (persistent) inputGain -> inputAnalyser -> worklet (pure sink)
+  S.inputAnalyser.connect(S.recordingNode);
+}
+
+// One PCM bundle from the recorder worklet, appended to the raw pool. Guard:
+// the worklet may post after the take is sealed and S.recordingRaw nulled.
+function _acceptBundle(data) {
+  if (!S.recordingRaw || !data?.samples) return;
+  const { samples, frames } = data;
+  if (S.recordingWritePos + frames > S.recordingRaw.length) {
+    const grown = new Float32Array(S.recordingRaw.length * 2);
+    grown.set(S.recordingRaw);
+    S.recordingRaw = grown;
+    _recRawPool    = grown;  // grown buffer becomes the pool (perf audit H1)
+  }
+  S.recordingRaw.set(samples, S.recordingWritePos);
+  S.recordingWritePos += frames;
+}
+
+// ── Sealing waits for the recorder's last bundle (2026-09-02) ───────────────
+// The recorder posts 2048-sample bundles, and the final partial one only
+// arrives a task after 'stop' is sent. Sealing synchronously threw it away on
+// every take — 0 to 43 ms off the end, at random, and a held-space loop is
+// exactly the sealed length, so every loop was that much short. Now 'stop'
+// starts a seal that finishes when the worklet's `done` lands (or after a
+// 50 ms fallback if the worklet is gone). `whenSealed()` is for the callers
+// that build something from the take straight after stopping it — loops and
+// triggers read slot.buffer, and before the seal they would fall back to the
+// oversized live buffer. A record press inside the window seals with what has
+// arrived, which is the old behaviour on a race no hand can produce.
+let _sealPending = null;      // { finish } while a stop waits on the recorder
+// A hit take is held open past the release by the input latency (js/latency.js
+// `inS`): the last thing sung before the button arrives that much later, and
+// a loop whose region ends at the release would be short by exactly that.
+let _holdTimer = null;
+const _sealWaiters = [];
+
+export function whenSealed(fn) {
+  // A take held open past its release (stopLiveRecordingHeld) is not sealed
+  // yet either: what is built from it must wait for the hold and the seal.
+  if (_sealPending || _holdTimer) _sealWaiters.push(fn);
+  else fn();
+}
+
+// Sends 'stop', keeps accepting bundles until the worklet's `done`, then
+// tears the node down, builds the take and calls onSealed(audioBuffer) —
+// null when the take was under the 80 ms floor (an accidental graze). Leaves
+// S.recordingRaw/WritePos for the caller to reset.
+function _captureStop(onSealed) {
+  // Only tear down the recording-specific nodes.
+  // inputGainNode and inputAnalyser are persistent (created in requestMicAccess)
+  // so the meter and knob stay active between recordings.
+  const node        = S.recordingNode;
+  const analyserRef = S.inputAnalyser;
+  S.recordingNode = null;
+  if (S.recordingSourceNode) { S.recordingSourceNode.disconnect(); S.recordingSourceNode = null; }
+
+  let timer = 0;
+  let done  = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    _sealPending = null;
+    if (timer) clearTimeout(timer);
+    if (node) {
+      node.port.onmessage = null;
+      try { analyserRef && analyserRef.disconnect(node); } catch(_) {}
+      try { node.disconnect(); } catch(_) {}
+    }
+    onSealed(_buildTake());
+    const waiters = _sealWaiters.splice(0);
+    for (const fn of waiters) {
+      try { fn(); } catch (e) { console.warn('[audio] whenSealed callback failed:', e); }
+    }
+  };
+  _sealPending = { finish };
+  if (!node) { finish(); return; }
+  node.port.onmessage = ({ data }) => {
+    if (data?.done) { finish(); return; }
+    _acceptBundle(data);
+  };
+  try { node.port.postMessage({ type: 'stop' }); } catch(_) { finish(); return; }
+  timer = setTimeout(finish, 50);
+}
+
+function _buildTake() {
+  const actx = ensureAudioContext();
+  const totalLength = S.recordingWritePos;
+
+  // Minimum kept length: 80 ms. Shorter than this is an accidental graze.
+  // (The 200 ms touchend delay means intentional taps always exceed this.)
+  const MIN_REC_SAMPLES = Math.floor(S.recordingSampleRate * 0.08);
+  if (totalLength < MIN_REC_SAMPLES) return null;
+
+  // Build final AudioBuffer
+  const audioBuffer = actx.createBuffer(1, totalLength, S.recordingSampleRate);
+  const channelData = S.recordingRaw.subarray(0, totalLength);
+
+  // Declick the buffer edges. This is DESTRUCTIVE — it is written into the
+  // samples, so whatever it removes is gone for every later use of this take.
+  //
+  // It was 50 ms with a squared curve, which is not a declick, it is a fade:
+  // squared means 25 ms in you are still 12 dB down, so hitting record and
+  // playing a loud first beat straight away buried the attack permanently. That
+  // is fine for granular material (grains carry their own envelopes and mostly
+  // read the middle of the buffer) and fine for loops (buildLoopPayload bakes
+  // its own 30 ms crossfade), but a trigger buffer is played verbatim from the
+  // top and its whole point is the transient.
+  //
+  // 5 ms is what a declick actually needs. Raise it only with a reason — the
+  // cost of getting it wrong lands on the recording, not on playback.
+  const fadeSamples = Math.min(Math.floor(S.recordingSampleRate * 0.005), Math.floor(totalLength / 4));
+  for (let i = 0; i < fadeSamples; i++) {
+    const env = (i / fadeSamples) ** 2;
+    channelData[i]                    *= env;
+    channelData[totalLength - 1 - i]  *= env;
+  }
+
+  audioBuffer.getChannelData(0).set(channelData);
+  return audioBuffer;
+}
+
+
 export function startLiveRecording() {
+  // A press inside the hold cuts it: the new take starts now, the old one
+  // seals with what has arrived.
+  if (_holdTimer) { clearTimeout(_holdTimer); _holdTimer = null; stopLiveRecording(); }
   if (S.isRecording) return;
   // Allow recording if we have a browser MediaStream OR Electron RtAudio input active.
   // In Electron, S.recordingStream is never set — audio flows via RtAudio IPC into
   // inputGainNode → inputAnalyser, which is the same chain the recording worklet taps.
   const hasRtAudioInput = window.electronBridge?.isElectron && window._rtAudioInputListening;
   if (!S.recordingStream && !hasRtAudioInput) return;
+  if (_sealPending) _sealPending.finish();   // a re-press inside the seal window
 
   // Memory guard — refuse to start a new recording if we've hit the ceiling.
   // The performer sees the HUD flash red and knows to sweep.
@@ -503,58 +684,19 @@ export function startLiveRecording() {
     return;
   }
 
-  S.recordingSampleRate   = actx.sampleRate;
-  // Reuse the persistent pool (perf audit H1) — see comment above.
-  if (!_recRawPool || _recRawPoolRate !== S.recordingSampleRate) {
-    _recRawPool     = new Float32Array(S.recordingSampleRate * 300); // 5 min headroom
-    _recRawPoolRate = S.recordingSampleRate;
-  }
-  S.recordingRaw          = _recRawPool;
-  S.recordingWritePos     = 0;
+  _captureStart(actx);
   S.liveBufferSampleCount = 0;
-
-  // inputGainNode and inputAnalyser are created once in requestMicAccess and persist.
-  // We don't need a separate MediaStreamSource for recording — tap the already-connected
-  // inputAnalyser output and route it through the AudioWorklet for capture.
-
-  S.recordingNode = new AudioWorkletNode(actx, 'recording-capture', {
-    numberOfInputs:   1,
-    numberOfOutputs:  0,    // no output needed — worklet is a pure sink
-    channelCount:     1,
-    channelCountMode: 'explicit',
-  });
-
-  S.recordingStartTime = performance.now();
-
-  // Receive batched PCM chunks from the worklet's audio thread.
-  // Guard: the worklet runs on the audio thread and may send a few more
-  // messages after stopRecording() nulls S.recordingRaw on the main thread.
-  S.recordingNode.port.onmessage = ({ data }) => {
-    if (!S.recordingRaw) return;           // recording already stopped
-    const { samples, frames } = data;
-    if (S.recordingWritePos + frames > S.recordingRaw.length) {
-      const grown = new Float32Array(S.recordingRaw.length * 2);
-      grown.set(S.recordingRaw);
-      S.recordingRaw = grown;
-      _recRawPool    = grown;  // grown buffer becomes the pool (perf audit H1)
-    }
-    S.recordingRaw.set(samples, S.recordingWritePos);
-    S.recordingWritePos += frames;
-  };
-
-  // Tell worklet to start capturing
-  S.recordingNode.port.postMessage({ type: 'init', batchSize: 16 });
-
-  // Chain: (persistent) inputGain -> inputAnalyser -> worklet (pure sink, no destination needed)
-  // inputAnalyser already has inputGainNode feeding it; just attach the recorder.
-  S.inputAnalyser.connect(S.recordingNode);
 
   S.isRecording = true;
   dlog('audio', 'recording started', { sampleRate: S.recordingSampleRate, nodes: S._grainSourceCount });
+  _dryMonitorRecordStart();   // auto-monitor ducks for a granular take (#245)
 
   // Reserve a slot in liveRecBuffers — placeholder with null buffer
   S.currentLiveBufferIdx = S.liveRecBuffers.length;
-  S.liveRecBuffers.push({ buffer: null, grainCursor: 0 });
+  // `startedAt`: the audio-clock time of the take's first sample, to within
+  // the recorder's first block — what an OVERDUB reads to find where in its
+  // master's cycle the take began (ui-presets.js attachOverdub).
+  S.liveRecBuffers.push({ buffer: null, grainCursor: 0, startedAt: actx.currentTime });
 
   // If the worklet engine is running, init a provisional live buffer so grains
   // from the in-progress recording can be played by the worklet (not main thread).
@@ -566,116 +708,240 @@ export function startLiveRecording() {
   S.updateLiveRecUI?.();
 }
 
-export function stopLiveRecording() {
+/** The release of a HIT take: stamp when the button went up, keep recording
+ *  for `holdS` (the input latency) so the sound of the release itself lands
+ *  in the take, then stop. The take's `edges` — its region from the button,
+ *  not the marks — are set at the seal. */
+export function stopLiveRecordingHeld(holdS = 0) {
   if (!S.isRecording) return;
-  S.isRecording = false;
-  dlog('audio', 'recording stopped', { writePos: S.recordingWritePos, nodes: S._grainSourceCount });
-
-  // Only tear down the recording-specific nodes.
-  // inputGainNode and inputAnalyser are persistent (created in requestMicAccess)
-  // so the meter and knob stay active between recordings.
-  if (S.recordingNode) {
-    // Tell the worklet to flush any partial batch and stop.
-    // Delay disconnect by one render quantum (~3ms at 48kHz) so the worklet's
-    // process() has time to see the stop message and flush its final buffer.
-    // Previously, immediate disconnect could yank the input before the flush,
-    // losing the last ~128 samples and creating an abrupt tail.
-    const nodeToClean = S.recordingNode;
-    const analyserRef = S.inputAnalyser;
-    try { nodeToClean.port.postMessage({ type: 'stop' }); } catch(_) {}
-    setTimeout(() => {
-      nodeToClean.port.onmessage = null;
-      try { analyserRef && analyserRef.disconnect(nodeToClean); } catch(_) {}
-      try { nodeToClean.disconnect(); } catch(_) {}
-    }, 5); // 5ms > one render quantum (2.67ms at 48kHz)
-    S.recordingNode = null;
-  }
-  if (S.recordingSourceNode) { S.recordingSourceNode.disconnect(); S.recordingSourceNode = null; }
-
-  const actx = ensureAudioContext();
-  const totalLength = S.recordingWritePos;
-
-  // Minimum kept length: 80 ms. Shorter than this is an accidental graze.
-  // (The 200 ms touchend delay means intentional taps always exceed this.)
-  const MIN_REC_SAMPLES = Math.floor(S.recordingSampleRate * 0.08);
-
-  if (totalLength < MIN_REC_SAMPLES) {
-    // Too short — remove the placeholder slot
-    if (S.currentLiveBufferIdx >= 0 && S.currentLiveBufferIdx < S.liveRecBuffers.length) {
-      S.liveRecBuffers.splice(S.currentLiveBufferIdx, 1);
-      // Fix particle references
-      S.particles.forEach(p => {
-        if (p.liveBufferIdx === S.currentLiveBufferIdx) p.liveBufferIdx = -1;
-        else if (p.liveBufferIdx > S.currentLiveBufferIdx) p.liveBufferIdx--;
-      });
-    }
-    S.currentLiveBufferIdx = -1;
-    S.recordingRaw = null;
-    S.updateLiveRecUI?.();
-    return;
-  }
-
-  // Build final AudioBuffer
-  const audioBuffer = actx.createBuffer(1, totalLength, S.recordingSampleRate);
-  const channelData = S.recordingRaw.subarray(0, totalLength);
-
-  // Fade edges to eliminate transient clicks
-  const fadeSamples = Math.min(Math.floor(S.recordingSampleRate * 0.05), Math.floor(totalLength / 4));
-  for (let i = 0; i < fadeSamples; i++) {
-    const env = (i / fadeSamples) ** 2;
-    channelData[i]                    *= env;
-    channelData[totalLength - 1 - i]  *= env;
-  }
-
-  audioBuffer.getChannelData(0).set(channelData);
-
-  // Seal the live buffer slot
+  const actx = S.audioCtx;
   const slot = S.liveRecBuffers[S.currentLiveBufferIdx];
-  if (slot) {
-    slot.buffer      = audioBuffer;
-    slot.grainCursor = 0;
-  }
-
-  // Clamp any particles that were painted beyond the final duration
-  const bufIdx = S.currentLiveBufferIdx;
-  const dur = audioBuffer.duration;
-  S.particles.forEach(p => {
-    if (p.liveBufferIdx === bufIdx) {
-      if (p.grainStart > dur) p.grainStart = Math.max(0, dur - 0.01);
-      if (p.grainStart + p.grainDuration > dur) p.grainDuration = dur - p.grainStart;
-    }
-  });
-
-  // Notify listeners that a recording was completed.
-  // Hot-swap path: _onRecordingComplete adds finalized buffer to running worklet
-  // and handles provisional buffer cleanup with deferred drain.
-  // Cold-start path: _onRecordingComplete starts the worklet fresh.
-  S._onRecordingComplete?.(audioBuffer, S.currentLiveBufferIdx);
-
-  S.recordingRaw         = null;   // gate for late worklet messages; pool retained
-  S.recordingWritePos    = 0;
-  S.liveBufferSampleCount = 0;
-  S.currentLiveBufferIdx = -1;
-  // Keep the reusable live buffer across recordings (perf audit H1, Jul 2026).
-  // It was released here, so every take re-grew it from scratch via amortised
-  // doubling — each doubling a full alloc+copy on the main thread MID-TAKE
-  // (a 4-min take pays a ~55 MB copy around the 2-min mark). Retaining it
-  // means subsequent takes start at the largest size seen so far and never
-  // reallocate unless they exceed it. Safe to share the object across takes:
-  // candidate resolution prefers slot.buffer over slot.liveBuffer, so stale
-  // liveBuffer refs on finalized slots are never read. Only the copy cursor
-  // resets. Revert: restore `_liveAudioBuf = null; _liveAudioBufLen = 0;`.
-  _liveCopiedUpTo  = 0;
-  S.updateLiveRecUI?.();
+  if (slot && actx) { slot.releaseAt = actx.currentTime; slot.inS = Math.max(0, holdS || 0); }
+  if (!(holdS > 0)) { stopLiveRecording(); return; }
+  _holdTimer = setTimeout(() => { _holdTimer = null; stopLiveRecording(); }, holdS * 1000);
 }
 
-// ── IPC audio credit state (perf audit H4, Jul 2026) ─────────────────────────
-// Module-level so re-running initSpeakerBuses resets the balance instead of
-// stacking a fresh closure + listener per call. See comment at the
-// registration site in initSpeakerBuses.
-const IPC_CREDIT_MAX = 8;
-let _ipcCreditBalance = IPC_CREDIT_MAX;
-let _creditListenerRegistered = false;
+export function stopLiveRecording() {
+  if (!S.isRecording) return;
+  if (_holdTimer) { clearTimeout(_holdTimer); _holdTimer = null; }
+  S.isRecording = false;
+  dlog('audio', 'recording stopped', { writePos: S.recordingWritePos, nodes: S._grainSourceCount });
+  _dryMonitorRecordEnd();
+  // The stroke's last mark is still pending in the paint ticker (it lands one
+  // tick behind); settle it now so whatever is built from this take at the
+  // seal — a loop, a trigger — has it.
+  S._settlePaintPending?.();
+
+  // isRecording is already false, so painting and the live rebuild have
+  // stopped. The slot index is read at seal time, not here: undo/redo
+  // renumber it when they splice liveRecBuffers (ui-samples.js).
+  _captureStop((audioBuffer) => {
+    const bufIdx = S.currentLiveBufferIdx;
+    if (!audioBuffer) {
+      // Too short — remove the placeholder slot
+      if (bufIdx >= 0 && bufIdx < S.liveRecBuffers.length) {
+        S.liveRecBuffers.splice(bufIdx, 1);
+        // Fix particle references
+        S.particles.forEach(p => {
+          if (p.liveBufferIdx === bufIdx) p.liveBufferIdx = -1;
+          else if (p.liveBufferIdx > bufIdx) p.liveBufferIdx--;
+        });
+      }
+      S.currentLiveBufferIdx = -1;
+      S.recordingRaw = null;
+      S.updateLiveRecUI?.();
+      return;
+    }
+
+    // Seal the live buffer slot
+    const slot = S.liveRecBuffers[bufIdx];
+    const dur = audioBuffer.duration;
+    if (slot) {
+      slot.buffer      = audioBuffer;
+      slot.grainCursor = 0;
+      // The region from the BUTTON (2026-09-04): the press is heard `inS`
+      // into the take and the recorder held `inS` past the release, so the
+      // material between the two presses is [inS, end]. Loops and line
+      // triggers read this over the marks (buildLoopPayload, _applyCluster).
+      if (slot.releaseAt != null) slot.edges = { startS: Math.min(slot.inS || 0, dur), endS: dur };
+      if (slot.markSpan) { slot.markSpan[0] = Math.min(slot.markSpan[0], dur); slot.markSpan[1] = Math.min(slot.markSpan[1], Math.max(0, dur - 0.01)); }
+    }
+
+    // Clamp any particles that were painted beyond the final duration
+    S.particles.forEach(p => {
+      if (p.liveBufferIdx === bufIdx) {
+        if (p.grainStart > dur) p.grainStart = Math.max(0, dur - 0.01);
+        if (p.grainStart + p.grainDuration > dur) p.grainDuration = dur - p.grainStart;
+      }
+    });
+
+    // Notify listeners that a recording was completed.
+    // Hot-swap path: _onRecordingComplete adds finalized buffer to running worklet
+    // and handles provisional buffer cleanup with deferred drain.
+    // Cold-start path: _onRecordingComplete starts the worklet fresh.
+    S._onRecordingComplete?.(audioBuffer, bufIdx);
+
+    S.recordingRaw         = null;   // gate for late worklet messages; pool retained
+    S.recordingWritePos    = 0;
+    S.liveBufferSampleCount = 0;
+    S.currentLiveBufferIdx = -1;
+    // Keep the reusable live buffer across recordings (perf audit H1, Jul 2026).
+    // It was released here, so every take re-grew it from scratch via amortised
+    // doubling — each doubling a full alloc+copy on the main thread MID-TAKE
+    // (a 4-min take pays a ~55 MB copy around the 2-min mark). Retaining it
+    // means subsequent takes start at the largest size seen so far and never
+    // reallocate unless they exceed it. Safe to share the object across takes:
+    // candidate resolution prefers slot.buffer over slot.liveBuffer, so stale
+    // liveBuffer refs on finalized slots are never read. Only the copy cursor
+    // resets. Revert: restore `_liveAudioBuf = null; _liveAudioBufLen = 0;`.
+    _liveCopiedUpTo  = 0;
+    S.updateLiveRecUI?.();
+  });
+}
+
+// ── Sampler capture (#247 — record-into-sampler) ────────────────────────────
+// Prep-time, gesture-free: the same _captureStart/_captureStop cores as a
+// live stroke, with none of the stroke plumbing — no liveRecBuffers slot, no
+// provisional streaming, no undo entry, and no rec-limit charge (takes are
+// bounded by MAX_SAMPLES, and sweep never touches sample slots).
+// One rule: while either recording family runs, the other refuses.
+// sampler.js turns the returned AudioBuffer into a sample slot.
+export function startSamplerCapture() {
+  if (S.isSamplerCapturing) return false;
+  if (S.isRecording || S.isPainting) { S._samplerRefused?.('a stroke is recording'); return false; }
+  if (S.samples.length >= MAX_SAMPLES) { S._samplerRefused?.('all sampler slots full'); return false; }
+  const hasRtAudioInput = window.electronBridge?.isElectron && window._rtAudioInputListening;
+  if (!S.recordingStream && !hasRtAudioInput) { S._samplerRefused?.('no live input'); return false; }
+
+  const actx = ensureAudioContext();
+  if (!_recWorkletReady) {
+    actx.audioWorklet.addModule('js/worklets/recording-capture.worklet.js')
+      .then(() => { _recWorkletReady = true; startSamplerCapture(); })
+      .catch(e => console.error('Failed to load recording worklet:', e));
+    return false;
+  }
+  if (_sealPending) _sealPending.finish();   // a re-press inside the seal window
+
+  _captureStart(actx);
+  S.isSamplerCapturing = true;
+  dlog('audio', 'sampler capture started', { sampleRate: S.recordingSampleRate });
+  S._renderSourceUI?.();
+  return true;
+}
+
+/** Stops the capture. onDone(audioBuffer) gets the declicked AudioBuffer a
+ *  few ms later, once the recorder's last bundle has landed — or null when
+ *  the take was under the 80 ms floor. */
+export function stopSamplerCapture(onDone) {
+  if (!S.isSamplerCapturing) { onDone?.(null); return; }
+  S.isSamplerCapturing = false;
+  dlog('audio', 'sampler capture stopped', { writePos: S.recordingWritePos });
+
+  _captureStop((audioBuffer) => {
+    S.recordingRaw      = null;   // gate for late worklet messages; pool retained
+    S.recordingWritePos = 0;
+    S._renderSourceUI?.();
+    if (!audioBuffer) S._samplerRefused?.('take too short');
+    onDone?.(audioBuffer);
+  });
+}
+
+// ── The direct audio ports (2026-09-06) ──────────────────────────────────────
+// Each hop is a MessagePort pair entangled straight between a worklet and the
+// main process. The preload makes the channel (electronBridge.openAudioPort),
+// posts one end to the main process and the other to this world over
+// window.postMessage — the one way a port crosses contextIsolation — and this
+// transfers it INTO the worklet. The renderer's main thread is then not in the
+// audio path at all. It used to relay every block and every credit, so a
+// stall here longer than the cushion was a hole in the output: measured on
+// 2026-09-05, a 30 ms stall dropped one block and a 60 ms stall dropped
+// eleven, while nothing in the app's own render loop showed above 6 ms — the
+// path was the problem, not the drawing.
+export function requestAudioPort(kind) {
+  return new Promise((resolve, reject) => {
+    if (!window.electronBridge?.openAudioPort) return reject(new Error('no electronBridge.openAudioPort'));
+    // Bounded: the boot sequence awaits this, and a port that never comes must
+    // not hold the output stream hostage — the worklet just drops until one does.
+    const timer = setTimeout(() => { window.removeEventListener('message', onMsg); reject(new Error(`audio port '${kind}' did not arrive in 2 s`)); }, 2000);
+    const onMsg = (e) => {
+      if (e.source !== window || e.data?.type !== 'mubone-audio-port' || e.data.kind !== kind) return;
+      clearTimeout(timer);
+      window.removeEventListener('message', onMsg);
+      const port = e.ports && e.ports[0];
+      if (port) resolve(port); else reject(new Error(`audio port '${kind}' arrived without a port`));
+    };
+    window.addEventListener('message', onMsg);
+    window.electronBridge.openAudioPort(kind);
+  });
+}
+
+// ── The output queue's depth (#333; regulated in main since 2026-09-06) ──────
+// The stall cushion in blocks: the depth the main process primes the output
+// queue to and skips it back to (electron-main.js onOutputBlock, the same
+// formula), and what the latency model counts (js/latency.js). Never under
+// two blocks. A stall longer than the cushion is a dropout, which is the
+// trade the cushion setting makes. Until 2026-09-06 this was a credit window
+// held on the renderer's main thread; the blocks now go worklet → main
+// straight, and main is the one place the true depth is known.
+export function cushionBlocks() {
+  const sr = S.audioCtx?.sampleRate ?? 48000;
+  const frames = S.preferredBufferSize ?? 1024;
+  return Math.max(2, Math.round((S.audioCushionMs ?? 10) / 1000 * sr / frames));
+}
+// The jitter margin above the cushion before a lead is skipped back: 10 ms,
+// or two blocks. Main's slackBlocks is the same formula.
+export function cushionSlackBlocks() {
+  const sr = S.audioCtx?.sampleRate ?? 48000;
+  const frames = S.preferredBufferSize ?? 1024;
+  return Math.max(2, Math.ceil(0.010 * sr / frames));
+}
+export function applyAudioCushion() {
+  window.electronBridge?.setAudioCushion?.(S.audioCushionMs ?? 20);
+  S._inputRingTarget?.();
+}
+/** The output queue's depth: frames written to audify and not yet played,
+ *  in ms — the main process's own count, polled once a second. Zero with no
+ *  output stream. */
+export function outputQueueDepthMs() {
+  if (!window.electronBridge || !_captureNode) return 0;
+  return _outDepthMs;
+}
+let _outDepthMs = 0;
+let _outDepthTimer = null;
+// Once a second: the depth, and the two fault counts — a dry queue is a hole
+// the device already played, a dropped block is a lead skipped back to the
+// cushion (S.transportDiag, wg.status(), the cushion row in Settings → Audio).
+async function _pollOutputDepth() {
+  if (!window.electronBridge?.getOutputDepth || !_captureNode) return;
+  try {
+    // The loop-gap timers cost ~1 % of a core each and are armed only while
+    // something reads them (P1): `S._wantLoopGapsUntil` is a deadline set by
+    // wg.status(), the transport probe and Settings → Audio.
+    const wantGaps = Date.now() < (S._wantLoopGapsUntil || 0);
+    const d = await window.electronBridge.getOutputDepth(wantGaps);
+    const sr = S.audioCtx?.sampleRate ?? 48000;
+    _outDepthMs = d.blockFrames ? d.frames / sr * 1000 : 0;
+    const dry = d.dry | 0, dropped = d.dropped | 0;
+    if (dry > S.transportDiag.outDry) dlog('transport', 'output queue ran dry — a hole played, re-primed', { holes: dry - S.transportDiag.outDry, total: dry });
+    if (dropped > S.transportDiag.outDropped) dlog('transport', 'output blocks skipped — a lead past the cushion', { blocks: dropped - S.transportDiag.outDropped, total: dropped });
+    S.transportDiag.outDry = dry;
+    S.transportDiag.outDropped = dropped;
+    // The audio host's event-loop gaps and holders (R6, R2): the loop the
+    // hops live on — a gap past the cushion there is a hole. The max is the
+    // max ever seen; the counts are since load. `d.main` is the browser
+    // thread's own loop, kept for the record.
+    const td = S.transportDiag;
+    if (d.loopGapMaxMs > td.hostGapMaxMs) td.hostGapMaxMs = d.loopGapMaxMs;
+    td.hostGaps10 = d.loopGaps10 | 0; td.hostGaps20 = d.loopGaps20 | 0;
+    if (d.slow) td.hostSlow = d.slow;                              // [name, maxMs, over10] ×8
+    if (d.gcMaxMs > td.hostGcMaxMs) td.hostGcMaxMs = d.gcMaxMs;
+    td.hostGcOver10 = d.gcOver10 | 0;
+    const m = d.main || {};
+    if (m.loopGapMaxMs > td.mainGapMaxMs) td.mainGapMaxMs = m.loopGapMaxMs;
+    td.mainGaps10 = m.loopGaps10 | 0; td.mainGaps20 = m.loopGaps20 | 0;
+    if (m.slow) td.mainSlow = m.slow;
+  } catch (_) {}
+}
 
 // ── Multi-channel speaker bus setup (Electron only) ──────────────────────────
 // Creates N persistent GainNode buses, one per output channel, evenly spaced
@@ -798,7 +1064,9 @@ export async function initSpeakerBuses(numChannels = 2) {
   const hpPhysL = hasMonitorCh ? (S.headphoneRouting?.[0] ?? numHouseCh)     : -1;
   const hpPhysR = hasMonitorCh ? (S.headphoneRouting?.[1] ?? numHouseCh + 1) : -1;
 
-  const busGainInit = S.isMuted ? 0 : (S.outputGainValue ?? 1);
+  // Same default as masterGain: this is where master lives on the Electron
+  // path, so a different fallback here would make the two paths disagree.
+  const busGainInit = S.isMuted ? 0 : (S.outputGainValue ?? MASTER_DEFAULT_GAIN);
   const custom = S.customSpeakerAngles;  // null or array of degrees
   const buses = Array.from({ length: numHouseCh }, (_, i) => {
     const angleDeg = (custom && typeof custom[i] === 'number')
@@ -927,7 +1195,15 @@ export async function initSpeakerBuses(numChannels = 2) {
   const routing = S.channelRouting ?? buses.map((_, i) => i);
   buses.forEach(({ bus }, i) => {
     const destCh = routing[i] ?? i;
-    if (destCh >= 0 && destCh < numHouseCh) bus.connect(_merger, 0, destCh);
+    // Bound by n (hardware channels), NOT numHouseCh (how many buses exist).
+    // Those are different numbers the moment routing is non-identity: a hex rig
+    // on a MOTU UltraLite mk4 has to sit on outs 3–8 (computer 1–2 are the Main
+    // Out pair, the six analog jacks start at computer 3), so destCh reaches 7
+    // while numHouseCh is 6. The old `< numHouseCh` guard silently dropped the
+    // last two positions — and the speaker sweep still sounded correct on them,
+    // because playSweepChannel writes straight to the merger and bounds itself
+    // by numChannels. Revert: restore `destCh < numHouseCh`.
+    if (destCh >= 0 && destCh < n) bus.connect(_merger, 0, destCh);
   });
   // Wire monitor buses to their physical channels (configurable via S.headphoneRouting)
   if (hasMonitorCh) {
@@ -952,29 +1228,23 @@ export async function initSpeakerBuses(numChannels = 2) {
 
   _merger.connect(_captureNode);
 
-  // Credit-based flow control: don't send if credits are exhausted.
-  // Register-once + module-level balance (perf audit H4, Jul 2026).
-  // Previously `_audioCredits` was a closure local and onAudioCredit was
-  // registered on EVERY initSpeakerBuses call (device/channel change) with
-  // no removal path in the preload — stale listeners stacked forever, each
-  // updating its own dead closure. Now the balance lives at module scope,
-  // is reset to max on each re-init, and the IPC listener is registered
-  // exactly once per session. Revert: restore the closure-local
-  // `let _audioCredits = 8` + unconditional onAudioCredit registration.
-  _ipcCreditBalance = IPC_CREDIT_MAX;
-  if (!_creditListenerRegistered && window.electronBridge.onAudioCredit) {
-    _creditListenerRegistered = true;
-    window.electronBridge.onAudioCredit((credits) => {
-      _ipcCreditBalance = Math.min(_ipcCreditBalance + credits, IPC_CREDIT_MAX);
-    });
-  }
-  _captureNode.port.onmessage = ({ data }) => {
-    if (_ipcCreditBalance > 0) {
-      _ipcCreditBalance--;
-      window.electronBridge.sendAudioBuffer(data.interleaved);
+  // Main regulates the queue to the cushion (electron-main.js); this side
+  // tells it the cushion, and polls the depth and the faults once a second.
+  window.electronBridge.setAudioCushion?.(S.audioCushionMs ?? 20);
+  if (!_outDepthTimer) _outDepthTimer = setInterval(_pollOutputDepth, 1000);
+  // The direct port to the main process, transferred into the worklet. Until
+  // it arrives the worklet drops its blocks unheard; if the graph was rebuilt
+  // meanwhile the port belongs to nobody and is closed.
+  {
+    const node = _captureNode;
+    try {
+      const port = await requestAudioPort('out');
+      if (_captureNode === node) node.port.postMessage({ type: 'port', port }, [port]);
+      else { try { port.close(); } catch (_) {} }
+    } catch (e) {
+      console.warn('[audio] output port:', e.message);
     }
-    // else: drop this buffer — backpressure from main process
-  };
+  }
 
   // ── Stereo headphone mix ──────────────────────────────────────────────────
   // Always-on downmix → AudioContext destination (system output = headphones/laptop).
@@ -1107,7 +1377,7 @@ export function updateDryMonitorPanning() {
   if (S.spatialPanning === 'worldlocked') {
     cx = wx; cy = wy; cz = wz;
   } else {
-    cameraTransformInto(wx, wy, wz, _dryC);
+    cameraRotateInto(wx, wy, wz, _dryC);
     cx = _dryC[0]; cy = _dryC[1]; cz = _dryC[2];
   }
 
@@ -1202,9 +1472,14 @@ export function setDryMonitorGain(v) {
   if (slider) slider.value = v;
   const num = document.getElementById('dryMonitorGainNum');
   if (num) num.textContent = Math.round(v * 100) + '%';
+  // Assigning slider.value fires no `input` event, so the main-UI audio
+  // panel's mirror listener never runs — push it explicitly.
+  S._syncAudioPanelLevels?.();
 }
 
-export function setDryMonitorEnabled(on) {
+// The gain-side applier. Nothing outside this file should call it directly:
+// the setting is setDryMonitorMode, and this is what the mode resolves to.
+function setDryMonitorEnabled(on) {
   S.dryMonitorEnabled = on;
   const t = S.audioCtx?.currentTime ?? 0;
   if (S.dryGainNode) {
@@ -1212,12 +1487,75 @@ export function setDryMonitorEnabled(on) {
       on ? S.dryMonitorGainValue : 0, t, 0.02
     );
   }
+  S._syncDryMonitorUI?.();
 }
+
+// ── Dry monitor mode — off | on | auto (#245) ────────────────────────────────
+// auto rests ON and ducks for the length of a GRANULAR recording only. The
+// duck is scoped to one live recording: startLiveRecording asks, and
+// stopLiveRecording restores — never a frame later, never across strokes.
+// An explicit off/on set mid-recording wins immediately and drops the duck.
+let _dryAutoDucked = false;
+
+export function setDryMonitorMode(mode) {
+  if (mode !== 'off' && mode !== 'on' && mode !== 'auto') return;
+  S.dryMonitorMode = mode;
+  _dryAutoDucked = false;
+  setDryMonitorEnabled(mode === 'on' || mode === 'auto');
+}
+
+export function isDryMonitorDucked() { return _dryAutoDucked; }
+
+// Which engine the recording that is starting belongs to. The tile in the
+// HAND is the authority (the whole test, per #245) — it was the SELECTED tile
+// until arming went on 2026-09-11, which was the same tile then and is the
+// drawer's now; a recording belongs to what is playing it. An erase tile in
+// the hand says nothing about a stroke, so fall back to the stroke's own
+// flags: a trigger recording or a loop commit mode is a TAPE take, anything
+// else is granular. (`commitMode === 'loop'` is the PIN kind and keeps that
+// name — a loop is a pinned tape that repeats.)
+function _recordingEngine() {
+  const eng = S._handEngine?.();
+  if (eng === 'tape' || eng === 'granular') return eng;
+  return (S._recordingTrigger || S.commitMode === 'loop') ? 'tape' : 'granular';
+}
+
+function _dryMonitorRecordStart() {
+  if (S.dryMonitorMode !== 'auto') return;
+  if (_recordingEngine() !== 'granular') return;
+  _dryAutoDucked = true;
+  setDryMonitorEnabled(false);
+}
+
+function _dryMonitorRecordEnd() {
+  if (!_dryAutoDucked) return;
+  _dryAutoDucked = false;
+  if (S.dryMonitorMode === 'auto') setDryMonitorEnabled(true);
+}
+S._setDryMonitorMode = setDryMonitorMode;
 
 // ── Speaker sweep helper ──────────────────────────────────────────────────────
 // Plays a short noise burst on a single physical output channel, bypassing all
 // VBAP buses and routing tables.  Used by the audio settings sweep function.
 // Returns a Promise that resolves when the burst finishes.
+/** A node that reaches EVERY physical output the app drives — what the
+ *  latency calibration plays its clicks into (js/latency.js). In Electron the
+ *  interface hears only the channel merger (the master bus stops at the
+ *  analyser there: RtAudio owns the output), so a gain fanned to every merger
+ *  input; in the browser, the master bus. Null when there is no output yet. */
+export function calibrationOutput() {
+  const actx = ensureAudioContext();
+  if (_merger) {
+    const n = S.speakerBuses?.numChannels ?? 0;
+    if (n <= 0) return null;
+    const g = actx.createGain();
+    g.gain.value = 1;
+    for (let ch = 0; ch < n; ch++) g.connect(_merger, 0, ch);
+    return g;
+  }
+  return window.electronBridge ? null : getMasterBus();
+}
+
 export function playSweepChannel(chIndex, durationMs = 600, fadeMs = 40, vol = 0.06) {
   const actx = ensureAudioContext();
   if (!_merger || !actx) return Promise.resolve();
@@ -1274,7 +1612,12 @@ export function playSweepChannel(chIndex, durationMs = 600, fadeMs = 40, vol = 0
 // rebuilding the whole graph. Call this when the user changes a routing dropdown.
 export function rewireChannelMerger() {
   if (!S.speakerBuses || !_merger) return;
-  const n = S.speakerBuses.length;
+  // Hardware channel count, not bus count — see the same guard in
+  // initSpeakerBuses. `.length` is how many speakers you have; `.numChannels` is
+  // how many outputs the interface has, and the routing dropdowns offer all of
+  // them. Falling back to .length keeps the old behaviour if numChannels is
+  // somehow unset, which is still safer than an out-of-range connect.
+  const n = S.speakerBuses.numChannels ?? S.speakerBuses.length;
   // Disconnect all buses from merger first
   S.speakerBuses.forEach(({ bus }) => {
     try { bus.disconnect(_merger); } catch(_) {}

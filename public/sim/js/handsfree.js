@@ -2,8 +2,11 @@
  * handsfree.js — Handsfree buffer segmentation engine
  *
  * When armed + trace is toggled on (tap) + plain trace mode:
- * a noise gate with proper envelope (attack/hold/release) monitors mic input
- * and segments the audio into separate buffers — one per phrase.
+ * a gate with a proper envelope (attack/hold/release) monitors mic input and
+ * segments the audio into separate buffers — one per phrase. It is NOT the
+ * paint gate: it takes S.paintGateThreshold as its floor (raised further by the
+ * output-referenced margin) and adds its own envelope on top. The paint gate
+ * decides which moments get a particle; this decides where a buffer is cut.
  *
  * The gate does NOT independently start/stop trace. It runs WITHIN an active
  * toggle-trace session and segments the continuous input into discrete buffers.
@@ -122,13 +125,13 @@ export function updateHPFFreq() {
 
 /**
  * Main tick — called ~30fps from tickMainMeters().
- * Only active when: hfArmed + _traceToggled + traceMode === 'trace'.
+ * Only active when: hfArmed + a TOGGLE-started gesture (S.paintLatched) + traceMode === 'trace'.
  * Runs the gate envelope and starts/stops buffer segments.
  */
 export function tickHandsfree() {
   // Only run when all conditions are met:
-  // armed + trace is toggled on + plain trace mode (no locked modes)
-  if (!S.hfArmed || !S._traceToggled || S.traceMode !== 'trace') return;
+  // armed + a toggle-started gesture running + plain trace mode (no locked modes)
+  if (!S.hfArmed || !S.paintLatched || S.traceMode !== 'trace') return;
   if (!S.inputAnalyser || !S.audioCtx) return;
 
   const now = performance.now();
@@ -153,7 +156,7 @@ export function tickHandsfree() {
 
   // ── 3. Compute effective threshold ────────────────────────────────────
   const marginLinear = dbToLinear(S.hfMarginDb);
-  const baseThreshold = S.vizNoiseFloor;
+  const baseThreshold = S.paintGateThreshold;
   const effectiveThreshold = Math.max(baseThreshold, outputRms * marginLinear);
 
   // ── 4. Gate detector: is input above threshold? ───────────────────────
@@ -256,8 +259,10 @@ export function tickHandsfree() {
 // ── Buffer segment lifecycle ──────────────────────────────────────────────────
 
 function _startSegment(now) {
-  // Don't start if something else owns recording
-  if (S.isPainting || S.isRecording) return;
+  // Don't start if something else owns recording. Deliberately live-only —
+  // handsfree IS the live input listening to itself, so S.sourceKind is not
+  // consulted here (#247); sampler capture shares the same singletons.
+  if (S.isPainting || S.isRecording || S.isSamplerCapturing) return;
 
   ensureAudioContext();
   startLiveRecording();
@@ -265,7 +270,6 @@ function _startSegment(now) {
 
   recordStrokeStart('live', S.currentLiveBufferIdx);
   S.isPainting = true;
-  S.paintFrameCount = 0;
   S.hfRecording = true;
   _bufferStartTime = now;
 
@@ -329,10 +333,8 @@ export function disarmHandsfree() {
     _stopSegment(performance.now());
   }
 
-  // If trace was toggled on, fully clean up (stops any continuous recording too)
-  if (S._traceToggled) {
-    S._stopToggleTrace?.();
-  }
+  // A gesture in flight ends with the arm (it stops any continuous recording too)
+  S._gestureEnd?.();
 
   S.hfArmed = false;
   S.hfGateOpen = false;

@@ -1,24 +1,23 @@
 // ============================================================================
-// UI — PRESETS, GRAIN CONTROLS, SEED BANKS, RADIUS VIZ
+// UI — GRAIN CONTROLS, SEED BANKS, RADIUS VIZ
 // ============================================================================
 
 import {
   S, perf,
-  PRESETS, COMMIT_COLORS, MAX_COMMITS,
+  COMMIT_COLORS, MAX_COMMITS,
   SEED_COLORS, MAX_SEEDS, SEQ_COLORS, MAX_SEQS,
   COMMIT_DRAW_THRESHOLD_MS, MOVING_SEED_THRESHOLD_MS,
-  gp, rebuildGrainCurves, minGrainDurS, minGrainPeriodS,
-  SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
-  USER_PRESET_START, isUserPreset, migratePresetIndices, loadUserPresets, saveUserPresets,
-  presetHasParams,
+  gp, minGrainDurS, minGrainPeriodS,
+  SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, K_MAX,
 } from './state.js';
-import { angleBetweenSphere, findNearestSeedSlot, resetCursorPeriod } from './grain.js';
-import { lerpPresets } from './seed-morph.js';
+import { resolveGrainParams } from './brush-voicing.js';
+import { angleBetweenSphere, findNearestSeedSlot, resetCursorPeriod, nearestLoopPin, masterPhaseWall, startOverdubLayer, swapOverdubLayer, stopOverdubLayers, releaseSeqNodes } from './grain.js';
 import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js';
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
-import { applySparsePreset, syncAllUI, PARAM_REGISTRY } from './ui-patch-table.js';
-import { isLocked, onLockChange, loadLocks } from './param-lock.js';
+import { applySparsePreset, syncAllUI } from './param-registry.js';
 import { getMappings } from './sensor-mapping.js';
+import { pinAnchorInto } from './pins.js';
+import * as history from './history.js';
 
 // ── Recency slider constants (module-level so both setupPresets & initGrainControls see them)
 const RECENCY_MIN = 1, RECENCY_MAX = 16;
@@ -72,160 +71,12 @@ function _stepPeriodBySamples(currentSeconds, direction) {
   return newSamples / sr;
 }
 
-// ── Grain presets UI ─────────────────────────────────────────────────────────
-
-// ── Snapshot current grain state into a user preset slot and persist ──────────
-function saveToUserPreset(index) {
-  const currentName = PRESETS[index].name;
-  const name = window.prompt('Patch name:', currentName);
-  if (name === null) return;   // cancelled
-
-  // Full capture of all params EXCEPT locked ones.
-  // Locked params are session-wide holds — they don't belong in patches.
-  const snap = {};
-  for (const p of PARAM_REGISTRY) {
-    if (isLocked(p.key)) continue;   // locked → omit from patch
-    snap[p.key] = p.get();
-  }
-
-  PRESETS[index] = {
-    ...snap,
-    name:             name.trim() || currentName,
-    userDefined:      true,
-  };
-  saveUserPresets();
-  // Refresh the button label
-  const btn = document.querySelectorAll('.preset-btn')[index];
-  const nameEl = btn?.querySelector('.preset-name');
-  if (nameEl) nameEl.textContent = PRESETS[index].name;
-  // Rebuild dropdown options to reflect new name
-  S._rebuildPresetDropdown?.();
-  S._rebuildMorphDropdowns?.();
-  // Re-sync UI if this slot is currently selected
-  if (S.activePresetIndex === index) selectPreset(index);
-}
-
-// selectPreset() also runs on startup, after a session import, and when a slot
-// is renamed — none of which are a performer changing patch. Without this gate
-// the LED would flash on every page load. Armed at the end of setupPresets().
-let _patchLedArmed = false;
-
+// ── Setup ──────────────────────────────────────────────────────────────────
+// Once the patch bank's home (its buttons, dropdown, save, view toggle — all
+// sunset 2026-09-03, sandbox/sunset-2026-09-03/patch-bank.js); what is left
+// wires the cabinet's scope, fill, order, radius, recency and mic controls.
 export function setupPresets() {
-  // Before loadUserPresets: the migration rewrites stored indices written by the
-  // old 40-slot layout, and a stale index read first would select the wrong patch.
-  migratePresetIndices();
-  loadUserPresets();   // hydrate user slots from localStorage before building buttons
-  const container = document.getElementById('presetButtons');
-  PRESETS.forEach((preset, i) => {
-    const btn = document.createElement('button');
-    const startIdx = S.activePresetIndex ?? 0;
-    btn.className = 'preset-btn' + (i === startIdx ? ' active' : '');
-
-    if (isUserPreset(i)) {
-      // User-defined slot (indices 10–19) — name span + save icon
-      btn.classList.add('user-preset');
-      btn.innerHTML =
-        `<span class="preset-num">${i + 1}</span>` +
-        `<span class="preset-name">${preset.name}</span>` +
-        `<span class="preset-save" title="save current state to this patch slot">✎</span>`;
-      btn.addEventListener('click', e => {
-        if (!e.target.classList.contains('preset-save')) selectPreset(i);
-      });
-      btn.querySelector('.preset-save').addEventListener('click', e => {
-        e.stopPropagation();
-        saveToUserPreset(i);
-      });
-    } else {
-      // Factory preset (indices 20+)
-      btn.innerHTML = `<span class="preset-num">${i + 1}</span>${preset.name}`;
-      btn.addEventListener('click', () => selectPreset(i));
-    }
-
-    container.appendChild(btn);
-  });
-  // Activate saved preset (or first factory preset "wash") on startup so all
-  // ancillary state is fully synced from the preset definition.
-  selectPreset(S.activePresetIndex ?? 0);
-  _patchLedArmed = true;   // startup restore done — later selects are real changes
-
-  // ── Preset view toggle (grid ↔ dropdown) ──────────────────────────────
-  const _pvToggle      = document.getElementById('presetViewToggle');
-  const _pvGrid        = document.getElementById('presetButtons');
-  const _pvDropWrap    = document.getElementById('presetDropdownWrap');
-  const _pvDropdown    = document.getElementById('presetDropdown');
-  const _pvDropSave    = document.getElementById('presetDropdownSave');
-
-  function _buildDropdownOptions() {
-    if (!_pvDropdown) return;
-    _pvDropdown.innerHTML = '';
-    const userGroup = document.createElement('optgroup');
-    userGroup.label = 'user';
-    const factoryGroup = document.createElement('optgroup');
-    factoryGroup.label = 'factory';
-    PRESETS.forEach((p, i) => {
-      const opt = document.createElement('option');
-      opt.value = i;
-      opt.textContent = `${i + 1}  ${p.name}`;
-      if (isUserPreset(i)) userGroup.appendChild(opt);
-      else factoryGroup.appendChild(opt);
-    });
-    // Factory first — matches the patch numbering and the key layout now that
-    // factory occupies 1–10 and user 11–20.
-    _pvDropdown.appendChild(factoryGroup);
-    _pvDropdown.appendChild(userGroup);
-    _pvDropdown.value = S.activePresetIndex;
-  }
-
-  // Expose so refreshPresetButtons and saveToUserPreset can rebuild options
-  S._rebuildPresetDropdown = _buildDropdownOptions;
-
-  if (_pvDropdown) {
-    _buildDropdownOptions();
-    _pvDropdown.addEventListener('change', () => {
-      selectPreset(parseInt(_pvDropdown.value));
-    });
-  }
-
-  // Sync dropdown when preset changes via any path
-  S._syncPresetDropdown = () => {
-    if (_pvDropdown) _pvDropdown.value = S.activePresetIndex;
-    if (_pvDropSave) {
-      const isFactory = !isUserPreset(S.activePresetIndex);
-      _pvDropSave.disabled = isFactory;
-      _pvDropSave.title = isFactory ? 'factory presets cannot be overwritten' : 'save current state to this patch slot';
-    }
-  };
-
-  // Save button next to dropdown — only works for user preset slots
-  if (_pvDropSave) {
-    _pvDropSave.addEventListener('click', () => {
-      const idx = S.activePresetIndex;
-      if (isUserPreset(idx)) saveToUserPreset(idx);
-    });
-  }
-  S._syncPresetDropdown();   // initial disabled state for save button
-
-  // Toggle grid ↔ dropdown
-  let _presetViewMode = 'grid';
-  try { _presetViewMode = localStorage.getItem('mubone_preset_view') || 'grid'; } catch (_) {}
-
-  function _applyPresetView(mode) {
-    _presetViewMode = mode;
-    if (_pvGrid)     _pvGrid.style.display     = mode === 'grid' ? '' : 'none';
-    if (_pvDropWrap) _pvDropWrap.style.display  = mode === 'dropdown' ? '' : 'none';
-    if (_pvToggle)   _pvToggle.textContent      = mode === 'grid' ? 'compact' : 'show all';
-    if (_pvToggle)   _pvToggle.title            = mode === 'grid' ? 'switch to compact dropdown view' : 'show all patch buttons';
-    try { localStorage.setItem('mubone_preset_view', mode); } catch (_) {}
-  }
-  _applyPresetView(_presetViewMode);
-
-  if (_pvToggle) {
-    _pvToggle.addEventListener('click', e => {
-      e.stopPropagation(); // don't trigger device-label collapse
-      _applyPresetView(_presetViewMode === 'grid' ? 'dropdown' : 'grid');
-    });
-  }
-
+  S._updatePlaybackControls = updatePlaybackControls;   // param-registry.js syncAllUI
   // Scope toggle — nearest / area
   updatePlaybackControls();
   const snapSeg = document.getElementById('snapToggleSeg');
@@ -318,25 +169,32 @@ export function setupPresets() {
   }
 
   // ── k control in search params ────────────────────────────────────────────
+  // The slider is a POSITION (0–1000) log-mapped onto 1…K_MAX — see the note
+  // on K_MAX in state.js for why the scale is fixed. `setSearchK` takes the
+  // real k and is the ONE writer: every caller (presets, OSC, the sheet, the
+  // wheel) hands it a count, and it puts the slider where that count lives.
+  const _kFromSlider = sv =>
+    Math.max(1, Math.min(K_MAX, Math.round(Math.pow(K_MAX, parseFloat(sv) / 1000))));
+  const _kToSlider = k =>
+    Math.round(1000 * Math.log(Math.max(1, Math.min(K_MAX, k))) / Math.log(K_MAX));
   S.setSearchK = function(v) {
-    const kMax = Math.max(30, S.particles.length);
-    const k = Math.max(1, Math.min(kMax, Math.round(v)));
+    const k = Math.max(1, Math.min(K_MAX, Math.round(v)));
     S.grainOverrides.k = k;
     const slider = document.getElementById('searchKSlider');
-    if (slider) slider.value = k;
+    if (slider) slider.value = _kToSlider(k);
     const bigNum = document.getElementById('kBigNum');
     if (bigNum) bigNum.value = k;
   };
 
   const searchKSlider = document.getElementById('searchKSlider');
   if (searchKSlider) {
-    searchKSlider.value = S.grainOverrides.k ?? gp().k;
+    searchKSlider.value = _kToSlider(S.grainOverrides.k ?? gp().k);
     let _searchKTimerId = null;
     searchKSlider.addEventListener('input', () => {
       if (_searchKTimerId === null)
         _searchKTimerId = setTimeout(() => {
           _searchKTimerId = null;
-          S.setSearchK(parseInt(searchKSlider.value));
+          S.setSearchK(_kFromSlider(searchKSlider.value));
         }, 50);
     });
   }
@@ -448,13 +306,11 @@ export function setupPresets() {
     });
   }
 
+
   // Fullscreen — delegates to the same fullscreenBtn click handler in events.js
   document.getElementById('fullscreenBtn2')?.addEventListener('click', () => {
     document.getElementById('fullscreenBtn')?.click();
   });
-
-  // Expose selectPreset on S so osc.js can call it without a circular import
-  S._selectPreset = selectPreset;
 
   // Mic enable button
   const micBtn = document.getElementById('micEnableBtn');
@@ -484,22 +340,6 @@ export function setupPresets() {
     });
   }
 
-  // ── Parameter lock indicators (display-only, toggled via patch table) ─────
-  loadLocks();
-
-  function _syncLockIndicator(el) {
-    const key = el.dataset.lockKey;
-    const locked = isLocked(key);
-    el.style.display = locked ? '' : 'none';
-    el.closest('.grain-row')?.classList.toggle('param-locked', locked);
-  }
-
-  document.querySelectorAll('.param-lock-indicator').forEach(_syncLockIndicator);
-
-  // Listen for lock changes from patch table
-  onLockChange((key) => {
-    document.querySelectorAll(`.param-lock-indicator[data-lock-key="${key}"]`).forEach(_syncLockIndicator);
-  });
 }
 
 export function toggleNearestMode() {
@@ -519,13 +359,99 @@ function getMouseLonLat() {
 
 /** Cursor position on the sphere — detethered-aware.
  *  In two-sensor mode the cursor sensor drives position; otherwise mouse or camQ. */
-function getCursorPos() {
+export function getCursorPos() {
   return S.cursorQ ? getCursorLonLat()
     : S.mouseInCanvas ? getMouseLonLat()
     : getCursorLonLat();
 }
 
 /** Legacy single-call plant (used by OSC, MIDI, etc). Plants a stationary seed. */
+// ── Pins on the history stack (js/history.js, 2026-09-05) ──────────────────
+// A pin placed by hand — a tapped cloud, a held path, a dropped loop — and an
+// unpin (release, unpin all) are ACTIONS: the slot OBJECT is what the action
+// holds, taken out or put back. A pin a gesture made from its stroke (the
+// looper's loop, the wash's cloud, an overdub's layer) belongs to the STROKE's
+// action instead (ui-samples.js) — one gesture, one action.
+
+/** Take a slot out now: nodes released, no fade. `_gen` moves so a fade
+ *  handler still pending on its old source cannot null the slot again after
+ *  a restore. */
+export function removePinSlot(slot) {
+  const idx = S.commitSlots.indexOf(slot);
+  if (idx < 0) return false;
+  if (slot.type === 'loop') releaseSeqNodes(slot);
+  slot._gen = (slot._gen | 0) + 1;
+  S.commitSlots[idx] = null;
+  S._pinsDirty = true;
+  S._syncCommitUI?.();
+  (S.updateSeedBanksUI || updateSeedBanksUI)();
+  return true;
+}
+
+/** Put a slot back, playing, with the mute / solo it had: at its own index
+ *  when free, else the first free one. The scheduler rebuilds a loop's nodes
+ *  (and its overdub layers) on the next tick. Refuses when the pool is full. */
+export function restorePinSlot(slot, at = -1) {
+  if (!slot || S.commitSlots.includes(slot)) return false;
+  const lim = S.commitSlotCount ?? S.commitSlots.length;
+  let idx = at >= 0 && at < lim && !S.commitSlots[at] ? at
+          : (slot.slotIndex < lim && !S.commitSlots[slot.slotIndex]) ? slot.slotIndex : -1;
+  if (idx < 0) for (let i = 0; i < lim; i++) if (!S.commitSlots[i]) { idx = i; break; }
+  if (idx < 0) { window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'full' } })); return false; }
+  slot.slotIndex = idx;
+  slot._gen = (slot._gen | 0) + 1;
+  if (slot.type === 'loop') {
+    slot._sourceNode = null; slot._gainNode = null; slot._muteGain = null; slot._pinGain = null;
+    slot._panner = null; slot._vbapGains = null; slot._extraNodes = null;
+    slot._fadingOut = false; slot._playingToEnd = false; slot._selfKilled = false;
+    slot._startedAt = 0;
+    slot.playing = true;
+    if (slot.overdubs) for (const ov of slot.overdubs) { ov._src = null; ov._gain = null; }
+  } else if (slot.type === 'cloud') {
+    slot._releasingAt = 0; slot._composerHold = false; slot._envRelease = 0;
+    slot._envAttack = 0; slot._envGainCurrent = 1;
+    slot.playing = true;
+  }
+  S.commitSlots[idx] = slot;
+  S._applyPinMix?.();            // its own mute / solo, and the standing solos
+  S._pinsDirty = true;
+  S._syncCommitUI?.();
+  (S.updateSeedBanksUI || updateSeedBanksUI)();
+  return true;
+}
+
+/** Put an overdub layer back on its master, if the master is still pinned. */
+export function reattachOverdub(master, ov) {
+  if (!master || !ov || !S.commitSlots.includes(master)) return false;
+  if (!master.overdubs) master.overdubs = [];
+  if (!master.overdubs.includes(ov)) master.overdubs.push(ov);
+  ov._src = null; ov._gain = null;
+  const src = master._sourceNode;
+  if (src && !src._stopped && S.audioCtx) startOverdubLayer(master, ov, S.audioCtx);
+  S._pinsDirty = true;
+  return true;
+}
+S._removePinSlot   = removePinSlot;
+S._restorePinSlot  = restorePinSlot;
+S._reattachOverdub = reattachOverdub;
+
+function _pinAction(slot, evicted = null) {
+  return {
+    kind: 'pin',
+    undo() { removePinSlot(slot); if (evicted) restorePinSlot(evicted); },
+    redo() { if (evicted) removePinSlot(evicted); restorePinSlot(slot); },
+  };
+}
+function _unpinAction(slots) {
+  const at = slots.map(sl => S.commitSlots.indexOf(sl));
+  return {
+    kind: 'unpin',
+    undo() { slots.forEach((sl, i) => restorePinSlot(sl, at[i])); },
+    redo() { for (const sl of slots) removePinSlot(sl); },
+  };
+}
+let _lastEvicted = null;   // the pin an overflow rule made room by removing
+
 export function plantSeed() {
   startSeedPlant();
   finalizeSeedPlant();
@@ -620,25 +546,29 @@ function _findCommitSlot(lon, lat) {
 // Legacy alias
 function _findSeedSlot(lon, lat) { return _findCommitSlot(lon, lat); }
 
-/** Start a seed plant. Reserves a slot and begins recording movement. */
-export function startSeedPlant() {
-  const { lon, lat } = getCursorPos();
+/** Reserve a cloud slot at (lon, lat), snapshotting the live block into it.
+ *  Returns the slot index, or -1 when the pool is full with overflow off. */
+function _reserveCloud(lon, lat) {
   const slotIndex = _findSeedSlot(lon, lat);
   if (slotIndex === -1) {
     // Slots full with overflow=off — signal the rejected attempt for LED feedback.
     window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'full' } }));
-    return;
+    return -1;
   }
-  // If replacing an existing commit, clean it up first
+  // If replacing an existing commit (the overflow rule), take it out through
+  // the one path, and remember it: the pin's undo puts it back.
+  _lastEvicted = null;
   if (S.commitSlots[slotIndex]) {
-    const existing = S.commitSlots[slotIndex];
-    if (existing.type === 'loop') _stopSeqAudio(existing);
-    S.commitSlots[slotIndex] = null;
+    _lastEvicted = S.commitSlots[slotIndex];
+    removePinSlot(_lastEvicted);
   }
   const color = SEED_COLORS[slotIndex];
   S.commitSlots[slotIndex] = {
     type: 'cloud',
     slotIndex, lon, lat, color, searchRadiusDeg: S.searchRadiusDeg,
+    // The anchor: where the pin gesture releases (pins.js pinAnchorInto). A
+    // tap is here; a held path is re-stamped at its END in finalizeSeedPlant.
+    anchorLon: lon, anchorLat: lat,
     nearestMode: S.nearestMode,
     kAllMode: S.grainKAllMode,
     kSeqMode: S.grainKSeqMode,
@@ -649,6 +579,7 @@ export function startSeedPlant() {
     _envAttack:    S.seedAttack,     // snapshot at sow — duration of the attack ramp
     _envRelease:   0,                // set at uproot time from current S.seedRelease
     _envGainCurrent: S.seedAttack > 0 ? 0 : 1,
+    mute: false, solo: false,        // the pin's own flags (pins.js)
     grainParams: {
       ...S.grainParams,
       ...Object.fromEntries(Object.entries(S.grainOverrides).filter(([, v]) => v !== null)),
@@ -669,43 +600,43 @@ export function startSeedPlant() {
     _playheadMs:  0,
     _pingForward: true,
   };
-
-  // Stamp per-particle fade attenuation for this seed (stationary path)
-  stampSeedRadiusFade(S.commitSlots[slotIndex]);
-
-  // Start recording cursor path for potential moving seed
-  S._seedRecordingFrames = [_captureSeedFrame()];
-  S._seedRecordingStart  = performance.now();
-  S._seedRecordingSlot   = slotIndex;
-
+  S._applyPinMix?.();
   (S.updateSeedBanksUI || updateSeedBanksUI)();
-
   // Signal the commit for LED feedback on the cursor x-IMU3 (1 yellow blink).
   window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'commit' } }));
+  return slotIndex;
 }
 
-/**
- * Stamp per-particle radius-fade attenuation for a cloud slot.
- * Reads geometry from the slot (identical values to the globals at plant
- * time, since plantSeed copies them into the slot) so it also works for
- * session import, which restores clouds without stamps (export/import
- * audit C2, `docs/EXPORT-IMPORT-AUDIT-2026-07.md`).
- */
-export function stampSeedRadiusFade(slot) {
-  if (!slot || slot.type !== 'cloud' || !slot.radiusFadeEnabled) return;
-  const searchRadiusRad = slot.searchRadiusDeg * Math.PI / 180;
-  const exp = 1 + (slot.radiusFadeCurve ?? 0.5) * 3;
-  const fadeKey = `_cFade${slot.slotIndex}`;
-  for (let pi = 0; pi < S.particles.length; pi++) {
-    const p = S.particles[pi];
-    const ang = angleBetweenSphere(slot.lon, slot.lat, p.lon, p.lat);
-    if (ang <= searchRadiusRad && searchRadiusRad > 0) {
-      const t = Math.min(1, ang / searchRadiusRad);
-      p[fadeKey] = Math.pow(1 - t, exp);
-    } else {
-      p[fadeKey] = 1.0;
-    }
-  }
+/** Start a seed plant. Reserves a slot and begins recording movement. */
+export function startSeedPlant() {
+  const { lon, lat } = getCursorPos();
+  const slotIndex = _reserveCloud(lon, lat);
+  if (slotIndex === -1) return;
+  // Start recording cursor path for potential moving seed
+  S._seedRecordingFrames   = [_captureSeedFrame(performance.now())];
+  S._seedRecordingStart    = performance.now();
+  S._seedRecordingSlot     = slotIndex;
+  S._seedRecordingDeferred = false;
+}
+
+/** A stroke that ENDS as a cloud (the grain sheet's `on end: cloud`, the
+ *  wash brush's contract — Ek, 2026-09-05): the path is recorded from the
+ *  press, but NO slot exists until the release. While the stroke runs the
+ *  cursor is the only thing reading it, exactly as a scratch stroke; the
+ *  moving cloud takes over the path when the hand lets go. startSeedPlant
+ *  (the `=` hold) reserves the slot at the press instead, because a pin
+ *  pressed on a place must sound at once — a ghost pin. Two things follow
+ *  from deferring: a full pool refuses at the RELEASE, leaving the stroke
+ *  scratch, and the cloud's snapshot (block, lens, radius) is the release's. */
+export function startSeedPath() {
+  S._seedRecordingFrames   = [_captureSeedFrame(performance.now())];
+  S._seedRecordingStart    = performance.now();
+  S._seedRecordingSlot     = -1;
+  S._seedRecordingDeferred = true;
+  // The stroke this path belongs to — read now, because the stroke's end
+  // clears currentStrokeId before it finalizes the path. Undo of the stroke
+  // takes the cloud with it (removeSeqByStrokeId), as it takes a loop.
+  S._seedRecordingStrokeId = S.currentStrokeId;
 }
 
 /** Capture a frame during ↓ hold. Called from grain scheduler tick (50/sec).
@@ -723,13 +654,27 @@ export function tickSeedRecording() {
 
 /** Finalize seed plant on ↓ key release. Short hold = stationary, long = moving. */
 export function finalizeSeedPlant() {
-  const frames = S._seedRecordingFrames;
-  const start  = S._seedRecordingStart;
-  const slot   = S._seedRecordingSlot;
-  S._seedRecordingFrames = null;
-  S._seedRecordingStart  = 0;
-  S._seedRecordingSlot   = -1;
+  const frames   = S._seedRecordingFrames;
+  const start    = S._seedRecordingStart;
+  const deferred = !!S._seedRecordingDeferred;
+  const sid      = S._seedRecordingStrokeId;
+  let   slot     = S._seedRecordingSlot;
+  S._seedRecordingFrames   = null;
+  S._seedRecordingStart    = 0;
+  S._seedRecordingSlot     = -1;
+  S._seedRecordingDeferred = false;
+  S._seedRecordingStrokeId = -1;
 
+  // A deferred path (startSeedPath) gets its slot NOW, anchored where the
+  // stroke ENDED — the pool may be full, in which case the stroke stays
+  // scratch and the LED says so.
+  if (deferred) {
+    if (!frames || !frames.length) return;
+    const end = frames[frames.length - 1];
+    slot = _reserveCloud(end.lon, end.lat);
+    if (slot === -1) return;
+    if (sid > 0) S.seedSlots[slot].strokeId = sid;
+  }
   if (slot < 0 || !S.seedSlots[slot]) return;
   const seed = S.seedSlots[slot];
 
@@ -743,10 +688,18 @@ export function finalizeSeedPlant() {
     // Long hold → moving seed.  Store the recorded path.
     seed.frames   = frames;
     seed.duration = frames[frames.length - 1].t;  // ms
-    // Update lon/lat to the first frame position (nominal anchor)
+    // The anchor is where the hand let go — the END of the path (Ek,
+    // 2026-09-05), so under focus you hear the stroke you just drew. `lon`
+    // is the playback position and the scheduler overwrites it every tick.
+    const end = frames[frames.length - 1];
+    seed.anchorLon = end.lon;
+    seed.anchorLat = end.lat;
     seed.lon = frames[0].lon;
     seed.lat = frames[0].lat;
   }
+  // A pin placed by hand is one action. A deferred path (the wash) is the
+  // stroke's: its cloud goes and comes with the stroke.
+  if (!deferred) { history.push(_pinAction(seed, _lastEvicted)); _lastEvicted = null; }
   (S.updateSeedBanksUI || updateSeedBanksUI)();
 }
 
@@ -766,8 +719,10 @@ export function uprootNearestSeed() {
   if (nearestSlot === -1) return;
   const seed = S.seedSlots[nearestSlot];
   if (!seed) return;
+  history.push(_unpinAction([seed]));
   // Use the current release time (performance gesture), not a stored value
   const rel = S.seedRelease || 0;
+  seed._composerHold = false;   // uproot destroys — see releaseCommit()
   if (rel <= 0) {
     // Instant removal
     S.seedSlots[nearestSlot] = null;
@@ -787,9 +742,12 @@ export function clearAllSeeds() {
   // Use the current release time for all cloud-type commits being cleared
   const rel = S.commitRelease || 0;
   let released = false;
+  const gone = S.commitSlots.filter(c => c && c.type === 'cloud');
+  if (gone.length) history.push(_unpinAction(gone));
   for (let i = 0; i < MAX_COMMITS; i++) {
     const seed = S.commitSlots[i];
     if (!seed || seed.type !== 'cloud') continue;
+    seed._composerHold = false;   // clear-all destroys — see releaseCommit()
     if (rel > 0 && !seed._releasingAt) {
       seed._envRelease  = rel;
       seed._releasingAt = now;
@@ -841,15 +799,6 @@ function _syncSeqButtonStates() {
   if (commitDrawBtn) {
     commitDrawBtn.style.opacity = full ? '0.35' : '';
   }
-  // Sync trace label — shows parenthesised mode name when armed but full
-  // (inlined here to avoid recursion with _syncCommitUI which calls us)
-  const traceLabel = document.getElementById('traceLabel');
-  if (traceLabel) {
-    const armed = S.traceMode !== 'trace';
-    const _labelMap      = { 'trace': 'trace', 'trace+loop': 'trace + loop',   'trace+cloud': 'trace + cloud' };
-    const _labelMapFull  = { 'trace': 'trace', 'trace+loop': 'trace + (loop)', 'trace+cloud': 'trace + (cloud)' };
-    traceLabel.textContent = (armed && full ? _labelMapFull : _labelMap)[S.traceMode] || 'trace';
-  }
 }
 S._syncSeqButtonStates = _syncSeqButtonStates;
 
@@ -874,22 +823,9 @@ function _syncCommitUI() {
       b.classList.toggle('active', b.dataset.mode === S.commitMode));
   }
 
-  // ── Trace mode button — no persistent state, just updates label ──
-
-  // ── Trace label — reflects current trace mode ──
-  const traceLabel = document.getElementById('traceLabel');
-  if (traceLabel) {
-    const full = S.traceMode !== 'trace' && seqSlotsFull();
-    const _labelMap      = { 'trace': 'trace', 'trace+loop': 'trace + loop',   'trace+cloud': 'trace + cloud' };
-    const _labelMapFull  = { 'trace': 'trace', 'trace+loop': 'trace + (loop)', 'trace+cloud': 'trace + (cloud)' };
-    traceLabel.textContent = (full ? _labelMapFull : _labelMap)[S.traceMode] || 'trace';
-  }
-
   // ── Legacy button compat ──
   const legacyMode = document.getElementById('seqModeBtn');
   if (legacyMode) legacyMode.classList.toggle('active', isLoop);
-  const legacyLock = document.getElementById('seedLockBtn');
-  if (legacyLock) legacyLock.classList.toggle('active', S.traceMode !== 'trace');
 
   // ── Commit action buttons — swap mode class, labels, and titles ──
   const modeName = isLoop ? 'loop' : 'cloud';
@@ -930,9 +866,10 @@ function _syncCommitUI() {
   // Also refresh slot-full state
   _syncSeqButtonStates();
 
-  // Grey out handsfree button when not in plain trace mode
-  const hfBtn = document.getElementById('hfArmBtn');
-  if (hfBtn) hfBtn.classList.toggle('hf-unavailable', S.traceMode !== 'trace');
+  // Grey out the handsfree arm pill when not in plain trace mode (#290 moved
+  // it into Settings → audio; `_syncHandsfreeUI` owns the rest of its state).
+  const hfSeg = document.getElementById('hfArmSeg');
+  if (hfSeg) hfSeg.classList.toggle('hf-unavailable', S.traceMode !== 'trace');
 }
 S._syncCommitUI = _syncCommitUI;
 S._clearAllCommits = () => clearAllCommits();
@@ -945,36 +882,44 @@ window._clearAllCommits = S._clearAllCommits;
 // Legacy wrapper — now uses the unified commit slot finder
 function _findSeqSlot(anchorLon, anchorLat) { return _findCommitSlot(anchorLon, anchorLat); }
 
-export function createSeqFromStroke(strokeId, anchorParticle) {
-  if (strokeId < 0) return;
-
-  // Resolve anchor position early for overflow nearest-mode
-  let anchorLon = 0, anchorLat = 0;
-  if (anchorParticle) {
-    anchorLon = anchorParticle.lon; anchorLat = anchorParticle.lat;
-  } else {
-    // Fall back to first particle of the stroke
-    for (let i = 0; i < S.particles.length; i++) {
-      if (S.particles[i].strokeId === strokeId) {
-        anchorLon = S.particles[i].lon; anchorLat = S.particles[i].lat;
-        break;
-      }
+/**
+ * Resolve the anchor position for a stroke: the explicit anchor particle if one
+ * was given (D-drop), otherwise the first particle painted in the stroke.
+ * Cheap — needed before slot allocation, which happens before the buffer work.
+ */
+function _resolveStrokeAnchor(strokeId, anchorParticle) {
+  // A drop by hand is anchored where the hand was. A stroke a brush pins at
+  // its end (looper, or any tile with loop `on end`) is anchored at its LAST
+  // mark — where the hand let go — so under focus you hear the stroke you
+  // just made (Ek, 2026-09-05). Paint order is array order.
+  if (anchorParticle) return { lon: anchorParticle.lon, lat: anchorParticle.lat };
+  for (let i = S.particles.length - 1; i >= 0; i--) {
+    if (S.particles[i].strokeId === strokeId) {
+      return { lon: S.particles[i].lon, lat: S.particles[i].lat };
     }
   }
+  return { lon: 0, lat: 0 };
+}
 
-  const slotIndex = _findSeqSlot(anchorLon, anchorLat);
-  if (slotIndex === -1) {
-    // All slots full with overflow=off — signal the rejected attempt.
-    // Loops reach the slot pool through here rather than startSeedPlant(), so
-    // this needs its own dispatch or committing a loop when full is silent.
-    window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'full' } }));
-    return;
-  }
-  // If replacing an existing seq, stop its audio first
-  if (S.seqSlots[slotIndex]) {
-    _stopSeqAudio(S.seqSlots[slotIndex]);
-    S.seqSlots[slotIndex] = null;
-  }
+/**
+ * Build the audio payload for one painted stroke: its particles, a standalone
+ * crossfaded buffer of the region they cover, and the loop bounds.
+ *
+ * Shared by the loop commit path (`createSeqFromStroke`) and the trigger tool
+ * (`armTrigger` in trigger.js) — the two differ in what plays the result and
+ * when, not in how the material is prepared.
+ *
+ * Returns null when the stroke can't produce playable audio (no particles, no
+ * resolvable source buffer, or a region too short to be worth a buffer). The
+ * caller decides what that means; this function has no side effects on S.
+ *
+ * NOTE: `particles` are detached copies with grainStart rebased to the new
+ * buffer's origin — they are NOT the objects in S.particles. Anything that
+ * needs to relate them back to the global array must match on position/time,
+ * not identity or index.
+ */
+export function buildLoopPayload(strokeId, anchorParticle) {
+  if (strokeId < 0) return null;
 
   // Collect particles belonging to this stroke, preserving paint order.
   // Paint order = array index order (particles are pushed sequentially).
@@ -984,7 +929,7 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
       seqParticles.push(S.particles[i]);
     }
   }
-  if (seqParticles.length === 0) return;
+  if (seqParticles.length === 0) return null;
 
   // ── Resolve audio buffer and compute loop region ───────────────────────
   // Store the buffer directly on the sequence so playback doesn't depend on
@@ -997,16 +942,55 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
   } else if (p0.source === 'sample') {
     buffer = S.samples[p0.sampleIndex]?.buffer;
   }
-  if (!buffer) return;
+  if (!buffer) return null;
 
   const n = seqParticles.length;
-  const loopStart = seqParticles[0].grainStart;
-  const lastP     = seqParticles[n - 1];
+  // Region bounds are MIN/MAX grainStart, NOT first/last in paint order.
+  // Paint order is not time order for every brush: a sample's grainCursor
+  // wraps mid-stroke, match points anywhere in the corpus, echo re-deposits
+  // earlier material. Rebasing against the first-painted mark pushed every
+  // earlier-in-buffer mark NEGATIVE — and a pin anchored on one handed the
+  // scheduler a negative start offset, whose uncaught throw at src.start()
+  // silenced every loop in the app, 50 times a second (2026-08-28).
+  let minStart = Infinity, maxStart = -Infinity, maxP = seqParticles[0];
+  for (let i = 0; i < n; i++) {
+    const gs = seqParticles[i].grainStart;
+    if (gs < minStart) minStart = gs;
+    if (gs > maxStart) { maxStart = gs; maxP = seqParticles[i]; }
+  }
+  let loopStart = minStart;
+  const lastP     = maxP;
   // Use the full buffer duration — stopLiveRecording() already clamped all
   // particle times to fit the finalized buffer, and the loop crossfade
   // handles the wrap-point seam.  (An earlier safeDur trim removed 50 ms
   // from the tail but that audibly cut off the performer's last beat.)
-  const loopEnd   = Math.min(buffer.duration, lastP.grainStart + lastP.grainDuration);
+  //
+  // The tail past the last mark is material-dependent (2026-08-28). A
+  // TRIGGER stroke's marks sample the take at the paint rate — their
+  // `grainDuration` is the GRANULAR grain length, seconds on a wash patch —
+  // and adding it overshot the region by up to the whole buffer: pinning a
+  // cut segment played through the erased gap into the rest of the original
+  // take. Same rule as _applyCluster in trigger.js: one median spacing is
+  // exactly the material the last mark stands for. Granular strokes keep
+  // grainDuration — their grains genuinely read that span.
+  let tailS = lastP.grainDuration;
+  if (p0.trig && n > 1) {
+    // Gaps over time-sorted starts — paint order again, see above.
+    const starts = seqParticles.map(p => p.grainStart).sort((a, b) => a - b);
+    const gaps = [];
+    for (let i = 1; i < n; i++) gaps.push(starts[i] - starts[i - 1]);
+    gaps.sort((a, b) => a - b);
+    tailS = gaps[gaps.length >> 1] || 0.02;
+  }
+  let loopEnd   = Math.min(buffer.duration, maxStart + tailS);
+  // The button, not the marks — the same rule as _applyCluster in trigger.js,
+  // for the same reasons: an untrimmed hit stroke's region is press to
+  // release, from the take's `edges`.
+  const takeSlot = p0.source === 'live' ? S.liveRecBuffers[p0.liveBufferIdx] : null;
+  if (p0.trig && takeSlot?.edges && takeSlot.markSpan &&
+      minStart <= takeSlot.markSpan[0] + 1e-6 && maxStart >= takeSlot.markSpan[1] - 1e-6) {
+    loopStart = takeSlot.edges.startS; loopEnd = takeSlot.edges.endS;
+  }
 
   // ── Build a crossfaded loop buffer ─────────────────────────────────────
   // Extract the loop region into a standalone buffer with a crossfade
@@ -1022,10 +1006,10 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
   const startSamp = Math.round(loopStart * sr);
   const endSamp   = Math.min(buffer.length, Math.round(loopEnd * sr));
   const regionLen = endSamp - startSamp;
-  // Guard against degenerate regions (e.g. noise gate rejected most particles,
+  // Guard against degenerate regions (e.g. paint gate rejected most particles,
   // leaving a near-zero region that createBuffer would reject).
   const MIN_LOOP_SAMPLES = Math.max(2, Math.floor(sr * 0.01)); // 10ms minimum
-  if (regionLen < MIN_LOOP_SAMPLES) return;
+  if (regionLen < MIN_LOOP_SAMPLES) return null;
   const xfadeSamp = Math.min(Math.floor(XFADE_S * sr), Math.floor(regionLen / 4));
 
   const loopBuffer = actx.createBuffer(nCh, regionLen, sr);
@@ -1061,37 +1045,260 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
     seqParticles[i] = { ...seqParticles[i], grainStart: seqParticles[i].grainStart - offsetShift };
   }
 
-  // Anchor position for distance calculations:
-  // - For D-drops (anchorParticle provided): use the anchor particle's position
-  // - For seq-mode strokes (no anchor): use the first particle of the stroke
-  const anchorP = anchorParticle || seqParticles[0];
+  // Anchor position for distance calculations — where the gesture RELEASED
+  // (pins.js pinAnchorInto): a drop by hand is the hand's particle; a stroke
+  // a brush pins at its end (looper) is its LAST mark (Ek, 2026-09-05 —
+  // this was `seqParticles[0]`, so the looper anchored every stroke at its
+  // start whatever _resolveStrokeAnchor said, because the slot takes the
+  // payload's anchor, not that one).
+  const anchorP = anchorParticle || seqParticles[seqParticles.length - 1];
+
+  return {
+    particles: seqParticles,
+    buffer:    loopBuffer,             // crossfaded, standalone
+    loopStart: 0,                      // buffer start (always 0 — region was extracted)
+    loopEnd:   loopBuffer.duration,    // buffer end (full buffer)
+    startIdx,
+    anchorLon: anchorP.lon,
+    anchorLat: anchorP.lat,
+  };
+}
+
+// ── The overdub brush (Ek, 2026-09-04; docs/archive/OVERDUB-PLAN.md) ────────────────
+// A take recorded while a pinned loop plays, folded onto that loop's cycle
+// and played back as a LAYER of the pin: every cycle, at the phase it was
+// played, at 1× whatever the master's speed. The take's marks land on the
+// sphere as their own stroke (hit material, never armed as a trigger), so
+// the cursor can erase and undo them; the layer is the pin's.
+
+/** The press: pick the master — the nearest pinned loop, no radius — and
+ *  hold it for the whole take. Nothing pinned, and the take SEEDS (Ek,
+ *  2026-09-06): it runs as an ordinary hit take with `S._overdubSeed` set,
+ *  and events.js arms it with `loop: true`, so the looper hook pins it on
+ *  release — the first press lays the main loop, the second overdubs onto
+ *  it. Nothing refuses any more; the hook it flashed is gone with it. */
+export function beginOverdub() {
+  const { lon, lat } = getCursorPos();
+  const i = nearestLoopPin(lon, lat);
+  if (i < 0) { S._overdubSeed = true; S._overdubTake = null; return true; }
+  const seq = S.commitSlots[i];
+  seq._ovdWrap = undefined;            // the wrap counter starts with the take
+  S._overdubTake = { seq, ov: null };  // `ov` is the provisional layer once the first wrap has passed
+  return true;
+}
+
+/** Fold a take onto a master's cycle: one buffer the length of the wall
+ *  cycle (loop length ÷ |speed|), the take written in from `phase0` and
+ *  wrapping — every pass of a long take summed, a short take landing once
+ *  where it was played. Nothing is resampled. */
+export function buildOverdubLayer(seq, take, phase0) {
+  if (!take) return null;
+  return _foldOntoCycle(seq, take.getChannelData(0), take.sampleRate, phase0);
+}
+function _foldOntoCycle(seq, samples, sr, phase0) {
+  const actx = ensureAudioContext();
+  const spd = Math.abs(seq.speed || 1);
+  const cycleS = (seq.loopEnd - seq.loopStart) / spd;
+  if (!(cycleS > 0) || !samples) return null;
+  const L = Math.max(1, Math.round(cycleS * sr));
+  const layer = actx.createBuffer(1, L, sr);
+  const dst = layer.getChannelData(0);
+  let pos = Math.round(((phase0 % cycleS) + cycleS) % cycleS * sr) % L;
+  for (let n = 0; n < samples.length; n++) {
+    dst[pos] += samples[n];
+    if (++pos === L) pos = 0;
+  }
+  return layer;
+}
+
+/** A take still recording, heard pass by pass: at each wrap of the master
+ *  (grain.js, the seq block) the take SO FAR — the recorder's raw pool up
+ *  to its write head, which is exactly what the seal will keep — is folded
+ *  onto the cycle and swapped in under a crossfade. Everything already
+ *  played sits behind the playhead, so it comes round on the next pass;
+ *  the final layer replaces this one at the seal (attachOverdub). */
+export function refreshLiveOverdub() {
+  const t = S._overdubTake;
+  if (!t?.seq || !S.isRecording || !S.recordingRaw || !(S.recordingWritePos > 0)) return null;
+  const seq = t.seq;
+  if (S.commitSlots.indexOf(seq) < 0) return null;
+  const slot = S.liveRecBuffers[S.currentLiveBufferIdx];
+  const phase0 = masterPhaseWall(seq, (slot?.startedAt ?? 0) - (S.latency?.roundTripS || 0));
+  const layer = _foldOntoCycle(seq, S.recordingRaw.subarray(0, S.recordingWritePos), S.recordingSampleRate, phase0);
+  if (!layer) return null;
+  const actx = ensureAudioContext();
+  // How much of the take this layer holds, in seconds — what is HEARD of it
+  // so far, which is what the renderer draws heads for (Ek, 2026-09-05: "as
+  // I continue to overdub over 2 or 3 or 4 times longer I also expect new
+  // playheads to appear for those portions").
+  const foldedS = S.recordingWritePos / S.recordingSampleRate;
+  if (!t.ov) {
+    t.ov = { strokeId: S.currentStrokeId, phase0, buffer: null, layer, live: true, foldedS, _src: null, _gain: null };
+    (seq.overdubs ||= []).push(t.ov);
+    if (seq._sourceNode && !seq._sourceNode._stopped) startOverdubLayer(seq, t.ov, actx, { fadeIn: 0.008 });
+    S._pinsDirty = true;
+    S._syncCommitUI?.();
+  } else {
+    t.ov.phase0 = phase0; t.ov.foldedS = foldedS;
+    swapOverdubLayer(seq, t.ov, layer, actx);
+  }
+  return t.ov;
+}
+S._overdubLiveWrap = refreshLiveOverdub;
+
+/** The stroke's end (events.js _commitTraceStroke, after the take seals):
+ *  the take joins its master as a layer, phased by where the master was
+ *  when the take's first sample landed. */
+export function attachOverdub(strokeId, seq, provisional = null) {
+  if (!(strokeId > 0) || !seq) return null;
+  const entry = S.strokeHistory.find(h => h.strokeId === strokeId);
+  const slot  = entry && entry.liveBufferIndex >= 0 ? S.liveRecBuffers[entry.liveBufferIndex] : null;
+  const gone  = S.commitSlots.indexOf(seq) < 0;   // the master went while the take ran
+  if (gone || !slot?.buffer) {
+    // Nothing to join: a provisional layer already on the slot is dropped,
+    // and the caller hands the stroke back as a plain line.
+    if (provisional && seq.overdubs) {
+      const i = seq.overdubs.indexOf(provisional);
+      if (i >= 0) { if (provisional._src && !provisional._src._stopped) { try { provisional._src.stop(); } catch (_) {} provisional._src._stopped = true; } seq.overdubs.splice(i, 1); }
+    }
+    return null;
+  }
+  // The round trip (js/latency.js): the take was sung against what was
+  // HEARD, late by `out`, and captured late by `in` — pull the phase back.
+  const phase0 = masterPhaseWall(seq, (slot.startedAt ?? 0) - (S.latency?.roundTripS || 0));
+  const layer  = buildOverdubLayer(seq, slot.buffer, phase0);
+  if (!layer) return null;
+  const actx = ensureAudioContext();
+  let ov = provisional && seq.overdubs?.includes(provisional) ? provisional : null;
+  if (ov) {
+    // The take was heard pass by pass; the sealed layer lands in its place.
+    ov.strokeId = strokeId; ov.phase0 = phase0; ov.buffer = slot.buffer; ov.live = false; delete ov.foldedS;
+    swapOverdubLayer(seq, ov, layer, actx);
+  } else {
+    ov = { strokeId, phase0, buffer: slot.buffer, layer, _src: null, _gain: null };
+    (seq.overdubs ||= []).push(ov);
+    if (seq._sourceNode && !seq._sourceNode._stopped) startOverdubLayer(seq, ov, actx);
+  }
+  S._pinsDirty = true;
+  S._syncCommitUI?.();
+  return ov;
+}
+
+/** The pin goes, the family becomes ordinary lines (Ek, 2026-09-04: "all
+ *  overdubs should become normal loops once unpinned"). Each overdub's marks
+ *  are still on the sphere as a hit stroke that was never armed; arming it
+ *  plain — one trigger, no audition, no looper hook — makes it what a line
+ *  stroke is once its own pin is released: scratch the cursor can fire. The
+ *  layers stop with the master's source. `keepPaint` false (a self-killing
+ *  master) deletes the marks instead, as the master deletes its own. */
+export function orphanOverdubs(seq, { keepPaint = true } = {}) {
+  const ovs = seq?.overdubs;
+  if (!ovs?.length || seq._orphaned) return 0;
+  // The list stays on the slot: the layer sources are stopped by the same
+  // teardown that stops the master's, after this, and they need finding.
+  seq._orphaned = true;
+  for (const ov of ovs) {
+    if (!(ov.strokeId > 0) || ov.live) continue;   // a take still recording is handed back at its own seal
+    if (keepPaint) {
+      if (S.particles.some(p => p.strokeId === ov.strokeId)) { try { S._armTrigger?.(ov.strokeId, { plain: true }); } catch (_) {} }
+    } else {
+      S.particles = S.particles.filter(p => p.strokeId !== ov.strokeId);
+      S._particleVersion = (S._particleVersion || 0) + 1;
+    }
+  }
+  S._syncTriggerUI?.();
+  return ovs.length;
+}
+
+/** Undo or erase-all of an overdub stroke: its layer goes, the master stays. */
+export function removeOverdubByStrokeId(strokeId) {
+  let n = 0;
+  for (const c of S.commitSlots) {
+    if (!c?.overdubs?.length) continue;
+    for (let i = c.overdubs.length - 1; i >= 0; i--) {
+      const ov = c.overdubs[i];
+      if (ov.strokeId !== strokeId) continue;
+      if (ov._src && !ov._src._stopped) {
+        // A short fade, not a bare stop: this is also the erase path.
+        try {
+          const now = ensureAudioContext().currentTime;
+          if (ov._gain) { ov._gain.gain.setValueAtTime(ov._gain.gain.value, now); ov._gain.gain.linearRampToValueAtTime(0, now + 0.012); }
+          ov._src.stop(now + 0.02);
+        } catch (_) {}
+        ov._src._stopped = true;
+      }
+      c.overdubs.splice(i, 1); n++;
+    }
+  }
+  if (n) { S._pinsDirty = true; S._syncCommitUI?.(); }
+  return n;
+}
+S._beginOverdub  = beginOverdub;
+S._attachOverdub = attachOverdub;
+
+export function createSeqFromStroke(strokeId, anchorParticle) {
+  if (strokeId < 0) return;
+
+  // Resolve anchor position early for overflow nearest-mode
+  const { lon: anchorLon, lat: anchorLat } = _resolveStrokeAnchor(strokeId, anchorParticle);
+
+  const slotIndex = _findSeqSlot(anchorLon, anchorLat);
+  if (slotIndex === -1) {
+    // All slots full with overflow=off — signal the rejected attempt.
+    // Loops reach the slot pool through here rather than startSeedPlant(), so
+    // this needs its own dispatch or committing a loop when full is silent.
+    window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'full' } }));
+    return;
+  }
+  // If replacing an existing seq, stop its audio first
+  if (S.seqSlots[slotIndex]) {
+    _stopSeqAudio(S.seqSlots[slotIndex]);
+    S.seqSlots[slotIndex] = null;
+  }
+
+  const payload = buildLoopPayload(strokeId, anchorParticle);
+  if (!payload) return;
 
   const color = COMMIT_COLORS[slotIndex];
+  // The first pass starts ON THE RELEASE (2026-09-04): the looper commits a
+  // stroke 60 ms and a seal after the button went up, and the source is
+  // built a scheduler tick after that. Started from the top then, the loop's
+  // downbeat was that late. A fresh take carries its release on the clock;
+  // the seq start path begins the first pass as far in as the release is
+  // behind (grain.js). A pin dropped onto old material keeps its anchor.
+  const _tk = S.particles.find(p => p.strokeId === strokeId && p.source === 'live');
+  const _takeSlot = _tk ? S.liveRecBuffers[_tk.liveBufferIdx] : null;
+  const _phaseAnchor = (!anchorParticle && _takeSlot?.releaseAt != null && S.audioCtx &&
+                        (S.audioCtx.currentTime - _takeSlot.releaseAt) < 1.0) ? _takeSlot.releaseAt : null;
   S.commitSlots[slotIndex] = {
     type: 'loop',
     slotIndex,
     strokeId,
-    particles:      seqParticles,
-    buffer:         loopBuffer,             // crossfaded loop buffer
-    loopStart:      0,                      // buffer start (always 0 now)
-    loopEnd:        loopBuffer.duration,     // buffer end (full buffer)
-    playheadIndex:  startIdx,
-    startOffset:    anchorParticle ? (seqParticles[startIdx].grainStart) : 0,
+    _phaseAnchor,
+    particles:      payload.particles,
+    buffer:         payload.buffer,          // crossfaded loop buffer
+    loopStart:      payload.loopStart,
+    loopEnd:        payload.loopEnd,
+    playheadIndex:  payload.startIdx,
+    startOffset:    anchorParticle ? payload.particles[payload.startIdx].grainStart : 0,
     direction:      S.seedLoopMode === 'rev' ? -1 : 1,
     speed:          S.seqNextParams.speed ?? 1.0,
     playing:        true,
     color,
-    anchorLon:      anchorP.lon,    // position used for distance/nearest calcs
-    anchorLat:      anchorP.lat,
+    anchorLon:      payload.anchorLon,  // position used for distance/nearest calcs
+    anchorLat:      payload.anchorLat,
     _sourceNode:    null,           // AudioBufferSourceNode (created by scheduler)
     _gainNode:      null,           // GainNode for volume control
     _revBuffer:     null,           // cached reversed buffer (created lazily if direction=-1)
     _createdAt:     performance.now() / 1000, // wallclock creation time (seconds)
     _startedAt:     0,              // audioContext.currentTime when started
+    mute: false, solo: false,       // the pin's own flags (pins.js)
     grainParams: {
       volume: S.seqNextParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0,
     },
   };
+  // Born under a solo or a group mute, it is silent from its first tick.
+  S._applyPinMix?.();
   _syncSeqButtonStates();
 }
 
@@ -1108,11 +1315,12 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'full' } }));
     return;
   }
-  // If replacing an existing commit, clean it up first
+  // If replacing an existing commit (the overflow rule), take it out through
+  // the one path, and remember it: the pin's undo puts it back.
+  _lastEvicted = null;
   if (S.commitSlots[slotIndex]) {
-    const existing = S.commitSlots[slotIndex];
-    if (existing.type === 'loop') _stopSeqAudio(existing);
-    S.commitSlots[slotIndex] = null;
+    _lastEvicted = S.commitSlots[slotIndex];
+    removePinSlot(_lastEvicted);
   }
 
   let startIdx = 0;
@@ -1131,7 +1339,10 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     loopStart:      sourceSeq.loopStart,
     loopEnd:        sourceSeq.loopEnd,
     playheadIndex:  startIdx,
-    startOffset:    anchorParticle ? (anchorParticle.grainStart - sourceSeq.loopStart) : 0,
+    // Clamped: an anchor can sit earlier in the buffer than the region start
+    // (non-monotonic strokes — see buildLoopPayload), and a negative offset
+    // makes src.start() throw inside the scheduler.
+    startOffset:    anchorParticle ? Math.max(0, anchorParticle.grainStart - sourceSeq.loopStart) : 0,
     direction:      S.seedLoopMode === 'rev' ? -1 : 1,
     speed:          S.seqNextParams.speed ?? 1.0,
     playing:        true,
@@ -1147,6 +1358,7 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
       volume: S.seqNextParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0,
     },
   };
+  S._applyPinMix?.();
   _syncSeqButtonStates();
 }
 
@@ -1168,6 +1380,7 @@ export function removeSeq(slotIndex, immediate = false) {
       const src  = slot._sourceNode;
       const gain = slot._gainNode;
       const actx = S.audioCtx;
+      orphanOverdubs(slot);
       if (src && !src._stopped) {
         if (gain && actx) {
           const now     = actx.currentTime;
@@ -1179,6 +1392,7 @@ export function removeSeq(slotIndex, immediate = false) {
           } catch (_) {}
           try { src.stop(now + fadeSec + 0.002); } catch (_) {}
           src._stopped = true;
+          stopOverdubLayers(slot, { when: now + fadeSec + 0.002 });
           // Defer extra-node cleanup until the source actually ends so the
           // fade has somewhere to run through.
           src.addEventListener('ended', () => {
@@ -1222,6 +1436,18 @@ export function removeSeqByStrokeId(strokeId) {
       found++;
     }
   }
+  // Triggers built on this stroke go too. The gate's own rebuild would drop
+  // them a tick later once it saw the particles gone, but undo should be silent
+  // immediately rather than on the next scheduler tick.
+  if (S.triggers?.length) {
+    for (let i = S.triggers.length - 1; i >= 0; i--) {
+      if (S.triggers[i].strokeId !== strokeId) continue;
+      S._stopTriggerAudio?.(S.triggers[i], 'fade');
+      S.triggers.splice(i, 1);
+      found++;
+    }
+    S._syncTriggerUI?.();
+  }
   if (!found) {
     console.warn(`[undo] no commit slot found for strokeId=${strokeId}. Slots:`,
       S.commitSlots.map((s, i) => s ? `${i}:${s.type}(sid=${s.strokeId})` : null).filter(Boolean));
@@ -1245,40 +1471,32 @@ export function clearAllSeqs() {
 // ── Unified commit operations ─────────────────────────────────────────────
 
 /**
- * Release the commit targeted by selectionMode (closest or farthest from cursor).
- * Replaces uprootNearestSeed() and pickupSeqRemove().
- * Clouds get a release envelope; loops are stopped immediately.
+ * Release the SELECTED pin — nearest to the cursor or the oldest, by
+ * `S.selectionMode` (pins.js selectedPinSlot, which is also what the rail
+ * marks, so the hand sees what ⌘D is about to take). Replaces
+ * uprootNearestSeed() and pickupSeqRemove().
+ * Clouds get a release envelope; loops leave by `S.loopReleaseMode`.
  */
 export function releaseCommit() {
   const { lon, lat } = getCursorPos();
-  let targetSlot = -1, targetAng = S.selectionMode === 'closest' ? Infinity : -1;
-  for (let i = 0; i < S.commitSlotCount; i++) {
-    const slot = S.commitSlots[i];
-    if (!slot) continue;
-    // Skip clouds already fading out or loops already playing to end
-    if (slot.type === 'cloud' && slot._releasingAt > 0) continue;
-    if (slot.type === 'loop' && (slot._playingToEnd || slot._fadingOut)) continue;
-    // Get position for distance calc
-    let sLon, sLat;
-    if (slot.type === 'cloud') {
-      sLon = (slot.frames && slot.frames.length) ? slot.frames[0].lon : slot.lon;
-      sLat = (slot.frames && slot.frames.length) ? slot.frames[0].lat : slot.lat;
-    } else {
-      sLon = slot.anchorLon ?? slot.particles?.[0]?.lon;
-      sLat = slot.anchorLat ?? slot.particles?.[0]?.lat;
-    }
-    if (sLon == null || sLat == null) continue;
-    const ang = angleBetweenSphere(sLon, sLat, lon, lat);
-    if (S.selectionMode === 'closest' ? ang < targetAng : ang > targetAng) {
-      targetAng = ang;
-      targetSlot = i;
-    }
-  }
+  const targetSlot = S._selectedPinSlot?.(lon, lat) ?? -1;
   if (targetSlot === -1) return;
+  _releaseSlotAt(targetSlot);
+}
+
+/** The one release tail — shared by releaseCommit and the layer pickup. */
+function _releaseSlotAt(targetSlot) {
   const slot = S.commitSlots[targetSlot];
+  if (!slot) return;
+  history.push(_unpinAction([slot]));
   if (slot.type === 'cloud') {
     // Cloud: apply release envelope
     const rel = S.commitRelease || 0;
+    // Uproot means DESTROY, from either state. A composer-held cloud carries
+    // _composerHold, which tells the scheduler's release branch to hold at
+    // silence instead of deleting — leave it set and this release would land
+    // on a hold and the commit would be unkillable.
+    slot._composerHold = false;
     if (rel <= 0) {
       S.commitSlots[targetSlot] = null;
     } else {
@@ -1289,6 +1507,7 @@ export function releaseCommit() {
     // Loop: stop audio — both fade and play-to-end defer slot removal to 'ended' event
     _stopSeqAudio(slot, S.loopReleaseMode === 'play-to-end');
   }
+  S._pinsDirty = true;
   S._syncCommitUI?.();
   (S.updateSeedBanksUI || updateSeedBanksUI)();
 
@@ -1299,6 +1518,224 @@ export function releaseCommit() {
   window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'release' } }));
 }
 
+// Scratch for the nearest-loop search below. `releaseNearestPin()` lived here
+// until 2026-09-10: the `-` key's own nearest-only unpin, which bypassed the
+// selected-pin setting while the action honoured it. Every unpin is
+// releaseCommit() now (Ek: "unpin does the version of whatever the setting is").
+const _anch2 = [0, 0];
+
+/** Self-killing loop (#239), called from the scheduler's wrap detection when
+ *  a slot's baked `passes` runs out: release the slot through the real tail,
+ *  then delete its paint — the loop was born promising to clean up after
+ *  itself. Trigger views over the same stroke go with the marks. */
+export function selfKillSlot(seq) {
+  if (seq._selfKilled) return;   // the wrap edge keeps firing while the fade runs
+  const idx = S.commitSlots.indexOf(seq);
+  if (idx === -1) return;
+  seq._selfKilled = true;
+  const sid = seq.strokeId;
+  orphanOverdubs(seq, { keepPaint: false });   // the family's paint goes with the master's
+  // Always FADE, never play-to-end (which would grant an audible pass N+1),
+  // and always a SHORT fade — the per-pass fades already did the decay, and
+  // S.loopFadeTimeMs belongs to manual releases and can be seconds long.
+  seq._composerHold = false;
+  _stopSeqAudio(seq, false, 0.12);
+  if (sid > 0) {
+    S.particles = S.particles.filter(p => p.strokeId !== sid);
+    S._particleVersion = (S._particleVersion || 0) + 1;
+    if (S.triggers?.length) S.triggers = S.triggers.filter(t => t.strokeId !== sid);
+  }
+  S._pinsDirty = true;
+  S._syncCommitUI?.();
+  (S.updateSeedBanksUI || updateSeedBanksUI)();
+}
+S._selfKillSlot = selfKillSlot;
+
+/** Erase write-through for held loops (#243). A loop slot owns a SNAPSHOT —
+ *  buildLoopPayload copies the marks and extracts a crossfaded buffer — so
+ *  erasing scratch paint never reached its audio: the stroke vanished and the
+ *  loop kept singing. The rule (Ek): erasing part of a HELD loop silences
+ *  that part INSIDE the loop while it keeps rolling — erase edits the
+ *  material, never the time — and erasing the whole stroke takes the loop
+ *  with it. The erased time-spans are zeroed IN PLACE in the slot's
+ *  AudioBuffer (the playing source shares the object, so the change is heard
+ *  on the next pass through that region), with short ramps so the cuts don't
+ *  click. Copies are matched to erased originals by position — the one thing
+ *  buildLoopPayload's rebase preserves verbatim — and the matched copies are
+ *  NEVER removed: the path is the loop's clock, so the circuit's length and
+ *  pan traversal survive any amount of erasing (see the comment at the
+ *  bottom of the loop). Trigger strokes are not handled here:
+ *  refreshTriggers already trims and splits them (the line-brush behaviour,
+ *  unchanged). */
+/** Zero sample spans in place, with short ramps so the cuts don't click.
+ *  Spans are MERGED before zeroing: zeroing each mark's span with its own
+ *  edge ramps left a comb of ~6 ms full-level blips through a contiguous
+ *  erase (the end-ramp of one span meeting the start-ramp of the next),
+ *  ticking at the mark rate. One erase bite is one silence. */
+function _zeroSpans(buf, spans) {
+  if (!spans.length) return;
+  const sr = buf.sampleRate;
+  const ramp = Math.floor(sr * 0.003);
+  spans.sort((x, y) => x[0] - y[0]);
+  const merged = [];
+  for (const sp of spans) {
+    const m = merged[merged.length - 1];
+    if (m && sp[0] <= m[1] + ramp) m[1] = Math.max(m[1], sp[1]);
+    else merged.push([sp[0], sp[1]]);
+  }
+  for (const [m0, m1] of merged) {
+    if (m1 <= m0) continue;
+    const r = Math.min(ramp, Math.max(1, (m1 - m0) >> 1));
+    for (let chn = 0; chn < buf.numberOfChannels; chn++) {
+      const d = buf.getChannelData(chn);
+      // Ramp only against live audio — a neighbour already silent from an
+      // earlier bite gets a hard (inaudible) cut instead of a blip.
+      const rampIn  = m0 > 0 && Math.abs(d[m0 - 1]) > 1e-4;
+      const rampOut = m1 < buf.length && Math.abs(d[m1]) > 1e-4;
+      for (let s = m0; s < m1; s++) {
+        let f = 0;
+        if (rampIn && s < m0 + r) f = 1 - (s - m0) / r;
+        else if (rampOut && s >= m1 - r) f = (s - (m1 - r)) / r;
+        d[s] *= f;
+      }
+    }
+  }
+}
+
+/** The span of audio a mark STANDS FOR in a whole-take buffer: from its own
+ *  moment to the NEXT mark's, and for the last mark to the end (Ek,
+ *  2026-09-10: erasing a tape line "visually takes the right bite out of the
+ *  line but audio wise it seems to bite off a bit less than a second more
+ *  on the downstream edge"). It used to be `grainStart + grainDuration`,
+ *  and a live mark's `grainDuration` is the GRANULAR grain length of the
+ *  brush that painted it — 0.6 s at the factory setting, up to seconds —
+ *  which has nothing to do with how much of a take a tape mark covers. A
+ *  mark is sized by the audio after it up to the next tick (paint-ticker.js,
+ *  audio-features.js), so that window is its span: the marks are the
+ *  buffer's timeline. `starts` is every mark's moment, sorted; the answer is
+ *  the first start after `t`, else `endS`. */
+function _spanEndAfter(starts, t, endS) {
+  let lo = 0, hi = starts.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (starts[mid] <= t + 1e-6) lo = mid + 1; else hi = mid; }
+  return lo < starts.length ? starts[lo] : endS;
+}
+function _sortedStarts(marks) { return marks.map(m => m.grainStart).sort((a, b) => a - b); }
+
+function onMarksErased(removed) {
+  if (!removed?.length) return;
+  const byStroke = new Map();
+  for (const r of removed) {
+    if (!(r.strokeId > 0)) continue;
+    let a = byStroke.get(r.strokeId);
+    if (!a) byStroke.set(r.strokeId, a = []);
+    a.push(r);
+  }
+  if (!byStroke.size) return;
+  for (let i = 0; i < S.commitSlotCount; i++) {
+    const slot = S.commitSlots[i];
+    if (!slot || slot.type !== 'loop' || !(slot.strokeId > 0)) continue;
+    const rem = byStroke.get(slot.strokeId);
+    if (!rem) continue;
+    const anyLeft = S.particles.some(p => p.strokeId === slot.strokeId);
+    const buf = slot.buffer;
+    if (!anyLeft || !buf) {
+      // The whole stroke went. With overdubs still on it the FAMILY keeps
+      // the clock (Ek, 2026-09-05: "the loop cycling should continue"): the
+      // master's own audio is silenced whole and the cycle runs on for its
+      // layers; the last overdub leaving is what releases the pin (below).
+      if (slot.overdubs?.length && buf) {
+        _zeroSpans(buf, [[0, buf.length]]);
+        slot._revBuffer = null;
+        S._pinsDirty = true;
+        continue;
+      }
+      // The loop goes with it. Short fade: this is an erase, not a musical
+      // release.
+      slot._composerHold = false;
+      _stopSeqAudio(slot, false, 0.12);
+      S._pinsDirty = true;
+      S._syncCommitUI?.();
+      continue;
+    }
+    const sr = buf.sampleRate;
+    const spans = [];
+    // The copies are the loop's whole timeline (they are never removed, see
+    // below), so a hit copy's span ends at the next copy's moment.
+    const starts = _sortedStarts(slot.particles);
+    for (const c of slot.particles) {
+      const hit = rem.some(r => Math.abs(r.lon - c.lon) < 1e-6 && Math.abs(r.lat - c.lat) < 1e-6);
+      if (!hit) continue;
+      c._silenced = true;   // advisory — the zeroed span below is what silences it
+      spans.push([Math.max(0, Math.floor(c.grainStart * sr)),
+                  Math.min(buf.length, Math.ceil(_spanEndAfter(starts, c.grainStart, buf.duration) * sr))]);
+    }
+    if (!spans.length) continue;
+    _zeroSpans(buf, spans);
+    // The copies STAY (Ek, 2026-08-28): a pinned loop's path is its CLOCK —
+    // a 4-second circuit stays a 4-second circuit however much audio is
+    // erased out of it, leaving creative gaps rather than a shorter loop.
+    // Removing matched copies here was the bug where erasing shortened the
+    // drawn path and compressed the pan traversal (and, because a drawn loop
+    // path usually closes back near its start, erasing "the front" also bit
+    // the tail marks sitting beside it — heard as the END of the audio
+    // disappearing). The spans are already silent in the buffer; the kept
+    // copies keep the playhead and VBAP travelling the full circuit through
+    // the gaps. The loop dies only when its whole scratch stroke goes — the
+    // anyLeft check above.
+    slot._revBuffer = null;   // a cached reversed copy is stale now
+  }
+
+  // Overdubs (Ek, 2026-09-05: "if I erase an overdub … that part of the
+  // overdub stroke I erased should not play"). The same rule as a loop, one
+  // level down: an overdub's marks ARE its stroke (no copies to match — the
+  // removed marks carry their own take time), so the erased spans are zeroed
+  // in the TAKE and the layer is rebuilt from it and swapped in, in phase,
+  // under the usual seam. Rebuilding rather than zeroing the layer keeps a
+  // long take's stacked passes honest: a span erased from one pass must not
+  // take the other passes' audio at the same phase. The take is what the
+  // session file carries, so the erase survives a reload. The whole stroke
+  // gone takes the overdub off its master — the dot leaves the row — the
+  // way a loop dies with its stroke. A take still recording is left alone;
+  // it is folded from the recorder's pool, not from a sealed buffer.
+  for (let i = 0; i < S.commitSlotCount; i++) {
+    const slot = S.commitSlots[i];
+    if (!slot?.overdubs?.length) continue;
+    for (let k = slot.overdubs.length - 1; k >= 0; k--) {
+      const ov = slot.overdubs[k];
+      if (!(ov.strokeId > 0) || ov.live) continue;
+      const rem = byStroke.get(ov.strokeId);
+      if (!rem) continue;
+      if (!S.particles.some(p => p.strokeId === ov.strokeId)) {
+        removeOverdubByStrokeId(ov.strokeId);
+        // The last overdub gone from a master whose own stroke is already
+        // erased: nothing is left to keep the clock for, and the pin goes
+        // the way it would have when its stroke went. Derived from the
+        // marks, not a flag, so a session saved in between reads the same.
+        if (!slot.overdubs.length && slot.strokeId > 0 && !S.particles.some(p => p.strokeId === slot.strokeId)) {
+          slot._composerHold = false;
+          _stopSeqAudio(slot, false, 0.12);
+          S._pinsDirty = true;
+          S._syncCommitUI?.();
+        }
+        continue;
+      }
+      const take = ov.buffer;
+      if (!take) continue;
+      const sr = take.sampleRate;
+      // An overdub's marks ARE its stroke: the timeline is the removed marks
+      // plus whatever of the stroke still stands (a mark erased earlier is
+      // already silent, so its absence from the list changes nothing).
+      const starts = _sortedStarts(rem.concat(S.particles.filter(p => p.strokeId === ov.strokeId)));
+      _zeroSpans(take, rem.map(r => [Math.max(0, Math.floor(r.grainStart * sr)),
+                                     Math.min(take.length, Math.ceil(_spanEndAfter(starts, r.grainStart, take.duration) * sr))]));
+      const layer = buildOverdubLayer(slot, take, ov.phase0);
+      if (layer) swapOverdubLayer(slot, ov, layer, ensureAudioContext());
+      ov._marks = null;   // the renderer's head cache
+    }
+  }
+}
+S._onMarksErased = onMarksErased;
+
 /**
  * Release all commits. Clouds get envelope, loops fade/play-to-end.
  */
@@ -1306,6 +1743,8 @@ export function clearAllCommits() {
   const now = performance.now() / 1000;
   const rel = S.commitRelease || 0;
   let released = false;
+  const gone = S.commitSlots.filter(Boolean);
+  if (gone.length) history.push(_unpinAction(gone));
   for (let i = 0; i < MAX_COMMITS; i++) {
     const slot = S.commitSlots[i];
     if (!slot) continue;
@@ -1344,11 +1783,8 @@ export function findNearestSeqSlot(refLon, refLat, filterPlaying = null) {
     const seq = S.commitSlots[i];
     if (!seq || seq.type !== 'loop') continue;
     if (filterPlaying !== null && seq.playing !== filterPlaying) continue;
-    // Use explicit anchor position if set, otherwise fall back to first particle
-    const aLon = seq.anchorLon ?? seq.particles[0]?.lon;
-    const aLat = seq.anchorLat ?? seq.particles[0]?.lat;
-    if (aLon == null || aLat == null) continue;
-    const ang = angleBetweenSphere(aLon, aLat, refLon, refLat);
+    if (!pinAnchorInto(seq, _anch2)) continue;
+    const ang = angleBetweenSphere(_anch2[0], _anch2[1], refLon, refLat);
     if (ang < nearestAng) { nearestAng = ang; nearestSlot = i; }
   }
   return nearestSlot;
@@ -1365,9 +1801,12 @@ export function findNearestSeqSlot(refLon, refLat, filterPlaying = null) {
  *                       with a short fade-out before it ends. Slot cleanup deferred
  *                       to the 'ended' event.
  */
-function _stopSeqAudio(seq, playToEnd = false) {
+function _stopSeqAudio(seq, playToEnd = false, fadeSecOverride = null) {
   const gain = seq._gainNode;
   const src  = seq._sourceNode;
+  // The pin is leaving by every road through here; its overdubs are handed
+  // back to the sphere now, while the layers ride out the fade or the pass.
+  if (!seq._selfKilled) orphanOverdubs(seq);
 
   if (playToEnd && gain && src && !src._stopped) {
     const actx = S.audioCtx;
@@ -1382,6 +1821,7 @@ function _stopSeqAudio(seq, playToEnd = false) {
 
       // Disable looping — source will naturally stop at loopEnd
       src.loop = false;
+      stopOverdubLayers(seq, { playToEnd: true });
 
       // Schedule fade-out over last 50ms (or less if loop is very short)
       const fadeTime = Math.min(0.05, remainSec * 0.5);
@@ -1394,12 +1834,15 @@ function _stopSeqAudio(seq, playToEnd = false) {
       seq._playingToEnd = true;
 
       // Clean up on natural end
+      // `gen` and `extra` are THIS source's: if undo puts the pin back before
+      // the fade ends, the slot carries new nodes and a new generation, and
+      // this handler must only tidy its own.
+      const gen = seq._gen | 0, extra = seq._extraNodes;
       src.addEventListener('ended', () => {
         src._stopped = true;
-        if (seq._extraNodes) {
-          for (const n of seq._extraNodes) { try { n.disconnect(); } catch (_) {} }
-          seq._extraNodes = null;
-        }
+        if (extra) for (const n of extra) { try { n.disconnect(); } catch (_) {} }
+        if ((seq._gen | 0) !== gen) return;
+        seq._extraNodes = null;
         seq._sourceNode = null;
         seq._gainNode   = null;
         seq._playingToEnd = false;
@@ -1413,8 +1856,10 @@ function _stopSeqAudio(seq, playToEnd = false) {
     }
   }
 
-  // Default: fade-out using loopFadeTimeMs
-  const FADE_MS = S.loopFadeTimeMs || 15;
+  // Default: fade-out using loopFadeTimeMs (or a caller's own fade — the
+  // self-kill must not borrow the user's manual-release fade, which can be
+  // seconds long; its decay already happened pass by pass)
+  const FADE_MS = fadeSecOverride != null ? fadeSecOverride * 1000 : (S.loopFadeTimeMs || 15);
   if (gain && src) {
     const actx = S.audioCtx;
     if (actx) {
@@ -1424,17 +1869,21 @@ function _stopSeqAudio(seq, playToEnd = false) {
       gain.gain.setValueAtTime(gain.gain.value, now);
       gain.gain.linearRampToValueAtTime(0, now + fadeSec);
       try { src.stop(now + fadeSec + 0.01); } catch (_) {}
+      stopOverdubLayers(seq, { when: now + fadeSec + 0.01 });
 
       // Mark as fading so grain scheduler / slot logic can treat it as releasing
       seq._fadingOut = true;
 
       // Defer cleanup until source actually ends (after the fade completes)
+      // `gen` and `extra` are THIS source's: if undo puts the pin back before
+      // the fade ends, the slot carries new nodes and a new generation, and
+      // this handler must only tidy its own.
+      const gen = seq._gen | 0, extra = seq._extraNodes;
       src.addEventListener('ended', () => {
         src._stopped = true;
-        if (seq._extraNodes) {
-          for (const n of seq._extraNodes) { try { n.disconnect(); } catch (_) {} }
-          seq._extraNodes = null;
-        }
+        if (extra) for (const n of extra) { try { n.disconnect(); } catch (_) {} }
+        if ((seq._gen | 0) !== gen) return;
+        seq._extraNodes = null;
         seq._sourceNode = null;
         seq._gainNode   = null;
         seq._fadingOut  = false;
@@ -1493,7 +1942,7 @@ export function dropSeqFromCursor() {
       nearest = p;
     }
   }
-  if (!nearest) return;  // nothing within radius — do nothing
+  if (!nearest) return false;  // nothing within radius — the caller decides
 
   // Check if this stroke already has a loop — if so, add another playhead
   // on the same buffer rather than blocking creation.
@@ -1509,8 +1958,14 @@ export function dropSeqFromCursor() {
   if (existingSlot) {
     addPlayheadFromExisting(existingSlot, nearest);
   } else {
+    const before = S.commitSlots.slice();
+    _lastEvicted = null;
     createSeqFromStroke(nearest.strokeId, nearest);
+    const made = S.commitSlots.find((c, i) => c && c !== before[i]);
+    if (made) history.push(_pinAction(made, _lastEvicted));
+    _lastEvicted = null;
   }
+  return true;
 }
 
 /**
@@ -1638,8 +2093,13 @@ function _drawLoopSlot(c, cx, cy, r, seq, isNearest) {
     c.restore();
   }
 
+  // A composer-muted loop is STILL `playing` — its source keeps running so it
+  // does not lose its place — so every existing check here reads true and it
+  // would draw identical to a sounding loop. Silent and sounding must not look
+  // the same on the bank; that is what the bank is for.
+  const muted = !!seq.composerMuted;
   // Background circle
-  const alpha = seq.playing ? (isNearest ? '77' : '44') : '22';
+  const alpha = muted ? '18' : seq.playing ? (isNearest ? '77' : '44') : '22';
   c.beginPath();
   c.arc(cx, cy, r, 0, Math.PI * 2);
   c.fillStyle = seq.color + alpha;
@@ -1648,9 +2108,20 @@ function _drawLoopSlot(c, cx, cy, r, seq, isNearest) {
   // Dim track ring
   c.beginPath();
   c.arc(cx, cy, r, 0, Math.PI * 2);
-  c.strokeStyle = seq.playing ? seq.color + '33' : seq.color + '22';
+  c.strokeStyle = seq.playing && !muted ? seq.color + '33' : seq.color + '22';
   c.lineWidth = 2.5;
   c.stroke();
+  // A dashed ring reads as "held" at a glance and survives being small.
+  if (muted) {
+    c.save();
+    c.setLineDash([2, 2]);
+    c.beginPath();
+    c.arc(cx, cy, r, 0, Math.PI * 2);
+    c.strokeStyle = seq.color + 'aa';
+    c.lineWidth = 1.2;
+    c.stroke();
+    c.restore();
+  }
 
   // Nearest: full-brightness ring (matches cloud highlight style)
   if (isNearest) {
@@ -1712,13 +2183,31 @@ function _drawLoopSlot(c, cx, cy, r, seq, isNearest) {
 
 /** Draw a cloud-type slot on the commit canvas */
 function _drawCloudSlot(c, cx, cy, r, seed, isNearest) {
+  // A composer-stopped cloud sits at envelope gain 0 with its slot intact, so
+  // without a floor it would draw as nothing at all and read as an empty slot.
+  // It is not empty — it is holding, and it can be toggled back.
+  const held = seed.playing === false;
   // Envelope state
-  const envG = seed._envGainCurrent ?? 1;
-  const isEnveloping = envG < 0.999;
-  let envAlphaMul = envG;
+  const envG = held ? 0 : (seed._envGainCurrent ?? 1);
+  const isEnveloping = !held && envG < 0.999;
+  // Held clouds get a floor rather than the envelope's 0, or the cell would be
+  // blank and read as an empty slot. They also must NOT pulse — the pulse means
+  // "an envelope is moving", and a held cloud is precisely not moving.
+  let envAlphaMul = held ? 0.3 : envG;
   if (isEnveloping) {
     const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.004 * Math.PI);
     envAlphaMul = envG * (0.5 + 0.5 * pulse);
+  }
+
+  if (held) {
+    c.save();
+    c.setLineDash([2, 2]);
+    c.beginPath();
+    c.arc(cx, cy, r, 0, Math.PI * 2);
+    c.strokeStyle = seed.color + 'aa';
+    c.lineWidth = 1.2;
+    c.stroke();
+    c.restore();
   }
 
   // Nearest highlight
@@ -1808,70 +2297,21 @@ function _drawCloudSlot(c, cx, cy, r, seed, isNearest) {
 export function updateSeqBanksUI()  { updateCommitBanksUI(); }
 export function updateSeedBanksUI() { updateCommitBanksUI(); }
 
-export function selectPreset(index) {
-  // Reject a slot that doesn't exist before touching any state. Callers reach
-  // here with indices from persisted settings, OSC, MIDI and the accessory —
-  // anything that outlives a change to the bank size. This used to throw on
-  // `preset.name` below, and because setupPresets() runs at main.js:239 the
-  // throw took the whole rest of init() with it: no animate(), no UI wiring,
-  // and the boot veil left to the 4s failsafe. Leaving the previous patch
-  // selected is the safe failure.
-  const preset = PRESETS[index];
-  if (!preset) {
-    console.warn(`[presets] patch ${index + 1} does not exist — bank has ${PRESETS.length} slots; ignoring`);
-    return;
-  }
-
-  S.activePresetIndex = index;
-  S._patchFlashUntil = performance.now() + 1200;
-  if (_patchLedArmed) {
-    window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'patch' } }));
-  }
-
-  // Update HUD patch info
-  const patchEl = document.getElementById('vmPatchInfo');
-  if (patchEl) patchEl.textContent = `${index + 1} ${preset.name || ''}`;
-
-  document.querySelectorAll('.preset-btn').forEach((btn, i) => {
-    btn.classList.toggle('active', i === index);
-  });
-
-  applyPresetObject(preset);
-}
-
 /**
- * Apply a patch's parameters to live state, with no reference to the bank.
+ * Apply a patch object's parameters to live state.
  *
- * Split out of selectPreset so a session import can restore the patch it was
- * played on **without depending on the preset bank** (docs/EXPORT-IMPORT-AUDIT-2026-08.md
- * § E4). A session used to store only `activePresetIndex` and re-select it on
- * import, which silently meant "whatever patch happens to live in slot N on
- * this machine" — wrong on any other rig, and the reason session import needed
- * the whole user bank shipped alongside it. Sessions now embed the resolved
- * patch object and call this directly.
+ * The one caller left is a SESSION IMPORT restoring the grain block the session
+ * was played on (`patch` in the file — the resolved live block since 2026-09-03,
+ * a bank slot object before that; docs/EXPORT-IMPORT-AUDIT-2026-08.md § E4).
+ * It was split out of the bank's selectPreset for exactly that reason, and the
+ * bank has since gone (sandbox/sunset-2026-09-03).
  *
- * Everything here is deliberately sparse (`'key' in preset`): a user patch
- * saves only what it overrides, and an absent key must leave live state alone
+ * Everything here is deliberately sparse (`'key' in preset`): an old user patch
+ * saved only what it overrode, and an absent key must leave live state alone
  * rather than reset it to a default.
- *
- * Callers own the bank-facing side — active index, button highlight, HUD label.
- * This function must not touch them, or it stops being usable for a patch that
- * isn't in the bank at all.
  */
 export function applyPresetObject(preset) {
   if (!preset || typeof preset !== 'object') return;
-
-  // ── Empty-preset guard ────────────────────────────────────────────────
-  // If the preset has no parameter data (only name/userDefined), skip all
-  // parameter application — selecting an empty slot should change nothing.
-  if (!presetHasParams(preset)) {
-    syncAllUI();
-    drawPresetWaveform();
-    updatePresetStats();
-    S._patchTableRefresh?.();
-    S._syncPresetDropdown?.();
-    return;
-  }
 
   // ── Sparse application: only apply keys that exist in the preset ──────
   // For grain engine params, we still need the grainParams merge for
@@ -1879,9 +2319,14 @@ export function applyPresetObject(preset) {
   // fallback chain (grainOverrides → grainParams).
 
   // Check which grain-engine keys are present in this preset
-  // retriggerMs is not in PARAM_REGISTRY (no patch table row)
+  // retriggerMs is not in PARAM_REGISTRY
   // but factory presets may define it — keep here so factory recall still works.
-  const GRAIN_KEYS = ['duration', 'durJitter', 'durVar', 'fadeRatio', 'period',
+  // fadeMode/fadeMs sit here alongside fadeRatio so a preset fully determines
+  // its envelope.  Without them, selecting a preset would apply its fadeRatio
+  // while leaving the unit on whatever the last patch used — so a 'pct' preset
+  // loaded in 'ms' mode would silently ignore the ratio it was authored with.
+  const GRAIN_KEYS = ['duration', 'durJitter', 'startJitter', 'durVar',
+    'fadeRatio', 'fadeMode', 'fadeMs', 'period',
     'periodVar', 'pitchJitter', 'pitchShift', 'panSpread', 'volume', 'k',
     'retriggerMs'];
   const hasAnyGrainKey = GRAIN_KEYS.some(k => k in preset && preset[k] !== undefined && preset[k] !== null);
@@ -1890,83 +2335,47 @@ export function applyPresetObject(preset) {
     // Merge grain params — only present keys overwrite grainParams
     for (const k of GRAIN_KEYS) {
       if (k in preset && preset[k] !== undefined && preset[k] !== null) {
-        if (isLocked(k)) continue;   // ◆ param lock
         S.grainParams[k] = preset[k];
       }
     }
     // Clear overrides for keys that are mapped (so grainParams value is used)
     Object.keys(S.grainOverrides).forEach(k => {
       if (k in preset && preset[k] !== undefined && preset[k] !== null) {
-        if (isLocked(k)) return;     // ◆ param lock
         S.grainOverrides[k] = null;
       }
     });
   }
 
-  // Set curveType (and direction) BEFORE rebuildGrainCurves so the cached
-  // attack/release arrays are built for the incoming preset, not the old one.
+  // curveType maps to the worklet's envShape, which selects between its
+  // prebuilt hann/tri tables — there is nothing to recompute on change.
   if ('direction' in preset && preset.direction)  S.grainDirection  = preset.direction;
   if ('curveType' in preset && preset.curveType)  S.grainCurveType  = preset.curveType;
-  rebuildGrainCurves();
 
-  if ('nearestMode' in preset && typeof preset.nearestMode === 'boolean') S.nearestMode = preset.nearestMode;
+  // ── A brush owns the SOUND. The cursor owns where it points ──────────────
+  // `nearestMode`, `searchRadiusDeg`, `recencyN` and the radius-fade pair are
+  // deliberately NOT read here any more (#212). They used to be, and the result
+  // was that selecting a brush moved your reach and could flip your scope
+  // mid-set — glitch yanked the radius to 80°, stutter to 6°. Where you are
+  // pointing is not a property of the material you painted. Any such key left
+  // in an old user patch is stripped on load rather than ignored here, so there
+  // is one answer instead of a live key nothing reads.
+  //
+  // `k` and `grainKAllMode` DO belong to the brush: how many marks sound at
+  // once is character, not geometry. wash at k=99 and vinyl at k=1 are
+  // different instruments.
   if ('grainKAllMode' in preset && typeof preset.grainKAllMode === 'boolean') S.grainKAllMode = preset.grainKAllMode;
-  // Enforce constraint: k-all not allowed with k-nearest
-  if (S.nearestMode && S.grainKAllMode) S.grainKAllMode = false;
   if ('grainKSeqMode' in preset && typeof preset.grainKSeqMode === 'boolean') S.grainKSeqMode = preset.grainKSeqMode;
-  if (!isLocked('searchRadiusDeg') && 'searchRadiusDeg' in preset && typeof preset.searchRadiusDeg === 'number') S.searchRadiusDeg = preset.searchRadiusDeg;
-  if (!isLocked('recencyN') && 'recencyN' in preset && typeof preset.recencyN === 'number') {
-    if (typeof S.setRecency === 'function') S.setRecency(preset.recencyN);
-    else S.recencyN = preset.recencyN;
-  }
-  if (!isLocked('k') && 'k' in preset && typeof preset.k === 'number') {
+  if ('k' in preset && typeof preset.k === 'number') {
     if (typeof S.setSearchK === 'function') S.setSearchK(preset.k);
     else S.grainOverrides.k = preset.k;
   }
   if ('probability' in preset && typeof preset.probability === 'number') S.grainProbability = preset.probability;
-  if ('radiusFadeEnabled' in preset && typeof preset.radiusFadeEnabled === 'boolean') S.radiusFadeEnabled = preset.radiusFadeEnabled;
-  if ('radiusFadeCurve' in preset && typeof preset.radiusFadeCurve === 'number') S.radiusFadeCurve = preset.radiusFadeCurve;
 
   // ── Apply all additional sparse params (cursor, seed, looper, morph) ──
   applySparsePreset(preset);
 
   // Sync all UI controls
   syncAllUI();
-  drawPresetWaveform();
-  updatePresetStats();
-
-  // Update patch table highlight if open
-  S._patchTableRefresh?.();
-  // Sync dropdown selector
-  S._syncPresetDropdown?.();
-
-}
-
-/** Refresh all preset button labels from the in-memory PRESETS array.
- *  Call after loadUserPresets() to sync the DOM without a full page reload.
- *
- *  ⚠ Currently UNCALLED. Its only caller was session import, which stopped
- *  loading the user bank when sessions were decoupled from settings
- *  (docs/EXPORT-IMPORT-AUDIT-2026-08.md § E4). Kept because it's the piece any
- *  future runtime `loadUserPresets()` re-apply path needs — see the § E2 loader
- *  inventory. Delete it if that path never materialises. */
-export function refreshPresetButtons() {
-  const btns = document.querySelectorAll('.preset-btn');
-  btns.forEach((btn, i) => {
-    if (isUserPreset(i)) {
-      // User-defined slot — update the .preset-name span
-      const nameEl = btn.querySelector('.preset-name');
-      if (nameEl) nameEl.textContent = PRESETS[i].name;
-      btn.classList.toggle('user-preset', true);
-    } else {
-      // Factory preset — rebuild innerHTML preserving the structure
-      const numEl = btn.querySelector('.preset-num');
-      const num = numEl ? numEl.textContent : (i + 1);
-      btn.innerHTML = `<span class="preset-num">${num}</span>${PRESETS[i].name}`;
-    }
-  });
-  S._rebuildPresetDropdown?.();
-  S._rebuildMorphDropdowns?.();
 }
 
 export function updatePlaybackControls() {
@@ -2075,175 +2484,9 @@ export function flashRadiusTooltip() {
   S.radiusTooltipUntil = performance.now() + 1200;
 }
 
-export function drawPresetWaveform() {
-  const canvas = document.getElementById('presetWaveform');
-  if (!canvas) return;
-  const rect = canvas.parentElement.getBoundingClientRect();
-  const w = rect.width  || 180;
-  const h = rect.height || 48;
-  const dpr = window.devicePixelRatio;
-  const needW = Math.round(w * dpr), needH = Math.round(h * dpr);
-  if (canvas.width !== needW || canvas.height !== needH) {
-    canvas.width  = needW;
-    canvas.height = needH;
-  }
-  const c = canvas.getContext('2d');
-  c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  c.clearRect(0, 0, w, h);
-
-  // Reached from a ResizeObserver and from syncGrainControlsUI, neither of
-  // which validates the index first — so a stale S.activePresetIndex must not
-  // be able to throw out of the render path.
-  const pr = PRESETS[S.activePresetIndex];
-  if (!pr) return;
-
-  const liveDur    = Math.max(0.00001, S.grainOverrides.duration ?? pr.duration ?? gp().duration);
-  const livePeriod = Math.max(0.00001, S.grainOverrides.period   ?? pr.period   ?? gp().period);
-
-  const STATS_H = 11;
-  const drawH   = h - STATS_H;
-  const PAD     = 2;
-  const baseY   = drawH;
-  const maxAmp  = drawH;
-
-  const minPeriod = 2 * (livePeriod * 5 + liveDur) / Math.max(1, w);
-  const stride    = Math.max(minPeriod, livePeriod, 0.0001); // floor prevents NaN/Inf
-
-  const viewSec  = stride * 4.5 + liveDur;
-  const pxPerSec = w / viewSec;
-  const grainW   = liveDur * pxPerSec;
-
-  const atkShape = (t) => {
-    if (S.grainCurveType === 'tri')  return t;
-    if (S.grainCurveType === 'rect') return t <= 0 ? 0 : 1;
-    return 0.5 * (1 - Math.cos(Math.PI * t));
-  };
-  const relShape = (t) => {
-    if (S.grainCurveType === 'tri')  return 1 - t;
-    if (S.grainCurveType === 'rect') return t >= 1 ? 0 : 1;
-    return 0.5 * (1 + Math.cos(Math.PI * t));
-  };
-
-  const liveFadeRatio = S.grainOverrides.fadeRatio ?? pr.fadeRatio ?? gp().fadeRatio ?? 0.25;
-  const liveFade      = Math.min(liveDur / 2 - 0.0001, liveDur * Math.min(liveFadeRatio, 0.5));
-
-  const tints = ['#7abcbc', '#6090e0', '#e07060', '#a0c060', '#c060a0', '#e0a030', '#60a0e0', '#e06060'];
-  const tint  = tints[S.activePresetIndex % tints.length] || '#7abcbc';
-
-  // Hard cap: never draw more than 50 grain shapes.  At low period + high
-  // duration the raw count can reach 100+ shapes × 82 canvas ops each =
-  // 8 000+ path operations per frame → starves the grain scheduler.  50
-  // shapes is visually indistinguishable from 100 at these scales.
-  const MAX_WAVEFORM_GRAINS = 50;
-  const rawCount = stride > 0 ? Math.ceil(viewSec / stride) + 1 : 6;
-  const count    = Math.min(rawCount, MAX_WAVEFORM_GRAINS);
-  const STEPS    = Math.min(40, count > 30 ? 20 : 40); // coarser steps at high shape counts
-  const fadeW    = liveFade * pxPerSec;
-  const ampH     = maxAmp - PAD * 2;
-
-  // Reuse a single points array to avoid per-grain {x,y} allocation pressure.
-  // At STEPS=40: up to 41 + 1 + 41 = 83 points per grain.
-  const maxPts = STEPS * 2 + 3;
-  const ptsX = new Float64Array(maxPts);
-  const ptsY = new Float64Array(maxPts);
-
-  for (let i = 0; i < count; i++) {
-    // All grains drawn at nominal size — the viz shows the pattern, not stochastic variation
-    const xStart = i * stride * pxPerSec;
-    const fadeWi = liveFade * pxPerSec;
-    const sustWi = Math.max(0, grainW - fadeWi * 2);
-
-    let nPts = 0;
-    for (let s = 0; s <= STEPS; s++) {
-      const t = s / STEPS;
-      ptsX[nPts] = xStart + t * fadeWi;
-      ptsY[nPts] = baseY - PAD - atkShape(t) * ampH;
-      nPts++;
-    }
-    if (sustWi > 0) {
-      ptsX[nPts] = xStart + fadeWi + sustWi;
-      ptsY[nPts] = baseY - PAD - ampH;
-      nPts++;
-    }
-    for (let s = 0; s <= STEPS; s++) {
-      const t = s / STEPS;
-      ptsX[nPts] = xStart + fadeWi + sustWi + t * fadeWi;
-      ptsY[nPts] = baseY - PAD - relShape(t) * ampH;
-      nPts++;
-    }
-
-    c.beginPath();
-    c.moveTo(ptsX[0], baseY);
-    for (let j = 0; j < nPts; j++) c.lineTo(ptsX[j], ptsY[j]);
-    c.lineTo(ptsX[nPts - 1], baseY);
-    c.closePath();
-    c.globalAlpha = 0.1;
-    c.fillStyle = tint;
-    c.fill();
-
-    c.beginPath();
-    c.moveTo(ptsX[0], ptsY[0]);
-    for (let j = 1; j < nPts; j++) c.lineTo(ptsX[j], ptsY[j]);
-    c.globalAlpha = 0.65;
-    c.strokeStyle = tint;
-    c.lineWidth = 1.5;
-    c.stroke();
-  }
-  c.globalAlpha = 1;
-
-  c.globalAlpha = 0.15;
-  c.strokeStyle = '#ffffff';
-  c.lineWidth = 0.5;
-  c.beginPath();
-  c.moveTo(0, baseY); c.lineTo(w, baseY);
-  c.stroke();
-  c.globalAlpha = 1;
-
-  const durStr   = fmtMs(liveDur);
-  const perStr   = fmtMs(livePeriod);
-  const curveStr = (S.grainCurveType || 'hann').slice(0, 4);
-  const statY = h - 2;
-  const fs    = Math.max(7, Math.round(7.5 * window.devicePixelRatio) / window.devicePixelRatio);
-  c.font = `${fs}px 'Roboto Mono', monospace`;
-  c.textBaseline = 'bottom';
-
-  c.globalAlpha = 0.12;
-  c.strokeStyle = '#ffffff';
-  c.lineWidth = 0.5;
-  c.beginPath(); c.moveTo(0, drawH); c.lineTo(w, drawH); c.stroke();
-  c.globalAlpha = 1;
-
-  const pairs = [['dur', durStr], ['per', perStr], ['env', curveStr]];
-  const segW  = w / pairs.length;
-  pairs.forEach(([label, val], i) => {
-    const x = segW * i + 4;
-    c.textAlign = 'left';
-    c.fillStyle = '#444';
-    c.fillText(label + ' ', x, statY);
-    const labelW = c.measureText(label + ' ').width;
-    c.fillStyle = '#7abcbc';
-    c.fillText(val, x + labelW, statY);
-  });
-}
-
-export function updatePresetStats() {
-  const pr = PRESETS[S.activePresetIndex];
-  if (!pr) return;
-  const durEl = document.getElementById('psDur');
-  const kEl   = document.getElementById('psK');
-  const panEl = document.getElementById('psPan');
-  // Fall through to live grainParams when preset has no value (empty user slot)
-  const dur = pr.duration ?? (S.grainOverrides.duration ?? gp().duration);
-  const k   = pr.k       ?? (S.grainOverrides.k        ?? gp().k);
-  const pan = pr.panSpread ?? (S.grainOverrides.panSpread ?? gp().panSpread);
-  if (durEl) durEl.textContent = fmtMs(dur);
-  if (kEl)   kEl.textContent   = k === 0 ? 'nearest' : k;
-  if (panEl) panEl.textContent = Math.round((pan ?? 0) * 100) + '%';
-}
-
 // ── Grain controls panel ─────────────────────────────────────────────────────
 // Called once from main.js (or events.js) after DOM ready.
-// Registers S.syncGrainControlsUI so selectPreset can call it.
+// Registers S.syncGrainControlsUI so applyPresetObject and the tiles can call it.
 
 export function initGrainControls() {
   // ── Hybrid slider: linear-in-samples below threshold, log above ─────────
@@ -2331,6 +2574,26 @@ export function initGrainControls() {
       _sampleStep: true,
     },
     {
+      // Same hybrid ms scale as durVar / periodVar — absolute-time randomness,
+      // sample-exact in the low zone where the musically useful range sits
+      // (half the 50ms drop rate = 25ms, which is mid-slider here).
+      sliderId: 'gcStartJitterSlider', numId: 'gcStartJitterNum', param: 'startJitter',
+      toDisplay: v => v === 0 ? '0' : _fmtPeriodSmart(v),
+      sliderToInternal: sv => { const v = parseFloat(sv); return v <= 0 ? 0 : _sliderToMs(v - 1) / 1000; },
+      internalToSlider: v  => v <= 0 ? 0 : _msToSlider(v * 1000) + 1,
+      fromDisplay: str => {
+        if (str.trim() === '0') return 0;
+        const smpMatch = str.trim().match(/^(\d+)\s*smp/i);
+        if (smpMatch) {
+          const n = parseInt(smpMatch[1]);
+          return isNaN(n) ? null : Math.max(0, n / _sr());
+        }
+        const v = _parseMs(str);
+        return isNaN(v) ? null : Math.max(0, Math.min(0.5, v));
+      },
+      _sampleStep: true,
+    },
+    {
       sliderId: 'gcDurJitterSlider', numId: 'gcDurJitterNum', param: 'durJitter',
       toDisplay: v => Math.round(v * 100) + '%',
       sliderToInternal: sv => parseFloat(sv) / 100,
@@ -2338,11 +2601,28 @@ export function initGrainControls() {
       fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
     },
     {
-      sliderId: 'gcFadeSlider', numId: 'gcFadeNum', param: 'fadeRatio',
-      toDisplay: v => Math.round(v * 100) + '%',
-      sliderToInternal: sv => parseFloat(sv) / 100,
-      internalToSlider: v  => Math.round(v * 100),
-      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(0.5, v)); },
+      // One row, two params.  `param` is a getter so every read site
+      // (syncSliderFromInternal, commitNumbox, setGrainParam) resolves it at
+      // call time and follows the unit toggle without the descriptor system
+      // needing to know two rows exist.
+      sliderId: 'gcFadeSlider', numId: 'gcFadeNum',
+      get param() { return _fadeIsMs() ? 'fadeMs' : 'fadeRatio'; },
+      toDisplay: v => _fadeIsMs() ? Math.round(v * 1000) + 'ms' : Math.round(v * 100) + '%',
+      sliderToInternal: sv => _fadeIsMs() ? parseFloat(sv) / 1000 : parseFloat(sv) / 100,
+      internalToSlider: v  => _fadeIsMs() ? Math.round(v * 1000) : Math.round(v * 100),
+      fromDisplay: str => {
+        // Typing a unit also switches the mode, so "20ms" works without
+        // touching the label first.
+        const s = str.trim().toLowerCase();
+        if (/ms/.test(s)) _setFadeMode('ms');
+        else if (/%/.test(s)) _setFadeMode('pct');
+        if (_fadeIsMs()) {
+          const v = parseFloat(s.replace(/ms/g, '')) / 1000;
+          return isNaN(v) ? null : Math.max(0, Math.min(0.5, v));
+        }
+        const v = parseFloat(s.replace('%', '')) / 100;
+        return isNaN(v) ? null : Math.max(0, Math.min(0.5, v));
+      },
     },
     {
       sliderId: 'gcPeriodSlider', numId: 'gcPeriodNum', param: 'period',
@@ -2495,7 +2775,14 @@ export function initGrainControls() {
       },
     },
     {
-      sliderId: 'gcFilterQSlider', numId: 'gcFilterQNum', param: 'filterQ',
+      sliderId: 'gcHpfQSlider', numId: 'gcHpfQNum', param: 'hpfQ',
+      toDisplay: v => v.toFixed(2),
+      sliderToInternal: sv => parseFloat(sv),
+      internalToSlider: v => v,
+      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.1, Math.min(20, v)); },
+    },
+    {
+      sliderId: 'gcLpfQSlider', numId: 'gcLpfQNum', param: 'lpfQ',
       toDisplay: v => v.toFixed(2),
       sliderToInternal: sv => parseFloat(sv),
       internalToSlider: v => v,
@@ -2517,40 +2804,19 @@ export function initGrainControls() {
   function requestWaveformRedraw() {
     if (!_waveformRafId) _waveformRafId = requestAnimationFrame(() => {
       _waveformRafId = 0;
-      drawPresetWaveform();
+      S._drawEngineScope?.();
     });
   }
 
   // ── Forward grain params to worklet when active ────────────────────────
   // Maps main-thread param names/values to worklet message format.
   // Called on every slider change, preset selection, and direction/curve switch.
-  const _DIR_MAP  = { fwd: 0, rev: 1, rand: 2, rnd: 2 };
-  const _CURVE_MAP = { hann: 0, tri: 1, rect: 2 };
-
   function _syncWorkletParams() {
-    // Always sync — worklet is the only grain engine
-    const ov = S.grainOverrides;
-    const base = gp();
-    const msg = {
-      period:           ov.period           ?? base.period,
-      duration:         ov.duration         ?? base.duration,
-      volume:           ov.volume           ?? base.volume,
-      pitchShift:       ov.pitchShift       ?? base.pitchShift       ?? 0,
-      pitchJitter:      ov.pitchJitter      ?? base.pitchJitter      ?? 0,
-      periodVar:        ov.periodVar        ?? base.periodVar        ?? 0,
-      durVar:           ov.durVar           ?? base.durVar           ?? 0,
-      durJitter:        ov.durJitter        ?? base.durJitter        ?? 0,
-      probability:      S.grainProbability ?? 1.0,
-      direction:        _DIR_MAP[S.grainDirection]   ?? 0,
-      envShape:         _CURVE_MAP[S.grainCurveType] ?? 0,
-      hpfFreq:          ov.hpfFreq          ?? base.hpfFreq          ?? 20,
-      lpfFreq:          ov.lpfFreq          ?? base.lpfFreq          ?? 20000,
-      filterQ:          ov.filterQ          ?? base.filterQ          ?? 0.707,
-      filterFreqJitter: ov.filterFreqJitter ?? base.filterFreqJitter ?? 0,
-      kSeqMode:         S.grainKSeqMode ?? false,
-      panSpread:        ov.panSpread        ?? base.panSpread        ?? 0,
-    };
-    S._updateWorkletParams?.(msg);
+    // The param block itself comes from brush-voicing.js — the same builder a
+    // stroke freezes when it is painted. Two copies of this field list would
+    // drift silently and present as "this brush sounds different after I
+    // reload"; see the note on resolveGrainParams().
+    S._updateWorkletParams?.(resolveGrainParams());
   }
 
   function setGrainParam(param, internalVal) {
@@ -2572,8 +2838,7 @@ export function initGrainControls() {
       if (param === 'duration') internalVal = Math.max(minGrainDurS(), internalVal);
       if (param === 'period')   internalVal = Math.max(S.minPeriodS, internalVal);
       S.grainOverrides[param] = internalVal;
-      if (param === 'volume') rebuildGrainCurves();
-      if (param === 'duration' || param === 'period' || param === 'fadeRatio') requestWaveformRedraw();
+      if (param === 'duration' || param === 'period' || param === 'fadeRatio' || param === 'fadeMs') requestWaveformRedraw();
       if (param === 'period' || param === 'periodVar') resetCursorPeriod();
     }
     // When period or duration changes independently, passively update the overlap display
@@ -2592,16 +2857,49 @@ export function initGrainControls() {
     if (olDef) syncSliderFromInternal(olDef);
   }
 
+  // ── Fade unit (% of grain length vs fixed ms) ───────────────────────────
+  // The fade row is the only control bound to two params.  These helpers are
+  // the single source of truth for which one is live; the row descriptor, the
+  // label and the slider range all read through them.
+  function _fadeIsMs() {
+    return (S.grainOverrides.fadeMode ?? gp().fadeMode ?? 'pct') === 'ms';
+  }
+  function _setFadeMode(mode) {
+    S.grainOverrides.fadeMode = mode === 'ms' ? 'ms' : 'pct';
+  }
+  // Slider travel differs per unit: 0–50% vs 0–500ms.  Kept in sync here so
+  // flipping the unit can't leave the handle mapped to the old range.
+  function _syncFadeUnitUI() {
+    const ms = _fadeIsMs();
+    const lbl = document.getElementById('gcFadeUnitBtn');
+    if (lbl) lbl.textContent = ms ? 'fade ms' : 'fade %';
+    const slider = document.getElementById('gcFadeSlider');
+    if (slider) slider.max = ms ? '500' : '50';
+  }
+
   function syncSliderFromInternal(def) {
     const slider = document.getElementById(def.sliderId);
     const numbox = document.getElementById(def.numId);
     if (!slider || !numbox) return;
+    if (def.sliderId === 'gcFadeSlider') _syncFadeUnitUI();
     const val = def.param === 'overlap'     ? _getOverlapRatio()
               : def.param === 'probability' ? S.grainProbability
               : (S.grainOverrides[def.param] ?? gp()[def.param] ?? 0);
     slider.value = def.internalToSlider(val);
     if (document.activeElement !== numbox) numbox.value = def.toDisplay(val);
   }
+
+  // Clicking the fade label flips the unit.  Deliberately the label rather
+  // than a segmented control: the row is already label + slider + numbox +
+  // lock, and squeezing two more buttons in would cost the slider its travel.
+  document.getElementById('gcFadeUnitBtn')?.addEventListener('click', () => {
+    _setFadeMode(_fadeIsMs() ? 'pct' : 'ms');
+    _syncFadeUnitUI();
+    const def = SLIDER_DEFS.find(d => d.sliderId === 'gcFadeSlider');
+    if (def) syncSliderFromInternal(def);
+    requestWaveformRedraw();
+    _syncWorkletParams();
+  });
 
   const dirSeg   = document.getElementById('gcDirSeg');
   const curveSeg = document.getElementById('gcCurveSeg');
@@ -2650,6 +2948,12 @@ export function initGrainControls() {
     const commitNumbox = () => {
       const internal = def.fromDisplay(numbox.value);
       if (internal !== null) {
+        // The fade row can change unit as a side effect of what was typed
+        // ("20ms" vs "12%"), and the two units have different slider travel —
+        // refresh the range before assigning the handle position, or the value
+        // lands against the old max.  This path sets slider/numbox directly
+        // rather than going through syncSliderFromInternal().
+        if (def.sliderId === 'gcFadeSlider') _syncFadeUnitUI();
         setGrainParam(def.param, internal);
         slider.value = def.internalToSlider(internal);
         numbox.value = def.toDisplay(internal);
@@ -2704,8 +3008,6 @@ export function initGrainControls() {
       btn.addEventListener('click', () => {
         S.grainCurveType = btn.dataset.curve;
         curveSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.curve === S.grainCurveType));
-        rebuildGrainCurves();
-        drawPresetWaveform();
         _syncWorkletParams();
       });
     });
@@ -2736,7 +3038,7 @@ export function initGrainControls() {
   if (octResetBtn) octResetBtn.addEventListener('click', () => S._pitchOctave(0));
   if (octUpBtn)    octUpBtn   .addEventListener('click', () => S._pitchOctave(1));
 
-  // Register syncGrainControlsUI on S so selectPreset can call it
+  // Register syncGrainControlsUI on S so applyPresetObject can call it
   S.syncGrainControlsUI = function() {
     SLIDER_DEFS.forEach(syncSliderFromInternal);
     if (dirSeg)   dirSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.dir   === S.grainDirection));
@@ -2777,8 +3079,6 @@ export function initGrainControls() {
       b.classList.toggle('active', (b.dataset.kseq === 'on') === S.grainKSeqMode));
     updatePlaybackControls();
     drawRadiusViz();
-    drawPresetWaveform();
-    updatePresetStats();
     _syncWorkletParams();
   };
 
@@ -2877,274 +3177,4 @@ export function initGrainControls() {
 
   // Initial sync — pick up any persisted mappings from localStorage
   S._syncMappingHighlights();
-}
-
-// ============================================================================
-// DESKTOP MORPH — 1D slider morph for HCI (no sensor)
-// ============================================================================
-// Morphs the nearest non-moving seed's grain params between:
-//   left preset (t=0) ←→ planted grain settings (t=0.5) ←→ right preset (t=1)
-// Only active when nearest seed is stationary. Greyed out for moving seeds.
-
-/** Grain-engine keys that desktop morph interpolates (no search params). */
-const MORPH_GRAIN_KEYS = [
-  'duration', 'durJitter', 'durVar', 'period', 'periodVar',
-  'fadeRatio', 'pitchJitter', 'pitchShift', 'panSpread', 'volume',
-];
-
-/** Populate a preset dropdown (<select>) with user + factory presets. */
-function _populateMorphSelect(sel) {
-  sel.innerHTML = '<option value="-1">— none —</option>';
-  for (let i = 0; i < PRESETS.length; i++) {
-    const p = PRESETS[i];
-    const opt = document.createElement('option');
-    opt.value = i;
-    opt.textContent = `${i + 1}. ${p.name}`;
-    sel.appendChild(opt);
-  }
-}
-
-/** Apply morph interpolation to the nearest seed's grainOverrides. */
-function _applyDesktopMorph(seed) {
-  if (!seed) return;
-
-  const t = S.desktopMorphT;
-  const idxL = S.desktopMorphPresetL;
-  const idxR = S.desktopMorphPresetR;
-
-  // Center position → clear overrides (seed plays its planted params)
-  if (Math.abs(t - 0.5) < 0.002) {
-    // Reset seed.grainOverrides for morph keys only
-    for (const k of MORPH_GRAIN_KEYS) {
-      if (seed.grainOverrides[k] !== undefined) delete seed.grainOverrides[k];
-    }
-    if (seed.grainParams._cachedAtk) seed.grainParams._cachedAtk = null;
-    return;
-  }
-
-  // Planted params = the center reference
-  const center = seed.grainParams;
-
-  if (t < 0.5) {
-    // Morph toward left preset
-    if (idxL < 0 || !PRESETS[idxL]) return;
-    const left = PRESETS[idxL];
-    const localT = 1 - (t / 0.5); // 0 at center, 1 at far left
-    const lerped = lerpPresets(center, left, localT);
-    for (const k of MORPH_GRAIN_KEYS) {
-      if (typeof lerped[k] === 'number') seed.grainOverrides[k] = lerped[k];
-    }
-  } else {
-    // Morph toward right preset
-    if (idxR < 0 || !PRESETS[idxR]) return;
-    const right = PRESETS[idxR];
-    const localT = (t - 0.5) / 0.5; // 0 at center, 1 at far right
-    const lerped = lerpPresets(center, right, localT);
-    for (const k of MORPH_GRAIN_KEYS) {
-      if (typeof lerped[k] === 'number') seed.grainOverrides[k] = lerped[k];
-    }
-  }
-
-  // Invalidate envelope curve cache so the worklet picks up new fadeRatio
-  if (seed.grainParams._cachedAtk) seed.grainParams._cachedAtk = null;
-}
-
-/** Start a return-to-center animation when the slider is released. */
-function _startReturnToCenter(slider) {
-  cancelAnimationFrame(S._desktopMorphAnimId);
-  const startT   = S.desktopMorphT;
-  const startMs  = performance.now();
-  const duration = S.desktopMorphReturnMs;
-
-  function tick(now) {
-    const elapsed = now - startMs;
-    const progress = Math.min(1, elapsed / duration);
-    // Ease-in-out sine — smooth start and end, visible motion across full duration
-    const ease = 0.5 - 0.5 * Math.cos(progress * Math.PI);
-    S.desktopMorphT = startT + (0.5 - startT) * ease;
-    slider.value = S.desktopMorphT;
-
-    // Apply to seed
-    const { lon, lat } = getCursorPos();
-    const slot = findNearestSeedSlot(lon, lat);
-    if (slot >= 0) _applyDesktopMorph(S.seedSlots[slot]);
-
-    if (progress < 1) {
-      S._desktopMorphAnimId = requestAnimationFrame(tick);
-    }
-  }
-  S._desktopMorphAnimId = requestAnimationFrame(tick);
-}
-
-export function initDesktopMorph() {
-  const section   = document.getElementById('desktopMorphSection');
-  const slider    = document.getElementById('morphSlider');
-  const selectL   = document.getElementById('morphPresetL');
-  const selectR   = document.getElementById('morphPresetR');
-  const stickySeg = document.getElementById('morphStickySeg');
-  const returnSl  = document.getElementById('morphReturnSlider');
-  const returnNum = document.getElementById('morphReturnNum');
-  const returnRow = document.getElementById('morphReturnRow');
-  if (!section || !slider || !selectL || !selectR) return;
-
-  // ── Restore persisted morph settings from localStorage ──────────────
-  const _MORPH_KEY = 'mubone_desktop_morph';
-  function _loadMorphSettings() {
-    try {
-      const raw = localStorage.getItem(_MORPH_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (typeof saved.presetL === 'number') S.desktopMorphPresetL = saved.presetL;
-      if (typeof saved.presetR === 'number') S.desktopMorphPresetR = saved.presetR;
-      if (typeof saved.sticky  === 'boolean') S.desktopMorphSticky = saved.sticky;
-      if (typeof saved.returnMs === 'number') S.desktopMorphReturnMs = saved.returnMs;
-    } catch (_) {}
-  }
-  function _saveMorphSettings() {
-    try {
-      localStorage.setItem(_MORPH_KEY, JSON.stringify({
-        presetL:  S.desktopMorphPresetL,
-        presetR:  S.desktopMorphPresetR,
-        sticky:   S.desktopMorphSticky,
-        returnMs: S.desktopMorphReturnMs,
-      }));
-    } catch (_) {}
-  }
-  _loadMorphSettings();
-
-  // Populate dropdowns
-  _populateMorphSelect(selectL);
-  _populateMorphSelect(selectR);
-  selectL.value = S.desktopMorphPresetL;
-  selectR.value = S.desktopMorphPresetR;
-
-  // Rebuild dropdowns when user presets change (name edits, saves)
-  S._rebuildMorphDropdowns = () => {
-    const curL = selectL.value, curR = selectR.value;
-    _populateMorphSelect(selectL);
-    _populateMorphSelect(selectR);
-    selectL.value = curL;
-    selectR.value = curR;
-  };
-
-  // Dropdown handlers
-  selectL.addEventListener('change', () => {
-    S.desktopMorphPresetL = parseInt(selectL.value, 10);
-    _saveMorphSettings();
-  });
-  selectR.addEventListener('change', () => {
-    S.desktopMorphPresetR = parseInt(selectR.value, 10);
-    _saveMorphSettings();
-  });
-
-  // Slider interaction
-  let sliderActive = false;
-  slider.addEventListener('input', () => {
-    // Cancel any in-flight return animation so it doesn't fight the user drag
-    cancelAnimationFrame(S._desktopMorphAnimId);
-    S._desktopMorphAnimId = 0;
-    sliderActive = true;
-    S.desktopMorphT = parseFloat(slider.value);
-    // Apply morph to nearest non-moving seed
-    const { lon, lat } = getCursorPos();
-    const slot = findNearestSeedSlot(lon, lat);
-    if (slot >= 0) _applyDesktopMorph(S.seedSlots[slot]);
-  });
-
-  // On release, optionally return to center.
-  // Use 'change' event — it fires reliably when slider interaction ends,
-  // even if the pointer leaves the slider element (dragging to edges).
-  // Also listen on document pointerup as a safety net for edge drags.
-  const onRelease = () => {
-    if (!sliderActive) return;
-    sliderActive = false;
-    if (!S.desktopMorphSticky) {
-      _startReturnToCenter(slider);
-    }
-  };
-  slider.addEventListener('change', onRelease);
-  document.addEventListener('pointerup', (e) => {
-    // Only trigger if slider was active (avoids spurious fires)
-    if (sliderActive) onRelease();
-  });
-
-  // Sticky toggle
-  stickySeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const sticky = btn.dataset.sticky === 'true';
-      S.desktopMorphSticky = sticky;
-      stickySeg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active', (b.dataset.sticky === 'true') === sticky));
-      // Grey out return time row when sticky (don't hide — just disable)
-      if (returnRow) {
-        returnRow.style.opacity = sticky ? '0.35' : '';
-        returnRow.style.pointerEvents = sticky ? 'none' : '';
-      }
-      _saveMorphSettings();
-    });
-  });
-  // Init sticky toggle from persisted state
-  stickySeg.querySelectorAll('.grain-seg-btn').forEach(b =>
-    b.classList.toggle('active', (b.dataset.sticky === 'true') === S.desktopMorphSticky));
-  // Init return row visibility (greyed out when sticky)
-  if (returnRow) {
-    returnRow.style.opacity = S.desktopMorphSticky ? '0.35' : '';
-    returnRow.style.pointerEvents = S.desktopMorphSticky ? 'none' : '';
-  }
-
-  // Return time slider
-  if (returnSl && returnNum) {
-    returnSl.value = S.desktopMorphReturnMs;
-    returnNum.value = S.desktopMorphReturnMs + 'ms';
-    returnSl.addEventListener('input', () => {
-      S.desktopMorphReturnMs = parseInt(returnSl.value, 10);
-      returnNum.value = S.desktopMorphReturnMs + 'ms';
-    });
-    returnSl.addEventListener('change', _saveMorphSettings);
-  }
-
-  // Hook into updateSeedBanksUI to grey out panel when no seeds exist
-  const _origUpdateSeedBanksUI = updateSeedBanksUI;
-  S.updateSeedBanksUI = function() {
-    _origUpdateSeedBanksUI();
-    const count = S.seedSlots.filter(c => c !== null).length;
-    if (count === 0) {
-      section.classList.add('morph-disabled');
-    } else {
-      section.classList.remove('morph-disabled');
-    }
-  };
-
-  // ── S callbacks for MIDI / OSC access to cloud morph ────────────────────
-  // Set morph position (0–1) from external source (CC fader, OSC float).
-  // Cancels any in-flight return animation and applies morph to nearest seed.
-  S._setDesktopMorphT = (t) => {
-    cancelAnimationFrame(S._desktopMorphAnimId);
-    S._desktopMorphAnimId = 0;
-    S.desktopMorphT = Math.max(0, Math.min(1, t));
-    if (slider) slider.value = S.desktopMorphT;
-    const { lon, lat } = getCursorPos();
-    const slot = findNearestSeedSlot(lon, lat);
-    if (slot >= 0) _applyDesktopMorph(S.seedSlots[slot]);
-  };
-
-  // Toggle sticky mode from external trigger.
-  S._toggleDesktopMorphSticky = () => {
-    S.desktopMorphSticky = !S.desktopMorphSticky;
-    if (stickySeg) stickySeg.querySelectorAll('.grain-seg-btn').forEach(b =>
-      b.classList.toggle('active', (b.dataset.sticky === 'true') === S.desktopMorphSticky));
-    if (returnRow) {
-      returnRow.style.opacity = S.desktopMorphSticky ? '0.35' : '';
-      returnRow.style.pointerEvents = S.desktopMorphSticky ? 'none' : '';
-    }
-    _saveMorphSettings();
-  };
-
-  // Set return time from external CC (50–3000 ms).
-  S._setDesktopMorphReturnMs = (ms) => {
-    S.desktopMorphReturnMs = Math.max(50, Math.min(3000, Math.round(ms)));
-    if (returnSl) returnSl.value = S.desktopMorphReturnMs;
-    if (returnNum) returnNum.value = S.desktopMorphReturnMs + 'ms';
-    _saveMorphSettings();
-  };
 }

@@ -2,9 +2,40 @@
 // ELECTRON MAIN PROCESS — mubone desktop wrapper
 // ============================================================================
 
-const { app, BrowserWindow, session, ipcMain, screen } = require('electron');
+const { app, BrowserWindow, session, ipcMain, screen, nativeImage } = require('electron');
+
+// Who held the loop (2026-09-06, R6): every ipcMain handler, socket and
+// serial callback is timed, and the loop's own gaps and GC pauses counted —
+// electron-loop-probe.js, shared with the audio host. This is the browser
+// thread; the hops live on the host's loop now.
+const probe = require('./electron-loop-probe.js');
+const timed = probe.timed;
+probe.wrapIpcMain(ipcMain);
 const path  = require('path');
 const dgram = require('dgram');
+
+// ── Timer throttling — off, unconditionally ──────────────────────────────────
+// Chromium throttles setTimeout/setInterval to ~1 Hz in any renderer it thinks
+// nobody is looking at, and on macOS "occluded" means *fully covered by another
+// window* — one visible pixel of mubone and the throttle lifts. That is a
+// desktop-browser power optimisation and it is actively wrong for a performance
+// instrument: the machine is doing exactly as much work either way, and the
+// window being covered says nothing about whether a show is running.
+//
+// It bites anything on a JS timer. `paint-ticker.js` polls at 200 Hz to keep
+// the particle deposit clock tight — throttled, that becomes 1 Hz and painting
+// deposits stop tracking the cursor. The speaker sweep's per-channel step is a
+// setTimeout, which is how this was first noticed (sweep crawls when covered).
+// Web Audio and the grain worklet run on the audio thread and are NOT affected,
+// so the symptom is timing drift in the control layer, not dropouts — which
+// makes it easy to misread as a performance problem.
+//
+// Three switches plus the per-window flag below, because they cover different
+// paths: timer throttling, renderer backgrounding, and macOS occlusion.
+// Revert only if idle power draw ever matters more than timing does.
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
 // ── Serial (x-IMU3 USB CDC) ────────────────────────────────────────────────
 // Lazy-loaded — serialport is optional (WiFi-only setups don't need it).
@@ -42,6 +73,15 @@ function argValue(name) {
 }
 
 const INSTANCE = (argValue('instance') || '').replace(/[^A-Za-z0-9_-]/g, '') || null;
+
+// Audit instances stay out of the way. scripts/lib/rig.js sets this for every
+// launch(): the window is created hidden and shown INACTIVE — it never takes
+// focus and never pulls macOS to its Space — and the dock icon is hidden so the
+// app cannot bounce or activate. Ek runs the suites while working on another
+// desktop; seven suites = seven windows stealing the screen (2026-09-05).
+// capturePage still renders an inactive window, so screenshots and the layout
+// audits are unaffected. Never set for the app you play.
+const BACKGROUND = process.env.MUBONE_RIG_BACKGROUND === '1';
 
 // Multi-station tiling: when the launcher passes --station-count=N, each
 // instance sizes itself to 1/N of the display and parks in its own column
@@ -207,13 +247,13 @@ function parseOSC(buf) {
 function startOSCReceiver() {
   const sock = dgram.createSocket('udp4');
 
-  sock.on('message', (msg) => {
+  sock.on('message', timed('udp:osc', (msg) => {
     if (!_oscWin || _oscWin.isDestroyed()) return;
     const parsed = parseOSC(msg);
     if (!parsed) return;
     // Broadcast all OSC to renderer — osc.js dispatches to sensor, grain params, etc.
     _oscWin.webContents.send('osc-message', parsed.address, parsed.values);
-  });
+  }));
 
   sock.on('error', (err) => {
     console.warn(`[OSC] UDP error: ${err.message}`);
@@ -245,7 +285,7 @@ let _ximu3CmdSock       = null;   // socket for sending commands
 function startXIMU3Discovery() {
   _ximu3DiscoverySock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
-  _ximu3DiscoverySock.on('message', (msg, rinfo) => {
+  _ximu3DiscoverySock.on('message', timed('udp:ximu3-discovery', (msg, rinfo) => {
     if (!_oscWin || _oscWin.isDestroyed()) return;
     try {
       const json = JSON.parse(msg.toString('utf8'));
@@ -255,7 +295,7 @@ function startXIMU3Discovery() {
     } catch (_) {
       // Not JSON — ignore (might be data on wrong port)
     }
-  });
+  }));
 
   _ximu3DiscoverySock.on('error', (err) => {
     console.warn(`[x-IMU3] discovery UDP error: ${err.message}`);
@@ -282,7 +322,7 @@ function startXIMU3DataListener(port) {
   entry = { sock, refs: 1, bufs: new Map() };
   _ximu3DataSocks.set(port, entry);
 
-  sock.on('message', (msg, rinfo) => {
+  sock.on('message', timed('udp:ximu3-data', (msg, rinfo) => {
     if (!_oscWin || _oscWin.isDestroyed()) return;
     const sourceIP = rinfo.address;
     let buf = entry.bufs.get(sourceIP) || '';
@@ -307,7 +347,7 @@ function startXIMU3DataListener(port) {
       }
     }
     entry.bufs.set(sourceIP, buf);
-  });
+  }));
 
   sock.on('error', (err) => {
     console.warn(`[x-IMU3] data UDP error on port ${port}: ${err.message}`);
@@ -389,7 +429,7 @@ function openSerialPortFn(portPath) {
 
     const parser = port.pipe(new ReadlineParser({ delimiter: '\n' }));
 
-    parser.on('data', (line) => {
+    parser.on('data', timed('serial:data', (line) => {
       if (!_oscWin || _oscWin.isDestroyed()) return;
       line = line.trim();
       if (!line) return;
@@ -404,7 +444,7 @@ function openSerialPortFn(portPath) {
         // Data message — same format as UDP
         _oscWin.webContents.send('ximu3-serial-data', portPath, line);
       }
-    });
+    }));
 
     port.on('error', (err) => {
       console.warn(`[serial] ${portPath} error: ${err.message}`);
@@ -446,192 +486,53 @@ function sendSerialCommandFn(portPath, jsonStr) {
   });
 }
 
-// ── audify (RtAudio) ──────────────────────────────────────────────────────────
-const { RtAudio, RtAudioFormat } = require('audify');
-
-let rtAudio    = null;
-let rtAudioIn  = null;   // separate RtAudio instance for input capture
-let audioDeviceId = -1;  // -1 = default device
-
-// Single RtAudio instance used only for device enumeration.
-// Creating throwaway instances while a stream is active can destabilise
-// CoreAudio on macOS (SIGBUS in the IO thread).
+// ── The audio host ────────────────────────────────────────────────────────────
+// audify and both audio streams live in audio-host.js, a utility process
+// with nothing else on its loop (2026-09-06, R2 of
+// docs/PERFORMANCE-AUDIT-2026-09.md). This process only forwards: the audio
+// ports the preload makes go straight to the host, and the device requests
+// from the renderer are relayed as request/response. If the host dies it is
+// respawned; the renderer's next device pick reattaches the ports.
+const { utilityProcess } = require('electron');
+let _host = null, _hostSeq = 0, _quitting = false;
+// Device ENUMERATION stays here, on its own RtAudio instance: getDevices()
+// holds a loop for 65 ms, which is nothing on this thread and a hole on the
+// host's. CoreAudio ids are global, so the host opens by the same id.
+const { RtAudio } = require('audify');
 let _rtEnum = null;
 function getEnumerator() {
   if (!_rtEnum) _rtEnum = new RtAudio();
   return _rtEnum;
 }
+const _hostPending = new Map();   // id → resolve
 
-// ── Audio output stream ───────────────────────────────────────────────────────
-
-const DEFAULT_BUFFER_FRAMES = 1024;  // safe default for 48 kHz on macOS
-
-function createOutputStream(deviceId, numChannels, bufferFrames, preferredRate) {
-  // Immediately block IPC writes — the stream is about to be torn down.
-  // The audio-buffer handler checks this and drops all incoming buffers,
-  // preventing writes to a half-closed or mismatched stream (which SIGBUS).
-  _expectedAudioBytes = 0;
-
-  // Close and destroy the old instance.  Safe now because the write guard
-  // above prevents any rtAudio.write() calls while _expectedAudioBytes === 0.
-  if (rtAudio) {
-    try { if (rtAudio.isStreamRunning()) rtAudio.stop(); } catch (_) {}
-    try { if (rtAudio.isStreamOpen()) rtAudio.closeStream(); } catch (_) {}
-    rtAudio = null;
-  }
-
-  const devices = getEnumerator().getDevices();
-  const device  = devices.find(d => d.id === deviceId);
-
-  if (!device) {
-    console.warn(`audify: device ${deviceId} not found — stream not opened`);
-    return;
-  }
-
-  // Use requested channel count, clamped to what the device actually supports
-  const nCh = Math.min(numChannels || device.outputChannels, device.outputChannels);
-  if (nCh < 1) {
-    console.warn(`audify: device "${device.name}" has no output channels`);
-    return;
-  }
-
-  const frames = bufferFrames || DEFAULT_BUFFER_FRAMES;
-
-  // Try sample rates in preference order. Match the AudioContext rate first
-  // to avoid resampling between Web Audio and RtAudio (causes crunchiness/delay).
-  const preferred = preferredRate || 48000;
-  const ratesToTry = [...new Set([preferred, 48000, 44100])];
-  let openedRate = null;
-
-  // Fresh instance for each device — channel count and config differ between
-  // devices and RtAudio's internal ring buffers are sized at openStream time.
-  rtAudio = new RtAudio();
-
-  for (const rate of ratesToTry) {
-    try {
-      rtAudio.openStream(
-        { deviceId, nChannels: nCh },
-        null,
-        RtAudioFormat.RTAUDIO_FLOAT32,
-        rate,
-        frames,
-        'mubone-spatial',
-        null,
-        null
-      );
-      openedRate = rate;
-      break; // success — stop trying
-    } catch (e) {
-      console.warn(`audify: ${rate} Hz failed on "${device.name}" — ${e.message}`);
-      try { if (rtAudio.isStreamOpen()) rtAudio.closeStream(); } catch(_) {}
-    }
-  }
-
-  if (!openedRate) {
-    console.error(`audify: could not open stream on "${device.name}" at any sample rate`);
-    rtAudio = null;
-    return;
-  }
-
-  rtAudio.start();
-  // Float32 = 4 bytes/sample. audify expects exactly frames × nCh × 4 per write().
-  _expectedAudioBytes = frames * nCh * 4;
-  _ipcDropCount = 0;
-  console.log(`audify stream started — "${device.name}", ${nCh} ch @ ${openedRate} Hz, buffer ${frames} frames (${_expectedAudioBytes} bytes/write)`);
+function startAudioHost() {
+  _host = utilityProcess.fork(path.join(__dirname, 'audio-host.js'), [], { serviceName: 'mubone audio host', stdio: 'pipe' });
+  // Through console so the dev bridge's capture sees the host's lines too.
+  _host.stdout?.on('data', (d) => console.log(String(d).trimEnd()));
+  _host.stderr?.on('data', (d) => console.error(String(d).trimEnd()));
+  _host.on('message', (m) => {
+    const resolve = m && _hostPending.get(m.id);
+    if (resolve) { _hostPending.delete(m.id); resolve(m.result); }
+  });
+  _host.on('exit', (code) => {
+    console.warn(`[audio-host] exited (${code})`);
+    for (const resolve of _hostPending.values()) resolve({ error: 'audio host exited' });
+    _hostPending.clear();
+    _host = null;
+    if (!_quitting) setTimeout(startAudioHost, 500);
+  });
 }
-
-// ── Audio input stream (RtAudio) ──────────────────────────────────────────────
-// Opens a separate RtAudio input-only stream, sends raw interleaved Float32 PCM
-// to the renderer via webContents.send('audio-input-buffer') so the input-meter
-// worklet can feed AnalyserNodes for the multichannel meter strip.
-
-function createInputStream(deviceId, numChannels, bufferFrames, win, preferredRate) {
-  // Close and destroy the old input instance.
-  if (rtAudioIn) {
-    try { if (rtAudioIn.isStreamRunning()) rtAudioIn.stop(); } catch(_) {}
-    try { if (rtAudioIn.isStreamOpen()) rtAudioIn.closeStream(); } catch(_) {}
-    rtAudioIn = null;
-  }
-  if (!win || win.isDestroyed()) return;
-
-  const devices = getEnumerator().getDevices();
-  const device  = devices.find(d => d.id === deviceId);
-
-  if (!device) {
-    console.warn(`audify input: device ${deviceId} not found`);
-    return;
-  }
-
-  // Warn about potential clock drift when I/O share the same device
-  if (rtAudio && audioDeviceId === deviceId) {
-    console.warn('[audify] Input and output share the same device — separate RtAudio instances may drift over long sessions. Consider duplex mode for sessions > 30min.');
-  }
-
-  const nCh = Math.min(numChannels || device.inputChannels, device.inputChannels);
-  if (nCh < 1) {
-    console.warn(`audify input: device "${device.name}" has no input channels`);
-    return;
-  }
-
-  const frames = bufferFrames || DEFAULT_BUFFER_FRAMES;
-
-  // Match AudioContext sample rate first to avoid resampling
-  const preferred = preferredRate || 48000;
-  const ratesToTry = [...new Set([preferred, 48000, 44100])];
-  let openedRate = null;
-
-  // Fresh instance — channel count and config differ between devices.
-  rtAudioIn = new RtAudio();
-
-  for (const rate of ratesToTry) {
-    try {
-      rtAudioIn.openStream(
-        null,                         // no output
-        { deviceId, nChannels: nCh }, // input parameters
-        RtAudioFormat.RTAUDIO_FLOAT32,
-        rate,
-        frames,
-        'mubone-input',
-        (inputData) => {
-          // inputData is a Node Buffer of interleaved Float32 samples
-          if (win.isDestroyed()) return;
-          const f32 = new Float32Array(inputData.buffer, inputData.byteOffset, inputData.length / 4);
-          win.webContents.send('audio-input-buffer', f32, nCh);
-        },
-        null
-      );
-      openedRate = rate;
-      break;
-    } catch (e) {
-      console.warn(`audify input: ${rate} Hz failed — ${e.message}`);
-      try { if (rtAudioIn.isStreamOpen()) rtAudioIn.closeStream(); } catch(_) {}
-    }
-  }
-
-  if (!openedRate) {
-    console.error(`audify input: could not open stream on "${device.name}"`);
-    rtAudioIn = null;
-    return;
-  }
-
-  rtAudioIn.start();
-  console.log(`audify input stream started — "${device.name}", ${nCh} ch @ ${openedRate} Hz`);
-  return { nCh, rate: openedRate, name: device.name };
+function hostCall(type, args = {}) {
+  return new Promise((resolve) => {
+    if (!_host) return resolve({ error: 'no audio host' });
+    const id = ++_hostSeq;
+    _hostPending.set(id, resolve);
+    _host.postMessage({ id, type, ...args });
+  });
 }
 
 // ── IPC handlers ──────────────────────────────────────────────────────────────
-
-// Expected byte count for one audify write call.
-// Recomputed whenever the output stream is (re)opened.
-let _expectedAudioBytes = 0;
-
-// Credit-based flow control for IPC audio path.
-// Main process sends credits back to renderer; renderer pauses when exhausted.
-// The credit BALANCE lives renderer-side (audio.js) — main just refunds one
-// credit per CONSUMED buffer, whether written or dropped. (Dead
-// `_ipcAudioCredits` mirror removed in the Jul 2026 perf audit — it was
-// written but never read.)
-let _ipcDropCount = 0;            // consecutive drops — throttled warning
 
 function setupIPC() {
   // Renderer → main: outbound OSC (status uplink to relay/joycon GUI).
@@ -649,81 +550,47 @@ function setupIPC() {
     sendOSCExternal(host, port, address, values);
   });
 
-  // Receive N-channel interleaved Float32Array from renderer and push to RtAudio.
-  // Guard against size mismatches — these happen transiently when the output device
-  // is switched (worklet and audify briefly disagree on channel count or buffer size).
-  // Drop the buffer silently rather than crashing audify.
-  ipcMain.on('audio-buffer', (event, interleavedFloat32) => {
-    // Refund one credit for every CONSUMED buffer — written OR dropped
-    // (perf audit H3, Jul 2026). Credits were previously only refunded on a
-    // successful rtAudio.write(), so every buffer dropped during stream
-    // teardown or a size mismatch permanently destroyed a credit; enough
-    // device/buffer-size switches could drain all 8 and silence output until
-    // the user re-picked the device. Refunding on drops keeps the pipeline
-    // flowing (drops during teardown are intentional); backpressure is still
-    // enforced because the refund only arrives after main has processed the
-    // buffer — a blocked rtAudio.write() delays it exactly as before.
-    const refund = () => {
-      if (!event.sender.isDestroyed()) event.sender.send('audio-credit', 1);
-    };
-    if (!rtAudio || !rtAudio.isStreamRunning()) return refund();
-    // _expectedAudioBytes === 0 means the stream is being torn down / reopened —
-    // drop everything until the new stream sets the expected size.
-    if (_expectedAudioBytes === 0) return refund();
-    const buf = Buffer.from(interleavedFloat32.buffer);
-    if (buf.length !== _expectedAudioBytes) {
-      // Throttled mismatch warning (max 1 per second)
-      _ipcDropCount++;
-      if (_ipcDropCount === 1 || _ipcDropCount % 100 === 0) {
-        console.warn(`[audio-buffer] size mismatch: got ${buf.length}, expected ${_expectedAudioBytes} — dropped ${_ipcDropCount} buffers`);
-      }
-      return refund();
-    }
-    _ipcDropCount = 0;
-    try {
-      rtAudio.write(buf);
-    } catch (e) {
-      console.error(`[audio-buffer] write error: ${e.message}`);
-      return refund();
-    }
-    refund();
+  // The two audio ports (2026-09-06). The preload makes a MessageChannel per
+  // hop and posts one end here; it goes straight on to the audio host, whose
+  // loop the hops live on. The other end is transferred into the worklet
+  // (audio.js requestAudioPort).
+  ipcMain.on('audio-port', (event, msg) => {
+    const port = event.ports && event.ports[0];
+    if (!port) return;
+    if (!_host) { try { port.close(); } catch (_) {} return; }
+    _host.postMessage({ type: 'audio-port', kind: msg && msg.kind }, [port]);
   });
 
+  // The queue's depth and faults, and the host loop's own gaps and holders
+  // (the loop the hops live on), plus this loop's under `main` — the browser
+  // thread, kept for the record.
+  // `gaps` arms both loop probes for ten seconds (P1): the 1 Hz depth poll
+  // passes false, so a show pays nothing for a gauge nobody is reading.
+  ipcMain.handle('get-output-depth', async (_e, gaps) =>
+    ({ ...(await hostCall('get-output-depth', { gaps: !!gaps })), main: probe.stats(!!gaps) }));
+
+  // The stall cushion, for the prime depth (audio.js applyAudioCushion).
+  ipcMain.on('set-audio-cushion', (_event, ms) => { if (ms > 0 && _host) _host.postMessage({ type: 'set-audio-cushion', ms }); });
+
+  ipcMain.handle('get-stream-latency', () => hostCall('get-stream-latency'));
   // List all output devices with channel counts, flagging the system default
   ipcMain.handle('get-audio-devices', () => {
     const rt        = getEnumerator();
     const defaultId = rt.getDefaultOutputDevice();
     return rt.getDevices()
       .filter(d => d.outputChannels > 0)
-      .map(d => ({
-        ...d,
-        isDefault:   d.id === defaultId,
-        quadCapable: d.outputChannels >= 4,
-      }));
+      .map(d => ({ ...d, isDefault: d.id === defaultId, quadCapable: d.outputChannels >= 4 }));
   });
-
   // List all input devices with true channel counts (via RtAudio, not WebRTC)
   ipcMain.handle('get-input-devices', () => {
     const rt        = getEnumerator();
     const defaultId = rt.getDefaultInputDevice();
     return rt.getDevices()
       .filter(d => d.inputChannels > 0)
-      .map(d => ({
-        ...d,
-        isDefault: d.id === defaultId,
-      }));
+      .map(d => ({ ...d, isDefault: d.id === defaultId }));
   });
-
-  // Open RtAudio input stream for multichannel metering
-  // Returns { ok, nCh, sampleRate, name } or { ok: false, error }
-  ipcMain.handle('set-input-device', (event, deviceId, numChannels, bufferFrames, sampleRate) => {
-    const win    = BrowserWindow.fromWebContents(event.sender);
-    const result = createInputStream(deviceId, numChannels, bufferFrames, win, sampleRate);
-    if (result) {
-      return { ok: true, nCh: result.nCh, sampleRate: result.rate, name: result.name };
-    }
-    return { ok: false, error: 'could not open input stream' };
-  });
+  ipcMain.handle('set-input-device', (_event, deviceId, numChannels, bufferFrames, sampleRate) =>
+    hostCall('set-input-device', { deviceId, numChannels, bufferFrames, sampleRate }));
 
   // Restart the app (used by buffer-size change which can't safely reopen streams)
   ipcMain.on('app-restart', () => {
@@ -731,14 +598,8 @@ function setupIPC() {
     app.exit(0);
   });
 
-  // Switch output device at runtime — accepts (deviceId, numChannels, bufferFrames)
-  ipcMain.handle('set-audio-device', (event, deviceId, numChannels, bufferFrames, sampleRate) => {
-    audioDeviceId = deviceId;
-    createOutputStream(deviceId, numChannels, bufferFrames, sampleRate);
-    const streaming  = !!(rtAudio && rtAudio.isStreamRunning());
-    const actualRate = streaming ? (rtAudio.getStreamSampleRate?.() ?? null) : null;
-    return { ok: true, streaming, sampleRate: actualRate };
-  });
+  ipcMain.handle('set-audio-device', (_event, deviceId, numChannels, bufferFrames, sampleRate) =>
+    hostCall('set-audio-device', { deviceId, numChannels, bufferFrames, sampleRate }));
 
   // ── x-IMU3 IPC ──────────────────────────────────────────────────────────────
   // Start/stop data listener, send commands to device
@@ -760,6 +621,57 @@ function setupIPC() {
   });
 
   // ── x-IMU3 serial IPC ────────────────────────────────────────────────────────
+
+  // ── WiFi survey ──────────────────────────────────────────────────────────
+  // The instrument cannot scan — sygbr-wifi.hpp still says `TODO: wifi rssi,
+  // bssid` — so the only vantage point available is this machine. One shot, on
+  // a button, never polled: docs/RIG-RUNBOOK.md § 3 is the procedure this
+  // serves, and a venue is where it is needed.
+  ipcMain.handle('wifi-scan', async () => {
+    const { execFile } = require('child_process');
+    const text = await new Promise((resolve) => {
+      execFile('system_profiler', ['SPAirPortDataType'], { timeout: 15000 },
+        (err, stdout) => resolve(err ? '' : stdout));
+    });
+    if (!text) return { ok: false, reason: 'system_profiler did not run.' };
+
+    const at = text.indexOf('Other Local Wi-Fi Networks');
+    if (at < 0) {
+      // macOS hides neighbouring networks from apps without Location Services.
+      // A terminal usually has it and this app usually does not, so the same
+      // command gives a full survey in one and nothing in the other. Say which
+      // it is, because "no networks found" sends you to look at the radio.
+      const radioOff = /Status:\s*Off/.test(text);
+      return { ok: false, reason: radioOff
+        ? 'This machine’s Wi-Fi is switched off, so it cannot survey the band. Turn it on — being on ethernet is fine, the scan only needs the radio listening.'
+        : 'macOS only shows neighbouring networks to apps granted Location Services. '
+          + 'System Settings → Privacy & Security → Location Services → enable it for mubone, '
+          + 'then scan again.' };
+    }
+    const tail = text.slice(at);
+
+    // Each network is a name line, then indented fields. Channel and signal are
+    // the only two that matter here.
+    const nets = [];
+    let cur = null;
+    for (const line of tail.split('\n')) {
+      const name = line.match(/^\s{12}([^\s:][^:]*):\s*$/);
+      if (name) { cur = { name: name[1], ch: null, band: null, rssi: null }; nets.push(cur); continue; }
+      if (!cur) continue;
+      const ch = line.match(/Channel:\s*(\d+)\s*\((\d+)GHz/);
+      if (ch) { cur.ch = +ch[1]; cur.band = +ch[2]; continue; }
+      const sig = line.match(/Signal \/ Noise:\s*(-?\d+)\s*dBm/);
+      if (sig) cur.rssi = +sig[1];
+    }
+
+    // The raw 2.4 GHz list goes back as well as the summary. A network on an
+    // in-between channel — 4, say — is a real neighbour that a 1/6/11 table can
+    // only show as an anonymous contribution, and if it is loud it is the most
+    // important thing on the page.
+    const two = nets.filter((n) => n.band === 2 && n.ch !== null && n.rssi !== null)
+                    .sort((a, b) => b.rssi - a.rssi);
+    return { ok: true, nets: two.map((n) => ({ name: n.name, ch: n.ch, rssi: n.rssi })) };
+  });
 
   ipcMain.handle('serial-list-ports', async () => {
     return await listSerialPortsFn();
@@ -804,10 +716,15 @@ function createWindow() {
     minWidth:  380,
     minHeight: 500,
     title:     INSTANCE ? `mubone [${INSTANCE}]` : 'mubone',
+    icon:      path.join(__dirname, 'logo', 'icon-512.png'),
+    show:      !BACKGROUND,
     backgroundColor: '#000000',
     webPreferences: {
       nodeIntegration:  false,
       contextIsolation: true,
+      // Per-window half of the throttling fix — see the commandLine switches
+      // at the top of this file for why.
+      backgroundThrottling: false,
       preload: path.join(__dirname, 'electron-preload.js'),
       // Instance name + OSC listen port ride into the preload's process.argv —
       // no IPC round-trip. Port is always passed so the UI can display it.
@@ -818,10 +735,31 @@ function createWindow() {
     },
   });
 
+  if (BACKGROUND) win.once('ready-to-show', () => win.showInactive());
+
   // Grant mic + MIDI permissions without browser prompt
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     callback(['media', 'midi', 'midiSysex', 'pointerLock'].includes(permission));
   });
+
+  // Web Serial has no port chooser here. In a tab the browser puts up a list
+  // and waits for a click; in Electron that list is ours to answer, and until
+  // we do, requestPort() never settles — the panel sits on "choose the
+  // instrument…" forever. This is the one place the desktop app can differ
+  // from a tab while every other part of the link behaves identically.
+  session.defaultSession.on('select-serial-port', (event, ports, webContents, callback) => {
+    event.preventDefault();
+    // The renderer already filtered to first-party instruments by USB vendor,
+    // so anything still in this list is a legitimate answer. Take the first:
+    // unplugging the one you don't mean is faster than any dialog we'd build.
+    callback(ports.length > 0 ? ports[0].portId : '');
+  });
+
+  // Chromium asks twice — may this page request a port at all, and may it keep
+  // the one it was given. Both have to say yes or the port opens and then dies.
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) =>
+    permission === 'serial' || ['media', 'midi', 'midiSysex', 'pointerLock'].includes(permission));
+  session.defaultSession.setDevicePermissionHandler((details) => details.deviceType === 'serial');
 
   // Enable SharedArrayBuffer in the renderer — required by Chromium 92+
   // (Electron 34 / Chromium 132).  The grain-engine worklet uses SAB to
@@ -863,24 +801,11 @@ function createWindow() {
 // Centralised cleanup — called from both window-all-closed and before-quit.
 // Must be safe to call more than once.
 function cleanupBeforeQuit() {
-  // Block further IPC audio writes immediately
-  _expectedAudioBytes = 0;
-
-  // Stop and destroy RtAudio output
-  if (rtAudio) {
-    try { if (rtAudio.isStreamRunning()) rtAudio.stop(); } catch (_) {}
-    try { if (rtAudio.isStreamOpen()) rtAudio.closeStream(); } catch (_) {}
-    rtAudio = null;
-  }
-  // Stop and destroy RtAudio input — this is the main crash culprit.
-  // Its native callback uses a ThreadSafeFunction that must be released
-  // before node::FreeEnvironment() runs its final uv_run().
-  if (rtAudioIn) {
-    try { if (rtAudioIn.isStreamRunning()) rtAudioIn.stop(); } catch (_) {}
-    try { if (rtAudioIn.isStreamOpen()) rtAudioIn.closeStream(); } catch (_) {}
-    rtAudioIn = null;
-  }
-  // Destroy the enumerator instance — it holds a live RtAudio C++ object
+  // The streams live in the audio host: tell it to stop and exit, and do
+  // not respawn it.
+  _quitting = true;
+  if (_host) { try { _host.postMessage({ type: 'shutdown' }); } catch (_) {} }
+  // The enumerator holds a live RtAudio C++ object — destroy it here.
   if (_rtEnum) {
     try { if (_rtEnum.isStreamOpen()) _rtEnum.closeStream(); } catch (_) {}
     _rtEnum = null;
@@ -898,10 +823,30 @@ function cleanupBeforeQuit() {
   _serialPorts.clear();
 }
 
+// The grain engine shares its audio buffers with the worklet through a
+// SharedArrayBuffer. In a browser that requires cross-origin isolation, which
+// is why the dev server sends COOP and COEP — but this window loads from
+// file://, where injecting those headers stopped taking effect after Electron
+// 34. Ask for the capability directly instead of arranging the conditions that
+// used to imply it.
+app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
+
 app.whenReady().then(() => {
+  startAudioHost();
+  // macOS ignores BrowserWindow's `icon` in development — the dock takes its
+  // image from the bundle, which in dev is Electron's own. Set it explicitly.
+  if (process.platform === 'darwin' && app.dock) {
+    if (BACKGROUND) app.dock.hide();
+    else app.dock.setIcon(nativeImage.createFromPath(path.join(__dirname, 'logo', 'icon-512.png')));
+  }
   setupIPC();
   const win = createWindow();
   _oscWin = win;
+
+  // Opt-in diagnosis channel (npm run electron:dev). Never loaded otherwise.
+  if (process.env.MUBONE_DEV_BRIDGE === '1') {
+    require('./scripts/dev-bridge.js').attachDevBridge(win, __dirname);
+  }
   startOSCReceiver();
   initOSCUplink();
   startXIMU3Discovery();

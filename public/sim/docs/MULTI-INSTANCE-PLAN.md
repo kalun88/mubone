@@ -17,6 +17,8 @@
 > This doc: everything that is currently crossed or fragile between instances,
 > and the change plan to make multi-instance first-class.
 
+> **Read this first.** Phases 1–3 shipped 2026-07-27 (instance profiles, per-instance OSC ports via `--osc-port`, three windows on one machine); Phase 4, unattended robustness, is open (TODO #145). § 4, the pre-show checklist, is the live part — read it before a multi-station show. § 1 holds the WiFi findings (why 2.4 GHz channel choice matters — `docs/RIG-RUNBOOK.md` has the procedure). § 3 is only for Phase 4 work.
+
 ---
 
 ## 1. Findings
@@ -30,7 +32,7 @@
 | UDP 10000 (x-imu3 discovery) | in | electron-main.js:192, `reuseAddr: true` | Broadcasts reach **all** instances — every instance sees all 3 device cards. OK because connect is manual (ui-imu-setup.js → `connectDevice`). |
 | UDP 8000+ (x-imu3 data) | in | electron-main.js:227, per-port, `reuseAddr: true` | **Danger zone** — see 1.2. |
 | UDP 9000+ (x-imu3 commands) | out | electron-main.js:298 | Fine — ephemeral client socket. |
-| WS 8080 (Max bridge) | out-connect | osc.js:32 | Browser mode only; not in the Electron show path. |
+| WS 8080 (browser relay, `proxy.js`) | out-connect | osc.js:32 | Browser mode only; not in the Electron show path. |
 
 ### 1.2 IMU data routing — the one real cross-wire risk
 
@@ -95,13 +97,12 @@ profile → one localStorage. Full key inventory:
 | Key | Owner | Cross-instance damage |
 |---|---|---|
 | `mubone_audio_defaults` | ui-audio-settings.js:1370 | **Worst one.** Stores `inputDeviceId`, `mainInputChannel`, `outputDeviceId`, gains, buffer size. Station B saving defaults overwrites Station A's input channel → wrong mic on next launch. |
-| `mubone_user_presets` | state.js | One shared patch bank; concurrent saves clobber. |
 | `mubone_sensor_cal` (+ `_version`) | sensor-registry.js:1011 | Per-slot tare/axis-map shared across stations. |
 | `mubone-sensor-prefs` | imu-setup.js:206 | Per-device prefs (by serial) — mostly OK since serials differ, but writes race. |
 | `mubone_custom_speaker_angles` | ui-audio-settings.js:469 | Shared speaker layout — fine if identical, racing writes if not. |
 | `mubone_key_map`, `mubone_midi_map` | midi.js | Shared bindings. |
 | `mubone_sensorMappings` | sensor-mapping.js:484 | Shared gesture mappings. |
-| `mubone_param_locks`, `mubone_staging`, `mubone_gesture_panel`, `mubone_osc_stream`, `mubone_radial_pins`, `mubone_projector_layout_v2`, `mubone_panel_*`, `mubone_sec_*`, `mubone_panel_order`, `mubone_bufferSize`, `mubone-learn-mode` | various | All shared; racy but low-stakes. |
+| `mubone_param_locks`, `mubone_staging`, `mubone_gesture_panel`, `mubone_osc_stream`, `mubone_radial_anchors`, `mubone_projector_layout_v2`, `mubone_panel_*`, `mubone_sec_*`, `mubone_panel_order`, `mubone_bufferSize`, `mubone-learn-mode` | various | All shared; racy but low-stakes. |
 
 Also: multiple Electron processes on one profile dir can contend for the
 LevelDB lock — persistence in instances 2/3 may silently fail. Everything in

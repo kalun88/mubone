@@ -4,9 +4,9 @@
 
 ## The problem this solves
 
-x-IMU3 settings persist in the device's flash. The x-IMU3 GUI writes them. The Max patches write them. Whatever touched the sensor last is what mubone inherits — and until 2026-08-01 the connect handshake only asserted about half the settings that matter, so a sensor that had been through the GUI or a Max session would arrive streaming data mubone parses and throws away.
+x-IMU3 settings persist in the device's flash. The x-IMU3 GUI writes them. A prototyping patch can write them. Whatever touched the sensor last is what mubone inherits — and until 2026-08-01 the connect handshake only asserted about half the settings that matter, so a sensor that had been through the GUI or a Max session would arrive streaming data mubone parses and throws away.
 
-Concretely, `max/x-imu3.maxpat` sets `inertial_message_rate_divisor: 1` (400 messages/second of gyro + accel) and `max/x-imu3 copy.maxpat` sets `magnetometer_message_rate_divisor: 1`. mubone never wrote either key, so those stuck. On a three-sensor rig that's 1200 unwanted messages/second of WiFi and main-thread parse work, all of it discarded at the bottom of `parseDataLine`.
+Concretely, the old `x-imu3.maxpat` (git history since 2026-09-05) set `inertial_message_rate_divisor: 1` (400 messages/second of gyro + accel) and `max/x-imu3 copy.maxpat` sets `magnetometer_message_rate_divisor: 1`. mubone never wrote either key, so those stuck. On a three-sensor rig that's 1200 unwanted messages/second of WiFi and main-thread parse work, all of it discarded at the bottom of `parseDataLine`.
 
 ## What mubone actually consumes
 
@@ -110,9 +110,9 @@ Before 2026-08-01 the same enforcement block was copy-pasted into four places �
 
 So the same physical sensor was configured differently depending on whether you launched Electron or browser mode. The fix was structural, not a re-sync: **`proxy.js` no longer enforces anything.** It's a transport — it owns the sockets and relays commands. `imu-setup.js` runs one enforcement pass for every transport, routing browser-mode UDP commands through the proxy's `{ type: 'command' }` relay. The LED handshake blink moved with it, so it goes through `ximu-led-feedback.js` in browser mode too.
 
-## Known conflict: the Max patches
+## Known conflict: patches that write settings
 
-`max/x-imu3.maxpat`, `max/x-imu3 copy.maxpat` and `max/x-imu3pia.maxpat` all contain message boxes that write settings mubone now enforces the other way:
+The old Max patches (`x-imu3.maxpat`, `x-imu3 copy.maxpat`, `x-imu3pia.maxpat` — git history since 2026-09-05, and the shape any prototyping patch of Ek's may take) contained message boxes that write settings mubone now enforces the other way:
 
 | Patch writes | mubone enforces |
 |---|---|
@@ -124,7 +124,7 @@ None are on a loadbang — they only fire if you click them. **These are left al
 
 ## Related
 
-- `docs/TIMING-REFERENCE.md` — where the 100 Hz figure sits relative to the paint ticker and grain scheduler
+- `docs/archive/TIMING-REFERENCE.md` — where the 100 Hz figure sits relative to the paint ticker and grain scheduler
 - `docs/EULER-VS-QUAT.md` — why quaternion rather than Euler
 - `docs/MULTI-INSTANCE-PLAN.md` — the 3-sensor case that drove `udp_low_latency: false`
 - `docs/archive/JAM-NOTES-2026-03-24.md` — the original settings survey this doc supersedes

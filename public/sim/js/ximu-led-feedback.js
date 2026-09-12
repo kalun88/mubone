@@ -1,5 +1,10 @@
 // ============================================================================
-// X-IMU LED FEEDBACK — configurable RGB feedback on the cursor-assigned x-IMU3.
+// LED FEEDBACK — configurable RGB feedback on the cursor-assigned sensor.
+//
+// Named for the x-IMU3 because that is the hardware it was written for, and it
+// still is most of what it drives. The mubone's own status LED joins on equal
+// terms: see "The sygaldry instrument" below for how something with no command
+// channel ends up in the same device loop.
 //
 // The LED is the performer's only glanceable status surface once they're away
 // from the screen, so what it shows is mapped rather than hardcoded: every
@@ -36,6 +41,9 @@
 //      value pushed to that device.
 //   2. Only the cursor device ever animates. Others get one idle write.
 //
+// Both apply to the sygaldry instrument too, where the radio is shared the same
+// way and the messages are OSC rather than JSON.
+//
 // The modal shows each row's msg/s so a glitchy session can be diagnosed by
 // looking at the table rather than rediscovering this from scratch.
 //
@@ -45,7 +53,9 @@
 
 import { S } from './state.js';
 import { getDevices, sendCommandTo } from './imu-setup.js';
-import { normalise } from './audio-features.js';
+import { linkForSensor, links, onLinksChanged } from './sygaldry.js';
+import { hexToChannels } from './sygaldry-led.js';
+import { normalise, timbreArc } from './audio-features.js';
 
 const ENABLED_KEY = 'mubone-ximu-led-feedback';
 const MAP_KEY     = 'mubone-ximu-led-map';
@@ -69,19 +79,19 @@ const CLR_OFF = '#000000';
 //      hard across the whole range) is the same 10 msg/s as a fast blink.
 //   3. Only the cursor device is ever painted, as with every other pattern.
 const TIMBRE_STEP_MS   = 100;   // sampler interval → 10 Hz ceiling
-const TIMBRE_HUE_STEPS = 24;    // 15° buckets across the 220° range
+const TIMBRE_HUE_STEPS = 24;    // even buckets across the arc's 135° HSL span
 // Smoothing time constant, in ms. Small enough that a deliberate move reads as
 // immediate (~2τ to settle), large enough that pool churn doesn't jitter the
 // hue. Raise for calmer, lower for twitchier.
 const TIMBRE_TAU_MS    = 90;
 
-// LED-optimised rather than a faithful port of featuresToHSL(). Two reasons the
-// screen values don't survive the trip: the viz washes noisy material to 35%
-// saturation, which on an emitter reads as plain white; and this emitter's white
+// LED-optimised rather than a faithful port of featuresToColor(). Two reasons
+// the screen values don't survive the trip: the viz washes noisy material to
+// low chroma, which on an emitter reads as plain white; and this emitter's white
 // point drags everything toward cyan (the 1.7 notes record several failed
 // attempts at a "blue" that always came out cyan). So saturation is compressed
-// into a high, narrow band and lightness is pinned below the screen's 62% —
-// a lit LED is already perceptually bright, and 62% just desaturates it further.
+// into a high, narrow band and lightness is pinned below the screen's — a lit
+// LED is already perceptually bright, and lifting it just desaturates it.
 const TIMBRE_SAT_MAX = 100;
 const TIMBRE_SAT_MIN = 62;
 const TIMBRE_LIT     = 50;
@@ -110,12 +120,66 @@ export const LED_PALETTE = [
   { hex: '#000000', name: 'off'    },
 ];
 
+// ── The sygaldry instrument ────────────────────────────────────────────────
+// The mubone carries its own RGB LED, and it wants exactly the feedback this
+// module already computes: the same states, the same precedence, the same
+// patterns. So it joins as one more device rather than getting a parallel
+// engine, and it can hold the cursor role like any other sensor.
+//
+// It reaches the device map by a different road. It is not an x-IMU3 and has no
+// JSON command channel; sygaldry.js republishes its orientation as
+// /sensor/<name>/quaternion, which imu-setup auto-discovers as an `osc` device
+// keyed `osc-<name>`. That transport is otherwise the Max bridge, whose sensors
+// have no LED at all — hence the identity check rather than a transport check.
+//
+// The conversion from a palette hex to what the instrument wants — sRGB gamma
+// out, this board's channel trim in — lives in sygaldry-led.js, where it can be
+// tested without a browser or a board attached.
+
+// Whether the instrument has an LED is not ours to assume: firmware without one
+// exists, and painting a phantom would put ten messages a second on a radio that
+// is also carrying sensor frames. The instrument will say, but only when asked —
+// connect sends a refresh and deliberately not a describe, because a describe is
+// sixty-odd replies that would arrive ahead of the state the panel wants. So ask
+// here, once per connection, and only once something is actually looking for
+// somewhere to paint.
+// Per link, because a rig can carry several instruments and each answers for
+// its own hardware.
+const _sygProbed = new Set();
+
+// The instrument a device row stands for, once it has said it has an LED.
+// Null while the answer is still outstanding — the describe is asked for once
+// and the next repaint picks up the reply.
+function _sygaldryLinkFor(dev) {
+  if (!dev || typeof dev.sn !== 'string' || !dev.sn.startsWith('osc-')) return null;
+  const l = linkForSensor(dev.sn.slice(4));
+  if (!l) return null;
+  if (l.hasLed) return l;
+  if (!_sygProbed.has(l.id)) { _sygProbed.add(l.id); try { l.describe(); } catch (_) {} }
+  return null;
+}
+
+function _isSygaldryDev(dev) { return !!_sygaldryLinkFor(dev); }
+
 // ── Patterns ───────────────────────────────────────────────────────────────
 // `states` / `events` flag which row kinds may select each pattern. `solid`
 // is meaningless for a transient event; `flash` is meaningless as a baseline.
 export const LED_PATTERNS = {
   solid:  { label: 'solid',  states: true,  events: false },
   flash:  { label: 'flash',  states: false, events: true,  onMs: 90,  offMs: 120 },
+  // One short full-brightness stab, then straight back to baseline. The
+  // cheapest thing on the wire: at count 1 — the default, and what a trigger
+  // uses — it is exactly TWO messages and done in 45ms. That matters because
+  // triggers fire far more often than commits do, and a flash held at ~9.5
+  // msg/s would put real traffic on the WiFi radio alongside inbound frames.
+  // It also reads percussively rather than as a blink, which is the point: a
+  // trigger launching should not look like anything else.
+  //
+  // The msg/s the modal shows is the same while-running figure every other
+  // pattern quotes, i.e. what it would cost if the cycle repeated — only
+  // reachable here by raising count above 1, where it becomes a fast double-tap
+  // rather than a single stab.
+  strike: { label: 'strike', states: false, events: true,  onMs: 45,  offMs: 105 },
   slow:   { label: 'slow',   states: true,  events: true,  onMs: 333, offMs: 333 },
   fast:   { label: 'fast',   states: true,  events: true,  onMs: 100, offMs: 100 },
   pulse:  { label: 'pulse',  states: true,  events: true,  steps: 8,  cycleMs: 1200 },
@@ -167,14 +231,14 @@ export function patternRate(pattern) {
 // Listed lowest-priority first, matching _currentStateId()'s fallthrough, so
 // the modal reads top-to-bottom as the precedence stack.
 export const LED_STATES = [
-  { id: 'idle',         label: 'idle',                 tip: 'nothing happening — also what every non-cursor x-IMU3 shows' },
+  { id: 'idle',         label: 'idle',                 tip: 'nothing happening — also what every non-cursor device shows' },
   { id: 'scan',         label: 'scan (cursor firing)',
     tip: 'scan is on and there are particles under the cursor. Lowest priority — every other state overrides it. The only row that can take its colour from the audio: set its pattern to "timbre".' },
   { id: 'mute',         label: 'system muted',
     tip: 'master output muted. Beats scan (it explains the silence) but loses to recording and erasing — you already know you muted it, whereas the take is the thing you need confirmed.' },
   { id: 'erase',        label: 'erasing',              tip: 'erase brush is down (held or latched). Destructive, so it outranks mute.' },
   { id: 'trace',        label: 'trace armed',          tip: 'manual trace — every moment is recording. Outranks mute so tracking into a muted rig still shows the take is running.' },
-  { id: 'trace_hf',     label: 'hands-free armed',     tip: 'hands-free trace armed, noise gate still closed' },
+  { id: 'trace_hf',     label: 'hands-free armed',     tip: 'hands-free trace armed, segmentation gate still closed' },
   { id: 'trace_hf_rec', label: 'hands-free recording', tip: 'hands-free trace, gate open — capturing audio right now' },
 ];
 
@@ -187,14 +251,22 @@ export const LED_EVENTS = [
   // Not `mute` — that's the state row for *being* muted. This is the toggle.
   { id: 'mute_toggle', label: 'mute toggled on/off' },
   { id: 'tare',      label: 'tare / zero'         },
-  { id: 'patch',     label: 'patch change'        },
   { id: 'sweep',     label: 'sweep'               },
   { id: 'erase_all', label: 'erase all'           },
   // Not `scan` — that's the state row for the cursor actually granulating.
   // This is the toggle action, matching midi.js's `scan_toggle` action id.
   { id: 'scan_toggle', label: 'scan toggled on/off' },
   { id: 'snapshot',  label: 'snapshot capture'    },
+  // Priority: a trigger launching is the performer's primary action feedback,
+  // so it cancels an in-flight sequence rather than being dropped as busy. A
+  // turntable sweeping past three triggers would otherwise show only the first.
+  { id: 'trigger',   label: 'trigger fired', priority: true,
+    tip: 'a trigger buffer launched. Interrupts any other event sequence — with several triggers on the sphere this fires far more often than a commit, and it is the one you most need to see.' },
 ];
+
+export const LED_ROW_PRIORITY = new Set(
+  LED_EVENTS.filter(r => r.priority).map(r => r.id)
+);
 
 export const LED_ROW_KIND = new Map([
   ...LED_STATES.map(r => [r.id, 'state']),
@@ -234,6 +306,13 @@ const DEFAULTS = {
   erase_all: { colour: '#CC1A1A', pattern: 'flash', count: 3, enabled: false },
   scan_toggle: { colour: '#00A86B', pattern: 'flash', count: 1, enabled: false },
   snapshot:  { colour: '#3B4FC8', pattern: 'flash', count: 1, enabled: false },
+  // White (Ek's call). It is the brightest thing the LED can do, which is what
+  // makes a 45ms stab register at a glance from across a stage — and the strike
+  // pattern is unlike anything else, so the colour doesn't have to carry the
+  // distinction on its own. `erase` and `mute` also use white, but both are
+  // held STATES with their own tempos; no other EVENT does. On by default,
+  // unlike the other new rows: Ek asked for it, and a strike is two messages.
+  trigger:   { colour: '#FFFFFF', pattern: 'strike', count: 1, enabled: true },
 };
 
 // ── Module state ───────────────────────────────────────────────────────────
@@ -416,14 +495,25 @@ function _advanceTimbre(f) {
   _timbreSeen = true;
 }
 
-// Same centroid→hue mapping as featuresToHSL() so the LED and the screen agree
-// on pitch/brightness; saturation and lightness are remapped for the emitter.
+// Same centroid→hue ARC as featuresToColor() so the LED and the screen agree on
+// what a sound looks like; saturation and lightness are remapped for the
+// emitter. When the screen's arc moved on 2026-08-29 — from a 240°→20° sweep
+// through the neon middle to an eased steel→violet→rose→ember wrap — this had
+// to move with it, or the sensor in the performer's hand would be showing green
+// for material the sphere was drawing in violet.
+//
+// The arc is shared (timbreArc), the hue band is not: the screen works in OKLCH
+// and this works in HSL, because the emitter is driven in sRGB and its own
+// white point, not a perceptual space, is what decides whether a colour lands.
+// 250 → 385 is the HSL equivalent of the screen's wrap: blue, violet, magenta,
+// red, orange, and no green on the path.
 // Pure — no side effects, safe to call from anywhere.
 function _timbreHex() {
   if (!_timbreSeen) return null;
-  const rawHue  = 240 - _timbreCent * 220;         // matches featuresToHSL()
-  const stepDeg = 220 / TIMBRE_HUE_STEPS;
-  const hue     = Math.round(rawHue / stepDeg) * stepDeg;
+  const { e }   = timbreArc(_timbreCent);          // matches featuresToColor()
+  const rawHue  = 250 + e * 135;                   // → 385, wrapped below
+  const stepDeg = 135 / TIMBRE_HUE_STEPS;
+  const hue     = (Math.round(rawHue / stepDeg) * stepDeg) % 360;
   const sat     = TIMBRE_SAT_MAX - _timbreZcr * (TIMBRE_SAT_MAX - TIMBRE_SAT_MIN);
   return _hslToHex(hue, sat, TIMBRE_LIT);
 }
@@ -451,7 +541,7 @@ export function timbreStatus() {
   const used = LED_STATES.some(r => _map[r.id]?.enabled && usesTimbre(_map[r.id].pattern));
   if (!used)             return { used: false, ok: false, why: 'no row set to timbre' };
   if (!_enabled)         return { used, ok: false, why: 'feedback off' };
-  if (!_findCursorDev()) return { used, ok: false, why: 'no cursor x-imu3' };
+  if (!_findCursorDev()) return { used, ok: false, why: 'no cursor device with an LED' };
 
   const st    = _currentStateId();
   const cfg   = _map[st];
@@ -467,17 +557,19 @@ export function timbreStatus() {
 }
 
 // ── Device helpers ─────────────────────────────────────────────────────────
-function* _allXimuDevices() {
+function* _allLedDevices() {
   for (const dev of getDevices().values()) {
-    // Only x-IMU3 transports have a colour command. OSC sensors (from the Max
-    // bridge) don't, so skip them.
+    // Every x-IMU3 transport carries a colour command, and so does a mubone
+    // instrument, over OSC — any number of them. Every other OSC sensor is a
+    // bridge feed with no LED behind it.
     if (dev.transport === 'udp' || dev.transport === 'serial') yield dev;
+    else if (_sygaldryLinkFor(dev)) yield dev;
   }
 }
 
 function _findDev(sn) {
   if (!sn) return null;
-  for (const d of _allXimuDevices()) if (d.sn === sn) return d;
+  for (const d of _allLedDevices()) if (d.sn === sn) return d;
   return null;
 }
 function _findCursorDev() { return _findDev(_cursorSn); }
@@ -487,17 +579,28 @@ const _lastSent = new Map();  // sn → hex string (or null for cleared)
 function _setColour(dev, hex) {
   if (_lastSent.get(dev.sn) === hex) return;     // dedupe — see header
   _lastSent.set(dev.sn, hex);
-  try { sendCommandTo(dev, { colour: hex }); } catch (_) {}
+  try {
+    const sygLink = _sygaldryLinkFor(dev);
+    if (sygLink) sygLink.led(...hexToChannels(hex));
+    else sendCommandTo(dev, { colour: hex });
+  } catch (_) {}
 }
 // Animation frames must land even when the value repeats a previous write.
 function _forceColour(dev, hex) {
   _lastSent.delete(dev.sn);
   _setColour(dev, hex);
 }
+// `colour: null` hands an x-IMU3 back to its own firmware, which has a default
+// display of its own. The mubone has none — its LED is dark until something
+// tells it otherwise — so releasing it means turning it off.
 function _clearColour(dev) {
   if (_lastSent.get(dev.sn) === null) return;
   _lastSent.set(dev.sn, null);
-  try { sendCommandTo(dev, { colour: null }); } catch (_) {}
+  try {
+    const sygLink = _sygaldryLinkFor(dev);
+    if (sygLink) sygLink.led(0, 0, 0);
+    else sendCommandTo(dev, { colour: null });
+  } catch (_) {}
 }
 
 // ── Baseline resolution ────────────────────────────────────────────────────
@@ -607,7 +710,7 @@ function _applyBaseline() {
   _stopPattern();
   if (!_enabled || _seqBusy) return;
 
-  for (const dev of _allXimuDevices()) {
+  for (const dev of _allLedDevices()) {
     const cfg = _baselineCfg(dev);
     if (!cfg) { _clearColour(dev); continue; }
     if (cfg.pattern === 'solid' || dev.sn !== _cursorSn) _setColour(dev, cfg.colour);
@@ -617,7 +720,7 @@ function _applyBaseline() {
 
 function _releaseAll() {
   _stopPattern();
-  for (const dev of _allXimuDevices()) _clearColour(dev);
+  for (const dev of _allLedDevices()) _clearColour(dev);
   _lastSent.clear();
 }
 
@@ -644,7 +747,7 @@ async function _runEvent(id, snOverride = null, overrides = null) {
   const cfg = overrides ? { ...base, ...overrides } : base;
 
   const dev = snOverride ? _findDev(snOverride) : _findCursorDev();
-  if (!dev)                    { _noteEvent(id, false, 'no cursor x-imu3'); return; }
+  if (!dev)                    { _noteEvent(id, false, 'no cursor device with an LED'); return; }
   if (_seqBusy)                { _noteEvent(id, false, 'busy');          return; }
 
   _noteEvent(id, true, '');
@@ -725,7 +828,7 @@ function _onSensorStatus(detail) {
 // but scan-vs-idle now *depends* on the grain count, so it has to be sampled
 // every tick regardless of which row is active. One timer, one source of truth.
 function _pollTraceState() {
-  const armed     = !!(S._traceToggled || S.isPainting);
+  const armed     = !!(S.paintLatched || S.isPainting);
   const hf        = armed && !!S.hfArmed;
   const recording = hf && !!S.hfRecording;
   // Covers both the held brush and the latching toggle — erase.js sets
@@ -867,8 +970,8 @@ async function _previewState(cfg) {
   }
 }
 
-// Is there a cursor x-IMU3 to talk to? The modal greys out its test buttons
-// when there isn't, rather than silently doing nothing.
+// Is there a cursor device with an LED to talk to? The modal greys out its test
+// buttons when there isn't, rather than silently doing nothing.
 export function hasCursorDevice() { return !!_findCursorDev(); }
 
 // ── Live introspection (the modal's activity readout) ──────────────────────
@@ -885,6 +988,20 @@ export function initXimuLedFeedback() {
 
   window.addEventListener('sensor-status', (e) => _onSensorStatus(e.detail));
   window.addEventListener('mubone-led', _onLedEvent);
+
+  // The instrument's LED comes and goes with the link, which the sensor
+  // registry knows nothing about: its device entry outlives the connection, and
+  // its key changes the moment the instrument says what it is called. Forget
+  // what we last sent it before repainting — otherwise the dedupe swallows the
+  // first write after a reconnect and the LED sits dark on a colour it thinks
+  // it is already showing.
+  onLinksChanged(() => {
+    // A link that has gone can be asked again next time it appears.
+    const live = new Set(links().filter((l) => l.connected).map((l) => l.id));
+    for (const id of [..._sygProbed]) if (!live.has(id)) _sygProbed.delete(id);
+    for (const sn of [..._lastSent.keys()]) if (sn.startsWith('osc-')) _lastSent.delete(sn);
+    _applyBaseline();
+  });
 
   _pollTimer = setInterval(_pollTraceState, 100);
 

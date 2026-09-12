@@ -11,80 +11,80 @@ import { flushWorkletGrains, resyncWorkletBuffers } from './grain-worklet-bridge
 // ── Sweep snapshot — allows one-level undo of sweep ──────────────────────────
 // Stashed on sweep, restored on undo, permanently discarded on next new action.
 
-/**
- * Restore a pending sweep snapshot. Called by undoLastStroke when a snapshot
- * exists. Returns true if a snapshot was restored, false if none was pending.
- */
-export function undoSweep() {
-  if (!S._sweepSnapshot) return false;
-  // Kill in-flight grains from the previous state so they don't ring out
-  killAllGrains();
-  flushWorkletGrains();
-  const snap = S._sweepSnapshot;
-  S.particles            = snap.particles;
-  S.liveRecBuffers       = snap.liveRecBuffers;
-  S.currentLiveBufferIdx = snap.currentLiveBufferIdx;
-  S.strokeHistory        = snap.strokeHistory;
-  S._particleVersion++;
-  // Restore commits if they were part of the snapshot (erase-all)
-  if (snap.commitSlots) {
-    for (let i = 0; i < snap.commitSlots.length; i++) S.commitSlots[i] = snap.commitSlots[i];
-    (S.updateSeedBanksUI || (() => {}))();
-  }
-  S._sweepSnapshot = null;
-  S.updateLiveRecUI?.();
-  return true;
-}
+import * as history from './history.js';
 
-/**
- * Discard any pending sweep snapshot — called when a new action makes the
- * sweep permanent (e.g. new paint stroke, sow, arm loop).
- */
-let _sweepAutoCommitTimer = null;
-export function commitSweep() {
-  if (_sweepAutoCommitTimer) { clearTimeout(_sweepAutoCommitTimer); _sweepAutoCommitTimer = null; }
-  const hadSnapshot = !!S._sweepSnapshot;
-  S._sweepSnapshot = null;
-  // Undo is no longer possible — release worklet/bridge buffers the erased
-  // recordings were pinning (group-show noise-glitch fix, Jul 2026).
-  // Guarded so the resync only runs when a sweep/erase was actually pending
-  // (commitSweep fires on every stroke start via recordStrokeStart).
-  if (hadSnapshot) resyncWorkletBuffers();
-}
-
-/**
- * Schedule auto-commit of the sweep snapshot after a delay.
- * Frees buffer memory even if the performer never paints again.
- * 30s is long enough to undo a mistake, short enough to reclaim RAM.
- */
-export function scheduleSweepAutoCommit() {
-  if (_sweepAutoCommitTimer) clearTimeout(_sweepAutoCommitTimer);
-  _sweepAutoCommitTimer = setTimeout(() => {
-    S._sweepSnapshot = null;
-    _sweepAutoCommitTimer = null;
-    // Undo window closed — release buffers pinned by the erased recordings
-    // (group-show noise-glitch fix, Jul 2026).
-    resyncWorkletBuffers();
-    S.updateLiveRecUI?.(); // refresh HUD (recTotalSec may have dropped)
-  }, 30000);
-}
-
-// ── Core sweep logic ─────────────────────────────────────────────────────────
-
-/**
- * Remove all particles not referenced by any active seed or loop.
- * Moving seeds keep particles within reach of any frame along their path.
- * The removed data is stashed in S._sweepSnapshot so undo can restore it.
- * Returns { removed, kept } counts.
- */
-export function sweep() {
-  // Snapshot the current state before we modify anything
-  S._sweepSnapshot = {
+// ── The material, as one snapshot ───────────────────────────────────────────
+// An erase, a sweep or an erase-all is an ACTION on the history stack
+// (js/history.js) carrying a BEFORE and an AFTER snapshot of the material —
+// arrays of references, not copies. Undo applies the before, redo the after,
+// to any depth: the one-slot `S._sweepSnapshot` with its 30-second auto-commit
+// is gone (2026-09-05), and with it the rule that a second erase could never
+// be undone and the first not after half a minute.
+export function snapshotMaterial() {
+  return {
     particles:            [...S.particles],
     liveRecBuffers:       S.liveRecBuffers ? [...S.liveRecBuffers] : [],
     currentLiveBufferIdx: S.currentLiveBufferIdx,
     strokeHistory:        [...S.strokeHistory],
+    commitSlots:          S.commitSlots.map(c => c),
+    overdubs:             S.commitSlots.map(c => c?.overdubs ? [...c.overdubs] : null),
+    // Trigger entries keep their own settings (radius, dwell, start); their
+    // particles and region are re-derived from S.particles on the next gate
+    // tick, so restoring the array is enough to bring the whole set back.
+    triggers:             [...(S.triggers || [])],
   };
+}
+
+export function applyMaterial(snap) {
+  killAllGrains();
+  flushWorkletGrains();
+  S.particles            = [...snap.particles];
+  S.liveRecBuffers       = [...snap.liveRecBuffers];
+  S.currentLiveBufferIdx = snap.currentLiveBufferIdx;
+  S.strokeHistory        = [...snap.strokeHistory];
+  for (const p of S.particles) if (p._gapAfter) p._gapAfter = undefined;
+  S._particleVersion++;
+  for (let i = 0; i < S.commitSlots.length; i++) {
+    const want = snap.commitSlots[i] ?? null, have = S.commitSlots[i];
+    if (want === have) {
+      // The same pin, but an erase may have taken layers off it.
+      if (want && snap.overdubs[i]) {
+        const keep = snap.overdubs[i];
+        want.overdubs = [...keep];
+        for (const ov of keep) S._reattachOverdub?.(want, ov);
+      }
+      continue;
+    }
+    if (have) S._removePinSlot?.(have);
+    if (want) {
+      if (snap.overdubs[i]) want.overdubs = [...snap.overdubs[i]];
+      S._restorePinSlot?.(want, i);
+    }
+  }
+  if (S.triggers) {
+    S.triggers.length = 0;
+    for (const t of snap.triggers) { t._builtAt = -1; S.triggers.push(t); }
+    S._syncTriggerUI?.();
+  }
+  resyncWorkletBuffers();
+  (S.updateSeedBanksUI || (() => {}))();
+  S._pinsDirty = true;
+  S.updateLiveRecUI?.();
+}
+
+/** One erase-like action: `kind` names it on the stack. */
+export function materialAction(kind, before, after) {
+  return { kind, undo() { applyMaterial(before); }, redo() { applyMaterial(after); } };
+}
+
+/**
+ * Remove all particles not referenced by any active seed or loop.
+ * Moving seeds keep particles within reach of any frame along their path.
+ * The removal is one action on the history stack, so undo restores it.
+ * Returns { removed, kept } counts.
+ */
+export function sweep() {
+  const snapBefore = snapshotMaterial();
 
   const kept = new Set();
 
@@ -123,6 +123,16 @@ export function sweep() {
     for (let pi = 0; pi < S.particles.length; pi++) {
       const p = S.particles[pi];
       if (p.strokeId === seqStrokeId) kept.add(p);
+    }
+  }
+
+  // ── Triggers: keep their strokes ──────────────────────────────────────
+  // Sweep discards material nothing is using. A trigger stroke is in use — it
+  // is the percussion map — so it is kept for the same reason loop strokes are,
+  // and sweeping would otherwise silently delete a set's worth of placements.
+  for (const t of (S.triggers || [])) {
+    for (let pi = 0; pi < S.particles.length; pi++) {
+      if (S.particles[pi].strokeId === t.strokeId) kept.add(S.particles[pi]);
     }
   }
 
@@ -166,12 +176,7 @@ export function sweep() {
   const remainingStrokeIds = new Set(S.particles.map(p => p.strokeId));
   S.strokeHistory = S.strokeHistory.filter(e => remainingStrokeIds.has(e.strokeId));
 
-  // If nothing was actually removed, no need for a snapshot
-  if (removed === 0) {
-    S._sweepSnapshot = null;
-  } else {
-    scheduleSweepAutoCommit(); // auto-free snapshot memory after 30s
-  }
+  if (removed > 0) history.push(materialAction('sweep', snapBefore, snapshotMaterial()));
 
   S.updateLiveRecUI?.();
 
@@ -192,13 +197,7 @@ export function initSweepUI() {
     if (!hasActive) {
       const count = S.particles.length;
       if (count === 0) { flashSweepFeedback(btn, 0, 0); return; }
-      // Stash snapshot before clearing everything
-      S._sweepSnapshot = {
-        particles:            [...S.particles],
-        liveRecBuffers:       S.liveRecBuffers ? [...S.liveRecBuffers] : [],
-        currentLiveBufferIdx: S.currentLiveBufferIdx,
-        strokeHistory:        [...S.strokeHistory],
-      };
+      const before = snapshotMaterial();
       S.particles = [];
       S._particleVersion++;
       if (S.liveRecBuffers) {
@@ -207,7 +206,7 @@ export function initSweepUI() {
       }
       S.strokeHistory = [];
       S.updateLiveRecUI?.();
-      scheduleSweepAutoCommit();
+      history.push(materialAction('sweep', before, snapshotMaterial()));
       flashSweepFeedback(btn, count, 0);
       return;
     }
@@ -244,14 +243,7 @@ function eraseAll() {
   const count = S.particles.length;
   const hadCommits = S.commitSlots.some(s => s !== null);
   if (count === 0 && !hadCommits) return 0;
-  // Stash snapshot for undo
-  S._sweepSnapshot = {
-    particles:            [...S.particles],
-    liveRecBuffers:       S.liveRecBuffers ? [...S.liveRecBuffers] : [],
-    currentLiveBufferIdx: S.currentLiveBufferIdx,
-    strokeHistory:        [...S.strokeHistory],
-    commitSlots:          S.commitSlots.map(s => s),   // shallow copy of slot refs
-  };
+  const before = snapshotMaterial();
   // Stop all in-flight grains so they don't ring out
   killAllGrains();        // main-thread AudioBufferSourceNodes
   flushWorkletGrains();   // worklet grain pool
@@ -259,6 +251,10 @@ function eraseAll() {
   // Clear particles & buffers
   S.particles = [];
   S._particleVersion++;
+  // Triggers are views onto those particles — with the material gone they have
+  // nothing to be. Cleared explicitly rather than left to the gate's own
+  // rebuild, because erase-all should be silent immediately, not one tick later.
+  S._clearAllTriggers?.();
   if (S.liveRecBuffers) {
     S.liveRecBuffers.length = 0;
     S.currentLiveBufferIdx = 0;
@@ -274,7 +270,7 @@ function eraseAll() {
   }
   (S.updateSeedBanksUI || (() => {}))();
   S.updateLiveRecUI?.();
-  scheduleSweepAutoCommit();
+  history.push(materialAction('erase-all', before, snapshotMaterial()));
 
   // If recording is still active, re-create a fresh buffer slot so new
   // particles from the ongoing recording have somewhere to land.

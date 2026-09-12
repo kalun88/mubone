@@ -49,7 +49,7 @@ Two gestures × two modes = four commit types:
 - **C** (tap) = drop (stationary commit)
 - **C** (hold) = draw (commit with extent/motion)
 - **Shift+C** = cycle commit mode between cloud and loop
-- **⌘C** = release nearest or farthest commit from cursor (configurable)
+- **⌘C** = release the selected pin — nearest to the cursor or the oldest (configurable)
 - HUD displays current commit mode prominently
 
 A commit is either a cloud or a loop — **you cannot commit both at the same time.** They are mutually exclusive commit types; the performer chooses one or the other for each commit action.
@@ -67,12 +67,12 @@ A commit is either a cloud or a loop — **you cannot commit both at the same ti
 | **Direction** | Panel-wide | Forward / reverse / ping-pong. Applies to both clouds and loops |
 | **Attack** | Panel-wide | Fade in time. Applied at commit time (not stamped — uses current panel value). Loops override to 0ms by default (backdoor to change TBD). |
 | **Release** | Panel-wide | Fade out time. Applied at release time (not stamped — uses current panel value). |
-| **Selection mode** | Panel-wide | **NEW** — closest or farthest from cursor. Determines which commit is targeted for morph and release. |
+| **Selection mode** | Panel-wide | nearest to the cursor or the oldest pinned. Determines which pin is selected — for release, and marked in the rail. |
 | **Clear all** | Panel-wide | Releases all commits |
-| **Release (⌘C)** | Panel-wide | Releases the commit selected by selection mode (closest or farthest) |
+| **Release (⌘C)** | Panel-wide | Releases the selected pin (nearest or oldest) |
 | **Volume** | Loop only | Stamped at drop/draw time. Not adjustable after commit via selection. |
 | **Speed** | Loop only | Stamped at drop/draw time. Not adjustable after commit via selection. |
-| **Morph** | Cloud only | Interpolates granular params. Targets the cloud selected by selection mode (closest or farthest). |
+| **Morph** | Cloud only | Interpolates granular params. Targets the selected pin (nearest or oldest). |
 
 ### Parameter behavior
 
@@ -82,7 +82,7 @@ A commit is either a cloud or a loop — **you cannot commit both at the same ti
 
 **Volume and speed (loop only)** are stamped at drop/draw time. Not adjustable after commit via selection.
 
-**Selection mode (closest/farthest) only controls two things:**
+**Selection mode (nearest/oldest) only controls two things:**
 1. **Which commit is morphed** (cloud only)
 2. **Which commit is released** (⌘C)
 
@@ -116,7 +116,7 @@ A cloud can be committed into empty space — no particles yet. The trail moves 
 ### Terminology
 
 - **Commit** — the action of activating sustained sound (encompasses all four types)
-- **Release** — remove nearest or farthest commit from cursor (configurable). The opposite of commit.
+- **Release** — remove the selected pin, nearest or oldest (configurable). The opposite of commit.
 - **Drop** — tap gesture. Drop cloud (parked) or drop loop (existing buffer).
 - **Draw** — hold gesture. Draw cloud (moving path) or draw loop (new recording).
 - **Cloud** — particle-based commit (drop = parked, draw = moving)
@@ -161,7 +161,7 @@ How to visually distinguish clouds vs loops on the sphere? Different glow, diffe
 
 ### Morph
 
-Morph applies to clouds only — interpolating between granular parameter sets. The cloud targeted for morph is determined by selection mode (closest or farthest).
+Morph applies to clouds only — interpolating between granular parameter sets. The cloud targeted for morph is determined by selection mode (nearest or oldest).
 
 ### Overflow modes
 

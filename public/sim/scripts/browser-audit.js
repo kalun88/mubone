@@ -8,14 +8,14 @@
 //   • module load — page errors, console errors, 404s, missing js/ files
 //   • degradation — Electron-only controls are present, disabled, and labelled
 //                   (not silently absent, and not dead-but-enabled)
-//   • origin gating — a hosted origin must not spray local-bridge connection
+//   • origin gating — a hosted origin must not pen local-bridge connection
 //                     errors into a first-time visitor's console
 //   • service worker — a redeploy reaches a returning visitor even without a
 //                      CACHE_VERSION bump, and the app still loads offline
 //
-// The SW checks run against 127.0.0.2 on purpose: index.html skips SW
-// registration on localhost/127.0.0.1, but 127.0.0.2 is still loopback, so
-// Chromium treats it as a secure context and the worker registers. That gives
+// The SW checks run against sw.localhost on purpose: index.html skips SW
+// registration on localhost/127.0.0.1, but Chromium resolves *.localhost to loopback
+// itself and treats it as a secure context, so the worker registers (see HOSTED). That gives
 // a hosted-origin simulation without needing TLS.
 //
 // Setup (once per machine/sandbox) — same as ui-shots.js:
@@ -105,6 +105,23 @@ function checkAppShell() {
     'sw.js fetch handler ignores non-http schemes');
 }
 
+// HOSTED origins, without DNS or extra loopback addresses: Chromium resolves
+// any *.localhost name to loopback itself and treats it as a secure context
+// (so COOP/COEP hold and the service worker registers), while
+// _bridgeReachable() compares the hostname to 'localhost' exactly, so
+// demo.localhost reads as HOSTED. The audit used sw.localhost / 127.0.0.3 for
+// this, which only Linux routes — on macOS both navigations timed out, so the
+// suite had never actually run here (found 2026-09-05).
+const HOSTED = 'demo.localhost', HOSTED_RESET = 'reset.localhost';
+
+// The rig cabinet's device panels, by kind (the `device--<kind>` class). Eight
+// since #291's sunsets; a panel retired or added changes this list.
+// The modals index.html must carry, by id — named rather than counted for the
+// reason the comment at the boot check gives. Shared with the reset check,
+// which counted to 11 while the list had 7 (2026-09-05).
+const MODALS = ['audioSettingsModal', 'vizModal', 'imuSetupModal', 'sensorMappingModal', 'ledModal', 'mappingModal', 'settingsModal'];
+const PANELS = ['audio', 'commit', 'erase', 'grain', 'play', 'search', 'session', 'trigger'];
+
 // ── 2. Load + degradation, at a given origin ───────────────────────────────
 async function auditOrigin(browser, host, { expectBridgeAttempt }) {
   console.log(`\n── ${host} ──`);
@@ -120,12 +137,15 @@ async function auditOrigin(browser, host, { expectBridgeAttempt }) {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(400);
 
-  const ui = await page.evaluate(async () => {
+  const ui = await page.evaluate(async (MODALS) => {
     const g = id => document.getElementById(id);
     const shown = el => !!el && getComputedStyle(el).display !== 'none';
     g('imuSetupBtn')?.click();
     await new Promise(r => setTimeout(r, 600));
-    const wifiMsg = document.querySelector('#imuSetupDiscovery .imu-setup-empty')?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+    // The sensors page is one list now (#293) — the per-transport lists and
+    // their empty states are gone, and the situational message ("a browser
+    // can't open UDP sockets…") lives in the one list's empty state.
+    const wifiMsg = document.querySelector('#imuSetupRows .set-empty')?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
     document.querySelectorAll('.mu-overlay.open').forEach(m => m.classList.remove('open'));
     g('audioSettingsBtn')?.click();
     await new Promise(r => setTimeout(r, 900));
@@ -134,7 +154,9 @@ async function auditOrigin(browser, host, { expectBridgeAttempt }) {
       sab: typeof SharedArrayBuffer !== 'undefined',
       coi: typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated,
       panels: document.querySelectorAll('.device').length,
+      panelKinds: [...document.querySelectorAll('.device')].map(d => [...d.classList].find(c => c.startsWith('device--'))?.slice(8)).filter(Boolean).sort(),
       modals: document.querySelectorAll('.mu-overlay').length,
+      missingModals: MODALS.filter(id => !document.querySelector('#' + id + '.mu-overlay')),
       wg: typeof window.wg, acc: typeof window.acc,
       wifiMsg,
       oscStation: g('oscStationInline')?.textContent?.trim() ?? '',
@@ -148,12 +170,24 @@ async function auditOrigin(browser, host, { expectBridgeAttempt }) {
       houseTip: !!(g('asHouseSpeakersSel')?.getAttribute('data-title') || g('asHouseSpeakersSel')?.title),
       swRegs: (await navigator.serviceWorker?.getRegistrations?.() ?? []).length,
     };
-  });
+  }, MODALS);
 
   check(pageErrs.length === 0, 'no page errors', uniq(pageErrs).join(' | '));
   check(badReqs.length === 0, 'no failed requests', uniq(badReqs).slice(0, 3).join(' | '));
   check(ui.coi && ui.sab, 'cross-origin isolated (SharedArrayBuffer available)');
-  check(ui.panels >= 10 && ui.modals >= 12, 'panels + modals present', `${ui.panels} panels, ${ui.modals} modals`);
+  // The count has to be MAINTAINED, and twice now it has not been: #169
+  // deleted cameraModal and left this at 12, and #269's sunset pass took the
+  // sample-instrument, gesture, staging and accessory modals and left it at
+  // 11. A red harness hides the next real regression, so the eight that are
+  // left are named rather than counted — a deletion then says which one.
+  // (`.device` panels stay a count: they are the rig cabinet, hidden since
+  // #291, and what matters is that the module load did not strand them.)
+  // Named since 2026-09-05: the count sat at 10 while the cabinet had 8 (the
+  // sunsets took two), so the check was red on a healthy build. A deletion now
+  // says which panel, and PANELS is the list to edit in the same commit.
+  const missingPanels = PANELS.filter(k => !ui.panelKinds.includes(k));
+  check(missingPanels.length === 0, "the cabinet's device panels are all in the DOM", missingPanels.length ? `missing: ${missingPanels.join(', ')}` : `${ui.panels} panels`);
+  check(ui.missingModals.length === 0, 'every expected modal is present', ui.missingModals.join(', '));
   check(ui.wg === 'object' && ui.acc === 'object', 'console shortcuts wg + acc exposed');
 
   // Electron-only controls must be VISIBLE and DISABLED, never silently absent.
@@ -164,7 +198,7 @@ async function auditOrigin(browser, host, { expectBridgeAttempt }) {
   check(ui.bufDisabled === true && ui.bufTip, 'buffer size disabled, with a tooltip explaining why');
   check(ui.houseTip, 'house-speakers select has a tooltip explaining why it is disabled');
   check(!/\b(port\s*)?7500\b/.test(ui.oscStation), 'OSC line does not advertise a UDP port in browser', ui.oscStation);
-  check(ui.wifiMsg.length > 0, 'wifi tab explains the browser situation', ui.wifiMsg.slice(0, 70));
+  check(ui.wifiMsg.length > 0, 'the sensor list explains the browser situation', ui.wifiMsg.slice(0, 70));
 
   // A hosted page cannot reach a localhost bridge — attempting it is pure noise.
   const bridgeErrs = consoleErrs.filter(e => /ws:\/\/localhost/.test(e));
@@ -198,7 +232,7 @@ function mirrorRepo() {
       fs.copyFileSync(from, to);
     }
   };
-  for (const rel of ['index.html', 'sw.js', 'css', 'js', 'gesture-window.html']) copy(rel);
+  for (const rel of ['index.html', 'sw.js', 'css', 'js']) copy(rel);
   return dst;
 }
 
@@ -208,14 +242,14 @@ function mirrorRepo() {
 // reload hanging when the two shared a browser. A separate instance is cheaper
 // than reasoning about that.
 async function auditServiceWorker() {
-  console.log('\n── service worker (127.0.0.2) ──');
+  console.log('\n── service worker (sw.localhost) ──');
   const browser = await chromium.launch({ args: ['--no-sandbox'] });
   const mirror = mirrorRepo();
   const mirrorPort = PORT + 1;
   const msrv = await serve(mirror, mirrorPort);
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
   const page = await ctx.newPage();
-  const origin = `http://127.0.0.2:${mirrorPort}`;
+  const origin = `http://sw.localhost:${mirrorPort}`;
 
   try {
     await page.goto(`${origin}/index.html`, { waitUntil: 'load', timeout: 30000 });
@@ -247,7 +281,7 @@ async function auditServiceWorker() {
       modals: document.querySelectorAll('.mu-overlay').length,
       wg: typeof window.wg,
     })).catch(() => ({ panels: 0, modals: 0, wg: 'undefined' }));
-    check(off.panels >= 10 && off.modals >= 12 && off.wg === 'object',
+    check(off.panels >= PANELS.length && off.modals >= MODALS.length && off.wg === 'object',
       'app loads fully offline from cache', JSON.stringify(off));
     check(offErrs.length === 0, 'no page errors offline', uniq(offErrs).join(' | '));
   } finally {
@@ -272,6 +306,10 @@ async function auditBoot(browser) {
   // Seed a deliberately NON-default layout, so late application is visible.
   await page.goto(`http://127.0.0.1:${PORT}/index.html`, { waitUntil: 'load' });
   await page.waitForTimeout(4000);
+  // The base root font, read before seeding: the expectation used to be a
+  // remembered "20.25px" (15 × 1.35) and went red when the design system
+  // moved the root to 16px (21.6). The rule is the RATIO, not a number.
+  const baseFont = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
   await page.evaluate(() => {
     localStorage.setItem('mubone_uiScale', '1.35');
     for (const d of document.querySelectorAll('.device')) {
@@ -310,8 +348,8 @@ async function auditBoot(browser) {
     'only the final layout position is ever visible',
     `seen: ${seenX.join(', ')} · final: ${finalX}`);
   check(samples.some(s => s.booting), 'boot veil engages before first paint');
-  check(seen[0]?.rootFont === '20.25px',
-    'saved UI scale applied before anything is visible', seen[0]?.rootFont);
+  check(seen[0] && Math.abs(parseFloat(seen[0].rootFont) - baseFont * 1.35) < 0.05,
+    'saved UI scale applied before anything is visible', `${seen[0]?.rootFont} (base ${baseFont}px × 1.35)`);
   await ctx.close();
 
   // Failsafe — a dead main.js must not leave a blank window.
@@ -344,11 +382,10 @@ async function auditReset(browser) {
   console.log('\n── reset ──');
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await ctx.newPage();
-  // 127.0.0.3, not .2: still loopback (secure context, so the SW registers)
-  // but a DIFFERENT origin from auditServiceWorker. This audit unregisters a
-  // worker mid-navigation, and sharing an origin with the SW audit left the
-  // registration in a limbo that blocked the next context on that origin.
-  const origin = `http://127.0.0.3:${PORT}`;
+  // Its own hosted origin, a DIFFERENT one from auditOrigin's: this audit
+  // unregisters a worker mid-navigation, and sharing an origin with the SW
+  // audit left the registration in a limbo that blocked the next context.
+  const origin = `http://${HOSTED_RESET}:${PORT}`;
   const boot = async () => {
     await page.goto(`${origin}/index.html`, { waitUntil: 'load', timeout: 30000 });
     await page.waitForTimeout(5000);
@@ -381,7 +418,7 @@ async function auditReset(browser) {
       outputGain: -7.5, recLimitSeconds: 42, hfHoldMs: 321,
       seedMode: 'nearest', loopFadeTimeMs: 99,
       vizRmsMax: 0.77, cameraMode: 'surface',
-      activePresetIndex: 3,
+      activePresetIndex: 3,   // the bank's index — sunset 2026-09-03; must be DROPPED, not carried
       darkMode: false, sensor3Cal: { axisMap: { roll: 'gx' } },
       ts: 1,
     }));
@@ -396,10 +433,9 @@ async function auditReset(browser) {
       blob:   j('mubone_audio_defaults'),
       seed:   j('mubone_seed_settings'),
       viz:    j('mubone_viz_calibration'),
-      patch:  localStorage.getItem('mubone_active_patch'),
+      patch:  localStorage.getItem('mubone_active_patch'),   // retired key — must stay absent
       live:   { seedMode: S.seedMode, loopFadeTimeMs: S.loopFadeTimeMs,
                 vizRmsMax: S.vizRmsMax, cameraMode: S.cameraMode,
-                activePresetIndex: S.activePresetIndex,
                 recLimitSeconds: S.recLimitSeconds, hfHoldMs: S.hfHoldMs },
     };
   });
@@ -407,10 +443,10 @@ async function auditReset(browser) {
     'migration: seed settings survive into S', JSON.stringify(mig.live));
   check(mig.live.vizRmsMax === 0.77 && mig.live.cameraMode === 'surface',
     'migration: viz calibration survives into S');
-  check(mig.live.activePresetIndex === 3, 'migration: active patch survives into S');
+  check(mig.patch === null, 'migration: the retired active-patch key is not written');
   check(mig.live.recLimitSeconds === 42 && mig.live.hfHoldMs === 321,
     'migration: audio fields that did not move are untouched');
-  check(mig.seed?.seedMode === 'nearest' && mig.viz?.vizRmsMax === 0.77 && mig.patch === '3',
+  check(mig.seed?.seedMode === 'nearest' && mig.viz?.vizRmsMax === 0.77,
     'migration: values landed in the new keys',
     `seed=${!!mig.seed} viz=${!!mig.viz} patch=${mig.patch}`);
   check(mig.blob && !('seedMode' in mig.blob) && !('vizRmsMax' in mig.blob) &&
@@ -423,7 +459,7 @@ async function auditReset(browser) {
   const DIRT = {
     'mubone-accessory-a8':     '{"ch":1}',       // accessory
     'mubone-ximu-led-map':     '{"led":1}',      // accessory
-    'mubone_user_presets':     '{"slot1":"MY PATCH"}', // patches
+    'mubone_tile_order':       '["pen"]',      // ui
     'mubone-sensor-prefs':     '{"x":1}',        // sensor
     'mubone_sensorMappings':   '[{"id":"map_1"}]', // mapping
   };
@@ -437,8 +473,8 @@ async function auditReset(browser) {
   const dialog = await page.evaluate(() => ({
     cats:     [...document.querySelectorAll('.reset-cat input[data-cat]')].map(b => b.dataset.cat),
     hasAll:   !!document.querySelector('.reset-cat input[data-all]'),
-    disabled: document.querySelector('.factory-reset-confirm').disabled,
-    desc:     document.querySelector('.factory-reset-desc')?.textContent?.trim() ?? '',
+    disabled: document.querySelector('.dlg-go').disabled,
+    desc:     document.querySelector('.dlg-desc')?.textContent?.trim() ?? '',
     allHint:  document.querySelector('.reset-cat-all')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
   }));
   check(dialog.cats.length >= 7 && dialog.hasAll,
@@ -453,7 +489,7 @@ async function auditReset(browser) {
       const b = document.querySelector('.reset-cat input[data-cat="accessory"]');
       b.checked = true;
       b.dispatchEvent(new Event('change'));
-      document.querySelector('.factory-reset-confirm').click();
+      document.querySelector('.dlg-go').click();
     }),
   ]);
   await page.waitForTimeout(5000);
@@ -465,35 +501,11 @@ async function auditReset(browser) {
   }, DIRT);
   check(partial['mubone-accessory-a8'] === null && partial['mubone-ximu-led-map'] === null,
     'partial reset cleared the accessory category');
-  check(partial['mubone_user_presets'] === DIRT['mubone_user_presets'] &&
+  check(partial['mubone_tile_order'] === DIRT['mubone_tile_order'] &&
         partial['mubone-sensor-prefs'] === DIRT['mubone-sensor-prefs'] &&
         partial['mubone_sensorMappings'] === DIRT['mubone_sensorMappings'],
     'partial reset left every other category alone',
     Object.entries(partial).filter(([, v]) => v === null).map(([k]) => k).join(', '));
-
-  // ── 5c2. A schema flag must not outlive its guard condition ──
-  // Resetting `patches` deletes mubone_preset_layout_v, which gates
-  // migratePresetIndices(). Its other two data keys live in `mapping` and `ui`,
-  // so dropping the flag while they survive re-runs the #156 old→new index
-  // remap over already-remapped pins — silent corruption dressed as a reset.
-  // keysFor() withholds the flag in that case; prove it, and prove it does NOT
-  // withhold when everything goes together.
-  const flag = await page.evaluate(async () => {
-    const { keysFor } = await import('./js/storage-registry.js');
-    localStorage.setItem('mubone_preset_layout_v', '1');
-    localStorage.setItem('mubone_radial_pins', '[{"presetIdx":3}]');   // `mapping`
-    localStorage.removeItem('mubone_desktop_morph');
-    const withPinsAlive = keysFor(['patches']).includes('mubone_preset_layout_v');
-    localStorage.removeItem('mubone_radial_pins');
-    const withPinsGone  = keysFor(['patches']).includes('mubone_preset_layout_v');
-    localStorage.setItem('mubone_radial_pins', '[{"presetIdx":3}]');
-    const withBoth = keysFor(['patches', 'mapping', 'ui']).includes('mubone_preset_layout_v');
-    return { withPinsAlive, withPinsGone, withBoth };
-  });
-  check(flag.withPinsAlive === false,
-    'schema flag withheld when the data it guards survives the reset', JSON.stringify(flag));
-  check(flag.withPinsGone === true && flag.withBoth === true,
-    'schema flag IS cleared once nothing it guards is left', JSON.stringify(flag));
 
   // ── 5c3. A pre-v4 setup file imports onto an already-split machine ──
   // The regression this guards: applySettingsPayload used to write the payload's
@@ -507,7 +519,6 @@ async function auditReset(browser) {
     // This machine is already migrated and holds DIFFERENT values.
     localStorage.setItem('mubone_seed_settings',   JSON.stringify({ seedMode: 'all' }));
     localStorage.setItem('mubone_viz_calibration', JSON.stringify({ vizRmsMax: 0.1 }));
-    localStorage.setItem('mubone_active_patch',    '0');
     // A v3 payload: grab-bag blob, none of the successor keys.
     const payload = {
       _magic: 'mubone-setup', _version: 3,
@@ -525,39 +536,85 @@ async function auditReset(browser) {
       blobKept: blob.outputGain,
     };
   });
-  check(legacyImport.seed === 'nearest' && legacyImport.viz === 0.9 && legacyImport.patch === '5',
-    'pre-v4 import: the file\'s values win over the local split keys', JSON.stringify(legacyImport));
+  check(legacyImport.seed === 'nearest' && legacyImport.viz === 0.9 && legacyImport.patch === null,
+    'pre-v4 import: the file\'s values win over the local split keys, and the bank index is dropped', JSON.stringify(legacyImport));
   check(legacyImport.blobStripped && legacyImport.blobKept === -3,
     'pre-v4 import: blob is reshaped, audio fields survive', JSON.stringify(legacyImport));
 
   // ── 5c4. Session payload is decoupled from settings (audit § E4) ──
-  // A session must carry the resolved patch, not an index into this machine's
-  // bank, and must NOT carry settings — the format stopped promising to apply
-  // them because a session import can't reload. Exercised through the real
-  // builder, since the point is what the file contains.
+  // A session must carry the sound it was played on as a SNAPSHOT of the live
+  // parameter set (v11 — there is no bank to index into any more), and must
+  // NOT carry settings — the format stopped promising to apply them because a
+  // session import can't reload. Exercised through the real builder, since the
+  // point is what the file contains.
   const sess = await page.evaluate(async () => {
     const { __testBuildSessionPayload } = await import('./js/ui-export.js');
-    const { S, PRESETS } = await import('./js/state.js');
-    S.activePresetIndex = 2;
+    const { S } = await import('./js/state.js');
+
+    // Arm one trigger so the payload has something to serialise. Built through
+    // armTrigger for the same reason trigger-audit.js does: creating one needs
+    // a painted stroke and a live AudioBuffer, neither of which exists here.
+    // Paint a trigger-type stroke and arm it. A trigger is a view onto real
+    // particles and a real source buffer, so the fixture has to provide both —
+    // there is no way to conjure one from settings alone, which is the property
+    // the payload assertions below are checking for.
+    const { armTrigger } = await import('./js/trigger.js');
+    const { stampCartesian } = await import('./js/grain.js');
+    const octx = new OfflineAudioContext(1, 44100, 44100);
+    S.liveRecBuffers = [{ buffer: octx.createBuffer(1, 44100, 44100), liveBuffer: null, grainCursor: 0 }];
+    S.triggers.length = 0;
+    for (let i = 0; i < 3; i++) {
+      const p = { lon: i * 0.01, lat: 0, strokeId: 77, source: 'live', liveBufferIdx: 0,
+                  grainStart: i * 0.01, grainDuration: 0.01, trig: true };
+      stampCartesian(p);
+      S.particles.push(p);
+    }
+    S._particleVersion++;
+    Object.assign(S.triggerParams, { rearmMs: 250, dwell: 'loop', start: 'touch' });
+    armTrigger(77);
+
     const p = __testBuildSessionPayload();
+    S.triggers.length = 0;
     return {
       version:     p._version,
       hasSettings: 'settings' in p,
-      patchName:   p.patch?.name ?? null,
-      bankName:    PRESETS[2]?.name ?? null,
-      patchIndex:  p.patchIndex,
+      patchIsSnapshot: !!p.patch && typeof p.patch.duration === 'number' && !('name' in p.patch),
+      noIndex:     !('patchIndex' in p),
       hasLive:     !!p.live,
-      // The patch must be a detached copy — exporting a live reference would
-      // let a later edit mutate an already-built payload.
-      detached:    p.patch !== PRESETS[2],
+      // Triggers ride in the session (material), not the setup (rig).
+      trigCount:   Array.isArray(p.triggers) ? p.triggers.length : -1,
+      trigDwell:   p.triggers?.[0]?.trigger?.dwell ?? null,
+      trigStroke:  p.triggers?.[0]?.strokeId ?? null,
+      // How triggers PLAY is global and live, so it rides in the live block —
+      // not copied onto each entry, where a mid-set change couldn't reach it.
+      trigParamsRearm:  p.live?.triggerParams?.rearmMs ?? null,
+      trigParamsDwell:  p.live?.triggerParams?.dwell ?? null,
+      trigNoPerEntrySettings: p.triggers?.[0] ? !('trigger' in p.triggers[0]) : false,
+      // A trigger is a view onto a stroke, so it must carry NO audio and NO
+      // particles of its own — both are already in the payload once. Storing
+      // them again would duplicate the audio and let the copies drift, which is
+      // the exact shape of the § E9 bug that made loop slots import silent.
+      trigNoAudio:     p.triggers?.[0] ? !('wav' in p.triggers[0]) : false,
+      trigNoParticles: p.triggers?.[0] ? !('particles' in p.triggers[0]) : false,
+      // The type has to travel with the material or a percussion map imports as
+      // granulation fodder.
+      trigParticleFlagged: (p.particles || []).some(q => q.strokeId === 77 && q.trig === 1),
     };
   });
-  check(sess.version === 5 && sess.hasSettings === false,
-    'v5 session carries no settings block', JSON.stringify(sess));
-  check(sess.patchName && sess.patchName === sess.bankName && sess.patchIndex === 2,
-    'session embeds the resolved patch, not just an index', JSON.stringify(sess));
-  check(sess.detached && sess.hasLive,
-    'embedded patch is a detached copy, live block still present', JSON.stringify(sess));
+  const EXPORT_VERSION = Number(fs.readFileSync(path.join(ROOT, 'js', 'ui-export.js'), 'utf8').match(/EXPORT_VERSION = (\d+)/)[1]);
+  check(sess.version === EXPORT_VERSION && sess.hasSettings === false,
+    `a v${EXPORT_VERSION} session carries no settings block`, JSON.stringify(sess));
+  check(sess.patchIsSnapshot && sess.noIndex,
+    'session embeds a snapshot of the live sound and no bank index', JSON.stringify(sess));
+  check(sess.trigCount === 1 && sess.trigStroke === 77,
+    'session carries the triggers as views onto their strokes', JSON.stringify(sess));
+  check(sess.trigNoAudio && sess.trigNoParticles && sess.trigNoPerEntrySettings,
+    'a trigger serialises as a strokeId alone — no audio, particles or settings', JSON.stringify(sess));
+  check(sess.trigParamsRearm === 250 && sess.trigParamsDwell === 'loop',
+    'trigger playback params ride in the live block, once for all of them', JSON.stringify(sess));
+  check(sess.trigParticleFlagged,
+    'trigger-vs-granular type travels with the particles', JSON.stringify(sess));
+  check(sess.hasLive, 'live block present', JSON.stringify(sess));
 
   // ── 5d. Select-all is still a true factory reset ──
   // Sentinel: a cache entry that a clean boot would never recreate. Counting
@@ -583,7 +640,7 @@ async function auditReset(browser) {
       const all = document.querySelector('.reset-cat input[data-all]');
       all.checked = true;
       all.dispatchEvent(new Event('change'));
-      document.querySelector('.factory-reset-confirm').click();
+      document.querySelector('.dlg-go').click();
     }),
   ]);
   await page.waitForTimeout(5000);
@@ -592,15 +649,17 @@ async function auditReset(browser) {
     keys: Object.keys(localStorage),
     cacheNames: await caches.keys(),
     sentinel: !!(await caches.match('/__sentinel__')),
-    presets: localStorage.getItem('mubone_user_presets'),
+    tiles: localStorage.getItem('mubone_tile_order'),
     panels: document.querySelectorAll('.device').length,
     modals: document.querySelectorAll('.mu-overlay').length,
+    modalIds: [...document.querySelectorAll('.mu-overlay')].map(m => m.id),
   }));
-  check(after.presets === null, 'select-all cleared the patches too', String(after.presets));
+  check(after.tiles === null, 'select-all cleared the tile order too', String(after.tiles));
   check(!after.sentinel && !after.cacheNames.includes('mubone-audit-sentinel'),
     'pre-reset cache contents are gone', `caches now: ${after.cacheNames.join(', ') || '(none)'}`);
-  check(after.panels >= 10 && after.modals >= 12, 'app boots clean after reset',
-    `${after.panels} panels, ${after.modals} modals`);
+  const missingAfter = MODALS.filter(id => !after.modalIds.includes(id));
+  check(after.panels >= PANELS.length && missingAfter.length === 0, 'app boots clean after reset',
+    `${after.panels} panels, ${after.modals} modals${missingAfter.length ? `, missing: ${missingAfter.join(', ')}` : ''}`);
   console.log(`       keys re-written by a clean boot: ${after.keys.length ? after.keys.join(', ') : '(none)'}`);
   await ctx.close();
 }
@@ -618,7 +677,7 @@ const want = name => ONLY.length === 0 || ONLY.includes(name);
   try {
     if (want('origins')) {
       await auditOrigin(browser, '127.0.0.1', { expectBridgeAttempt: true });
-      await auditOrigin(browser, '127.0.0.2', { expectBridgeAttempt: false });
+      await auditOrigin(browser, HOSTED, { expectBridgeAttempt: false });
     }
     if (want('boot'))  await auditBoot(browser);
     if (want('reset')) await auditReset(browser);

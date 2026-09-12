@@ -15,7 +15,59 @@ export const GRID_SEGMENTS_LAT   = 9;   // every 20deg (halved for perf)
 export const AUTO_ROTATION_SPEED = 0.0001;
 export const ROTATION_SPEED      = 0.06;
 export const FOV_DEG             = 80;
-export const PAINT_INTERVAL      = 3;
+// The sensor-mode CAMERA pitches with the cursor all the way to ±90 — the
+// crosshair stays vertically centred at every elevation (Ek, 2026-09-01: "i
+// expect it to be fixed in the center in sensor mode"). A 60°→74° soft-knee
+// compression lived here for one build; it was solving the wrong half of the
+// measured pole problem. The spin (body yaw at elevation e → sin(e) view-axis
+// spin, 99.7% at 85°, with roll at exactly zero) comes from yaw MOTION near
+// vertical — and yaw is faded to a stop there (below) — so full pitch is safe.
+// The geometry then works FOR the crosshair instead of against it: the
+// on-screen offset from a yaw error shrinks as cos(el)·err — a 180° azimuth
+// gap at el 88 is 4° on screen, and at the pole itself every azimuth is the
+// same point, so the crosshair is exactly centred no matter what yaw does.
+// The servo camera's three rig-data constants (2026-09-01, all derived from a
+// 128 s recording of Ek's actual sensor — scratchpad rig-recording, findings
+// in TODO #306). The camera is UPRIGHT-ONLY: pitch clamps at ±90, so an
+// upside-down world is unrepresentable — the flip Ek kept hitting turned out
+// to be dropout TELEPORTS (a 4.5 s wifi gap swallowed a whole descent; the
+// pointing reappeared 84° away in one packet) resolving through the old
+// inverted branch and sticking there for the rest of the session.
+export const SENSOR_CAM_SWING_DEG_S   = 360; // A comes around at this rate when
+                                             // pitch is pinned at the pole and
+                                             // the hand keeps going — the
+                                             // deliberate over-the-top pan
+export const SENSOR_CAM_OVERSHOOT_DEG = 2;   // pitch overshoot past the clamp
+                                             // that counts as "kept going"
+export const SENSOR_CAM_TELEPORT_DEG  = 20;  // a pointing step this big between
+                                             // CONSECUTIVE packets is not a
+                                             // hand, it is a dropout resume —
+                                             // reacquire upright, clean cut
+                                             // (local dt is no defence: resumes
+                                             // arrive as bursts of stale queued
+                                             // packets with tiny dt)
+
+// (Four generations of sensor-camera yaw machinery lived here on 2026-09-01 —
+// a hard clamp, a soft knee, a fade+glide state machine, a lazy pursuit, each
+// with its constants. All deleted the same day: the camera is now an
+// INCREMENTAL servo — surface mode's composition with the sensor's pointing
+// as the trackpad — and it has no tunables. See cameraFromPointing in
+// renderer.js for why that dissolves the pole rather than managing it.)
+// ── k is a CEILING on a stable scale (Ek, 2026-09-07) ──────────────────────
+// k used to be a slider whose MAX was rewritten to the particle count on every
+// perf tick, so the same handle position meant k = 30 before a session and
+// k = 900 after it. That made k unusable as the thing Ek actually wants it to
+// be: "K is more of the max pool size — set it at a higher number and once it
+// hits it, i know i've maxed out the pool on the cursor". A ceiling you cannot
+// set on a fixed scale is not a ceiling, and a slider whose max moves under
+// your hand breaks the engine page's rule that a slider's raw value is its
+// POSITION. So the scale is fixed and log-mapped: fine control down at 1–10
+// where one mark more is a musical difference, and headroom to park k above
+// anything you will paint — uncapped in practice, but still instrumented,
+// because the live count can only tell you it saturated if there is a number
+// to saturate against.
+export const K_MAX = 1024;
+
 export const PARTICLE_BASE_SIZE  = 4;
 export const PARTICLE_MAX_SIZE   = 20;
 export const MAX_SAMPLES         = 10;
@@ -24,37 +76,105 @@ export const SEARCH_RADIUS_MIN  = 1;
 export const SEARCH_RADIUS_MAX  = 180;
 export const SEARCH_RADIUS_STEP = 2;
 
-export const BG_COLOR_DARK  = '#000000';
-export const BG_COLOR_LIGHT = '#ffffff';
-export const GRID_COLOR = '#7abcbc';
+// ── The main button ─────────────────────────────────────────────────────────
+// What space, a click, the pedal and the slot keys do is one of two things,
+// decided in brush.js `gesturePress` (Ek, 2026-09-04). In TOGGLE mode a hold
+// means nothing else, so it is free for a second function: a button still
+// down after GESTURE_LONG_MS fires the tool's long press (erase: erase all).
+// The old tap-versus-hold hybrid and its two windows (TRACE_TAP_MS,
+// TRACE_TAP_MIN_MS) went with it — see the header of that function.
+export const GESTURE_LONG_MS = 8000;
 
-// ── Hann window curves (precomputed Float32Arrays for setValueCurveAtTime) ──
-// Web Audio requires at least 2 samples; we use 128 for smoothness.
-// HANN_ATTACK : 0 -> 1 over the attack portion  (first half of Hann: cos rising)
-// HANN_RELEASE: 1 -> 0 over the release portion (second half of Hann: cos falling)
-export const HANN_LEN = 128;
-export const HANN_ATTACK  = new Float32Array(HANN_LEN);
-export const HANN_RELEASE = new Float32Array(HANN_LEN);
-for (let i = 0; i < HANN_LEN; i++) {
-  // Attack: 0.5*(1 - cos(pi * i/(N-1)))  -- rises from 0 to 1
-  HANN_ATTACK[i]  = 0.5 * (1 - Math.cos(Math.PI * i / (HANN_LEN - 1)));
-  // Release: 0.5*(1 + cos(pi * i/(N-1))) -- falls from 1 to 0
-  HANN_RELEASE[i] = 0.5 * (1 + Math.cos(Math.PI * i / (HANN_LEN - 1)));
-}
+// ── Cursor axis source ──────────────────────────────────────────────────────
+// Who drives each cursor axis, held in S.azSource / S.elSource.  One owner per
+// axis, declared by the state itself — there is no precedence rule to get wrong.
+//
+//   'sensor' — the cursor-role sensor's own yaw/pitch, free running
+//   'locked' — frozen at the value held when the source was last set
+//   'mapped' — driven by a sensor-mapping row targeting cursor azimuth/elevation
+//
+// An axis set to 'mapped' with no mapping row feeding it HOLDS its last value
+// (i.e. behaves as 'locked') rather than snapping back to sensor control.
+// Silently resuming sensor motion mid-performance because a row got disabled is
+// the worse failure — see CURSOR_SOURCE in docs/TODO.md.
+//
+// These replaced booleans `axisLockAz` / `axisLockEl`.  The rename is the whole
+// point: `if (S.axisLockEl)` is truthy for the string 'off', so retyping in
+// place would have left every read site silently behaving as locked.  Same
+// reasoning as FACTORY_PRESET_START in #156 — delete the name, break loudly.
+export const AXIS_SOURCES = ['sensor', 'locked', 'mapped'];
 
-// Loaded-sample paint colours (cooler, more saturated)
+/** True when the axis is held rather than free-running ('locked' or 'mapped'). */
+export const axisHeld = src => src !== 'sensor';
+
+// ── The sphere's palette (2026-08-29) ────────────────────────────────────
+// The grid is the WORLD, not an engine. It has to recede so that material,
+// commits and the cursor read against it — so it carries no engine hue and
+// almost no chroma. Cyan graph paper on pure black was the loudest thing on
+// the stage and read as a gunsight (Ek: "very matrix neo green").
+//
+// Two bright lines and everything else is structure:
+//   horizon — the equator and the front meridian, warm ivory. The only bright
+//             thing on the grid: level, and which way you are facing. This is
+//             the artificial-horizon read the sphere is identified by.
+//   behind  — the back meridian: the same great circle from the far side, so
+//             the same hue, dropped toward grey rather than recoloured.
+//   graph   — every other meridian. Structure. Nothing to look at.
+//   north / south — sky above, earth below. Desaturated hard, because the cue
+//             has to survive a glance without turning the stage into a poster.
+// ink is a lifted black: at #000 every line on top of it reads as neon, and
+// the lift is far below anything a projector puts on a wall. The lift is WARM
+// (2026-08-29): a cool lift under a warm ivory horizon is the same mismatch the
+// chrome had, one layer down, and it is the black every other colour in the app
+// is now derived against. `graph` lost its blue cast for the same reason —
+// structure should read as structure, and `north` should be the only cool thing
+// in the sky.
+export const SPHERE_PALETTE = {
+  dark:  { ink: '#090806', horizon: '#e4ddd0', behind: '#8b8478',
+           graph: '#6e6963', north: '#6d8ea6', south: '#a8806b' },
+  light: { ink: '#ffffff', horizon: '#3b3529', behind: '#8a8377',
+           graph: '#98a2a9', north: '#41708f', south: '#8d6448' },
+};
+
+// NOTE: the precomputed HANN_ATTACK / HANN_RELEASE arrays and the
+// buildEnvelopeCurves / rebuildHannCurves / rebuildGrainCurves machinery that
+// scaled them were removed 2026-08-04.  They were the main-thread envelope from
+// before the AudioWorklet migration.  The worklet builds its own 1024-entry
+// hann and triangle tables ONCE in its constructor and only ever indexes them —
+// changing curve type just selects a different array, and fadeRatio changes the
+// lookup mapping, not the table.  Nothing read S.GRAIN_ATTACK_CURVE /
+// S.GRAIN_RELEASE_CURVE anywhere in the repo; rebuildGrainCurves() was still
+// being called on every volume CC, allocating two Float32Array(128) per call
+// (~128KB of garbage per pot sweep) to fill arrays no one looked at.
+
+// Loaded-sample paint colours. Ten identities that have to stay tellable
+// apart, so they do go all the way round the wheel — but at ONE perceptual
+// lightness (OKLCH L=0.80, C=0.095), which the old set did not: '#ffd06b' was
+// far lighter than '#6b6bff', so sample 3 always looked more important than
+// sample 8 for no reason anyone chose. Pastels, not highlighters.
 export const SAMPLE_PAINT_COLORS = [
-  '#ff6b6b', '#ffa06b', '#ffd06b',
-  '#a0ff6b', '#6bffa0', '#6bffd0',
-  '#6ba0ff', '#6b6bff', '#d06bff',
-  '#ff6bcc'
+  '#f5a69c', '#e9b17c', '#ccc076',
+  '#a2cc8f', '#79d2b7', '#6ccfde',
+  '#88c5f7', '#b1b7fa', '#d6abe7',
+  '#eea4c4'
 ];
 
-// Live-rec paint colours (warm amber/orange/gold family)
+// The cursor's idle colour (live source, not recording). Historically this
+// came through the never-written S.sampleColorIndex — i.e. it was always
+// SAMPLE_PAINT_COLORS[0]. Named when that key died (#247).
+export const CURSOR_IDLE_COLOR = '#f5a69c';
+
+// Live-rec paint colours — the pool a stroke's colour cycles through. Nine
+// identities confined to the warm quadrant, rose through ember to ochre, at one
+// perceptual lightness (OKLCH L=0.755, C=0.105). The old set was already an
+// amber family but still contained '#e8c840', a near-pure yellow: once the
+// timbre map stopped producing greens (see featuresToColor) that was the last
+// highlighter left on the stage, and it read as a mistake next to everything
+// else. The arc stops short of yellow deliberately.
 export const LIVE_PAINT_COLORS = [
-  '#e8a030', '#e86030', '#e8c840',
-  '#c87830', '#e07050', '#d4a060',
-  '#c8603a', '#e8b050', '#d06838'
+  '#e294b9', '#e793ab', '#ea939d',
+  '#eb958f', '#ea9782', '#e79a76',
+  '#e29e6b', '#dba363', '#d2a85e'
 ];
 
 // Commit system — unified pool for clouds (particle-based) and loops (buffer-based).
@@ -64,11 +184,18 @@ export const MAX_COMMITS = 16;
 // Legacy aliases — kept so existing code compiles during transition
 export const MAX_SEEDS = MAX_COMMITS;
 export const MAX_SEQS  = MAX_COMMITS;
+// Sixteen slot identities. These DO circle the whole wheel — a slot colour's
+// only job is to be tellable from the other fifteen at a glance, and hue
+// separation is the only budget that buys that. What changed on 2026-08-29 is
+// that they are all at the same perceptual lightness (OKLCH L=0.775, C=0.082)
+// instead of being Material-design swatches: '#fff176' sat next to '#4fc3f7'
+// sat next to '#c084fc', so slot 6 read as louder than slot 11 for no reason.
+// A set of pastels rather than a packet of highlighters.
 export const COMMIT_COLORS = [
-  '#4fc3f7', '#81c784', '#ffb74d', '#e57373',
-  '#ce93d8', '#fff176', '#80cbc4', '#ff8a65',
-  '#ff6b9d', '#c084fc', '#67e8f9', '#fbbf24',
-  '#a3e635', '#f472b6', '#38bdf8', '#fb923c'
+  '#e4a58d', '#dbab7e', '#ccb378', '#b9bb7d',
+  '#a3c18b', '#8cc69f', '#7ac7b5', '#72c6ca',
+  '#78c2db', '#89bce7', '#9eb5eb', '#b4aee7',
+  '#c8a7dc', '#d7a2cb', '#e1a0b6', '#e6a1a1'
 ];
 // Legacy aliases
 export const SEED_COLORS = COMMIT_COLORS;
@@ -78,7 +205,7 @@ export const SEQ_COLORS  = COMMIT_COLORS;
 export const COMMIT_DRAW_THRESHOLD_MS = 200;
 export const MOVING_SEED_THRESHOLD_MS = COMMIT_DRAW_THRESHOLD_MS; // legacy alias
 // Glow color for nearest-lock cursor grains -- distinct from particle and seed colors
-export const NEAREST_GLOW_COLOR = '#b8a0ff'; // soft violet
+export const NEAREST_GLOW_COLOR = '#a793c0'; // dusty violet — == --accent-sensor
 
 // ── Performance tuning ────────────────────────────────────────────────────────
 // These were set conservatively during early CPU-load testing. Adjust here if
@@ -89,9 +216,10 @@ export const NEAREST_GLOW_COLOR = '#b8a0ff'; // soft violet
 // 20ms tick = 50 ticks/sec; with 40ms lookahead, grains overlap 2× (no gaps).
 // Was 10ms but the seed scheduling loop is O(seeds×particles) per tick —
 // at 16 seeds × 500 particles that's 800k+ ops/sec, starving the render loop.
-// 20ms halves the scheduler CPU while keeping onset precision well under
-// the 5ms audio-rate threshold.
-export const GRAIN_SCHEDULER_INTERVAL_MS = 20;
+// 10 ms since 2026-09-06 (R3, #340): the pass costs 0.5 ms on the probe's stressed
+// scene now that the pool crosses as shared tables, and the halved tick is
+// −10 ms of worst-case gesture-to-grain. Was 20.
+export const GRAIN_SCHEDULER_INTERVAL_MS = 10;
 
 // Minimum period for the UI slider floor and seed onset-clock advancement.
 // With the AudioWorklet grain engine handling all synthesis on the audio thread,
@@ -121,6 +249,96 @@ export const LIVE_REBUILD_INTERVAL_MS = 50;
 // Mutable at runtime via audio settings slider (stored on S.recLimitSeconds).
 export const REC_LIMIT_SECONDS_DEFAULT = 600;
 
+// ── Level fader response ──────────────────────────────────────────────────────
+// Response exponent baked into the master and grain volume ccFns, so a fader
+// or pot on either spends more of its throw at the top:
+//
+//   value = span · (cc/127)^LEVEL_FADER_GAMMA
+//
+// Below 1 = finer at the top of the throw, which is where a level lives during
+// a piece; the bottom of a volume fader is the part nobody needs resolution in.
+// At 0.8 over master's 78 dB the top step is 0.49 dB rather than 0.61, and the
+// cost is a 1.7 dB first step off the stop instead of 0.6 — inaudible territory
+// either way. Unity moves from 77% to 72% of the throw.
+//
+// A 7-bit cc has 128 steps whatever the curve: this redistributes them, it
+// cannot add any. Controllers can shape further on top of this per binding
+// (the γ column in keys / midi / osc, which shows the product).
+//
+// OSC is untouched — /master/volume and /grain/volume take real values, not
+// controller positions, so no curve applies there.
+export const LEVEL_FADER_GAMMA = 0.8;
+
+// ── Master output default ───────────────────────────────────────────
+// The one place the master's cold-boot level is decided. Defaults are not
+// stored anywhere in this app — they are whatever modules initialise to — so
+// every consumer must derive from here rather than repeat a literal.
+//
+// This used to be 0.9 linear in S.outputGainValue while every master slider
+// and the audio-settings `outputGain` said -6 dB. On a cold boot with no
+// saved settings the graph really was at -0.9 dB, the UI claimed -6, and the
+// first touch of the fader dropped the output ~5 dB out of nowhere.
+//
+// Consumers: `masterGain` and `busGainInit` in js/audio.js, `as.outputGain`
+// in js/ui-audio-settings.js, and the value/data-default on asOutputGain +
+// apMasterGainSlider in index.html (those two are markup, so keep them in
+// step by hand).
+export const MASTER_DEFAULT_DB   = -6;
+export const MASTER_DEFAULT_GAIN = Math.pow(10, MASTER_DEFAULT_DB / 20);  // ≈0.5012
+
+// ── Gate meter ballistics ─────────────────────────────────────────────────────
+// Attack, release and peak fall for the gate meter, as TIME CONSTANTS rather
+// than per-tick coefficients — the meter ticks at half the RAF rate (~30 Hz,
+// see tickMainMeters), and a bare coefficient silently means something else if
+// that ever changes.
+//
+// They are applied to the DRAWN POSITION, not to the RMS. The axis below is a
+// γ3 power curve, and an exponential decay in RMS is an exponential in position
+// with THREE TIMES the time constant: smoothing the RMS made a 205 ms release
+// take 1.4 s to fall to a tenth of the meter's width, which is too laggy to
+// judge a threshold against. Smoothing the position instead puts these numbers
+// back in the domain the eye is in — the same reason hardware meters specify
+// their ballistics in dB.
+export const GATE_METER_TICK_MS      = 1000 / 30;
+// 10 ms is ~0.96 of the way in a single tick — effectively instant rise, which
+// is what a peak meter does and what makes a woodblock read at its true height.
+// 28 ms (the old RMS-domain coefficient, carried over) only reached 91% of a
+// 67 ms hit before the release started pulling it back down.
+export const GATE_METER_ATTACK_MS    = 10;
+export const GATE_METER_RELEASE_MS   = 205;  // ~470 ms to fall to a tenth of the width
+export const GATE_METER_PEAK_HOLD_MS = 667;  // peak marker sits still this long,
+export const GATE_METER_PEAK_FALL_MS = 650;  // then falls, deliberately slower than the bar
+
+// ── Paint gate meter scale ──────────────────────────────────────────
+// The gate meter's axis. Everything that reads or writes a position on that
+// meter shares it — the RMS bar, the peak tick, the threshold marker, the mouse
+// drag, and the noise_gate cc action — so a pot's throw matches what's drawn.
+//
+//   rms = GATE_METER_MAX · frac^GATE_METER_GAMMA
+//
+// Why not linear: the gate's working range against a live mic is 0–0.004 RMS,
+// which is 7% of a linear 0–0.06 span — 8 steps of a 7-bit cc, and a threshold
+// marker pinned to the left edge. At γ=3 that region takes 41% of the travel
+// (~52 cc steps) while the ceiling still reads 0.06, so the full input range
+// stays visible. γ=4 gives it 51%, γ=2 gives 26%.
+//
+// Changing GATE_METER_GAMMA re-scales the meter and the cc together; stored
+// thresholds are real RMS and are unaffected.
+
+// The ceiling is 1.0 because the meter now draws the metric the gate tests
+// (audio-features.gateLoudness), whose range is 0…1 — so "threshold all the way
+// up" is guaranteed to gate everything, and the top of the meter is full scale.
+// The old 0.06 was sized for plain RMS and could not be reached at all by the
+// peak-weighted value: anything above ~−22 dBFS peak painted regardless.
+//
+// γ is re-derived to keep the working region where it was: 0.004 sits at
+// 0.004^(1/6) = 40% of the travel, the same 40% it had at 0.06/γ3, and the
+// noise_gate cc still spends 51 of its 128 steps below it. Landmarks:
+//   room noise ~0.001 → 32%   ·  threshold 0.002 → 36%
+//   playing    ~0.1   → 68%   ·  full scale 1.0  → 100%
+export const GATE_METER_MAX   = 1.0;    // full scale — the metric's own ceiling
+export const GATE_METER_GAMMA = 6;      // >1 = more of the throw spent near zero
+
 // ── Serial accessory (x-IMU3-SA-A8) ───────────────────────────────────────────
 // 8 analogue inputs, 12-bit, fixed 100 Hz, arriving as comma-separated volts in
 // the x-IMU3's serial-accessory message (manual §8.2.14).  See accessory-registry.js.
@@ -144,433 +362,53 @@ export const ACC_DEFAULT_DEADBAND = 0.002;  // normalised; below this we don't d
 export const ACC_DEFAULT_HI       = 0.66;   // schmitt upper threshold (normalised)
 export const ACC_DEFAULT_LO       = 0.33;   // schmitt lower threshold (normalised)
 
-// ── Presets ───────────────────────────────────────────────────────────────────
+// ── The default grain block ──────────────────────────────────────────────────
+// What S.grainParams starts as, and what a grain tile adopts the first time it
+// is armed on a fresh profile (tiles.js _adoptBlock). It is the old factory
+// patch `wash` — smooth granular freeze, live-monitor feel, overlap ~9.7
+// (589 ms / 61 ms), full-sphere k = 99. The rest of the bank (ten factory
+// patches, ten user slots, the loader, the index migration) was sunset on
+// 2026-09-03: a tile owns its whole block now, so a flat bank of grain
+// patches had nothing to be a bank OF (docs/archive/BRUSH-MODEL.md § 1e). The data is
+// in the sunset folder's presets-data.js (see the sandbox README, #325).
+//
 // k    = neighbourhood pool size -- how many nearest particles are candidates.
 //        One grain fires per cursor onset, chosen randomly from the k pool.
+//        (A LENS property since #233; kept here only as gp().k's fallback.)
 // period = seconds between cursor onsets (global clock, independent of duration).
 //   period > duration -> silence gap between grains (sparse/pulsed feel)
 //   period < duration -> grains overlap in time (dense/washy feel)
-// retriggerMs = per-particle debounce for seeder mode only (not cursor).
-
-export const PRESETS = [
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // FACTORY PRESETS 0–9 — core sonic palette (patches 1–10, keys 1–0)
-  // Sparse: only character-defining grain params. Unset params pass through.
-  // panSpread kept tight (≤0.20) for VBAP precision unless spread IS the sound.
-  // All searchRadiusDeg ≤ 90.
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  // -- 0. wash -- smooth granular freeze, live-monitor feel
-  //    Overlap ~9.7 (589ms/61ms) — dense cloud, full-sphere k=99.
-  {
-    name:          'wash',
-    nearestMode:   false,
-    grainKAllMode: false,
-    grainKSeqMode: false,
-    searchRadiusDeg: 10,
-    k:             99,
-    duration:      0.589,
-    durJitter:     0,
-    durVar:        0.04,
-    fadeRatio:     0.50,
-    period:        0.061,
-    periodVar:     0.025,
-    pitchShift:    0,
-    pitchJitter:   0.012,
-    recencyN:      0,
-    probability:   1.0,
-    panSpread:     0.05,
-    volume:        0.85,
-    direction:     'fwd',
-    curveType:     'hann',
-    hpfFreq:       20,       // 20 Hz = off (below audible, bypass)
-    lpfFreq:       20000,    // 20 kHz = off (above audible, bypass)
-    filterQ:       0.707,    // Butterworth (flat passband, no resonance)
-    filterFreqJitter: 0,     // no per-grain cutoff randomisation
-    seqOverflow:   'oldest',
-  },
-
-  // -- 1. vinyl -- lock+recency1: scrubbing a record, exact position tracking
-  {
-    name:          'vinyl',
-    nearestMode:   true,
-    searchRadiusDeg: 12,
-    recencyN:      1,
-    k:             1,
-    duration:      0.14,
-    durJitter:     0.04,
-    durVar:        0.02,
-    period:        0.10,
-    periodVar:     0.01,
-    fadeRatio:     0.21,
-    pitchJitter:   0.015,
-    panSpread:     0.10,
-    volume:        0.85,
-  },
-
-  // -- 2. cloud -- wide radius, long overlapping grains, atmospheric wash
-  //    panSpread 0.55 — spread is character-defining here.
-  {
-    name:          'cloud',
-    searchRadiusDeg: 55,
-    recencyN:      4,
-    k:             8,
-    duration:      0.85,
-    durJitter:     0.3,
-    durVar:        0.12,
-    period:        0.28,
-    periodVar:     0.04,
-    fadeRatio:     0.28,
-    pitchJitter:   0.02,
-    panSpread:     0.55,
-    volume:        0.55,
-    probability:   0.9,
-  },
-
-  // -- 3. pulse -- rhythmic, medium grains with tight period, forward drive
-  {
-    name:          'pulse',
-    searchRadiusDeg: 18,
-    k:             4,
-    duration:      0.22,
-    durJitter:     0.05,
-    durVar:        0.03,
-    period:        0.40,
-    periodVar:     0.02,
-    fadeRatio:     0.23,
-    panSpread:     0.12,
-    volume:        1.0,
-    curveType:     'tri',
-  },
-
-  // -- 4. shimmer -- dense rapid onsets, pitch scatter
-  //    ~5 concurrent grains (350ms/70ms) — tuned for Chrome audio budget.
-  //    panSpread 0.45 — shimmer spread is part of the character.
-  {
-    name:          'shimmer',
-    searchRadiusDeg: 35,
-    k:             6,
-    duration:      0.35,
-    durJitter:     0.18,
-    durVar:        0.06,
-    period:        0.070,
-    periodVar:     0.015,
-    fadeRatio:     0.30,
-    pitchJitter:   0.025,
-    panSpread:     0.45,
-    volume:        0.38,
-    probability:   0.85,
-  },
-
-  // -- 5. glitch -- ultra-short random bursts, dropout probability, wide pitch
-  {
-    name:          'glitch',
-    searchRadiusDeg: 80,
-    recencyN:      8,
-    k:             12,
-    duration:      0.018,
-    durJitter:     0.5,
-    durVar:        0.01,
-    period:        0.04,
-    periodVar:     0.03,
-    fadeRatio:     0.22,
-    pitchJitter:   0.45,
-    panSpread:     0.18,
-    volume:        1.0,
-    probability:   0.55,
-    direction:     'rnd',
-    curveType:     'rect',
-  },
-
-  // -- 6. chop -- mechanical, short exact grains with long gap, no jitter
-  //    Defining: zero jitter everywhere, rect envelope.
-  {
-    name:          'chop',
-    searchRadiusDeg: 15,
-    k:             3,
-    duration:      0.095,
-    period:        0.20,
-    fadeRatio:     0.08,
-    panSpread:     0.12,
-    volume:        1.0,
-    curveType:     'rect',
-  },
-
-  // -- 7. ocean -- massive ambient wash, very long grains, slow onset
-  //    Everything bleeds together into an enveloping drone.
-  //    panSpread 0.50 — ambient spread is character-defining.
-  //    Radius capped at 85 (was 120).
-  {
-    name:          'ocean',
-    searchRadiusDeg: 85,
-    recencyN:      8,
-    k:             10,
-    duration:      3.2,
-    durJitter:     0.4,
-    durVar:        0.45,
-    period:        1.0,
-    periodVar:     0.20,
-    fadeRatio:     0.40,
-    panSpread:     0.50,
-    volume:        0.38,
-    probability:   0.75,
-  },
-
-  // -- 8. stutter -- CD-skip: lock, very fast repeat of nearly the same point
-  {
-    name:          'stutter',
-    nearestMode:   true,
-    searchRadiusDeg: 6,
-    recencyN:      1,
-    k:             2,
-    duration:      0.065,
-    durJitter:     0.02,
-    period:        0.060,
-    periodVar:     0.005,
-    fadeRatio:     0.15,
-    panSpread:     0.08,
-    volume:        0.90,
-    curveType:     'tri',
-  },
-
-  // -- 9. wobble -- warped tape: heavy dur+period variation
-  //    Unstable playback speed, like dying batteries.
-  {
-    name:          'wobble',
-    searchRadiusDeg: 25,
-    k:             5,
-    duration:      0.48,
-    durJitter:     0.12,
-    durVar:        0.18,
-    period:        0.38,
-    periodVar:     0.15,
-    fadeRatio:     0.25,
-    pitchJitter:   0.08,
-    panSpread:     0.15,
-    volume:        0.80,
-    probability:   0.88,
-  },
-];
-
-// ── Preset layout: 10 factory then 10 user ─────────────────────────────────
-// Factory occupies 0–9 (patches 1–10, keys 1–0) and user occupies 10–19
-// (patches 11–20, shift+1–0).  This ORDER IS LOAD-BEARING: the keyboard handler
-// derives the index arithmetically from the digit and the shift key, so factory
-// has to come first for `3` to mean "the third factory patch".
-//
-// Until 2026-07-31 it was the other way round — 20 user slots at 0–19 and 20
-// factory at 20–39 — so any index persisted by an older build points at the
-// wrong patch.  _migratePresetIndices() below rewrites the three keys that
-// store one.  If you add a fourth, migrate it there.
-//
-// There is no FACTORY_PRESET_START any more.  It was 20 and is now 0, so every
-// `i < FACTORY_PRESET_START` test would have silently inverted rather than
-// failed; the constant was deleted so those call sites broke loudly instead.
-// Use isUserPreset().
-export const FACTORY_PRESET_COUNT = 10;
-export const USER_PRESET_COUNT    = 10;
-export const USER_PRESET_START    = FACTORY_PRESET_COUNT;
-export const PRESET_COUNT         = FACTORY_PRESET_COUNT + USER_PRESET_COUNT;
-
-/** True if this index is a user slot (editable, saveable) rather than factory. */
-export const isUserPreset = i => i >= USER_PRESET_START;
-
-// User slots start empty (sparse) — no parameter values by default.
-// When selected, an empty slot changes nothing (all params pass through).
-// Users populate slots via the save button or the patch table editor.
-const _userDefault = n => ({
-  name:           `user ${n}`,
-  userDefined:    true,
-});
-// Append the user slots after factory (indices 10–19).
-for (let n = 1; n <= USER_PRESET_COUNT; n++) PRESETS.push(_userDefault(n));
-
-// Meta keys that every preset has (not parameter data).
-const _PRESET_META_KEYS = new Set(['name', 'userDefined']);
-
-// Load saved user presets from localStorage and overwrite the 20 slots in-place.
-// Call this before building the preset buttons so the UI reflects saved names.
-// Strips any stale keys that aren't in PARAM_REGISTRY (e.g. retriggerMs
-// from old saves) so they can't silently trigger parameter application
-// in selectPreset.
-export function loadUserPresets() {
-  try {
-    const raw = localStorage.getItem('mubone_user_presets');
-    if (!raw) return;
-    const saved = JSON.parse(raw);
-    if (!Array.isArray(saved)) return;
-    // A save from the 20-user-slot layout can't be mapped onto 10 slots without
-    // guessing which ten to keep, so it is discarded rather than silently
-    // truncated. Ek confirmed the old slots were empty; if that ever stops being
-    // true for someone, the right fix is an export before the upgrade, not a
-    // guess here.
-    if (saved.length !== USER_PRESET_COUNT) {
-      console.info(`[presets] discarding a ${saved.length}-slot user bank — this build has ${USER_PRESET_COUNT}`);
-      localStorage.removeItem('mubone_user_presets');
-      return;
-    }
-
-    // Build the set of valid keys lazily (PARAM_REGISTRY may not exist yet
-    // at import time, so we defer to first call).
-    if (!_validParamKeys) _buildValidParamKeys();
-
-    let cleaned = false;
-    saved.forEach((p, n) => {
-      const idx = USER_PRESET_START + n;
-      if (idx < PRESET_COUNT && p && typeof p === 'object') {
-        // Strip unknown keys — prevents old saves from hiding data that
-        // selectPreset would silently apply (e.g. retriggerMs).
-        for (const k of Object.keys(p)) {
-          if (!_PRESET_META_KEYS.has(k) && !_validParamKeys.has(k)) {
-            delete p[k];
-            cleaned = true;
-          }
-        }
-        PRESETS[idx] = { ...PRESETS[idx], ...p, userDefined: true };
-      }
-    });
-    if (cleaned) {
-      console.info('[presets] stripped stale keys from user presets — re-saving');
-      saveUserPresets();
-    }
-  } catch (e) {
-    console.warn('[presets] could not load user presets from localStorage:', e);
-    // If the data is corrupt JSON, remove it so we don't retry and fail
-    // on every subsequent load (was causing repeated console spam).
-    try { localStorage.removeItem('mubone_user_presets'); } catch (_) {}
-  }
-}
-
-// Valid parameter keys — populated lazily from PARAM_REGISTRY on first use.
-let _validParamKeys = null;
-/** @param {Array} [registry] — pass PARAM_REGISTRY from ui-patch-table */
-export function _buildValidParamKeys(registry) {
-  if (registry) {
-    _validParamKeys = new Set(registry.map(p => p.key));
-  } else {
-    // Fallback: build from known keys until PARAM_REGISTRY is available.
-    // Must stay in sync with PARAM_REGISTRY in ui-patch-table.js.
-    _validParamKeys = new Set([
-      'duration', 'durVar', 'durJitter', 'fadeRatio', 'period', 'overlap', 'periodVar',
-      'pitchJitter', 'pitchShift', 'panSpread', 'volume', 'k',
-      'hpfFreq', 'lpfFreq', 'filterQ', 'filterFreqJitter',
-      'probability', 'direction', 'curveType',
-      'nearestMode', 'grainKAllMode', 'grainKSeqMode',
-      'searchRadiusDeg', 'recencyN',
-      'radiusFadeEnabled', 'radiusFadeCurve',
-      'scanMuted', 'axisLockAz', 'axisLockEl',
-      'seqSlotCount', 'seqOverflow', 'seqModeEnabled',
-      'seqNextVolume', 'seqNextSpeed', 'seqNextDirection',
-      'seedSlotCount', 'seedOverflow', 'seedLockEnabled',
-      'seedMode', 'seedTether', 'seedXfade',
-      'seedAttack', 'seedRelease', 'seedLoopMode',
-    ]);
-  }
-}
-
-// ── One-shot migration: old 40-slot layout → new 20-slot layout ────────────
-// Before 2026-07-31: indices 0–19 were user, 20–39 were the 20 factory presets.
-// Now: 0–9 are the 10 surviving factory presets, 10–19 are user.
-//
-// Only three stored keys hold a preset INDEX (as opposed to preset data), and
-// all three are rewritten here.  Anything pointing at a retired factory preset
-// or at an old user slot falls back to 0 (wash) — the alternative is a dangling
-// index that silently selects the wrong patch mid-performance.
-//
-// Runs once, gated on a schema key, then never again.  The old-index tables are
-// deliberately literal rather than derived: they describe a layout that no
-// longer exists in the code, so there is nothing left to derive them from.
-const _PRESET_LAYOUT_KEY = 'mubone_preset_layout_v';
-const _PRESET_LAYOUT_V   = 2;
-
-// old factory index (20–39) → new index (0–9). Absent = retired.
-const _OLD_FACTORY_TO_NEW = {
-  20: 0,  // wash      21: vinyl   22: cloud    (23 freeze retired)
-  21: 1,
-  22: 2,
-  24: 3,  // pulse
-  25: 4,  // shimmer               (26 ghost retired)
-  27: 5,  // glitch
-  28: 6,  // chop
-  29: 7,  // ocean
-  30: 8,  // stutter    (31 tape, 32 swarm, 33 haunt, 34 morse,
-  38: 9,  // wobble      35 smear, 36 drill, 37 scatter, 39 ritual retired)
+export const DEFAULT_GRAIN = {
+  grainKAllMode: false,
+  grainKSeqMode: false,
+  k:             99,
+  duration:      0.589,
+  durJitter:     0,
+  startJitter:   0,        // on-marker only — see grainOverrides.startJitter
+  fadeMode:      'pct',    // 'pct' = fade scales with duration, 'ms' = fixed ramp
+  fadeMs:        0.020,    // ramp length in seconds, used when fadeMode === 'ms'
+  durVar:        0.04,
+  fadeRatio:     0.50,
+  period:        0.061,
+  periodVar:     0.025,
+  pitchShift:    0,
+  pitchJitter:   0.012,
+  probability:   1.0,
+  panSpread:     0.05,
+  volume:        0.85,
+  direction:     'fwd',
+  curveType:     'hann',
+  hpfFreq:       20,       // 20 Hz = off (below audible, bypass)
+  lpfFreq:       20000,    // 20 kHz = off (above audible, bypass)
+  // ONE Q PER FILTER (Ek, 2026-09-07: "the current Q for filter changes both
+  // the Q for the hpf and lpf, they should have their own right?"). It was one
+  // shared number, so a resonant low-pass could not be had without the same
+  // peak appearing at the high-pass corner. Butterworth (flat, no resonance)
+  // at both defaults.
+  hpfQ:          0.707,
+  lpfQ:          0.707,
+  filterFreqJitter: 0,     // no per-grain cutoff randomisation
 };
-
-const _remapPresetIndex = old =>
-  (typeof old === 'number' && _OLD_FACTORY_TO_NEW[old] !== undefined)
-    ? _OLD_FACTORY_TO_NEW[old]
-    : 0;
-
-export function migratePresetIndices() {
-  try {
-    if (Number(localStorage.getItem(_PRESET_LAYOUT_KEY)) >= _PRESET_LAYOUT_V) return;
-
-    // Radial morph pins — each pin holds a presetIdx.
-    const rawPins = localStorage.getItem('mubone_radial_pins');
-    if (rawPins) {
-      const pins = JSON.parse(rawPins);
-      if (Array.isArray(pins)) {
-        let moved = 0;
-        for (const pin of pins) {
-          if (!pin || typeof pin.presetIdx !== 'number') continue;
-          const next = _remapPresetIndex(pin.presetIdx);
-          if (next !== pin.presetIdx) moved++;
-          pin.presetIdx = next;
-        }
-        localStorage.setItem('mubone_radial_pins', JSON.stringify(pins));
-        if (moved) console.info(`[presets] remapped ${moved} radial pin(s) to the new patch layout`);
-      }
-    }
-
-    // Desktop morph endpoints.
-    const rawMorph = localStorage.getItem('mubone_desktop_morph');
-    if (rawMorph) {
-      const m = JSON.parse(rawMorph);
-      if (m && typeof m === 'object') {
-        if (typeof m.presetL === 'number') m.presetL = _remapPresetIndex(m.presetL);
-        if (typeof m.presetR === 'number') m.presetR = _remapPresetIndex(m.presetR);
-        localStorage.setItem('mubone_desktop_morph', JSON.stringify(m));
-      }
-    }
-
-    // The user bank itself is handled by loadUserPresets(), which discards a
-    // bank of the wrong length rather than guessing at a mapping.
-
-    localStorage.setItem(_PRESET_LAYOUT_KEY, String(_PRESET_LAYOUT_V));
-  } catch (e) {
-    console.warn('[presets] patch-layout migration failed:', e);
-    // Don't set the version key — a failed run should retry next load rather
-    // than leaving half-migrated indices marked as done.
-  }
-}
-
-/** Check whether a preset has any actual parameter data (beyond name/meta). */
-export function presetHasParams(preset) {
-  if (!preset || typeof preset !== 'object') return false;
-  for (const k of Object.keys(preset)) {
-    if (!_PRESET_META_KEYS.has(k)) return true;
-  }
-  return false;
-}
-
-// Persist the user slots to localStorage.
-export function saveUserPresets() {
-  try {
-    localStorage.setItem(
-      'mubone_user_presets',
-      JSON.stringify(PRESETS.slice(USER_PRESET_START, PRESET_COUNT))
-    );
-  } catch (e) {
-    console.warn('[presets] could not save user presets to localStorage:', e);
-    // Surface quota errors to the user — silent failures leave them thinking
-    // their patches are saved when they're not.
-    if (e?.name === 'QuotaExceededError') {
-      S._showToast?.('Storage full — patch not saved. Clear browser data or export patches.');
-    }
-  }
-}
 
 // ── Sample-rate-derived grain parameter floors ───────────────────────────────
 // Minimum grain duration = 2 samples; minimum inter-onset period = 2 samples.
@@ -578,50 +416,6 @@ export function saveUserPresets() {
 // before the context is created, e.g. during early UI initialisation).
 export const minGrainDurS    = () => 2 / (S.audioCtx?.sampleRate ?? 48000);
 export const minGrainPeriodS = () => 2 / (S.audioCtx?.sampleRate ?? 48000);
-
-// ── Envelope curve builders ──────────────────────────────────────────────────
-
-// Build envelope attack/release arrays for a given curve type and volume
-export function buildEnvelopeCurves(curveType, volume) {
-  const atk = new Float32Array(HANN_LEN);
-  const rel = new Float32Array(HANN_LEN);
-  for (let i = 0; i < HANN_LEN; i++) {
-    const t = i / (HANN_LEN - 1); // 0->1
-    let a, r;
-    if (curveType === 'tri') {
-      // Linear trapezoid (Henke Granulator III style): linear up then linear down
-      a = t;
-      r = 1 - t;
-    } else if (curveType === 'rect') {
-      // Rectangular: instant on, instant off (hard cut)
-      a = i === 0 ? 0 : 1;
-      r = i === HANN_LEN - 1 ? 0 : 1;
-    } else {
-      // Hann (default)
-      a = HANN_ATTACK[i];
-      r = HANN_RELEASE[i];
-    }
-    atk[i] = a * volume;
-    rel[i] = r * volume;
-  }
-  return { atk, rel };
-}
-
-// Rebuild scaled Hann curves (called by rebuildGrainCurves, kept for compatibility)
-export function rebuildHannCurves(volume) {
-  for (let i = 0; i < HANN_LEN; i++) {
-    S.GRAIN_ATTACK_CURVE[i]  = HANN_ATTACK[i]  * volume;
-    S.GRAIN_RELEASE_CURVE[i] = HANN_RELEASE[i] * volume;
-  }
-}
-
-// Rebuild global cached curves (called when curve type or volume changes)
-export function rebuildGrainCurves() {
-  const vol = S.grainOverrides.volume ?? S.grainParams.volume;
-  const { atk, rel } = buildEnvelopeCurves(S.grainCurveType, vol);
-  S.GRAIN_ATTACK_CURVE  = atk;
-  S.GRAIN_RELEASE_CURVE = rel;
-}
 
 // Shorthand alias (used throughout playback code)
 export const gp = () => S.grainParams;
@@ -728,13 +522,6 @@ export function perfTick() {
     const txt = pCount > 0 ? `[${pCount}]` : '';
     if (kwcEl.textContent !== txt) kwcEl.textContent = txt;
   }
-  // Dynamic k slider max = particle count, floor 30 so k can be set before painting
-  const kSliderEl = document.getElementById('searchKSlider');
-  if (kSliderEl) {
-    const newMax = String(Math.max(30, pCount));
-    if (kSliderEl.max !== newMax) kSliderEl.max = newMax;
-  }
-
   if (!S.perfMonitorVisible) return;
 
   // Throttle DOM writes to 4Hz — readable without churning layout.
@@ -869,21 +656,46 @@ export const S = {
   canvas: undefined,
   ctx:    undefined,
   camQ:   [0, 0, 0, 1],       // camera orientation quaternion [x, y, z, w]
-  cursorQ: null,               // [x,y,z,w] | null — separate cursor quat when detethered (two-IMU mode)
-  get detethered() { return this.cursorQ !== null; },  // true when cursor is independent of camera
+  // [x,y,z,w] | null — the cursor's own quat, whenever a sensor is pointing:
+  // two-IMU mode as before, and since 2026-09-01 single-IMU sensor mode too.
+  // The camera is DERIVED from it (cameraFromPointing in renderer.js — yaw +
+  // clamped pitch, never roll), so "cursor = camera centre" stopped being a
+  // rule and became the common case below the pitch clamp.
+  // (A `detethered` getter aliasing cursorQ !== null lived here; its one
+  // reader is gone and the name stopped being true — single-IMU mode sets
+  // cursorQ now.)
+  cursorQ: null,
   mouseX: 0,
   mouseY: 0,
   mousePixelX: 0,
   mousePixelY: 0,
   mouseInCanvas: false,
   altLocked:          false,  // true while Alt held -- sphere position frozen
-  axisLock:           'off',  // legacy compat — derived from axisLockAz/El
-  axisLockAz:         false,  // independent azimuth lock toggle
-  axisLockEl:         false,  // independent elevation lock toggle
-  _axisLockFrozenNx:  null,   // snapshot of surface nx when az locked
-  _axisLockFrozenNy:  null,   // snapshot of surface ny when el locked
-  _axisLockFrozenYaw:   null, // snapshot of sensor yaw when az locked
-  _axisLockFrozenPitch: null, // snapshot of sensor pitch when el locked
+  // Round ten: every command either control path sends to a sensor, for the
+  // card's Command log door. {t, what}; capped by the writers at 200.
+  _cmdLog: [],
+  azSource:           'sensor',  // who drives cursor azimuth   — see AXIS_SOURCES
+  elSource:           'sensor',  // who drives cursor elevation — see AXIS_SOURCES
+  // (rollSource is gone, 2026-09-01. Roll is DATA: the camera takes none —
+  // applyAxisSources strips a sensor quat to yaw+pitch structurally — and the
+  // mapping rows read the sensor's roll live via getCursorEuler. The RO footer
+  // button and _gateRoll went with it; disable a mapping row in Settings →
+  // Mapping when roll should stop driving something.)
+  // Degrees written by sensor-mapping rows whose output kind is 'cursor'.
+  // null = no row is feeding that axis, so a 'mapped' axis holds instead.
+  // Same shape and lifetime as S.grainOverrides.
+  cursorOverrides:    { azimuth: null, elevation: null, roll: null },
+  _axisLockFrozenNx:  null,   // snapshot of surface nx when az is held
+  _axisLockFrozenNy:  null,   // snapshot of surface ny when el is held
+  _axisLockFrozenYaw:   null, // snapshot of sensor yaw when az is held
+  _axisLockFrozenPitch: null, // snapshot of sensor pitch when el is held
+  // (_axisLockFrozenRoll lived here for two days, 2026-08-31 → 09-01: a
+  // snapshot so MUTING roll could hold the horizon. Then roll stopped reaching
+  // the camera at all — applyAxisSources composes yaw·pitch only — and a
+  // snapshot for a channel that no longer exists is exactly the kind of
+  // leftover the next session mistakes for a mechanism.)
+  _rawCamQ:             null, // pre-substitution sensor quats, kept so a cursor
+  _rawCursorQ:          null, // mapping can be re-applied after tickMappings()
   altFrozenMousePixelX: 0,
   altFrozenMousePixelY: 0,
 
@@ -891,6 +703,15 @@ export const S = {
   isMobile: navigator.maxTouchPoints > 0 && window.innerWidth < 1024,
   orientationActive: false,
   searchRadiusDeg: 10,
+  // ── What the lens READS (Ek, 2026-09-07) ────────────────────────────────
+  // The lens owns HOW the cursor reads — k, order, fill, radius, nearest,
+  // depth — so WHICH MATERIAL it reads belongs to it too, and it was the last
+  // thing here that was still a global. It replaces the `triggers on|off` row
+  // the cap absorbed: a mute you have to remember you left on becomes a lens
+  // you can see you are holding, which is the safer of the two on stage.
+  // 'both' | 'grains' | 'tape'. The cap still overrides it — capped, the
+  // cursor reads nothing whatever this says.
+  lensReads: 'both',
   nearestMode: false,   // when true: ignore radius, always pick closest particle
   grainKAllMode: false, // when true: k limit is removed — all particles within radius fire
   grainKSeqMode: false, // when true: step through candidates sequentially by grainStart order
@@ -898,9 +719,17 @@ export const S = {
 
   // ── Painting ───────────────────────────────────────────────────────────
   isPainting: false,          // true while mouse-move painting is active
-  paintFrameCount: 0,
   particles: [],              // all painted particles on the sphere
   _particleVersion: 0,        // incremented on every push/remove; grain.js uses this to invalidate angular-distance caches
+
+  // ── Paint ticker (consumed by paint-ticker.js) ─────────────────────────
+  // intervalMs: ms between marker deposits while painting.  Also sets onset
+  //   precision — the gate lookback rewinds by one interval, so this bounds
+  //   how close a grain can start to a detected transient.
+  // intervalMs: the deposit clock. (alignMs, a hand-set backdate of each
+  // mark's grainStart, was retired 2026-09-02: the offset is now derived from
+  // the stroke's frozen brush — brush-voicing.js grainPeakOffsetS.)
+  paintTicker: { intervalMs: 50 },
 
   // ── Stroke history (for undo) ──────────────────────────────────────────
   // Each entry: { strokeId, type: 'sample'|'live', liveBufferIndex (live only) }
@@ -913,7 +742,7 @@ export const S = {
   recencyN: 3,               // how many most-recent buffers to allow
   drawRecencyDial: null,     // set during setup -- module-level so MIDI CC can call it
   setRecency:      null,     // same
-  setSearchK:      null,     // set during setup -- module-level so selectPreset can call it
+  setSearchK:      null,     // set during setup -- module-level so applyPresetObject can call it
 
   // ── Erase brush ────────────────────────────────────────────────────────
   // Momentary hold-to-erase at the cursor (hold F / /erase/hold).  Follows
@@ -926,12 +755,91 @@ export const S = {
   // ── Commit system (unified clouds + loops) ─────────────────────────────
   // Each slot is either a cloud (particle-based granular) or a loop (buffer-based).
   // type: 'cloud' | 'loop' stored on each slot object.
+  // ── Composer mode ─────────────────────────────────────────────────────────
+  // Latched mode. While on, scan is muted and the cursor toggles any commit it
+  // reaches. Loops are MUTED (source keeps running, never loses its place);
+  // clouds are stopped with the commit attack/release envelope. Commits only —
+  // triggers are deliberately out of scope. See docs/archive/COMPOSER-MODE-PLAN.md.
+  // Pin groups — clouds and loops, DERIVED from each pin's kind, so there is
+  // no membership to store here. See js/pins.js; the two groups' mute/solo
+  // flags live on that module's GROUPS table because they belong to the group,
+  // not to the session's global state.
+
+  // ── Scope aperture (#217/#218) ────────────────────────────────────────────
+  // ── Brush head — deposit geometry (#218) ──────────────────────────────────
+  // STATIC paint qualities, deliberately not gesture-driven (Ek): the control
+  // is the CHOICE of brush, whose head is predetermined. Width is the band
+  // marks scatter across around the path (degrees of half-width; 0 = deposit
+  // exactly on the line, today's behaviour). Edge is the distribution across
+  // that band: 'hard' = uniform to the rim and stop, 'soft' = gaussian skirt
+  // whose sparse fringes read like an airbrush. Spatially SONIC, not
+  // cosmetic — wider material granulates over a wider region and spreads its
+  // VBAP image. Frozen into the stroke for free: a mark's position is
+  // physical (#210 needs no help here).
+  headWidthDeg: 0,
+  headEdge: 'soft',        // 'hard' | 'soft'
+  // The two experimental brush contracts (#218). Set by tile SELECTION —
+  // choosing the brush is the control; the character is predetermined:
+  // Which experimental deposit contract is active — ONE field, set on tile
+  // selection, because these are mutually exclusive characters of the chosen
+  // brush: 'none' | 'splatter' | 'match' | 'comb' | 'staff' | 'slice'.
+  // echo, chop and pour were cut 2026-08-29 (Ek) — see the tombstone in
+  // paint-ticker.js and docs/EXPERIMENTAL-BRUSHES.md.
+  brushFx: 'none',
+  eraseOldest: false,      // scrape — erase from the bottom (oldest first)
+  eraseWholeStroke: false, // scrape — 'erases: stroke' (#243): contact picks
+                           // WHICH strokes, then every mark of them goes
+
+  // ── Experimental engine dials (#225) — graduated from module constants ────
+  // Every value here was a const in paint-ticker.js; as state they appear in
+  // the design view like any engine param, captured per tile like any other.
+  fx: {
+    splatSpread: 0.10,     // splatter — ° of width per °/s of cursor speed
+    splatThrow:  0.06,     // splatter — forward fling, ° per °/s
+    staffLo:     110,      // staff — Hz at the bottom of the sphere
+    staffHi:     7040,     // staff — Hz at the top
+    sliceMinMs:  100,      // slice — cuts producing a segment shorter than
+                           // this merge into the previous one (0 = keep all).
+                           // Kills the ~100 ms double-onset artifacts without
+                           // losing audio: the cut goes, not the material.
+  },
+  combAxis: 'centroid',    // 'centroid' | 'rms' | 'zcr' — what sorts the comb
+  combKeep: 'all',         // 'all' | 'high' | 'low' — the comb's sieve
+
+  // ── Brush voicings (docs/archive/BRUSH-MODEL.md step 3) ──
+  // A stroke freezes the brush that painted it. `voicings` is the interned
+  // table of distinct resolved param blocks, `currentVoicing` is the id being
+  // stamped on everything the current stroke deposits, and each particle keeps
+  // it as `_vo`. `currentVoicing` is set at recordStrokeStart and re-set per
+  // deposit when a param moves MID-STROKE (paint-ticker.js _refreshVoicing),
+  // so one strokeId can carry several voicings — the worklet buckets by
+  // particle, so a later sweep plays each section as it was painted. A WET
+  // brush's strokes all point at the one voicing its knobs edit in place
+  // (brush-voicing.js, "Wet paint"). id 0 means "follow the live params",
+  // which is what nothing paints as any more.
+  voicings: [],
+  voicingSeq: 0,
+  currentVoicing: 0,
+
+  // Which brush is selected in the brush library (js/brush.js), as a
+  // 'grain' | 'tape' key.  The MATERIAL is derived from it and never set
+  // directly — that is the whole point (docs/archive/BRUSH-MODEL.md § 1). The old
+  // 'stamp:N' keys died with #247: a sample is a source, not a brush.
+  brushKey: null,
+
+  // ── The pin lenses (2026-08-29) ────────────────────────────────────────
   commitSlots: new Array(MAX_COMMITS).fill(null),
   commitSlotCount:    8,        // active limit (1–16), adjustable during session
   commitOverflow:     'off',    // 'off' | 'oldest' | 'nearest'
-  traceMode:          'trace',  // 'trace' | 'trace+loop' | 'trace+cloud' — what spacebar/click does
+  // What a finished grain stroke BECOMES: 'trace' scratch, 'trace+cloud' a
+  // moving cloud on its own path (the wash brush). Driven by the grain sheet's
+  // `on end` row (tiles.js) — the A key, /trace/mode and the cabinet button
+  // that cycled it went on 2026-09-05, and so did the third value,
+  // 'trace+loop' (the looper with grain marks; a session file carrying it
+  // reads as 'trace').
+  traceMode:          'trace',
   commitMode:         'cloud',  // 'cloud' | 'loop' — what the next C press creates
-  selectionMode:      'closest', // 'closest' | 'farthest' — which commit is targeted for morph & release
+  selectionMode:      'nearest', // 'nearest' | 'farthest' | 'oldest' — the SELECTED pin: what unpin takes, what the rail marks (pins.js)
   // Legacy aliases for code that still references old names
   get seedSlots()       { return this.commitSlots; },
   set seedSlots(v)      { this.commitSlots = v; },
@@ -939,11 +847,6 @@ export const S = {
   set seedSlotCount(v)  { this.commitSlotCount = v; },
   get seedOverflow()    { return this.commitOverflow; },
   set seedOverflow(v)   { this.commitOverflow = v; },
-  // Legacy: commitLockEnabled maps to traceMode !== 'trace'
-  get commitLockEnabled()  { return this.traceMode !== 'trace'; },
-  set commitLockEnabled(v) { this.traceMode = v ? 'trace+cloud' : 'trace'; },
-  get seedLockEnabled()    { return this.commitLockEnabled; },
-  set seedLockEnabled(v)   { this.commitLockEnabled = v; },
   get seqSlots()        { return this.commitSlots; },
   set seqSlots(v)       { this.commitSlots = v; },
   get seqSlotCount()    { return this.commitSlotCount; },
@@ -953,12 +856,84 @@ export const S = {
   get seqModeEnabled()  { return this.commitMode === 'loop'; },
   set seqModeEnabled(v) { this.commitMode = v ? 'loop' : 'cloud'; },
 
-  // ── Loaded samples (1-9) ───────────────────────────────────────────────
-  // activeSampleIndex: which slot is currently toggled ON for painting (-1 = none)
-  activeSampleIndex: -1,
-  sampleColorIndex:  0,       // cycles through SAMPLE_PAINT_COLORS
+  // ── Trigger tool ───────────────────────────────────────────────────────
+  // Whether a recording is granular or trigger material is decided BEFORE the
+  // record button is pressed (space vs ⇧space) and is fixed for the life of
+  // that buffer — there is no global "trigger mode". See js/trigger.js.
+  //
+  // True while a trigger-type stroke is being recorded; read when the stroke is
+  // released to decide what it becomes, and stamped onto each particle so the
+  // type travels with the material rather than with the app's state.
+  _recordingTrigger: false,
+  // The overdub take in flight: { seq } — the master chosen at the press
+  // (ui-presets.js beginOverdub). Read once at the stroke's end by
+  // attachOverdub and cleared. Null when the hand is not the overdub brush.
+  _overdubTake:      null,
+  _overdubSeed:      false,   // an overdub press with nothing pinned: this take is pinned as the main loop on release (ui-presets.js, events.js)
+  // What the app knows about the time between a sound and its sample, and
+  // between a scheduled sample and its sound (js/latency.js). `inS` moves a
+  // loop's edges and `roundTripS` moves an overdub's phase; `source` is
+  // 'estimate' (from the streams' own reports) or 'measured' (the loopback
+  // calibration on Settings → Audio). Zero until latency.js has run.
+  latency: { inS: 0, outS: 0, roundTripS: 0, source: 'none', detail: '' },
+  // Global trigger off, the exact analogue of scanMuted for granulation:
+  // silences firing without touching what was recorded.
+  // Triggers — views onto trigger-type strokes, not owners of material.
+  triggers: [],
+  // How triggers PLAY. Global and live: read at fire time, not copied into each
+  // trigger, so moving a slider mid-set changes every trigger immediately —
+  // including whatever is sounding. Only the material and its position belong
+  // to the recording; none of this is baked in.
+  // NOTE: no radius here. A trigger's reach IS the cursor's search radius
+  // (S.searchRadiusDeg) — one cursor, one reach. Erase already works that way,
+  // and a second radius meant the same physical gesture had two different sizes
+  // depending on what it happened to touch.
+  triggerParams: {
+    hysteresis: 1.15,          // exit radius = search radius × this — anti-chatter
+    rearmMs:    120,           // minimum gap before the same trigger can refire
+    dwell:      'oneshot',     // 'oneshot' | 'loop' | 'grain' — what dwelling does
+    start:      'top',         // 'top' | 'touch' | 'ends' — where playback begins
+    retrig:     'cut',         // 'cut' | 'layer' — refire over a pass still sounding
+    // Chop splits a take into separate triggers at its silences, at record
+    // time. The switch is kept separate from the threshold so toggling it off
+    // and back on doesn't lose the value you dialled in — and so the toggle can
+    // be a bindable action with nothing to remember.
+    chopOn:     false,         // the switch (bindable: trigger_chop)
+    chop:       300,           // ms of silence that counts as a break
+                               // The paint ticker's paint gate already leaves
+                               // the silences as gaps in the particles.
+    release:    'play-to-end', // 'play-to-end' | 'fade' — only used by dwell:'loop'
+    volume:     1.0,
+    speed:      1.0,
+    passes:     0,             // self-killing loops (#239): a looper slot plays
+                               // N passes, fading each, then deletes itself and
+                               // its paint. 0 = ∞. Baked at record time like
+                               // speed/volume (#240).
+                               // (#242): 'q' | 'w' | 'e', default the first.
+                               // Every group is key-addressable — the inbox
+                               // was cut 2026-08-28. Baked.
+    loopOnEnd:  false,         // the looper CONTRACT as a param (#244): end
+                               // the stroke and it loops immediately into its
+                               // group. line/slice fix 'arm' via
+                               // FACTORY_PARAMS; any custom loop tile can
+                               // flip it and become a looper with intention.
+  },
+
+  // ── Source (#247 — what the brush inks from) ───────────────────────────
+  // The chain is source → brush → lens (BRUSH-MODEL § 1g). Exactly one
+  // source is on: 'live' (the input channel in S.mainInputChannel) or
+  // 'sampler' (the sample instrument). Persistent, unlike the old
+  // activeSampleIndex which doubled as transient per-stroke paint state.
+  sourceKind: 'live',
+  // samplerIndex: the sampler's current sample. Sampler-internal, 0-based,
+  // never -1 — the sampler always has a "current" slot, loaded or not.
+  samplerIndex: 0,
   // Each slot: { buffer, name, duration, grainCursor, cropStart, cropEnd }
   samples: [],
+  // True while sampler capture (record-into-sampler) holds the shared
+  // recording singletons. One rule: while either this or isRecording is up,
+  // the other family refuses.
+  isSamplerCapturing: false,
 
   // ── Live recording (spacebar) ──────────────────────────────────────────
   recLimitSeconds: REC_LIMIT_SECONDS_DEFAULT, // adjustable via audio settings
@@ -971,6 +946,37 @@ export const S = {
   isRecording:        false,
   recordingStream:    null,
   recordingNode:      null,
+  // Transport faults since load, so a crackle can be attributed after the
+  // fact (2026-09-02): input ring ran dry (a block of silence went into the
+  // take), input ring overflowed (samples skipped), output buffer dropped for
+  // want of an IPC credit (a 21 ms hole). Grain-pool steals are in the
+  // worklet's own diag. Read with wg.status().
+  transportDiag: { inDry: 0, inOverflow: 0, outDropped: 0, outDry: 0, inSkipped: 0, inFillMs: 0, outDepthMs: 0,
+                   hostGapMaxMs: 0, hostGaps10: 0, hostGaps20: 0, hostSlow: [], hostGcMaxMs: 0, hostGcOver10: 0,   // the audio host's loop
+                   mainGapMaxMs: 0, mainGaps10: 0, mainGaps20: 0, mainSlow: [] },                                  // the browser thread
+  // Until when the loop-gap timers should run (P1, 2026-09-06). They cost ~1 %
+  // of a core in each of two processes, so they are armed by whoever reads
+  // them — wg.status(), the transport probe, Settings → Audio — and off in a
+  // show. The HOLDERS and the fault counts do not depend on this.
+  _wantLoopGapsUntil: 0,
+  // The stall cushion (2026-09-04, #333): how deep the two IPC hops are
+  // allowed to run, in ms — the output queue (credit window) and the input
+  // ring's target fill. Latency against stall tolerance, one number for both;
+  // Settings → Audio, `mubone_audio_cushion`. The estimate in js/latency.js
+  // adds it to each side. 10 ms since 2026-09-06 (R1, #338): with the audio
+  // host, the grain-major loop, no allocation while recording and the shared
+  // candidate tables in, Ek's laptop ran 58 takes at 10 ms with zero
+  // cumulative faults. 5 is a choice; the formula floors at two blocks.
+  audioCushionMs: 10,
+
+  // ── Max grains (P2, 2026-09-06) ─────────────────────────────────────────
+  // Polyphony: how many grains may sound at once, and the size of the glow
+  // ring with it. 256 was set in 2026-03 against a grain that cost more than
+  // twice what it costs now; the probe's dense scene sat at that ceiling. The
+  // choices are 256 / 512 / 1024, Settings → Audio, `mubone_max_grains`. The
+  // throttle reads LOAD (the worklet), so this is a ceiling on the sound, not
+  // the thing that protects the thread.
+  maxGrains: 512,
   recordingSourceNode: null,
   recordingRaw:       null,
   recordingWritePos:  0,
@@ -980,46 +986,67 @@ export const S = {
   micPermissionGranted: false,
   currentLiveBufferIdx: -1,   // index into liveRecBuffers being recorded
 
-  // ── Sensor calibration ─────────────────────────────────────────────────
-  // Sensor calibration for gesture-window.html's raw-gyro remap.
-  // (Formerly one of three slots; the other two were unused and removed
-  // 2026-04-23. Per-slot calibration is owned by sensor-registry.js.)
-  sensor3Cal: {
-    axisMap: {
-      x: { viz: 'roll',  sign:  1, mute: false },
-      y: { viz: 'pitch', sign: -1, mute: false },
-      z: { viz: 'yaw',   sign: -1, mute: false },
-    }
-  },
-
   // ── Particle visualisation (audio-feature-driven) ────────────────────
   // When true, particle color/size derived from audio features baked at
   // paint time.  When false, original palette-based colouring is used.
   darkMode:      true,      // true = black bg (dark mode), false = white bg (light mode)
-  vizMinSize:    6,         // particle min radius (px) — quiet floor, overrides PARTICLE_BASE_SIZE
-  vizMaxSize:    120,       // particle max radius (px) — loud ceiling, overrides PARTICLE_MAX_SIZE
+  vizMinSize:    3,         // particle min radius (px) — quiet floor, overrides PARTICLE_BASE_SIZE
+  vizMaxSize:    22,        // particle max radius (px) — loud ceiling, overrides PARTICLE_MAX_SIZE
+  // At the old 120px ceiling a loud grain covered a quarter of the sphere, so
+  // paint read as fog and featuresToColor's hue was lost to overlap. 22 keeps the
+  // RMS→size ratio at ~7× while grains stop occluding each other. Both are
+  // panel sliders, so this is a default — anyone who wants fog can still have it.
+  gazeTrail:     [],        // [{lon, lat, t}] — appended once per frame in the draw pass
+  // 2s, not 6 (Ek, 2026-08-29): six seconds of wake is a drawing in its own
+  // right, and it was still on screen long after it had stopped saying
+  // anything about where the cursor is going. 0 disables entirely.
+  gazeTrailSec:  2,         // trail length in seconds; 0 disables entirely
+  // ── Camera pull-back ──────────────────────────────────────────────────────
+  // How far the camera sits back from the sphere's centre, in RADII. This is a
+  // DOLLY, not a zoom: S.fovDeg is the zoom, and no fov value can ever get you
+  // outside the sphere.
+  //   0    — camera at the centre, looking out. The original inside-sphere
+  //          model, and every render path is bit-identical to pre-2026-08-24
+  //          at this value.
+  //   <1   — still inside, sphere surface closer on the far side
+  //   1    — exactly on the surface
+  //   >1   — OUTSIDE. The sphere becomes an object with a silhouette.
+  // Applied in CAMERA space (after rotation) so it always means "back away
+  // along the view axis", identically in all three camera modes.
+  //
+  // Audio is deliberately untouched by this: the grain search is angular on the
+  // sphere surface (grain.js `p._ang`), so pulling back changes what you SEE
+  // and never what the cursor REACHES.
+  camPull:       0,         // camera distance from centre, in SPHERE_RADIUS units
   // Calibration ranges — raw feature values outside these clip to 0 or 1.
   // Users adjust via the viz panel sliders to match their input level / content.
-  vizNoiseFloor: 0.002,     // RMS below this → particle not created (noise gate)
+  paintGateThreshold: 0.002,     // RMS below this → particle not created (paint gate)
   vizRmsMin:     0.005,     // quiet floor (below this → smallest particle)
   vizRmsMax:     0.31,      // loud ceiling (above this → largest particle)
   vizCentroidMin: 0.04,     // lowest expected centroid (deepest bass content)
   vizCentroidMax: 0.45,     // highest expected centroid (bright/hissy content)
   modeRingSize:  30,        // mode ring radius (px) — controls how big the 4 status arcs are
   uiScale:       1.0,       // UI scale factor — multiplied with base font-size (15px)
-  hudScale:      1.0,       // canvas HUD scale — multiplies edge bar height, text size, dot size, spacing
+  // Canvas HUD scale — multiplied edge bar height, text size, dot size and
+  // spacing. Its slider went with the HUD (2026-08-29): the main screen's
+  // `.hud` has been display:none since #291, so there was a control in the viz
+  // settings for something no longer on screen. ONE reader survives — the
+  // projector popup in events.js builds its own `.hud` and hides it at 0 — and
+  // that popup now has no control, because the window it mirrors has no HUD to
+  // match. Console-only until someone wants the popup HUD back.
+  hudScale:      1.0,
   edgeIndicator:     'on',  // 'on' | 'off' — show off-screen cursor arrow when detethered
   edgeIndicatorSize: 1.0,   // 0.5–2.0 — scale of the edge arrow
   fovDeg:        80,        // field of view (degrees) — match to projector throw for room-anchored use
-  driftOffsetQ:  null,      // persistent [x,y,z,w] correction quaternion applied on recenter
 
   // ── Handsfree recording ────────────────────────────────────────────────
-  // Pedal-armed auto-record: noise gate segments buffers within toggle-trace.
+  // Pedal-armed auto-record: paint gate segments buffers within toggle-trace.
   // Tap trace on → gate listens → each phrase becomes a separate buffer.
   hfArmed:          false,   // true = handsfree armed (gate segmentation active in toggle-trace)
   hfRecording:      false,   // true = handsfree gate has opened a buffer capture
   hfGateOpen:       false,   // current gate state (after envelope processing)
-  _traceToggled:    false,   // true = trace was toggled on (tap), not momentary-held
+  paintLatched:     false,   // true = the running gesture was started by a TOGGLE press and
+                             // ends on the next press (brush.js gesturePress); never in momentary
   hfHoldMs:         500,     // hold time (ms) — gate stays open through pauses shorter than this
   hfReleaseMs:      200,     // release time (ms) — smooth gate close after hold expires
   hfAttackMs:       3,       // attack time (ms) — how fast gate opens
@@ -1063,13 +1090,20 @@ export const S = {
 
   // ── Grain params / overrides ───────────────────────────────────────────
   grainParams: null,          // initialised below
-  activePresetIndex: 0,   // wash — factory is first now, so this is index 0
-  _patchFlashUntil: 0,    // performance.now() — flash patch number on change
   grainOverrides: {
     duration:    null,
     durJitter:   null,   // multiplier randomisation per grain (0–1)
     durVar:      null,   // +/- seconds of duration randomisation per grain
+    startJitter: null,   // +/- seconds of read-offset randomisation per grain.
+                         // Decouples scrub resolution from marker deposit rate:
+                         // lets a grain begin between markers instead of only
+                         // on one. 0 = strictly on-marker (previous behaviour).
     fadeRatio:   null,   // attack+release each as fraction of dur (0–0.5)
+    fadeMode:    null,   // 'pct' (ramp scales with grain length) | 'ms' (fixed ramp).
+                         // Under durJitter every grain is a different length, so
+                         // 'pct' gives every grain a different attack; 'ms' keeps
+                         // attack character constant. Percussion generally wants 'ms'.
+    fadeMs:      null,   // ramp length in seconds when fadeMode === 'ms'
     k:           null,
     period:      null,
     periodVar:   null,   // +/- seconds of period randomisation per onset
@@ -1080,17 +1114,13 @@ export const S = {
     retriggerMs: null,   // minimum re-trigger time for seeder grains (ms)
     hpfFreq:     null,   // highpass filter cutoff Hz (20 = off, max 20000)
     lpfFreq:     null,   // lowpass filter cutoff Hz  (20000 = off, min 20)
-    filterQ:     null,   // shared resonance for HPF/LPF (0.1–20, default 0.707)
+    hpfQ:        null,   // resonance at the HPF corner (0.1–20, default 0.707)
+    lpfQ:        null,   // resonance at the LPF corner (0.1–20, default 0.707)
     filterFreqJitter: null, // per-grain cutoff randomisation (0–1, fraction of freq)
   },
   grainProbability: 1.0,   // 0-1: probability each candidate grain fires per tick
   grainDirection:   'fwd', // 'fwd' | 'rev' | 'rnd'
   grainCurveType:   'hann', // 'hann' | 'tri' | 'rect'
-
-  // Scaled Hann curves reused every grain -- rebuilt once on preset change.
-  // Avoids allocating two Float32Array(128) per grain (thousands of GC objects/sec).
-  GRAIN_ATTACK_CURVE:  new Float32Array(HANN_LEN),
-  GRAIN_RELEASE_CURVE: new Float32Array(HANN_LEN),
 
   // ── Sample preview playback ────────────────────────────────────────────
   // { source, gain, startTimePerfNow, startSec, duration, slotIdx }
@@ -1112,16 +1142,6 @@ export const S = {
   // Physical gesture drives seeder grain character along a smooth↔agitated axis.
   agitateThreshold: 80,          // deg/s — gyroMag above this pushes toward agitated
   smoothThreshold:  20,          // deg/s — gyroMag below this (with movement) pushes toward smooth
-
-  // ── Desktop morph (1D slider morph for HCI — no sensor) ────────────────
-  // Morphs the nearest non-moving seed's grain params between two presets,
-  // with center position = the seed's planted grain settings.
-  desktopMorphPresetL: -1,       // PRESETS index for left endpoint (-1 = none)
-  desktopMorphPresetR: -1,       // PRESETS index for right endpoint (-1 = none)
-  desktopMorphT:       0.5,      // 0=left preset, 0.5=center (planted), 1=right preset
-  desktopMorphSticky:  false,    // true = slider stays where released; false = returns to center
-  desktopMorphReturnMs: 800,     // return-to-center time in ms (when not sticky)
-  _desktopMorphAnimId: 0,        // rAF handle for return animation
 
   // ── Commit playback modes ──────────────────────────────────────────────
   // 'all' = all commits play simultaneously (collage)
@@ -1220,7 +1240,16 @@ export const S = {
   // ── Dry monitor layer ──────────────────────────────────────────────────
   // Continuous spatialized pass-through of the live input signal, panned to
   // the cursor position.  Updates every frame — no recording, no buffering.
-  dryMonitorEnabled:  false,  // on/off toggle for the dry spatial layer (always starts OFF)
+  // dryMonitorMode is the SETTING: off | on | auto (#245). off and on are
+  // explicit; auto rests ON and ducks itself while a granular-engine stroke
+  // records (hear the granulation forming, not the instrument doubled), but
+  // stays ON through a loop-engine take (the take IS the instrument — you play
+  // against yourself). dryMonitorEnabled is the EFFECTIVE state the gain node
+  // follows; under auto it flips without the setting changing. Always starts
+  // OFF — never persisted, never in a setup file — so a rig cannot boot into
+  // feedback.
+  dryMonitorMode:     'off',
+  dryMonitorEnabled:  false,  // effective on/off of the dry spatial layer
   dryMonitorGainValue: 0.5,   // 0–2, dry signal level in the house mix
   dryGainNode:         null,  // GainNode — dry level control
   dryAnalyser:         null,  // AnalyserNode — dry level meter tap
@@ -1229,7 +1258,7 @@ export const S = {
   dryMixdownInputs:    null,  // [GainNode L, GainNode R] — dry → headphone mixdown (Electron)
 
   // ── Output gain + mute ─────────────────────────────────────────────────
-  outputGainValue: 0.9,  // linear gain (0–2), matches masterGain initial value
+  outputGainValue: MASTER_DEFAULT_GAIN,  // linear; -6 dB. Single source: MASTER_DEFAULT_DB above
   isMuted:         false,
   projectorMode:   false,  // true when the mirrored projector popup is open.
                            // The projector column LAYOUT is the default view
@@ -1244,15 +1273,21 @@ export const S = {
   _mobileSetupDone: false, // true once orientation + gyro setup completes
 
   // ── Camera mode ───────────────────────────────────────────────────────────
-  // Controls how the 3D sphere camera is driven and where the paint cursor lives.
-  // 'pull'    — (default) mouse/trackpad pull-from-center with dead zone + ease curve.
-  //             Cursor follows mouse position. Alt-lock supported.
+  // Controls how the 3D sphere camera is ROTATED and where the paint cursor lives.
+  // All three are orientation only — camera DISTANCE is camPull, below, and is
+  // orthogonal to all of them.
+  // 'steer'   — (default) mouse/trackpad offset from centre steers the view, with
+  //             dead zone + ease curve. Cursor follows mouse. Alt-lock supported.
   // 'surface' — trackpad surface = flattened sphere map. Finger position → sphere
   //             coordinate directly. Cursor hidden, paint target = canvas center.
   //             Alt-lock supported.
   // 'sensor'  — mubone IMU sensor drives camera quaternion. Cursor hidden,
   //             paint target = canvas center. Alt-lock not needed (mouse is free).
-  cameraMode: 'pull',   // 'pull' | 'surface' | 'sensor'
+  //
+  // RENAMED 2026-08-24: 'pull' → 'steer'. The old name described the gesture
+  // (you pull the sphere around) but read as a distance, and camPull now IS a
+  // distance in the same panel. One-shot migration in _loadVizCalibration.
+  cameraMode: 'steer',  // 'steer' | 'surface' | 'sensor'
 
   // ── Spatial panning ──────────────────────────────────────────────────────
   // Controls how grain audio is spatialized, independent of camera mode.
@@ -1260,7 +1295,9 @@ export const S = {
   //                  Uses StereoPanner, view-relative grain positions.
   // 'worldlocked' — sounds fixed in room (VBAP). Grain positions are absolute
   //                  world-space, speakers are fixed. Any number of speakers.
-  spatialPanning: 'headlocked',   // 'headlocked' | 'worldlocked'
+  // World-locked is the factory default (Ek, 2026-09-05): the product is the
+  // rig, and a fresh profile should pan to the room, not to the camera.
+  spatialPanning: 'worldlocked',  // 'headlocked' | 'worldlocked'
 
   // ── Multi-channel audio routing ────────────────────────────────────────
   // Number of spatial house speaker positions in the VBAP field.
@@ -1303,9 +1340,6 @@ export const S = {
 
 };
 
-// ── Initialise grainParams from first factory preset (index 20 = wash) ───────
-S.grainParams = { ...PRESETS[0] };   // wash — the default patch
+// ── Initialise grainParams from the default block (the old `wash`) ───────────
+S.grainParams = { ...DEFAULT_GRAIN };
 
-// Init scaled Hann curves, then rebuild with correct curve type
-rebuildHannCurves(S.grainParams.volume);
-rebuildGrainCurves();

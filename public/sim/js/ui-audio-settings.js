@@ -5,11 +5,14 @@
 // No monitoring — graph ends at analyser (dead end), MOTU handles monitoring.
 // ============================================================================
 
-import { S, DEBUG, PRESET_COUNT } from './state.js';
-import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, playSweepChannel, warmUpAudioEngine } from './audio.js';
-import { renderMeters, tickMeters, rebuildMainOutputMeters } from './ui-meters.js';
+import { S, DEBUG, MASTER_DEFAULT_DB, MASTER_DEFAULT_GAIN } from './state.js';
+import { dlog } from './diag.js';
+import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, playSweepChannel, warmUpAudioEngine, applyAudioCushion, outputQueueDepthMs, requestAudioPort } from './audio.js';
+import { renderMeters, tickMeters, rebuildMainOutputMeters,
+         renderSetMeters, setMeterSources, clearSetMeters,
+         startSetMeters, stopSetMeters, initSetGateMeter } from './ui-meters.js';
 import { armHandsfree, disarmHandsfree, updateHPFFreq } from './handsfree.js';
-import { getCursorLonLat, screenToLonLat, spherePointInto, cameraTransformInto } from './sphere.js';
+import { getCursorLonLat, screenToLonLat, spherePointInto, cameraRotateInto } from './sphere.js';
 
 // ── RtAudio input meter worklet (Electron only) ───────────────────────────────
 // In Electron, getUserMedia is capped at 2ch by the browser. Instead, we open an
@@ -18,6 +21,24 @@ import { getCursorLonLat, screenToLonLat, spherePointInto, cameraTransformInto }
 // AnalyserNodes so the meter strip shows all channels.
 
 let _inputWorkletNode = null;   // AudioWorkletNode driving input analysers
+// A harness seam (scripts/lib/rig.js mute): the real interface's input is
+// silenced at the routing gains, so an audit hears only what it injects and
+// never the room the machine is in — mark-align's flakiness all day was the
+// laptop's own microphone. Never set by the app.
+let _rtInputSilenced = false;
+let _rtInputLast = null;   // the last (chIndex, nCh) routed, to restore
+S._silenceRtInput = (on) => {
+  _rtInputSilenced = !!on;
+  _rtInputRoutingGains.forEach(g => { if (_rtInputSilenced) g.gain.value = 0; });
+  if (!_rtInputSilenced && _rtInputLast) rewireRtAudioRecordingChannel(_rtInputLast.ch, _rtInputLast.n);
+};
+// The input ring's target fill, from the stall cushion — re-sent whenever
+// the ring is rebuilt or the setting moves (audio.js applyAudioCushion).
+S._inputRingTarget = () => {
+  if (!_inputWorkletNode) return;
+  const frames = Math.round((S.audioCushionMs ?? 20) / 1000 * (S.audioCtx?.sampleRate ?? 48000));
+  _inputWorkletNode.port.postMessage({ type: 'target', frames });
+};
 let _inputMeterSetup  = false;  // true once worklet module is registered
 
 async function ensureInputMeterWorklet(actx) {
@@ -31,6 +52,21 @@ let _rtInputSplitter      = null;
 // One GainNode per channel between splitter and S.inputGainNode.
 // Routing = set chosen gain to 1, all others to 0. Avoids disconnect() pitfalls.
 let _rtInputRoutingGains  = [];
+
+/** Release the browser's microphone client, if one is open: the getUserMedia
+ *  stream and its monitor chain. In Electron, RtAudio is the one client on the
+ *  microphone (R8, 2026-09-06): called when RtAudio input activates, so a
+ *  stream left by a browser-mode session or an early start is closed, and by
+ *  the input disconnect. */
+function _closeBrowserMic() {
+  try { window._micMonitorSrc?.disconnect(); } catch(_) {}
+  window._micMonitorSrc = null;
+  for (const st of new Set([S.recordingStream, S.inputStream])) {
+    if (st) { try { st.getTracks().forEach(t => t.stop()); } catch(_) {} }
+  }
+  S.recordingStream = null;
+  S.inputStream     = null;
+}
 
 async function setupRtAudioInputMeters(rawCh) {
   // Web Audio caps splitter/merger at 32 channels; clamp the metered/output count.
@@ -64,6 +100,19 @@ async function setupRtAudioInputMeters(rawCh) {
   // stride.  The worklet's process() loop is capped by outputs[0].length (= nCh),
   // so channels beyond 32 are deinterleaved correctly but simply not output.
   _inputWorkletNode.port.postMessage({ type: 'init', numChannels: hwCh });
+  S._inputRingTarget?.();
+  // Fault counts from the ring (see S.transportDiag). A dry block during a
+  // take is a hole in the recording; this is the only place it is visible.
+  // Once a second the ring also reports its fill (#333).
+  _inputWorkletNode.port.onmessage = ({ data }) => {
+    if (data?.type !== 'faults') return;
+    S.transportDiag.inDry      += data.dry      | 0;
+    S.transportDiag.inOverflow += data.overflow | 0;
+    S.transportDiag.inSkipped  += data.skipped  | 0;
+    S.transportDiag.inFillMs    = (data.fillFrames || 0) / (S.audioCtx?.sampleRate ?? 48000) * 1000;
+    if (data.dry || data.overflow || data.skipped) dlog('transport', 'input ring fault', { dry: data.dry, overflow: data.overflow, skipped: data.skipped,
+      totalDry: S.transportDiag.inDry, totalOverflow: S.transportDiag.inOverflow, rec: S.isRecording });
+  };
 
   // ChannelSplitter fans out N channels — shared by both meter analysers and
   // the recording input tap (S.inputGainNode → S.inputAnalyser)
@@ -114,16 +163,22 @@ async function setupRtAudioInputMeters(rawCh) {
   // so spacebar records from whatever channel the dropdown shows.
   rewireRtAudioRecordingChannel(safeSel, nCh);
 
-  // Hook up the IPC push — Electron main sends chunks via 'audio-input-buffer'
-  // Guard with a flag — listeners accumulate on the ipcRenderer channel.
-  if (window.electronBridge?.onAudioInputBuffer) {
-    if (!window._rtAudioInputListening) {
+  // The direct port: RtAudio's input callback posts each chunk straight into
+  // this worklet (electron-main.js 'audio-port'), never through this thread
+  // (2026-09-06). A rebuild asks for a fresh pair; if the node was replaced
+  // while the port was on its way, the port belongs to nobody and is closed.
+  // `window._rtAudioInputListening` is the flag the rest of the app reads for
+  // "RtAudio is the live input" (audio.js, events.js, ui-presets.js).
+  if (window.electronBridge?.openAudioPort) {
+    const node = _inputWorkletNode;
+    try {
+      const port = await requestAudioPort('in');
+      if (_inputWorkletNode === node) node.port.postMessage({ type: 'port', port }, [port]);
+      else { try { port.close(); } catch (_) {} }
       window._rtAudioInputListening = true;
-      window.electronBridge.onAudioInputBuffer((f32, numCh) => {
-        if (_inputWorkletNode) {
-          _inputWorkletNode.port.postMessage({ type: 'pcm', interleaved: f32 }, [f32.buffer]);
-        }
-      });
+      _closeBrowserMic();            // one client on the microphone (R8)
+    } catch (e) {
+      console.warn('[audio] input port:', e.message);
     }
   }
 }
@@ -134,6 +189,7 @@ async function setupRtAudioInputMeters(rawCh) {
 // the unreliable 3-arg disconnect(node, output, input) form.
 function rewireRtAudioRecordingChannel(chIndex, nCh) {
   if (!_rtInputSplitter) return;
+  _rtInputLast = { ch: chIndex, n: nCh };
   const actx = ensureAudioContext();
 
   // Ensure recording gain node exists
@@ -173,12 +229,12 @@ function rewireRtAudioRecordingChannel(chIndex, nCh) {
   if (isStereo) {
     // Stereo sum: enable channels 0 and 1, silence the rest.
     // The routing gains all feed S.inputGainNode (mono) which auto-sums.
-    _rtInputRoutingGains.forEach((g, i) => { g.gain.value = (i <= 1) ? 1 : 0; });
+    _rtInputRoutingGains.forEach((g, i) => { g.gain.value = _rtInputSilenced ? 0 : (i <= 1) ? 1 : 0; });
     DEBUG && console.log(`[input] recording from RtAudio stereo (ch 1+2 sum)`);
   } else {
     const n = _rtInputRoutingGains.length || (nCh ?? as.inputAnalysers.length);
     const safe = Math.max(0, Math.min(chIndex, n - 1));
-    _rtInputRoutingGains.forEach((g, i) => { g.gain.value = (i === safe) ? 1 : 0; });
+    _rtInputRoutingGains.forEach((g, i) => { g.gain.value = _rtInputSilenced ? 0 : (i === safe) ? 1 : 0; });
     DEBUG && console.log(`[input] recording from RtAudio ch ${safe + 1} (index ${safe})`);
   }
 }
@@ -203,7 +259,7 @@ function formatDb(v) {
 const as = {
   inputGains:     { '0': 0, '1': 0, 'stereo': 0 },  // per-channel input gain (dB), keyed by channel value
   _meterGainNodes: [],  // one GainNode per channel, between splitter and meter analyser
-  outputGain:    -6,
+  outputGain:    MASTER_DEFAULT_DB,   // -6 dB; single source in state.js
   sampleRate:     48000,
   sourceNode:     null,
   splitterNode:   null,
@@ -319,7 +375,8 @@ function renderOutputMeters() {
   const labels = [...houseLabels, ...mixdownLabels];
   const separatorBefore = hasMixdown ? nHouse : undefined;
   wrap.style.display = '';
-  renderMeters('asOutputMeters', n, labels, undefined, separatorBefore);
+  renderSetMeters('asOutputMeters', labels);
+  setMeterSources('asOutputMeters', S.speakerAnalysers);
   // Also rebuild the main-window output meters to reflect the new channel layout
   rebuildMainOutputMeters();
 }
@@ -343,51 +400,42 @@ function renderInputMeters(selectedCh) {
   // Convert 'stereo' to [0, 1] for the highlight array.
   let sel = selectedCh !== undefined ? selectedCh : (S.mainInputChannel ?? 0);
   if (sel === 'stereo') sel = [0, 1];
-  renderMeters('asInputMeters', numCh, makeInputLabels(numCh, devLabel), sel);
+  // A channel with no signal path reads `off` rather than sitting at silence —
+  // "nothing is coming in" and "nothing is routed here" are different facts.
+  const live = as.inputAnalysers.length;
+  const off  = Array.from({ length: numCh }, (_, i) => i).filter(i => i >= live);
+  renderSetMeters('asInputMeters', makeInputLabels(numCh, devLabel), { off });
+  setMeterSources('asInputMeters', as.inputAnalysers);
   // Keep main window input meter in sync (same channel layout + highlight)
   S._rebuildMainInputMeters?.();
 }
 
-// ── VU metering (unified RAF loop) ────────────────────────────────────────────
+// ── Is this page on screen? ─────────────────────────────────────────────────
+// It has two hosts and only one of them is the modal: the settings shell MOVES
+// this dialog into #settingsHost and takes the overlay's `.open` back off, so
+// the guard below read false exactly while the page was in front of you. The
+// meters have never once run in the settings shell (#294).
+function _visible() {
+  const m = document.getElementById('audioSettingsModal');
+  return !!m?.classList.contains('open')
+      || !!document.querySelector('.settings-host .audio-dialog');
+}
+
+// ── VU metering (one loop for every meter on the page) ───────────────────────
 function startMetering() {
-  if (as.meterRAF) cancelAnimationFrame(as.meterRAF);
-  // Only run while the audio-settings modal is actually open (perf audit M3 /
-  // TODO #116). startMetering() is also called from device-activation paths
-  // (startup restore, device switch) with the modal closed — the RAF then ran
-  // at ~60fps for the rest of the session, reading analysers and drawing into
-  // a hidden modal. stopMetering() is already wired to both close paths, so
-  // gating start on the 'open' class fully bounds the loop's lifetime.
-  // Revert: delete this guard block.
-  const _asModal = document.getElementById('audioSettingsModal');
-  if (_asModal && !_asModal.classList.contains('open')) return;
-  function tick() {
-    // Input meters
-    if (as.inputAnalysers.length > 0) {
-      tickMeters(as.inputAnalysers, 'asInputMeters');
-    }
-    // Output meters (Electron only — S.speakerAnalysers set by initSpeakerBuses)
-    if (S.speakerAnalysers?.length) {
-      tickMeters(S.speakerAnalysers, 'asOutputMeters');
-    }
-    as.meterRAF = requestAnimationFrame(tick);
-  }
-  tick();
+  // The loop still has to be BOUNDED (perf audit M3 / TODO #116): this is also
+  // called from device-activation paths — startup restore, device switch —
+  // with the page nowhere on screen, and it used to leave a 60fps loop reading
+  // analysers into a hidden dialog for the rest of the session.
+  if (!_visible()) return;
+  setMeterSources('asInputMeters', as.inputAnalysers);
+  setMeterSources('asOutputMeters', S.speakerAnalysers);
+  startSetMeters();
 }
 
 function stopMetering() {
   if (as.meterRAF) { cancelAnimationFrame(as.meterRAF); as.meterRAF = null; }
-  // Clear canvases
-  ['asInputMeters', 'asOutputMeters'].forEach(id => {
-    const wrap = document.getElementById(id);
-    if (!wrap) return;
-    wrap.querySelectorAll('canvas').forEach(cv => {
-      const c2 = cv.getContext('2d');
-      c2.clearRect(0, 0, cv.width, cv.height);
-      c2.fillStyle = '#1a1a1a';
-      c2.fillRect(0, 0, cv.width, cv.height);
-    });
-    wrap.querySelectorAll('.as-vchan-clip').forEach(d => d.classList.remove('clipping'));
-  });
+  stopSetMeters();
 }
 
 // ── Angle helpers ─────────────────────────────────────────────────────────────
@@ -441,21 +489,16 @@ function renderInputMappingTable() {
   if (mainSel) {
     mainSel.value = S.mainInputChannel === 'stereo' ? 'stereo' : String(S.mainInputChannel ?? 0);
     mainSel.addEventListener('change', () => {
-      const val = mainSel.value;
-      const isStereo = val === 'stereo';
-      S.mainInputChannel = isStereo ? 'stereo' : parseInt(val, 10);
-      // Rewire recording path to new channel (or stereo sum)
-      if (window.electronBridge?.isElectron) {
-        rewireRtAudioRecordingChannel(isStereo ? 'stereo' : parseInt(val, 10), nCh);
-      } else if (S.inputStream) {
-        buildInputGraph(val);
-      }
-      // Update hidden compat dropdown so legacy channel-change handler still works
+      // asInputChannel owns the entire channel-change path — recording rewire,
+      // per-channel input-gain restore, meters, status, and the main-UI audio
+      // panel mirror. Delegate to it by dispatching a real `change` rather than
+      // reimplementing a subset here: the old inline copy assigned .value with
+      // no event, so the legacy handler never ran (no gain restore) and the
+      // panel's channel dropdown + in-gain slider both went stale.
       const compat = document.getElementById('asInputChannel');
-      if (compat) compat.value = val;
-      const highlight = isStereo ? [0, 1] : parseInt(val, 10);
-      renderInputMeters(highlight);
-      setStatus('asInputStatus', 'ok', isStereo ? 'main → stereo (L+R)' : `main → ch ${parseInt(val, 10) + 1}`);
+      if (!compat) return;
+      compat.value = mainSel.value;
+      compat.dispatchEvent(new Event('change', { bubbles: true }));
     });
   }
 }
@@ -486,7 +529,7 @@ function saveCustomSpeakerAngles() {
 }
 
 // Compute current cursor azimuth in degrees (0–360) from the active cursor
-// source: sensor quaternion, mouse/pull/surface screen position, or fallback.
+// source: sensor quaternion, mouse/steer/surface screen position, or fallback.
 // Same tri-state logic as scheduleGrains / updateDryMonitorPanning.
 const _capW = new Float32Array(3);
 const _capC = new Float32Array(3);
@@ -494,7 +537,7 @@ function getCursorAzDeg() {
   const { lon, lat } = S.cursorQ
     ? getCursorLonLat()                          // sensor quaternion
     : (S.mouseInCanvas || S.altLocked)
-      ? screenToLonLat(                          // mouse / pull / surface cursor
+      ? screenToLonLat(                          // mouse / steer / surface cursor
           S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
           S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY)
       : getCursorLonLat();                       // fallback (camQ forward)
@@ -504,7 +547,7 @@ function getCursorAzDeg() {
   if (S.spatialPanning === 'worldlocked') {
     cx = wx; cz = wz;
   } else {
-    cameraTransformInto(wx, wy, wz, _capC);
+    cameraRotateInto(wx, wy, wz, _capC);
     cx = _capC[0]; cz = _capC[2];
   }
   const rawAz  = Math.atan2(cx, cz);
@@ -581,7 +624,7 @@ function renderRoutingTable() {
              value="${deg}" min="0" max="359.9" step="0.5"
              title="azimuth in degrees (0° = front, 90° = right)">
       <span class="as-io-angle-unit">°</span>
-      <button class="as-io-capture-btn" data-bus="${i}"
+      <button class="set-btn set-btn--sm as-io-capture-btn" data-bus="${i}"
               ${isHeadlocked ? 'disabled title="capture only works in worldlocked mode — headlocked angles are relative to the listener, not the room"' : 'title="capture current cursor azimuth"'}>⊕</button>
       <select class="as-io-sel as-io-house-sel" data-bus="${i}">${hwOpts}</select>
     </div>`;
@@ -697,10 +740,12 @@ async function startAudio() {
 
     // Prefer the shared stream already opened by the mic button in main app.
     // S.audioCtx and S.inputStream are set by audio.js when mic is enabled.
-    // In Electron, RtAudio handles input — skip getUserMedia entirely.
+    // In Electron, RtAudio is the ONLY input path — never getUserMedia here
+    // (R8, 2026-09-06). This used to gate on `_rtAudioInputListening`, which
+    // is set asynchronously after boot, so a start that ran before the RtAudio
+    // input landed opened a second client on the microphone.
     // Falls back to its own getUserMedia only when running standalone in browser.
-    const hasRtAudioInput = window.electronBridge?.isElectron && window._rtAudioInputListening;
-    if (!S.inputStream && !hasRtAudioInput) {
+    if (!S.inputStream && !window.electronBridge?.isElectron) {
       S.inputStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount:     { ideal: 2 },
@@ -780,30 +825,96 @@ function stopAudio() {
 }
 
 // ── Latency display ───────────────────────────────────────────────────────────
+// What js/latency.js knows: in + out = the round trip, and where the figure
+// came from. The estimate is the streams' own report; a MEASUREMENT is the
+// loopback on the button beside it, and beats the estimate for this device
+// pair. This is the number the loop engine steers by (a loop's edges, an
+// overdub's phase), so it is stated as such, not as a comfort colour.
 function updateLatency() {
-  const buf = parseInt(document.getElementById('asBufferSize')?.value ?? 512);
-  const sr  = S.audioCtx?.sampleRate ?? parseInt(document.getElementById('asSampleRate')?.value ?? 48000);
   const lbl = document.getElementById('asLatencyLabel');
   const dot = document.getElementById('asLatencyDot');
-
-  // Prefer the real baseLatency + outputLatency reported by the browser
-  // (reflects the actual render buffer chosen by latencyHint: 'interactive').
-  // Fall back to the buffer-size estimate for Electron / older browsers.
-  const base = S.audioCtx?.baseLatency   ?? 0;
-  const out  = S.audioCtx?.outputLatency ?? 0;
-  if (base > 0) {
-    const realMs = ((base + out) * 1000).toFixed(1);
-    const bufMs  = (buf / sr * 1000).toFixed(1);
-    const label  = window.electronBridge?.isElectron
-      ? `≈ ${realMs} ms base + ${bufMs} ms buf`
-      : `≈ ${realMs} ms  (base ${(base*1000).toFixed(1)} + output ${(out*1000).toFixed(1)})`;
-    if (lbl) lbl.textContent = label;
-    if (dot) dot.className = 'latency-dot ' + (realMs < 8 ? 'ok' : realMs < 20 ? 'warn' : 'bad');
+  const btn = document.getElementById('asLatencyMeasure');
+  const fgt = document.getElementById('asLatencyForget');
+  const L = S.latency || { inS: 0, outS: 0, roundTripS: 0, source: 'none', detail: '' };
+  const ms = x => (x * 1000).toFixed(1);
+  if (L.source === 'none' || !(L.roundTripS > 0)) {
+    if (lbl) lbl.textContent = L.detail ? `— (${L.detail})` : '— not known yet';
+    if (dot) dot.className = 'latency-dot bad';
   } else {
-    const ms = (buf / sr * 1000).toFixed(1);
-    if (lbl) lbl.textContent = `≈ ${ms} ms  (${buf} frames / ${sr} Hz)`;
-    if (dot) dot.className = 'latency-dot ' + (ms < 8 ? 'ok' : ms < 20 ? 'warn' : 'bad');
+    if (lbl) lbl.textContent = `in ${ms(L.inS)} + out ${ms(L.outS)} = ${ms(L.roundTripS)} ms · ${L.source === 'measured' ? L.detail : 'estimate' + (L.detail ? ` (${L.detail})` : '')}`;
+    const rt = L.roundTripS * 1000;
+    if (dot) dot.className = 'latency-dot ' + (rt < 15 ? 'ok' : rt < 40 ? 'warn' : 'bad');
   }
+  if (btn) btn.textContent = L.source === 'measured' ? 'Re-measure' : 'Measure';
+  if (fgt) fgt.hidden = L.source !== 'measured';
+}
+S._latencyChanged = updateLatency;
+
+/** The stall cushion (#333): one number for both hops, applied at once —
+ *  the credit window shrinks or grows on the next block, the ring's target
+ *  on the next chunk — and the latency estimate follows. */
+export function setAudioCushion(ms) {
+  if (![5, 10, 20, 30, 50].includes(ms)) return;
+  S.audioCushionMs = ms;
+  try { localStorage.setItem('mubone_audio_cushion', String(ms)); } catch (_) {}
+  applyAudioCushion();
+  const sel = document.getElementById('asCushion');
+  if (sel && sel.value !== String(ms)) sel.value = String(ms);
+  S._refreshLatency?.();
+}
+S._setAudioCushion = setAudioCushion;
+
+/** What the hops hold right now — the queue's depth from the credits out,
+ *  the ring's fill from its last report. The cushion row shows both, so a
+ *  drift or a stall's aftermath is visible without a measurement. */
+/** What the pool is doing: how many grains are alive, and what the thread's
+ *  own load is — so the choice above is made against the machine, not a guess
+ *  (P2). Both come from the worklet's feedback, which costs nothing extra. */
+function updateMaxGrainsLive() {
+  const el = document.getElementById('asMaxGrainsLive');
+  if (!el) return;
+  // The worklet's own feedback, already arriving 30×/s — no new gauge.
+  const d = S._lastWorkletDiag || {};
+  const alive = S._grainSourceCount | 0;
+  const load = d.loadPct != null ? `${d.loadPct}% load` : '';
+  const thin = d.throttled ? ' · thinning' : '';
+  el.textContent = (alive || load) ? `${alive} alive${load ? ' · ' + load : ''}${thin}` : '';
+}
+
+function updateCushionLive() {
+  const el = document.getElementById('asCushionLive');
+  if (!el) return;
+  const d = outputQueueDepthMs();
+  S.transportDiag.outDepthMs = d;
+  if (!window.electronBridge) { el.textContent = ''; return; }
+  const skips = S.transportDiag.inSkipped ? ` · skipped ${S.transportDiag.inSkipped}` : '';
+  const drops = S.transportDiag.outDropped ? ` · dropped ${S.transportDiag.outDropped}` : '';
+  const dry   = S.transportDiag.outDry ? ` · dry ${S.transportDiag.outDry}` : '';
+  el.textContent = `out queue ${d.toFixed(1)} ms · in ring ${S.transportDiag.inFillMs.toFixed(1)} ms${skips}${drops}${dry}`;
+}
+
+async function handleMeasureLatency() {
+  const btn = document.getElementById('asLatencyMeasure');
+  const lbl = document.getElementById('asLatencyLabel');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  if (lbl) lbl.textContent = 'listening — six clicks, 2.5 s …';
+  try {
+    const d = await S._measureRoundTrip?.();
+    if (d == null) {
+      const r = S._latencyLast;
+      const why = r?.error ? r.error
+        : r && r.peakDb === -Infinity ? 'the take is silent — no input is reaching the recorder'
+        : r && r.peakDb < -50 ? `only noise reached the mic (peak ${r.peakDb} dB) — bring the speakers up, or cable an output into the input`
+        : r ? `heard sound (peak ${r.peakDb} dB, floor ${r.floorDb} dB) but found ${r.found} of ${r.of} clicks — quieten the room, or cable an output into the input`
+        : 'the mic did not hear the clicks';
+      if (lbl) lbl.textContent = why;
+      setTimeout(updateLatency, 6000);
+    }
+  } catch (e) {
+    if (lbl) lbl.textContent = `measurement failed: ${e.message}`;
+    setTimeout(updateLatency, 4000);
+  } finally { btn.disabled = false; }
 }
 
 // ── Engine settings: sample rate + buffer size ────────────────────────────────
@@ -833,6 +944,7 @@ async function applySampleRate() {
       const nCh = Math.min(32, current.outputChannels);
       const bufFrames = S.preferredBufferSize ?? 1024;
       await window.electronBridge.setAudioDevice(current.id, nCh, bufFrames, S.audioCtx?.sampleRate);
+      S._refreshLatency?.();
       await initSpeakerBuses(nCh);
     }
   }
@@ -904,7 +1016,12 @@ async function runSpeakerSweep() {
   // Read per burst, not once at the top: the sweep loops until stopped, so
   // this makes the slider live while it's running — ride it down until the
   // speakers are at a comfortable identification level.
-  const electronVol = () => vol * (S.outputGainValue ?? 1);
+  //
+  // Mute the same way, for the same reason: setMuted() ramps the speakerBuses,
+  // which this path bypasses, so the sweep was the one sound M could not stop
+  // in Electron while the browser path (through getMasterBus → _muteGain)
+  // obeyed it (#174). Read per burst too, so a mute lands within one step.
+  const electronVol = () => S.isMuted ? 0 : vol * (S.outputGainValue ?? MASTER_DEFAULT_GAIN);
 
   const buses = S.speakerBuses;  // may be null in browser
 
@@ -989,10 +1106,53 @@ function handleTestTone() { runSpeakerSweep(); }
 // enumerateDevices() only returns labels after mic permission is granted, so we
 // request a minimal stream first to unlock labels, then enumerate.
 
-let _inputDeviceId  = null;  // currently active input deviceId
-let _inputNumCh     = 1;     // channels actually delivered by current stream
+let _inputDeviceId   = null;  // currently active input deviceId
+let _inputDeviceName = null;  // its name — the stable key; see resolveAudioDevice()
+let _inputNumCh      = 1;     // channels actually delivered by current stream
 
-let _outputDeviceId = null;  // currently active output deviceId (set on Apply)
+let _outputDeviceId   = null;  // currently active output deviceId (set on Apply)
+let _outputDeviceName = null;  // its name — the stable key
+// The latency model keys its measurements on the device PAIR by name.
+S._inputDeviceKey  = () => _inputDeviceName ?? _inputDeviceId ?? 'in';
+S._outputDeviceKey = () => _outputDeviceName ?? _outputDeviceId ?? 'out';
+
+/**
+ * Resolve a persisted device choice against the devices present right now.
+ *
+ * Device ids are RUNTIME HANDLES, not identities. On macOS they are CoreAudio
+ * object ids, reassigned across reboots and whenever a virtual device (BlackHole,
+ * Zoom, Loopback) registers in a different order. A saved id can therefore come
+ * back pointing at a different device — which is how output silently lands on a
+ * virtual device with no speakers behind it: full signal, no sound, no error.
+ * The name is the only part that survives, so the name wins.
+ *
+ * If a name was saved and no longer matches, the device is genuinely absent, and
+ * we fall to the system default rather than the id — trusting a stale id at that
+ * point is exactly the bug this function exists to prevent.
+ */
+export function resolveAudioDevice(devices, name, id) {
+  if (!Array.isArray(devices) || devices.length === 0) return null;
+
+  if (name != null) {
+    // Two identical interfaces can share a name — the id breaks that tie.
+    const byName = devices.filter(d => d.name === name);
+    if (byName.length) return byName.find(d => d.id === id) || byName[0];
+    return devices.find(d => d.isDefault) || null;
+  }
+
+  // Entry saved before names were persisted: resolve by id this once. The next
+  // save writes the name, after which this branch is unreachable.
+  return (id != null && devices.find(d => d.id === id))
+      || devices.find(d => d.isDefault)
+      || null;
+}
+
+// Label of the currently selected <option>, for the browser path where devices
+// carry a MediaDevices `label` rather than an RtAudio `name`.
+function _selectedLabel(selId) {
+  const t = document.getElementById(selId)?.selectedOptions?.[0]?.textContent;
+  return (t && t.trim() && !t.trim().startsWith('—')) ? t.trim() : null;
+}
 
 async function populateInputDevices() {
   const sel = document.getElementById('asInputDevice');
@@ -1020,6 +1180,14 @@ async function populateInputDevices() {
         sel.appendChild(opt);
       });
       if (_inputDeviceId != null) sel.value = _inputDeviceId;
+      // RtAudio ids are positions in a list that shifts as devices come and
+      // go (BlackHole, Zoom, headphones), so a saved id can name the wrong
+      // row or none — the NAME is the stable key (resolveAudioDevice). The
+      // stream at startup is opened by name; the dropdown follows it.
+      if (!sel.value && _inputDeviceName) {
+        const m = devices.find(d => d.name === _inputDeviceName);
+        if (m) sel.value = String(m.id);
+      }
 
     } else {
       // ── Browser: use standard MediaDevices API ───────────────────────────
@@ -1098,26 +1266,21 @@ async function applyInputDevice() {
     S.inputAnalysers = [];
     _rtInputSplitter = null;
 
-    // Disconnect browser getUserMedia path
-    try { window._micMonitorSrc?.disconnect(); } catch(_) {}
-    window._micMonitorSrc = null;
-    if (S.recordingStream) {
-      S.recordingStream.getTracks().forEach(t => t.stop());
-      S.recordingStream = null;
-      S.inputStream     = null;
-    }
+    _closeBrowserMic();
 
     // Clear saved state
-    _inputDeviceId = null;
-    _inputNumCh    = 0;
+    _inputDeviceId   = null;
+    _inputDeviceName = null;
+    _inputNumCh      = 0;
     S._savedInputDeviceId   = null;
+    S._savedInputDeviceName = null;
     S.selectedInputDeviceId = null;
     S.micPermissionGranted  = false;
     as.started = false;
     window._rtAudioInputListening = false;
 
     // Reset UI
-    renderMeters('asInputMeters', 1);  // minimal placeholder meter
+    renderSetMeters('asInputMeters', ['1']);  // minimal placeholder meter
     const mapTable = document.getElementById('asInputMappingTable');
     if (mapTable) mapTable.style.display = 'none';
     setStatus('asInputStatus', 'idle', 'no input device');
@@ -1153,8 +1316,10 @@ async function applyInputDevice() {
     }
 
     const nCh = result.nCh;
-    _inputDeviceId = deviceId;
-    _inputNumCh    = nCh;
+    _inputDeviceId   = deviceId;
+    _inputDeviceName = device.name ?? null;
+    _inputNumCh      = nCh;
+    S._refreshLatency?.();   // a new input stream: new buffers, new figure
 
     // Web Audio caps at 32 channels — meter/route the first 32, but the worklet
     // deinterleaves all hw channels correctly (stride = nCh).
@@ -1217,6 +1382,7 @@ async function applyInputDevice() {
     S.selectedInputDeviceId    = deviceId;   // used by requestMicAccess on next open
     S.selectedInputChannels    = numCh;
     _inputDeviceId             = deviceId;
+    _inputDeviceName           = _selectedLabel('asInputDevice');
     _inputNumCh                = numCh;
 
     // Rebuild the persistent monitor chain in audio.js
@@ -1310,9 +1476,14 @@ async function populateOutputDevices() {
       sel.appendChild(opt);
     });
 
-    // Restore the last-applied device; fall back to system default on first open
+    // Restore the last-applied device — by id, else by NAME (the id is a
+    // position that shifts as devices come and go); fall back to system
+    // default on first open.
+    const byName = _outputDeviceName ? devices.find(d => d.name === _outputDeviceName) : null;
     if (_outputDeviceId != null && devices.some(d => d.id === _outputDeviceId)) {
       sel.value = _outputDeviceId;
+    } else if (byName) {
+      sel.value = String(byName.id);
     } else {
       const defaultDev = devices.find(d => d.isDefault) || devices[0];
       if (defaultDev) sel.value = defaultDev.id;
@@ -1356,7 +1527,8 @@ async function applyOutputDevice() {
     await initSpeakerBuses(numCh);
 
     if (result.streaming) {
-      _outputDeviceId = deviceId;   // remember for dropdown restore on re-open
+      _outputDeviceId   = deviceId;        // remember for dropdown restore on re-open
+      _outputDeviceName = device.name ?? null;  // the key that survives a reboot
 
       const layout = numCh === 2 ? 'stereo'
                    : numCh === 4 ? 'quad'
@@ -1397,14 +1569,13 @@ async function applyOutputDevice() {
 // Two fields left persistence entirely in that split:
 //   darkMode   — ui-viz.js already owned `mubone_darkMode`, and both wrote it.
 //                Load order decided which won. ui-viz is now the sole owner.
-//   sensor3Cal — nothing in the app ever assigned to it (gesture-window.html
-//                only reads it off live S), so it was always the state.js
-//                default. Persisting it was dead weight. If a UI for it ever
-//                lands, add persistence back deliberately — under `sensor`.
+//   sensor3Cal — nothing in the app ever assigned to it; only the separate
+//                gesture-window.html read it, and both left on 2026-09-05.
+//                It stays in SPLIT_DROPPED so an old blob carrying it is
+//                dropped rather than moved.
 const LS_AUDIO_DEFAULTS = 'mubone_audio_defaults';
 const LS_SEED_SETTINGS  = 'mubone_seed_settings';
 const LS_VIZ_CAL        = 'mubone_viz_calibration';
-const LS_ACTIVE_PATCH   = 'mubone_active_patch';
 
 // Legacy export — kept so existing imports don't break (no-op now)
 export function wireSaveDefaultBtn(_btnId) {}
@@ -1424,10 +1595,13 @@ export function wireSaveDefaultBtn(_btnId) {}
 function _buildPayloads() {
   return {
     audio: {
-      // Devices
-      inputDeviceId:    _inputDeviceId,
-      outputDeviceId:   _outputDeviceId,
-      mainInputChannel: S.mainInputChannel ?? 0,
+      // Devices — the *Name* fields are the real key; the ids are runtime
+      // handles kept only for tie-breaking. See resolveAudioDevice().
+      inputDeviceId:     _inputDeviceId,
+      inputDeviceName:   _inputDeviceName,
+      outputDeviceId:    _outputDeviceId,
+      outputDeviceName:  _outputDeviceName,
+      mainInputChannel:  S.mainInputChannel ?? 0,
 
       // Engine
       sampleRate:       S.audioCtx?.sampleRate ?? null,
@@ -1437,8 +1611,8 @@ function _buildPayloads() {
       outputGain:       as.outputGain,
       inputGains:       { ...as.inputGains },
 
-      // Noise gate
-      vizNoiseFloor:    S.vizNoiseFloor,
+      // Paint gate
+      paintGateThreshold:    S.paintGateThreshold,
 
       // Handsfree
       hfHoldMs:         S.hfHoldMs,
@@ -1478,6 +1652,13 @@ function _buildPayloads() {
       seedLoopMode:    S.seedLoopMode ?? 'pingpong',
       loopReleaseMode: S.loopReleaseMode ?? 'fade',
       loopFadeTimeMs:  S.loopFadeTimeMs ?? 15,
+      // Trigger playback params. Live performance state (a session carries them
+      // too), persisted here only so the rig boots with the values you last
+      // played rather than the factory ones — the same reason the seed envelope
+      // settings above are here. The cap — the one mute hits have had since
+      // 2026-09-07 — is deliberately NOT persisted: a rig should never boot
+      // silently muted.
+      triggerParams: { ...S.triggerParams },
     },
 
     // How particles are drawn — belongs with the other UI keys, not with audio
@@ -1491,9 +1672,10 @@ function _buildPayloads() {
       radiusFadeEnabled: S.radiusFadeEnabled,
       radiusFadeCurve:   S.radiusFadeCurve,
       cameraMode:        S.cameraMode,
+      camPull:           S.camPull,
+      gazeTrailSec:      S.gazeTrailSec,
     },
 
-    activePatch: S.activePresetIndex ?? 0,
   };
 }
 
@@ -1504,7 +1686,6 @@ export function saveAllDefaults() {
     localStorage.setItem(LS_AUDIO_DEFAULTS, json);
     localStorage.setItem(LS_SEED_SETTINGS, JSON.stringify(p.seed));
     localStorage.setItem(LS_VIZ_CAL,       JSON.stringify(p.viz));
-    localStorage.setItem(LS_ACTIVE_PATCH,  String(p.activePatch));
     DEBUG && console.log('[defaults] auto-saved:', json.length, 'bytes');
     return true;
   } catch (e) {
@@ -1570,6 +1751,10 @@ export function scheduleAutoSave() { _checkAndSave(); }
 const SPLIT_MOVED = {
   seed: ['seedMode', 'seedTether', 'seedXfade', 'seedAttack', 'seedRelease',
          'seedLoopMode', 'loopReleaseMode', 'loopFadeTimeMs',
+         // NOTE: triggerParams is deliberately absent. This list
+         // is what the pre-v4 grab-bag blob held; those fields postdate the
+         // split and can never appear in one, so listing them would describe
+         // history that didn't happen.
          // legacy aliases _loadSeedSettings still honours
          'seedNearestAlways', 'seedSnapFade', 'seedCrossfade'],
   viz:  ['vizMinSize', 'vizMaxSize', 'vizRmsMin', 'vizRmsMax',
@@ -1620,13 +1805,8 @@ export function splitLegacyAudioBlob(store, { overwrite = false } = {}) {
     for (const f of fields) delete d[f];
   }
 
-  if ('activePresetIndex' in d) {
-    if (overwrite || !store.has(LS_ACTIVE_PATCH)) {
-      store.set(LS_ACTIVE_PATCH, String(d.activePresetIndex));
-    }
-    delete d.activePresetIndex;
-    touched++;
-  }
+  // `activePresetIndex` pointed into the patch bank, sunset 2026-09-03: dropped.
+  if ('activePresetIndex' in d) { delete d.activePresetIndex; touched++; }
 
   for (const f of SPLIT_DROPPED) if (f in d) { delete d[f]; touched++; }
 
@@ -1648,19 +1828,26 @@ export function loadAudioDefaults() {
     // behind an early return on the blob's absence.
     _loadSeedSettings();
     _loadVizCalibration();
-    _loadActivePatch();
     const raw = localStorage.getItem(LS_AUDIO_DEFAULTS);
     if (!raw) return;
     const d = JSON.parse(raw);
 
     // Devices — restore module-level vars so dropdowns pre-select on next open,
     // and expose on S so main.js can auto-open the saved devices at startup.
+    if (d.inputDeviceName != null) {
+      _inputDeviceName = d.inputDeviceName;
+      S._savedInputDeviceName = d.inputDeviceName;
+    }
     if (d.inputDeviceId != null) {
       _inputDeviceId = d.inputDeviceId;
       S._savedInputDeviceId = d.inputDeviceId;
       // Also set selectedInputDeviceId so requestMicAccess (browser path)
       // opens the saved device instead of the system default.
       S.selectedInputDeviceId = d.inputDeviceId;
+    }
+    if (d.outputDeviceName != null) {
+      _outputDeviceName = d.outputDeviceName;
+      S._savedOutputDeviceName = d.outputDeviceName;
     }
     if (d.outputDeviceId != null) {
       _outputDeviceId = d.outputDeviceId;
@@ -1681,8 +1868,12 @@ export function loadAudioDefaults() {
       Object.assign(as.inputGains, d.inputGains);
     }
 
-    // Noise gate
-    if (typeof d.vizNoiseFloor  === 'number') S.vizNoiseFloor  = d.vizNoiseFloor;
+    // Paint gate. One-shot migration: the key was `vizNoiseFloor` until the
+    // rename (the name said "viz" for the threshold that decides which moments
+    // become playable at all). Read the old key once, then let the next save
+    // write the new one — no persistent fallback.
+    if (typeof d.paintGateThreshold === 'number')   S.paintGateThreshold = d.paintGateThreshold;
+    else if (typeof d.vizNoiseFloor === 'number')   S.paintGateThreshold = d.vizNoiseFloor;
 
     // Handsfree
     if (typeof d.hfHoldMs         === 'number')  S.hfHoldMs         = d.hfHoldMs;
@@ -1741,6 +1932,22 @@ function _loadSeedSettings() {
     if (typeof d.loopReleaseMode === 'string' && ['fade', 'play-to-end'].includes(d.loopReleaseMode))
       S.loopReleaseMode = d.loopReleaseMode;
     if (typeof d.loopFadeTimeMs === 'number') S.loopFadeTimeMs = Math.max(0, Math.min(2000, d.loopFadeTimeMs));
+    // Per-field so a defaults file written before a field existed still loads,
+    // and a hand-edited one can't put a string where the gate expects a number.
+    const t = d.triggerParams;
+    if (t && typeof t === 'object') {
+      const td = S.triggerParams;
+      if (typeof t.hysteresis === 'number') td.hysteresis = Math.max(1, Math.min(3, t.hysteresis));
+      if (typeof t.rearmMs    === 'number') td.rearmMs    = Math.max(0, Math.min(5000, t.rearmMs));
+      if (typeof t.volume     === 'number') td.volume     = Math.max(0, Math.min(1, t.volume));
+      if (typeof t.speed      === 'number') td.speed      = Math.max(0.25, Math.min(4, t.speed));
+      if (['oneshot', 'loop', 'grain'].includes(t.dwell)) td.dwell  = t.dwell;
+      if (['top', 'touch', 'ends'].includes(t.start))    td.start   = t.start;
+      if (['cut', 'layer'].includes(t.retrig))           td.retrig  = t.retrig;
+      if (typeof t.chop === 'number')       td.chop = Math.max(0, Math.min(2000, t.chop));
+      if (typeof t.chopOn === 'boolean')    td.chopOn = t.chopOn;
+      if (['play-to-end', 'fade'].includes(t.release))   td.release = t.release;
+    }
   } catch (e) {
     console.warn('[defaults] could not load seed settings:', e);
   }
@@ -1760,35 +1967,48 @@ function _loadVizCalibration() {
     if (typeof d.vizCentroidMax === 'number') S.vizCentroidMax = d.vizCentroidMax;
     if (typeof d.radiusFadeEnabled === 'boolean') S.radiusFadeEnabled = d.radiusFadeEnabled;
     if (typeof d.radiusFadeCurve   === 'number')  S.radiusFadeCurve   = d.radiusFadeCurve;
-    if (typeof d.cameraMode === 'string' && ['pull', 'surface', 'sensor'].includes(d.cameraMode))
-      S.cameraMode = d.cameraMode;
+    // One-shot rename migration (2026-08-24): 'pull' was the mouse-offset
+    // ROTATION mode, and the word now belongs to camera distance. Anything
+    // saved or exported before the rename says 'pull' and means 'steer'.
+    const mode = d.cameraMode === 'pull' ? 'steer' : d.cameraMode;
+    if (typeof mode === 'string' && ['steer', 'surface', 'sensor'].includes(mode))
+      S.cameraMode = mode;
+    // camPull deliberately NOT restored (2026-08-28): the outside view is
+    // retired — one centred, azimuthal-equidistant view. Old calibrations
+    // carrying a pull (this is how every rig booted at 1.2 without anyone
+    // setting it) boot at 0 like everyone else. S.camPull is console-only.
+    // Clamped rather than validated against the panel's three presets: the
+    // console is a first-class way to set this (S.gazeTrailSec = 12), and a
+    // value that round-trips through export should come back as it went out.
+    if (typeof d.gazeTrailSec === 'number' && d.gazeTrailSec >= 0)
+      S.gazeTrailSec = Math.min(d.gazeTrailSec, 60);
   } catch (e) {
     console.warn('[defaults] could not load viz calibration:', e);
   }
-}
-
-// ── mubone_active_patch ─────────────────────────────────────────────────────
-// Bounds-checked against the bank this build actually has — trimming the
-// factory bank (20 → 10 on 2026-07-31) left saved indices pointing past the
-// end, which crashed startup inside selectPreset(). Out of range falls back to
-// patch 1.
-function _loadActivePatch() {
-  try {
-    const raw = localStorage.getItem(LS_ACTIVE_PATCH);
-    if (raw === null) return;
-    const i = parseInt(raw, 10);
-    S.activePresetIndex = (Number.isInteger(i) && i >= 0 && i < PRESET_COUNT) ? i : 0;
-  } catch (_) { /* corrupt — leave the state default */ }
 }
 
 // ── Startup device activation (called from main.js after hardware is opened) ──
 // Wires the Web Audio graph for saved devices that were auto-opened at startup.
 // This must run AFTER initAudioSettings() so the DOM elements exist.
 
-export async function activateSavedInputDevice(nCh) {
+/** The output main.js opened at startup — resolved by name, the system
+ *  default as fallback — so the dropdown shows the device that is streaming. */
+export function noteActiveOutputDevice(dev) {
+  if (!dev) return;
+  _outputDeviceId   = dev.id;
+  _outputDeviceName = dev.name ?? _outputDeviceName;
+}
+
+export async function activateSavedInputDevice(nCh, dev = null) {
   // Wire up the full RtAudio input metering + recording chain.
   // This is the same work applyInputDevice() does after setInputDevice(),
   // but without needing the DOM dropdown to be populated first.
+  // `dev` is the device main.js actually opened — resolved by NAME, and the
+  // system default when nothing was saved or the saved one is gone. Until
+  // 2026-09-10 nothing recorded it here, so the dropdown kept selecting the
+  // saved id (stale after the device list shifted) or nothing at all after a
+  // reset, and read "select input device" over a live MacBook mic (Ek).
+  if (dev) { _inputDeviceId = dev.id; _inputDeviceName = dev.name ?? _inputDeviceName; }
   _inputNumCh = nCh;
   await setupRtAudioInputMeters(nCh);
   repopulateChannelSelect(nCh);
@@ -1797,6 +2017,12 @@ export async function activateSavedInputDevice(nCh) {
   const selCh = S.mainInputChannel ?? 0;
   const chSel = document.getElementById('asInputChannel');
   if (chSel) chSel.value = String(selCh);
+  // repopulateChannelSelect above already mirrored the panel — but it mirrored
+  // the default ch 1, and the line above then moves the modal past it without
+  // an event. Re-sync or the panel boots showing the wrong channel.
+  S._syncAudioPanelChannels?.();
+  const mainSel = document.getElementById('asMainInputSel');
+  if (mainSel) mainSel.value = String(selCh);
   rewireRtAudioRecordingChannel(selCh, nCh);
 
   // Render meters + mapping table (may be invisible until modal opens, but DOM ready)
@@ -1835,8 +2061,25 @@ export function initAudioSettings() {
 
   // Restore saved buffer size so the first device open uses the right value.
   // Electron default is 128 (lowest latency); browser default is 1024 (safe).
+  const savedGrains = parseInt(localStorage.getItem('mubone_max_grains'));
+  if ([256, 512, 1024].includes(savedGrains)) S.maxGrains = savedGrains;
+  const grainsSel = document.getElementById('asMaxGrains');
+  if (grainsSel) {
+    grainsSel.value = String(S.maxGrains ?? 512);
+    grainsSel.addEventListener('change', e => {
+      const n = parseInt(e.target.value);
+      if (![256, 512, 1024].includes(n)) return;
+      localStorage.setItem('mubone_max_grains', String(n));
+      S._setMaxGrains?.(n);
+      updateMaxGrainsLive();
+    });
+  }
+  const savedCushion = parseInt(localStorage.getItem('mubone_audio_cushion'));
+  if ([5, 10, 20, 30, 50].includes(savedCushion)) S.audioCushionMs = savedCushion;
+  const cushionSel = document.getElementById('asCushion');
+  if (cushionSel) cushionSel.value = String(S.audioCushionMs);
   const savedBuf = parseInt(localStorage.getItem('mubone_bufferSize'));
-  if (savedBuf && [128, 256, 512, 1024].includes(savedBuf)) {
+  if (savedBuf && [64, 128, 256, 512, 1024].includes(savedBuf)) {
     S.preferredBufferSize = savedBuf;
   } else if (window.electronBridge?.isElectron) {
     S.preferredBufferSize = 128;
@@ -1873,12 +2116,10 @@ export function initAudioSettings() {
         if (igVal)    igVal.textContent = formatDb(savedGain);
       }
 
-      // Sync noise gate slider to S.vizNoiseFloor (may have been restored from saved defaults)
+      // Sync paint gate slider to S.paintGateThreshold (may have been restored from saved defaults)
       {
-        const gs = document.getElementById('asNoiseGateSlider');
-        const gv = document.getElementById('asNoiseGateVal');
-        if (gs) gs.value = S.vizNoiseFloor;
-        if (gv) gv.textContent = S.vizNoiseFloor.toFixed(4);
+        const gs = document.getElementById('asPaintGateSlider');
+        if (gs) gs.value = S.paintGateThreshold;
       }
 
       // Browser mode: speaker buses never come up (initSpeakerBuses is an
@@ -1919,10 +2160,10 @@ export function initAudioSettings() {
         // Browser path: mic granted via top-bar button — S.inputAnalyser exists
         // but as.inputAnalysers (multi-channel meter array) wasn't built.
         // Show a 1-ch meter and active status.
-        renderMeters('asInputMeters', 1);
+        renderSetMeters('asInputMeters', ['1']);
         setStatus('asInputStatus', 'ok', 'input active');
       } else {
-        renderMeters('asInputMeters', 1);
+        renderSetMeters('asInputMeters', ['1']);
       }
 
       // Sync rate selector to live AudioContext rate (or saved rate)
@@ -2002,7 +2243,7 @@ export function initAudioSettings() {
   // Input gain — browser only (in Electron, trim at the interface hardware).
   // Writes to S.inputGainNode which sits between the mic source and S.inputAnalyser
   // (the recording path), so this actually affects what gets recorded.
-  const inputGainRow = document.getElementById('asInputGain')?.closest('.as-row');
+  const inputGainRow = document.getElementById('asInputGain')?.closest('.set-row');
   if (window.electronBridge?.isElectron && inputGainRow) {
     inputGainRow.style.display = 'none';
   }
@@ -2026,15 +2267,12 @@ export function initAudioSettings() {
     }
   });
 
-  // ── Noise gate slider ──────────────────────────────────────────────────────
-  const gateSlider = document.getElementById('asNoiseGateSlider');
-  const gateVal    = document.getElementById('asNoiseGateVal');
+  // ── Paint gate slider ──────────────────────────────────────────────────────
+  const gateSlider = document.getElementById('asPaintGateSlider');
   if (gateSlider) {
-    gateSlider.value = S.vizNoiseFloor;
-    if (gateVal) gateVal.textContent = S.vizNoiseFloor.toFixed(4);
+    gateSlider.value = S.paintGateThreshold;
     gateSlider.addEventListener('input', () => {
-      S.vizNoiseFloor = parseFloat(gateSlider.value);
-      if (gateVal) gateVal.textContent = S.vizNoiseFloor.toFixed(4);
+      S.paintGateThreshold = parseFloat(gateSlider.value);
     });
   }
 
@@ -2141,14 +2379,36 @@ export function initAudioSettings() {
       });
     }
 
-    // Wire main-panel handsfree arm button (cursor device)
-    const hfMainBtn = document.getElementById('hfArmBtn');
-    if (hfMainBtn) {
-      hfMainBtn.addEventListener('click', () => {
-        // Only allow arming in plain trace mode
-        if (S.traceMode !== 'trace' && !S.hfArmed) return;
-        if (S.hfArmed) disarmHandsfree();
-        else           armHandsfree();
+    // The arm control (#290). It used to be a button in the rig view's cursor
+    // device — the one place nobody could reach once the rig stopped being a
+    // screen — so it lives here now, beside the gate it arms. Arming is a
+    // boolean that STAYS, so it is a two-state pill that says which state it
+    // is in rather than a button whose meaning you have to remember (#267).
+    const hfArmSeg = document.getElementById('hfArmSeg');
+    if (hfArmSeg) {
+      hfArmSeg.addEventListener('click', e => {
+        const btn = e.target.closest('[data-hfarm]');
+        if (!btn) return;
+        const want = btn.dataset.hfarm === 'on';
+        if (want === !!S.hfArmed) return;          // picking the live segment does nothing
+        // Only plain trace mode can be armed; disarming is always allowed.
+        if (want && S.traceMode !== 'trace') return;
+        if (want) armHandsfree(); else disarmHandsfree();
+      });
+    }
+
+    // The tuning rows are a disclosure, not a collapsible (#293): the same
+    // eight rows, revealed in place under the row that asks for them. No
+    // triangle and no second kind of chrome — a settings page has one row
+    // model, and a group that opens is still made of rows.
+    const hfTuneBtn = document.getElementById('hfTuneBtn');
+    const hfTune    = document.getElementById('hfTune');
+    if (hfTuneBtn && hfTune) {
+      hfTuneBtn.addEventListener('click', () => {
+        const open = hfTune.hidden;
+        hfTune.hidden = !open;
+        hfTuneBtn.setAttribute('aria-expanded', String(open));
+        hfTuneBtn.textContent = open ? 'Done' : 'Tune…';
       });
     }
 
@@ -2156,18 +2416,22 @@ export function initAudioSettings() {
     S._syncHandsfreeUI = () => {
       const countEl = document.getElementById('hfCaptureCount');
       if (countEl) countEl.textContent = S.hfCaptureCount + (S.hfCaptureCount === 1 ? ' buffer' : ' buffers');
-      // Sync main-panel arm button (armed = green, recording = red, greyed = unavailable)
-      const mainBtn = document.getElementById('hfArmBtn');
-      if (mainBtn) {
-        mainBtn.classList.toggle('hf-armed', S.hfArmed);
-        mainBtn.classList.toggle('hf-recording', S.hfRecording);
-        mainBtn.classList.toggle('hf-unavailable', S.traceMode !== 'trace');
+      // Sync the arm pill. `hf-recording` stays a class rather than a third
+      // segment: recording is something the gate is DOING, not a state you can
+      // pick, and a capsule means pick-one-of-N (#267).
+      const armSeg = document.getElementById('hfArmSeg');
+      if (armSeg) {
+        armSeg.classList.toggle('hf-recording', !!S.hfRecording);
+        armSeg.classList.toggle('hf-unavailable', S.traceMode !== 'trace');
+        const want = S.hfArmed ? 'on' : 'off';
+        armSeg.querySelectorAll('[data-hfarm]').forEach(b =>
+          b.classList.toggle('active', b.dataset.hfarm === want));
       }
       // Sync trace indicator — show active state when toggled on
       const traceBtn = document.getElementById('paintIndicatorBtn');
       if (traceBtn) {
-        traceBtn.classList.toggle('painting', S._traceToggled);
-        traceBtn.classList.toggle('trace-toggled', S._traceToggled);
+        traceBtn.classList.toggle('painting', S.paintLatched);
+        traceBtn.classList.toggle('trace-toggled', S.paintLatched);
       }
       // HUD label — show "handsfree" next to coordinates when armed
       const hudLabel = document.getElementById('hfHudLabel');
@@ -2219,11 +2483,23 @@ export function initAudioSettings() {
     if (gainLbl)    gainLbl.textContent = formatDb(savedGain);
     if (S.inputGainNode) S.inputGainNode.gain.value = dbToLinear(savedGain);
 
+    // Both assignments above fire no `input` event, so the main-UI audio panel's
+    // mirror listener never runs — push channel + gain into it explicitly.
+    S._syncAudioPanelChannels?.();
+    S._syncAudioPanelLevels?.();
+
+    // The input-mapping table's own dropdown is a second view of this value;
+    // keep it honest when the change came from anywhere else (panel, restore).
+    const mainSel = document.getElementById('asMainInputSel');
+    if (mainSel && mainSel.value !== val) mainSel.value = val;
+
     const highlight = isStereo ? [0, 1] : chIndex;
 
     if (window.electronBridge?.isElectron) {
-      // Electron: RtAudio path — rewire splitter output into recording chain
-      rewireRtAudioRecordingChannel(chIndex, as.inputAnalysers.length);
+      // Electron: RtAudio path — rewire splitter output into recording chain.
+      // Pass 'stereo' through rather than chIndex — the rewire sums L+R for it,
+      // and collapsing to 0 here recorded ch 1 only.
+      rewireRtAudioRecordingChannel(isStereo ? 'stereo' : chIndex, as.inputAnalysers.length);
       renderInputMeters(highlight);
       setStatus('asInputStatus', 'ok', `${lbl} → granular engine`);
     } else if (S.inputStream) {
@@ -2290,6 +2566,10 @@ export function initAudioSettings() {
 
   // Buttons
   document.getElementById('asTestBtn')?.addEventListener('click', handleTestTone);
+  document.getElementById('asLatencyMeasure')?.addEventListener('click', handleMeasureLatency);
+  document.getElementById('asCushion')?.addEventListener('change', e => setAudioCushion(parseInt(e.target.value)));
+  setInterval(() => { updateCushionLive(); updateMaxGrainsLive(); }, 1000);
+  document.getElementById('asLatencyForget')?.addEventListener('click', () => S._clearLatencyCal?.());
 
   // ── Browser mic grant sync ───────────────────────────────────────────────
   // When requestMicAccess() succeeds (browser getUserMedia), it calls this
@@ -2297,9 +2577,10 @@ export function initAudioSettings() {
   // This makes the dropdown, meters, and internal state reflect reality
   // without the user having to open audio settings and manually pick a device.
   S._onBrowserMicGranted = (deviceId, numCh) => {
-    _inputDeviceId = deviceId;
-    _inputNumCh    = numCh;
-    as.started     = true;
+    _inputDeviceId   = deviceId;
+    _inputDeviceName = _selectedLabel('asInputDevice');
+    _inputNumCh      = numCh;
+    as.started       = true;
 
     // Build the per-channel analyser array so meters work immediately.
     // requestMicAccess creates S.inputAnalyser (singular) but the meter
@@ -2317,9 +2598,13 @@ export function initAudioSettings() {
   };
 
   // ── S callback for MIDI / OSC access to master output gain ──────────────
-  // Accepts dB value (-24 to +6), syncs the slider, label, and audio nodes.
+  // Accepts dB value (-60 to +18), syncs the slider, label, and audio nodes.
+  // Upper bound is +18, not the +6 this shipped with: the Electron path never
+  // passes through the soft clipper (browser-only, see js/audio.js), so it has
+  // no makeup gain at all and unity is as loud as it gets. Keep in step with
+  // the max on asOutputGain / apMasterGainSlider and the master_vol ccFn.
   S._setOutputGainDb = (db) => {
-    db = Math.max(-60, Math.min(6, db));
+    db = Math.max(-60, Math.min(18, db));
     as.outputGain = db;
     const ogSlider = document.getElementById('asOutputGain');
     const ogVal    = document.getElementById('asOutputGainVal');
@@ -2333,6 +2618,9 @@ export function initAudioSettings() {
     }
     if (window._headphoneOutNode) window._headphoneOutNode.gain.value = lin * 0.7;
     S.outputGainValue = lin;
+    // Assigning ogSlider.value fires no `input` event, so the main-UI audio
+    // panel's mirror listener never runs — push it explicitly.
+    S._syncAudioPanelLevels?.();
   };
 
   // Re-render routing table when spatial mode changes so capture buttons

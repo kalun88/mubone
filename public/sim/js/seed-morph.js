@@ -1,10 +1,11 @@
 // ============================================================================
-// seed-morph.js — Seed morph engine + preset interpolation utilities
+// seed-morph.js — the gesture morph engine
 //
 // Originally extracted from the since-deleted wand.js during the Mar 28 2026
-// sensor-registry refactor.  Contains:
-//   - lerpPresets() family: generic preset interpolation (2/3/4/5 point)
-//   - updateGestureMorph(): gyro-driven seed agitation/smoothing
+// sensor-registry refactor. Contains updateGestureMorph(): gyro-driven seed
+// agitation/smoothing. The lerpPresets() family that used to sit beside it
+// had one reader, the cloud-morph slider, and went with the patch bank on
+// 2026-09-03 (sandbox/sunset-2026-09-03/patch-bank.js).
 //
 // updateGestureMorph() reads inertial data from the gesture role slot and
 // drives morphT on the nearest seed(s).  morphT=0.5 = planted snapshot,
@@ -13,84 +14,10 @@
 // Called by osc.js after inertial sensor messages.
 // ============================================================================
 
-import { S, PRESETS, MAX_SEEDS } from './state.js';
+import { S, MAX_SEEDS } from './state.js';
 import { getByRole } from './sensor-registry.js';
 import { angleBetweenSphere, findNearestSeedSlot } from './grain.js';
 import { getCursorLonLat, screenToLonLat } from './sphere.js';
-
-// ── Preset interpolation ──────────────────────────────────────────────────────
-
-// Returns a new plain-object with all numeric fields lerped between a and b.
-// Strings / booleans threshold at t = 0.5.
-export function lerpPresets(a, b, t) {
-  const out  = {};
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  for (const k of keys) {
-    const av = a[k], bv = b[k];
-    out[k] = (typeof av === 'number' && typeof bv === 'number')
-      ? av + (bv - av) * t
-      : (t < 0.5 ? av : bv);
-  }
-  return out;
-}
-
-// 3-point piecewise lerp: A → C (center) → B.
-// t=0→A, t=0.5→C, t=1→B; each half is a separate linear segment.
-export function lerpPresets3(a, center, b, t) {
-  if (t <= 0.5) return lerpPresets(a, center, t * 2);
-  return lerpPresets(center, b, (t - 0.5) * 2);
-}
-
-// Bilinear interpolation between four corner presets.
-// tx=0→left, tx=1→right; ty=0→bottom, ty=1→top.
-export function lerpPresets4(tl, tr, bl, br, tx, ty) {
-  const wTL = (1 - tx) * ty;
-  const wTR = tx * ty;
-  const wBL = (1 - tx) * (1 - ty);
-  const wBR = tx * (1 - ty);
-  const out  = {};
-  const keys = new Set([...Object.keys(tl), ...Object.keys(tr), ...Object.keys(bl), ...Object.keys(br)]);
-  for (const k of keys) {
-    const a = tl[k], b = tr[k], c = bl[k], d = br[k];
-    if (typeof a === 'number' && typeof b === 'number' && typeof c === 'number' && typeof d === 'number') {
-      out[k] = wTL * a + wTR * b + wBL * c + wBR * d;
-    } else {
-      const mx = Math.max(wTL, wTR, wBL, wBR);
-      out[k] = mx === wTL ? a : mx === wTR ? b : mx === wBL ? c : d;
-    }
-  }
-  return out;
-}
-
-// 5-point interpolation: 4 corners + center.
-export function lerpPresets5(tl, tr, bl, br, center, tx, ty) {
-  const wC  = (1 - Math.abs(2 * tx - 1)) * (1 - Math.abs(2 * ty - 1));
-  const s   = 1 - wC;
-  const wTL = (1 - tx) * ty       * s;
-  const wTR = tx * ty              * s;
-  const wBL = (1 - tx) * (1 - ty) * s;
-  const wBR = tx * (1 - ty)       * s;
-  const out  = {};
-  const keys = new Set([
-    ...Object.keys(tl), ...Object.keys(tr),
-    ...Object.keys(bl), ...Object.keys(br), ...Object.keys(center),
-  ]);
-  for (const k of keys) {
-    const a = tl[k], b = tr[k], c = bl[k], d = br[k], e = center[k];
-    if (typeof a === 'number' && typeof b === 'number' && typeof c === 'number' &&
-        typeof d === 'number' && typeof e === 'number') {
-      out[k] = wTL * a + wTR * b + wBL * c + wBR * d + wC * e;
-    } else {
-      const weights = [wTL, wTR, wBL, wBR, wC];
-      const vals    = [a,   b,   c,   d,   e];
-      const mx = Math.max(...weights);
-      out[k] = vals[weights.indexOf(mx)];
-    }
-  }
-  return out;
-}
-
-// ── Gesture morph engine ────────────────────────────────────────────────────
 
 // Agitation axis delta definitions — max delta at morphT=0 or morphT=1.
 const AGITATE_DELTAS = {
@@ -216,7 +143,5 @@ export function updateGestureMorph() {
       }
     }
 
-    // Invalidate envelope curve cache so the worklet rebuilds with new fade
-    if (seed.grainParams._cachedAtk) seed.grainParams._cachedAtk = null;
   }
 }

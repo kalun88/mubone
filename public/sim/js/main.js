@@ -2,41 +2,51 @@
 // MAIN — entry point: wire up all modules and start the app
 // ============================================================================
 
-import { S, DEBUG, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
-import { showWaveformOverlay } from './debug-waveform.js';
+import { S, DEBUG, GRAIN_SCHEDULER_INTERVAL_MS, AXIS_SOURCES, axisHeld } from './state.js';
 import { scheduleGrains } from './grain.js';
 import { setupEvents, setupDragDrop } from './events.js';
-import { rebuildSampleListUI, buildSvTabs, drawSvWaveform, initUndoBtn } from './ui-samples.js';
+import { rebuildSampleListUI, initUndoBtn } from './ui-samples.js';
 import {
-  setupPresets, initGrainControls, initDesktopMorph,
-  drawPresetWaveform, updatePlaybackControls, selectPreset,
+  setupPresets, initGrainControls, updatePlaybackControls,
 } from './ui-presets.js';
 import { setupMappingModal, initMidi } from './midi.js';
 import { initAccessory } from './accessory-registry.js';
-import { initAccessoryUI } from './ui-accessory.js';
 import { initMobileMode } from './mobile.js';
 import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
-import { resizeCanvas, animate } from './renderer.js';
-import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initMorphToggle, initRadiusFade, initSeqMode, initMixdownGains, initDryMonitorGains, initAudioPanel, setScanMuted, initGateMeter } from './ui-meters.js';
-import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, getCameraQ, recenterCursor, assignQuatRole } from './sensor-registry.js';
+import { resizeCanvas, animate, applyAxisSources, cameraFromPointing } from './renderer.js';
+import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initRadiusFade, initSeqMode, initMixdownGains, initDryMonitorGains, initAudioPanel, setScanMuted, initGateMeter } from './ui-meters.js';
+import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, getCameraQ, assignQuatRole, getRegistry as getSensorRegistry } from './sensor-registry.js';
 import { initOSC } from './osc.js';
 import { initStatusPublisher } from './status-publisher.js';
 import { initXimuLedFeedback } from './ximu-led-feedback.js';
 import { initLedMapUI } from './ui-led-map.js';
-import { initAudioSettings, loadAudioDefaults, activateSavedInputDevice, startAutoSave } from './ui-audio-settings.js';
+import { initAudioSettings, loadAudioDefaults, activateSavedInputDevice, noteActiveOutputDevice, startAutoSave, resolveAudioDevice } from './ui-audio-settings.js';
 
-import { initImprovUI } from './ui-improv.js';
+import { initPinSettings } from './ui-pin-settings.js';
+import { initTriggerUI } from './ui-trigger.js';
 import { initVizUI } from './ui-viz.js';
 import { initSweepUI, initSessionPanel } from './ui-sweep.js';
 import { initEraseUI } from './erase.js';
+import './brush.js';   // registers S._currentBrush and the main button (S._gesturePress …)
+import './sampler.js'; // registers S._samplerSelectSource / _samplerTrace / capture (#247)
+import { initSourceTiles } from './ui-source.js';   // the source tiles (#247)
+import { initSettings, openSettings } from './ui-settings.js';   // the one settings door (#255)
+import { initTileLayout } from './tile-layout.js';
 import { initExportImport } from './ui-export.js';
-import { initPatchTable } from './ui-patch-table.js';
 import { initMappingUI } from './ui-sensor-mapping.js';
 import { initIMUSetupUI } from './ui-imu-setup.js';
+import { initSygaldryUI } from './ui-sygaldry.js';
+import { initDiagnostics } from './ui-diagnostics.js';
+import { initButtonsPage } from './ui-buttons.js';
 import { qMul, qNormalize, qFromAxisAngle, qRotateVec } from './sphere.js';
 import { startPaintTicker, getPaintTickerState } from './paint-ticker.js';
-import { initPanelDrag } from './panel-drag.js';
-import { CATEGORIES, keysFor, unregisteredKeys } from './storage-registry.js';
+// Trigger tool. Imported for its side effect of registering the gate and the
+// arm/disarm entry points on S — grain.js and midi.js reach it through those
+// rather than importing it, which is what keeps the import graph acyclic.
+import './trigger.js';
+import { refreshLatency } from './latency.js';
+import './composer.js';
+import { CATEGORIES, keysFor, unregisteredKeys, purgeRetiredKeys } from './storage-registry.js';
 import {
   startWorkletGrain, stopWorkletGrain, updateWorkletParams,
   isCrossOriginIsolated, hotSwapRecording, getWorkletDiag,
@@ -71,12 +81,17 @@ async function _startWorkletEngine(buf, opts = {}) {
     periodVar:        opts.periodVar        ?? ov.periodVar        ?? base.periodVar        ?? 0,
     durVar:           opts.durVar           ?? ov.durVar           ?? base.durVar           ?? 0,
     durJitter:        opts.durJitter        ?? ov.durJitter        ?? base.durJitter        ?? 0,
+    startJitter:      opts.startJitter      ?? ov.startJitter      ?? base.startJitter      ?? 0,
+    fadeRatio:        opts.fadeRatio        ?? ov.fadeRatio        ?? base.fadeRatio        ?? 0.5,
+    fadeMode:         (opts.fadeMode ?? ov.fadeMode ?? base.fadeMode) === 'ms' ? 1 : 0,
+    fadeMs:           opts.fadeMs          ?? ov.fadeMs          ?? base.fadeMs          ?? 0.020,
     envShape:         opts.envShape         ?? CURVE_MAP[S.grainCurveType] ?? 0,
     probability:      opts.probability      ?? S.grainProbability ?? 1.0,
     direction:        opts.direction        ?? DIR_MAP[S.grainDirection] ?? 0,
     hpfFreq:          opts.hpfFreq          ?? ov.hpfFreq          ?? base.hpfFreq          ?? 20,
     lpfFreq:          opts.lpfFreq          ?? ov.lpfFreq          ?? base.lpfFreq          ?? 20000,
-    filterQ:          opts.filterQ          ?? ov.filterQ          ?? base.filterQ          ?? 0.707,
+    hpfQ:             opts.hpfQ             ?? ov.hpfQ             ?? base.hpfQ             ?? 0.707,
+    lpfQ:             opts.lpfQ             ?? ov.lpfQ             ?? base.lpfQ             ?? 0.707,
     filterFreqJitter: opts.filterFreqJitter ?? ov.filterFreqJitter ?? base.filterFreqJitter ?? 0,
     kSeqMode:         S.grainKSeqMode ?? false,
   }, {
@@ -195,57 +210,25 @@ function init() {
     }
   }
 
-  // ── Narrow-mode canvas hoist ────────────────────────────────────────────
-  // At narrow widths the panel column becomes a two-column multicol so tiles
-  // PACK (flex-wrap banded every row to its tallest member, which left big
-  // dead gaps). A multicol spanner can't be position:sticky and it splits the
-  // flow, so the canvas tile is moved out to .main-layout for the duration —
-  // sibling of the panel, sticky against the same scroller. Purely positional;
-  // the canvas element and its context are untouched, so no re-render.
-  {
-    const NARROW_MAX = 700;
-    let hoisted = false;
-    const syncCanvasHoist = () => {
-      const mini   = document.querySelector('.projector-mini-canvas');
-      const layout = document.querySelector('.main-layout');
-      const panel  = document.querySelector('.right-panel');
-      if (!mini || !layout || !panel) return;          // pre-partition, retry next resize
-      const narrow = window.innerWidth <= NARROW_MAX;
-      if (narrow && !hoisted) {
-        layout.insertBefore(mini, panel);
-        hoisted = true;
-        resizeCanvas();
-      } else if (!narrow && hoisted) {
-        panel.insertBefore(mini, panel.firstChild);    // back inside before re-nesting
-        hoisted = false;
-        S._repartitionProjector?.();                   // restores centerWrap nesting
-        resizeCanvas();
-      }
-    };
-    S._syncCanvasHoist = syncCanvasHoist;
-    window.addEventListener('resize', syncCanvasHoist);
-    // Partition runs on a rAF at boot; land after it.
-    requestAnimationFrame(() => requestAnimationFrame(syncCanvasHoist));
-  }
-
   S.canvas = document.getElementById('sphereCanvas');
   S.ctx    = S.canvas.getContext('2d');
 
   resizeCanvas();
   setupEvents();
   setupDragDrop();
+  purgeRetiredKeys();    // one-shot: keys of sunset features (the patch bank, locks, cloud morph)
   loadAudioDefaults();   // restore saved settings before any UI init
   rebuildSampleListUI();
   S.updateLiveRecUI?.();
   setupPresets();
   initGrainControls();
-  initDesktopMorph();
   setupMappingModal();
   initMidi();
   // Accessory must init after setupMappingModal — it binds against the ACTIONS
   // registry that publishes S._actions / S._dispatchAction.
-  initAccessory();
-  initAccessoryUI();
+  initAccessory();   // the DATA layer stays: ui-export's setup file carries it.
+  // initAccessoryUI() SUNSET 2026-08-28 (#269) — the table/modal is in
+  // sandbox/sunset-2026-08-28/ui-accessory.js.
   // Prompt for mic permission on load — but skip in Electron where RtAudio
   // handles input (getUserMedia always fails there → spurious "mic denied").
   // Electron input is activated asynchronously below via activateSavedInputDevice.
@@ -264,15 +247,9 @@ function init() {
   S._getSensorCursorQ = getSensorCursorQ;    // cursor quat (multi-IMU: world in camera mode, delta in frame mode)
   S._getCameraQ       = getCameraQ;          // projector-aim: rotates the viewport (camera-role sensor)
   S._getFrameQ        = getFrameQ;           // body-reference: attaches sphere to body (frame-role sensor) — staging + new main path
-  // Drift correction. NO UI caller — the button is disabled pending #76 and the
-  // auto-recenter path went away with sensor-registry's slotTare (2026-08-01).
-  // Kept exposed deliberately: this is the handle for investigating #76 from
-  // the console. S.driftOffsetQ stays null until someone calls it, so every
-  // read of it downstream is an inert null-check.
-  S._recenterCursor   = recenterCursor;
-  // (S._onTare hung here to clear driftOffsetQ on a fresh tare. Only slotTare
-  // ever called it; imu-setup's captureTare — the tare that actually runs —
-  // never did. Removed with slotTare rather than left as a hook nothing fires.)
+  // (Recenter — a drift-offset quaternion composed onto the sensor — was
+  // deleted 2026-09-05 (#170, #76): no caller since 2026-08-01, and the drift
+  // there is, in yaw, is what zero heading corrects.)
 
   // ── IMU-driven cursor freshness ──────────────────────────────────────────
   // On every cursor-role quaternion arrival (up to 400Hz), update S.cursorQ
@@ -285,42 +262,31 @@ function init() {
     const cq = getSensorCursorQ();   // non-null in detethered two-IMU mode
     const sq = getSensorCamQ();      // non-null in single-IMU mode
 
+    // ONE owner of the axis-hold rule, imported from the renderer. This used to
+    // be a second copy that checked only azSource and elSource — so every
+    // sensor packet (up to 400 Hz) overwrote S.camQ with an un-gated
+    // quaternion, undoing the renderer's 30 fps result. Roll lock therefore
+    // never worked, through several rewrites of the thing it was blamed on
+    // (Ek, 2026-08-31). A rule with two implementations has one that is wrong.
     if (cq) {
-      let q = cq;
-      if (S.driftOffsetQ) q = qNormalize(qMul(S.driftOffsetQ, q));
-      if (S.axisLockAz || S.axisLockEl) {
-        const fwd = qRotateVec(q, [0, 0, 1]);
-        let yaw   = Math.atan2(fwd[0], fwd[2]);
-        let pitch = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
-        if (S.axisLockAz && S._axisLockFrozenYaw != null) yaw = S._axisLockFrozenYaw;
-        if (S.axisLockEl && S._axisLockFrozenPitch != null) pitch = S._axisLockFrozenPitch;
-        const qY = qFromAxisAngle(0, 1, 0, yaw);
-        const qP = qFromAxisAngle(1, 0, 0, pitch);
-        S.cursorQ = qNormalize(qMul(qY, qP));
-      } else {
-        S.cursorQ = q;
-      }
+      S.cursorQ = applyAxisSources(cq);
     } else if (sq) {
-      let q = sq;
-      if (S.driftOffsetQ) q = qNormalize(qMul(S.driftOffsetQ, q));
-      if (S.axisLockAz || S.axisLockEl) {
-        const fwd = qRotateVec(q, [0, 0, 1]);
-        let yaw   = Math.atan2(fwd[0], fwd[2]);
-        let pitch = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
-        if (S.axisLockAz && S._axisLockFrozenYaw != null) yaw = S._axisLockFrozenYaw;
-        if (S.axisLockEl && S._axisLockFrozenPitch != null) pitch = S._axisLockFrozenPitch;
-        const qY = qFromAxisAngle(0, 1, 0, yaw);
-        const qP = qFromAxisAngle(1, 0, 0, pitch);
-        S.camQ = qNormalize(qMul(qY, qP));
-      } else {
-        S.camQ = q;
-      }
+      const q = sq;
+      // Single-IMU: cursor gets the pointing, camera is derived — the same
+      // two writes the render loop makes, so the 400 Hz path and the 30 fps
+      // path can never disagree about either quat.
+      const pq = applyAxisSources(q);
+      S.cursorQ = pq;
+      S.camQ = cameraFromPointing(pq);
     }
   };
 
   // Paint ticker: single 200Hz timer polls cursor position and deposits
   // particles via adaptive angular spacing. Works identically for all modes.
   startPaintTicker();
+  // The latency model needs the audio context and, in Electron, the streams;
+  // both exist by now, and the device pages refresh it again on Apply.
+  setTimeout(() => refreshLatency(), 1500);
   window.paintTicker = getPaintTickerState;
 
   // ── Double-click any slider with `data-default="X"` to reset it ────────
@@ -340,76 +306,44 @@ function init() {
 
   initMappingUI();
   initIMUSetupUI();
+  initSygaldryUI();
+  initDiagnostics();
+  initButtonsPage();
   initAudioSettings();
-  initImprovUI();
+  initPinSettings();
+  initTriggerUI();
   initVizUI();
   initSweepUI();
   initSessionPanel();
   initEraseUI();
+  initTileLayout();
+  initSourceTiles();
+  initSettings();
   initUndoBtn();
   initExportImport();
-  initPatchTable(updatePlaybackControls, setScanMuted, selectPreset);
   startAutoSave();       // begin 2s dirty-check auto-persist for settings
 
-  // ── Collapsible panels ───────────────────────────────────────────────────
-  // Click any device-label to collapse/expand its body. State persists in
-  // localStorage so panels stay collapsed across reloads.
-
-  // Helper: get the panel key from a device element
-  function _panelKey(device) { return device?.className.match(/device--(\S+)/)?.[1]; }
-
-  // Helper: save current panel order to localStorage
-  function _savePanelOrder() {
-    const panel = document.querySelector('.right-panel');
-    if (!panel) return;
-    const order = [...panel.querySelectorAll('.device')]
-      .map(d => _panelKey(d)).filter(Boolean);
-    localStorage.setItem('mubone_panel_order', JSON.stringify(order));
-    // In projector mode the left/right column partition follows document
-    // order — re-run it after each reorder so the split tracks the move.
-    S._repartitionProjector?.();
-  }
-
-  // Restore saved panel order on load
+  // ── Collapsible panels, panel order, panel drag: SUNSET (#291) ──────────
+  // Collapsing a .device by its label, dragging tiles between columns and the
+  // saved panel order all belonged to the rig VIEW, which is no longer a
+  // screen — .right-panel is a hidden cabinet of controls the engine pages and
+  // the settings shell write through. Dragging is at
+  // sandbox/sunset-2026-08-29/panel-drag.js.
+  //
+  // The stale keys are cleared once rather than left to rot, and one of them
+  // could actually bite: a `.device.collapsed` class hides `.device-body`, and
+  // the commits device is BORROWED whole by Settings → pins (#262) — so a
+  // device someone collapsed in the rig view a week ago would have shown up as
+  // an empty settings page with nothing to explain it.
   try {
-    const saved = JSON.parse(localStorage.getItem('mubone_panel_order'));
-    if (saved && Array.isArray(saved)) {
-      const panel = document.querySelector('.right-panel');
-      if (panel) {
-        const devices = new Map();
-        panel.querySelectorAll('.device').forEach(d => {
-          const k = _panelKey(d);
-          if (k) devices.set(k, d);
-        });
-        // re-append in saved order (unsaved devices stay at end)
-        for (const k of saved) {
-          const d = devices.get(k);
-          if (d) { panel.appendChild(d); devices.delete(k); }
-        }
-        for (const d of devices.values()) panel.appendChild(d);
-      }
+    for (const k of Object.keys(localStorage)) {
+      if (k.startsWith('mubone_panel_')) localStorage.removeItem(k);
     }
-  } catch (_) {
-    // Corrupt panel order JSON — remove so it doesn't fail repeatedly
-    try { localStorage.removeItem('mubone_panel_order'); } catch (_2) {}
-  }
-
-  for (const label of document.querySelectorAll('.device-label')) {
-    const device = label.closest('.device');
-    if (!device) continue;
-    const key = _panelKey(device);
-    if (key && localStorage.getItem(`mubone_panel_${key}`) === '1') device.classList.add('collapsed');
-    label.addEventListener('click', () => {
-      device.classList.toggle('collapsed');
-      if (key) localStorage.setItem(`mubone_panel_${key}`, device.classList.contains('collapsed') ? '1' : '0');
-    });
-  }
-  // Panel rearrangement is click-and-drag (panel-drag.js, 2026-07-06 —
-  // replaced the old ▲▼ reorder arrows). Expose the saver so drops persist
-  // through the same path the arrows used: document order + a repartition,
-  // which writes the v2 projector layout from the DOM.
-  S._savePanelOrder = _savePanelOrder;
-  initPanelDrag();
+    localStorage.removeItem('mubone_projector_layout');
+    localStorage.removeItem('mubone_projector_layout_v2');
+    localStorage.removeItem('mubone_tile_layout');
+  } catch (_) {}
+  for (const d of document.querySelectorAll('.device.collapsed')) d.classList.remove('collapsed');
 
   // ── Collapsible sections (within devices) ─────────────────────────────
   // Click section-toggle labels to collapse/expand subsections.
@@ -452,7 +386,7 @@ function init() {
   // This used to be a single nuclear `localStorage.clear()` with one "keep my
   // patches" escape hatch, deliberately list-free because an enumerated key
   // list rots every time a module adds a key (exactly what happened to the
-  // export's STATIC_KEYS — docs/EXPORT-IMPORT-AUDIT-2026-07.md). Per-category
+  // export's STATIC_KEYS — docs/archive/EXPORT-IMPORT-AUDIT-2026-07.md). Per-category
   // reset needs a list, so the list now lives in ONE place with a drift
   // detector behind it: js/storage-registry.js, asserted by
   // scripts/browser-audit.js. Unregistered keys are still wiped by a select-all
@@ -484,7 +418,7 @@ function init() {
   // the old factory reset (everything + offline cache + service worker).
   document.getElementById('resetBtn')?.addEventListener('click', () => {
     const overlay = document.createElement('div');
-    overlay.className = 'factory-reset-overlay';
+    overlay.className = 'dlg-overlay';
     const rows = CATEGORIES.map(c => `
       <label class="reset-cat">
         <input type="checkbox" data-cat="${c.id}">
@@ -505,9 +439,9 @@ function init() {
       : '';
 
     overlay.innerHTML = `
-      <div class="factory-reset-dialog">
-        <div class="factory-reset-title">reset</div>
-        <p class="factory-reset-desc">Return the checked items to their defaults. The page reloads afterwards.</p>
+      <div class="dlg-dialog">
+        <div class="dlg-title">reset</div>
+        <p class="dlg-desc">Return the checked items to their defaults. The page reloads afterwards.</p>
         <div class="reset-cats">
           ${rows}
           <label class="reset-cat reset-cat-all">
@@ -519,9 +453,9 @@ function init() {
           </label>
         </div>
         ${warn}
-        <div class="factory-reset-btns">
-          <button class="factory-reset-btn factory-reset-cancel">cancel</button>
-          <button class="factory-reset-btn factory-reset-confirm" disabled>reset</button>
+        <div class="dlg-btns">
+          <button class="dlg-btn dlg-cancel">cancel</button>
+          <button class="dlg-btn dlg-go" disabled>reset</button>
         </div>
       </div>
     `;
@@ -529,7 +463,7 @@ function init() {
 
     const catBoxes = [...overlay.querySelectorAll('input[data-cat]')];
     const allBox   = overlay.querySelector('input[data-all]');
-    const confirm  = overlay.querySelector('.factory-reset-confirm');
+    const confirm  = overlay.querySelector('.dlg-go');
 
     // Select-all drives the category boxes; unticking any one of them releases
     // select-all (so you can't end up with the cache teardown armed while the
@@ -549,7 +483,7 @@ function init() {
       sync();
     }));
 
-    overlay.querySelector('.factory-reset-cancel').addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.dlg-cancel').addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 
     confirm.addEventListener('click', async () => {
@@ -589,38 +523,13 @@ function init() {
   // S._rebuildMainOutputMeters is also set inside startMainMetering() for the renderer shim.
   S._onSpeakerBusesReady = () => rebuildMainOutputMeters();
 
-  // ── Sample instrument modal ──────────────────────────────────────────────────
-  const sampleModal    = document.getElementById('sampleModal');
-  const sampleOpenBtn  = document.getElementById('bottomPanelToggleBtn');
-  const sampleCloseBtn = document.getElementById('sampleModalClose');
-  if (sampleModal && sampleOpenBtn) {
-    sampleOpenBtn.addEventListener('click', () => {
-      const opening = !sampleModal.classList.contains('open');
-      sampleModal.classList.toggle('open', opening);
-      sampleOpenBtn.classList.toggle('open', opening);
-      // Rebuild all slot waveforms + sv display when the panel opens —
-      // samples loaded while the panel was closed have zero-size canvases.
-      // Double-rAF: first rAF triggers layout of the newly-visible modal,
-      // second rAF runs after elements have real dimensions.
-      if (opening) requestAnimationFrame(() => requestAnimationFrame(() => {
-        rebuildSampleListUI();
-      }));
-    });
-    sampleCloseBtn?.addEventListener('click', () => {
-      sampleModal.classList.remove('open');
-      sampleOpenBtn.classList.remove('open');
-    });
-    // Click backdrop to close
-    sampleModal.addEventListener('click', e => {
-      if (e.target === sampleModal) {
-        sampleModal.classList.remove('open');
-        sampleOpenBtn.classList.remove('open');
-      }
-    });
-  }
+  // The sample-instrument MODAL is gone (#269): the sampler lives in the tool
+  // rail's source group, and its library is the properties-rail sheet that
+  // js/ui-source.js draws. ui-samples.js still owns the slot data, the
+  // waveform drawing and preview playback — only the modal went.
 
   // ── Camera mode modal ──────────────────────────────────────────────────────
-  // Camera mode: pull / surface / sensor (independent of audio spatialization)
+  // Camera mode: steer / surface / sensor (independent of audio spatialization)
   // Segmented picker in the top bar — replaced the camera modal on 2026-08-01,
   // so this is now the only camera-mode UI.
   const cameraModeSeg = document.getElementById('cameraModeSeg');
@@ -640,15 +549,28 @@ function init() {
       // it back never does — data-title is the honest field.
       if (btn.dataset.mode === 'sensor') {
         const state = S.cameraMode === 'sensor'
-          ? (S.detethered ? '\ncurrently: 2 sensors — cursor free'
-                          : '\ncurrently: 1 sensor — cursor locked')
-          : '';
+          ? (S._rawCursorQ ? '\ncurrently: 2 sensors — cursor free, frame holds the view'
+                           : '\ncurrently: 1 sensor — camera follows it, held level past ±70°')
+          : (S._sensorLive?.() ? '' : '\nno sensor connected — the pill stays where it is until one speaks');
         btn.setAttribute('data-title', _camTips.get(btn) + state);
       }
     });
   }
 
+  // A sensor is CONNECTED when one has spoken in the last few seconds — the
+  // registry stamps every quaternion.
+  const SENSOR_LIVE_MS = 3000;
+  const sensorLive = () => Object.values(getSensorRegistry() || {}).some(sl => sl && Date.now() - (sl.lastSeenQuat || 0) < SENSOR_LIVE_MS);
+  S._sensorLive = sensorLive;
+
   function applyCameraMode(mode) {
+    // The pill is never on SENSOR without a sensor (Ek, 2026-09-12): a click
+    // there with nothing connected stays where it is and the chip says why.
+    if (mode === 'sensor' && !sensorLive()) {
+      console.info('[camera] sensor mode refused — no sensor connected');
+      updateCameraModeBtn();
+      return;
+    }
     S.cameraMode = mode;
     updateCameraModeBtn();
 
@@ -665,24 +587,27 @@ function init() {
       S._resetSurfacePosition?.();
       // Request pointer lock (the chip click qualifies as a user gesture)
       S._requestSurfaceLock?.();
-      // Say how to get back out — the pointer is now captured and nothing else
-      // on screen names the key that releases it.
-      S._showSurfaceEntryHint?.();
     } else if (mode === 'sensor') {
-      S._hideSurfaceEntryHint?.();
       // Exit pointer lock + overlay if leaving surface mode
       S._exitSurfaceLock?.();
       S._hideSurfaceOverlay?.();
-      // Sensor: hide cursor, mouse is free for UI
-      if (S.canvas) S.canvas.style.cursor = 'none';
+      // The cursor is set below — see _syncStageCursor in events.js.
     } else {
-      S._hideSurfaceEntryHint?.();
       // Exit pointer lock + overlay if leaving surface mode
       S._exitSurfaceLock?.();
       S._hideSurfaceOverlay?.();
-      // Pull: show cursor
-      if (S.canvas) S.canvas.style.cursor = '';
+      // The cursor is set below — see _syncStageCursor in events.js.
     }
+
+    // A mode change is an EDGE for cursor lock's pointer half, which is steer
+    // and surface only. Lock in surface, switch to sensor, and without this
+    // S.altLocked stays true — so grain.js and renderer.js keep reading the
+    // cursor from a frozen mouse pixel instead of from the sensor. Runs after
+    // the branches above because it has the final say on the canvas cursor.
+    // Order matters: the stage cursor follows the MODE, and the lock overrides
+    // it — so the lock's edge runs last and has the final say.
+    S._syncStageCursor?.();
+    S._applyCursorLockPointer?.(S._cursorLocked?.());
 
     DEBUG && console.log(`[camera] mode: ${S.cameraMode}`);
   }
@@ -695,6 +620,20 @@ function init() {
   S._setCameraMode = applyCameraMode;
   updateCameraModeBtn();
 
+  // A persisted SENSOR mode boots as steer — nothing has spoken yet at boot,
+  // and the app is never on the sensor pill with no sensor (Ek, 2026-09-12).
+  // The wish is kept: the first quaternion to arrive switches the camera to
+  // the sensor, so a rig that opens before its x-imu3 still follows it.
+  if (S.cameraMode === 'sensor') {
+    S.cameraMode = 'steer';
+    S._cameraModeDeferred = 'sensor';
+    updateCameraModeBtn();
+  }
+  S._onSensorFirstQuat = () => {
+    if (S._cameraModeDeferred !== 'sensor') return;
+    S._cameraModeDeferred = null;
+    if (S.cameraMode === 'steer') applyCameraMode('sensor');
+  };
   // If surface mode was persisted, reset camera and show re-enter overlay
   // (pointer lock can't be requested without a user gesture on page load)
   if (S.cameraMode === 'surface') {
@@ -731,15 +670,11 @@ function init() {
   // Re-size after first layout pass in case dimensions weren't settled yet
   requestAnimationFrame(() => {
     resizeCanvas();
-    drawPresetWaveform();
     updatePlaybackControls();
-    buildSvTabs();
-    drawSvWaveform();
     animate();
     startMainMetering();  // start DOM-based VU meter loop for main window
-    initGateMeter();    // wire noise gate visual meter (canvas + drag)
+    initGateMeter();    // wire paint gate visual meter (canvas + drag)
     initScanToggle(); // wire scan (cursor spotlight) on/off toggle
-    initMorphToggle(); // wire radial morph on/off toggle
     initRadiusFade();      // wire radius fade toggle + curve slider
     initSeqMode();         // wire sequential (loop) mode toggle
     initMixdownGains();    // wire mixdown source gain sliders
@@ -747,45 +682,48 @@ function init() {
     initAudioPanel();      // wire main-UI audio panel — mirrors modal controls
   });
 
-  // Redraw waveforms when their containers resize (e.g. window resize or flex relayout)
-  const svDisplayEl = document.getElementById('svDisplay');
-  if (svDisplayEl) new ResizeObserver(() => drawSvWaveform()).observe(svDisplayEl);
-
-  const envelopeWaveformWrap = document.querySelector('.envelope-waveform-wrap');
-  if (envelopeWaveformWrap) new ResizeObserver(() => drawPresetWaveform()).observe(envelopeWaveformWrap);
-
   // Quad bus init — Electron only, no-op in the browser
   if (window.electronBridge?.isElectron) {
     initQuadBuses()
       .then(async () => {
         // Use saved output device if available, otherwise system default.
+        // Matched by NAME, not id — ids are reassigned across reboots, and a
+        // stale one can bind output to a virtual device with nothing behind it.
         const devices = await window.electronBridge.getAudioDevices();
-        const savedId = S._savedOutputDeviceId;  // set by loadAudioDefaults
-        const saved   = savedId != null ? devices.find(d => d.id === savedId) : null;
-        const best    = saved || devices.find(d => d.isDefault) || devices[0];
+        const best    = resolveAudioDevice(devices, S._savedOutputDeviceName, S._savedOutputDeviceId)
+                     || devices[0];
         if (best) {
           const nCh = Math.min(32, best.outputChannels);  // Web Audio merger caps at 32
           await initSpeakerBuses(nCh);
           const bufFrames = S.preferredBufferSize ?? 1024;
           const result = await window.electronBridge.setAudioDevice(best.id, nCh, bufFrames, S.audioCtx?.sampleRate);
-          const tag = saved ? 'saved' : 'system default';
+          if (result.streaming) noteActiveOutputDevice(best);
+          const tag = best.name === S._savedOutputDeviceName ? 'saved'
+                    : best.isDefault                          ? 'system default'
+                    : 'fallback';
           DEBUG && console.log(`Output: "${best.name}" (${tag}) — ${nCh} ch — streaming: ${result.streaming}`);
         } else {
           console.warn('No output devices found. Open Audio Settings to select one.');
         }
 
         // Auto-open saved input device and wire the full Web Audio chain
-        if (window.electronBridge.setInputDevice && S._savedInputDeviceId != null) {
+        // Input gets the same resolution chain as output. It previously bailed
+        // out entirely when nothing was saved, which left the app with no input
+        // open at all after a reset — hence the empty "select input device".
+        if (window.electronBridge.setInputDevice) {
           const inDevices = await window.electronBridge.getInputDevices();
-          const inDev     = inDevices.find(d => d.id === S._savedInputDeviceId);
+          const inDev     = resolveAudioDevice(inDevices, S._savedInputDeviceName, S._savedInputDeviceId);
           if (inDev) {
             const bufFrames = S.preferredBufferSize ?? 1024;
             const result = await window.electronBridge.setInputDevice(inDev.id, inDev.inputChannels, bufFrames, S.audioCtx?.sampleRate);
             if (result.ok) {
-              DEBUG && console.log(`Input: "${inDev.name}" (saved) — ${result.nCh} ch`);
+              const inTag = inDev.name === S._savedInputDeviceName ? 'saved'
+                          : inDev.isDefault                         ? 'system default'
+                          : 'fallback';
+              DEBUG && console.log(`Input: "${inDev.name}" (${inTag}) — ${result.nCh} ch`);
               // Wire up the worklet, analysers, and recording chain so the
               // input is fully active — not just open at the hardware level.
-              await activateSavedInputDevice(result.nCh);
+              await activateSavedInputDevice(result.nCh, inDev);
             }
           }
         }
@@ -799,13 +737,67 @@ function init() {
   const _sensorGroupEl  = document.getElementById('sensorGroup');
   const _sensorStatusEl = document.getElementById('sensorGroupStatus');
   if (_sensorGroupEl) {
+    // The whole block is the door to the sensor page (Ek, 2026-08-29). It reads
+    // as a status readout, but "is the sensor there" is the question you ask
+    // right before you go and do something about it, and the gear beside it was
+    // the only way through — a caption and a status you cannot click, next to a
+    // button that does what you wanted, is three controls where there is one
+    // idea. The buttons inside it keep their own jobs: the guard below is what
+    // stops a click on the gear from also opening the page behind it.
+    _sensorGroupEl.addEventListener('click', e => {
+      if (e.target.closest('button, a, input, select')) return;
+      openSettings('sensors');
+    });
+    _sensorGroupEl.setAttribute('role', 'button');
+    _sensorGroupEl.setAttribute('tabindex', '0');
+    _sensorGroupEl.setAttribute('title', 'sensor status — click to open sensor settings');
+    _sensorGroupEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        if (e.target !== _sensorGroupEl) return;
+        e.preventDefault(); openSettings('sensors');
+      }
+    });
+
     let _oscBridgeUp   = false;
     let _sensorDetail  = null;   // latest sensor-status event detail
 
+    // The transport in one word, the player's word: 'serial' is the API's
+    // name for a cable and 'udp' is the wire under wifi (R2).
+    const _RIG_WORD = { serial: 'usb', cable: 'usb', udp: 'wifi', wifi: 'wifi', osc: 'osc' };
+    let _rigWasUp = false;
     const _updateSensorGroup = () => {
       const hasDevice = _sensorDetail?.connected || false;
       const anyUp     = _oscBridgeUp || hasDevice;
       _sensorGroupEl.classList.toggle('no-sensor', !anyUp);
+
+      // ── S.rig — the resolved sensor fact, published once (R10) ──────────
+      // The chrome pill used to read #sensorGroupStatus.textContent out of
+      // this hidden footer block and strip the brackets with a regex — a
+      // picture of the fact. This object IS the fact; tile-layout reads it.
+      if (anyUp) _rigWasUp = true;
+      const cursorDev = _sensorDetail?.devices?.find(d => d.role === 'cursor' && d.feeding)
+                     || _sensorDetail?.devices?.find(d => d.role === 'cursor');
+      // Real sensor transports first; the OSC bridge is appended, not led
+      // with — osc is the rare case, and it was winning the pill's slot by
+      // being pushed first (Ek: "why does the sensor pill say OSC").
+      const words = [];
+      for (const t of _sensorDetail?.transports || []) {
+        const w = _RIG_WORD[t] || t;
+        if (!words.includes(w)) words.push(w);
+      }
+      if (_oscBridgeUp && !words.length) words.push('osc');
+      S.rig = {
+        up: anyUp,
+        transports: words,
+        count: _sensorDetail?.count || 0,
+        // The slot shows the transport carrying the CURSOR; any transport is
+        // the honest fallback when no cursor role is assigned yet.
+        cursorVia: cursorDev
+          ? (_RIG_WORD[cursorDev.via || cursorDev.transport] || cursorDev.transport)
+          : (words[0] || null),
+        found: _sensorDetail?.found || 0,
+        lost: !anyUp && _rigWasUp,
+      };
 
       // Build status text for the label  e.g. "(serial)" or "(wifi + osc · 3)"
       if (_sensorStatusEl) {
@@ -884,50 +876,19 @@ function init() {
     };
   }
 
-  // ── First-run hint ──────────────────────────────────────────────────────
-  // Dismisses when the user loads a sample or enables mic input.
-  const _firstRunEl = document.getElementById('firstRunHint');
-  if (_firstRunEl) {
-    // Skip hint if user already has samples loaded or has turned off learn mode
-    const _learnOff = (() => { try { return localStorage.getItem('mubone-learn-mode') === 'off'; } catch (_) { return false; } })();
-    if (S.sampleBuffers?.some(b => b) || _learnOff) {
-      _firstRunEl.classList.add('hidden', 'gone');
-    } else {
-      S._dismissFirstRun = () => {
-        if (!S._dismissFirstRun) return; // already dismissed
-        _firstRunEl.classList.add('hidden');
-        _firstRunEl.addEventListener('transitionend', () => _firstRunEl.classList.add('gone'), { once: true });
-        window.removeEventListener('keydown', _frKeyHandler);
-        S._dismissFirstRun = null;
-      };
-      const _frKeyHandler = (e) => {
-        if ((e.key === 'Enter' || e.key === 'Escape') && S._dismissFirstRun) {
-          S._dismissFirstRun();
-        }
-      };
-      window.addEventListener('keydown', _frKeyHandler);
-    }
-  }
+  // The first-run "get started" overlay is GONE (2026-08-30, Ek: "the get
+  // started popup still comes up sometimes — sunset that"). It was retired in
+  // #257 by an `if (false)` around its wiring, but the markup stayed in
+  // index.html and was only hidden from HERE — which runs after first paint, so
+  // on a cold start it painted for a frame or two and looked like it had come
+  // back. Hiding a thing at runtime is not the same as not having it. The
+  // markup, its CSS and `S._dismissFirstRun` are all deleted; its three steps
+  // live in the tooltips of the controls they describe and in
+  // docs/QUICK-START.md.
 
-  // ── Gesture modules ──────────────────────────────────────────────────────
-  import('./gesture.js')
-    .then(({ initGesture }) => initGesture())
-    .catch(e => console.warn('[gesture] failed to load:', e));
-  import('./gesture-panel.js')
-    .then(({ initGesturePanel, toggleGesturePanel }) => {
-      initGesturePanel();
-      // Wire the top-bar gesture button
-      const gestureBtn = document.getElementById('gestureBtn');
-      if (gestureBtn) gestureBtn.addEventListener('click', () => toggleGesturePanel());
-      // Shift+G keyboard shortcut
-      window.addEventListener('keydown', (e) => {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-        if (e.key === 'G' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
-          toggleGesturePanel();
-        }
-      });
-    })
-    .catch(e => console.warn('[gesture-panel] failed to load:', e));
+  // Gesture modules SUNSET 2026-08-28 (#269) — sandbox/sunset-2026-08-28/.
+  // Nothing in the app consumed the gesture features; the panel was the only
+  // reader. Kept, not deleted: the feature extraction is worth returning to.
 
   // ── Worklet restart on output device change ────────────────────────────
   // When the user switches output devices (different channel count), the
@@ -990,7 +951,6 @@ function init() {
       await _startWorkletEngine(buffers[buffers.length - 1].buffer, opts);
     },
     stop: () => { _stopWorkletEngine(); console.log('wg: stopped'); },
-    waveform: (bufIdx) => showWaveformOverlay(bufIdx),
     set: (params) => { updateWorkletParams(params); console.log('wg: params updated', params); },
     stress: (grains = 100) => {
       const period = 0.001;
@@ -999,10 +959,32 @@ function init() {
       console.log(`wg: stress test — period=${period*1000}ms, duration=${duration*1000}ms, target overlap=${grains}`);
     },
     status: () => {
+      // Arm the two loop-gap timers for the next half minute (P1): they cost
+      // ~1 % of a core each and are off unless something is reading them, so
+      // the first status after a quiet spell shows the gaps from the second
+      // it takes the 1 Hz poll to fetch them.
+      S._wantLoopGapsUntil = Date.now() + 30000;
       console.log('wg: cross-origin isolated:', isCrossOriginIsolated());
       console.log('wg: SharedArrayBuffer available:', typeof SharedArrayBuffer !== 'undefined');
       console.log('wg: recordings:', S.liveRecBuffers?.filter(b => b?.buffer)?.length ?? 0);
       console.log('wg: 256-slot pool, pitch shift, jitter, VBAP, feedback ring, per-seed onset clocks');
+      // Transport faults since load — each one is a click somewhere. Pool
+      // steals (a hard cut inside the engine) ride the worklet diag instead.
+      const td = S.transportDiag;
+      // The worklet's own figures ride getWorkletDiag().workletDiag — the
+      // top level is the bridge's view (`steals` read the wrong level until
+      // 2026-09-06 and always printed 0).
+      const wd = getWorkletDiag()?.workletDiag || {};
+      console.log(`wg: transport faults — input dry ${td.inDry}, input overflow ${td.inOverflow}, output dropped ${td.outDropped}, output dry ${td.outDry}, pool steals ${wd.steals ?? 0} (last second)`);
+      // Where a hole came from (R6): the main process's event loop, or the
+      // audio thread's own load. Both counted since load.
+      // The audio host is the loop the hops live on (R2); its holders are
+      // the longest synchronous run per handler and how often it passed
+      // 10 ms. The main process is the browser thread, for the record.
+      const holders = (list) => (list || []).map(([n, ms, c]) => `${n} ${ms} ms${c ? ` (${c}× over 10)` : ''}`).join(', ') || 'nothing over 2 ms';
+      console.log(`wg: audio host — longest event-loop gap ${td.hostGapMaxMs} ms, gaps over 10 ms ${td.hostGaps10}, over 20 ms ${td.hostGaps20}, GC longest ${td.hostGcMaxMs} ms · holders — ${holders(td.hostSlow)}`);
+      console.log(`wg: audio thread — load ${wd.loadPct ?? '?'}%, longest block ${wd.procMaxMs ?? '?'} ms, live chunks allocated ${wd.chunkAllocs ?? '?'} (last second)`);
+      console.log(`wg: main process (browser thread) — longest gap ${td.mainGapMaxMs} ms, over 10 ms ${td.mainGaps10}, over 20 ms ${td.mainGaps20} · holders — ${holders(td.mainSlow)}`);
     },
     diag: () => getWorkletDiag(),
   };
@@ -1011,45 +993,105 @@ function init() {
   // Loads persisted snapshots + mapping preset from localStorage; does not
   // auto-start the tick loop — user enables via the in-modal start button.
   // The UI binds the button, engine toggle, and live-readout plumbing.
-  import('./snapshot-engine.js')
-    .then(({ initSnapshotEngine }) => initSnapshotEngine({ autoStart: false }))
-    .catch(e => console.warn('[staging] snapshot-engine failed to load:', e));
-  // OSC stream-out — pumps /delta + /sensor/<name> to an external host (Max,
-  // SuperCollider, etc.) so mapping logic can live there.  Will auto-restart
-  // if it was running last session.
-  import('./osc-stream.js')
-    .then(({ initOSCStream }) => initOSCStream())
-    .catch(e => console.warn('[staging] osc-stream failed to load:', e));
-  import('./ui-staging.js')
-    .then(({ initStagingUI }) => initStagingUI())
-    .catch(e => console.warn('[staging] ui failed to load:', e));
+  // Staging SUNSET 2026-08-28 (#269) — snapshot-engine, osc-stream and the
+  // staging UI are in sandbox/sunset-2026-08-28/. The OSC stream-out idea is
+  // still wanted (TODO #122); it comes back as its own thing, not as staging.
 
   // Grain scheduler — independent of render loop so slow frames don't delay grains.
-  // Interval set by GRAIN_SCHEDULER_INTERVAL_MS in state.js (default 30ms ≈ 33 ticks/sec).
+  // Interval set by GRAIN_SCHEDULER_INTERVAL_MS in state.js (10 ms, 100 ticks/s since 2026-09-06).
   // Store interval ID so it can be cleared on teardown (e.g. page unload).
   S._grainSchedulerId = setInterval(scheduleGrains, GRAIN_SCHEDULER_INTERVAL_MS);
 
   // ── Global Escape key → close topmost modal ──────────────────────────────
-  // All .mu-overlay modals and .factory-reset-overlay popups close on Escape.
+  // All .mu-overlay modals and .dlg-overlay popups close on Escape.
   // ── Axis lock — independent azimuth / elevation toggles ─────────────────
-  function _initAxisLockSeg(segId, stateKey, frozenKeys) {
-    const seg = document.getElementById(segId);
-    if (!seg) return;
+  // One table and one setter for both axes.  The segmented control, the patch
+  // table row and the cycle action all write through setAxisSource(), so the
+  // DOM can't drift from S — previously each of the three re-implemented the
+  // active-class sync and they had to agree by hand.
+  const AXIS_SOURCE_ROWS = {
+    azSource: { segId: 'azSourceSeg', frozen: ['_axisLockFrozenNx', '_axisLockFrozenYaw'] },
+    elSource: { segId: 'elSourceSeg', frozen: ['_axisLockFrozenNy', '_axisLockFrozenPitch'] },
+    // (rollSource left this table 2026-09-01 with the RO button and _gateRoll:
+    // the camera takes no roll, so the only reader was the mapping-input gate,
+    // and Ek retired that too — mapping rows read roll live and are toggled
+    // per-row in Settings → Mapping.)
+  };
+
+  function syncAxisSourceUI(stateKey) {
+    for (const [key, row] of Object.entries(AXIS_SOURCE_ROWS)) {
+      if (stateKey && key !== stateKey) continue;
+      const seg = document.getElementById(row.segId);
+      if (!seg) continue;
+      seg.querySelectorAll('.grain-seg-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.val === S[key]));
+    }
+    // The footer's cycle buttons are not the segments — they are their own
+    // control reading the same state (see index.html). One sync, both places.
+    S._syncAxisCycles?.();
+  }
+
+  function setAxisSource(stateKey, src) {
+    const row = AXIS_SOURCE_ROWS[stateKey];
+    if (!row || !AXIS_SOURCES.includes(src)) return;
+    S[stateKey] = src;
+    // Drop the frozen snapshots so the next hold captures a fresh position
+    // rather than resuming wherever the previous one left the cursor.
+    for (const k of row.frozen) S[k] = null;
+    syncAxisSourceUI(stateKey);
+    // Cursor lock is DERIVED from the two axes, so it is re-read here rather
+    // than set anywhere — see cursorLocked() below. Every route that changes an
+    // axis already comes through this function (footer, cabinet segments, the
+    // patch table's PARAM_REGISTRY setter and therefore preset load, MIDI, OSC,
+    // and the mapping page's auto-arm), which is what makes one line enough.
+    S._applyCursorLockPointer?.(cursorLocked());
+  }
+
+  // ── Cursor lock is not a state of its own (2026-09-01) ──────────────────
+  // It IS az and el both held (Ek: "i just want the option key to basically be
+  // a shortcut to lock az and el, and if it's in steer and surface it also
+  // frees the cursor").
+  //
+  // Before this, alt-lock froze the sphere by its OWN route — a `!S.altLocked`
+  // test in the steer block, unrelated to the axis sources — so the same sphere
+  // was held still by two mechanisms that could disagree, and did: with az
+  // locked, moving the mouse off the canvas still resumed yaw auto-rotation.
+  // That route is gone. S.altLocked now means one thing only, the POINTER half,
+  // and events.js owns it.
+  function cursorLocked() { return axisHeld(S.azSource) && axisHeld(S.elSource); }
+
+  // What ⌥ put down, ⌥ picks back up. Releasing to 'sensor' unconditionally
+  // would silently disarm a row the mapping page armed — a dropdown must not
+  // put the cursor back under sensor control mid-performance, the same rule
+  // _armCursorAxis states in ui-sensor-mapping.js — so the previous value is
+  // stashed and handed back.
+  function setCursorLock(on) {
+    if (on) {
+      if (!cursorLocked()) S._cursorLockPrev = { azSource: S.azSource, elSource: S.elSource };
+      setAxisSource('azSource', 'locked');
+      setAxisSource('elSource', 'locked');
+    } else {
+      const prev = S._cursorLockPrev || {};
+      for (const k of ['azSource', 'elSource']) {
+        setAxisSource(k, prev[k] && prev[k] !== 'locked' ? prev[k] : 'sensor');
+      }
+      S._cursorLockPrev = null;
+    }
+  }
+
+  for (const [stateKey, row] of Object.entries(AXIS_SOURCE_ROWS)) {
+    const seg = document.getElementById(row.segId);
+    if (!seg) continue;
     seg.querySelectorAll('.grain-seg-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const on = btn.dataset.val === 'on';
-        S[stateKey] = on;
-        // Clear frozen snapshots so next lock captures fresh position
-        for (const k of frozenKeys) S[k] = null;
-        seg.querySelectorAll('.grain-seg-btn').forEach(b =>
-          b.classList.toggle('active', b === btn));
-      });
+      btn.addEventListener('click', () => setAxisSource(stateKey, btn.dataset.val));
     });
   }
-  _initAxisLockSeg('axisLockAzSeg', 'axisLockAz',
-    ['_axisLockFrozenNx', '_axisLockFrozenYaw']);
-  _initAxisLockSeg('axisLockElSeg', 'axisLockEl',
-    ['_axisLockFrozenNy', '_axisLockFrozenPitch']);
+  S._setAxisSource   = setAxisSource;
+  S._syncAxisSourceUI = syncAxisSourceUI;
+  S._cursorLocked    = cursorLocked;
+  S._setCursorLock   = setCursorLock;
+  S._toggleCursorLock = () => setCursorLock(!cursorLocked());
+  syncAxisSourceUI();
   // ── Commit slot config (unified cloud + loop pool) ──────────────────
   const commitSlotSelect = document.getElementById('commitSlotCountSelect')
                         || document.getElementById('seedSlotCountSelect');  // fallback to old ID
@@ -1102,7 +1144,7 @@ function init() {
     if (e.key !== 'Escape') return;
 
     // Reset / export / import overlays (dynamic, highest z-index)
-    const dialogOverlay = document.querySelector('.factory-reset-overlay');
+    const dialogOverlay = document.querySelector('.dlg-overlay');
     if (dialogOverlay) { dialogOverlay.remove(); return; }
 
     // Static .mu-overlay modals — close the last open one

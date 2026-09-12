@@ -2,15 +2,22 @@
 // osc.js — shared OSC dispatcher + transport init
 //
 // All OSC messages, regardless of source, flow through handleOSC().
-// Two transports:
+// Two transports, neither tied to any particular sender:
 //
 //   Electron  — electronBridge.onOSC (IPC from main process, UDP 7500)
-//   Browser   — WebSocket ws://localhost:8080 (bridge.js running in Max patch)
+//   Browser   — { address, values } JSON over ws://localhost:8080
 //
-// The browser falls back gracefully to mouse/gyro if the bridge isn't running.
+// The WebSocket port is a published interface, not a Max feature. proxy.js in
+// this repo (x-IMU3 UDP → WebSocket) is the implementation mubone maintains;
+// mubone-joycon-gui ships another, and the example patches in sandbox/max a
+// third. Nothing here knows which is on the other end.
+//
+// Hosted origins skip the WebSocket entirely — see _bridgeReachable() — so the
+// demo at mubone.org/sim has no OSC input at all, by design. With no relay
+// running the browser falls back to mouse/gyro.
 // ============================================================================
 
-import { S, DEBUG, PRESETS, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, rebuildGrainCurves } from './state.js';
+import { S, DEBUG, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, GATE_METER_MAX } from './state.js';
 import { getOrCreateSlot } from './sensor-registry.js';
 import {
   handleOSCSensorQuaternion, handleOSCSensorInertial,
@@ -18,7 +25,7 @@ import {
 import { updateGestureMorph } from './seed-morph.js';
 import { setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
 import { updatePlaybackControls } from './ui-presets.js';
-import { toggleMappingByIndex, setMappingInput } from './sensor-mapping.js';
+import { setMappingInput } from './sensor-mapping.js';
 
 // #105: multi-option controls accept either a bang (cycle to next mode) or a
 // string argument (set that mode directly, e.g. `/camera/mode sensor`).
@@ -27,6 +34,67 @@ import { toggleMappingByIndex, setMappingInput } from './sensor-mapping.js';
 function _bangOrStr(values) {
   const v = values?.[0];
   return (typeof v === 'string' && v.length) ? v : 127;
+}
+
+// ── Release-edge guard ────────────────────────────────────────────────────────
+// Almost every trigger case below hardcodes 127 and throws the incoming value
+// away, so without this an explicit `0` — which is what a Max [toggle], [t 1 0]
+// or any controller that sends both edges emits on release — runs the action a
+// SECOND time.  A latching toggle then cancels itself and looks broken; a mode
+// cycle skips a mode; /undo undoes two strokes.  The MIDI path has always had
+// this guard (a trigger action mapped to a CC ignores val === 0, and note-off
+// only reaches `hold` actions); the OSC path never did.  See
+// docs/OSC-AUDIT-2026-08.md § O2.
+//
+// The trigger/hold/cc split is read from the shared ACTIONS registry
+// (`S._actions`) rather than a list kept here — a parallel table would drift
+// the first time an address is added.  Addresses the registry doesn't know
+// (/scan/fade, /mapping1-3, /monitor/volume, /house/volume,
+// /spatial/mode) fall through unguarded, which is exactly today's behaviour:
+// this can only ever suppress a message it can prove is a release edge.
+
+// Two registry 'trigger' actions genuinely decode the payload — their cases
+// below read `values[0] ?? 127`, so 1 = on, 0 = off, bang = toggle. For those,
+// a zero is a command and not a release edge. They are exempt by address
+// rather than by `fmt`, because `fmt` is not a reliable discriminator: /search
+// /scope, /search/fill and /search/order also advertise 'int 0|1' but their
+// cases hardcode 127 and ignore the int.
+const _VALUED_TRIGGERS = new Set(['/cursor/scan', '/trigger/chop']);
+
+// The one bang address with no ACTIONS row, so the registry can't classify it.
+// Legacy compound toggle (camera mode + spatial panning in one message); kept
+// working from old Max patches, and it double-fired like everything else.
+const _EXTRA_TRIGGERS = new Set(['/spatial/mode']);
+
+// ── Numeric-payload guard ─────────────────────────────────────────────────────
+// Addresses whose case reads values[0] as a number. A bang or a non-numeric
+// symbol on one of these has no meaning, and letting it through wrote NaN into
+// S with no error (§ O3). Registry `cc` rows supply most of the set; the rest
+// are the value addresses that have no ACTIONS row at all, so nothing else can
+// tell us their shape.
+const _EXTRA_VALUE_ADDRS = new Set([
+  '/scan/fade', '/mapping1', '/mapping2', '/mapping3',
+  '/monitor/volume', '/house/volume', '/cursor/radiusfadecurve',
+]);
+
+function _needsNumber(address) {
+  if (_EXTRA_VALUE_ADDRS.has(address)) return true;
+  return (S._actions || []).find(x => x.osc === address)?.type === 'cc';
+}
+
+function _isUnusableValue(values) {
+  return !values || !values.length || !Number.isFinite(Number(values[0]));
+}
+
+function _isReleaseEdge(address, values) {
+  // A bang carries no value, so it can't be a release. Only an explicit
+  // numeric zero is — and only for an action the registry calls a trigger.
+  if (!values || values.length !== 1) return false;
+  if (Number(values[0]) !== 0) return false;
+  if (_VALUED_TRIGGERS.has(address)) return false;
+  if (_EXTRA_TRIGGERS.has(address)) return true;
+  const a = (S._actions || []).find(x => x.osc === address);
+  return a?.type === 'trigger';
 }
 
 const WS_URL            = 'ws://localhost:8080';
@@ -81,8 +149,9 @@ export function initOSC() {
   connectWebSocket();
 }
 
-// The local bridge (Max bridge.js / proxy.js) listens on localhost, so it is
-// only reachable when mubone is itself being served from this machine.
+// Any relay on this port listens on localhost (proxy.js, a joycon GUI, an
+// example Max patch), so it is only reachable when mubone is itself being
+// served from this machine.
 export function _bridgeReachable() {
   const h = location.hostname;
   return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '';
@@ -190,6 +259,24 @@ export function handleOSC(rawAddress, values) {
     console.log('[osc:in]', address, values);
   }
 
+  // Drop the release edge of a two-edge controller before anything acts on it.
+  // Deliberately AFTER the monitor broadcast above — the keys/midi/osc monitor
+  // must still show the message arriving, or a suppressed edge looks like a
+  // dropped packet and you debug the wrong layer.
+  if (_isReleaseEdge(address, values)) {
+    DEBUG && console.log(`[osc] release edge ignored: ${address} 0`);
+    return;
+  }
+
+  // Same idea for the other direction: a value address that got handed
+  // something it can't read. Warned unconditionally rather than under DEBUG —
+  // this is always a patch bug, it is otherwise completely silent, and it fires
+  // once per bad message rather than per frame.
+  if (_needsNumber(address) && _isUnusableValue(values)) {
+    console.warn(`[osc] ${address} needs a number, got ${JSON.stringify(values)} — ignored`);
+    return;
+  }
+
   // ── Generic sensor dispatch ─────────────────────────────────────────────────
   // New convention: /sensor/{name}/quaternion  (4 floats)
   //                 /sensor/{name}/inertial    (6 floats)
@@ -210,7 +297,6 @@ export function handleOSC(rawAddress, values) {
         const slot = getOrCreateSlot(name);
         if (slot.inertialRole === 'gesture') {
           updateGestureMorph();
-          S._onGestureUpdate?.();
         }
         return;
       }
@@ -247,7 +333,6 @@ export function handleOSC(rawAddress, values) {
 
     case '/grain/volume':
       S.grainOverrides.volume      = clamp(values[0], 0, 2);
-      rebuildGrainCurves();
       scheduleUISync();
       break;
 
@@ -293,6 +378,12 @@ export function handleOSC(rawAddress, values) {
       scheduleUISync();
       break;
 
+    case '/grain/startjitter':
+      // Incoming value in ms (0–500) → convert to seconds internally
+      S.grainOverrides.startJitter = clamp(values[0], 0, 500) / 1000;
+      scheduleUISync();
+      break;
+
     case '/grain/pervar':
       // Incoming value in ms (0–500) → convert to seconds internally
       S.grainOverrides.periodVar   = clamp(values[0], 0, 500) / 1000;
@@ -316,8 +407,15 @@ export function handleOSC(rawAddress, values) {
       S.grainOverrides.lpfFreq     = clamp(values[0], 20, 20000);
       scheduleUISync();
       break;
-    case '/grain/filterq':
-      S.grainOverrides.filterQ     = clamp(values[0], 0.1, 20);
+    // One Q per filter since 2026-09-07. `/grain/filterq` is gone rather than
+    // aliased to both — an address that moves two parameters cannot be undone
+    // to one of them, which is the whole reason they were split.
+    case '/grain/hpfq':
+      S.grainOverrides.hpfQ        = clamp(values[0], 0.1, 20);
+      scheduleUISync();
+      break;
+    case '/grain/lpfq':
+      S.grainOverrides.lpfQ        = clamp(values[0], 0.1, 20);
       scheduleUISync();
       break;
     case '/grain/filterjitter':
@@ -326,37 +424,10 @@ export function handleOSC(rawAddress, values) {
       scheduleUISync();
       break;
 
-    // ── Preset ───────────────────────────────────────────────────────────────
-    // Dispatches a CustomEvent so ui-presets.js can update its UI alongside
-    // the state change. ui-presets.js listens for 'osc-preset'.
-    //
-    // Two forms, both 1-indexed. `/preset N` stays because sequencing patches
-    // from Max is far easier with one address and a number than with twenty
-    // addresses; `/preset/N` exists because that is the shape every other
-    // per-patch binding takes (one action, one address, bang to fire).
-    case '/preset': {
-      const idx = Math.round(values[0]) - 1;  // 1-indexed from Max
-      if (idx >= 0 && idx < PRESETS.length) {
-        S._selectPreset?.(idx);
-      }
-      break;
-    }
-
-    // ── Camera mode (bang → cycle, string → set: e.g. `/camera/mode sensor`) ─
-    case '/camera/mode':
-      S._dispatchAction?.('camera_mode', _bangOrStr(values));
-      break;
-
-    // ── Spatial panning (bang → toggle, string → set) ────────────────────────
-    case '/spatial/panning':
-      S._dispatchAction?.('spatial_panning', _bangOrStr(values));
-      break;
-
-    // ── Legacy spatial mode (bang → toggle sim/physical compound state) ──────
     case '/spatial/mode':
       if (S.cameraMode === 'sensor' && S.spatialPanning === 'worldlocked') {
         // currently "physical" → switch to "sim"
-        if (S._setCameraMode) S._setCameraMode('pull');
+        if (S._setCameraMode) S._setCameraMode('steer');
         if (S._setSpatialPanning) S._setSpatialPanning('headlocked');
       } else {
         // anything else → switch to "physical"
@@ -370,16 +441,20 @@ export function handleOSC(rawAddress, values) {
     case '/mute':           S._dispatchAction?.('mute', 127);        break;
     // Momentary counterpart — 1 = mute, 0 = restore the pre-press state.
     case '/mute/hold':      S._dispatchAction?.('mute_hold', values[0] ? 127 : 0); break;
+    // The dry monitor's mute: off is the mute, unmuting returns to on or auto.
+    case '/dry/mute':       S._dispatchAction?.('dry_mute', 127);    break;
+    case '/dry/mute/hold':  S._dispatchAction?.('dry_mute_hold', values[0] ? 127 : 0); break;
+    // The cap is the ONE mute the cursor has (2026-09-07): granular and hits
+    // together. `/trigger/mute` was deleted with the second flag rather than
+    // aliased here — one address per thing, or the table stops being the
+    // namespace and becomes two names for one action.
     case '/cursor/scan':    S._dispatchAction?.('scan_toggle', values[0] ?? 127); break;
     case '/cursor/tare':    S._dispatchAction?.('tare', 127);        break;
-    case '/cursor/lock_az': S._dispatchAction?.('lock_az', 127);     break;
-    case '/cursor/lock_el': S._dispatchAction?.('lock_el', 127);     break;
+    // Bang cycles, string sets — same idiom as /commit/mode.
+    case '/cursor/az_source': S._dispatchAction?.('az_source', _bangOrStr(values)); break;
+    case '/cursor/el_source': S._dispatchAction?.('el_source', _bangOrStr(values)); break;
 
     // Sensor mapping toggles (1-indexed from Max → 0-indexed internally)
-    case '/mapping/toggle/1': toggleMappingByIndex(0); break;
-    case '/mapping/toggle/2': toggleMappingByIndex(1); break;
-    case '/mapping/toggle/3': toggleMappingByIndex(2); break;
-    case '/mapping/toggle/4': toggleMappingByIndex(3); break;
 
     // Generic external mapping inputs — any peer (joycon GUI, Max patch, etc.)
     // can emit a float on these addresses and the value shows up as an
@@ -423,11 +498,13 @@ export function handleOSC(rawAddress, values) {
 
     // ── Commit system (unified cloud + loop) ────────────────────────────────
     // Trigger/bang actions route through dispatchAction for consistent UI feedback.
+    // ── Trigger tool ──────────────────────────────────────────────────────
+    case '/trigger/chop':   S._dispatchAction?.('trigger_chop', values[0] ?? 127); break;
+
     case '/commit/drop':    S._dispatchAction?.('commit_drop', 127);    break;
     case '/commit/draw':    S._dispatchAction?.('commit_draw', values[0] ? 127 : 0); break;
     case '/commit/release': S._dispatchAction?.('commit_release', 127); break;
     case '/commit/clear':   S._dispatchAction?.('commit_clear', 127);   break;
-    case '/commit/mode':    S._dispatchAction?.('commit_mode', _bangOrStr(values));    break;
     case '/commit/blend':   S._dispatchAction?.('commit_blend', _bangOrStr(values));   break;
     case '/commit/tether':  S._dispatchAction?.('commit_tether', 127);  break;
     case '/commit/xfade':
@@ -449,17 +526,6 @@ export function handleOSC(rawAddress, values) {
       { const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.seedRelease;
         const nb = document.getElementById('seedReleaseNum');    if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; }
       break;
-    case '/commit/volume':
-      S.seqNextParams.volume = clamp(values[0], 0, 1);
-      { const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume;
-        const nb = document.getElementById('seqVolumeNum');    if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; }
-      break;
-    case '/commit/speed':
-      S.seqNextParams.speed = clamp(values[0], 0.25, 4);
-      { const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed;
-        const nb = document.getElementById('seqSpeedNum');    if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; }
-      break;
-
     case '/commit/slots':
       S.commitSlotCount = Math.max(1, Math.min(16, Math.round(values[0])));
       S._syncCommitSlotCount?.();    // syncs slider + numbox
@@ -470,68 +536,67 @@ export function handleOSC(rawAddress, values) {
     case '/commit/dir':       S._dispatchAction?.('commit_dir', _bangOrStr(values));      break;
     case '/commit/loop_release': S._dispatchAction?.('loop_release_mode', _bangOrStr(values)); break;
 
-    // ── Trace mode ──────────────────────────────────────────────────────────
-    case '/trace/mode':   S._dispatchAction?.('trace_mode', _bangOrStr(values)); break;
-    case '/trace/toggle': S._dispatchAction?.('trace_toggle', 127); break;
-
     case '/undo':         S._dispatchAction?.('undo', 127);       break;
+    case '/redo':         S._dispatchAction?.('redo', 127);       break;
     case '/sweep':        S._dispatchAction?.('sweep', 127);      break;
-    case '/erase/hold':   S._dispatchAction?.('erase_brush', values[0] ? 127 : 0); break;
-    case '/erase/toggle': S._dispatchAction?.('erase_toggle', 127); break;
+    // ── Tool (bang → cycle, string → set) ───────────────────────────────
+
 
     // ── Octave shortcuts (discrete steps on the base pitch shift) ──────────
     case '/grain/oct/down':  S._dispatchAction?.('pitch_oct_down', 127);  break;
     case '/grain/oct/reset': S._dispatchAction?.('pitch_oct_reset', 127); break;
     case '/grain/oct/up':    S._dispatchAction?.('pitch_oct_up', 127);    break;
 
-    // ── Paint (live rec + sample painting) ─────────────────────────────────
-    // Routed through dispatchAction for full lifecycle (mic, stroke, seq mode).
-    // /trace int — 1 = start trace (rec + paint), 0 = stop
-    case '/trace':
-      S._dispatchAction?.('recpaint', values[0] ? 127 : 0);
-      break;
-    // /paint/N int — 1 = start sample N paint, 0 = stop
-    case '/paint/1':  case '/paint/2':  case '/paint/3':  case '/paint/4':
-    case '/paint/5':  case '/paint/6':  case '/paint/7':  case '/paint/8':
-    case '/paint/9':  case '/paint/10': {
-      const n = parseInt(address.split('/')[2]);
-      S._dispatchAction?.('paint' + n, values[0] ? 127 : 0);
-      break;
-    }
+    // ── Paint ──────────────────────────────────────────────────────────────
+    // `/trace` and `/trace/toggle` were here until 2026-09-11. They started
+    // and stopped "the tool in the hand", and arming is gone — a play names
+    // the POSITION it plays, so the address is `/palette/N` and nothing else
+    // (the `/hold` and `/toggle` pair went the same evening, with the verb).
+    // ── Source / sampler (#247) ────────────────────────────────────────────
+    // /source/live | /source/sampler — bang selects what the brush inks from
+    case '/source/live':    S._dispatchAction?.('source_live', 127);    break;
+    case '/source/sampler': S._dispatchAction?.('source_sampler', 127); break;
+    // /sampler/sample int — 1..10 = slot, anything else = next loaded
+    case '/sampler/sample': S._dispatchAction?.('sampler_sample', values[0] || 127); break;
+    // /sampler/record int — 1 = start capture into next free slot, 0 = stop
+    case '/sampler/record': S._dispatchAction?.('sampler_record', values[0] ? 127 : 0); break;
 
-    // ── Spatial lock (hold) ─────────────────────────────────────────────────
-    case '/spatial/lock': {
-      if (S.cameraMode === 'sensor') break;  // alt lock not needed in sensor mode
-      const lock = !!values[0];
-      if (lock && !S.altLocked) {
-        S.altLocked            = true;
-        S.altFrozenMousePixelX = S.mousePixelX;
-        S.altFrozenMousePixelY = S.mousePixelY;
-        if (S.cameraMode === 'surface') S._exitSurfaceLock?.();
-        const wrapper = document.getElementById('canvasWrapper');
-        if (wrapper) { wrapper.style.cursor = 'auto'; S.canvas.style.cursor = 'auto'; }
-        const ind = document.getElementById('altLockIndicator');
-        if (ind) ind.style.display = '';
-      } else if (!lock && S.altLocked) {
-        S.altLocked = false;
-        if (S.cameraMode === 'surface') {
-          S._requestSurfaceLock?.();
-        } else {
-          const wrapper = document.getElementById('canvasWrapper');
-          if (wrapper) { wrapper.style.cursor = ''; S.canvas.style.cursor = ''; }
-        }
-        const ind = document.getElementById('altLockIndicator');
-        if (ind) ind.style.display = 'none';
-      }
+    // ── Cursor lock (hold) ──────────────────────────────────────────────────
+    // Held az + el, and in steer/surface the pointer handed back. This used to
+    // be a third hand-written copy of the alt-lock body (midi.js and events.js
+    // had the other two) and it had drifted from both: no _syncSessionAltLock,
+    // no surface overlay, and #canvasWrapper by name where events.js follows
+    // the live canvas. One owner now — see cursorLocked() in main.js.
+    // ── The palette by position, 1–9 ────────────────────────────────────────
+    // ONE ADDRESS PER POSITION (docs/PALETTE-GUI.md § 1), because the tile's
+    // VERB decides what an edge means and the wire no longer chooses:
+    //
+    //   a MOMENTARY tile  → `int 1|0`, both edges, and its ACTIONS row is a
+    //                       `hold`, so `_isReleaseEdge` lets the 0 through
+    //   a BANG or TOGGLE  → a bang; its row is a `trigger`, so the same guard
+    //                       swallows an explicit 0 as a release edge (O2)
+    //
+    // That guard is generic and reads `S._actions`, whose `type` is a getter
+    // over the tile's verb — so the payload contract follows the tile with no
+    // per-case test here, and the hand-written `Number(values[0]) === 0` this
+    // block used to carry is gone with the 18 `/toggle` and `/hold` addresses.
+    case '/palette/1': S._dispatchAction?.('palette_1', values.length && !Number(values[0]) ? 0 : 127); break;
+    case '/palette/2': S._dispatchAction?.('palette_2', values.length && !Number(values[0]) ? 0 : 127); break;
+    case '/palette/3': S._dispatchAction?.('palette_3', values.length && !Number(values[0]) ? 0 : 127); break;
+    case '/palette/4': S._dispatchAction?.('palette_4', values.length && !Number(values[0]) ? 0 : 127); break;
+    case '/palette/5': S._dispatchAction?.('palette_5', values.length && !Number(values[0]) ? 0 : 127); break;
+    case '/palette/6': S._dispatchAction?.('palette_6', values.length && !Number(values[0]) ? 0 : 127); break;
+    case '/palette/7': S._dispatchAction?.('palette_7', values.length && !Number(values[0]) ? 0 : 127); break;
+    case '/palette/8': S._dispatchAction?.('palette_8', values.length && !Number(values[0]) ? 0 : 127); break;
+    case '/palette/9': S._dispatchAction?.('palette_9', values.length && !Number(values[0]) ? 0 : 127); break;
+    case '/palette/wet': S._dispatchAction?.('wet_toggle', values[0] ?? 127); break;   // 0|1 sets, bang toggles
+
+    case '/spatial/lock':
+      S._dispatchAction?.('cursor_lock', values[0] ? 127 : 0);
       break;
-    }
 
     // ── App ─────────────────────────────────────────────────────────────────
     case '/handsfree':      S._dispatchAction?.('handsfree', 127);  break;
-    case '/app/perf':       S._dispatchAction?.('perf', 127);      break;
-    case '/app/projector':  S._dispatchAction?.('projector', 127); break;
-    case '/app/perfmode':   S._dispatchAction?.('perfmode', 127);  break;
-    case '/app/darkmode':   S._dispatchAction?.('darkmode', 127);  break;
     case '/session/erase':  S._dispatchAction?.('erase_all', 127); break;
 
     // ── Search ───────────────────────────────────────────────────────────────
@@ -573,52 +638,22 @@ export function handleOSC(rawAddress, values) {
       setMixdownHouseGain(clamp(values[0], 0, 1));
       break;
 
-    // ── Master volume & noise gate ──────────────────────────────────────────
-    // /master/volume f  — dB value (-60 to +6), drives the audio settings slider
+    // ── Master volume & paint gate ──────────────────────────────────────────
+    // /master/volume f  — dB value (-60 to +18), drives the audio settings slider
     case '/master/volume':
-      S._setOutputGainDb?.(clamp(values[0], -60, 6));
+      S._setOutputGainDb?.(clamp(values[0], -60, 18));
       break;
-    // /gate/threshold f — linear RMS (0 to 0.06)
+    // /gate/threshold f — the gate's loudness metric, max(rms, 0.7*peak), 0 to 1.
+    // Not plain RMS: see gateLoudness() in audio-features.js.
     case '/gate/threshold':
-      S._setNoiseGateThreshold?.(clamp(values[0], 0, 0.06));
+      S._setPaintGateThreshold?.(clamp(values[0], 0, GATE_METER_MAX));
       break;
     // /dry/gain f — spatialized live-input gain in the house mix (0 to 2; 1 = unity)
     case '/dry/gain':
       S._setDryMonitorGain?.(clamp(values[0], 0, 2));
       break;
 
-    // ── Cloud morph ─────────────────────────────────────────────────────────
-    // /morph/position f  — 0–1 morph position
-    case '/morph/position':
-      S._setDesktopMorphT?.(clamp(values[0], 0, 1));
-      break;
-    // /morph/sticky bang — toggle morph hold
-    case '/morph/sticky':
-      S._toggleDesktopMorphSticky?.();
-      break;
-    // /morph/return f — return-to-center glide time in ms (50–3000)
-    case '/morph/return':
-      S._setDesktopMorphReturnMs?.(clamp(values[0], 50, 3000));
-      break;
-    // /morph/radial bang — toggle gesture-joystick morph (X key)
-    case '/morph/radial':
-      S._dispatchAction?.('radial_morph', 127);
-      break;
-
     default: {
-      // /preset/N — the per-patch addresses, one per generated preset_N action.
-      // Handled here rather than as twenty cases for the same reason the actions
-      // are generated: the bank size lives in state.js and nothing else should
-      // hard-code it. A bare bang selects; an explicit 0 does not, matching how
-      // every other trigger treats a release edge.
-      const patch = /^\/preset\/(\d+)$/.exec(address);
-      if (patch) {
-        const n = parseInt(patch[1], 10);
-        if (n >= 1 && n <= PRESETS.length && !(values.length && Number(values[0]) === 0)) {
-          S._selectPreset?.(n - 1);
-        }
-        break;
-      }
       DEBUG && console.log(`[osc] unhandled: ${address}`, values);
     }
   }
@@ -652,6 +687,16 @@ export function sendOSC(address, values = []) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+// NaN survives both Math.min and Math.max, and `Number(undefined)` is NaN, so
+// this used to write NaN straight into S whenever a value address received a
+// bang or a non-numeric symbol.  The bad payload is now rejected up front by
+// _isUnusableValue() (see handleOSC), which is the only place that can decline
+// the write without inventing a value — from in here, `min` would be a lie: a
+// bang would read as "you asked for the minimum".  The Number.isFinite check
+// stays as a belt-and-braces guard for any future caller that skips the gate.
+// See docs/OSC-AUDIT-2026-08.md § O3.
 function clamp(v, min, max) {
-  return Math.max(min, Math.min(max, Number(v)));
+  const n = Number(v);
+  if (!Number.isFinite(n)) return min;
+  return Math.max(min, Math.min(max, n));
 }

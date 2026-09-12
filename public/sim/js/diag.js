@@ -18,7 +18,7 @@
 // the event timeline.  Overhead is negligible (array push + modulo).
 // ============================================================================
 
-import { S, DEBUG, perf, PRESETS, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
+import { S, DEBUG, perf, GRAIN_SCHEDULER_INTERVAL_MS } from './state.js';
 
 // ── Rolling event log (ring buffer) ─────────────────────────────────────────
 
@@ -86,10 +86,9 @@ export function generateDiagReport(triggerLabel = 'manual', error = null) {
     return v;
   };
 
-  // ── current preset name ──
-  const idx         = S.activePresetIndex ?? 0;
-  const presetName  = PRESETS[idx]?.name ?? '?';
-  const presetLabel = `${idx + 1} — ${presetName}`;
+  // ── the brush in the hand (its tile owns the live block) ──
+  const hand        = S._handTile?.();
+  const presetLabel = hand ? `${hand.label}${hand.wet ? ' (wet)' : ''}` : '?';
 
   // ── grain params ──
   const effPeriod  = eff('period')   ?? 0;
@@ -119,9 +118,7 @@ export function generateDiagReport(triggerLabel = 'manual', error = null) {
     : 0;
 
   // ── loaded samples ──
-  const sampleCount = S.loadedSamples
-    ? Object.values(S.loadedSamples).filter(Boolean).length
-    : (S.audioBuffer ? 1 : 0);
+  const sampleCount = S.samples?.filter(s => s?.buffer).length ?? 0;
 
   // ── format the report ──
   const lines = [
@@ -147,7 +144,7 @@ export function generateDiagReport(triggerLabel = 'manual', error = null) {
     `  seeds posted   : ${perf.seedsPosted} (active seeds → worklet, last tick)`,
     '',
     '── GRAIN PARAMETERS ───────────────────────────────────────────',
-    `  preset         : ${presetLabel}`,
+    `  brush          : ${presetLabel}`,
     `  period         : ${(effPeriod * 1000).toFixed(1)} ms`,
     `  duration       : ${(effDur * 1000).toFixed(1)} ms  (duty cycle: ${dutyCycle})`,
     `  pitch jitter   : ${cents(effPitch)}  (internal: ${typeof effPitch === 'number' ? effPitch.toFixed(4) : 'n/a'})`,
@@ -155,6 +152,7 @@ export function generateDiagReport(triggerLabel = 'manual', error = null) {
     `  release        : ${(effRel * 100).toFixed(0)}%`,
     `  dur variance   : ${(effDurVar * 1000).toFixed(1)} ms`,
     `  dur jitter     : ${Math.round((S.grainOverrides.durJitter ?? S.grainParams.durJitter ?? 0) * 100)}%`,
+    `  start jitter   : ${((S.grainOverrides.startJitter ?? S.grainParams.startJitter ?? 0) * 1000).toFixed(1)} ms`,
     `  pan spread     : ${effPan}`,
     `  volume         : ${effVol}`,
     `  probability    : ${(effProb * 100).toFixed(0)}%`,

@@ -72,10 +72,7 @@ which owns the hardware through RtAudio (audify).
     device's UDP announcements automatically (port 10000) — the sensor
     appears in the IMU setup card when powered on and on the same network.
     No Max required for this path.
-13. **Max/MSP bridge** (older path / other OSC gear): patches live in
-    `max/`; `bridge.js` relays OSC → the app (UDP 7500 in Electron,
-    WebSocket 8080 in browser). Only needed for non-x-imu3 OSC sources or
-    SoftStep-style controllers.
+13. **Other OSC senders** (Max while prototyping a mapping, TouchOSC, a script): send binary OSC to UDP `127.0.0.1:7500`; nothing to install. Browser mode instead needs `node proxy.js` for the x-imu3 (WebSocket 8080).
 
 ## Browser fallback (no Electron)
 

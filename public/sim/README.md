@@ -71,8 +71,8 @@ The console object `window.wg` exposes worklet-engine control (`wg.start()`, `wg
 
 | Mode | When to use | How panning works | Output |
 |---|---|---|---|
-| **Head-locked** (default) | Headphones, browser, demos | View-relative — panning is computed in camera space. Rotating your view rotates the sound world with you. | Stereo |
-| **World-locked** | Live performance, installation | World-space — grain positions are absolute. Speakers are fixed in the room; rotating the camera does not move the audio. | 2 – N channels |
+| **Head-locked** | Headphones, browser, demos | View-relative — panning is computed in camera space. Rotating your view rotates the sound world with you. | Stereo |
+| **World-locked** (default) | Live performance, installation | World-space — grain positions are absolute. Speakers are fixed in the room; rotating the camera does not move the audio. | 2 – N channels |
 
 Switch modes in Audio Settings. In world-locked mode the x-imu3 sensor (Electron only) drives both the visual camera and the paint cursor. With two sensors, the cursor detethers from the viewport center — the frame sensor controls the camera and the cursor sensor roams freely.
 
@@ -96,23 +96,21 @@ Open the **audio settings** modal to configure:
 
 ---
 
-## Max integration
+## Control surface
 
-`bridge.js` runs via `[node.script bridge.js]` inside the Max patch. It handles both transport paths:
+Two ports. Anything that speaks one of them drives the app; neither is specific to any particular
+sender.
 
 | Context | Transport | How it works |
 |---|---|---|
-| Electron | UDP | OSC binary to `127.0.0.1:7500`; Electron receives via `dgram` |
-| Browser | WebSocket | WebSocket server on `ws://localhost:8080`; browser auto-connects |
+| Electron | UDP | binary OSC to `127.0.0.1:7500`, received via `dgram`. The show path |
+| Browser | WebSocket | `{ address, values }` JSON on `ws://localhost:8080` |
 
-Send `setmode electron` or `setmode browser` to switch transport.
+`proxy.js` in this repo is the WebSocket implementation mubone maintains — it bridges x-IMU3 UDP
+into browser mode (`node proxy.js`, needs `npm install ws`). The hosted demo at mubone.org/sim
+never opens the socket at all, so it has no OSC input by design.
 
-### Setup (one time)
-
-In the `max/` folder:
-```
-npm install
-```
+**Max is a prototyping tool, not part of the app.** Ek keeps a Max patch to test custom OSC mappings and to try a control on the fly; anything that sends OSC — Max, Pd, TouchOSC, a script, a MIDI→OSC bridge — drives mubone the same way, and no code assumes any of them. The old example patches and their `bridge.js` relay are git history (`docs/archive/SANDBOX.md`). `proxy.js` above is the browser-mode relay this repo maintains.
 
 ### OSC namespace
 
@@ -146,7 +144,8 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/grain/oct/reset` | *(bang)* | Return the pitch shift to 0¢ |
 | `/grain/hpf` | `f` | Per-grain HPF cutoff, Hz (20–20000) |
 | `/grain/lpf` | `f` | Per-grain LPF cutoff, Hz (20–20000) |
-| `/grain/filterq` | `f` | Filter Q (0.1–20) |
+| `/grain/hpfq` | `f` | Resonance at the HIGH-PASS corner (0.1–20; 0.707 = flat) |
+| `/grain/lpfq` | `f` | Resonance at the LOW-PASS corner (0.1–20; 0.707 = flat) |
 | `/grain/filterjitter` | `f` | Filter freq jitter fraction (0–1) |
 | `/grain/dir` | *(bang)* | Cycle grain playback direction |
 | `/grain/curve` | *(bang)* | Cycle grain envelope curve |
@@ -163,15 +162,20 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/search/fill` | *(bang)* | Toggle k-fill mode |
 | `/search/order` | *(bang)* | Toggle k ordering |
 
-**Commit system** (unified cloud + loop — replaces the legacy `/seed/*` namespace)
+**Trigger tool**
 
 | Address | Args | Description |
 |---|---|---|
-| `/commit/drop` | *(bang)* | Drop commit at cursor |
-| `/commit/draw` | `i` | Draw commit (1 = start, 0 = stop) |
-| `/commit/release` | *(bang)* | Release nearest commit |
+| `/trigger/chop` | `i` | Chop on/off (1 = on, 0 = off, bang = toggle) — affects the next take recorded |
+
+**Pins** (clouds and loops — `/commit/*` is the wire name; the keys are `=` pin and `-` unpin)
+
+| Address | Args | Description |
+|---|---|---|
+| `/commit/drop` | *(bang)* | Pin what the cursor is on — the `=` key: a tape stroke becomes a loop, nothing in reach pins a cloud at the cursor |
+| `/commit/draw` | `i` | Hold `=` (1 = down, 0 = up): while painting the loop grows to the release, otherwise a cloud path is drawn and pinned on release |
+| `/commit/release` | *(bang)* | Unpin the selected pin — nearest, farthest or oldest, Settings → Pins |
 | `/commit/clear` | *(bang)* | Clear all commits |
-| `/commit/mode` | *(bang)* | Cycle commit mode (cloud ↔ loop) |
 | `/commit/blend` | *(bang)* | Toggle blend mode |
 | `/commit/tether` | *(bang)* | Toggle tether mode |
 | `/commit/xfade` | `f` | Snap/fade crossfade time (0–1) |
@@ -179,8 +183,6 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/commit/release_time` | `f` | Commit release, s (0–10) |
 | `/commit/loop_fade_time` | `f` | Loop fade time, ms (0–2000) |
 | `/commit/loop_release` | *(bang)* | Cycle loop release mode |
-| `/commit/volume` | `f` | Next-commit volume (0–1) |
-| `/commit/speed` | `f` | Next-commit speed (0.25–4) |
 | `/commit/slots` | `i` | Slot count (1–16) |
 | `/commit/overflow` | *(bang)* | Cycle overflow behaviour |
 | `/commit/selection` | *(bang)* | Cycle selection mode |
@@ -190,62 +192,58 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 
 | Address | Args | Description |
 |---|---|---|
-| `/camera/mode` | *(bang)* | Cycle camera mode (pull / surface / sensor) |
-| `/spatial/panning` | *(bang)* | Toggle spatial panning (headlocked / worldlocked) |
 | `/spatial/mode` | *(bang)* | Legacy compound — flips both camera + panning between "sim" and "physical" presets |
-| `/spatial/lock` | `i` | Spatial lock hold (1 = lock, 0 = release) |
+| `/spatial/lock` | `i` | Cursor lock hold — holds azimuth + elevation (1 = lock, 0 = release) |
+
+**Palette** — the five tiles by position: cap · lens ‖ loop · grain · erase
+
+| Address | Args | Description |
+|---|---|---|
+| `/palette/1` … `/palette/9` | *(bang)* or `i` | Fire palette position N — **and how it fires is the TILE's, not the message's**. A tile carries one verb, set in its drawer: a **momentary** tile takes `1` and `0` and plays between them; a **toggle** or a **bang** tile takes a bang, and an explicit `0` does nothing (it reads as a release edge). Positions, not tools: the performer lays the palette out by drag and the wire counts what is shown. The `/hold` and `/toggle` pair each position used to carry went with the three-verb position (2026-09-11) |
+| `/palette/wet` | `i` | Wet paint for the grain brush the drawer is open on (1 = wet, 0 = dry, bang = toggle) |
 
 **Cursor & transport**
 
 | Address | Args | Description |
 |---|---|---|
-| `/cursor/scan` | `i` | Toggle scan (cursor → house bus) |
-| `/cursor/tare` | *(bang)* | Tare cursor sensor |
-| `/cursor/lock_az` `/lock_el` | *(bang)* | Toggle azimuth / elevation lock |
+| `/cursor/scan` | `i` | The cap — the cursor's ONE mute: capped, it reads nothing, granular and hits alike (1 = reading, 0 = capped, bang = toggle). `/trigger/mute` was folded into this on 2026-09-07 |
+| `/cursor/tare` | *(bang)* | Zero the cursor — the sensor's heading in sensor mode; the camera back to the front in steer / surface |
+| `/cursor/az_source` `/el_source` | *(bang)* = cycle, `sensor`\|`locked`\|`mapped` = set | Who drives azimuth / elevation — the sensor, frozen at the held value, or a cursor mapping row |
 | `/cursor/radiusfade` | *(bang)* | Toggle radius fade |
 | `/cursor/radiusfadecurve` | `f` | Radius fade curve (0–1) |
 | `/mute` | *(bang)* | Master mute toggle |
 | `/mute/hold` | `i` | Momentary mute (1 = mute, 0 = restore the pre-press state) |
-| `/trace` | `i` | Trace (1 = start rec + paint, 0 = stop) |
-| `/trace/toggle` | *(bang)* | Toggle trace on/off |
-| `/trace/mode` | *(bang)* | Cycle trace mode (trace / trace+loop / trace+cloud) |
-| `/paint/1` … `/paint/10` | `i` | Momentary sample paint for slots 1–10 (1 = start, 0 = stop) |
+| `/dry/mute` | *(bang)* | Dry monitor mute toggle — off is the mute; unmuting returns to the mode it left, on or auto |
+| `/dry/mute/hold` | `i` | Momentary dry monitor mute (1 = off, 0 = restore the mode at the press) |
+| `/source/live` | *(bang)* | The brush inks from the live input channel |
+| `/source/sampler` | *(bang)* | The brush inks from the sampler's current sample |
+| `/sampler/sample` | `i` | Set the sampler's current sample (1–10 = slot, anything else = next loaded) |
+| `/sampler/record` | `i` | Capture live input into the next free sampler slot (1 = start, 0 = stop) |
 | `/sweep` | *(bang)* | Session sweep |
-| `/undo` | *(bang)* | Undo last stroke |
+| `/undo` | *(bang)* | Undo the last action — a stroke, a pin, an unpin, an erase |
+| `/redo` | *(bang)* | Redo the last undone action |
 | `/handsfree` | *(bang)* | Toggle handsfree mode |
 | `/session/erase` | *(bang)* | Erase all |
-| `/preset` | `i` | Select patch by number (1–20: 1–10 factory, 11–20 user) |
-| `/preset/1` … `/preset/20` | `bang` | Select that patch directly — one address per patch, for pads and pedals |
-| `/app/perf` `/app/perfmode` `/app/darkmode` | *(bang)* | Toggle perf monitor / high-perf render / dark mode |
 
 **Audio levels**
 
 | Address | Args | Description |
 |---|---|---|
-| `/master/volume` | `f` | Output gain, dB (-60 to +6) |
+| `/master/volume` | `f` | Output gain, dB (-60 to +18) |
 | `/monitor/volume` | `f` | Cursor → house send level (0–1) |
 | `/house/volume` | `f` | Seed bus master (0–2) |
 | `/mixdown/cursor` | `f` | Headphone mixdown cursor gain (0–1) |
 | `/mixdown/house` | `f` | Headphone mixdown house gain (0–1) |
 | `/dry/gain` | `f` | Spatialized live-input gain in house mix (0–2) |
-| `/gate/threshold` | `f` | Noise gate threshold (linear RMS, 0–0.06) |
+| `/gate/threshold` | `f` | Paint gate threshold, 0–1. Gates whether particles are PAINTED — it does not attenuate audio. Compared against `max(rms, 0.7·peak)`, not plain RMS |
 
 **Mapping module — external inputs**
 
 | Address | Args | Description |
 |---|---|---|
-| `/mapping/toggle/1` … `/mapping/toggle/4` | *(bang)* | Toggle the first 4 sensor-mapping rows |
 | `/mapping1` `/mapping2` `/mapping3` | `f` | Generic OSC inputs that appear as axes in the mapping modal — any peer can drive these |
 
-**Morph**
-
-| Address | Args | Description |
-|---|---|---|
-| `/morph/position` | `f` | Desktop morph T (0–1) |
-| `/morph/sticky` | *(bang)* | Toggle morph hold |
-| `/morph/return` | `f` | Return-to-center glide, ms (50–3000) |
-
-> Source of truth: the dispatch `switch` in `js/osc.js`. If an address isn't in there, it isn't handled — no `/seed/*`, no `/grain/duration`, no `/grain/radius`, no `/space/cursor`. A few legacy `/space/*` addresses are still emitted by the Max patch but silently dropped by the current dispatch.
+> Source of truth: the dispatch `switch` in `js/osc.js`. If an address isn't in there, it isn't handled — no `/seed/*`, no `/grain/duration`, no `/grain/radius`, no `/space/cursor`. A few legacy `/space/*` addresses are still emitted by the example Max patch but silently dropped by the current dispatch.
 
 ---
 
@@ -283,9 +281,6 @@ docs/
   ROUTING-DESIGN.md     — signal routing pipeline
   EULER-VS-QUAT.md      — quaternion vs Euler input analysis
   SENSOR-MOUNTING.md    — sensor mounting / axis alignment
-  MULTI-IMU-PLAN.md     — multi-sensor plan (adding frame sensor)
-  MAIN-PAGE-REDESIGN.md — in-flight UI redesign (periscope / overview)
-  STAGING-PLAN.md       — staging + performance prep
   GROUP-SHOW-NOISE-GLITCH.md — known noise/glitch issues from group shows
   TARE-RECENTER-ZERO.md — sensor calibration reference
   mubone-architecture-notes.md — multi-channel audio architecture
@@ -296,7 +291,7 @@ css/
   style.css
 
 js/
-  state.js              — constants, presets, shared state object (S)
+  state.js              — constants, the default grain block, shared state object (S)
   main.js               — app entry point, wires up all modules
   audio.js              — AudioContext, mic recording, speaker buses
   grain.js              — grain scheduling, spatial search, candidate posting
@@ -323,17 +318,20 @@ js/
   midi.js               — MIDI input and CC mapping
   midi-out.js           — MIDI output
   status-publisher.js   — status broadcast channel for secondary windows
-  param-lock.js         — parameter lock state
-  ui-presets.js         — preset panel, save/load, desktop morph
+  tool.js               — S.tool selector; the tool owns the primary gesture
+  tool-layout.js        — four-tools layout (body.tool-layout): dock, brush library, chrome
+  pins.js               — the two pin groups (clouds / loops), derived from kind; mute + solo
+  ui-pins.js            — the pinned rail
+  ui-presets.js         — grain controls, commit banks, radius viz
   ui-samples.js         — sample loading, waveform display, crop
   ui-audio-settings.js  — audio device/gain/routing settings
   ui-meters.js          — VU metering, mixdown controls
-  ui-improv.js          — improv mode UI
+  ui-pin-settings.js    — Settings → Pins wiring + the monitor/house split
   ui-viz.js             — visualization settings
   ui-sweep.js           — particle sweep tool
   ui-learn.js           — learning mode tooltips
   ui-export.js          — settings export/import
-  ui-patch-table.js     — patch table editor
+  param-registry.js     — the sparse parameter registry a session's `patch` applies through
   ui-trace.js           — trace display
   gesture.js            — gesture feature extraction (smoothness, effort, periodicity)
   gesture-viz.js        — gesture feature visualization overlay
@@ -341,7 +339,6 @@ js/
   snapshot-engine.js    — posture-snapshot staging engine
   ui-staging.js         — staging modal UI
   relational-features.js — cross-sensor relational features (Δ-angles for staging)
-  interp-kernels.js     — interpolation kernels shared by staging + radial morph
 
   worklets/
     grain-engine.worklet.js      — AudioWorklet grain synthesis engine (256-slot pool)
@@ -349,7 +346,7 @@ js/
     input-meter.worklet.js       — input level metering
     recording-capture.worklet.js — mic recording capture
 
-max/                    — Max/MSP patches and bridge.js
+proxy.js                — x-IMU3 UDP → WebSocket bridge for browser mode
 ```
 
 ---

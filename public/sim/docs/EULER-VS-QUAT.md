@@ -1,6 +1,6 @@
 # Euler vs Quaternion Input — x-IMU3 Analysis
 
-> **Status: CURRENT** · reference analysis · the tradeoffs and the roll-mute pole fix still hold. Written against x-IMU3 manual v1.11.
+> **Status: CURRENT** · reference analysis · the input-format tradeoffs still hold. **The roll-mute framing is history as of 2026-09-01:** the camera takes no roll at all any more — `applyAxisSources` (renderer.js) strips a sensor quat to yaw+pitch structurally, and `cameraFromPointing` derives the camera: pitch is the cursor's to ±90, yaw follows through a fade that stops it near the poles. There is no roll mute on the sphere to fix; roll survives only as a mapping INPUT (`_gateRoll`). Written against x-IMU3 manual v1.11.
 
 > Written Mar 28, 2025. Reference: [x-IMU3 User Manual v1.11](https://x-io.co.uk/downloads/x-IMU3-User-Manual-v1.11.pdf), mubone sensor-registry.js, TODO.md bugs #9, #75, #76.
 

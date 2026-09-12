@@ -1,18 +1,26 @@
 {
   "name": "mubone",
-  "version": "1.12.0-alpha",
+  "version": "1.14.0-alpha",
   "description": "mubone — spatial granular synthesizer",
   "main": "electron-main.js",
   "author": "mubone",
   "scripts": {
     "electron": "electron .",
+    "electron:dev": "MUBONE_DEV_BRIDGE=1 electron .",
+    "audit": "node scripts/rig-audit.js",
+    "audit:docs": "node scripts/docs-audit.js",
+    "audit:sensor": "node scripts/sensor-audit.js",
+    "audit:align": "node scripts/align-audit.js",
+    "audit:for": "node scripts/audit-for.js",
+    "audit:deadweight": "node scripts/deadweight-audit.js",
     "stations": "sh scripts/run-stations.sh",
     "start": "node server.js",
-    "rebuild": "electron-rebuild",
+    "rebuild": "electron-rebuild -f -o audify,serialport",
     "dist": "electron-builder --mac",
     "dist:arm64": "electron-builder --mac --arm64",
     "dist:x64": "electron-builder --mac --x64",
-    "dist:universal": "electron-builder --mac --universal"
+    "dist:universal": "electron-builder --mac --universal",
+    "test": "node --test js/*.test.mjs"
   },
   "dependencies": {
     "audify": "^1.10.1",
@@ -20,27 +28,27 @@
     "ws": "^8.19.0"
   },
   "devDependencies": {
-    "electron": "^34.0.0",
+    "@electron/rebuild": "^4.2.0",
+    "electron": "^41.10.6",
     "electron-builder": "^25.1.8",
-    "electron-rebuild": "^3.2.9"
+    "playwright-core": "^1.63.0"
   },
   "build": {
     "appId": "org.mubone.app",
     "productName": "mubone",
+    "icon": "logo/icon-1024.png",
     "directories": {
       "output": "dist"
     },
     "files": [
       "electron-main.js",
       "electron-preload.js",
+      "audio-host.js",
+      "electron-loop-probe.js",
       "index.html",
-      "gesture-window.html",
       "sw.js",
       "js/**/*",
-      "css/style.css",
-      "css/fonts/**/*",
-      "max/**/*",
-      "!max/node_modules/**/*",
+      "css/**/*",
       "!**/*.bak",
       "!**/*.bak2"
     ],
@@ -51,13 +59,12 @@
       "node_modules/bindings/**",
       "node_modules/file-uri-to-path/**"
     ],
-    "afterPack": "./build/fix-audify-rpath.js",
+    "afterPack": "./build/after-pack.js",
     "mac": {
       "target": [
         "dmg"
       ],
       "category": "public.app-category.music",
-      "icon": null,
       "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
@@ -70,28 +77,34 @@
     },
     "dmg": {
       "title": "mubone ${version}",
+      "window": {
+        "width": 560,
+        "height": 460
+      },
       "contents": [
         {
-          "x": 130,
-          "y": 220
+          "x": 140,
+          "y": 170
         },
         {
           "x": 410,
-          "y": 220,
+          "y": 170,
           "type": "link",
           "path": "/Applications"
+        },
+        {
+          "x": 140,
+          "y": 330,
+          "type": "file",
+          "path": "build/dmg/READ ME FIRST.txt"
+        },
+        {
+          "x": 410,
+          "y": 330,
+          "type": "file",
+          "path": "build/dmg/Open mubone (first time).command"
         }
       ]
-    },
-    "extraResources": [
-      {
-        "from": "max/",
-        "to": "max/",
-        "filter": [
-          "**/*",
-          "!node_modules/**"
-        ]
-      }
-    ]
+    }
   }
 }

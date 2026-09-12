@@ -2,6 +2,8 @@
 
 > **Status: CURRENT** · reference · audio routing, multi-channel, VBAP, Electron bridge. Describes shipped behaviour.
 
+> **Read this first.** Reference for the audio graph and Electron. Live and worth reading: *Implemented Architecture*, *Spatial panning: head-locked vs world-locked*, *Multi-Channel Spatial Routing*, *electronBridge API*, *Audio Settings — What Each Control Actually Does*, *Performance Tuning Constants*. *OSC integration* and *What Max is now* were rewritten 2026-09-05: two ports, any sender, Max only as Ek's prototyping patch. *Camera Rotation* predates the 2026-09-01 change where the sensor drives the cursor and the camera is derived. Read the section for your question, not the file.
+
 ## Status
 
 The Electron multi-channel audio path is implemented and working. The browser stereo path is unchanged. Both share the same codebase with no branching in the granular engine itself.
@@ -37,12 +39,12 @@ Mic / line input
   └─ [Electron] getUserMedia (WebRTC) for grain recording
        └─ MediaStreamSource → inputGainNode → inputAnalyser → ScriptProcessor → recordingRaw[]
        + RtAudio input stream (true multichannel counts, meter only)
-            └─ main process callback → IPC audio-input-buffer → renderer input meter
+            └─ audio host (utility process) callback → MessagePort → input-meter worklet ring (pre-rolled to the cushion)
 
 Grain playback
   └─ BufferSource → grainGain → elevGain
        ├─ [Electron] VBAP → per-speaker GainNodes → speakerBuses[0..N-1]
-       │     └─ ChannelMerger → QuadCaptureWorklet → IPC audio-buffer → audify → hardware
+       │     └─ ChannelMerger → QuadCaptureWorklet → MessagePort → audio host (queue held at the cushion) → audify → hardware
        │     └─ headphone downmix (closest L/R buses → stereo dead-end, no hardware output)
        └─ [Browser] StereoPanner → masterBus → softClipper → destination
 
@@ -59,7 +61,7 @@ Output meter (both contexts)
 
 ## Spatial panning: head-locked vs world-locked
 
-`S.spatialPanning` is `'headlocked'` (default) or `'worldlocked'`. The switch lives in `grain.js`, `audio.js`, and `grain-worklet-bridge.js` at the point where each grain's world-space position is resolved to a panning coordinate.
+`S.spatialPanning` is `'worldlocked'` (the factory default since 2026-09-05) or `'headlocked'`. The switch lives in `grain.js`, `audio.js`, and `grain-worklet-bridge.js` at the point where each grain's world-space position is resolved to a panning coordinate.
 
 **Head-locked** (`'headlocked'`)
 - Audio is panned relative to the current camera orientation.
@@ -74,7 +76,7 @@ Output meter (both contexts)
 - In Electron with the x-imu3 assigned to the cursor role, the sensor drives camera rotation AND the paint cursor position.
 - In browser: world-locked mode works without a sensor (mouse-driven camera) — the panning behaviour is the same, the performer just can't "turn" into it.
 
-**Legacy "sim / physical" shorthand.** The `/spatial/mode` OSC handler flips a compound state: "physical" = `cameraMode = 'sensor'` + `spatialPanning = 'worldlocked'`; "sim" = `cameraMode = 'pull'` + `spatialPanning = 'headlocked'`. The two underlying keys (`S.cameraMode`, `S.spatialPanning`) are what code reads; `/spatial/mode` is a convenience toggle.
+**Legacy "sim / physical" shorthand.** The `/spatial/mode` OSC handler flips a compound state: "physical" = `cameraMode = 'sensor'` + `spatialPanning = 'worldlocked'`; "sim" = `cameraMode = 'steer'` (renamed from `'pull'` 2026-08-24) + `spatialPanning = 'headlocked'`. The two underlying keys (`S.cameraMode`, `S.spatialPanning`) are what code reads; `/spatial/mode` is a convenience toggle.
 
 ---
 
@@ -188,33 +190,29 @@ This works identically for any N: stereo (2), quad (4), octaphonic (8), Dante (4
 | Context | Use | Audio output | Sensor input |
 |---|---|---|---|
 | Browser | Development, demos, link sharing | Stereo via Web Audio destination | Unavailable (mouse/touch fallback) |
-| Electron | Live performance, installation | N-channel via audify / RtAudio | x-imu3 via Max OSC → UDP → IPC |
+| Electron | Live performance, installation | N-channel via audify / RtAudio | x-imu3 over WiFi (UDP announce + data), or any OSC sender → UDP 7500 → IPC |
 
 The granular engine (`grain.js`) checks `S.speakerBuses` at render time. If present, it routes via VBAP to the speaker buses. If null, it falls through to the stereo panner path. No other code changes between contexts.
 
 ---
 
-## OSC / Max Integration
+## OSC integration
 
-All OSC messages — sensor data, grain parameters, preset selection, transport and seed controls — are dispatched through a single `handleOSC(address, values)` function in `js/osc.js`. Two transports feed it:
+All OSC messages — sensor data, grain parameters, transport, pins, undo — are dispatched through one `handleOSC(address, values)` in `js/osc.js`. Two transports feed it, and neither is specific to any sender (Max is Ek's prototyping patch, one sender among any):
 
 ```
-Electron:  Max → [node.script bridge.js]  (setmode electron)
-                    └─ encodeOSC() → UDP 127.0.0.1:7500
-                         └─ electron-main.js (dgram)
-                              └─ IPC osc-message
-                                   └─ electronBridge.onOSC
-                                        └─ handleOSC()
+Electron:  any OSC sender → UDP 127.0.0.1:7500 (binary OSC)
+                └─ electron-main.js (dgram)
+                     └─ IPC osc-message
+                          └─ electronBridge.onOSC
+                               └─ handleOSC()
 
-Browser:   Max → [node.script bridge.js]  (setmode browser)
-                    └─ WebSocket server ws://localhost:8080
-                         └─ browser WebSocket client (osc.js)
-                              └─ handleOSC()
+Browser:   x-IMU3 UDP → proxy.js → ws://localhost:8080 ({ address, values } JSON)
+                                        └─ browser WebSocket client (osc.js)
+                                             └─ handleOSC()
 ```
 
-`bridge.js` (in `max/`) runs via `[node.script bridge.js]` inside the Max patch **in both modes** — it is never bypassed. Sending `setmode electron` or `setmode browser` to the node.script switches its output transport at runtime. In Electron mode it encodes messages as OSC binary and fires them over UDP; in browser mode it broadcasts JSON over WebSocket. The Max patch has a toggle that sends this message automatically.
-
-The browser tries `ws://localhost:8080` on load and retries every 3 seconds — graceful no-op if Max isn't running. A `● MAX` indicator appears in the UI top-right corner on first message received (either transport).
+The browser tries `ws://localhost:8080` on load and retries every 3 seconds — a no-op if no relay is running, and hosted origins never try (`_bridgeReachable()`). The `● OSC` indicator lights on the first message received on either transport.
 
 **Sensor path:** `handleOSC` routes `/sensor/{name}/quaternion` with 4 floats through the sensor registry (`sensor-registry.js`), which auto-creates the slot on first receipt, applies tare + axis map, and dispatches to the assigned role (cursor / frame / gesture). This works identically in both contexts.
 
@@ -232,7 +230,7 @@ The browser tries `ws://localhost:8080` on load and retries every 3 seconds — 
 
 **Both contexts** use `getUserMedia` for grain recording (ScriptProcessor → recordingRaw[]). The browser caps channel counts at whatever WebRTC negotiates with the OS.
 
-**Electron only** additionally opens a separate RtAudio input stream (`createInputStream` in `electron-main.js`) to get true multichannel input counts. The RtAudio input callback sends raw interleaved Float32 PCM to the renderer via IPC (`audio-input-buffer`), feeding the multichannel input meter strip. The device list in Audio Settings (input side) in Electron comes from `get-input-devices` (RtAudio) rather than `MediaDevices.enumerateDevices()`, so reported channel counts are accurate.
+**Electron only** additionally opens a separate RtAudio input stream (`createInputStream` in `electron-main.js`) to get true multichannel input counts. The RtAudio input callback posts each chunk of raw interleaved Float32 PCM straight to the input-meter worklet over a MessagePort (since 2026-09-06 — the renderer's main thread is not in either audio hop; `docs/RULINGS.md` "the two IPC hops are bounded"), feeding the multichannel input meter strip and the recording path. The device list in Audio Settings (input side) in Electron comes from `get-input-devices` (RtAudio) rather than `MediaDevices.enumerateDevices()`, so reported channel counts are accurate.
 
 ---
 
@@ -246,15 +244,17 @@ When speaker buses are active, `audio.js` also wires a stereo headphone downmix:
 
 | File | Role |
 |---|---|
-| `electron-main.js` | Electron main process. Manages audify output stream (device selection, channel count, buffer size, sample rate negotiation) and a separate RtAudio input stream. Receives x-imu3 OSC over UDP and pushes to renderer via IPC. |
+| `electron-main.js` | Electron main process. Spawns and relays to the audio host, lists audio devices on its own RtAudio enumerator, receives x-imu3 OSC over UDP and pushes to renderer via IPC. |
+| `audio-host.js` | The audio host — a utility process with nothing on its loop but audify: the output stream and its regulation to the cushion, the input stream, both audio ports. Since 2026-09-06 (R2). |
+| `electron-loop-probe.js` | Shared by main and the host: event-loop gap counts, timed handlers, GC pauses — what `wg.status()` prints per loop. |
 | `electron-preload.js` | IPC bridge. Exposes `window.electronBridge` to renderer (see API table below). |
 | `js/audio.js` | `ensureAudioContext` (48000 Hz default), `initSpeakerBuses(N)` (builds N-channel Web Audio graph + headphone downmix + meter tap), `recreateAudioContext` (sample rate change), `rewireChannelMerger` (apply `S.channelRouting` without full rebuild). |
 | `js/grain.js` | `playGrain` — VBAP routing when `S.speakerBuses` is set, stereo panner fallback otherwise. |
 | `js/osc.js` | `initOSC()` selects transport (Electron IPC or browser WebSocket). `handleOSC(address, values)` dispatches all incoming OSC to sensor, grain params, preset, etc. |
 | `js/sensor-registry.js` | Sensor slot registry. `/sensor/{name}/{type}` OSC messages register slots on first receipt, track per-sensor calibration (tare, axis map, flat-mount detection), and dispatch to role consumers (cursor, frame, gesture). Exposes `getByRole()`, `applyAxisMapQuat()`, `getSensorCursorQ()`, `getFrameQ()`. Tare itself lives in `imu-setup.js`, not here. |
 | `js/sphere.js` | 3D math — `getCursorLonLat()`, `screenToLonLat()`, `cameraTransform()`, `qRotateVec`, quaternion helpers. |
-| `max/bridge.js` | Node for Max script. Runs via `[node.script bridge.js]` in both modes. In browser mode: starts a WebSocket server on `ws://localhost:8080` and broadcasts all incoming messages to connected tabs. In Electron mode: encodes messages as OSC binary and sends UDP to `127.0.0.1:7500`. Send `setmode browser` or `setmode electron` to switch transport at runtime. |
-| `js/worklets/quad-capture.worklet.js` | Batches N-channel audio into interleaved Float32Array and posts to main thread. N and batchSize configured at runtime via `{ type: 'init', numChannels: N, batchSize: B }`. batchSize = bufferFrames / 128 so each post is exactly one audify write. |
+| `proxy.js` | x-IMU3 UDP → WebSocket relay for browser mode (`node proxy.js`). The only relay this repo maintains. |
+| `js/worklets/quad-capture.worklet.js` | Batches N-channel audio into an interleaved Float32Array and posts it straight to the main process over the port transferred in (`{ type: 'port' }`). N and batchSize configured at runtime via `{ type: 'init', numChannels: N, batchSize: B }`. batchSize = bufferFrames / 128 so each post is exactly one audify write. |
 | `js/ui-audio-settings.js` | Input device picker (WebRTC in browser; RtAudio device list in Electron). Output device picker (Electron only). Channel routing dropdowns. Speaker sweep. Sample rate and buffer size controls. |
 
 ---
@@ -266,13 +266,14 @@ When speaker buses are active, `audio.js` also wires a stereo headphone downmix:
 | Method | Direction | Description |
 |---|---|---|
 | `isElectron` | — | `true` — use this to detect Electron at runtime |
-| `sendAudioBuffer(f32)` | renderer → main | Send interleaved Float32Array of N-channel audio to RtAudio |
+| `openAudioPort(kind)` | renderer → main | Make a MessagePort pair for one audio hop (`'out'` or `'in'`): one end to main, the other to the main world over `window.postMessage`, which audio.js transfers into the worklet |
+| `setAudioCushion(ms)` | renderer → main | The stall cushion — the depth main primes the output queue to |
+| `getOutputDepth()` | renderer → main | The output queue's depth, its prime depth, and its dry / dropped counts |
 | `getAudioDevices()` | renderer → main | Returns list of output devices with `id`, `name`, `outputChannels`, `isDefault`, `quadCapable` |
 | `setAudioDevice(id, nCh, bufFrames)` | renderer → main | Open RtAudio output stream; returns `{ ok, streaming, sampleRate }` |
 | `getInputDevices()` | renderer → main | Returns list of input devices with `id`, `name`, `inputChannels`, `isDefault` (from RtAudio, not WebRTC) |
 | `setInputDevice(id, nCh, bufFrames)` | renderer → main | Open RtAudio input stream; returns `{ ok, nCh, sampleRate, name }` |
-| `onAudioInputBuffer(cb)` | main → renderer | Register callback `cb(f32: Float32Array, nCh: number)` for multichannel input PCM from RtAudio |
-| `onOSC(cb)` | main → renderer | Register callback `cb(address: string, values: any[])` for all OSC messages from Max. Called by `osc.js` which dispatches to sensor, grain params, etc. |
+| `onOSC(cb)` | main → renderer | Register callback `cb(address: string, values: any[])` for all OSC messages. Called by `osc.js` which dispatches to sensor, grain params, etc. |
 | `toggleFullscreen()` | renderer → main | Toggle native OS fullscreen (web `requestFullscreen()` doesn't work in BrowserWindow) |
 
 ---
@@ -318,8 +319,6 @@ The AudioContext was originally created at 22050 Hz to halve CPU load. This caus
 
 ---
 
-## What Max Does Now
+## What Max is now
 
-Max is no longer in the audio chain. It is a controller: sensor data, grain parameters, presets, transport, seed placement, and undo — all via OSC. The same namespace works in both contexts; `bridge.js` handles the transport switch (UDP in Electron, WebSocket in browser). Max patches live in `max/`.
-
-The consolidated Max patch (`max/main.maxpat`) is the control surface today (legacy `mubone-controller.maxpat` was deleted in the Max reorg per CHANGELOG). The x-imu3 sensor path runs through `max/x-imu3.maxpat` and feeds `/sensor/{name}/quaternion` upstream.
+A prototyping tool. Ek uses a Max patch to test custom OSC mappings and to try a control before it has a real home. It is not part of the app, not a setup step, and no code assumes it (Ek, 2026-09-05). The x-imu3 reaches Electron directly over WiFi — UDP announcements on 10000, data on the device's send port — not through Max. The old `main.maxpat`, `x-imu3.maxpat` and `bridge.js` are git history (`docs/archive/SANDBOX.md`).

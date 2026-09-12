@@ -1,0 +1,48 @@
+mubone — opening it the first time
+==================================
+
+mubone is not signed by Apple, because it is not sold through the App Store
+and has no Apple Developer certificate behind it. macOS therefore refuses to
+open it until you say, once, that you trust it. Nothing here is a virus check
+you are skipping — it is the "we don't know this developer" check.
+
+Two steps.
+
+
+1. Install it
+-------------
+Drag the mubone icon onto the Applications folder in this window.
+
+
+2. Tell macOS it's OK
+---------------------
+Double-click "Open mubone (first time).command" in this window. It clears the
+quarantine flag and launches the app. If macOS blocks the script itself,
+right-click it and choose Open.
+
+If you would rather not run a script, do it by hand instead:
+
+  a. Open mubone from Applications. macOS blocks it — click Done / OK.
+  b. Open System Settings > Privacy & Security.
+  c. Scroll to Security. There is a line about mubone being blocked, with an
+     "Open Anyway" button. Click it and confirm.
+  d. Open mubone again.
+
+  (On older macOS you may see "mubone is damaged and can't be opened" instead.
+  It isn't damaged — that is the same block wearing a worse label. Open
+  Terminal and paste:  xattr -dr com.apple.quarantine /Applications/mubone.app )
+
+Either way you only do this once per version. When you get a newer mubone,
+you do it again for that copy.
+
+
+While you're here
+-----------------
+- Apple Silicon only (M1 and later). This build will not run on an Intel Mac.
+- mubone asks for the microphone on first launch — say yes, it is the
+  instrument's input. It also asks for local network access, which is how it
+  talks to the x-imu3 sensor.
+- Audio comes out of whatever you pick in the Audio panel, not the system
+  default. Set the sample rate to match your interface.
+
+Press Esc to leave full screen. Questions go to Ek.

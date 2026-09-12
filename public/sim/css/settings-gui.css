@@ -1,0 +1,1246 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   settings-gui.css — the settings dialog's own standard (2026-08-30)
+   ──────────────────────────────────────────────────────────────────────────
+   Scope: everything inside #settingsModal. Nothing here crosses that edge.
+   Rationale, the row model and the closed kit: docs/SETTINGS-GUI.md.
+
+   Load AFTER style.css, so it wins on equal specificity:
+     <link rel="stylesheet" href="css/settings-gui.css">
+
+   Every colour is a token from tokens.css. Four tokens are added below; move
+   them into tokens.css when this file stops being a patch.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --fs-set-row:  0.94rem;   /* 15px   — a settings row's title */
+  --fs-set-hint: 0.84rem;   /* 13.5px — its description        */
+  --r-field:     8px;       /* fields, buttons, dropdowns, nav items */
+  --r-menu:      12px;      /* popovers, device lists */
+  --set-nav-bg:  #161311;   /* one warm step UP from --bg-app  */
+}
+
+/* ── Shell ──────────────────────────────────────────────────────────────── */
+html body .mu-dialog.settings-dialog {
+  width: min(1180px, 94vw); height: min(760px, 88vh);
+  border-radius: var(--r-card); overflow: hidden;
+}
+html body .settings-nav {
+  flex: 0 0 250px; gap: 2px; padding: 14px 10px;
+  background: var(--set-nav-bg);
+  border-right: 1px solid var(--border-subtle);
+}
+html body .set-nav-grp {
+  font-size: 11.5px; letter-spacing: var(--ls-display); text-transform: uppercase;
+  color: var(--text-dimmer); padding: 6px 10px;
+}
+html body .set-nav-grp:not(:first-child) { padding-top: 18px; }
+html body .set-nav-item {
+  display: flex; align-items: center; gap: 11px;
+  height: 36px; padding: 0 10px; border: none; border-radius: var(--r-field);
+  background: none; box-shadow: none;
+  font-family: var(--font-sans); font-size: 14.5px; letter-spacing: var(--ls-tight);
+  color: var(--text-subtle); text-align: left; cursor: pointer;
+  transition: background var(--m-touch) var(--ease-out), color var(--m-touch) var(--ease-out);
+}
+html body .set-nav-item:hover { background: var(--surface-1); color: var(--text-light); }
+html body .set-nav-item.active {
+  background: var(--surface-3); color: var(--text-light); box-shadow: none;
+}
+html body .set-nav-item > svg { flex: 0 0 16px; width: 16px; height: 16px; }
+
+html body .settings-head { height: 60px; flex: 0 0 60px; padding: 0 24px; gap: 14px; }
+html body .settings-head h2 {
+  font-size: 20px; font-weight: 600; letter-spacing: var(--ls-tight);
+  color: var(--text-highlight); text-transform: none;
+}
+html body .settings-dialog .close-btn { width: 34px; height: 34px; border-radius: var(--r-field); }
+
+/* The content pane is the ONE scroller — the hosted dialog must not be. */
+.settings-host { padding: 26px 24px 30px; overflow-y: auto; overscroll-behavior: contain; }
+/* gap: 0 — the borrowed .mu-dialog is flex with the rig view's 0.8rem gap, and
+   inside the settings shell that 12.8px stacked onto every section's 30px
+   margin: audio, visuals and sensors ran a 42.8px rhythm while pins (hosted
+   from a different element) ran the contract's 30. One number, § 2's. */
+.settings-host .in-settings { padding: 0; max-width: 860px; overflow: visible; gap: 0; }
+
+/* ── Section ────────────────────────────────────────────────────────────── */
+
+.settings-host .in-settings .set-section {
+  border: none !important; background: none !important; padding: 0 !important;
+  margin: 30px 0 0 !important;
+}
+.settings-host .in-settings .set-sec-title {
+  font-size: 16px; font-weight: 600; letter-spacing: var(--ls-tight);
+  text-transform: none; color: var(--text-highlight);
+  margin: 0 0 2px; display: flex; align-items: center; gap: 10px;
+}
+.settings-host .in-settings .set-sec-lede {
+  font-size: var(--fs-set-hint); color: var(--text-muted); margin: 0 0 10px;
+}
+
+/* ── The row ────────────────────────────────────────────────────────────── */
+.settings-host .in-settings .set-row{
+  display: flex; align-items: center; gap: 24px;
+  padding: 15px 0; min-height: 0;
+  border-top: 1px solid var(--border-faint); border-bottom: none;
+  background: none;
+}
+.settings-host .in-settings .set-row:last-child { border-bottom: 1px solid var(--border-faint); }
+.settings-host .in-settings .set-row--top { align-items: flex-start; }
+.settings-host .in-settings .set-row-text { flex: 1 1 auto; min-width: 0; }
+.settings-host .in-settings .set-row-title {
+  display: block; font-size: var(--fs-set-row); font-weight: 500;
+  letter-spacing: var(--ls-tight); text-transform: none; color: var(--text-light);
+}
+.settings-host .in-settings .set-row-desc,
+.settings-host .in-settings .as-note {
+  display: block; margin: 3px 0 0; padding: 0; max-width: 46ch;
+  font-size: var(--fs-set-hint); line-height: 1.45; letter-spacing: var(--ls-tight);
+  color: var(--text-muted); font-style: normal; text-wrap: pretty;
+}
+
+.settings-host .in-settings .set-ctl {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 12px; justify-content: flex-end;
+}
+.settings-host .in-settings .set-ctl--slider { width: 300px; gap: 14px; }
+/* ── Where a unit goes ──────────────────────────────────────────────────────
+   Every control group ends at the SAME right edge — the content column's — so
+   the page has one vertical line down its right side rather than a ragged one.
+   What varies is which side the small text sits on, and it is not a judgement
+   call:
+     a UNIT or qualifier ("frames", "stereo field")  → LEFT of the control
+     a live READOUT ("10 min", "−6.0 dB", "0.002")   → RIGHT, in a 64px column
+   A unit names what the control is measured in and is read before you use it; a
+   readout is what the control currently says and is read after. Markup order
+   puts most `.as-dim` units after their select, so they are re-ordered here
+   rather than by moving nodes on nine pages. Anything longer than two words is
+   not a unit — it belongs in `.set-row-desc`. */
+.settings-host .in-settings .set-ctl > .as-dim{ order: -1; flex: 0 0 auto; }
+html body .settings-host .in-settings .set-ctl > .as-val { order: 99; }
+
+/* ── Toggle ─────────────────────────────────────────────────────────────── */
+.settings-host .set-toggle {
+  appearance: none; -webkit-appearance: none; position: relative; flex: 0 0 auto;
+  width: 44px; height: 26px; margin: 0; border: none; border-radius: 999px;
+  background: var(--surface-5); cursor: pointer;
+  transition: background var(--m-state) var(--ease-out);
+}
+.settings-host .set-toggle::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 20px; height: 20px; border-radius: 50%; background: var(--text-subtle);
+  transition: transform var(--m-state) var(--ease-snap), background var(--m-state) var(--ease-out);
+}
+.settings-host .set-toggle:checked { background: var(--accent-action); }
+.settings-host .set-toggle:checked::after {
+  transform: translateX(18px); background: var(--text-highlight);
+}
+.settings-host .set-toggle:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Buttons ────────────────────────────────────────────────────────────── */
+.settings-host .in-settings .set-btn,
+.settings-host .in-settings .top-bar-btn,
+.settings-host .in-settings .as-btn,
+.settings-host .in-settings .as-io-reset-btn,
+.settings-host .in-settings .mu-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 36px; padding: 0 16px;
+  background: none; border: 1px solid var(--border-soft); border-radius: var(--r-field);
+  font-family: var(--font-sans); font-size: 14.5px; letter-spacing: var(--ls-tight);
+  text-transform: none; color: var(--text-primary); cursor: pointer;
+  transition: background var(--m-touch) var(--ease-out), color var(--m-touch) var(--ease-out),
+              border-color var(--m-touch) var(--ease-out);
+}
+.settings-host .in-settings .set-btn:hover,
+.settings-host .in-settings .top-bar-btn:hover,
+.settings-host .in-settings .as-btn:hover {
+  background: var(--surface-1); color: var(--text-light);
+}
+.settings-host .in-settings .set-btn--primary {
+  background: var(--text-light); border-color: var(--text-light);
+  color: var(--bg-app); font-weight: 600;
+}
+.settings-host .in-settings .set-btn--primary:hover { background: var(--text-highlight); }
+.settings-host .in-settings .set-btn--danger{
+  border-color: var(--tint-danger-border); color: var(--status-error);
+}
+.settings-host .in-settings .set-btn--danger:hover { background: var(--tint-danger-soft); }
+.settings-host .in-settings .set-btn:disabled {
+  border-color: var(--border-subtle); color: var(--text-faint); cursor: default; background: none;
+}
+.settings-host .in-settings .set-btn--sm { height: 30px; padding: 0 13px; font-size: 13.5px; }
+
+/* ── Dropdown + menu ────────────────────────────────────────────────────── */
+.settings-host .in-settings select,
+.settings-host .in-settings .as-select,
+.settings-host .in-settings .set-select {
+  /* flex is reset explicitly: several rows carry an inline `flex: 1` on the
+     select, and flex-basis 0% + grow beats `width` outright — which is how a
+     190px dropdown measured 748. */
+  flex: 0 0 auto;
+  height: 36px; padding: 0 30px 0 12px; min-width: 0; max-width: none; width: 190px;
+  background: none; border: 1px solid var(--border-soft); border-radius: var(--r-field);
+  font-family: var(--font-sans); font-size: 14.5px; color: var(--text-light);
+  cursor: pointer; appearance: none; -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 15px) 15px, calc(100% - 11px) 15px;
+  background-size: 4px 4px, 4px 4px; background-repeat: no-repeat;
+}
+.settings-host .in-settings select:hover { border-color: var(--border-hover); }
+.settings-host .in-settings select:focus { outline: none; border-color: var(--accent-action); }
+.settings-host .in-settings .set-select--wide { width: 260px; }
+.settings-host .set-menu {
+  padding: 6px; background: var(--chrome-bg-well);
+  border: 1px solid var(--border-soft); border-radius: var(--r-menu);
+  box-shadow: 0 18px 40px rgba(0,0,0,0.55);
+}
+.settings-host .set-menu-item {
+  display: flex; align-items: center; width: 100%; height: 34px; padding: 0 10px;
+  background: none; border: none; border-radius: var(--r-field);
+  font-family: var(--font-sans); font-size: 14.5px; color: var(--text-primary);
+  text-align: left; cursor: pointer;
+}
+.settings-host .set-menu-item:hover { background: var(--surface-2); }
+.settings-host .set-menu-item[aria-checked="true"] { background: var(--surface-2); color: var(--text-light); }
+.settings-host .set-menu-item[aria-checked="true"] > svg { margin-left: auto; color: var(--accent-action); }
+
+/* ── Segmented ──────────────────────────────────────────────────────────── */
+.settings-host .in-settings .grain-seg{
+  display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+  border: 1px solid var(--border-soft); border-radius: var(--r-field); background: none;
+}
+.settings-host .in-settings .grain-seg .grain-seg-btn{
+  height: 30px; padding: 0 14px; border: none; border-radius: 6px; background: none;
+  font-family: var(--font-sans); font-size: 14px; letter-spacing: var(--ls-tight);
+  text-transform: none; color: var(--text-subtle); cursor: pointer;
+}
+.settings-host .in-settings .grain-seg .grain-seg-btn:hover { color: var(--text-light); }
+.settings-host .in-settings .grain-seg .grain-seg-btn.active{
+  background: var(--surface-4); color: var(--text-light);
+}
+
+/* ── Slider ─────────────────────────────────────────────────────────────── */
+.settings-host .in-settings input[type=range] {
+  -webkit-appearance: none; appearance: none; flex: 1 1 auto; width: auto;
+  height: 16px; margin: 0; background: none; cursor: pointer;
+}
+.settings-host .in-settings input[type=range]::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 2px;
+  background: linear-gradient(to right,
+    var(--accent-action) 0 calc(var(--fill, 0) * 1%),
+    var(--surface-4) calc(var(--fill, 0) * 1%) 100%);
+}
+.settings-host .in-settings input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 16px; height: 16px; margin-top: -6px; border: none; border-radius: 50%;
+  background: var(--text-light); box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+/* `html body` on this one and on .set-count below is not decoration: dropping
+   it moved the slider readout from 14.5 to 14 on audio (5 elements) and viz (9),
+   and the filter count from 13.44 to 14 on keys and osc. Measured round ten,
+   both directions. Everything else in this file is one class past
+   `.settings-host`. */
+html body .settings-host .in-settings .as-val,
+.settings-host .in-settings .grain-numbox{
+  /* min-width in style.css (4.5rem = 72px) beats flex-basis, so it is named. */
+  flex: 0 0 64px; width: 64px; min-width: 64px; max-width: 64px; text-align: right;
+  font-family: var(--font-sans); font-size: 14.5px; font-variant-numeric: tabular-nums;
+  color: var(--text-primary); background: none; border: none;
+}
+
+/* ── Field ──────────────────────────────────────────────────────────────── */
+.settings-host .in-settings input[type=text],
+.settings-host .in-settings input[type=number],
+.settings-host .in-settings input[type=search] {
+  height: 36px; padding: 0 12px;
+  background: var(--surface-0); border: 1px solid var(--border-soft); border-radius: var(--r-field);
+  font-family: var(--font-sans); font-size: 14.5px; color: var(--text-light);
+}
+.settings-host .in-settings input[type=number] { font-variant-numeric: tabular-nums; }
+.settings-host .in-settings input:focus { outline: none; border-color: var(--accent-action); }
+
+/* ── Device list (sensors, browsers, interfaces) ────────────────────────── */
+.settings-host .set-devices {
+  border: 1px solid var(--border-base); border-radius: var(--r-menu); overflow: hidden;
+}
+.settings-host .set-devices-head {
+  display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 16px;
+  background: var(--surface-0);
+  font-size: var(--fs-set-row); font-weight: 500; color: var(--text-light);
+}
+.settings-host .set-devices-head > .set-btn { margin-left: auto; }
+.settings-host .set-device {
+  display: flex; align-items: center; gap: 14px; padding: 13px 16px;
+  border-top: 1px solid var(--border-faint);
+}
+.settings-host .set-device--idle { opacity: 0.62; }
+.settings-host .set-device-n {
+  width: 14px; text-align: center; font-size: var(--fs-set-hint); color: var(--text-dimmer);
+  font-variant-numeric: tabular-nums;
+}
+.settings-host .set-device-name { font-size: var(--fs-set-row); color: var(--text-light); }
+.settings-host .set-device-meta { font-size: var(--fs-set-sub); color: var(--text-dim); }
+.settings-host .set-device-id {
+  margin-left: auto; font-size: var(--fs-set-sub); color: var(--text-dimmer); font-variant-numeric: tabular-nums;
+}
+.settings-host .set-device-ok { color: var(--status-ok); }
+
+/* ── Table ──────────────────────────────────────────────────────────────── */
+.settings-host .in-settings table { width: 100%; border-collapse: collapse; }
+.settings-host .in-settings th {
+  font-size: var(--fs-set-hint); font-weight: 400; letter-spacing: var(--ls-tight);
+  text-transform: none; color: var(--text-muted); text-align: left;
+  padding: 11px 4px; border-bottom: 1px solid var(--border-faint);
+}
+.settings-host .in-settings td {
+  font-size: 14px; color: var(--text-primary);
+  padding: 12px 4px; border-bottom: 1px solid var(--border-faint);
+}
+.settings-host .in-settings tr:hover td { background: var(--surface-0); }
+
+/* ── Badge ──────────────────────────────────────────────────────────────── */
+/* An empty badge is not a small badge — status('') means there is nothing to
+   say, and a bare pill sitting in the row says otherwise. Written at the same
+   depth as the rule above: at .set-badge:empty it loses on specificity and the
+   pill stays, which is exactly what shipped for one round. */
+.settings-host .set-badge:empty { display: none; }
+
+.settings-host .set-badge {
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px;
+  border-radius: 6px; font-size: 12.5px; letter-spacing: var(--ls-tight);
+  background: var(--surface-3); color: var(--text-subtle);
+}
+.settings-host .set-badge::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; display: none;
+}
+
+.settings-host .set-badge--ok    { background: var(--tint-sweep-soft);  color: var(--status-ok); }
+.settings-host .set-badge--warn  { background: var(--tint-action-soft); color: var(--status-warn); }
+.settings-host .set-badge--err   { background: var(--tint-danger-soft); color: var(--status-error); }
+
+/* ── Empty state ────────────────────────────────────────────────────────── */
+.settings-host .set-empty,
+.settings-host .in-settings .imu-setup-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 38px 20px; border: 1px solid var(--border-faint); border-radius: var(--r-menu);
+  font-size: 14.5px; color: var(--text-muted); text-align: center;
+}
+
+/* ── The page's body size ─────────────────────────────────────────────────
+   THIS ONE IS REAL, and it is not what its old comment said. It was written to
+   beat style.css § 24's sweep; § 24 is gone (round ten) and deleting this with
+   it moved six of the ten pages:
+
+     audio     gained 11.04 and 15.68      sensors   lost 14, gained 15.68
+     mapping   lost 14, gained 14.5/15.68  feedback  gained 14.08
+     keys      gained 14.5                 osc       14 → 11.04 + 12.48
+
+   So it is not a counter-rule, it is the DEFAULT: a bare span, div or p inside
+   a hosted page has no kit class, and without this it inherits whichever
+   instrument size its own markup carries. Kept, and collapsed to the shallowest
+   selector that still holds all ten pages (measured: `.settings-host` + the
+   element is enough now that § 24 is not competing). */
+.settings-host span,
+.settings-host div,
+.settings-host p,
+.settings-host label,
+.settings-host td,
+.settings-host button,
+.settings-host .as-dim,
+.settings-host .as-meter-group-label,
+.settings-host .as-io-col-sw,
+.settings-host .as-io-col-hw,
+.settings-host .as-io-col-angle,
+.settings-host .as-io-sw {
+  font-size: 14px; letter-spacing: var(--ls-tight); text-transform: none;
+}
+
+/* Column and group captions: a table header, not an engraving. */
+.settings-host .in-settings .as-meter-group-label,
+.settings-host .in-settings .as-io-col-sw,
+.settings-host .in-settings .as-io-col-hw,
+.settings-host .in-settings .as-io-col-angle {
+  font-size: var(--fs-set-hint); color: var(--text-muted);
+  letter-spacing: var(--ls-tight); text-transform: none;
+}
+.settings-host .in-settings .as-dim{
+  font-size: var(--fs-set-hint); color: var(--text-muted); opacity: 1;
+}
+
+/* ── Status strip: it is a badge now, not a bar ─────────────────────────── */
+.settings-host .in-settings .status-strip {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 8px;
+  background: var(--surface-3); border: none; border-radius: 6px;
+  font-size: 12.5px; color: var(--text-subtle);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   RE-ADDED AFTER THE DESIGN-SIDE REPLACEMENT (2026-08-30)
+   Eight rules that were in the previous copy of this file and are not in the
+   new one. Each is here because something measurable breaks without it; none
+   of them contradicts anything above. Appended at the end, so position keeps
+   deciding.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* 1. The body token. `npm run audit:align` resolves the kit's ramp by reading
+      --fs-set-body / --fs-set-row / --fs-set-hint off .settings-host; with the
+      first one undefined the allowed set loses 14px and every page fails. */
+:root { --fs-set-body: 0.875rem; }   /* 14.00px — body text inside the dialog */
+
+/* 2. The other half of retiring § 24. The sweep above restates span / div / p /
+      label / td / button at (0,2,3) and wins — but § 24 also names ~20 CLASSES
+      at (0,3,2), and those still resolve var(--fs-page) = 11.04: .acc-pill,
+      .fn-name, .key-badge, .osc-badge, .osc-fmt, .key-cell, .midi-cell,
+      .mapping-filter-count, .io-monitor-*, .led-na, .as-vchan-label,
+      .imu-transport, .imu-setup-device-info, .osc-key, .osc-kind. Rather than
+      restate twenty selectors a third time, re-point the two VARIABLES they all
+      read — same selector as style.css:8342, same depth, declared later. */
+.settings-host {
+  --fs-page: var(--fs-set-body);   /* 14.00 */
+  --fs-hint: var(--fs-set-hint);   /* 13.44 */
+}
+
+/* 3. Section headings on the pages that are not converted yet. § 24 sends these
+      to --fs-eyebrow DIRECTLY, so re-pointing the variables does not reach
+      them, and they stay 11px uppercase under a 16px sentence-case heading. */
+.settings-host .in-settings .seq-section-label,
+.settings-host .in-settings h2 {
+  font-size: 16px; font-weight: 600; letter-spacing: var(--ls-tight);
+  text-transform: none; color: var(--text-highlight);
+}
+
+/* 4. The last two sizes below the hint: mapping's page lede was --fs-body
+      (12.48) and the OSC reference's address column was the eyebrow. */
+
+/* 5. The header's borrowed page action (SETTINGS-GUI § 4) — the audio page's
+      speaker sweep lives there while that page is open. The slot carries the
+      auto margin because style.css:3057 puts it on the close button, which
+      would otherwise push the action away from the ✕. */
+html body .settings-head #settingsHeadActions {
+  margin-left: auto; display: flex; align-items: center; gap: 10px;
+}
+html body .settings-head .close-btn { margin-left: 0; }
+html body .settings-head .as-btn,
+html body .settings-head .set-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 34px; padding: 0 16px; background: none;
+  border: 1px solid var(--border-soft); border-radius: var(--r-field);
+  font-family: var(--font-sans); font-size: 14.5px; letter-spacing: var(--ls-tight);
+  text-transform: none; color: var(--text-primary); cursor: pointer;
+}
+html body .settings-head .as-btn:hover { background: var(--surface-1); color: var(--text-light); }
+.settings-host .in-settings .as-page-actions:empty { display: none; }
+
+/* 6. A disclosure is a plain row set revealed in place — the audio page's
+      handsfree tuning and the sensors page's command log both rely on it. */
+.settings-host .in-settings [hidden] { display: none; }
+
+/* 7. The wide dropdown, under the class the pages actually carry. */
+.settings-host .in-settings .as-select--wide { width: 260px; }
+
+/* 8. The small button's size is the hint TOKEN, not a 13.5px literal: 0.06px
+      away from --fs-set-hint is a seventh step on the ramp that no one can see
+      and every audit reports. */
+.settings-host .in-settings .set-btn--sm { font-size: var(--fs-set-hint); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   THE SENSORS PAGE (2026-08-30)
+   The two-column layout is gone: three source rows, one device list, one
+   selected sensor. Only two things here are not already in the kit — the
+   selected row's mark and the orientation grid — and both are noted in the
+   report as candidates for docs/SETTINGS-GUI.md § 3.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* A connected row is pressable, because pressing it is how a sensor becomes
+   THE sensor. The selected one carries an ember edge rather than a fill, so a
+   list of six sensors still reads as one list. */
+.settings-host .set-device { cursor: default; }
+.settings-host .set-device[data-sn] { cursor: pointer; }
+.settings-host .set-device[data-sn]:hover { background: var(--surface-0); }
+.settings-host .set-device--sel {
+  background: color-mix(in srgb, var(--accent-action) 6%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent-action);
+}
+.settings-host .set-device-mark {
+  width: 14px; text-align: center; color: var(--text-dimmer); flex: 0 0 14px;
+}
+.settings-host .set-device-mark.set-device-ok { color: var(--status-ok); }
+.settings-host .set-device-text {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.settings-host .set-device-meta { font-size: var(--fs-set-hint); }
+/* The wire as a mark (2026-09-09): 14px on the sub-line, sat on the text's
+   own centre; the same glyph in the card head's badge at the badge's size. */
+.settings-host .set-wire { width: 14px; height: 14px; vertical-align: -3px; display: inline-block; }
+/* The row's ⋯ — the rail's door, in the kit's small button: 30 square, the
+   glyph alone, lit while the block below is showing this sensor. */
+.settings-host .in-settings .set-device-more {
+  width: 30px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-dim);
+}
+.settings-host .set-device-more-ico { width: 16px; height: 16px; display: block; }
+.settings-host .in-settings .set-device-more[aria-pressed="true"] {
+  color: var(--text-light); border-color: var(--border-soft); background: var(--surface-2);
+}
+/* An empty list is empty INSIDE the box — the kit's empty state carries its own
+   frame, which would draw a second border 1px inside the first. */
+.settings-host .set-devices .set-empty {
+  border: none; border-radius: 0; padding: 30px 20px;
+}
+
+/* The card is a container now, not a card: the selected sensor's block sits in
+   the page, so its old frame would put a second edge inside the section — and
+   its padding pushed the control groups 13px left of every other row's, which
+   is exactly the ragged right edge the row model exists to remove. */
+.settings-host .in-settings .imu-setup-card {
+  padding: 0; margin: 0; border: none; background: none; border-radius: 0;
+}
+
+/* ── The table (SETTINGS-GUI § 3) ────────────────────────────────────────
+   A fixed-column grid IS the table element: columns that have to line up down
+   the page, which a right-aligned control group cannot do. Fixed rather than
+   auto so a value column does not re-flow as its digits change — the sensor
+   readout rewrites six cells at up to 400 Hz. Each page states its own column
+   template in --set-cols and nothing else varies. */
+.settings-host .in-settings .set-table {
+  border-top: 1px solid var(--border-faint);
+}
+.settings-host .in-settings .set-table-head,
+.settings-host .in-settings .set-table-row {
+  display: grid;
+  grid-template-columns: var(--set-cols);
+  align-items: center; gap: 12px;
+}
+/* sensors — Axis · Maps to · Raw · Polarity · Calibrated (R6: NWU said the
+   same fact as Maps to, and the door's heading already says NWU is fixed) */
+.settings-host .in-settings .set-table--orient { --set-cols: 70px 70px 1fr 90px 1fr; }
+/* Sources — source · what arrives · one right-aligned status/action group */
+.settings-host .in-settings .set-table--sources { --set-cols: 150px 1fr max-content; }
+
+/* The selected sensor is a THING (Ek, 2026-09-01: "the connected sensor is in
+   a box of sorts") — the device list's own box geometry, reused as the
+   container for its rows: same border, same radius, same 52px header strip.
+   Not a twelfth kit element; a composition of two that exist. */
+.settings-host .in-settings .imu-setup-card {
+  border: 1px solid var(--border-base); border-radius: var(--r-menu);
+  overflow: hidden; padding: 0 16px 8px; margin-top: 0;
+}
+.settings-host .in-settings .set-card-head {
+  display: flex; align-items: center; gap: 12px; height: 52px;
+  margin: 0 -16px; padding: 0 16px; background: var(--surface-0);
+  border-bottom: 1px solid var(--border-faint);
+  font-size: var(--fs-set-row); font-weight: 500; color: var(--text-light);
+}
+.settings-host .in-settings .set-card-live { margin-left: auto; }
+/* A layer head is a SECTION TITLE that happens to live inside the card, so it
+   carries the section's own number — 30 above — rather than a bespoke one. */
+.settings-host .in-settings .set-layer-head { margin-top: 30px; }
+/* LED feedback — On · Function · Colour · Pattern · Rate|Count · Test */
+.settings-host .in-settings .set-table--led    { --set-cols: 56px 1fr 150px 190px 74px 84px; }
+.settings-host .in-settings .set-table-head {
+  padding: 10px 0; font-size: var(--fs-set-hint); color: var(--text-muted);
+}
+/* The three "on tiles" switches under Keyboard · Button · MIDI (2026-09-12):
+   the kit's toggle, a hint-size caption beside it, stacked under the title. */
+.settings-host .in-settings .set-table-head .set-legend-show {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px; cursor: pointer; }
+.settings-host .in-settings .set-table-head .set-legend-show small {
+  font-size: var(--fs-set-hint); color: var(--text-subtle); }
+.settings-host .in-settings .set-table-row {
+  padding: 8px 0; font-size: 14px; color: var(--text-primary);
+  border-top: 1px solid var(--border-faint);
+}
+/* The dial beside each angle (2026-09-09): a 22px ring and a needle, the
+   number staying beside it. Raw wears the text colour, calibrated the accent. */
+.settings-host .set-dial { width: 24px; height: 24px; flex: none; margin-right: 10px;
+  fill: none; stroke: var(--text-faint); stroke-width: 1.5; stroke-linecap: round; }
+.settings-host .set-dial-needle { stroke: var(--text-primary); stroke-width: 2;
+  transition: transform 80ms linear; }
+.settings-host .set-dial-needle--cal { stroke: var(--accent-action); }
+/* The zero tick at twelve o'clock: what the needle is read against. */
+.settings-host .set-dial-zero { stroke: var(--text-faint); stroke-width: 1.5; }
+/* The number keeps one width so the dial beside it does not walk as the
+   digits change — 62px holds "-179.6°" at the table's 14px. */
+.settings-host .set-table-numval { display: inline-block; min-width: 62px; text-align: right; }
+/* Raw and calibrated are read as a column of numbers, so they are right
+   aligned and tabular — the digits must not shift as the value changes. */
+.settings-host .in-settings .set-table--orient .set-table-head > :nth-child(3),
+.settings-host .in-settings .set-table--orient .set-table-head > :nth-child(5),
+.settings-host .in-settings .set-table-num {
+  text-align: right; font-variant-numeric: tabular-nums;
+  display: flex; align-items: center; justify-content: flex-end;
+}
+.settings-host .in-settings .set-table--orient .set-table-head > :nth-child(4),
+.settings-host .in-settings .set-table-act {
+  text-align: center; display: flex; justify-content: center;
+}
+.settings-host .in-settings .set-table .imu-setup-pol-btn {
+  width: 30px; height: 30px; padding: 0; border-radius: var(--r-field);
+  border: 1px solid var(--border-soft); background: none;
+  font-family: var(--font-sans); font-size: 14px; color: var(--text-primary);
+  font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.settings-host .in-settings .set-table .imu-setup-pol-btn.reversed {
+  border-color: var(--accent-action); color: var(--accent-action);
+}
+
+/* ── The disclosure row ──────────────────────────────────────────────────
+   A chevron that turns, and nothing else: no triangle, no collapsible frame,
+   the rows simply arrive underneath. */
+.settings-host .in-settings .set-row--disclose { cursor: pointer; }
+.settings-host .in-settings .set-chevron {
+  display: inline-block; width: 14px; color: var(--text-dimmer);
+  transition: transform var(--m-touch) var(--ease-out);
+}
+.settings-host .in-settings .set-row--disclose.open .set-chevron {
+  transform: rotate(90deg);
+}
+.settings-host .in-settings .imu-setup-cmd-log {
+  max-height: 220px; overflow-y: auto; padding: 10px 0 14px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   THE LED FEEDBACK PAGE (2026-08-30)
+   Two tables rather than one, because a state's fifth column is a Rate and an
+   event's is a Count — one table made the reader carry the difference. The
+   legend that used to open the page is the Reference section at the bottom.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* The function column is a name and the condition that fires it. The sub-line
+   is what the tooltip used to be, at the one moment you are comparing rows. */
+.settings-host .in-settings .led-fn {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.settings-host .in-settings .led-fn-name { font-size: 14px; color: var(--text-light); }
+/* One line, always: the sub-line may not be what decides a row's height, or a
+   longer string in a future row silently re-flows the whole table. */
+.settings-host .in-settings .led-fn-sub {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+}
+.settings-host .in-settings .led-fn-when {
+  font-size: var(--fs-set-sub); color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* The row driving the LED right now. A ground rather than a border, so it
+   reads as "this one is live" and not as "this one is selected". */
+.settings-host .in-settings .led-row.is-active {
+  background: color-mix(in srgb, var(--accent-action) 5%, transparent);
+}
+.settings-host .in-settings .led-row.is-active .led-fn-name {
+  color: var(--text-highlight);
+}
+.settings-host .in-settings .led-row.is-active .led-fn-name::before {
+  content: '▸ '; color: var(--accent-action);
+}
+/* A disabled row states it through its controls' own disabled faces — dimming
+   the whole row reads as muted, which is a different fact (DESIGN-SYSTEM § 4). */
+.settings-host .in-settings .led-row.is-off .led-fn,
+.settings-host .in-settings .led-row.is-off .led-fn-name { color: var(--text-subtle); }
+.settings-host .in-settings .led-row select:disabled,
+.settings-host .in-settings .led-colour-trigger:disabled {
+  border-color: var(--border-subtle); color: var(--text-faint); cursor: default;
+}
+@keyframes setLedFired { from { background: var(--accent-action); } to { background: transparent; } }
+.settings-host .in-settings .led-row.led-fired { animation: setLedFired 0.7s ease-out; }
+
+/* ── Colour: a swatch, its name, and the palette as the kit's menu ─────── */
+.settings-host .in-settings .led-colour { position: relative; }
+.settings-host .in-settings .led-colour-trigger {
+  width: 100%; justify-content: flex-start; gap: 9px; padding: 0 10px;
+}
+.settings-host .in-settings .led-swatch {
+  width: 14px; height: 14px; flex: 0 0 14px; border-radius: 4px;
+  border: none; padding: 0; display: inline-block;
+}
+/* Black is invisible against the dialog, so it gets the hairline. */
+.settings-host .in-settings .led-swatch.is-off { border: 1px solid var(--border-medium); }
+.settings-host .in-settings .led-colour-name { font-size: var(--fs-set-hint); }
+.settings-host .in-settings .set-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 5;
+  min-width: 100%; max-height: 280px; overflow-y: auto;
+}
+.settings-host .in-settings .set-menu-item { gap: 9px; }
+.settings-host .in-settings .set-menu-item[aria-checked="true"]::after {
+  content: '✓'; margin-left: auto; color: var(--accent-action);
+}
+
+/* The count column is 74px wide, so its dropdown cannot be the kit's fixed
+   190 — the only dimension that changes. */
+.settings-host .in-settings .set-select--sm { width: 74px; padding: 0 22px 0 10px; }
+
+/* ── The reference block ─────────────────────────────────────────────────
+   Measured, not eyeballed: 66ch is where a 13.5px line stops needing the eye
+   to travel back across the page, which is the whole reason this is set as
+   prose and not as rows. */
+.settings-host .in-settings .mapping-legend {
+  max-width: 66ch; margin: 0;
+  font-size: var(--fs-set-hint); line-height: 1.55; color: var(--text-muted);
+  text-wrap: pretty; font-style: normal;
+}
+/* The paragraphs, not just the block: a <p> matches the page's type sweep at
+   the same depth, so setting the container alone left them at body size. */
+.settings-host .in-settings .mapping-legend p {
+  margin: 0 0 10px; font-size: var(--fs-set-hint); line-height: 1.55;
+}
+.settings-host .in-settings .mapping-legend p:last-child { margin-bottom: 0; }
+.settings-host .in-settings .mapping-legend strong {
+  color: var(--text-primary); font-weight: 600;
+}
+.settings-host .in-settings .mapping-legend em {
+  color: var(--text-light); font-style: italic; font-weight: 400;
+}
+.settings-host .in-settings .mapping-legend code {
+  /* inherit, not an em fraction: 0.94em of 13.44 is a size nobody chose and
+     the audit reports it as a step on the ramp. */
+  font-family: var(--font-mono); font-size: inherit; color: var(--text-light);
+  background: none; padding: 0;
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   meter-patch.css — append verbatim to the END of css/settings-gui.css,
+   then delete this file. Element eleven of the kit: the meter.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --fs-set-sub: 0.8125rem;  /* 13px — a sub-line under a name or a number */
+  --fs-set-tick: 0.71875rem; /* 11.5px — a METER TICK, and nothing else. The
+                                only size below the badge; legal on the dB
+                                ruler, its labels and the gate's threshold
+                                caption. align-audit rejects it elsewhere. */
+}
+
+/* ── Meter — the one element with no desktop precedent ─────────────────────
+   Horizontal, one row per channel, ONE dB ruler per group — four channels at
+   6px each read as a block, and the scale is read once. Geometry follows the
+   row model's right edge: 54px label · track · 64px readout · 10px clip pip.
+
+   Two things are load-bearing rather than decorative. The scale is CURVED
+   (pow 1.5 in the driver) so the top 20 dB — the part you ride — take half the
+   track. And the number is RMS while the tick is PEAK: the paint gate tests
+   max(rms, 0.7×peak), so rms is the value you set a threshold against, and the
+   thing that clips is already on screen as the held tick. One number, two
+   facts, no second column.
+
+   The driver (js/ui-meters.js) writes fill width, peak position, readout text,
+   the clip latch and `background-size` — same contract as `--fill` on a range:
+   CSS owns the look, JS owns the numbers. */
+.settings-host .set-meters { display: flex; flex-direction: column; gap: 9px; }
+.settings-host .set-meter-ruler {
+  display: flex; align-items: center; gap: 14px; height: 14px;
+  font-size: var(--fs-set-tick); color: var(--text-faint);
+}
+.settings-host .set-meter-ruler > .set-meter-scale { flex: 1; position: relative; height: 14px; }
+.settings-host .set-meter-scale > span { position: absolute; top: 0; transform: translateX(-50%); }
+.settings-host .set-meter-scale > span:last-child { color: var(--text-muted); }
+.settings-host .set-meter-row { display: flex; align-items: center; gap: 14px; }
+.settings-host .set-meter-label {
+  flex: 0 0 54px; font-size: var(--fs-set-hint); color: var(--text-subtle);
+  font-variant-numeric: tabular-nums;
+}
+.settings-host .set-meter-track {
+  flex: 1; position: relative; height: 6px; border-radius: 3px;
+  background: var(--surface-2); overflow: hidden;
+}
+/* Where to aim: −18 … −6 on the curved scale. The meter saying where you
+   should be is the informative part a bare bar cannot do. */
+.settings-host .set-meter-band {
+  position: absolute; left: 58.6%; right: 14.6%; top: 0; bottom: 0;
+  background: var(--surface-1);
+}
+.settings-host .set-meter-fill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+  border-radius: 3px; background-repeat: no-repeat;
+  /* The heat ramp is anchored to the SCALE, not to the fill: the driver sets
+     `background-size: <trackWidth>px 100%`, so −20 dB is the same green
+     whether the bar is short or long. Scaled to the fill instead, a quiet
+     signal paints its own tip red — a meter lying about headroom. Stops sit on
+     the curved scale at −60 · −20 · −11 · −6 · −1, so the colour turns where
+     the lit band ends. */
+  background-image: linear-gradient(90deg,
+    color-mix(in srgb, var(--status-ok) 82%, var(--bg-app)) 0%,
+    var(--status-ok) 50%,
+    color-mix(in srgb, var(--status-ok) 45%, var(--status-warn)) 74%,
+    var(--status-warn) 86%,
+    var(--status-error) 97%);
+}
+.settings-host .set-meter-peak {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: var(--text-highlight); opacity: 0;
+}
+.settings-host .set-meter-val {
+  flex: 0 0 64px; text-align: right; font-size: var(--fs-set-body);
+  color: var(--text-primary); font-variant-numeric: tabular-nums;
+}
+.settings-host .set-meter-val--over { color: var(--status-error); }
+.settings-host .set-meter-clip {
+  flex: 0 0 10px; height: 10px; border-radius: 2px; background: var(--surface-2);
+}
+.settings-host .set-meter-clip--lit { background: var(--status-error); }
+.settings-host .set-meter-row--off { opacity: 0.45; }
+
+/* The gate is the same meter carrying a threshold. The marker overhangs the
+   track, so the row needs its own headroom for the caption. */
+.settings-host .set-meter-row--gate { margin-top: 12px; }
+.settings-host .set-meter-thresh {
+  position: absolute; top: -6px; bottom: -6px; width: 2px;
+  background: var(--text-light); cursor: ew-resize;
+}
+.settings-host .set-meter-thresh-val {
+  position: absolute; top: -13px; transform: translateX(-50%);
+  font-size: var(--fs-set-tick); color: var(--text-secondary);
+}
+.settings-host .set-meter-gated {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  border-radius: 3px 0 0 3px;
+  background: color-mix(in srgb, var(--status-error) 22%, transparent);
+}
+
+/* ── The two variants ruled in at round four ─────────────────────────────── */
+.settings-host .in-settings .set-select--sm {
+  width: 74px; padding: 0 24px 0 10px; font-size: var(--fs-set-hint);
+  background-position: calc(100% - 13px) 15px, calc(100% - 9px) 15px;
+}
+/* A row gets one DESCRIPTION (prose, rewritable) and optionally one STATUS
+   line (a live value). Naming them apart is what stops a number from being
+   edited as if it were copy. */
+.settings-host .in-settings .set-row-status {
+  display: block; margin-top: 3px;
+  font-size: var(--fs-set-sub); color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* 13px is a real step now: a sub-line under a name (device row, LED function)
+   or under a number (an event's burst length). */
+
+.settings-host .in-settings .set-device-meta,
+.settings-host .in-settings .set-table-sub {
+  font-size: var(--fs-set-sub); color: var(--text-dim);
+}
+
+/* ── The three bare-span rules ────────────────────────────────────────────
+   Everything else the kit declares is keyed on a CLASS, and a class rule at
+   `.settings-host .set-x` (0,2,2) beats the body-size default above (0,1,1) on
+   its own. These three target a bare `span`, which the default names directly,
+   so inheritance from the parent's rule is not enough and the size has to be
+   stated on the child. Measured: deleting them put the meter's dB ruler back to
+   14 (15 elements on the audio page), and dropped a device-list header and the
+   mapping sentence from 15.04 to 14.
+
+   Nothing here is a specificity restatement any more — style.css § 24 is gone
+   and so are the five rules that existed to out-rank it. */
+.settings-host .set-meter-scale > span { font-size: var(--fs-set-tick); }
+.settings-host .set-devices-head > span { font-size: var(--fs-set-row); }
+.settings-host .map-sentence > span { font-size: var(--fs-set-row); }
+
+/* Two rules the meter needs from its hosts, kept after the patch so its own
+   position still decides everything it states. */
+/* The ruler's trailing cells are SPACERS — they line the scale up with the
+   tracks — so the clip pip must not paint there. */
+.settings-host .set-meter-ruler .set-meter-clip { background: none; }
+/* The threshold marker and its caption overhang the track on purpose, so the
+   gate row is the one place the track does not clip its children. */
+.settings-host .set-meter-row--gate .set-meter-track { overflow: visible; }
+
+/* The count column is a select with its cost under it, so it stacks. */
+.settings-host .in-settings .led-count-cell {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+}
+
+/* The gate row is a meter inside a CONTROL GROUP rather than in a meter group,
+   so it has to be told to fill it: as a bare flex child it sized to its
+   readout and left the track at 0px wide — a meter that drew correctly in
+   percentages and could not be dragged, because there was nothing to drag on.
+   (Measured 2026-08-30: track rect width 0.) */
+.settings-host .in-settings .set-ctl > .set-meter-row {
+  flex: 1 1 auto; min-width: 0;
+}
+/* An event row stacks a count over its cost, and the table's ceiling is 56px
+   (SETTINGS-GUI § 3). 30px select + 15px sub-line leaves 11px of padding to
+   spend, so the LED tables spend 4 top and bottom and land at 55. */
+.settings-host .in-settings .set-table--led .set-table-row { padding: 4px 0; }
+.settings-host .in-settings .set-table-sub { line-height: 1.15; }
+/* The kit's select is 36 tall, and 36 + a 15px sub-line + padding is 61 — over
+   the table's ceiling. In a table row the small select is 30, matching the
+   small button beside it; the chevron moves up with it. */
+.settings-host .in-settings .set-table--led .set-select--sm {
+  height: 30px;
+  background-position: calc(100% - 13px) 12px, calc(100% - 9px) 12px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   THE MAPPING PAGE (2026-08-30, round six)
+   Master–detail, for the reason the sensors page took it: _buildRow() put
+   fourteen controls on one line, and no table row survives that. The list is
+   one sentence per mapping; the six rows below it are the chain, in the order
+   the signal takes it.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* A suffixed field — the unit belongs to the NUMBER, not to the row. `° 0 – 90`
+   is not a sentence, and a unit parked right of a pair of boxes leaves them
+   ending short of every other control group on the page. */
+.settings-host .in-settings .set-field {
+  display: inline-flex; align-items: center; gap: 3px;
+  width: 96px; height: 36px; padding: 0 11px;
+  background: var(--surface-0);
+  border: 1px solid var(--border-soft); border-radius: var(--r-field);
+}
+.settings-host .in-settings .set-field:focus-within { border-color: var(--accent-action); }
+.settings-host .in-settings .set-field > input {
+  flex: 1; min-width: 0; height: auto; padding: 0; text-align: right;
+  background: none; border: none; border-radius: 0;
+  font-size: var(--fs-set-body); font-variant-numeric: tabular-nums; color: var(--text-light);
+}
+.settings-host .in-settings .set-field > input:focus { outline: none; }
+.settings-host .in-settings .set-field-unit {
+  flex: 0 0 auto; font-size: var(--fs-set-hint); color: var(--text-dim);
+}
+/* The one field that is prose rather than a number: an OSC address. It reads
+   left, and 260 is the kit's wide dropdown — the same right edge. */
+.settings-host .in-settings .set-field--wide { width: 260px; }
+.settings-host .in-settings .set-field--wide > input { text-align: left; }
+
+/* The page action the header borrows. `--primary` is scoped to `.in-settings`,
+   which the button LEAVES when it is borrowed, so it needs its face stated
+   again where it lands. */
+html body .settings-head .set-btn--primary {
+  background: var(--text-light); border-color: var(--text-light);
+  color: var(--bg-app); font-weight: 600;
+}
+html body .settings-head .set-btn--primary:hover { background: var(--text-highlight); }
+/* Same trap, second variant: a borrowed action leaves `.in-settings`, so the
+   danger face has to be stated where it lands too. "Clear all…" arrived in the
+   header wearing the secondary's grey outline. */
+html body .settings-head .set-btn--danger {
+  border-color: var(--accent-danger); color: var(--status-error);
+}
+html body .settings-head .set-btn--danger:hover { background: var(--tint-danger-soft); }
+
+/* A mapping row is selectable the way a sensor row is; the pointer rule was
+   keyed on the sensors page's own data attribute. */
+.settings-host .set-device[data-id] { cursor: pointer; }
+.settings-host .set-device[data-id]:hover { background: var(--surface-0); }
+/* A disabled mapping still reads, it just does not run. 0.55 is the spec'd
+   step; --idle's 0.62 is the sensors page's "not connected yet", a different
+   fact. */
+.settings-host .set-device--off { opacity: 0.55; }
+/* The sentence IS the row. Axis and destination carry the page's brightest
+   text; the arrow is punctuation and recedes; a MIDI channel is a qualifier. */
+.settings-host .in-settings .map-sentence {
+  font-size: var(--fs-set-row); color: var(--text-light);
+}
+/* The live pair sits where a device id sits — right, tabular, before the badge. */
+.settings-host .in-settings .map-live {
+  margin-left: auto; font-size: var(--fs-set-sub); color: var(--text-dim);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.settings-host .in-settings .set-device .map-live + .set-badge { margin-left: 12px; }
+/* `.set-table-sub` carries line-height 1.15 so an LED event row clears the
+   table's 56px ceiling. A device list has no such ceiling, and inheriting that
+   number put the mapping list 1.05px off the sensors list beside it — two lists
+   of the same element, on adjacent pages, at different heights. */
+.settings-host .in-settings .set-device .set-table-sub { line-height: normal; }
+/* The selected mapping's heading carries its live pair as a badge, and Delete
+   is pushed to the right edge the rows below it end on. */
+.settings-host .in-settings .map-detail-head { margin-bottom: 10px; }
+.settings-host .in-settings .map-detail-head > .set-btn { margin-left: auto; }
+
+/* The range bar, rebuilt as the meter element (SETTINGS-GUI § 3). The track is
+   the axis's own reachable travel — which FOLDS with |x|, so a 0…180 selection
+   on a folded axis fills the bar rather than sitting in its right-hand half —
+   the lit band is the selected span, and the peak tick is the live reading. */
+/* The class is reused deliberately (the spec: "that is .mapping-range-bar,
+   rebuilt as the meter element"). Its old 48×6-strip rule in style.css used to
+   fight this one — the block reported 6px tall while its ruler, track and note
+   painted 87px down over the Curve row — and was deleted with the rest of the
+   old row's CSS in round seven, so only the spacing is stated here now. */
+.settings-host .in-settings .mapping-range-bar { margin: 10px 0 0; }
+.settings-host .in-settings .mapping-range-bar .set-meter-band {
+  background: color-mix(in srgb, var(--accent-action) 30%, transparent);
+}
+.settings-host .in-settings .mapping-range-bar .set-meter-peak { opacity: 1; }
+.settings-host .in-settings .mapping-range-note {
+  margin: 6px 0 0 68px; font-size: var(--fs-set-sub); color: var(--text-dim);
+  max-width: 66ch;
+}
+/* The range bar is a second LINE of the input-range row, not a row of its own:
+   one border pair, and the bar runs the full content width under both the
+   label and the fields. */
+.settings-host .in-settings .set-row.map-row--range { flex-wrap: wrap; }
+.settings-host .in-settings .mapping-range-bar { flex: 0 0 100%; }
+/* A third dropdown width. The kit closes at 190 / 260 because those are the two
+   COLUMNS pages are built on; 120 is not a column, it is the output kind — one
+   word, and putting it at 190 makes the destination beside it look like the
+   subordinate control. Noted in SETTINGS-GUI § 3. */
+.settings-host .in-settings .set-select--narrow { width: 120px; }
+/* An IP address is not a number and does not fit the 96 box. */
+.settings-host .in-settings .set-field--host { width: 140px; }
+.settings-host .in-settings .set-field--host > input { text-align: left; }
+/* Transport status: a 6px pip beside that mapping's live readout, latched the
+   way the clip pip is — a send that failed once is a fact about the row, and a
+   dot that has already gone back to grey by the time you look up is not a
+   diagnostic. Clears on the next successful send. */
+.settings-host .in-settings .map-tx {
+  flex: 0 0 6px; width: 6px; height: 6px; margin-left: 10px;
+  border-radius: 50%; background: var(--surface-4);
+}
+.settings-host .in-settings .map-tx--ok   { background: var(--status-ok); }
+.settings-host .in-settings .map-tx--warn { background: var(--status-warn); }
+.settings-host .in-settings .map-tx--err  { background: var(--status-error); }
+/* In the list the live pair takes the auto margin, so the pip rides beside it
+   rather than pushing it off the right edge. */
+.settings-host .in-settings .set-device .map-tx { margin-left: 8px; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   THE KEYS + MIDI PAGE (2026-08-30, round eight)
+   Ten columns became four. The cut IS the design: `osc` and `data` describe the
+   action, so they are its sub-line; the two learn columns were buttons pointing
+   at the cell beside them, so the cell became the button; min/max/γ are read
+   constantly and edited rarely, so they are a menu behind one.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* The filter toolbar. `.set-toolbar` / `.set-search` / `.set-count` already
+   exist for the OSC reference; only the search's 300px box and its leading
+   glyph are new. */
+.settings-host .in-settings .set-toolbar {
+  display: flex; align-items: center; gap: 16px; margin: 0 0 22px;
+}
+.settings-host .in-settings .set-search-wrap {
+  position: relative; flex: 0 0 300px; width: 300px; display: flex; align-items: center;
+}
+.settings-host .in-settings .set-search-icon {
+  position: absolute; left: 12px; width: 16px; height: 16px;
+  color: var(--text-dimmer); pointer-events: none;
+}
+.settings-host .in-settings .set-search {
+  width: 100%; height: 36px; padding: 0 32px 0 36px;
+  background: var(--surface-0); border: 1px solid var(--border-soft);
+  border-radius: var(--r-field); font-family: var(--font-sans);
+  font-size: var(--fs-set-body); color: var(--text-light);
+}
+.settings-host .in-settings .set-search:focus {
+  outline: none; border-color: var(--accent-action);
+}
+.settings-host .in-settings .set-search-clear {
+  position: absolute; right: 8px; width: 20px; height: 20px; padding: 0;
+  display: none; align-items: center; justify-content: center;
+  background: none; border: none; border-radius: var(--r-field);
+  color: var(--text-dimmer); font-size: var(--fs-set-hint); cursor: pointer;
+}
+.settings-host .in-settings .set-toolbar.filtering .set-search-clear { display: flex; }
+html body .settings-host .in-settings .set-count {
+  font-size: var(--fs-set-hint); color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+/* Instrument buttons: its rows are read, not set — the 46ch measure left half
+   the page empty under a paragraph (Ek, 2026-09-10: "make it take up full
+   width"). Scoped to the one page whose descriptions are the content. */
+.settings-host .in-settings .set-row-desc--wide { max-width: none; }
+/* How a button is read — Gesture · the button · Fires · Use it for. A 200 × 40
+   timeline per row: the trace is the button, the dot the fire, the band the
+   window, the dash the count to long, the green the on-time. Rows hold the
+   kit's 56px ceiling by keeping the two text cells to two lines. One class
+   per part (the depth rule: .in-settings + one step). */
+.settings-host .in-settings .set-table--how { --set-cols: 100px 200px 1fr 1.25fr; }
+.settings-host .in-settings .how-row { padding: 6px 0; }
+.settings-host .in-settings .how-group {
+  display: block; padding: 14px 0 2px; font-size: var(--fs-set-hint); color: var(--text-dimmer);
+  letter-spacing: var(--ls-display); text-transform: uppercase; border-top: 0;
+}
+.settings-host .in-settings .how-svg { display: block; width: 200px; height: 40px; }
+.settings-host .in-settings .how-text { font-size: var(--fs-set-hint); color: var(--text-muted); line-height: 1.35; }
+.settings-host .in-settings .how-trace { fill: none; stroke: var(--text-light); stroke-width: 1.5; stroke-linejoin: round; }
+.settings-host .in-settings .how-band { fill: var(--text-faint); opacity: 0.55; }
+.settings-host .in-settings .how-hold { stroke: var(--text-subtle); stroke-width: 2; stroke-dasharray: 3 2; }
+.settings-host .in-settings .how-on { stroke: var(--status-ok); stroke-width: 3; stroke-linecap: round; }
+.settings-host .in-settings .how-dot { fill: var(--accent-action); }
+.settings-host .in-settings .how-dot--hollow { fill: none; stroke: var(--accent-action); stroke-width: 1.5; }
+.settings-host .in-settings .how-dot--off { fill: var(--text-subtle); }
+.settings-host .in-settings .how-strike { stroke: var(--status-error); stroke-width: 1.6; fill: none; }
+/* Show all — the kit's switch beside its word, at the count's size. */
+.settings-host .in-settings .set-toolbar-toggle {
+  display: flex; align-items: center; gap: 10px;
+  font-size: var(--fs-set-hint); color: var(--text-muted); cursor: pointer; user-select: none;
+}
+/* The instruction, pushed right. It is the page's one piece of prose that is
+   not attached to a control, and it earns that by being the only way to know
+   the cells are buttons. */
+.settings-host .in-settings .set-toolbar-hint {
+  margin-left: auto; font-size: var(--fs-set-hint); color: var(--text-dim);
+}
+
+/* Four columns. The three binding columns are fixed so they line up down a
+   hundred rows; only Action flexes. */
+/* Instrument buttons — Button · Press · Tap · Long · Extra long · ×2 · ×3.
+   Tap · long · extra long are the wide ones: the factory set (2026-09-10) puts
+   the palette's long labels (`tile 4 (grain) · activate (momentary)`) there,
+   and at 1fr they ran to three lines and 68px. Two lines is 51 (measured). */
+.settings-host .in-settings .set-table--buttons { --set-cols: 70px 0.9fr 1.5fr 1.5fr 1.5fr 0.8fr 0.8fr; }
+/* Gesture · Fires on · Wait · A hold action */
+.settings-host .in-settings .set-table--edges { --set-cols: 70px 1.3fr 1fr 1.4fr; }
+/* Action · Key · Button · MIDI · Scale — the Button column is the instrument's
+   three (2026-09-09), the same cell as Key at the same width. 84px held a key
+   name; a key WITH its gesture (2026-09-11) is `spacebar extra long`, and at
+   84 the cell cut it after the first word (Ek, 2026-09-12); at 132 it still lost
+   the last letters — measured 141px of text in a 130px box. 150 clears it. */
+.settings-host .in-settings .set-table--keys { --set-cols: 1fr 150px 150px 128px 128px; }
+.settings-host .in-settings .set-table--keys .set-table-row { padding: 7px 0; }
+/* A group heading spans the grid rather than sitting in the first column. */
+.settings-host .in-settings .set-table--keys .set-table-row--group {
+  grid-template-columns: 1fr; padding: 18px 0 6px;
+  font-size: var(--fs-set-hint); color: var(--text-muted); border-top: none;
+}
+.settings-host .in-settings .set-table--keys .set-row-title { font-size: var(--fs-set-body); }
+.settings-host .in-settings .filtered-out { display: none; }
+
+/* A binding cell IS the control (SETTINGS-GUI § 3): 30px, the kit's small
+   button. Unbound is a DASHED box — an empty slot that can be filled reads
+   differently from a solid button that does something. */
+.settings-host .in-settings .bind-btn {
+  width: 100%; height: 30px; padding: 0 10px;
+  background: none; border: 1px solid var(--border-soft); border-radius: var(--r-field);
+  font-family: var(--font-sans); font-size: var(--fs-set-hint); color: var(--text-light);
+  cursor: pointer; text-align: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.settings-host .in-settings .bind-btn:hover { border-color: var(--border-medium); }
+.settings-host .in-settings .bind-btn--empty {
+  border-style: dashed; color: var(--text-dimmer);
+}
+/* Listening is the one state that must be unmistakable from across a room. */
+.settings-host .in-settings .bind-btn--learning {
+  border-color: var(--accent-action); border-style: solid; color: var(--accent-action);
+}
+/* THREE STATES, and the rule between them is: a DASH means unbound, BLANK means
+   impossible.
+     · solid button      — bound, and rebindable
+     · dashed button "—" — unbound, and bindable: an empty slot
+     · blank             — no binding is possible here at all
+   Scale obeys it too: it has no unbound state, so it is a button or nothing.
+   "n/a" was a third word for what blank already says. A fourth "badge" state
+   was specified and built in round nine and deleted in round ten: it had zero
+   cases in ACTIONS, and a state the table cannot produce is invented. */
+.settings-host .in-settings .bind-blank { display: block; }
+.settings-host .in-settings .bind-cell { position: relative; }
+
+/* The scale menu: the kit's menu carrying three fields instead of items. */
+.settings-host .in-settings .scale-menu { padding: 10px; min-width: 210px; left: auto; right: 0; }
+.settings-host .in-settings .scale-menu-row {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+}
+.settings-host .in-settings .scale-menu-row:last-child { margin-bottom: 0; }
+/* first-child, not `> span`: the kit's field IS a span, so a bare `> span`
+   handed it `flex: 1 1 auto` and it sized to its content — three fields at
+   112, 109 and 134 in a menu whose whole point is that they line up. */
+.settings-host .in-settings .scale-menu-row > span:first-child {
+  flex: 1 1 auto; font-size: var(--fs-set-hint); color: var(--text-muted);
+}
+.settings-host .in-settings .scale-menu-row > .set-field { flex: 0 0 96px; width: 96px; }
+
+/* Two device lists, side by side. */
+.settings-host .in-settings .mon-cols {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start;
+}
+.settings-host .in-settings .mon-log { max-height: 220px; overflow-y: auto; }
+.settings-host .in-settings .mon-line {
+  padding: 5px 16px; font-size: var(--fs-set-sub); color: var(--text-dim);
+  font-variant-numeric: tabular-nums; border-top: 1px solid var(--border-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.settings-host .in-settings .mon-pause {
+  margin-left: auto; display: flex; align-items: center; gap: 10px;
+  font-size: var(--fs-set-hint); color: var(--text-muted);
+}
+/* A READOUT, not a field. The port is fixed at launch by --osc-port, so a box
+   around it was drawing a control that cannot be operated — the same mistake
+   the dashed-vs-blank rule above exists to stop. Plain text in the control
+   slot, right-aligned and tabular, exactly as a meter row reading "off". */
+.settings-host .in-settings .set-readout {
+  font-size: var(--fs-set-body); color: var(--text-light);
+  font-variant-numeric: tabular-nums; text-align: right;
+}
+
+/* ── The pins page (2026-08-30, round nine) ───────────────────────────────
+   NOTE THE SELECTOR: the shell puts `.in-settings` on the borrowed node
+   ITSELF, so `.in-settings .device--commit` matches nothing — it asks for a
+   device inside an in-settings ancestor, and here they are one element. Every
+   rule below was written that way first and silently did nothing; the page was
+   still 316px short of the app's right edge with a max-width override sitting
+   right here. It is `.device--commit.in-settings`.
+   The commits device is BORROWED whole, so its own layout rules still apply
+   inside the host. Three of them fight the row model and are stated back here:
+   `.device-body` is a flex column with a gap, `.seq-section + .seq-section`
+   draws its own hairline, and `.grain-seg` inside a device is laid out for a
+   32px panel row. The page shows only what #270 left visible — params. */
+.settings-host .device--commit.in-settings .seq-section-body {
+  display: block !important;
+}
+/* The section wrapper is a flex column with a gap; rows own their own spacing
+   and their own hairline, so both have to come off or every row is 12px
+   further apart than the same row on every other page. */
+.settings-host .device--commit.in-settings .seq-section-body > .set-row { margin: 0; }
+.settings-host .device--commit.in-settings .set-sec-title { margin-top: 26px; }
+.settings-host .device--commit.in-settings .set-sec-title:first-child { margin-top: 0; }
+/* The collapsible's own label. It has to stay in the markup — it carries the
+   collapse toggle and the `commitSharedParams` key — but on this page the
+   sections below it are the headings, and "params" above "Slots" is the device
+   view's word for a page that is now made of rows. */
+.settings-host .device--commit.in-settings .seq-section-label { display: none; }
+/* style.css caps a commit section at 34rem, which is the width it wants in the
+   rig view's narrow panel column. Hosted, it left the whole page ending at 949
+   while every other page ends at 1265 — one page 316px short of the app's only
+   right edge. Measured 2026-08-30. */
+.settings-host .device--commit.in-settings .seq-section { max-width: none; }
+.settings-host .device--commit.in-settings { padding: 0; }
+/* A dimmed row means "only in focus mode", which is inline on the element. It
+   must not also dim the section heading above it. */
+.settings-host .device--commit.in-settings .set-row .grain-numbox {
+  height: 36px; width: 64px; text-align: right;
+}
+/* The lock indicator rides the control group, not the row: it is a mark about
+   the parameter, and at the far right it reads as another control. */
+html body .settings-host .in-settings .grain-seg .grain-seg-btn { border-radius: 6px; }
+
+/* ── Round ten: the two-line list head, the attach menu, the command log ── */
+.settings-host .in-settings .set-devices-head--two-line { height: auto; min-height: 52px; padding: 8px 16px; }
+.settings-host .in-settings .set-devices-head-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.settings-host .in-settings .set-devices-sub { font-size: var(--fs-set-hint); font-weight: 400; color: var(--text-muted); }
+/* Breathing room where the card header meets its first line (Ek: "spacing
+   under the sensor title is off"). */
+.settings-host .in-settings .imu-card-lede { margin: 14px 0 4px; }
+/* A scrolled sub-block heading — a row that titles the rows after it. */
+.settings-host .in-settings .set-row--head { padding-bottom: 4px; }
+.settings-host .in-settings .set-layer-head { margin-bottom: 6px; }
+.settings-host .in-settings .imu-cmd-log {
+  font-family: var(--font-mono, monospace); font-size: var(--fs-set-hint);
+  color: var(--text-muted); white-space: pre; overflow-x: auto; padding: 10px 0;
+}
+/* Calibration: three kit toggles, stacked (Ek, 2026-09-01). */
+/* One row, not a stack (Ek, 2026-09-09) — three toggles over one bitfield. */
+.settings-host .in-settings .imu-cal-stack { display: flex; flex-direction: row; align-items: center; gap: 18px; }
+.settings-host .in-settings .imu-cal-line {
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  font-size: var(--fs-set-body); color: var(--text-primary);
+}
+.settings-host .in-settings .imu-empty-sources { display: flex; flex-direction: column; gap: 8px; text-align: left; margin: 0 auto 12px; max-width: 560px; }
+.settings-host .in-settings .imu-empty-row { display: flex; gap: 16px; font-size: var(--fs-set-hint); color: var(--text-muted); }
+.settings-host .in-settings .imu-empty-key { flex: 0 0 110px; font-weight: 500; color: var(--text-primary); }
+.settings-host .in-settings .imu-empty-foot { font-size: var(--fs-set-hint); color: var(--text-muted); margin: 0; }
+/* #318: the template puts .set-field on the <input> itself, and nothing set
+   the field's face — so a password input's placeholder fell back to the UA
+   font. One face for the field and its placeholder, stated once. */
+.settings-host .in-settings input.set-field {
+  font-family: var(--font-sans); font-size: var(--fs-set-body);
+  color: var(--text-primary); text-align: left;
+}
+.settings-host .in-settings input.set-field::placeholder {
+  font-family: var(--font-sans); font-size: var(--fs-set-body);
+  color: var(--text-subtle);
+}
+
+/* The keys page's PALETTE rows (2026-09-11): glyph · name · verb as separate
+   marks in the title, in the palette's order — the glyph and name say what,
+   the verb says which of the tile's own acts this row binds; the key cell
+   says what fires it. No position number, no kind word. */
+.settings-host .in-settings .set-row-title--tile { display: flex; align-items: center; gap: 0.45rem; }
+.settings-host .in-settings .set-row-glyph { width: 1rem; height: 1rem; flex: none; color: var(--text-dim); }
+.settings-host .in-settings .set-row-name { color: var(--text-light); }
+.settings-host .in-settings .set-row-verb { color: var(--text-secondary); font-weight: 400; }
+.settings-host .in-settings .set-row-verb::before { content: '·'; margin-right: 0.45rem; color: var(--text-tertiary); }

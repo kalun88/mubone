@@ -29,23 +29,31 @@ In the sensor panel, assign one quaternion stream to **cursor** and the other to
 
 Stand in your neutral "home" pose (the orientation you want to be center/origin in the viz) and tare both sensors. This zeros each sensor to its own mounted orientation. Order doesn't matter — just hold still while you tare.
 
-### 4. Configure axis maps (one axis at a time)
+### 4. Calibrate the mounting
 
-Each sensor has its own axis map: three physical channels (x, y, z) each mapped to a viz axis (yaw, pitch, roll) with a sign (±) and mute toggle.
+**This replaces the per-channel axis mapping this section used to describe.** That control was documented here for months and never existed in the panel — `DeviceState` held signs only, and the channel map lives in the registry, which had no UI at all. Worse, it was the wrong tool: a mounting is an arbitrary rotation, and no assignment of three channels to three axes with three signs can express one. Only the 24 right-angle cases, which is not where a strap ends up.
 
-For each sensor independently:
+Instead, for each sensor:
 
-1. **Yaw** — rotate your body left/right. Watch the live Euler readout and note which channel (x, y, or z) moves the most. Map that channel → `viz yaw`. If the direction is inverted, flip the sign.
+1. **Settings → Sensors → Mounting → Calibrate**, then follow the countdown.
+2. Hold it **as it will be worn, aimed the way you play**.
+3. **Bow it forwards** — rotate it the way you would take a bow — and hold.
 
-2. **Pitch** — nod up/down. Find the channel that moves, map it → `viz pitch`. Check sign.
+The bow is the measurement, not two snapshots: gravity gives only *up*, so bowing forwards is the only way mubone can learn which way forward is. Bow it sideways and forward lands 90° off. A single position cannot work at all — it cannot separate the strap's own twist about vertical from which way you are facing, so pitch comes out mixed into roll. See `docs/TARE-RECENTER-ZERO.md`. Done this way it works at any angle: wrist rotated to taste, head, back, a clip on a tuba bell.
 
-3. **Roll** — tilt head/body side to side. Map the moving channel → `viz roll`. Check sign.
+Then, separately, **face the audience and press `` ` ``** to zero the heading. Do that as often as you like; it cannot disturb the mounting.
 
-If a channel doesn't map to anything useful, mute it.
+### 5. Check the directions, and flip signs if needed
 
-### 5. Verify with the stacked test (optional)
+With the frame correct, anything still backwards is a genuine one-bit problem:
 
-Place both sensors together, tare both, and move them as a unit. The viz should stay perfectly still — cursor and frame cancel. If it drifts at large angles, an axis map is wrong (likely a sign flip or axis swap).
+- pitch up → cursor moves toward the **blue** (upper hemisphere)
+- twist → the **horizon rolls**, the cursor does not translate
+- turn → the cursor sweeps along the **ivory equator**
+
+Flip the offending axis in the sensor's polarity row. Those write `slot.quatCal.axisMap`, downstream of the mount and heading rotations, so they cannot invalidate the calibration.
+
+**If sign-flipping does not converge, stop flipping.** A rotated reference frame is not a one-bit problem and no sequence of sign changes can fix it — recalibrate the mounting instead. That distinction cost a full debugging session on 2026-08-31; `docs/TARE-RECENTER-ZERO.md` has the reasoning.
 
 ## Quick reference
 

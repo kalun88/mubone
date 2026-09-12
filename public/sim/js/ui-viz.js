@@ -127,7 +127,11 @@ export function initVizUI() {
   }
 
   // ── UI scale slider ────────────────────────────────────────────────────
-  const BASE_FONT_PX = 15;
+  // The rem base lives in tokens.css as --ui-base-px, read once here rather
+  // than copied. The fallback matches that token; if it ever has to be used,
+  // the stylesheet failed to load and the app has bigger problems.
+  const BASE_FONT_PX =
+    parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-base-px')) || 16;
   const SCALE_KEY = 'mubone_uiScale';
   function applyUiScale(scale) {
     S.uiScale = scale;
@@ -145,37 +149,52 @@ export function initVizUI() {
     v  => { applyUiScale(v); },
     v  => v.toFixed(2));
 
-  // ── HUD scale slider ───────────────────────────────────────────────────
-  const HUD_SCALE_KEY = 'mubone-hud-scale';
-  try {
-    const saved = parseFloat(localStorage.getItem(HUD_SCALE_KEY));
-    if (saved >= 0 && saved <= 2.0) S.hudScale = saved;
-  } catch {}
-  function applyHudScale(v) {
-    S.hudScale = v;
-    const wrapper = document.getElementById('canvasWrapper');
-    if (wrapper) wrapper.style.setProperty('--hud-scale', v);
-    // Hide the DOM HUD overlay when scale is 0 (HUD off)
-    const hud = wrapper?.querySelector('.hud');
-    if (hud) hud.style.display = v === 0 ? 'none' : '';
-    try { localStorage.setItem(HUD_SCALE_KEY, String(v)); } catch {}
-  }
-  applyHudScale(S.hudScale);
-  bindSlider('vizHudScaleSlider', 'vizHudScaleVal',
-    () => S.hudScale,
-    v  => { applyHudScale(v); },
-    v  => v === 0 ? 'off' : v.toFixed(2));
+  // The HUD SIZE slider was removed 2026-08-29. The canvas HUD it sized is
+  // `body .hud { display: none }` — hidden since the tile screen became the
+  // app (#291), so the control had nothing to size. Every `--hud-scale` in
+  // the stylesheet carries a `, 1` fallback, so dropping the only setter
+  // changes no measurement. See S.hudScale in state.js for the one reader
+  // that is left.
 
+  // ── Projector throw angle (rig calibration, NOT a zoom) ─────────────────
+  // Kept separate from camera pull-back on purpose, and the two are not
+  // interchangeable however alike they look on a laptop:
+  //   • this is a number you LOOK UP (Nebula 1.2:1 ≈ 26°, Capsule 3 ≈ 45°) so
+  //     the virtual sphere lands on real surfaces. It is machine-local
+  //     (mubone_fovDeg) and deliberately absent from export files — it
+  //     describes this room's projector, not the piece.
+  //   • camPull is the view control, and it rides the exported viz calibration.
+  // They also are not one axis: FOV changes DISTORTION, pull-back changes
+  // VANTAGE, and narrow-FOV + pulled-back — the least distorted external view —
+  // is a corner no single combined slider could reach.
   // ── Field of view slider ────────────────────────────────────────────────
   const FOV_KEY = 'mubone_fovDeg';
   try {
+    // 360 = the whole sphere laid flat (azimuthal equidistant disc map) —
+    // the FOV slider doubles as the zoom-out-to-world-map control.
     const saved = parseFloat(localStorage.getItem(FOV_KEY));
-    if (saved >= 20 && saved <= 120) S.fovDeg = saved;
+    if (saved >= 10 && saved <= 360) S.fovDeg = saved;
   } catch {}
   bindSlider('vizFovSlider', 'vizFovVal',
     () => S.fovDeg,
     v  => { S.fovDeg = v; try { localStorage.setItem(FOV_KEY, String(v)); } catch {} },
     v  => v.toFixed(1) + '°');
+  // The canvas wheel drives the same value (events.js) — keep the slider,
+  // its readout and the persisted key in step.
+  S._syncZoomUI = (v) => {
+    const s   = document.getElementById('vizFovSlider');
+    const val = document.getElementById('vizFovVal');
+    if (s)   s.value = v;
+    if (val) val.textContent = v.toFixed(1) + '°';
+    try { localStorage.setItem(FOV_KEY, String(v)); } catch {}
+  };
+
+  // ── Camera pull-back RETIRED (2026-08-28, Ek) ───────────────────────────
+  // "One view that's accurate": the centred camera is azimuthal equidistant
+  // and the FOV slider zooms out to the 360° flat map. The outside view is
+  // gone from the UI; S.camPull stays console-only (the pulled render paths
+  // are dormant no-ops at 0) until a cleanup pass deletes them.
+  S._syncCamPullUI = () => {};
 
   // ── Edge indicator (detethered cursor) ─────────────────────────────────
   const EDGE_IND_KEY = 'mubone_edgeIndicator';
@@ -218,6 +237,34 @@ export function initVizUI() {
     () => S.vizMaxSize,
     v  => { S.vizMaxSize = v; },
     v  => v.toFixed(0));
+
+  // ── Gaze trail length ───────────────────────────────────────────────────
+  // Three presets rather than a slider: the useful answers are "none", "just
+  // enough to see the last move" and "a full phrase", and the right one
+  // depends on how fast you turn, not on a value you'd dial in.
+  //
+  // No localStorage key of its own — gazeTrailSec rides the viz calibration
+  // payload in ui-audio-settings.js, which the 2s dirty check persists. That
+  // is also how the particle size sliders above persist; adding a key here
+  // would give the value two homes that could disagree.
+  const trailSeg = document.getElementById('vizGazeTrailSeg');
+  if (trailSeg) {
+    const syncTrail = () => trailSeg.querySelectorAll('[data-trail]').forEach(b =>
+      b.classList.toggle('active', parseFloat(b.dataset.trail) === S.gazeTrailSec));
+    syncTrail();
+    trailSeg.querySelectorAll('[data-trail]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        S.gazeTrailSec = parseFloat(btn.dataset.trail);
+        // The draw pass clears the buffer itself when the value is 0, so
+        // there is nothing to flush here.
+        syncTrail();
+      });
+    });
+    // An imported setup writes S.gazeTrailSec straight into state, so let the
+    // import path re-light the right button rather than leaving the panel
+    // showing the value that was replaced.
+    S._syncGazeTrailUI = syncTrail;
+  }
 
   // ── RMS calibration (volume → size) ─────────────────────────────────────
   bindSlider('vizRmsMinSlider', 'vizRmsMinNum',

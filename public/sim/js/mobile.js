@@ -2,12 +2,9 @@
 // MOBILE MODE — orientation tracking, touch handlers, settings panel
 // ============================================================================
 
-import { S, LIVE_PAINT_COLORS, PRESETS } from './state.js';
+import { S } from './state.js';
 import { qFromAxisAngle, qNormalize, qMul } from './sphere.js';
-import { ensureAudioContext, requestMicAccess, startLiveRecording, stopLiveRecording } from './audio.js';
-import { recordStrokeStart } from './ui-samples.js';
-import { selectPreset, createSeqFromStroke } from './ui-presets.js';
-import { setScanMuted } from './ui-meters.js';
+import { ensureAudioContext, requestMicAccess } from './audio.js';
 
 // ── Orientation state (module-private) ───────────────────────────────────────
 let orientationYawAxis   = 'beta';
@@ -73,7 +70,6 @@ function startOrientationTracking() {
 
 export function initMobileMode() {
   document.body.classList.add('mobile-mode');
-  selectPreset(PRESETS.findIndex(p => p.name === 'wash') || 0);
 
   const wrapper = document.getElementById('canvasWrapper');
   wrapper.insertAdjacentHTML('beforeend', `
@@ -386,19 +382,12 @@ function setupMobileTouchHandlers() {
     const hint = document.getElementById('mobileTapHint');
     if (hint) hint.style.display = 'none';
 
-    ensureAudioContext();
-    if (!S.micPermissionGranted) {
-      await requestMicAccess();
-      if (!S.micPermissionGranted) return;
-    }
-
-    // In trace+loop mode, mute scan when trace fires
-    if (S.traceMode === 'trace+loop' && !S.scanMuted) setScanMuted(true);
-    startLiveRecording();
-    recordStrokeStart('live', S.currentLiveBufferIdx);
-    S.isPainting      = true;
-    S.paintFrameCount = 0;
-    S.updateLiveRecUI?.();
+    // PALETTE POSITION 1, momentary. This was the main button until
+    // 2026-09-11 — it pressed whatever tool was armed, and arming is gone. A
+    // phone has no keyboard and no pedal, so the tap is wired straight to the
+    // first position, which is what the demo needs to be playable at all; on
+    // a rig you press a position from a key, a pad or a pedal.
+    S._paletteActivate?.(0, true, true);
   }, { passive: false });
 
   S.canvas.addEventListener('touchmove', e => {
@@ -407,20 +396,6 @@ function setupMobileTouchHandlers() {
 
   S.canvas.addEventListener('touchend', e => {
     e.preventDefault();
-    if (S.traceMode === 'trace+loop' && S.currentStrokeId > 0) {
-      try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
-    }
-    S.isPainting      = false;
-    S.currentStrokeId = -1;
-    S.liveColorIndex  = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-    S.updateLiveRecUI?.();
-    if (S.isRecording) {
-      const captureStart = S.recordingStartTime;
-      setTimeout(() => {
-        if (S.isRecording && S.recordingStartTime === captureStart) {
-          stopLiveRecording();
-        }
-      }, 200);
-    }
+    S._paletteActivate?.(0, false, true);
   }, { passive: false });
 }

@@ -28,9 +28,13 @@ class RecordingCaptureProcessor extends AudioWorkletProcessor {
         this._writePos = 0;
         this._active   = true;
       } else if (data?.type === 'stop') {
-        // Flush any partial batch before stopping
+        // Flush any partial batch before stopping, then say so: the main
+        // thread seals the take when this `done` lands, not when it sent
+        // 'stop'. Sealing on send threw the partial batch away every time —
+        // up to 2048 samples (43 ms) off the end of every take and loop.
         if (this._writePos > 0) this._flush();
         this._active = false;
+        this.port.postMessage({ done: true });
       }
     };
   }

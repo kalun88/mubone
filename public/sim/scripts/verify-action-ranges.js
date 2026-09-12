@@ -1,7 +1,7 @@
 // ============================================================================
 // verify-action-ranges.js — check each cc ACTION's `range` against its ccFn
 //
-// Every cc action declares { min, max, curve } describing the span its ccFn
+// Every cc action declares { min, max, curve, gamma? } describing the span its ccFn
 // covers across MIDI 0–127.  The accessory table does unit maths against that
 // declaration, so a wrong `curve` flag is silent damage: the UI still shows
 // plausible cents and Hz while the pot's throw is skewed.  Nothing in the app
@@ -30,19 +30,16 @@
 // that list short — every entry is a place the annotation and the code can
 // drift, which is the thing this script exists to prevent.
 //
-// Setup (once per machine/sandbox) — same as scripts/ui-shots.js:
-//   npm install playwright-core
-//   npx playwright-core install chromium-headless-shell
-//   # sandboxes without libXdamage.so.1: see the ui-shots.js header for the stub
-//
-// Run:
-//   python3 -m http.server 8123 &     # from the repo root
+// Run (no setup — launches its own muted Electron instance on a private
+// profile and OSC port, so it cannot touch your presets or a live station):
 //   node scripts/verify-action-ranges.js
+//   node scripts/rig-audit.js            # this plus the other suites, one boot
 //
-// Exits non-zero on any mismatch.  Browser mode only — no audio, no worklet.
+// Exits non-zero on any mismatch.  Runs in the real Electron app, so the ccFns
+// under test drive the actual audio graph rather than a browser-mode stub.
 // ============================================================================
 
-const { chromium } = require('playwright-core');
+const { launch } = require('./lib/rig');
 
 const TOLERANCE = 0.03;   // normalised position at half throw, absolute
 
@@ -63,16 +60,8 @@ const PARTIAL = {
   recency_cc: 'top of throw is the 0 = "all" sentinel, which sits above the 1–16 range by design',
 };
 
-(async () => {
-  const browser = await chromium.launch({ args: ['--no-sandbox'] });
-  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
-  page.on('pageerror', e => console.log('PAGEERROR:', e.message.slice(0, 200)));
-  await page.goto('http://localhost:8123/index.html', { waitUntil: 'load', timeout: 20000 });
-  await page.waitForTimeout(2500);
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(300);
-
-  const raw = await page.evaluate(async () => {
+async function run(rig) {
+  const raw = await rig.evaluate(async () => {
     const S = (await import('./js/state.js')).S;
     const actions = S._actions || [];
     const out = [];
@@ -138,6 +127,7 @@ const PARTIAL = {
       out.push({
         id: a.id, key, fmt: a.fmt,
         curve: a.range.curve || 'lin',
+        gamma: Number(a.range.gamma) || 1,
         int: !!a.range.int,
         steps: Math.abs((a.range.maxFn ? a.range.maxFn() : a.range.max) - a.range.min),
         values: snaps.map(s => s[key]),
@@ -167,6 +157,10 @@ const PARTIAL = {
     let pos;
     if (r.curve === 'log' && v0 > 0 && v1 > 0 && vMid > 0) {
       pos = Math.log(vMid / v0) / Math.log(v1 / v0);
+    } else if (r.curve === 'pow') {
+      // Undo the declared exponent — a ccFn that really applies it lands back
+      // on half throw, and a linear one reads 0.5^(1/γ) instead.
+      pos = Math.pow(Math.max(0, (vMid - v0) / (v1 - v0)), 1 / r.gamma);
     } else {
       pos = (vMid - v0) / (v1 - v0);
     }
@@ -186,7 +180,7 @@ const PARTIAL = {
     if (partial) { skipped++; lines.push(`~  ${r.id.padEnd(22)} ${partial}`); continue; }
 
     failed++;
-    const alt = r.curve === 'log' ? 'lin' : 'log';
+    const alt = r.curve === 'lin' ? 'log' : 'lin';
     lines.push(
       `\nX  ${r.id}  declared [${r.curve}]  writes S.${r.key}   fmt: ${r.fmt}\n` +
       `     readings   v=0 ${num(v0)}   v=63.5 ${num(vMid)}   v=127 ${num(v1)}\n` +
@@ -198,6 +192,17 @@ const PARTIAL = {
   console.log(lines.join('\n'));
   console.log(`\n${ok} ok · ${failed} mismatched · ${skipped} skipped`);
 
-  await browser.close();
-  process.exit(failed ? 1 : 0);
-})().catch(e => { console.error('FATAL', e.message); process.exit(1); });
+  for (const e of rig.errors()) console.log('  renderer error:', e);
+  return failed;
+}
+
+module.exports = { run };
+
+if (require.main === module) {
+  (async () => {
+    const rig = await launch();
+    let failed = 1;
+    try { failed = await run(rig); } finally { await rig.close(); }
+    process.exit(failed ? 1 : 0);
+  })().catch(e => { console.error('FATAL', e.message); process.exit(1); });
+}

@@ -3,18 +3,23 @@
 // ============================================================================
 
 import {
-  S, BG_COLOR_DARK, BG_COLOR_LIGHT, GRID_COLOR, GRID_SEGMENTS_LON, GRID_SEGMENTS_LAT,
+  S, SPHERE_PALETTE, GRID_SEGMENTS_LON, GRID_SEGMENTS_LAT,
   SPHERE_RADIUS, FOV_DEG, PARTICLE_BASE_SIZE, PARTICLE_MAX_SIZE,
-  SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, NEAREST_GLOW_COLOR,
+  SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, CURSOR_IDLE_COLOR, NEAREST_GLOW_COLOR,
   MAX_SEEDS, MAX_SEQS, AUTO_ROTATION_SPEED, ROTATION_SPEED,
   RENDER_TARGET_FPS, GRAIN_SCHEDULER_INTERVAL_MS,
-  perf, perfTick, gp, rebuildGrainCurves, minGrainDurS
+  perf, perfTick, gp, minGrainDurS, axisHeld,
+  SENSOR_CAM_SWING_DEG_S, SENSOR_CAM_OVERSHOOT_DEG, SENSOR_CAM_TELEPORT_DEG
 } from './state.js';
-import { spherePoint, cameraTransform, project, projectInto, updateProjectionCache, getCursorLonLat, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto } from './sphere.js';
-import { activeGrainMap } from './grain.js';
+import { spherePoint, cameraTransform, project, projectInto, updateProjectionCache, getCursorLonLat, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto, camOffsetZ } from './sphere.js';
+import { syncParticleMarks } from './composer.js';
+import { pinAnchorInto } from './pins.js';
+const _anchorR = [0, 0];
+import { activeGrainMap, GLOW_MIN_MS, stampCartesian, refreshCloudClaims, isCloudClaimed, masterPhaseWall, overdubHeads } from './grain.js';
+import { claimedStrokeIds } from './trigger.js';
 import { tickMappings } from './sensor-mapping.js';
 import { rebuildLiveBuffer } from './audio.js';
-import { normalise, featuresToHSL, tickPeakHold } from './audio-features.js';
+import { normalise, featuresToColor, tickPeakHold } from './audio-features.js';
 
 // All VU metering moved to ui-meters.js (DOM-based, shared with audio settings modal).
 
@@ -29,8 +34,35 @@ export function drawFrame() {
   // Cache focalLen + canvas half-dimensions for zero-alloc projectInto().
   updateProjectionCache();
 
-  S.ctx.fillStyle = S.darkMode ? BG_COLOR_DARK : BG_COLOR_LIGHT;
+  S.ctx.fillStyle = (S.darkMode ? SPHERE_PALETTE.dark : SPHERE_PALETTE.light).ink;
   S.ctx.fillRect(0, 0, S.canvas.width, S.canvas.height);
+
+  // Cursor lon/lat resolved once per frame, before anything that needs it.
+  // drawCursor() used to be the only writer of the cursor's screen position,
+  // and it runs after drawParticles() — so earlier passes read a stale frame.
+  {
+    // The grain filter's first version froze the cursor here, because it
+    // edited the one stroke underneath it. It does not any more (#284/#292):
+    // it targets nothing and writes nothing, so the cursor just moves.
+    const { lon, lat } = S.cursorQ ? getCursorLonLat()
+      : S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY) : getCursorLonLat();
+    S._frameCursorLon = lon;
+    S._frameCursorLat = lat;
+    // perfMode never draws the trail, so don't pay to accumulate one.
+    if (S.gazeTrailSec > 0 && !S.perfMode) {
+      const now = performance.now() / 1000;
+      // Only when the cursor MOVED. A still cursor used to append a coincident
+      // point every frame, and round line caps turned the pile into a bright
+      // dot (see drawGazeTrail). A wake that shortens while you hold still is
+      // also the truthful reading of a motion cue.
+      const last = S.gazeTrail[S.gazeTrail.length - 1];
+      if (!last || Math.abs(lon - last.lon) + Math.abs(lat - last.lat) > TRAIL_MIN_RAD)
+        S.gazeTrail.push({ lon, lat, t: now });
+      while (S.gazeTrail.length && now - S.gazeTrail[0].t > S.gazeTrailSec) S.gazeTrail.shift();
+    } else if (S.gazeTrail.length) {
+      S.gazeTrail.length = 0;
+    }
+  }
 
   if (S.perfMode) {
     // ── Minimal render: reference lines, particles, anchors, cursor, edge bar ──
@@ -39,7 +71,6 @@ export function drawFrame() {
     drawSeedAnchorsMinimal();
     drawCursor();
     S.updateSeedBanksUI?.();
-    drawEdgeHUD();           // 3 fillRects — negligible cost
     return;
   }
 
@@ -47,16 +78,15 @@ export function drawFrame() {
   drawParticles();
   S.updateLiveGranulatingIndicator?.();
   drawTetherLine();
+  drawGazeTrail();          // under the cursor, over the particles
   drawCursor();
   drawSeeds();
-  S.drawSvLiveOverlay?.();
   drawRadiusTooltip();
   // Meters now drawn by DOM-based startMainMetering() loop in ui-meters.js
   // Recency dial removed — visual clutter, recency-N controlled via slider/OSC
   S.drawRadiusViz?.();
   S.updateSeedBanksUI?.();  // unified: both aliases point to updateCommitBanksUI
   S._syncSeqControls?.();
-  drawEdgeHUD();
 }
 
 // ── Seed rendering ───────────────────────────────────────────────────────────
@@ -66,11 +96,46 @@ export function drawFrame() {
 // zero-alloc projectInto — fewer samples needed for same visual
 // density, and the per-projection cost is now much lower.
 const _TRAIL_BUDGET = 120;
+// Below this much cursor movement (radians, L1) no trail point is recorded —
+// ~0.06° , comfortably under a pixel at any FOV the app offers.
+const TRAIL_MIN_RAD = 0.001;
+
+// ── The anchor mark ─────────────────────────────────────────────────────────
+// ONE mark for every pin, at its ANCHOR (pins.js pinAnchorInto — where the
+// gesture released): a ring, a dot, the slot number, pause bars when the pin
+// is not playing. A stationary cloud adds its reach circle around it; a
+// moving cloud's reach travels with its head, so its anchor is the mark
+// alone (Ek, 2026-09-05: "make consistent all the anchors and what they look
+// like … anchors should only be dropped at the end of the path"). Nothing is
+// drawn at the anchor while the pin gesture is still held — the anchor does
+// not exist until the release.
+function _drawAnchorMark(x, y, color, alpha, label, paused) {
+  S.ctx.save();
+  S.ctx.globalAlpha = alpha;
+  S.ctx.strokeStyle = color;
+  S.ctx.lineWidth = 2.5;
+  S.ctx.beginPath(); S.ctx.arc(x, y, 14, 0, Math.PI * 2); S.ctx.stroke();
+  S.ctx.fillStyle = color;
+  S.ctx.beginPath(); S.ctx.arc(x, y, 4, 0, Math.PI * 2); S.ctx.fill();
+  S.ctx.font = 'bold 11px "Roboto Mono", monospace';
+  S.ctx.textAlign = 'center';
+  S.ctx.textBaseline = 'middle';
+  S.ctx.fillText(label, x, y - 20);
+  if (paused) {
+    S.ctx.fillStyle = color + '88';
+    const bw = 2.5, bh = 7;
+    S.ctx.fillRect(x - bw - 1.5, y - bh / 2, bw, bh);
+    S.ctx.fillRect(x + 1.5, y - bh / 2, bw, bh);
+  }
+  S.ctx.restore();
+}
 
 export function drawSeeds() {
   const { lon: curLon, lat: curLat } = S.cursorQ ? getCursorLonLat()
     : S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY) : getCursorLonLat();
-  const nearestSlot = S.findNearestSeedSlot?.(curLon, curLat) ?? -1;
+  // The highlighted cloud is the SELECTED pin — nearest or oldest by
+  // Settings → Pins — the same one the rail marks and unpin takes.
+  const nearestSlot = S._selectedPinSlot?.(curLon, curLat) ?? -1;
   const W = S.canvas.width, H = S.canvas.height;
   const margin = 14;
 
@@ -126,7 +191,12 @@ export function drawSeeds() {
 
     if (proj) {
       // Envelope gain: modulates visual opacity during attack/release
-      const envG = seed._envGainCurrent ?? 1;
+      // A composer-held cloud sits at envelope gain 0 with its slot intact, so
+      // the raw value would draw nothing and the commit would look erased. It
+      // is not erased — it is holding, and touching it brings it back. Floor it
+      // so the ring stays findable, which is what makes the cloud re-touchable.
+      const held = seed.playing === false;
+      const envG = held ? 0.28 : (seed._envGainCurrent ?? 1);
       S.ctx.save();
       S.ctx.globalAlpha = (isNearest ? 0.7 : 0.4) * envG;
       S.ctx.strokeStyle = seed.color;
@@ -145,24 +215,41 @@ export function drawSeeds() {
       } else {
         const rRad    = vizSearchRadiusDeg * Math.PI / 180;
         const fovRad  = ((S.fovDeg ?? FOV_DEG) * Math.PI) / 180;
-        const focalLen = (Math.min(W, H) / 2) / Math.tan(fovRad / 2);
-        const screenR  = focalLen * Math.tan(rRad) / (proj.depth / SPHERE_RADIUS);
+        // Equidistant centred camera: exact at any screen position. Pulled:
+        // the old rectilinear approximation.
+        const screenR = camOffsetZ() === 0
+          ? rRad * (Math.min(W, H) / 2) / (fovRad / 2)
+          : ((Math.min(W, H) / 2) / Math.tan(fovRad / 2)) * Math.tan(rRad) / (proj.depth / SPHERE_RADIUS);
         S.ctx.beginPath();
         S.ctx.arc(proj.sx, proj.sy, Math.max(12, screenR), 0, Math.PI * 2);
         S.ctx.stroke();
       }
       S.ctx.setLineDash([]);
-      S.ctx.globalAlpha = isNearest ? 1 : 0.6;
-      S.ctx.fillStyle = seed.color;
-      const centerDotR = isMoving ? 3 : 6;
-      S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, centerDotR, 0, Math.PI * 2); S.ctx.fill();
-      S.ctx.globalAlpha = isNearest ? 0.9 : 0.5;
-      S.ctx.fillStyle = seed.color;
-      S.ctx.font = `10px "Roboto Mono", monospace`;
-      S.ctx.textAlign = 'center';
-      S.ctx.textBaseline = 'middle';
-      S.ctx.fillText(i + 1, proj.sx, proj.sy - 12);
       S.ctx.restore();
+      // The pin gesture still held: the cloud reads here, but its anchor does
+      // not exist yet — no mark until the release (Ek, 2026-09-05).
+      const recording = i === S._seedRecordingSlot;
+      if (isMoving || recording) {
+        // The head: where a moving cloud reads right now — a small dot inside
+        // its travelling reach circle, no number (the number is the anchor's).
+        S.ctx.save();
+        S.ctx.globalAlpha = (isNearest ? 1 : 0.6) * envG;
+        S.ctx.fillStyle = seed.color;
+        S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, 3, 0, Math.PI * 2); S.ctx.fill();
+        S.ctx.restore();
+      }
+      if (!recording) {
+        // The anchor mark — at the anchor, which for a stationary cloud is
+        // where it sits and for a moving one the END of its path.
+        let ax = proj.sx, ay = proj.sy, adf = Math.max(0, depthFactor(proj.depth));
+        if (isMoving && pinAnchorInto(seed, _anchorR)) {
+          spherePointInto(_anchorR[0], _anchorR[1], _arcW);
+          cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+          const ap = project(_arcC[0], _arcC[1], _arcC[2]);
+          if (!ap) { ax = null; } else { ax = ap.sx; ay = ap.sy; adf = Math.max(0, depthFactor(ap.depth)); }
+        }
+        if (ax != null) _drawAnchorMark(ax, ay, seed.color, (isNearest ? 1 : 0.6) * envG * (0.35 + 0.65 * adf), i + 1, held);
+      }
     }
 
     // ── Edge indicators (off-screen seed markers) ──
@@ -242,133 +329,53 @@ export function drawSeeds() {
   _drawLiveRecordingTrail();
 }
 
-// ── Shared velocity-dot trail renderer ──────────────────────────────────────
-// Draws dots along a frame array with spacing proportional to cursor speed.
-// Fast → wide gaps, slow → tight dots.  Used by both live + finalized trails.
+// ── Path trail ──────────────────────────────────────────────────────────────
+// A moving cloud's path, and the path a held pin is recording: ONE light line
+// (Ek, 2026-09-05: the velocity-spaced dots were "too busy with the grains
+// under"; the head and the anchor mark already say which way it goes).
 //
 // Performance-critical path — optimised to minimise per-frame cost:
 //   • projectInto() writes into a scratch array (zero object allocations)
 //   • focalLen/canvas-halves cached once per frame by updateProjectionCache()
-//   • All trail dots batched into a single beginPath/fill (one canvas call
-//     instead of 200+ individual beginPath/arc/fill triplets)
+//   • the whole polyline is a single beginPath/stroke (one canvas call)
 
 // Scratch arrays for projectInto results (never returned to caller)
 const _projA = [0, 0, 0];  // current frame projection
 const _projB = [0, 0, 0];  // previous frame projection (copied per step)
 
-function _drawVelocityDotTrail(frames, color, alpha, dotR, maxSamples) {
+function _drawPathTrail(frames, color, alpha, width, maxSamples) {
   if (!frames || frames.length < 2) return;
 
   S.ctx.save();
-  S.ctx.fillStyle   = color;
+  S.ctx.strokeStyle = color;
   S.ctx.globalAlpha = alpha;
+  S.ctx.lineWidth   = width;
+  S.ctx.lineJoin    = 'round';
+  S.ctx.lineCap     = 'round';
 
-  // Velocity → spacing mapping (aggressive so the difference is obvious)
-  const minPx    = 5;    // tightest packing when nearly still
-  const velScale = 3.0;  // px per (deg/s) — big multiplier for visible effect
-  const maxPx    = 60;   // cap
-  const TWO_PI   = Math.PI * 2;
-
-  // Back-meridian guard threshold
+  // Back-meridian guard threshold: consecutive frames straddling ±π both
+  // project to valid positions on opposite edges, and a segment between them
+  // is a full-width streak. Break the line there instead.
   const maxSegPx = Math.min(S.canvas.width, S.canvas.height) * 0.35;
-
   const step = Math.max(1, Math.floor(frames.length / maxSamples));
 
-  let hasPrev = false, prevT = frames[0].t;
-  let prevLon = frames[0].lon, prevLat = frames[0].lat;
-  let prevSx = 0, prevSy = 0;
-  let accumDist = 0, curSpacing = minPx;
-
-  // Batch all trail dots into a single path — one fill() at the end.
+  // ONE path, one stroke — the same batching the dots had (the per-dot
+  // beginPath/arc/fill triplet was the GPU stall the Mar 29 pass removed).
   S.ctx.beginPath();
-
+  let hasPrev = false, prevSx = 0, prevSy = 0;
   for (let fi = 0; fi < frames.length; fi += step) {
     const f = frames[fi];
     spherePointInto(f.lon, f.lat, _arcW);
     cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
-    if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _projA)) {
-      hasPrev = false;
-      continue;
-    }
+    if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _projA)) { hasPrev = false; continue; }
     const sx = _projA[0], sy = _projA[1];
-
-    if (hasPrev) {
-      const dx = sx - prevSx;
-      const dy = sy - prevSy;
-      const segLen = Math.sqrt(dx * dx + dy * dy);
-
-      // Back-meridian guard: when consecutive frames straddle ±π, both
-      // may project to valid screen positions on opposite edges.  The
-      // huge screen-space jump draws a flash of dots across the canvas.
-      // Break the trail instead (same as off-screen gap).
-      if (segLen > maxSegPx) {
-        S.ctx.moveTo(sx + dotR, sy);
-        S.ctx.arc(sx, sy, dotR, 0, TWO_PI);
-        accumDist = 0;
-        prevSx = sx; prevSy = sy;
-        prevT = f.t; prevLon = f.lon; prevLat = f.lat;
-        continue;
-      }
-
-      // Angular speed (deg/s) — wrap-aware longitude delta
-      const dt = f.t - prevT;
-      if (dt > 0) {
-        let dLon = f.lon - prevLon;
-        if (dLon > Math.PI) dLon -= TWO_PI;
-        else if (dLon < -Math.PI) dLon += TWO_PI;
-        const dLat = f.lat - prevLat;
-        const degDist = Math.sqrt(dLon * dLon + dLat * dLat);
-        const speed = (degDist / dt) * 1000;
-        curSpacing = Math.min(maxPx, minPx + velScale * speed);
-      }
-
-      accumDist += segLen;
-
-      // Place dots along segment
-      if (segLen > 0) {
-        const nx = dx / segLen, ny = dy / segLen;
-        while (accumDist >= curSpacing) {
-          accumDist -= curSpacing;
-          const bx = sx - nx * accumDist;
-          const by = sy - ny * accumDist;
-          S.ctx.moveTo(bx + dotR, by);
-          S.ctx.arc(bx, by, dotR, 0, TWO_PI);
-        }
-      }
-    } else {
-      // First visible point
-      S.ctx.moveTo(sx + dotR, sy);
-      S.ctx.arc(sx, sy, dotR, 0, TWO_PI);
-      accumDist = 0;
-    }
-
+    if (hasPrev && Math.hypot(sx - prevSx, sy - prevSy) < maxSegPx) S.ctx.lineTo(sx, sy);
+    else S.ctx.moveTo(sx, sy);
     hasPrev = true; prevSx = sx; prevSy = sy;
-    prevT = f.t; prevLon = f.lon; prevLat = f.lat;
   }
-  // Single fill for all trail dots
-  S.ctx.fill();
-
-  // ── Start + end markers (separate fill — different sizes) ──
-  S.ctx.globalAlpha = Math.min(1, alpha + 0.15);
-
-  const first = frames[0];
-  spherePointInto(first.lon, first.lat, _arcW);
-  cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
-  if (projectInto(_arcC[0], _arcC[1], _arcC[2], _projA)) {
-    S.ctx.beginPath();
-    S.ctx.arc(_projA[0], _projA[1], 6, 0, TWO_PI);
-    S.ctx.fill();
-  }
-
-  const last = frames[frames.length - 1];
-  spherePointInto(last.lon, last.lat, _arcW);
-  cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
-  if (projectInto(_arcC[0], _arcC[1], _arcC[2], _projA)) {
-    S.ctx.beginPath();
-    S.ctx.arc(_projA[0], _projA[1], 3, 0, TWO_PI);
-    S.ctx.fill();
-  }
-
+  S.ctx.stroke();
+  // No start or end blob: the 6 px dot at frames[0] read as an anchor at the
+  // START of the path (Ek, 2026-09-05), and the anchor mark stands at the end.
   S.ctx.restore();
 }
 
@@ -376,21 +383,115 @@ function _drawVelocityDotTrail(frames, color, alpha, dotR, maxSamples) {
 // While the user holds ↓ and moves, draw the in-progress path in real time.
 function _drawLiveRecordingTrail() {
   const frames = S._seedRecordingFrames;
-  if (!frames || frames.length < 2) return;
+  if (!frames || !frames.length) return;
   const slot = S._seedRecordingSlot;
   const seed = slot >= 0 ? S.seedSlots[slot] : null;
-  const color = seed ? seed.color : (S.darkMode ? '#ffffff' : '#000000');
-  _drawVelocityDotTrail(frames, color, 0.7, 2.5, 50);
+  // A deferred path (the wash, `on end: cloud`) has no slot until the release,
+  // so nothing used to show where it began — the held pin's ghost cloud drops
+  // its head and reach at the press, and this one looked like it was "waiting
+  // to launch" (Ek, 2026-09-05). Draw the launch point the same way: the head
+  // dot and the reach ring at the first frame, in the stroke's paint colour.
+  // Visual only — no slot, nothing sounds there until the release.
+  if (!seed) {
+    const f0 = frames[0];
+    spherePointInto(f0.lon, f0.lat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    const p = project(_arcC[0], _arcC[1], _arcC[2]);
+    if (p) {
+      const W = S.canvas.width, H = S.canvas.height;
+      const rRad   = (f0.searchRadiusDeg ?? S.searchRadiusDeg ?? 10) * Math.PI / 180;
+      const fovRad = ((S.fovDeg ?? FOV_DEG) * Math.PI) / 180;
+      const screenR = camOffsetZ() === 0
+        ? rRad * (Math.min(W, H) / 2) / (fovRad / 2)
+        : ((Math.min(W, H) / 2) / Math.tan(fovRad / 2)) * Math.tan(rRad) / (p.depth / SPHERE_RADIUS);
+      const color = LIVE_PAINT_COLORS[S.liveColorIndex % LIVE_PAINT_COLORS.length];
+      S.ctx.save();
+      S.ctx.strokeStyle = color;
+      S.ctx.fillStyle = color;
+      S.ctx.globalAlpha = 0.6;
+      S.ctx.lineWidth = 2;
+      S.ctx.setLineDash([2, 3]);
+      S.ctx.beginPath(); S.ctx.arc(p.sx, p.sy, Math.max(12, screenR), 0, Math.PI * 2); S.ctx.stroke();
+      S.ctx.setLineDash([]);
+      S.ctx.beginPath(); S.ctx.arc(p.sx, p.sy, 3, 0, Math.PI * 2); S.ctx.fill();
+      S.ctx.restore();
+    }
+  }
+  if (frames.length < 2) return;
+  const color = seed ? seed.color : LIVE_PAINT_COLORS[S.liveColorIndex % LIVE_PAINT_COLORS.length];
+  _drawPathTrail(frames, color, 0.5, 1.2, 50);
 }
 
 // ── Moving seed trail ──────────────────────────────────────────────────────
 // Delegates to the shared velocity-dot renderer.
 function _drawMovingSeedTrail(seed, slotIndex, isNearest, maxSamples) {
-  const alpha = isNearest ? 0.7 : 0.45;
-  _drawVelocityDotTrail(seed.frames, seed.color, alpha, 2.5, maxSamples || 50);
+  const alpha = isNearest ? 0.5 : 0.3;
+  _drawPathTrail(seed.frames, seed.color, alpha, 1.2, maxSamples || 50);
 }
 
 // ── Tether line ───────────────────────────────────────────────────────────────
+// ── Gaze trail ──────────────────────────────────────────────────────
+// A tapering ribbon behind the cursor: the strongest available cue for how the
+// instrument moves. The age² alpha falloff plus the width taper are what make
+// it read as a jet stream — linear alpha looks like a scratch on the glass.
+// Points are appended in drawFrame() only when the cursor has MOVED; this only
+// draws them.
+//
+// It is a WAKE, not a mark (Ek, 2026-08-29: "it's white as well, so when I'm
+// painting a line it competes"). Three things follow. Its colour is the cool
+// grey of vapour, never the ink the material and the horizon are drawn in —
+// pure white put it in the same voice as the thing being painted, at the
+// moment you most need to tell them apart. Its alpha ceiling is low and its
+// width tops out under 2px. And a sub-pixel segment is SKIPPED: a round line
+// cap on a zero-length stroke draws a full-width dot, so a cursor holding
+// still used to stack one per frame into a bright bead — the dots along the
+// line, arriving exactly when the cursor was steady enough to be painting
+// carefully. The append gate in drawFrame() stops most of them at the source;
+// this catches slow drift.
+const TRAIL_INK_DARK  = '150,162,178';   // cool grey — vapour, not ink
+const TRAIL_INK_LIGHT = '96,110,126';
+const TRAIL_MIN_PX    = 1.2;             // shorter than this is a dot, not a line
+export function drawGazeTrail() {
+  const n = S.gazeTrail.length;
+  if (n < 2 || S.gazeTrailSec <= 0) return;
+  const now = performance.now() / 1000;
+  const ink = S.darkMode ? TRAIL_INK_DARK : TRAIL_INK_LIGHT;
+  const seamLimit = S.canvas.width * 0.25;
+  S.ctx.save();
+  S.ctx.lineCap = 'round';
+  // Each point projects once, carried forward as `prev` — half the matrix
+  // work of projecting both ends of every segment.
+  let prev = null;
+  for (let i = 0; i < n; i++) {
+    const pt = S.gazeTrail[i];
+    spherePointInto(pt.lon, pt.lat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    const p = project(_arcC[0], _arcC[1], _arcC[2]);
+    if (!p) { prev = null; continue; }
+    if (prev) {
+      const d = Math.hypot(p.sx - prev.sx, p.sy - prev.sy);
+      // Guard the wrap: a lon seam crossing projects as a full-width streak
+      if (d >= TRAIL_MIN_PX && d < seamLimit) {
+        const age = 1 - (now - pt.t) / S.gazeTrailSec;   // 1 = newest
+        S.ctx.strokeStyle = `rgba(${ink},${(0.34 * age * age).toFixed(3)})`;
+        S.ctx.lineWidth   = 0.8 + 1.0 * age;
+        S.ctx.beginPath();
+        S.ctx.moveTo(prev.sx, prev.sy);
+        S.ctx.lineTo(p.sx, p.sy);
+        S.ctx.stroke();
+      }
+    }
+    prev = p;
+  }
+  S.ctx.restore();
+}
+
+// The tether — centre of the view to the cursor. Same voice as the trail and
+// for the same reason (2026-08-29): it is cursor CHROME, it lives inside the
+// painting hand's field of view, and it was pure white with a [4, 8] dash —
+// literally dots along a line, in the material's own colour, right where the
+// stroke is being made. The dash stays; it is what tells the tether apart
+// from a mark.
 export function drawTetherLine() {
   if (!S.mouseInCanvas) return;
   const cx = S.canvas.width / 2, cy = S.canvas.height / 2;
@@ -398,9 +499,10 @@ export function drawTetherLine() {
   const dist = Math.sqrt(dx*dx + dy*dy);
   if (dist < 20) return;
   const maxDist = Math.min(S.canvas.width, S.canvas.height) * 0.5;
-  const alpha   = Math.min(0.5, 0.1 + 0.4 * (dist / maxDist));
+  const alpha   = Math.min(0.30, 0.06 + 0.24 * (dist / maxDist));
+  const ink     = S.darkMode ? TRAIL_INK_DARK : TRAIL_INK_LIGHT;
   S.ctx.save();
-  S.ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+  S.ctx.strokeStyle = `rgba(${ink},${alpha})`;
   S.ctx.lineWidth   = 1;
   S.ctx.setLineDash([4, 8]);
   S.ctx.beginPath();
@@ -413,15 +515,15 @@ export function drawTetherLine() {
 
 // ── Grid lines ────────────────────────────────────────────────────────────────
 export function drawGridLines() {
-  // Contrast-aware grid colours for dark/light mode
-  const eqColor   = S.darkMode ? '#a0dede' : '#207070';
-  const gridColor = S.darkMode ? GRID_COLOR : '#3a8888';
-  const northTint = S.darkMode ? '#c8a060' : '#806030';
-  const southTint = S.darkMode ? '#60a0c8' : '#306080';
+  // SPHERE_PALETTE (state.js) carries the reasoning for these five roles.
+  // Weights here are the other half of it: the grid used to be loud in BOTH
+  // chroma and line weight, and dropping only the colour would have left a
+  // grey gunsight. Everything below is lighter than it was.
+  const P = S.darkMode ? SPHERE_PALETTE.dark : SPHERE_PALETTE.light;
 
   if (S.perfMode) {
     // Minimal: equator + prime meridian only, very light
-    S.ctx.strokeStyle = eqColor; S.ctx.lineWidth = 0.8; S.ctx.globalAlpha = 0.2;
+    S.ctx.strokeStyle = P.horizon; S.ctx.lineWidth = 0.8; S.ctx.globalAlpha = 0.2;
     drawArc(0, 'lat');
     drawArc(0, 'lon');
     S.ctx.globalAlpha = 1;
@@ -429,12 +531,13 @@ export function drawGridLines() {
   }
 
   // ── Regular meridians (skip prime 0° and back 180°, drawn separately) ───
+  // Graph paper. You read curvature and motion off these, never the lines.
   for (let i = 1; i < GRID_SEGMENTS_LON; i++) {
     if (i === GRID_SEGMENTS_LON / 2) continue; // skip back meridian (180°)
     const lon = (i / GRID_SEGMENTS_LON) * Math.PI * 2;
-    S.ctx.strokeStyle = gridColor;
+    S.ctx.strokeStyle = P.graph;
     S.ctx.lineWidth   = 0.8;
-    S.ctx.globalAlpha = 0.45;
+    S.ctx.globalAlpha = 0.34;
     drawArc(lon, 'lon');
   }
 
@@ -442,30 +545,30 @@ export function drawGridLines() {
   // Drawn as segmented arcs so width/alpha vary with latitude.
   // Prime is heaviest at equator, thins toward poles. Back is lighter but
   // follows the same taper so they read as one continuous great circle.
-  // The prime→back contrast must be obvious: prime peaks at 5px, back at 2px.
+  // The prime→back contrast must stay obvious: prime peaks at 3.4px, back at
+  // 2.2px. Both were heavier (5.0 / 3.0) when the grid was cyan and had to
+  // fight for attention against itself.
   const TAPER_SEGS = 12;
-  const primeColor = S.darkMode ? '#a0dede' : '#186060';
-  const backColor  = S.darkMode ? '#70a8a8' : '#409090';
   for (let s = 0; s < TAPER_SEGS; s++) {
     const lat0 = (s / TAPER_SEGS) * Math.PI - Math.PI / 2;
     const lat1 = ((s + 1) / TAPER_SEGS) * Math.PI - Math.PI / 2;
     const midLat = (lat0 + lat1) / 2;
     // t=1 at equator, t=0 at poles
     const t = 1 - Math.abs(midLat) / (Math.PI / 2);
-    // Prime meridian (0°): width 5.0→1.5, alpha 0.95→0.35
-    S.ctx.strokeStyle = primeColor;
-    S.ctx.lineWidth   = 1.5 + 3.5 * t;
-    S.ctx.globalAlpha = 0.35 + 0.6 * t;
+    // Prime meridian (0°): width 3.4→1.2, alpha 0.70→0.24
+    S.ctx.strokeStyle = P.horizon;
+    S.ctx.lineWidth   = 1.2 + 2.2 * t;
+    S.ctx.globalAlpha = 0.24 + 0.46 * t;
     _drawArcSegment(0, 'lon', lat0, lat1);
-    // Back meridian (180°): width 3.0→1.2, alpha 0.6→0.25
-    S.ctx.strokeStyle = backColor;
-    S.ctx.lineWidth   = 1.2 + 1.8 * t;
-    S.ctx.globalAlpha = 0.25 + 0.35 * t;
+    // Back meridian (180°): width 2.2→1.0, alpha 0.38→0.14
+    S.ctx.strokeStyle = P.behind;
+    S.ctx.lineWidth   = 1.0 + 1.2 * t;
+    S.ctx.globalAlpha = 0.14 + 0.24 * t;
     _drawArcSegment(Math.PI, 'lon', lat0, lat1);
   }
 
-  // ── Equator — always distinct ──────────────────────────────────────────
-  S.ctx.strokeStyle = eqColor; S.ctx.lineWidth = 2.5; S.ctx.globalAlpha = 0.9;
+  // ── Equator — the horizon, and the boundary the hemisphere cue reads off ──
+  S.ctx.strokeStyle = P.horizon; S.ctx.lineWidth = 1.8; S.ctx.globalAlpha = 0.66;
   drawArc(0, 'lat');
 
   // ── Latitude lines — hemisphere-tinted, fading toward poles ────────────
@@ -473,57 +576,258 @@ export function drawGridLines() {
     const lat          = (i / GRID_SEGMENTS_LAT) * Math.PI - Math.PI / 2;
     const distFromEq   = Math.abs(lat) / (Math.PI / 2);
     if (distFromEq < 0.05) continue; // skip if it overlaps the explicit equator
-    const gridTint     = lat > 0 ? northTint : southTint;
-    if      (distFromEq < 0.4)  { S.ctx.strokeStyle = gridTint;  S.ctx.lineWidth = 1.2; S.ctx.globalAlpha = 0.6; }
-    else if (distFromEq < 0.7)  { S.ctx.strokeStyle = gridTint;  S.ctx.lineWidth = 0.8; S.ctx.globalAlpha = 0.4;  }
-    else                        { S.ctx.strokeStyle = gridTint;  S.ctx.lineWidth = 0.5; S.ctx.globalAlpha = 0.2;  }
+    const gridTint     = lat > 0 ? P.north : P.south;
+    S.ctx.strokeStyle  = gridTint;
+    if      (distFromEq < 0.4)  { S.ctx.lineWidth = 1.1; S.ctx.globalAlpha = 0.46; }
+    else if (distFromEq < 0.7)  { S.ctx.lineWidth = 0.8; S.ctx.globalAlpha = 0.28; }
+    else                        { S.ctx.lineWidth = 0.5; S.ctx.globalAlpha = 0.14; }
     drawArc(lat, 'lat');
   }
   S.ctx.globalAlpha = 1;
 }
 
+
 // Reusable scratch buffers for drawArc — avoids ~14,000 array allocations/frame
 const _arcW = [0, 0, 0];
 const _arcC = [0, 0, 0];
-export function drawArc(angle, type) {
-  const steps = 12;  // halved from 24 — saves ~650 transforms/frame
-  let started = false;
+
+// Far-off-canvas guard for every projected POLYLINE. Near ±90° off-axis the
+// rectilinear projection blows up (tan): a point still passes the z-cull but
+// "projects" thousands of px off-screen, and any path reaching for it draws a
+// streak across the whole canvas (2026-08-28, steer mode at the edges). One
+// canvas beyond each edge is kept, so segments merely spanning the edge still
+// draw; treat anything further as culled and break the path there.
+function _onCanvasish(sx, sy) {
+  const w = S.canvas.width, h = S.canvas.height;
+  return sx >= -w && sx <= 2 * w && sy >= -h && sy <= 2 * h;
+}
+// Grid smoothness (2026-08-28): the old 12-step polygons ("minecraft lines")
+// were never really about transform cost — each point went through the
+// ALLOCATING project(), and the step count was cut to limit GC pressure.
+// These now use the zero-alloc projectInto, so 4–8× the segments costs a few
+// thousand pure-math flops per frame and zero allocations — cheaper on the
+// GC than the blocky version was. The audio thread never sees any of it.
+const _gridProj = [0, 0, 0];
+
+// ── Arcs are subdivided by how far the chord MISSES the curve (2026-08-29) ─
+//
+// A fixed step count assumes the projection stretches the sphere evenly. The
+// centred camera is azimuthal equidistant, where it does not: the TANGENTIAL
+// scale is θ/sinθ, which is 1 on the view axis and unbounded at the antipode.
+// Past a 180° FOV the far hemisphere wraps around the outside of the picture
+// and a 15° step of longitude that measures 8px in front of you measures
+// hundreds behind — so the grid came apart into visible straight chords and a
+// polygon rim (Ek, 2026-08-29: "those lines aren't round, they look like
+// they're straight lines"). Raising the flat count instead would have paid
+// that price everywhere on screen to fix one ring at the edge.
+//
+// So: walk a coarse parameter step and bisect each one while the straight
+// chord misses the real curve. The test is SAGITTA, not chord length — how
+// far the true midpoint sits off the chord — because length alone refines
+// where nothing is wrong. At an 80° FOV every base chord is ~36px and every
+// one of them is already visually straight; charging them 4 extra projections
+// each cost 0.8ms a frame to fix a ring that only exists past 180°. Measuring
+// the miss instead spends the work where the picture is actually bending, so
+// a normal FOV pays one midpoint probe per step and stops.
+//
+// Midpoints are projected from the real sphere point, never interpolated on
+// screen, so bisection adds curvature rather than smoothing a polygon.
+const SAG_PX    = 0.45;   // max allowed miss between chord and curve
+const MAX_DEPTH = 5;      // ≤ 32 inserted points per base step
+const ARC_STEPS = 48;
+// One scratch row per recursion level — a shared buffer would be overwritten
+// by the deeper call before this level had read it.
+const _segBuf = [];
+for (let _d = 0; _d <= MAX_DEPTH; _d++) _segBuf.push([0, 0, 0]);
+
+// t ∈ [0,1] over the arc → sphere point → screen, into `out`.
+// 'lon' is a meridian (fixed lon, t sweeps lat pole to pole); 'lat' is a
+// parallel (fixed lat, t sweeps lon all the way round).
+function _arcProject(type, angle, t, out) {
+  const lon = type === 'lon' ? angle : t * Math.PI * 2;
+  const lat = type === 'lon' ? t * Math.PI - Math.PI / 2 : angle;
+  spherePointInto(lon, lat, _arcW);
+  cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+  // ── The grid is on the same shell as the material (Ek, 2026-09-07) ───────
+  // "I still see horizontal lines flashing in front like it was the back side
+  // of the sphere … when my zoom level makes the camera kinda right near the
+  // back surface."
+  //
+  // They were the NEAR shell, not the back one. Pulled back, every point of
+  // the sphere still projects, so the grid drew BOTH shells and the near one
+  // hung between the eye and the work. The particle pass has always kept the
+  // INNER face — the instrument is a bowl you work from within, and
+  // screenToLonLat's far root picks that same face — so the grid was the one
+  // layer disagreeing with everything else on screen about which side you are
+  // on. Same predicate, same reasoning: n · c > 0, where n is the outward
+  // normal (length R) and c the view ray. At camPull 0 it is a no-op — every
+  // point has n · c = R² > 0 — so the centred view is untouched.
+  const cx = _arcC[0], cy = _arcC[1], cz = _arcC[2];
+  const offZ = camOffsetZ();
+  if (offZ !== 0) {
+    if (cx * cx + cy * cy + (cz - offZ) * cz <= 0) return false;
+  } else if (cz < 0) {
+    // ── The graph paper ENDS at the horizon, and grows past it as you zoom
+    //    out (Ek, 2026-09-07) ────────────────────────────────────────────
+    // Centred — the model you actually play in — there is no camera behind
+    // the sphere and no back FACE to cull: azimuthal equidistant maps every
+    // direction to a point, and 2026-08-29 folded the far hemisphere into a
+    // rim band so it could not take the picture over. It is still DRAWN,
+    // though, and its latitude lines are what Ek keeps seeing: "horizontal
+    // lines flashing in front like it was the back side of the sphere".
+    //
+    // The marks out there are his material and stay. The GRID is graph
+    // paper, and graph paper past the horizon is only worth having when you
+    // are deliberately looking at the whole sphere — "I don't think I should
+    // ever see the back side unless I'm … clearly wanting to see everything".
+    //
+    // So the grid's reach is a function of the zoom rather than a switch: at
+    // 200° of field and below it stops at the horizon, and from there it
+    // grows outward until at 340° it covers the sphere. `t` is cos of how far
+    // past 90° it may go, so the boundary MOVES rather than appearing — the
+    // graph paper extends as you pull back, and there is no frame at which a
+    // ring of lines arrives. Squared compare, so the common front-hemisphere
+    // case costs one sign test and no sqrt on the render path.
+    const t = _gridBackReach();
+    if (t <= 0) return false;
+    if (cz * cz > t * t * (cx * cx + cy * cy + cz * cz)) return false;
+  }
+  return projectInto(_arcC[0], _arcC[1], _arcC[2], out)
+      && _onCanvasish(out[0], out[1]);
+}
+// 0 at 200° of field (the grid stops at the horizon) … 1 at 340° (it reaches
+// the antipode). Read once per point; the arithmetic is two adds and a clamp.
+const GRID_BACK_FOV0 = 200, GRID_BACK_FOV1 = 340;
+function _gridBackReach() {
+  const f = S.fovDeg ?? FOV_DEG;
+  return Math.max(0, Math.min(1, (f - GRID_BACK_FOV0) / (GRID_BACK_FOV1 - GRID_BACK_FOV0)));
+}
+
+// Emit the curve from t=ta to t=tb, bisecting while the chord misses it.
+// A midpoint that will not project is not a reason to subdivide — draw the
+// chord and let the canvas guard handle it.
+function _arcBisect(type, angle, ta, ax, ay, tb, bx, by, depth) {
+  if (depth < MAX_DEPTH) {
+    const tm  = (ta + tb) * 0.5;
+    const buf = _segBuf[depth];
+    if (_arcProject(type, angle, tm, buf)) {
+      const mx = buf[0], my = buf[1];
+      if (Math.hypot(mx - (ax + bx) * 0.5, my - (ay + by) * 0.5) > SAG_PX) {
+        _arcBisect(type, angle, ta, ax, ay, tm, mx, my, depth + 1);
+        _arcBisect(type, angle, tm, mx, my, tb, bx, by, depth + 1);
+        return;
+      }
+    }
+  }
+  S.ctx.lineTo(bx, by);
+}
+
+// One stroked run of an arc over the parameter range [t0, t1].
+function _arcRun(type, angle, t0, t1, steps) {
+  let started = false, pt = 0, px = 0, py = 0;
   S.ctx.beginPath();
   for (let i = 0; i <= steps; i++) {
-    const t   = i / steps;
-    const lon = type === 'lon' ? angle : t * Math.PI * 2;
-    const lat = type === 'lon' ? t * Math.PI - Math.PI / 2 : angle;
-    spherePointInto(lon, lat, _arcW);
-    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
-    const proj = project(_arcC[0], _arcC[1], _arcC[2]);
-    if (proj) {
-      if (!started) { S.ctx.moveTo(proj.sx, proj.sy); started = true; }
-      else            S.ctx.lineTo(proj.sx, proj.sy);
-    } else { started = false; }
+    const t = t0 + (t1 - t0) * (i / steps);
+    if (!_arcProject(type, angle, t, _gridProj)) { started = false; continue; }
+    const cx = _gridProj[0], cy = _gridProj[1];
+    if (!started) { S.ctx.moveTo(cx, cy); started = true; }
+    else _arcBisect(type, angle, pt, px, py, t, cx, cy, 0);
+    pt = t; px = cx; py = cy;
   }
   S.ctx.stroke();
+}
+
+export function drawArc(angle, type) {
+  _arcRun(type, angle, 0, 1, ARC_STEPS);
 }
 
 // Draw a segment of a meridian (lon arc) between lat0 and lat1.
 // Used for tapered prime/back meridians where width varies with latitude.
+// Same parameterisation as drawArc's 'lon' case — lat = t·π − π/2 — so the
+// lat range converts straight to a t range and the refinement comes free.
 function _drawArcSegment(lon, _type, lat0, lat1) {
-  const steps = 3;  // 3 steps per segment is enough for smooth curves
-  let started = false;
-  S.ctx.beginPath();
-  for (let i = 0; i <= steps; i++) {
-    const lat = lat0 + (lat1 - lat0) * (i / steps);
-    spherePointInto(lon, lat, _arcW);
-    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
-    const proj = project(_arcC[0], _arcC[1], _arcC[2]);
-    if (proj) {
-      if (!started) { S.ctx.moveTo(proj.sx, proj.sy); started = true; }
-      else            S.ctx.lineTo(proj.sx, proj.sy);
-    } else { started = false; }
+  const HALF_PI = Math.PI / 2;
+  _arcRun('lon', lon, (lat0 + HALF_PI) / Math.PI, (lat1 + HALF_PI) / Math.PI, 12);
+}
+
+
+// ── The cursor's engine hue ────────────────────────────────────────────────
+/** `#rrggbb` (or any CSS colour tiles.js resolved) at an alpha. The hand's hue
+ *  arrives as a hex string from the --eng-* custom properties, and the reticle
+ *  needs it at two weights — a wash for the disc and a line for the ring. Hex
+ *  is the only form those properties take, so this is a slice, not a parser;
+ *  anything else falls through unchanged and the caller's alpha is lost rather
+ *  than the colour. Memoised on the string because the hue changes when a
+ *  position starts or stops playing and not once per frame. */
+//  Two slots, not one: the reticle asks for the same colour at two alphas on
+//  every frame, and a single slot would miss on both calls for ever.
+const _hexASlots = [{ k: '', a: -1, v: '' }, { k: '', a: -1, v: '' }];
+let _hexASlot = 0;
+function _hexA(c, a) {
+  for (const s of _hexASlots) if (s.k === c && s.a === a) return s.v;
+  let v = c;
+  if (typeof c === 'string' && c.charCodeAt(0) === 35 && c.length === 7) {
+    v = 'rgba(' + parseInt(c.slice(1, 3), 16) + ',' + parseInt(c.slice(3, 5), 16)
+      + ',' + parseInt(c.slice(5, 7), 16) + ',' + a + ')';
   }
-  S.ctx.stroke();
+  const s = _hexASlots[_hexASlot]; _hexASlot ^= 1;
+  s.k = c; s.a = a; s.v = v;
+  return v;
+}
+
+// Published by tiles.js (S._handHue) rather than resolved here: the engine →
+// --eng-* mapping is not the identity (`granular` reads `--eng-grain`, and
+// `filter` answers with granular's hue), so a second copy of that table here
+// would drift the moment one of them changed. One table, in the module that
+// owns the tiles.
+
+// Screen position of a unit-sphere point, or null if it is behind the limb.
+const _cpW = [0, 0, 0], _cpC = [0, 0, 0];
+function _pinScreen(lon, lat) {
+  spherePointInto(lon, lat, _cpW);
+  cameraTransformInto(_cpW[0], _cpW[1], _cpW[2], _cpC);
+  const pr = project(_cpC[0], _cpC[1], _cpC[2]);
+  if (!pr || pr.depth > SPHERE_RADIUS * 2) return null;
+  return pr;
 }
 
 // ── Radius readout (persistent ghost below cursor, flashes on change) ────────
+// ── Brush radius in screen pixels ───────────────────────────────────────────
+// The reticle circle has to match the angular reach the scheduler actually uses
+// (grain.js compares `p._ang` against searchRadiusDeg), so it is measured, not
+// assumed.
+//
+// Centred, `focalLen · tan(r)` is exact: the brush is a cone from the camera at
+// the sphere's centre. Pulled back that identity breaks — the same angle on the
+// sphere subtends a different angle at the eye, and worse, it is no longer even
+// circular on screen near the limb. So when pulled we project the cursor point
+// and a point one brush-radius away along its meridian, and measure. Costs two
+// projections per frame, twice.
+const _brW = [0, 0, 0], _brC = [0, 0, 0];
+function brushScreenRadius(focalLen) {
+  const r = S.searchRadiusDeg * Math.PI / 180;
+  // Centred camera is azimuthal equidistant: pixels per radian is a constant,
+  // so the brush's screen radius is exact at every screen position.
+  if (camOffsetZ() === 0) {
+    const fovRad = ((S.fovDeg ?? FOV_DEG) * Math.PI) / 180;
+    return r * (Math.min(S.canvas.width, S.canvas.height) / 2) / (fovRad / 2);
+  }
+  const flat = r < Math.PI / 2 ? focalLen * Math.tan(r) : S.canvas.width * 0.8;
+
+  const lon = S._frameCursorLon, lat = S._frameCursorLat;
+  if (lon == null || lat == null) return flat;
+  const proj = (lo, la) => {
+    spherePointInto(lo, la, _brW);
+    cameraTransformInto(_brW[0], _brW[1], _brW[2], _brC);
+    return project(_brC[0], _brC[1], _brC[2]);
+  };
+  // Offset along the meridian, flipping near the pole so we stay on the sphere.
+  const off = (lat + r) > Math.PI / 2 ? lat - r : lat + r;
+  const a = proj(lon, lat), b = proj(lon, off);
+  if (!a || !b) return flat;
+  return Math.hypot(b.sx - a.sx, b.sy - a.sy);
+}
+
 export function drawRadiusTooltip() {
   // Use stashed cursor screen coords from drawCursor — works for both mouse and detethered modes
   const mx = S._cursorScreenX;
@@ -531,13 +835,11 @@ export function drawRadiusTooltip() {
   if (isNaN(mx) || isNaN(my)) return;  // cursor inactive or off-screen
 
   // Compute brush radius for offset positioning
-  const searchRadiusRad = S.searchRadiusDeg * Math.PI / 180;
   const fovRad   = ((S.fovDeg ?? FOV_DEG) * Math.PI) / 180;
   const focalLen = (Math.min(S.canvas.width, S.canvas.height) / 2) / Math.tan(fovRad / 2);
-  const brushR   = S.nearestMode ? 28
-    : searchRadiusRad < Math.PI / 2
-      ? focalLen * Math.tan(searchRadiusRad)
-      : S.canvas.width * 0.8;
+  // The ring draws even in nearest mode (it's still the loop/trigger gate),
+  // so the label always positions below the real ring.
+  const brushR   = brushScreenRadius(focalLen);
 
   const label = S.nearestMode ? 'nearest' : `${S.searchRadiusDeg}°`;
   const fs    = 9;
@@ -572,11 +874,107 @@ export function drawRadiusTooltip() {
 const _STRIDE = 7;
 let _sortBuf   = new Float64Array(512 * _STRIDE);
 let _colorBuf  = new Array(512);       // string colors can't go in a typed array
+// Parallel to _colorBuf rather than an 8th stride field: the stride layout is
+// documented above and load-bearing, and a Uint8Array is cheaper to clear.
+let _mutedBuf  = new Uint8Array(512);
+let _wetBuf    = new Uint8Array(512);   // 1 = a wet mark of the brush in the hand — it will move
 let _sortIdx   = new Int32Array(512);
+// ── Per-material drawing (#216 viz pass) ────────────────────────────────────
+// The brush decides how a mark reads back, visually as well as sonically:
+// a grain mark stays a dot, LINE material (p.trig) draws as a connected polyline per
+// stroke, STAMP material (p.source === 'sample') draws as a vertical bar
+// whose height is the file's amplitude at that mark's offset (p.rms is
+// computed from the sample buffer at deposit time), so a stamp stroke lays
+// the waveform of the file along the painted path. All parallel to the sort
+// buffer, preallocated — nothing here may allocate per frame.
+let _matBuf    = new Uint8Array(512);   // 0 grain · 1 line · 2 stamp
+let _strokeBuf = new Int32Array(512);   // strokeId, for polyline grouping
+let _origBuf   = new Int32Array(512);   // original index — a gap breaks the line
+let _timeBuf   = new Float32Array(512); // grainStart — a TIME gap breaks it too
+let _gapBuf    = new Uint8Array(512);   // erase stamped a hole after this mark
+let _lineIdx   = new Int32Array(512);   // ii of collected line points, in order
+let _lineColor = new Array(512);        // resolved color per collected point
+let _lineAlpha = new Float32Array(512);
+let _lineWidth = new Float32Array(512); // HALF-width per point — volume-driven
+// Unit-sphere direction per collected line point — for great-circle
+// densification of the ribbon (marks are 50 ms of hand travel apart, and
+// straight screen segments between them read as a polygon).
+let _linePX = new Float64Array(512);
+let _linePY = new Float64Array(512);
+let _linePZ = new Float64Array(512);
+// Densified ribbon centers (marks + slerped sub-points), and the shared
+// per-frame sub-point budget — same discipline as _TRAIL_BUDGET.
+const _LINE_SMOOTH_BUDGET = 800;
+let _cenX = new Float64Array(512 + _LINE_SMOOTH_BUDGET + 8);
+let _cenY = new Float64Array(512 + _LINE_SMOOTH_BUDGET + 8);
+let _cenW = new Float32Array(512 + _LINE_SMOOTH_BUDGET + 8);
+// Ribbon scratch: screen-space offset outline for one stroke run (fwd + back).
+let _ribX = new Float32Array(2 * (512 + _LINE_SMOOTH_BUDGET + 8));
+let _ribY = new Float32Array(2 * (512 + _LINE_SMOOTH_BUDGET + 8));
 // Cache projected positions for active grains to avoid double spherePoint/project work.
-const _glowCache = new Map();   // particle → { sx, sy, depth, facing }
+const _glowCache = new Map();   // particle → { sx, sy, depth }
+// The density face's bins (the glow pass): grains too short to be seen are
+// drawn as cores in ONE path per alpha step, not a path each. Reused every
+// frame — the render loop allocates nothing per grain (§ render-path).
+// Every sounding mark is drawn at ONE alpha, so the whole glow layer is a
+// single batched path: sx, sy, r triplets, reused every frame, zero-alloc.
+// It was four alpha bins and then six while heat and the onset rate weighted
+// each mark; both are gone (Ek: "i don't want different core or alphas").
+const _glowDots = [];
+// The mark's whole appearance, and the only two numbers in it (Ek, 2026-09-07):
+// twice the 0.42 core the weighted face used at its lightest, at the alpha the
+// six-bin ramp reached at its top. Both are on the marker layer's own size
+// scale (PARTICLE_BASE_SIZE / PARTICLE_MAX_SIZE), never the viz sliders.
+const GLOW_CORE  = 0.84;
+const GLOW_ALPHA = 0.917;
+// Reach lines per frame — a cost ceiling, not a readability one. It used to
+// be a CLIFF: above it the fan was not drawn at all, so the lens at "all"
+// over a dense set — the moment the fan says the most — showed nothing
+// (P5, 2026-09-06). Now the pool is SAMPLED at a stride above the ceiling:
+// the same number of lines, spread evenly through the pool, so the fan keeps
+// its shape and its reach while alpha carries the density as it already did.
+const REACH_MAX = 128;
+
+// ── Depth ramp ──────────────────────────────────────────────────────────────
+// depth → 0..1 "how near", the input to every size and alpha ramp in the three
+// loops below. They must agree, so they all come through here.
+//
+// Two geometries, deliberately NOT unified into one formula:
+//   centred (camPull 0) — every point on the sphere is exactly SPHERE_RADIUS
+//     away, so there is no distance to speak of. `depth` is the z-component and
+//     the ramp is really "how far off the view axis". Kept arithmetically
+//     identical to the pre-pull code so nothing shifts at the default.
+//   pulled — `depth` is a genuine distance spanning |R − D| … R + D. That span
+//     is narrow relative to 2R, so reusing the centred formula would squeeze
+//     every particle into a sliver of the ramp and they would all come out the
+//     same size. Normalise across the span that actually exists.
+// Colour for a particle whose loop is muted. Desaturated, not just dimmed:
+// dimming alone reads as "far away" or "quiet", which are things the paint
+// already means. Grey is the one thing that reads as "not sounding".
+const MUTED_PARTICLE_DARK  = '#5c5c5c';
+const MUTED_PARTICLE_LIGHT = '#b0b0b0';
+
+let _dfNear = 0, _dfInvSpan = 0, _dfPulled = false;
+function updateDepthRamp() {
+  const offZ = camOffsetZ();
+  _dfPulled = offZ !== 0;
+  if (!_dfPulled) return;
+  _dfNear = Math.abs(SPHERE_RADIUS - offZ);
+  const span = 2 * Math.min(SPHERE_RADIUS, offZ);
+  _dfInvSpan = span > 0 ? 1 / span : 0;
+}
+function depthFactor(depth) {
+  // Centred clamp (2026-08-28): the equidistant view draws the FAR
+  // hemisphere too, where z goes negative and the unclamped ramp exceeded 1
+  // — far-side dots rendered past max size. Beyond the 90° ring everything
+  // sits at 1; the facing term already dims it as the depth cue.
+  return _dfPulled
+    ? Math.max(0, Math.min(1, 1 - (depth - _dfNear) * _dfInvSpan))
+    : Math.min(1, 1 - (depth / (SPHERE_RADIUS * 2)));
+}
 
 export function drawParticles() {
+  updateDepthRamp();
   // Single-pass: project + collect directly into a flat sort buffer.
   // Feature-driven rendering: pack audio features into the buffer for
   // feature-driven size/colour. Palette colour used as fallback for legacy particles.
@@ -586,47 +984,134 @@ export function drawParticles() {
   // Ensure pre-allocated buffers are large enough
   const maxCount = S.particles.length;
   if (_sortIdx.length < maxCount) {
-    _sortBuf  = new Float64Array(maxCount * STRIDE);
-    _colorBuf = new Array(maxCount);
-    _sortIdx  = new Int32Array(maxCount);
+    _sortBuf   = new Float64Array(maxCount * STRIDE);
+    _colorBuf  = new Array(maxCount);
+    _mutedBuf  = new Uint8Array(maxCount);
+    _wetBuf    = new Uint8Array(maxCount);
+    _sortIdx   = new Int32Array(maxCount);
+    _matBuf    = new Uint8Array(maxCount);
+    _strokeBuf = new Int32Array(maxCount);
+    _origBuf   = new Int32Array(maxCount);
+    _timeBuf   = new Float32Array(maxCount);
+    _gapBuf    = new Uint8Array(maxCount);
+    _lineIdx   = new Int32Array(maxCount);
+    _lineColor = new Array(maxCount);
+    _lineAlpha = new Float32Array(maxCount);
+    _lineWidth = new Float32Array(maxCount);
+    _linePX    = new Float64Array(maxCount);
+    _linePY    = new Float64Array(maxCount);
+    _linePZ    = new Float64Array(maxCount);
+    _cenX      = new Float64Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
+    _cenY      = new Float64Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
+    _cenW      = new Float32Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
+    _ribX      = new Float32Array(2 * (maxCount + _LINE_SMOOTH_BUDGET + 8));
+    _ribY      = new Float32Array(2 * (maxCount + _LINE_SMOOTH_BUDGET + 8));
   }
+  // One pass over ≤16 slots; rebuilds the marks only when the muted set moves.
+  // Returns false in the normal case, which lets the loops below skip the
+  // per-particle read entirely.
+  const anyMuted = syncParticleMarks();
+  // The wet voicing of the brush in the HAND, if it is wet — its marks wear a
+  // ring below. Read once per frame; a dry hand costs one call.
+  const _hand = S._handTile?.();
+  const handWetVo = _hand?.wet ? (S._wetVoicingOf?.(_hand.id) ?? 0) : 0;
 
   _glowCache.clear();
   const hasGlow = activeGrainMap.size > 0;
 
-  // Reusable scratch for per-particle projection — zero allocations in loop
+  // Reusable scratch for per-particle projection — zero allocations in loop.
+  // projectInto() rather than project(): the latter allocates a result object
+  // AND recomputes Math.tan(fov/2) on every call, which at 20k particles ×
+  // 30fps is 600k allocations/sec of pure GC pressure in the hot loop.  The
+  // projection cache is already primed by updateProjectionCache() per frame.
   const _pW = [0, 0, 0];
   const _pC = [0, 0, 0];
+  const _pj = [0, 0, 0];
+
+  // Camera distance decides which of two geometries we are in, and they are not
+  // continuous with each other in how `depth` and `facing` behave — see the
+  // long note above _depthFacing.
+  const offZ    = camOffsetZ();
+  const pulled  = offZ !== 0;
 
   let count = 0;
+  let origIdx = -1;
   for (const p of S.particles) {
+    origIdx++;
     spherePointInto(p.lon, p.lat, _pW);
     cameraTransformInto(_pW[0], _pW[1], _pW[2], _pC);
     const cx = _pC[0], cy = _pC[1], cz = _pC[2];
-    const proj = project(cx, cy, cz);
-    if (!proj) continue;
+    if (!projectInto(cx, cy, cz, _pj)) continue;
+    const psx = _pj[0], psy = _pj[1], pdepth = _pj[2];
     const mag    = Math.sqrt(cx*cx + cy*cy + cz*cz);
-    const facing = Math.max(0, cz / mag);
+    let facing;
+    if (!pulled) {
+      // Camera at the centre: every point is exactly SPHERE_RADIUS away, so
+      // this is not a distance at all — it is cos(angle off the view axis).
+      // Unchanged from the original inside-sphere model.
+      facing = Math.max(0, cz / mag);
+    } else {
+      // Off-centre: mag IS a real distance and half the sphere hides the other
+      // half, so cull by surface normal. n = (P − centre) is the outward normal
+      // (length R), c is the view ray, and n·c > 0 keeps the INNER face.
+      //
+      // Inner, at every distance — not "near face once you are outside". The
+      // instrument is a bowl you work from within, so pulling back has to keep
+      // showing the surface you are painting, and screenToLonLat's far root
+      // picks that same face. Draw the near shell instead and you get a
+      // coherent-looking ball whose cursor is on the side you cannot see.
+      //
+      // At camPull 0 this is a no-op — every point has n·c = R² > 0, and
+      // projectInto's z > 0.1 alone gives the forward hemisphere, exactly as
+      // the centred model always did.
+      const nz  = cz - offZ;
+      const ndc = cx * cx + cy * cy + nz * cz;   // n · c
+      if (ndc <= 0) continue;
+      // cos of the angle between the surface normal and the view ray.
+      facing = Math.min(1, ndc / (mag * SPHERE_RADIUS));
+    }
     const off    = count * STRIDE;
-    _sortBuf[off]     = proj.sx;
-    _sortBuf[off + 1] = proj.sy;
-    _sortBuf[off + 2] = proj.depth;
+    _sortBuf[off]     = psx;
+    _sortBuf[off + 1] = psy;
+    // When pulled, the ramp wants the true distance, not the z-component: near
+    // the silhouette the two diverge badly. Centred, they are the same thing.
+    _sortBuf[off + 2] = pulled ? mag : pdepth;
     _sortBuf[off + 3] = facing;
     _sortBuf[off + 4] = p.rms ?? 0;
     _sortBuf[off + 5] = p.centroid ?? 0;
     _sortBuf[off + 6] = p.zcr ?? 0;
     _colorBuf[count]  = p.color;
+    _mutedBuf[count]  = anyMuted && p._composerMuted ? 1 : 0;
+    _wetBuf[count]    = handWetVo && p._vo === handWetVo ? 1 : 0;
+    _matBuf[count]    = p.trig ? 1 : (p.source === 'sample' ? 2 : 0);
+    _strokeBuf[count] = p.strokeId ?? -1;
+    _origBuf[count]   = origIdx;
+    // takeT when present (#247): a sampler trigger stroke's grainStart strides
+    // at the patch's grain period (breaking every segment past the 0.25 s gap
+    // test) and rewinds when the sample loops — takeT is its real path clock.
+    _timeBuf[count]   = p.takeT ?? p.grainStart ?? 0;
+    _gapBuf[count]    = p._gapAfter ? 1 : 0;
+    // Unit direction, for the ribbon's great-circle densification.
+    if (p._cx === undefined) stampCartesian(p);
+    _linePX[count] = p._cx; _linePY[count] = p._cy; _linePZ[count] = p._cz;
     if (hasGlow && activeGrainMap.has(p)) {
-      _glowCache.set(p, { sx: proj.sx, sy: proj.sy, depth: proj.depth, facing });
+      _glowCache.set(p, { sx: psx, sy: psy, depth: pulled ? mag : pdepth });
     }
     count++;
   }
 
   const buf = _sortBuf;
 
-  // Read mutable size overrides (set from viz modal sliders)
-  const pBase = S.vizMinSize ?? PARTICLE_BASE_SIZE;
-  const pMax  = S.vizMaxSize ?? PARTICLE_MAX_SIZE;
+  // Read mutable size overrides (set from viz modal sliders), scaled by the
+  // zoom (2026-08-28): under the equidistant view a mark should keep a
+  // roughly constant ANGULAR footprint, so dots shrink as the view zooms out
+  // toward the 360° map instead of swamping it, and grow (capped) zoomed in.
+  // 80° — the long-standing default — is the reference size.
+  const zf = Math.max(0.35, Math.min(1.6, 80 / (S.fovDeg ?? FOV_DEG)));
+  const pBase = (S.vizMinSize ?? PARTICLE_BASE_SIZE) * zf;
+  const pMax  = (S.vizMaxSize ?? PARTICLE_MAX_SIZE) * zf;
+
+  let _lineCount = 0;   // line-material points collected this frame
 
   for (let ii = 0; ii < count; ii++) {
     const i          = ii * STRIDE;
@@ -634,8 +1119,7 @@ export function drawParticles() {
     const sy         = buf[i + 1];
     const depth      = buf[i + 2];
     const facing     = buf[i + 3];
-    const distFactor = 1 - (depth / (SPHERE_RADIUS * 2));
-    const depthScale = Math.max(0, distFactor);
+    const depthScale = Math.max(0, depthFactor(depth));
 
     let size, color, alpha;
 
@@ -649,7 +1133,7 @@ export function drawParticles() {
       // rmsN=0 → pBase (quiet floor), rmsN=1 → pMax (loud ceiling)
       const rmsSize = pBase + (pMax - pBase) * rmsN;
       size  = rmsSize * (0.5 + 0.5 * depthScale);
-      color = featuresToHSL(centN, zcrR);
+      color = featuresToColor(centN, zcrR);
       alpha = (0.35 + 0.65 * depthScale) * (0.5 + 0.5 * facing);
     } else {
       // ── Original palette rendering (fallback) ──
@@ -658,12 +1142,288 @@ export function drawParticles() {
       alpha = (0.3 + 0.7 * depthScale) * (0.5 + 0.5 * facing);
     }
 
+    // A muted loop's material goes grey. Applied after the colour is chosen so
+    // it overrides both the feature-driven and the palette path — the point is
+    // that timbre colour stops meaning anything while the buffer is silent.
+    if (_mutedBuf[ii]) {
+      color = S.darkMode ? MUTED_PARTICLE_DARK : MUTED_PARTICLE_LIGHT;
+      alpha *= 0.7;
+    }
+
+    // Line and stamp material keep their PALETTE colour — a line's colour is
+    // the stroke's identity and a stamp's is its file's, and both encode
+    // their sound another way (the line by being one object, the bar by its
+    // height). Feature-driven hue stays a grain thing. Muted grey still wins.
+    const mat = _matBuf[ii];
+    if (mat === 1) {
+      // Line material: collect, draw as a volume-ribbon after this loop.
+      // The half-width follows the mark's recorded rms — the stroke reads
+      // like a pressure line: thin where the playing was quiet, swelling
+      // where it was loud. A mark with no features draws at the floor.
+      // Alpha boosted over the dot formula (a stroke has far less ink than
+      // a dot cloud) and breathing slightly with the same volume.
+      //
+      // FAR-OFF-CANVAS marks are treated as culled: near ±90° off-axis the
+      // rectilinear projection blows up (tan), a mark "projects" to
+      // thousands of px off-screen, and the ribbon drew a streak across the
+      // whole canvas to reach it (2026-08-28, steer mode at the edges).
+      // Skipping it leaves an origIdx gap, which is already a run break. The
+      // margin is generous — one canvas beyond each edge — so segments
+      // merely spanning the edge still draw.
+      if (!_onCanvasish(buf[i], buf[i + 1])) continue;
+      const rmsN = buf[i + 4] > 0 ? normalise(buf[i + 4], S.vizRmsMin, S.vizRmsMax) : 0;
+      _lineIdx[_lineCount]   = ii;
+      _lineColor[_lineCount] = _mutedBuf[ii] ? color : _colorBuf[ii];
+      _lineAlpha[_lineCount] = Math.min(1, alpha * (1.3 + 0.5 * rmsN));
+      const rmsE = Math.pow(rmsN, 1.35);   // expand contrast: quiet stays thin
+      _lineWidth[_lineCount] = (0.6 + (pBase * 0.5 + pMax * 1.8) * rmsE) * (0.55 + 0.45 * depthScale);
+      _lineCount++;
+      continue;
+    }
+
     S.ctx.globalAlpha = alpha;
-    S.ctx.fillStyle   = color;
-    S.ctx.beginPath(); S.ctx.arc(sx, sy, size, 0, Math.PI * 2); S.ctx.fill();
+    if (mat === 2) {
+      // Stamp material: a thin vertical bar whose height is the file's
+      // amplitude at this mark's offset — the stroke lays the waveform of
+      // the file along the painted path. rms is computed from the sample
+      // buffer at deposit time (paint-ticker), so this needs no new data.
+      S.ctx.fillStyle = _mutedBuf[ii] ? color : _colorBuf[ii];
+      const rmsN  = buf[i + 4] > 0 ? normalise(buf[i + 4], S.vizRmsMin, S.vizRmsMax) : 0;
+      const halfH = (pBase * 0.6 + pMax * 1.6 * rmsN) * (0.5 + 0.5 * depthScale) + 0.8;
+      const halfW = Math.max(0.7, 0.5 + 0.7 * depthScale);
+      S.ctx.fillRect(sx - halfW, sy - halfH, halfW * 2, halfH * 2);
+    } else {
+      S.ctx.fillStyle = color;
+      S.ctx.beginPath(); S.ctx.arc(sx, sy, size, 0, Math.PI * 2); S.ctx.fill();
+      // A WET mark of the brush in the hand wears a ring in the hand's hue:
+      // these are the marks the sheet's knobs will move (brush-voicing.js,
+      // "Wet paint"). Only the hand's — a wet brush you are not holding
+      // cannot move, so its marks read like any dry ones. One extra stroke
+      // per such mark, and only while a wet brush is playing.
+      if (_wetBuf[ii]) {
+        S.ctx.strokeStyle = S._handHue || color;
+        S.ctx.lineWidth = 1;
+        S.ctx.beginPath(); S.ctx.arc(sx, sy, size + 2, 0, Math.PI * 2); S.ctx.stroke();
+      }
+    }
+  }
+
+  // ── Line material: one polyline per stroke ────────────────────────────────
+  // Collected in array order, which is paint order. A path breaks where the
+  // stroke changes, where culling hid a span (original-index gap), or where
+  // the stroke's own TIMELINE jumps — which is what erase leaves behind. The
+  // index break alone cannot see an erase: origIdx is recomputed from the
+  // compacted array every frame, so survivors on either side of an erased
+  // chunk become consecutive again and the ribbon drew a chord across the
+  // gap (2026-08-28). Time is stable: marks deposit on the paint tick, so a
+  // delta well past the tick means material is missing there. A false break
+  // (a brush clock stretching mid-stroke) is harmless — the two runs abut.
+  if (_lineCount > 0) {
+    const _lineGapS = Math.max(0.25, 4 * ((S.paintTicker?.intervalMs ?? 50) / 1000));
+    S.ctx.lineJoin = 'round';
+    let runStart = 0;
+    let smoothLeft = _LINE_SMOOTH_BUDGET;   // shared across all runs this frame
+    const flush = (a, b) => {   // draw collected points [a, b) as one ribbon
+      if (b - a === 1) {
+        // An isolated visible point still marks the material.
+        const ii = _lineIdx[a], i = ii * STRIDE;
+        S.ctx.globalAlpha = _lineAlpha[a];
+        S.ctx.fillStyle   = _lineColor[a];
+        S.ctx.beginPath();
+        S.ctx.arc(buf[i], buf[i + 1], Math.max(1.2, _lineWidth[a]), 0, Math.PI * 2);
+        S.ctx.fill();
+        return;
+      }
+      // Densify along the GREAT CIRCLE first (2026-08-28): marks sit 50 ms
+      // of hand travel apart, and straight screen segments between them read
+      // as a polygon ("minecraft lines"). Sub-points are slerped on the
+      // sphere and projected — the drawn ribbon is the true spherical path,
+      // the same one the eraser and the trigger gate test. Budget-bounded,
+      // same discipline as _TRAIL_BUDGET; when it runs out later strokes
+      // simply draw straight.
+      const n0 = b - a;
+      let cn = 0;
+      for (let k = 0; k < n0; k++) {
+        const iC = _lineIdx[a + k] * STRIDE;
+        _cenX[cn] = buf[iC];
+        _cenY[cn] = buf[iC + 1];
+        _cenW[cn] = Math.max(0.5, _lineWidth[a + k]);
+        cn++;
+        if (k + 1 < n0 && smoothLeft > 0) {
+          const j0 = _lineIdx[a + k], j1 = _lineIdx[a + k + 1];
+          const ax = _linePX[j0], ay = _linePY[j0], az = _linePZ[j0];
+          const bx2 = _linePX[j1], by2 = _linePY[j1], bz2 = _linePZ[j1];
+          const dt = ax * bx2 + ay * by2 + az * bz2;
+          const ang = Math.acos(Math.max(-1, Math.min(1, dt)));
+          if (ang > 0.05) {                              // > ~3°: worth curving
+            const subs = Math.min(6, Math.ceil(ang / 0.035));
+            const sinA = Math.sin(ang);
+            const w0 = _cenW[cn - 1], w1 = Math.max(0.5, _lineWidth[a + k + 1]);
+            for (let s2 = 1; s2 < subs && smoothLeft > 0; s2++) {
+              const tt = s2 / subs;
+              const fA = Math.sin((1 - tt) * ang) / sinA;
+              const fB = Math.sin(tt * ang) / sinA;
+              cameraTransformInto((fA * ax + fB * bx2) * SPHERE_RADIUS,
+                                  (fA * ay + fB * by2) * SPHERE_RADIUS,
+                                  (fA * az + fB * bz2) * SPHERE_RADIUS, _arcC);
+              if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _gridProj)) continue;
+              _cenX[cn] = _gridProj[0];
+              _cenY[cn] = _gridProj[1];
+              _cenW[cn] = w0 + (w1 - w0) * tt;
+              cn++; smoothLeft--;
+            }
+          }
+        }
+      }
+      // Offset each point perpendicular to the local path direction by its
+      // own half-width — a filled ribbon whose width IS the recorded volume.
+      // One polygon, one fill; scratch buffers are preallocated.
+      const n = cn;
+      let pnx = 0, pny = -1;   // carried normal for zero-length segments
+      let snx = 0, sny = -1, enx = 0, eny = -1;   // end normals, for the caps
+      for (let k = 0; k < n; k++) {
+        const kP = Math.max(0, k - 1), kN = Math.min(n - 1, k + 1);
+        const tx = _cenX[kN] - _cenX[kP], ty = _cenY[kN] - _cenY[kP];
+        const len = Math.hypot(tx, ty);
+        let nx, ny;
+        if (len > 1e-6) { nx = -ty / len; ny = tx / len; pnx = nx; pny = ny; }
+        else            { nx = pnx; ny = pny; }
+        if (k === 0)     { snx = nx; sny = ny; }
+        if (k === n - 1) { enx = nx; eny = ny; }
+        const w = _cenW[k];
+        _ribX[k] = _cenX[k] + nx * w;      _ribY[k] = _cenY[k] + ny * w;
+        _ribX[2 * n - 1 - k] = _cenX[k] - nx * w;
+        _ribY[2 * n - 1 - k] = _cenY[k] - ny * w;
+      }
+      // MATERIAL-TRUE END CAPS (2026-08-28): each mark owns half a segment of
+      // line on each side, so a run extends half its terminal segment past
+      // the end marks. Without this, an erase gap could only span
+      // survivor-to-survivor and always read one full mark-spacing WIDER than
+      // the material removed — at sparse spacing "the eraser bites double its
+      // diameter" even though removal was exact.
+      // A cap only extends across a TRUE adjacency: if the terminal segment
+      // is itself a bridge (a musical rest the gate recorded — anything past
+      // the paint tick), extending half of it would draw material that was
+      // never there. Bridges get flat caps.
+      const iA = _lineIdx[a] * STRIDE,     iA1 = _lineIdx[a + 1] * STRIDE;
+      const iZ = _lineIdx[b - 1] * STRIDE, iZ1 = _lineIdx[b - 2] * STRIDE;
+      const adjS = 1.6 * ((S.paintTicker?.intervalMs ?? 50) / 1000);
+      const fS = (_timeBuf[_lineIdx[a + 1]] - _timeBuf[_lineIdx[a]]) <= adjS ? 0.5 : 0;
+      const fE = (_timeBuf[_lineIdx[b - 1]] - _timeBuf[_lineIdx[b - 2]]) <= adjS ? 0.5 : 0;
+      const exSX = buf[iA] + (buf[iA] - buf[iA1]) * fS;
+      const exSY = buf[iA + 1] + (buf[iA + 1] - buf[iA1 + 1]) * fS;
+      const exEX = buf[iZ] + (buf[iZ] - buf[iZ1]) * fE;
+      const exEY = buf[iZ + 1] + (buf[iZ + 1] - buf[iZ1 + 1]) * fE;
+      const sw = Math.max(0.5, _lineWidth[a]);
+      const ew = Math.max(0.5, _lineWidth[b - 1]);
+      S.ctx.globalAlpha = _lineAlpha[a];
+      S.ctx.fillStyle   = _lineColor[a];
+      S.ctx.beginPath();
+      S.ctx.moveTo(_ribX[0], _ribY[0]);
+      for (let k = 1; k < n; k++) S.ctx.lineTo(_ribX[k], _ribY[k]);
+      S.ctx.lineTo(exEX + enx * ew, exEY + eny * ew);   // end cap, extended
+      S.ctx.lineTo(exEX - enx * ew, exEY - eny * ew);
+      for (let k = n; k < 2 * n; k++) S.ctx.lineTo(_ribX[k], _ribY[k]);
+      S.ctx.lineTo(exSX - snx * sw, exSY - sny * sw);   // start cap, extended
+      S.ctx.lineTo(exSX + snx * sw, exSY + sny * sw);
+      S.ctx.closePath();
+      S.ctx.fill();
+    };
+    for (let k = 1; k <= _lineCount; k++) {
+      // `_gapBuf` is the erase's own stamp on the survivor before a hole —
+      // the one break signal that works when the erase-split is deferred
+      // (claimed stroke) and the hole is smaller than the time threshold.
+      const brk = k === _lineCount
+        || _strokeBuf[_lineIdx[k]] !== _strokeBuf[_lineIdx[k - 1]]
+        || _origBuf[_lineIdx[k]]   !== _origBuf[_lineIdx[k - 1]] + 1
+        || _timeBuf[_lineIdx[k]] - _timeBuf[_lineIdx[k - 1]] > _lineGapS
+        || _gapBuf[_lineIdx[k - 1]] === 1;
+      if (brk) { flush(runStart, k); runStart = k; }
+    }
   }
 
   S.ctx.globalAlpha = 1;
+
+  // ── Reach fan (the SELECTION, not the sound) ──────────────────────────────
+  // Drawn on its own gate — the pool being fresh — and NEVER on the glow map.
+  // It lived inside `if (_glowCache.size > 0)` until 2026-09-07, which made the
+  // fan blink at the grain rate: on a slow patch (500 ms period, 500 ms grains)
+  // the map empties for the frame or two between one grain expiring and the
+  // next onset, and the whole selection vanished with it (Ek: "those lines show
+  // which particles are selected under k — it is the selection area, not the
+  // grain glow"). What the cursor can reach does not stop being true between
+  // two onsets, and at a long period it is not true only 60 % of the time.
+  //
+  // Reach lines: the search radius stops being an abstract circle and becomes
+  // visible reach. Also makes k / nearestMode / grainKAllMode self-evident —
+  // k-all looks like a burst of spokes.
+  //
+  // ONE LINE PER CANDIDATE, ONE RING PER GRAIN (Ek, 2026-09-02). The fan is
+  // the scheduler's published pool — the k marks the cursor is choosing from
+  // THIS tick (S._cursorPool, grain.js) — not the glow map. The glow map is
+  // grains in flight, and a grain outlives the tick that chose it by its
+  // whole duration: at k = 1, 1000 ms grains and a 200 ms period, five dots
+  // wore lines at once and the fan read as k = 5. So the two marks now say
+  // two different things: a line is "reachable now", a ring is "sounding
+  // now", and the count of lines IS k (or the radius's population in fill
+  // mode). The pool is at most 20 ms stale, which is one tick behind the
+  // reticle on a fast sweep and nothing anyone can see.
+  //
+  // REACH_MAX is a PERFORMANCE ceiling, not a readability one. It was 32,
+  // chosen as "spokes stop reading as spokes past this" — without checking
+  // that the default patch ships k = 99. Density is handled by ALPHA instead,
+  // which degrades smoothly where a hard cap fell off a cliff: a few lines
+  // draw crisp, a hundred draw as a faint fan that still reads as reach.
+  //
+  // The cloud gate stays (2026-08-30): a mark inside a pinned cloud is the
+  // cloud's, the cursor does not granulate it (grain.js), and the pool
+  // builder already leaves it out — but a cloud pinned between two ticks
+  // would draw a line for one frame, and pins-audit § K counts the segments
+  // a real drawFrame() issues, so the predicate is checked here as well.
+  const pool = S._cursorPool;
+  const poolFresh = pool && (performance.now() - (S._cursorPoolAt || 0)) < 120;
+  if (poolFresh && pool.length > 0) {
+    const scanOff = S.scanMuted;
+    const ink = S.darkMode ? '#ffffff' : '#000000';
+    spherePointInto(S._frameCursorLon, S._frameCursorLat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    const cProj = project(_arcC[0], _arcC[1], _arcC[2]);
+    if (cProj) {
+      // ONE path for the whole fan, one stroke. Per-line beginPath/stroke
+      // triplets are the exact pattern that made moving-cloud trails the #1
+      // source of scheduler drift (see the render-path notes in CLAUDE.md).
+      // Projection is the zero-alloc path: three scratch arrays, no objects.
+      refreshCloudClaims();
+      let n = 0;
+      // Every mark up to the ceiling; above it, an even stride through the
+      // pool. `drawn` is what the alpha ramp sees, so a sampled fan reads
+      // at the same weight a full one would.
+      const stride = pool.length > REACH_MAX ? Math.ceil(pool.length / REACH_MAX) : 1;
+      S.ctx.beginPath();
+      for (let i = 0; i < pool.length; i += stride) {
+        const particle = pool[i];
+        if (isCloudClaimed(particle)) continue;   // a pinned cloud's, not the cursor's
+        spherePointInto(particle.lon, particle.lat, _arcW);
+        cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+        if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _projA)) continue;
+        S.ctx.moveTo(cProj.sx, cProj.sy);
+        S.ctx.lineTo(_projA[0], _projA[1]);
+        n++;
+      }
+      if (n) {
+        // Floor is 0.25 at a full fan, roughly 0.49 for a handful. Scan off
+        // keeps the fan — reach is still true — at the muted marker's weight.
+        S.ctx.strokeStyle  = ink;
+        S.ctx.lineWidth    = 1;
+        // The DENSITY the fan stands for, not the count drawn: a sampled
+        // fan of 128 out of 3000 must read as dense, not as a handful.
+        const dens = Math.min(1, (n * stride) / 64);
+        S.ctx.globalAlpha  = 0.5 * (1 - 0.5 * dens) * (scanOff ? 0.4 : 1);
+        S.ctx.stroke();
+        S.ctx.globalAlpha  = 1;
+      }
+    }
+  }
 
   // ── Active grain highlight (second pass) ──────────────────────────────────
   // Draw a bright dot over every particle that currently has a grain playing.
@@ -672,20 +1432,65 @@ export function drawParticles() {
   // to visually distinguish them from seed-triggered grains (which stay white).
   if (_glowCache.size > 0) {
     const scanOff = S.scanMuted;
-    for (const [particle, { sx, sy, depth, facing }] of _glowCache) {
-      const df   = Math.max(0, 1 - (depth / (SPHERE_RADIUS * 2)));
-      const size = (PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df) * 1.6;
+    const ink = S.darkMode ? '#ffffff' : '#000000';
+    // ONE MARK, ONE WEIGHT (Ek, 2026-09-07: "i don't want different core or
+    // alphas, i want the same. use the x2 and 0.92 alpha for all"). Everything
+    // that made one sounding grain look different from another is gone: the
+    // core-and-ring face and its duration threshold, the onset-rate ramp that
+    // replaced it, and the per-mark heat that predated both. A grain sounding
+    // is a grain sounding; the mark says so at full weight whether it is one
+    // every half second or three hundred a second, and the eye is left to read
+    // the field from how many marks are lit and for how long — which is the
+    // engine's own doing, not the renderer's editorial. The two constants are
+    // the ones Ek picked off the old ramp's top end.
+    //
+    // The three deletions took three days and each one was the same finding.
+    // The ring past a duration threshold: "when i drag down i see big circles
+    // then they disappear". Moving that threshold onto the onset rate: same
+    // seam, new place. Ramping it continuously instead: "i don't want
+    // different core or alphas". A performance surface is read at a glance
+    // while both hands are busy, and every rule that makes the same event look
+    // different in different conditions is one more thing to decode first.
+    //
+    // DELIBERATE: this pass sizes off the PARTICLE_BASE_SIZE / PARTICLE_MAX_SIZE
+    // constants (4 / 20) while the paint pass above reads S.vizMinSize /
+    // S.vizMaxSize. The two size systems are divorced on purpose — this is a
+    // fixed-size MARKER LAYER, and that is the whole reason it survives the
+    // sliders. Tie the core to vizMaxSize and the marker grows with the paint
+    // it is meant to stand out against, so at a high ceiling the highlight
+    // stops being findable exactly when the field is dense enough to need it.
+    // The layer's job is "which grain is sounding", which has nothing to do
+    // with how loud that grain was. (Recorded 2026-08-24; docs/archive/viz-changes-for-cli.md
+    // flagged it as an accident, and Ek's call was to keep it fixed.)
+    //
+    // DEPTH is the one thing still allowed to move the mark, and it is not a
+    // weighting: it is where the mark IS. The core rides the same depth ramp
+    // the paint under it does, so a mark on the far side does not read as
+    // nearer than the material around it. Alpha does not, or depth would be
+    // counted twice and the far side would fade out of a layer whose whole
+    // job is to be findable.
+    _glowDots.length = 0;
+    for (const [particle, { sx, sy, depth }] of _glowCache) {
       const entry = activeGrainMap.get(particle);
-      const isCursorGrain = entry && entry.glowColor === '#ffffff';
-      if (scanOff && isCursorGrain) {
-        // Scan off cursor grains: faint white — still visible but clearly quieter
-        S.ctx.globalAlpha = (0.15 + 0.1 * facing) * df;
-      } else {
-        // Seed grains + scan-active cursor grains: near-opaque white
-        S.ctx.globalAlpha = (0.75 + 0.25 * facing) * df;
+      // A loop or trigger tags its playhead mark in the loop's own colour
+      // (grain.js, seq block) so the paint pass can brighten it as the head
+      // passes. That head already wears the SQUARE (_drawPlayheadSquare); a
+      // circle here as well drew both markers on one mark (Ek, 2026-09-02).
+      // The circle is for grains — white tags, cursor and cloud alike.
+      if (!entry || entry.glowColor !== '#ffffff') continue;
+      const df   = Math.max(0, depthFactor(depth));
+      const base = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df;
+      _glowDots.push(sx, sy, Math.max(3.2, base * GLOW_CORE));
+    }
+    if (_glowDots.length) {
+      S.ctx.globalAlpha = scanOff ? GLOW_ALPHA * 0.25 : GLOW_ALPHA;
+      S.ctx.fillStyle   = ink;
+      S.ctx.beginPath();
+      for (let i = 0; i < _glowDots.length; i += 3) {
+        S.ctx.moveTo(_glowDots[i] + _glowDots[i + 2], _glowDots[i + 1]);
+        S.ctx.arc(_glowDots[i], _glowDots[i + 1], _glowDots[i + 2], 0, Math.PI * 2);
       }
-      S.ctx.fillStyle = S.darkMode ? '#ffffff' : '#000000';
-      S.ctx.beginPath(); S.ctx.arc(sx, sy, size, 0, Math.PI * 2); S.ctx.fill();
+      S.ctx.fill();
     }
     S.ctx.globalAlpha = 1;
   }
@@ -700,15 +1505,13 @@ export function drawParticles() {
     spherePointInto(p.lon, p.lat, _arcW);
     cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
     const proj = project(_arcC[0], _arcC[1], _arcC[2]);
-    if (!proj || proj.depth > SPHERE_RADIUS * 2) continue;
-    const facing = Math.max(0, 1 - proj.depth / SPHERE_RADIUS);
-    const df = Math.max(0, 1 - (proj.depth / (SPHERE_RADIUS * 2)));
-    const size = (PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df) * 2.2;
-    S.ctx.globalAlpha = (0.6 + 0.4 * facing) * df;
-    S.ctx.strokeStyle = seq.color;
-    S.ctx.lineWidth = 2;
-    S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, size, 0, Math.PI * 2); S.ctx.stroke();
-    S.ctx.globalAlpha = 1;
+    if (!proj) continue;
+    // depthFactor, not the raw 2R formulas — see the trigger playhead note.
+    const df = Math.max(0, depthFactor(proj.depth));
+    // The same square as the trigger playhead — a held loop is the same kind
+    // of time; alpha floored like the particle pass.
+    _drawPlayheadSquare(proj.sx, proj.sy, df, 0.9 * (0.35 + 0.65 * df));
+    if (seq.overdubs?.length && S.audioCtx) _drawOverdubHeads(seq, proj.sx, proj.sy);
   }
 
   // ── Sequence anchor markers ──────────────────────────────────────────────
@@ -723,87 +1526,430 @@ export function drawParticles() {
     spherePointInto(aLon, aLat, _arcW);
     cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
     const proj = project(_arcC[0], _arcC[1], _arcC[2]);
-    if (!proj || proj.depth > SPHERE_RADIUS * 2) continue;
-    const df = Math.max(0, 1 - (proj.depth / (SPHERE_RADIUS * 2)));
-    const a = (seq.playing ? 0.9 : 0.4) * df;
-    const x = proj.sx, y = proj.sy;
+    if (!proj) continue;
+    const df = Math.max(0, depthFactor(proj.depth));
+    const a = (seq.playing ? 0.9 : 0.4) * (0.35 + 0.65 * df);
+    _drawAnchorMark(proj.sx, proj.sy, seq.color, a, si + 1, !seq.playing);
+  }
 
-    S.ctx.save();
-    S.ctx.globalAlpha = a;
-    // Ring
-    S.ctx.strokeStyle = seq.color;
-    S.ctx.lineWidth = 2.5;
-    S.ctx.beginPath(); S.ctx.arc(x, y, 14, 0, Math.PI * 2); S.ctx.stroke();
-    // Filled center dot
-    S.ctx.fillStyle = seq.color;
-    S.ctx.beginPath(); S.ctx.arc(x, y, 4, 0, Math.PI * 2); S.ctx.fill();
-    // Slot number
-    S.ctx.font = 'bold 11px "Roboto Mono", monospace';
-    S.ctx.textAlign = 'center';
-    S.ctx.textBaseline = 'middle';
-    S.ctx.fillText(si + 1, x, y - 20);
-    // Pause icon
-    if (!seq.playing) {
-      S.ctx.fillStyle = seq.color + '88';
-      const bw = 2.5, bh = 7;
-      S.ctx.fillRect(x - bw - 1.5, y - bh / 2, bw, bh);
-      S.ctx.fillRect(x + 1.5, y - bh / 2, bw, bh);
+  drawTriggers();
+}
+
+// ── Armed triggers ──────────────────────────────────────────────────────────
+// A trigger has no slot chip in the commit bank, so the sphere is the only
+// readout it gets. Three things need to be visible at a glance, mid-set:
+// which strokes are armed, how close the cursor is to firing one, and which one
+// is sounding right now.
+//
+// The halo is drawn at the stroke's NEAREST point to the cursor, not at its
+// anchor. The hit test is stroke-wide — any particle counts — so a circle
+// pinned to the anchor would show a catchment area that isn't the real one.
+// For a long paint stroke the two are nowhere near each other.
+// Budget for the armed-stroke outlines, shared across all triggers — the same
+// discipline _TRAIL_BUDGET enforces for moving clouds. Trigger strokes are
+// static, but there can be 32 of them and the render loop shares a thread with
+// a scheduler that needs sample-accurate onsets.
+// (The shared outline budget was replaced 2026-08-28 by a fixed 48-point
+// per-trigger cap — dividing by the trigger count made every erase-split
+// resample the outline. See the stride note in drawTriggers.)
+const _trigProj = [0, 0, 0];
+// An overdub's head (Ek, 2026-09-05: "I should see a playhead on the overdub
+// as well, tethered to the main loop playhead"). Where the master's phase
+// falls in the take (grain.js overdubHeads — one head per stacked pass), the
+// mark of the overdub's stroke nearest that moment wears the same square at
+// a lower alpha, and a thin line runs to the master's head: the layer has no
+// clock of its own, and the line says so. The stroke's marks are cached on
+// the overdub, sorted by take time, and dropped when the particle set
+// changes (an erase) — a per-frame filter over S.particles would not do.
+const _ovProj = [0, 0, 0];
+const _ovHeads = [];
+function _overdubMarks(ov) {
+  // Keyed on the particle version AND the count: a take still recording
+  // grows its stroke every tick without bumping the version.
+  const ver = S._particleVersion + ':' + S.particles.length;
+  if (ov._marks && ov._marksVer === ver) return ov._marks;
+  const m = [];
+  for (const p of S.particles) if (p.strokeId === ov.strokeId) m.push(p);
+  m.sort((a, b) => a.grainStart - b.grainStart);
+  ov._marks = m; ov._marksVer = ver;
+  return m;
+}
+function _markAtTakeTime(marks, t) {
+  let lo = 0, hi = marks.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (marks[mid].grainStart < t) lo = mid + 1; else hi = mid; }
+  if (lo > 0 && t - marks[lo - 1].grainStart < marks[lo].grainStart - t) lo--;
+  return marks[lo];
+}
+function _drawOverdubHeads(seq, mx, my) {
+  const phase = masterPhaseWall(seq, S.audioCtx.currentTime);
+  const ink = S.darkMode ? '#ffffff' : '#000000';
+  for (const ov of seq.overdubs) {
+    if (!(ov.strokeId > 0) || !ov.layer) continue;
+    const marks = _overdubMarks(ov);
+    if (!marks.length) continue;
+    // A sealed take is its buffer's length; a take still recording is heard
+    // only as far as its last fold — one head per pass of THAT.
+    const takeDur = ov.buffer?.duration ?? ov.foldedS ?? ov.layer.duration;
+    overdubHeads(ov, phase, takeDur, _ovHeads);
+    for (let h = 0; h < _ovHeads.length; h++) {
+      const p = _markAtTakeTime(marks, _ovHeads[h]);
+      spherePointInto(p.lon, p.lat, _arcW);
+      cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+      if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _ovProj)) continue;
+      const df = Math.max(0, depthFactor(_ovProj[2]));
+      const a  = 0.35 + 0.65 * df;
+      S.ctx.save();
+      S.ctx.globalAlpha = 0.45 * a;
+      S.ctx.strokeStyle = ink;
+      S.ctx.lineWidth   = 1;
+      S.ctx.beginPath(); S.ctx.moveTo(mx, my); S.ctx.lineTo(_ovProj[0], _ovProj[1]); S.ctx.stroke();
+      S.ctx.restore();
+      _drawPlayheadSquare(_ovProj[0], _ovProj[1], df, 0.6 * a);
     }
-    S.ctx.restore();
+  }
+}
+
+// A loop's playhead is a SQUARE — the granulation marker's core + outline, in
+// ink, at the granulation marker's size, but square (Ek, 2026-09-02). Shape is
+// the whole difference between "a grain is sounding here" (circle) and "a
+// loop's head is here" (square); the loop's own colour lives on its anchor
+// marker and its rail chip, not on the head. The tangent-oriented rectangle
+// this replaces was smaller than the circle and read as a third thing.
+// Axis-aligned on purpose: a square that turns with the path stops being a
+// square at a glance. Same floored depth fade as the particles.
+const _tickProj = [0, 0, 0];   // scratch for the trigger outline below
+
+function _drawPlayheadSquare(x, y, df, alpha) {
+  const base = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df;
+  const core = Math.max(1.6, base * 0.42);
+  const half = Math.max(6,   base * 1.5);
+  const ink  = S.darkMode ? '#ffffff' : '#000000';
+  S.ctx.save();
+  S.ctx.globalAlpha = alpha;
+  S.ctx.fillStyle   = ink;
+  S.ctx.beginPath(); S.ctx.arc(x, y, core, 0, Math.PI * 2); S.ctx.fill();
+  S.ctx.globalAlpha = alpha * 0.8;
+  S.ctx.strokeStyle = ink;
+  S.ctx.lineWidth   = 1.1;
+  S.ctx.strokeRect(x - half, y - half, half * 2, half * 2);
+  S.ctx.restore();
+}
+
+function drawTriggers() {
+  const trigs = S.triggers;
+  if (!trigs || trigs.length === 0) return;
+
+  // Capped, draw faintly and never show the proximity or firing states. The
+  // gate keeps tracking `_inside` under the cap (so uncapping doesn't bang
+  // whatever the cursor is on), and drawing that would promise a shot that
+  // isn't coming.
+  const live = !S.scanMuted && S.lensReads !== 'grains';
+  const parkedAlpha = 0.45;   // multiplier applied to everything while capped
+
+  // ── Armed-stroke outlines ────────────────────────────────────────────────
+  // Which strokes are armed has to be visible without firing them. Drawn as
+  // decimated polylines through each stroke's particles, batched into one path
+  // per trigger. Stride is derived from the shared budget so a sphere full of
+  // long strokes costs the same as one with a few.
+  // A stroke claimed by a live loop slot draws no armed outline: its trigger
+  // cannot fire while claimed (#241), and with the rebuild deferred its
+  // particle list may still hold erased marks — the outline would trace
+  // material that is no longer there.
+  const claimed = claimedStrokeIds();
+  let _trigSmoothLeft = 400;   // outline slerp budget, per frame
+  S.ctx.save();
+  S.ctx.lineWidth = 1;
+  for (let i = 0; i < trigs.length; i++) {
+    const t = trigs[i];
+    if (claimed && claimed.has(t.strokeId)) continue;
+    const ps = t.particles;
+    if (!ps || ps.length < 2) continue;
+    // STABLE stride (2026-08-28): this used to divide the budget by the
+    // trigger COUNT, so the split that follows every erase changed the
+    // stride and resampled the outline's points along the whole stroke —
+    // "the line shifts a little to adjust". A per-trigger cap keeps the
+    // sampled marks fixed for any stroke of ≤48 marks and nearly fixed
+    // above; total worst case is bounded by MAX×48 points, same order as
+    // the old shared budget.
+    const stride = Math.max(1, Math.ceil(ps.length / 48));
+    S.ctx.globalAlpha = (live && t.trigger?._inside ? 0.5 : 0.22) * (live ? 1 : parkedAlpha);
+    S.ctx.strokeStyle = t.color;
+    S.ctx.beginPath();
+    let started = false;
+    let prevP = null;
+    for (let pi = 0; pi < ps.length; pi += stride) {
+      const p = ps[pi];
+      // Slerp between decimated samples so the outline follows the great
+      // circle instead of chording — same smoothing as the stroke ribbon,
+      // with its own small budget (the stride makes the chords LONG).
+      if (started && prevP && _trigSmoothLeft > 0 &&
+          p._cx !== undefined && prevP._cx !== undefined) {
+        const dt = prevP._cx * p._cx + prevP._cy * p._cy + prevP._cz * p._cz;
+        const ang = Math.acos(Math.max(-1, Math.min(1, dt)));
+        if (ang > 0.05) {
+          const subs = Math.min(5, Math.ceil(ang / 0.05));
+          const sinA = Math.sin(ang);
+          for (let s2 = 1; s2 < subs && _trigSmoothLeft > 0; s2++) {
+            const tt = s2 / subs;
+            const fA = Math.sin((1 - tt) * ang) / sinA;
+            const fB = Math.sin(tt * ang) / sinA;
+            cameraTransformInto((fA * prevP._cx + fB * p._cx) * SPHERE_RADIUS,
+                                (fA * prevP._cy + fB * p._cy) * SPHERE_RADIUS,
+                                (fA * prevP._cz + fB * p._cz) * SPHERE_RADIUS, _arcC);
+            if (projectInto(_arcC[0], _arcC[1], _arcC[2], _tickProj) &&
+                _onCanvasish(_tickProj[0], _tickProj[1])) {
+              S.ctx.lineTo(_tickProj[0], _tickProj[1]);
+              _trigSmoothLeft--;
+            }
+          }
+        }
+      }
+      spherePointInto(p.lon, p.lat, _arcW);
+      cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+      if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _trigProj)
+          || !_onCanvasish(_trigProj[0], _trigProj[1])) { started = false; prevP = null; continue; }
+      if (started) S.ctx.lineTo(_trigProj[0], _trigProj[1]);
+      else { S.ctx.moveTo(_trigProj[0], _trigProj[1]); started = true; }
+      prevP = p;
+    }
+    S.ctx.stroke();
+  }
+  S.ctx.restore();
+
+  // ── Playhead ring on whatever is firing ──────────────────────────────────
+  // No catchment halo: the reach is the cursor's search radius, and the cursor
+  // already draws that ring around itself. A second ring of the same size at
+  // each stroke would say the same thing twice and imply a per-trigger zone
+  // that no longer exists. The stroke outline above carries "this is a
+  // trigger" and brightens on proximity; this marks the one that's sounding.
+  //
+  // Trigger particles are never in activeGrainMap, so the glow the main
+  // particle pass draws can't find them — the position has to come from the
+  // trigger's own playheadIndex, exactly as the loop slots' indicator does.
+  for (let i = 0; i < trigs.length; i++) {
+    const t = trigs[i];
+    let php = null, phIdx = 0;
+    if (t.playing) {
+      phIdx = t.playheadIndex;
+      php = t.particles[phIdx];
+    } else if (t._tail && S.audioCtx) {
+      // A play-to-end tail: the source is detached and still sounding, and
+      // the scheduler no longer advances playheadIndex — compute the marker
+      // here from the tail record, the same maths the seq block uses.
+      const tl = t._tail;
+      const loopLen = tl.loopEnd - tl.loopStart;
+      if (loopLen > 0 && t.particles.length) {
+        const elapsed = (S.audioCtx.currentTime - tl.startedAt) * tl.speed;
+        const pos = elapsed % loopLen;
+        const bufTime = tl.direction === -1 ? tl.loopEnd - pos : tl.loopStart + pos;
+        let best = 0, bd = Infinity;
+        for (let pi = 0; pi < t.particles.length; pi++) {
+          const d = Math.abs(t.particles[pi].grainStart - bufTime);
+          if (d < bd) { bd = d; best = pi; }
+        }
+        php = t.particles[best]; phIdx = best;
+      }
+    }
+    if (!php) continue;
+    spherePointInto(php.lon, php.lat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _trigProj)) continue;
+    // depthFactor, not the raw 2R formulas: with the camera pulled back every
+    // depth on the sphere exceeds 2R, and the old fixed cull hid the playhead
+    // EVERYWHERE — which is what "the indicator disappears" was, whatever the
+    // stroke was doing. updateDepthRamp() ran at the top of drawParticles.
+    // Floored like the particle pass (0.35 + 0.65·df): depth DIMS, never
+    // erases — with the camera pulled back the cursor's material sits at the
+    // sphere's far surface (depth ≈ offZ + R, df ≈ 0), and a bare ·df there
+    // multiplied the marker to 0.001 alpha. Same lesson as the 2R cull above.
+    const df = Math.max(0, depthFactor(_trigProj[2]));
+    _drawPlayheadSquare(_trigProj[0], _trigProj[1], df,
+                        0.95 * (0.35 + 0.65 * df) * (live ? 1 : parkedAlpha));
   }
 }
 
 // ── Minimal particle renderer (perfMode) ───────────────────────────────────
 // Single pass, no depth sort, no second glow pass, no sequence markers.
-// Active grains get a simple brightness boost inline — one Map.has() per
-// particle, no extra draw pass.  Roughly 3× fewer canvas ops than normal.
+//
+// Batched fills.  The previous version issued one beginPath/arc/fill triplet
+// per particle — at 20k particles × 30fps that is 600k canvas path operations
+// per second, and it dominated the frame so completely that perfMode measured
+// 1.00x against the full renderer.  Dropping the sort and the glow pass saves
+// nothing next to that.  This is the same stall CLAUDE.md records for the
+// trail renderer; the fix was applied there and never here.
+//
+// Particles are bucketed by quantised colour + alpha, counting-sorted into
+// contiguous runs, then each bucket is drawn as ONE path.  That turns 20k path
+// operations into at most a few hundred.  Safe specifically because perfMode
+// does no depth sort — reordering draws is free here.  The full renderer keeps
+// its per-particle draws, since there back-to-front order is load-bearing.
+//
+// Also uses projectInto() rather than project(), which allocated an object and
+// recomputed Math.tan() on every call — 300k allocations/sec at 10k particles.
+const _PB_HUE = 16, _PB_SAT = 4, _PB_ALPHA = 6;
+const _PB_VIZ  = _PB_HUE * _PB_SAT * _PB_ALPHA;   // 384 colour/alpha buckets
+const _PB_GLOW  = _PB_VIZ;                         // active grains — one bucket
+const _PB_MUTED = _PB_VIZ + 1;                     // muted loop material — one more
+const _PB_N     = _PB_VIZ + 2;
+
+// Cached bucket → colour string table (rebuilt only when dark mode flips).
+let _pbColors = null, _pbColorsDark = null;
+function _pbColorTable() {
+  if (_pbColors && _pbColorsDark === S.darkMode) return _pbColors;
+  _pbColors = new Array(_PB_VIZ);
+  for (let h = 0; h < _PB_HUE; h++) {
+    for (let s = 0; s < _PB_SAT; s++) {
+      const col = featuresToColor(h / (_PB_HUE - 1), s / (_PB_SAT - 1));
+      for (let a = 0; a < _PB_ALPHA; a++) _pbColors[(h * _PB_SAT + s) * _PB_ALPHA + a] = col;
+    }
+  }
+  _pbColorsDark = S.darkMode;
+  return _pbColors;
+}
+
+// Scratch, grown on demand and reused across frames — zero per-frame allocation.
+let _pbX = null, _pbY = null, _pbR = null, _pbB = null, _pbCap = 0;
+let _pbOX = null, _pbOY = null, _pbOR = null;
+const _pbCount = new Int32Array(_PB_N);
+const _pbOfs   = new Int32Array(_PB_N + 1);
+
 function drawParticlesMinimal() {
-  const useViz = true;
+  const parts = S.particles;
+  const n = parts.length;
+  if (n === 0) return;
+  // perfMode draws through its own loop, so it needs the same ramp and the same
+  // cull as drawParticles — otherwise pulling back would look right until you
+  // pressed p, and then half the sphere would paint through itself.
+  updateDepthRamp();
+  if (_pbCap < n) {
+    _pbCap = n;
+    _pbX = new Float32Array(n); _pbY = new Float32Array(n); _pbR = new Float32Array(n);
+    _pbB = new Int32Array(n);
+    _pbOX = new Float32Array(n); _pbOY = new Float32Array(n); _pbOR = new Float32Array(n);
+  }
   const pBase = S.vizMinSize ?? PARTICLE_BASE_SIZE;
   const pMax  = S.vizMaxSize ?? PARTICLE_MAX_SIZE;
-  const _pW = [0, 0, 0];
-  const _pC = [0, 0, 0];
+  const _pW = _pbW, _pC = _pbC, _pj = _pbProj;
   const hasGlow = activeGrainMap.size > 0;
   const glowColor = S.darkMode ? '#ffffff' : '#000000';
+  const mutedColor = S.darkMode ? MUTED_PARTICLE_DARK : MUTED_PARTICLE_LIGHT;
+  // Same self-healing mark pass as the full renderer, so perfMode does not
+  // quietly lose the one cue that says which material is silent.
+  const anyMuted = syncParticleMarks();
+  const ctx = S.ctx;
 
-  for (const p of S.particles) {
+  _pbCount.fill(0);
+  let vis = 0;          // visible, bucketable particles
+  let legacyDrawn = 0;  // pre-feature particles fall back to individual draws
+
+  for (let i = 0; i < n; i++) {
+    const p = parts[i];
     spherePointInto(p.lon, p.lat, _pW);
     cameraTransformInto(_pW[0], _pW[1], _pW[2], _pC);
     const cx = _pC[0], cy = _pC[1], cz = _pC[2];
-    const proj = project(cx, cy, cz);
-    if (!proj) continue;
-    const mag    = Math.sqrt(cx*cx + cy*cy + cz*cz);
-    const facing = Math.max(0, cz / mag);
-    const df     = Math.max(0, 1 - (proj.depth / (SPHERE_RADIUS * 2)));
-
-    // Check if this particle is currently sounding
+    if (!projectInto(cx, cy, cz, _pj)) continue;
+    const sx = _pj[0], sy = _pj[1], depth = _pj[2];
+    const mag    = Math.sqrt(cx * cx + cy * cy + cz * cz);
+    let facing;
+    if (!_dfPulled) {
+      facing = mag > 0 ? Math.max(0, cz / mag) : 0;
+    } else {
+      // Same inner-face cull as drawParticles — see the note there.
+      const nz  = cz - camOffsetZ();
+      const ndc = cx * cx + cy * cy + nz * cz;
+      if (ndc <= 0) continue;
+      facing = Math.min(1, ndc / (mag * SPHERE_RADIUS));
+    }
+    const df = Math.max(0, depthFactor(_dfPulled ? mag : depth));
     const active = hasGlow && activeGrainMap.has(p);
 
-    let size, color, alpha;
-    if (useViz && (p.rms ?? 0) > 0) {
-      const rmsN  = normalise(p.rms, S.vizRmsMin, S.vizRmsMax);
-      size  = (pBase + (pMax - pBase) * rmsN) * (0.5 + 0.5 * df);
-      color = active ? glowColor : featuresToHSL(
-        normalise(p.centroid ?? 0, S.vizCentroidMin, S.vizCentroidMax),
-        p.zcr ?? 0
-      );
-      alpha = active ? 0.95 : (0.35 + 0.65 * df) * (0.5 + 0.5 * facing);
+    if ((p.rms ?? 0) > 0) {
+      const rmsN = normalise(p.rms, S.vizRmsMin, S.vizRmsMax);
+      const size = (pBase + (pMax - pBase) * rmsN) * (0.5 + 0.5 * df);
+      const alpha = active ? 0.95 : (0.35 + 0.65 * df) * (0.5 + 0.5 * facing);
+      let bucket;
+      if (anyMuted && p._composerMuted) {
+        // Its own bucket rather than a colour override: this path batches by
+        // bucket and draws each as one path, so a per-particle colour would
+        // break the batching that perfMode exists for.
+        bucket = _PB_MUTED;
+      } else if (active) {
+        bucket = _PB_GLOW;
+      } else {
+        const cN = normalise(p.centroid ?? 0, S.vizCentroidMin, S.vizCentroidMax);
+        let hb = (cN * _PB_HUE) | 0;            if (hb >= _PB_HUE) hb = _PB_HUE - 1; else if (hb < 0) hb = 0;
+        let sb = ((p.zcr ?? 0) * _PB_SAT) | 0;  if (sb >= _PB_SAT) sb = _PB_SAT - 1; else if (sb < 0) sb = 0;
+        let ab = (alpha * _PB_ALPHA) | 0;       if (ab >= _PB_ALPHA) ab = _PB_ALPHA - 1; else if (ab < 0) ab = 0;
+        bucket = (hb * _PB_SAT + sb) * _PB_ALPHA + ab;
+      }
+      _pbX[vis] = sx; _pbY[vis] = sy; _pbR[vis] = size; _pbB[vis] = bucket;
+      _pbCount[bucket]++; vis++;
     } else {
-      color = active ? glowColor : p.color;
-      size  = pBase + (pMax - pBase) * df;
-      alpha = active ? 0.95 : (0.3 + 0.7 * df) * (0.5 + 0.5 * facing);
+      // Legacy particle with no captured features — palette colour, drawn
+      // individually.  Only reachable for clouds imported from before feature
+      // capture existed, so this path is effectively empty in practice.
+      const legacyMuted = anyMuted && p._composerMuted;
+      ctx.globalAlpha = legacyMuted ? 0.45
+                      : active ? 0.95 : (0.3 + 0.7 * df) * (0.5 + 0.5 * facing);
+      ctx.fillStyle   = legacyMuted ? mutedColor : active ? glowColor : p.color;
+      ctx.beginPath(); ctx.arc(sx, sy, pBase + (pMax - pBase) * df, 0, Math.PI * 2); ctx.fill();
+      legacyDrawn++;
     }
-
-    S.ctx.globalAlpha = alpha;
-    S.ctx.fillStyle   = color;
-    S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, size, 0, Math.PI * 2); S.ctx.fill();
   }
-  S.ctx.globalAlpha = 1;
+
+  // Prefix sum → contiguous run per bucket, then scatter.
+  let acc = 0;
+  for (let b = 0; b < _PB_N; b++) { _pbOfs[b] = acc; acc += _pbCount[b]; }
+  _pbOfs[_PB_N] = acc;
+  const cursor = _pbCount;                       // reuse as write cursor
+  for (let b = 0; b < _PB_N; b++) cursor[b] = _pbOfs[b];
+  for (let i = 0; i < vis; i++) {
+    const b = _pbB[i], w = cursor[b]++;
+    _pbOX[w] = _pbX[i]; _pbOY[w] = _pbY[i]; _pbOR[w] = _pbR[i];
+  }
+
+  // One path per non-empty bucket.
+  const table = _pbColorTable();
+  const TAU = Math.PI * 2;
+  let pathOps = 0;
+  for (let b = 0; b < _PB_N; b++) {
+    const start = _pbOfs[b], end = _pbOfs[b + 1];
+    if (start === end) continue;
+    pathOps++;
+    if (b === _PB_MUTED)     { ctx.globalAlpha = 0.45; ctx.fillStyle = mutedColor; }
+    else if (b === _PB_GLOW) { ctx.globalAlpha = 0.95; ctx.fillStyle = glowColor; }
+    else {
+      // Bucket index encodes the alpha bin in its low digits; recover the bin
+      // centre so a bucket's alpha is representative rather than its floor.
+      ctx.globalAlpha = ((b % _PB_ALPHA) + 0.5) / _PB_ALPHA;
+      ctx.fillStyle = table[b];
+    }
+    ctx.beginPath();
+    for (let i = start; i < end; i++) {
+      const x = _pbOX[i], y = _pbOY[i], r = _pbOR[i];
+      ctx.moveTo(x + r, y);                      // moveTo prevents a connecting line
+      ctx.arc(x, y, r, 0, TAU);
+    }
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // Counted inside the draw loop above rather than by a second pass over all
+  // _PB_N buckets — that pass cost ~11.5k iterations/sec of the render budget
+  // purely for telemetry nothing reads at runtime.
+  _pbLastStats.visible = vis;
+  _pbLastStats.legacy  = legacyDrawn;
+  _pbLastStats.pathOps = pathOps;
 }
+
+// Module-scope scratch vectors — never returned, never resized.
+const _pbW = [0, 0, 0], _pbC = [0, 0, 0], _pbProj = [0, 0, 0];
+// Exposed for the render audit / perf work; not read by the app itself.
+export const _pbLastStats = { visible: 0, legacy: 0, pathOps: 0 };
 
 // ── Minimal seed/loop anchor markers (perfMode) ──────────────────────────────
 // Static dot + slot number at each committed slot's INITIAL placement position.
-// Moving seeds show frames[0], not the current interpolated position.
+// A pin's marker sits at its ANCHOR — where its gesture released (pins.js
+// pinAnchorInto) — never at a moving cloud's interpolated position.
 // Draws the search radius circle if one was set at placement time.
 function drawSeedAnchorsMinimal() {
   const _aW = [0, 0, 0];
@@ -813,16 +1959,13 @@ function drawSeedAnchorsMinimal() {
   for (let si = 0; si < S.commitSlotCount; si++) {
     const slot = S.commitSlots[si];
     if (!slot) continue;
-    // Resolve initial placement position — frames[0] for moving, static otherwise
     let aLon, aLat, color, radiusDeg;
+    if (!pinAnchorInto(slot, _anchorR)) continue;
+    aLon = _anchorR[0]; aLat = _anchorR[1];
     if (slot.type === 'cloud') {
-      aLon = (slot.frames && slot.frames.length) ? slot.frames[0].lon : slot.lon;
-      aLat = (slot.frames && slot.frames.length) ? slot.frames[0].lat : slot.lat;
       color = slot.color || '#4a9fd4';
       radiusDeg = slot.searchRadiusDeg;
     } else if (slot.type === 'loop') {
-      aLon = slot.anchorLon ?? slot.particles[0]?.lon;
-      aLat = slot.anchorLat ?? slot.particles[0]?.lat;
       color = slot.color || '#ff6b9d';
       radiusDeg = slot.searchRadiusDeg;
     } else continue;
@@ -867,16 +2010,188 @@ function drawSeedAnchorsMinimal() {
 //             Left   = seed tether on     (violet #b8a0ff)
 //   Zone 3  Radius circle   — search radius (solid, minimal)
 //
+// The reach ring drawn as the PROJECTED image of the true angular circle on
+// the sphere. A flat screen circle of focalLen·tan(r) is exact only on the
+// view axis: this is a rectilinear projection at 80° FOV, and off-axis the
+// true region is an ELLIPSE — at a screen corner ~2.5× the flat ring's size.
+// The ring is what the player aims the eraser and the triggers with, so what
+// it shows must be what captures (Ek, 2026-08-28: "it doesn't look like it's
+// on the sphere, just on the screen"). 36 perimeter points, built around the
+// cursor's world direction (spherePointInto carries any frame rotation) and
+// pushed through the same cameraTransform/project as every particle.
+const _reachW = [0, 0, 0], _reachC = [0, 0, 0], _reachP = [0, 0, 0];
+
+// The cursor's tangent frame, shared by the reach ring and the reticle so both
+// read the surface the same way: n is the cursor's unit point on the sphere,
+// e1/e2 an orthonormal basis of the tangent plane there.
+const _cfN = [0, 0, 0], _cfE1 = [0, 0, 0], _cfE2 = [0, 0, 0];
+function _cursorFrame(mx, my) {
+  const c = screenToLonLat(mx, my);
+  if (!c || isNaN(c.lon) || isNaN(c.lat)) return false;
+  spherePointInto(c.lon, c.lat, _reachW);
+  const nl = Math.hypot(_reachW[0], _reachW[1], _reachW[2]) || 1;
+  const nx = _reachW[0] / nl, ny = _reachW[1] / nl, nz = _reachW[2] / nl;
+  let e1x = -nz, e1y = 0, e1z = nx;                       // n × ŷ
+  let el = Math.hypot(e1x, e1y, e1z);
+  if (el < 1e-6) { e1x = 1; e1y = 0; e1z = 0; el = 1; }   // at a pole
+  e1x /= el; e1y /= el; e1z /= el;
+  _cfN[0]  = nx;  _cfN[1]  = ny;  _cfN[2]  = nz;
+  _cfE1[0] = e1x; _cfE1[1] = e1y; _cfE1[2] = e1z;
+  _cfE2[0] = ny * e1z - nz * e1y;
+  _cfE2[1] = nz * e1x - nx * e1z;
+  _cfE2[2] = nx * e1y - ny * e1x;
+  return true;
+}
+
+function _reachPath(mx, my) {
+  if (!_cursorFrame(mx, my)) return null;
+  const r = S.searchRadiusDeg * Math.PI / 180;
+  const nx  = _cfN[0],  ny  = _cfN[1],  nz  = _cfN[2];
+  const e1x = _cfE1[0], e1y = _cfE1[1], e1z = _cfE1[2];
+  const e2x = _cfE2[0], e2y = _cfE2[1], e2z = _cfE2[2];
+  const cr = Math.cos(r) * SPHERE_RADIUS, sr = Math.sin(r) * SPHERE_RADIUS;
+  const K = 36;
+  const path = new Path2D();
+  let started = false, count = 0;
+  for (let k = 0; k <= K; k++) {
+    const ph = (k % K) / K * 2 * Math.PI;
+    const cp = Math.cos(ph), sp = Math.sin(ph);
+    const wx = cr * nx + sr * (cp * e1x + sp * e2x);
+    const wy = cr * ny + sr * (cp * e1y + sp * e2y);
+    const wz = cr * nz + sr * (cp * e1z + sp * e2z);
+    cameraTransformInto(wx, wy, wz, _reachC);
+    if (!projectInto(_reachC[0], _reachC[1], _reachC[2], _reachP)
+        || !_onCanvasish(_reachP[0], _reachP[1])) { started = false; continue; }
+    if (started) path.lineTo(_reachP[0], _reachP[1]);
+    else { path.moveTo(_reachP[0], _reachP[1]); started = true; }
+    count++;
+  }
+  return count >= 3 ? path : null;
+}
+
+// ── Reticle shape — the projection's local distortion, once per frame ─────
+//
+// The reach ring is the TRUE projected circle, so off-axis it is an ellipse
+// (see _reachPath). The reticle beside it was flat screen geometry — a circle
+// and four axis-aligned arms — so at the edges the ring sat on the sphere and
+// the crosshair sat on the glass (Ek, 2026-08-29). Tessellating the reticle the
+// same way would be five more projected paths per frame for something 12px
+// across; instead take the projection's 2×2 JACOBIAN at the cursor — the
+// first-order image of the tangent plane — and draw the reticle in that frame.
+// The ring becomes the same ellipse the reach ring is, the arms lie along the
+// surface, and the whole thing costs four projections and one 2×2 SVD.
+//
+// Normalised by the SMALLER axis, so the least-stretched direction keeps its
+// pixel size and the other grows exactly as the ring does — under the centred
+// (azimuthal-equidistant) camera that is radial 1, tangential θ/sinθ, which is
+// the ring's own stretch. Anisotropy is CAPPED because a pulled camera's
+// silhouette shows the tangent plane edge-on, where the true ratio is infinite
+// and an honest reticle is a 200px smear pointing nowhere.
+const RETICLE_MAX_ANISO = 4;
+const RETICLE_EPS = 0.02;                   // rad — finite-difference step
+const _jP = [0, 0, 0], _jC = [0, 0, 0], _jCol = [0, 0];
+// k1 = long axis (short axis is 1), rot = its screen angle, m** = the full map
+// applied to reticle offsets. Identity when the cursor is on the view axis,
+// which is every frame in surface and sensor mode.
+const _ret = { k1: 1, rot: 0, m00: 1, m01: 0, m10: 0, m11: 1 };
+// The camera's roll about the view axis — the rigid screen rotation the whole
+// image picks up when the sensor rolls. camQ is composed qYaw · qPitch · qRoll
+// (applyAxisMapQuat), so roll is the innermost factor and is the twist about Z.
+function _camRollScreen() {
+  const q = S.camQ;
+  if (!q) return 0;
+  // Same Ry·Rx·Rz convention camQ is built in. A body-side twist about Z is
+  // NOT the roll here once yaw or pitch is non-zero — see _applyAxisSources.
+  return Math.atan2(2 * (q[3]*q[2] + q[0]*q[1]), 1 - 2 * (q[0]*q[0] + q[2]*q[2]));
+}
+function _retIdentity() {
+  _ret.k1 = 1; _ret.rot = 0;
+  _ret.m00 = 1; _ret.m01 = 0; _ret.m10 = 0; _ret.m11 = 1;
+  return _ret;
+}
+// Central difference along one tangent direction → px per radian.
+function _retDeriv(ex, ey, ez, out) {
+  const ce = Math.cos(RETICLE_EPS) * SPHERE_RADIUS;
+  const se = Math.sin(RETICLE_EPS) * SPHERE_RADIUS;
+  cameraTransformInto(ce * _cfN[0] + se * ex, ce * _cfN[1] + se * ey,
+                      ce * _cfN[2] + se * ez, _jC);
+  if (!projectInto(_jC[0], _jC[1], _jC[2], _jP)) return false;
+  const ax = _jP[0], ay = _jP[1];
+  cameraTransformInto(ce * _cfN[0] - se * ex, ce * _cfN[1] - se * ey,
+                      ce * _cfN[2] - se * ez, _jC);
+  if (!projectInto(_jC[0], _jC[1], _jC[2], _jP)) return false;
+  out[0] = (ax - _jP[0]) / (2 * RETICLE_EPS);
+  out[1] = (ay - _jP[1]) / (2 * RETICLE_EPS);
+  return isFinite(out[0]) && isFinite(out[1]);
+}
+function _reticleShape(mx, my) {
+  if (!_cursorFrame(mx, my)) return _retIdentity();
+  if (!_retDeriv(_cfE1[0], _cfE1[1], _cfE1[2], _jCol)) return _retIdentity();
+  const a = _jCol[0], c = _jCol[1];
+  if (!_retDeriv(_cfE2[0], _cfE2[1], _cfE2[2], _jCol)) return _retIdentity();
+  const b = _jCol[0], d = _jCol[1];
+  // Closed-form 2×2 SVD: J = R(phi) · diag(s1, s2) · R(th), s2 signed so a
+  // mirrored frame (the projection flips beyond the rim) stays representable.
+  const E = (a + d) * 0.5, F = (a - d) * 0.5;
+  const G = (c + b) * 0.5, H = (c - b) * 0.5;
+  const Q = Math.hypot(E, H), R = Math.hypot(F, G);
+  const s1 = Q + R, s2 = Q - R;
+  if (!(s1 > 1e-9)) return _retIdentity();
+  const a1 = Math.atan2(G, F), a2 = Math.atan2(H, E);
+  const phi = (a2 + a1) * 0.5, th = (a2 - a1) * 0.5;
+  const m = Math.abs(s2);
+  const k1 = m > 1e-9 ? Math.min(s1 / m, RETICLE_MAX_ANISO) : RETICLE_MAX_ANISO;
+  const k2 = s2 < 0 ? -1 : 1;
+  // The projection map, exactly as the Jacobian gives it — R(phi)·diag·R(th),
+  // mirror and all. Do NOT symmetrise this: with k2 = -1 (the mirrored frame
+  // beyond the rim) the symmetric form is a REFLECTION about a phi that spins
+  // freely wherever the SVD is degenerate, and the crosshair windmills
+  // (2026-08-31, one attempt at this).
+  const cp = Math.cos(phi), sp = Math.sin(phi);
+  const ct = Math.cos(th),  st = Math.sin(th);
+  const j00 =  cp * k1 * ct - sp * k2 * st;
+  const j01 = -cp * k1 * st - sp * k2 * ct;
+  const j10 =  sp * k1 * ct + cp * k2 * st;
+  const j11 = -sp * k1 * st + cp * k2 * ct;
+
+  // Then take the camera's ROLL back out. The cursor is fixed and the sphere
+  // is what rolls under it, so the crosshair must not turn with the sensor —
+  // it did, because the tangent basis is projected THROUGH the rolled camera
+  // (Ek, 2026-08-31: a "+" at 0° became an "×" at 45°). Undoing one known
+  // screen rotation leaves every other property of the map intact, which
+  // symmetrising did not.
+  const camRoll = _camRollScreen();   // once — this runs every frame
+  const cr = Math.cos(-camRoll), sr = Math.sin(-camRoll);
+  _ret.k1  = k1;
+  _ret.rot = phi - camRoll;
+  _ret.m00 = cr * j00 - sr * j10;
+  _ret.m01 = cr * j01 - sr * j11;
+  _ret.m10 = sr * j00 + cr * j10;
+  _ret.m11 = sr * j01 + cr * j11;
+  return _ret;
+}
+// Reticle geometry is authored in flat pixels around (mx, my) and mapped
+// through _ret on the way out. Ellipses take the axes straight from the SVD,
+// so line weight stays uniform — a ctx.transform would smear the stroke too.
+function _retMoveTo(mx, my, dx, dy) {
+  S.ctx.moveTo(mx + _ret.m00 * dx + _ret.m01 * dy,
+               my + _ret.m10 * dx + _ret.m11 * dy);
+}
+function _retLineTo(mx, my, dx, dy) {
+  S.ctx.lineTo(mx + _ret.m00 * dx + _ret.m01 * dy,
+               my + _ret.m10 * dx + _ret.m11 * dy);
+}
+function _retEllipse(mx, my, r) {
+  S.ctx.ellipse(mx, my, r * _ret.k1, r, _ret.rot, 0, Math.PI * 2);
+}
+
 export function drawCursor() {
   const cx = S.canvas.width / 2, cy = S.canvas.height / 2;
   const w = S.canvas.width, h = S.canvas.height;
 
-  const searchRadiusRad = S.searchRadiusDeg * Math.PI / 180;
   const fovRad   = ((S.fovDeg ?? FOV_DEG) * Math.PI) / 180;
   const focalLen = (Math.min(w, h) / 2) / Math.tan(fovRad / 2);
-  const brushR   = searchRadiusRad < Math.PI / 2
-    ? focalLen * Math.tan(searchRadiusRad)
-    : w * 0.8;
+  const brushR   = brushScreenRadius(focalLen);
 
   if (S.isMobile && !S._mobileSetupDone) return;
 
@@ -885,8 +2200,13 @@ export function drawCursor() {
   let cursorOffScreen = false;
 
   if (S.cursorQ) {
-    // Detethered: project cursorQ forward vector through camera to screen
-    const fwd = _qRotVec(S.cursorQ, [0, 0, 1]);
+    // Detethered: project the cursor's point ON THE SPHERE through the camera.
+    // Scaled to SPHERE_RADIUS, not a unit vector: projection through the origin
+    // is scale-invariant, so a unit vector worked while the camera sat at the
+    // centre — but cameraTransformInto now adds the pull-back offset, and
+    // adding a world-scale offset to a length-1 vector puts the cursor
+    // somewhere meaningless the moment camPull leaves 0.
+    const fwd = _qRotVec(S.cursorQ, [0, 0, SPHERE_RADIUS]);
     cameraTransformInto(fwd[0], fwd[1], fwd[2], _arcC);
     const p   = project(_arcC[0], _arcC[1], _arcC[2]);
     if (p && p.sx >= 0 && p.sx <= w && p.sy >= 0 && p.sy <= h) {
@@ -900,7 +2220,8 @@ export function drawCursor() {
         my = Math.max(0, Math.min(h, p.sy));
       } else {
         // Behind camera — project to closest edge using 2D direction
-        const fwd2d = _qRotVec(S.cursorQ, [0, 0, 1]);
+        // (SPHERE_RADIUS for the same reason as above)
+        const fwd2d = _qRotVec(S.cursorQ, [0, 0, SPHERE_RADIUS]);
         cameraTransformInto(fwd2d[0], fwd2d[1], fwd2d[2], _arcC);
         // Use x/y to determine edge direction even though z <= 0
         const angle = Math.atan2(-_arcC[1], _arcC[0]);
@@ -972,28 +2293,153 @@ export function drawCursor() {
   const painting    = S.isPainting;
   const scanOff = S.scanMuted;
   const recording   = S.isRecording;
+  // Recording is red; sampler source wears its current sample's colour so
+  // the cursor says what it would ink from (#247); live idles neutral.
   const color       = recording
     ? '#e83030'
-    : SAMPLE_PAINT_COLORS[S.activeSampleIndex >= 0 ? S.activeSampleIndex % SAMPLE_PAINT_COLORS.length : S.sampleColorIndex];
+    : S.sourceKind === 'sampler'
+      ? SAMPLE_PAINT_COLORS[S.samplerIndex % SAMPLE_PAINT_COLORS.length]
+      : CURSOR_IDLE_COLOR;
 
   // ─── ZONE 3: Radius circle ─────────────────────────────────────────────
 
   // Erase brush held: red tint (danger). Scan off: amber matching the scan
   // button. Otherwise neutral grey. Pure color swap — no extra draw calls.
   const erasing  = S.eraseHeld;
+  // ─── The hand: what is PLAYING ─────────────────────────────────────────
+  // This was a CAP ARC at twelve o'clock in the engine's hue, and Ek could not
+  // tell what it was: "i'm not sure why there's an extra line indicator on the
+  // top part of the cursor" (2026-08-30). It read as a stray mark rather than
+  // as part of the cursor, and there is a geometric reason for that — the
+  // reach ring is `_reachPath`, the PROJECTED circle, which is an ellipse
+  // everywhere but dead centre, while the arc was drawn at a flat screen
+  // radius. So it genuinely did not sit on the ring: it floated a little off
+  // it, and the further from centre the cursor went the further off it drifted.
+  //
+  // The fix is not to place the arc better. The ring itself is the mark: the
+  // cursor is DRAWN in the playing tool's colour, so the tile you pressed and
+  // the thing under your hand are the same colour, with nothing added to the
+  // cursor at all. Same muscle memory, one less object — which is what Ek
+  // asked the redesign for in the first place ("elegant… not busy").
+  //
+  // NULL BETWEEN PRESSES since arming went (2026-09-11): nothing is in the
+  // hand, so the ring falls back to neutral grey, and the hue arriving IS the
+  // instrument saying a tool is running. It used to wear the armed tool's hue
+  // all the time, which said what space WOULD do — a question the instrument
+  // no longer asks.
+  //
+  // Erase and scan-off still win: those are states you must not misread, and
+  // they are about the CURSOR rather than about what is in the hand.
+  const _hue = (!erasing && !scanOff) ? S._handHue : null;
   const _rFill   = erasing ? 'rgba(224,64,64,0.12)'
-    : scanOff ? 'rgba(232,160,48,0.10)' : 'rgba(180,180,180,0.10)';
+    : scanOff ? 'rgba(232,160,48,0.10)'
+    : _hue ? _hexA(_hue, 0.10) : 'rgba(180,180,180,0.10)';
   const _rStroke = erasing ? 'rgba(224,64,64,0.85)'
-    : scanOff ? 'rgba(232,160,48,0.55)' : 'rgba(200,200,200,0.55)';
+    : scanOff ? 'rgba(232,160,48,0.55)'
+    : _hue ? _hexA(_hue, 0.62) : 'rgba(200,200,200,0.55)';
 
   const kAll = S.grainKAllMode;
 
+  // Radius ring — the projected true circle (see _reachPath); the flat
+  // screen circle stays as the fallback when the ring doesn't project.
+  // Drawn in BOTH modes: nearest ignores the radius for GRAIN selection only —
+  // loops (composer.js), triggers (trigger.js) and cloud focus (grain.js)
+  // still gate on searchRadiusDeg, so the ring is the gate and keeps its
+  // full design; nearest adds the diamond on top.
+  const reach = _reachPath(mx, my);
+
+  // ── The erase sweep ─────────────────────────────────────────────────────
+  // The brush is a swept CAPSULE (erase.js), not the circle that used to be
+  // drawn here: at speed it clears a band from the last tick's position to
+  // this one, and the reticle was showing only the far end of it. erase.js
+  // publishes the exact sweep it ran the hit tests on, so this is a drawing OF
+  // the algorithm rather than a second guess at it — including the teleport
+  // guard, which stamps instead of sweeping and so collapses to a plain circle
+  // here too, automatically.
+  const _sw = S._eraseSweep;
+  if (erasing && _sw && _sw.live) {
+    // Two corrections, both of them the same mistake — drawing something the
+    // erase never did (Ek, 2026-08-30: "there's a weird trail that extends
+    // when i move it around a lot"):
+    //
+    //   THE FAR END WAS THE LIVE CURSOR, not the sweep's own end. The erase
+    //   tick is a 30 ms interval and this runs every frame, so between ticks
+    //   the cursor ran on while `_sw` stood still — the band was drawn from
+    //   the last tick's START to wherever the hand had got to, up to two
+    //   ticks of travel longer than the thing that actually cleared, and
+    //   visibly growing the faster you moved. Both ends come from `_sw` now.
+    //
+    //   IT WAS A STRAIGHT LINE. The sweep runs along a GREAT CIRCLE and
+    //   erase.js subdivides it at ~8° for exactly that reason: a long chord
+    //   tunnels under the surface. Drawn straight on screen it left the band
+    //   somewhere the brush had not been — and with the velocity budget
+    //   reaching 150°, a fast flick drew a bar clean across the sphere.
+    //
+    // Same slerp, same 8° step, so the picture is the algorithm.
+    const va = _pinScreen(Math.atan2(_sw.ax, _sw.az), Math.asin(Math.max(-1, Math.min(1, _sw.ay))));
+    const vb = _pinScreen(Math.atan2(_sw.bx, _sw.bz), Math.asin(Math.max(-1, Math.min(1, _sw.by))));
+    if (va && vb) {
+      const dot = Math.max(-1, Math.min(1, _sw.ax * _sw.bx + _sw.ay * _sw.by + _sw.az * _sw.bz));
+      const ang = Math.acos(dot);
+      const pts = [];
+      if (ang > 0.14) {
+        const n = Math.min(20, Math.ceil(ang / 0.14)), sinAll = Math.sin(ang);
+        for (let w = 0; w <= n; w++) {
+          const t = w / n;
+          const fA = Math.sin((1 - t) * ang) / sinAll, fB = Math.sin(t * ang) / sinAll;
+          const x = fA * _sw.ax + fB * _sw.bx, y = fA * _sw.ay + fB * _sw.by, z = fA * _sw.az + fB * _sw.bz;
+          // A waypoint on the far side has no honest screen position, so the
+          // band stops at the limb rather than teleporting across it.
+          const p = _pinScreen(Math.atan2(x, z), Math.asin(Math.max(-1, Math.min(1, y))));
+          if (!p) break;
+          pts.push(p);
+        }
+      } else { pts.push(va, vb); }
+      if (pts.length > 1) {
+        // A round-capped, round-joined stroke of width 2r IS the swept capsule
+        // — the same shape the old arc/lineTo built by hand, for any number of
+        // segments, and it cannot disagree with itself at the joins.
+        S.ctx.save();
+        S.ctx.strokeStyle = _rFill;
+        S.ctx.lineWidth = brushR * 2;
+        S.ctx.lineCap = 'round';
+        S.ctx.lineJoin = 'round';
+        S.ctx.beginPath();
+        S.ctx.moveTo(pts[0].sx, pts[0].sy);
+        for (let i = 1; i < pts.length; i++) S.ctx.lineTo(pts[i].sx, pts[i].sy);
+        S.ctx.stroke();
+        S.ctx.restore();
+      }
+    }
+  }
+
+  // Everything below the ring is drawn in the cursor's tangent frame.
+  _reticleShape(mx, my);
+  S.ctx.fillStyle = _rFill;
+  if (reach) S.ctx.fill(reach);
+  else { S.ctx.beginPath(); S.ctx.arc(mx, my, brushR, 0, Math.PI * 2); S.ctx.fill(); }
+  S.ctx.strokeStyle = _rStroke;
+  S.ctx.lineWidth   = 1.5;
+  const strokeReach = () => {
+    if (reach) S.ctx.stroke(reach);
+    else { S.ctx.beginPath(); S.ctx.arc(mx, my, brushR, 0, Math.PI * 2); S.ctx.stroke(); }
+  };
+  // k-all: solid line — everything in radius fires. Normal: dashed
+  if (kAll) {
+    strokeReach();
+  } else {
+    S.ctx.setLineDash([5, 5]);
+    strokeReach();
+    S.ctx.setLineDash([]);
+  }
+
   if (S.nearestMode) {
-    // Snap/nearest: big diamond shape
+    // Snap/nearest: big diamond shape over the ring
     const d = 40;
     S.ctx.fillStyle = _rFill;
     S.ctx.beginPath();
-    S.ctx.moveTo(mx, my - d); S.ctx.lineTo(mx + d, my); S.ctx.lineTo(mx, my + d); S.ctx.lineTo(mx - d, my);
+    _retMoveTo(mx, my, 0, -d); _retLineTo(mx, my, d, 0);
+    _retLineTo(mx, my, 0, d);  _retLineTo(mx, my, -d, 0);
     S.ctx.closePath();
     S.ctx.fill();
     S.ctx.strokeStyle = _rStroke;
@@ -1006,19 +2452,51 @@ export function drawCursor() {
       S.ctx.stroke();
       S.ctx.setLineDash([]);
     }
-  } else {
-    // Radius circle
-    S.ctx.fillStyle = _rFill;
-    S.ctx.beginPath(); S.ctx.arc(mx, my, brushR, 0, Math.PI * 2); S.ctx.fill();
-    S.ctx.strokeStyle = _rStroke;
-    S.ctx.lineWidth   = 1.5;
-    // k-all: solid line — everything in radius fires. Normal: dashed
-    if (kAll) {
-      S.ctx.beginPath(); S.ctx.arc(mx, my, brushR, 0, Math.PI * 2); S.ctx.stroke();
-    } else {
-      S.ctx.setLineDash([5, 5]);
-      S.ctx.beginPath(); S.ctx.arc(mx, my, brushR, 0, Math.PI * 2); S.ctx.stroke();
-      S.ctx.setLineDash([]);
+  }
+
+  // ─── The hand: what is PLAYING ─────────────────────────────────────────
+  // The cursor says what is in the hand without the player looking away from
+  // the sphere to find out (Ek, 2026-08-29).
+  //
+  // A CAP ARC at twelve o'clock, in the tool's engine hue. Colour and one
+  // fixed clock position, nothing else: no glyph to resolve at a glance, no
+  // text, and it cannot crowd because it is part of a ring that was already
+  // there. The hue is read from the same --eng-* properties the rail tiles
+  // and the engine sheet use, so playing a sand-coloured grain tile turns the
+  // cursor's cap sand — the tile you pressed and the mark on the cursor are
+  // the same colour by construction. That is the muscle memory: you learn it
+  // once, in the rail, and the sphere speaks it back.
+  // (The cap arc that used to be drawn here is gone — see _rStroke above.)
+
+  // ─── The line to the nearest pin ────────────────────────────────────
+  // One dashed hairline from the cursor to the pin the focus law calls
+  // nearest (grain.js publishes S._dominantSeedSlot), in that pin's colour,
+  // brighter as its share grows. This replaced the pin COMPASS — a short arc
+  // per pin in reach on a ring outside the reach ring, its opacity the pin's
+  // share (Ek, 2026-09-05: "now that we have the one-line selector we can
+  // remove those indicators"). The line says which pin, the rail's mark says
+  // which is selected, and the mix is heard rather than drawn.
+  const _dom = S._dominantSeedSlot;
+  const _pw = S._pinWeights;
+  if (_dom >= 0 && _pw && S.commitSlots && S.commitSlots[_dom]) {
+    const slot = S.commitSlots[_dom];
+    const w = _pw[_dom] || 0;
+    if (pinAnchorInto(slot, _anchorR)) {
+      const pr = _pinScreen(_anchorR[0], _anchorR[1]);
+      if (pr) {
+        S.ctx.save();
+        S.ctx.globalAlpha = 0.45 + 0.35 * Math.min(1, w);
+        S.ctx.strokeStyle = slot.color || '#8aa6bc';
+        S.ctx.lineWidth = 1.5;
+        S.ctx.lineCap = 'round';
+        S.ctx.setLineDash([2, 4]);
+        S.ctx.beginPath();
+        S.ctx.moveTo(mx, my);
+        S.ctx.lineTo(pr.sx, pr.sy);
+        S.ctx.stroke();
+        S.ctx.setLineDash([]);
+        S.ctx.restore();
+      }
     }
   }
 
@@ -1027,7 +2505,7 @@ export function drawCursor() {
   const tipR = 5, armLen = 12, armGap = tipR + 3;
 
   // Handsfree + toggle-trace active in plain trace mode — green reticle indicator
-  const _toggleTraceOn = S._traceToggled && S.hfArmed && S.traceMode === 'trace';
+  const _toggleTraceOn = S.paintLatched && S.hfArmed && S.traceMode === 'trace';
 
   // Outer ring — white/black normally, green when toggle-trace, red when recording
   const _rtic = S.darkMode ? '255,255,255' : '0,0,0';
@@ -1037,170 +2515,42 @@ export function drawCursor() {
     : _toggleTraceOn ? 'rgba(77,204,122,0.80)'
     : `rgba(${_rtic},0.7)`;
   S.ctx.lineWidth   = 2;
-  S.ctx.beginPath(); S.ctx.arc(mx, my, tipR, 0, Math.PI * 2); S.ctx.stroke();
+  S.ctx.beginPath(); _retEllipse(mx, my, tipR); S.ctx.stroke();
 
   // Center dot — large solid red when recording, paint color when painting, white/black idle
   if (recording) {
     const recDotR = tipR * 2.4;  // big red dot — primary recording indicator
     S.ctx.fillStyle = 'rgba(232,48,48,0.90)';
-    S.ctx.beginPath(); S.ctx.arc(mx, my, recDotR, 0, Math.PI * 2); S.ctx.fill();
+    S.ctx.beginPath(); _retEllipse(mx, my, recDotR); S.ctx.fill();
   } else {
     S.ctx.fillStyle = painting ? color : `rgba(${_rtic},0.8)`;
-    S.ctx.beginPath(); S.ctx.arc(mx, my, tipR * 0.65, 0, Math.PI * 2); S.ctx.fill();
+    S.ctx.beginPath(); _retEllipse(mx, my, tipR * 0.65); S.ctx.fill();
   }
   // Green toggle-trace pip — always drawn on top so it nests inside the red
   // recording dot, giving a visual "recording via toggle-trace" indicator
   if (_toggleTraceOn) {
     S.ctx.fillStyle = 'rgba(77,204,122,0.95)';
-    S.ctx.beginPath(); S.ctx.arc(mx, my, tipR * 0.65, 0, Math.PI * 2); S.ctx.fill();
+    S.ctx.beginPath(); _retEllipse(mx, my, tipR * 0.65); S.ctx.fill();
   }
 
   // Crosshair arms — thick, visible from across the room
   S.ctx.strokeStyle = painting ? `rgba(${_rtic},0.6)` : `rgba(${_rtic},0.4)`;
   S.ctx.lineWidth   = 1.5;
   S.ctx.beginPath();
-  S.ctx.moveTo(mx + armGap, my);   S.ctx.lineTo(mx + armGap + armLen, my);
-  S.ctx.moveTo(mx - armGap, my);   S.ctx.lineTo(mx - armGap - armLen, my);
-  S.ctx.moveTo(mx, my - armGap);   S.ctx.lineTo(mx, my - armGap - armLen);
-  S.ctx.moveTo(mx, my + armGap);   S.ctx.lineTo(mx, my + armGap + armLen);
+  _retMoveTo(mx, my,  armGap, 0);  _retLineTo(mx, my,  armGap + armLen, 0);
+  _retMoveTo(mx, my, -armGap, 0);  _retLineTo(mx, my, -armGap - armLen, 0);
+  _retMoveTo(mx, my, 0, -armGap);  _retLineTo(mx, my, 0, -armGap - armLen);
+  _retMoveTo(mx, my, 0,  armGap);  _retLineTo(mx, my, 0,  armGap + armLen);
   S.ctx.stroke();
 
   S.ctx.restore();
 }
 
-// ── Edge HUD — top bar with 3 columns matching A / S / D keys ───────────────
-// Left (A):   trace mode — dim=trace, pink=trace+loop, blue=trace+cloud
-// Center (S): scan state — white=on, orange=off, gradient if fade, diamond if nearest
-// Right (D):  commit mode — blue=cloud, pink=loop
+// The edge HUD (3-column A/S/D bar) was SUNSET on 2026-08-28 (#269) — it is
+// in sandbox/sunset-2026-08-28/edge-hud.js. The tile screen says all three
+// things in words, so a colour bar you had to learn was pure decoding cost.
+// `_commitSlotsFull()` went with it; nothing else called it.
 
-const EDGE_H_BASE = 18;  // bar height at scale 1.0
-
-// Lightweight inline check — mirrors seqSlotsFull() without circular import
-function _commitSlotsFull() {
-  for (let i = 0; i < S.commitSlotCount; i++) {
-    const sl = S.commitSlots[i];
-    if (!sl || (sl.type === 'cloud' && sl._releasingAt > 0) ||
-        (sl.type === 'loop' && (sl._playingToEnd || sl._fadingOut))) return false;
-  }
-  return true;
-}
-
-function drawEdgeHUD() {
-  if (S.hudScale === 0) return;   // HUD off
-  const scale = S.hudScale || 1;
-  const EDGE_H = Math.round(EDGE_H_BASE * scale);
-  const W = S.canvas.width;
-  const ctx = S.ctx;
-  const colW = Math.floor(W / 3);
-  const col2X = colW;
-  const col3X = colW * 2;
-  const col3W = W - col3X; // last column absorbs rounding remainder
-
-  ctx.save();
-
-  // ── LEFT: Trace mode (A) ──────────────────────────────────────────────
-  {
-    const traceColors = {
-      'trace':       '#3a3a3a',  // dim neutral
-      'trace+loop':  '#ff6b9d',  // pink-red
-      'trace+cloud': '#4a9fd4',  // saturated blue
-    };
-    const traceColor = traceColors[S.traceMode] || traceColors['trace'];
-    // Armed but full: diagonal stripe pattern (mode color + grey)
-    const armedButFull = S.traceMode !== 'trace'
-      && S.commitOverflow === 'off' && _commitSlotsFull();
-    if (armedButFull) {
-      // Draw grey base, then diagonal stripes in the mode colour
-      ctx.fillStyle = '#3a3a3a';
-      ctx.fillRect(0, 0, colW, EDGE_H);
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, 0, colW, EDGE_H);
-      ctx.clip();
-      ctx.fillStyle = traceColor;
-      const step = Math.round(8 * scale);
-      for (let x = -EDGE_H; x < colW + EDGE_H; x += step * 2) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x + EDGE_H, EDGE_H);
-        ctx.lineTo(x + EDGE_H + step, EDGE_H);
-        ctx.lineTo(x + step, 0);
-        ctx.closePath();
-        ctx.fill();
-      }
-      ctx.restore();
-    } else {
-      ctx.fillStyle = traceColor;
-      ctx.fillRect(0, 0, colW, EDGE_H);
-    }
-
-    // Handsfree state is shown via HUD text label, not on the edge bar.
-    // The left column is reserved exclusively for trace mode state.
-  }
-
-  // ── CENTER: Scan state (S) ────────────────────────────────────────────
-  {
-    const scanOn = !S.scanMuted;
-    const baseColor = scanOn ? '#f0f4f8' : '#e8a030';
-
-    if (S.radiusFadeEnabled) {
-      // Gradient: color at edges, fades to bg in the middle.
-      // Round coordinates to avoid sub-pixel gradient banding in Electron.
-      const gx0 = Math.round(col2X);
-      const gx1 = Math.round(col2X + colW);
-      const grad = ctx.createLinearGradient(gx0, 0, gx1, 0);
-      grad.addColorStop(0, baseColor);
-      grad.addColorStop(0.5, S.darkMode ? BG_COLOR_DARK : BG_COLOR_LIGHT);
-      grad.addColorStop(1, baseColor);
-      ctx.fillStyle = grad;
-    } else {
-      ctx.fillStyle = baseColor;
-    }
-    ctx.fillRect(col2X, 0, colW, EDGE_H);
-
-    // Nearest mode: overlay a diamond icon in center
-    if (S.nearestMode) {
-      const cx = col2X + colW / 2, cy = EDGE_H / 2, d = Math.round(6 * scale);
-      ctx.fillStyle = scanOn ? '#ffffff' : '#ffcc66';
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - d); ctx.lineTo(cx + d, cy); ctx.lineTo(cx, cy + d); ctx.lineTo(cx - d, cy);
-      ctx.closePath();
-      ctx.fill();
-    }
-  }
-
-  // ── RIGHT: Commit mode (D) ────────────────────────────────────────────
-  {
-    const commitColor = S.commitMode === 'loop' ? '#ff6b9d' : '#4a9fd4';
-    // Slots full + overflow off: diagonal stripe pattern (commit color + grey)
-    const slotsFull = S.commitOverflow === 'off' && _commitSlotsFull();
-    if (slotsFull) {
-      ctx.fillStyle = '#3a3a3a';
-      ctx.fillRect(col3X, 0, col3W, EDGE_H);
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(col3X, 0, col3W, EDGE_H);
-      ctx.clip();
-      ctx.fillStyle = commitColor;
-      const step = Math.round(8 * scale);
-      for (let x = col3X - EDGE_H; x < col3X + col3W + EDGE_H; x += step * 2) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x + EDGE_H, EDGE_H);
-        ctx.lineTo(x + EDGE_H + step, EDGE_H);
-        ctx.lineTo(x + step, 0);
-        ctx.closePath();
-        ctx.fill();
-      }
-      ctx.restore();
-    } else {
-      ctx.fillStyle = commitColor;
-      ctx.fillRect(col3X, 0, col3W, EDGE_H);
-    }
-  }
-
-  ctx.restore();
-}
 
 // ── Canvas resize ─────────────────────────────────────────────────────────────
 export function resizeCanvas() {
@@ -1268,7 +2618,7 @@ export function animate() {
   // ══ Camera rotation ═══════════════════════════════════════════════════════
   // Three modes, all writing S.camQ [x,y,z,w]:
   //
-  //   pull    — mouse offset from canvas centre (absolute, below)
+  //   steer   — mouse offset from canvas centre (absolute, below)
   //   surface — pointer-lock trackpad deltas, incremental world-yaw × local-pitch
   //   sensor  — x-imu3 frame-to-frame deltas, same incremental pattern
   //
@@ -1286,9 +2636,15 @@ export function animate() {
   // reconstruction — that reintroduces gimbal lock.
   // ════════════════════════════════════════════════════════════════════════════
 
-  // Pull mode — mouse pull-from-center (absolute, small-angle)
-  if (S.cameraMode === 'pull') {
-    if (S.mouseInCanvas && !S.altLocked && !(S.isMobile && S.orientationActive)) {
+  // Steer mode — mouse offset from centre steers the view (absolute, small-angle).
+  // Note this is ROTATION only; camera distance is S.camPull and applies to all
+  // three modes alike (see sphere.js cameraTransformInto).
+  if (S.cameraMode === 'steer') {
+    // No !S.altLocked test here any more (2026-09-01). Cursor lock IS az and el
+    // both held, and the two guards inside this block already read those — so
+    // the old test was a SECOND mechanism freezing the same sphere, which is
+    // how it drifted: see the auto-rotate branch below.
+    if (S.mouseInCanvas && !(S.isMobile && S.orientationActive)) {
       const dist = Math.sqrt(S.mouseX*S.mouseX + S.mouseY*S.mouseY);
       const DEAD_ZONE = 0.30;
       if (dist > DEAD_ZONE) {
@@ -1297,18 +2653,23 @@ export function animate() {
         const speed = curve * ROTATION_SPEED;
         const nx = S.mouseX / dist, ny = S.mouseY / dist;
 
-        if (Math.abs(nx) > 0.001 && !S.axisLockAz) {
+        if (Math.abs(nx) > 0.001 && !axisHeld(S.azSource)) {
           const up = _qRotVec(S.camQ, [0, 1, 0]);
           const yawSign = up[1] < 0 ? -1 : 1;
           const qYaw = _qFromAA(0, 1, 0, nx * speed * yawSign);
           S.camQ = _qNorm(_qMul(qYaw, S.camQ));
         }
-        if (Math.abs(ny) > 0.001 && !S.axisLockEl) {
+        if (Math.abs(ny) > 0.001 && !axisHeld(S.elSource)) {
           const qPitch = _qFromAA(1, 0, 0, ny * speed);
           S.camQ = _qNorm(_qMul(S.camQ, qPitch));
         }
       }
-    } else if (!S.altLocked) {
+    } else if (!axisHeld(S.azSource)) {
+      // The idle drift, and it is a YAW — so azSource is what governs it. This
+      // read `!S.altLocked`, which was the axis locks' blind spot: with azimuth
+      // locked, moving the mouse off the canvas resumed the very rotation the
+      // lock exists to stop, and moving it back in stopped it again. A lock you
+      // can leave by walking away from the canvas is not a lock.
       const qAuto = _qFromAA(0, 1, 0, AUTO_ROTATION_SPEED);
       S.camQ = _qNorm(_qMul(qAuto, S.camQ));
     }
@@ -1324,8 +2685,8 @@ export function animate() {
     S._surfaceDelta.dx = 0;
     S._surfaceDelta.dy = 0;
     // Axis lock: zero the locked component
-    if (S.axisLockAz) dx = 0;
-    if (S.axisLockEl) dy = 0;
+    if (axisHeld(S.azSource)) dx = 0;
+    if (axisHeld(S.elSource)) dy = 0;
     if (dx !== 0 || dy !== 0) {
       // Yaw in world frame (pre-multiply around world Y) — prevents roll.
       // Pitch in local frame (post-multiply around local X) — clean pole traversal.
@@ -1340,37 +2701,17 @@ export function animate() {
   // applyAxisMapQuat already has a pole-safe forward-vector path for when
   // roll is muted — no need for a second delta-tracking layer here.
   if (S.cameraMode === 'sensor' && typeof S._getSensorCamQ === 'function') {
-    let sq = S._getSensorCamQ();
-    // Apply persistent drift correction from recenter
-    if (sq && S.driftOffsetQ) {
-      sq = _qNorm(_qMul(S.driftOffsetQ, sq));
-    }
+    const sq = S._getSensorCamQ();
+    // Stashed so the post-tickMappings pass can re-derive without re-reading
+    // the sensor — see the re-apply below.
+    S._rawCamQ = sq;
     if (sq) {
-      if (S.axisLockAz || S.axisLockEl) {
-        const fwd = _qRotVec(sq, [0, 0, 1]);
-        let yaw   = Math.atan2(fwd[0], fwd[2]);
-        let pitch = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
-        if (S.axisLockAz) {
-          if (S._axisLockFrozenYaw == null) S._axisLockFrozenYaw = yaw;
-          yaw = S._axisLockFrozenYaw;
-        } else { S._axisLockFrozenYaw = null; }
-        if (S.axisLockEl) {
-          if (S._axisLockFrozenPitch == null) S._axisLockFrozenPitch = pitch;
-          pitch = S._axisLockFrozenPitch;
-        } else { S._axisLockFrozenPitch = null; }
-        const qY = _qFromAA(0, 1, 0, yaw);
-        const qP = _qFromAA(1, 0, 0, pitch);
-        S.camQ = _qNorm(_qMul(qY, qP));
-      } else {
-        S._axisLockFrozenYaw = null;
-        S._axisLockFrozenPitch = null;
-        S.camQ = sq;
-      }
-      // (An auto-recenter branch lived here, armed by S._pendingRecenter from
-      // sensor-registry's slotTare. That tare was removed 2026-08-01 — see the
-      // note in sensor-registry.js — so nothing could ever set the flag, and
-      // this was per-frame work in the render loop that never ran. Recenter
-      // itself is still reachable as S._recenterCursor() from the console.)
+      // Single-IMU: the sensor drives the CURSOR, and the camera is derived —
+      // identical to camQ below the pitch clamp (reticle at centre, as ever),
+      // holding level past it while the reticle climbs to the pole.
+      const pq = applyAxisSources(sq);
+      S.cursorQ = pq;
+      S.camQ = cameraFromPointing(pq);
     }
 
     // ── Detethered cursor — two-IMU mode ──────────────────────────────────
@@ -1379,32 +2720,16 @@ export function animate() {
     // camQ stays at identity so frameQ alone provides the viewport.
     let cq = typeof S._getSensorCursorQ === 'function' ? S._getSensorCursorQ() : null;
     if (cq) {
-      // Apply same drift correction as single-IMU path
-      if (S.driftOffsetQ) cq = _qNorm(_qMul(S.driftOffsetQ, cq));
-      // Apply axis locks to cursor orientation
-      if (S.axisLockAz || S.axisLockEl) {
-        const fwd = _qRotVec(cq, [0, 0, 1]);
-        let yaw   = Math.atan2(fwd[0], fwd[2]);
-        let pitch = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
-        if (S.axisLockAz) {
-          if (S._axisLockFrozenYaw == null) S._axisLockFrozenYaw = yaw;
-          yaw = S._axisLockFrozenYaw;
-        } else { S._axisLockFrozenYaw = null; }
-        if (S.axisLockEl) {
-          if (S._axisLockFrozenPitch == null) S._axisLockFrozenPitch = pitch;
-          pitch = S._axisLockFrozenPitch;
-        } else { S._axisLockFrozenPitch = null; }
-        const qY = _qFromAA(0, 1, 0, yaw);
-        const qP = _qFromAA(1, 0, 0, pitch);
-        S.cursorQ = _qNorm(_qMul(qY, qP));
-      } else {
-        S.cursorQ = cq;
-      }
+      S._rawCursorQ = cq;
+      S.cursorQ = applyAxisSources(cq);
       // Camera at identity — frame provides the view
       S.camQ = [0, 0, 0, 1];
     } else {
-      S.cursorQ = null;
-      // Single IMU: camQ already set above
+      S._rawCursorQ = null;
+      // Single IMU: cursorQ and camQ already set above (when a sensor is
+      // feeding — with none, cursorQ stays wherever the last packet left it,
+      // so clear it and let the mouse fallback take the cursor).
+      if (!sq) S.cursorQ = null;
     }
   } else {
     // Non-sensor modes: ensure cursorQ is cleared
@@ -1416,7 +2741,7 @@ export function animate() {
   // aim behaviour: turning the sensor pans the viewport while the world stays
   // in world coords.  Stored on S.frameQ; sphere.js applies it per-point in
   // cameraTransform / getCursorLonLat / screenToLonLat.  Only active in
-  // sensor mode — surface and pull are mouse/trackpad only.
+  // sensor mode — surface and steer are mouse/trackpad only.
   //
   // A 'frame' role sensor (body-reference) does NOT go here — that mode feeds
   // the delta quat directly into S.cursorQ via getSensorCursorQ(), and leaves
@@ -1432,6 +2757,21 @@ export function animate() {
   // Evaluate after camera/cursor quaternion updates so axis values are fresh.
   // Writes mapped values to S.grainOverrides; grain scheduler reads on next tick.
   tickMappings();
+
+  // ── Cursor-destination mappings ────────────────────────────────────────
+  // tickMappings() has to run after the camera block (mapping inputs must be
+  // fresh), but a 'cursor' row writes back INTO the cursor — so re-derive here
+  // from the stashed raw quaternion. Without this a mapped axis would always
+  // show the previous frame's value, a fixed 33ms behind every other output.
+  // Only runs while an axis is actually 'mapped'.
+  if (S.azSource === 'mapped' || S.elSource === 'mapped') {
+    if (S._rawCursorQ)   S.cursorQ = applyAxisSources(S._rawCursorQ);
+    else if (S._rawCamQ) {
+      const pq = applyAxisSources(S._rawCamQ);
+      S.cursorQ = pq;
+      S.camQ = cameraFromPointing(pq);
+    }
+  }
 
   // Particle deposits are handled by paint-ticker.js (200Hz setInterval),
   // independent of the render loop and input source.
@@ -1475,6 +2815,141 @@ export function animate() {
   S._tickMainMeters?.();
 
   requestAnimationFrame(animate);
+}
+
+// ── Axis-source substitution ────────────────────────────────────────────────
+// Reduces a sensor quaternion to POINTING — yaw and pitch through the axis
+// locks, and nothing else. Single owner of the rule, shared by the camera
+// path, the detethered cursor path, the post-mapping re-apply and main.js's
+// 400 Hz arrival path.
+//
+// Roll is not resolved, muted, or frozen here — it is STRIPPED, always
+// (Ek, 2026-09-01: "the roll should not make it to the actual sphere").
+// The previous shape kept roll as a third resolved axis behind rollSource,
+// and that was the wrong fight: measured end-to-end with roll pinned at
+// exactly 0.00, body yaw at 85° elevation still became 99.7% view-axis spin,
+// because pinning the reticle to screen centre makes "up on screen" the
+// heading's job near the pole. The spin was never roll. So the camera is now
+// DERIVED (cameraFromPointing below) and this function's output is a pure
+// direction: mubone paints with az and el, a position on a 2D map.
+export function applyAxisSources(q) {
+  const fwd = _qRotVec(q, [0, 0, 1]);
+  const liveYaw   = Math.atan2(fwd[0], fwd[2]);
+  const livePitch = Math.asin(Math.max(-1, Math.min(1, -fwd[1])));
+
+  const yaw   = _resolveAxis(S.azSource,   S.cursorOverrides.azimuth,
+                             '_axisLockFrozenYaw',   liveYaw,   false);
+  const pitch = _resolveAxis(S.elSource,   S.cursorOverrides.elevation,
+                             '_axisLockFrozenPitch', livePitch, true);
+
+  return _qNorm(_qMul(_qFromAA(0, 1, 0, yaw), _qFromAA(1, 0, 0, pitch)));
+}
+
+// ── The camera, derived from pointing ───────────────────────────────────────
+// SENSOR MODE IS SURFACE MODE WITH THE SENSOR AS THE TRACKPAD (Ek,
+// 2026-09-01: "i want it to work like in steer mode… can you find a simpler
+// route"). The camera is two accumulators — yaw A about world Y, pitch B
+// about local X, camQ = Ry(A)·Rx(B), the exact no-roll / clean-pole-traversal
+// composition the steer and surface blocks above use — and each update nudges
+// them by the ON-SCREEN OFFSET of the pointing direction from view centre.
+// A servo: the crosshair is pinned to centre by construction, at every
+// elevation, and the centre of view IS the true pointing, so painting stays
+// absolute.
+//
+// Why this dissolves the pole instead of managing it: every previous attempt
+// (hard clamp → soft knee → fade+glide → lazy pursuit, all built and rejected
+// today) SOLVED for absolute azimuth, and azimuth is the thing the pole
+// breaks — it swings ~1/cos(el) per degree of hand wobble, unboundedly at 90°.
+// The servo never computes azimuth. The offset of the pointing from centre is
+// bounded by ACTUAL hand motion — a hand circling the pole feeds tiny bounded
+// nudges whose direction spins, not a wild angle — so the world moves at hand
+// rate everywhere, tremor stays sub-degree, and there is nothing left to
+// clamp, fade, or glide. Going over the top, B simply passes 90° and the
+// world does the same backbend surface mode does; coming back unwinds it.
+// No constants, no state machine: two numbers and a wrap.
+let _camA  = null;  // accumulated yaw about world Y (radians)
+let _camP  = 0;     // accumulated pitch about local X — CLAMPED to ±90 (upright-only)
+let _camAt = 0;     // performance.now() of the last update
+let _camF  = null;  // last pointing direction, for teleport detection
+const _wrapPi = a => Math.atan2(Math.sin(a), Math.cos(a));
+export function cameraFromPointing(pq) {
+  const DEG = Math.PI / 180, HALF = Math.PI / 2;
+  const f = _qRotVec(pq, [0, 0, 1]);   // true pointing, world frame
+
+  const now = performance.now();
+  const prevAt = _camAt;
+  _camAt = now;
+  const dt = Math.min(0.1, (now - prevAt) / 1000);
+  const stale = now - prevAt > 500;
+  // A pointing step this large between consecutive packets is not a hand — it
+  // is a dropout resuming (Ek's recording: a 4.5 s gap swallowed a descent and
+  // the pointing reappeared 84° away in ONE packet, behind a burst of stale
+  // queued packets whose tiny inter-arrival times defeat any dt-based check —
+  // which is why the teleport test exists beside the stale test).
+  const tele = _camF && Math.acos(Math.max(-1, Math.min(1,
+    f[0] * _camF[0] + f[1] * _camF[1] + f[2] * _camF[2]))) > SENSOR_CAM_TELEPORT_DEG * DEG;
+  _camF = f;
+  if (_camA === null || stale || tele) {
+    // Reacquire — always upright, always a clean deterministic cut.
+    _camA = Math.atan2(f[0], f[2]);
+    _camP = Math.max(-HALF, Math.min(HALF, -Math.asin(Math.max(-1, Math.min(1, f[1])))));
+    return _qNorm(_qMul(_qFromAA(0, 1, 0, _camA), _qFromAA(1, 0, 0, _camP)));
+  }
+
+  // UPRIGHT-ONLY servo. Pitch clamps at ±90, so an upside-down world is
+  // UNREPRESENTABLE — the invariant Ek asked for ("when i come back down the
+  // world is upside down… pitch up becomes pitch down" cannot happen, by
+  // construction rather than by branch bookkeeping). Replayed against 128 s of
+  // his real sensor stream: crosshair never off by >8° for any measurable
+  // duration, dropouts included. The inverted/backbend branch of the first
+  // servo is gone with the #305 cone — the recording showed his real
+  // over-the-top gestures round the pole at 85–86° rather than crossing it,
+  // so the branch had no genuine gesture left to serve.
+  const cam = _qMul(_qFromAA(0, 1, 0, _camA), _qFromAA(1, 0, 0, _camP));
+  const fc = _qRotVec([-cam[0], -cam[1], -cam[2], cam[3]], f);
+  _camA = _wrapPi(_camA + Math.atan2(fc[0], fc[2]));
+  let pn = _camP - Math.asin(Math.max(-1, Math.min(1, fc[1])));
+  if (Math.abs(pn) > HALF) {
+    // Pinned at the pole with the hand still going: the target is beyond, at
+    // an elevation where azimuth is WELL-conditioned again — so come around
+    // toward its true azimuth at a bounded rate. This is the deliberate
+    // over-the-top pan, and it also breaks the dead spot where a far-side
+    // descent sits at exactly opposite azimuth with zero horizontal offset
+    // (the replay stuck staring at the zenith for 4 s without it).
+    const over = Math.abs(pn) - HALF;
+    pn = Math.max(-HALF, Math.min(HALF, pn));
+    if (over > SENSOR_CAM_OVERSHOOT_DEG * DEG) {
+      const err = _wrapPi(Math.atan2(f[0], f[2]) - _camA);
+      _camA = _wrapPi(_camA + Math.sign(err) *
+        Math.min(Math.abs(err), SENSOR_CAM_SWING_DEG_S * DEG * Math.max(dt, 0.005)));
+    }
+  }
+  _camP = pn;
+  return _qNorm(_qMul(_qFromAA(0, 1, 0, _camA), _qFromAA(1, 0, 0, _camP)));
+}
+
+// One axis.  'sensor' passes the live value through; 'mapped' takes the mapping
+// row's degrees when a row is feeding it; 'locked' — and 'mapped' with no row —
+// hold the frozen snapshot.
+//
+// `negate` converts an elevation override to pitch: getCursorLonLat() reads
+// lat = asin(fwd.y), and this construction gives fwd.y = -sin(pitch), so
+// lat = -pitch.  Azimuth needs no flip — lon and yaw are both atan2(x, z).
+//
+// The mapped branch also WRITES the frozen snapshot.  That keeps two other
+// things correct for free: switching 'mapped' → 'locked' holds exactly where
+// the mapping left the cursor, and the 400Hz quaternion-arrival path in main.js
+// (which only knows about the frozen values) tracks a mapped axis without
+// needing its own copy of this logic.
+function _resolveAxis(src, overrideDeg, frozenKey, live, negate) {
+  if (src === 'sensor') { S[frozenKey] = null; return live; }
+  if (src === 'mapped' && overrideDeg != null) {
+    const v = (negate ? -overrideDeg : overrideDeg) * (Math.PI / 180);
+    S[frozenKey] = v;
+    return v;
+  }
+  if (S[frozenKey] == null) S[frozenKey] = live;
+  return S[frozenKey];
 }
 
 // Inline quaternion helpers used in the animate() hot path.

@@ -22,9 +22,17 @@ contextBridge.exposeInMainWorld('electronBridge', {
   // Renderer → Main: restart the app (used after buffer-size change)
   restartApp: () => ipcRenderer.send('app-restart'),
 
-  // Renderer → Main: send a captured N-channel interleaved audio buffer to RtAudio
-  sendAudioBuffer: (interleavedFloat32) => {
-    ipcRenderer.send('audio-buffer', interleavedFloat32);
+  // Renderer → Main: open a direct audio channel of one kind ('out' | 'in').
+  // One end goes to the main process, the other to the page's main world over
+  // window.postMessage — the one way a MessagePort crosses contextIsolation —
+  // where audio.js transfers it INTO the worklet. From then on the blocks and
+  // the credits travel worklet ↔ main process and never touch the renderer's
+  // main thread (2026-09-06: a stall there longer than the cushion was a hole
+  // in the output). Each call replaces the previous port of that kind.
+  openAudioPort: (kind) => {
+    const { port1, port2 } = new MessageChannel();
+    ipcRenderer.postMessage('audio-port', { kind }, [port1]);
+    window.postMessage({ type: 'mubone-audio-port', kind }, '*', [port2]);
   },
 
   // Renderer → Main: request available output devices
@@ -34,17 +42,21 @@ contextBridge.exposeInMainWorld('electronBridge', {
   setAudioDevice: (deviceId, numChannels, bufferFrames, sampleRate) =>
     ipcRenderer.invoke('set-audio-device', deviceId, numChannels, bufferFrames, sampleRate),
 
+  // Renderer → Main: the streams' latency (frames), for js/latency.js
+  getStreamLatency: () => ipcRenderer.invoke('get-stream-latency'),
+  // Renderer → Main: the output queue's depth (frames written, not yet played),
+  // its prime depth and how often it has run dry
+  getOutputDepth: (gaps) => ipcRenderer.invoke('get-output-depth', !!gaps),
+  // Renderer → Main: the stall cushion in ms — the depth the output queue is
+  // primed to (electron-main.js primeOutput)
+  setAudioCushion: (ms) => ipcRenderer.send('set-audio-cushion', ms),
+
   // Renderer → Main: request available input devices (true channel counts from RtAudio)
   getInputDevices: () => ipcRenderer.invoke('get-input-devices'),
 
   // Renderer → Main: open RtAudio input stream for multichannel metering
   setInputDevice: (deviceId, numChannels, bufferFrames, sampleRate) =>
     ipcRenderer.invoke('set-input-device', deviceId, numChannels, bufferFrames, sampleRate),
-
-  // Main → Renderer: raw multichannel input PCM pushed from RtAudio input callback
-  // cb(interleavedFloat32: Float32Array, numChannels: number)
-  onAudioInputBuffer: (cb) =>
-    ipcRenderer.on('audio-input-buffer', (_e, f32, nCh) => cb(f32, nCh)),
 
   // Main → Renderer: OSC message received from Max over UDP
   // All OSC addresses are forwarded — cb(address: string, values: any[])
@@ -65,9 +77,6 @@ contextBridge.exposeInMainWorld('electronBridge', {
   // which targets the local relay in JSON format.
   sendOSCExternal: (host, port, address, values = []) =>
     ipcRenderer.send('osc-send-external', host, port, address, values),
-
-  // Main → Renderer: credit-based flow control for audio buffer backpressure
-  onAudioCredit: (cb) => ipcRenderer.on('audio-credit', (_, credits) => cb(credits)),
 
   // Toggle fullscreen (uses simpleFullScreen to avoid macOS Spaces blackout).
   // Returns the new fullscreen state so the renderer can update immediately
@@ -120,6 +129,9 @@ contextBridge.exposeInMainWorld('electronBridge', {
 
   // Renderer → Main: list available serial ports
   // Returns [{ path, manufacturer, serialNumber, vendorId, productId }]
+  // One-shot WiFi survey for the diagnostics page. Never polled.
+  wifiScan: () => ipcRenderer.invoke('wifi-scan'),
+
   serialListPorts: () => ipcRenderer.invoke('serial-list-ports'),
 
   // Renderer → Main: open a serial port by path

@@ -5,38 +5,37 @@
 import {
   S,
   LIVE_PAINT_COLORS, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
-  PRESETS,
+  MASTER_DEFAULT_GAIN, MAX_SAMPLES,
 } from './state.js';
 import { ensureAudioContext } from './audio.js';
-import { requestMicAccess, startLiveRecording, stopLiveRecording } from './audio.js';
+import { requestMicAccess, startLiveRecording, stopLiveRecording, stopLiveRecordingHeld, whenSealed } from './audio.js';
+import * as history from './history.js';
 import { toggleHandsfree } from './handsfree.js';
 import { screenToLonLat } from './sphere.js';
+import { recordStrokeStart, undoLastStroke, redoLastStroke } from './ui-samples.js';
 import {
-  recordStrokeStart, undoLastStroke, updateSampleListActiveState,
-  updateSvTabStates, updateSamplePaintIndicator, switchSvTab,
-} from './ui-samples.js';
-import {
-  toggleNearestMode, plantSeed, startSeedPlant, finalizeSeedPlant,
+  toggleNearestMode, plantSeed, startSeedPlant, startSeedPath, finalizeSeedPlant,
   uprootNearestSeed,
-  updatePlaybackControls, flashRadiusTooltip, selectPreset,
-  drawPresetWaveform, createSeqFromStroke, dropSeqFromCursor,
-  releaseCommit, clearAllCommits,
+  updatePlaybackControls, flashRadiusTooltip,
 } from './ui-presets.js';
 import { resizeCanvas } from './renderer.js';
 import { loadAudioFile } from './ui-samples.js';
 
 import { setScanMuted } from './ui-meters.js';
-import { startEraseStroke, stopEraseStroke } from './erase.js';
+import { armTrigger } from './trigger.js';
+import { toggleRail } from './tiles.js';
 
 // ── Erase-all triple-press state ────────────────────────────────────────────
 let _erasePressCount = 0;
 let _eraseLastPress  = 0;
 
-// ── Tap-toggle vs hold-momentary trace ─────────────────────────────────────
-// Quick tap (<200ms) = toggle trace on/off. Hold (≥200ms) = momentary.
-// When toggled on + handsfree armed + plain trace mode, gate segments buffers.
-const TRACE_TAP_MS  = 200;
-let _traceDownAt    = 0;   // performance.now() when spacebar/click went down
+// Every play is ONE thing, decided in brush.js `gesturePress` (toggle or
+// momentary, Ek 2026-09-04), and it is started by a PALETTE POSITION — a key,
+// a pad, a pedal or OSC (tiles.js). This file owns what a live-source grain
+// stroke IS (startPaintStroke / stopPaintStroke below) and nothing about the
+// edges: space and the canvas mousedown were the last two raw wires into the
+// funnel and both went with arming on 2026-09-11, because "the tool in the
+// hand" is what they pressed and there is no hand between presses.
 
 // ── Focus helpers ───────────────────────────────────────────────────────────
 // Returns true when focus is on a text-entry element that should consume
@@ -77,6 +76,68 @@ function _flushInput() {
   }
 }
 
+// ── Steer reach: the rails ARE the edge (Ek, 2026-08-29) ────────────────────
+// Steer maps the pointer's offset from the centre of the CANVAS to a rotation
+// speed. The rails overlay the canvas rather than resizing it (#291), so the
+// canvas stays full-window while the part you can actually reach with the
+// pointer gets narrower every time a rail opens — and the mapping never knew.
+//
+// Measured at 1440 wide with the tool rail, an engine sheet and the pinned rail
+// open, the reachable stage is 385px of a 1438px canvas, and:
+//
+//   pointer at the RIGHT rail edge → offset 0.659 → t⁴ curve → 7% of full speed
+//   pointer at the LEFT  rail edge → offset 0.122 → inside the 0.30 dead zone,
+//                                    so the sphere does not move AT ALL
+//
+// which is exactly "the sphere barely moves". The fix is not to change the
+// curve or the dead zone — both are fine — but to measure the offset against
+// the stage you can actually reach, so a rail edge means the same thing a
+// window edge does: hard over.
+//
+// The insets are cached and only recomputed when a rail opens or closes or the
+// window resizes, because this is read on every pointer move and a
+// getBoundingClientRect per rail per event is a forced layout at pointer rate.
+const _STAGE_RAILS = { left: ['#toolRail', '#propRail'], right: ['#tcRail'] };
+let _stageInset = { l: 0, r: 0 };
+let _stageInsetDirty = true;
+
+function _railExtent(sel, side) {
+  const el = document.querySelector(sel);
+  if (!el) return 0;
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return 0;
+  const r = el.getBoundingClientRect();
+  if (r.width < 1) return 0;
+  const c = S.canvas.getBoundingClientRect();
+  // How far the rail eats INTO the canvas from that side — a rail parked
+  // off-canvas (a closing transition) contributes nothing.
+  return side === 'left' ? Math.max(0, Math.min(r.right - c.left, c.width))
+                         : Math.max(0, Math.min(c.right - r.left, c.width));
+}
+
+function _stageInsets() {
+  if (_stageInsetDirty) {
+    _stageInsetDirty = false;
+    const l = Math.max(0, ..._STAGE_RAILS.left.map(s => _railExtent(s, 'left')));
+    const r = Math.max(0, ..._STAGE_RAILS.right.map(s => _railExtent(s, 'right')));
+    // Never let the rails claim the whole stage: if they somehow cover
+    // everything, fall back to the full canvas rather than dividing by ~0.
+    _stageInset = (l + r) > 0 && (l + r) < 0.9 * S.canvas.getBoundingClientRect().width
+      ? { l, r } : { l: 0, r: 0 };
+  }
+  return _stageInset;
+}
+
+/** Mark the cached stage insets stale. Cheap; the recompute is lazy. */
+export function invalidateStageInsets() { _stageInsetDirty = true; }
+
+function _watchStageInsets() {
+  window.addEventListener('resize', invalidateStageInsets);
+  // The rails are shown and hidden by classes on <body>, so that is the signal.
+  new MutationObserver(invalidateStageInsets)
+    .observe(document.body, { attributes: true, attributeFilter: ['class'] });
+}
+
 // ── Helper: get lon/lat from mouse screen position ────────────────────────────
 function getMouseLonLat() {
   return screenToLonLat(S.mousePixelX, S.mousePixelY);
@@ -87,23 +148,148 @@ function _updateLiveRecUI() {
   S.updateLiveRecUI?.();
 }
 
-// Grey/restore D-loop buttons when trace+loop owns recording
-function _syncCommitBtnLock(locked) {
-  if (S.commitMode !== 'loop') return;  // only lock when commit is in loop mode
-  const dropBtn = document.getElementById('commitDropBtn');
-  const drawBtn = document.getElementById('commitDrawBtn');
-  if (dropBtn) { dropBtn.style.opacity = locked ? '0.35' : ''; dropBtn.style.pointerEvents = locked ? 'none' : ''; }
-  if (drawBtn) { drawBtn.style.opacity = locked ? '0.35' : ''; drawBtn.style.pointerEvents = locked ? 'none' : ''; }
+/** What a finished trace stroke becomes.
+ *
+ *  A trigger-type recording (⇧space, or the bindable trace_trigger action)
+ *  becomes a trigger regardless of trace mode: the type was chosen before the
+ *  recording started and belongs to the buffer, not to any app state.
+ *
+ *  Shared by the three trace release paths (spacebar, mouse, sample keys) —
+ *  they used to carry three copies of one branch, and a fourth would have
+ *  been three ways to forget one. Also the single place the trigger-recording
+ *  flag is cleared, so it can't leak into the next stroke. A grain stroke
+ *  that ends as a CLOUD is not decided here: its path is finalized by
+ *  stopPaintStroke (`_seedRecordingDeferred`), after this commit. */
+function _commitTraceStroke(strokeId) {
+  const wasTrigger = S._recordingTrigger;
+  S._recordingTrigger = false;
+  S._syncTriggerRecUI?.();
+  // An overdub take: hit material that is never armed — it joins its master
+  // as a layer instead (ui-presets.js attachOverdub). Read once and cleared
+  // here, whatever the stroke came to, so a refused or empty take cannot
+  // hand its master to the next stroke.
+  const overdub = S._overdubTake;
+  S._overdubTake = null;
+  // An overdub take with no master SEEDS one (ui-presets.js beginOverdub):
+  // read and cleared here for the same reason, and handed to armTrigger so
+  // the looper hook pins it whatever the tile's own `on end` says.
+  const seed = !!S._overdubSeed;
+  S._overdubSeed = false;
+  if (!(strokeId > 0)) return;
+  // An aborted gesture (brush.js gestureAbort): the take is thrown away once
+  // it has sealed — particles, buffer slot, anything it pinned — through the
+  // stroke's own history action, which is then gone for good, not redoable.
+  // Nothing is armed. Waiting for the seal keeps the recorder's last bundle
+  // from landing in a slot that has already been freed.
+  if (S._abortStrokeId === strokeId) {
+    S._abortStrokeId = null;
+    // Off the history NOW — a ×2 bound to undo fires right after the abort
+    // and must reach what came before this take, not this take (Ek,
+    // 2026-09-10: "i wanted that undo to act instead of the loop activate").
+    // The clean-up itself waits for the seal.
+    const a = history.detach(x => x.kind === 'stroke' && x.strokeId === strokeId);
+    whenSealed(() => { if (a) { a.undo(); a.dispose?.(); } S._pinsDirty = true; S._syncCommitUI?.(); });
+    return;
+  }
+  // The take seals a few ms after stopLiveRecording(), when the recorder's
+  // last bundle lands. Both commits read slot.buffer and would otherwise
+  // fall back to the oversized live buffer (audio.js, sealing).
+  whenSealed(() => {
+    if (overdub) {
+      let ov = null;
+      try { ov = S._attachOverdub?.(strokeId, overdub.seq, overdub.ov); } catch (e) { console.warn('[overdub] attach failed:', e); }
+      // The master went while the take ran: the stroke is an ordinary line
+      // now, the same as an overdub whose master is unpinned.
+      if (!ov) { try { armTrigger(strokeId, { plain: true }); } catch (_) {} }
+      return;
+    }
+    if (wasTrigger) {
+      try { armTrigger(strokeId, { loop: seed }); } catch (_) {}
+    }
+  });
 }
 
-/** Stop toggle-trace: called when user taps space/click to toggle trace OFF,
- *  or when trace mode changes away from plain trace. */
-function _stopToggleTrace() {
-  S._traceToggled = false;
-  S._traceActive  = false;
-  _traceDownAt    = 0;
+/**
+ * Start / stop a trigger-type recording: what the main button does when the
+ * hand holds a hit brush (the line brushes), from any wire.
+ *
+ * One implementation reached from the trigger panel's record button and the
+ * bindable `trace_trigger` action, so a pad, a pedal and the mouse can't drift
+ * apart — the #166 rule.
+ *
+ * ⇧space is not this: it sets `_recordingTrigger` and presses the main
+ * button, so the stroke runs through startPaintStroke with whatever brush is
+ * in the hand. Both routes converge on the same two facts — `_recordingTrigger`
+ * set while painting, and `armTrigger` on release — through `_commitTraceStroke`.
+ */
+async function startTriggerRecord() {
+  if (S.isPainting) return;
+  ensureAudioContext();
+  const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
+  if (!gotMic) return;
+  // Scan is deliberately left alone — see _commitTraceStroke.
+  S._recordingTrigger = true;
+  S._traceActive      = true;
+  startLiveRecording();
+  recordStrokeStart('live', S.currentLiveBufferIdx);
+  S.isPainting = true;
+  _updateLiveRecUI();
+  S._syncTriggerRecUI?.();
+}
 
-  // If handsfree gate is mid-capture, finalize it
+function stopTriggerRecord() {
+  if (!S._recordingTrigger) return;
+  const savedStrokeId = S.currentStrokeId;
+  S.isPainting      = false;
+  S.currentStrokeId = -1;
+  // The release is stamped and the recorder held by the input latency, so
+  // the region from the button has the sound of the release in it.
+  if (S.isRecording) stopLiveRecordingHeld(S.latency?.inS || 0);
+  S._traceActive = false;
+  // _commitTraceStroke reads and clears the flag, and is the single place that
+  // decides what a finished stroke becomes.
+  _commitTraceStroke(savedStrokeId);
+  S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+  _updateLiveRecUI();
+  S._syncTriggerRecUI?.();
+}
+S._startTriggerRecord = startTriggerRecord;
+S._stopTriggerRecord  = stopTriggerRecord;
+
+/**
+ * A live-source grain stroke — what a position press starts when its tile is
+ * a grain brush over the live input. One body: space, the mouse, the touch
+ * screen and the `recpaint` action each used to carry their own copy, and
+ * they disagreed about the mic (space painted without one, the mouse asked
+ * and gave up) and about the tap-latch window.
+ *
+ * Under handsfree (armed, plain trace mode, a TOGGLE-started gesture) the
+ * stroke is not recorded here at all: the gate in handsfree.js opens and
+ * closes the takes between this start and its stop.
+ */
+async function startPaintStroke() {
+  if (S.isPainting) return;
+  ensureAudioContext();
+  if (S.hfArmed && S.paintLatched && S.traceMode === 'trace' && !S._recordingTrigger) {
+    _updateLiveRecUI(); S._syncHandsfreeUI?.();
+    return;
+  }
+  const hasInput = S.micPermissionGranted ||
+                   (window.electronBridge?.isElectron && window._rtAudioInputListening);
+  const gotMic = hasInput ? true : await requestMicAccess();
+  if (!gotMic || !S._gestureActive?.()) return;   // denied, or released during the prompt
+  startLiveRecording();
+  recordStrokeStart('live', S.currentLiveBufferIdx);
+  S.isPainting = true;
+  // `on end: cloud` (the wash brush): record the path, no slot until the
+  // release — the cursor alone reads the stroke while it is painted.
+  if (S.traceMode === 'trace+cloud') startSeedPath();
+  _updateLiveRecUI();
+  S._syncTriggerRecUI?.();
+}
+
+function stopPaintStroke() {
+  // A handsfree take mid-capture is finalised, and counted.
   if (S.hfRecording) {
     const wasPainting = S.isPainting;
     S.isPainting      = false;
@@ -111,27 +297,40 @@ function _stopToggleTrace() {
     if (S.isRecording) stopLiveRecording();
     S.hfRecording = false;
     S.hfGateOpen  = false;
-    // Only count if there was an active painting stroke
     if (wasPainting) {
       S.hfCaptureCount++;
       S.hfCaptureFlashUntil = performance.now() + 400;
       S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
     }
+    S._syncHandsfreeUI?.();
   }
-
-  // If non-handsfree toggle trace was recording, stop it
   if (S.isPainting || S.isRecording) {
-    S.isPainting      = false;
+    S.isPainting = false;
+    // Finalize the recording BEFORE the commit so the commit sees
+    // the sealed buffer (exact sample count), not the over-allocated live
+    // buffer whose duration extends into silence.
+    const savedStrokeId = S.currentStrokeId;
     S.currentStrokeId = -1;
     if (S.isRecording) stopLiveRecording();
+    _commitTraceStroke(savedStrokeId);
+    // Keyed on the recording in flight, not the mode: the sheet's row can
+    // flip mid-stroke, and a path left recording would grow for ever.
+    if (S._seedRecordingDeferred) finalizeSeedPlant();
     S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+  } else if (S._recordingTrigger) {
+    // ⇧space on a tool that never recorded (the mic was denied, or the
+    // eraser): the flag must not leak into the next stroke.
+    S._recordingTrigger = false;
+    S._syncTriggerRecUI?.();
   }
-
   _updateLiveRecUI();
   S._syncHandsfreeUI?.();
 }
+S._startPaintStroke = startPaintStroke;
+S._stopPaintStroke  = stopPaintStroke;
 
 export function setupEvents() {
+  _watchStageInsets();
   // ── Pointer lock for surface mode ───────────────────────────────────────
   // Surface mode uses pointer lock so the full trackpad range is available
   // (no screen-edge limits). Accumulated deltas map to sphere orientation.
@@ -164,15 +363,15 @@ export function setupEvents() {
 
   // Where canvas overlays must be appended.
   //
-  // NOT #canvasWrapper. In projector mode — which is the DEFAULT layout —
-  // setProjectorLayout() moves the real canvas out into .projector-mini-body
-  // and collapses .canvas-wrapper to `height: 0; overflow: hidden`. Anything
-  // appended to the wrapper is then clipped to nothing: present in the DOM,
-  // computed styles all "visible", zero pixels on screen. This is exactly how
-  // the perf monitor broke (#141) — it had to be carried into the mini tile.
+  // The canvas's own parent, not #canvasWrapper by name. Today those are the
+  // same element — the rig view's partition, which used to move the canvas out
+  // into a mini tile and collapse the wrapper to `height: 0`, was sunset with
+  // the rig view (#291). Following the live canvas keeps that history from
+  // being a trap: an overlay appended to a wrapper the canvas has left is
+  // present in the DOM with every computed style reading "visible" and zero
+  // pixels on screen, which is exactly how the perf monitor broke (#141).
   //
-  // Following the live canvas's parent works in both layouts and survives any
-  // future re-nesting. Both hosts are `position: relative`, which is what the
+  // Both hosts are `position: relative`, which is what the
   // absolutely-positioned overlays need.
   function _canvasHost() {
     return S.canvas?.parentElement || document.getElementById('canvasWrapper');
@@ -182,13 +381,76 @@ export function setupEvents() {
   // mode. Shared by the Alt keypress and the overlay's click — clicking the
   // overlay while alt-locked must clear the lock too, or the pointer would be
   // recaptured with S.altLocked still true and the two would disagree.
+  // ── Whose pointer is it (Ek, 2026-09-01) ────────────────────────────────
+  // "in sensor mode, when the sensor is not connected, i don't see the real
+  // mouse cursor when it's above the viz area — only in the surrounding
+  // footer/header rails."
+  //
+  // The stage hides the OS pointer (css/style.css, .canvas-wrapper and its
+  // canvas) because in steer and surface the mouse IS the instrument: it steers
+  // the sphere, the app draws its own reticle, and a second arrow chasing it is
+  // noise. Sensor mode is the exception and always was — applyCameraMode's own
+  // comment there reads "hide cursor, mouse is free for UI", which is two
+  // clauses that contradict each other. Since #291 it also stopped being
+  // harmless: the palette and both rails FLOAT OVER the stage, so the hidden
+  // region is exactly where those controls live.
+  //
+  // One owner, because there are two callers and they ran in an order that
+  // undid each other: applyCameraMode sets the mode's cursor, and releasing a
+  // cursor lock restores it — and the release runs LAST on a mode change.
+  S._syncStageCursor = () => {
+    if (S.altLocked) return;            // the lock owns it while it is on
+    const c = S.cameraMode === 'sensor' ? 'auto' : '';
+    const host = _canvasHost();
+    if (host) host.style.cursor = c;
+    if (S.canvas) S.canvas.style.cursor = c;
+  };
+
+  // ── The POINTER half of cursor lock (2026-09-01) ────────────────────────
+  // Cursor lock itself is not a state — it is az and el both held, and
+  // setAxisSource() in main.js owns that and calls this on the edge. What is
+  // left here is the part that only means anything with a mouse: hand the
+  // pointer back so the UI is clickable, and freeze the cursor where it was.
+  //
+  // Sensor mode is excluded, and that gate is load-bearing rather than tidy.
+  // S.altLocked is read by grain.js:693, renderer.js:2154/2170 and
+  // sensor-mapping.js:354 to switch the cursor from the camera-driven
+  // getCursorLonLat() to a FROZEN MOUSE PIXEL. With a sensor driving a tethered
+  // cursor (S.cursorQ === null) letting it go true teleports the cursor to
+  // wherever the mouse was last seen. Ek's own reading of the mode is the same
+  // one: "in sensor mode, az and el lock — cursor does nothing, it's already
+  // free."
+  S._applyCursorLockPointer = (on) => {
+    const want = !!on && S.cameraMode !== 'sensor';
+    if (want === S.altLocked) return;   // edge only — this is called per write
+    if (!want) { _releaseAltLock(); return; }
+    S.altLocked            = true;
+    S.altFrozenMousePixelX = S.mousePixelX;
+    S.altFrozenMousePixelY = S.mousePixelY;
+    if (S.cameraMode === 'surface') S._exitSurfaceLock?.();
+    // Raise the overlay here rather than leaning on the pointerlockchange
+    // that exitPointerLock triggers: that event only fires if the lock was
+    // actually held, and cursor lock is reachable from states where it was
+    // not (lock request denied, window never focused). The event path still
+    // runs and no-ops on the early return, so locked and unlocked entries
+    // agree. In EVERY mode, not surface alone (Ek, 2026-09-12): the option
+    // key frees the cursor the same way wherever the camera is, so the same
+    // wash says so — a steer-mode lock used to show only the small indicator.
+    _showSurfaceOverlay();
+    const host = _canvasHost();   // NOT #canvasWrapper — see _canvasHost
+    if (host) { host.style.cursor = 'auto'; S.canvas.style.cursor = 'auto'; }
+    const ind = document.getElementById('altLockIndicator');
+    if (ind) ind.style.display = '';
+    S._syncSessionAltLock?.(true);
+  };
+
   function _releaseAltLock() {
     S.altLocked = false;
     if (S.cameraMode === 'surface') {
       S._requestSurfaceLock?.();     // also hides the overlay
     } else {
-      const host = _canvasHost();
-      if (host) { host.style.cursor = ''; S.canvas.style.cursor = ''; }
+      _hideSurfaceOverlay();
+      S._syncStageCursor();
     }
     const ind = document.getElementById('altLockIndicator');
     if (ind) ind.style.display = 'none';
@@ -207,17 +469,19 @@ export function setupEvents() {
     const viaAlt = !!S.altLocked;
     _surfaceOverlay = document.createElement('div');
     _surfaceOverlay.id = 'surfaceLockOverlay';
+    const back = S.cameraMode === 'surface' ? 're-enter surface mode' : 'take the cursor back';
     _surfaceOverlay.innerHTML = viaAlt
       ? `<span class="surface-overlay-main">cursor freed — the UI is yours</span>` +
-        `<span class="surface-overlay-hint">click here or press ${altKey} again to re-enter surface mode</span>`
+        `<span class="surface-overlay-hint">click here or press ${altKey} again to ${back}</span>`
       : `<span class="surface-overlay-main">click to re-enter surface mode</span>` +
         `<span class="surface-overlay-hint">tip: use ${altKey} to free the cursor without leaving surface mode</span>`;
     wrapper.appendChild(_surfaceOverlay);
     _surfaceOverlay.addEventListener('click', () => {
-      // Clicking is equivalent to pressing Alt again when alt-locked, so route
-      // through the same release — otherwise the alt-lock indicator would
-      // stay lit and the camera stay frozen with the pointer recaptured.
-      if (S.altLocked) _releaseAltLock();
+      // Clicking is equivalent to pressing ⌥ again when cursor-locked, so route
+      // through the same unlock — and that now means the AXES, not just the
+      // pointer. Releasing only the pointer would recapture it with az and el
+      // still held, leaving the sphere frozen with no overlay left to say why.
+      if (S.altLocked) S._setCursorLock?.(false);
       else             S._requestSurfaceLock?.();
     });
   }
@@ -231,55 +495,11 @@ export function setupEvents() {
     }
   }
 
-  // ── "How to get out" banner, shown on ENTERING surface mode ──────────────
-  // The overlay above only appears once pointer lock has already been lost —
-  // it tells you how to get back IN. Entering is the moment that needs the
-  // opposite: the pointer is captured, the mouse no longer reaches the UI, and
-  // nothing on screen says which key releases it.
-  //
-  // A banner rather than a modal on purpose: a dialog that has to be dismissed
-  // is the wrong thing to put in front of someone who just changed camera mode
-  // mid-performance. This states the escape hatch and gets out of the way.
-  let _surfaceHint = null;
-  let _surfaceHintTimer = null;
-
-  function _showSurfaceEntryHint() {
-    const wrapper = _canvasHost();   // see _canvasHost — never #canvasWrapper
-    if (!wrapper) return;
-    const altKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌥ option' : 'Alt';
-    clearTimeout(_surfaceHintTimer);
-    _surfaceHint?.remove();
-
-    _surfaceHint = document.createElement('div');
-    _surfaceHint.id = 'surfaceEntryHint';
-    _surfaceHint.innerHTML =
-      `<span class="surface-hint-title">surface mode</span>` +
-      `<span class="surface-hint-body">the pointer is captured — hold <kbd>${altKey}</kbd> ` +
-      `to free the cursor, or press <kbd>Esc</kbd> to release the lock</span>`;
-    wrapper.appendChild(_surfaceHint);
-    // Non-interactive (pointer-events: none in CSS) so it can never swallow a
-    // click meant for the canvas underneath it.
-    requestAnimationFrame(() => _surfaceHint?.classList.add('visible'));
-
-    // 4s was too short to read twice — long enough to notice, not long enough
-    // to absorb. This is a message you read once and act on, so it holds until
-    // it's been used or clearly ignored. Pressing Alt dismisses it early (see
-    // the keydown handler), which is the real exit for anyone who already
-    // knows the shortcut.
-    _surfaceHintTimer = setTimeout(() => {
-      _surfaceHint?.classList.remove('visible');
-      // Outlast the fade before removing, so it doesn't disappear mid-transition.
-      setTimeout(() => { _surfaceHint?.remove(); _surfaceHint = null; }, 400);
-    }, 12000);
-  }
-  S._showSurfaceEntryHint = _showSurfaceEntryHint;
-
-  function _hideSurfaceEntryHint() {
-    clearTimeout(_surfaceHintTimer);
-    _surfaceHint?.remove();
-    _surfaceHint = null;
-  }
-  S._hideSurfaceEntryHint = _hideSurfaceEntryHint;
+  // The "surface mode — the pointer is captured" banner that popped over the
+  // stage on entering surface mode is gone (Ek, 2026-09-12: "remove that box.
+  // the overlay is enough"). The overlay below is the one way in and out.
+  S._showSurfaceEntryHint = () => {};
+  S._hideSurfaceEntryHint = () => {};
 
   document.addEventListener('pointerlockchange', () => {
     _pointerLocked = document.pointerLockElement === S.canvas;
@@ -311,8 +531,16 @@ export function setupEvents() {
     // Pull mode: standard mouse tracking
     if (!S.altLocked) {
       const rect  = S.canvas.getBoundingClientRect();
-      _pendingMouseX = ((e.clientX - rect.left) / rect.width  - 0.5) * 2;
-      _pendingMouseY = ((e.clientY - rect.top)  / rect.height - 0.5) * 2;
+      // STEER offset is measured against the reachable stage (canvas minus any
+      // open rails) so the rail edge means hard over; the PIXEL coordinates
+      // stay in canvas space, because they answer a different question — where
+      // on the sphere the cursor is — and the rails do not move the sphere.
+      const ins  = _stageInsets();
+      const sx0  = rect.left + ins.l;
+      const sw   = Math.max(1, rect.width - ins.l - ins.r);
+      const clamp1 = v => v < -1 ? -1 : v > 1 ? 1 : v;
+      _pendingMouseX = clamp1(((e.clientX - sx0) / sw - 0.5) * 2);
+      _pendingMouseY = clamp1(((e.clientY - rect.top) / rect.height - 0.5) * 2);
       _pendingPixelX = (e.clientX - rect.left) * (S.canvas.width  / rect.width);
       _pendingPixelY = (e.clientY - rect.top)  * (S.canvas.height / rect.height);
       S.mouseInCanvas = true;
@@ -388,6 +616,12 @@ export function setupEvents() {
   });
 
   // ── Keyboard ──────────────────────────────────────────────────────────────
+  const _downKeySrc = new Map();   // key code → the recogniser source it put down
+  // A window blur is a release edge: a key-up that never arrives must not
+  // leave a source down (a long firing in another window, a momentary stuck).
+  window.addEventListener('blur', () => {
+    for (const [code, src] of _downKeySrc) { _downKeySrc.delete(code); S._dispatchGesture?.(src, false); }
+  });
   document.addEventListener('keydown', async e => {
 
     // Skip all default handling while key learn mode is active
@@ -404,16 +638,19 @@ export function setupEvents() {
     // Down would scroll the panel instead of firing its action. Printable keys
     // still yield to typing (a binding on "d" must not eat text entry); keys
     // that don't insert a character always win.
+    // A learned key is a SOURCE the button recogniser reads (midi.js
+    // dispatchGesture, 2026-09-11): this down and the matching up below are
+    // its two edges, and the recogniser decides press · tap · long · extra
+    // long · ×2 · ×3 from them with the buttons' timings and rules. The up
+    // is matched by CODE, so modifiers changing under a held key still
+    // release it. `_downKeySrc` is what is down right now.
     const typingIntoField = _focusedOnFormField() && _producesText(e);
-    if (S._keyMappings && S._dispatchAction && !e.repeat && !typingIntoField) {
-      for (const [actionId, km] of Object.entries(S._keyMappings)) {
-        if (km.type !== 'key') continue;
-        if (km.code !== e.code) continue;
-        if (km.shift !== e.shiftKey || km.ctrl !== e.ctrlKey || km.meta !== e.metaKey) continue;
+    if (S._keySourceOf && S._dispatchGesture && !e.repeat && !typingIntoField) {
+      const src = S._keySourceOf(e);
+      if (S._sourceBound?.(src)) {
         e.preventDefault();
-        S._dispatchAction(actionId, 127);
-        // Track which hold action this key code activated so keyup releases the right one
-        if (S._holdActionIds?.has(actionId)) S._activeHoldKeyMap?.set(e.code, actionId);
+        _downKeySrc.set(e.code, src);
+        S._dispatchGesture(src, true);
         return;
       }
     }
@@ -427,183 +664,39 @@ export function setupEvents() {
       return;
     }
 
-    // Alt: toggle-lock sphere at current position
-    // Only meaningful in pull and surface modes (sensor mode has free mouse already)
+    // ⌥ is a SHORTCUT to the two axis locks, not a mechanism of its own
+    // (Ek, 2026-09-01). It used to freeze the camera by a separate route and
+    // leave azSource/elSource alone, so the footer could read "free" while the
+    // sphere would not move. Now it writes the same state the footer buttons
+    // write, and the pointer follows from that.
+    //
+    // No sensor-mode early return any more: there the axes still lock, and
+    // _applyCursorLockPointer is what knows the pointer half does not apply.
     if ((e.code === 'AltLeft' || e.code === 'AltRight') && !e.repeat) {
       e.preventDefault();
-      if (S.cameraMode === 'sensor') return;  // alt lock not needed in sensor mode
-      if (!S.altLocked) {
-        // Lock: freeze camera, release pointer lock (surface), show cursor for UI
-        S.altLocked            = true;
-        S.altFrozenMousePixelX = S.mousePixelX;
-        S.altFrozenMousePixelY = S.mousePixelY;
-        // The banner exists to teach exactly this key. Using it is proof the
-        // message landed, so retire it early instead of making it sit out its
-        // full timeout over the canvas.
-        _hideSurfaceEntryHint();
-        if (S.cameraMode === 'surface') {
-          S._exitSurfaceLock?.();
-          // Raise the overlay here rather than leaning on the
-          // pointerlockchange that exitPointerLock triggers: that event only
-          // fires if the lock was actually held, and alt-lock is reachable
-          // from states where it wasn't (lock request denied, window never
-          // focused). The event path still runs and no-ops on the early
-          // return, so locked and unlocked entries agree.
-          _showSurfaceOverlay();
-        }
-        const host = _canvasHost();   // NOT #canvasWrapper — see _canvasHost
-        if (host) { host.style.cursor = 'auto'; S.canvas.style.cursor = 'auto'; }
-        const ind = document.getElementById('altLockIndicator');
-        if (ind) ind.style.display = '';
-        S._syncSessionAltLock?.(true);
-      } else {
-        _releaseAltLock();
-      }
+      S._toggleCursorLock?.();
       return;
     }
 
-    // ⌘D: release one commit (nearest or farthest based on selectionMode)
-    if (e.key === 'd' && (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.repeat) {
-      e.preventDefault();
-      releaseCommit();
-    }
+    // The D keys (tap D pin, hold D draw, ⇧D kind, ⌘D unpin) went on
+    // 2026-09-03 (#327): `=` and `-` are the pin pair on the tile screen
+    // (tiles.js, capture phase), and one fact does not get two keys.
+    // SPACE IS A FREE KEY (2026-09-11). It was the main button — it fired
+    // whatever tool was armed — and with arming gone it has no tool to name.
+    // It is learnable onto any palette position on the keys page, which is
+    // what Ek asked for: "now spacebar is just like any other key".
+    // (⇧space recorded a trigger buffer until 2026-09-09 — "record a hit",
+    // out of the vocabulary with the action and its address.)
 
-    // Shift+D: cycle commit mode (cloud ↔ loop)
-    if (e.key === 'D' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
-      e.preventDefault();
-      S.commitMode = S.commitMode === 'cloud' ? 'loop' : 'cloud';
-      S._syncCommitUI?.();
-    }
+    // The letter and digit rows belong to the tile screen (#214): digits are
+    // tiles by position, Q W E are layers. The patch bank's digits and the
+    // Q–P sample-paint row lost their default keys in the same pass the tile
+    // row landed. The preset actions stay bindable via MIDI/OSC; the
+    // paint1–10 actions died with the stamp brush (#247) — the sampler is a
+    // SOURCE now (/source/sampler + /sampler/sample), painted by any brush.
 
-    // D: unified commit key
-    //   Quick tap (<200ms) = drop commit (cloud: parked cloud, loop: drop from cursor)
-    //   Long hold (≥200ms) = draw commit (cloud: moving path, loop: record new loop)
-    //   In loop mode, D-loop takes priority over trace (spacebar/mouse).
-    if (e.key === 'd' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
-      e.preventDefault();
-      // Disallow if slots are full and overflow is off
-      if (S.commitOverflow === 'off') {
-        let full = true;
-        for (let i = 0; i < S.commitSlotCount; i++) {
-          const sl = S.commitSlots[i];
-          if (!sl || (sl.type === 'cloud' && sl._releasingAt > 0)) { full = false; break; }
-        }
-        if (full) return;
-      }
-      S._commitStartMs = performance.now();
-      ensureAudioContext();
-
-      if (S.commitMode === 'loop') {
-        // Block D-loop while trace+loop is actively recording — trace owns the mic
-        if (S._traceActive && S.traceMode === 'trace+loop') return;
-        S._cLoopActive = true;
-        _traceDownAt = 0; // clear stale tap timestamp — D-loop owns recording now
-        // Loop mode: start recording immediately (decision on keyup)
-        if (!S.scanMuted) setScanMuted(true);
-        const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
-        if (gotMic) startLiveRecording();
-        recordStrokeStart('live', S.currentLiveBufferIdx);
-        S.isPainting      = true;
-        S.paintFrameCount = 0;
-        // Grey out trace indicator while D-loop owns recording
-        const traceInd = document.getElementById('paintIndicatorBtn');
-        if (traceInd) { traceInd.style.opacity = '0.35'; traceInd.style.pointerEvents = 'none'; }
-      } else {
-        // Cloud mode: start cloud recording (captures cursor frames)
-        // If trace+cloud is mid-recording, shelve its state so D gets its own seed
-        if (S._traceActive && S.traceMode === 'trace+cloud' && S._seedRecordingFrames) {
-          S._shelvedSeed = { frames: S._seedRecordingFrames, start: S._seedRecordingStart, slot: S._seedRecordingSlot };
-          S._seedRecordingFrames = null;
-          S._seedRecordingStart  = 0;
-          S._seedRecordingSlot   = -1;
-        }
-        startSeedPlant();
-      }
-      _updateLiveRecUI();
-    }
-
-    // Spacebar: live recording + painting (trace)
-    // Tap (<200ms) = toggle on/off. Hold (≥200ms) = momentary.
-    if (e.code === 'Space' && !e.repeat) {
-      e.preventDefault();
-
-      // If trace is already toggled on, this tap toggles it OFF
-      if (S._traceToggled) {
-        _stopToggleTrace();
-        return;
-      }
-
-      S._traceActive = true;
-      _traceDownAt = performance.now();
-      // If D-loop owns recording, just mark trace as held — don't touch audio
-      if (!S._cLoopActive) {
-        ensureAudioContext();
-        // Mute scan + lock commit buttons immediately for trace+loop — don't wait
-        // for startLiveRecording to finish (worklet may load async on first press)
-        if (S.traceMode === 'trace+loop') {
-          if (!S.scanMuted) setScanMuted(true);
-          _syncCommitBtnLock(true);
-        }
-        const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
-        if (gotMic) startLiveRecording();
-        recordStrokeStart('live', S.currentLiveBufferIdx);
-        S.isPainting      = true;
-        S.paintFrameCount = 0;
-        // Auto-commit cloud during trace when in trace+cloud mode
-        if (S.traceMode === 'trace+cloud') startSeedPlant();
-        _updateLiveRecUI();
-      }
-    }
-
-    // QWERTYUIOP: momentary sample paint (10 slots)
-    const _sampleKeys = 'qwertyuiop';
-    const _sampleIdx = _sampleKeys.indexOf(e.key.toLowerCase());
-    if (_sampleIdx !== -1 && !e.repeat && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
-      if (_sampleIdx < S.samples.length && S.samples[_sampleIdx].buffer) {
-        e.preventDefault();
-        ensureAudioContext();
-        // In trace+loop mode, mute scan when painting
-        if (S.traceMode === 'trace+loop' && !S.scanMuted) setScanMuted(true);
-        S.activeSampleIndex = _sampleIdx;
-        recordStrokeStart('sample');
-        S.isPainting      = true;
-        S.paintFrameCount = 0;
-        // Cold-start worklet if not yet running (e.g. sample paint as first action)
-        S._ensureWorkletForSample?.(S.samples[_sampleIdx].buffer);
-        if (S.traceMode === 'trace+cloud') startSeedPlant();
-        switchSvTab(_sampleIdx);
-        updateSampleListActiveState();
-        updateSvTabStates();
-        updateSamplePaintIndicator();
-      }
-    }
-
-    // Number keys: select user presets (use e.code to work with shift held)
-    // 1–9 → user presets 0–8, 0 → user preset 9
-    // Shift+1–9 → user presets 10–18, Shift+0 → user preset 19
-    {
-      const _digitCodes = ['Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','Digit7','Digit8','Digit9','Digit0'];
-      const _digitIdx = _digitCodes.indexOf(e.code);
-      if (_digitIdx !== -1 && !e.repeat && !e.metaKey && !e.ctrlKey) {
-        e.preventDefault();
-        const presetIdx = (_digitIdx === 9 ? 9 : _digitIdx) + (e.shiftKey ? 10 : 0);
-        if (presetIdx < PRESETS.length) selectPreset(presetIdx);
-      }
-    }
-
-    // p: toggle performance monitor | Shift+P: toggle high-perf render mode
-    if (e.key === 'p' && !e.shiftKey) {
-      e.preventDefault();
-      S.perfMonitorVisible = !S.perfMonitorVisible;
-      const el = document.getElementById('perfMonitor');
-      if (el) el.style.display = S.perfMonitorVisible ? 'block' : 'none';
-    }
-    if (e.key === 'P' && e.shiftKey) {
-      e.preventDefault();
-      S.perfMode = !S.perfMode;
-      S._syncPerfModeUI?.();
-      console.log(`[perf] high-performance render mode ${S.perfMode ? 'ON' : 'OFF'}`);
-    }
+    // (p / ⇧P — the perf monitor and high-perf render — and ⇧F, the projector,
+    // lost their keys 2026-09-09: all three are set on their settings pages.)
 
     // N: toggle snap/nearest mode
     if (e.key === 'n' || e.key === 'N') {
@@ -620,24 +713,15 @@ export function setupEvents() {
       flashRadiusTooltip();
     }
 
+    // Shift+Cmd/Ctrl+Z: redo — checked first; shifted the key reads 'Z'
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z') && !e.repeat) {
+      e.preventDefault();
+      redoLastStroke();
+    }
     // Cmd/Ctrl+Z: undo last stroke
-    if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.repeat) {
+    else if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.repeat) {
       e.preventDefault();
       undoLastStroke();
-    }
-
-    // A: cycle trace mode (trace → trace+loop → trace+cloud → trace)
-    if (e.key === 'a' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
-      e.preventDefault();
-      // If toggled trace is active, force-stop before mode change
-      if (S._traceToggled) _stopToggleTrace();
-      const _modes = ['trace', 'trace+loop', 'trace+cloud'];
-      const _idx = _modes.indexOf(S.traceMode);
-      S.traceMode = _modes[(_idx + 1) % _modes.length];
-      // Flash the button
-      const _btn = document.getElementById('commitLockBtn');
-      if (_btn) { _btn.classList.add('flashing'); setTimeout(() => _btn.classList.remove('flashing'), 180); }
-      S._syncCommitUI?.();
     }
 
     // S: toggle scan (cursor spotlight on/off)
@@ -652,37 +736,32 @@ export function setupEvents() {
       S._setMuted?.(!S.isMuted);
     }
 
-    // X: toggle radial morph
-    if (e.key === 'x' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
-      e.preventDefault();
-      // Route through dispatchAction so keyboard, MIDI and /morph/radial OSC
-      // all share one code path (and the mapping UI flash).
-      if (S._dispatchAction) S._dispatchAction('radial_morph', 127);
-      else { S.radialMorphOn = !S.radialMorphOn; S._syncMorphBtnUI?.(); }
-    }
-
     // H: toggle handsfree recording
     if ((e.key === 'h' || e.key === 'H') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
       toggleHandsfree();
     }
 
-    // F (hold): erase brush — momentary erase at cursor (radius + recency)
-    if (e.key === 'f' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
-      e.preventDefault();
-      startEraseStroke();
-    }
+    // F was the ERASER's key here until 2026-09-03, when it moved to tiles.js
+    // as a palette hold; it is UNBOUND now (Ek, 2026-09-07: "F should be
+    // unbounded as a key for erase. We have the palette tiles now"). An
+    // eraser is played from its position like every other tool, which applies
+    // its preset — a bare startEraseStroke() here never could.
 
-    // - (minus): sweep
-    if (e.key === '-' && !e.metaKey && !e.ctrlKey && !e.repeat) {
-      e.preventDefault();
-      S._sessionSweep?.();
-    }
-
-    // Backtick: tare cursor sensor
+    // `-` used to sweep here; tiles.js takes `-` for unpin in the capture
+    // phase and stops it, so that handler was dead (#327). Sweep is the pill.
+    // Backtick: zero the cursor
     if (e.key === '`' && !e.metaKey && !e.ctrlKey && !e.repeat) {
       e.preventDefault();
       S._tareCursor?.();
+    }
+
+    // Tilde (⇧`): the tool rail, shown or hidden — the tools pill's key. The
+    // shifted key rather than the bare one because ` is tare, and tare is
+    // hit mid-performance. Tab is the drawer (tiles.js).
+    if (e.key === '~' && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      e.preventDefault();
+      toggleRail();
     }
 
     // Delete/Backspace: erase all (triple-press within 800ms)
@@ -701,25 +780,19 @@ export function setupEvents() {
       }
     }
 
-    // Shift+F: toggle projector mode
-    if (e.key === 'F' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
-      e.preventDefault();
-      if (S._dispatchAction) S._dispatchAction('projector', 127);
-      else toggleProjectorMode();
-    }
+
   });
 
   document.addEventListener('keyup', e => {
     // Alt key-up is intentionally ignored — lock is a toggle, not momentary
     if (e.code === 'AltLeft' || e.code === 'AltRight') return;
 
-    // Custom key binding keyup — release the hold action that this key activated.
-    // Uses _activeHoldKeyMap (populated on keydown) so we release the exact action
-    // even if modifiers changed between keydown and keyup.
-    if (S._activeHoldKeyMap?.has(e.code)) {
-      const actionId = S._activeHoldKeyMap.get(e.code);
-      S._activeHoldKeyMap.delete(e.code);
-      S._dispatchAction?.(actionId, 0);
+    // A learned key's up edge: the recogniser's release (a tap fires here, a
+    // momentary lets go, a long that never came is cancelled).
+    if (_downKeySrc.has(e.code)) {
+      const src = _downKeySrc.get(e.code);
+      _downKeySrc.delete(e.code);
+      S._dispatchGesture?.(src, false);
       return;
     }
     // For custom-bound trigger actions, swallow keyup (don't fall through to hardcoded handlers)
@@ -729,174 +802,9 @@ export function setupEvents() {
       }
     }
 
-    // F release: end erase stroke
-    if (e.key === 'f' && !e.metaKey && !e.ctrlKey) {
-      stopEraseStroke();
-    }
+    // Spacebar release: the main button's up edge (nothing in toggle mode).
+    if (e.code === 'Space') { e.preventDefault(); S._gestureRelease?.(); }
 
-    // D release: finalize commit (tap = drop, hold = draw)
-    if (e.key === 'd' && !e.metaKey && !e.ctrlKey) {
-      e.preventDefault();
-      const holdMs = performance.now() - (S._commitStartMs || 0);
-      const DROP_THRESHOLD_MS = 200;
-
-      if (S.commitMode === 'loop') {
-        // If D-loop was blocked (trace+loop active), nothing to finalize
-        if (!S._cLoopActive) return;
-        // Loop commit
-        if (holdMs < DROP_THRESHOLD_MS) {
-          // Quick tap → drop loop: discard the aborted recording, then drop
-          // existing stroke under cursor into a loop slot.
-          const abortedStrokeId = S.currentStrokeId;
-          S.isPainting      = false;
-          S.currentStrokeId = -1;
-          if (S.isRecording) stopLiveRecording();
-          // Remove any particles deposited during the tiny hold
-          if (abortedStrokeId > 0) {
-            S.particles = S.particles.filter(p => p.strokeId !== abortedStrokeId);
-            S._particleVersion++;
-            const hIdx = S.strokeHistory.findIndex(h => h.strokeId === abortedStrokeId);
-            if (hIdx !== -1) {
-              const entry = S.strokeHistory.splice(hIdx, 1)[0];
-              if (entry.type === 'live' && entry.liveBufferIndex >= 0) {
-                const idx = entry.liveBufferIndex;
-                if (idx < S.liveRecBuffers.length) {
-                  S.liveRecBuffers.splice(idx, 1);
-                  S.particles.forEach(p => { if (p.liveBufferIdx > idx) p.liveBufferIdx--; });
-                }
-              }
-            }
-          }
-          // Drop the stroke under cursor into a loop slot
-          dropSeqFromCursor();
-        } else {
-          // Long hold → draw loop: finalize recording first so the loop
-          // gets the sealed buffer (exact sample count, not over-allocated).
-          S.isPainting = false;
-          const savedStrokeId = S.currentStrokeId;
-          S.currentStrokeId = -1;
-          if (S.isRecording) stopLiveRecording();
-          if (savedStrokeId > 0) {
-            try { createSeqFromStroke(savedStrokeId); } catch (_) {}
-          }
-          S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-        }
-        // D-loop done — restore trace indicator
-        S._cLoopActive = false;
-        const traceInd = document.getElementById('paintIndicatorBtn');
-        if (traceInd) { traceInd.style.opacity = ''; traceInd.style.pointerEvents = ''; }
-        // If trace (spacebar/mouse) is still held, resume recording
-        if (S._traceActive && !S._traceToggled) {
-          if (S.traceMode === 'trace+loop') {
-            if (!S.scanMuted) setScanMuted(true);
-            _syncCommitBtnLock(true);
-          }
-          startLiveRecording();
-          recordStrokeStart('live', S.currentLiveBufferIdx);
-          S.isPainting      = true;
-          S.paintFrameCount = 0;
-          if (S.traceMode === 'trace+cloud') startSeedPlant();
-        }
-      } else {
-        // Cloud commit: finalize (tap = parked, hold = moving)
-        finalizeSeedPlant();
-        // If trace+cloud had a shelved seed, restore it so it keeps recording
-        if (S._shelvedSeed) {
-          S._seedRecordingFrames = S._shelvedSeed.frames;
-          S._seedRecordingStart  = S._shelvedSeed.start;
-          S._seedRecordingSlot   = S._shelvedSeed.slot;
-          S._shelvedSeed = null;
-        }
-      }
-      S._commitStartMs = 0;
-      _updateLiveRecUI();
-    }
-
-    // Spacebar release: stop recording, end live paint stroke
-    if (e.code === 'Space') {
-      e.preventDefault();
-
-      // If trace is toggled on, release is a no-op — trace stays on
-      if (S._traceToggled) return;
-
-      // Tap (<200ms) = toggle trace on (don't stop recording)
-      const tapDuration = performance.now() - _traceDownAt;
-      if (_traceDownAt > 0 && tapDuration < TRACE_TAP_MS && !S._cLoopActive) {
-        // Only allow toggle in plain trace mode (not trace+loop or trace+cloud)
-        if (S.traceMode === 'trace') {
-          S._traceToggled = true;
-          // If handsfree is armed, hand off to the gate for segmentation:
-          // stop this initial recording (too short to keep) and let the gate manage
-          if (S.hfArmed) {
-            S.isPainting      = false;
-            S.currentStrokeId = -1;
-            if (S.isRecording) stopLiveRecording();
-            // Don't increment color — the gate will manage colors per segment
-          } else {
-            // No handsfree: just keep recording continuously (toggle trace without gate)
-            // Recording stays active, will be stopped by next tap
-          }
-          _updateLiveRecUI();
-          S._syncHandsfreeUI?.();
-          return;
-        }
-        // In locked modes (trace+loop, trace+cloud), fall through to normal momentary stop
-      }
-
-      S._traceActive = false;
-      _syncCommitBtnLock(false);
-      // If D-loop owns recording, just mark trace as released — don't touch audio
-      if (!S._cLoopActive) {
-        S.isPainting      = false;
-        // Finalize recording BEFORE creating the loop so createSeqFromStroke
-        // sees the sealed buffer (exact sample count) instead of the over-
-        // allocated live buffer whose duration extends into silence.
-        const savedStrokeId = S.currentStrokeId;
-        S.currentStrokeId = -1;
-        if (S.isRecording) stopLiveRecording();
-
-        // Auto-commit based on trace mode
-        if (S.traceMode === 'trace+loop' && savedStrokeId > 0) {
-          try { createSeqFromStroke(savedStrokeId); } catch (_) {}
-        }
-        if (S.traceMode === 'trace+cloud') {
-          if (S._shelvedSeed) {
-            // D is still held — finalize the shelved trace seed, leave D's active recording alone
-            const sh = S._shelvedSeed;
-            S._shelvedSeed = null;
-            const slot = sh.slot;
-            const seed = S.commitSlots[slot];
-            if (seed && sh.frames && sh.frames.length >= 2) {
-              seed.frames   = sh.frames;
-              seed.duration = sh.frames[sh.frames.length - 1].t;
-              seed.lon      = sh.frames[0].lon;
-              seed.lat      = sh.frames[0].lat;
-            }
-            (S.updateSeedBanksUI || S._syncCommitUI)?.();
-          } else {
-            finalizeSeedPlant();
-          }
-        }
-        // Scan stays muted after trace+loop — performer controls scan manually
-        S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-        _updateLiveRecUI();
-      }
-    }
-
-    // QWERTYUIOP key release: end sample paint stroke
-    const _sampleKeysUp = 'qwertyuiop';
-    const _sampleIdxUp = _sampleKeysUp.indexOf(e.key.toLowerCase());
-    if (_sampleIdxUp !== -1 && S.activeSampleIndex === _sampleIdxUp) {
-      if (S.traceMode === 'trace+loop' && S.currentStrokeId > 0) {
-        try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
-      }
-      if (S.traceMode === 'trace+cloud') finalizeSeedPlant();
-      S.isPainting      = false;
-      S.currentStrokeId = -1;
-      S.activeSampleIndex = -1;
-      updateSampleListActiveState();
-      updateSamplePaintIndicator();
-    }
   });
 
   // Coalesce resize handling to one run per frame — macOS fires resize
@@ -912,11 +820,15 @@ export function setupEvents() {
     requestAnimationFrame(() => {
       _resizeQueued = false;
       resizeCanvas();
-      drawPresetWaveform();
+      S._drawEngineScope?.();
     });
   });
 
-  // Scroll: custom scroll bindings only (radius is [ ] keys only)
+  // Scroll (2026-08-28, Ek): a custom scroll binding wins; otherwise plain
+  // scroll is the RADIUS (dispatched through the ACTIONS table so every
+  // mirror follows — never a bare S.searchRadiusDeg write) and ⇧-scroll is
+  // the ZOOM, multiplicative so a notch feels equal at every scale, out to
+  // the 360° flat map.
   S.canvas.addEventListener('wheel', e => {
     if (S._keyMappings && S._dispatchAction) {
       const dir = e.deltaY > 0 ? 'scroll_down' : 'scroll_up';
@@ -928,104 +840,30 @@ export function setupEvents() {
         }
       }
     }
+    e.preventDefault();
+    if (e.shiftKey) {
+      // macOS hands ⇧-scroll to deltaX on some devices.
+      const d = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+      const v = Math.max(10, Math.min(360, (S.fovDeg ?? 80) * Math.exp(d * 0.0015)));
+      S.fovDeg = v;
+      S._syncZoomUI?.(v);
+      return;
+    }
+    // Continuous, multiplicative — a trackpad should glide, not step
+    // through the 2° ladder the inc/dec actions use (those stay for keys
+    // and pedals). Scroll up grows the radius.
+    S._setSearchRadius?.((S.searchRadiusDeg ?? 10) * Math.exp(e.deltaY * -0.002));
   }, { passive: false });
 
-  // Left click: live rec + paint (trace)
-  // Tap (<200ms) = toggle on/off. Hold (≥200ms) = momentary.
-  S.canvas.addEventListener('mousedown', async e => {
-    if (S.altLocked) return;
-    if (e.button !== 0) return;
-    e.preventDefault();
-
-    // If trace is already toggled on, this click toggles it OFF
-    if (S._traceToggled) {
-      _stopToggleTrace();
-      return;
-    }
-
-    S._traceActive = true;
-    _traceDownAt = performance.now();
-    // If D-loop owns recording, just mark trace as held — don't touch audio
-    if (S._cLoopActive) return;
-    ensureAudioContext();
-    const hasInput = S.micPermissionGranted ||
-                     (window.electronBridge?.isElectron && window._rtAudioInputListening);
-    if (!hasInput) {
-      await requestMicAccess();
-      return;
-    }
-    // Mute scan + lock commits immediately for trace+loop — don't gate on
-    // S.isRecording which may be false if worklet is still loading (first press)
-    if (S.traceMode === 'trace+loop') {
-      if (!S.scanMuted) setScanMuted(true);
-      _syncCommitBtnLock(true);
-    }
-    startLiveRecording();
-    recordStrokeStart('live', S.currentLiveBufferIdx);
-    S.isPainting      = true;
-    S.paintFrameCount = 0;
-    if (S.traceMode === 'trace+cloud') startSeedPlant();
-    _updateLiveRecUI();
-  });
-  S.canvas.addEventListener('mouseup', e => {
-    if (S.altLocked) return;
-    if (e.button !== 0) return;
-
-    // If trace is toggled on, release is a no-op — trace stays on
-    if (S._traceToggled) return;
-
-    // Tap (<200ms) = toggle trace on
-    const tapDuration = performance.now() - _traceDownAt;
-    if (_traceDownAt > 0 && tapDuration < TRACE_TAP_MS && !S._cLoopActive) {
-      if (S.traceMode === 'trace') {
-        S._traceToggled = true;
-        if (S.hfArmed) {
-          // Hand off to gate: stop initial recording, gate manages from here
-          S.isPainting      = false;
-          S.currentStrokeId = -1;
-          if (S.isRecording) stopLiveRecording();
-        }
-        _updateLiveRecUI();
-        S._syncHandsfreeUI?.();
-        return;
-      }
-    }
-
-    S._traceActive = false;
-    _syncCommitBtnLock(false);
-    // If D-loop owns recording, just mark trace as released — don't touch audio
-    if (S._cLoopActive) return;
-    S.isPainting = false;
-    // Finalize recording BEFORE creating the loop (same fix as spacebar path)
-    const savedStrokeId = S.currentStrokeId;
-    S.currentStrokeId = -1;
-    if (S.isRecording) stopLiveRecording();
-
-    if (S.traceMode === 'trace+loop' && savedStrokeId > 0) {
-      try { createSeqFromStroke(savedStrokeId); } catch (_) {}
-    }
-    if (S.traceMode === 'trace+cloud') {
-      if (S._shelvedSeed) {
-        // D is still held — finalize the shelved trace seed, leave D's active recording alone
-        const sh = S._shelvedSeed;
-        S._shelvedSeed = null;
-        const slot = sh.slot;
-        const seed = S.commitSlots[slot];
-        if (seed && sh.frames && sh.frames.length >= 2) {
-          seed.frames   = sh.frames;
-          seed.duration = sh.frames[sh.frames.length - 1].t;
-          seed.lon      = sh.frames[0].lon;
-          seed.lat      = sh.frames[0].lat;
-        }
-        (S.updateSeedBanksUI || S._syncCommitUI)?.();
-      } else {
-        finalizeSeedPlant();
-      }
-    }
-    // Scan stays muted after trace+loop — performer controls scan manually
-    S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-    _updateLiveRecUI();
-  });
+  // A CLICK ON THE SPHERE PLAYS NOTHING (2026-09-11). It was the main button,
+  // the same as space, and it pressed the tool in the hand — there is no hand
+  // to press with. The mouse aims the cursor and that is all it does; what
+  // plays is a palette position, from a key, a pad or a pedal.
+  //
+  // A momentary gesture whose key-up the window never sees (focus left
+  // mid-hold) ends here, the way erase's does; a toggle-started one is not
+  // touched — it ends on its next press, which is what the player expects.
+  window.addEventListener('blur', () => S._gestureRelease?.());
 
   // Right click: undo (works even when alt-locked)
   S.canvas.addEventListener('contextmenu', e => {
@@ -1066,306 +904,18 @@ export function setupEvents() {
     window.electronBridge.onFullscreenChanged((isFs) => applyFullscreenState(isFs));
   }
 
-  // ── Projector mode ────────────────────────────────────────────────────
-  // The 4-column layout (canvas mini-tile + device columns) is the DEFAULT
-  // view — it is applied once at the end of setupEvents and never torn down.
-  // Shift+F / the projector button only opens/closes the mirrored popup that
-  // drives an external display (drag to projector, double-click to fullscreen).
+  // ── Projector MIRROR ──────────────────────────────────────────────────
+  // ⇧F / the projector button open a popup window that mirrors the sphere onto
+  // an external display. That is all "projector" means here now.
   //
-  // Column partition: each .device tile lives in one of four flex columns
-  // ([ leftCol ][ centerWrap( canvas, [ cLeftCol, cRightCol ] ) ][ rightCol ]).
-  // Initial column membership comes from DEFAULT_PROJECTOR_LAYOUT (or the
-  // saved layout in localStorage); the up/down arrows on each tile header
-  // reorder across columns and persist via _saveProjectorLayoutFromDom.
-
-  // Move the real canvas into / out of a mini wrapper inside the panel flow
-  let _miniWrapper = null;
-  let _origCanvasParent = null;
-  let _origCanvasNext = null;
-
-  // Default projector-mode column layout — applied on first entry when there
-  // is no saved layout in localStorage. Keys match the `device--KEY` class
-  // suffix in index.html. Unlisted tiles fall into the right column so they
-  // remain reachable.
-  // 5-column projector layout. Outer ratio is 1 : 3 : 1 — the center takes
-  // 3 sub-columns (cleft, cmid, cright) under the canvas, so the whole
-  // panel rail reads as five equal-width slices. Tuned 2026-04-23 to
-  // avoid over-wide panels at laptop-and-up viewport widths where the
-  // old 4-column (1:2:1) layout left each panel ~25% of the viewport.
-  // v2 layout model (2026-07-06, drag-rearrange work): five POSITIONAL
-  // columns (slots 0–4) plus a canvas position. The canvas block spans two
-  // adjacent slots (canvasPos, canvasPos+1); those two columns nest under it,
-  // the other three stand at root level. Moving the canvas re-nests columns —
-  // tiles never move with it ("canvas alone" semantics, chosen by Ek).
-  // Old named-key format (left/cleft/cmid/cright/right) migrates one-shot.
-  const DEFAULT_PROJECTOR_LAYOUT = {
-    canvasPos: 0,
-    cols: [
-      ['audio', 'session'],                // slot 0 — under canvas
-      ['play', 'erase'],                   // slot 1 — under canvas
-      ['envelope', 'preset', 'search'],    // slot 2
-      ['grain'],                           // slot 3
-      ['commit'],                          // slot 4
-    ],
-  };
-
-  function _loadProjectorLayout() {
-    // v2 format
-    try {
-      const saved = JSON.parse(localStorage.getItem('mubone_projector_layout_v2'));
-      if (saved && Array.isArray(saved.cols) && saved.cols.length === 5) {
-        saved.canvasPos = Math.max(0, Math.min(3, saved.canvasPos ?? 1));
-        return saved;
-      }
-    } catch (_) {}
-    // One-shot migration from the old named-key format (canvas was fixed at
-    // slots 1–2): read old → write v2 → delete old.
-    try {
-      const old = JSON.parse(localStorage.getItem('mubone_projector_layout'));
-      if (old && typeof old === 'object' && 'cmid' in old) {
-        const v2 = {
-          canvasPos: 1,
-          cols: [old.left || [], old.cleft || [], old.cmid || [],
-                 old.cright || [], old.right || []],
-        };
-        localStorage.setItem('mubone_projector_layout_v2', JSON.stringify(v2));
-        localStorage.removeItem('mubone_projector_layout');
-        return v2;
-      }
-      localStorage.removeItem('mubone_projector_layout');
-    } catch (_) {}
-    return null;
-  }
-  function _saveProjectorLayoutFromDom() {
-    const panel = document.querySelector('.right-panel');
-    if (!panel) return;
-    const cols = [[], [], [], [], []];
-    panel.querySelectorAll('.projector-col').forEach(col => {
-      const i = parseInt(col.dataset.col, 10);
-      if (i < 0 || i > 4 || Number.isNaN(i)) return;
-      cols[i] = [...col.children]
-        .map(d => d.className.match?.(/device--(\S+)/)?.[1])
-        .filter(Boolean);
-    });
-    try {
-      localStorage.setItem('mubone_projector_layout_v2',
-        JSON.stringify({ canvasPos: _canvasPos, cols }));
-    } catch (_) {}
-  }
-
-  // Move device tiles into five positional flex-column wrappers (slots 0–4)
-  // so each column packs its tiles independently (true masonry). The canvas
-  // block (projector-center) spans two adjacent slots — canvasPos and
-  // canvasPos+1 — and those two columns nest inside it, below the canvas:
-  //
-  //    canvasPos = 1 (default):
-  //    [ col0 ][        centerWrap         ][ col3 ][ col4 ]
-  //    [      ][   projector-mini-canvas   ][      ][      ]
-  //    [      ][   col1   ][    col2       ][      ][      ]
-  //
-  // Moving the canvas (S._moveCanvasTo) re-nests which two columns sit under
-  // it; column CONTENTS never move with the canvas. Columns keep stable
-  // identity via data-col regardless of nesting.
-  //
-  // querySelectorAll('.device') walks depth-first in document order, so
-  // _savePanelOrder in main.js continues to see tiles in the correct order.
-  let _canvasPos = 1;   // canvas spans slots (_canvasPos, _canvasPos + 1)
-
-  function _projectorCols(panel) {
-    const cols = [];
-    for (let i = 0; i < 5; i++) {
-      let col = panel.querySelector(`.projector-col[data-col="${i}"]`);
-      if (!col) {
-        col = document.createElement('div');
-        col.className = 'projector-col';
-        col.dataset.col = String(i);
-      }
-      cols.push(col);
-    }
-    return cols;
-  }
-
-  // Arrange the outer row + centerWrap nesting for the current _canvasPos.
-  // Idempotent — safe to call after any reorder or canvas move.
-  function _arrangeProjectorColumns(panel) {
-    const ensureDiv = (sel, cls) =>
-      panel.querySelector(sel) || Object.assign(document.createElement('div'), { className: cls });
-    const centerWrap = ensureDiv('.projector-center',      'projector-center');
-    const centerRow  = ensureDiv('.projector-center-cols', 'projector-center-cols');
-    const cols = _projectorCols(panel);
-
-    const mini = panel.querySelector('.projector-mini-canvas');
-    if (mini && mini.parentNode !== centerWrap) {
-      centerWrap.insertBefore(mini, centerWrap.firstChild);
-    }
-    if (centerRow.parentNode !== centerWrap) centerWrap.appendChild(centerRow);
-
-    // Nest the two spanned columns inside centerRow, in slot order; all
-    // others go to the panel root, with centerWrap taking the spanned pair's
-    // place in the outer row.
-    for (let i = 0; i < 5; i++) {
-      if (i === _canvasPos) {
-        panel.appendChild(centerWrap);
-        centerRow.appendChild(cols[i]);
-        centerRow.appendChild(cols[i + 1]);
-        i++;  // skip the second spanned slot — already nested
-      } else {
-        panel.appendChild(cols[i]);
-      }
-    }
-    return cols;
-  }
-
-  function _repartitionProjectorPanels() {
-    const panel = document.querySelector('.right-panel');
-    if (!panel) return;
-
-    // Collect tiles in document order across all existing wrappers.
-    const tiles = [...panel.querySelectorAll('.device')]
-      .filter(d => !d.classList.contains('projector-mini-canvas'));
-
-    // Column membership is assigned ONCE (on initial entry, when tiles are
-    // still flat in .right-panel). After that, drag-and-drop reorders tiles
-    // freely across columns — we do not re-distribute. The saved layout
-    // (or the default if none exists) decides the initial columns AND the
-    // initial canvas position.
-    const needsInitial = tiles.some(d => !d.closest('.projector-col'));
-    const layout = needsInitial ? (_loadProjectorLayout() || DEFAULT_PROJECTOR_LAYOUT) : null;
-    if (layout) _canvasPos = Math.max(0, Math.min(3, layout.canvasPos ?? 1));
-
-    const cols = _arrangeProjectorColumns(panel);
-
-    if (needsInitial) {
-      const deviceByKey = new Map();
-      tiles.forEach(d => {
-        const k = d.className.match(/device--(\S+)/)?.[1];
-        if (k) deviceByKey.set(k, d);
-      });
-      const placed = new Set();
-      for (let i = 0; i < 5; i++) {
-        for (const k of (layout.cols[i] || [])) {
-          const d = deviceByKey.get(k);
-          if (d) { cols[i].appendChild(d); placed.add(d); }
-        }
-      }
-      // Any unlisted tiles spill into the last column so they stay visible.
-      tiles.forEach(d => { if (!placed.has(d)) cols[4].appendChild(d); });
-    }
-
-    // Persist the current layout so it survives reloads.
-    _saveProjectorLayoutFromDom();
-  }
-
-  // Move the canvas block to span slots (pos, pos+1). Tiles stay in their
-  // columns — only the nesting changes. Exposed for panel-drag.js.
-  function _moveCanvasTo(pos) {
-    pos = Math.max(0, Math.min(3, pos | 0));
-    if (pos === _canvasPos) return;
-    const panel = document.querySelector('.right-panel');
-    if (!panel) return;
-    _canvasPos = pos;
-    _arrangeProjectorColumns(panel);
-    _saveProjectorLayoutFromDom();
-    requestAnimationFrame(() => resizeCanvas());
-  }
-
-  function _clearProjectorPartition() {
-    const panel = document.querySelector('.right-panel');
-    if (!panel) return;
-    // Flatten: move every device (including mini) back out as a direct child
-    // of panel in document order, then drop all (now empty) scaffolding
-    // wrappers. Mini is subsequently removed by setProjectorLayout itself.
-    [...panel.querySelectorAll('.device')].forEach(t => panel.appendChild(t));
-    panel.querySelectorAll(
-      '.projector-col, .projector-center-cols, .projector-center'
-    ).forEach(el => el.remove());
-  }
-
-  function setProjectorLayout(on) {
-    const panel = document.querySelector('.right-panel');
-    const canvasWrapper = document.querySelector('.canvas-wrapper');
-    const canvas = S.canvas;
-    if (!panel || !canvasWrapper || !canvas) return;
-
-    // Idempotent: no-op if already in the requested state. Protects against
-    // double-entry from the boot path + any legacy callers.
-    if (on && _miniWrapper) return;
-    if (!on && !_miniWrapper) return;
-
-    if (on) {
-      // Remember original position so we can restore later
-      _origCanvasParent = canvas.parentElement;
-      _origCanvasNext = canvas.nextSibling;
-
-      // Create mini wrapper and move the real canvas into it.
-      // No device-label here — the sphere render fills the tile edge-to-edge.
-      // A slim hover-reveal grab handle (top center) lets the performer drag
-      // the whole canvas block left/right between column slots (panel-drag.js
-      // → S._moveCanvasTo); it must NOT cover much canvas since the canvas
-      // itself is the paint surface.
-      _miniWrapper = document.createElement('div');
-      _miniWrapper.className = 'projector-mini-canvas device';
-      const miniBody = document.createElement('div');
-      miniBody.className = 'projector-mini-body';
-      miniBody.appendChild(canvas);
-      // Everything that overlays the canvas has to travel WITH the canvas, or
-      // it stays marooned in the now-collapsed (height:0, overflow:hidden)
-      // .canvas-wrapper — present in the DOM, computed styles all "visible",
-      // zero pixels on screen. That was #141 for the perf monitor (p appeared
-      // to do nothing) and it recurred for the surface overlays, which main.js
-      // can create at boot BEFORE this rAF runs.
-      //
-      // Listed by id rather than "move every child": .canvas-wrapper also
-      // holds the HUD, the drop overlay and the first-run hint, which are
-      // positioned against the wrapper and must not follow the canvas.
-      for (const id of ['perfMonitor', 'surfaceLockOverlay', 'surfaceEntryHint']) {
-        const el = document.getElementById(id);
-        if (el) miniBody.appendChild(el);
-      }
-      _miniWrapper.appendChild(miniBody);
-      const miniHandle = document.createElement('div');
-      miniHandle.className = 'canvas-drag-handle';
-      miniHandle.title = 'drag to move the viz between columns';
-      _miniWrapper.appendChild(miniHandle);
-
-      // Insert at the top of the panel flow
-      panel.insertBefore(_miniWrapper, panel.firstChild);
-
-      document.body.classList.add('projector-mode');
-
-      // Assign left/right columns to device tiles, and expose the partition
-      // fn so the reorder handlers in main.js can re-run it after each move.
-      _repartitionProjectorPanels();
-      S._repartitionProjector = _repartitionProjectorPanels;
-      S._moveCanvasTo = _moveCanvasTo;
-      S._saveProjectorLayout = _saveProjectorLayoutFromDom;
-    } else {
-      document.body.classList.remove('projector-mode');
-
-      // Move canvas back to its original wrapper
-      if (_origCanvasParent) {
-        if (_origCanvasNext) _origCanvasParent.insertBefore(canvas, _origCanvasNext);
-        else _origCanvasParent.appendChild(canvas);
-        // Perf monitor rides with the canvas (see enable branch)
-        const _pmBack = document.getElementById('perfMonitor');
-        if (_pmBack) _origCanvasParent.appendChild(_pmBack);
-      }
-      if (_miniWrapper) { _miniWrapper.remove(); _miniWrapper = null; }
-      _origCanvasParent = null;
-      _origCanvasNext = null;
-
-      // Drop partition classes so normal-mode .right-panel flow resumes
-      _clearProjectorPartition();
-      S._repartitionProjector = null;
-      S._moveCanvasTo = null;
-      S._saveProjectorLayout = null;
-    }
-
-    requestAnimationFrame(() => resizeCanvas());
-  }
-  // Expose so the boot path (end of setupEvents) can flip layout on once
-  // the DOM is fully wired.
-  S._setProjectorLayout = setProjectorLayout;
+  // The rig view's projector LAYOUT — the partition that moved #sphereCanvas
+  // into a mini tile inside .right-panel and dealt the .device tiles into five
+  // draggable columns — was sunset on 2026-08-29 (#291) together with the rig
+  // view itself. It lives at sandbox/sunset-2026-08-29/projector-partition.js
+  // with its revival notes. The canvas is full-bleed in .canvas-wrapper and
+  // never moves, so the overlays positioned against it (#perfMonitor,
+  // #surfaceLockOverlay, #surfaceEntryHint) never move either — which is the
+  // whole class of bug that block existed to keep re-solving.
 
   function toggleProjectorMode() {
     const btn = document.getElementById('projectorModeBtn');
@@ -1518,10 +1068,7 @@ export function setupEvents() {
     });
   }
   S._toggleProjectorMode = toggleProjectorMode;
-  document.getElementById('projectorModeBtn')?.addEventListener('click', () => {
-    if (S._dispatchAction) S._dispatchAction('projector', 127);
-    else toggleProjectorMode();
-  });
+  document.getElementById('projectorModeBtn')?.addEventListener('click', () => toggleProjectorMode());
 
   // (Divider removed — projector mode uses mini canvas tile in panel flow)
 
@@ -1542,7 +1089,7 @@ export function setupEvents() {
     // _muteGain is not in that chain, so ramp each bus gain instead.
     // On unmute, restore to the current output gain level (not just 1).
     if (S.speakerBuses) {
-      const busTarget = muted ? 0 : (S.outputGainValue ?? 1);
+      const busTarget = muted ? 0 : (S.outputGainValue ?? MASTER_DEFAULT_GAIN);
       S.speakerBuses.forEach(({ bus }) => bus.gain.setTargetAtTime(busTarget, t, 0.01));
     }
     if (muteBtn) {
@@ -1563,61 +1110,13 @@ export function setupEvents() {
   S._finalizeSeedPlant = finalizeSeedPlant;
   S._uprootSeed       = uprootNearestSeed;
   S._undo         = undoLastStroke;
-  // Expose toggle-trace cleanup so other modules (ui-meters commitLockBtn) can call it
-  S._stopToggleTrace  = _stopToggleTrace;
 
   // Expose slot-full check for inline indicator scripts (non-module context)
   window._loopSlotsFull = () =>
     S.seqOverflow === 'off' &&
     Array.from({ length: S.seqSlotCount }, (_, i) => S.seqSlots[i]).every(Boolean);
 
-  // Expose for osc.js — /trace 1 starts trace, /trace 0 stops it.
-  // OSC 1/0 is always toggle-style (sender controls timing).
-  // When handsfree is armed in plain trace mode, the gate segments buffers.
-  S._setRecording = async (shouldRecord) => {
-    ensureAudioContext();
-    if (shouldRecord) {
-      // If already toggled on, ignore duplicate 1
-      if (S._traceToggled) return;
-      S._traceActive = true;
 
-      // In plain trace + handsfree armed: toggle on, let gate manage recording
-      if (S.traceMode === 'trace' && S.hfArmed) {
-        S._traceToggled = true;
-        S._syncHandsfreeUI?.();
-        _updateLiveRecUI();
-        return;
-      }
-      // Plain toggle trace (no handsfree): start one continuous recording
-      if (S.traceMode === 'trace') {
-        S._traceToggled = true;
-      }
-      const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
-      if (gotMic) startLiveRecording();
-      recordStrokeStart('live', S.currentLiveBufferIdx);
-      S.isPainting      = true;
-      S.paintFrameCount = 0;
-    } else {
-      // /trace 0 → stop
-      if (S._traceToggled) {
-        _stopToggleTrace();
-        return;
-      }
-      S.isPainting      = false;
-      S.currentStrokeId = -1;
-      if (S.isRecording) stopLiveRecording();
-      S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-      S._traceActive = false;
-    }
-    _updateLiveRecUI();
-  };
-
-  // ── Projector layout = default view ─────────────────────────────────────
-  // The projector column layout (mini canvas + 4 device columns) is the
-  // primary layout for the app. Apply it once at the end of init so every
-  // cold-load lands in this view without the user pressing Shift+F. The
-  // Shift+F / projector button now only toggles the mirrored popup.
-  requestAnimationFrame(() => setProjectorLayout(true));
 
 }
 
@@ -1647,7 +1146,7 @@ export function setupDragDrop() {
     );
     (async () => {
       for (const file of files) {
-        if (S.samples.length >= 9) break;
+        if (S.samples.length >= MAX_SAMPLES) break;
         await loadAudioFile(file);
       }
     })();

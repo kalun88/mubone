@@ -2,7 +2,42 @@
 
 > **Status: CURRENT** — second audit of `js/ui-export.js`, following the storage-registry refactor (#157). **E1–E5 fixed** (`EXPORT_VERSION` 3 → 5); E6–E8 open. Supersedes the *format* description in `EXPORT-IMPORT-AUDIT-2026-07.md`, which stays as the record of the A/B/C/D findings.
 >
+> **`EXPORT_VERSION` 11 → 12 on 2026-09-04 (#330)** — the overdub brush. A loop slot carries
+> `overdubs: [{ strokeId, phase0, wav }]` — the TAKES and where in the master's cycle each began,
+> never the layers: a layer is rebuilt on import from its take against the slot's own cycle
+> (`buildOverdubLayer`), so a file cannot carry a layer that disagrees with its master. Additive;
+> a v11 file imports with no overdubs. `docs/archive/OVERDUB-PLAN.md`.
+
+> **`EXPORT_VERSION` 10 → 11 on 2026-09-03 (#325)** — the patch bank is gone. A session's `patch`
+> is now a SNAPSHOT of the live parameter set at export (`param-registry.js` `snapshotCurrentState`,
+> the same sparse vocabulary a bank slot used), and `patchIndex` is no longer written. Import applies
+> `patch` through `applyPresetObject` exactly as before; a v4-and-earlier file that carried only an
+> index has nothing to resolve it against and keeps the live sound. The setup file no longer carries
+> a `patches` category (`mubone_user_presets`, `mubone_active_patch`, `mubone_preset_layout_v`,
+> `mubone_preset_view`) nor `mubone_param_locks` / `mubone_radial_anchors` / `mubone_desktop_morph`;
+> `purgeRetiredKeys()` deletes them at boot. § E4's argument stands — it is why `applyPresetObject`
+> survived the bank.
+>
+> **`EXPORT_VERSION` 9 → 10 on 2026-08-30** — pins group by KIND. `live.layers` and every slot's
+> `layerId` are **removed**, `_preLayerOn` becomes `_preGroupOn`, and `live.pinGroups` carries the
+> only thing the two groups hold: each one's muted/solo flag. A v7–v9 file imports with its named
+> groups discarded (they no longer exist) and its `_preLayerOn` migrated, so a session saved
+> mid-mute still restores honestly. **This deletes E10's hazard rather than guarding it** — see the
+> note appended to § E10.
+>
+> **`EXPORT_VERSION` 7 → 8 on 2026-08-25 (#210)** — frozen brushes. `live.voicings` plus a `vo` per
+> particle, written only when non-zero. v7-and-earlier files migrate onto the `patch` they already
+> embed rather than being left to follow the selected brush. See § E11.
+>
+> **`EXPORT_VERSION` 6 → 7 on 2026-08-25 (#207)** — arrangement layers. Additive and backward
+> compatible: `live.layers` plus `layerId` / `_preLayerOn` per commit slot, session file only. See
+> § E10 for the ordering constraint, which is the part worth knowing before touching the import.
+>
+> **E9 added and fixed 2026-08-10 (`EXPORT_VERSION` 5 → 6)** while building the trigger tool — loop particles were serialised as indices into an array they were never in, so **every imported loop came back silent**. Two audits missed it. See § E9.
+>
 > **E4 + E5 resolved 2026-08-01 (#161)** — Ek took both recommendations. A session no longer carries settings and embeds its resolved patch instead (`EXPORT_VERSION` 5); settings import offers merge / replace. The E2 fix's `RESTART_ONLY` reporting was **deleted** rather than kept — decoupling removed the condition it described. See the § E4 and § E5 resolution notes.
+
+> **Read this first.** The file contract: setup and session are DISJOINT file types (the rig vs the music), `EXPORT_VERSION` is 5, and the pre-v4 normaliser is how old files load. Fixed: E1–E3, E9–E11. Open: E4 (settings-in-session tension), E5 (import is a merge, not a replace), E6 (no forward-migration scaffold), E7 (shared loop buffers duplicated), E8 (base64 container). Read E10 before changing import ORDER and E11 before changing what a mark carries; *Verified* and *Revert* at the end. `scripts/pins-audit.js` is the only suite that imports a session.
 
 Prompted by asking whether export/import was still true after #151 (browser
 audit), #155 (pot scaling), #156 (patch bank 40 → 20) and #157 (storage
@@ -88,7 +123,7 @@ restart via a new `RESTART_ONLY` table + `pendingRestart()`.
 `RESTART_ONLY` is deliberately **hand-derived from module read sites, not from
 `storage-registry.js`** — the registry answers "what category is this key" and
 says nothing about whether a runtime re-apply path exists. Two keys
-(`mubone_gesture_panel`, `mubone_radial_pins`) were in neither list when this
+(`mubone_gesture_panel`, `mubone_radial_anchors`) were in neither list when this
 audit started, which is how the omission was found. If you add a loader, delete
 the key from `RESTART_ONLY` and call it in `applySessionPayload` step 1.
 
@@ -225,7 +260,131 @@ Base64 adds ~33% over raw PCM. Fine at current sizes. If sessions grow, a `.zip`
 with raw WAVs + `session.json` would also make the audio inspectable in a DAW,
 which has debugging value beyond the size saving.
 
+## E9. Loop particles serialised as indices into an array they were never in — FIXED
+
+`EXPORT_VERSION` 5 → 6, found 2026-08-10 while adding the trigger tool, which
+needed the same serialisation and would have inherited the bug by copying it.
+
+A loop slot wrote:
+
+```js
+particleIndices: slot.particles.map(p => S.particles.indexOf(p)),
+```
+
+But `createSeqFromStroke` (now `buildLoopPayload`) **replaces its particles with
+detached copies** so their `grainStart` can be rebased onto the extracted loop
+buffer:
+
+```js
+seqParticles[i] = { ...seqParticles[i], grainStart: ... - offsetShift };
+```
+
+Those copies are not in `S.particles`, so `indexOf` returned −1 for every one.
+On import the `.filter(p => p != null)` dropped them all, leaving
+`particles: []` — and the scheduler's `!seq.particles.length` guard then skips
+the slot outright. **An imported loop was silent, had no playhead and drew no
+marker, while its buffer sat there intact.** `addPlayheadFromExisting` shares the
+same copies, so playhead slots were affected identically.
+
+Fixed by storing values: `[lon, lat, grainStart, grainDuration]` per particle,
+which is also several times smaller than an object each — a stroke can run to
+hundreds. Pre-v6 files keep the old read path so they still import their buffer;
+there is nothing to recover for the playhead, because it was never written.
+
+**Why two audits missed it.** Both read the export path looking for fields that
+were absent or stale — the failure mode the `STATIC_KEYS` drift trained us to
+look for. This field was present, plausibly named and structurally valid; only
+its *meaning* was wrong, and only because of a fact that lives in a different
+file. Nothing in `ui-export.js` says the particles are copies.
+
+The general rule this leaves: **an index is a reference into one specific array,
+so serialising one is only safe if the objects are actually in that array.**
+`buildLoopPayload` deliberately hands back objects that are not. Anything
+serialising loop or trigger particles stores values.
+
+Verified in `browser-audit.js` § reset — the v6 payload is asserted to carry
+packed 4-element particles and no `particleIndices`, driven through the real
+`buildSessionPayload` via the existing `__testBuildSessionPayload` seam.
+
 ---
+
+## E10. Layers had to be restored before the commits, not with the rest of `live` — FIXED, then DELETED
+
+> **Superseded 2026-08-30 (`EXPORT_VERSION` 10).** Everything below is accurate about v7–v9 and is
+> kept because the failure it describes is the best argument in this document for *deriving* state
+> instead of storing it. Pins now group by kind — `groupOf(c)` is `c.type` — so there is no
+> `layerId` on the wire, no group set to restore, and **no id for a mid-import repaint to resolve
+> against the wrong table**. The ordering below is still observed (the groups' mute flags go in at
+> the top of step 5) but it is now tidiness rather than correctness. `scripts/pins-audit.js` § B
+> asserts the absence; § F still runs the race, because the cheapest way to keep a fixed bug fixed
+> is to keep running the test that caught it.
+
+`EXPORT_VERSION` 6 → 7, 2026-08-25, closing #207. Arrangement layers (`js/layers.js`) were
+memory-only, so a session's grouping — named layers, which hold sits in which, and which layers
+were muted — was lost on every export. The fields themselves are unremarkable: `live.layers`
+carries the layer set and its id counter, and each commit slot gains `layerId` and `_preLayerOn`.
+
+**The part worth recording is where the read happens.** Everything else in the `live` block is
+consumed by `applyLiveState()`, which runs *after* `applySessionPayload()` returns. Layers cannot
+be, and the reason is `layerOf()`: it assigns a hold to its type's default layer the first time
+anyone asks, which is what makes membership lazy and what let layers ship without touching any
+creation path in `ui-presets.js`. That same laziness makes a late restore actively destructive.
+
+Two things can ask during an import. The layers rail repaints on its own 6 Hz timer, and the
+commit loop **awaits** `base64WavToAudioBuffer()` once per loop slot — so there is a real, and on a
+session with several loops a long, window in which slots exist carrying imported `layerId` values
+while `S.layers` still holds the *previous* session's set. A repaint landing there fails to
+resolve the id, falls back to the type default, and writes that default onto the hold. Nothing
+throws. The arrangement silently flattens into two groups, and the file it came from is fine — so
+the next export writes the flattened version back and the original grouping is gone for good.
+
+So `restoreLayers()` is called at the top of step 5, before any slot is populated, and
+`applyLiveState()` carries a comment saying `live.layers` is deliberately not read there — the
+obvious "completion" of that function would restore the layers a second time and reset every
+`muted` flag the arrangement was saved with.
+
+`_preLayerOn` is on the wire for the same reason it exists in memory: muting a layer records which
+of its holds were *already* silent, and unmuting brings back only the ones that were sounding.
+Without it in the file, importing a session whose layer was muted and then unmuting that layer
+resurrects holds the player had silenced one at a time.
+
+**Guarded by `scripts/pins-audit.js`** (in `rig-audit.js`), rewritten for v10: § B asserts that
+nothing writes membership and no pin can be moved between groups, § E asserts the round trip, § F
+still spins a `groupOf()` repaint against an import in flight, and § G covers v6-and-earlier files
+plus the v7–v9 migration — named groups discarded, `_preLayerOn` read into `_preGroupOn`, `layerId`
+not carried forward — plus the hand-edited degenerate cases.
+
+**Not yet played on a rig.** Hits are still in no group at all: composer deliberately excludes
+triggers because a hit owns nothing, it is a view onto a stroke, so grouping them needs the
+one-stroke model in `docs/archive/BRUSH-MODEL.md` § 3a first.
+
+## E11. Frozen brushes — the material had to carry its own settings — FIXED
+
+`EXPORT_VERSION` 7 → 8, 2026-08-25, closing #210. Reported by Ek from playing: painting with
+`wash` and then selecting `shimmer` re-voiced everything already on the sphere, because **the
+brush was a global mode rather than a property of the material**. Nothing recorded which brush
+painted a mark, and the cursor had exactly one voice in the worklet with one global param block.
+
+**What goes in the file.** `live.voicings` is the interned table of distinct resolved grain param
+blocks, and each particle carries `vo` — written only when non-zero, the same reasoning as `trig`,
+because the particle array is the biggest thing in the payload. The interning is what keeps this
+small: a set painted entirely in `wash` produces **one** voicing, not one per stroke, so the table
+is the number of distinct settings actually played with rather than the number of strokes.
+
+**The v7 migration does not guess.** A pre-v8 session already embeds `patch` — the resolved patch
+object it was genuinely played on, which is exactly what § E4 added it for. So imported material
+gets one voicing built from that, rather than being left on voicing 0 to follow whatever brush
+happens to be selected on the importing machine. § E4's decision paid for itself here.
+
+**Voicing 0 is reserved** and means "follow the live params" — the pre-step-3 behaviour. It is not
+a compat shim: it is a defined value that nothing paints as any more, and `restoreVoicings()`
+refuses to load a stored voicing with that id, because a stroke pointing at it would silently
+follow the global knobs and undo the whole point of freezing.
+
+**Not a format problem, but recorded here because the format is where it shows:** the reason this
+could not be done per-grain is *density*. The onset period belongs to the clock, and one clock
+cannot produce two densities — so each distinct voicing under the cursor needs its own voice.
+Guarded by `scripts/pins-audit.js` § H.
 
 ## Verified
 

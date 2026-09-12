@@ -134,7 +134,7 @@ Reported as "it shows the default layout and the help overlay for a split second
 | `main.js` panel-order restore + repartition | panels change column |
 | `main.js` collapse restore | panels change height |
 | `events.js` projector partition | 5-column layout replaces the flat one |
-| `main.js` first-run-hint decision | the "get started" overlay is hidden |
+| ~~`main.js` first-run-hint decision~~ | *deleted 2026-08-30 — the overlay is gone from the markup, so there is no decision to paint* |
 
 Measured on a seeded non-default layout: **three distinct painted states**, with the first panel at `x=1094`, then `973`, then `23`, all inside ~140 ms. In Electron, with ~40 ES modules to load before `main.js` body runs, that spread is long enough to read as the app loading twice.
 

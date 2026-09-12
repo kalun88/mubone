@@ -39,9 +39,9 @@ function _slotsFilled() {
 // ── The wire contract — each entry is one /status/<x> address on the wire ──
 const WATCH = [
   { addr: '/status/trace',        get: () =>
-      ((S._traceToggled || S.isPainting) && !S.hfArmed) ? 1 : 0 },
+      ((S.paintLatched || S.isPainting) && !S.hfArmed) ? 1 : 0 },
   { addr: '/status/trace/hf',     get: () =>
-      ((S._traceToggled || S.isPainting) &&  S.hfArmed) ? 1 : 0 },
+      ((S.paintLatched || S.isPainting) &&  S.hfArmed) ? 1 : 0 },
   { addr: '/status/slots/filled', get: () => _slotsFilled() },
   { addr: '/status/slots/max',    get: () => Math.max(1, Math.min(16, S.commitSlotCount | 0)) },
 ];

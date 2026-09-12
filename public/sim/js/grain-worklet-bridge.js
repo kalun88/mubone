@@ -7,15 +7,16 @@
 // Usage:
 //   import { startWorkletEngine, stopWorkletEngine, ... } from './grain-worklet-bridge.js';
 //   await startWorkletEngine(audioCtx, recordingBuffer, params);
-//   postCandidates(candidateList);   // called from scheduler at 50Hz
+//   S._postWorkletCandidates(pool, lon, lat);   // from the scheduler at 50Hz
 //   updateWorkletParams({ period: 0.020, pitchShift: 100 });
 //   stopWorkletEngine();
 // ============================================================================
 
 import { S, gp } from './state.js';
 import { dlog } from './diag.js';
-import { activeGrainMap, packVBAPLookup } from './grain.js';
-import { cameraTransformInto, spherePointInto } from './sphere.js';
+import { markGlow, packVBAPLookup } from './grain.js';
+import { voicingById } from './brush-voicing.js';
+import { cameraRotateInto, spherePointInto } from './sphere.js';
 
 // Scratch arrays for headlocked azimuth — reused per candidate, zero alloc.
 const _hlW = new Float64Array(3);  // world-space xyz
@@ -39,7 +40,7 @@ const _spatialResult = { azDeg: 0, elBias: 0 };
 function _spatialForParticle(lon, lat) {
   if (S.spatialPanning === 'headlocked') {
     spherePointInto(lon, lat, _hlW);
-    cameraTransformInto(_hlW[0], _hlW[1], _hlW[2], _hlC);
+    cameraRotateInto(_hlW[0], _hlW[1], _hlW[2], _hlC);
     const az = Math.atan2(_hlC[0], _hlC[2]);
     _spatialResult.azDeg = ((az * 180 / Math.PI) % 360 + 360) % 360;
     // In headlocked, elevation is irrelevant for center-bias — the
@@ -54,12 +55,37 @@ function _spatialForParticle(lon, lat) {
   }
   return _spatialResult;
 }
-let _lastPostedCandidates = [];  // for console debugging
+let _lastPostedCandidates = [];  // for console debugging (the message path); the table path reads back on demand
+let _postedOnce = false;
+
+// ── The candidate TABLES (R3, 2026-09-06) — must match grain-engine.worklet.js ──
+// The pool used to cross to the worklet as a message of objects every tick:
+// thousands of candidates structured-cloned on the main thread, allocated
+// again on the audio thread, and collected there. Now the bridge writes rows
+// into one SharedArrayBuffer — a region per cursor voice, double-buffered with
+// a published-half word — and posts a two-field message. The worklet reads a
+// candidate by row at fire time. The message path stays for a page without
+// shared memory (the browser demo when not cross-origin isolated).
+// Voice slots, and the candidate tables sized from them — one region per
+// cursor voice plus region 0 for the live voicing. These MUST agree with
+// grain-engine.worklet.js: a voice with no region writes nowhere and is
+// silent, which is how a raised cap would fail quietly (P4, 2026-09-06).
+const MAX_CURSOR_VOICES = 16;
+const MAX_SEED_VOICES = 64;
+const CT_ROWS = 8192, CT_WORDS = 7, CT_HEADER = 4, CT_REGIONS = 1 + MAX_CURSOR_VOICES;
+const CT_HALF = CT_ROWS * CT_WORDS + CT_ROWS;
+const CT_REGION = CT_HEADER + 2 * CT_HALF;
+let _ctSab = null, _ctI = null, _ctF = null;
+const _ctCount = new Int32Array(CT_REGIONS);      // rows written this tick, per region
+const _ctPerm  = new Uint32Array(CT_ROWS);        // scratch for the step-mode order
+let _ctTruncated = 0;                             // rows beyond CT_ROWS, dropped (diag)
+let _lastPostedSeeds = [];       // the seed voices of the last post, for the audits
 
 // Multi-buffer support: maps AudioBuffer references to worklet buffer indices.
 // SAB (primary) buffer → -1, provisional live buffer → -2, additional buffers → 0, 1, 2, ...
 // Rebuilt on every start/restart when all live recordings are sent to the worklet.
 let _bufferMap = new Map();   // AudioBuffer → worklet bufIndex
+let _liveChunkSize = 0;   // the worklet's live chunk size, for spares (R5)
 let _lastWorkletDiag = null;  // most recent _diag from worklet feedback (~30Hz)
 
 // Provisional live buffer: streamed to worklet during active recording (bufIndex -2).
@@ -154,7 +180,13 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
   _workletNode.port.onmessage = ({ data }) => {
     if (data?.type === 'feedback') {
       if (_feedbackCallback) _feedbackCallback(data);
-      if (data._diag) _lastWorkletDiag = data._diag;
+      if (data._diag) {
+        _lastWorkletDiag = data._diag;
+        S._lastWorkletDiag = data._diag;      // Settings → Audio's live readout (P2)
+        // The worklet used its spare (or never had one): allocate HERE and
+        // transfer it — the audio thread must not (R5, 2026-09-06).
+        if (data._diag.spareLow) _sendSpareChunk();
+      }
 
       // Push worklet pool utilisation into the perf monitor so the node
       // meter shows active grain count (replaces stale main-thread node count).
@@ -164,15 +196,29 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
 
       // Drive visual glow from worklet feedback — these are the particles
       // actually sounding, not the main thread's independent random pick.
+      // A particle glows for the duration of ITS grain, which is its stroke's
+      // frozen voicing (brush-voicing.js) — not the live sheet's. It read the
+      // live duration until 2026-09-05 (Ek: "for a brush that is not wet,
+      // when I change the params the particles lighting up change"): turning
+      // the knob changed how long a dry stroke lit, while its sound stayed.
+      // A particle with no voicing (0) is the live params, as everywhere.
       const grains = data.grains;
       if (grains && grains.length > 0) {
         const particles = S.particles;
         const now = performance.now();
-        const durMs = (S.grainOverrides.duration ?? gp().duration) * 1000;
+        const liveMs = (S.grainOverrides.duration ?? gp().duration) * 1000;
+        let lastVo = 0, lastMs = liveMs;       // voicings repeat within a message
         for (let i = 0; i < grains.length; i++) {
           const pid = grains[i];
           const p = particles[pid];
-          if (p) activeGrainMap.set(p, { expiry: now + durMs, glowColor: '#ffffff' });
+          if (!p) continue;
+          const vo = p._vo | 0;
+          if (vo !== lastVo) {
+            const v = vo ? voicingById(vo) : null;
+            lastMs = v ? (v.params.duration ?? 0.1) * 1000 : liveMs;
+            lastVo = vo;
+          }
+          markGlow(p, lastMs, '#ffffff', now);
         }
       }
 
@@ -360,18 +406,211 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
   // ── Register candidate posting callback on S ────────────────────────
   // Called from grain.js scheduleGrains() at ~50Hz with the current
   // candidate pool (already filtered by radius/k/recency).
-  S._postWorkletCandidates = (pool, cursorLon, cursorLat) => {
+  // ── Cursor voice buckets (docs/archive/BRUSH-MODEL.md step 3) ──────────────────
+  // A stroke freezes the brush that painted it, so one sweep of the cursor can
+  // cross material wanting different grain params — different DENSITY above
+  // all, which is per-voice and cannot be faked per grain. So the pool is
+  // bucketed by `p._vo` and posted as one voice per distinct voicing.
+  //
+  // Bucketed HERE rather than in grain.js on purpose: this function already
+  // walks the pool once per tick to resolve buffers and spatialisation, so
+  // bucketing rides along for free and the 20 ms scheduler is untouched.
+  // Buckets are module-level and truncated rather than reallocated, so the
+  // per-tick allocation is unchanged from the single-list version.
+  const _voBuckets = new Map();     // voicingId -> { list, maxStroke }
+  const _voFree = [];               // retired bucket arrays, reused next tick
+
+  // ── The mark is where the grain PEAKS (Ek, 2026-09-02) ───────────────
+  // A mark stores its moment; the grain that plays it starts EARLY by the
+  // time that voice's envelope takes to peak (brush-voicing.js,
+  // grainPeakOffsetS), so the point the dot shows is the point heard when
+  // the cursor rests on it. Done here, per candidate, from the voice that
+  // will play it — the mark's frozen voicing, or a cloud's own block for a
+  // mark with no voicing — so a different engine reading the same mark still
+  // peaks on it. Dry voicings
+  // never change, so their offsets are cached; voicing 0 follows the live
+  // params and is recomputed once per post; a WET voicing's params move with
+  // its brush's knobs, and brush-voicing.js says so through
+  // `S._voicingChanged`, which drops that entry (0 drops them all). A session
+  // import swaps the voicing set, which drops the cache.
+  let _peakOffCache = new Map();
+  let _peakOffFor = null;
+  const _peakOffsetFor = (vo) => {
+    if (S.voicings !== _peakOffFor) { _peakOffCache = new Map(); _peakOffFor = S.voicings; }
+    let off = _peakOffCache.get(vo);
+    if (off === undefined) {
+      off = S._peakOffsetForVoicing?.(vo) ?? 0;
+      if (vo) _peakOffCache.set(vo, off);
+    }
+    return off;
+  };
+  S._voicingChanged = (vo) => { if (vo) _peakOffCache.delete(vo); else _peakOffCache.clear(); };
+
+  S._postWorkletCandidates = (pool, cursorLon, cursorLat) =>
+    (_ctI ? _postCandidatesTable : _postCandidatesMsg)(pool, cursorLon, cursorLat);
+
+  // The voicing a mark is READ with. A painted mark's own (`_vo`, frozen at
+  // its stroke's start; 0 = the live params). A TRIGGER's mark has no grain
+  // voicing of its own: a hit brush froze whatever grain block happened to be
+  // live when the stroke was recorded, which nothing displays and no setting
+  // owns. Under dwell `grain` the trigger opens to the cursor, and it reads
+  // with the LIVE grain block — the grain brush in the palette, wet or dry —
+  // so the sound of a dwelling trigger is the brush you can see (Ek,
+  // 2026-09-06: a trigger is a view onto a stroke and owns nothing).
+  const _voiceOf = p => (p.trig ? 0 : (p._vo ?? 0));
+
+  // The table path (R3). Two passes over the pool: the first counts marks and
+  // the newest stroke per voicing, so the voice cap keeps the most RECENT
+  // voicings (the rule the message path applied); the second writes rows.
+  const _ctVoCount = new Map(), _ctVoMax = new Map(), _ctVoSlot = new Map();
+  function _postCandidatesTable(pool, cursorLon, cursorLat) {
     if (!_workletNode) return;
+    S._syncWetVoicing?.();
+    const ctI = _ctI, ctF = _ctF;
+    _ctCount.fill(0);
+    _ctVoCount.clear(); _ctVoMax.clear(); _ctVoSlot.clear();
+    const n = pool ? pool.length : 0;
+    // Pass 1: which voicings, how many marks each, and their newest stroke.
+    for (let i = 0; i < n; i++) {
+      const p = pool[i], vo = _voiceOf(p);
+      _ctVoCount.set(vo, (_ctVoCount.get(vo) || 0) + 1);
+      if ((p.strokeId | 0) > (_ctVoMax.get(vo) ?? -1)) _ctVoMax.set(vo, p.strokeId | 0);
+    }
+    // Slots: vo 0 is region 0; the others get 1..8, most recent first.
+    const vos = [];
+    for (const vo of _ctVoCount.keys()) if (vo) vos.push(vo);
+    if (vos.length > MAX_CURSOR_VOICES) { vos.sort((a, b) => _ctVoMax.get(b) - _ctVoMax.get(a)); vos.length = MAX_CURSOR_VOICES; }
+    for (let k = 0; k < vos.length; k++) _ctVoSlot.set(vos[k], k + 1);
+    if (_ctVoCount.has(0)) _ctVoSlot.set(0, 0);
+    // Pass 2: rows into the unpublished half of each region.
+    const sr = _sabSampleRate;
+    const fadeOn = S.radiusFadeEnabled && !S.nearestMode && S.searchRadiusDeg > 0;
+    const fadeRad = S.searchRadiusDeg * Math.PI / 180;
+    const fadeExp = 1 + (S.radiusFadeCurve ?? 0.5) * 3;
+    const offLive = _peakOffsetFor(0);
+    let skipNoBuf = 0, skipNoMap = 0;
+    for (let i = 0; i < n; i++) {
+      const p = pool[i];
+      const vo = _voiceOf(p);
+      const region = _ctVoSlot.get(vo);
+      if (region === undefined) continue;                  // beyond the voice cap
+      let audioBuf = null;
+      if (p.source === 'live' && p.liveBufferIdx >= 0 && p.liveBufferIdx < S.liveRecBuffers.length) {
+        const slot = S.liveRecBuffers[p.liveBufferIdx];
+        audioBuf = slot?.buffer || slot?.liveBuffer;
+      } else if (p.source === 'sample' && p.sampleIndex >= 0 && p.sampleIndex < S.samples.length) {
+        audioBuf = S.samples[p.sampleIndex]?.buffer;
+      }
+      if (!audioBuf) { skipNoBuf++; continue; }
+      const bufIndex = _bufferMap.get(audioBuf);
+      if (bufIndex === undefined) { skipNoMap++; continue; }
+      const c = _ctCount[region];
+      if (c >= CT_ROWS) { _ctTruncated++; continue; }
+      const bufLen = audioBuf.length;
+      const peakOff = vo ? _peakOffsetFor(vo) : offLive;
+      const offsetSamples = Math.max(0, Math.min(Math.round(((p.grainStart ?? 0) - peakOff) * sr), bufLen - 1));
+      const sp = _spatialForParticle(p.lon, p.lat);
+      let radiusFade = 1.0;
+      if (fadeOn) { const t = Math.min(1, (p._ang ?? 0) / fadeRad); radiusFade = Math.pow(1 - t, fadeExp); }
+      const hdr = region * CT_REGION;
+      const half = 1 - ctI[hdr];
+      const w = hdr + CT_HEADER + half * CT_HALF + c * CT_WORDS;
+      ctI[w]     = bufIndex;
+      ctI[w + 1] = offsetSamples;
+      ctI[w + 2] = bufLen;
+      ctF[w + 3] = sp.azDeg;
+      ctF[w + 4] = sp.elBias;
+      ctI[w + 5] = p._globalIdx ?? i;
+      ctF[w + 6] = radiusFade;
+      _ctCount[region] = c + 1;
+    }
+    // Step mode needs the rows in offset order: a permutation per region,
+    // sorted only when the lens asks for step (random reads the rows as is).
+    const kSeq = !!S.grainKSeqMode;
+    for (let r = 0; r < CT_REGIONS; r++) {
+      const hdr = r * CT_REGION, half = 1 - ctI[hdr], cnt = _ctCount[r];
+      const base = hdr + CT_HEADER + half * CT_HALF;
+      if (kSeq && cnt > 1) {
+        const perm = _ctPerm.subarray(0, cnt);
+        for (let k = 0; k < cnt; k++) perm[k] = k;
+        perm.sort((a, b) => ctI[base + a * CT_WORDS + 1] - ctI[base + b * CT_WORDS + 1]);
+        ctI.set(perm, base + CT_ROWS * CT_WORDS);
+      } else if (cnt > 0) {
+        for (let k = 0; k < cnt; k++) ctI[base + CT_ROWS * CT_WORDS + k] = k;
+      }
+      // Publish: the count of the half, then the half itself, then the generation.
+      Atomics.store(ctI, hdr + 1 + half, cnt);
+      Atomics.store(ctI, hdr, half);
+      Atomics.add(ctI, hdr + 3, 1);
+    }
+    const voices = [];
+    for (let k = 0; k < vos.length; k++) {
+      if (_ctCount[k + 1] === 0) continue;
+      voices.push({ slot: k + 1, vo: vos[k], params: S._voicingById?.(vos[k])?.params || null });
+    }
+    if (n > 0 && _ctCount[0] === 0 && voices.length === 0 && !_postedOnce) {
+      dlog('worklet', `all ${n} candidates filtered out`, { noBuf: skipNoBuf, noMap: skipNoMap, bufMapSize: _bufferMap.size });
+    }
+    if (!_postedOnce && (voices.length || _ctCount[0])) { _postedOnce = true; dlog('worklet', 'first candidates written to the tables', { regions: voices.length + (_ctCount[0] ? 1 : 0) }); }
+    _workletNode.port.postMessage({ type: 'cursorVoicesTab', voices, liveActive: _ctCount[0] > 0, kSeqMode: kSeq });
+  }
+
+  /** The rows as objects, read back from the published halves — for the
+   *  console and the audits (getWorkletDiag), never on the tick. */
+  function _readBackCandidates() {
+    if (!_ctI) return _lastPostedCandidates;
+    const out = [];
+    for (let r = 0; r < CT_REGIONS; r++) {
+      const hdr = r * CT_REGION, half = _ctI[hdr], cnt = _ctI[hdr + 1 + half];
+      const base = hdr + CT_HEADER + half * CT_HALF;
+      for (let k = 0; k < cnt; k++) {
+        const w = base + k * CT_WORDS;
+        out.push({ region: r, bufIndex: _ctI[w], offset: _ctI[w + 1], length: _ctI[w + 2], azDeg: _ctF[w + 3], elBias: _ctF[w + 4], particleId: _ctI[w + 5], radiusFade: _ctF[w + 6] });
+      }
+    }
+    return out;
+  }
+  S._readBackCandidates = _readBackCandidates;
+
+  // The message path: the pre-R3 post, kept whole for a page without SharedArrayBuffer.
+  function _postCandidatesMsg(pool, cursorLon, cursorLat) {
+    if (!_workletNode) return;
+    // Wet paint rides the tick: if the brush in the hand is wet, its voicing
+    // is brought up to the live block here, before its params are posted
+    // below — so a pot, an OSC value or a sheet row moves every stroke that
+    // brush painted within one tick. ~22 compares when nothing has moved.
+    S._syncWetVoicing?.();
     // Always post — even an empty pool must clear stale worklet candidates
     if (!pool || pool.length === 0) {
-      _workletNode.port.postMessage({ type: 'candidates', list: [] });
+      _workletNode.port.postMessage({ type: 'cursorVoices', list: [] });
       return;
     }
+    for (const b of _voBuckets.values()) { b.list.length = 0; _voFree.push(b.list); }
+    _voBuckets.clear();
     const list = [];
     const sr = _sabSampleRate;
+    // Radius fade — same curve as stampSeedRadiusFade() in ui-presets.js, but
+    // computed live: the cursor moves every tick, so a stamp would be stale.
+    // Nearest mode has no radius to fade against, which is why the UI forces
+    // the toggle off there (ui-meters.js syncUI) — mirror that here.
+    const fadeOn = S.radiusFadeEnabled && !S.nearestMode && S.searchRadiusDeg > 0;
+    const fadeRad = S.searchRadiusDeg * Math.PI / 180;
+    const fadeExp = 1 + (S.radiusFadeCurve ?? 0.5) * 3;
     let _skipNoBuf = 0, _skipNoMap = 0;
+    const offLive = _peakOffsetFor(0);
     for (let i = 0; i < pool.length; i++) {
       const p = pool[i];
+
+      // Bucket by voicing. `_vo` is absent only on material that predates
+      // step 3 and has not been through the import migration; 0 means
+      // "follow the live params", which is the pre-step-3 behaviour. There is
+      // no override any more: audition and the grain filter both forced every
+      // mark onto voicing 0 here, and both are gone (2026-09-03) — a wet
+      // brush's strokes move because their own voicing's params move, above.
+      // Resolved up here because the peak offset below is the playing
+      // voice's, not the painting one's.
+      const vo = _voiceOf(p);
+      const peakOff = vo ? _peakOffsetFor(vo) : offLive;
 
       // Resolve the particle's AudioBuffer and map to worklet buffer index.
       // During active recording, slot.buffer is null — fall back to slot.liveBuffer
@@ -393,22 +632,40 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
       // append delivery) and handles frontier grains at fire time, clamping
       // duration or dropping grains with <64 available samples.
       const bufLen = audioBuf.length;
+      // Clamped at 0: the first peak-offset of a take cannot start early
+      // enough, and its marks' peaks drift late by the shortfall.
       const offsetSamples = Math.max(0, Math.min(
-        Math.round((p.grainStart ?? 0) * sr),
+        Math.round(((p.grainStart ?? 0) - peakOff) * sr),
         bufLen - 1
       ));
 
       const sp = _spatialForParticle(p.lon, p.lat);
 
-      list.push({
+      // p._ang is the angular distance to the cursor, stamped this tick by the
+      // scheduler (grain.js). Reuse it rather than recomputing the great-circle.
+      let radiusFade = 1.0;
+      if (fadeOn) {
+        const t = Math.min(1, (p._ang ?? 0) / fadeRad);
+        radiusFade = Math.pow(1 - t, fadeExp);
+      }
+
+      const cand = {
         bufIndex,
         offset:      offsetSamples,
         length:      bufLen,
         azDeg:  sp.azDeg,
         elBias: sp.elBias,
         particleId:  p._globalIdx ?? i,
-        radiusFade:  1.0,
-      });
+        radiusFade,
+      };
+      list.push(cand);
+      let bucket = _voBuckets.get(vo);
+      if (!bucket) {
+        bucket = { list: _voFree.pop() || [], maxStroke: -1 };
+        _voBuckets.set(vo, bucket);
+      }
+      bucket.list.push(cand);
+      if (p.strokeId > bucket.maxStroke) bucket.maxStroke = p.strokeId;
     }
     // Sort by offset (grainStart) so k-seq mode steps through in buffer order
     list.sort((a, b) => a.offset - b.offset);
@@ -429,31 +686,117 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
     }
     // Expose last posted candidates for console debugging
     _lastPostedCandidates = list;
-    _workletNode.port.postMessage({ type: 'candidates', list });
-  };
+
+    // Resolve each bucket to a voice. Params ride with the voice every tick,
+    // which is what S._postWorkletSeeds already does for its 16 seeds — same
+    // message shape, same cost profile, one fewer thing to reason about.
+    let buckets = [..._voBuckets.entries()];
+    if (buckets.length > MAX_CURSOR_VOICES) {
+      // More distinct settings under the cursor than there are voices. Keep the
+      // most RECENT, which is the rule `recencyN` already applies to buffers —
+      // the newest layer is the one the player is working on.
+      buckets.sort((a, b) => b[1].maxStroke - a[1].maxStroke);
+      buckets.length = MAX_CURSOR_VOICES;
+    }
+    const voices = [];
+    for (const [vo, b] of buckets) {
+      if (b.list.length === 0) continue;
+      b.list.sort((x, y) => x.offset - y.offset);
+      voices.push({ vo, params: S._voicingById?.(vo)?.params || null, candidates: b.list });
+    }
+    // Order (random | step) is the lens's, live — sent once per post and
+    // applied to every cursor voice worklet-side, so frozen voicings never
+    // pin it (#233).
+    _workletNode.port.postMessage({ type: 'cursorVoices', list: voices, kSeqMode: !!S.grainKSeqMode });
+  }
 
   // ── Register seed posting callback on S ────────────────────────────
   // Called from grain.js at ~50Hz with active seed data (pool, params, gain).
-  // Each seed has its own candidate list and grain parameters; the worklet
-  // runs independent onset clocks per seed.
+  //
+  // A cloud is a moving cursor (Ek, 2026-09-05: "the pin is just a moving
+  // cursor — if I change the material under it, it should change"). So a
+  // cloud reads each mark with the MARK's voicing, exactly as the cursor does
+  // above: its pool is bucketed by `p._vo` and posted as one worklet voice per
+  // voicing, and a wet brush's knobs reach the wash cloud's material through
+  // its wet voicing while a dry stroke the cloud crosses keeps its frozen
+  // sound. Before this the cloud played everything under it with the block it
+  // was pinned with, which is what a mark with NO voicing (or a voicing this
+  // session does not have) still plays with — `sd.grainParams`. The cloud's
+  // morph overrides land on top of whichever block plays.
+  //
+  // Voices are allocated by KEY (slot, voicing) and kept between ticks, so a
+  // voice's onset clock runs on while its cloud reads the same material; a
+  // key not seen this tick gives its index back. Per cloud the cursor's cap
+  // applies (MAX_CURSOR_VOICES, most recent strokes kept); across clouds the
+  // worklet's MAX_SEED_VOICES — a bucket that finds no free voice is silent
+  // this tick, never doubled onto another.
+  const _sdBuckets = new Map();     // voicingId -> { list, maxStroke }, per cloud
+  const _sdFree = [];               // retired bucket arrays, reused
+  const _sdVoiceOf = new Map();     // "slot:vo" -> worklet seed voice index
+  const _sdVoiceFree = [];          // free worklet seed voice indices
+  for (let i = MAX_SEED_VOICES - 1; i >= 0; i--) _sdVoiceFree.push(i);
+  const _sdSeen = new Set();        // keys posted this tick
+  const DIR_MAP  = { fwd: 0, rev: 1, rand: 2, rnd: 2 };
+  const CURVE_MAP = { hann: 0, tri: 1, rect: 2 };
+  const _seedVoiceParams = (gp, kSeqMode) => ({
+    period:           gp.period ?? 0.050,
+    duration:         gp.duration ?? 0.100,
+    volume:           gp.volume ?? 0.8,
+    pitchShift:       gp.pitchShift ?? 0,
+    pitchJitter:      gp.pitchJitter ?? 0,
+    periodVar:        gp.periodVar ?? 0,
+    durVar:           gp.durVar ?? 0,
+    durJitter:        gp.durJitter ?? 0,
+    startJitter:      gp.startJitter ?? 0,
+    fadeRatio:        gp.fadeRatio ?? 0.5,
+    fadeMode:         gp.fadeMode === 'ms' ? 1 : 0,
+    fadeMs:           gp.fadeMs ?? 0.020,
+    envShape:         CURVE_MAP[gp.curveType] ?? gp.envShape ?? 0,
+    probability:      gp.probability ?? 1.0,
+    direction:        DIR_MAP[gp.direction] ?? gp.direction ?? 0,
+    hpfFreq:          gp.hpfFreq ?? 20,
+    lpfFreq:          gp.lpfFreq ?? 20000,
+    hpfQ:             gp.hpfQ ?? 0.707,
+    lpfQ:             gp.lpfQ ?? 0.707,
+    filterFreqJitter: gp.filterFreqJitter ?? 0,
+    kSeqMode:         kSeqMode ?? false,
+    panSpread:        gp.panSpread ?? 0,
+  });
   S._postWorkletSeeds = (seeds) => {
     if (!_workletNode) return;
+    // The cursor post syncs the hand's wet voicing before posting; the seed
+    // post does the same, so a wash cloud follows its wet brush's knobs even
+    // while the cursor posts nothing (scan muted, nothing in reach). Cheap
+    // when nothing has moved.
+    S._syncWetVoicing?.();
     const sr = _sabSampleRate;
-    const DIR_MAP  = { fwd: 0, rev: 1, rand: 2, rnd: 2 };
-    const CURVE_MAP = { hann: 0, tri: 1, rect: 2 };
     const list = [];
+    _sdSeen.clear();
     for (let i = 0; i < seeds.length; i++) {
       const sd = seeds[i];
       if (!sd) continue;
-      // Build candidate list for this seed (same buffer mapping as cursor)
-      const cands = [];
+      const slot = sd.slotIndex ?? i;
       const pool = sd.pool;
-      const slotIdx = sd.slotIndex ?? i;
-      // Per-particle radius fade: look up the cached fade value for this seed slot
-      const fadeKey = `_cFade${slotIdx}`;
+      // Radius fade, computed live from the per-slot angle cache the scheduler
+      // stamps each tick (grain.js). Replaces the old `_cFade{slot}` stamp,
+      // which was only written at plant/import time and so went stale for
+      // moving clouds and missed particles recorded after the plant.
+      const sFadeOn  = !!sd.fadeOn && sd.fadeRad > 0 && !!sd.angKey;
+      const sAngKey  = sd.angKey;
+      const sFadeExp = 1 + (sd.fadeCurve ?? 0.5) * 3;
+      // A mark with no voicing plays with the cloud's own block, so its grain
+      // starts early by that block's peak offset; a voiced mark by its
+      // voicing's — the same rule as the cursor, see _peakOffsetFor.
+      const ownGP = sd.grainParams || {};
+      const ownPeakOff = S._grainPeakOffsetS?.(ownGP) ?? 0;
+      for (const b of _sdBuckets.values()) { b.list.length = 0; _sdFree.push(b.list); }
+      _sdBuckets.clear();
       if (pool) {
         for (let j = 0; j < pool.length; j++) {
           const p = pool[j];
+          let vo = p._vo ?? 0;
+          if (vo && !S._voicingById?.(vo)) vo = 0;
+          const peakOff = vo ? _peakOffsetFor(vo) : ownPeakOff;
           let audioBuf = null;
           if (p.source === 'live' && p.liveBufferIdx >= 0 && p.liveBufferIdx < S.liveRecBuffers.length) {
             const slot = S.liveRecBuffers[p.liveBufferIdx];
@@ -466,49 +809,67 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
           if (bufIndex === undefined) continue;  // buffer not sent to worklet
           const bufLen = audioBuf.length;
           const offsetSamples = Math.max(0, Math.min(
-            Math.round((p.grainStart ?? 0) * sr),
+            Math.round(((p.grainStart ?? 0) - peakOff) * sr),
             bufLen - 1
           ));
           const sp = _spatialForParticle(p.lon, p.lat);
-          const fade = p[fadeKey] ?? 1.0;
-          cands.push({
+          let fade = 1.0;
+          if (sFadeOn) {
+            const t = Math.min(1, (p[sAngKey] ?? 0) / sd.fadeRad);
+            fade = Math.pow(1 - t, sFadeExp);
+          }
+          let b = _sdBuckets.get(vo);
+          if (!b) { b = { list: _sdFree.pop() || [], maxStroke: -1 }; _sdBuckets.set(vo, b); }
+          const sid = p.strokeId ?? 0;
+          if (sid > b.maxStroke) b.maxStroke = sid;
+          b.list.push({
             bufIndex, offset: offsetSamples, length: bufLen,
             azDeg: sp.azDeg, elBias: sp.elBias,
             particleId: p._globalIdx ?? j, radiusFade: fade,
           });
         }
       }
-      // Sort by offset (grainStart) so k-seq mode steps through in buffer order
-      cands.sort((a, b) => a.offset - b.offset);
-      const gp = sd.grainParams || {};
-      list.push({
-        index: sd.slotIndex ?? i,
-        active: true,
-        gain: sd.gain ?? 1.0,
-        candidates: cands,
-        params: {
-          period:           gp.period ?? 0.050,
-          duration:         gp.duration ?? 0.100,
-          volume:           gp.volume ?? 0.8,
-          pitchShift:       gp.pitchShift ?? 0,
-          pitchJitter:      gp.pitchJitter ?? 0,
-          periodVar:        gp.periodVar ?? 0,
-          durVar:           gp.durVar ?? 0,
-          durJitter:        gp.durJitter ?? 0,
-          envShape:         CURVE_MAP[gp.curveType] ?? gp.envShape ?? 0,
-          probability:      gp.probability ?? 1.0,
-          direction:        DIR_MAP[gp.direction] ?? gp.direction ?? 0,
-          hpfFreq:          gp.hpfFreq ?? 20,
-          lpfFreq:          gp.lpfFreq ?? 20000,
-          filterQ:          gp.filterQ ?? 0.707,
-          filterFreqJitter: gp.filterFreqJitter ?? 0,
-          kSeqMode:         sd.kSeqMode ?? false,
-          panSpread:        gp.panSpread ?? 0,
-        },
-      });
+      let buckets = [..._sdBuckets.entries()];
+      if (buckets.length > MAX_CURSOR_VOICES) {
+        buckets.sort((a, b) => b[1].maxStroke - a[1].maxStroke);
+        buckets.length = MAX_CURSOR_VOICES;
+      }
+      for (const [vo, b] of buckets) {
+        if (b.list.length === 0) continue;
+        const key = slot + ':' + vo;
+        let index = _sdVoiceOf.get(key);
+        if (index === undefined) {
+          index = _sdVoiceFree.pop();
+          if (index === undefined) continue;    // no voice free — silent this tick
+          _sdVoiceOf.set(key, index);
+        }
+        _sdSeen.add(key);
+        // Sort by offset (grainStart) so k-seq mode steps through in buffer order
+        b.list.sort((x, y) => x.offset - y.offset);
+        let gp = vo ? S._voicingById(vo).params : ownGP;
+        if (sd.overrides) gp = Object.assign(Object.create(gp), sd.overrides);
+        list.push({
+          index, active: true, gain: sd.gain ?? 1.0, slot, vo,
+          candidates: b.list.slice(),
+          params: _seedVoiceParams(gp, sd.kSeqMode),
+        });
+      }
     }
+    for (const [key, index] of _sdVoiceOf) {
+      if (!_sdSeen.has(key)) { _sdVoiceOf.delete(key); _sdVoiceFree.push(index); }
+    }
+    _lastPostedSeeds = list;
     _workletNode.port.postMessage({ type: 'seeds', list });
   };
+
+  // ── Spare live chunks (R5) ──────────────────────────────────────────
+  // Allocated on this thread and transferred; the worklet pops one when a take
+  // outgrows a chunk. `spareLow` on the feedback is the request for the next.
+  function _sendSpareChunk() {
+    if (!_workletNode || !(_liveChunkSize > 0)) return;
+    const buffer = new ArrayBuffer(_liveChunkSize * 4);
+    try { _workletNode.port.postMessage({ type: 'liveSpare', buffer }, [buffer]); } catch (_) {}
+  }
 
   // ── Provisional live buffer: stream in-progress recording to worklet ─
   // Called when recording starts while the worklet is already running.
@@ -522,6 +883,8 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
     _provisionalSentLen = 0;
     const chunkSize = Math.round(_sabSampleRate * 30); // 30s chunks, grow on demand
     _workletNode.port.postMessage({ type: 'liveBufferInit', chunkSize });
+    _liveChunkSize = chunkSize;
+    _sendSpareChunk();   // so a take past 30 s pops instead of allocating (R5)
 
     // Connect mic input directly to the grain worklet so it accumulates
     // live audio at audio rate — zero latency vs the postMessage path.
@@ -602,6 +965,15 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
     dlog('worklet', 'provisional live buffer cleared + mic disconnected');
   };
 
+  // ── The candidate tables (R3): one SAB, viewed here and in the worklet ─
+  if (typeof SharedArrayBuffer !== 'undefined') {
+    try {
+      _ctSab = new SharedArrayBuffer(CT_REGIONS * CT_REGION * 4);
+      _ctI = new Int32Array(_ctSab); _ctF = new Float32Array(_ctSab);
+      _workletNode.port.postMessage({ type: 'cursorTables', sab: _ctSab });
+    } catch (e) { _ctSab = null; _ctI = null; _ctF = null; dlog('worklet', 'candidate tables unavailable — message path', { error: e.message }); }
+  }
+
   // ── Send init message ───────────────────────────────────────────────
   const sr = actx.sampleRate;
   _workletNode.port.postMessage({
@@ -610,6 +982,7 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
     sampleRate: sr,
     bufferLength: channelData.length,
     numChannels,
+    maxGrains: S.maxGrains ?? 512,     // the pool and the glow ring (P2)
     params: {
       period:      params.period ?? 0.050,
       duration:    params.duration ?? 0.100,
@@ -683,15 +1056,6 @@ export function updateWorkletParams(params) {
   _workletNode.port.postMessage({ type: 'params', ...params });
 }
 
-// ── Post candidate particle list (called from scheduler at ~50Hz) ───────────
-/**
- * @param {Array} list - [{ bufIndex, offset, length, azDeg, particleId, radiusFade }]
- */
-export function postCandidates(list) {
-  if (!_workletNode) return;
-  _workletNode.port.postMessage({ type: 'candidates', list });
-}
-
 // ── Send VBAP lookup table ──────────────────────────────────────────────────
 /**
  * @param {Float32Array} lutData - 360×4 = 1440 floats [idxA, idxB, wA, wB] per degree
@@ -709,6 +1073,28 @@ export function postVbapLUT(lutData, numChannels) {
 export function postSampleBuffers(buffers) {
   if (!_workletNode) return;
   _workletNode.port.postMessage({ type: 'buffers', list: buffers });
+}
+
+// ── Hot-swap a sample buffer into the running worklet (#247) ────────────────
+// The addBuffer half of hotSwapRecording, with none of the live-rec teardown:
+// registers ANY AudioBuffer (a dropped file, a sampler take) with a running
+// engine so painting from it is audible immediately. Before this, a sample
+// added mid-session sat unmapped — candidates hit `bufIndex === undefined`
+// and counted into _skipNoMap until the engine restarted. Cold start needs
+// nothing from us: _startWorkletEngine rebuilds the map from S.samples.
+export function hotSwapSample(audioBuffer) {
+  if (!_workletNode || !audioBuffer) return false;
+  if (_bufferMap.has(audioBuffer)) return true;
+  const data = audioBuffer.getChannelData(0);
+  const newIndex = _sampleBufsCount();
+  const copy = new Float32Array(data);
+  _workletNode.port.postMessage({
+    type: 'addBuffer',
+    data: copy,
+    length: data.length,
+  }, [copy.buffer]);
+  _bufferMap.set(audioBuffer, newIndex);
+  return true;
 }
 
 // ── Hot-swap a finalized recording into the running worklet ─────────────────
@@ -807,7 +1193,7 @@ export function flushWorkletGrains() {
 }
 
 // ── Release dead buffers (sweep-snapshot commit) ────────────────────────────
-// THE group-show noise-glitch fix (docs/GROUP-SHOW-NOISE-GLITCH.md, Jul 2026).
+// THE group-show noise-glitch fix (docs/archive/GROUP-SHOW-NOISE-GLITCH.md, Jul 2026).
 // Erase-all / sweep keep worklet buffers alive so undo can restore them.
 // Once the snapshot is committed (new stroke, or 30s auto-commit), the
 // erased recordings are provably unreachable — but nothing dropped them:
@@ -915,15 +1301,27 @@ export function isWorkletGrainActive() {
   return _workletNode !== null;
 }
 
+/** Set the grain pool (and the glow ring with it). Everything sounding stops:
+ *  it is a setting, not a performance control (P2, 2026-09-06). */
+export function setMaxGrains(n) {
+  S.maxGrains = n;
+  _workletNode?.port.postMessage({ type: 'maxGrains', n });
+}
+S._setMaxGrains = setMaxGrains;
+
 export function getWorkletNode() {
   return _workletNode;
 }
 
 /** Console diagnostic: last posted candidate list + feedback stats. */
 export function getWorkletDiag() {
+  const candidates = S._readBackCandidates ? S._readBackCandidates() : _lastPostedCandidates;
   return {
-    candidates: _lastPostedCandidates,
-    candidateCount: _lastPostedCandidates.length,
+    candidates,
+    candidateCount: candidates.length,
+    tables: !!_ctI,
+    tableTruncated: _ctTruncated,
+    seeds: _lastPostedSeeds,
     running: _workletNode !== null,
     // Buffer retention (group-show noise glitch): bridge-side AudioBuffer refs
     // and the worklet's own view of its _sampleBufs (via feedback _diag).

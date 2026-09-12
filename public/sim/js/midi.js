@@ -4,30 +4,28 @@
 
 import {
   S,
-  PRESETS, isUserPreset, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
-  LIVE_PAINT_COLORS, DEBUG, rebuildGrainCurves,
+  SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
+  DEBUG, AXIS_SOURCES, axisHeld,
+  GATE_METER_MAX, GATE_METER_GAMMA, LEVEL_FADER_GAMMA,
 } from './state.js';
-import { ensureAudioContext } from './audio.js';
-import { toggleMappingByIndex } from './sensor-mapping.js';
-import { startLiveRecording, stopLiveRecording } from './audio.js';
 import { toggleHandsfree } from './handsfree.js';
+import { undoLastStroke, redoLastStroke } from './ui-samples.js';
 import {
-  recordStrokeStart, undoLastStroke,
-} from './ui-samples.js';
-import {
-  toggleNearestMode, plantSeed, startSeedPlant, finalizeSeedPlant, uprootNearestSeed,
-  clearAllSeeds, clearAllCommits, clearAllSeqs,
-  updatePlaybackControls, flashRadiusTooltip, selectPreset,
-  createSeqFromStroke, dropSeqFromCursor, releaseCommit,
+  toggleNearestMode, clearAllCommits,
+  updatePlaybackControls, flashRadiusTooltip,
+  releaseCommit,
 } from './ui-presets.js';
 import { sweep } from './ui-sweep.js';
 import { startEraseStroke, stopEraseStroke } from './erase.js';
-import { setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
+import { setMixdownCursorGain, setMixdownHouseGain, gateFracToRms } from './ui-meters.js';
 import { wireSaveDefaultBtn } from './ui-audio-settings.js';
 import { setScanMuted } from './ui-meters.js';
 import { findNearestSeedSlot } from './grain.js';
 import { getCursorLonLat, screenToLonLat } from './sphere.js';
-import { fmtRange } from './scale.js';
+import {
+  fmtRange, scaleControl, clampGamma, toNorm, fromNorm, clampReal, fmtNumber,
+  rangeMin, rangeMax, baseGamma,
+} from './scale.js';
 
 // Each action definition: { id, label, key, osc, type, ccFn?, range? }
 // id: null entries are section headers (group: 'label')
@@ -43,44 +41,109 @@ import { fmtRange } from './scale.js';
 // ccFn covers across MIDI 0–127, and the curve it already applies internally.
 // Consumed by the accessory table so a pot's limits can be set in cents and Hz
 // rather than percentages.  See scale.js for the full contract.
-// Placeholder spliced out below — lets the patch rows keep their position in
-// the ordered ACTIONS list without hand-writing twenty near-identical entries.
-const _PATCH_ACTIONS_MARKER = Object.freeze({ _patchMarker: true });
-
 const ACTIONS = [
 
+  // ── Palette (2026-09-03, #327; positions 1–9 since 2026-09-11) ───────────
+  // ONE ROW PER POSITION (docs/PALETTE-GUI.md § 1). A POSITION is a button and
+  // this is where it is bound, whatever sits there today — the performer
+  // designs the palette first and maps to positions after (Ek). The digits 1–9
+  // are the factory keys, by position (Ek, 2026-09-04), and a relearned one
+  // gives its digit up (tiles.js `_keyRelearned`).
+  //
+  // `type`, `fmt` and `tip` are GETTERS because the tile's VERB decides them
+  // and the verb is set in the tile's drawer at any time: a momentary tile is
+  // a `hold` taking `int 0|1`, a bang or a toggle is a `trigger` taking a
+  // bang. Five places read `.type` — `_fireGesture`, `_learnGesture`, the CC
+  // path, the key-learn path and `osc.js`'s release-edge guard — and a getter
+  // keeps every one of them correct with no call-site change. The row is a
+  // plain object everywhere else; nothing spreads it, which a getter would
+  // flatten.
+  //
+  // There were 27 rows until 2026-09-11 — tap · toggle · momentary per
+  // position — and before that a four-row slot with `arm` and `cycle`. Both
+  // asked the CALLER how to fire; the tile says now.
+  { id: null, group: 'palette' },
+  { id: 'palette_1', label: 'tile 1', row: () => S._paletteRow?.(1), key: '—', osc: '/palette/1',
+    get type() { return S._paletteType?.(1) ?? 'trigger'; },
+    get fmt()  { return this.type === 'hold' ? 'int 0|1' : 'bang'; },
+    get tip()  { return S._paletteTip?.(1) ?? 'position 1'; } },
+  { id: 'palette_2', label: 'tile 2', row: () => S._paletteRow?.(2), key: '—', osc: '/palette/2',
+    get type() { return S._paletteType?.(2) ?? 'trigger'; },
+    get fmt()  { return this.type === 'hold' ? 'int 0|1' : 'bang'; },
+    get tip()  { return S._paletteTip?.(2) ?? 'position 2'; } },
+  { id: 'palette_3', label: 'tile 3', row: () => S._paletteRow?.(3), key: '—', osc: '/palette/3',
+    get type() { return S._paletteType?.(3) ?? 'trigger'; },
+    get fmt()  { return this.type === 'hold' ? 'int 0|1' : 'bang'; },
+    get tip()  { return S._paletteTip?.(3) ?? 'position 3'; } },
+  { id: 'palette_4', label: 'tile 4', row: () => S._paletteRow?.(4), key: '—', osc: '/palette/4',
+    get type() { return S._paletteType?.(4) ?? 'trigger'; },
+    get fmt()  { return this.type === 'hold' ? 'int 0|1' : 'bang'; },
+    get tip()  { return S._paletteTip?.(4) ?? 'position 4'; } },
+  { id: 'palette_5', label: 'tile 5', row: () => S._paletteRow?.(5), key: '—', osc: '/palette/5',
+    get type() { return S._paletteType?.(5) ?? 'trigger'; },
+    get fmt()  { return this.type === 'hold' ? 'int 0|1' : 'bang'; },
+    get tip()  { return S._paletteTip?.(5) ?? 'position 5'; } },
+  { id: 'palette_6', label: 'tile 6', row: () => S._paletteRow?.(6), key: '—', osc: '/palette/6',
+    get type() { return S._paletteType?.(6) ?? 'trigger'; },
+    get fmt()  { return this.type === 'hold' ? 'int 0|1' : 'bang'; },
+    get tip()  { return S._paletteTip?.(6) ?? 'position 6'; } },
+  { id: 'palette_7', label: 'tile 7', row: () => S._paletteRow?.(7), key: '—', osc: '/palette/7',
+    get type() { return S._paletteType?.(7) ?? 'trigger'; },
+    get fmt()  { return this.type === 'hold' ? 'int 0|1' : 'bang'; },
+    get tip()  { return S._paletteTip?.(7) ?? 'position 7'; } },
+  { id: 'palette_8', label: 'tile 8', row: () => S._paletteRow?.(8), key: '—', osc: '/palette/8',
+    get type() { return S._paletteType?.(8) ?? 'trigger'; },
+    get fmt()  { return this.type === 'hold' ? 'int 0|1' : 'bang'; },
+    get tip()  { return S._paletteTip?.(8) ?? 'position 8'; } },
+  { id: 'palette_9', label: 'tile 9', row: () => S._paletteRow?.(9), key: '—', osc: '/palette/9',
+    get type() { return S._paletteType?.(9) ?? 'trigger'; },
+    get fmt()  { return this.type === 'hold' ? 'int 0|1' : 'bang'; },
+    get tip()  { return S._paletteTip?.(9) ?? 'position 9'; } },
+  { id: 'wet_toggle', label: 'wet paint (toggle)', key: '—', osc: '/palette/wet', fmt: 'int 0|1, bang=toggle', type: 'trigger',
+    tip: 'wet on/off for the brush in the hand — the switch in its sheet head. A wet brush\'s knobs keep moving every stroke it painted; off dries them where they sound' },
+
+  // ── Source / sampler (#247 — the chain is source → brush → lens) ──────────
+  // ── Recording ─────────────────────────────────────────────────────────────
+  // `recpaint` and `trace_toggle` — "activate (momentary)" and "activate
+  // (toggle)", on `/trace` and `/trace/toggle`, with spacebar and the sphere
+  // click as their factory keys — stood at the head of this group until
+  // 2026-09-11. Both meant "fire the tool in the hand", and with arming gone
+  // there is no hand: a press names the POSITION it plays, so those two rows
+  // had nothing left to address. Spacebar is learnable onto any palette row.
+  { id: null, group: 'recording' },
+  { id: 'handsfree',   label: 'handsfree (toggle)',          key: 'H',                 osc: '/handsfree',         fmt: 'bang',             type: 'trigger',
+    tip: 'toggle handsfree arm — when on, toggle-trace segments buffers at the paint gate threshold, with its own envelope' },
+
+  // ── Trigger tool ──────────────────────────────────────────────────────────
+  { id: 'trigger_chop', label: 'chop (toggle)',                key: '—',                 osc: '/trigger/chop',    fmt: 'bang=toggle, int 0|1',  type: 'trigger',
+    tip: 'chop on/off — when on, a trigger take is split into separate triggers at its silences. affects the NEXT take recorded; the gap threshold stays where you set it' },
+
+  // ── Commit (D) ────────────────────────────────────────────────────────────
   // ── Session ────────────────────────────────────────────────────────────────
   { id: null, group: 'session' },
   { id: 'mute',         label: 'system mute (toggle)',      key: 'M',                 osc: '/mute',              fmt: 'int 0|1',          type: 'trigger',
-    tip: 'silence all audio output — latching' },
-  { id: 'mute_hold',    label: 'system mute (hold)',        key: '—',                 osc: '/mute/hold',         fmt: 'int 0|1',          type: 'hold',
+    tip: 'silence all audio output — each press flips it. The momentary one is below' },
+  { id: 'dry_mute',     label: 'dry monitor mute (toggle)', key: '—',                 osc: '/dry/mute',          fmt: 'bang',             type: 'trigger',
+    tip: 'the footer\'s dry switch: muted is off; unmuting returns to the mode it was in — on, or auto' },
+  { id: 'dry_mute_hold', label: 'dry monitor mute (momentary)', key: '—',              osc: '/dry/mute/hold',     fmt: 'int 0|1',          type: 'hold',
+    tip: '1 mutes the dry monitor, 0 restores the mode it was in at the press' },
+  { id: 'mute_hold',    label: 'system mute (momentary)',        key: '—',                 osc: '/mute/hold',         fmt: 'int 0|1',          type: 'hold',
     tip: 'momentary mute — silent while held, restores the PREVIOUS state on release, so a tap over an already-muted system leaves it muted' },
-  { id: 'undo',         label: 'undo last stroke',          key: 'right click / ⌘Z',  osc: '/undo',              fmt: 'bang',             type: 'trigger',
+  { id: 'undo',         label: 'undo',          key: 'right click / ⌘Z',  osc: '/undo',              fmt: 'bang',             type: 'trigger',
     tip: 'remove the most recently painted stroke from the sphere' },
-  { id: 'sweep',        label: 'sweep (remove unused)',     key: '—',                 osc: '/sweep',             fmt: 'bang',             type: 'trigger',
-    tip: 'delete all particles not referenced by active seeds or loops' },
-  { id: 'erase_all',    label: 'erase all (session)',       key: 'Backspace×3',       osc: '/session/erase',     fmt: 'bang',             type: 'trigger',
+  { id: 'redo',         label: 'redo',        key: '⇧⌘Z',               osc: '/redo',              fmt: 'bang',             type: 'trigger',
+    tip: 'bring back the last thing undone — a stroke with everything it made, an erase, a pin. A new action forks history: what was undone stays undone' },
+  { id: 'sweep',        label: 'sweep the scratch', key: '—',             osc: '/sweep',             fmt: 'bang',             type: 'trigger',
+    tip: 'everything unpinned goes; pinned clouds and loops keep sounding. The chrome pill, bindable here' },
+  { id: 'erase_all',    label: 'erase all',       key: 'Backspace×3',       osc: '/session/erase',     fmt: 'bang',             type: 'trigger',
     tip: 'erase everything — all particles, commits, and recordings' },
-  { id: 'erase_toggle', label: 'erase brush (toggle)',      key: '—',                 osc: '/erase/toggle',      fmt: 'bang',             type: 'trigger',
-    tip: 'latching erase — one press starts erasing, the next stops. For controllers that only send a press edge (foot pedals), where the hold version would never release' },
-  { id: 'erase_brush',  label: 'erase brush (hold)',        key: 'hold F',            osc: '/erase/hold',        fmt: 'int 0|1',          type: 'hold',
-    tip: 'hold to erase particles under the cursor — same radius + recency as the scan, so erasing reveals older buffers' },
-
-  // ── Patches ────────────────────────────────────────────────────────────────
-  // One row per patch, generated below from PRESETS — see _buildPatchActions().
-  // This used to be a single `patch select` cc row spanning the whole bank,
-  // which is the wrong shape for the thing people actually do with it: bind a
-  // button, or a pad, to one patch. A cc sweep can't express that at all.
-  { id: null, group: 'patches' },
-  _PATCH_ACTIONS_MARKER,
-
   // ── Search ─────────────────────────────────────────────────────────────────
-  { id: null, group: 'search' },
-  { id: 'snap',         label: 'scope (nearest/area)',       key: 'N',                 osc: '/search/scope',   fmt: 'int 0|1',          type: 'trigger',
-    tip: 'scope — nearest: fire k closest on whole sphere / area: search within radius + recency' },
-  { id: 'k_all',        label: 'fill (all/k)',              key: '—',                 osc: '/search/fill',    fmt: 'int 0|1',          type: 'trigger',
+  { id: null, group: 'lens' },
+  { id: 'snap',         label: 'lens mode · nearest / area (toggle)', key: 'N',                 osc: '/search/scope',   fmt: 'int 0|1',          type: 'trigger',
+    tip: 'the installed lens\'s mode — nearest: the k closest marks on the whole sphere / area: within the radius and depth' },
+  { id: 'k_all',        label: 'fill · all / k (toggle)',              key: '—',                 osc: '/search/fill',    fmt: 'int 0|1',          type: 'trigger',
     tip: 'fill — all: fire every particle in radius / k: cap to k nearest (area mode only)' },
-  { id: 'k_seq',        label: 'order (step/random)',       key: '—',                 osc: '/search/order',   fmt: 'int 0|1',          type: 'trigger',
+  { id: 'k_seq',        label: 'order · step / random (toggle)',       key: '—',                 osc: '/search/order',   fmt: 'int 0|1',          type: 'trigger',
     tip: 'step through candidates one at a time in recording order instead of random' },
   { id: 'radius_cc',    label: 'radius',                    key: '—',                 osc: '/search/radius',  type: 'cc',
     range: { min: SEARCH_RADIUS_MIN, max: SEARCH_RADIUS_MAX, unit: '°', int: true },
@@ -91,13 +154,13 @@ const ACTIONS = [
     tip: 'decrease search radius by 2°' },
   // Ceiling is the particle count, so it moves as you paint — a pot limited to
   // "k up to 12" has to re-resolve every time it's read, not at bind time.
-  { id: 'grain_k',      label: 'k (nearest)',               key: '—',                 osc: '/search/k',       type: 'cc',
+  { id: 'grain_k',      label: 'k',                         key: '—',                 osc: '/search/k',       type: 'cc',
     range: { min: 1, maxFn: () => Math.max(1, S.particles.length), max: 1, int: true },
     ccFn: v => { const mx = Math.max(1, S.particles.length); S.grainOverrides.k = Math.max(1, Math.round(1 + (v / 127) * (mx - 1))); S.syncGrainControlsUI?.(); } },
   // 0 = "all" is a sentinel sitting ABOVE 16, not part of the numeric range, so
   // it stays out of `range` — a scaled pot spans 1–16 and can't reach it. Bind
   // a button to it if you want "all" on a controller.
-  { id: 'recency_cc',   label: 'recency',                   key: '—',                 osc: '/search/recency', type: 'cc',
+  { id: 'recency_cc',   label: 'depth',                     key: '—',                 osc: '/search/recency', type: 'cc',
     range: { min: 1, max: 16, int: true },
     tip: 'how many recent buffers the scan can reach — the top of the throw is 0 = all',
     ccFn: v => { const raw = Math.round((v / 127) * 17); const n = raw >= 17 ? 0 : Math.max(1, raw); if (typeof S.setRecency === 'function') S.setRecency(n); else S.recencyN = n; } },
@@ -119,6 +182,10 @@ const ACTIONS = [
     tip: 'multiplicative duration randomness — also driven by the sensor mapping system',
     range: { min: 0, max: 1 },
     ccFn: v => { S.grainOverrides.durJitter = v / 127; S.syncGrainControlsUI?.(); } },
+  { id: 'grain_startjit', label: 'start ±',                 key: '—',  osc: '/grain/startjitter', type: 'cc',
+    tip: 'per-grain read-offset randomness — lets grains begin between markers instead of only on one',
+    range: { min: 0, max: 500, unit: 'ms' },
+    ccFn: v => { S.grainOverrides.startJitter = (v / 127) * 0.5; S.syncGrainControlsUI?.(); } },
   { id: 'grain_fade',   label: 'fade',                      key: '—',  osc: '/grain/fade',        type: 'cc',
     tip: 'attack + release each as % of grain duration — 0% instant on/off, 50% pure envelope',
     range: { min: 0, max: 50, unit: '%' },
@@ -165,15 +232,17 @@ const ACTIONS = [
     tip: 'stereo spread — 0% mono, 100% full stereo',
     range: { min: 0, max: 100, unit: '%' },
     ccFn: v => { S.grainOverrides.panSpread = v / 127; S.syncGrainControlsUI?.(); } },
+  // Curved toward the top of the throw like master volume — see
+  // LEVEL_FADER_GAMMA in state.js.
   { id: 'grain_vol',    label: 'volume',                    key: '—',  osc: '/grain/volume',      type: 'cc',
-    tip: 'grain volume — 1.0 = unity/input parity, max 2.0',
-    range: { min: 0, max: 2 },
-    ccFn: v => { S.grainOverrides.volume = (v / 127) * 2; rebuildGrainCurves(); S.syncGrainControlsUI?.(); } },
-  { id: 'grain_dir',    label: 'direction',                 key: '—',  osc: '/grain/dir',         fmt: 'bang=cycle, str=set (fwd|rev|rnd)',              type: 'trigger',
+    tip: 'grain volume — 1.0 = unity/input parity, max 2.0. the throw is curved toward the top, where a level actually sits',
+    range: { min: 0, max: 2, curve: 'pow', gamma: LEVEL_FADER_GAMMA },
+    ccFn: v => { S.grainOverrides.volume = Math.pow(v / 127, LEVEL_FADER_GAMMA) * 2; S.syncGrainControlsUI?.(); } },
+  { id: 'grain_dir',    label: 'direction (cycle)',                 key: '—',  osc: '/grain/dir',         fmt: 'bang=cycle, str=set (fwd|rev|rnd)',              type: 'trigger',
     tip: 'grain playback direction — cycles fwd → rev → rnd' },
-  { id: 'grain_curve',  label: 'envelope curve',            key: '—',  osc: '/grain/curve',       fmt: 'bang=cycle, str=set (hann|tri|rect)',              type: 'trigger',
+  { id: 'grain_curve',  label: 'envelope curve (cycle)',            key: '—',  osc: '/grain/curve',       fmt: 'bang=cycle, str=set (hann|tri|rect)',              type: 'trigger',
     tip: 'grain envelope shape — cycles hann → triangle → rectangular' },
-  { id: 'grain_retrig', label: 'retrigger (ms)',            key: '—',  osc: '/grain/retrigger',   type: 'cc',
+  { id: 'grain_retrig', label: 'retrigger',            key: '—',  osc: '/grain/retrigger',   type: 'cc',
     tip: 'per-particle cooldown — prevents the same point from firing again within this window',
     range: { min: 0, max: 500, unit: 'ms' },
     ccFn: v => { S.grainOverrides.retriggerMs = (v / 127) * 500; S.syncGrainControlsUI?.(); } },
@@ -185,10 +254,14 @@ const ACTIONS = [
     tip: 'lowpass filter cutoff — 20 kHz = off, log scale',
     range: { min: 20, max: 20000, unit: 'Hz', curve: 'log' },
     ccFn: v => { S.grainOverrides.lpfFreq = 20 * Math.pow(1000, v / 127); S.syncGrainControlsUI?.(); } },
-  { id: 'grain_filterq', label: 'filter Q',                 key: '—',  osc: '/grain/filterq',     type: 'cc',
-    tip: 'filter resonance — 0.707 = flat (Butterworth), higher = resonant peak',
+  { id: 'grain_hpfq',    label: 'hpf Q',                    key: '—',  osc: '/grain/hpfq',        type: 'cc',
+    tip: 'resonance at the HIGH-PASS corner — 0.707 = flat (Butterworth), higher = a peak there',
     range: { min: 0.1, max: 20 },
-    ccFn: v => { S.grainOverrides.filterQ = 0.1 + (v / 127) * 19.9; S.syncGrainControlsUI?.(); } },
+    ccFn: v => { S.grainOverrides.hpfQ = 0.1 + (v / 127) * 19.9; S.syncGrainControlsUI?.(); } },
+  { id: 'grain_lpfq',    label: 'lpf Q',                    key: '—',  osc: '/grain/lpfq',        type: 'cc',
+    tip: 'resonance at the LOW-PASS corner — 0.707 = flat (Butterworth), higher = a peak there',
+    range: { min: 0.1, max: 20 },
+    ccFn: v => { S.grainOverrides.lpfQ = 0.1 + (v / 127) * 19.9; S.syncGrainControlsUI?.(); } },
   { id: 'grain_fltjit',  label: 'filter jitter',            key: '—',  osc: '/grain/filterjitter', type: 'cc',
     tip: 'per-grain cutoff randomisation — 0% = static, 100% = ±1 octave',
     range: { min: 0, max: 1 },
@@ -196,55 +269,33 @@ const ACTIONS = [
 
   // ── Cursor / Scan (S) ─────────────────────────────────────────────────────
   { id: null, group: 'cursor' },
-  { id: 'scan_toggle',  label: 'scan on/off (S)',            key: 'S',                 osc: '/cursor/scan',       fmt: 'int 0|1',          type: 'trigger',
-    tip: 'toggle scan — cursor spotlight on/off in the house output' },
-  { id: 'tare',         label: 'tare / zero (Z)',            key: '`',                 osc: '/cursor/tare',       fmt: 'bang',             type: 'trigger',
-    tip: 'zero the cursor sensor — set current orientation as center reference' },
-  { id: 'lock_az',      label: 'lock azimuth (toggle)',      key: '—',                 osc: '/cursor/lock_az',    fmt: 'int 0|1',          type: 'toggle',
-    tip: 'toggle azimuth lock — freezes horizontal position' },
-  { id: 'lock_el',      label: 'lock elevation (toggle)',    key: '—',                 osc: '/cursor/lock_el',    fmt: 'int 0|1',          type: 'toggle',
-    tip: 'toggle elevation lock — freezes vertical position' },
-  { id: 'mapping_toggle_1', label: 'toggle mapping 1',       key: '—',                 osc: '/mapping/toggle/1',  fmt: 'bang',             type: 'trigger',
-    tip: 'toggle the first sensor-to-param mapping on/off' },
-  { id: 'mapping_toggle_2', label: 'toggle mapping 2',       key: '—',                 osc: '/mapping/toggle/2',  fmt: 'bang',             type: 'trigger',
-    tip: 'toggle the second sensor-to-param mapping on/off' },
-  { id: 'mapping_toggle_3', label: 'toggle mapping 3',       key: '—',                 osc: '/mapping/toggle/3',  fmt: 'bang',             type: 'trigger',
-    tip: 'toggle the third sensor-to-param mapping on/off' },
-  { id: 'mapping_toggle_4', label: 'toggle mapping 4',       key: '—',                 osc: '/mapping/toggle/4',  fmt: 'bang',             type: 'trigger',
-    tip: 'toggle the fourth sensor-to-param mapping on/off' },
-  { id: 'radius_fade',  label: 'radius fade on/off',        key: '—',                 osc: '/cursor/radiusfade', fmt: 'int 0|1',          type: 'trigger',
+  { id: 'scan_toggle',  label: 'lens off (toggle)',               key: 'S',                 osc: '/cursor/scan',       fmt: 'int 0|1',          type: 'trigger',
+    tip: 'no lens on: the cursor reads nothing (the cap). Again, the same lens is back on. S by default; a lens tile tapped when on does the same' },
+  { id: 'tare',         label: 'zero',                   key: '`',                 osc: '/cursor/tare',       fmt: 'bang',             type: 'trigger',
+    tip: 'zero the cursor — in sensor mode the current heading becomes the centre; in steer and surface the camera goes back to the front. The footer\'s ZERO button' },
+  { id: 'az_source',    label: 'azimuth source (cycle)',       key: '—',                 osc: '/cursor/az_source',  fmt: 'bang=cycle, str=set (sensor|locked|mapped)', type: 'trigger',
+    tip: 'who drives azimuth — sensor (free), locked (frozen), or mapped (a cursor mapping row)' },
+  { id: 'el_source',    label: 'elevation source (cycle)',     key: '—',                 osc: '/cursor/el_source',  fmt: 'bang=cycle, str=set (sensor|locked|mapped)', type: 'trigger',
+    tip: 'who drives elevation — sensor (free), locked (frozen), or mapped (a cursor mapping row)' },
+  { id: 'radius_fade',  label: 'radius fade (toggle)',        key: '—',                 osc: '/cursor/radiusfade', fmt: 'int 0|1',          type: 'trigger',
     tip: 'attenuate grains by distance from cursor centre' },
   { id: 'radius_fade_curve', label: 'radius fade curve',    key: '—',                 osc: '/cursor/radiusfadecurve', type: 'cc',
     tip: '0 = gentle linear fade, 1 = steep sharp edge rolloff',
     range: { min: 0, max: 1 },
     ccFn: v => { S.radiusFadeCurve = v / 127; S._syncRadiusFadeUI?.(); } },
 
-  // ── Trace (A) ─────────────────────────────────────────────────────────────
-  { id: null, group: 'trace (A)' },
-  { id: 'recpaint',     label: 'trace (hold/tap)',           key: 'click / space',     osc: '/trace',             fmt: 'int 0|1',          type: 'hold',
-    tip: 'hold = momentary record, tap = toggle on/off (handsfree segments when armed)' },
-  { id: 'trace_toggle', label: 'trace toggle',               key: '—',                 osc: '/trace/toggle',    fmt: 'bang',             type: 'trigger',
-    tip: 'directly toggle trace on/off (no tap timing — ideal for foot pedals)' },
-  { id: 'handsfree',   label: 'handsfree arm (H)',          key: 'H',                 osc: '/handsfree',         fmt: 'bang',             type: 'trigger',
-    tip: 'toggle handsfree arm — when on, toggle-trace segments buffers by noise gate' },
-  { id: 'trace_mode',   label: 'trace mode cycle (A)',      key: 'A',                 osc: '/trace/mode',      fmt: 'bang=cycle, str=set (trace|trace+loop|trace+cloud)',                             type: 'trigger',
-    tip: 'cycle trace mode: trace → trace+loop → trace+cloud' },
-
-  // ── Commit (D) ────────────────────────────────────────────────────────────
-  { id: null, group: 'commit (D)' },
-  { id: 'commit_mode',  label: 'commit mode cycle (⇧D)',    key: 'Shift+D',           osc: '/commit/mode',     fmt: 'bang=cycle, str=set (cloud|loop)',             type: 'trigger',
-    tip: 'cycle commit mode: cloud ↔ loop — what D key creates' },
-  { id: 'commit_drop',  label: 'drop commit (tap D)',       key: 'D',                 osc: '/commit/drop',     fmt: 'bang',             type: 'trigger',
-    tip: 'drop a stationary cloud or loop at the current cursor position' },
-  { id: 'commit_draw',  label: 'draw commit (hold D)',      key: 'hold D',            osc: '/commit/draw',     fmt: 'int 0|1',          type: 'hold',
-    tip: 'hold to draw a moving cloud path or record a loop — release to finalize' },
-  { id: 'commit_release', label: 'release nearest (⌘D)',    key: '⌘D',               osc: '/commit/release',  fmt: 'bang',             type: 'trigger',
-    tip: 'release the nearest commit (cloud or loop) from its slot' },
-  { id: 'commit_clear', label: 'clear all commits',         key: '—',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
-    tip: 'remove all clouds and loops from all slots' },
-  { id: 'commit_selection', label: 'selection mode (toggle)', key: '—',               osc: '/commit/selection', fmt: 'bang=toggle, str=set (closest|farthest)',                 type: 'trigger',
-    tip: 'toggle which commit is targeted for release and morph — closest or farthest from cursor' },
-  { id: 'commit_slots', label: 'commit slot count',         key: '—',                 osc: '/commit/slots',    type: 'cc',
+  { id: null, group: 'pins (= / −)' },
+  { id: 'commit_drop',  label: 'pin here',          key: '=',                 osc: '/commit/drop',     fmt: 'bang',             type: 'trigger',
+    tip: 'the = key: pin what the cursor is on — a tape stroke becomes a loop; nothing in reach pins a cloud at the cursor' },
+  { id: 'commit_draw',  label: 'pin a drawn path (momentary)', key: 'hold =',            osc: '/commit/draw',     fmt: 'int 0|1',          type: 'hold',
+    tip: 'hold =: while painting the loop grows to the release; otherwise a cloud path is drawn — release to pin it' },
+  { id: 'commit_release', label: 'unpin',               key: '−',                 osc: '/commit/release',  fmt: 'bang',             type: 'trigger',
+    tip: 'unpin the selected pin, cloud or loop — nearest, farthest or oldest is Settings → Pins' },
+  { id: 'commit_clear', label: 'unpin all',                 key: '—',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
+    tip: 'unpin every cloud and loop — the pinned rail\'s UNPIN ALL' },
+  { id: 'commit_selection', label: 'selected pin · nearest / oldest (toggle)', key: '—',               osc: '/commit/selection', fmt: 'bang=toggle, str=set (nearest|oldest)',                 type: 'trigger',
+    tip: 'which pin is SELECTED — what unpin takes and the rail marks: nearest the cursor, or the oldest' },
+  { id: 'commit_slots', label: 'pin slot count',         key: '—',                 osc: '/commit/slots',    type: 'cc',
     tip: 'number of active commit slots (1–16)',
     range: { min: 1, max: 16, int: true },
     ccFn: v => {
@@ -252,18 +303,10 @@ const ACTIONS = [
       S._syncCommitSlotCount?.();    // syncs slider + numbox
       (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))();
     } },
-  { id: 'commit_overflow', label: 'commit overflow (cycle)', key: '—',                osc: '/commit/overflow', fmt: 'bang=cycle, str=set (off|oldest|nearest)',                   type: 'trigger',
+  { id: 'commit_overflow', label: 'pin overflow (cycle)', key: '—',                osc: '/commit/overflow', fmt: 'bang=cycle, str=set (off|oldest|nearest)',                   type: 'trigger',
     tip: 'cycle overflow mode: off → oldest → nearest' },
-  { id: 'commit_dir',   label: 'commit movement dir',       key: '—',                 osc: '/commit/dir',      fmt: 'bang=cycle, str=set (pingpong|forward|rev)',                 type: 'trigger',
+  { id: 'commit_dir',   label: 'cloud movement (cycle)',       key: '—',                 osc: '/commit/dir',      fmt: 'bang=cycle, str=set (pingpong|forward|rev)',                 type: 'trigger',
     tip: 'how moving commits traverse their path — cycles fwd → rev → pingpong' },
-  { id: 'commit_volume', label: 'next commit volume',       key: '—',                 osc: '/commit/volume',   type: 'cc',
-    tip: 'volume for the next commit — set before recording',
-    range: { min: 0, max: 1 },
-    ccFn: v => { S.seqNextParams.volume = v / 127; const sl = document.getElementById('seqVolumeSlider'); if (sl) sl.value = S.seqNextParams.volume; const nb = document.getElementById('seqVolumeNum'); if (nb) nb.value = Math.round(S.seqNextParams.volume * 100) + '%'; } },
-  { id: 'commit_speed', label: 'next commit speed',         key: '—',                 osc: '/commit/speed',    type: 'cc',
-    tip: 'speed for the next commit — 1× = original, set before recording',
-    range: { min: 0.25, max: 4, unit: '×' },
-    ccFn: v => { S.seqNextParams.speed = 0.25 + (v / 127) * 3.75; const sl = document.getElementById('seqSpeedSlider'); if (sl) sl.value = S.seqNextParams.speed; const nb = document.getElementById('seqSpeedNum'); if (nb) nb.value = S.seqNextParams.speed.toFixed(2) + '×'; } },
   { id: 'commit_attack', label: 'cloud fade in',             key: '—',                 osc: '/commit/attack',   type: 'cc',
     tip: 'cloud fade-in time — 0s instant, up to 10s swell',
     range: { min: 0, max: 10, unit: 's' },
@@ -272,43 +315,31 @@ const ACTIONS = [
     tip: 'cloud fade-out time — 0s instant, up to 10s fade',
     range: { min: 0, max: 10, unit: 's' },
     ccFn: v => { S.seedRelease = (v / 127) * 10; const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.seedRelease; const nb = document.getElementById('seedReleaseNum'); if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; } },
-  { id: 'loop_release_mode', label: 'loop fade out mode',   key: '—',                 osc: '/commit/loop_release', fmt: 'bang=toggle, str=set (fade|play-to-end)',                 type: 'trigger',
+  { id: 'loop_release_mode', label: 'loop fade out · fade / play-to-end (toggle)',   key: '—',                 osc: '/commit/loop_release', fmt: 'bang=toggle, str=set (fade|play-to-end)',                 type: 'trigger',
     tip: 'fade = fade out over time, play-to-end = loop finishes current pass then stops' },
   { id: 'loop_fade_time', label: 'loop fade out time',    key: '—',                 osc: '/commit/loop_fade_time', type: 'cc',
     tip: 'fade-out duration for loops when released — 0ms instant, up to 2000ms',
     range: { min: 0, max: 2000, unit: 'ms', int: true },
     ccFn: v => { S.loopFadeTimeMs = Math.round((v / 127) * 2000); const sl = document.getElementById('loopFadeTimeSlider'); if (sl) sl.value = S.loopFadeTimeMs; const nb = document.getElementById('loopFadeTimeNum'); if (nb) nb.value = S.loopFadeTimeMs < 1000 ? S.loopFadeTimeMs + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; } },
-  { id: 'commit_blend', label: 'commit blend mode',         key: '—',                 osc: '/commit/blend',    fmt: 'bang=toggle, str=set (focus|all)',             type: 'trigger',
+  { id: 'commit_blend', label: 'pin blend · all / focus (toggle)',         key: '—',                 osc: '/commit/blend',    fmt: 'bang=toggle, str=set (focus|all)',             type: 'trigger',
     tip: 'all = equal weight, focus = distance-weighted blend toward closest' },
-  { id: 'commit_tether', label: 'commit tether',            key: '—',                 osc: '/commit/tether',   fmt: 'int 0|1',          type: 'trigger',
+  { id: 'commit_tether', label: 'pin tether (toggle)',            key: '—',                 osc: '/commit/tether',   fmt: 'int 0|1',          type: 'trigger',
     tip: 'on = commit always plays regardless of cursor distance, off = radius-gated' },
-  { id: 'commit_xfade', label: 'commit xfade',              key: '—',                 osc: '/commit/xfade',    type: 'cc',
+  { id: 'commit_xfade', label: 'pin xfade',              key: '—',                 osc: '/commit/xfade',    type: 'cc',
     tip: '0 = hard snap to nearest commit, 1 = smooth distance-weighted crossfade',
     range: { min: 0, max: 1 },
     ccFn: v => { S.seedXfade = v / 127; S._syncImprovUI?.(); } },
 
-  // ── Cloud Morph ─────────────────────────────────────────────────────────────
-  { id: null, group: 'cloud morph' },
-  { id: 'morph_cc',        label: 'morph position',            key: '—',                 osc: '/morph/position', type: 'cc',
-    tip: 'cloud morph slider — 0 = left preset, 0.5 = planted center, 1 = right preset',
-    range: { min: 0, max: 1 },
-    ccFn: v => { S._setDesktopMorphT?.(v / 127); } },
-  { id: 'morph_sticky',    label: 'morph hold (toggle)',       key: '—',                 osc: '/morph/sticky',   fmt: 'bang',             type: 'trigger',
-    tip: 'toggle morph hold — sticky keeps position, return glides back to center' },
-  { id: 'morph_return',    label: 'morph return time',         key: '—',                 osc: '/morph/return',   type: 'cc',
-    tip: 'return-to-center glide time when hold is off',
-    range: { min: 50, max: 3000, unit: 'ms' },
-    ccFn: v => { S._setDesktopMorphReturnMs?.(50 + (v / 127) * 2950); } },
-  { id: 'radial_morph',    label: 'gesture morph (X)',         key: 'X',                 osc: '/morph/radial',   fmt: 'int 0|1',          type: 'trigger',
-    tip: 'toggle gesture-joystick morph between pinned presets' },
-
   // ── Levels ─────────────────────────────────────────────────────────────────
   { id: null, group: 'levels' },
-  // dB is already a log scale — the ccFn is linear IN dB, so curve stays 'lin'.
+  // dB is already a log scale, so linear IN dB used to be the whole story — but
+  // that spends half the throw under −20 dB. The curve is applied to the throw,
+  // not to the dB, so the range stays declared in dB and carries the exponent.
+  // See LEVEL_FADER_GAMMA in state.js.
   { id: 'master_vol',   label: 'master volume',             key: '—',                 osc: '/master/volume',  type: 'cc',
-    tip: 'master output gain — the master vol slider in audio settings (-60 to +6 dB)',
-    range: { min: -60, max: 6, unit: 'dB' },
-    ccFn: v => { S._setOutputGainDb?.(-60 + (v / 127) * 66); } },
+    tip: 'master output gain — the master vol slider in audio settings (-60 to +18 dB). the throw is curved toward the top, where a level actually sits',
+    range: { min: -60, max: 18, unit: 'dB', curve: 'pow', gamma: LEVEL_FADER_GAMMA },
+    ccFn: v => { S._setOutputGainDb?.(-60 + Math.pow(v / 127, LEVEL_FADER_GAMMA) * 78); } },
   { id: 'mixdown_cursor', label: 'headphone cursor level',  key: '—',                 osc: '/mixdown/cursor', type: 'cc',
     tip: 'cursor grain level in the headphone stereo mix',
     range: { min: 0, max: 1 },
@@ -317,10 +348,18 @@ const ACTIONS = [
     tip: 'house speaker fold-down level in the headphone stereo mix',
     range: { min: 0, max: 1 },
     ccFn: v => { setMixdownHouseGain(v / 127); } },
-  { id: 'noise_gate',   label: 'noise gate threshold',      key: '—',                 osc: '/gate/threshold', type: 'cc',
-    tip: 'noise gate threshold — signal below this RMS level is gated',
-    range: { min: 0, max: 0.06, unit: 'RMS' },
-    ccFn: v => { S._setNoiseGateThreshold?.(v / 127 * 0.06); } },
+  // Curved, not linear: the gate's whole working range against a live mic sits
+  // in the bottom few percent of the span, which a linear throw gives 8 of 128
+  // steps.  gateFracToRms is the meter's own axis, so the pot and the drawn
+  // threshold move together — see GATE_METER_GAMMA in state.js.
+  // id and osc path deliberately keep the old names through the rename: the id
+  // is the key Ek's saved midi/key bindings are stored under, and the osc path
+  // is wired into Max patches. Renaming either would silently orphan them for a
+  // cosmetic gain. The label is what anyone actually reads.
+  { id: 'noise_gate',   label: 'paint gate threshold',      key: '—',                 osc: '/gate/threshold', type: 'cc',
+    tip: 'paint gate threshold — below this, no particle is deposited, so that moment is not granulatable or triggerable. it does NOT attenuate audio. the throw is curved toward zero, where the noise floor lives',
+    range: { min: 0, max: GATE_METER_MAX, unit: 'RMS', curve: 'pow', gamma: GATE_METER_GAMMA },
+    ccFn: v => { S._setPaintGateThreshold?.(gateFracToRms(v / 127)); } },
   { id: 'dry_gain',    label: 'dry monitor gain',           key: '—',                 osc: '/dry/gain',       type: 'cc',
     tip: 'spatialized live input level in the house mix (0 = silent, 2 = +6dB)',
     range: { min: 0, max: 2 },
@@ -328,80 +367,21 @@ const ACTIONS = [
 
   // ── Spatial ────────────────────────────────────────────────────────────────
   { id: null, group: 'spatial' },
-  { id: 'camera_mode',     label: 'camera mode (cycle)',        key: '—',                 osc: '/camera/mode',      fmt: 'bang=cycle, str=set (pull|surface|sensor)',              type: 'trigger',
-    tip: 'pull = mouse drag, surface = pointer lock, sensor = IMU input' },
-  { id: 'spatial_panning',  label: 'spatial panning (toggle)',   key: '—',                 osc: '/spatial/panning',  fmt: 'bang=toggle, str=set (headlocked|worldlocked)',              type: 'trigger',
-    tip: 'headlocked = stereo follows head, worldlocked = stereo follows sphere position' },
-  { id: 'alt_lock',         label: 'freeze sphere (hold)',       key: 'Alt / Opt',         osc: '/spatial/lock',     fmt: 'int 0|1',           type: 'hold',
-    tip: 'hold to freeze sphere rotation — cursor stays in place while camera stops' },
+  { id: 'cursor_lock',      label: 'cursor lock (momentary)',         key: 'Alt / Opt',         osc: '/spatial/lock',     fmt: 'int 0|1',           type: 'hold',
+    tip: 'holds azimuth and elevation together — the same state the AZ and EL footer buttons write. In steer and surface it also hands the pointer back so the UI is clickable' },
 
-  // ── Paint ──────────────────────────────────────────────────────────────────
-  { id: null, group: 'paint samples' },
-  { id: 'paint1',       label: 'paint sample 1 (hold)',     key: 'Q',                 osc: '/paint/1',        fmt: 'int 0|1',          type: 'hold' },
-  { id: 'paint2',       label: 'paint sample 2 (hold)',     key: 'W',                 osc: '/paint/2',        fmt: 'int 0|1',          type: 'hold' },
-  { id: 'paint3',       label: 'paint sample 3 (hold)',     key: 'E',                 osc: '/paint/3',        fmt: 'int 0|1',          type: 'hold' },
-  { id: 'paint4',       label: 'paint sample 4 (hold)',     key: 'R',                 osc: '/paint/4',        fmt: 'int 0|1',          type: 'hold' },
-  { id: 'paint5',       label: 'paint sample 5 (hold)',     key: 'T',                 osc: '/paint/5',        fmt: 'int 0|1',          type: 'hold' },
-  { id: 'paint6',       label: 'paint sample 6 (hold)',     key: 'Y',                 osc: '/paint/6',        fmt: 'int 0|1',          type: 'hold' },
-  { id: 'paint7',       label: 'paint sample 7 (hold)',     key: 'U',                 osc: '/paint/7',        fmt: 'int 0|1',          type: 'hold' },
-  { id: 'paint8',       label: 'paint sample 8 (hold)',     key: 'I',                 osc: '/paint/8',        fmt: 'int 0|1',          type: 'hold' },
-  { id: 'paint9',       label: 'paint sample 9 (hold)',     key: 'O',                 osc: '/paint/9',        fmt: 'int 0|1',          type: 'hold' },
-  { id: 'paint10',      label: 'paint sample 10 (hold)',    key: 'P',                 osc: '/paint/10',       fmt: 'int 0|1',          type: 'hold' },
+  { id: null, group: 'source / sampler' },
+  { id: 'source_live',    label: 'source: live input',      key: '—',                 osc: '/source/live',    fmt: 'bang',             type: 'trigger',
+    tip: 'the brush inks from the live input channel (see audio settings for which)' },
+  { id: 'source_sampler', label: 'source: sampler',         key: '—',                 osc: '/source/sampler', fmt: 'bang',             type: 'trigger',
+    tip: 'the brush inks from the sample instrument’s current sample' },
+  { id: 'sampler_sample', label: 'sampler: select sample',  key: '—',                 osc: '/sampler/sample', fmt: 'int 1..10 = slot, 127 = next loaded', type: 'trigger',
+    tip: 'set the sampler’s current sample — explicit slot number, or cycle the loaded ones' },
+  { id: 'sampler_record', label: 'sampler: record (momentary)',  key: '—',                 osc: '/sampler/record', fmt: 'int 0|1',          type: 'hold',
+    tip: 'capture the live input into the next free sampler slot — refused while a paint stroke is recording' },
 
   // ── App ────────────────────────────────────────────────────────────────────
-  { id: null, group: 'app' },
-  { id: 'perf',         label: 'perf monitor',              key: 'p',                  osc: '/app/perf',       fmt: 'int 0|1',          type: 'trigger' },
-  { id: 'perfmode',     label: 'high-perf render',          key: 'Shift+P',            osc: '/app/perfmode',   fmt: 'int 0|1',          type: 'trigger' },
-  { id: 'darkmode',     label: 'dark / light mode',         key: '—',                  osc: '/app/darkmode',   fmt: 'int 0|1',          type: 'trigger',
-    tip: 'toggle dark mode (black background) and light mode (white background)' },
-  { id: 'projector',    label: 'projector mode',            key: 'Shift+F',            osc: '/app/projector',  fmt: 'bang',             type: 'trigger',
-    tip: 'toggle the projector output window' },
 ];
-
-// ── Per-patch actions ───────────────────────────────────────────────────────
-// One trigger per patch, so each can be bound to its own button, pad or note.
-// Generated from PRESETS rather than written out: the bank size is a constant in
-// state.js, and twenty hand-written entries would be twenty chances to drift
-// from it.
-//
-// The keyboard column mirrors what events.js already does — digits 1–0 for the
-// first ten, shift+digit for the next ten — so the modal documents the real key
-// map instead of a second, hand-maintained copy of it. Past twenty patches
-// there are no digits left, and the key column says so.
-const _DIGIT_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'];
-
-function _buildPatchActions() {
-  return PRESETS.map((_, i) => {
-    const n = i + 1;
-    const digit = _DIGIT_KEYS[i % 10];
-    const a = {
-      id:   `preset_${n}`,
-      key:  i < 10 ? digit : (i < 20 ? `⇧${digit}` : '—'),
-      osc:  `/preset/${n}`,
-      fmt:  'bang',
-      type: 'trigger',
-    };
-    // label and tip are getters, not strings: renaming a user slot in the patch
-    // table has to show up here without a reload, and the modal reads .label.
-    Object.defineProperty(a, 'label', {
-      enumerable: true,
-      get: () => `${n}  ${PRESETS[i]?.name ?? ''}`,
-    });
-    Object.defineProperty(a, 'tip', {
-      enumerable: true,
-      get: () => isUserPreset(i)
-        ? `user patch ${n} — an empty slot changes nothing, every parameter passes through`
-        : `factory patch ${n} — read-only`,
-    });
-    return a;
-  });
-}
-
-{
-  const at = ACTIONS.indexOf(_PATCH_ACTIONS_MARKER);
-  if (at === -1) console.warn('[midi] patch-action marker missing — no per-patch rows');
-  else ACTIONS.splice(at, 1, ..._buildPatchActions());
-}
 
 // Derive the format column for every cc action from its range, so the modal and
 // the accessory's unit maths can't disagree. Non-cc actions keep their literal
@@ -411,38 +391,596 @@ for (const a of ACTIONS) {
   if (a.type === 'cc' && a.range) a.fmt = fmtRange(a.range);
 }
 
-// MIDI mappings: { actionId → { type: 'cc'|'note', channel, number } }
+// MIDI mappings: { actionId → { type: 'cc'|'note', channel, number,
+//                                curve?, outLo?, outHi? } }
 let midiMappings = {};
 let midiLearningId = null;
 let midiAccess = null;
+
+// The binding kinds a palette tile's legend draws — see the switches in
+// initMidi. Read by tiles.js paletteLegend through S._legendShown.
+const LEGEND_KINDS_DEFAULT = { key: true, button: false, midi: false };
+let legendKinds = { ...LEGEND_KINDS_DEFAULT };
+try { const saved = JSON.parse(localStorage.getItem('mubone_legend_kinds') || 'null'); if (saved && typeof saved === 'object') legendKinds = { ...LEGEND_KINDS_DEFAULT, ...saved }; } catch (_) {}
+S._legendShown = kind => !!legendKinds[kind];
 
 // Key/scroll mappings: { actionId → { key, code, shift, ctrl, meta, type } }
 // type: 'key' | 'scroll_up' | 'scroll_down'
 let keyMappings = {};
 let keyLearningId = null;
 
+// Action ids that were renamed or retired, applied once to a stored map on
+// load so a learned key or pad keeps doing what it did. 2026-09-04: the belt
+// became the PALETTE, ids and addresses with it (`belt_*` → `palette_*`).
+// The 2026-09-03 map (#327: the holds moved to position ids, `erase_brush`
+// folded into the erase slot's hold) ran the day it landed and is gone —
+// a stored `belt_1` now means the cap tap, not the old brush-slot hold.
+const _RENAMED_IDS = {
+  belt_2: 'palette_1', belt_3: 'palette_2', belt_4: 'palette_3', belt_5: 'palette_4',
+  belt_3_hold: 'palette_2_hold', belt_4_hold: 'palette_3_hold', belt_5_hold: 'palette_4_hold',
+  erase_brush: 'palette_4_hold',
+};
+const _RETIRED_IDS = ['belt_1', 'erase_toggle', 'trace_trigger', 'commit_mode', 'commit_volume', 'commit_speed', 'perf', 'perfmode', 'darkmode', 'projector', 'camera_mode', 'spatial_panning'];
+function _migrateIds(map) {
+  let n = 0;
+  for (const [was, now] of Object.entries(_RENAMED_IDS)) {
+    if (!(was in map)) continue;
+    if (!(now in map)) map[now] = map[was];
+    delete map[was]; n++;
+  }
+  for (const id of _RETIRED_IDS) if (id in map) { delete map[id]; n++; }
+  return n;
+}
+// The cap left the palette (2026-09-11) and every position below it moved
+// up one: palette_2 → palette_1 (the lens), palette_3* → palette_2* (tape),
+// palette_4* → palette_3* (grain), palette_5* → palette_4* (erase); the old
+// palette_1 (the cap tap) is dropped — `scan_toggle` is that action. The old
+// and new ids OVERLAP, so this cannot live in _RENAMED_IDS, which runs on
+// every load: it runs ONCE per profile, stamped, over the three maps.
+const _PALETTE_RENUMBER_KEY = 'mubone_palette_renumber';
+const _PALETTE_RENUMBER_V = '2026-09-11';
+function _renumberPalette(map) {
+  const out = {}; let n = 0;
+  for (const [id, v] of Object.entries(map)) {
+    const m = /^palette_([1-5])(_cycle|_toggle|_hold)?$/.exec(id);
+    if (!m) { out[id] = v; continue; }
+    n++;
+    if (m[1] === '1') continue;                      // the cap tap: gone
+    out[`palette_${Number(m[1]) - 1}${m[2] ?? ''}`] = v;
+  }
+  if (n) { for (const k of Object.keys(map)) delete map[k]; Object.assign(map, out); }
+  return n;
+}
+/** True when this profile actually STORED that map. A one-shot migration must
+ *  not run over a map that was never stored: `loadButtonMappings` falls back
+ *  to BUTTON_DEFAULTS, which are written in TODAY's numbering, and renumbering
+ *  them shifted every factory button down a position on a fresh profile —
+ *  button 1 landed on the lens instead of line, and the pin pair on 6 and 5.
+ *  It has done that since the renumber landed; nothing read the factory button
+ *  map back until the delay mark (§ 7) needed to know what sat on button 3. */
+function _wasStored(key) { try { return localStorage.getItem(key) != null; } catch (_) { return false; } }
+function renumberPaletteOnce() {
+  let stamp = null;
+  try { stamp = localStorage.getItem(_PALETTE_RENUMBER_KEY); } catch (_) {}
+  if (stamp === _PALETTE_RENUMBER_V) return;
+  if (_wasStored('mubone_key_map')    && _renumberPalette(keyMappings))    saveKeyMappings();
+  if (_wasStored('mubone_midi_map')   && _renumberPalette(midiMappings))   saveMidiMappings();
+  if (_wasStored('mubone_button_map') && _renumberPalette(buttonMappings)) saveButtonMappings();
+  try { localStorage.setItem(_PALETTE_RENUMBER_KEY, _PALETTE_RENUMBER_V); } catch (_) {}
+}
+
+// ── 27 palette actions → 9, ONCE (docs/PALETTE-GUI.md § 1) ──────────────────
+// A position had three actions and the caller chose; it has one, and the tile
+// chooses. Every binding on `palette_N_toggle` or `palette_N_hold` MOVES onto
+// `palette_N` — nothing is lost, because a tile carrying two sources is
+// explicitly legal (§ 6) and `_learnGesture` already guarantees no two actions
+// share a source+gesture, so the move cannot collide.
+//
+// The VERB those bindings implied is derived on the other side, in tiles.js
+// `_derivedVerbs`, which reads these maps at module load — before this runs,
+// because module evaluation precedes every init. Two stamps, no coupling.
+//
+// `palette_N` wins if it is already bound in the same map: it is the id that
+// survives, so its binding is the one the performer will see on the row.
+const _PALETTE_VERBS_KEY = 'mubone_palette_verbs_collapsed';
+const _PALETTE_VERBS_V = '2026-09-11';
+function _collapsePaletteVerbs(map) {
+  let n = 0;
+  for (const suffix of ['_hold', '_toggle']) {
+    for (let i = 1; i <= 9; i++) {
+      const was = `palette_${i}${suffix}`, now = `palette_${i}`;
+      if (!(was in map)) continue;
+      if (!(now in map)) map[now] = map[was];
+      delete map[was]; n++;
+    }
+  }
+  return n;
+}
+function collapsePaletteVerbsOnce() {
+  let stamp = null;
+  try { stamp = localStorage.getItem(_PALETTE_VERBS_KEY); } catch (_) {}
+  if (stamp === _PALETTE_VERBS_V) return;
+  // Same rule as the renumber: a map that was never stored is already in
+  // today's shape, and BUTTON_DEFAULTS is.
+  if (_wasStored('mubone_key_map')    && _collapsePaletteVerbs(keyMappings))    saveKeyMappings();
+  if (_wasStored('mubone_midi_map')   && _collapsePaletteVerbs(midiMappings))   saveMidiMappings();
+  if (_wasStored('mubone_button_map') && _collapsePaletteVerbs(buttonMappings)) saveButtonMappings();
+  try { localStorage.setItem(_PALETTE_VERBS_KEY, _PALETTE_VERBS_V); } catch (_) {}
+}
 function loadKeyMappings() {
   try {
     const saved = localStorage.getItem('mubone_key_map');
     if (saved) keyMappings = JSON.parse(saved);
+    if (_migrateIds(keyMappings)) saveKeyMappings();
   } catch(e) { keyMappings = {}; }
 }
 
+// ── THE DIGITS ARE THE TILE'S, NOT THE POSITION'S (Ek, 2026-09-12) ──────────
+// "when i move the tiles around, the keybound should follow the tile … we
+// shouldn't have the numbers auto assign based on position on the palette."
+// Until today digit N was an IMPLICIT factory key for position N (tiles.js
+// read it straight off the keyboard), so a tile dragged from 1 to 4 answered
+// to 4, and a key learned onto position 1 stayed with position 1. Now every
+// palette key is an explicit row in this map, seeded once from the factory
+// digits, and `S._paletteReordered` carries the three maps along with every
+// place, move and remove — so what a tile answers to is a property of the
+// tile on the strip. A tile that arrives on the strip has NO key until one is
+// learned (Ek, 2026-09-12: "don't auto find a key to assign when i drag
+// things into the palette"). `{ type: 'none' }` — a removed factory digit — has nothing to
+// remove any more and is dropped: an unbound row is just unbound.
+const _PALETTE_DIGITS_KEY = 'mubone_palette_digits';
+const _PALETTE_DIGITS_V   = '2026-09-12b';
+const _keyRow = (key, code, g = 'press') => ({ type: 'key', key, code, shift: false, ctrl: false, meta: false, g });
+function _digitRow(d) { return _keyRow(String(d), `Digit${d}`); }
+// THE FACTORY KEYS, by TILE, for the factory strip in tiles.js
+// DEFAULT_PALETTE (Ek, 2026-09-12): 1 · 2 · 3 for the wide lens, wash and
+// overdub; the SPACEBAR for line as a press and for pen as a long — one key,
+// two gestures, the recogniser tells them apart; ↑ unpins and ↓ pins. Seeded
+// onto whichever POSITION holds that tile, so a profile with its own order
+// still gets the spacebar on line; a tile the factory does not name, or a
+// second copy of one it does, gets no key until one is learned.
+const PALETTE_FACTORY_ORDER = ['wide', 'wash', 'overdub', 'line', 'pen', 'unpin', 'pin'];
+const PALETTE_FACTORY_KEYS = {
+  wide: _digitRow(1), wash: _digitRow(2), overdub: _digitRow(3),
+  line: _keyRow(' ', 'Space'), pen: _keyRow(' ', 'Space', 'long'),
+  unpin: _keyRow('↑', 'ArrowUp'), pin: _keyRow('↓', 'ArrowDown'),
+};
+const _sameKey = (a, b) => a && b && a.type === 'key' && b.type === 'key' && a.code === b.code && !!a.shift === !!b.shift && !!a.ctrl === !!b.ctrl && !!a.meta === !!b.meta && (a.g || 'press') === (b.g || 'press');
+function seedPaletteDigitsOnce() {
+  let stamp = null;
+  try { stamp = localStorage.getItem(_PALETTE_DIGITS_KEY); } catch (_) {}
+  if (stamp === _PALETTE_DIGITS_V) return;
+  let ids = PALETTE_FACTORY_ORDER;
+  try { const arr = JSON.parse(localStorage.getItem('mubone_palette') || 'null'); if (Array.isArray(arr)) ids = arr.slice(0, 9).map(e => e && e.id); } catch (_) {}
+  const given = new Set();
+  ids.forEach((tid, j) => {
+    const n = j + 1, id = `palette_${n}`, km = keyMappings[id];
+    // A learned key stays. The morning's seed — the plain digit of the
+    // position — and a removed factory digit are the factory's to replace.
+    if (km && km.type !== 'none' && !_sameKey(km, _digitRow(n))) return;
+    delete keyMappings[id];
+    const fac = PALETTE_FACTORY_KEYS[tid];
+    if (!fac || given.has(tid)) return;
+    if (Object.values(keyMappings).some(m => _sameKey(m, fac))) return;
+    keyMappings[id] = { ...fac }; given.add(tid);
+  });
+  saveKeyMappings();
+  try { localStorage.setItem(_PALETTE_DIGITS_KEY, _PALETTE_DIGITS_V); } catch (_) {}
+}
+/** The palette changed shape: `from[j]` is the OLD position of what now sits
+ *  at position j, or -1 for a tile that just arrived. Every binding on
+ *  `palette_N` follows its tile through all three maps; an arrival takes the
+ *  lowest free digit. tiles.js calls this after every place, move and remove. */
+S._paletteReordered = (from) => {
+  const maps = [[keyMappings, saveKeyMappings], [buttonMappings, saveButtonMappings], [midiMappings, saveMidiMappings]];
+  for (const [map] of maps) {
+    const old = {};
+    for (let n = 1; n <= 9; n++) { old[n] = map[`palette_${n}`]; delete map[`palette_${n}`]; }
+    from.forEach((o, j) => { if (o >= 0 && old[o + 1]) map[`palette_${j + 1}`] = old[o + 1]; });
+  }
+  for (const [, save] of maps) save();
+};
+
 function saveKeyMappings() {
   try { localStorage.setItem('mubone_key_map', JSON.stringify(keyMappings)); } catch(e) {}
+  S._bindingsChanged?.();
+}
+
+// ── The instrument's buttons (Ek, 2026-09-09) — and every key and note (2026-09-11) ──
+// "there should be a way for me to map those buttons to anything in that
+// settings page." A third input beside key and MIDI, in the ONE table. Each
+// physical button is SIX inputs — press, tap, long, extra long, ×2, ×3 — and the map is
+// actionId → { btn, g }, learned by performing the gesture while a cell
+// listens, cleared by right-click.
+// Since 2026-09-11 the same recogniser reads EVERY two-edged source (Ek: "can
+// the keyboard do that too? it should follow the same system/rule as the
+// buttons so if i ever change how the button works the keyboard should
+// follow"): a learned key (`key:Code[+shift][+ctrl][+meta]`, keyMappings with
+// a `g`) and a MIDI note (`note:ch:num`, midiMappings with a `g`) are sources
+// like a button (`btn:N`), with the same six gestures, the same timings and
+// the same rules below. A binding without `g` is a press — what every key and
+// note did before. The factory KEYS (a digit, S, M …) are not bindings and
+// stay direct. The factory button set is Ek's own (2026-09-10),
+// tap · long · extra long down each button: 1 is the hand (tape toggle, grain
+// momentary), 2 is the session (undo, sweep, erase all), 3 is the pins (pin,
+// unpin, unpin all — one, two and three presses). It was the three palette presses before, which
+// is what sygaldry.js had hard-wired.
+// One gesture, one action: learning it onto a row takes it off any other.
+// Saved `{}` is a real answer and is never re-defaulted.
+//
+// THE EDGES (Ek, ruled 2026-09-09):
+//   press  the down edge, never delayed. "the down edge needs to be the thing
+//          that starts and ends a take. not the up edge." A press fires at
+//          the start of every gesture on its button, so press is EXCLUSIVE
+//          with tap there, and long / ×2 / ×3 beside a press are only for
+//          actions that swallow what the press started (abort and erase).
+//   tap    the up edge, if it came before the long time — the classic short
+//          press, the one that can share a button with long as a true
+//          alternative. Costs the length of the tap; never on a take button.
+//          Beside a ×2 or ×3 it WAITS the tap window (Ek, 2026-09-10: "one
+//          press drop pin, two press pick up, three pick up all" — it fired
+//          at the up and the double then fired on top). So on such a button
+//          one press is the tap, two the ×2, three the ×3, exactly one fires,
+//          and the tap costs the window. A press never waits.
+//   long   the timer, at the long time while still held.
+//   extra long  a second timer, at the extra-long time while still held
+//          (Ek, 2026-09-10: "i think we need an extra long hold"). Long has
+//          already fired by then, the way a press has fired before a long —
+//          so it carries what can follow a long, and a momentary on long is
+//          still on when it fires. Learning waits for it: a hold released
+//          between the two times learns as long.
+//   ×2     the second down inside the tap window — INSTEAD of that down's own
+//          press or tap (a looper's "press twice": the first press does its
+//          thing, the second is the double). Waits the window only when a ×3
+//          is bound on the same button. ×3 is the third down.
+//   A hold action on any gesture is released on the up edge. On a button
+//   with a press bound, the tap window is the shortest take it can make:
+//   two downs inside it are a double, not start and stop. The tap timer
+//   only runs on a button that has a ×2 or ×3 to count for.
+let buttonMappings = {};
+let buttonLearningId = null;
+let _learnKeyEv = null;      // the key event a key learn started on (code + modifiers)
+let _learnKeyDown = null;    // its code while it is still down
+const BUTTON_GESTURES = ['press', 'tap', 'long', 'xlong', 'double', 'triple'];
+const GESTURE_LABEL = { press: '', tap: 'tap', long: 'long', xlong: 'extra long', double: '×2', triple: '×3' };
+// Position 3's tile (overdub) is a TOGGLE in the factory palette and position
+// 2's (wash) is a MOMENTARY, and this map is why (tiles.js DEFAULT_PALETTE
+// says so too): a `tap` is a bang on the up edge with no second edge, so it
+// cannot drive a momentary — `_learnGesture` refuses exactly that pairing
+// below. Button 1 tap therefore needs a toggle under it, and button 1 long,
+// which has both edges, can have the momentary. Change one and change the
+// other. (Positions 2 and 3 swapped roles with the 2026-09-12 factory strip.)
+const BUTTON_DEFAULTS = {
+  palette_3:        { btn: 1, g: 'tap' },  palette_2:        { btn: 1, g: 'long' },
+  undo:             { btn: 2, g: 'tap' },  sweep:            { btn: 2, g: 'long' }, erase_all:    { btn: 2, g: 'xlong' },
+  // Button 3 is the pin pair BY POSITION (2026-09-11): pin at 7, unpin at 6
+  // on the factory palette; unpin all is not a tile and stays the action.
+  palette_7:        { btn: 3, g: 'tap' },  palette_6:        { btn: 3, g: 'double' }, commit_clear: { btn: 3, g: 'triple' },
+};
+function loadButtonMappings() {
+  try {
+    const saved = localStorage.getItem('mubone_button_map');
+    buttonMappings = saved ? JSON.parse(saved) : { ...BUTTON_DEFAULTS };
+    let n = _migrateIds(buttonMappings);
+    for (const bm of Object.values(buttonMappings)) if (bm && !bm.g) { bm.g = 'press'; n++; }
+    if (n) saveButtonMappings();
+  } catch(e) { buttonMappings = { ...BUTTON_DEFAULTS }; }
+}
+function saveButtonMappings() {
+  try { localStorage.setItem('mubone_button_map', JSON.stringify(buttonMappings)); } catch(e) {}
+  S._bindingsChanged?.();
+}
+function buttonMappingLabel(bm) { return bm ? `btn ${bm.btn}${GESTURE_LABEL[bm.g] ? ' ' + GESTURE_LABEL[bm.g] : ''}` : ''; }
+// A SOURCE is what a gesture is read on: `btn:N`, `key:Code[+mods]`, `note:ch:num`.
+const btnSource  = n  => `btn:${n}`;
+const keySource  = km => `key:${km.code}${km.shift ? '+shift' : ''}${km.ctrl ? '+ctrl' : ''}${km.meta ? '+meta' : ''}`;
+const noteSource = mm => `note:${mm.channel}:${mm.number}`;
+const keySourceOf = e => keySource({ code: e.code, shift: e.shiftKey, ctrl: e.ctrlKey, meta: e.metaKey });
+function sourceLabel(src) {
+  if (src.startsWith('btn:')) return `button ${src.slice(4)}`;
+  if (src.startsWith('note:')) { const [, ch, n] = src.split(':'); return `note ${n} ch${ch}`; }
+  const km = Object.values(keyMappings).find(m => m && m.type === 'key' && keySource(m) === src);
+  return km ? `key ${keyMappingLabel({ ...km, g: undefined })}` : src.replace(/^key:/, 'key ');
+}
+/** Every gesture binding in the three maps: [actionId, source, gesture]. */
+function* _gestureBindings() {
+  for (const [id, bm] of Object.entries(buttonMappings)) if (bm) yield [id, btnSource(bm.btn), bm.g || 'press'];
+  for (const [id, km] of Object.entries(keyMappings)) if (km && km.type === 'key') yield [id, keySource(km), km.g || 'press'];
+  for (const [id, mm] of Object.entries(midiMappings)) if (mm && mm.type === 'note') yield [id, noteSource(mm), mm.g || 'press'];
+}
+function actionForGesture(src, g) {
+  for (const [id, s, gg] of _gestureBindings()) if (s === src && gg === g) return id;
+  return null;
+}
+function _bindingsOnSource(src) {
+  const out = new Set();
+  for (const [, s, g] of _gestureBindings()) if (s === src) out.add(g);
+  return out;
+}
+/** Which learn is armed for a source's kind — the recogniser learns into the
+ *  map the source belongs to. */
+function _learningFor(src) {
+  return src.startsWith('btn:') ? buttonLearningId : src.startsWith('key:') ? keyLearningId : midiLearningId;
+}
+
+// The two windows, in ms. Set on Settings → Instrument buttons; kept here
+// because the recogniser is here.
+// Ek's numbers (2026-09-10): long 300, extra long 3000, tap window 120.
+const BUTTON_TIMING_DEFAULT = { long: 300, xlong: 3000, tap: 120 };
+let buttonTiming = { ...BUTTON_TIMING_DEFAULT };
+function loadButtonTiming() {
+  try { const t = JSON.parse(localStorage.getItem('mubone_button_timing') || 'null'); if (t) buttonTiming = { ...BUTTON_TIMING_DEFAULT, ...t }; } catch (_) {}
+}
+function setButtonTiming(t) {
+  buttonTiming = { ...buttonTiming, ...t };
+  // Extra long is a second timer past long; equal or shorter would fire both
+  // at once, or the extra long first.
+  if (buttonTiming.xlong <= buttonTiming.long) buttonTiming.xlong = buttonTiming.long + 100;
+  try { localStorage.setItem('mubone_button_timing', JSON.stringify(buttonTiming)); } catch (_) {}
+}
+
+// Per-button recogniser state. `held` is the gesture whose hold action is
+// down right now, released on the up edge whatever gesture it was. `swallowed`
+// marks a down that fired ×2/×3 (or was learned) so its up edge fires no tap.
+const _btn = {};
+function _bs(btn) { return _btn[btn] || (_btn[btn] = { down: false, downAt: 0, taps: 0, tapTimer: null, longTimer: null, xlongTimer: null, held: [], swallowed: false, longFired: false, xlongFired: false, tapDeferred: false, pressAction: null, pressMark: null }); }
+// A press's neighbour SWALLOWS what the press did (Ek, 2026-09-10: "set loop
+// (toggle) on button 1 press, grain (momentary) on button 1 long — when long
+// activates it'll cancel the loop that just started as if it was never meant
+// to be, then do cloud"; and the same evening, pin on the press, pin a drawn
+// path on the long: "i was expecting it to remove that first pin like it was
+// never meant"). When long, extra long, ×2 or ×3 fires on a button whose
+// press fired this sequence: everything the press wrote to the history since
+// the down is taken back — a pin, a sweep, an erase — undone and gone, never
+// redoable; and a gesture the press started (an activate) is aborted, its
+// take thrown away and never armed. Then the neighbour fires.
+const _ACTIVATES = /^palette_[1-9]$/;
+function _abortPress(st) {
+  const id = st.pressAction; st.pressAction = null;
+  if (st.pressMark != null) { S._historyDiscardSince?.(st.pressMark); st.pressMark = null; }
+  if (id && _ACTIVATES.test(id)) S._gestureAbort?.();
+}
+// A gesture whose action is momentary stays on until the up edge. More than
+// one can be on at once — a momentary on press and another on long — so the
+// button keeps a list and the release lets go of all of them.
+function _hold(st, g) { if (g) st.held.push(g); }
+
+function _fireGesture(src, g, down) {
+  const id = actionForGesture(src, g);
+  const action = id && ACTIONS.find(a => a.id === id);
+  // Settings → Instrument buttons' live monitor reads this: the source (a
+  // button, a key, a note), the gesture as read, and the action it landed
+  // on (or none).
+  window.dispatchEvent(new CustomEvent('button-gesture', { detail: { btn: src.startsWith('btn:') ? Number(src.slice(4)) : null, src, srcLabel: sourceLabel(src), g, down, id: action ? id : null, label: actionLabel(action) || null } }));
+  if (!action) return null;
+  if (action.type === 'hold') { dispatchAction(id, down ? 127 : 0); return down ? g : null; }
+  if (down) dispatchAction(id, 127);
+  return null;
+}
+
+// Learning: the whole gesture is watched, so assigning a press or a tap takes
+// one tap window — the only time those wait for anything. Press and tap are
+// the same physical thing, so learning either takes the other off the button.
+function _learnGesture(src, g) {
+  const id = _learningFor(src);
+  if (id === null) return;
+  // TAP is a bang on the up edge (back 2026-09-09 evening — Ek, testing: "it's
+  // useful to have tap, which is fire on the up"). It has no second edge, so
+  // a momentary cannot take it: the learn stays armed and says so.
+  if (g === 'tap' && ACTIONS.find(a => a.id === id)?.type === 'hold') {
+    setMappingStatus(`“${ACTIONS.find(a => a.id === id)?.label}” is momentary and needs an off edge — tap has none. Press, long-press or double-tap instead…`);
+    return;
+  }
+  // A momentary action (type `hold`) can sit on any gesture that has two
+  // edges — and every gesture does: press is on at the down, long is on at
+  // the long time, ×2 / ×3 on at the second / third down, and all of them
+  // are off at the release (_fireGesture returns the gesture as `held`, and
+  // the up edge releases it). An earlier draft the same day forced a
+  // momentary onto the press; Ek: "for momentary buttons, how come i can't
+  // do btn3 long".
+  // One gesture, one action: the same source+gesture on another row goes.
+  for (const [other, s, gg] of [..._gestureBindings()]) {
+    if (other === id || s !== src || gg !== g) continue;
+    if (s.startsWith('btn:')) delete buttonMappings[other];
+    else if (s.startsWith('key:')) delete keyMappings[other];
+    else delete midiMappings[other];
+  }
+  let shown;
+  if (src.startsWith('btn:')) {
+    buttonMappings[id] = { btn: Number(src.slice(4)), g }; saveButtonMappings();
+    shown = buttonMappingLabel(buttonMappings[id]); buttonLearningId = null;
+  } else if (src.startsWith('key:')) {
+    const ev = _learnKeyEv || {};
+    keyMappings[id] = { type: 'key', key: ev.key ?? null, code: ev.code, shift: !!ev.shift, ctrl: !!ev.ctrl, meta: !!ev.meta, g }; saveKeyMappings();
+    shown = keyMappingLabel(keyMappings[id]); keyLearningId = null; _learnKeyEv = null;
+  } else {
+    const [, ch, n] = src.split(':');
+    midiMappings[id] = { type: 'note', channel: Number(ch), number: Number(n), g }; saveMidiMappings();
+    shown = _midiLabel(midiMappings[id]); midiLearningId = null;
+  }
+  const action = ACTIONS.find(a => a.id === id);
+  setMappingStatus(`mapped "${actionLabel(action)}" → ${shown}`);
+  renderMappingTable();
+}
+
+/** A physical button's edge. `btn` is 1-based, the number printed on the row. */
+// A short press learns as the press, or as TAP when the cell was ⇧-clicked —
+// the two are the same physical thing, so the cell has to say which.
+let _learnShortAs = 'press';
+
+/** The instrument's buttons, from sygaldry.js: button N's edge. */
+function dispatchButton(n, down) { dispatchGesture(btnSource(n), down); }
+/** The recogniser. `src` is a source string (btnSource · keySource · noteSource);
+ *  `down` its edge. Learning is per source kind — the key cell learns keys. */
+function dispatchGesture(btn, down) {
+  const st = _bs(btn);
+  if (down === st.down) return;
+  st.down = down;
+  const learning = _learningFor(btn) !== null;
+  const bound = learning ? new Set(BUTTON_GESTURES) : _bindingsOnSource(btn);
+  const counting = learning || bound.has('double') || bound.has('triple');
+
+  if (down) {
+    st.downAt = performance.now();
+    st.swallowed = false; st.longFired = false; st.xlongFired = false;
+    st.tapDeferred = false;                         // a second down makes the first press a double, not a tap
+    // A down continues the count only while a window is OPEN — the timer the
+    // last release started. Any other down is the first of a new sequence.
+    // The count used to carry over from a press whose release was not counted
+    // (a learn cancelled while the button was down, a binding changed under
+    // it), and the next learn's first press then arrived as a ×2 (Ek,
+    // 2026-09-10). Only a button with something to count for counts at all.
+    const inWindow = st.tapTimer !== null;
+    clearTimeout(st.tapTimer); st.tapTimer = null;
+    st.taps = !counting ? 0 : inWindow ? st.taps + 1 : 1;
+    // The second and third down inside the window are the double and the
+    // triple — INSTEAD of their own press or tap. The first down always is.
+    if (st.taps === 3 && counting && bound.has('triple')) {
+      st.taps = 0; st.swallowed = true;
+      if (learning) _learnGesture(btn, 'triple'); else { _abortPress(st); _hold(st, _fireGesture(btn, 'triple', true)); }
+      return;
+    }
+    if (st.taps === 2 && !learning && bound.has('double') && !bound.has('triple')) {
+      st.taps = 0; st.swallowed = true;
+      _abortPress(st); _hold(st, _fireGesture(btn, 'double', true));
+      return;
+    }
+    if (st.taps === 2 && counting) {
+      // A ×3 may follow (or, learning, anything may): this down is neither a
+      // press nor a tap; the tap timer decides double at the window's end.
+      st.swallowed = true;
+    } else if (!learning && bound.has('press')) {
+      // The front edge, undelayed.
+      st.pressAction = actionForGesture(btn, 'press');
+      st.pressMark = S._undoCount?.() ?? null;       // what the press writes lands above this
+      _hold(st, _fireGesture(btn, 'press', true));
+    }
+    if (bound.has('long')) {
+      clearTimeout(st.longTimer);
+      st.longTimer = setTimeout(() => {
+        st.longTimer = null;
+        if (!st.down) return;
+        clearTimeout(st.tapTimer); st.tapTimer = null; st.taps = 0;
+        st.longFired = true; st.swallowed = true;
+        // Learning waits: the release decides long, the next timer extra long.
+        if (!learning) { _abortPress(st); _hold(st, _fireGesture(btn, 'long', true)); }
+      }, buttonTiming.long);
+    }
+    if (bound.has('xlong')) {
+      clearTimeout(st.xlongTimer);
+      st.xlongTimer = setTimeout(() => {
+        st.xlongTimer = null;
+        if (!st.down) return;
+        clearTimeout(st.tapTimer); st.tapTimer = null; st.taps = 0;
+        st.xlongFired = true; st.swallowed = true;
+        if (learning) _learnGesture(btn, 'xlong');
+        else { _abortPress(st); _hold(st, _fireGesture(btn, 'xlong', true)); }
+      }, buttonTiming.xlong);
+    }
+  } else {
+    clearTimeout(st.longTimer); st.longTimer = null;
+    clearTimeout(st.xlongTimer); st.xlongTimer = null;
+    if (st.held.length) { for (const g of st.held) _fireGesture(btn, g, false); st.held = []; }
+    else if (!learning && !st.swallowed && bound.has('press')) _fireGesture(btn, 'press', false);
+    // THE TAP WINDOW runs from the UP edge: it is the GAP after a press in
+    // which the next press counts as the ×2 or ×3 (2026-09-10, evening). It
+    // ran from the down until then, so at Ek's 120 ms a double had to land
+    // its second down within 120 ms of the first — no hand does that; the
+    // gap is what a hand controls. A long or extra long ends the sequence.
+    const short = !st.longFired && !st.xlongFired;
+    if (counting && short) {
+      clearTimeout(st.tapTimer);
+      st.tapTimer = setTimeout(() => {
+        st.tapTimer = null;
+        const n = st.taps; st.taps = 0;
+        if (learning) _learnGesture(btn, n >= 3 ? 'triple' : n === 2 ? 'double' : _learnShortAs);
+        else if (n === 2 && bound.has('double')) { _abortPress(st); _hold(st, _fireGesture(btn, 'double', true)); }
+        else if (n === 1 && st.tapDeferred) { st.tapDeferred = false; _fireGesture(btn, 'tap', true); }
+      }, buttonTiming.tap);
+    }
+    if (learning) {
+      if (st.xlongFired) return;                    // learned at the timer
+      if (st.longFired) _learnGesture(btn, 'long');
+      return;                                       // else the window decides
+    }
+    if (st.swallowed) return;                       // a double, a triple, a long: no tap
+    // TAP: a bang on the up edge of a short press nothing else claimed. It
+    // may share the button with a press — the press fired at the down, the
+    // tap fires now — so a press-and-tap button does both on every short press.
+    if (bound.has('tap')) {
+      // Beside a ×2 or ×3 the tap waits the window, so one press is a tap
+      // and two are a double, never both.
+      if (counting) st.tapDeferred = true;
+      else _fireGesture(btn, 'tap', true);
+    }
+  }
+}
+
+/** What fires an action today, for a surface that shows its bindings (the
+ *  palette's key legend, tiles.js): the learned key if there is one, the
+ *  MIDI assignment if there is one. Read through a function, never through
+ *  the map objects — the keys page replaces a map wholesale on "clear". */
+function bindingOf(actionId) {
+  const km = keyMappings[actionId], mm = midiMappings[actionId], bm = buttonMappings[actionId];
+  return {
+    key:    km ? keyMappingLabel(km) : null,
+    removed: !!km && km.type === 'none',   // its factory key was right-clicked away
+    midi:   mm ? (mm.type === 'cc' ? `cc ${mm.number}` : `n ${mm.number}${mm.g && GESTURE_LABEL[mm.g] ? ' ' + GESTURE_LABEL[mm.g] : ''}`) : null,
+    button: bm ? buttonMappingLabel(bm) : null,
+  };
+}
+/** EVERY input bound to one action, for the palette's legend (PALETTE-GUI § 6).
+ *  `bindingOf` above answers with LABELS for the keys page's three cells; this
+ *  answers with the parts, because the tile draws source, gesture and delay in
+ *  three colours and needs them apart.
+ *
+ *  `delayed` is § 7: binding `×2` or `×3` anywhere on an input makes that
+ *  input's TAP wait the double window before it can fire, because the
+ *  recogniser defers a tap it might have to re-read as the first of a pair
+ *  (`dispatchGesture`: `if (counting) st.tapDeferred = true`). Measured at
+ *  ~125 ms against ~0.3 ms on a button with no sibling — a timing change to a
+ *  gesture the performer did not touch, so the tile says so. Only a TAP is
+ *  slowed: a press fires on the down edge and never waits.
+ *
+ *  `factoryCode` is the tile's own digit, which is not in any map — pass it
+ *  and it is reported like a learned key when nothing has taken it. */
+function bindingsOf(actionId, factoryCode) {
+  const out = [];
+  const slow = (src, g) => g === 'tap' && (() => { const b = _bindingsOnSource(src); return b.has('double') || b.has('triple'); })();
+  const km = keyMappings[actionId], bm = buttonMappings[actionId], mm = midiMappings[actionId];
+  if (km && km.type === 'key') {
+    const mods = (km.meta ? '⌘' : '') + (km.ctrl ? 'ctrl' : '') + (km.shift ? '⇧' : '');
+    const g = km.g || 'press';
+    out.push({ kind: 'key', label: mods + (km.code === 'Space' ? 'spacebar' : (km.key || km.code)), space: km.code === 'Space', g, delayed: slow(keySource(km), g) });
+  } else if (factoryCode && !km && !keyTaken(factoryCode)) {
+    const src = keySource({ code: factoryCode });
+    out.push({ kind: 'key', label: factoryCode.replace(/^Digit|^Key/, ''), space: factoryCode === 'Space', g: 'press', delayed: slow(src, 'press') });
+  }
+  if (bm) { const g = bm.g || 'press'; out.push({ kind: 'button', label: String(bm.btn), g, delayed: slow(btnSource(bm.btn), g) }); }
+  if (mm && mm.type === 'note') { const g = mm.g || 'press'; out.push({ kind: 'midi', label: `n ${mm.number}`, g, delayed: slow(noteSource(mm), g) }); }
+  return out;
+}
+
+/** True when a factory key was learned onto some other action, so the
+ *  factory binding it stood on is gone (tiles.js _keyRelearned's second half). */
+function keyTaken(code) {
+  return Object.values(keyMappings).some(m => m.type === 'key' && m.code === code && !m.shift && !m.ctrl && !m.meta);
 }
 
 // Returns a human-readable label for a key mapping
 function keyMappingLabel(km) {
-  if (!km) return '';
+  if (!km || km.type === 'none') return '';   // `none`: a factory key REMOVED (right-click)
   if (km.type === 'scroll_up')   return 'scroll ↑';
   if (km.type === 'scroll_down') return 'scroll ↓';
   const parts = [];
   if (km.meta)  parts.push('⌘');
   if (km.ctrl)  parts.push('ctrl');
   if (km.shift) parts.push('shift');
-  parts.push(km.key || km.code);
-  return parts.join('+');
+  // A learned spacebar arrives as e.key ' ' — blank in a cell — so it is named
+  // (Ek, 2026-09-10: "anytime the assignment is space it should be spacebar").
+  parts.push(km.code === 'Space' ? 'spacebar' : (km.key || km.code));
+  // The gesture the key is read for (2026-09-11); a press says nothing, as on a button.
+  return parts.join('+') + (km.g && GESTURE_LABEL[km.g] ? ' ' + GESTURE_LABEL[km.g] : '');
 }
 
 // Remove any existing binding that uses the same key combo (conflict resolution)
@@ -463,11 +1001,55 @@ function loadMidiMappings() {
   try {
     const saved = localStorage.getItem('mubone_midi_map');
     if (saved) midiMappings = JSON.parse(saved);
+    if (_migrateIds(midiMappings)) saveMidiMappings();
   } catch(e) { midiMappings = {}; }
 }
 
 function saveMidiMappings() {
   try { localStorage.setItem('mubone_midi_map', JSON.stringify(midiMappings)); } catch(e) {}
+  S._bindingsChanged?.();
+}
+
+// ── Per-mapping scale stage ─────────────────────────────────────────────────
+// A cc mapping can carry a response curve and an output window — the same stage
+// scale.js already applies to an accessory pot, now on the MIDI path it was
+// written for.  It lives on the MAPPING, not the action: a fader and an OSC
+// sender pointed at the same destination want different shapes, and the ccFn is
+// the thing they have in common.
+//
+// Why it exists: a 7-bit cc has 128 steps and no more.  A curve cannot invent
+// resolution the controller never sent — it redistributes the steps it did, so
+// buying finer control at one end always spends it at the other.  Master volume
+// linear in dB is 0.52 dB a step everywhere, half of them below −27 dB where
+// nothing is audible; γ 0.5 halves the step at the top and pays for it with a
+// 15 dB first step off the stop.
+//
+// Absent fields mean identity, so an untouched mapping dispatches the raw cc
+// value byte for byte and nothing already bound changes feel.  Bounds are
+// stored NORMALISED (0–1 of the destination's travel), matching
+// accessory-registry: retargeting then keeps the same fraction of the throw
+// rather than reading as a corrupt value in the new destination's units.
+
+function mapScale(mapping) {
+  const c = Number(mapping?.curve);
+  const l = Number(mapping?.outLo);
+  const h = Number(mapping?.outHi);
+  return {
+    curve: Number.isFinite(c) && c > 0 ? c : 1,
+    lo:    Number.isFinite(l) ? l : 0,
+    hi:    Number.isFinite(h) ? h : 1,
+  };
+}
+
+/** Is this mapping doing anything other than passing the cc straight through? */
+function isScaled(mapping) {
+  const s = mapScale(mapping);
+  return Math.abs(s.curve - 1) > 0.001 || s.lo > 0.001 || s.hi < 0.999;
+}
+
+/** A destination has a throw to shape only if it's continuous and cc-bound. */
+function scaleEditable(action, mapping) {
+  return action?.type === 'cc' && mapping?.type === 'cc';
 }
 
 // ── MIDI input enable (per instance profile) ────────────────────────────────
@@ -481,13 +1063,10 @@ let midiInputEnabled = (() => {
 })();
 
 function _syncMidiInputToggleUI() {
-  const btn = document.getElementById('midiInputToggle');
-  if (btn) {
-    btn.textContent = midiInputEnabled ? 'midi: on' : 'midi: off';
-    btn.classList.toggle('active', midiInputEnabled);
-  }
+  const tog = document.getElementById('midiInputToggle');
+  if (tog) tog.checked = midiInputEnabled;
   const portEl = document.getElementById('midiPortName');
-  if (portEl && !midiInputEnabled) portEl.textContent = 'off';
+  if (portEl && !midiInputEnabled) portEl.textContent = 'Off';
 }
 
 export async function initMidi() {
@@ -495,8 +1074,8 @@ export async function initMidi() {
 
   const toggleBtn = document.getElementById('midiInputToggle');
   if (toggleBtn) {
-    toggleBtn.addEventListener('click', () => {
-      midiInputEnabled = !midiInputEnabled;
+    toggleBtn.addEventListener('change', () => {
+      midiInputEnabled = !!toggleBtn.checked;
       try { localStorage.setItem('mubone_midi_input', midiInputEnabled ? 'on' : 'off'); } catch (_) {}
       if (midiInputEnabled) refreshMidiInputs();
       _syncMidiInputToggleUI();
@@ -517,8 +1096,10 @@ function refreshMidiInputs() {
   const inputs = [...midiAccess.inputs.values()];
   const portEl = document.getElementById('midiPortName');
   if (portEl) portEl.textContent = midiInputEnabled
-    ? (inputs.length ? inputs.map(i => i.name).join(', ') : '—')
-    : 'off';
+    ? (inputs.length
+        ? `${inputs.map(i => i.name).join(', ')} · ${inputs.length} port${inputs.length === 1 ? '' : 's'} available`
+        : 'No devices attached')
+    : 'Off';
   for (const input of inputs) {
     input.onmidimessage = handleMidiMessage;
   }
@@ -538,32 +1119,46 @@ function handleMidiMessage(event) {
     }));
   } catch (_) {}
 
+  // A NOTE is a two-edged source like a button (2026-09-11): on and off go to
+  // the recogniser, which reads press · tap · long · extra long · ×2 · ×3 on it
+  // and, learning, learns the gesture performed. A CC has travel, not edges.
+  const isNote = type === 9 || type === 8;
+  if (isNote) {
+    const src = noteSource({ channel, number: num });
+    const down = type === 9 && val > 0;
+    if (midiLearningId !== null || _bindingsOnSource(src).size) dispatchGesture(src, down);
+    return;
+  }
   if (midiLearningId !== null) {
-    const mapType = (type === 11) ? 'cc' : 'note';
-    midiMappings[midiLearningId] = { type: mapType, channel, number: num };
+    midiMappings[midiLearningId] = { type: 'cc', channel, number: num };
     saveMidiMappings();
     const action = ACTIONS.find(a => a.id === midiLearningId);
-    setMappingStatus(`mapped "${action?.label}" → ${mapType.toUpperCase()} ${num} ch${channel}`);
+    setMappingStatus(`mapped "${actionLabel(action)}" → CC ${num} ch${channel}`);
     midiLearningId = null;
     renderMappingTable();
     return;
   }
 
+  // Sends its release edge: a hold by declaration, or a palette slot tap —
+  // ALWAYS for those three, not only while "tool keys fire" is on. The
+  // switch can flip while a note or CC bound to one is down, and the
+  // release must still land or the hold is stranded; with the switch off,
+  // a 0 there is a no-op (tiles.js S._paletteTap).
+  const _isHold = a => a.type === 'hold';
   for (const action of ACTIONS) {
     if (!action.id) continue;  // skip group headers
     const mapping = midiMappings[action.id];
     if (!mapping) continue;
     const matchCC   = mapping.type === 'cc'   && type === 11 && mapping.number === num && mapping.channel === channel;
-    const matchNote = mapping.type === 'note' && type === 9  && mapping.number === num && mapping.channel === channel && val > 0;
-    // Note-off for hold actions: status type 8 (noteOff) or type 9 with vel 0
-    const matchNoteOff = mapping.type === 'note' && mapping.number === num && mapping.channel === channel &&
-      ((type === 8) || (type === 9 && val === 0));
     // For trigger-type actions mapped to CC, only fire on press (val > 0), not release
-    if (matchCC && action.type === 'trigger' && val === 0) continue;
-    if (matchCC || matchNote) {
-      dispatchAction(action.id, matchCC ? val : 127);
-    } else if (matchNoteOff && action.type === 'hold') {
-      dispatchAction(action.id, 0);
+    if (matchCC && action.type === 'trigger' && !_isHold(action) && val === 0) continue;
+    if (matchCC) {
+      // Continuous destinations go through the mapping's scale stage; a trigger
+      // or hold has no throw to shape and passes the raw press value.
+      // dispatchAction's domain is not integer-only, so the shaped float
+      // survives all the way into the ccFn.
+      const out = action.type === 'cc' ? scaleControl(val / 127, mapScale(mapping)) * 127 : val;
+      dispatchAction(action.id, out);
     }
   }
 }
@@ -577,7 +1172,7 @@ function _flash(el) {
 
 // #105: OSC string-set support. Multi-option controls historically cycled on
 // bang; they now ALSO accept the target mode as a string (e.g.
-// `/camera/mode sensor`, `/trace/mode trace+loop`) so external controllers
+// `/camera/mode sensor`, `/commit/mode loop`) so external controllers
 // can set a specific mode without cycling. Normalizes case/aliases; returns
 // the canonical mode or null (→ fall back to cycling).
 function _strMode(midiVal, modes, aliases = {}) {
@@ -588,70 +1183,30 @@ function _strMode(midiVal, modes, aliases = {}) {
 }
 
 function dispatchAction(id, midiVal) {
-  // Patch triggers are generated, so they're matched by prefix rather than
-  // twenty switch cases. Press edge only — a patch change on note-off would
-  // fire twice per pad hit.
-  if (id.startsWith('preset_')) {
-    const n = parseInt(id.slice(7), 10);
-    if (Number.isFinite(n) && n >= 1 && n <= PRESETS.length && midiVal > 0) selectPreset(n - 1);
-    return;
-  }
   switch(id) {
-    case 'recpaint': {
-      // Tap-toggle vs hold-momentary: same logic as spacebar/click.
-      // val > 0 = press, val === 0 = release.
-      if (midiVal > 0) {
-        // If already toggled on, this is a tap-off — use canonical cleanup
-        if (S._traceToggled) {
-          S._stopToggleTrace?.();
-        } else if (!S.isPainting) {
-          // Press: start painting
-          S._traceActive = true;
-          S._midiTraceDownAt = performance.now();
-          ensureAudioContext(); startLiveRecording();
-          recordStrokeStart('live', S.currentLiveBufferIdx);
-          S.isPainting = true; S.paintFrameCount = 0;
-          S.updateLiveRecUI?.();
-        }
-      } else if (midiVal === 0) {
-        // Release — if toggled, no-op
-        if (S._traceToggled) break;
-        // Tap detection
-        const tapMs = performance.now() - (S._midiTraceDownAt || 0);
-        // Only allow toggle in plain trace mode (not trace+loop or trace+cloud)
-        if (S._midiTraceDownAt && tapMs < 200 && S.traceMode === 'trace') {
-          S._traceToggled = true;
-          if (S.hfArmed) {
-            S.isPainting = false; S.currentStrokeId = -1;
-            if (S.isRecording) stopLiveRecording();
-          }
-          S.updateLiveRecUI?.(); S._syncHandsfreeUI?.();
-          S._midiTraceDownAt = 0;
-          break;
-        }
-        S._midiTraceDownAt = 0;
-        // Momentary release: stop painting
-        if (S.isPainting) {
-          if (S.seqModeEnabled && S.currentStrokeId > 0) {
-            try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
-          }
-          S.isPainting      = false;
-          S.currentStrokeId = -1;
-          if (S.isRecording) stopLiveRecording();
-          S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-          S.updateLiveRecUI?.();
-        }
-        S._traceActive = false;
-      }
-      // Sync trace indicator button with isPainting state (OSC/MIDI path)
-      const _traceBtn = document.getElementById('paintIndicatorBtn');
-      if (_traceBtn) _traceBtn.classList.toggle('painting', S.isPainting || S._traceToggled);
-      break;
-    }
     case 'mute':
       if (S._setMuted) S._setMuted(!S.isMuted);
       else S.isMuted = !S.isMuted;
       break;
+    // The dry monitor's mute is a MODE change — off is the mute, and unmuting
+    // returns to the mode it left (on or auto), never blindly to on. The
+    // setting is never persisted (state.js), so neither is what it left.
+    case 'dry_mute': {
+      if (S.dryMonitorMode !== 'off') { S._dryModeBeforeMute = S.dryMonitorMode; S._setDryMonitorMode?.('off'); }
+      else S._setDryMonitorMode?.(S._dryModeBeforeMute || 'on');
+      break;
+    }
+    case 'dry_mute_hold': {
+      const on = midiVal > 0;
+      if (on) {
+        if (S._dryMuteHoldPrev == null) S._dryMuteHoldPrev = S.dryMonitorMode;
+        S._setDryMonitorMode?.('off');
+      } else if (S._dryMuteHoldPrev != null) {
+        const prev = S._dryMuteHoldPrev; S._dryMuteHoldPrev = null;
+        S._setDryMonitorMode?.(prev);
+      }
+      break;
+    }
     case 'mute_hold': {
       // Momentary (cough-button) mute. Release restores the state at press
       // time rather than blindly unmuting — otherwise tapping the pedal while
@@ -687,22 +1242,8 @@ function dispatchAction(id, midiVal) {
     case 'erase_all':
       S._sessionEraseAll?.();
       break;
-    case 'erase_brush':
-      // hold: val > 0 = press (start erasing), val === 0 = release
-      if (midiVal > 0) startEraseStroke();
-      else             stopEraseStroke();
-      break;
-    case 'erase_toggle':
-      // Latching counterpart to erase_brush, same rationale as trace_toggle:
-      // controllers that only emit a press edge (AirTurn and most foot pedals)
-      // can never deliver the release a hold action needs, so the brush would
-      // latch on forever.  S.eraseHeld is the single source of truth for state
-      // — both entry points drive the same stroke lifecycle, so a toggle can
-      // be ended by releasing the F key and vice versa.
-      if (S.eraseHeld) stopEraseStroke();
-      else             startEraseStroke();
-      break;
     case 'undo':        undoLastStroke(); break;
+    case 'redo':        redoLastStroke(); break;
     case 'sweep':
       if (S._sessionSweep) S._sessionSweep();
       else sweep();
@@ -712,122 +1253,48 @@ function dispatchAction(id, midiVal) {
       break;
 
     // ── View ─────────────────────────────────────────────────────────────────
-    case 'projector':
-      if (S._toggleProjectorMode) S._toggleProjectorMode();
-      _flash(document.getElementById('projectorModeBtn'));
-      break;
+    // `recpaint` and `trace_toggle` were handled here — the main button as a
+    // pedal and as a toggle. They are gone (2026-09-11): a play is started by
+    // a POSITION, and `_paletteActivate` is the one door.
 
-    // ── Gesture morph ────────────────────────────────────────────────────────
-    case 'radial_morph':
-      S.radialMorphOn = !S.radialMorphOn;
-      S._syncMorphBtnUI?.();
-      _flash(document.getElementById('morphBtn'));
+    // ── Trigger tool ────────────────────────────────────────────────────────
+    case 'trigger_chop':
+      // Same shape as scan_toggle: 1 / 0 set, anything else (a bang) toggles.
+      // The row existed in ACTIONS since #194 with no case here, so a pad or
+      // /trigger/chop bound to it did nothing — osc-audit's wiring section
+      // reported it on every run and nobody could tell it from #322.
+      if (midiVal === 1)       S._setChopOn?.(true);
+      else if (midiVal === 0)  S._setChopOn?.(false);
+      else                     S._setChopOn?.(!S.triggerParams.chopOn);
       break;
-
-    // ── Trace ───────────────────────────────────────────────────────────────
-    case 'trace_toggle': {
-      // Direct toggle: no tap-timing required — ideal for foot pedals.
-      // Bang toggles trace on/off with same lifecycle as tap-toggle.
-      if (S._traceToggled || S.isPainting) {
-        // Currently on → turn off
-        S._stopToggleTrace?.();
-      } else if (S.traceMode === 'trace') {
-        // Currently off, plain trace mode → toggle on
-        S._traceToggled = true;
-        S._traceActive  = true;
-        // If handsfree armed, let the gate manage recording segments
-        if (S.hfArmed) {
-          S.updateLiveRecUI?.(); S._syncHandsfreeUI?.();
-        } else {
-          // No handsfree — start continuous recording immediately
-          ensureAudioContext(); startLiveRecording();
-          recordStrokeStart('live', S.currentLiveBufferIdx);
-          S.isPainting = true; S.paintFrameCount = 0;
-          S.updateLiveRecUI?.();
-        }
-      }
-      const _tb = document.getElementById('paintIndicatorBtn');
-      if (_tb) _tb.classList.toggle('painting', S.isPainting || S._traceToggled);
-      break;
-    }
-    case 'trace_mode': {
-      // If toggled trace is active, force-stop before mode change
-      if (S._traceToggled) {
-        S._stopToggleTrace?.();
-      }
-      const _modes = ['trace', 'trace+loop', 'trace+cloud'];
-      const _set = _strMode(midiVal, _modes, { loop: 'trace+loop', cloud: 'trace+cloud' });
-      const _idx = _modes.indexOf(S.traceMode);
-      S.traceMode = _set ?? _modes[(_idx + 1) % _modes.length];
-      _flash(document.getElementById('commitLockBtn'));
-      S._syncCommitUI?.();
-      break;
-    }
 
     // ── Commit: unified drop/draw/release/clear ─────────────────────────────
-    case 'commit_mode': {
-      S.commitMode = _strMode(midiVal, ['cloud', 'loop'])
-        ?? (S.commitMode === 'cloud' ? 'loop' : 'cloud');
-      S._syncCommitUI?.();
-      break;
-    }
+    // Both pin forms are the `=` key's own path (tiles.js S._pinTap / S._pinHold,
+    // 2026-09-10): what the cursor is on decides, never the commitMode setting.
     case 'commit_drop':
-      if (S.commitMode === 'cloud') plantSeed();
-      else                          dropSeqFromCursor();
+      S._pinTap?.();
       _flash(document.getElementById('commitDropBtn'));
+      S._pinFlash?.('pin');
       break;
     case 'commit_draw': {
-      const _drawBtn = document.getElementById('commitDrawBtn');
-      if (S.commitMode === 'cloud') {
-        if (midiVal > 0) { startSeedPlant(); if (_drawBtn) _drawBtn.classList.add('painting'); }
-        else             { finalizeSeedPlant(); if (_drawBtn) _drawBtn.classList.remove('painting'); }
-      } else {
-        // Loop arm: reuse existing seq_arm logic
-        if (midiVal > 0 && !S.isPainting) {
-          if (S.seqOverflow === 'off') {
-            let full = true;
-            for (let i = 0; i < S.seqSlotCount; i++) { if (!S.seqSlots[i]) { full = false; break; } }
-            if (full) break;
-          }
-          ensureAudioContext();
-          S._loopRecPreSeqMode = S.seqModeEnabled;
-          S.seqModeEnabled = true;
-          if (!S.scanMuted) setScanMuted(true);
-          startLiveRecording();
-          recordStrokeStart('live', S.currentLiveBufferIdx);
-          S.isPainting = true; S.paintFrameCount = 0;
-          if (_drawBtn) _drawBtn.classList.add('painting');
-          S.updateLiveRecUI?.();
-        } else if (midiVal === 0 && S.isPainting) {
-          if (S.currentStrokeId > 0) {
-            try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
-          }
-          S.isPainting      = false;
-          S.currentStrokeId = -1;
-          if (S.isRecording) stopLiveRecording();
-          S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-          if (S._loopRecPreSeqMode !== undefined) {
-            S.seqModeEnabled = S._loopRecPreSeqMode;
-            S._syncCommitUI?.();
-            S._loopRecPreSeqMode = undefined;
-          }
-          if (_drawBtn) _drawBtn.classList.remove('painting');
-          S.updateLiveRecUI?.();
-        }
-      }
+      const on = midiVal > 0;
+      S._pinHold?.(on);
+      document.getElementById('commitDrawBtn')?.classList.toggle('painting', on);
       break;
     }
     case 'commit_release':
       releaseCommit();
       _flash(document.getElementById('commitReleaseBtn'));
+      S._pinFlash?.('unpin');
       break;
     case 'commit_clear':
       clearAllCommits();
       _flash(document.getElementById('commitClearBtn'));
+      S._pinFlash?.('all');
       break;
     case 'commit_selection': {
-      S.selectionMode = _strMode(midiVal, ['closest', 'farthest'], { nearest: 'closest' })
-        ?? (S.selectionMode === 'closest' ? 'farthest' : 'closest');
+      S.selectionMode = _strMode(midiVal, ['nearest', 'oldest'], { closest: 'nearest' })
+        ?? (S.selectionMode === 'nearest' ? 'oldest' : 'nearest');
       S._syncImprovUI?.();
       break;
     }
@@ -872,11 +1339,6 @@ function dispatchAction(id, midiVal) {
       S._syncImprovUI?.();
       break;
 
-    // ── Cloud Morph ────────────────────────────────────────────────────────
-    case 'morph_sticky':
-      S._toggleDesktopMorphSticky?.();
-      break;
-
     // ── Search ──────────────────────────────────────────────────────────────
     case 'snap':         toggleNearestMode(); break;
     case 'k_all':
@@ -904,79 +1366,50 @@ function dispatchAction(id, midiVal) {
       S.grainCurveType = _strMode(midiVal, curves,
         { triangle: 'tri', rectangle: 'rect', square: 'rect' })
         ?? curves[(curves.indexOf(S.grainCurveType) + 1) % curves.length];
-      rebuildGrainCurves();
       S.syncGrainControlsUI?.();
       break;
     }
-    case 'camera_mode': {
-      const modes = ['pull', 'surface', 'sensor'];
-      const idx = modes.indexOf(S.cameraMode);
-      const next = _strMode(midiVal, modes) ?? modes[(idx + 1) % modes.length];
-      if (S._setCameraMode) S._setCameraMode(next);
+    // THE PALETTE BY POSITION — one action each (docs/PALETTE-GUI.md § 1).
+    // The VERB is the tile's, so this hands the raw edge to tiles.js and asks
+    // nothing: a bang tile acts on the down and ignores the 0, a momentary
+    // takes both edges, a toggle flips on the down. `palette_N_toggle` and
+    // `palette_N_hold` — 18 of the old 27 rows — are gone with the three-verb
+    // position; `_collapsePaletteVerbsOnce` moved any binding on them here.
+    case 'palette_1': S._paletteFire?.(0, midiVal > 0); break;
+    case 'palette_2': S._paletteFire?.(1, midiVal > 0); break;
+    case 'palette_3': S._paletteFire?.(2, midiVal > 0); break;
+    case 'palette_4': S._paletteFire?.(3, midiVal > 0); break;
+    case 'palette_5': S._paletteFire?.(4, midiVal > 0); break;
+    case 'palette_6': S._paletteFire?.(5, midiVal > 0); break;
+    case 'palette_7': S._paletteFire?.(6, midiVal > 0); break;
+    case 'palette_8': S._paletteFire?.(7, midiVal > 0); break;
+    case 'palette_9': S._paletteFire?.(8, midiVal > 0); break;
+    case 'wet_toggle':
+      // Same convention as scan_toggle: OSC 0|1 sets, keys/GUI send 127 → toggle.
+      S._setWet?.(midiVal === 1 ? true : midiVal === 0 ? false : null);
+      break;
+    case 'cursor_lock':
+      // One owner. The body that used to sit here was a copy of events.js's and
+      // had lost _syncSessionAltLock, the surface overlay and the entry-hint
+      // dismissal along the way — so a pedal and the ⌥ key left the app in
+      // measurably different states.
+      S._setCursorLock?.(midiVal > 0);
+      break;
+    case 'az_source':
+    case 'el_source': {
+      if (midiVal === 0) break; // act on press only, ignore release
+      // Same bang-cycles / string-sets idiom as trace_mode: a pedal cycles,
+      // Max can address a state directly.  Frozen-snapshot clearing and the
+      // DOM sync both live in setAxisSource() (main.js) — one owner.
+      const stateKey = id === 'az_source' ? 'azSource' : 'elSource';
+      const set = _strMode(midiVal, AXIS_SOURCES, { free: 'sensor', lock: 'locked', map: 'mapped' });
+      // A bang toggles HELD ↔ FREE, the same two states the footer button has
+      // (2026-09-01) — a pedal that steps a foot into 'mapped' mid-set is the
+      // same trap the three-state button was. The explicit string sets keep all
+      // three, so Max can still address 'mapped' directly.
+      S._setAxisSource?.(stateKey, set ?? (axisHeld(S[stateKey]) ? 'sensor' : 'locked'));
       break;
     }
-    case 'spatial_panning': {
-      const set = _strMode(midiVal, ['headlocked', 'worldlocked'],
-        { head: 'headlocked', world: 'worldlocked' });
-      if (S._setSpatialPanning) S._setSpatialPanning(
-        set ?? (S.spatialPanning === 'headlocked' ? 'worldlocked' : 'headlocked'));
-      break;
-    }
-    case 'alt_lock':
-      if (midiVal > 0 && !S.altLocked) {
-        S.altLocked = true;
-        S.altFrozenMousePixelX = S.mousePixelX;
-        S.altFrozenMousePixelY = S.mousePixelY;
-        if (S.cameraMode === 'surface') S._exitSurfaceLock?.();
-        const wrapper = document.getElementById('canvasWrapper');
-        if (wrapper) { wrapper.style.cursor = 'auto'; S.canvas.style.cursor = 'auto'; }
-        const ind = document.getElementById('altLockIndicator');
-        if (ind) ind.style.display = '';
-      } else if (midiVal === 0 && S.altLocked) {
-        S.altLocked = false;
-        if (S.cameraMode === 'surface') {
-          S._requestSurfaceLock?.();
-        } else {
-          const wrapper = document.getElementById('canvasWrapper');
-          if (wrapper) { wrapper.style.cursor = ''; S.canvas.style.cursor = ''; }
-        }
-        const ind = document.getElementById('altLockIndicator');
-        if (ind) ind.style.display = 'none';
-      }
-      break;
-    case 'lock_az':
-    case 'lock_el': {
-      if (midiVal === 0) break; // toggle on press only, ignore release
-      const stateKey = id === 'lock_az' ? 'axisLockAz' : 'axisLockEl';
-      const segId    = id === 'lock_az' ? 'axisLockAzSeg' : 'axisLockElSeg';
-      S[stateKey] = !S[stateKey];
-      // Clear frozen snapshots so next lock captures fresh position
-      if (id === 'lock_az') { S._axisLockFrozenNx = null; S._axisLockFrozenYaw = null; }
-      if (id === 'lock_el') { S._axisLockFrozenNy = null; S._axisLockFrozenPitch = null; }
-      // Sync UI buttons
-      const seg = document.getElementById(segId);
-      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active',
-          (b.dataset.val === 'on') === S[stateKey]));
-      break;
-    }
-    case 'mapping_toggle_1': if (midiVal === 0) break; toggleMappingByIndex(0); break;
-    case 'mapping_toggle_2': if (midiVal === 0) break; toggleMappingByIndex(1); break;
-    case 'mapping_toggle_3': if (midiVal === 0) break; toggleMappingByIndex(2); break;
-    case 'mapping_toggle_4': if (midiVal === 0) break; toggleMappingByIndex(3); break;
-    case 'perf':
-      S.perfMonitorVisible = !S.perfMonitorVisible;
-      { const el = document.getElementById('perfMonitor'); if (el) el.style.display = S.perfMonitorVisible ? 'block' : 'none'; }
-      break;
-    case 'perfmode':
-      S.perfMode = !S.perfMode;
-      S._syncPerfModeUI?.();
-      console.log(`[perf] high-performance render mode ${S.perfMode ? 'ON' : 'OFF'}`);
-      break;
-    case 'darkmode':
-      S.darkMode = !S.darkMode;
-      S._syncDarkModeUI?.();
-      break;
     case 'radius_dec':
       S.searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, S.searchRadiusDeg - SEARCH_RADIUS_STEP);
       updatePlaybackControls(); flashRadiusTooltip();
@@ -985,31 +1418,19 @@ function dispatchAction(id, midiVal) {
       S.searchRadiusDeg = Math.min(SEARCH_RADIUS_MAX, S.searchRadiusDeg + SEARCH_RADIUS_STEP);
       updatePlaybackControls(); flashRadiusTooltip();
       break;
+    case 'source_live':
+      if (midiVal > 0) S._samplerSelectSource?.('live');
+      break;
+    case 'source_sampler':
+      if (midiVal > 0) S._samplerSelectSource?.('sampler');
+      break;
+    case 'sampler_sample':
+      if (midiVal > 0) S._samplerSelectSample?.(midiVal);
+      break;
+    case 'sampler_record':
+      S._samplerCaptureHold?.(midiVal > 0);
+      break;
     default:
-      if (id.startsWith('paint')) {
-        const n = parseInt(id.replace('paint', ''));
-        const idx = n - 1;
-        if (midiVal > 0 && !S.isPainting && idx < S.samples.length && S.samples[idx].buffer) {
-          // Start sample paint
-          ensureAudioContext(); S.activeSampleIndex = idx;
-          if (S.seqModeEnabled && !S.scanMuted) S._setMuted?.(false) || setScanMuted?.(true);
-          const s = S.samples[idx]; s.grainCursor = s.cropStart * s.duration;
-          recordStrokeStart('sample'); S.isPainting = true; S.paintFrameCount = 0;
-          // Cold-start worklet if not yet running (e.g. sample paint as first action)
-          S._ensureWorkletForSample?.(S.samples[idx].buffer);
-        } else if (midiVal === 0 && S.isPainting && S.activeSampleIndex === idx) {
-          // Stop sample paint
-          if (S.seqModeEnabled && S.currentStrokeId > 0) {
-            try { createSeqFromStroke(S.currentStrokeId); } catch (_) {}
-          }
-          S.isPainting = false;
-          S.currentStrokeId = -1;
-          S.activeSampleIndex = -1;
-        }
-        // Sync trace indicator for sample paint too
-        const _traceBtn2 = document.getElementById('paintIndicatorBtn');
-        if (_traceBtn2) _traceBtn2.classList.toggle('painting', S.isPainting);
-      }
       // CC actions and any other actions dispatched via ccFn
       { const action = ACTIONS.find(a => a.id === id);
         if (action?.type === 'cc' && action.ccFn) action.ccFn(midiVal); }
@@ -1024,36 +1445,44 @@ function dispatchAction(id, midiVal) {
 // menu, so no find bar) and in the browser it only highlights — neither gets you
 // to one row.  This hides everything that doesn't match instead.
 let _mapFilter = '';
+// Bound rows only, by default (Ek, 2026-09-10: "hide anything that doesn't
+// have a binding by default, and add a show all / hide toggle at the top").
+// A binding is a learned key, a factory key nobody else has taken, a button
+// or a MIDI assignment; a row being learned counts, so it cannot vanish.
+let _mapShowAll = false;
+try { _mapShowAll = localStorage.getItem('mubone_keys_show_all') === '1'; } catch (_) {}
 
 // Hide rows that don't match every whitespace-separated term, and hide a group
 // header when nothing under it survived.  Walks backwards so each header is
 // reached after the rows it introduces.
 function _applyMappingFilter() {
-  const tbody = document.getElementById('mappingTableBody');
-  if (!tbody) return;
+  const body = document.getElementById('mappingTableBody');
+  if (!body) return;
 
   const terms = _mapFilter.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const rows  = tbody.rows;
+  const rows  = [...body.children];
   let shown = 0, total = 0, groupHasVisible = false;
 
+  // Backwards, so a group heading knows whether anything under it survived.
   for (let i = rows.length - 1; i >= 0; i--) {
-    const tr = rows[i];
-    if (tr.dataset.groupHeader) {
-      tr.classList.toggle('filtered-out', !groupHasVisible);
+    const el = rows[i];
+    if (el.dataset.groupHeader) {
+      el.classList.toggle('filtered-out', !groupHasVisible);
       groupHasVisible = false;
       continue;
     }
     total++;
-    const hit = terms.length === 0 ||
-                terms.every(t => (tr.dataset.search || '').includes(t));
-    tr.classList.toggle('filtered-out', !hit);
+    const hit = (_mapShowAll || el.dataset.bound === '1') &&
+                (terms.length === 0 || terms.every(t => (el.dataset.search || '').includes(t)));
+    el.classList.toggle('filtered-out', !hit);
     if (hit) { shown++; groupHasVisible = true; }
   }
 
   const countEl = document.getElementById('mappingFilterCount');
-  if (countEl) countEl.textContent = terms.length ? `${shown} / ${total}` : `${total} rows`;
-  document.querySelector('.mapping-filter-row')
-    ?.classList.toggle('filtering', terms.length > 0);
+  if (countEl) countEl.textContent = (terms.length || !_mapShowAll)
+    ? `${shown} of ${total} actions`
+    : `${total} actions`;
+  document.querySelector('.set-toolbar')?.classList.toggle('filtering', terms.length > 0);
 }
 
 function _setMappingFilter(v, { focus = false } = {}) {
@@ -1089,9 +1518,12 @@ function closeMappingModal() {
   renderMappingTable();
 }
 
+const _MAP_HINT = 'Click a cell to learn · right-click to clear';
 function setMappingStatus(msg) {
   const el = document.getElementById('mappingStatus');
-  if (el) el.textContent = msg;
+  // Empty means "nothing to report", and an empty slot where an instruction
+  // was reads as the page having lost something. It goes back to the hint.
+  if (el) el.textContent = msg || _MAP_HINT;
 }
 
 // ── Live MIDI/OSC monitor ───────────────────────────────────────────────────
@@ -1107,6 +1539,12 @@ let _midiDirty = false;
 let _oscDirty  = false;
 let _monPaused = false;
 let _monRafQueued = false;
+// Sensor STREAMS stay out of the log (Ek, 2026-09-10: "the osc live monitor
+// should filter out the osc quaternion and sensor data"): a quaternion at
+// 100–400 Hz buries every control message in seconds. They are counted, not
+// dropped silently — the count is how you know the sensor is arriving at all.
+const _OSC_STREAM = /^\/sensor\//;
+let _oscStreamHidden = 0;
 
 function _pad2(n) { return n < 10 ? '0' + n : '' + n; }
 function _pad3(n) { return n < 10 ? '00' + n : n < 100 ? '0' + n : '' + n; }
@@ -1148,7 +1586,39 @@ function _fmtOsc(o) {
 }
 
 function _monitorModalOpen() {
-  return document.getElementById('mappingModal')?.classList.contains('open');
+  return _visible();
+}
+
+/** Is this page on screen? Two hosts, and only one of them is the modal: the
+ *  settings shell (#255) MOVES this dialog into #settingsHost and takes the
+ *  overlay's `.open` back off, so the monitor rendered nothing and cmd-F did
+ *  nothing for the whole time the page was hosted — which is all of the time,
+ *  since the shell became the only door (#291). */
+function _visible() {
+  return !!document.getElementById('mappingModal')?.classList.contains('open')
+      || !!document.querySelector('.settings-host .mapping-dialog');
+}
+
+function _monPaint(el, ring, what) {
+  if (!el) return;
+  if (!ring.length) {
+    el.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'set-empty';
+    empty.textContent = `Nothing received yet.`;
+    el.appendChild(empty);
+    return;
+  }
+  // Newest last, and the pane is scrolled to it: a monitor you have to scroll
+  // to see the latest line of is not telling you anything live.
+  el.innerHTML = '';
+  for (const line of ring) {
+    const d = document.createElement('div');
+    d.className = 'mon-line';
+    d.textContent = line;
+    el.appendChild(d);
+  }
+  el.scrollTop = el.scrollHeight;
 }
 
 function _scheduleMonRender() {
@@ -1159,23 +1629,17 @@ function _scheduleMonRender() {
     if (_monPaused) return;
     if (!_monitorModalOpen()) return;
     if (_midiDirty) {
-      const el = document.getElementById('ioMonMidiLog');
-      if (el) {
-        el.textContent = _midiRing.length ? _midiRing.join('\n') : '— waiting for messages —';
-        el.scrollTop = el.scrollHeight;
-      }
+      _monPaint(document.getElementById('ioMonMidiLog'), _midiRing, 'MIDI');
       const c = document.getElementById('ioMonMidiCount');
       if (c) c.textContent = String(_midiRing.length);
       _midiDirty = false;
     }
     if (_oscDirty) {
-      const el = document.getElementById('ioMonOscLog');
-      if (el) {
-        el.textContent = _oscRing.length ? _oscRing.join('\n') : '— waiting for messages —';
-        el.scrollTop = el.scrollHeight;
-      }
+      _monPaint(document.getElementById('ioMonOscLog'), _oscRing, 'OSC');
       const c = document.getElementById('ioMonOscCount');
       if (c) c.textContent = String(_oscRing.length);
+      const h = document.getElementById('ioMonOscHidden');
+      if (h) h.textContent = _oscStreamHidden ? `· ${_oscStreamHidden.toLocaleString()} sensor messages hidden` : '';
       _oscDirty = false;
     }
   });
@@ -1192,6 +1656,7 @@ function setupIOMonitor() {
 
   window.addEventListener('mubone-osc-in', (ev) => {
     if (_monPaused) return;
+    if (_OSC_STREAM.test(ev.detail.address)) { _oscStreamHidden++; _oscDirty = true; _scheduleMonRender(); return; }
     _oscRing.push(_fmtOsc(ev.detail));
     if (_oscRing.length > MONITOR_MAX) _oscRing.shift();
     _oscDirty = true;
@@ -1205,16 +1670,159 @@ function setupIOMonitor() {
   if (clearEl) clearEl.addEventListener('click', () => {
     _midiRing.length = 0;
     _oscRing.length  = 0;
+    _oscStreamHidden = 0;
     _midiDirty = true;
     _oscDirty  = true;
     _scheduleMonRender();
   });
 }
 
+// ── Scale cells for one mapping row ─────────────────────────────────────────
+// The min / max / γ trio, mirroring the accessory table (ui-accessory.js) so the
+// two places you shape a controller look and behave the same.  min and max are
+// typed in the DESTINATION's own units (dB, Hz, cents) and stored normalised; γ
+// is the response exponent.  Rows with nothing to shape still get three cells,
+// dimmed and disabled, so the columns stay aligned down ~100 rows.
+//
+// Edits are committed on Enter or blur, never per keystroke — typing "-24"
+// would otherwise apply "-" and "-2" on the way through and move the window
+// twice mid-edit.  Committing re-syncs only this row rather than re-rendering
+// the table: a full rebuild on blur would destroy the box you just tabbed into.
+function _el(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text != null) el.textContent = text;
+  return el;
+}
+
+/** A binding cell: 30px, the kit's small button, and the button IS the learn
+ *  control — click to learn, right-click to clear. Two columns of "learn" and
+ *  "✕" buttons pointing at the cell beside them were the same thing said
+ *  three times. */
+function _bindBtn(label, { empty = false, learning = false, title = '' } = {}) {
+  const b = _el('button', 'bind-btn'
+    + (empty ? ' bind-btn--empty' : '')
+    + (learning ? ' bind-btn--learning' : ''), learning ? 'Listening…' : label);
+  if (title) b.title = title;
+  return b;
+}
+
+// ── The scale menu ──────────────────────────────────────────────────────────
+// min / max / γ, behind the cell that reads them out. They are read constantly
+// and edited rarely, so three always-on columns were three columns paying rent
+// for a popover. Same maths as before, same units, same double-click reset.
+//
+// Edits commit on Enter or blur, never per keystroke — typing "-24" would
+// otherwise apply "-" and "-2" on the way through and move the window twice.
+let _openScaleMenu = null;
+function _closeScaleMenu() {
+  if (_openScaleMenu) { _openScaleMenu.remove(); _openScaleMenu = null; }
+}
+document.addEventListener('mousedown', e => {
+  if (_openScaleMenu && !_openScaleMenu.contains(e.target)) _closeScaleMenu();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') _closeScaleMenu(); });
+
+function _scaleLabel(action, mapping) {
+  if (!isScaled(mapping)) return 'Full travel';
+  const range = action.range;
+  const sc = mapScale(mapping);
+  const base = baseGamma(range);
+  const g = fmtNumber(sc.curve * base);
+  if (!range) return `γ${g}`;
+  const unit = range.unit ? ` ${range.unit}` : '';
+  return `${fmtNumber(fromNorm(range, sc.lo), !!range.int)}–${fmtNumber(fromNorm(range, sc.hi), !!range.int)}${unit} γ${g}`;
+}
+
+function _openScale(cell, btn, action, mapping, redraw) {
+  _closeScaleMenu();
+  const range   = action.range;
+  const bounded = !!range;
+  const base    = baseGamma(range);
+  const menu = _el('div', 'set-menu scale-menu');
+
+  const field = (labelText, disabled) => {
+    const row = _el('div', 'scale-menu-row');
+    row.appendChild(_el('span', null, labelText));
+    const wrap = _el('span', 'set-field');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.disabled = !!disabled;
+    wrap.appendChild(input);
+    row.appendChild(wrap);
+    menu.appendChild(row);
+    return input;
+  };
+  const minBox   = field(range?.unit ? `min (${range.unit})` : 'min', !bounded);
+  const maxBox   = field(range?.unit ? `max (${range.unit})` : 'max', !bounded);
+  const curveBox = field('γ', false);
+
+  const sync = () => {
+    const sc = mapScale(mapping);
+    if (bounded) {
+      minBox.value = fmtNumber(fromNorm(range, sc.lo), !!range.int);
+      maxBox.value = fmtNumber(fromNorm(range, sc.hi), !!range.int);
+    } else {
+      minBox.placeholder = maxBox.placeholder = '—';
+    }
+    curveBox.value = fmtNumber(sc.curve * base);
+    btn.textContent = _scaleLabel(action, mapping);
+  };
+
+  const commit = (box, apply) => {
+    box.addEventListener('blur', () => { apply(box); saveMidiMappings(); sync(); redraw(); });
+    box.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  { e.preventDefault(); box.blur(); }
+      if (e.key === 'Escape') { sync(); box.blur(); }
+    });
+  };
+
+  if (bounded) {
+    const full = `${fmtNumber(rangeMin(range), !!range.int)}–${fmtNumber(rangeMax(range), !!range.int)}${range.unit ? ' ' + range.unit : ''}`;
+    minBox.title = maxBox.title =
+      `where the two ends of the controller's travel land — full travel of this destination: ${full}`;
+    const boundBox = (box, key) => commit(box, b => {
+      const typed = parseFloat(String(b.value).replace(/[^\d.+-]/g, ''));
+      if (Number.isFinite(typed)) mapping[key] = toNorm(range, clampReal(range, typed));
+    });
+    boundBox(minBox, 'outLo');
+    boundBox(maxBox, 'outHi');
+  }
+
+  curveBox.title = `response exponent for the whole chain — 1 linear, above 1 gives fine control at the bottom of the throw, below 1 at the top. this destination starts at ${fmtNumber(base)}, which is the curve its own ccFn applies. double-click to reset the whole scale stage.`;
+  commit(curveBox, b => {
+    const typed = parseFloat(String(b.value).replace(/[^\d.]/g, ''));
+    // Divide the destination's own exponent back out: the box is the product of
+    // the two, the mapping stores only its own share.
+    if (Number.isFinite(typed)) mapping.curve = clampGamma(typed / base);
+  });
+  curveBox.addEventListener('dblclick', () => {
+    delete mapping.curve; delete mapping.outLo; delete mapping.outHi;
+    saveMidiMappings(); sync(); redraw();
+  });
+
+  sync();
+  cell.appendChild(menu);
+  _openScaleMenu = menu;
+  (bounded ? minBox : curveBox).focus();
+  (bounded ? minBox : curveBox).select();
+}
+
+/** An action's label as it reads TODAY: a palette row says what sits at its
+ *  position (tiles.js `S._paletteRow`), everything else is its static label. */
+function actionLabel(action) { return action ? (action.row?.()?.label ?? action.label) : ''; }
+function _midiLabel(midiMap) {
+  if (!midiMap) return '—';
+  return midiMap.type === 'note'
+    ? `Note ${midiMap.number}${midiMap.g && GESTURE_LABEL[midiMap.g] ? ' ' + GESTURE_LABEL[midiMap.g] : ''}`
+    : `${midiMap.type.toUpperCase()} ${midiMap.number} · ch ${midiMap.channel}`;
+}
+
 function renderMappingTable() {
-  const tbody = document.getElementById('mappingTableBody');
-  if (!tbody) return;
-  tbody.innerHTML = '';
+  const body = document.getElementById('mappingTableBody');
+  if (!body) return;
+  _closeScaleMenu();
+  body.innerHTML = '';
 
   let curGroup = '';   // most recent section heading — folded into each row's filter text
 
@@ -1222,180 +1830,238 @@ function renderMappingTable() {
     // Skip legacy aliases — they still work for existing MIDI maps but don't show in UI
     if (action._legacy) continue;
 
-    // ── Section header row ──────────────────────────────────────────────────
+    // ── Section heading ────────────────────────────────────────────────────
     if (!action.id) {
       curGroup = action.group || '';
-      const tr = document.createElement('tr');
-      tr.className = 'mapping-group-header';
-      tr.dataset.groupHeader = '1';
-      const th = document.createElement('th');
-      th.colSpan = 8;
-      th.textContent = action.group;
-      tr.appendChild(th);
-      tbody.appendChild(tr);
+      const head = _el('div', 'set-table-row set-table-row--group', action.group);
+      head.dataset.groupHeader = '1';
+      body.appendChild(head);
       continue;
     }
 
-    const midiMap    = midiMappings[action.id];
-    const keyMap     = keyMappings[action.id];
-    const isMidiLearning = midiLearningId === action.id;
-    const isKeyLearning  = keyLearningId  === action.id;
+    // A palette row reads what is at its position today, and whether this
+    // verb is live for that kind of tile (an empty position, a lens's toggle,
+    // a pin's arm are listed and blank — blank means impossible, as below).
+    const live  = action.row?.() ?? null;
+    if (live?.hidden) continue;   // a verb this tile has not: no row at all
+    const label = live?.label ?? action.label;
+    const na    = live ? !live.enabled : false;
+    const midiMap        = midiMappings[action.id];
+    const keyMap         = keyMappings[action.id];
+    const btnMap         = buttonMappings[action.id];
+    const isMidiLearning = midiLearningId   === action.id;
+    const isKeyLearning  = keyLearningId    === action.id;
+    const isBtnLearning  = buttonLearningId === action.id;
 
-    const tr = document.createElement('tr');
+    const row = _el('div', 'set-table-row');
+
+    // A factory key another action has learned is not this row's binding: the
+    // cell says so below, and the bound-only view agrees.
+    const takenBy = !keyMap && action.key && action.key !== '—'
+      ? Object.entries(keyMappings).find(([id, km]) => id !== action.id && km.type === 'key'
+          && keyMappingLabel(km).toLowerCase() === action.key.toLowerCase()) : null;
+    const factoryKeyLive = !!(action.key && action.key !== '—' && !takenBy);
+    // A palette row is always shown, bound or not: the page is where the
+    // performer designs the palette's bindings, so every verb of every
+    // position is on it (Ek, 2026-09-11: "all tools should have a activate
+    // (toggle) and activate (momentary)" — the bound-only view hid them).
+    row.dataset.bound = (live || keyMap || btnMap || midiMap || factoryKeyLive
+      || isMidiLearning || isKeyLearning || isBtnLearning) ? '1' : '0';
 
     // Everything the filter box searches — built from the same values the cells
     // below display, plus the group heading and the action id, so "grain",
-    // "cc 74", "/trace" and "pitch_shift" all find their row.  Unmapped rows
-    // carry the word "unassigned" even though the cell now shows a hyphen: it's
-    // the only way to filter down to what still needs binding.
-    tr.dataset.search = [
-      action.label,
-      curGroup,
-      action.id,
+    // "cc 74", "/trace" and "pitch_shift" all find their row. Unmapped rows
+    // carry "unassigned": it is the only way to filter to what needs binding.
+    if (na) row.classList.add('set-table-row--na');
+    row.dataset.search = [
+      label, curGroup, action.id,
       action.key && action.key !== '—' ? action.key : '',
       keyMap  ? keyMappingLabel(keyMap) : '',
+      btnMap  ? `button ${buttonMappingLabel(btnMap)}` : '',
       midiMap ? `${midiMap.type} ${midiMap.number} ch${midiMap.channel}` : 'unassigned',
-      action.osc || '',
-      action.fmt || '',
+      isScaled(midiMap) ? 'scaled curved' : '',
+      action.osc || '', action.fmt || '',
     ].join(' ').toLowerCase();
 
-    // Function name
-    const tdName = document.createElement('td');
-    tdName.className = 'fn-name';
-    tdName.textContent = action.label;
-    if (action.tip) tdName.title = action.tip;
-    tr.appendChild(tdName);
-
-    // Keyboard default shortcut
-    const tdKey = document.createElement('td');
-    if (action.key && action.key !== '—') {
-      const badge = document.createElement('span');
-      badge.className = 'key-badge';
-      badge.textContent = action.key;
-      tdKey.appendChild(badge);
-    } else {
-      tdKey.textContent = '—';
-      tdKey.className   = 'unassigned';
+    // ── Action: the name, and under it the address and what it accepts ──────
+    // Those were two columns. They are not independent facts about the action,
+    // they describe it — so they are its sub-line.
+    const nameCell = _el('div');
+    const title = _el('span', 'set-row-title', live ? '' : label);
+    if (live) {
+      // Position · glyph · name · verb, as separate marks: the number says
+      // WHERE, the glyph and name say WHAT, the verb says which of the tile's
+      // own acts this row binds. The kind (brush, lens, eraser) is not said.
+      // No position number (Ek, 2026-09-11, late): the rows come in the
+      // palette's order, and the key cell says what fires the tile.
+      title.classList.add('set-row-title--tile');
+      if (live.glyph) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        g.setAttribute('viewBox', '0 0 24 24'); g.setAttribute('fill', 'currentColor'); g.setAttribute('aria-hidden', 'true');
+        g.classList.add('set-row-glyph'); if (live.hue) g.style.color = live.hue; g.innerHTML = live.glyph;
+        title.appendChild(g);
+      }
+      title.appendChild(_el('span', 'set-row-name', live.name));
+      if (live.verb) title.appendChild(_el('span', 'set-row-verb', live.verb));
     }
-    tr.appendChild(tdKey);
+    if (na && live?.why) title.title = live.why; else if (action.tip) title.title = action.tip;
+    nameCell.appendChild(title);
+    // Address · what it accepts · what KIND of action it is. The third field
+    // came from the OSC reference page's `osc-kind` column when that page was
+    // folded into this one (round eleven): `int 0|1` alone cannot tell a hold
+    // from a trigger, and eighteen rows share that format.
+    // OSC facts only (Ek, 2026-09-09: "the extra stuff is all confusing. int
+    // 0|1 sure, that makes sense for OSC"). Which VERSION of an action this is
+    // — toggle or momentary — is in its title where there are two.
+    const sub = [action.osc, action.fmt].filter(Boolean).join(' · ');
+    if (sub) nameCell.appendChild(_el('span', 'set-table-sub', sub));
+    row.appendChild(nameCell);
 
-    // Key override (custom binding) — only for trigger/hold actions
-    const canKeyLearn = action.type === 'trigger' || action.type === 'hold' || action.type === 'toggle';
-    const tdKeyOverride = document.createElement('td');
-    tdKeyOverride.className = 'key-cell' + (keyMap ? '' : ' unassigned');
-    if (canKeyLearn && keyMap) {
-      tdKeyOverride.textContent = keyMappingLabel(keyMap);
-    } else {
-      tdKeyOverride.textContent = '—';
-    }
-    tr.appendChild(tdKeyOverride);
-
-    // Key learn / clear buttons — only for trigger/hold actions
-    const tdKeyBtn = document.createElement('td');
-    tdKeyBtn.style.whiteSpace = 'nowrap';
-
+    // ── Key ────────────────────────────────────────────────────────────────
+    const canKeyLearn = !na && (action.type === 'trigger' || action.type === 'hold' || action.type === 'toggle');
+    const keyCell = _el('div', 'bind-cell');
     if (canKeyLearn) {
-      const keyLearnBtn = document.createElement('button');
-      keyLearnBtn.className = 'learn-btn' + (isKeyLearning ? ' learning' : '');
-      keyLearnBtn.textContent = isKeyLearning ? 'waiting…' : 'learn';
-      keyLearnBtn.addEventListener('click', () => {
-        midiLearningId = null;  // cancel any MIDI learn
-        if (keyLearningId === action.id) {
-          keyLearningId = null;
-          setMappingStatus('');
-        } else {
-          keyLearningId = action.id;
-          setMappingStatus(`press a key or scroll to assign "${action.label}"…`);
-        }
+      // A factory key is a literal on the row, not a binding, so learning it
+      // onto another action never removed it here — the table showed 3 on
+      // tile 3 · arm AND on the play it was learned onto, while the digit had
+      // already stood down at runtime (Ek, 2026-09-09: "3 is listed twice").
+      // The cell says what the key DOES: a factory key another action has
+      // learned reads as unbound, and the hover says who took it.
+      // A stored `none` is a factory key the performer REMOVED (Ek,
+      // 2026-09-11: "i should be able to right click even factory defaults
+      // to remove them"): the cell reads unbound, and a right-click on it
+      // puts the factory key back.
+      const removed = keyMap?.type === 'none';
+      const bound = keyMap ? keyMappingLabel(keyMap)
+                  : (action.key && action.key !== '—' && !takenBy ? action.key : null);
+      // 84px truncates a compound default like "right click / ⌘Z", so the
+      // full binding is always in the hover text, not only the short ones.
+      const kb = _bindBtn(bound || '—', {
+        empty: !bound, learning: isKeyLearning,
+        title: (bound ? bound + ' — ' : '')
+             + (removed ? `factory key ${action.key} removed — right-click to put it back · click to learn a key`
+               : keyMap ? 'click to relearn · right-click to clear the override'
+                       : takenBy ? `its factory key ${action.key} is learned onto “${ACTIONS.find(a => a.id === takenBy[0])?.label}” — click to learn another`
+                                 : 'click, then press · long-press · extra-long-press · double- or triple-tap a key, or scroll · ⇧-click to learn a tap (the up edge)'
+                                   + (factoryKeyLive ? ' · right-click removes the factory key' : '')),
+      });
+      kb.addEventListener('click', e => {
+        midiLearningId = null; buttonLearningId = null;   // cancel the other learns
+        keyLearningId = (keyLearningId === action.id) ? null : action.id;
+        _learnShortAs = e.shiftKey ? 'tap' : 'press';
+        setMappingStatus(keyLearningId
+          ? (e.shiftKey ? `Tap a key to assign “${label}” to its tap — the up edge…`
+                        : `Press, long-press, extra-long-press, double- or triple-tap a key, or scroll, to assign “${label}”… (⇧-click the cell to learn a tap)`)
+          : '');
         renderMappingTable();
       });
-      tdKeyBtn.appendChild(keyLearnBtn);
-
-      if (keyMap) {
-        const clearBtn = document.createElement('button');
-        clearBtn.className = 'clear-midi-btn';
-        clearBtn.textContent = '✕';
-        clearBtn.title = 'clear key override';
-        clearBtn.addEventListener('click', () => {
-          delete keyMappings[action.id];
-          saveKeyMappings();
-          renderMappingTable();
-        });
-        tdKeyBtn.appendChild(clearBtn);
-      }
-    }
-    tr.appendChild(tdKeyBtn);
-
-    // MIDI assignment
-    const tdMidi = document.createElement('td');
-    tdMidi.className = 'midi-cell' + (midiMap ? '' : ' unassigned');
-    if (midiMap) {
-      tdMidi.textContent = `${midiMap.type.toUpperCase()} ${midiMap.number} ch${midiMap.channel}`;
+      kb.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        if (!keyMap) {
+          // No override: a live factory key is REMOVED by storing `none`.
+          if (!factoryKeyLive) return;
+          keyMappings[action.id] = { type: 'none' };
+        } else delete keyMappings[action.id];   // an override, or a removal, cleared
+        saveKeyMappings();
+        renderMappingTable();
+      });
+      keyCell.appendChild(kb);
     } else {
-      tdMidi.textContent = '—';
+      // Blank. A dash means unbound; blank means impossible. This action can
+      // never carry a key, so offering an empty slot would be a lie.
+      //
+      // There is no fourth "fixed default" state: every action in ACTIONS that
+      // carries a `key` is trigger, hold or toggle, so a non-learnable action
+      // with a default key does not exist. A state with no case in the table is
+      // an invented one (round ten).
+      keyCell.appendChild(_el('span', 'bind-blank'));
     }
-    tr.appendChild(tdMidi);
+    row.appendChild(keyCell);
 
-    // MIDI learn / clear buttons
-    const tdMidiBtn = document.createElement('td');
-    tdMidiBtn.style.whiteSpace = 'nowrap';
+    // ── Button — the instrument's three ─────────────────────────────────────
+    // Same three states as the key cell, same rule: a dash is an empty slot,
+    // blank means a button cannot do this (a cc has travel, a button has none).
+    const btnCell = _el('div', 'bind-cell');
+    if (canKeyLearn) {
+      const bb = _bindBtn(btnMap ? buttonMappingLabel(btnMap) : '—', {
+        empty: !btnMap, learning: isBtnLearning,
+        title: btnMap ? 'click to relearn · right-click to clear'
+             : 'click, then press · long-press · extra-long-press · double- or triple-tap a button on the instrument · ⇧-click to learn a tap (the up edge)',
+      });
+      bb.addEventListener('click', e => {
+        keyLearningId = null; midiLearningId = null;
+        const was = buttonLearningId;
+        buttonLearningId = (was === action.id) ? null : action.id;
+        _learnShortAs = e.shiftKey ? 'tap' : 'press';
+        setMappingStatus(buttonLearningId
+          ? (e.shiftKey ? `Tap a button on the instrument to assign “${action.label}” to its tap — the up edge…`
+                        : `Press, long-press, extra-long-press, double- or triple-tap a button on the instrument to assign “${action.label}”… (⇧-click the cell to learn a tap, the up edge)`)
+          : '');
+        renderMappingTable();
+      });
+      bb.addEventListener('contextmenu', e => {
+        e.preventDefault();
+        if (!btnMap) return;
+        delete buttonMappings[action.id];
+        saveButtonMappings();
+        renderMappingTable();
+      });
+      btnCell.appendChild(bb);
+    } else {
+      btnCell.appendChild(_el('span', 'bind-blank'));
+    }
+    row.appendChild(btnCell);
 
-    const midiLearnBtn = document.createElement('button');
-    midiLearnBtn.className = 'learn-btn' + (isMidiLearning ? ' learning' : '');
-    midiLearnBtn.textContent = isMidiLearning ? 'waiting…' : 'learn';
-    midiLearnBtn.addEventListener('click', () => {
-      keyLearningId = null;  // cancel any key learn
-      if (midiLearningId === action.id) {
-        midiLearningId = null;
-        setMappingStatus('');
-      } else {
-        midiLearningId = action.id;
-        setMappingStatus(`move a midi control to assign "${action.label}"…`);
-        if (!midiAccess) initMidi().then(refreshMidiInputs);
-      }
+    // ── MIDI ───────────────────────────────────────────────────────────────
+    const midiCell = _el('div', 'bind-cell');
+    if (na) { midiCell.appendChild(_el('span', 'bind-blank')); row.appendChild(midiCell); }
+    else {
+    const mb = _bindBtn(_midiLabel(midiMap), {
+      empty: !midiMap, learning: isMidiLearning,
+      title: midiMap ? 'click to relearn · right-click to clear' : 'click to learn a control',
+    });
+    mb.addEventListener('click', () => {
+      keyLearningId = null; buttonLearningId = null;      // cancel the other learns
+      midiLearningId = (midiLearningId === action.id) ? null : action.id;
+      setMappingStatus(midiLearningId ? `Move a control, or press · long-press · double-tap a note, to assign “${label}”…` : '');
+      if (midiLearningId && !midiAccess) initMidi().then(refreshMidiInputs);
       renderMappingTable();
     });
-    tdMidiBtn.appendChild(midiLearnBtn);
+    mb.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      if (!midiMap) return;
+      delete midiMappings[action.id];
+      saveMidiMappings();
+      renderMappingTable();
+    });
+    midiCell.appendChild(mb);
+    row.appendChild(midiCell);
+    }
 
-    if (midiMap) {
-      const clearBtn = document.createElement('button');
-      clearBtn.className = 'clear-midi-btn';
-      clearBtn.textContent = '✕';
-      clearBtn.title = 'clear midi assignment';
-      clearBtn.addEventListener('click', () => {
-        delete midiMappings[action.id];
-        saveMidiMappings();
-        renderMappingTable();
+    // ── Scale ──────────────────────────────────────────────────────────────
+    const scaleCell = _el('div', 'bind-cell');
+    if (!midiMap || !scaleEditable(action, midiMap)) {
+      // Blank, both times, and for the same reason: with no MIDI binding there
+      // is no travel to shape, and a bang has none either. Neither is an empty
+      // slot waiting to be filled, so neither gets a dash. "n/a" was a third
+      // word for the same fact.
+      scaleCell.appendChild(_el('span', 'bind-blank'));
+    } else {
+      const sb = _bindBtn(_scaleLabel(action, midiMap), { title: 'min, max and γ for this binding' });
+      sb.addEventListener('click', e => {
+        e.stopPropagation();
+        if (_openScaleMenu && scaleCell.contains(_openScaleMenu)) { _closeScaleMenu(); return; }
+        _openScale(scaleCell, sb, action, midiMap, () => {
+          // A shaped mapping looks identical to a raw one once you have stopped
+          // reading the numbers — the label is what makes it findable.
+          sb.textContent = _scaleLabel(action, midiMap);
+        });
       });
-      tdMidiBtn.appendChild(clearBtn);
+      scaleCell.appendChild(sb);
     }
-    tr.appendChild(tdMidiBtn);
+    row.appendChild(scaleCell);
 
-    // OSC path
-    const tdOsc = document.createElement('td');
-    tdOsc.className = 'osc-path';
-    if (action.osc) {
-      const badge = document.createElement('span');
-      badge.className = 'osc-badge';
-      badge.textContent = action.osc;
-      tdOsc.appendChild(badge);
-    } else {
-      tdOsc.textContent = '—';
-      tdOsc.classList.add('unassigned');
-    }
-    tr.appendChild(tdOsc);
-
-    // Data format
-    const tdFmt = document.createElement('td');
-    tdFmt.className = 'osc-fmt';
-    if (action.fmt) {
-      tdFmt.textContent = action.fmt;
-    } else {
-      tdFmt.textContent = '—';
-      tdFmt.classList.add('unassigned');
-    }
-    tr.appendChild(tdFmt);
-    tbody.appendChild(tr);
+    body.appendChild(row);
   }
 
   // Rows are rebuilt on every learn/clear — reapply the active query so the
@@ -1408,6 +2074,11 @@ function renderMappingTable() {
 export function setupMappingModal() {
   loadMidiMappings();
   loadKeyMappings();
+  loadButtonMappings();
+  renumberPaletteOnce();
+  collapsePaletteVerbsOnce();
+  seedPaletteDigitsOnce();   // AFTER the two renumberings: they shift palette ids, and ran over the seed once (2026-09-12)
+  loadButtonTiming();
 
   // Patch recency CC fn to also redraw the dial
   const recEntry = ACTIONS.find(a => a.id === 'recency_cc');
@@ -1420,17 +2091,22 @@ export function setupMappingModal() {
   document.getElementById('mappingModal')?.addEventListener('click', e => {
     if (e.target === document.getElementById('mappingModal')) closeMappingModal();
   });
-  document.getElementById('clearAllMidi')?.addEventListener('click', () => {
-    midiMappings = {};
-    saveMidiMappings();
+  // One button, one confirm. It used to prompt() for "keys", "midi" or
+  // "both" — and Electron has no prompt(): the click threw "prompt() is not
+  // supported" and cleared nothing (found 2026-09-09). Clear all is all:
+  // key overrides, MIDI assignments, and the instrument's buttons back to
+  // their factory plays. Right-click a cell to clear one.
+  document.getElementById('keysClearAll')?.addEventListener('click', () => {
+    if (!window.confirm('Clear all bindings?\n\nEvery key override and MIDI assignment goes; the instrument\'s buttons go back to the three plays. Right-click a cell to clear just one.')) return;
+    // Cleared IN PLACE: events.js and tiles.js hold `S._keyMappings`, the
+    // same object — a fresh `{}` here left them reading the old map, so the
+    // factory digits stayed dead until a reload (found 2026-09-06).
+    for (const k of Object.keys(keyMappings))  delete keyMappings[k];  saveKeyMappings();
+    for (const k of Object.keys(midiMappings)) delete midiMappings[k]; saveMidiMappings();
+    for (const k of Object.keys(buttonMappings)) delete buttonMappings[k];
+    Object.assign(buttonMappings, BUTTON_DEFAULTS); saveButtonMappings();
     renderMappingTable();
-    setMappingStatus('all midi mappings cleared');
-  });
-  document.getElementById('clearAllKeys')?.addEventListener('click', () => {
-    keyMappings = {};
-    saveKeyMappings();
-    renderMappingTable();
-    setMappingStatus('all key overrides cleared');
+    setMappingStatus('All key overrides and MIDI assignments cleared; the buttons are back to the factory set');
   });
 
   // ── Key learn: capture keydown while learning ────────────────────────────
@@ -1438,40 +2114,48 @@ export function setupMappingModal() {
   const BLOCKED_KEYS = new Set(['Escape', 'Tab', 'F5', 'F11', 'F12']);
 
   document.addEventListener('keydown', e => {
+    if (buttonLearningId !== null && e.key === 'Escape') {
+      buttonLearningId = null; setMappingStatus(''); renderMappingTable();
+      e.stopImmediatePropagation(); return;
+    }
     if (keyLearningId === null) return;
 
     // Escape cancels learning (don't close modal)
     if (e.key === 'Escape') {
       keyLearningId = null;
+      buttonLearningId = null;   // a button learn left armed on a closed page eats the next press
       setMappingStatus('');
       renderMappingTable();
       e.stopImmediatePropagation();
       return;
     }
 
-    if (BLOCKED_KEYS.has(e.key)) return;
-
+    if (BLOCKED_KEYS.has(e.key) || ['Shift', 'Control', 'Meta', 'Alt'].includes(e.key)) return;
+    // A HELD key auto-repeats, and each repeat is a fresh keydown with its
+    // default action: holding the spacebar to learn a long press scrolled the
+    // page a screen per repeat (Ek, 2026-09-12). The repeats are swallowed;
+    // only the first down reaches the recogniser.
     e.preventDefault();
     e.stopImmediatePropagation();
+    if (e.repeat) return;
 
-    const newMapping = {
-      type:  'key',
-      key:   e.key,
-      code:  e.code,
-      shift: e.shiftKey,
-      ctrl:  e.ctrlKey,
-      meta:  e.metaKey,
-    };
-
-    removeConflictingKeyBinding(newMapping, keyLearningId);
-    keyMappings[keyLearningId] = newMapping;
-    saveKeyMappings();
-
-    const action = ACTIONS.find(a => a.id === keyLearningId);
-    setMappingStatus(`mapped "${action?.label}" → ${keyMappingLabel(newMapping)}`);
-    keyLearningId = null;
-    renderMappingTable();
+    // The whole GESTURE is learned, as on a button (2026-09-11): this down
+    // starts the recogniser on the key's source; the up (below), the long
+    // timer or a second down decides press · tap · long · extra long · ×2 · ×3,
+    // and _learnGesture writes the key WITH its gesture. A plain press learns
+    // as press — what every key did before — unless the cell was ⇧-clicked
+    // for a tap.
+    _learnKeyEv = { key: e.key, code: e.code, shift: e.shiftKey, ctrl: e.ctrlKey, meta: e.metaKey };
+    _learnKeyDown = e.code;
+    buttonLearningId = null;   // a button learn left armed on a closed page eats the next press
+    dispatchGesture(keySourceOf(e), true);
   }, true);  // capture phase — runs before events.js handlers
+  document.addEventListener('keyup', e => {
+    if (_learnKeyDown === null || e.code !== _learnKeyDown) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    _learnKeyDown = null;
+    if (_learnKeyEv) dispatchGesture(keySource(_learnKeyEv), false);
+  }, true);
 
   // ── Key learn: capture scroll while learning ─────────────────────────────
   document.addEventListener('wheel', e => {
@@ -1480,7 +2164,7 @@ export function setupMappingModal() {
     // Hold actions need a release event — scroll has no release, so block it
     const learningAction = ACTIONS.find(a => a.id === keyLearningId);
     if (learningAction?.type === 'hold') {
-      setMappingStatus(`scroll can't be assigned to hold actions — press a key instead`);
+      setMappingStatus(`scroll can't be assigned to an on/off action — press a key instead`);
       return;
     }
 
@@ -1500,6 +2184,7 @@ export function setupMappingModal() {
     const action = ACTIONS.find(a => a.id === keyLearningId);
     setMappingStatus(`mapped "${action?.label}" → ${keyMappingLabel(newMapping)}`);
     keyLearningId = null;
+    buttonLearningId = null;   // a button learn left armed on a closed page eats the next press
     renderMappingTable();
   }, { capture: true, passive: false });
 
@@ -1513,6 +2198,31 @@ export function setupMappingModal() {
     _mapFilter = filterEl.value;
     _applyMappingFilter();
   });
+
+  // WHICH KINDS THE TILES SHOW (Ek, 2026-09-12): one switch per binding kind
+  // under its column, deciding whether that kind is drawn in the palette
+  // legend. Factory: the keyboard yes, the buttons and MIDI no — the tile
+  // says what a hand at the keyboard can press; the instrument's own buttons
+  // are learned by feel. bindingsOf stays complete: the keys page, the delay
+  // rule and the audits read every binding whether or not a tile draws it.
+  document.querySelectorAll('[data-legend-kind]').forEach(el => {
+    const kind = el.dataset.legendKind;
+    el.checked = !!legendKinds[kind];
+    el.addEventListener('change', () => {
+      legendKinds[kind] = el.checked;
+      try { localStorage.setItem('mubone_legend_kinds', JSON.stringify(legendKinds)); } catch (_) {}
+      S._bindingsChanged?.();
+    });
+  });
+  const showAllEl = document.getElementById('mappingShowAll');
+  if (showAllEl) {
+    showAllEl.checked = _mapShowAll;
+    showAllEl.addEventListener('change', () => {
+      _mapShowAll = showAllEl.checked;
+      try { localStorage.setItem('mubone_keys_show_all', _mapShowAll ? '1' : '0'); } catch (_) {}
+      _applyMappingFilter();
+    });
+  }
 
   // Escape clears a non-empty query, otherwise blurs — so the next Escape
   // reaches the modal instead of the field.
@@ -1532,7 +2242,7 @@ export function setupMappingModal() {
   document.addEventListener('keydown', e => {
     if (e.key !== 'f' && e.key !== 'F') return;
     if (!e.metaKey && !e.ctrlKey) return;
-    if (!document.getElementById('mappingModal')?.classList.contains('open')) return;
+    if (!_visible()) return;
     e.preventDefault();
     e.stopPropagation();
     filterEl?.focus();
@@ -1560,8 +2270,29 @@ export function setupMappingModal() {
   S._keyMappings    = keyMappings;
   S._actions        = ACTIONS;
   S._dispatchAction = dispatchAction;
+  S._dispatchButton = dispatchButton;   // the instrument's buttons, sygaldry.js
+  // Keys through the same recogniser (events.js): the source a key event is,
+  // whether anything is bound on it, and its edge.
+  S._keySourceOf    = keySourceOf;
+  S._sourceBound    = src => _bindingsOnSource(src).size > 0;
+  S._dispatchGesture = dispatchGesture;
+  S._handleMidiMessage = handleMidiMessage;   // the audits' way in for a note
+  S._buttonBindings = () => Object.entries(buttonMappings).map(([id, bm]) => ({ id, ...bm, label: actionLabel(ACTIONS.find(a => a.id === id)) || id }));
+  S._buttonTiming   = { get: () => ({ ...buttonTiming }), set: setButtonTiming, defaults: { ...BUTTON_TIMING_DEFAULT } };
+  S._bindingOf      = bindingOf;
+  S._bindingsOf     = bindingsOf;                    // the palette's legend reads these two
+  S._gestureLabel   = g => GESTURE_LABEL[g] ?? '';
+  S._keyTaken       = keyTaken;
+  // Continuous radius setter for the canvas wheel (2026-08-28): the
+  // radius_inc/dec actions step by SEARCH_RADIUS_STEP (2°), which is right
+  // for a key or a pedal and wrong for a trackpad — the radius visibly
+  // quantised. Same clamp, same UI sync as the actions; tenth-degree
+  // resolution so the readout stays legible.
+  S._setSearchRadius = (deg) => {
+    const v = Math.max(SEARCH_RADIUS_MIN, Math.min(SEARCH_RADIUS_MAX, deg));
+    S.searchRadiusDeg = Math.round(v * 10) / 10;
+    updatePlaybackControls(); flashRadiusTooltip();
+  };
   S._isKeyLearning  = () => keyLearningId !== null;
-  S._holdActionIds  = new Set(ACTIONS.filter(a => a.type === 'hold').map(a => a.id));
-  S._activeHoldKeyMap = new Map();  // code → actionId for held custom-bound keys
 
 }

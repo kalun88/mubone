@@ -11,7 +11,9 @@
 // Messages from main thread:
 //   { type: 'init', sab, sampleRate, bufferLength, params }
 //   { type: 'params', ... }          — cursor parameter updates
-//   { type: 'candidates', list }     — cursor candidate list (50Hz)
+//   { type: 'cursorVoices', list }   — cursor candidates, bucketed by the brush
+//                                      each stroke froze (50Hz). vo 0 routes to
+//                                      the global cursor params; see the case.
 //   { type: 'seeds', list }          — per-seed state updates (50Hz)
 //   { type: 'vbapLUT', data }        — VBAP lookup table (once)
 //   { type: 'buffers', list }        — sample buffer registration
@@ -20,10 +22,65 @@
 
 const BLOCK = 128;              // render quantum size (Web Audio spec)
 const HANN_TABLE_SIZE = 1024;   // envelope lookup resolution
-const POOL_SIZE = 256;          // max simultaneous grains
-const MAX_SEEDS = 20;           // max concurrent seeds
-const MAX_CHANNELS = 16;        // max output channels (speaker buses)
-const FEEDBACK_RING_SIZE = 256; // active-grain feedback entries
+// Shortest ramp that still behaves like a fade rather than an edge — roughly
+// one render quantum.  Applied in both fade modes, but only when the fade is
+// non-zero: an explicit 0 still means instant on/off.
+const MIN_FADE_S = 0.002;
+// ── How many grains may sound at once (P2, 2026-09-06) ────────────────────
+// A setting, not a constant: it is polyphony, and the right number depends on
+// the machine. 256 was chosen in 2026-03 against a grain that cost more than
+// twice what it costs now (R4), and the probe's dense scene sat at its ceiling.
+// The pool is allocated from `maxGrains` at `init` and re-allocated when the
+// setting changes; POOL_DEFAULT is only what a worklet starts with before the
+// bridge's init arrives. The FEEDBACK RING is always the same size — it is
+// what tells the renderer which marks sounded, and a mark that sounded must
+// be allowed to light (Ek, 2026-09-06: "the glow map should be accurate").
+const POOL_DEFAULT = 512;
+// Seed voices. A cloud is a moving cursor (2026-09-05): the bridge posts it as
+// one voice per VOICING under it, so there are more voices than clouds
+// (state.js MAX_SEEDS = 20). The bridge allocates `index`; a voice is a voice.
+// Voice slots, raised 2026-09-06 (P4) from 8 and 40. The onset loops walk
+// every slot once per sample whether or not it holds a voice, so a slot has a
+// FIXED cost: measured at 0.22 µs per cursor slot and 0.14 µs per seed slot,
+// per 128-sample block. Sixteen and sixty-four together add 4.3 µs to a
+// 2667 µs budget — 0.16 % — and buy twice the distinct brushes audible under
+// one cursor and half again the voicings across the pinned clouds. A bucket
+// that finds no free voice is SILENT for that tick, which is the thing these
+// numbers were quietly costing.
+const MAX_SEED_VOICES = 64;
+// Cursor voices — docs/archive/BRUSH-MODEL.md step 3. A stroke freezes the brush that
+// painted it, so one sweep can cross material wanting different grain params.
+// DENSITY is why these have to be separate voices rather than per-grain data:
+// the onset period belongs to the clock, and one clock cannot produce two
+// densities. Separate from the seed pool on purpose — clouds must not compete
+// with brushes for polyphony.
+const MAX_CURSOR_VOICES = 16;
+
+// ── The candidate TABLES (R3, 2026-09-06) — must match grain-worklet-bridge.js ──
+// One region per cursor voice (0 = the live voicing, 1..8 = the voice slots) in
+// one SharedArrayBuffer the bridge owns. Each region: a 4-word header
+// [published half, count of half 0, count of half 1, generation], then two
+// halves of CT_ROWS rows × CT_WORDS words followed by a CT_ROWS permutation
+// (row order by offset, for step mode). The bridge writes the unpublished half
+// and flips; a fire reads the published half. Row words: bufIndex i32,
+// offset i32, length i32, azDeg f32, elBias f32, particleId i32, radiusFade f32.
+const CT_ROWS = 8192, CT_WORDS = 7, CT_HEADER = 4;
+const CT_HALF = CT_ROWS * CT_WORDS + CT_ROWS;
+const CT_REGION = CT_HEADER + 2 * CT_HALF;
+
+// ── The throttle's window and its two thresholds (P3, 2026-09-06) ──────────
+// The thread's own load over a SHORT window is what says "near the limit".
+// 32 blocks is 85 ms at 48 kHz: long enough that the 1 ms clock's rounding
+// averages out (±3 % at the thresholds), short enough that a burst is not
+// averaged away — the mean over a second is exactly what hides the thing that
+// breaks the sound. Skipping ramps from nothing at 70 % of the block budget
+// to everything at 95 %.
+const LOAD_WINDOW_BLOCKS = 32;
+const LOAD_SOFT = 0.70, LOAD_HARD = 0.95;
+// The backstop: a pool about to run out still thins, because the alternative
+// is _allocGrain stealing a sounding grain, which is a click. Nothing to do
+// with load — it is the pool's own last 10 %.
+const POOL_SOFT = 0.90;
 
 class GrainEngineProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -46,6 +103,17 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     // Warm cache: first chunk survives liveBufferClear for instant reuse.
     this._liveChunks = [];          // array of Float32Array (each ~30s)
     this._liveChunkSize = 0;        // samples per chunk (set on init)
+    // Spare chunks, transferred in by the bridge ('liveSpare') so a take that
+    // outgrows a chunk POPS one inside process() instead of allocating 5.8 MB
+    // on the audio thread mid-take (R5, 2026-09-06). A chunk freed by a clear
+    // goes back here. `_spareLow` rides the next feedback; the bridge tops up.
+    this._spareChunks = [];
+    this._spareLow = false;
+    this._procMs = 0; this._procMax = 0; this._procBlocks = 0; this._chunkAllocs = 0;   // R6 load figures
+    // The throttle's own signal (P3): load over the last LOAD_WINDOW_BLOCKS.
+    this._procMs32 = 0; this._blocks32 = 0; this._loadShort = 0;
+    this._blockMs = BLOCK / 48000 * 1000;   // corrected at init from the real rate
+    this._diagThrottled = 0;                // onsets the throttle skipped
     this._liveBufLen = 0;           // total valid sample count across all chunks
     this._liveRecording = false;    // true when mic input is connected
 
@@ -63,55 +131,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     }
     // Rect envelope = 1.0 everywhere — no table needed, just skip lookup
 
-    // ── Grain pool ────────────────────────────────────────────────────────
-    // Pre-allocated flat arrays for zero-alloc process().
-    // Each grain is at index [i] across all arrays.
-    this._gActive     = new Uint8Array(POOL_SIZE);    // 0 or 1
-    this._gReadPos    = new Float64Array(POOL_SIZE);   // fractional sample position
-    this._gReadRate   = new Float32Array(POOL_SIZE);   // pitch ratio (1.0 = original)
-    this._gPhase      = new Float32Array(POOL_SIZE);   // 0→1 envelope progress
-    this._gPhaseInc   = new Float32Array(POOL_SIZE);   // 1 / durationSamples
-    this._gVolume     = new Float32Array(POOL_SIZE);   // per-grain volume
-    this._gEnvShape   = new Uint8Array(POOL_SIZE);     // 0=hann, 1=tri, 2=rect
-    this._gBufIndex   = new Int32Array(POOL_SIZE);     // -1=recBuf, 0+=sampleBufs[i]
-    this._gBufOffset  = new Float64Array(POOL_SIZE);   // start offset in buffer (samples)
-    this._gBufLen     = new Uint32Array(POOL_SIZE);    // length of buffer region
-    this._gParticleId = new Int32Array(POOL_SIZE);     // for feedback ring (-1 = none)
-    this._gIsSeed     = new Uint8Array(POOL_SIZE);     // 0=cursor grain, 1=seed grain
-    // VBAP per-grain: speaker pair indices + weights
-    this._gVbapIdxA   = new Uint8Array(POOL_SIZE);
-    this._gVbapIdxB   = new Uint8Array(POOL_SIZE);
-    this._gVbapWA     = new Float32Array(POOL_SIZE);
-    this._gVbapWB     = new Float32Array(POOL_SIZE);
-    this._gElBias     = new Float32Array(POOL_SIZE);   // elevation center-bias (0=equator, 1=pole)
-    // Per-grain biquad filter state (Direct Form II Transposed)
-    // Two cascaded sections: HPF then LPF. Each needs 5 coefficients + 2 state vars.
-    // Filter flags: bit 0 = HPF active, bit 1 = LPF active
-    this._gFilterFlags = new Uint8Array(POOL_SIZE);
-    // HPF coefficients: b0, b1, b2, a1, a2 (a0 normalized to 1)
-    this._gHpfB0 = new Float32Array(POOL_SIZE);
-    this._gHpfB1 = new Float32Array(POOL_SIZE);
-    this._gHpfB2 = new Float32Array(POOL_SIZE);
-    this._gHpfA1 = new Float32Array(POOL_SIZE);
-    this._gHpfA2 = new Float32Array(POOL_SIZE);
-    this._gHpfZ1 = new Float32Array(POOL_SIZE);  // state
-    this._gHpfZ2 = new Float32Array(POOL_SIZE);
-    // LPF coefficients + state
-    this._gLpfB0 = new Float32Array(POOL_SIZE);
-    this._gLpfB1 = new Float32Array(POOL_SIZE);
-    this._gLpfB2 = new Float32Array(POOL_SIZE);
-    this._gLpfA1 = new Float32Array(POOL_SIZE);
-    this._gLpfA2 = new Float32Array(POOL_SIZE);
-    this._gLpfZ1 = new Float32Array(POOL_SIZE);
-    this._gLpfZ2 = new Float32Array(POOL_SIZE);
-
-    // Source tag: 0 = cursor, 1 = seed (for selective flush on undo)
-    this._gIsCursor = new Uint8Array(POOL_SIZE);
-
-    // Free list — simple stack
-    this._freeList = new Uint16Array(POOL_SIZE);
-    this._freePtr  = POOL_SIZE;  // points past last free slot
-    for (let i = 0; i < POOL_SIZE; i++) this._freeList[i] = i;
+    this._allocPool(POOL_DEFAULT);
 
     // Active grain count (for diagnostics)
     this._activeCount = 0;
@@ -133,6 +153,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     this._direction       = 0;      // 0=fwd, 1=rev, 2=rand
     // Direction diagnostics — counts reset each feedback cycle
     this._diagDirFwd      = 0;
+    this._diagJitterDrop  = 0;      // jittered reads dropped for landing outside the audio
     this._diagDirRev      = 0;
     this._grainStart      = 0;      // default buffer offset
     this._numChannels     = 1;      // output channel count
@@ -140,9 +161,14 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     // Filter parameters (cursor)
     this._hpfFreq         = 20;     // Hz — bypass at ≤22
     this._lpfFreq         = 20000;  // Hz — bypass at ≥19500
-    this._filterQ         = 0.707;  // Q factor
+    this._hpfQ            = 0.707;  // Q at the HPF corner
+    this._lpfQ            = 0.707;  // Q at the LPF corner
     this._filterFreqJitter = 0;     // per-grain cutoff randomization (0–1)
     this._durJitter       = 0;      // duration percentage jitter (0–1)
+    this._startJitter     = 0;      // read-offset jitter in SECONDS (0 = off)
+    this._fadeRatio       = 0.5;    // attack/release each as fraction of dur
+    this._fadeMode        = 0;      // 0 = proportional (fadeRatio), 1 = absolute (fadeMs)
+    this._fadeMs          = 0.020;  // absolute ramp length in SECONDS
     this._panSpread       = 0;      // spatial spread (0=point source, 1=full 360°)
     this._kSeqMode        = false;  // sequential candidate stepping (vs random)
     this._seqIdx          = 0;      // current sequential index into candidate list
@@ -158,33 +184,13 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     //   volume, pitchShift, pitchJitter, periodVar, durVar, envShape,
     //   probability, direction, gain, candidates[], candidateCount }
     this._seeds = [];
-    for (let si = 0; si < MAX_SEEDS; si++) {
-      this._seeds.push({
-        active: false,
-        nextOnset: 0,
-        periodSamples: 0,
-        durationSamples: 0,
-        volume: 0.8,
-        pitchShift: 0,
-        pitchJitter: 0,
-        periodVar: 0,
-        durVar: 0,
-        durJitter: 0,
-        envShape: 0,
-        probability: 1.0,
-        direction: 0,
-        gain: 1.0,            // seedWeight × envGain (pre-computed on main thread)
-        hpfFreq: 20,
-        lpfFreq: 20000,
-        filterQ: 0.707,
-        filterFreqJitter: 0,
-        panSpread: 0,         // spatial spread (0–1)
-        kSeqMode: false,      // sequential candidate stepping
-        seqIdx: 0,            // current sequential index
-        candidates: [],
-        candidateCount: 0,
-      });
-    }
+    this._cursorVoices = [];
+    for (let si = 0; si < MAX_CURSOR_VOICES; si++) this._cursorVoices.push(this._makeVoice(true));
+    // The candidate tables (R3): views over the bridge's SharedArrayBuffer, and
+    // the region the live cursor voice reads (-1: the `_candidates` objects).
+    this._ctI = null; this._ctF = null;
+    this._candTab = -1;
+    for (let si = 0; si < MAX_SEED_VOICES; si++) this._seeds.push(this._makeVoice());
 
     // ── VBAP lookup table ─────────────────────────────────────────────────
     // 360 entries: [idxA, idxB, wA, wB] packed as 4 values per degree
@@ -194,12 +200,14 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     // Circular buffer of recent grain onsets for glow overlay
     // Pre-allocated feedback ring — no allocations during process().
     // Stores particle IDs of recently fired grains for glow overlay.
-    this._feedbackBuf = new Int32Array(FEEDBACK_RING_SIZE);
     this._feedbackLen = 0;          // entries written since last post
     this._feedbackTimer = 0;        // sample counter for periodic posting
 
     // ── PRNG state (xorshift32 — deterministic, no allocation) ───────────
     this._rngState = 0xDEADBEEF;
+
+    // Grains stolen from the pool since the last feedback post (a hard cut).
+    this._diagSteals = 0;
 
     // ── Message handler ───────────────────────────────────────────────────
     this.port.onmessage = ({ data }) => this._handleMessage(data);
@@ -225,9 +233,13 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
 
     switch (data.type) {
       case 'init': {
+        // The pool size the app asked for (P2). Re-allocating here is free:
+        // nothing is sounding yet.
+        if (data.maxGrains && data.maxGrains !== this._pool) this._allocPool(data.maxGrains);
         this._recBuf = new Float32Array(data.sab);
         this._recLen = data.bufferLength;
         this._sr = data.sampleRate || 48000;
+        this._blockMs = BLOCK / this._sr * 1000;
         if (data.numChannels) {
           this._numChannels = data.numChannels;
           this._eqGain = 1 / Math.sqrt(data.numChannels);
@@ -235,11 +247,12 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         this._sampleClock = 0;
         this._nextOnset = 0;
         this._activeCount = 0;
-        this._freePtr = POOL_SIZE;
-        for (let i = 0; i < POOL_SIZE; i++) {
+        this._freePtr = this._pool;
+        for (let i = 0; i < this._pool; i++) {
           this._freeList[i] = i;
           this._gActive[i] = 0;
         }
+        this._resetActive();
         this._active = true;
         // Apply initial params
         if (data.params) this._applyParams(data.params);
@@ -256,51 +269,105 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         // Compact candidate list from main thread spatial search
         this._candidates = data.list || [];
         this._candidateCount = this._candidates.length;
+        this._candTab = -1;
         break;
+
+      case 'cursorTables':
+        // The bridge's SharedArrayBuffer of candidate tables (R3). Views once;
+        // every tick after this is a header read, never a message of objects.
+        this._ctI = new Int32Array(data.sab);
+        this._ctF = new Float32Array(data.sab);
+        break;
+
+      case 'cursorVoicesTab': {
+        // The table form of 'cursorVoices': which regions are live this tick
+        // and each voice's params; the candidates themselves are in the SAB.
+        for (let vi = 0; vi < MAX_CURSOR_VOICES; vi++) this._cursorVoices[vi].active = false;
+        this._candidates = [];
+        this._candidateCount = 0;
+        this._candTab = data.liveActive && this._ctI ? 0 : -1;
+        const vlist = data.voices || [];
+        for (let i = 0; i < vlist.length; i++) {
+          const e = vlist[i];
+          if (!e || !(e.slot >= 1 && e.slot <= MAX_CURSOR_VOICES)) continue;
+          const v = this._cursorVoices[e.slot - 1];
+          v.active = true;
+          v.gain = 1.0;
+          v.candidates = null;
+          v.candidateCount = 0;
+          v.tabRegion = e.slot;
+          if (e.params) this._applyVoiceParams(v, e.params);
+          if (data.kSeqMode != null) {
+            const was = v.kSeqMode;
+            v.kSeqMode = !!data.kSeqMode;
+            if (v.kSeqMode && !was) v.seqIdx = 0;
+          }
+          if (v.nextOnset === 0 || !v.periodSamples) v.nextOnset = this._sampleClock;
+        }
+        break;
+      }
+
+      case 'cursorVoices': {
+        // One voice per distinct frozen brush under the cursor this tick
+        // (docs/archive/BRUSH-MODEL.md step 3). The main thread buckets the candidate
+        // pool by the voicing each stroke froze; see grain-worklet-bridge.js.
+        //
+        // vo === 0 is the reserved "follow the live params" voicing, and it
+        // routes to the ORIGINAL cursor voice — this._candidates plus the
+        // global param block — rather than to a slot here. That is what
+        // material painted before step 3 plays with, and it means the
+        // pre-existing cursor path stays exactly as it was rather than being
+        // reimplemented alongside it.
+        const vlist = data.list || [];
+        for (let vi = 0; vi < MAX_CURSOR_VOICES; vi++) this._cursorVoices[vi].active = false;
+        this._candidates = [];
+        this._candidateCount = 0;
+        let slot = 0;
+        for (let i = 0; i < vlist.length; i++) {
+          const e = vlist[i];
+          if (!e) continue;
+          if (!e.vo) {
+            this._candidates = e.candidates || [];
+            this._candidateCount = this._candidates.length;
+            continue;
+          }
+          if (slot >= MAX_CURSOR_VOICES) break;
+          const v = this._cursorVoices[slot++];
+          v.active = true;
+          v.gain = 1.0;
+          v.candidates = e.candidates || [];
+          v.candidateCount = v.candidates.length;
+          v.tabRegion = -1;
+          if (e.params) this._applyVoiceParams(v, e.params);
+          // Order is the LENS's, live — the message-level flag overrides
+          // whatever the frozen voicing block carried (#233).
+          if (data.kSeqMode != null) {
+            const was = v.kSeqMode;
+            v.kSeqMode = !!data.kSeqMode;
+            if (v.kSeqMode && !was) v.seqIdx = 0;
+          }
+          if (v.nextOnset === 0 || !v.periodSamples) v.nextOnset = this._sampleClock;
+        }
+        break;
+      }
 
       case 'seeds': {
         // Per-seed state updates from main thread (~50Hz).
         // Each entry: { index, active, params:{...}, gain, candidates:[...] }
         const seedList = data.list || [];
         // First, deactivate all seeds (main thread sends only active ones)
-        for (let si = 0; si < MAX_SEEDS; si++) this._seeds[si].active = false;
+        for (let si = 0; si < MAX_SEED_VOICES; si++) this._seeds[si].active = false;
         for (let i = 0; i < seedList.length; i++) {
           const sd = seedList[i];
           const si = sd.index;
-          if (si < 0 || si >= MAX_SEEDS) continue;
+          if (si < 0 || si >= MAX_SEED_VOICES) continue;
           const seed = this._seeds[si];
           seed.active = true;
           seed.gain = sd.gain ?? 1.0;
           seed.candidates = sd.candidates || [];
           seed.candidateCount = seed.candidates.length;
           // Apply params if provided
-          if (sd.params) {
-            const p = sd.params;
-            const sr = this._sr;
-            if (p.period != null)
-              seed.periodSamples = Math.max(1, Math.round(p.period * sr));
-            if (p.duration != null)
-              seed.durationSamples = Math.max(1, Math.round(p.duration * sr));
-            if (p.volume != null)      seed.volume = p.volume;
-            if (p.pitchShift != null)  seed.pitchShift = p.pitchShift;
-            if (p.pitchJitter != null) seed.pitchJitter = p.pitchJitter;
-            if (p.periodVar != null)   seed.periodVar = p.periodVar;
-            if (p.durVar != null)      seed.durVar = p.durVar;
-            if (p.envShape != null)    seed.envShape = p.envShape;
-            if (p.probability != null) seed.probability = p.probability;
-            if (p.direction != null)   seed.direction = p.direction;
-            if (p.durJitter != null)   seed.durJitter = p.durJitter;
-            if (p.hpfFreq != null)     seed.hpfFreq = p.hpfFreq;
-            if (p.lpfFreq != null)     seed.lpfFreq = p.lpfFreq;
-            if (p.filterQ != null)     seed.filterQ = p.filterQ;
-            if (p.filterFreqJitter != null) seed.filterFreqJitter = p.filterFreqJitter;
-            if (p.panSpread != null) seed.panSpread = p.panSpread;
-            if (p.kSeqMode != null) {
-              const was = seed.kSeqMode;
-              seed.kSeqMode = !!p.kSeqMode;
-              if (seed.kSeqMode && !was) seed.seqIdx = 0;
-            }
-          }
+          if (sd.params) this._applyVoiceParams(seed, sd.params);
           // Init onset clock if newly activated
           if (seed.nextOnset === 0 || !seed.periodSamples) {
             seed.nextOnset = this._sampleClock;
@@ -346,15 +413,41 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       // Uses 30s chunks to avoid large upfront allocation.
       case 'liveBufferInit': {
         const chunkSize = data.chunkSize || Math.round(this._sr * 30);
+        // A new take is about to overwrite chunk 0 from sample 0. Grains from
+        // the previous take may still be reading it (a second press within
+        // one grain-length of the first release), so fade them over a block
+        // now, before their material changes under them.
+        this._fadeLiveGrains(0);
         this._liveChunkSize = chunkSize;
         this._liveBufLen = 0;
         // Warm cache: reuse first chunk if it exists and matches size
         if (this._liveChunks.length > 0 && this._liveChunks[0].length === chunkSize) {
-          // Keep first chunk, discard extras from previous long recordings
-          this._liveChunks.length = 1;
+          // Keep first chunk; extras from a previous long take become spares.
+          this._returnChunks(1);
         } else {
+          // A size change orphans the old chunks and spares (once per app
+          // life in practice — the size is the sample rate × 30 s).
+          this._spareChunks.length = 0;
           this._liveChunks = [new Float32Array(chunkSize)];
         }
+        break;
+      }
+
+      case 'maxGrains':
+        // Settings → Audio moved it. Everything sounding stops — the setting
+        // is not a performance control.
+        if (data.n && data.n !== this._pool) this._allocPool(data.n);
+        break;
+
+      case 'liveSpare': {
+        // A spare chunk from the bridge (an ArrayBuffer, transferred). Kept
+        // only if it is the current size; two spares are plenty — a chunk is
+        // 30 s and the top-up round trip is one feedback (~33 ms).
+        const buf = data.buffer;
+        if (buf instanceof ArrayBuffer && this._liveChunkSize > 0 && buf.byteLength === this._liveChunkSize * 4 && this._spareChunks.length < 2) {
+          this._spareChunks.push(new Float32Array(buf));
+        }
+        this._spareLow = this._spareChunks.length < 1;
         break;
       }
 
@@ -373,7 +466,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
           const endSample = offset + incoming.length;
           const chunksNeeded = Math.ceil(endSample / cs);
           while (this._liveChunks.length < chunksNeeded) {
-            this._liveChunks.push(new Float32Array(cs));
+            this._liveChunks.push(this._takeChunk(cs));
           }
 
           // Copy incoming data across chunk boundaries
@@ -396,10 +489,11 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
 
       case 'liveBufferClear':
         // Warm cache: keep first chunk allocated for instant reuse on next record press.
-        // Only zero out the valid-length counter — no deallocation.
-        if (this._liveChunks.length > 1) {
-          this._liveChunks.length = 1;  // free extra chunks
-        }
+        // Only zero out the valid-length counter — no deallocation. Chunks
+        // beyond the first ARE freed, so a grain still reading one of them
+        // (a take over 30 s, released under a second ago) fades first.
+        this._fadeLiveGrains(this._liveChunkSize);
+        this._returnChunks(1);          // extra chunks become spares, not garbage
         this._liveBufLen = 0;
         this._liveRecording = false;
         break;
@@ -410,15 +504,16 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
 
       case 'liveRecStop':
         this._liveRecording = false;
-        // Snapshot the final buffer length into all active live-buffer grains.
-        // During recording, the render loop used the live _liveBufLen; now it
-        // switches to the per-grain snapshot _gBufLen[i]. Without this update,
-        // grains whose read position has advanced past their fire-time snapshot
-        // would suddenly read 0 (silence) — causing an audible gap at the
-        // recording→playback transition.
-        for (let i = 0; i < POOL_SIZE; i++) {
+        // The take has stopped growing. Snapshot its final length into every
+        // live grain (the render loop switches from _liveBufLen to _gBufLen[i]
+        // here), and bring each grain's envelope down to land on the last
+        // audio it has. A grain riding the edge used to keep its envelope and
+        // read zeros from the edge on — a hard cut to silence mid-envelope,
+        // the click Ek heard on every early release (2026-09-02).
+        for (let i = 0; i < this._pool; i++) {
           if (this._gActive[i] && this._gBufIndex[i] === -2) {
             this._gBufLen[i] = this._liveBufLen;
+            this._landGrainOnEdge(i, this._liveBufLen);
           }
         }
         break;
@@ -428,10 +523,11 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         this._liveRecording = false;
         this._liveChunks = [];
         this._liveBufLen = 0;
-        for (let i = 0; i < POOL_SIZE; i++) this._gActive[i] = 0;
+        for (let i = 0; i < this._pool; i++) this._gActive[i] = 0;
+        this._resetActive();
         this._activeCount = 0;
-        this._freePtr = POOL_SIZE;
-        for (let i = 0; i < POOL_SIZE; i++) this._freeList[i] = i;
+        this._freePtr = this._pool;
+        for (let i = 0; i < this._pool; i++) this._freeList[i] = i;
         break;
 
       // Soft-flush: fade out all in-flight grains (~3ms) instead of hard-
@@ -441,7 +537,12 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         // Clear candidate lists so onset clocks don't re-fire stale grains
         this._candidates = [];
         this._candidateCount = 0;
-        for (let si = 0; si < MAX_SEEDS; si++) {
+        for (let vi = 0; vi < MAX_CURSOR_VOICES; vi++) {
+          this._cursorVoices[vi].candidates = [];
+          this._cursorVoices[vi].candidateCount = 0;
+          this._cursorVoices[vi].active = false;
+        }
+        for (let si = 0; si < MAX_SEED_VOICES; si++) {
           this._seeds[si].candidates = [];
           this._seeds[si].candidateCount = 0;
           this._seeds[si].active = false;
@@ -449,7 +550,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         // Accelerate all active grains to fade out in ~128 samples (~2.7ms).
         // The hann/tri envelope tapers to zero naturally — no click.
         // Buffers stay alive so grains can still read during the fade.
-        for (let i = 0; i < POOL_SIZE; i++) {
+        for (let i = 0; i < this._pool; i++) {
           if (this._gActive[i]) {
             // Jump phase forward so remaining envelope is short
             const remaining = 1.0 - this._gPhase[i];
@@ -463,7 +564,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       // Compact _sampleBufs, dropping buffers whose recordings were erased.
       // Sent by the bridge at sweep-snapshot commit time (undo no longer
       // possible), NOT at erase time — see resyncWorkletBuffers() in
-      // grain-worklet-bridge.js and docs/GROUP-SHOW-NOISE-GLITCH.md.
+      // grain-worklet-bridge.js and docs/archive/GROUP-SHOW-NOISE-GLITCH.md.
       // data.keep = old indices to retain, ascending. Indices -1 (SAB) and
       // -2 (live chunks) are unaffected. Must stay in lockstep with the
       // bridge's _bufferMap rebuild or grains read from the wrong buffer.
@@ -481,7 +582,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         this._sampleBufs = next;
         // Remap in-flight grains to new indices; free grains whose buffer
         // was dropped (its data is gone — can't fade what we can't read).
-        for (let i = 0; i < POOL_SIZE; i++) {
+        for (let i = 0; i < this._pool; i++) {
           if (!this._gActive[i]) continue;
           const bi = this._gBufIndex[i];
           if (bi < 0) continue;  // SAB / live buffer — untouched
@@ -495,7 +596,11 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         // so granulation resumes seamlessly on the next post.
         this._candidates = [];
         this._candidateCount = 0;
-        for (let si = 0; si < MAX_SEEDS; si++) {
+        for (let vi = 0; vi < MAX_CURSOR_VOICES; vi++) {
+          this._cursorVoices[vi].candidates = [];
+          this._cursorVoices[vi].candidateCount = 0;
+        }
+        for (let si = 0; si < MAX_SEED_VOICES; si++) {
           this._seeds[si].candidates = [];
           this._seeds[si].candidateCount = 0;
         }
@@ -508,7 +613,14 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       case 'flush-cursor':
         this._candidates = [];
         this._candidateCount = 0;
-        for (let i = 0; i < POOL_SIZE; i++) {
+        // Frozen-brush voices are cursor grains too — undo has to silence them
+        // or the undone stroke keeps sounding from its own voice.
+        for (let vi = 0; vi < MAX_CURSOR_VOICES; vi++) {
+          this._cursorVoices[vi].candidates = [];
+          this._cursorVoices[vi].candidateCount = 0;
+          this._cursorVoices[vi].active = false;
+        }
+        for (let i = 0; i < this._pool; i++) {
           if (this._gActive[i] && this._gIsCursor[i]) {
             const remaining = 1.0 - this._gPhase[i];
             if (remaining > 0) {
@@ -517,6 +629,82 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
           }
         }
         break;
+    }
+  }
+
+  /**
+   * One independent voice: its own onset clock, its own full param block, its
+   * own candidate list. Seeds (clouds) and cursor voices (frozen brushes) are
+   * the same shape on purpose — _fireGrain() reads every param off whichever
+   * voice it is handed, so neither needed a special case to exist.
+   */
+  _makeVoice(isCursor = false) {
+    return {
+      // Which bus this voice's grains belong on, and whether a cursor flush
+      // takes them. NOT derivable from "was a voice passed to _fireGrain" any
+      // more: cursor voices are passed exactly like seeds, so without this flag
+      // every frozen-brush grain would be tagged a seed grain — routed to the
+      // house bus instead of the monitor, and left running by undo.
+      isCursor,
+      active: false,
+      nextOnset: 0,
+      periodSamples: 0,
+      durationSamples: 0,
+      volume: 0.8,
+      pitchShift: 0,
+      pitchJitter: 0,
+      periodVar: 0,
+      durVar: 0,
+      durJitter: 0,
+      startJitter: 0,       // read-offset jitter in seconds
+      fadeRatio: 0.5,       // attack/release each as fraction of dur
+      fadeMode: 0,          // 0 = proportional, 1 = absolute
+      fadeMs: 0.020,        // absolute ramp length in seconds
+      envShape: 0,
+      probability: 1.0,
+      direction: 0,
+      gain: 1.0,            // seedWeight × envGain (pre-computed on main thread)
+      hpfFreq: 20,
+      lpfFreq: 20000,
+      hpfQ: 0.707,
+      lpfQ: 0.707,
+      filterFreqJitter: 0,
+      panSpread: 0,         // spatial spread (0–1)
+      kSeqMode: false,      // sequential candidate stepping
+      seqIdx: 0,            // current sequential index
+      candidates: [],
+      candidateCount: 0,
+    };
+  }
+
+  /** Apply a param block to a voice. One field list, both voice kinds. */
+  _applyVoiceParams(v, p) {
+    const sr = this._sr;
+    if (p.period != null)      v.periodSamples   = Math.max(1, Math.round(p.period * sr));
+    if (p.duration != null)    v.durationSamples = Math.max(1, Math.round(p.duration * sr));
+    if (p.volume != null)      v.volume = p.volume;
+    if (p.pitchShift != null)  v.pitchShift = p.pitchShift;
+    if (p.pitchJitter != null) v.pitchJitter = p.pitchJitter;
+    if (p.periodVar != null)   v.periodVar = p.periodVar;
+    if (p.durVar != null)      v.durVar = p.durVar;
+    if (p.envShape != null)    v.envShape = p.envShape;
+    if (p.probability != null) v.probability = p.probability;
+    if (p.direction != null)   v.direction = p.direction;
+    if (p.durJitter != null)   v.durJitter = p.durJitter;
+    if (p.startJitter != null) v.startJitter = p.startJitter;
+    if (p.fadeRatio != null)   v.fadeRatio = p.fadeRatio;
+    if (p.fadeMode != null)    v.fadeMode = p.fadeMode;
+    if (p.fadeMs != null)      v.fadeMs = p.fadeMs;
+    if (p.hpfFreq != null)     v.hpfFreq = p.hpfFreq;
+    if (p.lpfFreq != null)     v.lpfFreq = p.lpfFreq;
+    if (p.hpfQ != null)        v.hpfQ = p.hpfQ;
+    if (p.lpfQ != null)        v.lpfQ = p.lpfQ;
+    if (p.filterFreqJitter != null) v.filterFreqJitter = p.filterFreqJitter;
+    if (p.panSpread != null)   v.panSpread = p.panSpread;
+    if (p.kSeqMode != null) {
+      const was = v.kSeqMode;
+      v.kSeqMode = !!p.kSeqMode;
+      if (v.kSeqMode && !was) v.seqIdx = 0;
     }
   }
 
@@ -548,12 +736,22 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       this._hpfFreq = p.hpfFreq;
     if (p.lpfFreq != null)
       this._lpfFreq = p.lpfFreq;
-    if (p.filterQ != null)
-      this._filterQ = p.filterQ;
+    if (p.hpfQ != null)
+      this._hpfQ = p.hpfQ;
+    if (p.lpfQ != null)
+      this._lpfQ = p.lpfQ;
     if (p.filterFreqJitter != null)
       this._filterFreqJitter = p.filterFreqJitter;
     if (p.durJitter != null)
       this._durJitter = p.durJitter;
+    if (p.startJitter != null)
+      this._startJitter = p.startJitter;
+    if (p.fadeRatio != null)
+      this._fadeRatio = p.fadeRatio;
+    if (p.fadeMode != null)
+      this._fadeMode = p.fadeMode;
+    if (p.fadeMs != null)
+      this._fadeMs = p.fadeMs;
     if (p.panSpread != null)
       this._panSpread = p.panSpread;
     if (p.kSeqMode != null) {
@@ -564,10 +762,31 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
   }
 
   // ── Envelope lookup (zero-alloc) ──────────────────────────────────────
-  _envelope(phase, shape) {
+  // fr = fadeRatio: the fraction of the grain spent in attack, and again in
+  // release.  Both tables span the WHOLE grain (hann rises 0→1 over the first
+  // half and falls over the second), so before fadeRatio was wired through
+  // every grain was permanently the fr = 0.5 case — full gain only at the exact
+  // centre.  That is why a transient had to sit mid-grain to be heard at level,
+  // and why the rect curve sounded so much more present on a percussive hit.
+  //
+  // Below 0.5 the ramps keep their shape and a unity sustain opens between
+  // them, so an attack anywhere in the middle plays unattenuated.
+  _envelope(phase, shape, fr) {
     if (shape === 2) return 1.0;  // rect — no envelope
     const table = shape === 1 ? this._triTable : this._hannTable;
-    const idx = phase * (HANN_TABLE_SIZE - 1);
+    let t;
+    if (fr >= 0.5) {
+      t = phase;                                     // unchanged classic shape
+    } else if (fr <= 0) {
+      return 1.0;                                    // instant on/off
+    } else if (phase < fr) {
+      t = (phase / fr) * 0.5;                        // attack  → table 0 … 0.5
+    } else if (phase > 1 - fr) {
+      t = 0.5 + ((phase - (1 - fr)) / fr) * 0.5;     // release → table 0.5 … 1
+    } else {
+      return 1.0;                                    // sustain
+    }
+    const idx = t * (HANN_TABLE_SIZE - 1);
     const i0 = idx | 0;
     const i1 = i0 + 1 < HANN_TABLE_SIZE ? i0 + 1 : i0;
     const frac = idx - i0;
@@ -610,16 +829,139 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     return s0 + frac * (s1 - s0);
   }
 
+  // ── Land a live grain on the end of its audio ─────────────────────────
+  // The buffer this grain reads has stopped growing at `len`. If the grain
+  // would still be sounding when its read head runs off the end, shorten the
+  // rest of its envelope so it reaches zero exactly there — the same
+  // accelerated-phase trick 'flush' uses, but sized to the audio left rather
+  // than to one block. A reverse grain walks away from the end toward 0, so
+  // its runway is its own read position. Never faster than one block.
+  _landGrainOnEdge(i, len) {
+    const rate = this._gReadRate[i];
+    if (rate === 0) return;
+    let audioLeft = rate > 0
+      ? (len - this._gReadPos[i]) / rate
+      : this._gReadPos[i] / -rate;
+    if (audioLeft < 128) audioLeft = 128;
+    // A grain in its sustain (fade ratio under ½, envelope flat at 1) skips
+    // straight to the start of its release — the level is 1 on both sides of
+    // the jump, so nothing is heard — and the release alone spans the audio
+    // that is left. Compressing the sustain too would only steepen the
+    // release for no reason. A grain still in its attack keeps its shape and
+    // is compressed whole.
+    const fr = this._gFade[i];
+    let phase = this._gPhase[i];
+    if (fr > 0 && fr < 0.5 && phase >= fr && phase < 1 - fr) {
+      phase = 1 - fr;
+      this._gPhase[i] = phase;
+    }
+    const remainingPhase = 1 - phase;
+    if (remainingPhase <= 0) return;
+    const samplesLeft = remainingPhase / this._gPhaseInc[i];
+    if (samplesLeft > audioLeft) this._gPhaseInc[i] = remainingPhase / audioLeft;
+  }
+
+  // Fade every active live-buffer grain whose read head is at or past
+  // `fromPos` out over one block. Used where the live chunks are about to
+  // change under a grain: a new take rewriting chunk 0, or a clear freeing
+  // the chunks after the first.
+  _fadeLiveGrains(fromPos) {
+    for (let i = 0; i < this._pool; i++) {
+      if (!this._gActive[i] || this._gBufIndex[i] !== -2) continue;
+      if (this._gReadPos[i] < fromPos) continue;
+      const remaining = 1.0 - this._gPhase[i];
+      if (remaining > 0) this._gPhaseInc[i] = remaining / 128;
+    }
+  }
+
+
+  /** (Re)allocate the grain pool at `n` slots — every per-grain array, the
+   *  free list, the active list and the feedback ring, which is always the
+   *  pool's size so a grain that sounded can always light its mark. Any grain
+   *  sounding is dropped: this runs at `init` and when the setting changes,
+   *  never while playing a phrase. */
+  _allocPool(n) {
+    const size = Math.max(32, Math.min(4096, n | 0));
+    this._pool = size;
+    // ── Grain pool ────────────────────────────────────────────────────────
+    // Pre-allocated flat arrays for zero-alloc process().
+    // Each grain is at index [i] across all arrays.
+    this._gActive     = new Uint8Array(this._pool);    // 0 or 1
+    this._gReadPos    = new Float64Array(this._pool);   // fractional sample position
+    this._gReadRate   = new Float32Array(this._pool);   // pitch ratio (1.0 = original)
+    this._gPhase      = new Float32Array(this._pool);   // 0→1 envelope progress
+    this._gPhaseInc   = new Float32Array(this._pool);   // 1 / durationSamples
+    this._gVolume     = new Float32Array(this._pool);   // per-grain volume
+    this._gEnvShape   = new Uint8Array(this._pool);     // 0=hann, 1=tri, 2=rect
+    this._gFade       = new Float32Array(this._pool);   // fadeRatio captured at fire time
+    this._gBufIndex   = new Int32Array(this._pool);     // -1=recBuf, 0+=sampleBufs[i]
+    this._gBufOffset  = new Float64Array(this._pool);   // start offset in buffer (samples)
+    this._gBufLen     = new Uint32Array(this._pool);    // length of buffer region
+    this._gParticleId = new Int32Array(this._pool);     // for feedback ring (-1 = none)
+    this._gIsSeed     = new Uint8Array(this._pool);     // 0=cursor grain, 1=seed grain
+    // VBAP per-grain: speaker pair indices + weights
+    this._gVbapIdxA   = new Uint8Array(this._pool);
+    this._gVbapIdxB   = new Uint8Array(this._pool);
+    this._gVbapWA     = new Float32Array(this._pool);
+    this._gVbapWB     = new Float32Array(this._pool);
+    this._gElBias     = new Float32Array(this._pool);   // elevation center-bias (0=equator, 1=pole)
+    // Per-grain biquad filter state (Direct Form II Transposed)
+    // Two cascaded sections: HPF then LPF. Each needs 5 coefficients + 2 state vars.
+    // Filter flags: bit 0 = HPF active, bit 1 = LPF active
+    this._gFilterFlags = new Uint8Array(this._pool);
+    // HPF coefficients: b0, b1, b2, a1, a2 (a0 normalized to 1)
+    this._gHpfB0 = new Float32Array(this._pool);
+    this._gHpfB1 = new Float32Array(this._pool);
+    this._gHpfB2 = new Float32Array(this._pool);
+    this._gHpfA1 = new Float32Array(this._pool);
+    this._gHpfA2 = new Float32Array(this._pool);
+    this._gHpfZ1 = new Float32Array(this._pool);  // state
+    this._gHpfZ2 = new Float32Array(this._pool);
+    // LPF coefficients + state
+    this._gLpfB0 = new Float32Array(this._pool);
+    this._gLpfB1 = new Float32Array(this._pool);
+    this._gLpfB2 = new Float32Array(this._pool);
+    this._gLpfA1 = new Float32Array(this._pool);
+    this._gLpfA2 = new Float32Array(this._pool);
+    this._gLpfZ1 = new Float32Array(this._pool);
+    this._gLpfZ2 = new Float32Array(this._pool);
+
+    // Source tag: 0 = cursor, 1 = seed (for selective flush on undo)
+    this._gIsCursor = new Uint8Array(this._pool);
+
+    // Free list — simple stack
+    this._freeList = new Uint16Array(this._pool);
+    this._freePtr  = this._pool;  // points past last free slot
+    for (let i = 0; i < this._pool; i++) this._freeList[i] = i;
+    // The ACTIVE grains, as an unordered list (R4, 2026-09-06): the render
+    // loop walks this instead of scanning all 256 slots per sample. A slot's
+    // position in it is kept so freeing is a swap-remove, O(1).
+    this._activeIdx = new Uint16Array(this._pool);
+    this._activePos = new Int16Array(this._pool).fill(-1);
+    this._activeN   = 0;
+    // The sample within the current block a grain was fired at: it renders
+    // from there, not from the block's start — the onset stays sample-exact.
+    this._gStartS   = new Uint8Array(this._pool);
+    this._curS      = 0;
+    this._scratch   = new Float32Array(BLOCK);   // one grain's block, before the mix
+
+    this._feedbackBuf = new Int32Array(size);
+    this._feedbackLen = 0;
+    this._activeCount = 0;
+  }
+
   // ── Allocate a grain slot from free list ──────────────────────────────
   _allocGrain() {
     if (this._freePtr === 0) {
-      // Pool exhausted — steal oldest (lowest index still active)
-      for (let i = 0; i < POOL_SIZE; i++) {
-        if (this._gActive[i]) {
-          this._gActive[i] = 0;
-          this._activeCount--;
-          return i;
-        }
+      // Pool exhausted — steal one that is sounding: the head of the active
+      // list. A hard kill, and therefore a click; counted so a crackle can be
+      // attributed.
+      if (this._activeN > 0) {
+        const i = this._activeIdx[0];
+        this._deactivate(i);
+        this._activeCount--;
+        this._diagSteals++;
+        return i;
       }
       return -1;  // shouldn't happen
     }
@@ -628,9 +970,55 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
 
   // ── Free a grain slot back to pool ────────────────────────────────────
   _freeGrain(idx) {
-    this._gActive[idx] = 0;
+    this._deactivate(idx);
     this._freeList[this._freePtr++] = idx;
     this._activeCount--;
+  }
+
+  /** A chunk for the live take: a spare if one is in, else an allocation on
+   *  the audio thread — counted, because that is the thing R5 removes. */
+  _takeChunk(cs) {
+    const sp = this._spareChunks.pop();
+    if (sp) { this._spareLow = this._spareChunks.length < 1; return sp; }
+    this._chunkAllocs++;
+    this._spareLow = true;
+    return new Float32Array(cs);
+  }
+
+  /** Chunks past `keep` go back to the spare pool (at most two are kept). */
+  _returnChunks(keep) {
+    while (this._liveChunks.length > keep) {
+      const c = this._liveChunks.pop();
+      if (this._spareChunks.length < 2 && c.length === this._liveChunkSize) this._spareChunks.push(c);
+    }
+    this._spareLow = this._spareChunks.length < 1;
+  }
+
+  /** Into the active list, fired at this block's current sample. */
+  _activate(idx) {
+    this._gActive[idx] = 1;
+    this._activePos[idx] = this._activeN;
+    this._activeIdx[this._activeN++] = idx;
+    this._gStartS[idx] = this._curS;
+  }
+
+  /** Out of the active list — swap-remove, so the walk in _render must not
+   *  advance past a slot it just freed. */
+  _deactivate(idx) {
+    const pos = this._activePos[idx];
+    if (pos >= 0) {
+      const last = this._activeIdx[--this._activeN];
+      this._activeIdx[pos] = last;
+      this._activePos[last] = pos;
+      this._activePos[idx] = -1;
+    }
+    this._gActive[idx] = 0;
+  }
+
+  _resetActive() {
+    this._activeN = 0;
+    this._activePos.fill(-1);
+    this._gStartS.fill(0);
   }
 
   // ── Biquad coefficient computation (cookbook formulas) ──────────────────
@@ -676,12 +1064,29 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     const eShape    = seed ? seed.envShape      : this._envShape;
     const dir       = seed ? seed.direction     : this._direction;
     const cands     = seed ? seed.candidates    : this._candidates;
-    const candCount = seed ? seed.candidateCount : this._candidateCount;
+    // A cursor voice on a table (R3): the count is the published half's.
+    const tab = seed ? (seed.tabRegion ?? -1) : this._candTab;
+    const ctI = this._ctI;
+    let tabHalf = 0, tabBase = 0;
+    let candCount;
+    if (tab >= 0 && ctI) {
+      const hdr = tab * CT_REGION;
+      tabHalf = Atomics.load(ctI, hdr);
+      candCount = Atomics.load(ctI, hdr + 1 + tabHalf);
+      tabBase = hdr + CT_HEADER + tabHalf * CT_HALF;
+    } else {
+      candCount = seed ? seed.candidateCount : this._candidateCount;
+    }
     const hpfFreq   = seed ? (seed.hpfFreq ?? 20)    : this._hpfFreq;
     const lpfFreq   = seed ? (seed.lpfFreq ?? 20000)  : this._lpfFreq;
-    const fQ        = seed ? (seed.filterQ ?? 0.707)   : this._filterQ;
+    const hQ        = seed ? (seed.hpfQ ?? 0.707)     : this._hpfQ;
+    const lQ        = seed ? (seed.lpfQ ?? 0.707)     : this._lpfQ;
     const fJitter   = seed ? (seed.filterFreqJitter ?? 0) : this._filterFreqJitter;
     const djitter   = seed ? (seed.durJitter ?? 0)     : this._durJitter;
+    const sJitter   = seed ? (seed.startJitter ?? 0)   : this._startJitter;
+    const fadeR     = seed ? (seed.fadeRatio ?? 0.5)   : this._fadeRatio;
+    const fMode     = seed ? (seed.fadeMode ?? 0)      : this._fadeMode;
+    const fMs       = seed ? (seed.fadeMs ?? 0.020)    : this._fadeMs;
     const spread    = seed ? (seed.panSpread ?? 0)      : this._panSpread;
 
     // No candidates → nothing to play (radius mode with cursor outside range)
@@ -692,7 +1097,8 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
 
     const idx = this._allocGrain();
     if (idx < 0) return;
-    this._gIsCursor[idx] = seed ? 0 : 1;  // tag: 1 = cursor, 0 = seed
+    // A cursor VOICE is a cursor grain even though it arrives as `seed`.
+    this._gIsCursor[idx] = (!seed || seed.isCursor) ? 1 : 0;
 
     // ── Pick source: candidate list or default ──────────────────────────
     let bufIndex = -1;     // -1 = main recBuf
@@ -721,23 +1127,80 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       } else {
         ci = (this._rand01() * candCount) | 0;
       }
-      const c = cands[ci];
-      bufIndex    = c.bufIndex ?? -1;
-      bufOffset   = c.offset ?? 0;
-      bufLen      = c.length ?? this._recLen;
-      azDeg       = c.azDeg ?? 0;
-      elBias      = c.elBias ?? 0;
-      particleId  = c.particleId ?? -1;
-      radiusFade  = c.radiusFade ?? 1.0;
+      if (tab >= 0 && ctI) {
+        // Step mode walks the permutation (rows by offset); random reads the row.
+        const row = kSeq ? ctI[tabBase + CT_ROWS * CT_WORDS + ci] : ci;
+        const w = tabBase + row * CT_WORDS;
+        bufIndex    = ctI[w];
+        bufOffset   = ctI[w + 1];
+        bufLen      = ctI[w + 2];
+        azDeg       = this._ctF[w + 3];
+        elBias      = this._ctF[w + 4];
+        particleId  = ctI[w + 5];
+        radiusFade  = this._ctF[w + 6];
+      } else {
+        const c = cands[ci];
+        bufIndex    = c.bufIndex ?? -1;
+        bufOffset   = c.offset ?? 0;
+        bufLen      = c.length ?? this._recLen;
+        azDeg       = c.azDeg ?? 0;
+        elBias      = c.elBias ?? 0;
+        particleId  = c.particleId ?? -1;
+        radiusFade  = c.radiusFade ?? 1.0;
+      }
     }
 
     // For live buffer grains: snapshot the worklet's current data extent.
     // The candidate's `length` comes from the bridge (may lag), but the
-    // worklet knows exactly how much data it has. This snapshot is stored
-    // in _gBufLen and used for the entire grain lifetime — prevents the
-    // micro-fade zone from shifting when new delta appends arrive.
+    // worklet knows exactly how much data it has. While recording the render
+    // loop reads the LIVE length so the grain can follow the edge; after
+    // 'liveRecStop' it reads this per-grain snapshot instead.
     if (bufIndex === -2 && this._liveBufLen > 0) {
       bufLen = this._liveBufLen;
+    }
+
+    // ── Start offset jitter ─────────────────────────────────────────────
+    // Markers are deposited on a fixed clock (20Hz default), so without this
+    // a grain can only ever begin exactly where a marker landed — the paint
+    // interval is the instrument's scrub resolution.  startJitter randomises
+    // the read offset ±N seconds around the marker, so the audio *between*
+    // markers becomes reachable without depositing more particles (which is
+    // what actually costs the scheduler: its per-tick work is O(particles)).
+    //
+    // Deliberately applied here, before the duration-clamp block below, so
+    // the existing guards catch the edge cases: an offset pushed past the
+    // buffer end gets slid back with duration preserved, and a frontier
+    // grain with <64 samples left gets dropped cleanly.  Only the negative
+    // side needs its own clamp.
+    //
+    // Also deliberately applied in the worklet rather than the bridge: the
+    // bridge sorts candidates by offset for k-seq mode, and jittering before
+    // that sort would scramble sequential playback order.
+    //
+    // A jittered read that lands OUTSIDE the audio that exists is DROPPED,
+    // not clamped (Ek, 2026-09-05). It used to clamp to 0 on the negative
+    // side and be slid back to the edge by the fit block on the positive
+    // side, so in the first jitter-width of a take every grain landed on
+    // one of two samples: a dense brush (the wash — 400 ms grains every
+    // 15 ms, ±400 ms jitter) became twenty-seven copies of the same few
+    // milliseconds, 15 ms apart, which is a comb filter with notches every
+    // 66 Hz — the "zipper" at the start of every wash stroke, gone once the
+    // take outgrew the jitter. Dropping thins the brush near an edge (half
+    // the reads at a take's very start, none away from the edges) and
+    // never piles it up. Only a JITTERED read is dropped: an unjittered
+    // mark keeps every frontier rule below.
+    if (sJitter > 0) {
+      const jitterSamples = (sJitter * this._sr) | 0;
+      if (jitterSamples > 0) {
+        const j = bufOffset + (((this._rand01() * 2 - 1) * jitterSamples) | 0);
+        if (j < 0 || (bufLen > 0 && j >= bufLen)) {
+          this._gActive[idx] = 0;
+          this._freeList[this._freePtr++] = idx;
+          this._diagJitterDrop++;
+          return;
+        }
+        bufOffset = j;
+      }
     }
 
     // ── Duration with jitter ────────────────────────────────────────────
@@ -772,49 +1235,55 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     // Track direction stats for diagnostics
     if (readRate >= 0) this._diagDirFwd++; else this._diagDirRev++;
 
-    // ── Duration clamping for fixed-length buffers ────────────────────
-    // Prevents grains from reading past the buffer end (which wraps via
-    // modulo in _readSample, causing the start of the buffer to bleed in).
-    // Active live recording is exempt — the buffer grows and
-    // _readLiveChunked returns 0 for unwritten regions.
+    // ── Fit the grain to the audio that exists ─────────────────────────
+    // A mark points at a moment, and the grain plays what is there from that
+    // moment on: at the end of a buffer it gets SHORTER rather than sliding
+    // back to keep its length (Ek, 2026-09-02). It used to slide, and on a
+    // take shorter than the grain every mark landed on sample 0 — ten marks
+    // in a line, one identical sound, and a quick hit that "restarted" on
+    // release. The onset clock is untouched here, so density stays what the
+    // brush says; only this grain's length yields. Under 64 samples of audio
+    // the grain is dropped rather than played as a click.
+    const absRate = Math.abs(readRate) || 1;
     const isActiveLive = bufIndex === -2 && this._liveRecording;
-    if (!isActiveLive && bufLen > 0) {
-      const absRate = Math.abs(readRate) || 1;
-      const needed = durSamples * absRate;
-      // If the grain doesn't fit from bufOffset, slide the start back
-      // so the full duration is preserved. Character stays consistent
-      // instead of getting shorter near the buffer end.
-      if (bufOffset + needed > bufLen) {
-        bufOffset = Math.max(0, bufLen - needed);
+    if (isActiveLive) {
+      // The buffer is still growing, one sample per sample. A forward grain
+      // behind the edge never runs out at rate ≤ 1. At rate > 1 it overtakes
+      // the edge after (edge − offset) / (rate − 1) samples and would read
+      // zeros from then on, so it ends there. A reverse grain would start
+      // beyond the edge and read zeros until the edge passed it, so it starts
+      // AT the edge and walks down. A forward grain aimed past the edge (a
+      // wall-clock mark can lead the audio clock by a few ms) starts at the
+      // edge. Each of these was a hard cut to zero mid-envelope before.
+      if (readRate >= 0) {
+        if (bufOffset > bufLen) bufOffset = bufLen;
+        if (absRate > 1) {
+          const untilOvertake = ((bufLen - bufOffset) / (absRate - 1)) | 0;
+          if (untilOvertake < 64) {
+            this._gActive[idx] = 0;
+            this._freeList[this._freePtr++] = idx;
+            return;
+          }
+          if (durSamples > untilOvertake) durSamples = untilOvertake;
+        }
+      } else {
+        const top = Math.min(bufOffset + durSamples * absRate, bufLen);
+        const maxDur = ((top - bufOffset) / absRate) | 0;
+        if (maxDur < 64) {
+          this._gActive[idx] = 0;
+          this._freeList[this._freePtr++] = idx;
+          return;
+        }
+        if (durSamples > maxDur) durSamples = maxDur;
       }
-      const available = bufLen - bufOffset;
-      if (available <= 0) {
-        this._gActive[idx] = 0;
-        this._freeList[this._freePtr++] = idx;
-        return;
-      }
-      const maxDur = (available / absRate) | 0;
+    } else if (bufLen > 0) {
+      const maxDur = ((bufLen - bufOffset) / absRate) | 0;
       if (maxDur < 64) {
         this._gActive[idx] = 0;
         this._freeList[this._freePtr++] = idx;
         return;
       }
-      if (durSamples > maxDur) {
-        durSamples = maxDur;
-      }
-    } else if (isActiveLive) {
-      // Active recording: only drop grains whose offset is completely
-      // past the buffer (shouldn't happen, but safety net).
-      if (readRate >= 0 && bufOffset > bufLen) {
-        this._gActive[idx] = 0;
-        this._freeList[this._freePtr++] = idx;
-        return;
-      }
-      if (readRate < 0 && bufOffset <= 0) {
-        this._gActive[idx] = 0;
-        this._freeList[this._freePtr++] = idx;
-        return;
-      }
+      if (durSamples > maxDur) durSamples = maxDur;
     }
 
     // ── Spatial panning ────────────────────────────────────────────────
@@ -853,7 +1322,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     if (needsHPF) {
       filterFlags |= 1;
       const jFreq = fJitter > 0 ? hpfFreq * Math.pow(2, (this._rand01() * 2 - 1) * fJitter) : hpfFreq;
-      const c = this._computeHPF(Math.min(jFreq, this._sr * 0.49), fQ);
+      const c = this._computeHPF(Math.min(jFreq, this._sr * 0.49), hQ);
       this._gHpfB0[idx] = c[0]; this._gHpfB1[idx] = c[1]; this._gHpfB2[idx] = c[2];
       this._gHpfA1[idx] = c[3]; this._gHpfA2[idx] = c[4];
       this._gHpfZ1[idx] = 0; this._gHpfZ2[idx] = 0;
@@ -861,35 +1330,48 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     if (needsLPF) {
       filterFlags |= 2;
       const jFreq = fJitter > 0 ? lpfFreq * Math.pow(2, (this._rand01() * 2 - 1) * fJitter) : lpfFreq;
-      const c = this._computeLPF(Math.min(jFreq, this._sr * 0.49), fQ);
+      const c = this._computeLPF(Math.min(jFreq, this._sr * 0.49), lQ);
       this._gLpfB0[idx] = c[0]; this._gLpfB1[idx] = c[1]; this._gLpfB2[idx] = c[2];
       this._gLpfA1[idx] = c[3]; this._gLpfA2[idx] = c[4];
       this._gLpfZ1[idx] = 0; this._gLpfZ2[idx] = 0;
     }
 
     // ── Write grain slot ────────────────────────────────────────────────
-    this._gActive[idx]     = 1;
     this._gReadPos[idx]    = readRate >= 0 ? bufOffset : bufOffset + durSamples * Math.abs(readRate);
     this._gReadRate[idx]   = readRate;
     this._gPhase[idx]      = 0;
     this._gPhaseInc[idx]   = 1 / durSamples;
     this._gVolume[idx]     = vol * radiusFade;
     this._gEnvShape[idx]   = eShape;
+    // Resolve the fade here, not at param time: durSamples is only final at
+    // this point (durJitter, durVar and the end-of-buffer clamp all move it).
+    //   proportional — ramp scales with the grain, so under durJitter every
+    //                  grain gets a different attack length.
+    //   absolute     — fixed ramp, so attack character stays put while the
+    //                  grain length varies.  That is the whole point of it.
+    let frEff = fMode === 1 ? (fMs * this._sr) / durSamples : fadeR;
+    if (frEff > 0) {                     // explicit 0 stays instant on/off
+      const frFloor = (MIN_FADE_S * this._sr) / durSamples;
+      if (frEff < frFloor) frEff = frFloor;
+    }
+    if (frEff > 0.5) frEff = 0.5;        // 0.5 = ramps meet, no sustain
+    this._gFade[idx]       = frEff;
     this._gBufIndex[idx]   = bufIndex;
     this._gBufOffset[idx]  = bufOffset;
     this._gBufLen[idx]     = bufLen;
     this._gParticleId[idx] = particleId;
-    this._gIsSeed[idx]     = seed ? 1 : 0;
+    this._gIsSeed[idx]     = (seed && !seed.isCursor) ? 1 : 0;   // bus select
     this._gVbapIdxA[idx]   = vbapIdxA;
     this._gVbapIdxB[idx]   = vbapIdxB;
     this._gVbapWA[idx]     = vbapWA;
     this._gVbapWB[idx]     = vbapWB;
     this._gElBias[idx]     = elBias;
     this._gFilterFlags[idx] = filterFlags;
+    this._activate(idx);
     this._activeCount++;
 
     // ── Feedback ring entry ─────────────────────────────────────────────
-    if (particleId >= 0 && this._feedbackLen < FEEDBACK_RING_SIZE) {
+    if (particleId >= 0 && this._feedbackLen < this._pool) {
       this._feedbackBuf[this._feedbackLen++] = particleId;
     }
   }
@@ -898,7 +1380,29 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
   // Two outputs: outputs[0] = monitor bus (cursor grains),
   //              outputs[1] = house bus (seed grains).
   // When only one output exists (fallback), all grains mix into outputs[0].
+  // The audio thread's own load (2026-09-06, R6 of docs/PERFORMANCE-AUDIT-2026-09.md):
+  // Date.now() is millisecond-coarse, but summed over the 375 blocks between
+  // feedbacks it is a fair load figure, and its max catches a block that
+  // stalled inside (an allocation, a big message deserialised). Both ride
+  // _diag: loadPct, procMaxMs, chunkAllocs (live chunks allocated in here).
   process(inputs, outputs) {
+    const t0 = Date.now();
+    const keep = this._render(inputs, outputs);
+    const dt = Date.now() - t0;
+    this._procMs += dt;
+    if (dt > this._procMax) this._procMax = dt;
+    this._procBlocks++;
+    // The short window the throttle reads (P3). Separate from the feedback's
+    // ~375-block average, which is a readout, not a control signal.
+    this._procMs32 += dt;
+    if (++this._blocks32 >= LOAD_WINDOW_BLOCKS) {
+      this._loadShort = this._procMs32 / (LOAD_WINDOW_BLOCKS * this._blockMs);
+      this._procMs32 = 0; this._blocks32 = 0;
+    }
+    return keep;
+  }
+
+  _render(inputs, outputs) {
     if (!this._active) return true;
 
     const monOut  = outputs[0];         // cursor / monitor
@@ -928,7 +1432,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         const endPos = wp + micData.length;
         const chunksNeeded = Math.ceil(endPos / cs);
         while (this._liveChunks.length < chunksNeeded) {
-          this._liveChunks.push(new Float32Array(cs));
+          this._liveChunks.push(this._takeChunk(cs));
         }
         // Batch copy mic samples into chunks (set() is memcpy — fast).
         // For typical BLOCK=128, this is usually a single set() call.
@@ -951,25 +1455,35 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     const hasSampleBufs = this._sampleBufs.length > 0;
     if (!hasRecBuf && !hasLiveBuf && !hasSampleBufs) return true;
 
-    // ── Pressure throttle ────────────────────────────────────────────────
-    // When pool utilization exceeds 75%, randomly skip onsets with
-    // increasing probability to prevent cascade overload and grain stealing.
-    // At 75% → 0% skip, at 100% → 100% skip (linear ramp).
-    const PRESSURE_THRESHOLD = POOL_SIZE * 0.75;  // 192
-    const activeCount = this._activeCount;
-    const underPressure = activeCount > PRESSURE_THRESHOLD;
-    // Skip probability: 0 at threshold, 1 at full pool
-    const skipProb = underPressure
-      ? (activeCount - PRESSURE_THRESHOLD) / (POOL_SIZE - PRESSURE_THRESHOLD)
-      : 0;
+    // ── The throttle reads the LOAD, not the pool (P3, 2026-09-06) ───────
+    // It used to skip onsets from 75 % of the POOL — 192 of 256 — which is
+    // the wrong variable in both directions: on this machine a wash across
+    // eight brushes is ~213 grains and was thinned while the thread sat at a
+    // fifth of its budget, and on a slower one 100 expensive grains would not
+    // have been thinned at all. Now the signal is the thread's own load over
+    // the last 85 ms, so the instrument plays what it was asked to play until
+    // the machine is actually near its limit, whatever the grains cost.
+    //
+    // The pool keeps a backstop over its last 10 %: running it dry means
+    // _allocGrain steals a sounding grain, and a steal is a click. Thinning
+    // first is the gentler failure, and both are counted (_diagThrottled,
+    // _diagSteals) so a thin patch can be told from a clicking one.
+    const load = this._loadShort;
+    const loadSkip = load <= LOAD_SOFT ? 0 : Math.min(1, (load - LOAD_SOFT) / (LOAD_HARD - LOAD_SOFT));
+    const poolFrom = this._pool * POOL_SOFT;
+    const poolSkip = this._activeCount <= poolFrom ? 0
+      : Math.min(1, (this._activeCount - poolFrom) / (this._pool - poolFrom));
+    const skipProb = loadSkip > poolSkip ? loadSkip : poolSkip;
+    const underPressure = skipProb > 0;
 
+    // ── Onsets, sample by sample (only the clocks; no rendering here) ──
     for (let s = 0; s < BLOCK; s++) {
+      this._curS = s;
       // ── Fire cursor grain at onset ──────────────────────────────────
       // Guard: skip cursor grains until params are set (period starts at 0)
       if (this._periodSamples > 0 && this._sampleClock >= this._nextOnset) {
-        if (!underPressure || this._rand01() > skipProb) {
-          this._fireGrain();  // null seed = cursor grain
-        }
+        if (!underPressure || this._rand01() > skipProb) this._fireGrain();  // null seed = cursor grain
+        else this._diagThrottled++;
 
         // Schedule next onset with period jitter
         let nextPeriod = this._periodSamples;
@@ -980,14 +1494,32 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         this._nextOnset = this._sampleClock + nextPeriod;
       }
 
+      // ── Fire cursor-voice grains at their independent onsets ────────
+      // Identical to the seed loop below, and deliberately not merged with it:
+      // the two arrays are different lengths and are cleared by different
+      // messages, and _fireGrain() already treats any voice the same way.
+      for (let vi = 0; vi < MAX_CURSOR_VOICES; vi++) {
+        const v = this._cursorVoices[vi];
+        if (!v.active || v.periodSamples <= 0) continue;
+        if (this._sampleClock >= v.nextOnset) {
+          if (!underPressure || this._rand01() > skipProb) this._fireGrain(v);
+          else this._diagThrottled++;
+          let nextPeriod = v.periodSamples;
+          if (v.periodVar > 0) {
+            const varSamples = Math.round(v.periodVar * this._sr);
+            nextPeriod = Math.max(1, nextPeriod + ((this._rand01() * 2 - 1) * varSamples) | 0);
+          }
+          v.nextOnset = this._sampleClock + nextPeriod;
+        }
+      }
+
       // ── Fire seed grains at their independent onsets ────────────────
-      for (let si = 0; si < MAX_SEEDS; si++) {
+      for (let si = 0; si < MAX_SEED_VOICES; si++) {
         const seed = this._seeds[si];
         if (!seed.active || seed.periodSamples <= 0) continue;
         if (this._sampleClock >= seed.nextOnset) {
-          if (!underPressure || this._rand01() > skipProb) {
-            this._fireGrain(seed);
-          }
+          if (!underPressure || this._rand01() > skipProb) this._fireGrain(seed);
+          else this._diagThrottled++;
 
           // Schedule next seed onset with period jitter
           let nextPeriod = seed.periodSamples;
@@ -999,128 +1531,118 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         }
       }
 
-      // ── Render all active grains ────────────────────────────────────
-      for (let i = 0; i < POOL_SIZE; i++) {
-        if (!this._gActive[i]) continue;
+      this._sampleClock++;
+    }
 
-        // Resolve buffer source
-        // bufIdx: -1 = SAB (primary recording), -2 = chunked live buffer, 0+ = sampleBufs
-        const bufIdx = this._gBufIndex[i];
-        let buf, bufLen;
-        let isLiveChunked = false;
-        if (bufIdx === -1) {
-          buf = this._recBuf;
-          bufLen = this._recLen;
-        } else if (bufIdx === -2) {
-          // Chunked live buffer — no single flat array, use _readLiveChunked
-          isLiveChunked = true;
-          buf = true;  // sentinel: chunks exist
-          // During active recording: use live _liveBufLen so grains can
-          // read newly-arrived data (direct mic input grows the buffer at
-          // audio rate). This is safe because the buffer grows smoothly —
-          // no jumps, no crunch/click risk.
-          // After recording: use the fire-time snapshot (_gBufLen[i]) since
-          // the buffer is no longer growing.
-          bufLen = this._liveRecording ? this._liveBufLen : this._gBufLen[i];
-        } else if (bufIdx >= 0 && bufIdx < this._sampleBufs.length) {
-          const sb = this._sampleBufs[bufIdx];
-          buf = sb.data;
-          bufLen = sb.length;
-        } else {
-          this._freeGrain(i);
-          continue;
-        }
+    // ── Render, grain-major (R4, 2026-09-06) ──────────────────────────────
+    // Each active grain renders its samples of this block into a scratch —
+    // buffer resolved once, state in locals, the filter and envelope inlined
+    // per sample — and is mixed into its bus once, with weights computed once.
+    // Before this the loop was sample-major: 256 slot checks per sample, the
+    // buffer re-resolved and every state value loaded and stored through a
+    // typed array per grain per sample, and the VBAP weights re-derived per
+    // sample. The active-index list is walked with swap-removal, so a freed
+    // slot is replaced in place and the walk does not advance past it. A
+    // grain fired inside this block starts at its own sample (`_gStartS`).
+    const scratch = this._scratch;
+    const eq = this._eqGain;
+    const lut = this._vbapLUT;
+    for (let ai = 0; ai < this._activeN; ) {
+      const i = this._activeIdx[ai];
 
-        if (!buf || bufLen === 0 || (isLiveChunked && this._liveChunks.length === 0)) {
-          this._freeGrain(i);
-          continue;
-        }
+      // Resolve buffer source once per grain.
+      // bufIdx: -1 = SAB (primary recording), -2 = chunked live buffer, 0+ = sampleBufs
+      const bufIdx = this._gBufIndex[i];
+      let buf = null, bufLen = 0, isLiveChunked = false;
+      if (bufIdx === -1) {
+        buf = this._recBuf; bufLen = this._recLen;
+      } else if (bufIdx === -2) {
+        isLiveChunked = true;
+        // While recording the live length, so the grain follows the edge;
+        // after, the fire-time snapshot.
+        bufLen = this._liveRecording ? this._liveBufLen : this._gBufLen[i];
+        buf = this._liveChunks.length > 0 ? this._liveChunks : null;
+      } else if (bufIdx >= 0 && bufIdx < this._sampleBufs.length) {
+        const sb = this._sampleBufs[bufIdx];
+        buf = sb.data; bufLen = sb.length;
+      }
+      if (!buf || bufLen === 0) { this._freeGrain(i); continue; }
 
-        // Read sample with linear interpolation
-        let raw = isLiveChunked
-          ? this._readLiveChunked(bufLen, this._gReadPos[i])
-          : this._readSample(buf, bufLen, this._gReadPos[i]);
+      const s0 = this._gStartS[i];
+      this._gStartS[i] = 0;
+      const n = BLOCK - s0;
 
-        // ── Per-grain biquad filtering (Direct Form II Transposed) ────
-        const fFlags = this._gFilterFlags[i];
-        if (fFlags & 1) {  // HPF
-          const x = raw;
-          const y = this._gHpfB0[i] * x + this._gHpfZ1[i];
-          this._gHpfZ1[i] = this._gHpfB1[i] * x - this._gHpfA1[i] * y + this._gHpfZ2[i];
-          this._gHpfZ2[i] = this._gHpfB2[i] * x - this._gHpfA2[i] * y;
-          raw = y;
-        }
-        if (fFlags & 2) {  // LPF
-          const x = raw;
-          const y = this._gLpfB0[i] * x + this._gLpfZ1[i];
-          this._gLpfZ1[i] = this._gLpfB1[i] * x - this._gLpfA1[i] * y + this._gLpfZ2[i];
-          this._gLpfZ2[i] = this._gLpfB2[i] * x - this._gLpfA2[i] * y;
-          raw = y;
-        }
+      let pos  = this._gReadPos[i];
+      const rate = this._gReadRate[i];
+      let ph   = this._gPhase[i];
+      const inc = this._gPhaseInc[i];
+      const vol = this._gVolume[i];
+      const shape = this._gEnvShape[i];
+      const fr  = this._gFade[i];
+      const fFlags = this._gFilterFlags[i];
+      // Biquad coefficients and state in locals (Direct Form II Transposed).
+      const hb0 = this._gHpfB0[i], hb1 = this._gHpfB1[i], hb2 = this._gHpfB2[i], ha1 = this._gHpfA1[i], ha2 = this._gHpfA2[i];
+      let hz1 = this._gHpfZ1[i], hz2 = this._gHpfZ2[i];
+      const lb0 = this._gLpfB0[i], lb1 = this._gLpfB1[i], lb2 = this._gLpfB2[i], la1 = this._gLpfA1[i], la2 = this._gLpfA2[i];
+      let lz1 = this._gLpfZ1[i], lz2 = this._gLpfZ2[i];
+      const hpf = (fFlags & 1) !== 0, lpf = (fFlags & 2) !== 0;
 
-        // Envelope
-        const env = this._envelope(this._gPhase[i], this._gEnvShape[i]);
-        const sample = raw * env * this._gVolume[i];
+      let k = 0, done = false, acc = 0;
+      for (; k < n; k++) {
+        let raw = isLiveChunked ? this._readLiveChunked(bufLen, pos) : this._readSample(buf, bufLen, pos);
+        if (hpf) { const x = raw, y = hb0 * x + hz1; hz1 = hb1 * x - ha1 * y + hz2; hz2 = hb2 * x - ha2 * y; raw = y; }
+        if (lpf) { const x = raw, y = lb0 * x + lz1; lz1 = lb1 * x - la1 * y + lz2; lz2 = lb2 * x - la2 * y; raw = y; }
+        const sample = raw * this._envelope(ph, shape, fr) * vol;
+        scratch[k] = sample;
+        acc += sample;
+        pos += rate;
+        ph  += inc;
+        if (ph >= 1.0) { k++; done = true; break; }
+      }
+      this._gReadPos[i] = pos;
+      this._gPhase[i]   = ph;
+      this._gHpfZ1[i] = hz1; this._gHpfZ2[i] = hz2;
+      this._gLpfZ1[i] = lz1; this._gLpfZ2[i] = lz2;
 
-        // NaN guard: corrupted filter state or buffer read can produce NaN,
-        // which poisons the entire output channel. Kill the grain instead.
-        if (sample !== sample) {  // fastest NaN check
-          this._freeGrain(i);
-          continue;
-        }
+      // NaN guard, once per block: a NaN anywhere poisons the sum. Kill the
+      // grain rather than the channel.
+      if (acc !== acc) { this._freeGrain(i); continue; }
 
-        // ── Mix into output channels ──────────────────────────────────
-        // Route: cursor grains → monitor (output 0), seed grains → house (output 1)
-        const dest = (this._gIsSeed[i] && houseOut) ? houseOut : monOut;
-
-        if (numCh === 1) {
-          dest[0][s] += sample;
-        } else if (this._vbapLUT && numCh > 2) {
-          // VBAP multi-channel with elevation center-bias.
-          // At equator (elBias≈0): standard 2-speaker VBAP pair.
-          // At poles (elBias→1): energy spreads equally to all speakers.
-          const eb = this._gElBias[i];
-          const chA = this._gVbapIdxA[i];
-          const chB = this._gVbapIdxB[i];
-          if (eb > 0.01) {
-            const eq = this._eqGain;  // 1/√numSpeakers, precomputed
-            for (let ch = 0; ch < numCh; ch++) {
-              if (ch === chA)       dest[ch][s] += sample * (this._gVbapWA[i] + (eq - this._gVbapWA[i]) * eb);
-              else if (ch === chB)  dest[ch][s] += sample * (this._gVbapWB[i] + (eq - this._gVbapWB[i]) * eb);
-              else                  dest[ch][s] += sample * (eq * eb);
-            }
-          } else {
-            if (chA < numCh) dest[chA][s] += sample * this._gVbapWA[i];
-            if (chB < numCh) dest[chB][s] += sample * this._gVbapWB[i];
-          }
-        } else if (numCh === 2) {
-          // Stereo: use VBAP weights for L/R panning (spread-aware).
-          // Elevation center-bias: collapse pan toward center at poles.
-          const eb = this._gElBias[i];
-          if (eb > 0.01) {
-            const wA = this._gVbapWA[i] + (0.707 - this._gVbapWA[i]) * eb;
-            const wB = this._gVbapWB[i] + (0.707 - this._gVbapWB[i]) * eb;
-            dest[0][s] += sample * wA;
-            dest[1][s] += sample * wB;
-          } else {
-            dest[0][s] += sample * this._gVbapWA[i];
-            dest[1][s] += sample * this._gVbapWB[i];
+      // ── Mix once: cursor grains → monitor (output 0), seed grains → house (output 1)
+      const dest = (this._gIsSeed[i] && houseOut) ? houseOut : monOut;
+      if (numCh === 1) {
+        const d = dest[0];
+        for (let q = 0; q < k; q++) d[s0 + q] += scratch[q];
+      } else if (lut && numCh > 2) {
+        // VBAP multi-channel with elevation center-bias: at the equator the
+        // 2-speaker pair, toward the poles energy spreads to every speaker.
+        const eb = this._gElBias[i], chA = this._gVbapIdxA[i], chB = this._gVbapIdxB[i];
+        const wA = this._gVbapWA[i], wB = this._gVbapWB[i];
+        if (eb > 0.01) {
+          for (let ch = 0; ch < numCh; ch++) {
+            const g = ch === chA ? wA + (eq - wA) * eb : ch === chB ? wB + (eq - wB) * eb : eq * eb;
+            const d = dest[ch];
+            for (let q = 0; q < k; q++) d[s0 + q] += scratch[q] * g;
           }
         } else {
-          dest[0][s] += sample;
+          if (chA < numCh) { const d = dest[chA]; for (let q = 0; q < k; q++) d[s0 + q] += scratch[q] * wA; }
+          if (chB < numCh) { const d = dest[chB]; for (let q = 0; q < k; q++) d[s0 + q] += scratch[q] * wB; }
         }
-
-        // Advance read position and envelope
-        this._gReadPos[i] += this._gReadRate[i];
-        this._gPhase[i]   += this._gPhaseInc[i];
-
-        // Grain finished?
-        if (this._gPhase[i] >= 1.0) {
-          this._freeGrain(i);
-        }
+      } else if (numCh === 2) {
+        // Stereo: the VBAP weights as L/R (spread-aware); the pan collapses
+        // toward centre at the poles.
+        const eb = this._gElBias[i];
+        let wA = this._gVbapWA[i], wB = this._gVbapWB[i];
+        if (eb > 0.01) { wA += (0.707 - wA) * eb; wB += (0.707 - wB) * eb; }
+        const dL = dest[0], dR = dest[1];
+        for (let q = 0; q < k; q++) { const v = scratch[q]; dL[s0 + q] += v * wA; dR[s0 + q] += v * wB; }
+      } else {
+        const d = dest[0];
+        for (let q = 0; q < k; q++) d[s0 + q] += scratch[q];
       }
 
-      this._sampleClock++;
+      if (done) { this._freeGrain(i); continue; }   // swap-removed: re-read this position
+      ai++;
     }
 
     // ── Periodic feedback to main thread (~30Hz = every ~1600 samples) ──
@@ -1128,18 +1650,36 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     // (the slice) is acceptable at 30Hz and unavoidable for structured clone.
     this._feedbackTimer += BLOCK;
     if (this._feedbackTimer >= 1600) {
-      const grainIds = this._feedbackLen > 0
-        ? Array.from(this._feedbackBuf.subarray(0, this._feedbackLen))
-        : [];
+      // A typed copy, not an Array of boxed ids (R5): one allocation, and a
+      // structured clone the bridge indexes exactly as it did.
+      const grainIds = this._feedbackBuf.slice(0, this._feedbackLen);
       this.port.postMessage({
         type: 'feedback',
         grains: grainIds,
         activeCount: this._activeCount,
         _diag: {
+          // The thread's load since the last feedback (R6).
+          loadPct: this._procBlocks ? Math.round(100 * this._procMs / (this._procBlocks * BLOCK / this._sr * 1000)) : 0,
+          procMaxMs: this._procMax,
+          chunkAllocs: this._chunkAllocs,
+          spareLow: this._spareLow,
+          // The throttle's own signal and what it cost, since the last post.
+          loadShort: +this._loadShort.toFixed(3),
+          throttled: this._diagThrottled,
+          steals: this._diagSteals,
           periodSmp: this._periodSamples,
           durSmp: this._durationSamples,
           vol: this._volume,
           candCount: this._candidateCount,
+          // Frozen-brush voices actually sounding, and their onset periods.
+          // The worklet cannot console.log, and "does material remember its
+          // brush" is not answerable from the main thread — the main thread
+          // only knows what it POSTED. This is what says it arrived.
+          cvActive: this._cursorVoices.reduce((n, v) => n + (v.active ? 1 : 0), 0),
+          cvPeriods: this._cursorVoices.filter(v => v.active).map(v => v.periodSamples),
+          // Seed voices sounding — more than the clouds when a cloud reads
+          // marks of more than one voicing.
+          sdActive: this._seeds.reduce((n, v) => n + (v.active ? 1 : 0), 0),
           freePtr: this._freePtr,
           nextOnset: this._nextOnset,
           clock: this._sampleClock,
@@ -1148,7 +1688,9 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
           liveChunks: this._liveChunks.length,
           dir: this._direction,
           dirFwd: this._diagDirFwd,
+          jitterDropped: this._diagJitterDrop,
           dirRev: this._diagDirRev,
+          steals: this._diagSteals,
           // Buffer retention diagnostics (group-show noise glitch investigation):
           // _sampleBufs only grows within a node lifetime — erase-all never
           // clears it. Expose count + retained MB to confirm/refute the leak.
@@ -1158,8 +1700,12 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       });
       this._feedbackLen = 0;
       this._feedbackTimer = 0;
+      this._procMs = 0; this._procMax = 0; this._procBlocks = 0;   // load figures are per feedback
       this._diagDirFwd = 0;
+      this._diagJitterDrop = 0;
       this._diagDirRev = 0;
+      this._diagSteals = 0;
+      this._diagThrottled = 0;
     }
 
     return true;

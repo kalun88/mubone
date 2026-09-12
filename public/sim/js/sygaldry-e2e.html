@@ -1,0 +1,74 @@
+<!doctype html>
+<meta charset="utf8">
+<title>sygaldry end to end</title>
+<body>
+<pre id="out">connecting…</pre>
+<script type="module">
+// End-to-end harness: the app's own sygaldry module, a real instrument, a real
+// socket. Served from localhost so the page is a secure context, which is what
+// the app gets from https in the field.
+//
+//   node/python -m http.server, then load with ?host=<instrument address>
+//
+// Verifies the whole chain: handshake, describe, refresh, decode, address
+// translation, and arrival at the app's central OSC dispatcher.
+
+const out = document.getElementById('out');
+const log = (s) => { out.textContent += '\n' + s; };
+const params = new URLSearchParams(location.search);
+const host = params.get('host');
+const seconds = Number(params.get('seconds') || 6);
+
+const seen = new Map();          // address -> count, as the app's dispatcher sees them
+window.addEventListener('mubone-osc-in', (e) => {
+  const a = e.detail.address;
+  seen.set(a, (seen.get(a) || 0) + 1);
+});
+
+const report = (verdict, detail) => {
+  const summary = { verdict, detail, dispatched: Object.fromEntries(seen),
+                    stateAddresses: Object.keys(window.__link?.state ?? {}).length,
+                    wifi: Object.keys(window.__link?.state ?? {}).filter(a => a.startsWith('/WiFi')),
+                    sample: Object.keys(window.__link?.state ?? {}).slice(0, 12) };
+  out.textContent = 'RESULT ' + JSON.stringify(summary);
+  document.title = verdict;
+  // Beaconed back to the server that served this page, because a headless dump
+  // races the socket: virtual time fast-forwards timers but not the network.
+  new Image().src = '/e2e-result?' + encodeURIComponent(JSON.stringify(summary));
+};
+
+try {
+  const mod = await import('./sygaldry.js');
+  const { link, capabilities } = mod;
+  window.__link = link;
+  log('capabilities ' + JSON.stringify(capabilities()));
+
+  await link.connectWebSocket(host);
+  log('connected, subprotocol negotiated');
+
+  await new Promise((r) => setTimeout(r, seconds * 1000));
+
+  const quaternions = [...seen].filter(([a]) => a.endsWith('/quaternion'));
+  const inertials   = [...seen].filter(([a]) => a.endsWith('/inertial'));
+  const name = link.name;
+  const problems = [];
+  if (!name || name === 'mubone') problems.push('device name was never learned');
+  if (quaternions.length === 0) problems.push('no quaternion reached the dispatcher');
+  if (inertials.length === 0) problems.push('no inertial reached the dispatcher');
+  const named = seen.get(`/sensor/${name}/quaternion`) || 0;
+  const unnamed = [...seen].filter(([a]) => a.endsWith('/quaternion') && !a.includes(name))
+                           .reduce((n, [, c]) => n + c, 0);
+  if (!named) problems.push('no quaternion arrived under the device name');
+  if (unnamed) problems.push(`${unnamed} quaternions arrived before the name was known`);
+  const q = link.latest('/BNO085/orientation');
+  if (!q || q.length !== 4) problems.push('no raw orientation in link state');
+
+  link.disconnect();
+  report(problems.length ? 'FAIL' : 'PASS',
+         problems.length ? problems.join('; ')
+                         : `name ${name}, ${named} quaternions, ${seen.get('/sensor/' + name + '/inertial')} inertials`);
+} catch (e) {
+  report('FAIL', `${e.name}: ${e.message}`);
+}
+</script>
+</body>

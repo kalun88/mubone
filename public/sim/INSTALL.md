@@ -1,6 +1,6 @@
 # mubone — Install Guide
 
-> **Status: CURRENT** · user-facing install guide · verified 2026-07-28 against 1.11 alpha.
+> **Status: CURRENT** · user-facing install guide · verified 2026-08-21 against 1.13 alpha.
 
 ## Running multiple stations (installed app)
 
@@ -24,11 +24,17 @@ checkout the equivalent is `npm run stations`. See `docs/MULTI-INSTANCE-PLAN.md`
 
 ## Option A: Pre-built app (no dev tools needed)
 
-Ask for the `.dmg` or `.zip` for your Mac architecture:
-- **Apple Silicon** (M1/M2/M3/M4): `mubone-1.11.0-alpha-arm64.dmg`
-- **Intel Mac**: `mubone-1.11.0-alpha-x64.dmg`
+Ask Ek for the DMG — **Apple Silicon only** (M1 and later), e.g. `mubone-1.13.0-alpha-arm64.dmg`. Open it and drag **mubone** onto the Applications folder.
 
-Open the DMG and drag **mubone** to your Applications folder. On first launch, macOS will warn about an unidentified developer — right-click the app and choose **Open**, then click **Open** again in the dialog. You only need to do this once.
+### First launch — the one-time unblock
+
+mubone carries an **ad-hoc signature**, not an Apple Developer ID one: there is no paid developer account behind it and nothing is notarized. macOS quarantines anything downloaded and refuses to open it until you say, once, that you trust it. Any of these does it:
+
+- **Double-click `Open mubone (first time).command`** in the DMG window. It clears the quarantine flag and launches the app. If macOS blocks the script itself, right-click it and choose **Open**.
+- **By hand:** open mubone, let macOS block it, then go to **System Settings → Privacy & Security → Security**, find the line saying mubone was blocked, and click **Open Anyway**. Control-clicking the app and choosing Open no longer works — Apple removed that shortcut in macOS 15 (Sequoia).
+- **Terminal:** `xattr -dr com.apple.quarantine /Applications/mubone.app`
+
+It's once per version, not once per machine — a newer DMG needs it again. The DMG ships `READ ME FIRST.txt` saying the same thing, for collaborators who don't have this guide.
 
 ### Audio setup
 
@@ -38,11 +44,11 @@ Open the DMG and drag **mubone** to your Applications folder. On first launch, m
 4. Set sample rate to match your interface (48000 Hz is default).
 5. Grant microphone access when prompted.
 
-### Max/MSP integration (optional)
+### Controlling mubone over OSC (optional)
 
-The Max patches are bundled inside the app at `mubone.app/Contents/Resources/max/`. Copy the `max/` folder out if you want to run the controller patch. Requires Max 8+.
+mubone listens for binary OSC on UDP `127.0.0.1:7500` and acts on it immediately — no setup, no configuration, nothing to enable. Anything that can send OSC will do: Max, Pd, TouchOSC, a Python script, a hardware controller through a MIDI→OSC bridge. `README.md` tabulates every address the app handles.
 
-Inside Max, open `max/main.maxpat` (the consolidated controller; `mubone-controller.maxpat` was removed in the Max reorg). The bridge script (`bridge.js`) sends OSC over UDP to `127.0.0.1:7500` — the Electron app listens automatically, no configuration needed.
+**Max is a prototyping tool, not part of the app.** Ek keeps a Max patch to test custom OSC mappings and to try a control on the fly; anything that sends OSC — Max, Pd, TouchOSC, a script, a MIDI→OSC bridge — drives mubone the same way, and no code assumes any of them. The old example patches and their `bridge.js` relay are git history (`docs/archive/SANDBOX.md`).
 
 ---
 
@@ -85,7 +91,9 @@ npm run dist:arm64
 npm run dist:x64
 ```
 
-Output goes to `dist/`. The DMG and ZIP will be named with the version and architecture.
+Output goes to `dist/`, named with the version and architecture.
+
+Two things happen automatically after packing (`build/after-pack.js`): audify's dylib references are rewritten from `@rpath` to `@loader_path`, then the whole bundle is **ad-hoc codesigned**. That signature is free and needs no Apple account, but it is what makes the app launchable on Apple Silicon — packing invalidates the seals Electron shipped with, and `mac.identity: null` tells electron-builder not to re-sign. A successful build ends with `[adhoc-sign] ✓ signature verifies`. Don't remove the step.
 
 Note: building for a different architecture than your own Mac requires that `audify` can cross-compile. If this fails, build on a machine matching the target arch.
 
@@ -93,13 +101,15 @@ Note: building for a different architecture than your own Mac requires that `aud
 
 ## Troubleshooting
 
-**"mubone is damaged and can't be opened"** — The app is unsigned. Run this in Terminal:
+**"mubone is damaged and can't be opened"** or **"Apple could not verify mubone"** — the quarantine flag, not damage. See *First launch* above, or run:
 ```bash
-xattr -cr /Applications/mubone.app
+xattr -dr com.apple.quarantine /Applications/mubone.app
 ```
+
+**The app quits on launch, or Console shows a code-signature error** — the ad-hoc signature is missing or stale. Apple Silicon refuses to run an unsigned arm64 binary at all. Rebuild and check the log for `[adhoc-sign] ✓ signature verifies`.
 
 **No audio output** — Check Audio panel: make sure the correct output device is selected and the channel count matches your interface. The app defaults to stereo in browser mode; multi-channel requires Electron.
 
-**Mic not working** — macOS requires explicit microphone permission. Check System Settings → Privacy & Security → Microphone → ensure mubone is allowed.
+**Mic not working** — macOS requires explicit microphone permission. Check System Settings → Privacy & Security → Microphone → ensure mubone is allowed. An ad-hoc signature changes with every build, so macOS treats each new DMG as a new app and asks again.
 
 **audify fails to compile** — Make sure Xcode CLT is installed (`xcode-select --install`). If you're on an Intel Mac and audify's prebuilt binaries are arm64-only, you may need to compile from source — ensure CMake is installed (`brew install cmake`).

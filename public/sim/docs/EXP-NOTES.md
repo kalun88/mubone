@@ -273,14 +273,14 @@ These two systems compose naturally:
 - This works in both standard and organized paint modes
 
 **Phase 3: Timbral navigation feedback**
-- Visual feedback: color particles by timbral features (already partially done via featuresToHSL)
+- Visual feedback: color particles by timbral features (already partially done via featuresToColor)
 - Add a "timbral compass" overlay showing what feature region the cursor is in
 - Tune search radius and k behavior for organized mode
 
 ### Existing infrastructure
 
 - `audio-features.js`: `snapshotInputFeatures()` returns `{ rms, centroid, zcr }` — already called during painting
-- `featuresToHSL()`: maps features to color — already used for particle visualization
+- `featuresToColor()`: maps features to color — already used for particle visualization
 - `renderer.js`: particle position is read from `particle.lon`, `particle.lat` — just change what sets these
 - `events.js`: paint handler creates particles with `{ lon, lat, source, sampleIndex, ... }` — the insertion point for both features
 - `grain.js`: k-nearest search uses `angleBetweenSphere()` — works identically on an organized sphere, no changes needed
@@ -339,7 +339,7 @@ Several existing tools solve the same "organize audio segments by timbral simila
 | Module | File | Status |
 |---|---|---|
 | Gesture extraction | `js/gesture.js` | built — needs live testing with sensor |
-| Gesture visualization | `js/gesture-viz.js` | built — overlay panel, press G to toggle |
+| Gesture visualization | `js/gesture-viz.js` | built, but **not imported by `main.js`** — it never loads and G does nothing. Console-only: `await import('./js/gesture-viz.js')` |
 | Gesture panel UI | `js/gesture-panel.js` | built — Shift+G to toggle |
 | Snapshot engine | `js/snapshot-engine.js` | built — posture macros, auto-start off by default |
 | Staging UI | `js/ui-staging.js` | built — ◇ staging button always visible |
