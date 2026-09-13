@@ -7,6 +7,109 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 1.15.1 alpha — 2026-09-12
+
+The evening after 1.15, on the rig: the steer, the stickers, the recogniser, the pin tile.
+
+### Fixed
+- A double no longer aborts a play its press never started: loop toggle on 2 and line toggle on 2 ×2
+  left line stuck recording, because the second double's dead press still aborted the running line
+  and the double restarted it.
+- Right-clicking a sticker to clear the binding left the tile with no sticker and no way to learn a
+  new key from it. An unbound tile wears an empty sticker, a dash, and a click on it learns.
+- The steer moved slowly just above the palette strip: the vertical offset is measured against the
+  stage above the strip now, so the strip's top edge is hard over like the canvas top.
+
+### Changed
+- The steer stops the moment the pointer is on any chrome: a rail, the top bar, the palette, a
+  settings page. This reverses the previous night's palette exception.
+- ⇧Tab shows and hides the pinned rail; Tab stays the tool rail's. The two pills' tooltips name
+  their keys.
+- The factory pin is button 3's press, not its tap, so the pin tile cycles through all three verbs
+  (bang · momentary · toggle) and pins on the down edge, ~125 ms sooner. A stored map with the tap
+  is moved to the press once at load. The delay mark still draws for a tap learned beside a ×2.
+- The OSC audit had read the factory strip's entries as actions since the 1.15 redeal and was failing;
+  its parser reads ACTIONS rows only, and two quiet-by-precondition addresses are declared.
+- The pinned rail boots closed unless it was left open; a factory reset boots it closed.
+- The phone (the hosted demo in a phone's browser): iPhone never started because the motion
+  permission was asked two awaits after the tap, which Safari refuses — it is asked inside the tap
+  now; WebKit's inverted rotation sign is corrected; the desktop chrome (bar, rails, palette) is
+  hidden; the speaker-routing element looped a zero-sample WAV and ate the main thread (TODO #349);
+  a touch on the sphere is the spacebar. `scripts/phone-audit.js` is the one phone check.
+
+## 1.15 alpha — 2026-09-12
+
+**Covers 2026-09-05 → 2026-09-12 (177 commits).** The cycle where the instrument got a hand back and
+the palette became quick access; where every learned key, button and note became one recogniser;
+where the audio path left the GUI thread; and where the strip was redrawn three times in a day until
+it matched the picture.
+
+### Added
+- **The hand.** One tool is in hand, picked by a click on its rail row or its strip tile, played by the
+  spacebar and a left-click on the sphere in one global verb (momentary by factory) — the hand tile at
+  the head of the strip, three tiles wide, with the spacebar and CLICK as keycaps under it. Both inputs
+  are reserved and cannot be learned. `Tab` shows and hides the tool rail and never a drawer.
+- **The palette as quick access.** A tile fires from its own key, button or note, in its own verb
+  (bang · momentary · toggle, the verb drawn as the tile's shape), and never touches the hand. A key
+  belongs to its tile: explicit rows, dealt once from the factory, carried when a tile moves, the next
+  free digit on a drop. The keys page's "Shown on the palette" chooses which kind the tiles wear.
+- **The binding sticker.** One per bound tile, bottom-left, in the same disc as the wet drop and the
+  pin: the source, the gesture (long and extra long as a bar), the delay mark. Click to relearn,
+  right-click to clear. Chords are refused for palette positions; a key draws its glyph or four
+  characters.
+- **The pin mark.** Auto-pin is a property of the tile, like wet: it *is* the engine's on-end switch —
+  cloud on end for grain, loop on end for tape — read off the tile's block; a button on the row, a
+  sticker on the tile. Dub wears it always.
+- **The pin group as tool rows** in the pinned rail — pin, unpin, unpin all — draggable onto the
+  palette; unpin all is a palette candidate.
+- **Every learned key and MIDI note is a button**: press · tap · long · extra long · ×2 · ×3, one
+  recogniser, one set of timings; a tap beside a ×2 waits the window, and the tile says so.
+- **Instrument buttons page**: a live monitor, the factory set (button 1 the hand's tools, 2 the
+  session, 3 the pins), a drawn table of how a button is read.
+- **Reset on the settings page**: Reset all (armed by one click, fired by the next) and Reset selected
+  with a toggle per storage category; the popup is gone.
+- **A new build wipes the hosted demo**, silently, keyed on the service worker's cache version.
+- **Mute and solo on every pin and both groups**; audibility is derived; an empty group holds no state.
+- **The audio host**: audify in a utility process; the GUI thread is out of the audio path; the
+  scheduler runs every 10 ms; the candidate pool crosses to the worklet as shared tables; the caps and
+  throttles measured and re-set (`docs/CAPS-AND-THROTTLES-2026-09.md`, `docs/PERFORMANCE-AUDIT-2026-09.md`).
+- **Six engine hues** — source azure, lens sea green, tape hot pink, grain gold, erase mauve, pins
+  bone — and every glyph in its family's hue; the strip's measures as tokens.
+
+### Changed
+- **Names and glyphs.** pen → **dots** (four dots on a curved L), wash → **trail** (a ring of dots),
+  looper → **loop** (an open ring), overdub → **dub**; the pin family is a pushpin from the side; the
+  drawer's door is the panel-right glyph, not ⋯.
+- **The factory strip**: dots (1 held) · line (1) · loop (2) · dub (3) · scrape top (4) · pin (↓) ·
+  unpin (↑); the hand ships holding dots, momentary; no lens on the strip.
+- **Keys + MIDI**: toggle and momentary are rows, titles are by tile, bound rows only with Show all;
+  the key cell says what a key does. The `=` / `-` pin keys are gone — the palette is the whole truth.
+- The header is glyphs; the pinned rail's settings door is a hamburger; the camera pill never sits on
+  sensor with no sensor; the surface-mode entry banner and the rails' helper text are gone.
+- The heading zero is the yaw the app reads; the hardware tare is off; connection state is packets
+  arriving; the sensor list offers only ports with a USB identity.
+- The pull keeps steering over the palette (mouse tracking on the document, the canvas rect as the
+  boundary).
+
+### Fixed
+- A pin the drop declined planted nothing in the dead band between the radius and 1.5× it.
+- The boot hand's block was never applied, so a drawer opened on it showed the boot state.
+- Deleting the in-hand tool threw in the sheet render.
+- A muted group outlived its last pin and the next pin was born silent — including through a release
+  fade.
+- A loop hold's name in the pinned rail sat 2.8px left of the pin rows above it; the hold row now uses
+  the tool row's metrics (measured, `audit:align` guards it).
+- `mubone_settings_section` (the settings door's last-open section) was never registered, so the reset
+  page listed it as an orphan key.
+- The service worker's cache key and the chrome's brand version both bumped.
+
+### Removed
+- The dead `.lyr-act` row rules — the pin rows are tool rows now.
+- Arming: `sel`, the armed box, the main button, `lastFired`, the drawer-head verb segment, the
+  ledger under the tiles, the `n ` prefix on a note, the cabinet's reset button, the `⋯`.
+
+---
+
 ## 1.14 alpha — 2026-09-05
 
 **Covers 2026-08-21 → 2026-09-05 (#201–#336).** The longest cycle so far, and the one where the instrument changed shape: the tile screen replaced the panel rig as the app, the brush model shipped, the sensor pipeline was rebuilt around two measurements, a first-party instrument joined the x-imu3, and the repo grew a harness that drives the real Electron app. It closes with a day spent making the work itself cheaper — smaller docs, one audit per change, a commit per change, and a dead-weight pass that took out everything nothing reached.

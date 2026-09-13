@@ -10,11 +10,6 @@
 
 ### Sep 12
 
-- [ ] **#349 Mobile mode answers a probe in 37–44 s** — found in the 2026-09-12 browser check: at 390×844 with a
-  phone user agent (`S.isMobile`, `initMobileMode`) a page.evaluate that runs a 1 s rAF loop returns after 37 s, and a
-  screenshot times out; no long tasks are recorded and the loop counts 61 fps, so the thread is not blocked — something
-  in the mobile path is holding the CDP round trip (fullscreen / `DeviceMotionEvent.requestPermission` in `js/mobile.js`
-  are the candidates). The same viewport with a desktop UA answers in 5 ms. Not on the collaborators' laptop path.
 - [ ] **#350 A button map from before 2026-09-11 is not migrated onto positions** — Ek's own profile has
   `mubone_button_map` on the bare ids (`commit_drop` on button 3 tap, `commit_release` on ×2), while `BUTTON_DEFAULTS`
   now binds `palette_7` / `palette_6`. The actions still fire, but `bindingsOf('palette_N')` cannot attribute them, so

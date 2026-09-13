@@ -2,11 +2,11 @@
 
 > **Status: CURRENT** · reference · verified 2026-07-28. If a binding here disagrees with `ACTIONS` in `js/midi.js`, the code is authoritative — the in-app keys/midi/osc modal renders from it.
 
-> **Read this first.** `ACTIONS` in `js/midi.js` is authoritative and the in-app keys / MIDI / OSC modal renders from it; this file is the prose copy. The digits `1`–`5` are the palette's keys by position and Tab / ⇧Tab open the drawers (`docs/RULINGS.md`, palette). Find the key you are changing in its section; read *Custom Bindings & Remote Control* for learn. Some section text predates the tile screen becoming `main`.
+> **Read this first.** `ACTIONS` in `js/midi.js` is authoritative and the in-app keys / MIDI / OSC modal renders from it; this file is the prose copy. The palette's keys are the tiles' own (`docs/PALETTE-GUI.md`); Tab shows and hides the tool rail; the ⋯ on a row is the drawer's door. Find the key you are changing in its section; read *Custom Bindings & Remote Control* for learn. Some section text predates the tile screen becoming `main`.
 
 ## Cursor & Camera Modes
 
-In **steer mode** (default), your mouse controls the camera — drag to rotate the sphere.
+In **steer mode** (default), your mouse controls the camera — its offset from the centre of the **reachable stage** (the canvas minus any open rail and the palette strip) is a rotation speed, so a rail's edge and the strip's top edge are both hard over. **The steer stops the moment the pointer is on any chrome** — a rail, the top bar, the palette, a settings page (Ek, 2026-09-12: "anywhere i'm trying to use the GUI the sphere should automatically stop spinning") — and picks up again when it is back on the sphere.
 
 In **surface mode**, your trackpad/mouse position maps directly onto the sphere surface — move your finger and the cursor follows.
 
@@ -20,14 +20,23 @@ You can switch between steer, surface, and sensor modes from the camera mode but
 
 ## The tile screen
 
-**The palette is a strip of up to nine positions; the tool rail is the library**
-(`js/tiles.js`, 2026-09-11). A fresh palette is **wide · line · pen · all · overdub · unpin ·
-pin**, on keys **`1` to `9` by position**. It is BUILT BY DRAGGING a row in from the rail
-(Procreate): drag within the strip to move a tile, drag one off to remove it.
+**The hand, and the palette as quick access** (`js/tiles.js`, 2026-09-12; `docs/PALETTE-GUI.md`
+is the authority). **The hand is one tool** — click it in the rail or on the strip and it is in
+hand; **the spacebar and a left-click on the sphere play it**, in one global verb (momentary by
+factory; right-click the hand tile to flip it), and the **hand tile** at the head of the strip shows it: its glyph, its shape the verb,
+the spacebar and the mouse as keycaps under it.
+Those two inputs are reserved — they can be learned onto nothing. **The palette is quick access**:
+a strip of up to nine positions, each with its own key, button or note, firing in the tile's own
+verb and never touching what is in hand. A fresh palette is **dots · line · loop · dub · scrape top · pin ·
+unpin** on **`1` long · `1` · `2` · `3` · `4` · `↓` · `↑`** — dots and line share the `1` key, line on
+its press and dots on its hold — and the hand ships holding **dots, momentary** (Ek, 2026-09-12,
+night). No lens is on the strip; wide is installed and stays so. It is BUILT BY DRAGGING a row in from the rail
+(Procreate): a dropped tile takes the next free digit; drag within the strip to move a tile and
+its key moves with it; drag one off to remove it and free its digit.
 
-**Nothing is armed** (Ek, 2026-09-11: "we are now sunsetting the concept of arming a tool.
-there's no concept anymore of what the hand holds"). A POSITION is a button. It has one action,
-one OSC address and **ONE VERB**, and the verb is the tile's:
+**Nothing is armed** (Ek, 2026-09-11) — the hand is not arming: a tile fires in its own verb
+whatever is in hand, and the only mark the hand leaves on the strip is a one-hairline ring. A
+POSITION is a button. It has one action, one OSC address and **ONE VERB**, and the verb is the tile's:
 
 | verb | what the press means | shape |
 |---|---|---|
@@ -35,51 +44,55 @@ one OSC address and **ONE VERB**, and the verb is the tile's:
 | **momentary** | it runs while the input is down | a plate — four corners you grip |
 | **toggle** | it runs until you press again | an asymmetric plate — it has thrown one way and can throw back |
 
-The verb is set in the tile's **drawer head**, and it offers only what the kind allows: a brush,
-an eraser and a lens are momentary or toggle; **pin** has all three, which is how one pin tile
-pins where you stand and a second draws a path; **unpin** is a bang alone. Drop a tile and it
+The verb is set by a **right-click on the strip tile**, cycling through what the kind allows: a
+brush, an eraser and a lens are momentary or toggle; **pin** has all three, which is how one pin
+tile pins where you stand and a second draws a path; **unpin** is a bang alone. Drop a tile and it
 lands on its kind's default — a tool momentary, a lens toggle, pin a bang. Putting one tool on the
-strip twice in two verbs is two drags and two settings, and that is the mechanism.
+strip twice in two verbs is two drags and two right-clicks, and that is the mechanism. A
+right-click on the hand tile flips the hand's verb the same way.
 
-**A click on the strip FIRES it**, in that tile's verb, exactly as its key does. **A rail row has
-no click at all**: it is a drag source with a `⋯`, and the `⋯` is the only gesture that points the
-drawer without firing. **There is no main button**: `space`, a click on the sphere, `F`, `/trace`
-and `/trace/toggle` all meant "fire the tool in the hand", and all are gone. Space is a free key
-you can learn onto any position on the keys page.
+**A click on a tool — rail row or strip tile — takes it in hand** and plays nothing. A click on a
+lens tile installs it or turns it off; a click on a pin tile fires it. The `⋯` opens the drawer
+and picks nothing. `F`, `/trace` and `/trace/toggle` are gone; the hand has no action row — space
+and the click are wired to it directly.
 
-**Each tile wears a LEGEND** — one line saying what fires it: the source (a key bright, a button
-ember, a MIDI note grey), then the gesture in the app's own word, and **blank means press**. A
-tile may carry several inputs. A `···` after the gesture means that tap is **delayed**: a `×2` or
-`×3` bound anywhere on the same input makes its tap wait the double window — measured at ~125 ms,
-and it ships on button 3, where pin is the tap and unpin the `×2`.
+**Each bound tile wears a STICKER** on its bottom-left corner — one binding kind at a time, chosen
+on the keys page (key by factory; button or MIDI note instead when you want them) — saying what
+fires it: the source (a key bright, a button ember, a note grey), then the gesture in the app's
+own word, **blank means press**, and long / extra long as a bar. **Click the sticker to relearn**:
+the next key, button or note of that kind lands on that position (`Esc` or another click cancels;
+right-click clears). A palette key is a plain key: ⌘, ctrl and ⇧ chords are refused.
+A `···` after the gesture means that tap is **delayed**: a `×2` or `×3` bound anywhere on the
+same input makes its tap wait the double window — measured at ~125 ms. It shipped on button 3
+(pin the tap, unpin the `×2`) until 2026-09-12; pin is button 3's **press** now, so the factory
+pin tile takes all three verbs and pins the moment the button goes down.
 
-**Pinning is `=` and unpinning is `-`** — one gesture, no group to aim: tap = pin where you
-stand, hold = pin a drawn path.
-`Q W E`, `⇧Q W E` and `⇧Tab` addressed the three named pin groups and are **free keys** since
-2026-08-30; pinned material groups by what it is, clouds and loops (`docs/archive/BRUSH-MODEL.md` § 3e).
+**Pinning and unpinning are the pin tiles' own keys** (`↓` and `↑` by factory, or whatever the
+drop dealt) — the palette is the whole truth (Ek, 2026-09-12); the `=` / `-` keys are gone. One
+gesture, no group to aim: a bang pins where you stand, a momentary or toggle pin tile draws a path.
+`Q W E` and `⇧Q W E` addressed the three named pin groups and are **free keys** since
+2026-08-30 (`⇧Tab` was too, and is the pinned rail's since 2026-09-12); pinned material groups by what it is, clouds and loops (`docs/archive/BRUSH-MODEL.md` § 3e).
 
 | Key | Does |
 |-----|------|
-| **`space`** | **free** since 2026-09-11 — it was the main button, and there is no tool in the hand for it to fire. Learn it onto the position you reach for most |
-| **`Tab`** | the **drawer** of the last tile FIRED, open or shut — one rule, one variable. The `⋯` on a rail row is the other door, and the only one that does not fire |
-| **`⇧Tab`** | the installed **lens's** drawer, open or shut. Also the ⋯ on a lens row (on an uninstalled lens it installs it, then opens) |
-| **`=`** | **pin** what the cursor is sounding — a hold: tap = pin where you stand, hold = pin a drawn path |
-| **`-`** | **unpin** — release the selected pin (nearest, farthest or oldest — Settings → Pins), whichever kind it is. *(This took sweep's key; sweep is the chrome pill, and stays bindable as `sweep`.)* |
-| **1 … 9** | **fire** palette position N (`palette_N`), in that tile's verb — a momentary plays while the digit is down, a toggle runs until the same digit again, a bang happens once. Factory palette: 1 wide *(toggle)* · 2 line *(toggle)* · 3 pen *(momentary)* · 4 all *(momentary)* · 5 overdub *(momentary)* · 6 unpin *(bang)* · 7 pin *(bang)*; drag tiles to change it, and the digits follow the positions. One play at a time — while a tool runs, the other tool keys are dead and its own key is what ends it |
+| **`space`** | **plays the tool in hand**, in the hand's verb — toggle: press starts, press again stops; momentary: while held. A left-click on the sphere is the same press. Reserved: cannot be learned (2026-09-12) |
+| **`Tab`** | show or hide the **tool rail** — never the drawer (Ek, 2026-09-12). The `⋯` on a rail row is the drawer's only door; `~` is the same act as Tab. The tools pill's tooltip says so |
+| **`⇧Tab`** | show or hide the **pinned rail** on the right (Ek, 2026-09-12: "shift tab to open and close the pin"). The pinned pill's tooltip says so |
+| **1 … 9, `↑`, `↓`** | **fire** a palette position (`palette_N`), in that tile's verb — a momentary plays while the key is down, a toggle runs until the same key again, a bang happens once. Factory: 1 long dots *(momentary)* · 1 line *(toggle)* · 2 loop *(toggle)* · 3 dub *(toggle)* · 4 scrape top *(momentary)* · `↓` pin · `↑` unpin. **The key belongs to the tile**: move the tile and the key moves with it; drop a new tile and it takes the next free digit. One play at a time — while a tool runs, the other tool keys are dead and its own key is what ends it |
 | **S** | the installed lens **off**, and on again — no lens on, the cursor reads nothing: the cap (`scan_toggle`). A lens tile tapped when on does the same |
 | | a position has **one row** on the keys page, in its tile's own words — `line · play (toggle)`, `pen · play (momentary)`, `wide · on / off`, `pin · pin here`. `palette_N_toggle` and `palette_N_hold` went with the three-verb position (2026-09-11); the verb lives on the tile now. **F was unbound on 2026-09-07**: it was a second key for one tool, from before the palette existed |
-| | every palette key is a factory default of its action: relearn it on the keys page and the digit stands down |
+| | every palette key is an explicit row on the keys page — relearn it there, or click the tile's legend row and press the new key |
 | | the keys page shows only BOUND actions by default — a learned key, a factory key nobody else took, a button, a MIDI assignment. **Show all** at the top reveals the rest, and the filter box searches whichever set is showing (2026-09-10) |
 | | **the instrument's three buttons** send 1 on the down and 0 on the up. A momentary action takes the whole button; a toggle or bang action sits on a gesture — press (the down, never delayed) · tap (a bang on the up) · long press · extra long · ×2 · ×3 — bound in the Button column (Settings → Instrument buttons sets the windows and shows what each button does) |
 | *(none)* | **wet** on/off for the grain brush in the hand — the switch in its sheet head, or bind `wet_toggle` (`/palette/wet`). A wet brush's knobs keep moving every stroke it painted; off dries them where they sound |
 | **overdub** (a loop-kind tile) | a take inside the NEAREST PINNED LOOP's cycle: press with the overdub brush in the hand and the take joins that loop as a layer — every cycle, at the phase you played it, at 1× whatever the loop's speed; longer than the cycle and the passes stack. One pin, a dot per overdub on its row. Nothing pinned, the first take IS the main loop — pinned on release like the looper's — and the next press overdubs onto it. `docs/archive/OVERDUB-PLAN.md` |
 | **wash** (a grain-kind tile) | the looper's move for the grain family: end the stroke and it is PINNED at once as a moving cloud looping the path you drew, reading the marks you laid on it. While you paint only the cursor reads it; the cloud takes the path on release. The contract is the grain sheet's **on end** row (`scratch · cloud`) — any grain tile becomes a wash by flipping it; the tile remembers. The row is what the **A** key and `/trace/mode` used to cycle under the palette; both are gone (2026-09-05) |
-| **paint + `=`** | the looper gesture: while painting a line (a digit, a pad or a pedal), hold `=` and the stroke-so-far loops immediately and keeps growing with the stroke; releasing `=` freezes it |
+| **paint + the pin tile's key** | the looper gesture: while painting a line, hold a momentary pin tile's key and the stroke-so-far loops immediately and keeps growing with the stroke; releasing it freezes it |
 | **Q W E · ⇧Q W E** | **free.** They addressed the named pin groups, which no longer exist |
 
 **The pin buttons** live in the pinned rail, above the material they act on — **pin**, **unpin**
-(on `=` and `-`) and **unpin all**. They are not tools: space never fires them and `Tab` never
-lands on them; they act on what already exists. They carry no state: there is one pin gesture and
+(played by their palette tiles' keys, `↓` / `↑` by factory) and **unpin all**. They are not tools:
+they cannot be in hand and `Tab` never lands on them; they act on what already exists. They carry no state: there is one pin gesture and
 nothing to aim it at, so the label is the verb.
 
 **Pinned material groups by kind** — the rail shows a **clouds** row and a **loops** row, each
@@ -98,14 +111,14 @@ tool, mirroring the pinned rail on the right. It always shows everything the app
 holds the ones you reach for. Each engine's title carries a **`+`** at its right edge
 (2026-09-10): tap it to mint a tool of that engine from what is on the sliders now — it is picked
 and its drawer opens. This replaced a `new tool` row at the foot of the list and its engine
-chooser. **Clicking a row points the drawer at that tool and does nothing else** — it plays
-nothing and it does not place it on the palette (drag it there). **The ⋯ at the right edge of
-every row, or `Tab`, opens a second rail beside it** with that tool's whole engine (on another
-row the ⋯ picks the tool first, as the click would) — one line per parameter, **type into any
+chooser. **Clicking a row takes that tool in hand** — space and the sphere's click play it; it
+plays nothing itself and does not place the tool on the palette (drag it there). **The ⋯ at the
+right edge of every row opens a second rail beside it** with that tool's whole engine (the ⋯
+points the drawer without changing the hand; `Tab` never opens it) — one line per parameter, **type into any
 number**, **double-click any track to reset it** to the tick shown beneath it, and for a granular
 tool a window at the top showing one grain against the next one's onset. The filter is drawn: drag
 its edges for hpf and lpf, up and down for Q. An open drawer follows whatever you pick next. A lens
-row installs the lens and nothing more, and every lens row carries the same ⋯ (`⇧Tab`; on an
+row installs the lens and nothing more, and every lens row carries the same ⋯ (on an
 uninstalled lens it installs first). Both rails float over the sphere and never resize it. `Esc` closes
 the properties rail, then the tool rail; **tools** in the chrome (and `~`) shows and hides them.
 
@@ -117,19 +130,20 @@ right. The input channel lives in Settings → audio, since it is chosen when yo
 own **pinned** pill. Nothing on this screen resizes the stage: the sphere is the full window, and
 each rail is shown or hidden over it.
 
-**LIT is the only mark a tile carries.** The tile filled in its engine's hue is the tool
-*sounding* — a key, a pad, a pedal — and it shows on the palette tile and its rail row alike.
-There is no resting mark: the **box** that meant ARMED went with arming on 2026-09-11, along with
-the question it answered ("what would space do?"). A lens tile lights its glyph while the lens is
-on; a pin tile flashes on the press.
+**LIT, and IN HAND, are the marks a tile carries.** The tile filled in its engine's hue is the
+tool *sounding* — a key, a pad, a pedal — and it shows on the palette tile and its rail row alike.
+The in-hand tool IS the hand tile at the head of the strip, and its rail row is marked — that is
+the answer to "what would space do?", asked again since 2026-09-12.
+The **box** that meant ARMED is gone. A lens tile lights its glyph while the lens is on; a pin
+tile flashes on the press.
 
 **Changing what is on the palette is a DRAG.** Drag a row in from the rail to place it (the caret
 says where), drag a tile within the strip to move it, drag a tile off to remove it — nine is full,
 and the strip is exactly as wide as the list. Every tool may leave: the palette can hold nothing
-but lenses and pins. Nothing cycles under a tile and no palette click opens a drawer (`Tab`
-does). The palette's badge at its head is chrome, not a tile. The list persists in
+but lenses and pins. Nothing cycles under a tile and no palette click opens a drawer (the ⋯
+does); a click on a tool tile takes it in hand. The hand tile heads the row, three tiles wide like a spacebar. The list persists in
 `mubone_palette`. A **lens tile** is a state — tap it on, tap it off, and no lens on is the cap,
-where the cursor reads nothing; there is no cap tile. `⇧Tab` is the lens's drawer.
+where the cursor reads nothing; there is no cap tile. The ⋯ on its rail row is the lens's drawer.
 
 A tile's engine shows in exactly one place on the tile itself: **the hue of its glyph** — one hue
 per engine, not per tile (source slate-blue · lens teal · loop rose · grain sand · erase clay,
@@ -162,10 +176,9 @@ and the patch bank itself went on 2026-09-03 (#325, `sandbox/sunset-2026-09-03/`
 tile owns its whole block, so there is nothing for a bank to hold.
 
 Every play is one funnel, decided once in `js/brush.js` (`gesturePress`) and only then handed to
-the brush of the position that started it, to say what it deposits (`_toolDown`). It was called
-the **main button** while space, a click and `/trace` all pressed it with whatever was armed;
-arming went on 2026-09-11 and a press now names the POSITION it fires — and the tile at that
-position says how.
+the brush that started it, to say what it deposits (`_toolDown`). Two doors press it: a POSITION
+(a quick-access key, in the tile's verb) and THE HAND (space, the sphere's click, the hand tile, in
+the hand's verb). One play at a time, whichever door.
 
 ---
 
@@ -306,7 +319,7 @@ actions and the `X` radial-morph key all went with the bank.
 | *(unbound)* | An eraser's spring-loaded hold has no key — its digit TAPS its position like every other, and the hold is that position's `palette_N_hold` on a button or pedal (2026-09-07) |
 | **Delete / Backspace** ×3 | Erase all (triple-press within 800ms) |
 | **`** (backtick) | Zero the cursor — the sensor's heading in sensor mode; in steer and surface the camera goes back to the front. Also the footer's ZERO button, leftmost of the cursor group |
-| **~** (⇧`) | Show or hide the tool rail — the tools pill's key. `Tab` is the drawer. The shifted key rather than the bare one because **`** is tare, which is hit mid-performance |
+| **~** (⇧`) | Show or hide the tool rail — the tools pill's key, the same act as `Tab`. The shifted key rather than the bare one because **`** is tare, which is hit mid-performance |
 
 ## Display
 

@@ -39,6 +39,7 @@ The map `scripts/audit-for.js` applies. A path is tested against every row, and 
 | `docs/`, `CLAUDE.md`, `README.md`, `INSTALL.md`, `sw.js`, `package.json`, any `js/*.js` (orphan check) | `node scripts/docs-audit.js` | banners, table rows, versions, orphans, dead script references |
 | `js/live-loop.js`, `js/worklets/live-loop.worklet.js` | `node scripts/live-loop-audit.js` | real-time, ~15 s of playback; not in rig-audit |
 | `js/main.js`, `sw.js` | `node scripts/browser-audit.js` | release-only unless the change is ABOUT browser mode |
+| `js/mobile.js` (and the `body.mobile-mode` CSS, the hand's touch path) | `node scripts/phone-audit.js` | the phone: an emulated iPhone and Android on playwright — mobile mode on, the desktop chrome hidden, tap-to-begin fast, the motion permission asked INSIDE the tap, a gyro event turns the camera, a touch plays the hand. Nobody develops for the phone; this says whether it still works |
 
 ## 3. The scripts
 
@@ -123,38 +124,52 @@ near it.
 ONLY the sections the change touches** — `node scripts/palette-audit.js --only=A,D` (or
 `PALETTE_ONLY=A,D`) — ~11 s including the launch against minutes for the whole file (Ek,
 2026-09-11: "i need fast iteration"); the sections are independent, each starting from the
-factory palette and the lens on. The full file runs once before the commit. 145 checks over the
-palette LIST (2026-09-11; five kind-locked tiles and a cycle before that): the factory seven on a
-fresh profile (it clears `mubone_palette` and reloads first), one row with no beds, every tile
-draggable, the legends, NINE palette actions — and **no tile or row wearing a box**, which is how
-ARMING stays deleted; § B and § G are DELETED (the rail click no longer acts, and there is no armed
-box to outrank the lit fill); § C the drawer — `Tab` follows the last tile FIRED (`lastFired`),
-⇧Tab the lens, the `⋯` the one gesture that points without firing, a rail click does nothing and a
-click on the strip fires; § D drives the browser's own DragEvents — a row in at the caret, a tile
-moved (carrying its verb), one dragged off, the pin pair from its rail, EVERY tool able to leave,
-the verb set at the drop from § 4's defaults, and pin's three verbs on a second pin tile; § E the
-digits FIRE by position in the tile's verb — a toggle outlives its key, a momentary ends on the up
-(without that edge it latched for ever), a bang pins once — one play at a time, no hand-back, and
-`sel` is gone; § F the lens as a state; § H the verb is the TILE's — the same edges mean opposite
-things under two verbs, flipping one in its drawer changes what they do, a momentary is refused
-while a TAP is bound, and **space and the sphere click are asserted DEAD**, which is the check that
-catches the main button being rewired; §§ I–L unchanged in subject.
+factory palette and the lens on. The full file runs once before the commit. 173 checks
+(2026-09-12; the hand back and the palette as quick access — `docs/PALETTE-GUI.md` § 1) over the
+palette LIST: the factory seven on a fresh profile (it clears `mubone_palette` and reloads first)
+on `1` … `5`, `↑`, `↓`, one row with no beds, every tile draggable, the legends, NINE palette
+actions, the PLATE naming the hand at the bed's width in the toggle shape, the in-hand ring on one
+tile and one row — and **no tile or row wearing a box**, which is how ARMING stays deleted; § B and
+§ G are DELETED (the rail click is a pick, and there is no armed box to outrank the lit fill); § C
+the drawer and the click — `Tab` opens the IN-HAND tool's drawer and a fire does not move it, ⇧Tab
+the lens, a rail click and a strip click take a tool in hand (plays nothing, places nothing), the
+`⋯` points the drawer without touching the hand, a lens tile's click installs, a pin tile's fires;
+§ D drives the browser's own DragEvents — a row in at the caret **takes the next free digit**, a
+tile moved carries its verb AND its key, one dragged off frees the digit, the pin pair from its
+rail, EVERY tool able to leave, pin's three verbs on a second pin tile; § E the keys are explicit
+rows and FIRE by position in the tile's verb — a toggle outlives its key, a momentary ends on the
+up (without that edge it latched for ever), a bang pins once — one play at a time, no hand-back,
+the hand untouched, `sel` gone; § F the lens as a state; § H THE HAND — space and the sphere's
+click play the in-hand tool, toggle by factory and momentary after a right-click on the plate
+(the plate's computed radius read back), the plate itself a spacebar, space refused by a learn and
+a stored Space row dropped at load, and a quick-access play still the TILE's verb, flipped by the
+strip's right-click, momentary refused under a TAP by the model itself; §§ I–L unchanged in
+subject (§ L now asserts a fire LEAVES the drawer where it was).
 
 **§ M and § N are the two `docs/PALETTE-GUI.md` § 9 calls "new I" and "new J"** — both letters were
 already taken by the wash and the wet button. § M is SHAPE IS THE VERB: the computed `border-radius`
-per verb, and it FLIPS a tile's verb in its drawer and reads the shape back off the strip, which is
-the only way to catch a deeper `html body .palette .tile` rule quietly winning. § N is THE LEGEND IS
-THE TRUTH: source + gesture + delay for every bound input, blank iff `press`, `···` iff a sibling
-`×2`/`×3` delays that tap, and the spacebar drawn rather than typed — it caught the glyph rule
-sizing the stroke mark to 30px square. Ek's rule 6 governs both: force each state and read it back;
-an empty diff proves only that nothing visible moved.
+per verb, and it FLIPS a tile's verb by the strip's right-click and reads the shape back off the
+strip, which is the only way to catch a deeper `html body .palette .tile` rule quietly winning. § N
+is THE LEGEND IS THE TRUTH: source + gesture + delay for every bound input, blank iff `press`, `···`
+iff a sibling `×2`/`×3` delays that tap (the button and note switches on for the read), and the
+spacebar drawn rather than typed on the PLATE — it caught the glyph rule sizing the stroke mark to
+30px square. **§ O is THE LEDGER** (2026-09-12): one legend row per kind the keys page's switches
+show, the bed measured 12px taller per row; a row's click arms that kind's learn on that position,
+the next key, button or note lands there, Esc or a second click cancels, right-click clears. Ek's
+rule 6 governs all three: force each state and read it back; an empty diff proves only that
+nothing visible moved.
+
+`factory()` in the helpers restores the KEY and BUTTON maps for the palette rows as well as the
+list: a removed tile takes its bindings with it (they belong to the tile), so rebuilding the strip
+by removeAt / placeTile alone would re-deal the digits and lose the factory buttons.
 
 Two notes for whoever runs it next. The pin-path checks in § D are guarded on the pool being able
 to take a pin at all — run beside `action ranges` and `cc mirrors` in one instance and the cc sweep
 leaves it in a state where nothing new lands, which is pollution rather than a failure. And § E is
 PACED with waits between plays: `startPaintStroke` is async and waits on the mic, so on a rig
 without one a stop dispatched in the same synchronous block can land before the start finishes and
-leave `S.isPainting` true. That is a real race in the audio path, not in the palette.
+leave `S.isPainting` true — and a stuck `isPainting` turns the next PIN into a live hold, so § C's
+fire pair is paced too. That is a real race in the audio path, not in the palette.
 
 **Before trusting ANY before/after claim about the screen:** `node scripts/probe-selftest.mjs`
 must be green — all seven, including the across-a-reload assertion. `scripts/screen-probe.mjs`

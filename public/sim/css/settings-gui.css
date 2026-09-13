@@ -540,12 +540,9 @@ html body .settings-head .as-btn:hover { background: var(--surface-1); color: va
 .settings-host .in-settings .set-table-head {
   padding: 10px 0; font-size: var(--fs-set-hint); color: var(--text-muted);
 }
-/* The three "on tiles" switches under Keyboard · Button · MIDI (2026-09-12):
-   the kit's toggle, a hint-size caption beside it, stacked under the title. */
-.settings-host .in-settings .set-table-head .set-legend-show {
-  display: flex; align-items: center; gap: 8px; margin-top: 6px; cursor: pointer; }
-.settings-host .in-settings .set-table-head .set-legend-show small {
-  font-size: var(--fs-set-hint); color: var(--text-subtle); }
+/* The three "on tiles" switches under the column heads (the afternoon's
+   ledger) are gone: which kind the palette shows is the segmented row above
+   the table (#legendKindSeg, the kit's segmented). */
 .settings-host .in-settings .set-table-row {
   padding: 8px 0; font-size: 14px; color: var(--text-primary);
   border-top: 1px solid var(--border-faint);
@@ -1244,3 +1241,8 @@ html body .settings-host .in-settings .grain-seg .grain-seg-btn { border-radius:
 .settings-host .in-settings .set-row-name { color: var(--text-light); }
 .settings-host .in-settings .set-row-verb { color: var(--text-secondary); font-weight: 400; }
 .settings-host .in-settings .set-row-verb::before { content: '·'; margin-right: 0.45rem; color: var(--text-tertiary); }
+
+/* Reset all is ARMED by its first click and fired by the second (Ek,
+   2026-09-12, night: no popup; the arm is the confirmation). The armed face
+   is the danger face filled — the one moment the button is a promise. */
+.settings-host .in-settings .set-btn--danger.armed { background: var(--accent-danger); border-color: var(--accent-danger); color: var(--text-highlight); }

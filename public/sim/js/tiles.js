@@ -1,14 +1,18 @@
 // ============================================================================
 // tiles.js — the palette and the toolbox (#248, slots 2026-09-03)
 //
-// ── The palette is a strip of tiles, and NOTHING IS HELD ─────────────────────
-// (Ek, 2026-09-03; ARMING DELETED 2026-09-11.)
-// "The palette is the musical performer's palette": what you switch between
-// while playing, in one strip. There is no armed tool and no tool in the hand
-// between presses — "what would space do right now?" has no answer because it
-// is not a question the instrument asks any more. A POSITION is a button:
-// pressing it plays what sits there, and releasing it or pressing it again
-// ends that. That is the whole model.
+// ── The hand, and the palette as quick access ────────────────────────────────
+// (Ek, 2026-09-03; arming deleted 2026-09-11; THE HAND BACK 2026-09-12.)
+// "like any computer painting app, the tool rail has the tool. you should be
+// able to pick the tool and have it 'in hand'. in hand just should mean what
+// the spacebar or click does. that should be always the truth." Two things,
+// cleanly split. THE HAND is one tool, picked by a click on its rail row or
+// its strip tile, played by the SPACEBAR and a LEFT-CLICK on the sphere in
+// one global verb (`handVerb`), and drawn as the spacebar plate under the
+// strip. THE PALETTE is quick access: a POSITION is a button with its own
+// key, button or note, in its own verb; pressing it plays what sits there
+// and never touches what is in hand. "What would space do?" has one answer
+// again, and the plate is it.
 //   · The palette is BUILT by dragging (Ek, 2026-09-11, Procreate): a row
 //     from the rail onto the strip places it, a tile within the strip moves
 //     it, a tile dragged off is removed. Nothing cycles under a tile; every
@@ -16,19 +20,11 @@
 //   · A LENS is a state: its tile (or rail row) tapped turns it on, tapped
 //     again turns it off, and NO LENS ON is the cap — the cursor reads
 //     nothing. There is no cap tile and no cap row (Ek, 2026-09-11).
-//   · The two clicks DIVERGE, deliberately (Ek, 2026-09-11): a click on a
-//     TOOL — on the strip or in the rail — picks it for the DRAWER and plays
-//     nothing, while key N, a pad or OSC on that position PLAYS it. You play
-//     with your hands on keys and pedals; the screen is where you set up.
-//     Lens and pin tiles were never armed, so their click is unchanged: the
-//     lens goes on, the pin fires.
-//   · The tool rail is the LIBRARY, and a click there no longer PLACES:
-//     placing is drag. The rule that put a clicked tool onto the strip
-//     ("the armed tool is always on the palette") died with arming. Tab is
-//     the drawer of the LAST THING PICKED — a tool row, a palette tile, a
-//     lens row or tile, the sampler (`lastFired`, Ek 2026-09-03: "if I just
-//     clicked the lens, when I press tab I expect that lens to open"); ⇧Tab
-//     is always the lens's.
+//   · A CLICK on a tool — on the strip or in the rail — takes it IN HAND and
+//     plays nothing; key N, a pad or OSC on a position PLAYS it. A lens tile's
+//     click installs it (a choice), a pin tile's fires it (an act).
+//   · The tool rail is the LIBRARY, and a click there never PLACES: placing
+//     is drag. Tab shows and hides the TOOL RAIL; the ⋯ is the drawer's door.
 //
 // Two models used to run at once here and fought (Ek): a palette, where a
 // click selects and space uses the selection, and a pedalboard, where a held
@@ -111,18 +107,31 @@ function _saveGone() { try { localStorage.setItem(LS_GONE, JSON.stringify([..._g
 // Glyphs shared with the mockup (same paths).
 const G = {
   line:  '<path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+  // DOTS: four big dots on a lightly curved L (Ek, 2026-09-12, night: "make
+  // it a lightly curved L shape" — after a dashed curve, dots on line's curve
+  // and a straight diagonal). The centres are the quadratic (5,4) → control
+  // (5.5,19.5) → (20,20) at t = 0, ⅓, ⅔, 1: down the left, a soft bend, out
+  // along the bottom. r 2.1.
+  dots:  '<circle cx="5" cy="4" r="2.1"/><circle cx="6.9" cy="12.7" r="2.1"/><circle cx="11.9" cy="18" r="2.1"/><circle cx="20" cy="20" r="2.1"/>',
   // The line's glyph, TWICE: one take cut into pieces is more than one line,
   // and two of the same squiggle says so at any size (Ek, 2026-09-03). The
   // first redraw cut one curve into segments with bars through the gaps; at
   // rail size that read as noise beside the plain line.
   slice: '<g transform="translate(0 -4.5)"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></g><g transform="translate(0 4.5)"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></g>',
-  looper: '<path d="M12 5a7 7 0 1 1-6.2 3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M5 4.2l.8 4.4 4.2-1.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>',
+  // TRAIL: dots' own dots — r 2.1 — in a circle, six of them on r 7 (Ek,
+  // 2026-09-12, night: "the same size dots but in a circle"). LOOP: line's
+  // own stroke as a circle with a small gap — r 8, 1.6 wide, 40° open at the
+  // top-right ("same width line as the line logo but a circle with a small
+  // space in the circle's line"). Both are their engine's brush shape closed
+  // into a ring: what they pin on release. The pin mark says the same thing.
+  trail: '<circle cx="19.00" cy="12.00" r="2.1"/><circle cx="15.50" cy="18.06" r="2.1"/><circle cx="8.50" cy="18.06" r="2.1"/><circle cx="5.00" cy="12.00" r="2.1"/><circle cx="8.50" cy="5.94" r="2.1"/><circle cx="15.50" cy="5.94" r="2.1"/>',
+  loop:  '<path d="M19.25 8.62A8 8 0 1 1 15.38 4.75" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
   // Overdub: the looper's circle with a second arc laid inside it — a layer on a cycle.
   overdub: '<path d="M12 4a8 8 0 1 1-7.1 4.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M12 8.5a3.5 3.5 0 1 1-3.1 1.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
   // Wash: one mark and the halo it leaves — the stroke that stays as a cloud.
-  wash:  '<circle cx="12" cy="12" r="2.2"/><circle cx="12" cy="12" r="5.6" fill="none" stroke="currentColor" stroke-width="1.3" opacity=".6"/><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.1" opacity=".3"/>',
+
   // The pen: a nib on a stroke — the classic thin granular line (spray until 2026-09-06).
-  pen: '<path d="M4 20l1.2-4.4L15.6 5.2a1.6 1.6 0 0 1 2.3 0l.9.9a1.6 1.6 0 0 1 0 2.3L8.4 18.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M14.2 6.6l3.2 3.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M4 20l4.4-1.2-3.2-3.2z"/>',
+
   spray: '<circle cx="10" cy="12" r="3.2"/><circle cx="16" cy="8" r="1.6"/><circle cx="17.5" cy="13.5" r="1.1"/><circle cx="14.5" cy="17" r="1.3"/><circle cx="6" cy="7.5" r="1.2"/><circle cx="5.5" cy="16.5" r=".9"/><circle cx="20" cy="10.5" r=".7"/><circle cx="12" cy="5.5" r=".8"/>',
   match: '<rect x="3" y="9" width="4.5" height="6" rx="1"/><rect x="8.8" y="7" width="2.8" height="10" rx="1"/><rect x="12.9" y="10" width="4" height="4.5" rx="1"/><rect x="18.2" y="8" width="2.6" height="8" rx="1"/>',
   comb: '<rect x="3" y="6" width="3" height="12" rx="1"/><rect x="7.6" y="8" width="3" height="10" rx="1"/><rect x="12.2" y="10.5" width="3" height="7.5" rx="1"/><rect x="16.8" y="13" width="3" height="5" rx="1"/>',
@@ -137,11 +146,22 @@ const G = {
   // dabs for "not". Material's silhouette, thumb notch lower right.
   // The pin pair on the palette (2026-09-10): a pushpin, and the pushpin
   // struck through — the slash is the footer's own word for "off".
-  pin:        '<path d="M14.2 2.8l7 7-1.9.6-1.2-.2-3.5 3.5.6 3.6-1.6 1.6-3.9-3.9L4.5 20.3l-.8-.8 5.3-5.2-3.9-3.9 1.6-1.6 3.6.6 3.5-3.5-.2-1.2z"/>',
-  unpin:      '<path d="M14.2 2.8l7 7-1.9.6-1.2-.2-3.5 3.5.6 3.6-1.6 1.6-3.9-3.9L4.5 20.3l-.8-.8 5.3-5.2-3.9-3.9 1.6-1.6 3.6.6 3.5-3.5-.2-1.2z"/><path d="M4 4l16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>',
+  // THE PIN FAMILY (Ek, 2026-09-12, night: "come up with a better logo for
+  // pin unpin and unpin all"): a pushpin from the side — a round head and a
+  // needle — flat and geometric. PIN is the head filled; the PIN MARK's off
+  // face (`pinOff`, the rows and stickers) is the same head outlined — the
+  // wet drop's rule, filled on, outlined off; UNPIN is the outlined pin with
+  // the app's own off-slash; UNPIN ALL is two outlined pins under one slash —
+  // plural, and gone. The tack silhouette these replace collided with the
+  // slash at row size, and its doubled form read as a smudge.
+  pin:        '<circle cx="12" cy="8.5" r="5"/><path d="M12 13.5v7.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>',
+  unpin:      '<circle cx="12" cy="8.5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 12.7v8.3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M4.5 19.5l15-15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  unpinAll:   '<circle cx="7.3" cy="8.5" r="3.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7.3 11.9v8.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="16.7" cy="8.5" r="3.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M16.7 11.9v8.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M3 20.5L21 3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   palette:    '<path fill-rule="evenodd" d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zM4.9 12a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0zM7.9 8a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0zM12.9 8a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0zM15.9 12a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0z"/>',
   // A drop: the mark of a WET brush, whose knobs keep moving its strokes.
   wet: '<path d="M12 3.4C9.2 7.4 6.6 10.4 6.6 13.6a5.4 5.4 0 0 0 10.8 0c0-3.2-2.6-6.2-5.4-10.2z"/>',
+  // The pin mark's OFF face: the same pin, its head outlined — the wet drop's rule.
+  pinOff: '<circle cx="12" cy="8.5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 12.7v8.3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>',
   // The same drop, outlined: the wet BUTTON's dry face on a grain brush's
   // row — shape, not dimming, the palette mark's rule (Ek, 2026-09-06).
   wetOff: '<path d="M12 3.4C9.2 7.4 6.6 10.4 6.6 13.6a5.4 5.4 0 0 0 10.8 0c0-3.2-2.6-6.2-5.4-10.2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>',
@@ -159,17 +179,26 @@ const TILE_DEFS = {
             foot: 'Records a trigger — one buffer, played whole when the cursor reaches it. Loop-on-touch is the dwell option. The line ↔ trigger merge is § 1d.' },
   slice:  { kind: 'brush', g: 'slice',  c: '#ff8fab', label: 'slice',
             foot: 'A line that AUTO-SLICES: one take, cut into separate triggers at its onsets. Detection is on the audio in the dB domain against a local median, so it adapts to any noise floor — an attack is whatever rises out of the room. Swells stay whole; each slice fires on touch like any line.' },
-  looper: { kind: 'brush', g: 'looper', c: '#ff5c7a', label: 'looper',
+  // `looper` and `overdub` are the IDS; LOOP and DUB are the names (Ek,
+  // 2026-09-12, night: "rename looper loop. rename overdub, dub"), the ids
+  // kept for the same reason as `pen` → dots above.
+  looper: { kind: 'brush', g: 'loop',   c: '#ff5c7a', label: 'loop',
             foot: 'The traditional looper (#237): end the stroke and it LOOPS IMMEDIATELY, pinning itself into a group — record, it repeats. The stroke stays scratch too, touch it and it fires. `passes` (baked in) makes it self-killing: N passes, fading each, then it deletes itself and its paint. ⇧Q/W/E unpins the nearest pin of that group back to the cursor.' },
-  overdub: { kind: 'brush', g: 'overdub', c: '#ff9db3', label: 'overdub',
+  overdub: { kind: 'brush', g: 'overdub', c: '#ff9db3', label: 'dub',
             foot: 'A take INSIDE a pinned loop\'s cycle (docs/archive/OVERDUB-PLAN.md). The nearest pinned loop at the press is the master; the take joins it as a layer — every cycle, at the phase you played it, at 1× whatever the master\'s speed; longer than the cycle and the passes stack. Its marks are its own stroke (erase, undo), the sound is the pin\'s: one pin, a dot per overdub. Nothing pinned, and the first take IS the main loop — pinned on release, like the looper — so the next press has a master.' },
-  pen:  { kind: 'brush', g: 'pen',  c: '#e8a030', label: 'pen',
+  // `pen` is the ID; DOTS is the name (Ek, 2026-09-12, night: "change the
+  // name pen to dots"). The id stays: it keys stored blocks, palettes,
+  // voicings in session files and every audit, and a rename of the id is a
+  // migration for a day the audits run.
+  pen:  { kind: 'brush', g: 'dots', c: '#e8a030', label: 'dots',
             foot: 'The granular trace — marks on a tick, each a window into the buffer. Granulates what is in reach.' },
   // The wash (Ek, 2026-09-05; renamed away on 2026-09-07 and RESTORED the same
   // day — "actually i forgot about the wash being the one that drops a pin
   // simultaneously"). The looper's move for the grain family, and the one grain
   // tile that arrives with a sound of its own.
-  wash:   { kind: 'brush', g: 'wash',   c: '#d9a86c', label: 'wash',
+  // `wash` is the ID; TRAIL is the name (Ek, 2026-09-12, night: "rename wash
+  // trail"), the id kept as pen → dots above.
+  wash:   { kind: 'brush', g: 'trail',  c: '#d9a86c', label: 'trail',
             foot: 'A granular wash that STAYS: end the stroke and it is pinned as a cloud on the path you drew, looping it — `cloud on end`, the looper\'s contract for the grain family. While you paint only the cursor reads it; the cloud takes the path on release. Factory block is a reverb, not a granulator: long, dense, smeared, dark. Unpin it like any cloud.' },
   spray:  { kind: 'brush', g: 'spray',  c: '#f26415', label: 'spray',
             foot: 'EXPERIMENTAL — the one brush whose head is dynamic, and that IS its predetermined contract: scatter rides your speed (a flick throws paint forward), width rides your voice (louder loads the brush). Slow and quiet converges on a thin line.' },
@@ -306,14 +335,26 @@ const VERB_RADIUS = { bang: '999px', momentary: 'var(--r-hand)', toggle: '24px 3
 //   pen      tool  momentary  space long   — the same key, held
 //   unpin    act   bang       ↑
 //   pin      act   bang       ↓
+// THE FACTORY STRIP (Ek, 2026-09-12, night), left to right, with the factory
+// keys midi.js PALETTE_FACTORY_KEYS deals by tile — keep the two lists and
+// midi.js PALETTE_FACTORY_ENTRIES in step:
+//   dots        momentary   1 long        — the same key as line, held
+//   line        toggle      1
+//   loop        toggle      2
+//   dub         toggle      3
+//   scrape top  momentary   4
+//   pin         bang        ↓
+//   unpin       bang        ↑
+// The hand ships holding DOTS, momentary. No lens on the strip: wide is
+// installed and stays so; a lens tile is a drag away.
 const DEFAULT_PALETTE = [
-  { id: 'wide',    verb: 'toggle'    },
-  { id: 'wash',    verb: 'momentary' },
-  { id: 'overdub', verb: 'toggle'    },
-  { id: 'line',    verb: 'toggle'    },
   { id: 'pen',     verb: 'momentary' },
-  { id: 'unpin',   verb: 'bang'      },
+  { id: 'line',    verb: 'toggle'    },
+  { id: 'looper',  verb: 'toggle'    },
+  { id: 'overdub', verb: 'toggle'    },
+  { id: 'scrape',  verb: 'momentary' },
   { id: 'pin',     verb: 'bang'      },
+  { id: 'unpin',   verb: 'bang'      },
 ];
 let palette = DEFAULT_PALETTE.map(e => ({ ...e }));
 // ── Reading the list ────────────────────────────────────────────────────────
@@ -385,6 +426,10 @@ function _entryFromStored(v, i) {
 const ACT_TILES = {
   pin:   { g: 'pin',   action: 'commit_drop',    label: 'pin',   tip: 'pin here — what the cursor is sounding, where you stand. Its verb is in its drawer: bang pins where you stand, momentary and toggle draw a path' },
   unpin: { g: 'unpin', action: 'commit_release', label: 'unpin', tip: 'unpin the selected pin — nearest, farthest or oldest, Settings → Pins' },
+  // A palette candidate since 2026-09-12 (Ek, night: the pin rows are tool
+  // rows, "consistent with being able to drag those tools from the right
+  // rail into and out of the palette bar"). A bang, always; nothing to aim.
+  unpinall: { g: 'unpinAll', action: 'commit_clear', label: 'unpin all', tip: 'unpin all — release every pin, clouds and loops', danger: true },
 };
 function isActTile(id) { return Object.prototype.hasOwnProperty.call(ACT_TILES, id); }
 /** A tool you play — a brush or an eraser, not a ghost. Custom tiles qualify. */
@@ -418,6 +463,7 @@ const VERBS_OF = {
   lens:  { allowed: ['momentary', 'toggle'], def: 'toggle' },
   pin:   { allowed: ['bang', 'momentary', 'toggle'], def: 'bang' },
   unpin: { allowed: ['bang'], def: 'bang' },
+  unpinall: { allowed: ['bang'], def: 'bang' },
 };
 export function verbsOf(id) {
   const k = paletteKind(id);
@@ -449,6 +495,12 @@ function _sanitizePalette() {
 export function setVerbAt(i, verb) {
   const e = palAt(i);
   if (!e || !verbAllowed(e.id, verb) || e.verb === verb) return false;
+  // A momentary cannot sit under a TAP: a tap is a bang with no up edge, so
+  // it would fire 127 with no 0 and latch the tile on for ever. midi.js
+  // `_learnGesture` refuses the pairing from the learn side; the strip's
+  // right-click skips it; and the MODEL refuses it here, so no third door
+  // can slip it through (palette-audit § H).
+  if (verb === 'momentary' && (S._bindingsOf?.(`palette_${i + 1}`) ?? []).some(b => b.g === 'tap')) return false;
   e.verb = verb; _savePalette();
   render();
   if (propsOpen()) renderProps();
@@ -514,25 +566,59 @@ function isEraseTile(id) { return tileDef(id)?.kind === 'edit'; }
 // there is nothing to aim. One gesture, two keys, no state to read before
 // pressing them.
 
-// `sel`, the ARMED tile, was here until 2026-09-11. Nothing replaced it: the
-// hand is `_held` and exists only while a position is playing, and what the
-// DRAWER is about is `_optSel` / `lastFired`, which were already the answer
-// to every other question `sel` used to be asked.
+// `sel`, the ARMED tile, was here until 2026-09-11; `inHand` (below) is the
+// 2026-09-12 answer to the one question it used to answer that still exists
+// — what does space play. What the DRAWER is about is `_optSel`: what the
+// sheet is SHOWING, which ⇧Tab moves without touching the hand.
 let _optSel = { kind: 'tool', id: 'pen' };  // what the options bar shows
-// THE LAST TILE FIRED — what `Tab` opens and what the properties footer is
-// about (PALETTE-GUI § 5.2: "one rule, one variable"). It was `_lastPick`,
-// the last thing CLICKED, until 2026-09-11 evening; firing and pointing the
-// drawer were two gestures then and are one now, because the only thing that
-// does not fire is the `⋯`. A key, a pad, a pedal and a click all move it —
-// the drawer follows your hands wherever they are. Not `_optSel`: that is what
-// the sheet is SHOWING, and ⇧Tab moves it without firing anything.
-let lastFired = { kind: 'tool', id: 'pen' };
+// ── THE HAND (Ek, 2026-09-12) ─────────────────────────────────────────────
+// "like any computer painting app, the tool rail has the tool. you should be
+// able to pick the tool and have it 'in hand'. in hand just should mean what
+// the spacebar or click does. that should be always the truth."
+//
+// The hand is ONE tool — a brush or an eraser — picked by a CLICK on its rail
+// row or its strip tile, and played by the SPACEBAR and a LEFT-CLICK on the
+// sphere: the two inputs reserved for it, learnable onto nothing else. Its
+// verb is one global switch, `handVerb`, drawn as the spacebar plate under
+// the strip (the tile's own two shapes). The palette tiles are QUICK ACCESS:
+// each fires from its own key, button or note, in its own verb, and never
+// touches what is in hand. `_held` (below) stays what is PLAYING, from either
+// door; `inHand` is what space would play. The drawer follows the hand
+// (pickHand). That replaces `lastFired`, which made the drawer follow whatever was
+// fired last — a quick-access key moving the drawer off the tool you are
+// working on was the wrong rule once there was a hand again.
+const LS_HAND = 'mubone_hand', LS_HAND_VERB = 'mubone_hand_verb';
+const HAND_POS = -1;          // `_held.i` while the hand plays — no position
+let inHand = null;            // a tool id; set at boot, never null after
+let handVerb = 'momentary';   // 'toggle' | 'momentary' — the spacebar's verb; momentary by factory (Ek, 2026-09-12, night)
+try { const v = localStorage.getItem(LS_HAND_VERB); if (v === 'momentary' || v === 'toggle') handVerb = v; } catch (_) {}
+export function inHandId() { return inHand; }
+export function handVerbOf() { return handVerb; }
+export function setHandVerb(v) {
+  if (v !== 'toggle' && v !== 'momentary') return false;
+  handVerb = v;
+  try { localStorage.setItem(LS_HAND_VERB, v); } catch (_) {}
+  render();
+  return true;
+}
+/** PICK a tool into the hand. The one gesture that does it is a click — the
+ *  rail row or the strip tile — and the drawer follows the pick (Photoshop's
+ *  options bar, through pickTile). Placing on the strip is still a drag. */
+export function pickHand(id) {
+  const t = tileById(id);
+  if (!t || t.ghost || !isToolTile(id)) return false;
+  inHand = id;
+  try { localStorage.setItem(LS_HAND, id); } catch (_) {}
+  pickTile(id);
+  return true;
+}
 // A digit held on the keyboard. It came back on 2026-09-11 evening with the
 // VERB: a digit carries both edges now, because the tile decides what they
 // mean — a momentary tile plays from the down to the up, and without the up
 // it would latch on for ever. A toggle and a bang ignore the release, which
 // `_paletteFire` handles, so this only has to deliver it.
-let _downPinKey = null;   // the pin key currently held, or null
+let _downHandKey = false; // the spacebar is down
+let _downHandMouse = false; // the sphere's left button is down
 
 /** The toolbox shows EVERY tile, always (Ek, 2026-08-28) — it is the
  *  library, not the leftovers. The palette HOLDS tools the library still
@@ -600,7 +686,7 @@ function _engineHueTable() {
   const cs = getComputedStyle(document.body);
   const hue = k => cs.getPropertyValue('--eng-' + k).trim() || '#8a9090';
   _engHueTable = { tape: hue('tape'), erase: hue('erase'), granular: hue('grain'),
-                   lens: hue('lens'), source: hue('source'), none: hue('none') };
+                   lens: hue('lens'), source: hue('source'), pins: hue('pins'), none: hue('none') };
   _engHueDark = S.darkMode;
   return _engHueTable;
 }
@@ -621,11 +707,10 @@ function _publishHandHue() {
  *  2026-09-11. */
 export function selectedTile() { return tileById(sheetTileId()); }
 
-/** POINT THE DRAWER at a tool. The `⋯` is the only gesture that does this and
- *  does not fire (PALETTE-GUI § 5.3) — a rail row has no click behaviour at
- *  all, a palette tile's click FIRES it, and `Tab` follows whatever was fired
- *  last. It is also where a minted tool lands and where a deleted tool's
- *  neighbour is picked up from.
+/** POINT THE DRAWER at a tool. The `⋯` does this alone; a click on a row or
+ *  a strip tile does it THROUGH pickHand, which also takes the tool in hand
+ *  (2026-09-12). It is also where a minted tool lands and where a deleted
+ *  tool's neighbour is picked up from.
  *
  *  It does not place the tool on the palette: the rule that a clicked tool
  *  joined the strip existed to keep the armed tool visible on it, and placing
@@ -634,7 +719,6 @@ function pickTile(id) {
   const t = tileById(id);
   if (!t || t.ghost || !isToolTile(id)) return false;
   _optSel = { kind: 'tool', id };
-  lastFired = { kind: 'tool', id };
   // The sheet's tile OWNS the live block: renderProps draws the live controls
   // and `_pollLiveBlock` captures them back into sheetTileId(), so a pick that
   // did not apply would show the last tile's numbers and write them into this
@@ -686,8 +770,10 @@ function _applyBrushCharacter(t) {
 
 let _held = null;   // { i, id, latched } while a tool is held, from any source
 
-function slotDown(i, momentary = true) {
-  const id = idAt(i);
+function slotDown(i, momentary = true) { _playDown(i, idAt(i), momentary); }
+/** A play from either door: a strip POSITION (`i` ≥ 0, its tile) or the HAND
+ *  (`i` = HAND_POS, the tool in hand). */
+function _playDown(i, id, momentary) {
   const t = isToolTile(id) ? tileById(id) : null;
   if (!t) return;
   if (_held) { if (_held.latched && _held.i === i) slotEnd(i); return; }
@@ -697,8 +783,7 @@ function slotDown(i, momentary = true) {
   // between presses, because nothing was in the hand. Under a grain filter it
   // changes the hand, not the glass (#292).
   _applyHand(t);
-  document.querySelector(`#paletteDock .tile[data-pos="${i}"]`)?.classList.add('playing');
-  document.querySelector(`#toolRail [data-tile="${id}"]`)?.classList.add('playing');
+  _lightHeld();
   // The tool in the hand is now this position's (handTileId), so the funnel
   // starts an erase for an eraser and a stroke for a brush. Toggle or
   // momentary is the binding's, not a mode.
@@ -726,6 +811,7 @@ function _releaseHeld() {
   _held = null;
   document.querySelector(`#paletteDock .tile[data-pos="${h.i}"]`)?.classList.remove('playing');
   document.querySelector(`#toolRail [data-tile="${h.id}"]`)?.classList.remove('playing');
+  if (h.i === HAND_POS) document.getElementById('handKey')?.classList.remove('playing');
   // The hand is empty again. The tool's brush character and block stay where
   // the press left them — nothing reads them until the next press, which
   // re-applies whatever it wants — but the CURSOR must stop wearing the hue,
@@ -741,6 +827,22 @@ S._gestureChanged = () => {
   refreshPlayingState();
 };
 
+// ── PLAYING THE HAND — the spacebar and the sphere's click ─────────────────
+// Both edges, like a position's. The verb is the hand's own (`handVerb`),
+// not a tile's: a momentary plays from the down to the up, a toggle from one
+// down to the next. `momentary` can be forced — a phone's touch has no verb
+// switch to read (mobile.js). One play at a time, whichever door started it;
+// the hand's own second press ends its toggle play, as a position's does.
+function handDown(momentary = handVerb === 'momentary') {
+  const id = inHand;
+  if (!id || !tileById(id)) return;
+  if (_held) { if (_held.latched && _held.i === HAND_POS) slotEnd(HAND_POS); return; }
+  _playDown(HAND_POS, id, momentary);
+}
+function handUp() { slotUp(HAND_POS); }
+S._handDown = handDown;
+S._handUp   = handUp;
+
 // ── Installing a lens ──────────────────────────────────────────────────────
 // Writes go through the real controls (setComposerMode, toggleNearestMode,
 // the scan button) so every old binding stays in sync; the tiles re-derive.
@@ -753,14 +855,12 @@ S._gestureChanged = () => {
 async function lensTap(id) {
   if (!isLensTile(id)) return;
   if (id === _lensSel && !S.scanMuted) {
-    // Off. Still a PICK: Tab after it opens this lens's page.
-    lastFired = { kind: 'lens', id };
+    // Off.
     document.getElementById('scanBtn')?.click();
     render();
     return;
   }
   _lensSel = id;
-  lastFired = { kind: 'lens', id };
   applyTileParams(id);   // a lens is a preset too — per-lens memory
   if (S.scanMuted) document.getElementById('scanBtn')?.click();
   // Installing does not open the drawer (Ek, 2026-09-03): a click chooses,
@@ -801,14 +901,17 @@ function lensAll() { return LENSES.filter(l => !_gone.has(l.id)).map(l => l.id).
  *  re-asserted here. Polled at 30 Hz from initTiles: at the layout's 5 Hz a
  *  press showed up to 200 ms late, which on an instrument reads as "the tile
  *  does not light". */
-export function refreshPlayingState() {
+export function refreshPlayingState() { _lightHeld(); }
+/** Light what is playing: the strip tile BY POSITION (the same tool may sit
+ *  on the strip twice in two verbs, and lighting both would say the wrong one
+ *  is sounding), the rail row by id (there is one), and the spacebar plate
+ *  when the play is the HAND's — a quick-access play of the in-hand tool
+ *  lights its row and its tile, never the plate. */
+function _lightHeld() {
   if (!_held) return;
-  // BY POSITION, not by id: the same tool may sit on the strip twice in two
-  // verbs, and lighting both would say the wrong one is sounding. The rail row
-  // is still lit by id — there is only one of those, and it is the tool that
-  // is playing.
   document.querySelector(`#paletteDock .tile[data-pos="${_held.i}"]`)?.classList.add('playing');
   document.querySelector(`#toolRail [data-tile="${_held.id}"]`)?.classList.add('playing');
+  if (_held.i === HAND_POS) document.getElementById('handKey')?.classList.add('playing');
 }
 
 /** Cheap class sync, called from the layout's 5 Hz tick; never rebuilds the
@@ -833,7 +936,7 @@ export function refreshLensStates() {
 
 /** A lens's name, factory or yours. */
 function lensLabel(id) { return LENSES.find(l => l.id === id)?.label ?? tileDef(id)?.label ?? id; }
-const lensTileTitle = (label, verb) => `${label} · lens · ${verb === 'momentary' ? 'on while its key is down' : 'fires on / off'} — no lens on, the cursor reads nothing; ⇧Tab is its drawer`;
+const lensTileTitle = (label, verb) => `${label} · lens · ${verb === 'momentary' ? 'on while its key is down' : 'fires on / off'} — no lens on, the cursor reads nothing; the ⋯ on its rail row is its drawer`;
 
 // ── The hold gesture — Q W E file material into a layer ─────────────────────
 // § 1c through today's engine: on granular material the layer key runs the
@@ -1063,6 +1166,8 @@ function onKeydown(e) {
   // Esc closes exactly ONE thing, so it stops propagating. It used to defer to
   // the first-run overlay, which advertised Esc itself; that overlay is gone.
   if (e.code === 'Escape') {
+    // A learn armed from a tile's legend row is the innermost thing of all.
+    if (S._paletteLearning?.()) { e.preventDefault(); e.stopPropagation(); S._paletteLearnCancel?.(); return; }
     // Innermost first: the properties rail, then the tool rail. Closing the
     // list while its device view stayed up left an orphaned panel.
     if (document.body.classList.contains('prail-open')) {
@@ -1077,47 +1182,36 @@ function onKeydown(e) {
   // cloud or a loop and that is the whole of it. There is one pin gesture, on
   // `=` / `-`, so there is nothing left for those five bindings to say.
   //
-  // Tab is the DRAWER of the last thing picked; ⇧Tab is the lens's. Tab
-  // used to cycle the palette, a third way of choosing a tool on a strip that
-  // already had direct keys (Ek, 2026-09-03). The browser's own focus walk
-  // would otherwise crawl the chrome pills, so it is swallowed here; Tab is
-  // already unbindable in the mapping table.
+  // TAB SHOWS AND HIDES THE TOOL RAIL, and nothing else (Ek, 2026-09-12,
+  // night: "tab should only open the tool rail, never the drawer") — shifted
+  // or not. The drawer's only doors are the ⋯ on a row and the pin tile's
+  // press. Tab opened the in-hand tool's drawer for one evening, followed the
+  // last tile fired for a day before that, and cycled the palette before
+  // that (Ek, 2026-09-03). The browser's own focus walk would otherwise crawl
+  // the chrome pills, so it is swallowed here; Tab is already unbindable in
+  // the mapping table. `~` is the same act (events.js), the tools pill's key.
+  // ⇧Tab is the PINNED rail's (Ek, 2026-09-12: "for the right, let's make it
+  // shift tab to open and close the pin"); tile-layout.js owns that rail.
   if (e.code === 'Tab') {
     e.preventDefault(); e.stopPropagation();
-    if (e.shiftKey) { toggleSheet(installedLens(), 'lens'); return; }
-    // The last pick, if it still exists; the first tool in the rail otherwise
-    // (the armed tool was the fallback until 2026-09-11).
-    const pk = lastFired;
-    const alive = pk.kind === 'lens' ? ((LENSES.some(l => l.id === pk.id) && !_gone.has(pk.id)) || !!tileDef(pk.id))
-                : pk.kind === 'source' ? true : !!tileById(pk.id);
-    if (alive) toggleSheet(pk.id, pk.kind);
-    else { const fb = order.find(isToolTile); if (fb) toggleSheet(fb, 'tool'); }
+    if (e.shiftKey) S._togglePinnedRail?.(); else toggleRail();
     return;
   }
-  // `-` unpins and `=` pins. `=` is a HOLD (tap = pin where you stand, hold =
-  // pin a drawn path), so it takes a one-at-a-time guard — two overlapping
-  // holds would otherwise start two plants and finalize one.
-  //
-  // `-` DISPLACES SWEEP on this screen (events.js:734). That is deliberate,
-  // and the stopPropagation below is what makes it safe: sweep is destructive
-  // (it clears the whole scratch layer), so the one outcome that must not
-  // happen is `-` unpinning AND sweeping on one press. Capture phase runs
-  // before events.js, the event stops here, and sweep keeps both its chrome
-  // pill and its `-` key in the rig view, where this handler stands down.
-  if (e.code === 'Minus' && !e.shiftKey) {
+  // THE SPACEBAR IS THE HAND'S (Ek, 2026-09-12: "spacebar and left click are
+  // not key binding options since those are reserved for the in-hand tool").
+  // midi.js refuses to learn it and drops any stored binding on it, so this
+  // is the only thing space does. Both edges — onKeyup has the up.
+  if (e.code === 'Space' && !e.shiftKey) {
     e.preventDefault(); e.stopPropagation();
-    _pinFlash('unpin');
-    unpinSelected();
+    if (_downHandKey) return;
+    _downHandKey = true;
+    handDown();
     return;
   }
-  if (e.code === 'Equal' && !e.shiftKey) {
-    e.preventDefault(); e.stopPropagation();
-    if (_downPinKey !== null) return;
-    _downPinKey = e.code;
-    _pinFlash('pin');
-    pinDown();
-    return;
-  }
+  // `=` and `-` no longer pin and unpin (Ek, 2026-09-12, night: "palette is
+  // whole truth"): the pin tiles' own keys are the only ones, read off the
+  // strip. They were hard-wired here from 2026-09-10, unshown once the pin
+  // rows lost their caps, and `-` shadowed the sweep key underneath.
   // The palette's keys: the digits PLAY by position (Ek, 2026-09-04, and the
   // press is a play rather than an arm since 2026-09-11). `N` does that
   // position's primary act — a tool plays (toggle), a lens goes on or off, a
@@ -1130,11 +1224,10 @@ function onKeydown(e) {
   // tool keys are dead — the live one is the playing position's OWN, whose
   // second press ends it, and slotDown holds that rule. A lens or pin key
   // stays live: it is the eye's, not the hand's.
-  // The digits are no longer read here (Ek, 2026-09-12): every palette key,
-  // the factory digits included, is an explicit row in the key map that
+  // The digits are not read here (2026-09-12): every palette key, the
+  // factory digits included, is an explicit row in the key map that
   // events.js dispatches like any learned key — and that row follows its tile
-  // when the strip is rearranged (midi.js seedPaletteDigitsOnce,
-  // S._paletteReordered). Nothing is left for this handler to own.
+  // when the strip is rearranged (midi.js S._paletteReordered).
 }
 /** Attribute- and text-safe. The legend prints a learned key's own name, which
  *  can be any character the keyboard produces. */
@@ -1162,33 +1255,58 @@ const SPACE_MARK = '<svg class="leg-space" viewBox="0 0 24 10" width="15" height
  *
  *  `html` is what the tile draws. `key` and `midi` are kept as plain text for
  *  the audits and the tooltips, which want the fact and not the markup. */
+const _KIND_WORD = { key: 'key', button: 'button on the instrument', midi: 'MIDI note' };
+/** The gesture inside the sticker (PALETTE-GUI § 11.5–11.6): a plain press
+ *  has no suffix; tap · ×2 · ×3 are the app's own words at 9.5px; LONG and
+ *  XLONG are drawn as a BAR, short and long — the words were what ran a
+ *  button sticker past the tile. The ids are GESTURE_LABEL's keys. */
+function _gestureHTML(g) {
+  if (g === 'long' || g === 'xlong') return `<i class="leg-g leg-g--bar${g === 'xlong' ? ' leg-g--xlong' : ''}" title="${g === 'xlong' ? 'extra long' : 'long'}"></i>`;
+  const raw = S._gestureLabel?.(g) ?? '';
+  return raw ? `<i class="leg-g">${esc(raw)}</i>` : '';
+}
+/** The source, short enough for a sticker: the drawn spacebar; a key's glyph
+ *  or its name cut to four characters (Ek, 2026-09-12: the full name is the
+ *  tooltip's); a button's number; a note's number bare — the `n` went with
+ *  the ledger, the hue says the kind. */
+function _shortLabel(b) {
+  if (b.space) return SPACE_MARK;
+  const l = String(b.label ?? '');
+  return esc(l.length > 4 ? l.slice(0, 4) : l);
+}
+/** THE BINDING STICKER (§ 11.4–11.6): ONE per bound position, of ONE kind —
+ *  the kind the keys page shows, key · button · note — at the tile's
+ *  bottom-left, the same disc as wet and pin; none when unbound. It is the
+ *  keys page's learn cell brought to the tile: click to relearn, right-click
+ *  to clear, and while learning it says `…`. `key` and `midi` stay complete
+ *  whatever is drawn — they are the fact, for the tooltips. */
 function paletteLegend(n) {
   const binds = S._bindingsOf?.(`palette_${n}`) ?? [];
-  // Drawn: only the kinds the keys page's switches show (S._legendShown).
-  // `key` and `midi` below stay complete — they are the fact, for tooltips.
-  const shown = binds.filter(b => S._legendShown?.(b.kind) ?? true);
-  const parts = shown.map(b => {
-    const src = b.space ? SPACE_MARK : esc(b.label);
-    const raw = S._gestureLabel?.(b.g) ?? '';
-    const g = _GESTURE_SHORT[raw] ?? raw;
-    // `···` AFTER the gesture, on the tile that is slowed, and only while a
-    // sibling binding actually causes the delay (§ 7).
-    return `<span class="leg leg--${b.kind}">${src}` +
-      (g ? `<i class="leg-g">${esc(g)}</i>` : '') +
-      (b.delayed ? `<i class="leg-d" title="a ×2 or ×3 on the same input makes this tap wait the double window before it fires">···</i>` : '') +
-      `</span>`;
-  });
+  const kind = legendKind();
+  const shown = binds.filter(b => b.kind === kind);
+  const learning = S._paletteLearning?.() ?? null;
+  const lrn = !!learning && learning.id === `palette_${n}` && learning.kind === kind;
+  const tip = lrn ? `press the ${_KIND_WORD[kind]} to bind here — press, hold, ×2 … · Esc or click again cancels`
+                  : `${shown.map(b => b.label + (b.g && b.g !== 'press' ? ' ' + (S._gestureLabel?.(b.g) ?? b.g) : '')).join(', ')} — click to relearn · right-click to clear`;
+  // NO BINDING IS STILL A STICKER (Ek, 2026-09-12: "when i right click to
+  // remove a binding from a palette tile, it should have a hyphen thru the
+  // sticker but it just disappears so i have no way to bind a new key via
+  // the palette tile"): the sticker is the learn cell, so an unbound tile
+  // wears an empty one — a dash — and a click on it learns.
+  const none = !lrn && !shown.length;
+  const inner = lrn ? '…' : none ? '<span class="leg-none">–</span>' : shown.map(b => `<span class="leg leg--${b.kind}">${_shortLabel(b)}${_gestureHTML(b.g)}` +
+    (b.delayed ? `<i class="leg-d" title="a ×2 or ×3 on the same input makes this tap wait the double window before it fires">···</i>` : '') + `</span>`).join('');
+  const tipNone = `no ${_KIND_WORD[kind]} — click to learn one`;
+  const html = `<span class="tile-binds"><kbd class="tile-bind tile-bind--${kind}${lrn ? ' learning' : ''}${none ? ' tile-bind--none' : ''}" data-learn-kind="${kind}" data-learn-pos="${n - 1}" title="${esc(none ? tipNone : tip)}">${inner}</kbd></span>`;
   const text = binds.map(b => [b.label, _GESTURE_SHORT[S._gestureLabel?.(b.g) ?? ''] ?? (S._gestureLabel?.(b.g) ?? ''), b.delayed ? '···' : ''].filter(Boolean).join(' '));
   return {
-    html: parts.length ? `<span class="tile-leg">${parts.join('')}</span>` : '',
+    html,
     key:  text.filter((_, i) => binds[i].kind === 'key').join(' · '),
     midi: text.filter((_, i) => binds[i].kind !== 'key').join(' · '),
   };
 }
 function onKeyup(e) {
-  if (_downPinKey !== null && e.code === _downPinKey) {
-    _downPinKey = null; pinUp(); return;
-  }
+  if (_downHandKey && e.code === 'Space') { _downHandKey = false; handUp(); }
 }
 
 // ── FIRING A POSITION — the one door (docs/PALETTE-GUI.md § 1) ──────────────
@@ -1219,13 +1337,9 @@ S._paletteFire = (i, down = true) => {
   const e = palAt(i); if (!e) return;
   const { id, verb } = e;
   const k = paletteKind(id); if (!k) return;
-  // TAB AND THE PROPERTIES FOOTER FOLLOW THE LAST TILE FIRED (§ 5.2) — one
-  // rule, one variable, and EVERY tile, pin included: a pin's sheet is its
-  // head alone, and that head is the only door to its verb.
-  if (down) {
-    lastFired = { kind: k === 'lens' ? 'lens' : 'tool', id };
-    if (document.body.classList.contains('prail-open')) { _optSel = { ...lastFired }; _propRow = id; renderProps(); }
-  }
+  // A fire moves nothing: the drawer follows the HAND (pickHand), and a
+  // quick-access key must not pull it off the tool you are working on
+  // (2026-09-12; it followed the last tile fired for a day).
 
   if (k === 'lens') {
     if (verb === 'momentary') _lensMomentary(id, down);
@@ -1233,6 +1347,7 @@ S._paletteFire = (i, down = true) => {
     return;
   }
   if (k === 'act') {
+    if (id === 'unpinall') { if (down) { _pinFlash('unpinall'); document.getElementById('commitClearBtn')?.click(); } return; }
     if (id !== 'pin') { if (down) { _pinFlash('unpin'); unpinSelected(); } return; }
     // Pin in three verbs (Ek, 2026-09-11): a BANG pins where you stand; a
     // MOMENTARY draws a path from the down to the up; a TOGGLE opens the path
@@ -1275,6 +1390,7 @@ const VERB_WORDS = {
   lens:  { momentary: 'on while held',    toggle: 'on / off' },
   pin:   { bang: 'pin here', momentary: 'pin a path (momentary)', toggle: 'pin a path (toggle)' },
   unpin: { bang: 'unpin' },
+  unpinall: { bang: 'unpin all' },
 };
 /** The short word for the drawer's segmented control — the verb alone. */
 const VERB_SHORT = { bang: 'bang', momentary: 'momentary', toggle: 'toggle' };
@@ -1325,6 +1441,43 @@ S._paletteTip = (n) => {
 // on first load.
 try { localStorage.removeItem('mubone_palette_trigger'); localStorage.removeItem('mubone_gesture_momentary'); } catch (_) {}
 
+/** ONE binding kind on the strip at a time (PALETTE-GUI § 11.4): the keys
+ *  page's segmented row chooses key · button · note; key is the factory. */
+function legendKind() { return S._legendKind?.() ?? 'key'; }
+
+// ── THE HAND TILE — what is in hand (Ek, 2026-09-12) ───────────────────────
+// A TILE at the head of the row, one extra gap off the quick-access group
+// (night: "the spacebar to the left of the tile group, tiles wide, and of
+// course moving the keyboard binding under it like the same design as the
+// tiles"): the in-hand tool's glyph in its engine hue, its SHAPE the hand's
+// verb in the tile's own two radii (VERB_RADIUS) — a toggle the asymmetric
+// plate, a momentary the rounded one — lit like any tile while the hand
+// plays, and under it, in the ledger's cap, the two inputs that play it: the
+// drawn spacebar in a wide keycap, the mouse in a keycap. No `data-pos` and
+// no `data-pal`: it is not a position, nothing fires it by number, and a
+// drag never picks it up. Right-click flips the verb; a press presses the
+// hand. It was a plate the row's width for one evening. The click is the
+// WORD in a keycap (Ek, night: "make the left click more obvious or spell out
+// left click, i can't see what that icon is") — a 7×10 mouse in a 15px cap
+// was not a symbol anyone could read.
+function handTileHTML(ENGINE_HUE) {
+  const t = tileById(inHand);
+  if (!t) return '';
+  const c = ENGINE_HUE[engineOf(t.id)] ?? ENGINE_HUE.none;
+  const verb = handVerb;
+  const playing = _held && _held.i === HAND_POS;
+  const title = `${t.label} is in hand — the spacebar and a left-click on the sphere play it, ` +
+    (verb === 'toggle' ? 'from one press to the next (toggle)' : 'while held (momentary)') +
+    ` · right-click for ${verb === 'toggle' ? 'momentary' : 'toggle'} · click a tool in the rail or on the strip to take it in hand · its ⋯ in the rail opens its drawer`;
+  return `<button type="button" class="tile tile--hand${playing ? ' playing' : ''}" id="handKey"` +
+    ` style="--c:${c};--eng:${c};--pal-r:${VERB_RADIUS[verb]}" data-hand="${t.id}" data-verb="${verb}" title="${esc(title)}">` +
+    `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G[t.g]}</svg>` +
+    `<span class="tile-nm">${esc(t.label)}</span>` +
+    ((isWet(t.id) || isAutoPin(t.id)) ? `<span class="tile-marks">${isWet(t.id) ? `<span class="tile-wet"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.wet}</svg></span>` : ''}${isAutoPin(t.id) ? `<span class="tile-pin"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.pin}</svg></span>` : ''}</span>` : '') +
+    `<span class="tile-binds"><kbd class="tile-bind tile-bind--key" aria-label="spacebar">${SPACE_MARK}</kbd>` +
+    `<kbd class="tile-bind tile-bind--key" aria-label="left click">click</kbd></span></button>`;
+}
+
 // ── Render ──────────────────────────────────────────────────────────────────
 
 export function render() {
@@ -1360,15 +1513,21 @@ export function render() {
   // was on the armed row only, and a handle that appears when you pick the
   // row up is one you cannot find from behind an instrument. It picks the
   // tool, as the row's click does, and opens its drawer.
-  // Never on hover. Tab is the same act from the keyboard.
+  // Never on hover. Tab shows the rail; the ⋯ is the drawer's one door.
   // The palette MARK that stood here — filled for "in the cycle", outlined for
   // "skipped" — left with the cycle (Ek, 2026-09-11: "we can remove the palette
   // icon/toggle from the left rail. we just drag it in"). Whether a tool is on
   // the palette is read off the palette.
+  // The drawer's door is the PANEL-RIGHT glyph — a frame with its right third
+  // marked, the accepted "open a panel to the right" (Ek, 2026-09-12, night:
+  // "3 dots makes me think that it'll open a menu … use the accepted icon for
+  // opening up a drawer to the right"). It was ⋯ from 2026-09-03. The class
+  // and the `data-more` hook keep their names: every audit reaches the drawer
+  // through them.
   const MORE = `<span class="trow-more" data-more role="button" tabindex="-1"` +
-    ` title="its drawer — open or shut (Tab)">` +
-    `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">` +
-    `<circle cx="6" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="18" cy="12" r="1.7"/></svg></span>`;
+    ` title="its drawer — opens beside the rail">` +
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">` +
+    `<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M14.5 5v14"/></svg></span>`;
   // The WET mark (Ek, 2026-09-03): a drop after the name of a brush whose
   // knobs keep moving every stroke it painted (brush-voicing.js, "Wet
   // paint"). On the row AND the palette tile, because the point of wet being a
@@ -1376,6 +1535,17 @@ export function render() {
   // brush it is from the palette.
   const WET = `<span class="tile-wet" title="wet — its knobs move every stroke it painted; switch it off in its sheet to dry them">` +
     `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.wet}</svg></span>`;
+  // The PIN mark (Ek, 2026-09-12, night): the tile pins what it plays on
+  // release — a cloud for grain, a loop for tape — read off its own on-end
+  // flag. On the palette tile beside the wet drop; on the row a button that
+  // flips it, exactly as the drop does.
+  const PIN = `<span class="tile-pin" title="pins on end — the stroke is pinned when you let go; the switch is in its sheet">` +
+    `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.pin}</svg></span>`;
+  const PIN_BTN = (on, eng) => `<span class="tile-pin tile-pin--btn${on ? ' on' : ''}" data-pin-tgl role="switch" tabindex="-1" aria-checked="${on}"` +
+    ` title="${on ? `pins on end — the stroke becomes a ${eng === 'tape' ? 'loop' : 'cloud'} when you let go; tap to stop pinning`
+                 : `does not pin — the stroke stays scratch; tap to pin it as a ${eng === 'tape' ? 'loop' : 'cloud'} on release`}">` +
+    `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${on ? G.pin : G.pinOff}</svg></span>`;
+  const MARKS = id => { const w = isWet(id), p = isAutoPin(id); return (w || p) ? `<span class="tile-marks">${w ? WET : ''}${p ? PIN : ''}</span>` : ''; };
   // On the RAIL the drop is a BUTTON (Ek, 2026-09-06), on every grain brush's
   // row — the palette mark's shape rule: outlined is dry, filled is wet, and
   // a tap flips it without loading the row (the capture handler in init).
@@ -1410,12 +1580,13 @@ export function render() {
     // are still a radio group because a lens IS a selection.)
     const rule = '';
     const dirty = isOffFactory(id) ? ' off-factory' : '';
-    const wet = isWet(id);
+    const wet = isWet(id), autopin = isAutoPin(id);
+    const hand = id === inHand ? ' · IN HAND — space and a click on the sphere play it' : ' · click to take it in hand';
     const title = `${t.label}${eng ? ' · ' + eng : ''}` +
       (zone === 'palette'
-        ? ` · ${verbWord(id, verb) ?? verb} — its key and a click both fire it; the ⋯ in the rail opens its drawer · drag to move it, drag off the palette to remove it`
-        : inPalette(id) ? ` · the ⋯ opens its drawer · on the palette at ${posesOf(id).join(' and ')} · drag it onto the palette for another verb`
-        : ` · the ⋯ opens its drawer · drag it onto the palette to place it`) +
+        ? `${hand} · ${verbWord(id, verb) ?? verb} from its own key — right-click for the other verb · the ⋯ in the rail opens its drawer · drag to move it, drag off the palette to remove it`
+        : inPalette(id) ? `${hand} · the ⋯ opens its drawer · on the palette at ${posesOf(id).join(' and ')} · drag it onto the palette for another verb`
+        : `${hand} · the ⋯ opens its drawer · drag it onto the palette to place it`) +
       `${t.ghost ? ' · not built yet' : ''}`;
     const body = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G[t.g]}</svg>` +
       `<span class="tile-nm">${t.label}</span>`;
@@ -1423,18 +1594,24 @@ export function render() {
       // No idle mark on a palette tile: the box said ARMED and there is no
       // armed tool (2026-09-11). A tile is lit only while it plays, and its
       // SHAPE is its verb (§ 3).
+      // No in-hand mark on a quick-access tile: the hand tile at the head of
+      // the row shows the same glyph, and a ring here said it twice.
       return `<button type="button" class="tile` +
         `${t.ghost ? ' ghost' : ''}${dirty}${wet ? ' wet' : ''}" style="--c:${c};--eng:${c};${SHAPE(verb)}"` +
         ` data-tile="${id}" data-pal="${id}" data-zone="palette"${pos} draggable="true" title="${title}">` +
-        body + (wet ? WET : '') + html + `</button>`;
+        body + MARKS(id) + html + `</button>`;
     }
-    // A rail row carries `open` and nothing else: `armed` marked the tool in
-    // the hand, and the coloured left edge it drew went with arming.
-    return `<button type="button" class="trow${rule}${open ? ' open' : ''}` +
-      `${t.ghost ? ' ghost' : ''}${t.custom ? ' trow--own' : ''}${dirty}${wet ? ' wet' : ''}"` +
+    // A rail row carries `open` (its drawer is up) and `in-hand` (space plays
+    // it, 2026-09-12) — the one place the hand is marked besides the hand
+    // tile itself, so the tool can be found in the library.
+    return `<button type="button" class="trow${rule}${open ? ' open' : ''}${id === inHand ? ' in-hand' : ''}` +
+      `${t.ghost ? ' ghost' : ''}${t.custom ? ' trow--own' : ''}${dirty}${wet ? ' wet' : ''}${autopin ? ' autopin' : ''}"` +
       ` style="--c:${c};--eng:${c}"` +
       ` data-tile="${id}" data-zone="box" draggable="true" aria-pressed="${open}" title="${title}">` +
-      body + (eng === 'granular' ? WET_BTN(wet) : '') + MORE + `</button>`;
+      // Dub's pin is a fact, not a switch: the mark, not the button.
+      // … in the button's own 1.4rem box, so it sits where every other
+      // row's pin sits (Ek, night: "not at the same position as the others").
+      body + (eng === 'granular' ? WET_BTN(wet) : '') + (id === 'overdub' ? `<span class="tile-pin tile-pin--btn tile-pin--fixed on" title="dub works on pinned loops only — its take joins the nearest one, or seeds it"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.pin}</svg></span>` : (eng === 'granular' || eng === 'tape' ? PIN_BTN(autopin, eng) : '')) + MORE + `</button>`;
   };
 
   // ── The palette: the list, in order ───────────────────────────────────────
@@ -1473,13 +1650,17 @@ export function render() {
         `<span class="tile-nm">${label}</span>${LEG(n)}</button>`;
     }
     const a = ACT_TILES[id];
-    return `<button type="button" class="tile tile--act" style="${SHAPE(verb)}" data-act="${a.action}" data-pal="${id}" data-zone="palette"${pos} draggable="true" title="${a.tip} — ${verbWord(id, verb) ?? verb}">` +
+    return `<button type="button" class="tile tile--act" style="--c:${ENGINE_HUE.pins};--eng:${ENGINE_HUE.pins};${SHAPE(verb)}" data-act="${a.action}" data-pal="${id}" data-zone="palette"${pos} draggable="true" title="${a.tip} — ${verbWord(id, verb) ?? verb}">` +
       `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G[a.g]}</svg>${LEG(n)}</button>`;
   };
   const dock = document.getElementById('paletteDock');
+  // ONE ROW: the hand tile at its head, one extra gap, then the quick-access
+  // tiles in order (Ek, 2026-09-12, night: "the spacebar to the left of the
+  // tile group, tiles wide"). The palette badge that headed the row went
+  // the same evening.
   if (dock) dock.innerHTML =
-    `<div class="palette" id="paletteBed"><i class="palette-badge" title="the palette — drag a tool, a lens or the pin pair here from the rails; drag a tile to move it, off the strip to remove it; each tile wears the key that fires it">` +
-    `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.palette}</svg></i>` +
+    `<div class="palette" id="paletteBed" title="the palette — the hand at its head, then quick access: drag a tool, a lens or the pin pair here from the rails; drag a tile to move it, off the strip to remove it; each tile wears the key that fires it — click the sticker to relearn it, right-click to clear">` +
+    handTileHTML(ENGINE_HUE) +
     palette.map((e, i) => paletteTile(e, i + 1)).join('') + `</div>`;
   // The strip was just rebuilt: a tool sounding through it must not go dark
   // for a poll's worth of frames (the switch flipped, a lens cycled on `2`).
@@ -1521,7 +1702,7 @@ export function render() {
       `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${SCOPE_G[sc.id] ?? G.custom}</svg>` +
       `<span class="tile-nm">${sc.label}</span>` +
       // Every lens row carries the drawer handle like every tool row does (2026-09-10).
-      MORE.replace('(Tab)', '(⇧Tab)') + `</button>`;
+      MORE + `</button>`;
   };
   // ONE group again (#286's second question retired 2026-08-30): "which lens"
   // takes exactly one answer, and with the pin filters gone there is no second
@@ -1546,23 +1727,30 @@ export function render() {
 export function renderPinChrome() {
   const wrap = document.getElementById('tcPins');
   if (!wrap) return;
-  // Three BUTTONS — actions, not options, so no state mark (#267). They live
-  // in the pinned rail, with the material they act on. The `kbd` is the key
-  // that does the same thing, in the rail's own right-hand column.
+  // THE PIN GROUP, in the tool rail's own row model (Ek, 2026-09-12, night:
+  // "a section of the same design as the left rail, but on the right rail,
+  // it's for the pin and unpin tools, and unpin all … consistent with being
+  // able to drag those tools from the right rail into and out of the
+  // palette bar"): a group title, then one .trow per act — glyph, name, and
+  // the key that does the same thing as a cap at the right edge, where a
+  // tool row keeps its drawer button (an act has no drawer). A click FIRES
+  // (an act has no span to hold); a drag places it on the palette. The
+  // glyph is the chrome's grey, not an engine hue: a pin holds any engine's
+  // material. Unpin all is named in full — beside two pin rows "all" could
+  // read as "pin all" (#267) — and turns brick on approach, as every
+  // destructive control does.
+  // No key cap on the row (Ek, night: "remove the keyboard shortcut glyphs
+  // from the pin rows since we see them in the palette, which right now are
+  // mismatched"): the palette tile's legend is where a key is read, and the
+  // fixed = / − caps disagreed with whatever digit the drop had dealt.
+  const row = (id, extra = '') => { const a = ACT_TILES[id];
+    return `<button type="button" class="trow trow--act${a.danger ? ' trow--danger' : ''}" style="--c:var(--eng-pins);--eng:var(--eng-pins)" data-pin="${id}" data-act="${a.action}" draggable="true"` +
+      ` title="${a.tip} · click to do it · drag it onto the palette for a tile of its own${extra}">` +
+      `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G[a.g]}</svg>` +
+      `<span class="tile-nm">${a.label}</span></button>`; };
   wrap.innerHTML =
-    `<button type="button" class="lyr-act" data-pin="pin" draggable="true"` +
-    ` title="pin what the cursor is sounding — key =  (hold to draw a path) · drag it onto the palette to give it a position">` +
-    `<i></i><span class="lyr-act-nm">pin</span><kbd>=</kbd></button>` +
-    `<button type="button" class="lyr-act" data-pin="unpin" draggable="true"` +
-    ` title="unpin the selected pin — nearest, farthest or oldest, Settings → Pins — key - · drag it onto the palette to give it a position">` +
-    `<i></i><span class="lyr-act-nm">unpin</span><kbd>\u2212</kbd></button>` +
-    // Its full name, not "all": beside two pin buttons "all" could be read as
-    // "pin all", and ambiguity in a destructive control is the one place it
-    // actually costs something (#267). It has no key, so its right column is
-    // empty — that is the row model answering "no keycap", not a gap.
-    `<button type="button" class="lyr-act lyr-act--danger" data-pin="all"` +
-    ` title="unpin all — release every pin, clouds and loops">` +
-    `<i></i><span class="lyr-act-nm">unpin all</span></button>`;
+    `<div class="tbx-grp" data-grp="pin"><span class="tbx-lbl" style="--eng:var(--eng-pins)">pin</span>` +
+    `<div class="tbx-tiles">${row('pin', ' (hold to draw a path)')}${row('unpin')}${row('unpinall')}</div></div>`;
 }
 
 /** The pressed look for the pin pair — they have no `playing` state (nothing
@@ -1574,7 +1762,8 @@ export function renderPinChrome() {
 // cases through S._pinFlash; the key and rail paths that bypass dispatch call
 // it themselves.
 function _pinFlash(kind) {
-  const act = { pin: 'commit_drop', unpin: 'commit_release' }[kind];
+  if (kind === 'all') kind = 'unpinall';   // midi.js's commit_clear says `all`
+  const act = { pin: 'commit_drop', unpin: 'commit_release', unpinall: 'commit_clear' }[kind];
   const els = [document.querySelector(`#tcPins [data-pin="${kind}"]`),
                act ? document.querySelector(`#paletteDock [data-act="${act}"]`) : null].filter(Boolean);
   for (const el of els) el.classList.add('fired');
@@ -2234,6 +2423,45 @@ export function setWet(id, on) {
   if (propsOpen()) renderProps();
   return true;
 }
+// AUTO-PIN IS A PROPERTY OF THE TILE, like wet (Ek, 2026-09-12, night: "maybe
+// the pin is the same as the wet, it's like a quickly visible property of that
+// tile … auto loop at end of a tape engine, auto pin at end of a grain engine.
+// yes that's smarter"). It IS the engine's own on-end switch — `gEnd` cloud
+// for a grain tile, `onEnd` loop for a tape tile — read off the tile's stored
+// block, so the mark is accurate by construction: the looper is line with it
+// on, the wash is dots with it on. The row's pin button flips it; the sheet's
+// switch is the same value from the other side.
+function _tileParam(id, pid) {
+  const s = _sessionCfg[id]?.[pid]; if (s !== undefined) return s;
+  const p = _persists(id) ? _tileCfg[id]?.params?.[pid] : undefined; if (p !== undefined) return p;
+  return FACTORY_PARAMS[id]?.[pid];
+}
+const _AUTOPIN = { granular: { pid: 'gEnd', on: 'cloud', off: 'scratch' }, tape: { pid: 'onEnd', on: 'loop', off: 'arm' } };
+// DUB is pinned by nature (Ek, 2026-09-12, night: "the overdub one tool is
+// special … it technically works with pinned items only. add the pin
+// sticker to the tile"): its take joins the nearest pinned loop, or seeds
+// one — there is no unpinned outcome — so it wears the mark always and the
+// mark is not a switch on it.
+export function isAutoPin(id) {
+  if (id === 'overdub') return true;
+  const a = _AUTOPIN[engineOf(id)];
+  return !!a && _tileParam(id, a.pid) === a.on;
+}
+export function setAutoPin(id, on) {
+  if (id === 'overdub') return false;
+  const a = _AUTOPIN[engineOf(id)]; if (!a) return false;
+  on = on == null ? !isAutoPin(id) : !!on;
+  if (on === isAutoPin(id)) return false;
+  const v = on ? a.on : a.off;
+  if (_persists(id)) { _tileCfg[id] = { ...(_tileCfg[id] ?? {}), params: { ...(_tileCfg[id]?.params ?? {}), [a.pid]: v } }; _saveTileCfg(); }
+  else _sessionCfg[id] = { ...(_sessionCfg[id] ?? {}), [a.pid]: v };
+  // The sheet's tile OWNS the live block, so the live flag follows only then;
+  // any other tile's press re-applies its whole block anyway (_applyHand).
+  if (sheetTileId() === id) _applyParam(a.pid, v);
+  render();
+  if (propsOpen()) renderProps();
+  return true;
+}
 /** The tile in the HAND — the position that is PLAYING, and null between
  *  presses (2026-09-11: nothing is held when nothing sounds). This is what a
  *  stroke freezes from and what wet paint follows. Every stroke starts from a
@@ -2532,9 +2760,9 @@ export function closeProps() {
  *  do, and nothing to remember. */
 export function toggleRail() { setPropsOpen(!propsOpen()); }
 
-/** The drawer, open or shut — Tab for the last pick, ⇧Tab for the lens, and
- *  the ⋯ on the row for either. Shut only when it is showing THIS thing:
- *  Tab with the lens page up brings the tool's page, not darkness. */
+/** The drawer, open or shut — the ⋯ on a row (Tab took it from 2026-09-03
+ *  to 2026-09-12; Tab is the rail's now). Shut only when it is showing THIS
+ *  thing: the ⋯ with another page up brings this page, not darkness. */
 function toggleSheet(id, kind = 'tool') {
   const showing = document.body.classList.contains('prail-open') && _propRow === id;
   if (showing) closeProps(); else openProps(id, kind);
@@ -3724,15 +3952,21 @@ function deleteTile(id) {
   if (custom) { delete _tileCfg[id]; _saveTileCfg(); }
   else { _gone.add(id); _saveGone(); }
   order = order.filter(t => t !== id);
+  // Whatever it was, something else has to be in the drawer and the hand
+  // now — and BEFORE the palette save below, which re-renders through
+  // S._bindingsChanged: a sheet pointed at a tile that no longer exists
+  // threw in renderProps (found 2026-09-12).
+  const fb = order.find(isToolTile);
+  const wasSel = _optSel.id === id, wasHand = inHand === id;
+  if (wasSel && fb) _optSel = { kind: 'tool', id: fb };
+  if (wasHand && fb) { inHand = fb; try { localStorage.setItem(LS_HAND, fb); } catch (_) {} }
   // A deleted tile leaves the palette too.
   { const keep = palette.map((e, n) => e.id !== id ? n : -1).filter(n => n >= 0);
     palette = palette.filter(e => e.id !== id); _sanitizePalette(); _savePalette();
     S._paletteReordered?.(keep.slice(0, palette.length)); }
   _saveOrder();
-  // Whatever it was, something else has to be in the drawer now — a rail
-  // pointing at a tile that no longer exists renders an empty sheet.
   if (wasLens) { if (installedLens() === id) lensTap(lensAll()[0]); else { render(); renderProps(); } }
-  else if (_optSel.id === id) { const fb = order.find(isToolTile); if (fb) pickTile(fb); else { render(); renderProps(); } }
+  else if ((wasSel || wasHand) && fb) pickHand(fb);
   else { render(); renderProps(); }
   return true;
 }
@@ -3755,7 +3989,7 @@ function _clearOver() {
  *  row, a pin-rail row, or a palette tile (`data-pal`). Null if it is not
  *  something the palette can hold. */
 function _dragIdOf(el) {
-  const t = el.closest('[data-pal], .trow[data-tile], .trow[data-lens], .lyr-act[data-pin]');
+  const t = el.closest('[data-pal], .trow[data-tile], .trow[data-lens], [data-pin]');
   if (!t) return null;
   const id = t.dataset.pal ?? t.dataset.tile ?? t.dataset.lens ?? t.dataset.pin ?? null;
   return paletteKind(id) ? id : null;
@@ -3779,17 +4013,17 @@ function wireDrag(bar) {
   bar.addEventListener('dragstart', e => {
     const id = _dragIdOf(e.target);
     if (!id) return;
-    const t = e.target.closest('[data-pal], .trow, .lyr-act');
+    const t = e.target.closest('[data-pal], .trow');
     _dragFrom = id;
     // The POSITION the drag started on, or -1 from a rail. A drag within the
     // strip MOVES that entry and carries its verb; a drag in from a rail
     // PLACES a new one in its kind's default verb (§ 4).
     _dragFromPos = t.dataset.pos != null ? Number(t.dataset.pos) : -1;
-    _dragFromZone = t.closest('[data-zone]')?.dataset.zone ?? (t.classList.contains('lyr-act') ? 'pins' : 'box');
+    _dragFromZone = t.closest('[data-zone]')?.dataset.zone ?? 'pins';
     _dragDropped = false;
     t.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    try { e.dataTransfer.setData('text/plain', _dragFrom); } catch (_) {}
+    // A synthetic DragEvent (the audits') may carry no dataTransfer.
+    if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', _dragFrom); } catch (_) {} }
   });
   bar.addEventListener('dragend', () => {
     const from = _dragFrom, fromZone = _dragFromZone, dropped = _dragDropped, fromPos = _dragFromPos;
@@ -3928,19 +4162,30 @@ export function initTiles() {
   // the armed tile and had to be a tool on the palette; it is just the tile
   // the sheet is pointed at now, so the rail's first tool will do.
   { const first = tools()[0] ?? order.find(isToolTile);
-    if (first) { _optSel = { kind: 'tool', id: first }; lastFired = { kind: 'tool', id: first }; } }
-  // Nothing is applied to the cursor at boot. Until 2026-09-11 the armed tile
-  // was IN the cursor from the first frame, because space could fire it
-  // before anything was pressed; now the press that starts a play is what
-  // applies the tool, so there is nothing to restore and nothing to get wrong.
+    if (first) _optSel = { kind: 'tool', id: first };
+    // THE HAND at boot: the tool it held last, if it still exists; the first
+    // tool otherwise. Picked without applying — nothing is in the cursor
+    // until the first press (below).
+    let h = null; try { h = localStorage.getItem(LS_HAND); } catch (_) {}
+    inHand = (h && tileById(h) && isToolTile(h)) ? h : first;
+    if (inHand) _optSel = { kind: 'tool', id: inHand };
+    // Re-read here, not only at module load: midi.js's factory re-deal
+    // (seedPaletteDigitsOnce, which runs before initTiles) may have just
+    // written the hand and its verb.
+    try { const v = localStorage.getItem(LS_HAND_VERB); if (v === 'momentary' || v === 'toggle') handVerb = v; } catch (_) {} }
+  // The hand's block is applied at boot, as a pick applies it (pickHand →
+  // pickTile → applyTileParams): the sheet's tile OWNS the live block, and
+  // the sheet opened on the boot hand showed the boot state instead of the
+  // tool's own — found 2026-09-12 night, when wash's drawer read "scratch"
+  // with cloud on end baked into its block. (From 2026-09-11 to then nothing
+  // was applied at boot, because there was no hand to apply.)
+  if (inHand) applyTileParams(inHand);
 
-  // ── THE RAIL HAS NO CLICK (PALETTE-GUI § 5.3) ────────────────────────────
-  // "A rail click places nothing. Dragging is the only way onto the strip, so
-  // a rail row has NO click behaviour at all: it is a drag source with a ⋯."
-  // So this handler is the ⋯'s, and the rail's ghost act tiles' (undo/redo),
-  // and nothing else. The load-and-arm path is deleted; the pick-for-the-
-  // drawer path that briefly replaced it is deleted too, because § 5.2 makes
-  // the drawer follow what was FIRED and the ⋯ is the one exception.
+  // ── A RAIL CLICK TAKES THE TOOL IN HAND (Ek, 2026-09-12) ─────────────────
+  // "you pick the tool with the mouse i.e. click it, then you should use it.
+  // clicking it shouldn't open the drawer, it should be that tool is in
+  // hand." The ⋯ is still the drawer's door, and the rail's ghost act tiles
+  // (undo) are buttons. Placing on the strip is a drag, as before.
   const onRailClick = e => {
     const b = e.target.closest('.trow');
     if (!b || !b.dataset.tile) return;
@@ -3956,31 +4201,51 @@ export function initTiles() {
       if (t.id === 'undo') S._dispatchAction?.('undo', 127);
       flash(id); return;
     }
-    // Anywhere else on the row is the ⋯ too (Ek, 2026-09-12: "clicking on the
-    // tool in the rail does nothing - it should open the drawer"). A click
-    // never plays anything; the keys and the strip's positions do that.
-    if (id === _optSel.id) toggleSheet(id, 'tool');
-    else if (pickTile(id)) openProps(id, 'tool');
+    // Anywhere else on the row: in hand. It plays nothing — space and the
+    // sphere's click do that — and an open drawer follows the pick.
+    pickHand(id);
   };
 
-  // ── A CLICK ON THE STRIP OPENS THE DRAWER (Ek, 2026-09-12) ───────────────
-  // "clicking never activates anymore." The strip fired from the pointer for
-  // a day (§ 1, § 8 of PALETTE-GUI as written 2026-09-11); a click is a
-  // pointing gesture now, the same as on the rail: it opens the sheet of what
-  // sits at that position. Playing is the keys', the buttons', the wire's.
-  // A RIGHT-click cycles the position's verb through the verbs its kind
-  // allows — momentary ↔ toggle for a tool or a lens, the three for a pin —
-  // and skips a momentary that a TAP binding could not hold (the drawer's
-  // segment refuses the same pairing). A bang-only tile has nothing to cycle.
+  // ── A CLICK ON THE STRIP (Ek, 2026-09-12) ────────────────────────────────
+  // The strip is a reduction of the rail, so a click means what it means
+  // there: a TOOL tile is taken in hand. A LENS tile is a choice — the click
+  // installs it or turns it off, as its rail row does. A PIN tile is an act
+  // with no span to hold, so the click fires it in its verb, both edges at
+  // once. Playing a tool from the strip is its key's, its button's, the
+  // wire's — never the mouse's (Ek, this morning: "clicking never activates
+  // anymore"). The strip fired from the pointer for one day, 2026-09-11.
+  //
+  // A click on a LEGEND ROW under a tile arms a learn for that row's kind —
+  // the keys page's own cell, brought to the tile (S._paletteLearn); the next
+  // key, button or note pressed lands on this position. Clicking it again, or
+  // Esc, cancels. Right-click on a row clears that kind's binding.
+  //
+  // A RIGHT-click on the tile cycles the position's verb through the verbs
+  // its kind allows — momentary ↔ toggle for a tool or a lens, the three for
+  // a pin — and skips a momentary that a TAP binding could not hold
+  // (midi.js `_learnGesture` refuses the same pairing). A bang-only tile has
+  // nothing to cycle.
   const onStripClick = e => {
+    if (e.target.closest('#handKey')) return;   // the hand tile presses on mousedown (onPlateDown); its legend is fixed
+    const row = e.target.closest('.tile-bind[data-learn-kind]');
+    if (row) {
+      e.preventDefault(); e.stopPropagation();
+      const pos = Number(row.dataset.learnPos), kind = row.dataset.learnKind;
+      const cur = S._paletteLearning?.();
+      if (cur && cur.id === `palette_${pos + 1}` && cur.kind === kind) S._paletteLearnCancel?.();
+      else S._paletteLearn?.(pos, kind);
+      return;
+    }
     const b = e.target.closest('.tile[data-pos]'); if (!b) return;
     const i = Number(b.dataset.pos), en = palAt(i); if (!en) return;
     const k = paletteKind(en.id);
-    lastFired = { kind: k === 'lens' ? 'lens' : 'tool', id: en.id };
-    if (k === 'tool') { if (en.id === _optSel.id && propsOpen()) toggleSheet(en.id, 'tool'); else if (pickTile(en.id)) openProps(en.id, 'tool'); return; }
-    _optSel = { ...lastFired }; _propRow = en.id; setPropsOpen(true); renderProps();
+    if (k === 'tool') { pickHand(en.id); return; }
+    if (k === 'lens') { lensTap(en.id); return; }
+    S._paletteFire(i, true); S._paletteFire(i, false);
   };
   const onStripContext = e => {
+    const row = e.target.closest('.tile-bind[data-learn-kind]');
+    if (row) { e.preventDefault(); e.stopPropagation(); S._paletteUnbind?.(Number(row.dataset.learnPos), row.dataset.learnKind); return; }
     const b = e.target.closest('.tile[data-pos]'); if (!b) return;
     e.preventDefault();
     const i = Number(b.dataset.pos), en = palAt(i); if (!en) return;
@@ -3995,6 +4260,46 @@ export function initTiles() {
     const next = order[(order.indexOf(en.verb) + 1) % order.length];
     setVerbAt(i, next);
   };
+  // ── THE SPACEBAR PLATE (Ek, 2026-09-12) ──────────────────────────────────
+  // "beside the palette bar it should show what tool is in hand … the space
+  // bar actually had the icon and the name of the tool on the spacebar
+  // 'image', big and wide the width of the palette bar." It is a spacebar,
+  // so pressing it presses the hand — both edges, the release on the window
+  // so a drag off it still ends what it started — and a right-click flips
+  // its verb, the way a tile's right-click cycles the tile's.
+  const onPlateDown = e => {
+    if (e.button !== 0 || !e.target.closest('#handKey')) return;
+    e.preventDefault(); e.stopPropagation();
+    if (_downHandMouse) return;
+    _downHandMouse = true; handDown();
+  };
+  const onPlateContext = e => {
+    if (!e.target.closest('#handKey')) return;
+    e.preventDefault(); e.stopPropagation();
+    setHandVerb(handVerb === 'toggle' ? 'momentary' : 'toggle');
+  };
+  // ── A LEFT-CLICK ON THE SPHERE PLAYS THE HAND (Ek, 2026-09-12) ───────────
+  // The other reserved input. Not while the option key has freed the cursor
+  // for the UI, and not in surface mode without the lock (the overlay is up
+  // and owns the click). The rails and the dock swallow their own presses,
+  // so a press on a control never reaches here.
+  const onSphereDown = e => {
+    if (e.button !== 0 || S.altLocked) return;
+    if (S.cameraMode === 'surface' && document.pointerLockElement !== S.canvas) return;
+    e.preventDefault();
+    if (_downHandMouse) return;
+    _downHandMouse = true; handDown();
+  };
+  const onMouseUp = e => {
+    if (e.button !== 0 || !_downHandMouse) return;
+    _downHandMouse = false; handUp();
+  };
+  // A window blur is a release edge for both wires: a key-up or mouse-up
+  // that never arrives must not leave a momentary hand stuck down.
+  window.addEventListener('blur', () => {
+    if (_downHandKey)   { _downHandKey = false;   handUp(); }
+    if (_downHandMouse) { _downHandMouse = false; handUp(); }
+  });
 
   // The pin pair is not a tool, so it gets its own handler. A CLICK cannot
   // hold, so it is the tap form of the gesture — pin where you stand.
@@ -4002,7 +4307,7 @@ export function initTiles() {
     const b = e.target.closest('[data-pin]');
     if (!b) return;
     _pinFlash(b.dataset.pin);
-    if (b.dataset.pin === 'all') { document.getElementById('commitClearBtn')?.click(); return; }
+    if (b.dataset.pin === 'unpinall') { document.getElementById('commitClearBtn')?.click(); return; }
     if (b.dataset.pin === 'unpin') { unpinSelected(); return; }
     await pinDown();
     await pinUp();
@@ -4013,7 +4318,6 @@ export function initTiles() {
   const paletteDock = document.getElementById('paletteDock');
   const toolRail = document.getElementById('toolRail');
   document.getElementById('tcPins')?.addEventListener('click', onPinClick);
-  document.getElementById('toolRailHide')?.addEventListener('click', () => setPropsOpen(false));
   // Both rails float OVER the canvas, whose mousedown starts a trace, so
   // every press inside them is swallowed — not just presses on a control.
   for (const el of [toolRail, document.getElementById('propRail')]) {
@@ -4022,14 +4326,24 @@ export function initTiles() {
   toolRail?.addEventListener('click', onRailClick);
   paletteDock?.addEventListener('click', onStripClick);
   paletteDock?.addEventListener('contextmenu', onStripContext);
+  paletteDock?.addEventListener('contextmenu', onPlateContext);
+  paletteDock?.addEventListener('mousedown', onPlateDown);
+  // A FINGER ON THE HAND TILE is the same press (the phone, 2026-09-12: the
+  // palette there is the hand tile alone). preventDefault, so the browser
+  // sends no compat mousedown/up pair after the finger lifts — that pair
+  // would be a press of no length.
+  const onPlateTouch = e => {
+    if (!e.target.closest('#handKey')) return;
+    e.preventDefault(); e.stopPropagation();
+    if (e.type === 'touchstart') { if (_downHandMouse) return; _downHandMouse = true; handDown(); }
+    else if (_downHandMouse) { _downHandMouse = false; handUp(); }
+  };
+  for (const t of ['touchstart', 'touchend', 'touchcancel']) paletteDock?.addEventListener(t, onPlateTouch, { passive: false });
   paletteDock?.addEventListener('mousedown', e => { if (e.target.closest('.tile')) e.stopPropagation(); });
+  S.canvas?.addEventListener('mousedown', onSphereDown);
+  window.addEventListener('mouseup', onMouseUp);
   // Drag sources and targets: the two rails and the palette (2026-09-11).
   for (const el of [toolRail, paletteDock, document.getElementById('tcPins')]) if (el) wireDrag(el);
-  // The lens tiles and the pin tiles had their own click handlers here until
-  // 2026-09-11 evening, one calling `lensTap` and one dispatching the pin
-  // action. Both go through `onStripClick` now: a click on ANY strip tile opens
-  // its sheet, a right-click cycles its verb, and nothing on the strip plays
-  // from the mouse (Ek, 2026-09-12).
 
   // The lens group — taps install. It sits in the toolbox strip now (#253),
   // so this binds to #lensBar; the wrapping dock element is gone.
@@ -4058,6 +4372,13 @@ export function initTiles() {
     e.preventDefault(); e.stopPropagation();
     const id = rowId(w.closest('[data-tile]'));
     if (id) setWet(id);
+  }, true);
+  // The pin button, the same way: a tap flips the tile's on-end flag.
+  toolRail?.addEventListener('click', e => {
+    const w = e.target.closest('[data-pin-tgl]'); if (!w) return;
+    e.preventDefault(); e.stopPropagation();
+    const id = rowId(w.closest('[data-tile]'));
+    if (id) setAutoPin(id);
   }, true);
   // The `+` on an engine's title mints a tool of that engine and opens its
   // drawer. It waits out a play, the way every click on this rail used to —
@@ -4147,7 +4468,6 @@ S._setWet     = on => setWet(sheetTileId(), on);
 // sheet is rendered by that module, so the shell only has to open the rail.
 S._openProps = (id, kind) => {
   _optSel = { kind: kind ?? 'tool', id };
-  if (kind === 'source') lastFired = { kind, id };   // the sampler row was clicked
   _propsOn = true;
   document.body.classList.add('props-open', 'prail-open');
   document.getElementById('tcTools')?.classList.add('on');

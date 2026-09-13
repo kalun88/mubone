@@ -1507,6 +1507,9 @@ function _releaseSlotAt(targetSlot) {
     // Loop: stop audio — both fade and play-to-end defer slot removal to 'ended' event
     _stopSeqAudio(slot, S.loopReleaseMode === 'play-to-end');
   }
+  // The group's flags go with its last pin — now, while this one is only
+  // leaving, not when its slot is finally freed (pins.js pruneEmptyGroups).
+  S._prunePinGroups?.();
   S._pinsDirty = true;
   S._syncCommitUI?.();
   (S.updateSeedBanksUI || updateSeedBanksUI)();

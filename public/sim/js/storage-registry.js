@@ -120,11 +120,16 @@ export const KEYS = [
   // ── ui ──
   { key: 'mubone_uiScale',              cat: 'ui', note: 'also read pre-paint by the boot script in index.html' },
   { key: 'mubone_darkMode',             cat: 'ui' },
+  { key: 'mubone_settings_section',     cat: 'ui', note: 'the settings door reopens on the section last open (ui-settings.js). Unregistered from c425c3e to 1.15: the reset page listed it as an orphan and probe-selftest read the orphan row as reload drift' },
   { key: 'mubone_fovDeg',               cat: 'ui' },
   { key: 'mubone_edgeIndicator',        cat: 'ui' },
   { key: 'mubone_edgeIndicatorSize',    cat: 'ui' },
   { key: 'mubone-learn-mode',           cat: 'ui' },
-  { key: 'mubone_legend_kinds',         cat: 'ui', note: 'which binding kinds the palette legend draws — { key, button, midi } booleans; the three switches under the keys page\'s column titles (2026-09-12). Factory: key only' },
+  { key: 'mubone_build',                cat: 'ui', note: 'the service worker CACHE_VERSION the hosted demo last booted on (main.js _wipeOnNewBuild, 2026-09-12): a different one wipes the store and reloads — collaborators open every new build at factory. Electron and localhost never write it' },
+  { key: 'mubone_hand',                 cat: 'ui', note: 'the tool IN HAND — what the spacebar and a left-click on the sphere play (tiles.js, 2026-09-12); a tool id' },
+  { key: 'mubone_hand_verb',            cat: 'ui', note: 'the hand\'s verb, toggle | momentary — the hand tile\'s shape (2026-09-12). Factory: momentary (Ek, evening)' },
+  { key: 'mubone_palette_digits',       cat: 'bindings', guards: ['mubone_key_map'], note: 'stamp: the factory strip was dealt once — the list into mubone_palette, the hand, the palette rows of the three maps (midi.js seedPaletteDigitsOnce, 2026-09-12)' },
+  { key: 'mubone_legend_kind',          cat: 'ui', note: 'the ONE binding kind the palette tiles wear as their sticker — key | button | midi; the segmented row on the keys page (PALETTE-GUI § 11.4, 2026-09-12). Factory: key. Was mubone_legend_kinds, three booleans, for one afternoon' },
   { key: 'mubone_viz_calibration',      cat: 'ui', note: 'split out of mubone_audio_defaults 2026-08-01' },
 
   // ── debug ──

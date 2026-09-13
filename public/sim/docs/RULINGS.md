@@ -203,15 +203,46 @@ How to use this file: find the heading for the area you are about to touch and r
   the trap — reading which of `palette_N` / `_toggle` / `_hold` was bound, with
   `_hold` beating `_toggle` when both were; nothing is lost, because every
   binding moves onto `palette_N` and a tile carrying two sources is legal.
+- **THE HAND IS BACK; THE PALETTE IS QUICK ACCESS** (Ek, 2026-09-12: "like any computer painting
+  app, the tool rail has the tool. you should be able to pick the tool and have it 'in hand'. in
+  hand just should mean what the spacebar or click does. that should be always the truth"). The
+  2026-09-11 ruling above cut the hand out because two models fought; one day of playing showed
+  the cut was in the wrong place, and the fix is that each model owns its inputs. **The hand** is
+  ONE tool (`inHand`, `mubone_hand`), picked by a CLICK on its rail row or strip tile, played by the
+  **spacebar** and a **left-click on the sphere** in one global verb (`handVerb`, toggle by factory,
+  `mubone_hand_verb`), drawn as the **spacebar plate** under the strip — glyph, name, engine hue,
+  its shape the verb in the tile's two radii, lit while the hand plays, a spacebar itself
+  (press it), right-click flips the verb. The two inputs are reserved: the keys page refuses the
+  spacebar and a stored Space row is dropped at load; there is no `hand` action row. **Quick access**
+  is the strip: a tile fires from its own key, button or note, in its own verb, and never touches
+  the hand — pen can be in hand while `5` plays pen momentary, and the tile lights, not the plate.
+  `_held` stays the one gate (what is PLAYING, one at a time, `i = HAND_POS` for the hand); `Tab`
+  opens the in-hand tool's drawer, the drawer follows the hand, and `lastFired` is deleted — a
+  quick-access key pulling the drawer off the tool you are working on was the wrong rule once
+  there was a hand. **A key belongs to its tile**: every palette key is an explicit row, seeded
+  once (1 … 5 on wide · wash · overdub · line · pen, ↑ · ↓ on the pins), carried through every
+  place, move and remove by `S._paletteReordered`; **a drop takes the next free digit** (the
+  afternoon reversed the morning's "don't auto find a key", and the afternoon stands); a removed
+  tile takes its keys, buttons and notes with it. **The legend is a ledger**: one row per binding
+  kind the keys page's "on tiles" switches show, each the page's own learn cell brought to the
+  tile (`S._paletteLearn` arms the page's `keyLearningId` / `buttonLearningId` / `midiLearningId`;
+  the page's recogniser finishes it — no second learn path), Esc or a second click cancels,
+  right-click clears. **The verb is the placement's, set on the strip** by right-click (the
+  drawer's segment went the same morning: the drawer is the tool's, the verb the placement's), and
+  the MODEL refuses a momentary under a TAP (`setVerbAt`), not only the doors. The clicks by kind:
+  a tool → in hand; a lens → installed or off (a choice); a pin tile → fired (an act). The in-hand
+  tool wears a one-hairline ring on its tile and its row — the armed box is not back. Held by
+  `palette-audit` §§ A, C, D, E, H, N, O (the bed measured 12px taller per ledger row).
+  `docs/PALETTE-GUI.md` § 1, § 5–6.
 - **A `×2` or `×3` bound anywhere on an input delays that input's TAP**, and the
   slowed tile says so with `···` (PALETTE-GUI § 7). The recogniser defers a tap
   it might have to re-read as the first of a pair (`dispatchGesture`:
   `if (counting) st.tapDeferred = true`), which is correct and invisible — a
   timing change to a gesture the performer did not touch. MEASURED, five presses
   each, from the up edge to the recogniser's own event: **123.6–127.8 ms** with a
-  sibling `×2`, **0.1–0.3 ms** without. It ships: `palette_7` (pin) is button 3
-  tap and `palette_6` (unpin) is button 3 `×2`, so pinning with your thumb has
-  been ~125 ms late since the button map was written. Only a TAP is slowed — a
+  sibling `×2`, **0.1–0.3 ms** without. It shipped until 2026-09-12: pin was button 3
+  tap and unpin button 3 `×2`, so pinning with your thumb was ~125 ms late from the day
+  the button map was written (pin is the press now — see the paragraph below). Only a TAP is slowed — a
   press fires on the down edge — and only the slowed tile wears the mark, never
   the `×2`'s own. **Measuring it found a second trap**: `renumberPaletteOnce`
   ran on a FRESH profile, over a `BUTTON_DEFAULTS` already written in today's
@@ -220,6 +251,15 @@ How to use this file: find the heading for the area you are about to touch and r
   nothing read the factory button map back until the delay mark needed to know
   what sat on button 3. Both one-shot migrations now skip a map the profile
   never stored, which is the rule every one-shot migration should have had.
+- **The factory pin is button 3's PRESS, so the pin tile has three verbs** (Ek, 2026-09-12: "as i
+  right click thru pin it should have 3 states avail. right now it's just toggle and bang. it should
+  have momentary"). The model refuses a momentary under a TAP (a tap has no up edge), and the factory
+  map put pin on button 3's tap, so the one pin tile every profile starts with could never take its
+  third verb. The tap was chosen on 2026-09-10 so that "one press = pin, two = unpin" did not pin
+  before the ×2 fired; the swallow being general since that evening (a press's neighbour takes back
+  whatever the press did) makes the press the better binding anyway: it pins on the down, undelayed,
+  the ×2 takes that pin back and unpins, and a momentary path holds. `BUTTON_DEFAULTS` says press; a
+  stored map with button 3 tap on `palette_6` is moved to press once at load.
 - **The wash is the looper's move for the grain family**
   (`wash`, grain kind, Ek 2026-09-05, #334): its stroke is pinned at once as a MOVING CLOUD
   looping the path you drew, reading the marks you laid on it — a granular wash that stays. The

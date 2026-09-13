@@ -2227,3 +2227,193 @@
   falls through to the ghost cloud (`js/tiles.js`, `js/ui-presets.js`). `pins-audit` § P walks the cursor into the
   band and fails on the old code at 10.6°. `pins` 198 · `palette` 146 · `docs` green. The library footer's
   "click a tool to arm it" copy went too (arming is deleted), and CLAUDE.md's overdub line now matches the code.
+
+- [x] **The hand is back; the palette is quick access (Ek, 2026-09-12, `docs/PALETTE-GUI.md` § 1)** — ONE tool in hand,
+  picked by a click on its rail row or strip tile, played by the spacebar and a left-click on the sphere in one global
+  verb, drawn as the spacebar plate under the strip (glyph, name, the verb as its shape; right-click flips it). Both
+  inputs are unlearnable. A tile fires from its own key in its own verb and never touches the hand; a key belongs to its
+  tile (a drop takes the next free digit, a move carries it); each legend row is a learn cell, one row per kind switched
+  on. `Tab` opens the in-hand drawer, `lastFired` is deleted. Reverses 2026-09-11 rulings 1, 2, 3 and 6 and the morning's
+  "don't auto find a key" and "click opens the drawer". `palette` §§ A C D E H L M N rewritten, § O new.
+
+- [x] **The plate heads the bed (Ek, 2026-09-12, evening: "remove the palette icon from the palette bar and put the
+  spacebar icon on top of all the tiles across but still inside the box")** — the bed is a column: the plate across its
+  head, 5px over the tile row, the row's exact width (measured 401 = 401, 6px inside the box), then the tiles and the
+  ledger. The palette badge is deleted. `palette` § A asserts the head; `align` and `probe` rerun for the CSS.
+
+- [x] **The legend's source is a CAP (Ek, 2026-09-12, evening: "something that denotes that it's a reference for a
+  key")** — a `<kbd>` keycap under the tile, radius 2, the row's 12px, one hairline at 55 % of the source's colour, no
+  fill: a keycap for a key (letters uppercase), a round cap for the instrument's button (a struck pad is round), the keycap
+  in grey for a note; an empty row is an empty dashed cap, the click it invites. Measured: caps 12 × 13.7, the widest
+  row (`③ tap ···`) 50px inside the 57px legend, ≥ 19px of air between neighbours. `palette` § N asserts the two shapes.
+
+- [x] **The hand is a TILE at the head of the row (Ek, 2026-09-12, night: "make the spacebar to the left of the tile
+  group, tiles wide, and of course moving the keyboard binding under it like the same design as the tiles")** — the
+  plate that spanned the row is a 53px tile, first in the row, 10px (a double gap) off the quick-access group, the
+  in-hand glyph in its hue, its shape the verb, lit while the hand plays; under it the spacebar in a wide keycap (21 × 12)
+  and the mouse in a keycap (15 × 12), fixed. The strip tile's in-hand ring went (the hand tile says it); the rail row
+  keeps its mark. Measured: hand 53 × 53 on the tiles' line, gap 10.0, bed 81 tall again. `palette` § A asserts it.
+
+- [x] **Three tiles wide, more air, the arrows' glyphs (Ek, 2026-09-12, night)** — the hand tile is 3 × 53 + 2 gaps, at the
+  row's own gap (the extra 5px went: "should be the same amount of space"), glyph and name; the strip's measures are
+  tokens (tile 53 · gap 7 · inset 8 · legend 15 · gap 6, bed radius `--r-card`); every cap wears the tile's border colour,
+  11px weight 400; a learned arrow or editing key draws its glyph (`KEY_GLYPH`: ↑ ↓ ← → ↩ ⌫ ⌦ ⇞ ⇟ ↖ ↘), not its word.
+  No audits run (Ek: "stop running all the audits for this session"); `palette` § A's two numbers kept in step by hand.
+
+- [x] **Tab shows and hides the tool rail, never a drawer (Ek, 2026-09-12, night)** — `toggleRail()`, shifted or not; the
+  ⋯ on a row is the drawer's only door (a pin tile's sheet opens from its press). It opened the in-hand tool's drawer for
+  one evening and the lens's on ⇧Tab. `palette` § C and the three sections that used Tab as the drawer's key rewritten
+  by hand, unrun (no audits this session).
+
+- [x] **The rails' helper text and the tools rail's hide button go (Ek, 2026-09-12, night)** — both `.lyr-foot` blocks
+  (the tool rail's "click a tool to take it in hand …", the pinned rail's "pinned material plays off-cursor / = pins ·
+  − unpins") and their CSS, and `#toolRailHide` ("there's already the rail opener icon" — the tools pill, `~`, Tab and
+  Esc close it). `align` "the pinned rail's foot is two lines" inverted to "carries no foot", unrun.
+
+- [x] **The click is spelled (Ek, 2026-09-12, night: "i can't see what that icon is under the spacebar block")** — the
+  hand tile's second cap says CLICK; the 7 × 10 mouse glyph is gone. `palette` § A kept in step by hand, unrun.
+
+- [x] **Reset lives on the settings page (Ek, 2026-09-12, night: "instead of a pop up, build it into the settings page …
+  one button that will reset all plus another button reset selected")** — Session page: Reset all (danger, armed by one
+  click, fired by the next, four-second arm), then one kit row per storage category with a toggle and Reset selected
+  under them, live while a toggle is on. The popup and the cabinet's `#resetBtn` are gone; `browser-audit` §§ 5b/5d
+  repointed by hand, unrun (release-only).
+
+- [x] **Dots, and the pin mark (Ek, 2026-09-12, night)** — `pen` is named **dots** (the id stays: blocks, palettes, voicings
+  and every audit key on it) and draws line's curve dotted; the looper draws LINE and the wash draws DOTS, and what sets
+  them apart is the **pin mark** — wet's twin: a property of the tile that IS its on-end switch (`gEnd` cloud for grain,
+  `onEnd` loop for tape), read off the tile's own block, a button on the row that flips it, a mark beside the wet drop on
+  the palette tile and the hand tile. `isAutoPin` / `setAutoPin` in tiles.js. Ek: "conditioned on that particular
+  toggle in the engine … that would be really cool and accurate."
+
+- [x] **Loop and dub (Ek, 2026-09-12, night)** — `looper` is named **loop**, `overdub` **dub**; the ids stay, as `pen` → dots.
+
+- [x] **The drawer's door is the panel-right glyph (Ek, 2026-09-12, night: "3 dots makes me think that it'll open a
+  menu")** — a frame with its right third marked, on every tool and lens row; `.trow-more` / `[data-more]` keep their
+  names. The docs still call it "the ⋯" in prose — a rename for the finish pass.
+
+- [x] **Trail (Ek, 2026-09-12, night)** — `wash` is named **trail**; the id stays, as `pen` → dots.
+
+- [x] **The pin group is tool rows in the pinned rail (Ek, 2026-09-12, night: "a section of the same design as the left
+  rail, but on the right rail, it's for the pin and unpin tools, and unpin all … drag those tools from the right rail into
+  and out of the palette bar")** — `renderPinChrome` draws a `.tbx-grp` of three `.trow`s (glyph · name · the key as a
+  cap); a click fires, a drag places; **unpin all is a palette candidate** (`ACT_TILES.unpinall`, `commit_clear`, a bang,
+  its own glyph, brick on approach). The `.lyr-act` chips are gone from the rail; `align`'s pinned-rail row checks still
+  read `.lyr-act` — a rewrite for the finish pass, unrun.
+
+- [x] **The palette is the whole truth for pin and unpin (Ek, 2026-09-12, night)** — the hard-wired `=` / `-` keys and
+  `_downPinKey` are gone from tiles.js; the pin tiles' own keys are the only ones. Checked: = and − do nothing, ↓ pins,
+  ↑ unpins.
+
+- [x] **An empty group holds no state (Ek, 2026-09-12, night: "i muted the group. then i erase that loop … when i go to
+  make a new loop it starts muted")** — the two group flags lived on the session-long GROUPS constant and outlived the
+  last pin of their kind, invisibly (the rail hides an empty group's row). `pins.js pruneEmptyGroups()` clears mute and
+  solo on a group with no LIVE pins — a cloud fading through its release or a loop playing to its end is leaving, not
+  in — at RELEASE time (`_releaseSlotAt`; at the next pin's creation the newborn already counts) and from `applyMix` as
+  the net. Checked on clouds with a 3 s release: muted group → unpin → flag off mid-fade → the next cloud is audible.
+
+- [x] **§ 11 built: six hues, the glyph in its hue, one binding kind, the sticker (Ek, 2026-09-12, `docs/PALETTE-GUI.md`
+  § 11, `docs/mockups/palette-10a.png`)** — `--eng-*` are six quadrants plus `--eng-pins` bone; every tile and row glyph
+  is `var(--c)`; rest `surface-1`, hover `surface-3`, lit the hue at 20 % with a 2px border and a glow. ONE binding kind
+  on the strip (first switch on until Ek's one-choice control); the ledger is gone, the bed 71px. The binding is a
+  STICKER bottom-left — 18 tall, `flex:none; white-space:nowrap` on it and every span (§ 11.6's trap), a note bare, long
+  and xlong a bar, a key's glyph or four characters, chords refused. Measured on a fresh rig: bed 71, sticker 18 × 18
+  at −4/−4, `3` + xlong bar 35.4, `127 tap` 45.2, `127` + xlong bar 44.8 — all under 53. Steps a–c of the brief were
+  already in the tree (09-11 evening); § 11.1's "still unbuilt" is corrected in place. `palette` §§ N/O rewritten and
+  § P new, `align` "the palette legend" rewritten for the sticker — by hand, unrun (no audits this session).
+
+- [x] **"Shown on the palette" (Ek, 2026-09-12, night: "now that only 1 binding type shows in the palette, fix the settings
+  toggles to reflect how the ux works")** — the three "on tiles" toggles under the keys page's column heads are one
+  segmented row above the table, Key · Button · MIDI (`#legendKindSeg`, `S._legendKind` / `S._setLegendKind`,
+  `mubone_legend_kind`; the old three-boolean key carries its first-on kind over once and is removed).
+
+- [x] **The factory strip, re-dealt (Ek, 2026-09-12, night)** — dots (1 long, momentary) · line (1, toggle) · loop (2, toggle)
+  · dub (3, toggle) · scrape top (4, momentary) · pin (↓) · unpin (↑); the hand ships holding dots, momentary; no lens on
+  the strip. Dots and line share the 1 key — press and hold, the button-1 rule on a key. A profile on the older stamp
+  takes the whole strip once (`seedPaletteDigitsOnce`: the list, the hand, the palette rows of all three maps;
+  BUTTON_DEFAULTS re-keyed: btn 1 tap line, btn 1 long dots, btn 3 tap pin, ×2 unpin). `palette`'s constants and
+  `factory()` re-keyed by hand; its position-keyed checks still name the afternoon's positions — finish pass, unrun.
+
+- [x] **Dub wears the pin always (Ek, 2026-09-12, night: "it technically works with pinned items only")** — `isAutoPin('overdub')`
+  is true and not a switch; its row shows the mark, not the button; its tile and the hand tile wear the sticker.
+
+- [x] **The pull keeps steering over the palette (Ek, 2026-09-12, night: "with the palette bar in the way, the pull moves
+  the sphere really slowly when i want to pull down")** — the steer tracking listened on the canvas, and the bed over the
+  lower stage took the pointer, freezing the offset at the strip's top edge. It listens on the document now with the
+  canvas RECT as the boundary (inside steers whatever is drawn on top; outside is the old `mouseleave`). Measured: the
+  offset climbs 0.75 → 0.81 → 0.99 from above the bed, onto a tile, to the canvas bottom over the bed; the footer leaves.
+  **Reversed for the palette the same day** (below: the chrome is outside).
+
+- [x] **A new build wipes the hosted demo, silently (Ek, 2026-09-12, night: "my collaborators know that this is a prototype
+  they should expect nothing is kept so wipe is silent")** — `main.js _wipeOnNewBuild`: on the hosted origin only, the
+  deployed `sw.js` CACHE_VERSION (the key a browser deploy already has to bump) against a `mubone_build` stamp; different
+  → Reset all's wipe, the cache and the worker, the new stamp, a reload. A store with no stamp is fresh and is stamped
+  without a wipe, so Reset all does not double-reload. Not exercisable from the browser audit (localhost is not hosted);
+  checked by hand in a rig with the hosted test stubbed.
+
+- [x] **Release 1.15.0-alpha (2026-09-12)** — the five version updates, CHANGELOG. Audits: `rig-audit` (action ranges,
+  cc mirrors, mark align, palette, pins) green; `engine` fails 4 (the wet switch) at HEAD too — pre-existing; `osc`
+  (full), `browser`, `docs`, `sensor`, `npm test`, `align`, `probe` green; `deadweight` reported (15 ids, 34 classes,
+  flake.nix/lock unreferenced). Release-pass fixes: `palette-audit` re-keyed to the evening factory strip (a held-key
+  check uses 2, since 1 carries line on the press and dots on the long); a synthetic drag with no `dataTransfer` no
+  longer throws; the hold row wears the tool row's metrics; `mubone_settings_section` registered; `.lyr-act` CSS gone.
+
+- [x] **The chrome is outside the stage (Ek, 2026-09-12: "anywhere i'm trying to use the GUI the sphere should automatically
+  stop spinning")** — `events.js` mousemove: a pointer whose target is in a rail, the top bar, the palette dock or a modal
+  sets `mouseInCanvas` false, exactly as leaving the canvas rect does, so the steer stops dead (the renderer's steer is
+  gated on that flag) instead of spinning under a pointer reaching for a tile. Probed on a rig: rail, palette, top bar
+  read off-stage, the canvas on. `palette` green.
+
+- [x] **An unbound tile keeps its sticker as a dash (Ek, 2026-09-12: "it should have a hyphen thru the sticker but it just
+  disappears so i have no way to bind a new key via the palette tile")** — `paletteLegend`: no binding of the shown kind
+  → `.tile-bind--none` with `–` in `--text-faint`; still the learn cell. PALETTE-GUI § 11.5 says so; `palette` § E/N/O
+  re-keyed (every tile wears one sticker, the count is never zero). `palette` green.
+
+- [x] **A double no longer aborts a play its press never started (Ek, 2026-09-12: loop toggle on 2, line toggle on 2 ×2 —
+  "forever stuck recording")** — `midi.js _abortPress`: the second double's first down pressed loop under the running
+  line (dead, one play at a time), and the abort threw away the LINE, which the double then restarted. `pressStarted`
+  is read off `S._gestureActive` around the press fire; the abort only fires when it is true. New `palette` § L check:
+  2 ×2 starts line, 2 ×2 ends it, a lone 2 still toggles loop. `palette` green.
+
+- [x] **⇧Tab is the pinned rail's; the two pills name their keys (Ek, 2026-09-12: "when i hover over the drawer opener it
+  should say tab for the left. for the right, let's make it shift tab to open and close the pin")** — `tiles.js` Tab
+  handler: shift → `S._togglePinnedRail` (set by `tile-layout.js`, which owns that rail), bare → the tool rail as
+  before. The tools and pinned pills' tooltips say Tab / ⇧Tab. `palette` § C checks ⇧Tab flips the pinned rail and
+  leaves the tool rail and the drawer alone. KEYBOARD-SHORTCUTS updated (⇧Tab was listed as a free key).
+
+- [x] **The palette is the steer's bottom edge (Ek, 2026-09-12: "make it move faster at the top of the palette bar, that
+  speed there should be the same as the top edge")** — `events.js _stageInsets` gains a bottom inset from `#paletteDock`,
+  measured like the rails eat the sides; the vertical offset is against the stage above the strip. Probed on a rig:
+  the canvas top −0.999, one px above the strip +0.995, the middle of the reachable stage −0.001; on the strip the
+  pointer is off-stage (the chrome ruling). `palette` green.
+
+- [x] **The factory pin is button 3's press; the pin tile has three verbs (Ek, 2026-09-12: "as i right click thru pin it
+  should have 3 states avail. right now it's just toggle and bang. it should have momentary")** — `BUTTON_DEFAULTS`
+  palette_6 btn 3 press (was tap: no up edge, momentary refused); one-shot in `loadButtonMappings` moves a stored
+  btn 3 tap on palette_6 to press. `palette` § H cycles pin 6 bang → momentary → toggle → bang; § N reads the delay
+  mark off a tap it binds itself; § O pin wears `3`. RULINGS paragraph, PALETTE-GUI § 7 and KEYBOARD-SHORTCUTS past tense.
+
+- [x] **Release 1.15.1-alpha (2026-09-12, evening)** — the five updates (the chrome and CLAUDE.md stay on the minor, as
+  `docs-audit` reads them), CHANGELOG. Audit fixes found by the full set: `osc-audit` had failed since the factory-strip
+  redeal (its ACTIONS parser read `PALETTE_FACTORY_ENTRIES` rows as actions — the 1.15 release run was misread as green);
+  `/palette/7` (the factory unpin) and `/mute/hold` (the rig launches muted) declared in NEEDS_STATE, both proven live on
+  a rig; `palette` § D/E restore `commitSlotCount` beside the cc suites; `pins` waits up to 3 s for the fade's `ended`.
+
+- [x] **The pinned rail boots closed (Ek, 2026-09-12: "start closed on open unless persisted open. but on factory reset it
+  starts closed")** — `tile-layout.js`: the default is closed; `mubone_pinned_rail` = '1' reopens it; Reset all wipes the
+  key so a fresh store boots closed. ⇧Tab and the pinned pill open it.
+
+- [x] **The phone pass (Ek, 2026-09-12: "it doesn't work with apple phones and the tapping doesnt engage anything … a
+  really dumb simple version … i dont want to develop a separate app")** — `mobile.js`: the iOS motion permission is
+  asked INSIDE the tap (it was two awaits later, so Safari answered denied and the setup bailed — no gyro, no touch);
+  a call that throws is not a refusal; WebKit's inverted `rotationRate` sign corrected (`PLATFORM_SIGN`); four `[mobile]`
+  trace lines at the tap. `audio.js`: the speaker-routing `<audio>` looped a 0-sample WAV and ate the main thread — a page
+  answered a script call in 5 s with it, 2 ms without (#349, closed); it is one second of silence now. CSS: the bar, rails
+  and palette are hidden under `body.mobile-mode`. `scripts/phone-audit.js` (new, playwright, an emulated iPhone and
+  Pixel) is the one phone check — `audit-for.js` maps `mobile.js` to it. Not tested on a real phone from here.
+
+- [x] **The phone's palette is the hand tile alone (Ek, 2026-09-12: "the palette bar can be reduced to just the spacebar,
+  since there's no key assignments … without making too much of a separate mobile design thing")** — two lines under
+  the existing `body.mobile-mode` rule hide the strip tiles and the stickers; the dock and the hand tile stay. `tiles.js`:
+  a finger on the hand tile is the hand's press (touchstart/end on the dock, preventDefault so no compat click follows).
+  `phone-audit` checks the tile shows and a touch on it plays; `palette`, `align`, `probe` green.

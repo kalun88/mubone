@@ -160,6 +160,14 @@ instrument's ramp, which is where the 11px pages came from.
 
 ## 7. Applying it to the remaining pages
 
+**The session page's reset is on the page, not a popup** (Ek, 2026-09-12, night). Two rows of the
+kit: **Reset all**, a danger button armed by one click and fired by the next (the armed face is the
+danger face filled, `.set-btn--danger.armed`, for four seconds) — the arm is the confirmation; and
+**Reset selected**: one `.set-row` per storage category (`CATEGORIES` in `js/storage-registry.js`,
+title in sentence case, the hint as the description) with the kit's toggle flush right, then the
+button, live only while a toggle is on, its description naming what is selected. Unregistered keys
+are named in a lede under Reset all. `js/main.js` `initResetSection`.
+
 `settings-gui.css` styles the shell and the kit. Each hosted page still needs its markup taken
 from `.as-row` (label + control) to the row model (title + description + control). **Done: `audio`,
 `sensors`, `led feedback`, `mapping`, `camera + display`, `export · import · reset`,

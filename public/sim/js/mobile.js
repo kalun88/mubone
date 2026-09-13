@@ -11,6 +11,12 @@ let orientationYawAxis   = 'beta';
 let orientationPitchAxis = 'alpha';
 let ORIENTATION_YAW_SIGN   = -1;
 let ORIENTATION_PITCH_SIGN = -1;
+// WebKit reports devicemotion.rotationRate with the OPPOSITE sign to Chrome
+// (a long-standing Safari inversion, not a mounting difference), so an
+// iPhone turned the sphere the wrong way. One factor, read once; the ⚙
+// panel's sign buttons still flip either axis on top of it.
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const PLATFORM_SIGN = IOS ? -1 : 1;
 let lastRotationRate = { alpha: 0, beta: 0, gamma: 0 };
 let refreshMobileOrientationUI = null;
 
@@ -54,8 +60,8 @@ function startOrientationTracking() {
     const rawYaw   = lastRotationRate[orientationYawAxis]   ?? 0;
     const rawPitch = lastRotationRate[orientationPitchAxis] ?? 0;
 
-    const dYaw   = rawYaw   * dt * ORIENTATION_YAW_SIGN   * (Math.PI / 180);
-    const dPitch = rawPitch * dt * ORIENTATION_PITCH_SIGN * (Math.PI / 180);
+    const dYaw   = rawYaw   * dt * ORIENTATION_YAW_SIGN   * PLATFORM_SIGN * (Math.PI / 180);
+    const dPitch = rawPitch * dt * ORIENTATION_PITCH_SIGN * PLATFORM_SIGN * (Math.PI / 180);
 
     const qDY = qFromAxisAngle(0, 1, 0, dYaw);
     const qDP = qFromAxisAngle(1, 0, 0, dPitch);
@@ -295,18 +301,43 @@ function setupMobileSettings() {
 let _fullscreenFallbackTimer = null;
 
 async function enterMobileFullscreen() {
-  ensureAudioContext();
-  await requestMicAccess();
+  // iOS FIRST, SYNCHRONOUSLY (2026-09-12: "it doesn't work with apple
+  // phones"): Safari opens the motion prompt only from inside the tap's own
+  // call stack. It was asked in _finishMobileSetup, two awaits and a
+  // fullscreen round trip later, so Safari answered "denied" every time and
+  // the setup bailed — the gyro never started and a touch did nothing.
+  // Chrome has no requestPermission and resolves at once.
+  // Only an explicit 'denied' is the player's refusal; a call that THROWS
+  // (no prompt to show, an emulator, a browser that has the function but no
+  // policy) is not, and the gyro is tried anyway — the worst case is a still
+  // sphere, which the ⚙ panel's readout shows at once.
+  const motion = (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function')
+    ? DeviceMotionEvent.requestPermission().catch(e => { console.info(`[mobile] motion permission call threw (${e?.name ?? e}) — going on`); return 'granted'; })
+    : Promise.resolve('granted');
+  ensureAudioContext();                 // also inside the tap: iOS unlocks audio here
+  // Four lines at the tap, always on: a phone has no DevTools to hand, and
+  // these are what a screenshot of chrome://inspect or Safari's console needs.
+  const perm = await motion;
+  console.info(`[mobile] motion permission: ${perm}`);
+  if (perm !== 'granted') {
+    const lbl = document.querySelector('#mobileEnterBtn .enter-label');
+    if (lbl) lbl.textContent = 'motion access refused — reload and allow';
+    return;
+  }
+  const mic = await requestMicAccess();
+  console.info(`[mobile] mic: ${mic ? 'open' : 'refused'} · audio: ${S.audioCtx?.state}`);
 
   const el  = document.documentElement;
   const rfs = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
   if (rfs) {
-    _fullscreenFallbackTimer = setTimeout(() => _finishMobileSetup(), 2000);
-    rfs.call(el).catch(() => {
+    _fullscreenFallbackTimer = setTimeout(() => { console.info('[mobile] fullscreen: no answer in 2 s, going on'); _finishMobileSetup(); }, 2000);
+    rfs.call(el).catch(e => {
+      console.info(`[mobile] fullscreen: refused (${e?.name ?? e}), going on`);
       clearTimeout(_fullscreenFallbackTimer);
       _finishMobileSetup();
     });
   } else {
+    console.info('[mobile] fullscreen: not offered here');
     _finishMobileSetup();
   }
 }
@@ -346,13 +377,7 @@ async function _finishMobileSetup() {
     screen.orientation.lock(lockType).catch(() => {});
   }
 
-  if (typeof DeviceMotionEvent !== 'undefined' &&
-      typeof DeviceMotionEvent.requestPermission === 'function') {
-    const perm = await DeviceMotionEvent.requestPermission().catch(() => 'denied');
-    if (perm !== 'granted') { S._mobileSetupDone = false; return; }
-  }
-
-  startOrientationTracking();
+  startOrientationTracking();          // the motion permission was granted in the tap
   calibrateOrientation();
 
   document.getElementById('mobileEnterBtn').style.display       = 'none';
@@ -363,6 +388,7 @@ async function _finishMobileSetup() {
   S.mousePixelX = S.canvas.width  / 2;
   S.mousePixelY = S.canvas.height / 2;
   S.mouseInCanvas = true;
+  console.info(`[mobile] setup done · ${isLandscape ? 'landscape' : 'portrait'} · ${IOS ? 'iOS' : 'other'}`);
 }
 
 function setupMobileTouchHandlers() {
@@ -382,12 +408,10 @@ function setupMobileTouchHandlers() {
     const hint = document.getElementById('mobileTapHint');
     if (hint) hint.style.display = 'none';
 
-    // PALETTE POSITION 1, momentary. This was the main button until
-    // 2026-09-11 — it pressed whatever tool was armed, and arming is gone. A
-    // phone has no keyboard and no pedal, so the tap is wired straight to the
-    // first position, which is what the demo needs to be playable at all; on
-    // a rig you press a position from a key, a pad or a pedal.
-    S._paletteActivate?.(0, true, true);
+    // THE HAND, momentary (2026-09-12): a touch is the phone's spacebar, and
+    // a touch has no verb switch to read, so it plays while held. It was
+    // palette position 1 for a day, and the main button before that.
+    S._handDown?.(true);
   }, { passive: false });
 
   S.canvas.addEventListener('touchmove', e => {
@@ -396,6 +420,6 @@ function setupMobileTouchHandlers() {
 
   S.canvas.addEventListener('touchend', e => {
     e.preventDefault();
-    S._paletteActivate?.(0, false, true);
+    S._handUp?.();
   }, { passive: false });
 }

@@ -375,7 +375,7 @@ async function auditBoot(browser) {
 // registered. If you add a key to a module and not to the registry, this fails.
 //
 // Then: a partial reset must clear exactly its categories and nothing else, a
-// select-all must still reach Cache Storage and the service worker (localStorage
+// Reset all must still reach Cache Storage and the service worker (localStorage
 // is not the app's only persistence in browser mode), and the pre-split
 // mubone_audio_defaults blob must migrate into its four successor keys.
 async function auditReset(browser) {
@@ -465,31 +465,28 @@ async function auditReset(browser) {
   };
   await page.evaluate(d => { for (const [k, v] of Object.entries(d)) localStorage.setItem(k, v); }, DIRT);
 
-  const openReset = async () => {
-    await page.evaluate(() => document.getElementById('resetBtn').click());
-    await page.waitForTimeout(400);
-  };
-  await openReset();
+  // RESET IS ON THE SETTINGS PAGE (2026-09-12): no dialog. The session page
+  // carries Reset all (armed by one click, fired by the next) and one toggle
+  // row per storage category with Reset selected under them.
   const dialog = await page.evaluate(() => ({
-    cats:     [...document.querySelectorAll('.reset-cat input[data-cat]')].map(b => b.dataset.cat),
-    hasAll:   !!document.querySelector('.reset-cat input[data-all]'),
-    disabled: document.querySelector('.dlg-go').disabled,
-    desc:     document.querySelector('.dlg-desc')?.textContent?.trim() ?? '',
-    allHint:  document.querySelector('.reset-cat-all')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
+    cats:     [...document.querySelectorAll('#resetCats input[data-cat]')].map(b => b.dataset.cat),
+    hasAll:   !!document.getElementById('resetAllBtn'),
+    disabled: document.getElementById('resetSelectedBtn').disabled,
+    allHint:  document.querySelector('#resetAllBtn')?.closest('.set-row')?.querySelector('.set-row-desc')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
   }));
   check(dialog.cats.length >= 7 && dialog.hasAll,
-    'dialog renders a row per category plus select-all', dialog.cats.join(', '));
-  check(dialog.disabled === true, 'confirm is disabled until something is checked');
-  check(/offline cache/i.test(dialog.allHint) && /service worker/i.test(dialog.allHint),
-    'select-all row says it clears the offline cache + service worker', dialog.allHint.slice(0, 80));
+    'the page renders a row per category plus Reset all', dialog.cats.join(', '));
+  check(dialog.disabled === true, 'Reset selected is disabled until a toggle is on');
+  check(/offline cache/i.test(dialog.allHint),
+    'the Reset all row says it clears the offline cache', dialog.allHint.slice(0, 80));
 
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'load', timeout: 30000 }).catch(() => {}),
     page.evaluate(() => {
-      const b = document.querySelector('.reset-cat input[data-cat="accessory"]');
+      const b = document.querySelector('#resetCats input[data-cat="accessory"]');
       b.checked = true;
       b.dispatchEvent(new Event('change'));
-      document.querySelector('.dlg-go').click();
+      document.getElementById('resetSelectedBtn').click();
     }),
   ]);
   await page.waitForTimeout(5000);
@@ -633,14 +630,12 @@ async function auditReset(browser) {
   check(before.keys > 5 && before.caches > 0 && before.sw > 0,
     'state is dirty before the full reset', JSON.stringify(before));
 
-  await openReset();
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'load', timeout: 30000 }).catch(() => {}),
     page.evaluate(() => {
-      const all = document.querySelector('.reset-cat input[data-all]');
-      all.checked = true;
-      all.dispatchEvent(new Event('change'));
-      document.querySelector('.dlg-go').click();
+      const b = document.getElementById('resetAllBtn');
+      b.click();   // arms
+      b.click();   // fires
     }),
   ]);
   await page.waitForTimeout(5000);
@@ -654,7 +649,7 @@ async function auditReset(browser) {
     modals: document.querySelectorAll('.mu-overlay').length,
     modalIds: [...document.querySelectorAll('.mu-overlay')].map(m => m.id),
   }));
-  check(after.tiles === null, 'select-all cleared the tile order too', String(after.tiles));
+  check(after.tiles === null, 'Reset all cleared the tile order too', String(after.tiles));
   check(!after.sentinel && !after.cacheNames.includes('mubone-audit-sentinel'),
     'pre-reset cache contents are gone', `caches now: ${after.cacheNames.join(', ') || '(none)'}`);
   const missingAfter = MODALS.filter(id => !after.modalIds.includes(id));

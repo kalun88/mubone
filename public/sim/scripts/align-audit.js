@@ -227,12 +227,13 @@ if (!_railWasOpen) {
     // levels down as the string "[Object]", and a comparison against a string's
     // .y is false — which is a PASS. Caught on this section's first run.
     out.paletteStrip = box(strip);
+    // The binding is a STICKER on the tile's bottom-left corner (PALETTE-GUI
+    // § 11.5): its box, and the tile's, and the bed's.
     out.paletteTiles = all('.tile', strip).map((n, i) => {
-      const parts = all('.leg', n).map(box);
-      return { n: i + 1, t: n.querySelector('.tile-leg')?.textContent ?? '', tile: box(n),
+      const st = n.querySelector('.tile-bind');
+      return { n: i + 1, t: st?.textContent ?? '', tile: box(n),
         glyph: n.querySelector('svg:not(.leg-space)') && box(n.querySelector('svg:not(.leg-space)')),
-        leg: n.querySelector('.tile-leg') && box(n.querySelector('.tile-leg')),
-        ink: parts.length ? { x: Math.min(...parts.map(p => p.x)), r: Math.max(...parts.map(p => p.r)) } : null };
+        leg: st && box(st) };
     });
   }
 }
@@ -462,16 +463,19 @@ if (list && !list.querySelector('.lyr-hold')) {
 await new Promise(r => setTimeout(r, 200));
 const px = v => Math.round(v * 100) / 100;
 const lefts = [], rights = [], wrapped = [], clipped = [];
-for (const row of rail.querySelectorAll('.lyr-act, .lyr-hold')) {
-  const nm = row.querySelector('.lyr-act-nm, .lyr-hold-nm');
-  const rt = row.querySelector('kbd, .lyrsolo');
+// The pin rows are TOOL ROWS (.trow, 2026-09-12) beside the holds: one label
+// x for both models. A pin row has no right column of its own — no key cap,
+// no drawer — so its name's right edge is where the hold's S ends.
+for (const row of rail.querySelectorAll('.trow, .lyr-hold')) {
+  const nm = row.querySelector('.tile-nm, .lyr-hold-nm');
+  const rt = row.querySelector('.lyrsolo') ?? (row.classList.contains('trow') ? nm : null);
   const tag = (row.dataset.pin || (nm ? nm.textContent.trim() : 'row')).slice(0, 14);
   if (nm) lefts.push([tag, px(nm.getBoundingClientRect().x)]);
   if (rt) rights.push([tag, px(rt.getBoundingClientRect().right)]);
 }
 // One line, and not ellipsised — the action labels and the empty state only.
 // A hold's name is user text and MAY be truncated; a fixed label may not.
-for (const el of rail.querySelectorAll('.lyr-act-nm, .lyr-empty')) {
+for (const el of rail.querySelectorAll('.trow .tile-nm, .lyr-empty')) {
   const t = el.textContent.trim().slice(0, 14);
   // COUNT LINE BOXES, not height / line-height. These labels compute
   // line-height: normal, so the height maths returns NaN and the check passes
@@ -693,29 +697,25 @@ function collapses(label, items, key) {
   }
 
   console.log('\n── the palette legend ──');
+  // The STICKER (PALETTE-GUI § 11.5–11.6): bottom-left, overhanging the
+  // outline by ~5px both ways, inside the bed, never wider than the tile,
+  // never into the next tile. § 11.6's trap — a sticker that compresses
+  // instead of overhanging — shows here as a width under its text.
   if (!d.paletteStrip || !d.paletteTiles?.length) skipped('the palette legend', 'the palette is empty or hidden', 5);
   else {
     const P = { strip: d.paletteStrip, tiles: d.paletteTiles }, T = P.tiles.filter(t => t.leg);
-    // A profile can have every factory key removed and nothing learned — then
-    // no tile has a line and there is nothing to measure. Say so, as a skip.
-    if (!T.length) { skipped('the palette legend', `none of the ${P.tiles.length} tiles carries a legend (every key removed, nothing learned?)`, 5); }
+    if (!T.length) { skipped('the palette legend', `none of the ${P.tiles.length} tiles carries a sticker (every key removed, nothing learned?)`, 5); }
     else {
-    // Numbers, or nothing below is a measurement.
-    const numeric = T.every(t => [t.leg.y, t.leg.b, t.tile.b, P.strip.b].every(v => typeof v === 'number'));
-    check(numeric, 'the legend boxes arrived as numbers', numeric ? `${T.length} tile(s)` : JSON.stringify(T[0]).slice(0, 120));
-    // Under the tile, not in it: the line starts below the outline, and the
-    // glyph ends above the line — the 3.4px overlap that shipped.
-    const inCell = T.filter(t => t.leg.y < t.tile.b - TOLERANCE).map(t => `${t.n}: line ${t.leg.y} < tile ${t.tile.b}`);
-    check(inCell.length === 0, 'every legend line starts below its tile\'s outline', inCell.join(', ') || `${T.length} line(s), first at +${(T[0].leg.y - T[0].tile.b).toFixed(1)}px`);
-    const onGlyph = T.filter(t => t.glyph && t.glyph.b > t.leg.y + TOLERANCE).map(t => `${t.n}: glyph ${t.glyph.b} > line ${t.leg.y}`);
-    check(onGlyph.length === 0, 'no glyph reaches its legend line', onGlyph.join(', ') || 'clear');
-    // Inside the strip: the bed reserves the line, so no ink leaves it.
-    const outOfBed = T.filter(t => t.ink && (t.leg.b > P.strip.b - 1 || t.ink.x < P.strip.x + 1 || t.ink.r > P.strip.r - 1)).map(t => `${t.n} (${t.t})`);
-    check(outOfBed.length === 0, 'every legend sits inside the strip\'s bed', outOfBed.join(', ') || `bed ${P.strip.h}px tall`);
-    // Neighbours: a legend may be wider than its 53px column (the widest case
-    // is 54px), so it is the INK of adjacent lines that must not meet.
-    const meets = T.slice(1).filter((t, i) => t.ink && T[i].ink && t.ink.x < T[i].ink.r + 3).map((t, i) => `${T[i].n}→${t.n}`);
-    check(meets.length === 0, 'adjacent legends keep ≥ 3px of air between their ink', meets.join(', ') || 'clear');
+      const numeric = T.every(t => [t.leg.x, t.leg.b, t.tile.x, t.tile.b, P.strip.b].every(v => typeof v === 'number'));
+      check(numeric, 'the sticker boxes arrived as numbers', `${T.length} tile(s)`);
+      const hang = T.filter(t => Math.abs((t.tile.x - t.leg.x) - 4) > 1.5 || Math.abs((t.leg.b - t.tile.b) - 4) > 1.5).map(t => `${t.n}: left ${(t.tile.x - t.leg.x).toFixed(1)} bottom ${(t.leg.b - t.tile.b).toFixed(1)}`);
+      check(hang.length === 0, 'every sticker overhangs its tile\'s bottom-left corner by ~4px both ways', hang.join(', ') || `${T.length} sticker(s)`);
+      const outOfBed = T.filter(t => t.leg.b > P.strip.b - 1 || t.leg.x < P.strip.x + 1).map(t => `${t.n} (${t.t})`);
+      check(outOfBed.length === 0, 'every sticker sits inside the strip\'s bed', outOfBed.join(', ') || `bed ${Math.round(P.strip.h)}px tall`);
+      const wide = T.filter(t => t.leg.w > t.tile.w).map(t => `${t.n} (${t.t}) ${t.leg.w.toFixed(1)}px`);
+      check(wide.length === 0, 'no sticker is wider than its tile', wide.join(', ') || 'clear');
+      const into = T.filter(t => { const next = P.tiles[t.n]; return next && t.leg.r > next.tile.x - 1; }).map(t => `${t.n} (${t.t})`);
+      check(into.length === 0, 'no sticker reaches into the next tile', into.join(', ') || 'clear');
     }
   }
 
@@ -933,9 +933,11 @@ function collapses(label, items, key) {
       'no fixed rail label is ellipsised',
       (rr.clipped || []).length ? rr.clipped.join(', ') : 'nothing clipped');
 
-    check(rr.footLines === 2,
-      'the pinned rail\'s foot is two lines, not a paragraph',
-      rr.footLines === -1 ? 'no .lyr-foot found' : `${rr.footLines} line(s) — #256 budgets two`);
+    // The foot is gone (Ek, 2026-09-12, night: "remove all this helper text …
+    // remove that area that it holds too") — the rail must carry none.
+    check(rr.footLines === -1,
+      'the pinned rail carries no foot',
+      rr.footLines === -1 ? 'no .lyr-foot' : `${rr.footLines} line(s) of helper text`);
 
     const bb = rr.barBtns || [];
     const hSpread = bb.length ? +(Math.max(...bb.map(b => b[1])) - Math.min(...bb.map(b => b[1]))).toFixed(2) : 0;

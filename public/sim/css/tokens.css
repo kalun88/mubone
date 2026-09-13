@@ -176,6 +176,19 @@
     --leg-midi:        #9d978e;   /* grey   — a MIDI note, and every gesture */
     --leg-delay:       #c9a06a;   /* amber  — this tap waits the ×2 window   */
 
+    /* ── Engine hues: one hue per engine, hue is identity (PALETTE-GUI § 11.2–11.3) ── */
+    /* SIX QUADRANTS (PALETTE-GUI § 11.2, Ek 2026-09-12): the three dusty
+    mid-tones inside a 50° arc are six hues that clear 5:1 on the bed. Ember
+    owns 25–40° (--accent-action, --leg-button), so grain is the one warm
+    family. Pins are not an engine — bone is what engines commit into. */
+    --eng-source: #4aa3e8;   /* azure       — the only blue: what the brush inks from */
+    --eng-lens:   #5fbf9a;   /* sea green   — how the cursor reads; still "this is on" */
+    --eng-tape:   #f2569e;   /* hot pink    — recordings that play whole */
+    --eng-grain:  #e8a030;   /* gold        — grains from a buffer; dots' own colour */
+    --eng-erase:  #b07c8f;   /* mauve       — tape's hue drained: material removed */
+    --eng-pins:   #cfc7bc;   /* bone        — what the engines commit into */
+    --eng-none:   #857f76;   /* warm ash    — no engine                */
+
     /* Mic states — a brick family. Fire-engine red was the only pure hue in
        the interface and it sat in the top bar for the whole performance. */
     --mic-idle-bg:     #33211b;

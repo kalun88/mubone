@@ -1,8 +1,8 @@
 # CLAUDE.md — Project Context for Cowork / Claude Code
 
-> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-11 (1.14 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
+> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-12 (1.15 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
 
-> **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`. It was 72 KB of changelog on 2026-09-05 — do not add a paragraph here per change.
+> **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`. It was 72 KB of changelog on 2026-09-05 — no paragraph here per change.
 
 ---
 
@@ -10,7 +10,7 @@
 
 A browser-based spatial granular synthesizer for live acoustic instrumentalists. The performer plays into a mic, audio is recorded into a particle cloud on a 3D sphere, and grains are spatialized via VBAP to multi-channel speakers. An **x-imu3** sensor tracks orientation for the cursor; additional sensors can be added via the generic sensor registry (`/sensor/{name}/quaternion`).
 
-Deployed to **mubone.org/sim** via Cloudflare Workers (static). Source is private on GitHub.
+Deployed to **mubone.org/sim** via Cloudflare Workers (static). Source is private.
 
 ## How we work together
 
@@ -26,8 +26,8 @@ Ek is the only user of mubone. This shapes how we approach changes:
   The brush material is `tape`, never `hit` — **hit is out of the vocabulary** (Ek: "i hate hit,
   we should remove it from the vocab").
 - **Canonical terminology.** The performer-held sensor is an **x-imu3** — never "wand" or "IMU wand". Generic word is **sensor**. Active per-slot calibration lives in `sensor-registry.js` — `quatCal.mountQuat` + `quatCal.headingQuat`, the two gestures described under Debugging approach. No `sensor3Cal` (deleted with `gesture-window.html`, 2026-09-05), no `wandCal`, no `tareEuler`, no device-level `polarity`. OSC convention: `/sensor/{name}/{type}`. If you see legacy terminology in code or docs, flag it as a rename candidate — don't match it.
-- **Plan before executing — for what cannot be unwound.** A rename, a deletion, or a refactor that crosses modules gets a sketch first (naming, files, risks) and a confirmation. A bounded change inside one module, or anything a green audit proves, just goes; the round trip on every change cost more than it saved (Ek, 2026-09-05).
-- **Surface debt.** Flag stale docs, inconsistent naming, dead code when you see them — don't silently accommodate.
+- **Plan before executing — for what cannot be unwound.** A rename, a deletion, or a refactor that crosses modules gets a sketch first (naming, files, risks) and a confirmation. A bounded change inside one module, or anything a green audit proves, just goes; the round trip on every change cost more than it saved (Ek).
+- **Surface debt.** Flag stale docs, inconsistent naming and dead code — never silently accommodate.
 - **Session hygiene — the cheap session is the goal.** Start with this file and the open items in `docs/TODO.md` that touch the task; read nothing else end to end. Run the ONE audit the diff maps to (`node scripts/audit-for.js`, see Debugging approach), never the whole set. End by writing one entry of five lines or fewer per thing done into `docs/archive/TODO-DONE-<month>.md`, any new ruling as one paragraph in `docs/RULINGS.md`, and the long reasoning in the commit message. Nothing is added to this file unless a rule of the codebase changed. `/finish` is this close-out as one command; `/release` is the release checklist; a parallel session lives in its own worktree (`claude --worktree`, then `sh scripts/worktree-setup.sh`).
 
 ## Tech stack
@@ -55,9 +55,8 @@ docs/               — project reference documents (see below)
 
 ## What's live, and what only looks live
 
-The repo carries finished experiments alongside running code. Recency and plausible shape are
-not evidence — a stale `.maxpat` reads as authoritative until someone checks its UDP port. So
-each area has a marker; use it before treating anything as how mubone works.
+The repo carries finished experiments alongside running code. Recency is not evidence — a stale
+`.maxpat` reads as authoritative until someone checks its UDP port. Each area has a marker.
 
 - **`js/`** — the gate is *imported by `main.js`*. See "Off-main-GUI work" below. Since
   2026-09-05 every module in `js/` is on the right side of it (`docs-audit` fails on a new orphan
@@ -89,18 +88,19 @@ about either is specific to Max.
   WebSocket) is the implementation this repo maintains and ships; mubone-joycon-gui has its own,
   and the example Max patches (git history) a third.
 
-The address namespace is the dispatch `switch` in `js/osc.js` — an address that isn't in there
-isn't handled, whatever a patch or a doc says. `README.md` tabulates it.
+The address namespace is the dispatch `switch` in `js/osc.js` — an address not in there is not
+handled, whatever a patch or a doc says. `README.md` tabulates it.
 
-**Max is external, always** — see the bullet above; the patches are history and the two ports are the whole contract.
+**Max is external, always** — see above; the patches are history and the two ports are the whole contract.
 
 **Effort goes to Electron. The browser build is a demo** — not a second product held at parity.
-It exists so the instrument can be shown without an install. Two things follow, both already true
-in code: the hosted origin never opens the WebSocket (`_bridgeReachable()`), so the public demo
+It exists so the instrument can be shown without an install. Two things follow, both true in code: the hosted origin never opens the WebSocket (`_bridgeReachable()`), so the public demo
 has no OSC input; and Electron-only controls are expected to degrade visibly rather than work.
 `scripts/browser-audit.js` guards the second and stays mandatory at release — it catches Electron-only
 assumptions leaking into shared modules, which breaks the rig too. Its offline / service-worker
-assertions are demo-grade and can be relaxed if they ever cost real time.
+assertions are demo-grade and can be relaxed if they ever cost real time. **The phone is the hosted
+demo in a phone's browser** (`js/mobile.js`: gyro steers, a touch is the spacebar, the chrome hidden) —
+no separate app, no phone work beyond `node scripts/phone-audit.js` staying green.
 
 ## Design and UX work
 
@@ -112,19 +112,19 @@ tokens, the footer row grid, the rail's selection shapes, the settings type cont
 **Never claim something is aligned, centred, consistent or balanced without measuring it.** This is
 the project's most-repeated failure: six times in two days a design change was reported as done, by
 eye, and was wrong — captions on seven baselines, a group 105px into its neighbour, 32.4px of air
-against 18.4. Every cause was structural and invisible until read as numbers. Read the live values,
-change one thing, read them again.
+against 18.4. Every cause was structural and invisible until read as numbers. Read, change one
+thing, read again.
 
     npm run audit:align     # the alignment invariants, against the running app; needs `npm run electron:dev`
 
 It talks to the app through `.dev-bridge/` instead of launching Electron, so unlike the rig
-harnesses it runs anywhere with access to the repo folder. **A design bug that shipped should leave
-an invariant behind** — adding one is usually four lines, and the audit's blind spots are how the
-regressions got out.
+harnesses it runs anywhere with the repo folder. **A design bug that shipped should leave
+an invariant behind** — usually four lines, and the audit's blind spots are how the regressions
+got out.
 
 Two CSS traps, each of which has already cost a wrong diagnosis: an inline `style="font-size:…"`
 outranks every stylesheet rule, and specificity is not reading order — a four-class selector beats
-a three-class one however far down the file it sits.
+a three-class one anywhere.
 
 ## Key architecture patterns
 
@@ -137,10 +137,10 @@ words — read that entry before touching the area, and put a new ruling there, 
 - **Accessory registry** (`accessory-registry.js`; its table UI was sunset 2026-08-28, git history): the x-IMU3-SA-A8's 8 channels (pad numbers 1–8, not indices) bind to the shared `ACTIONS` registry (`S._actions` / `S._dispatchAction`). Accessory, MIDI, keys and OSC all dispatch through ONE table — never add a parallel mapping system. Device settings are read on connect, never written automatically.
 - **VBAP** spatial panning: pre-computed lookup, O(1) per grain, any speaker count. Head-locked vs world-locked modes.
 - **A tile is the preset**: every grain tile owns and persists its whole block (`mubone_tiles`); the patch bank was sunset 2026-09-03 (git history).
-- **The hand exists only while something plays** (`js/tiles.js`). The engine flags (`traceMode`, `commitMode`, `scanMuted`, `lensReads`, `composerMode`) are the truth underneath; the tile screen drives them one way and follows them the other. `docs/archive/BRUSH-MODEL.md`.
+- **`_held` is what plays, null between presses** (`js/tiles.js`). The engine flags (`traceMode`, `commitMode`, `scanMuted`, `lensReads`, `composerMode`) are the truth underneath; the tile screen drives them and follows them. `docs/archive/BRUSH-MODEL.md`.
 - **One screen, and the rig cabinet** (`js/tile-layout.js`): the tile screen IS the app. `.top-bar` and `.right-panel` are permanently `display:none` and hold the 41 cabinet elements the engine pages write through. **Never delete a control there because nothing shows it** — move it to whatever owns its state, `engine-audit` green after.
-- **ONE TILE, ONE VERB, and the verb is the TILE's** (`docs/PALETTE-GUI.md` is the authority — read it): `mubone_palette` is `[{id,verb}]`, ≤ 9; a tile fires `bang` · `momentary` · `toggle`, set in its drawer head from `verbsOf`. One action and one OSC address per POSITION (`palette_N`; its `type` is a getter over the verb), the same tool may sit twice in two verbs, nothing dedupes, built by DRAG only. The verb is DRAWN as the shape — one property, `border-radius` (`VERB_RADIUS`).
-- **Arming is deleted** (2026-09-11): no `sel`, no armed box; `_held` is the whole hand, null between presses. No main button — space, the sphere click, `F`, the `/trace` pair are gone. A rail click does NOTHING (its ⋯ is the door), a click on the STRIP fires, `Tab` follows `lastFired`. **Every learned key and MIDI note is a button** (`dispatchGesture`): one recogniser, six gestures, one set of timings.
+- **ONE TILE, ONE VERB, and the verb is the TILE's** (`docs/PALETTE-GUI.md` is the authority — read it): `mubone_palette` is `[{id,verb}]`, ≤ 9; a tile fires `bang` · `momentary` · `toggle`, set by right-click on the strip tile from `verbsOf`. One action and one OSC address per POSITION (`palette_N`; its `type` is a getter over the verb), the same tool may sit twice in two verbs, built by DRAG only. The verb is DRAWN as the shape — `border-radius` (`VERB_RADIUS`).
+- **The hand, and quick access** (2026-09-12; arming stays deleted). **The hand is ONE tool** (`inHand`): a CLICK on its row or tile picks it; **space** and a **left-click on the sphere** play it in one global verb (`handVerb`), the hand tile at the strip's head; both are unlearnable. **The strip is quick access**: a tile fires from its own key in its own verb, never touching the hand; a key belongs to its TILE (a drop takes the next free digit); its sticker is the learn cell. `Tab` shows the tool rail, never a drawer; the row's panel button (`[data-more]`) is the drawer's door. **Every learned key and note is a button** — one recogniser.
 - **Overdub** (tape kind) records into the NEAREST pinned loop as a phase-locked layer on the master's gain nodes, pass by pass; nothing pinned, the first take IS the main loop, pinned on release like the looper. **Wash** (grain kind) pins its stroke at release as a moving cloud through the grain sheet's `on end` row (`S.traceMode`: `trace` / `trace+cloud`; `trace+loop` is deleted). `docs/archive/OVERDUB-PLAN.md`.
 - **Shape encodes affordance** (rectangle = action, switch = yes/no, capsule = which one), **one hue per engine** (`--eng-*`), **never dim to mean anything**, flat surfaces. A true boolean on an engine sheet is the SWITCH, not an `on | off` capsule (2026-09-07). `docs/INSTRUMENT-GUI.md`.
 - **One settings door** (`#settingsModal`, `js/ui-settings.js`): a section's body is the REAL modal's `.mu-dialog` moved in and moved back on close — never a copy, and anything borrowed must be returned. A setting with no nav item has no way in.
@@ -161,7 +161,7 @@ The grain scheduler is timing-sensitive (10 ms interval, audio-rate onset precis
 - **`_TRAIL_BUDGET = 120`** — total trail projections per frame, shared across all moving seeds. Keep this low. The old value (200) caused measurable scheduler drift.
 - **`_interpolateMovingSeed()` reuses `seed._currentFrame`** — no per-tick object allocation in the scheduler. Don't change this to return a new object.
 
-If you add new per-frame work to the render loop (especially anything with trig, projection, or canvas calls), profile against scheduler drift first.
+New per-frame render work (trig, projection, canvas calls): profile against scheduler drift first.
 
 ## Off-main-GUI work lives in the DevTools console
 
@@ -174,11 +174,11 @@ The old `?exp` URL flag and `js/exp/` subfolder were removed (2026-04-23). Every
 - Do NOT add a new `js/exp/` or `js/experimental/` or `js/beta/` subfolder. All modules live flat under `js/`.
 - Do NOT import a new experimental module from `main.js` if it's not ready to always-run. Let it sit in `js/` as a standalone module and load it from the DevTools console when you want to try it.
 
-If a module is mature enough to always load, wire it into `main.js` directly. If it's not, leave it unreferenced — Ek will pull it in from the console. This is the one-bit gate: "imported by `main.js`" vs "not imported by `main.js`". No URL flags.
+A module mature enough to always load is wired into `main.js`; otherwise it stays unreferenced and Ek pulls it in from the console. One-bit gate: imported by `main.js` or not. No URL flags.
 
 ## Versioning — releases are explicit, never automatic
 
-Current version: **1.14 alpha** (`1.14.0-alpha` in `package.json`). **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (commits are per change — see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
+Current version: **1.15 alpha** (`1.15.1-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
 
 1. **`index.html`** — BOTH version strings: the `<span class="top-bar-version">` (cabinet, hidden) and the chrome brand `<b>mubone</b> <i>1.14</i>`, which is the one the player sees. 1.14 bumped the span and left the brand on 1.13
 2. **`package.json`** line 3 — the `"version"` field (semver, e.g. `"1.10.0-alpha"`)
@@ -190,7 +190,7 @@ Current version: **1.14 alpha** (`1.14.0-alpha` in `package.json`). **Do not bum
    1.12 through the whole 1.13 cycle, in the one file every session reads first, because the
    checklist did not name them.
 
-Bump the minor number for feature work or meaningful bug fixes (1.10 → 1.11). Bump the patch for hotfixes (1.10.1). Stay on "alpha" until public beta. `git push` is explicit — never automatic; a commit closes every change.
+Bump the minor for feature work or meaningful fixes (1.10 → 1.11), the patch for hotfixes (1.10.1). Stay on "alpha" until public beta. `git push` is explicit, never automatic; a commit closes every change.
 
 ## Reference documents (read as needed)
 
@@ -259,8 +259,8 @@ Bump the minor number for feature work or meaningful bug fixes (1.10 → 1.11). 
 
 ## Code style
 
-- Match existing patterns — look at neighboring code before writing
-- Comments explain *why*, not *what*
+- Match existing patterns — read neighbouring code first
+- Comments explain *why*
 - Constants at top of `state.js`, not scattered across modules
 - UI wiring goes through `S` callbacks to avoid circular imports
-- Performance-sensitive paths (grain scheduling, render loop) must stay lean
+- Hot paths (grain scheduling, render loop) stay lean

@@ -95,7 +95,10 @@ function parseActions() {
     if (cur && L.trim() && !/^\s*\{\s*id:/.test(L)) cur.text += '\n' + L;
     if (/^\s*\{\s*id:\s*null/.test(L)) cur = null;
   }
-  return rows.map(r => ({
+  // Only ACTIONS rows carry a label; midi.js also opens `{ id: '…', verb }`
+  // lines for the factory strip (PALETTE_FACTORY_ENTRIES, 2026-09-12), which
+  // read as actions with no dispatch case until this filter.
+  return rows.filter(r => /\blabel:/.test(r.text.split('\n')[0])).map(r => ({
     id:   r.id,
     line: r.line,
     osc:  (/osc:\s*'([^']+)'/.exec(r.text) || [])[1] || null,
@@ -226,6 +229,13 @@ const NOISE = /^camQ\.|^cursorQ\.|^gazeTrail\.|Until$|^perf\.|^fps/;
 const NEEDS_STATE = new Map([
   ['/cursor/tare',      'needs a connected sensor'],
   ['/commit/release',   'needs a commit to exist'],
+  // The factory strip's unpin tile (2026-09-12: dots · line · loop · dub ·
+  // scrape · pin · unpin). Proven on a rig: /palette/6 pins, /palette/7 then
+  // releases it — with nothing pinned it has nothing to move.
+  ['/palette/7',        'the factory unpin tile — needs a commit to exist'],
+  // launch() starts the rig muted; a hold from muted to muted, released to
+  // the state at press time (muted), moves nothing. Proven on a rig.
+  ['/mute/hold',        'the rig launches muted; the hold restores the muted state it found'],
   ['/commit/clear',     'needs a commit to exist'],
   // /mapping/toggle/1–4 were listed here until 2026-09-05, when the addresses
   // were deleted (never bound). Wet lives in tiles.js's module-local _tileCfg

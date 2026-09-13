@@ -97,8 +97,14 @@ function _flushInput() {
 // The insets are cached and only recomputed when a rail opens or closes or the
 // window resizes, because this is read on every pointer move and a
 // getBoundingClientRect per rail per event is a forced layout at pointer rate.
-const _STAGE_RAILS = { left: ['#toolRail', '#propRail'], right: ['#tcRail'] };
-let _stageInset = { l: 0, r: 0 };
+// The PALETTE is the bottom edge (Ek, 2026-09-12: "make it move faster at the
+// top of the palette bar, that speed there should be the same as the top
+// edge. it's moving real slow near that top edge of the palette"): the dock
+// overlays the lower stage the way the rails overlay its sides, so the
+// vertical offset is measured against the stage above it — hard over at the
+// strip's top edge, and the pointer is off-stage once it is on the strip.
+const _STAGE_RAILS = { left: ['#toolRail', '#propRail'], right: ['#tcRail'], bottom: ['#paletteDock'] };
+let _stageInset = { l: 0, r: 0, b: 0 };
 let _stageInsetDirty = true;
 
 function _railExtent(sel, side) {
@@ -111,8 +117,9 @@ function _railExtent(sel, side) {
   const c = S.canvas.getBoundingClientRect();
   // How far the rail eats INTO the canvas from that side — a rail parked
   // off-canvas (a closing transition) contributes nothing.
-  return side === 'left' ? Math.max(0, Math.min(r.right - c.left, c.width))
-                         : Math.max(0, Math.min(c.right - r.left, c.width));
+  return side === 'left'   ? Math.max(0, Math.min(r.right - c.left, c.width))
+       : side === 'bottom' ? Math.max(0, Math.min(c.bottom - r.top, c.height))
+                           : Math.max(0, Math.min(c.right - r.left, c.width));
 }
 
 function _stageInsets() {
@@ -120,10 +127,12 @@ function _stageInsets() {
     _stageInsetDirty = false;
     const l = Math.max(0, ..._STAGE_RAILS.left.map(s => _railExtent(s, 'left')));
     const r = Math.max(0, ..._STAGE_RAILS.right.map(s => _railExtent(s, 'right')));
+    const b = Math.max(0, ..._STAGE_RAILS.bottom.map(s => _railExtent(s, 'bottom')));
     // Never let the rails claim the whole stage: if they somehow cover
     // everything, fall back to the full canvas rather than dividing by ~0.
-    _stageInset = (l + r) > 0 && (l + r) < 0.9 * S.canvas.getBoundingClientRect().width
-      ? { l, r } : { l: 0, r: 0 };
+    const c = S.canvas.getBoundingClientRect();
+    _stageInset = { ...((l + r) > 0 && (l + r) < 0.9 * c.width ? { l, r } : { l: 0, r: 0 }),
+                    b: b > 0 && b < 0.9 * c.height ? b : 0 };
   }
   return _stageInset;
 }
@@ -514,7 +523,17 @@ export function setupEvents() {
   });
 
   // ── Mouse tracking on canvas ─────────────────────────────────────────────
-  S.canvas.addEventListener('mousemove', e => {
+  // ON THE DOCUMENT, not the canvas (Ek, 2026-09-12, night: "with the palette
+  // bar in the way, the pull moves the sphere really slowly when i want to
+  // pull down"). The palette's bed sits over the lower stage and takes the
+  // pointer, so a canvas listener stopped hearing the mouse the moment it
+  // crossed the strip's top edge — the steer offset froze a few px under
+  // centre, which reads as a slow pull. The canvas RECT is still the
+  // boundary: inside it the mouse steers whatever is drawn on top, outside
+  // it (the chrome, the footer) the mouse has left, which is what
+  // `mouseleave` said before.
+  const _CHROME = '.tc-bar, .tc-rail, .tc-lrail, .tc-prail, #paletteDock, #settingsModal, .mu-modal, .mu-dialog';
+  document.addEventListener('mousemove', e => {
     // Sensor mode: mouse doesn't drive camera — skip
     if (S.cameraMode === 'sensor') return;
 
@@ -531,6 +550,15 @@ export function setupEvents() {
     // Pull mode: standard mouse tracking
     if (!S.altLocked) {
       const rect  = S.canvas.getBoundingClientRect();
+      const inside = e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom;
+      // THE CHROME IS OUTSIDE (Ek, 2026-09-12: "when my mouse is trying to
+      // engage with either rail or the header or footer row or the palette
+      // bar, basically anywhere i'm trying to use the GUI, the sphere should
+      // automatically stop spinning"). The rails and the palette overlay the
+      // canvas, so the rect alone kept the steer alive under a pointer that
+      // was reaching for a tile; a pointer on any chrome has left the stage,
+      // and the steer stops dead rather than holding its last offset.
+      if (!inside || e.target.closest(_CHROME)) { S.mouseInCanvas = false; return; }
       // STEER offset is measured against the reachable stage (canvas minus any
       // open rails) so the rail edge means hard over; the PIXEL coordinates
       // stay in canvas space, because they answer a different question — where
@@ -538,9 +566,10 @@ export function setupEvents() {
       const ins  = _stageInsets();
       const sx0  = rect.left + ins.l;
       const sw   = Math.max(1, rect.width - ins.l - ins.r);
+      const sh   = Math.max(1, rect.height - ins.b);
       const clamp1 = v => v < -1 ? -1 : v > 1 ? 1 : v;
       _pendingMouseX = clamp1(((e.clientX - sx0) / sw - 0.5) * 2);
-      _pendingMouseY = clamp1(((e.clientY - rect.top) / rect.height - 0.5) * 2);
+      _pendingMouseY = clamp1(((e.clientY - rect.top) / sh - 0.5) * 2);
       _pendingPixelX = (e.clientX - rect.left) * (S.canvas.width  / rect.width);
       _pendingPixelY = (e.clientY - rect.top)  * (S.canvas.height / rect.height);
       S.mouseInCanvas = true;
@@ -550,8 +579,9 @@ export function setupEvents() {
       }
     }
   });
-  S.canvas.addEventListener('mouseleave', () => {
-    // Surface mode: keep last position so camera stays put when cursor leaves
+  // The leave is the rect test above; a `mouseleave` on the canvas fired on
+  // every crossing into the palette's bed, which is inside the stage.
+  document.addEventListener('mouseleave', () => {
     if (S.cameraMode === 'surface') return;
     if (!S.altLocked) S.mouseInCanvas = false;
   });

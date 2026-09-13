@@ -80,7 +80,7 @@
     <div class="top-bar-left">
       <div class="top-bar-brand">
         <span class="top-bar-logo">mubone</span>
-        <span class="top-bar-version">1.14 alpha</span>
+        <span class="top-bar-version">1.15 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="mu-btn--bare top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -136,7 +136,6 @@
         </button>
         <button id="exportSetupBtn" class="mu-btn--bare top-bar-btn" title="export all settings and key mappings as a JSON file">↑ export</button>
         <button id="importSetupBtn" class="mu-btn--bare top-bar-btn" title="import settings from a previously exported JSON file">↓ import</button>
-        <button id="resetBtn" class="mu-btn--bare top-bar-btn" title="reset stored settings to defaults — pick what to clear, or select all for a full factory reset">↺ reset</button>
         <button id="learnModeBtn" class="mu-btn--bare top-bar-btn" title="learning mode — instant tooltips on hover">? learn</button>
       </div>
     </div>
@@ -155,7 +154,7 @@
          of right-hand pills never said. -->
     <div class="tc-side tc-side-l">
       <span class="tc-grp">
-        <button type="button" class="tc-icon tc-drawer" id="tcTools" aria-pressed="false" title="tools — the library. Click a tool to open it in the drawer; drag it onto the palette to place it (Esc hides)">
+        <button type="button" class="tc-icon tc-drawer" id="tcTools" aria-pressed="false" title="tools — Tab shows and hides the rail. Click a tool to open it in the drawer; drag it onto the palette to place it (Esc hides)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.75" width="18" height="14.5" rx="2.4"/><path d="M9.4 4.75v14.5"/></svg>
         </button>
       </span>
@@ -203,7 +202,7 @@
          wordmark's own colour without 9KB of path data in this file. -->
     <div class="tc-brand">
       <img class="tc-mark" src="logo/mark-light.svg" alt="" aria-hidden="true" width="18" height="18">
-      <b>mubone</b> <i>1.14</i>
+      <b>mubone</b> <i>1.15</i>
     </div>
     <!-- SHAPE ENCODES AFFORDANCE (#267), now four vocabularies:
            .tc-icon    a bare GLYPH — an action, no box. The browser toolbar's
@@ -260,7 +259,7 @@
       <!-- The rail's door is its own group, so the hairline the left side draws
            between its door and the next group draws here too (Ek, 2026-09-10). -->
       <span class="tc-grp">
-        <button type="button" class="tc-icon tc-drawer" id="tcPinned" aria-pressed="false" title="pinned — the rail of held material on the right">
+        <button type="button" class="tc-icon tc-drawer" id="tcPinned" aria-pressed="false" title="pinned — ⇧Tab shows and hides the rail of held material on the right">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.75" width="18" height="14.5" rx="2.4"/><path d="M14.6 4.75v14.5"/></svg>
         </button>
       </span>
@@ -354,48 +353,47 @@
           </svg>
         </button>
       </div>
-      <!-- The pin ACTIONS live with the thing they act on (#267). They are
-           buttons, not options: each does something and returns to rest.
-           js/tiles.js fills this. They carried a target GROUP in their label
-           until the groups were sunset (2026-08-30); there is nothing to aim
-           now, so the label is just the verb. -->
+      <!-- The pin ROWS live with the thing they act on (#267), in the tool
+           rail's own row model since 2026-09-12: glyph, name, key; a click
+           fires, a drag places the act on the palette. js/tiles.js
+           renderPinChrome fills this. -->
       <div class="lyr-actions" id="tcPins"></div>
       <div class="lyr-list" id="lyrList"></div>
-      <!-- Two lines, not a paragraph (#256): a rail that is empty most of the
-           time should not be the wordiest thing on screen. The full rules
-           live in docs/KEYBOARD-SHORTCUTS.md and in the pin buttons' own
-           tooltips, which is where someone actually looks for them. -->
-      <div class="lyr-foot">Pinned material plays <b>off-cursor</b>.<br><b>=</b> pins · <b>−</b> unpins</div>
+      <!-- No foot (Ek, 2026-09-12, night: "remove all this helper text …
+           remove that area that it holds too"). The rules live in
+           docs/KEYBOARD-SHORTCUTS.md and in the pin buttons' own tooltips. -->
     </aside>
 
     <!-- The PALETTE (#250) — floats over the lower stage, centred: up to nine
-         positions, built by dragging rows in from the rail. A POSITION is a
-         button and its key plays what sits there; nothing is armed and no
-         tile carries an idle mark (2026-09-11). It is the instrument, so it
-         is on the instrument's surface rather than in the chrome; the dock
-         itself is pointer-transparent so the gaps still paint. js/tiles.js
-         renders it; the library is #tileBar. -->
+         positions, built by dragging rows in from the rail — QUICK ACCESS. A
+         POSITION is a button and its own key, button or note plays what sits
+         there. Under it the SPACEBAR PLATE names the tool IN HAND, which the
+         spacebar and a left-click on the sphere play (2026-09-12). It is the
+         instrument, so it is on the instrument's surface rather than in the
+         chrome; the dock itself is pointer-transparent so the gaps still
+         paint. js/tiles.js renders it; the library is #tileBar. -->
     <div class="palette-dock" id="paletteDock" data-zone="palette" aria-label="palette"></div>
 
     <!-- THE TOOL RAIL (#258) — Ableton's left browser, as the library.
          A LIST, not a strip: every tool the app has, grouped, one row each.
-         Clicking a row picks that tool for the DRAWER and plays nothing; the
-         ⋯ on it (or Tab) opens the properties rail beside it.
+         Clicking a row takes that tool IN HAND (space and the sphere's click
+         play it) and plays nothing; the ⋯ on it (or Tab) opens the
+         properties rail beside it.
          Both float over the stage, mirroring the pinned rail on the right so
          the screen reads as one idea from either edge. The horizontal strip
          this replaces made a list of tools look like a control surface.
          Source rows are js/ui-source.js; the rest is js/tiles.js. -->
     <aside class="tc-lrail" id="toolRail" data-zone="box" aria-label="tools">
+      <!-- No hide button (Ek, night: "there's already the rail opener icon");
+           the tools pill, `~`, Tab and Esc close it. -->
       <div class="lyr-bar">
         <span class="lyr-title">Tools</span>
-        <button type="button" id="toolRailHide" title="hide the tool rail (Esc)">hide</button>
       </div>
       <div class="lyr-list" id="toolRailList">
         <div class="srcbar" id="srcBar" role="list" aria-label="source"></div>
         <div class="lensbar" id="lensBar" role="list" aria-label="lenses"></div>
         <div class="tilebar" id="tileBar" role="list" aria-label="tools"></div>
       </div>
-      <div class="lyr-foot">Click a tool's ⋯ to open its <b>drawer</b>. <b>Drag</b> a tool, a lens or a pin onto the palette to give it a position — its key and a click on the strip play it.</div>
     </aside>
 
     <!-- THE PROPERTIES RAIL (#258) — the device view: whatever the tool rail
@@ -1457,13 +1455,26 @@
     <div class="set-section">
       <div class="set-sec-title">Bindings</div>
       <div class="set-sec-lede">One row per action. The OSC address and what it accepts sit under the action’s own name — they describe the same thing.</div>
+      <!-- WHICH KIND THE PALETTE SHOWS (PALETTE-GUI § 11.4): one choice, the
+           kit's segmented control — a tile wears one sticker, of one kind.
+           The three "on tiles" toggles under the column heads were the
+           ledger's; the ledger went with § 11.4 (2026-09-12). -->
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Shown on the palette</span>
+          <span class="set-row-desc">Which binding each tile wears as its sticker: its key, its button on the instrument, or its MIDI note. The table below always shows all three.</span>
+        </div>
+        <div class="set-ctl">
+          <div class="grain-seg" id="legendKindSeg" role="group" aria-label="binding shown on the palette">
+            <button type="button" class="grain-seg-btn" data-legend-kind="key">Key</button>
+            <button type="button" class="grain-seg-btn" data-legend-kind="button">Button</button>
+            <button type="button" class="grain-seg-btn" data-legend-kind="midi">MIDI</button>
+          </div>
+        </div>
+      </div>
       <div class="set-table set-table--keys">
         <div class="set-table-head set-table-row">
-          <span>Action</span>
-          <span>Keyboard<label class="set-legend-show" title="show keyboard bindings in the palette tiles' legends"><input type="checkbox" class="set-toggle" data-legend-kind="key"><small>on tiles</small></label></span>
-          <span>Button<label class="set-legend-show" title="show the instrument's button bindings in the palette tiles' legends"><input type="checkbox" class="set-toggle" data-legend-kind="button"><small>on tiles</small></label></span>
-          <span>MIDI<label class="set-legend-show" title="show MIDI note bindings in the palette tiles' legends"><input type="checkbox" class="set-toggle" data-legend-kind="midi"><small>on tiles</small></label></span>
-          <span>Scale</span>
+          <span>Action</span><span>Keyboard</span><span>Button</span><span>MIDI</span><span>Scale</span>
         </div>
         <div id="mappingTableBody"></div>
       </div>
@@ -2056,16 +2067,40 @@
       </div>
     </div>
 
+    <!-- RESET, on the page (Ek, 2026-09-12, night: "instead of a pop up, build
+         it into the settings page … one button that will reset all plus another
+         button reset selected"). Row model throughout: Reset all is one row
+         with the danger button, armed by a first click and fired by a second
+         (no dialog, no undo); then one row per storage category with the kit's
+         toggle, and Reset selected under them, live only while something is
+         on. js/main.js initResetSection renders the category rows from
+         storage-registry CATEGORIES and wires both buttons. -->
     <div class="set-section">
       <div class="set-sec-title">Reset</div>
-      <div class="set-sec-lede">There is no undo for this one.</div>
+      <div class="set-sec-lede">There is no undo for either. The page reloads afterwards.</div>
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Reset all</span>
-          <span class="set-row-desc">Clear every stored setting — tools, calibration, mappings and layout — and start from defaults.</span>
+          <span class="set-row-desc">Every stored setting — tools, calibration, mappings, layout — and the offline cache; the app starts from factory. Click twice.</span>
         </div>
         <div class="set-ctl">
-          <button class="set-btn set-btn--danger" data-proxy="resetBtn">Reset all…</button>
+          <button class="set-btn set-btn--danger" id="resetAllBtn">Reset all</button>
+        </div>
+      </div>
+      <div class="set-sec-lede" id="resetOrphans" hidden></div>
+    </div>
+
+    <div class="set-section">
+      <div class="set-sec-title">Reset selected</div>
+      <div class="set-sec-lede">Switch on what goes back to its defaults; everything else stays.</div>
+      <div id="resetCats"></div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Reset selected</span>
+          <span class="set-row-desc" id="resetSelectedDesc">Nothing selected.</span>
+        </div>
+        <div class="set-ctl">
+          <button class="set-btn set-btn--danger" id="resetSelectedBtn" disabled>Reset selected</button>
         </div>
       </div>
     </div>

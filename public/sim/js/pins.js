@@ -73,6 +73,35 @@ export function pinsIn(g) {
   return out;
 }
 
+/** AN EMPTY GROUP HOLDS NO STATE (Ek, 2026-09-12, night: "i muted the group.
+ *  then i erase that loop. when i go to make a new loop it starts muted. the
+ *  mute flag should reset if it's coming from no loops pinned"). The two
+ *  flags are the player's intent about the pins IN the group; with none
+ *  left there is nothing the intent is about, and the rail hides the row, so
+ *  a flag left set was invisible until the next pin was born silent. Called
+ *  from the rail's tick (ui-pins.js, on every change) and from applyMix. */
+/** A pin on its way OUT — a cloud fading through its release, a loop fading
+ *  or playing to its end after an unpin — is no longer IN its group: the slot
+ *  lingers for the tail, and counting it kept the flags alive exactly long
+ *  enough for the next pin to be born under them (Ek: "same issue with
+ *  clouds" — a release time was set). ui-presets treats such a slot as free. */
+function leaving(c) {
+  return c.type === 'cloud' ? c._releasingAt > 0 : !!(c._playingToEnd || c._fadingOut);
+}
+export function pruneEmptyGroups() {
+  let changed = false;
+  for (const g of GROUPS) {
+    if (!(g.muted || g.solo) || pinsIn(g).some(c => !leaving(c))) continue;
+    g.muted = false; g.solo = false; changed = true;
+  }
+  if (changed) S._pinsDirty = true;
+  return changed;
+}
+// The RELEASE is where it has to run (ui-presets.js _releaseSlotAt): at the
+// next pin's creation the newborn already counts as live, so a prune there
+// can no longer tell an emptied group from one that still holds a pin.
+S._prunePinGroups = pruneEmptyGroups;
+
 // ── The derivation ──────────────────────────────────────────────────────────
 
 /** Is anything soloed — a pin or a group. When nothing is, solo has no say. */
@@ -95,6 +124,7 @@ export function isPinAudible(c) {
  *  it is called after every flag change, when a pin arrives, and after an
  *  import — a pin born under a solo is silent from its first tick. */
 export function applyMix() {
+  pruneEmptyGroups();
   for (const c of S.commitSlots) {
     if (!c) continue;
     const want = isPinAudible(c);

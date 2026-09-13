@@ -882,7 +882,9 @@ async function run(rig) {
     // tick of waiting, so wait for the slots rather than for a fixed time.
     S.loopReleaseMode = 'fade';
     UP.clearAllCommits();
-    for (let w = 0; w < 40 && S.commitSlots.some(Boolean); w++) { G.scheduleGrains(); await sleep(25); }
+    // Up to 3 s: under the full rig-audit run the `ended` event has landed
+    // past the old 1 s and read as "one slot left" (2026-09-12, twice).
+    for (let w = 0; w < 120 && S.commitSlots.some(Boolean); w++) { G.scheduleGrains(); await sleep(25); }
     out.unpinAll = st();
     let n = 0; while (H.undoCount() > 0 && n < 20) { US.undoLastStroke(); await sleep(40); n++; }
     await tick(); out.top = { ...st(), n };
@@ -1352,7 +1354,10 @@ async function run(rig) {
 
     // Count the line segments one real frame draws from the reticle.
     const ctx = S.ctx;
-    const countLines = () => {
+    // The MIN of three frames: one line somewhere in the frame comes and
+    // goes on its own clock (784 vs 785 across a full rig-audit run, three
+    // times on 2026-09-12), and every assertion below is an exact difference.
+    const countOnce = () => {
       const realMove = ctx.moveTo.bind(ctx), realLine = ctx.lineTo.bind(ctx);
       let n = 0;
       ctx.moveTo = (...a) => realMove(...a);
@@ -1360,6 +1365,7 @@ async function run(rig) {
       try { R.drawFrame(); } finally { ctx.moveTo = realMove; ctx.lineTo = realLine; }
       return n;
     };
+    const countLines = () => Math.min(countOnce(), countOnce(), countOnce());
 
     tag(); const baseline = countLines();
     // The fan is the SELECTION and stands on its own: an empty glow map — the

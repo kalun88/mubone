@@ -14,7 +14,9 @@ mubone is a browser-based spatial granular synthesizer. You play into a mic, you
 
 **Set the latency once** — Settings → Audio → Latency shows what the app knows about the time in and out through your interface; press **Measure** with the output reaching the mic (speakers, or a cable) and the loop engine steers by the real figure from then on, per device pair.
 
-**Paint particles** — press **Space** to trace. Your live audio is captured and painted as colored dots onto the sphere at the cursor position. Press again to stop (the button is a toggle by default; Settings → keys + MIDI → *Main button* makes it momentary: paint only while held).
+**Paint particles** — click a tool in the left rail to take it **in hand** (the first tile of the palette, with the spacebar under it, shows it), then press **Space** or click the sphere to play it. Your live audio is captured and painted as colored dots onto the sphere at the cursor position. Press again to stop (the hand is a toggle by default; right-click that tile to make it momentary: paint only while held). The other palette tiles are quick access — each has its own key, shown under it.
+
+**On a phone** — open `mubone.org/sim` in the phone's browser and tap the ring. The phone's gyro turns the sphere, a touch on the sphere plays the tool in hand (the phone's spacebar), and the ⚙ button is the whole settings page: live sensor readout, axis and sign, mic and output. There is no rail or bar on the phone, and the palette is the hand tile alone — touch it or the sphere to play. iPhone asks for motion access at the tap; refuse it and the sphere stays still.
 
 **Move the cursor** — by default the camera is in **steer mode**: drag your mouse to rotate the sphere. The cursor stays at center and the sphere rotates around it. You can switch to **surface mode** (finger/trackpad position maps directly to sphere coordinates) or **sensor mode** (x-imu3) from the top bar.
 
@@ -69,7 +71,7 @@ The factory patches are wash, vinyl, cloud, pulse, shimmer, glitch, chop, ocean,
 
 **What's stored**: all grain parameters (duration, period, pitch, filter, volume, pan, search radius, etc.) — everything in the grain/search/commit panels. Locked parameters (if you've set any via the lock feature) are excluded from recall, so they stay at their current value when switching presets.
 
-**Persistence**: presets save to your browser's localStorage under the key `mubone_user_presets`. They survive page reloads and persist across sessions. A factory reset (in the settings menu) can optionally preserve your patches if you check "keep my patches."
+**Persistence**: every tile and setting lives in your browser's localStorage and survives reloads. Settings → Session has **Reset all** (two clicks, everything back to factory) and **Reset selected** (switch on the categories to clear). **On mubone.org the demo starts from factory on every new build** — it is a prototype, and nothing is kept across builds; Electron and a local server keep their settings.
 
 ## URL Parameters
 
@@ -109,8 +111,9 @@ The mapping module lets you wire IMU orientation axes directly to grain paramete
 
 | Key | Action |
 |-----|--------|
-| **Space** (tap) | Toggle trace on/off |
-| **Space** (hold) | Momentary trace (paint while held) |
+| **Space** / left-click on the sphere | Play the tool in hand — toggle by default, momentary after a right-click on the hand tile |
+| **1 … 9, ↑, ↓** | Fire a palette tile in its own verb (each tile wears its key) |
+| **Tab** | Show or hide the tool rail (the ⋯ on a row opens a tool's drawer) |
 
 ### Commits (Seeds)
 

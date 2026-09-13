@@ -16,7 +16,7 @@ import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
 import { resizeCanvas, animate, applyAxisSources, cameraFromPointing } from './renderer.js';
 import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initRadiusFade, initSeqMode, initMixdownGains, initDryMonitorGains, initAudioPanel, setScanMuted, initGateMeter } from './ui-meters.js';
 import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, getCameraQ, assignQuatRole, getRegistry as getSensorRegistry } from './sensor-registry.js';
-import { initOSC } from './osc.js';
+import { initOSC, _bridgeReachable } from './osc.js';
 import { initStatusPublisher } from './status-publisher.js';
 import { initXimuLedFeedback } from './ximu-led-feedback.js';
 import { initLedMapUI } from './ui-led-map.js';
@@ -169,6 +169,17 @@ async function _reloadWorkletEngine() {
 }
 
 function init() {
+  // ── A NEW BUILD WIPES THE DEMO (Ek, 2026-09-12, night) ───────────────────
+  // "my collaborators know that this is a prototype, they should expect
+  // nothing is kept, so wipe is silent." On the HOSTED origin only — Electron
+  // and localhost keep their settings — the app reads the deployed service
+  // worker's CACHE_VERSION (one no-store fetch; it is the key Ek already has
+  // to bump for a browser deploy to reach anyone at all, so "a new build" and
+  // "a new cache version" are one event) and compares it to the stamp it
+  // wrote last time. Different: the same wipe as Reset all — every key, the
+  // offline cache, the service worker — then the new stamp and a reload.
+  // A store with no stamp is fresh (or just reset) and needs no wipe.
+  _wipeOnNewBuild();
   // Forward main-process logs to DevTools console
   if (window.electronBridge?.onMainLog) {
     window.electronBridge.onMainLog((level, msg) => {
@@ -397,6 +408,24 @@ function init() {
   // "apply defaults live" path, because defaults are just what the modules
   // initialise to on a cold boot. Don't add one; the reload IS the mechanism.
   //
+  async function _wipeOnNewBuild() {
+    if (window.electronBridge || _bridgeReachable()) return;
+    let version = null;
+    try {
+      const txt = await (await fetch('./sw.js', { cache: 'no-store' })).text();
+      version = /CACHE_VERSION\s*=\s*'([^']+)'/.exec(txt)?.[1] ?? null;
+    } catch (_) {}
+    if (!version) return;
+    let stamp = null;
+    try { stamp = localStorage.getItem('mubone_build'); } catch (_) {}
+    if (stamp === version) return;
+    if (stamp === null) { try { localStorage.setItem('mubone_build', version); } catch (_) {} return; }
+    console.log(`[build] ${stamp} → ${version}: the demo starts from factory`);
+    try { localStorage.clear(); localStorage.setItem('mubone_build', version); } catch (_) {}
+    await Promise.race([_clearOfflineCache(), new Promise(r => setTimeout(r, 1500))]);
+    location.reload();
+  }
+
   // The one thing key deletion does NOT reach is Cache Storage + the service
   // worker (browser mode). Those survive and keep serving the previous build,
   // which makes "back to day one" untrue precisely when someone is resetting
@@ -414,109 +443,84 @@ function init() {
     } catch (_) {}
   }
 
-  // Reset — pick which storage categories go back to defaults. Select-all is
-  // the old factory reset (everything + offline cache + service worker).
-  document.getElementById('resetBtn')?.addEventListener('click', () => {
-    const overlay = document.createElement('div');
-    overlay.className = 'dlg-overlay';
-    const rows = CATEGORIES.map(c => `
-      <label class="reset-cat">
-        <input type="checkbox" data-cat="${c.id}">
-        <span class="reset-cat-text">
-          <span class="reset-cat-label">${c.label}</span>
-          <span class="reset-cat-hint">${c.hint}</span>
-        </span>
-      </label>
-    `).join('');
-
-    // Surface drift rather than hiding it: if a key is in localStorage but not
-    // in the registry, say so in the dialog. Select-all still clears it.
-    const orphans = unregisteredKeys();
-    const warn = orphans.length
-      ? `<p class="reset-warn">${orphans.length} stored key(s) aren't in the registry
-         (${orphans.join(', ')}) — only <em>select all</em> clears these.
-         They should be added to js/storage-registry.js.</p>`
-      : '';
-
-    overlay.innerHTML = `
-      <div class="dlg-dialog">
-        <div class="dlg-title">reset</div>
-        <p class="dlg-desc">Return the checked items to their defaults. The page reloads afterwards.</p>
-        <div class="reset-cats">
-          ${rows}
-          <label class="reset-cat reset-cat-all">
-            <input type="checkbox" data-all="1">
-            <span class="reset-cat-text">
-              <span class="reset-cat-label">select all + clear offline cache</span>
-              <span class="reset-cat-hint">full factory reset — also drops the service worker and cached build</span>
-            </span>
-          </label>
+  // ── RESET, ON THE SETTINGS PAGE (Ek, 2026-09-12, night) ──────────────────
+  // "instead of a pop up, build it into the settings page … one button that
+  // will reset all plus another button reset selected." The popup with its
+  // checkbox list is gone; the session page carries two rows of the kit
+  // (SETTINGS-GUI § 2–3): Reset all, a danger button armed by one click and
+  // fired by the next (the arm is the confirmation — it wears the second
+  // click's words for four seconds, then stands down), and one row per
+  // storage category with the kit's toggle, then Reset selected, live only
+  // while a toggle is on. The cabinet's `#resetBtn` went with the popup: the
+  // page owns the state now, and nothing else pointed at it.
+  function initResetSection() {
+    const allBtn = document.getElementById('resetAllBtn');
+    const selBtn = document.getElementById('resetSelectedBtn');
+    const cats   = document.getElementById('resetCats');
+    const desc   = document.getElementById('resetSelectedDesc');
+    const orph   = document.getElementById('resetOrphans');
+    if (!allBtn || !selBtn || !cats) return;
+    // Sentence case, as the dialog runs prose (SETTINGS-GUI § 5); the hint is
+    // the row's one-sentence description.
+    const sentence = t => t.charAt(0).toUpperCase() + t.slice(1).replace(/\.?$/, '.');
+    cats.innerHTML = CATEGORIES.map(c => `
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">${c.label.charAt(0).toUpperCase() + c.label.slice(1)}</span>
+          <span class="set-row-desc">${sentence(c.hint)}</span>
         </div>
-        ${warn}
-        <div class="dlg-btns">
-          <button class="dlg-btn dlg-cancel">cancel</button>
-          <button class="dlg-btn dlg-go" disabled>reset</button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-
-    const catBoxes = [...overlay.querySelectorAll('input[data-cat]')];
-    const allBox   = overlay.querySelector('input[data-all]');
-    const confirm  = overlay.querySelector('.dlg-go');
-
-    // Select-all drives the category boxes; unticking any one of them releases
-    // select-all (so you can't end up with the cache teardown armed while the
-    // categories it belongs with are unchecked).
+        <div class="set-ctl"><input type="checkbox" class="set-toggle" data-cat="${c.id}" aria-label="reset ${c.label}"></div>
+      </div>`).join('');
+    const boxes = [...cats.querySelectorAll('input[data-cat]')];
     const sync = () => {
-      const n = catBoxes.filter(b => b.checked).length;
-      confirm.disabled = n === 0 && !allBox.checked;
-      confirm.textContent = allBox.checked ? 'factory reset' : 'reset';
+      const on = boxes.filter(b => b.checked);
+      selBtn.disabled = on.length === 0;
+      desc.textContent = on.length === 0 ? 'Nothing selected.'
+        : `${on.length} of ${boxes.length} selected: ${on.map(b => CATEGORIES.find(c => c.id === b.dataset.cat)?.label).join(', ')}.`;
     };
-    allBox.addEventListener('change', () => {
-      catBoxes.forEach(b => { b.checked = allBox.checked; });
-      sync();
-    });
-    catBoxes.forEach(b => b.addEventListener('change', () => {
-      if (!b.checked) allBox.checked = false;
-      else if (catBoxes.every(x => x.checked)) allBox.checked = true;
-      sync();
-    }));
+    boxes.forEach(b => b.addEventListener('change', sync));
+    sync();
+    // Surface drift rather than hiding it: a key in localStorage that the
+    // registry does not know is cleared by Reset all alone.
+    const orphans = unregisteredKeys();
+    if (orph && orphans.length) {
+      orph.hidden = false;
+      orph.textContent = `${orphans.length} stored key(s) are not in the registry (${orphans.join(', ')}) — only Reset all clears them. They should be added to js/storage-registry.js.`;
+    }
 
-    overlay.querySelector('.dlg-cancel').addEventListener('click', () => overlay.remove());
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-
-    confirm.addEventListener('click', async () => {
-      confirm.disabled = true;
-      confirm.textContent = 'resetting…';
-
-      const cats     = catBoxes.filter(b => b.checked).map(b => b.dataset.cat);
-      const wipeAll  = allBox.checked;
-
-      if (wipeAll) {
-        // clear() rather than the key list, so anything unregistered goes too.
-        // This is the one path where being exhaustive beats being precise.
-        localStorage.clear();
-      } else {
-        for (const k of keysFor(cats)) {
-          try { localStorage.removeItem(k); } catch (_) {}
-        }
+    let armTimer = null;
+    const disarm = () => { clearTimeout(armTimer); armTimer = null; allBtn.textContent = 'Reset all'; allBtn.classList.remove('armed'); };
+    allBtn.addEventListener('click', async () => {
+      if (armTimer === null) {
+        allBtn.textContent = 'Click again to reset all';
+        allBtn.classList.add('armed');
+        armTimer = setTimeout(disarm, 4000);
+        return;
       }
-      console.log(`[reset] cleared: ${wipeAll ? 'everything' : cats.join(', ') || 'nothing'}`);
-
-      // Cache teardown is async, browser-only (no-op in Electron), and only
-      // part of a full reset. Race it against a timeout — a hang before
-      // location.reload() would leave the app half-wiped, which is worse than
-      // an uncleared cache.
-      if (wipeAll) {
-        await Promise.race([
-          _clearOfflineCache(),
-          new Promise(r => setTimeout(r, 1500)),
-        ]);
-      }
+      disarm();
+      allBtn.disabled = true; selBtn.disabled = true;
+      allBtn.textContent = 'Resetting…';
+      // clear() rather than the key list, so anything unregistered goes too.
+      // This is the one path where being exhaustive beats being precise.
+      localStorage.clear();
+      console.log('[reset] cleared: everything');
+      // Cache teardown is async, browser-only (no-op in Electron). Race it
+      // against a timeout — a hang before location.reload() would leave the
+      // app half-wiped, which is worse than an uncleared cache.
+      await Promise.race([_clearOfflineCache(), new Promise(r => setTimeout(r, 1500))]);
       location.reload();
     });
-  });
+    selBtn.addEventListener('click', () => {
+      const chosen = boxes.filter(b => b.checked).map(b => b.dataset.cat);
+      if (!chosen.length) return;
+      selBtn.disabled = true; allBtn.disabled = true;
+      selBtn.textContent = 'Resetting…';
+      for (const k of keysFor(chosen)) { try { localStorage.removeItem(k); } catch (_) {} }
+      console.log(`[reset] cleared: ${chosen.join(', ')}`);
+      location.reload();
+    });
+  }
+  initResetSection();
 
   // When speaker buses are (re)initialised, rebuild the main-window output meters.
   // Using a callback on S avoids a circular import between audio.js and ui-meters.js.

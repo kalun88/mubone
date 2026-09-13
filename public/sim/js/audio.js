@@ -29,6 +29,19 @@ export function makeSoftClipCurve(amount = 10) {
 
 // ── Audio context & master bus ──────────────────────────────────────────────
 
+/** A WAV of `seconds` of silence as a blob URL — the mobile speaker-routing
+ *  element's source (see ensureAudioContext). 8 kHz mono 16-bit. */
+function _silentWavUrl(seconds) {
+  const rate = 8000, n = Math.round(rate * seconds), data = n * 2;
+  const b = new ArrayBuffer(44 + data), v = new DataView(b);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + data, true); str(8, 'WAVE');
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, data, true);
+  return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+}
+
 export function ensureAudioContext() {
   if (!S.audioCtx) {
     // Use caller-supplied preferred rate (set by audio settings UI), then
@@ -47,9 +60,12 @@ export function ensureAudioContext() {
     // Playing a silent looping <audio> element forces Chrome/Android to switch
     // the audio session to media/loudspeaker mode for the whole AudioContext.
     if (S.isMobile) {
-      // Minimal valid WAV: 44-byte header + 0 samples of data
+      // ONE SECOND of silence, not zero samples (2026-09-12): a 0-sample WAV
+      // on loop is a media element that ends and restarts continuously, and
+      // it ate the main thread — a phone-emulated page answered a script call
+      // in 5 s with it and 2 ms without (TODO #349). 8 kHz mono 16-bit.
       const silentAudio = document.createElement('audio');
-      silentAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+      silentAudio.src = _silentWavUrl(1);
       silentAudio.loop   = true;
       silentAudio.volume = 0.001; // effectively inaudible but keeps the session alive
       silentAudio.play().catch(() => {});

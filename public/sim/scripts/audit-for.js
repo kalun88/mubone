@@ -72,6 +72,9 @@ const MAP = [
   [/^js\/main\.js$|^sw\.js$/,
     'node scripts/browser-audit.js',
     'browser mode itself changed — otherwise this one is release-only'],
+  [/^js\/mobile\.js$/,
+    'node scripts/phone-audit.js',
+    'the phone: mobile mode on, chrome hidden, the tap-to-begin flow, the motion permission inside the tap, a gyro event, a touch as the spacebar (playwright, ~1 min)'],
 ];
 
 function changedFiles(base) {

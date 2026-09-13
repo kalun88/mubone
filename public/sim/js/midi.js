@@ -46,9 +46,12 @@ const ACTIONS = [
   // ── Palette (2026-09-03, #327; positions 1–9 since 2026-09-11) ───────────
   // ONE ROW PER POSITION (docs/PALETTE-GUI.md § 1). A POSITION is a button and
   // this is where it is bound, whatever sits there today — the performer
-  // designs the palette first and maps to positions after (Ek). The digits 1–9
-  // are the factory keys, by position (Ek, 2026-09-04), and a relearned one
-  // gives its digit up (tiles.js `_keyRelearned`).
+  // designs the palette first and maps to positions after (Ek). Every key on
+  // a position is an explicit row in the key map — seeded from the factory
+  // set once, the next free digit given on a drop — and it FOLLOWS ITS TILE
+  // when the strip is rearranged (S._paletteReordered, 2026-09-12). The
+  // SPACEBAR and the sphere's left-click are the HAND's (tiles.js) and are
+  // learnable onto nothing.
   //
   // `type`, `fmt` and `tip` are GETTERS because the tile's VERB decides them
   // and the verb is set in the tile's drawer at any time: a momentary tile is
@@ -108,8 +111,10 @@ const ACTIONS = [
   // (toggle)", on `/trace` and `/trace/toggle`, with spacebar and the sphere
   // click as their factory keys — stood at the head of this group until
   // 2026-09-11. Both meant "fire the tool in the hand", and with arming gone
-  // there is no hand: a press names the POSITION it plays, so those two rows
-  // had nothing left to address. Spacebar is learnable onto any palette row.
+  // there was no hand. The hand is back since 2026-09-12 (tiles.js `inHand`),
+  // but not as a ROW: the spacebar and the sphere's click are wired to it
+  // directly, reserved, and refused by the learn — so there is still nothing
+  // here to bind.
   { id: null, group: 'recording' },
   { id: 'handsfree',   label: 'handsfree (toggle)',          key: 'H',                 osc: '/handsfree',         fmt: 'bang',             type: 'trigger',
     tip: 'toggle handsfree arm — when on, toggle-trace segments buffers at the paint gate threshold, with its own envelope' },
@@ -397,12 +402,39 @@ let midiMappings = {};
 let midiLearningId = null;
 let midiAccess = null;
 
-// The binding kinds a palette tile's legend draws — see the switches in
-// initMidi. Read by tiles.js paletteLegend through S._legendShown.
-const LEGEND_KINDS_DEFAULT = { key: true, button: false, midi: false };
-let legendKinds = { ...LEGEND_KINDS_DEFAULT };
-try { const saved = JSON.parse(localStorage.getItem('mubone_legend_kinds') || 'null'); if (saved && typeof saved === 'object') legendKinds = { ...LEGEND_KINDS_DEFAULT, ...saved }; } catch (_) {}
-S._legendShown = kind => !!legendKinds[kind];
+// THE ONE BINDING KIND THE PALETTE SHOWS (PALETTE-GUI § 11.4, 2026-09-12):
+// key · button · midi, chosen on the keys page's segmented row, read by
+// tiles.js paletteLegend. It was three booleans (`mubone_legend_kinds`) for
+// the afternoon's ledger; the first that was on carries over, once.
+const LEGEND_KINDS = ['key', 'button', 'midi'];
+let legendKind = 'key';
+try {
+  const one = localStorage.getItem('mubone_legend_kind');
+  if (LEGEND_KINDS.includes(one)) legendKind = one;
+  else {
+    const old = JSON.parse(localStorage.getItem('mubone_legend_kinds') || 'null');
+    if (old && typeof old === 'object') { legendKind = LEGEND_KINDS.find(k => old[k]) ?? 'key'; localStorage.setItem('mubone_legend_kind', legendKind); }
+  }
+  localStorage.removeItem('mubone_legend_kinds');
+} catch (_) {}
+function _paintLegendKind() {
+  document.querySelectorAll('#legendKindSeg [data-legend-kind]').forEach(el => {
+    const on = el.dataset.legendKind === legendKind;
+    el.classList.toggle('active', on); el.setAttribute('aria-pressed', String(on));
+  });
+}
+S._legendKind = () => legendKind;
+S._setLegendKind = kind => {
+  if (!LEGEND_KINDS.includes(kind) || kind === legendKind) return;
+  legendKind = kind;
+  try { localStorage.setItem('mubone_legend_kind', kind); } catch (_) {}
+  _paintLegendKind();
+  S._bindingsChanged?.();
+};
+// The afternoon's two-argument form, kept for the audits: "show this kind"
+// chooses it; "hide" is a no-op — one kind is always shown.
+S._legendShown = kind => kind === legendKind;
+S._setLegendShown = (kind, on) => { if (on) S._setLegendKind(kind); };
 
 // Key/scroll mappings: { actionId → { key, code, shift, ctrl, meta, type } }
 // type: 'key' | 'scroll_up' | 'scroll_down'
@@ -511,7 +543,10 @@ function loadKeyMappings() {
   try {
     const saved = localStorage.getItem('mubone_key_map');
     if (saved) keyMappings = JSON.parse(saved);
-    if (_migrateIds(keyMappings)) saveKeyMappings();
+    let dirty = _migrateIds(keyMappings);
+    // The spacebar is the hand's (2026-09-12): a row on it is not a binding.
+    for (const [id, km] of Object.entries(keyMappings)) if (km && km.type === 'key' && km.code === 'Space') { delete keyMappings[id]; dirty = true; }
+    if (dirty) saveKeyMappings();
   } catch(e) { keyMappings = {}; }
 }
 
@@ -524,45 +559,77 @@ function loadKeyMappings() {
 // palette key is an explicit row in this map, seeded once from the factory
 // digits, and `S._paletteReordered` carries the three maps along with every
 // place, move and remove — so what a tile answers to is a property of the
-// tile on the strip. A tile that arrives on the strip has NO key until one is
-// learned (Ek, 2026-09-12: "don't auto find a key to assign when i drag
-// things into the palette"). `{ type: 'none' }` — a removed factory digit — has nothing to
-// remove any more and is dropped: an unbound row is just unbound.
+// tile on the strip. A tile that ARRIVES takes the next free digit (Ek,
+// 2026-09-12, afternoon: "the palette bar should auto assign based on the
+// next number up that's available when a tool is dragged in" — reversing the
+// morning's "don't auto find a key"; the key then stays with the tile
+// wherever it is moved). `{ type: 'none' }` — a removed factory digit — has
+// nothing to remove any more and is dropped: an unbound row is just unbound.
+//
+// THE SPACEBAR IS THE HAND'S (tiles.js, 2026-09-12) and cannot be a binding:
+// the learn refuses it (BLOCKED_KEYS) and loadKeyMappings drops any stored
+// row on it — the morning's factory seed put it on line and pen.
 const _PALETTE_DIGITS_KEY = 'mubone_palette_digits';
-const _PALETTE_DIGITS_V   = '2026-09-12b';
+const _PALETTE_DIGITS_V   = '2026-09-12d';
 const _keyRow = (key, code, g = 'press') => ({ type: 'key', key, code, shift: false, ctrl: false, meta: false, g });
 function _digitRow(d) { return _keyRow(String(d), `Digit${d}`); }
 // THE FACTORY KEYS, by TILE, for the factory strip in tiles.js
-// DEFAULT_PALETTE (Ek, 2026-09-12): 1 · 2 · 3 for the wide lens, wash and
-// overdub; the SPACEBAR for line as a press and for pen as a long — one key,
-// two gestures, the recogniser tells them apart; ↑ unpins and ↓ pins. Seeded
-// onto whichever POSITION holds that tile, so a profile with its own order
-// still gets the spacebar on line; a tile the factory does not name, or a
-// second copy of one it does, gets no key until one is learned.
-const PALETTE_FACTORY_ORDER = ['wide', 'wash', 'overdub', 'line', 'pen', 'unpin', 'pin'];
+// DEFAULT_PALETTE (Ek, 2026-09-12): 1 … 5 for the wide lens, wash, overdub,
+// line and pen — the digits a drop would have given them, in order; ↑ unpins
+// and ↓ pins. Seeded onto whichever POSITION holds that tile, so a profile
+// with its own order still gets 4 on line; a tile the factory does not name,
+// or a second copy of one it does, takes the next free digit like a drop.
+// THE FACTORY STRIP (Ek, 2026-09-12, night) — tiles.js DEFAULT_PALETTE is the
+// same list; keep them in step. Dots and line SHARE the 1 key: line is its
+// press (a toggle, on the down edge, never delayed) and dots its long (a
+// momentary, both edges) — the button-1 rule on a key.
+const PALETTE_FACTORY_ORDER = ['pen', 'line', 'looper', 'overdub', 'scrape', 'pin', 'unpin'];
+const PALETTE_FACTORY_ENTRIES = [
+  { id: 'pen', verb: 'momentary' }, { id: 'line', verb: 'toggle' }, { id: 'looper', verb: 'toggle' }, { id: 'overdub', verb: 'toggle' },
+  { id: 'scrape', verb: 'momentary' }, { id: 'pin', verb: 'bang' }, { id: 'unpin', verb: 'bang' },
+];
 const PALETTE_FACTORY_KEYS = {
-  wide: _digitRow(1), wash: _digitRow(2), overdub: _digitRow(3),
-  line: _keyRow(' ', 'Space'), pen: _keyRow(' ', 'Space', 'long'),
-  unpin: _keyRow('↑', 'ArrowUp'), pin: _keyRow('↓', 'ArrowDown'),
+  pen: _keyRow('1', 'Digit1', 'long'), line: _digitRow(1), looper: _digitRow(2), overdub: _digitRow(3), scrape: _digitRow(4),
+  pin: _keyRow('↓', 'ArrowDown'), unpin: _keyRow('↑', 'ArrowUp'),
 };
 const _sameKey = (a, b) => a && b && a.type === 'key' && b.type === 'key' && a.code === b.code && !!a.shift === !!b.shift && !!a.ctrl === !!b.ctrl && !!a.meta === !!b.meta && (a.g || 'press') === (b.g || 'press');
+/** The lowest digit 1–9 no key row uses (unmodified, any gesture), or null. */
+function _freeDigit() {
+  const used = new Set(Object.values(keyMappings).filter(m => m && m.type === 'key' && !m.shift && !m.ctrl && !m.meta).map(m => m.code));
+  for (let d = 1; d <= 9; d++) if (!used.has(`Digit${d}`)) return d;
+  return null;
+}
 function seedPaletteDigitsOnce() {
   let stamp = null;
   try { stamp = localStorage.getItem(_PALETTE_DIGITS_KEY); } catch (_) {}
   if (stamp === _PALETTE_DIGITS_V) return;
-  let ids = PALETTE_FACTORY_ORDER;
-  try { const arr = JSON.parse(localStorage.getItem('mubone_palette') || 'null'); if (Array.isArray(arr)) ids = arr.slice(0, 9).map(e => e && e.id); } catch (_) {}
+  // THE FACTORY STRIP, RE-DEALT ONCE (Ek, 2026-09-12, night: "i'm ready to
+  // redo the factory palette defaults again"): a profile on an older stamp
+  // takes the new strip whole — the list, the hand (dots, momentary), the
+  // palette rows of all three maps: keys dealt by tile below, the buttons
+  // back to BUTTON_DEFAULTS, notes dropped. Runs before initTiles reads
+  // the palette (main.js: setupMappingModal first), so the strip boots new.
+  try {
+    localStorage.setItem('mubone_palette', JSON.stringify(PALETTE_FACTORY_ENTRIES));
+    localStorage.setItem('mubone_hand', 'pen');
+    localStorage.setItem('mubone_hand_verb', 'momentary');
+  } catch (_) {}
+  for (const map of [keyMappings, buttonMappings, midiMappings]) for (const k of Object.keys(map)) if (/^palette_[1-9]$/.test(k)) delete map[k];
+  for (const [k, v] of Object.entries(BUTTON_DEFAULTS)) if (/^palette_[1-9]$/.test(k)) buttonMappings[k] = { ...v };
+  saveButtonMappings(); saveMidiMappings();
+  const ids = PALETTE_FACTORY_ORDER;
   const given = new Set();
+  // A learned key stays. An earlier seed — the plain digit of the position,
+  // or the morning's spacebar — and a removed factory digit are the
+  // factory's to replace.
+  const replaceable = (km, n) => !km || km.type === 'none' || km.code === 'Space' || _sameKey(km, _digitRow(n));
   ids.forEach((tid, j) => {
     const n = j + 1, id = `palette_${n}`, km = keyMappings[id];
-    // A learned key stays. The morning's seed — the plain digit of the
-    // position — and a removed factory digit are the factory's to replace.
-    if (km && km.type !== 'none' && !_sameKey(km, _digitRow(n))) return;
+    if (!replaceable(km, n)) return;
     delete keyMappings[id];
-    const fac = PALETTE_FACTORY_KEYS[tid];
-    if (!fac || given.has(tid)) return;
-    if (Object.values(keyMappings).some(m => _sameKey(m, fac))) return;
-    keyMappings[id] = { ...fac }; given.add(tid);
+    const fac = tid && !given.has(tid) ? PALETTE_FACTORY_KEYS[tid] : null;
+    if (fac && !Object.values(keyMappings).some(m => _sameKey(m, fac))) { keyMappings[id] = { ...fac }; given.add(tid); return; }
+    if (tid) { const d = _freeDigit(); if (d) keyMappings[id] = _digitRow(d); }
   });
   saveKeyMappings();
   try { localStorage.setItem(_PALETTE_DIGITS_KEY, _PALETTE_DIGITS_V); } catch (_) {}
@@ -578,7 +645,47 @@ S._paletteReordered = (from) => {
     for (let n = 1; n <= 9; n++) { old[n] = map[`palette_${n}`]; delete map[`palette_${n}`]; }
     from.forEach((o, j) => { if (o >= 0 && old[o + 1]) map[`palette_${j + 1}`] = old[o + 1]; });
   }
+  // An arrival takes the next free digit — after the moves, so a digit that
+  // just travelled with its tile is not counted free.
+  from.forEach((o, j) => {
+    if (o >= 0 || keyMappings[`palette_${j + 1}`]) return;
+    const d = _freeDigit(); if (d) keyMappings[`palette_${j + 1}`] = _digitRow(d);
+  });
   for (const [, save] of maps) save();
+};
+
+// ── LEARNING FROM THE TILE (Ek, 2026-09-12) ─────────────────────────────────
+// "we should be able to click that number and be in 'learning' mode waiting
+// for the key press. same function as in the key+midi setting but faster and
+// in the palette. same with midi and the buttons." The legend's rows are the
+// keys page's cells, brought to the tile: one arms the learn for its kind on
+// its position, and the page's own recogniser finishes it — nothing is a
+// second learn path. tiles.js reads `_paletteLearning` to draw the row.
+S._paletteLearn = (pos, kind) => {
+  const id = `palette_${pos + 1}`;
+  if (!ACTIONS.some(a => a.id === id)) return false;
+  keyLearningId = null; buttonLearningId = null; midiLearningId = null;
+  _learnShortAs = 'press';
+  if (kind === 'key') keyLearningId = id; else if (kind === 'button') buttonLearningId = id; else if (kind === 'midi') midiLearningId = id; else return false;
+  setMappingStatus(`press a ${kind === 'key' ? 'key' : kind === 'button' ? 'button on the instrument' : 'MIDI note'} to assign it to position ${pos + 1}… (Esc cancels)`);
+  renderMappingTable();
+  S._bindingsChanged?.();
+  return true;
+};
+S._paletteLearning = () => keyLearningId ? { id: keyLearningId, kind: 'key' }
+                         : buttonLearningId ? { id: buttonLearningId, kind: 'button' }
+                         : midiLearningId ? { id: midiLearningId, kind: 'midi' } : null;
+S._paletteLearnCancel = () => {
+  keyLearningId = null; buttonLearningId = null; midiLearningId = null; _learnKeyEv = null;
+  setMappingStatus(''); renderMappingTable(); S._bindingsChanged?.();
+};
+/** Right-click on a legend row: that kind's binding on the position goes. */
+S._paletteUnbind = (pos, kind) => {
+  const id = `palette_${pos + 1}`;
+  if (kind === 'key') { delete keyMappings[id]; saveKeyMappings(); }
+  else if (kind === 'button') { delete buttonMappings[id]; saveButtonMappings(); }
+  else if (kind === 'midi') { delete midiMappings[id]; saveMidiMappings(); }
+  renderMappingTable();
 };
 
 function saveKeyMappings() {
@@ -650,12 +757,21 @@ const GESTURE_LABEL = { press: '', tap: 'tap', long: 'long', xlong: 'extra long'
 // below. Button 1 tap therefore needs a toggle under it, and button 1 long,
 // which has both edges, can have the momentary. Change one and change the
 // other. (Positions 2 and 3 swapped roles with the 2026-09-12 factory strip.)
+// BY POSITION on the factory strip of 2026-09-12 night (PALETTE_FACTORY_ORDER):
+// button 1 tap plays LINE at 2 (a toggle — a tap is a bang with no up edge)
+// and button 1 long plays DOTS at 1 (a momentary — long has both edges);
+// button 3 tap is PIN at 6, ×2 UNPIN at 7; unpin all stays the action.
 const BUTTON_DEFAULTS = {
-  palette_3:        { btn: 1, g: 'tap' },  palette_2:        { btn: 1, g: 'long' },
+  palette_2:        { btn: 1, g: 'tap' },  palette_1:        { btn: 1, g: 'long' },
   undo:             { btn: 2, g: 'tap' },  sweep:            { btn: 2, g: 'long' }, erase_all:    { btn: 2, g: 'xlong' },
-  // Button 3 is the pin pair BY POSITION (2026-09-11): pin at 7, unpin at 6
-  // on the factory palette; unpin all is not a tile and stays the action.
-  palette_7:        { btn: 3, g: 'tap' },  palette_6:        { btn: 3, g: 'double' }, commit_clear: { btn: 3, g: 'triple' },
+  // Pin on button 3's PRESS, not its tap (Ek, 2026-09-12: "as i right click
+  // thru pin it should have 3 states avail. right now it's just toggle and
+  // bang. it should have momentary"): a tap has no up edge, so the model
+  // refused momentary on the factory pin tile from day one. A press fires
+  // undelayed, holds a momentary path, and the ×2 beside it takes the press's
+  // pin back before unpinning (the swallow is general) — so button 3 is still
+  // pin · unpin · unpin all, ~125 ms sooner.
+  palette_6:        { btn: 3, g: 'press' }, palette_7:        { btn: 3, g: 'double' }, commit_clear: { btn: 3, g: 'triple' },
 };
 function loadButtonMappings() {
   try {
@@ -663,6 +779,8 @@ function loadButtonMappings() {
     buttonMappings = saved ? JSON.parse(saved) : { ...BUTTON_DEFAULTS };
     let n = _migrateIds(buttonMappings);
     for (const bm of Object.values(buttonMappings)) if (bm && !bm.g) { bm.g = 'press'; n++; }
+    // One-shot (2026-09-12): the factory pin was button 3 TAP; it is the press now.
+    if (buttonMappings.palette_6?.btn === 3 && buttonMappings.palette_6?.g === 'tap') { buttonMappings.palette_6.g = 'press'; n++; }
     if (n) saveButtonMappings();
   } catch(e) { buttonMappings = { ...BUTTON_DEFAULTS }; }
 }
@@ -734,11 +852,18 @@ function _bs(btn) { return _btn[btn] || (_btn[btn] = { down: false, downAt: 0, t
 // the down is taken back — a pin, a sweep, an erase — undone and gone, never
 // redoable; and a gesture the press started (an activate) is aborted, its
 // take thrown away and never armed. Then the neighbour fires.
+// ONLY WHAT THE PRESS STARTED (Ek, 2026-09-12: loop toggle on 2, line
+// toggle on 2 ×2 — "i double 2 to try toggle out of line but it doesn't
+// respond, it's forever stuck recording"). The second double's first down
+// pressed loop under the running line, which is dead by the one-play rule;
+// the abort then threw away the LINE the press never touched, and the double
+// started it again. `pressStarted` is read off the engine around the fire.
 const _ACTIVATES = /^palette_[1-9]$/;
 function _abortPress(st) {
   const id = st.pressAction; st.pressAction = null;
+  const started = st.pressStarted; st.pressStarted = false;
   if (st.pressMark != null) { S._historyDiscardSince?.(st.pressMark); st.pressMark = null; }
-  if (id && _ACTIVATES.test(id)) S._gestureAbort?.();
+  if (id && _ACTIVATES.test(id) && started) S._gestureAbort?.();
 }
 // A gesture whose action is momentary stays on until the up edge. More than
 // one can be on at once — a momentary on press and another on long — so the
@@ -801,6 +926,9 @@ function _learnGesture(src, g) {
   const action = ACTIONS.find(a => a.id === id);
   setMappingStatus(`mapped "${actionLabel(action)}" → ${shown}`);
   renderMappingTable();
+  // The save above redrew the strip while the learn was still armed, so the
+  // legend row still said "…": redraw now that it has stood down.
+  S._bindingsChanged?.();
 }
 
 /** A physical button's edge. `btn` is 1-based, the number printed on the row. */
@@ -853,7 +981,9 @@ function dispatchGesture(btn, down) {
       // The front edge, undelayed.
       st.pressAction = actionForGesture(btn, 'press');
       st.pressMark = S._undoCount?.() ?? null;       // what the press writes lands above this
+      const wasOn = !!S._gestureActive?.();
       _hold(st, _fireGesture(btn, 'press', true));
+      st.pressStarted = !wasOn && !!S._gestureActive?.();
     }
     if (bound.has('long')) {
       clearTimeout(st.longTimer);
@@ -951,13 +1081,16 @@ function bindingsOf(actionId, factoryCode) {
   if (km && km.type === 'key') {
     const mods = (km.meta ? '⌘' : '') + (km.ctrl ? 'ctrl' : '') + (km.shift ? '⇧' : '');
     const g = km.g || 'press';
-    out.push({ kind: 'key', label: mods + (km.code === 'Space' ? 'spacebar' : (km.key || km.code)), space: km.code === 'Space', g, delayed: slow(keySource(km), g) });
+    out.push({ kind: 'key', label: mods + (km.code === 'Space' ? 'spacebar' : keyGlyph(km)), space: km.code === 'Space', g, delayed: slow(keySource(km), g) });
   } else if (factoryCode && !km && !keyTaken(factoryCode)) {
     const src = keySource({ code: factoryCode });
     out.push({ kind: 'key', label: factoryCode.replace(/^Digit|^Key/, ''), space: factoryCode === 'Space', g: 'press', delayed: slow(src, 'press') });
   }
   if (bm) { const g = bm.g || 'press'; out.push({ kind: 'button', label: String(bm.btn), g, delayed: slow(btnSource(bm.btn), g) }); }
-  if (mm && mm.type === 'note') { const g = mm.g || 'press'; out.push({ kind: 'midi', label: `n ${mm.number}`, g, delayed: slow(noteSource(mm), g) }); }
+  // The note's label is its number bare (PALETTE-GUI § 11.6): the `n ` went
+  // with the ledger — the sticker's hue says the kind, and `n 127 tap` ran
+  // 57.7px against a 53px tile.
+  if (mm && mm.type === 'note') { const g = mm.g || 'press'; out.push({ kind: 'midi', label: String(mm.number), g, delayed: slow(noteSource(mm), g) }); }
   return out;
 }
 
@@ -966,6 +1099,18 @@ function bindingsOf(actionId, factoryCode) {
 function keyTaken(code) {
   return Object.values(keyMappings).some(m => m.type === 'key' && m.code === code && !m.shift && !m.ctrl && !m.meta);
 }
+
+// THE KEY'S OWN GLYPH (Ek, 2026-09-12, night: "arrow up down left right when
+// i assign-learned it wrote out the whole word arrowup, should be just the
+// correct glyph"). A learned key arrives as `e.key`, which for the arrows
+// and the editing keys is a WORD; the keycap draws the mark the keyboard
+// prints. By code, so a layout cannot change it.
+const KEY_GLYPH = {
+  ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+  Enter: '↩', NumpadEnter: '↩', Backspace: '⌫', Delete: '⌦',
+  PageUp: '⇞', PageDown: '⇟', Home: '↖', End: '↘',
+};
+function keyGlyph(km) { return KEY_GLYPH[km.code] ?? (km.key || km.code); }
 
 // Returns a human-readable label for a key mapping
 function keyMappingLabel(km) {
@@ -978,7 +1123,7 @@ function keyMappingLabel(km) {
   if (km.shift) parts.push('shift');
   // A learned spacebar arrives as e.key ' ' — blank in a cell — so it is named
   // (Ek, 2026-09-10: "anytime the assignment is space it should be spacebar").
-  parts.push(km.code === 'Space' ? 'spacebar' : (km.key || km.code));
+  parts.push(km.code === 'Space' ? 'spacebar' : keyGlyph(km));
   // The gesture the key is read for (2026-09-11); a press says nothing, as on a button.
   return parts.join('+') + (km.g && GESTURE_LABEL[km.g] ? ' ' + GESTURE_LABEL[km.g] : '');
 }
@@ -1255,7 +1400,9 @@ function dispatchAction(id, midiVal) {
     // ── View ─────────────────────────────────────────────────────────────────
     // `recpaint` and `trace_toggle` were handled here — the main button as a
     // pedal and as a toggle. They are gone (2026-09-11): a play is started by
-    // a POSITION, and `_paletteActivate` is the one door.
+    // a POSITION through `S._paletteFire`, or by the HAND through
+    // `S._handDown` — the spacebar and the sphere's click, which are wired to
+    // it directly and never come through here (2026-09-12).
 
     // ── Trigger tool ────────────────────────────────────────────────────────
     case 'trigger_chop':
@@ -2111,11 +2258,12 @@ export function setupMappingModal() {
 
   // ── Key learn: capture keydown while learning ────────────────────────────
   // Non-overridable keys that should not be captured
-  const BLOCKED_KEYS = new Set(['Escape', 'Tab', 'F5', 'F11', 'F12']);
+  // ' ' is the spacebar: the hand's, never a binding (tiles.js, 2026-09-12).
+  const BLOCKED_KEYS = new Set(['Escape', 'Tab', 'F5', 'F11', 'F12', ' ']);
 
   document.addEventListener('keydown', e => {
-    if (buttonLearningId !== null && e.key === 'Escape') {
-      buttonLearningId = null; setMappingStatus(''); renderMappingTable();
+    if ((buttonLearningId !== null || midiLearningId !== null) && e.key === 'Escape') {
+      buttonLearningId = null; midiLearningId = null; setMappingStatus(''); renderMappingTable(); S._bindingsChanged?.();
       e.stopImmediatePropagation(); return;
     }
     if (keyLearningId === null) return;
@@ -2126,10 +2274,26 @@ export function setupMappingModal() {
       buttonLearningId = null;   // a button learn left armed on a closed page eats the next press
       setMappingStatus('');
       renderMappingTable();
+      S._bindingsChanged?.();    // a legend row armed from the strip stands down
       e.stopImmediatePropagation();
       return;
     }
 
+    if (e.key === ' ') {
+      // Swallowed, not passed on: the hand must not play while a learn is up.
+      e.preventDefault(); e.stopImmediatePropagation();
+      setMappingStatus('the spacebar is the hand\'s — it plays the tool in hand and cannot be assigned. Press another key…');
+      return;
+    }
+    // A PALETTE KEY IS A PLAIN KEY (Ek, 2026-09-12: chords refused for
+    // palette positions): nine positions and ten digits do not need ⌘, ctrl
+    // or ⇧, and a chord on a performance tile is a mis-binding — its sticker
+    // would run two tiles wide (§ 11.6). The learn stays armed and says so.
+    if (/^palette_[1-9]$/.test(keyLearningId) && (e.metaKey || e.ctrlKey || e.shiftKey) && !['Shift', 'Control', 'Meta', 'Alt'].includes(e.key)) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      setMappingStatus('a palette key is a plain key — no ⌘, ctrl or ⇧. Press the key on its own…');
+      return;
+    }
     if (BLOCKED_KEYS.has(e.key) || ['Shift', 'Control', 'Meta', 'Alt'].includes(e.key)) return;
     // A HELD key auto-repeats, and each repeat is a fresh keydown with its
     // default action: holding the spacebar to learn a long press scrolled the
@@ -2199,20 +2363,12 @@ export function setupMappingModal() {
     _applyMappingFilter();
   });
 
-  // WHICH KINDS THE TILES SHOW (Ek, 2026-09-12): one switch per binding kind
-  // under its column, deciding whether that kind is drawn in the palette
-  // legend. Factory: the keyboard yes, the buttons and MIDI no — the tile
-  // says what a hand at the keyboard can press; the instrument's own buttons
-  // are learned by feel. bindingsOf stays complete: the keys page, the delay
-  // rule and the audits read every binding whether or not a tile draws it.
-  document.querySelectorAll('[data-legend-kind]').forEach(el => {
-    const kind = el.dataset.legendKind;
-    el.checked = !!legendKinds[kind];
-    el.addEventListener('change', () => {
-      legendKinds[kind] = el.checked;
-      try { localStorage.setItem('mubone_legend_kinds', JSON.stringify(legendKinds)); } catch (_) {}
-      S._bindingsChanged?.();
-    });
+  // WHICH KIND THE PALETTE SHOWS (§ 11.4): the segmented row above the table.
+  // bindingsOf stays complete: the keys page, the delay rule and the audits
+  // read every binding whether or not a tile draws it.
+  _paintLegendKind();
+  document.querySelectorAll('#legendKindSeg [data-legend-kind]').forEach(el => {
+    el.addEventListener('click', () => S._setLegendKind(el.dataset.legendKind));
   });
   const showAllEl = document.getElementById('mappingShowAll');
   if (showAllEl) {
@@ -2268,6 +2424,7 @@ export function setupMappingModal() {
   // dispatchAction's 0–127 domain is not integer-only: a caller with finer
   // resolution than MIDI can pass a float and the ccFn `v / 127` stays smooth.
   S._keyMappings    = keyMappings;
+  S._buttonMappings = buttonMappings;   // the same object, for the audits — a removed tile takes its buttons with it
   S._actions        = ACTIONS;
   S._dispatchAction = dispatchAction;
   S._dispatchButton = dispatchButton;   // the instrument's buttons, sygaldry.js

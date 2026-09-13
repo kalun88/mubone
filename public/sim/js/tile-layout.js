@@ -382,6 +382,7 @@ export function initTileLayout() {
   _proxyClick('tcSweep', 'sessionSweepBtn');
   _proxyClick('tcClear', 'sessionEraseBtn');
   document.getElementById('tcPinned')?.addEventListener('click', () => setPinnedRail(!pinnedRailOn()));
+  S._togglePinnedRail = () => setPinnedRail(!pinnedRailOn());   // ⇧Tab (tiles.js)
 
   // Chrome floats over nothing, but stray mousedowns must not start a trace.
   document.getElementById('tcBar')?.addEventListener('mousedown', e => e.stopPropagation());
@@ -396,7 +397,11 @@ export function initTileLayout() {
   _wireFooterControls();
   window.dispatchEvent(new Event('resize'));   // the canvas just changed size
 
-  let pinnedOn = true;   // the arrangement is visible until you hide it
+  // CLOSED at boot unless you left it open (Ek, 2026-09-12: "have the right
+  // tool rail (pins) start closed on open unless persisted open. but on
+  // factory reset it starts closed") — Reset all wipes the key, so a fresh
+  // store boots closed. It booted open until then.
+  let pinnedOn = false;
   try { const v = localStorage.getItem(LS_PINNED); if (v !== null) pinnedOn = v === '1'; } catch (_) {}
   setPinnedRail(pinnedOn);
 }
