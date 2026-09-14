@@ -297,7 +297,6 @@ function _stopSegment(now) {
   } else {
     // Valid capture
     S.hfCaptureCount++;
-    S.hfCaptureFlashUntil = performance.now() + 400;
     S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
   }
 

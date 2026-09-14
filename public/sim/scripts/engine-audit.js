@@ -71,6 +71,7 @@ const SNAP = `JSON.stringify({
   comb: S.combAxis, keep: S.combKeep, 
   reads: S.lensReads,
   onEnd: S.traceMode,
+  wet: window.__wet(),  /* the tile's, not S's — tiles.js _tileCfg; unwatched 2026-09-07 → 09-13, so the switch read inert on every grain brush */
 })`;
 
 const TARGETS = [
@@ -98,7 +99,9 @@ async function run(rig) {
 
   await rig.evaluate(new Function(`return (async () => {
     const { S } = await import('./js/state.js');
+    const { isWet, selectedTile } = await import('./js/tiles.js');
     const wait = ms => new Promise(r => setTimeout(r, ms));
+    window.__wet = () => { const t = selectedTile(); return t ? isWet(t.id) : null; };
     window.__snap = () => ${SNAP};
     window.__near = () => !!S.nearestMode;
     await wait(700);
@@ -215,10 +218,18 @@ async function run(rig) {
         const a = window.__snap();
         btn.click(); await wait(120);
         const b = window.__snap();
-        const live = pr.querySelector('.prow--sw [data-sw="' + (btn.dataset.sw || '') + '"], .prow--sw [data-swproxy="' + (btn.dataset.swproxy || '') + '"]') || btn;
+        // Re-found after the click: a switch re-renders its sheet (setWet →
+        // renderProps), so \`btn\` is a detached node by now and a click on
+        // it goes nowhere — the wet switch has neither data-sw nor
+        // data-swproxy, so the lookup below fell through to the dead node.
+        const key = Object.keys(btn.dataset)[0];
+        const live = (key && pr.querySelector('.prow--sw [data-' + key.toLowerCase() + '="' + btn.dataset[key] + '"]')) || btn;
         live.click(); await wait(120);
         const c = window.__snap();
-        if (a === b || b === c) inertSeg.push(name.trim() + ' (switch)');
+        // The same exemption the segment loop has: under NEAREST the fade
+        // switch is forced off, so both clicks are legitimate no-ops there.
+        const exempt = ${JSON.stringify([...EXEMPT_WHEN_NEAREST])}.includes(name.trim()) && window.__near();
+        if ((a === b || b === c) && !exempt) inertSeg.push(name.trim() + ' (switch)');
       }
 
       return { nT, nS, inert, inertSeg };
@@ -352,6 +363,62 @@ async function run(rig) {
   check(`all ${dep.total} rig elements the engine pages write through exist`,
         dep.missing.length === 0, dep.missing.join(', '));
 
+
+  console.log('\n§ C2. a refusal the performer cannot see is a silent failure');
+  // The recording budget is the case that forced this (2026-09-13). When the
+  // live buffers hold `recLimitSeconds` of audio, startLiveRecording REFUSES —
+  // the press records nothing and paints nothing — and every warning it had
+  // (80%, 95%, the refusal) was written to `#vmBuffers`, inside `.hud`, which
+  // `body .hud { display: none }` has hidden since the one-screen layout. A
+  // 14-minute continuous-play test walked into it at ~13.5 minutes and
+  // deposited nothing for the rest of the run, with nothing on screen to say
+  // why. Any state that STOPS THE INSTRUMENT RESPONDING has to reach a box a
+  // performer can actually see; this asserts that for the budget, by measuring
+  // the element rather than trusting that it exists.
+  const budget = await rig.evaluate(new Function(`return (async () => {
+    const { S, perf } = await import('./js/state.js');
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const read = () => {
+      const el = document.getElementById('tcStats');
+      if (!el) return { text: '', w: 0, h: 0, shown: false };
+      const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
+      return { text: (el.textContent || '').trim(), w: Math.round(r.width), h: Math.round(r.height),
+               shown: cs.display !== 'none' && cs.visibility !== 'hidden' && r.width > 0 && r.height > 0 };
+    };
+    const bar = () => {
+      const t = document.getElementById('tcRec'), f = document.getElementById('tcRecFill');
+      if (!t || !f) return { w: 0, fill: null, cls: null };
+      const tr = t.getBoundingClientRect(), fr = f.getBoundingClientRect();
+      const cs = getComputedStyle(t);
+      return { w: Math.round(tr.width), h: Math.round(tr.height), fill: +fr.width.toFixed(1),
+               cls: f.className, shown: cs.display !== 'none' && tr.width > 0 && tr.height > 0 };
+    };
+    const keepRec = perf.recTotalSec, keepAlt = S.altLocked;
+    S.altLocked = false;
+    perf.recTotalSec = 0;                        await sleep(420); const quiet = { ...read(), bar: bar() };
+    perf.recTotalSec = S.recLimitSeconds * 0.5;  await sleep(420); const half  = { ...read(), bar: bar() };
+    perf.recTotalSec = S.recLimitSeconds * 0.85; await sleep(420); const warn  = { ...read(), bar: bar() };
+    perf.recTotalSec = S.recLimitSeconds;        await sleep(420); const full  = { ...read(), bar: bar() };
+    perf.recTotalSec = keepRec; S.altLocked = keepAlt; await sleep(420);
+    return { quiet, half, warn, full };
+  })()`));
+  check('the budget bar is on screen with real size',
+        budget.quiet.bar.shown && budget.quiet.bar.w > 0 && budget.quiet.bar.h > 0,
+        JSON.stringify(budget.quiet.bar));
+  check('it is empty at nothing recorded and full at the ceiling',
+        budget.quiet.bar.fill === 0 && Math.abs(budget.full.bar.fill - budget.full.bar.w) < 1.5,
+        JSON.stringify({ at0: budget.quiet.bar.fill, atLim: budget.full.bar.fill, w: budget.full.bar.w }));
+  check('it tracks the level in between',
+        Math.abs(budget.half.bar.fill - budget.half.bar.w / 2) < 1.5,
+        JSON.stringify(budget.half.bar));
+  check('it turns at 80% and again at 95%',
+        budget.half.bar.cls === 'tc-rec-fill' && /warn/.test(budget.warn.bar.cls),
+        JSON.stringify({ half: budget.half.bar.cls, warn: budget.warn.bar.cls }));
+  check('no words until the instrument actually refuses',
+        budget.quiet.text === '' && budget.warn.text === '', JSON.stringify([budget.quiet.text, budget.warn.text]));
+  check('at the limit it says what to do, in a box with real size',
+        /sweep/.test(budget.full.text) && budget.full.shown && budget.full.w > 0,
+        JSON.stringify(budget.full));
   console.log('\n§ D. a grain tile owns its whole block');
   // "If I see that slider in that position, it's set" (Ek, 2026-09-03).
   // Factory grain tiles used to apply NOTHING to the sound on arming — pen's

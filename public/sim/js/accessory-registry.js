@@ -271,11 +271,6 @@ function tickWatchdog() {
   }
 }
 
-/** Subscribe to accessory presence edges. Called with `true` when data starts
- *  flowing and `false` when it goes stale (STALE_MS with nothing arriving —
- *  the A8 hot-plugs with no event, so a timeout IS the unplug signal). */
-export function onAccessoryPresenceChange(cb) { _presenceListeners.add(cb); }
-
 // ── Public API ──────────────────────────────────────────────────────────────
 // Everything public is addressed by PAD NUMBER (1–8) to match the silkscreen on
 // the A8 and the channel labels in the x-IMU3 GUI.  The array stays 0-based

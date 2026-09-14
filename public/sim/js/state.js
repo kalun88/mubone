@@ -168,14 +168,47 @@ export const CURSOR_IDLE_COLOR = '#f5a69c';
 // identities confined to the warm quadrant, rose through ember to ochre, at one
 // perceptual lightness (OKLCH L=0.755, C=0.105). The old set was already an
 // amber family but still contained '#e8c840', a near-pure yellow: once the
-// timbre map stopped producing greens (see featuresToColor) that was the last
-// highlighter left on the stage, and it read as a mistake next to everything
-// else. The arc stops short of yellow deliberately.
+// timbre map stopped producing greens that was the last highlighter left on
+// the stage, and it read as a mistake next to everything else. That reasoning
+// no longer holds for the TIMBRE map — its arc runs through green and yellow
+// again since 2026-09-13 (see featuresToColor) — but it still holds here: this
+// pool is a fallback identity for a stroke with no engine behind it, not a
+// reading of the sound, and it stays in the warm quadrant.
+// The nine-step ramp a live stroke used to cycle through, pink → gold, one
+// step per take REGARDLESS OF ENGINE. That is what made painted material
+// "alternate colours" (Ek, 2026-09-13) and it contradicted the one rule the
+// hues exist for: the tile you pressed and the mark under your hand are the
+// same colour by construction (DESIGN-SYSTEM § 4). It survives only as the
+// fallback for a stroke with no engine behind it.
 export const LIVE_PAINT_COLORS = [
   '#e294b9', '#e793ab', '#ea939d',
   '#eb958f', '#ea9782', '#e79a76',
   '#e29e6b', '#dba363', '#d2a85e'
 ];
+
+/** THE COLOUR A LIVE MARK IS PAINTED IN (2026-09-13).
+ *
+ *  The ENGINE's hue — tape pink, grain gold — so a glance at the sphere says
+ *  what made the material, the same way the rail row and the tile do. Takes
+ *  still have to be tellable from each other, so consecutive ones step through
+ *  a small lightness swing AROUND that hue rather than across the spectrum:
+ *  five steps, ±9%, which separates neighbours without ever reading as a
+ *  different engine. `S._paintHue` is published by tiles.js for whatever is
+ *  playing and is null between presses; with no engine behind the stroke the
+ *  old ramp still answers. */
+const _PAINT_STEPS = [0, 0.09, -0.09, 0.045, -0.045];
+export function livePaintColor(index = 0) {
+  const hue = S._paintHue;
+  if (!hue || !/^#[0-9a-f]{6}$/i.test(hue))
+    return LIVE_PAINT_COLORS[index % LIVE_PAINT_COLORS.length];
+  const k = _PAINT_STEPS[index % _PAINT_STEPS.length];
+  const ch = [1, 3, 5].map(i => parseInt(hue.slice(i, i + 2), 16));
+  const out = ch.map(v => {
+    const t = k >= 0 ? v + (255 - v) * k : v * (1 + k);
+    return Math.max(0, Math.min(255, Math.round(t))).toString(16).padStart(2, '0');
+  });
+  return '#' + out.join('');
+}
 
 // Commit system — unified pool for clouds (particle-based) and loops (buffer-based).
 // MAX_COMMITS is the hard upper bound (array size).
@@ -183,7 +216,6 @@ export const LIVE_PAINT_COLORS = [
 export const MAX_COMMITS = 16;
 // Legacy aliases — kept so existing code compiles during transition
 export const MAX_SEEDS = MAX_COMMITS;
-export const MAX_SEQS  = MAX_COMMITS;
 // Sixteen slot identities. These DO circle the whole wheel — a slot colour's
 // only job is to be tellable from the other fifteen at a glance, and hue
 // separation is the only budget that buys that. What changed on 2026-08-29 is
@@ -199,14 +231,10 @@ export const COMMIT_COLORS = [
 ];
 // Legacy aliases
 export const SEED_COLORS = COMMIT_COLORS;
-export const SEQ_COLORS  = COMMIT_COLORS;
 // Commit draw threshold (ms) — hold D longer than this to record a moving cloud / new loop.
 // Shorter is treated as a stationary drop.
 export const COMMIT_DRAW_THRESHOLD_MS = 200;
 export const MOVING_SEED_THRESHOLD_MS = COMMIT_DRAW_THRESHOLD_MS; // legacy alias
-// Glow color for nearest-lock cursor grains -- distinct from particle and seed colors
-export const NEAREST_GLOW_COLOR = '#a793c0'; // dusty violet — == --accent-sensor
-
 // ── Performance tuning ────────────────────────────────────────────────────────
 // These were set conservatively during early CPU-load testing. Adjust here if
 // you want to change system-wide behaviour without hunting through call sites.
@@ -243,11 +271,19 @@ export const RENDER_TARGET_FPS = 30;
 // and the worklet has the real data via its process() input.
 export const LIVE_REBUILD_INTERVAL_MS = 50;
 
-// Recording memory guard — warn performer when total recorded audio approaches
-// this ceiling.  At 48kHz mono, each minute ≈ 11.5MB of Float32 data.
-// 600s (10 min) ≈ 115MB — conservative for student laptops with 8GB RAM.
-// Mutable at runtime via audio settings slider (stored on S.recLimitSeconds).
-export const REC_LIMIT_SECONDS_DEFAULT = 600;
+// Recording memory guard — the total live audio the app will hold before it
+// REFUSES a new take (audio.js startLiveRecording). At 48kHz mono a minute is
+// about 11.5 MB of Float32, so 1800s (30 min) is roughly 345 MB.
+//
+// It was 600s from 2026-03-24 until 2026-09-13, sized in its own comment as
+// "conservative for student laptops with 8GB RAM" — the Dartmouth workshop
+// machines. Ek's ruling on the day the silent-refusal bug was found: 30 min,
+// which is the slider's existing maximum and long enough that a set does not
+// reach it, while still bounded. Refusing is still what happens at the
+// ceiling — nothing is auto-deleted, because the takes still hold marks on
+// the sphere and undo cannot bring them back — and the chrome now says so
+// from 80% on (tile-layout.js).
+export const REC_LIMIT_SECONDS_DEFAULT = 1800;
 
 // ── Level fader response ──────────────────────────────────────────────────────
 // Response exponent baked into the master and grain volume ccFns, so a fader
@@ -410,12 +446,12 @@ export const DEFAULT_GRAIN = {
   filterFreqJitter: 0,     // no per-grain cutoff randomisation
 };
 
-// ── Sample-rate-derived grain parameter floors ───────────────────────────────
-// Minimum grain duration = 2 samples; minimum inter-onset period = 2 samples.
-// Getter functions read the live AudioContext sample rate (falls back to 48000
-// before the context is created, e.g. during early UI initialisation).
-export const minGrainDurS    = () => 2 / (S.audioCtx?.sampleRate ?? 48000);
-export const minGrainPeriodS = () => 2 / (S.audioCtx?.sampleRate ?? 48000);
+// ── Sample-rate-derived grain parameter floor ────────────────────────────────
+// Minimum grain duration = 2 samples. Reads the live AudioContext sample rate
+// (falls back to 48000 before the context is created, e.g. during early UI
+// initialisation). Its twin `minGrainPeriodS`, the same expression for the
+// inter-onset floor, was imported once and never called.
+export const minGrainDurS = () => 2 / (S.audioCtx?.sampleRate ?? 48000);
 
 // Shorthand alias (used throughout playback code)
 export const gp = () => S.grainParams;
@@ -1023,8 +1059,24 @@ export const S = {
   paintGateThreshold: 0.002,     // RMS below this → particle not created (paint gate)
   vizRmsMin:     0.005,     // quiet floor (below this → smallest particle)
   vizRmsMax:     0.31,      // loud ceiling (above this → largest particle)
-  vizCentroidMin: 0.04,     // lowest expected centroid (deepest bass content)
-  vizCentroidMax: 0.45,     // highest expected centroid (bright/hissy content)
+  // ── THE COLOUR LEGEND, FIXED (Ek, 2026-09-13) ─────────────────────────
+  // "it should be very predictable so that i see yellow every time and my
+  // collaborators see yellow and they know what sound that is."
+  //
+  // These two are the whole mapping from brightness to hue, and they are
+  // CONSTANTS: no sliders, no calibration, and deliberately NOT saved with a
+  // profile, so every copy of mubone paints the same sound the same colour and
+  // a colour can be a word two people share. They are still on S, so the
+  // console can move them for an experiment; nothing in the GUI can.
+  //
+  // The span is one acoustic instrument's honest range, 200 Hz to 10 kHz —
+  // 5.6 octaves, logarithmically (audio-features normaliseCentroid), which is
+  // what an experimental vocalist covers from chest tones through open vowels
+  // and pressed nasal sounds to fricatives, breath and hiss. Where things land:
+  //   250 Hz deep tones 0.06 · 1 kHz open voice 0.41 · 2.2 kHz pressed 0.61
+  //   4.5 kHz breath 0.80 · 8.3 kHz cymbal and hiss 0.95 · noise 1.00
+  vizCentroidMin: 0.0083,   // 200 Hz — below a chest tone
+  vizCentroidMax: 0.4167,   // 10 kHz — above a cymbal
   modeRingSize:  30,        // mode ring radius (px) — controls how big the 4 status arcs are
   uiScale:       1.0,       // UI scale factor — multiplied with base font-size (15px)
   // Canvas HUD scale — multiplied edge bar height, text size, dot size and
@@ -1059,7 +1111,6 @@ export const S = {
   hfCompEnabled:    false,   // optional pre-gate compressor (off by default)
   hfCompRatio:      3,       // compressor ratio (2:1–4:1)
   hfCaptureCount:   0,       // number of buffers auto-captured this session
-  hfCaptureFlashUntil: 0,    // performance.now() timestamp for HUD flash
 
   // ── Audio ──────────────────────────────────────────────────────────────
   audioCtx:   null,

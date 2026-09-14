@@ -40,7 +40,6 @@ export function push(action) {
   if (!action || typeof action.undo !== 'function' || typeof action.redo !== 'function') return;
   _undo.push(action);
   if (_redo.length) { for (const a of _redo) a.dispose?.(); _redo.length = 0; }
-  S._historyDirty = true;
 }
 
 export function undo() {
@@ -50,7 +49,6 @@ export function undo() {
   const a = _undo.splice(i, 1)[0];
   a.undo();
   _redo.push(a);
-  S._historyDirty = true;
   return a;
 }
 
@@ -59,7 +57,6 @@ export function redo() {
   if (!a) return null;
   a.redo();
   _undo.push(a);
-  S._historyDirty = true;
   return a;
 }
 
@@ -67,30 +64,11 @@ export function clear() {
   for (const a of _undo) a.dispose?.();
   for (const a of _redo) a.dispose?.();
   _undo.length = 0; _redo.length = 0;
-  S._historyDirty = true;
 }
 
 export function clearRedo() {
   for (const a of _redo) a.dispose?.();
   _redo.length = 0;
-  S._historyDirty = true;
-}
-
-/** Throw an action away — undone, never redoable. The abort path (brush.js
- *  gestureAbort, 2026-09-10): a take a press started that a long, extra long,
- *  ×2 or ×3 on the same button then swallowed "as if it was never meant to
- *  be". The newest match is taken, so an aborted stroke cannot reach past a
- *  later one. */
-export function discard(pred) {
-  for (let i = _undo.length - 1; i >= 0; i--) {
-    if (!pred(_undo[i])) continue;
-    const a = _undo.splice(i, 1)[0];
-    a.undo();
-    a.dispose?.();
-    S._historyDirty = true;
-    return a;
-  }
-  return null;
 }
 
 /** Take back everything pushed since the stack stood at `n` — undone and
@@ -106,7 +84,6 @@ export function discardSince(n) {
     gone.push(_undo.splice(i, 1)[0]);
   }
   for (const a of gone) { a.undo(); a.dispose?.(); }   // newest first
-  if (gone.length) S._historyDirty = true;
   return gone.length;
 }
 
@@ -119,7 +96,6 @@ export function detach(pred) {
   for (let i = _undo.length - 1; i >= 0; i--) {
     if (!pred(_undo[i])) continue;
     const a = _undo.splice(i, 1)[0];
-    S._historyDirty = true;
     return a;
   }
   return null;
@@ -130,7 +106,6 @@ export function redoCount() { return _redo.length; }
 /** The stack, read-only, for audits and the console. */
 export function entries() { return _undo.map(a => a.kind); }
 
-S._historyPush = push;
 S._historyDiscardSince = discardSince;
 S._undoCount   = undoCount;
 S._redoCount   = redoCount;

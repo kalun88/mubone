@@ -138,10 +138,20 @@ settings dialog. It was 0/2/3/5/20 and the 20 fought every 2px control beside it
 `--accent-lock` `#7fa8ae`, `--accent-sensor` `#a793c0`, `--accent-sweep` `#9db87e`,
 `--accent-danger` `#cc6a55`, `--accent-warn` `#c99552`.
 
-**Engine hues** (`--eng-*`) are the colour language: source `#8aa6bc`, lens `#85b0a9`, loop
-`#c793a2`, grain `#cfa870`, erase `#c08e85`, none `#857f76`. **These are load-bearing.** The rail
-tile, the engine sheet and the cursor all read the same property, so the tile you pressed and the
-mark under your hand are the same colour *by construction*, not by two lists agreeing.
+**Engine hues** (`--eng-*`) are the colour language: source `#4aa3e8`, lens `#5fbf9a`, tape
+`#f2569e`, grain `#e8a030`, erase `#b07c8f`, pins `#cfc7bc`, none `#857f76`. **These are
+load-bearing.** The rail tile, the engine sheet and the cursor all read the same property, so the
+tile you pressed and the mark under your hand are the same colour *by construction*, not by two
+lists agreeing. They were re-cut brighter and more saturated on 2026-09-12 (§ 11 of
+`docs/PALETTE-GUI.md`, six hues); this line described the muted originals until 2026-09-13.
+
+**The lettering keeps up with them.** When the hues got brighter, everything else read as dull —
+and measuring said it was never lightness (the four regions sit within a few points of each other)
+but that the eyebrow-caption layer was set in `--text-faint`, 2.7:1, the step this file's own
+ramp reserves for "disabled marks only, never a word". Captions and group labels take
+`--text-secondary`, which is what the ramp assigns them; `--text-faint` keeps the genuinely-off
+things — a disabled button, a ghost row, an `.off` state, an unbound sticker. Mean contrast per
+region is 7.3:1 – 8.7:1 across chrome, footer, tool rail and palette, and 9:1 in settings.
 
 ### The rails keep their own tracking, and the reason is width
 

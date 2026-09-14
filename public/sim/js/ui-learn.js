@@ -138,5 +138,4 @@
   btn.addEventListener('click', () => setLearnMode(!learnMode));
 
   // Expose for other modules
-  S._setLearnMode = setLearnMode;
 })();

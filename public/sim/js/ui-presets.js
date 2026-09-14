@@ -5,10 +5,8 @@
 import {
   S, perf,
   COMMIT_COLORS, MAX_COMMITS,
-  SEED_COLORS, MAX_SEEDS, SEQ_COLORS, MAX_SEQS,
-  COMMIT_DRAW_THRESHOLD_MS, MOVING_SEED_THRESHOLD_MS,
-  gp, minGrainDurS, minGrainPeriodS,
-  SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, K_MAX,
+  SEED_COLORS, MAX_SEEDS, COMMIT_DRAW_THRESHOLD_MS, MOVING_SEED_THRESHOLD_MS,
+  gp, minGrainDurS, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, K_MAX
 } from './state.js';
 import { resolveGrainParams } from './brush-voicing.js';
 import { angleBetweenSphere, findNearestSeedSlot, resetCursorPeriod, nearestLoopPin, masterPhaseWall, startOverdubLayer, swapOverdubLayer, stopOverdubLayers, releaseSeqNodes } from './grain.js';
@@ -439,7 +437,7 @@ function _pinAction(slot, evicted = null) {
   return {
     kind: 'pin',
     undo() { removePinSlot(slot); if (evicted) restorePinSlot(evicted); },
-    redo() { if (evicted) removePinSlot(evicted); restorePinSlot(slot); },
+    redo() { if (evicted) removePinSlot(evicted); restorePinSlot(slot); }
   };
 }
 function _unpinAction(slots) {
@@ -447,7 +445,7 @@ function _unpinAction(slots) {
   return {
     kind: 'unpin',
     undo() { slots.forEach((sl, i) => restorePinSlot(sl, at[i])); },
-    redo() { for (const sl of slots) removePinSlot(sl); },
+    redo() { for (const sl of slots) removePinSlot(sl); }
   };
 }
 let _lastEvicted = null;   // the pin an overflow rule made room by removing
@@ -585,7 +583,7 @@ function _reserveCloud(lon, lat) {
       ...Object.fromEntries(Object.entries(S.grainOverrides).filter(([, v]) => v !== null)),
       curveType:   S.grainCurveType,
       direction:   S.grainDirection,
-      probability: S.grainProbability,
+      probability: S.grainProbability
     },
     grainOverrides: {},
     morphT:        0.5,
@@ -598,7 +596,7 @@ function _reserveCloud(lon, lat) {
     duration: 0,
     loopMode: S.seedLoopMode ?? 'pingpong',
     _playheadMs:  0,
-    _pingForward: true,
+    _pingForward: true
   };
   S._applyPinMix?.();
   (S.updateSeedBanksUI || updateSeedBanksUI)();
@@ -700,15 +698,6 @@ export function finalizeSeedPlant() {
   // A pin placed by hand is one action. A deferred path (the wash) is the
   // stroke's: its cloud goes and comes with the stroke.
   if (!deferred) { history.push(_pinAction(seed, _lastEvicted)); _lastEvicted = null; }
-  (S.updateSeedBanksUI || updateSeedBanksUI)();
-}
-
-/** Toggle loop mode for a moving seed (ping-pong ↔ forward). */
-export function toggleSeedLoopMode(slotIndex) {
-  const seed = S.seedSlots[slotIndex];
-  if (!seed || !seed.frames) return;
-  const cycle = { pingpong: 'forward', forward: 'rev', rev: 'pingpong' };
-  seed.loopMode = cycle[seed.loopMode] ?? 'forward';
   (S.updateSeedBanksUI || updateSeedBanksUI)();
 }
 
@@ -1060,7 +1049,7 @@ export function buildLoopPayload(strokeId, anchorParticle) {
     loopEnd:   loopBuffer.duration,    // buffer end (full buffer)
     startIdx,
     anchorLon: anchorP.lon,
-    anchorLat: anchorP.lat,
+    anchorLat: anchorP.lat
   };
 }
 
@@ -1294,8 +1283,8 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
     _startedAt:     0,              // audioContext.currentTime when started
     mute: false, solo: false,       // the pin's own flags (pins.js)
     grainParams: {
-      volume: S.seqNextParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0,
-    },
+      volume: S.seqNextParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0
+    }
   };
   // Born under a solo or a group mute, it is silent from its first tick.
   S._applyPinMix?.();
@@ -1355,8 +1344,8 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     _createdAt:     performance.now() / 1000,
     _startedAt:     0,
     grainParams: {
-      volume: S.seqNextParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0,
-    },
+      volume: S.seqNextParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0
+    }
   };
   S._applyPinMix?.();
   _syncSeqButtonStates();
@@ -1452,20 +1441,6 @@ export function removeSeqByStrokeId(strokeId) {
     console.warn(`[undo] no commit slot found for strokeId=${strokeId}. Slots:`,
       S.commitSlots.map((s, i) => s ? `${i}:${s.type}(sid=${s.strokeId})` : null).filter(Boolean));
   }
-}
-
-/**
- * Remove all loops (legacy compat — clearAllCommits is preferred).
- */
-export function clearAllSeqs() {
-  for (let i = 0; i < MAX_COMMITS; i++) {
-    const slot = S.commitSlots[i];
-    if (slot && slot.type === 'loop') {
-      _stopSeqAudio(slot);
-      S.commitSlots[i] = null;
-    }
-  }
-  S._syncCommitUI?.();
 }
 
 // ── Unified commit operations ─────────────────────────────────────────────
@@ -2556,7 +2531,7 @@ export function initGrainControls() {
         const v = _parseMs(str);
         return isNaN(v) ? null : Math.max(minGrainDurS(), Math.min(4, v));
       },
-      _sampleStep: true,
+      _sampleStep: true
     },
     {
       sliderId: 'gcDurVarSlider', numId: 'gcDurVarNum', param: 'durVar',
@@ -2574,7 +2549,7 @@ export function initGrainControls() {
         const v = _parseMs(str);
         return isNaN(v) ? null : Math.max(0, Math.min(0.5, v));
       },
-      _sampleStep: true,
+      _sampleStep: true
     },
     {
       // Same hybrid ms scale as durVar / periodVar — absolute-time randomness,
@@ -2594,14 +2569,14 @@ export function initGrainControls() {
         const v = _parseMs(str);
         return isNaN(v) ? null : Math.max(0, Math.min(0.5, v));
       },
-      _sampleStep: true,
+      _sampleStep: true
     },
     {
       sliderId: 'gcDurJitterSlider', numId: 'gcDurJitterNum', param: 'durJitter',
       toDisplay: v => Math.round(v * 100) + '%',
       sliderToInternal: sv => parseFloat(sv) / 100,
       internalToSlider: v  => Math.round(v * 100),
-      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
+      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); }
     },
     {
       // One row, two params.  `param` is a getter so every read site
@@ -2625,7 +2600,7 @@ export function initGrainControls() {
         }
         const v = parseFloat(s.replace('%', '')) / 100;
         return isNaN(v) ? null : Math.max(0, Math.min(0.5, v));
-      },
+      }
     },
     {
       sliderId: 'gcPeriodSlider', numId: 'gcPeriodNum', param: 'period',
@@ -2643,7 +2618,7 @@ export function initGrainControls() {
         const v = _parseMs(str);
         return isNaN(v) ? null : Math.max(S.minPeriodS, Math.min(4, v));
       },
-      _sampleStep: true,
+      _sampleStep: true
     },
     {
       sliderId: 'gcOverlapSlider', numId: 'gcOverlapNum', param: 'overlap',
@@ -2682,7 +2657,7 @@ export function initGrainControls() {
         const v = _parseMs(str);
         return isNaN(v) ? null : Math.max(0, Math.min(0.5, v));
       },
-      _sampleStep: true,
+      _sampleStep: true
     },
     {
       sliderId: 'gcPitchShiftSlider', numId: 'gcPitchShiftNum', param: 'pitchShift',
@@ -2705,7 +2680,7 @@ export function initGrainControls() {
         }
         const c = parseFloat(s);
         return isNaN(c) ? null : Math.max(-2400, Math.min(2400, Math.round(c)));
-      },
+      }
     },
     {
       sliderId: 'gcPitchSlider', numId: 'gcPitchNum', param: 'pitchJitter',
@@ -2719,28 +2694,28 @@ export function initGrainControls() {
         const c = parseFloat(str.replace(/[±¢\s]/g, ''));
         if (isNaN(c)) return null;
         return Math.pow(2, Math.max(0, c) / 1200) - 1;
-      },
+      }
     },
     {
       sliderId: 'gcProbSlider', numId: 'gcProbNum', param: 'probability',
       toDisplay: v => Math.round(v * 100) + '%',
       sliderToInternal: sv => parseFloat(sv),
       internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
+      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); }
     },
     {
       sliderId: 'gcPanSlider', numId: 'gcPanNum', param: 'panSpread',
       toDisplay: v => Math.round(v * 100) + '%',
       sliderToInternal: sv => parseFloat(sv),
       internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
+      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); }
     },
     {
       sliderId: 'gcVolSlider', numId: 'gcVolNum', param: 'volume',
       toDisplay: v => v.toFixed(3),
       sliderToInternal: sv => parseFloat(sv),
       internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.001, Math.min(2.0, v)); },
+      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.001, Math.min(2.0, v)); }
     },
     // ── Filter sliders ──────────────────────────────────────────────────────
     // HPF/LPF use a log scale (20–20000 Hz) mapped to slider 0–1000.
@@ -2759,7 +2734,7 @@ export function initGrainControls() {
         if (s.endsWith('k')) v = parseFloat(s.replace('k', '')) * 1000;
         else v = parseFloat(s);
         return isNaN(v) ? null : Math.max(20, Math.min(20000, v));
-      },
+      }
     },
     {
       sliderId: 'gcLpfSlider', numId: 'gcLpfNum', param: 'lpfFreq',
@@ -2775,28 +2750,28 @@ export function initGrainControls() {
         if (s.endsWith('k')) v = parseFloat(s.replace('k', '')) * 1000;
         else v = parseFloat(s);
         return isNaN(v) ? null : Math.max(20, Math.min(20000, v));
-      },
+      }
     },
     {
       sliderId: 'gcHpfQSlider', numId: 'gcHpfQNum', param: 'hpfQ',
       toDisplay: v => v.toFixed(2),
       sliderToInternal: sv => parseFloat(sv),
       internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.1, Math.min(20, v)); },
+      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.1, Math.min(20, v)); }
     },
     {
       sliderId: 'gcLpfQSlider', numId: 'gcLpfQNum', param: 'lpfQ',
       toDisplay: v => v.toFixed(2),
       sliderToInternal: sv => parseFloat(sv),
       internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.1, Math.min(20, v)); },
+      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.1, Math.min(20, v)); }
     },
     {
       sliderId: 'gcFilterJitterSlider', numId: 'gcFilterJitterNum', param: 'filterFreqJitter',
       toDisplay: v => Math.round(v * 100) + '%',
       sliderToInternal: sv => parseFloat(sv),
       internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); },
+      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); }
     },
   ];
 
@@ -3088,11 +3063,13 @@ export function initGrainControls() {
   // Init display from default preset
   S.syncGrainControlsUI();
 
-  // ── Radial morph visual indicator ───────────────────────────────────────
-  // When the gesture radial morph is driving params, toggle .param-morphed
-  // on each affected grain-row so the slider thumb turns orange.
-  // Extra param → slider-ID mapping for controls outside SLIDER_DEFS
-  // Non-SLIDER_DEF controls: slider-based and segment-based UI elements
+  // ── Controls outside SLIDER_DEFS ─────────────────────────────────────────
+  // k, radius, recency, the fade curve and the segment rows: the param →
+  // element mapping the highlight pass below needs, since SLIDER_DEFS does not
+  // cover them. The radial-morph indicator that shared these two tables
+  // (.param-morphed, an orange thumb) went on 2026-09-13 — it read
+  // S.radialMorphActiveParams, which nothing has ever assigned, and its own
+  // hook was never called; radial morph itself was sunset with the patch bank.
   const EXTRA_MORPH_SLIDERS = [
     { param: 'k',                sliderId: 'searchKSlider' },
     { param: 'searchRadiusDeg',  sliderId: 'radiusSlider' },
@@ -3108,33 +3085,6 @@ export function initGrainControls() {
     { param: 'direction',        segId: 'gcDirSeg' },
     { param: 'curveType',        segId: 'gcCurveSeg' },
   ];
-
-  S._syncRadialMorphUI = function() {
-    const morphed = S.radialMorphActiveParams;
-    SLIDER_DEFS.forEach(def => {
-      const slider = document.getElementById(def.sliderId);
-      if (!slider) return;
-      const row = slider.closest('.grain-row');
-      if (!row) return;
-      row.classList.toggle('param-morphed', morphed?.has(def.param) ?? false);
-    });
-    // Also mark non-SLIDER_DEF slider controls (k, radius, recency, fade curve)
-    EXTRA_MORPH_SLIDERS.forEach(def => {
-      const el = document.getElementById(def.sliderId);
-      if (!el) return;
-      const row = el.closest('.grain-row');
-      if (!row) return;
-      row.classList.toggle('param-morphed', morphed?.has(def.param) ?? false);
-    });
-    // Segment/toggle controls (nearest, k-all, k-seq, radius fade, dir, curve)
-    EXTRA_MORPH_SEGS.forEach(def => {
-      const el = document.getElementById(def.segId);
-      if (!el) return;
-      const row = el.closest('.grain-row');
-      if (!row) return;
-      row.classList.toggle('param-morphed', morphed?.has(def.param) ?? false);
-    });
-  };
 
   // ── Sensor mapping visual indicator ──────────────────────────────────────
   // When an IMU sensor mapping is enabled for a param, toggle .param-mapped

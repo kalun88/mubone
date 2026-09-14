@@ -55,7 +55,7 @@ VBAP panning is pre-computed as a packed Float32Array lookup table and runs in t
 
 ## Exploring beyond the main UI
 
-The `?exp` URL flag was removed. All modules live under `js/` and everything that used to be gated is either always-on (gesture, snapshot, staging) or invokable from the DevTools console:
+The `?exp` URL flag was removed. All modules live flat under `js/`. What it used to gate is either always-on now or invokable from the DevTools console (the gesture, snapshot and staging modules were sunset in August 2026 and are git history, so there is nothing left to import):
 
 ```js
 // from DevTools:
@@ -63,7 +63,7 @@ const m = await import('./js/<module-name>.js');
 m.someExportedFn();
 ```
 
-The console object `window.wg` exposes worklet-engine control (`wg.start()`, `wg.stop()`, `wg.set(params)`, `wg.status()`, `wg.diag()`). See `docs/EXP-NOTES.md` for design notes on gesture extraction, self-organizing paint, and other in-flight research directions.
+The console object `window.wg` exposes worklet-engine control (`wg.start()`, `wg.stop()`, `wg.set(params)`, `wg.status()`, `wg.diag()`). `docs/EXP-NOTES.md` holds unbuilt idea-space; its gesture, snapshot and staging sections describe modules that no longer exist.
 
 ---
 
@@ -293,58 +293,75 @@ css/
 js/
   state.js              — constants, the default grain block, shared state object (S)
   main.js               — app entry point, wires up all modules
+
   audio.js              — AudioContext, mic recording, speaker buses
+  audio-features.js     — real-time audio analysis (RMS, centroid, ZCR)
+  onsets.js             — noise-floor-adaptive onset detection, for the slice tool
+  latency.js            — the time between a sound and its sample, and back
+  sampler.js            — the sample instrument, an INPUT rather than a brush
+  live-loop.js          — main-thread handle for the live-loop worklet
+
   grain.js              — grain scheduling, spatial search, candidate posting
   grain-worklet-bridge.js — main-thread ↔ worklet communication layer
   paint-ticker.js       — velocity-adaptive particle deposition (up to 400Hz)
+  brush.js              — the brush decides the material
+  brush-voicing.js      — a stroke freezes the brush that painted it
+  erase.js              — the erase brush
+  trigger.js            — the trigger tool: a view onto a stroke, gated by proximity
+  seed-morph.js         — seed agitate/smooth morphing, driven by an inertial stream
+  scale.js              — control shaping for continuous controllers
+
+  pins.js               — pin groups (clouds / loops), derived from kind; mute + solo
+  composer.js           — composer mode: latch-toggle pins by cursor proximity
+  history.js            — ONE action stack: undo is the last thing the performer did
+  param-registry.js     — the sparse parameter registry a session's patch applies through
+  storage-registry.js   — the one authoritative map of persisted keys → category
+
   sphere.js             — 3D math, quaternion ops, projection
-  renderer.js           — canvas animation loop, particle/seed/cursor drawing
-  audio-features.js     — real-time audio analysis (RMS, centroid, ZCR)
-  debug-waveform.js     — visual debug tool for inspecting audio buffers
-  diag.js               — rolling diagnostic event log (dlog)
+  renderer.js           — canvas animation loop, particle/pin/cursor drawing
   events.js             — mouse, keyboard, drag-drop handlers
+  diag.js               — rolling diagnostic event log (dlog)
   handsfree.js          — auto-recording gate engine
-  midi.js               — MIDI input and CC mapping
-  mobile.js             — mobile gyro/touch support
+  mobile.js             — the hosted demo in a phone's browser: gyro, touch, hidden chrome
+
+  tiles.js              — the palette and the toolbox; a tile is the preset
+  tile-layout.js        — the one screen: chrome, sphere, rails, palette, footer
+
   sensor-registry.js    — sensor slot registry (cursor, frame, gesture roles)
   sensor-mapping.js     — sensor → parameter mapping engine
   imu-setup.js          — direct x-imu3 connection (WiFi/USB)
-  ui-imu-setup.js       — x-imu3 connection UI
-  ui-sensor-mapping.js  — sensor mapping UI (axis map, calibration)
+  ximu-settings.js      — the x-imu3's own device settings
   ximu-led-feedback.js  — x-imu3 onboard LED feedback
-  seed-morph.js         — seed agitate/smooth gesture morphing
+  sygaldry.js           — talk to a first-party mubone instrument
+  sygaldry-osc.js       — OSC and SLIP codecs for sygaldry instruments
+  sygaldry-led.js       — a palette colour as duty on the instrument's LED
+  accessory-registry.js — the x-IMU3-SA-A8's 8 analogue channels → the ACTIONS table
+
   osc.js                — OSC message dispatch (inbound)
   osc-out.js            — OSC message dispatch (outbound)
-  midi.js               — MIDI input and CC mapping
+  midi.js               — MIDI input, CC mapping, and the ONE action table
   midi-out.js           — MIDI output
   status-publisher.js   — status broadcast channel for secondary windows
-  tool.js               — S.tool selector; the tool owns the primary gesture
-  tool-layout.js        — four-tools layout (body.tool-layout): dock, brush library, chrome
-  pins.js               — the two pin groups (clouds / loops), derived from kind; mute + solo
+
+  ui-settings.js        — the one settings door (#settingsModal)
+  ui-presets.js         — grain controls, pin banks, radius viz
   ui-pins.js            — the pinned rail
-  ui-presets.js         — grain controls, commit banks, radius viz
+  ui-pin-settings.js    — Settings → Pins, and the monitor/house split
+  ui-source.js          — the source tiles (live input, samples)
   ui-samples.js         — sample loading, waveform display, crop
   ui-audio-settings.js  — audio device/gain/routing settings
   ui-meters.js          — VU metering, mixdown controls
-  ui-pin-settings.js    — Settings → Pins wiring + the monitor/house split
   ui-viz.js             — visualization settings
   ui-sweep.js           — particle sweep tool
+  ui-trigger.js         — the trigger tool's controls
+  ui-buttons.js         — Settings → Instrument buttons
   ui-learn.js           — learning mode tooltips
   ui-export.js          — settings export/import
-  param-registry.js     — the sparse parameter registry a session's `patch` applies through
-  ui-trace.js           — trace display
-  gesture.js            — gesture feature extraction (smoothness, effort, periodicity)
-  gesture-viz.js        — gesture feature visualization overlay
-  gesture-panel.js      — gesture mapping panel UI (Shift+G)
-  snapshot-engine.js    — posture-snapshot staging engine
-  ui-staging.js         — staging modal UI
-  relational-features.js — cross-sensor relational features (Δ-angles for staging)
-
-  worklets/
-    grain-engine.worklet.js      — AudioWorklet grain synthesis engine (256-slot pool)
-    quad-capture.worklet.js      — N-channel capture → IPC → audify
-    input-meter.worklet.js       — input level metering
-    recording-capture.worklet.js — mic recording capture
+  ui-diagnostics.js     — measurements you run, and verdicts you read
+  ui-imu-setup.js       — x-imu3 connection UI
+  ui-sensor-mapping.js  — sensor mapping UI (axis map, calibration)
+  ui-led-map.js         — the x-IMU3 LED mapping modal
+  ui-sygaldry.js        — the sygaldry instrument's panel
 
 proxy.js                — x-IMU3 UDP → WebSocket bridge for browser mode
 ```

@@ -52,11 +52,9 @@ const WHEN = {
   identify:     'On connect, and on a role switch.',
   mute_toggle:  'Mute is switched on or off.',
   tare:         'The cursor is tared.',
-  patch:        'A patch changes.',
   sweep:        'A sweep runs.',
   erase_all:    'Everything is erased.',
   scan_toggle:  'Scan is switched on or off.',
-  snapshot:     'A snapshot is captured.',
   trigger:      'A trigger buffer launches.',
 };
 

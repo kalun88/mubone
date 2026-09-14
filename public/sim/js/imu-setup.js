@@ -931,40 +931,6 @@ export async function connectSerialDevice(portPathOrObj) {
   return true;
 }
 
-export async function disconnectDevice(sn) {
-  const dev = _devices.get(sn);
-  if (!dev) return;
-
-  dev.feeding = false;
-  _devices.delete(sn);
-
-  const bridge = window.electronBridge;
-
-  if (dev.transport === 'serial') {
-    _serialPathToDevice.delete(dev.serialPath);
-    if (bridge?.isElectron) {
-      // Electron mode
-      if (bridge.serialClose) await bridge.serialClose(dev.serialPath);
-    } else {
-      // Browser mode — close WebSerial port
-      await _webSerialClose(dev.serialPath);
-    }
-    DEBUG && console.log(`[imu-setup] serial disconnected ${dev.serialPath}`);
-  } else {
-    if (bridge?.isElectron) {
-      // Electron mode — release our ref on the UDP data listener for this
-      // device's send port.  Main-side is ref-counted, so the socket only
-      // closes when the last device using that port disconnects.
-      await bridge.ximu3StopData(dev.send);
-    } else {
-      // Browser mode — tell proxy to disconnect
-      _sendProxyControl({ type: 'disconnect', sn });
-    }
-    DEBUG && console.log(`[imu-setup] UDP disconnected ${sn}`);
-  }
-  _syncSensorStatus();
-}
-
 // ── Send command to a specific device ───────────────────────────────────────
 
 export function sendCommandTo(dev, jsonObj) {
@@ -1130,20 +1096,6 @@ export async function blinkDevice(dev, count = 3, intervalMs = 150) {
   }
 }
 
-// Find device by slot name (for role-switch blink trigger)
-export function getDeviceBySlotName(slotName) {
-  for (const dev of _devices.values()) {
-    if (dev.slotName === slotName) return dev;
-  }
-  return null;
-}
-
-// Convenience: send to first connected device
-export function sendCommand(jsonObj) {
-  const dev = _devices.values().next().value;
-  if (dev) sendCommandTo(dev, jsonObj);
-}
-
 // ── Axes alignment ──────────────────────────────────────────────────────────
 
 export function setAxesAlignment(dev, value) {
@@ -1175,13 +1127,6 @@ export function togglePolarity(dev, axis) {
   e.sign = -e.sign;
   saveCalibration();
   return e.sign;
-}
-
-export function setPolarity(dev, axis, sign) {
-  const e = _entryFor(_slotFor(dev), axis);
-  if (!e) return;
-  e.sign = sign >= 0 ? 1 : -1;
-  saveCalibration();
 }
 
 export function getPolarity(dev, axis) {
@@ -1251,11 +1196,6 @@ export function hasMountCal(dev) {
 
 export function requestEulerMode(dev) {
   sendCommandTo(dev, { ahrs_message_type: 2 });
-  setTimeout(() => sendCommandTo(dev, { apply: null }), 100);
-}
-
-export function requestQuatMode(dev) {
-  sendCommandTo(dev, { ahrs_message_type: 0 });
   setTimeout(() => sendCommandTo(dev, { apply: null }), 100);
 }
 
@@ -1619,8 +1559,6 @@ function _syncSensorStatus() {
 }
 
 function _delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-export const AXES_ALIGNMENT_LABELS = AXES_ALIGNMENTS;
 
 export function getAlignmentLabel(value) {
   const entry = AXES_ALIGNMENTS.find(a => a[0] === value);

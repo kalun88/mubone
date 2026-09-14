@@ -2417,3 +2417,130 @@
   the existing `body.mobile-mode` rule hide the strip tiles and the stickers; the dock and the hand tile stay. `tiles.js`:
   a finger on the hand tile is the hand's press (touchstart/end on the dock, preventDefault so no compat click follows).
   `phone-audit` checks the tile shows and a touch on it plays; `palette`, `align`, `probe` green.
+
+- [x] **The Someday list is parked (Ek, 2026-09-13: "the app is now at a stable enough state, in a way feature lock")** —
+  the 24 April–August ideas moved whole to `docs/archive/TODO-SOMEDAY.md`, ids kept; `docs/TODO.md` keeps one pointer
+  line and drops the empty Jul 27–28 heading. `docs-audit` green.
+
+- [x] **The engine audit had read the wet switch as inert since 2026-09-07** — `scripts/engine-audit.js`: `wet` lives on
+  the tile (`_tileCfg`), not on `S`, so the snapshot never saw it move; and the second click went to the detached
+  pre-render node because the wet button carries `data-wet`, not `data-sw`. Snapshot now asks `isWet(selectedTile())`;
+  the re-lookup uses whatever data attribute the switch has. `engine` 38/38.
+
+- [x] **The audits were lying, in six suites at once (2026-09-13)** — a clean tree failed cc mirrors, trigger, engine,
+  mark align, palette and pins. One app bug (the wet switch reads as inert because `wet` lives on the tile, not `S`);
+  the rest were the harness: `waitForApp` returned before `initAudioPanel`'s rAF, the bridge's 10 s eval cap under load,
+  the fade switch missing the segment loop's nearest exemption, the gaze trail counted in pins § K's line totals,
+  § P waiting on an rAF Chromium had throttled, and the loopback check demanding a quieter room than `findClicks` needs.
+  Full rig audit green. Reasoning in each commit.
+
+- [x] **Two silent app bugs found by reading S for fields nothing sets** — the audio-crash recovery re-opened the mic
+  behind `S.micRequested`, which has never been assigned, so a recovered context recorded silence; and `diag.js`
+  has exported `initDiag()` since March 2026 with no caller (a March audit said so and was deleted without the fix),
+  so crash capture, ⇧D and the console helpers were dead and the report counted pins through `S.activeSeeds`, which
+  does not exist. Both fixed; the crash overlay is `?debug`-gated so it cannot cover the sphere mid-set.
+
+- [x] **The feature-lock sweep: 53 exports, 33 hooks, 229 lines of custom routing, the dead markup and CSS** — every
+  export in `js/` checked against every file that could reach it; the `'custom'` sensor role deleted (it was absent
+  from both role arrays on purpose, so nothing could select it); `#asRmsReadout`, 13 dead id attributes, 46 lines of
+  CSS. Two new permanent checks in `docs-audit`: every named import resolves to a real export (a scripted cut took
+  `GRAIN_SCHEDULER_INTERVAL_MS` with it and nothing else would have caught it), and README's module list is exactly
+  `js/` in both directions (it named 10 sunset modules and omitted 26 real ones, `tiles.js` and `pins.js` among them).
+
+- [x] **The user-facing docs and the performer-visible strings** — QUICK-START taught a D key deleted 2026-09-03,
+  digits as patch-bank presets, X for radial morph and ⇧G for the gesture panel; KEYBOARD-SHORTCUTS (CURRENT) still
+  carried the four D rows in a section of their own. In the app: the latency row said "loop engine" (it is TAPE), the
+  LED page offered a `snapshot capture` row that can never light, and the reset page named roll mute and polarity.
+
+- [x] **#36 Stress-test long sessions (open since the Dartmouth prep, March)** — 14 min of continuous painting, 521
+  strokes, 11,506 marks: heap FLAT at 9.5 MB, scheduler drift max 3 ms against a 10 ms tick, no renderer errors. No
+  leak. It did surface the recording-budget silence (its own commit) at ~13.5 min.
+
+- [x] **#39 42-channel VBAP (open since the Dartmouth prep)** — no cliff anywhere. The lookup is 360 entries whatever
+  the speaker count, so the packed table is 1440 floats at 2 channels and at 64; a query is ~6 ns flat; building it is
+  0.075 ms at 42 and 0.105 ms at 64. Every entry names two real speakers with unit-power weights at every count tested
+  (2/8/16/24/32/42/64). Any 42-channel risk is on the audio-host side, not in VBAP.
+
+- [x] **Edge-case round: 20 rude sequences, none broke it** — unpin mid-take, reload with a pin playing, a second tool
+  fired mid-play, 20 rapid press/release pairs, erase-all mid-take, undo past the top of the stack, pinning past a full
+  pool, switching the tool in hand mid-press, the cap hammered mid-stroke, the cursor source vanishing mid-take,
+  erase-all undone. Plus: every persisted key survives a reload byte-for-byte with no unregistered keys, and the
+  export/import round trip restores marks, pins and their kinds, a moved setting and a wet brush, does not double on a
+  second import, and refuses a truncated file without taking the app down.
+
+- [x] **The release-only audits, all run** — `osc-audit` full sweep PASS (90 addresses observable), `browser-audit`
+  PASS including the service-worker and offline contract, `phone-audit` PASS, `align-audit` all invariants,
+  `probe-selftest` green.
+
+- [x] **#351 One gesture, two actions, after the button-map redeal (Ek, 2026-09-13: "just delete the colliding old
+  rows")** — `seedPaletteDigitsOnce` adds the palette_N rows and left the profile's own, so a pre-2026-09-11 map had
+  `commit_release` AND `palette_7` on button 3's double and one double-press released two pins. Any stored row on a
+  gesture a position now holds is dropped, named in a console line; a row on a free gesture is a binding you made and
+  stays. `midi.js`; #350 is narrowed to whether a free-gesture bare-id row should be MOVED instead.
+
+- [x] **The recording budget: 30 minutes, refuse at the ceiling, a bar in the chrome (Ek, 2026-09-13)** — the cap was
+  600s, sized in March "for student laptops with 8GB RAM"; now 1800s (the slider's existing max), with a stored 600
+  taking the new default once. Nothing auto-deletes: the takes hold marks undo cannot restore, so the instrument
+  refuses and says so. The gauge is a 44×3 track beside SWEEP, neutral → ochre at 80% → brick at 95%, words only at
+  the ceiling. `engine-audit` § C2 measures all of it. `state.js`, `ui-audio-settings.js`, `index.html`,
+  `tile-layout.js`, `css/style.css`.
+
+- [x] **The hue axis reads peaks at 23 Hz, not sums at 187 (Ek, 2026-09-13: "i reset the whole app many times still
+  the same")** — the colours were right on the bench and wrong through a mic. Tilt was read off the shared fftSize-256
+  analyser, so the whole vowel F1 range sat in FOUR bins; and a share-of-total-energy ratio counts every bin, so a
+  broadband room floor landed 97% above the split and slid everything warm. It reads the existing 2048-point gate
+  analyser now and compares each band's top-three peaks. Room shift 0.187 → 0.023, spread 144° of hue, 8.1 µs a mark.
+  `audio-features.js`, `ui-viz.js` (legend stops).
+
+- [x] **Colour rides the gamut and the arc goes round the other side (Ek, 2026-09-13: "still cant see to get yellow or
+  reds or greens. i always see orange blue violet")** — flat chroma at half of sRGB made hue 15° salmon and 54° tan;
+  one lightness ramp through both yellow and blue made yellow mud; and the arc climbed the short way round the wheel,
+  which has no green on it. Chroma is bisected to the gamut edge, lightness follows each hue's cusp, the arc runs
+  290°→25° through cyan, green and amber, and four measured knots give the voiced cluster 54% of it. Neighbour step
+  0.048 → 0.117 OKLab. `audio-features.js`, `ui-viz.js`, `state.js` (stale no-green claim).
+
+- [x] **A painted line, not a chain of bricks (Ek, 2026-09-13: "it looks super blockey it used to be smooth")** — every
+  colour change started a new ribbon and every ribbon got the material-true end caps, so a mid-stroke timbre change put
+  two blunt caps back to back. One outline per run now, colours filled as pieces of it sharing boundary points; colour
+  interpolated across the slerped sub-points; width and path smoothed by [1 2 1], path capped at the ribbon's own
+  half-width so the eraser can still find it. Line block 1.50 → 1.20 ms median. `renderer.js`.
+
+- [x] **The colour work is baked in, and the saturation axis was inverted (Ek, 2026-09-13: "let's make sure we don't
+  make this mistake again")** — `scripts/colour-audit.js`, 30 checks, measures every sound at three noise-floor levels
+  and reports what the floor MOVED. It caught its own harness twice (the input bus keeps a 3.25 s tail; a noise band
+  needs a median of three reads) and caught a real bug: `noise` was flatness minus a brightness trend fitted over a
+  centroid range of 0.012 and extrapolated ten times that far, which made a hiss read as the most tonal sound there is.
+  It counts bins within 12 dB of the peak now — floor-robust, gap 22 quiet and 21 in a room. `audio-features.js`,
+  `rig-audit.js`, `audit-for.js`, `docs/AUDITS.md`.
+
+- [x] **The room between notes is not a colour (Ek, 2026-09-13, off his own live take: "it goes thru purple to
+  green/yellow just on a K")** — a tape take records continuously, so most marks sit at rms 0.002 against a click's
+  0.69 and the axis was reading the room. A frame 34 dB below the loudest thing recently played now holds the last
+  reading, referenced to a decaying peak hold rather than a room estimate. Also: colour sub-points existed only where
+  geometry wanted them, so a slow hand got no gradient; and the colour table inherited sRGB's blue corner, one bucket
+  stepping six JNDs. Cusp smoothed, table 64 → 96 buckets, worst step 0.124 → 0.038. `audio-features.js`,
+  `renderer.js`, `colour-audit.js` § I.
+
+- [x] **A take's colours are decided against the whole take (Ek, 2026-09-13: "sure do the first")** — the live hold is
+  causal, so it is wrong at the start of a take: on one of Ek's sliced takes 39 marks sat over 34 dB under its loudest
+  moment and the live estimator caught 22, the misses all early. `settleTakeTimbre` re-runs the same threshold at the
+  seal and once per take on import, so old sessions come back right too. Idempotent, writes to the marks so the LED
+  agrees with the screen. `audio-features.js`, `audio.js`, `ui-export.js`, `colour-audit.js` § I (37 ok).
+
+- [x] **rig-audit gives each timing suite its own boot** — AUDITS.md § 1 had said "run trigger and mark align alone"
+  since 1.14 and it still cost a false failure (7 failures with trigger ahead of it, 0 alone), because `audit-for.js`
+  emits whatever the diff needs and nothing knew they could not ride together. The tool keeps the rule now.
+  `rig-audit.js`, `docs/AUDITS.md`.
+
+- [x] **Full sweep of the viz painting path (Ek, 2026-09-13: "do a full check of all the viz painting stuff")** —
+  four parallel code reviews plus a canvas-spy fuzz against the running app. Fourteen defects found and fixed across
+  three commits: export turned "no tilt" into tilt 0 so an imported session came back one colour; sampler and concat
+  marks had no colour axes at all and were hued by a different rule in every consumer; the LED used a bare 0 where the
+  screen used the centroid fallback; a NaN or zero loudness dropped a mark to the palette, grey at double size; the
+  legend was frozen at the boot theme; three bugs in the same day's ribbon code (bucket scale 64 vs 96, the end cap
+  drawn twice, the smoothing clamp applied per pass); the depth ramp fed the z-component in five layers; perfMode
+  missed the FOV size compensation and lit loop playheads as grains; the comb and concat brushes compared a fraction
+  of Nyquist against hertz; the take span was widened by marks that never landed; the comb discarded every stroke's
+  last mark; the dub's trail fell back to the legacy palette; and the hold's reference outlived its take.
+  `colour-audit.js` grew § J. `renderer.js`, `audio-features.js`, `paint-ticker.js`, `audio.js`, `ui-export.js`,
+  `ui-viz.js`, `ximu-led-feedback.js`.

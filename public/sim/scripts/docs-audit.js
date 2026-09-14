@@ -460,6 +460,58 @@ function checkModuleList() {
 }
 
 
+
+// ── 9b. README's module list is exactly js/ ─────────────────────────────────
+// CLAUDE.md names FAMILIES, so its check (above) cannot catch a missing module.
+// README lists every file by name with a one-liner, and that list is what a new
+// reader takes for the map of the app — so it rots in BOTH directions. On
+// 2026-09-13 it named ten modules that do not exist (tool.js, gesture.js,
+// snapshot-engine.js, ui-staging.js and the rest, all sunset months earlier)
+// and omitted twenty-six that do, tiles.js and pins.js among them: the two
+// files a session is most likely to need. Both directions fail here.
+function checkReadmeModules() {
+  console.log('\n── README module list ──');
+  const md = fs.readFileSync(p('README.md'), 'utf8');
+  const listed = new Set([...md.matchAll(/^ {2}([a-z0-9][a-z0-9-]*\.js)\s/gm)].map(m => m[1]));
+  const files = new Set(fs.readdirSync(p('js')).filter(f => f.endsWith('.js')));
+  const phantom = [...listed].filter(f => !files.has(f));
+  const missing = [...files].filter(f => !listed.has(f));
+  check(phantom.length === 0, 'every module README lists exists in js/',
+    phantom.length ? phantom.join(', ') : `${listed.size} listed`);
+  check(missing.length === 0, 'every module in js/ is listed in README',
+    missing.length ? missing.join(', ') : `${files.size} files`);
+}
+// ── 9c. every named import resolves to a real export ───────────────────────
+// There is no build step, so a `import { gone } from './x.js'` is not an error
+// until the module is loaded and the browser refuses the whole file — which in
+// practice means a blank app and one console line. Nothing else in the repo
+// checks it. It earned its place on 2026-09-13: a scripted sweep of dead
+// exports over-reached by one comment block and took GRAIN_SCHEDULER_INTERVAL_MS
+// with it, a live constant four modules import, and this is what said so.
+function checkImports() {
+  console.log('\n── named imports resolve ──');
+  const strip = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const dir = p('js');
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.js'));
+  const src = new Map(files.map(f => [f, strip(fs.readFileSync(path.join(dir, f), 'utf8'))]));
+  const bad = [];
+  for (const [f, text] of src) {
+    for (const m of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"]\.\/([^'"]+)['"]/g)) {
+      const target = src.get(m[2]);
+      if (target === undefined) { bad.push(`${f} → ${m[2]} (no such module)`); continue; }
+      for (let sym of m[1].split(',')) {
+        sym = sym.trim().split(/\s+as\s+/)[0].trim();
+        if (!sym) continue;
+        const re = new RegExp(`export\\s+(async\\s+)?(function|const|let|class)\\s+${sym}\\b`
+                            + `|export\\s*\\{[^}]*\\b${sym}\\b`);
+        if (!re.test(target)) bad.push(`${f} imports ${sym} from ${m[2]}`);
+      }
+    }
+  }
+  check(bad.length === 0, 'every named import resolves to an export',
+    bad.length ? bad.join(' · ') : `${src.size} modules`);
+}
+
 // ── 10. INSTRUMENT-GUI's radius scale matches the tokens ────────────────────
 // The instrument kit states six radii by value. A design doc that can go stale
 // silently is how this project started — CLAUDE.md called three sunset features
@@ -544,6 +596,8 @@ checkLinks();
 checkSettingsDepth();
 checkHexLiterals();
 checkModuleList();
+checkReadmeModules();
+checkImports();
 checkInstrumentRadii();
 checkScriptRefs();
 checkSessionWeight();

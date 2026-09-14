@@ -43,6 +43,7 @@ const SUITES = [
   { name: 'engine pages',  mod: './engine-audit.js' },
   { name: 'mark align',    mod: './mark-align-audit.js' },
   { name: 'palette',          mod: './palette-audit.js' },
+  { name: 'colour',        mod: './colour-audit.js' },
   // Last on purpose: it is the only suite that IMPORTS a session, which
   // replaces S.particles, S.commitSlots and the layer set wholesale. It hands
   // back a clean commit pool, but running it ahead of the others would still
@@ -61,13 +62,27 @@ const SUITES = [
     process.exit(2);
   }
 
-  const rig = doAttach ? await attach() : await launch();
-  if (doAttach) console.log('attached to the running app — this WILL disturb its state\n');
-
+  // ── THE TWO TIMING SUITES GET THEIR OWN BOOT (2026-09-13) ─────────────────
+  // `trigger` measures dropped blocks in steady state and `mark align` records
+  // bursts and reads their loudness off the audio clock. Neither survives
+  // sharing a boot with the other: on 2026-09-13 a clean tree passed both when
+  // run alone and `mark align` reported seven failures with `trigger` ahead of
+  // it in the same instance, which is a false failure that costs a real
+  // investigation every time. docs/AUDITS.md § 1 has said "run them alone"
+  // since release 1.14 — it is a rule the tool can keep instead of the reader,
+  // so each timing suite now gets a fresh instance of its own.
+  // Suites that must not share an instance with anything else. `trigger` and
+  // `mark align` are timing suites (see above). `colour` joined them on
+  // 2026-09-13: it plays real audio through the input bus for minutes and polls
+  // the bus down to silence between readings, and `pins` — which is clean 200/200
+  // alone and after a plain reload — intermittently lost its reach-fan and
+  // bracket counts when it followed it. Those checks need grains actually
+  // sounding inside a window, which is the first thing a warm machine loses.
+  const ALONE = new Set(['trigger tool', 'mark align', 'colour']);
   const results = [];
-  try {
-    for (let i = 0; i < suites.length; i++) {
-      const s = suites[i];
+  const runGroup = async (group, rig) => {
+    for (let i = 0; i < group.length; i++) {
+      const s = group[i];
       // Each suite assumes a settled app: the sweeps leave every control moved,
       // and both the trigger and composer suites stop the scheduler, so hand
       // the next one a fresh renderer rather than the wreckage of the last.
@@ -82,8 +97,29 @@ const SUITES = [
       }
       results.push({ name: s.name, failures });
     }
-  } finally {
-    if (!doAttach) await rig.close();
+  };
+
+  // One group per timing suite, plus one holding everything else. Attaching is
+  // the exception: there is one app and the caller chose it, so the split would
+  // be a lie — say so and run them in order.
+  const groups = doAttach
+    ? [suites]
+    : [...suites.filter(s => ALONE.has(s.name)).map(s => [s]),
+       suites.filter(s => !ALONE.has(s.name))].filter(g => g.length);
+  if (doAttach && suites.filter(s => ALONE.has(s.name)).length > 1) {
+    console.log('note: --attach cannot give the solo suites a boot each;');
+    console.log('      a failure in either may be the other one\'s wake. Re-run alone.\n');
+  }
+
+  for (const group of groups) {
+    const rig = doAttach ? await attach() : await launch();
+    if (doAttach) console.log('attached to the running app — this WILL disturb its state\n');
+    try {
+      await runGroup(group, rig);
+    } finally {
+      if (!doAttach) await rig.close();
+    }
+    if (doAttach) break;
   }
 
   console.log(`\n${'═'.repeat(64)}`);

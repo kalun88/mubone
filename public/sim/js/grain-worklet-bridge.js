@@ -5,11 +5,11 @@
 // candidate list posting (50Hz), VBAP LUT transfer, feedback ring reading.
 //
 // Usage:
-//   import { startWorkletEngine, stopWorkletEngine, ... } from './grain-worklet-bridge.js';
-//   await startWorkletEngine(audioCtx, recordingBuffer, params);
+//   import { startWorkletGrain, stopWorkletGrain, updateWorkletParams } from './grain-worklet-bridge.js';
+//   await startWorkletGrain(voiceId, opts);
 //   S._postWorkletCandidates(pool, lon, lat);   // from the scheduler at 50Hz
 //   updateWorkletParams({ period: 0.020, pitchShift: 100 });
-//   stopWorkletEngine();
+//   stopWorkletGrain(voiceId);
 // ============================================================================
 
 import { S, gp } from './state.js';
@@ -1056,25 +1056,6 @@ export function updateWorkletParams(params) {
   _workletNode.port.postMessage({ type: 'params', ...params });
 }
 
-// ── Send VBAP lookup table ──────────────────────────────────────────────────
-/**
- * @param {Float32Array} lutData - 360×4 = 1440 floats [idxA, idxB, wA, wB] per degree
- * @param {number} numChannels - speaker count
- */
-export function postVbapLUT(lutData, numChannels) {
-  if (!_workletNode) return;
-  _workletNode.port.postMessage({ type: 'vbapLUT', data: lutData, numChannels });
-}
-
-// ── Register sample buffers ─────────────────────────────────────────────────
-/**
- * @param {Array} buffers - [{ data: Float32Array, length: number }]
- */
-export function postSampleBuffers(buffers) {
-  if (!_workletNode) return;
-  _workletNode.port.postMessage({ type: 'buffers', list: buffers });
-}
-
 // ── Hot-swap a sample buffer into the running worklet (#247) ────────────────
 // The addBuffer half of hotSwapRecording, with none of the live-rec teardown:
 // registers ANY AudioBuffer (a dropped file, a sampler take) with a running
@@ -1253,17 +1234,6 @@ export function resyncWorkletBuffers() {
   return dropKeys.length;
 }
 
-/**
- * Flush only cursor-originated grains, leaving seeds alive.
- * Used by undo to immediately silence the undone stroke's audio without
- * disrupting committed clouds/seeds that are still playing.
- */
-export function flushCursorGrains() {
-  if (_workletNode) {
-    _workletNode.port.postMessage({ type: 'flush-cursor' });
-  }
-}
-
 // ── Stop the worklet grain engine ───────────────────────────────────────────
 export function stopWorkletGrain() {
   if (_workletNode) {
@@ -1285,7 +1255,6 @@ export function stopWorkletGrain() {
     S._onVBAPRebuilt = null;
     S._beginProvisionalRecording = null;
     S._onLiveBufferRebuilt = null;
-    S._endProvisionalRecording = null;
     dlog('worklet', 'grain engine stopped');
   }
   _sab = null;
@@ -1309,10 +1278,6 @@ export function setMaxGrains(n) {
 }
 S._setMaxGrains = setMaxGrains;
 
-export function getWorkletNode() {
-  return _workletNode;
-}
-
 /** Console diagnostic: last posted candidate list + feedback stats. */
 export function getWorkletDiag() {
   const candidates = S._readBackCandidates ? S._readBackCandidates() : _lastPostedCandidates;
@@ -1328,12 +1293,4 @@ export function getWorkletDiag() {
     bufMapSize: _bufferMap.size,
     workletDiag: _lastWorkletDiag,
   };
-}
-
-// Reset registration flag when AudioContext is recreated
-export function resetWorkletRegistration() {
-  _registered = false;
-  _workletNode = null;
-  _sab = null;
-  _feedbackCallback = null;
 }

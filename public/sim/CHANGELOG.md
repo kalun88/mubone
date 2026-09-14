@@ -7,6 +7,40 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 1.16.0 alpha — 2026-09-13
+
+Colour. A whole day on what a sound looks like, and then on everything else in the painting path.
+
+### Fixed
+- **The hue axis could not see the vowel space.** It was read off the shared fftSize-256 analyser, 187 Hz a bin, so the entire first-formant range that separates one vowel from another lived in four bins. It reads the existing 2048-point gate analyser now, 23.4 Hz a bin.
+- **The room decided the colour.** A share-of-total-energy ratio counts every bin, and with 124 bins above the 800 Hz split against four below, 97% of any broadband floor landed high and offset the hue rather than blurring it. Comparing each band's top three peaks is immune: a floor moves the reading 0.023 where it used to move it 0.187.
+- **The saturation axis was inverted.** A hiss read as the most tonal thing on the sphere and was drawn at full chroma, because a brightness trend fitted over a centroid range of 0.012 was extrapolated ten times that far. It counts the bins within 12 dB of the peak now — class gap 22 in silence, 21 in a room.
+- **Reds and yellows were there and did not look it.** Chroma was flat at about half of what sRGB holds, and one lightness ramp ran through both yellow and blue. Chroma is bisected to the gamut edge and lightness follows each hue's own cusp.
+- **Green was unreachable by construction.** The arc climbed the short way round the wheel. It runs 290° down to 25° now, through violet, blue, cyan, green, yellow, orange and red, and spends its length where the material actually lands.
+- **Silence took a colour.** A tape take records continuously, so most of its marks are the gaps; the axis answered for them and a single tongue click came back purple through green to yellow. A frame far below the loudest thing recently played holds the last reading, and the take's colours are settled again against the whole take once it seals.
+- **An imported session came back one colour**, because export wrote 0 where a mark had no tilt and 0 is a legal value.
+- **Sampler and concat marks had no colour axes at all**, so they were hued by a different rule on screen, in the LED, and in perf mode.
+- **A mark with no loudness drew grey at double size**, and mid-ribbon it broke the colour ramp.
+- **The tape line was blocky.** Every colour change started a new ribbon and every ribbon got the material-true end caps, so a mid-stroke change in the sound put two blunt caps back to back. One outline per stroke now, colours filled as pieces of it, width and path smoothed, corners rounded within the ribbon's own half-width.
+- **The depth ramp was fed the z-component** in five layers, so playheads and anchor marks stayed at full size across the whole far side while the paint under them receded.
+- **perf mode was a different picture**, not just a faster one: no FOV size compensation, and loop playheads lit as if they were sounding grains.
+- **The comb and match brushes compared a fraction of Nyquist against hertz.** Comb's keep-high accepted nothing at all; match ignored brightness entirely.
+- **The take's span was widened by marks the sieve rejected**, which made the take read as erase-trimmed for ever.
+- **The comb discarded every stroke's last mark**, leaving a stray dot off the end of every combed stroke.
+- **The overdub's trail fell back to the legacy rotating palette** for the whole of a dub.
+- **The legend was frozen at the boot theme** — the key and the map disagreeing.
+- **Recording stopped silently at ten minutes** with its only warning in a hidden element.
+
+### Added
+- `scripts/colour-audit.js` — 43 checks in ten sections. It measures every sound at three noise-floor levels and gates on what the floor MOVED, because a synthesised tone has no noise floor and a microphone always does.
+- A recording budget bar in the chrome, and a 30-minute ceiling that refuses and says so.
+- A focus bracket on the sphere for the selected pin.
+
+### Changed
+- The timbre calibration sliders and the Listen button are gone, replaced by a legend of measured landings. The arc is a constant, so a sound is the same colour on every machine.
+- `rig-audit.js` gives each timing suite, and the colour suite, an instance of its own.
+---
+
 ## 1.15.1 alpha — 2026-09-12
 
 The evening after 1.15, on the rig: the steer, the stickers, the recogniser, the pin tile.

@@ -4,11 +4,11 @@
 //   - viz mode toggle (feature-driven vs original palette)
 //   - Particle base / max size sliders
 //   - RMS min/max (volume → particle size calibration)
-//   - Spectral centroid min/max (timbre → particle colour calibration)
+//   - The timbre LEGEND (the arc is fixed; there is nothing to calibrate)
 // ============================================================================
 
 import { S } from './state.js';
-import { wireSaveDefaultBtn } from './ui-audio-settings.js';
+import { featuresToColor } from './audio-features.js';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -101,10 +101,14 @@ export function initVizUI() {
       btn.addEventListener('click', () => {
         S.darkMode = btn.dataset.theme === 'dark';
         syncDarkButtons();
+        // The legend is the KEY to the sphere and rebuilds from featuresToColor,
+        // which reads S.darkMode. Nothing dispatched this event, so the legend
+        // kept the boot theme's colours while the sphere repainted in the other
+        // one — the key and the map disagreeing, which is worse than no key.
+        window.dispatchEvent(new Event('mubone-theme'));
       });
     });
     // Allow OSC / external toggle to sync UI
-    S._syncDarkModeUI = syncDarkButtons;
   }
 
   // ── Performance mode toggle (on / off) ─────────────────────────────────
@@ -122,7 +126,9 @@ export function initVizUI() {
         console.log(`[perf] high-performance render mode ${S.perfMode ? 'ON' : 'OFF'}`);
       });
     });
-    // Allow keyboard shortcut (Shift+P) to sync the UI buttons
+    // Published so a RESTORED perfMode shows on the buttons at boot
+    // (_loadVizCalibration calls it). ⇧P, which this line used to name, lost
+    // its key on 2026-09-09 — the segment is how the mode is set now.
     S._syncPerfModeUI = syncPerfButtons;
   }
 
@@ -194,7 +200,6 @@ export function initVizUI() {
   // and the FOV slider zooms out to the 360° flat map. The outside view is
   // gone from the UI; S.camPull stays console-only (the pulled render paths
   // are dormant no-ops at 0) until a cleanup pass deletes them.
-  S._syncCamPullUI = () => {};
 
   // ── Edge indicator (detethered cursor) ─────────────────────────────────
   const EDGE_IND_KEY = 'mubone_edgeIndicator';
@@ -277,15 +282,37 @@ export function initVizUI() {
     v  => { S.vizRmsMax = v; },
     v  => v.toFixed(2));
 
-  // ── Centroid calibration (timbre → colour) ──────────────────────────────
-  bindSlider('vizCentMinSlider', 'vizCentMinNum',
-    () => S.vizCentroidMin,
-    v  => { S.vizCentroidMin = v; },
-    v  => v.toFixed(2));
-
-  bindSlider('vizCentMaxSlider', 'vizCentMaxNum',
-    () => S.vizCentroidMax,
-    v  => { S.vizCentroidMax = v; },
-    v  => v.toFixed(2));
-
+  // ── The timbre legend (Ek, 2026-09-13) ─────────────────────────────────
+  // The two bounds are CONSTANTS now (state.js), not sliders and not a
+  // ten-second listen: "it should be very predictable so that i see yellow
+  // every time and my collaborators see yellow and they know what sound that
+  // is." A colour is only a shared word if nobody can quietly redefine it, so
+  // what used to be two calibration rows and a Listen button is a legend —
+  // the ramp drawn, with the sounds that land on it named.
+  const legend = document.getElementById('vizTimbreLegend');
+  if (legend) {
+    // Measured against real formant triples and noise bands, 2026-09-13: the
+    // hue axis compares the loudest peak below 800 Hz against the loudest
+    // above, so these are the sounds that land on each part of the ramp —
+    // blue and cyan for placed voice, green for an open one, gold for breath,
+    // red for a hiss. The tonal ones are drawn tonal and the breathy ones
+    // breathy, because saturation is the second axis.
+    const STOPS = [
+      ['chest, growl',      0.18, 0.15],
+      ['ee, ay',            0.23, 0.15],
+      ['oo, ah',            0.35, 0.15],
+      ['oh, open',          0.46, 0.20],
+      ['breath, click',     0.60, 0.75],
+      ['hiss, sss',         0.95, 0.55],
+    ];
+    const paint = () => {
+      legend.innerHTML = STOPS.map(([word, tilt, noise]) => {
+        const c = featuresToColor(tilt, noise);
+        return `<span class="viz-legend-stop"><i class="viz-legend-dot" style="background:${c}"></i>${word}</span>`;
+      }).join('');
+    };
+    paint();
+    // The ramp is built from the tokens' own arc, so a theme change redraws it.
+    window.addEventListener('mubone-theme', paint);
+  }
 }

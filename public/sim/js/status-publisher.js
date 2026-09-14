@@ -73,9 +73,3 @@ export function initStatusPublisher() {
     window.addEventListener('osc-disconnected', () => { _last.clear(); });
   }
 }
-
-export function stopStatusPublisher() {
-  _started = false;
-  if (_tickTimer) { clearInterval(_tickTimer); _tickTimer = null; }
-  _last.clear();
-}

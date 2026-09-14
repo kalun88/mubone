@@ -5,7 +5,7 @@
 // No monitoring — graph ends at analyser (dead end), MOTU handles monitoring.
 // ============================================================================
 
-import { S, DEBUG, MASTER_DEFAULT_DB, MASTER_DEFAULT_GAIN } from './state.js';
+import { S, DEBUG, MASTER_DEFAULT_DB, MASTER_DEFAULT_GAIN, REC_LIMIT_SECONDS_DEFAULT } from './state.js';
 import { dlog } from './diag.js';
 import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, playSweepChannel, warmUpAudioEngine, applyAudioCushion, outputQueueDepthMs, requestAudioPort } from './audio.js';
 import { renderMeters, tickMeters, rebuildMainOutputMeters,
@@ -1577,9 +1577,6 @@ const LS_AUDIO_DEFAULTS = 'mubone_audio_defaults';
 const LS_SEED_SETTINGS  = 'mubone_seed_settings';
 const LS_VIZ_CAL        = 'mubone_viz_calibration';
 
-// Legacy export — kept so existing imports don't break (no-op now)
-export function wireSaveDefaultBtn(_btnId) {}
-
 // The one field list. Both saveAllDefaults() and the auto-save dirty check
 // consume this — that is the whole point. They used to be two hand-written
 // lists and had drifted: the nine handsfree fields and `recLimitSeconds` were
@@ -1667,13 +1664,15 @@ function _buildPayloads() {
       vizMaxSize:        S.vizMaxSize,
       vizRmsMin:         S.vizRmsMin,
       vizRmsMax:         S.vizRmsMax,
-      vizCentroidMin:    S.vizCentroidMin,
-      vizCentroidMax:    S.vizCentroidMax,
       radiusFadeEnabled: S.radiusFadeEnabled,
       radiusFadeCurve:   S.radiusFadeCurve,
       cameraMode:        S.cameraMode,
       camPull:           S.camPull,
       gazeTrailSec:      S.gazeTrailSec,
+      // The render mode you pick for a hard venue, and the one viz setting
+      // with a control that did not survive a reload (2026-09-13): set it
+      // before a set, reload for any reason, and it was silently off again.
+      perfMode:          S.perfMode,
     },
 
   };
@@ -1721,9 +1720,6 @@ export function startAutoSave() {
   setInterval(_checkAndSave, 2000);
 }
 
-// Legacy export — kept so existing imports don't break
-export function scheduleAutoSave() { _checkAndSave(); }
-
 // ── Pre-split blob normalisation (2026-08-01) ───────────────────────────────
 // The old single blob carried viz calibration, seed settings and the active
 // patch index; those now live in their own keys so the reset categories are
@@ -1758,7 +1754,6 @@ const SPLIT_MOVED = {
          // legacy aliases _loadSeedSettings still honours
          'seedNearestAlways', 'seedSnapFade', 'seedCrossfade'],
   viz:  ['vizMinSize', 'vizMaxSize', 'vizRmsMin', 'vizRmsMax',
-         'vizCentroidMin', 'vizCentroidMax',
          'radiusFadeEnabled', 'radiusFadeCurve', 'cameraMode'],
 };
 const SPLIT_DROPPED = ['darkMode', 'vizMode', 'sensor3Cal', 'wandCal', 'fovDeg'];
@@ -1901,7 +1896,12 @@ export function loadAudioDefaults() {
     if (typeof d.mixdownHouseGainValue === 'number')  S.mixdownHouseGainValue  = d.mixdownHouseGainValue;
 
     // Recording limit
-    if (typeof d.recLimitSeconds === 'number') S.recLimitSeconds = d.recLimitSeconds;
+    // A profile carrying the OLD default (600s, the workshop-laptop number)
+    // takes the new one. Idempotent — after the first load the stored value is
+    // 1800, so this cannot fire twice — and a limit you actually chose is any
+    // other value on the slider's 60s grid (2026-09-13).
+    if (typeof d.recLimitSeconds === 'number')
+      S.recLimitSeconds = d.recLimitSeconds === 600 ? REC_LIMIT_SECONDS_DEFAULT : d.recLimitSeconds;
 
     DEBUG && console.log('[defaults] restored saved defaults');
   } catch (e) {
@@ -1958,13 +1958,15 @@ function _loadVizCalibration() {
   try {
     const raw = localStorage.getItem(LS_VIZ_CAL);
     if (!raw) return;
-    const d = JSON.parse(raw);
+    let d = JSON.parse(raw);   // reassigned by the centroid migration below
     if (typeof d.vizMinSize     === 'number') S.vizMinSize     = d.vizMinSize;
     if (typeof d.vizMaxSize     === 'number') S.vizMaxSize     = d.vizMaxSize;
     if (typeof d.vizRmsMin      === 'number') S.vizRmsMin      = d.vizRmsMin;
     if (typeof d.vizRmsMax      === 'number') S.vizRmsMax      = d.vizRmsMax;
-    if (typeof d.vizCentroidMin === 'number') S.vizCentroidMin = d.vizCentroidMin;
-    if (typeof d.vizCentroidMax === 'number') S.vizCentroidMax = d.vizCentroidMax;
+    // The centroid bounds are NOT restored: they are the fixed colour legend
+    // (state.js), and a profile carrying an older pair would have meant two
+    // people looking at the same sound in different colours. Older files still
+    // carry them; they are ignored rather than migrated.
     if (typeof d.radiusFadeEnabled === 'boolean') S.radiusFadeEnabled = d.radiusFadeEnabled;
     if (typeof d.radiusFadeCurve   === 'number')  S.radiusFadeCurve   = d.radiusFadeCurve;
     // One-shot rename migration (2026-08-24): 'pull' was the mouse-offset
@@ -1982,6 +1984,7 @@ function _loadVizCalibration() {
     // value that round-trips through export should come back as it went out.
     if (typeof d.gazeTrailSec === 'number' && d.gazeTrailSec >= 0)
       S.gazeTrailSec = Math.min(d.gazeTrailSec, 60);
+    if (typeof d.perfMode === 'boolean') { S.perfMode = d.perfMode; S._syncPerfModeUI?.(); }
   } catch (e) {
     console.warn('[defaults] could not load viz calibration:', e);
   }

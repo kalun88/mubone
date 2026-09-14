@@ -397,6 +397,5 @@ S._voicingForCurrentBrush = voicingForCurrentBrush;
 S._voicingById            = voicingById;
 S._syncWetVoicing         = syncWetVoicing;
 S._wetVoicingOf           = wetVoicingOf;
-S._dryVoicing             = dryVoicing;
 S._peakOffsetForVoicing   = peakOffsetForVoicing;
 S._grainPeakOffsetS       = grainPeakOffsetS;

@@ -774,6 +774,79 @@ How to use this file: find the heading for the area you are about to touch and r
 
 **A button always sends 1 and 0; the action decides (Ek, 2026-09-09).** Every physical button and every key sends both edges, the down and the up. A **momentary** action (type id `hold`) takes the whole button — on at the down, off at the up — and has no gestures: learning it binds the button itself, whatever was done. A **toggle** action flips on each press; it and every other **bang** (type id `trigger`, the OSC word) can sit on any of the five gestures — press (the down, never delayed: "the down edge needs to be the thing that starts and ends a take"), tap (the up), **long press** (at the end of the long time, still held), ×2 and ×3 (on the second and third press inside the window, INSTEAD of the press). Where an action exists in both versions the version is in its title — `system mute (toggle)`, `system mute (momentary)` — and the keys page's sub-line carries OSC facts only, the address and the format. The three slots' `(play)` actions are momentary in shape but follow the Main button setting, toggle by default, which is the one mode setting above every tool. No per-button momentary-or-bang option: "the hardware button always sends 1 and 0. the software deals with those in special ways depending on what it's bound to." An earlier draft the same day used "on/off" for the action type and reserved toggle for the Main button; Ek ruled it more complicated than the thing it described. "Hold" is not a word of the instrument.
 
+## Colour — what a timbre looks like
+
+**For anything touching `js/audio-features.js` or the viz legend:** the hue axis is a **ratio of
+peaks, never a share of sums**, and it is read at **fftSize 2048**, never off the shared 256
+analyser. Both halves were learned the hard way on 2026-09-13, when the sphere came out peach and
+tan through a microphone after every bench test passed. At 256 the bins are 187 Hz wide, so the
+first-formant range that separates `ee` from `ah` — 270 to 730 Hz — lives inside four bins: the
+axis cannot see what it is being asked to measure. And a sum over bins is not robust to a floor.
+Room tone, mic self-noise and the breath under any real voice put energy in EVERY bin, and with 124
+bins above the 800 Hz split against four below, 97% of that floor lands high and offsets the hue
+rather than blurring it — a vowel reading 0.206 in silence reads 0.358 with a floor under it.
+Subtracting an estimated floor (the frame's median bin, by histogram) was tried and measured and
+halved the error, which is not enough; comparing the two bands' loudest peaks removes it for free,
+because a floor lifts every bin by about the same amount and so barely moves either maximum. Use
+the mean of each band's TOP THREE bins, not the single loudest — same immunity, and a vibrato hands
+its strength to the neighbouring bin instead of dropping out (wobble 0.029 against 0.036). Measured
+after: a room floor moves the hue by at most 0.023, eleven sounds span 144° of hue, and the whole
+snapshot costs 8.1 µs, taken per MARK and never per frame. **The bounds are constants, not
+sliders** (Ek: "it should be very predictable so that i see yellow everytime and my collaborators
+see yellow and they know what sound that is") — the viz panel shows a legend of measured landings,
+and anything that would let a performer redefine a colour is the wrong answer to a colour problem.
+
+**A mark with no sound in it has no timbre, and a colour table has to be finer than the eye.**
+Two rules from reading a real take back (2026-09-13). **A tape take records continuously**, so most
+of its marks are the gaps between what was played — measured on one of Ek's strokes, two clicks at
+rms 0.69 against everything else at 0.002. An axis that answers for those marks is reading the
+room, and it does not merely add noise: as a note decays into the floor the reading walks
+systematically from the note's colour toward the room's, which drew a single tongue click as purple
+through green to yellow. Anything below 34 dB of the loudest thing recently played HOLDS the last
+reading; the reference is a decaying peak hold, never an absolute threshold (wrong at a different
+input gain) and never a floor tracker (gets stuck). The rule it states is true of the instrument:
+the colour is the last thing you actually played, until you play something else. **And the memo
+table's resolution is a design parameter, not an optimisation.** 64 buckets across a 265° arc put 36
+of 63 neighbours over a just-noticeable difference and one over six, because sRGB's blue corner
+makes the gamut cusp fall 0.25 in lightness across 24° of hue and the ramp inherited the cliff.
+Smooth the cusp curve and use enough buckets; a smoothed cusp cannot put a colour out of gamut,
+since the chroma bisection is exact for whatever lightness it is handed. Check it by measuring the
+OKLab step between ADJACENT buckets, not by looking at the ramp.
+
+**Both colour axes must survive a room, and the test must prove it.** A microphone always
+arrives with a broadband floor under it — room tone, mic self-noise, the breath under any voice —
+and a synthesised bench tone never does, so a feature can pass every test here and be useless on
+stage. That is exactly what happened through four rounds on 2026-09-13. The rule that comes out of
+it: **never accept an audio feature that sums or averages over all bins.** A sum counts the empty
+bins, a floor fills exactly those, and the result is offset rather than blurred — the old hue axis
+(share of energy above 800 Hz) moved 0.187 with room tone under it, and spectral flatness, which is
+a geometric mean, moved by 2.21 against a class gap of 0.71, which is no axis at all. Both fixes
+are the same shape: **compare peaks, or count them.** Hue is the top three bins below the split
+against the top three above; saturation is how many bins sit within 12 dB of the loudest. A floor
+lifts every bin including the loudest, so neither moves. Second rule, from the same day: **never
+fit a correction on a range narrower than the one it will be used over** — `noise` carried a
+brightness trend `flat − 9.4 · centroid` whose slope came from sung material spanning centroid
+0.038 to 0.050 and was applied to a hiss at 0.374, where it did not weaken the axis but INVERTED
+it, drawing a hiss at full saturation for months. `scripts/colour-audit.js` is the standing guard:
+it measures at three floor levels and gates on what the floor MOVED, not on the spread.
+
+**The arc goes DOWN through green, and chroma rides the gamut edge** (2026-09-13, reversing the
+2026-04 routing). Two rules, both learned from the same sphere. **Never set chroma to a flat
+number.** `_oklchHex` clamps, so a chroma that fits at one hue bends the hue at another, and the
+only safe flat value is about half of what sRGB holds — which makes hue 15° salmon instead of red
+and hue 54° tan instead of yellow. Bisect for the most chroma that lightness and hue can hold and
+take a share of it; 2048 buckets verified unclipped in both themes. **And lightness belongs to the
+hue, not to the ramp.** sRGB's yellow lives at L 0.96 and its blue at L 0.45; one monotone ramp
+through both makes one of them mud. Follow each hue's gamut CUSP, nudged a little toward the middle
+so the deep end is not a hole on black. The old arc climbed 248° → 58° specifically to miss green
+and yellow, because in HSL they glare — but that glare was HSL holding lightness constant in name
+only, and the routing survived into OKLCh where the reason had stopped applying, costing the axis a
+third of the wheel. Going down 290° → 25° is 265° wide and passes through violet, blue, cyan,
+green, yellow, orange and red. **Last, spend the arc where the material is:** the axis is not
+uniformly populated and cannot be, since below the split means voiced and above means fricative, so
+everything sung lands in a third of the range. Four measured piecewise-linear knots hand the voiced
+cluster 54% of the wheel. Monotone, so it reorders nothing; constant, so it is not a setting.
+
 ## Brush, lens and voicing — what freezes, what is wet
 
 **For anything touching how the cursor voices material, or `js/brush-voicing.js`:** a stroke

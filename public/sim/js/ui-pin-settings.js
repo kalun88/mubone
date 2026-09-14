@@ -227,8 +227,6 @@ export function initPinSettings() {
     b.classList.toggle('active', b.dataset.loopmode === (S.seedLoopMode ?? 'pingpong')));
 
   // ── Expose setters for MIDI/OSC access ─────────────────────────────────
-  S._setMonitorVolume = applyMonitor;
-  S._setHouseVolume   = applyHouse;
 
   // ── OSC sync hook — so external OSC changes reflect in the UI ──────────
   // Called from osc.js after it writes a new value to S

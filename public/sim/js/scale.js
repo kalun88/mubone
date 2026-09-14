@@ -200,12 +200,6 @@ export function fmtNumber(v, int = false) {
   return String(Number(v.toPrecision(2)));
 }
 
-/** A single value with its unit — "−600 ¢". */
-export function fmtValue(range, real) {
-  const s = fmtNumber(real, !!range?.int);
-  return range?.unit ? `${s} ${range.unit}` : s;
-}
-
 /**
  * The action's fmt string, derived rather than hand-written — this is the text
  * shown in the keys/midi/osc modal's format column. Previously each action

@@ -37,6 +37,7 @@ import { initMappingUI } from './ui-sensor-mapping.js';
 import { initIMUSetupUI } from './ui-imu-setup.js';
 import { initSygaldryUI } from './ui-sygaldry.js';
 import { initDiagnostics } from './ui-diagnostics.js';
+import { initDiag } from './diag.js';
 import { initButtonsPage } from './ui-buttons.js';
 import { qMul, qNormalize, qFromAxisAngle, qRotateVec } from './sphere.js';
 import { startPaintTicker, getPaintTickerState } from './paint-ticker.js';
@@ -319,6 +320,12 @@ function init() {
   initIMUSetupUI();
   initSygaldryUI();
   initDiagnostics();
+  // The crash log, ⇧D and the console helpers (window.dlog, window.diagReport).
+  // diag.js has exported initDiag since March 2026 and nothing has ever called
+  // it: a March audit listed "diag.js Not Imported Anywhere" and the audit file
+  // was deleted without the fix. Only the Settings → Diagnostics button reached
+  // any of it.
+  initDiag();
   initButtonsPage();
   initAudioSettings();
   initPinSettings();
@@ -1091,7 +1098,6 @@ function init() {
     });
   }
   S._setAxisSource   = setAxisSource;
-  S._syncAxisSourceUI = syncAxisSourceUI;
   S._cursorLocked    = cursorLocked;
   S._setCursorLock   = setCursorLock;
   S._toggleCursorLock = () => setCursorLock(!cursorLocked());

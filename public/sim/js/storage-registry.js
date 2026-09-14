@@ -27,9 +27,9 @@ export const CATEGORIES = [
   { id: 'accessory', label: 'accessory',               hint: 'A8 channel config + x-IMU3 LED map' },
   { id: 'mapping',   label: 'mapping modules',         hint: 'sensor mappings' },
   { id: 'audio',     label: 'audio settings',          hint: 'devices, gains, gate, handsfree, speaker layout, seeds' },
-  { id: 'sensor',    label: 'sensor config',           hint: 'roles, axis maps, tare, polarity, roll mute' },
+  { id: 'sensor',    label: 'sensor config',           hint: 'roles, axis maps, mount and heading calibration' },
   { id: 'ui',        label: 'UI + layout',             hint: 'scale, theme, FOV, panel order + collapse, viz calibration' },
-  { id: 'debug',     label: 'debug flags',             hint: 'grain diag snapshot, OSC trace' },
+  { id: 'debug',     label: 'debug flags',             hint: 'OSC trace' },
 ];
 
 const CATEGORY_IDS = new Set(CATEGORIES.map(c => c.id));
@@ -59,6 +59,11 @@ export const RETIRED_KEYS = [
   // (#223), the OSC stream and gesture panel (sandbox/sunset-2026-08-28), the
   // HUD scale (no reader anywhere). Dead-weight pass, 2026-09-05.
   'mubone_perform_vis', 'mubone_osc_stream', 'mubone_gesture_panel', 'mubone-hud-scale',
+  // diag.js stopped writing a crash snapshot every 5 s long ago and only ever
+  // removed the key after that; it was still registered as a live debug key,
+  // so the reset page offered to reset a value nothing writes (2026-09-13).
+  // One mechanism for a retired key, and this is it.
+  'grainDiagSnapshot',
 ];
 export function purgeRetiredKeys() {
   let n = 0;
@@ -112,7 +117,7 @@ export const KEYS = [
   { key: 'mubone_sensor_cal',    cat: 'sensor' },
   { key: 'mubone_sensor_cal_v',  cat: 'sensor', guards: ['mubone_sensor_cal'],
     note: 'schema flag — MUST travel with mubone_sensor_cal or the frame→camera migration re-runs on migrated data' },
-  { key: 'mubone-sensor-prefs',  cat: 'sensor', note: 'per-serial polarity, roll mute, role' },
+  { key: 'mubone-sensor-prefs',  cat: 'sensor', note: 'per-serial axis signs and role' },
   { key: 'mubone_sygaldry_known', cat: 'sensor',
     note: 'per-instrument { ssid, address } keyed by the name the instrument reports; '
         + 'replaced muboneSygaldryAddress / muboneSygaldrySsid, which described only one' },
@@ -135,7 +140,6 @@ export const KEYS = [
   // ── debug ──
   // Excluded from the settings export: a shared setup file shouldn't carry
   // someone else's diagnostic state.
-  { key: 'grainDiagSnapshot', cat: 'debug' },
   { key: 'muboneOscTrace',    cat: 'debug' },
 ];
 

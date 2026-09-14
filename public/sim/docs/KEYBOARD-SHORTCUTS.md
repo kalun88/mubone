@@ -199,14 +199,16 @@ momentary tile — a tap is a bang on the up edge with no second edge — so the
 combination and says why. `Space` and a click on the sphere were the old main button's factory
 keys until 2026-09-11; with nothing armed there was no tool for them to name, so they are free.
 
-## Commits (Clouds & Loops)
+## Pins (clouds & loops)
 
-| Key | Action |
-|-----|--------|
-| **D** (tap) | Drop commit (cloud: plant at cursor / loop: drop from cursor) |
-| **D** (hold) | Draw commit (cloud: moving path / loop: record) |
-| **Shift+D** | Cycle commit mode (cloud ↔ loop) |
-| **⌘D / Ctrl+D** | Release nearest commit |
+**There is no D key.** The four D bindings — tap to drop, hold to draw, ⇧D for the kind,
+⌘D to release — went on 2026-09-03 (#327) and their replacement `=` / `-` pair went on
+2026-09-12: pinning is two TILES on the palette and the keys those tiles hold, factory
+`↓` pin and `↑` unpin (§ the palette, above). What a pin IS is decided by the cursor, not
+by a mode — `pinDown` / `pinUp` in `js/tiles.js` — so there is nothing for a kind key to
+cycle: a tape stroke being painted grows the loop to the release, a stroke in reach becomes
+a loop, and nothing in reach pins a ghost cloud at the cursor. Unpin takes the pin
+**Settings → Pins** names (nearest by default), never a nearest-only search of its own.
 
 ## Trigger tool
 

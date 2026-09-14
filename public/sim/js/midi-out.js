@@ -231,17 +231,3 @@ export function testSend(deviceId, channel, cc, value, opts = {}) {
     return 'invalid';
   }
 }
-
-/** Snapshot of per-tuple counters and module totals. For diagnostics. */
-export function getStats() {
-  const tuples = {};
-  for (const [k, v] of _state.entries()) {
-    tuples[k] = { ...v };
-  }
-  return { totalSent: _totalSent, tuples };
-}
-
-/** Clear internal throttle/dedup state. */
-export function resetMIDIOut() {
-  _state.clear();
-}

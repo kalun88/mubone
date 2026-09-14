@@ -64,8 +64,6 @@ export function groupOf(c) {
   return GROUPS.find(g => g.key === c.type) ?? null;
 }
 
-export function groupByKey(k) { return GROUPS.find(g => g.key === k) ?? null; }
-
 export function pinsIn(g) {
   if (!g) return [];
   const out = [];

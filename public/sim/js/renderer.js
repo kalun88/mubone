@@ -5,13 +5,12 @@
 import {
   S, SPHERE_PALETTE, GRID_SEGMENTS_LON, GRID_SEGMENTS_LAT,
   SPHERE_RADIUS, FOV_DEG, PARTICLE_BASE_SIZE, PARTICLE_MAX_SIZE,
-  SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, CURSOR_IDLE_COLOR, NEAREST_GLOW_COLOR,
-  MAX_SEEDS, MAX_SEQS, AUTO_ROTATION_SPEED, ROTATION_SPEED,
+  SAMPLE_PAINT_COLORS, livePaintColor, CURSOR_IDLE_COLOR, MAX_SEEDS, AUTO_ROTATION_SPEED, ROTATION_SPEED,
   RENDER_TARGET_FPS, GRAIN_SCHEDULER_INTERVAL_MS,
   perf, perfTick, gp, minGrainDurS, axisHeld,
   SENSOR_CAM_SWING_DEG_S, SENSOR_CAM_OVERSHOOT_DEG, SENSOR_CAM_TELEPORT_DEG
 } from './state.js';
-import { spherePoint, cameraTransform, project, projectInto, updateProjectionCache, getCursorLonLat, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto, camOffsetZ } from './sphere.js';
+import { project, projectInto, updateProjectionCache, getCursorLonLat, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto, camOffsetZ } from './sphere.js';
 import { syncParticleMarks } from './composer.js';
 import { pinAnchorInto } from './pins.js';
 const _anchorR = [0, 0];
@@ -19,7 +18,7 @@ import { activeGrainMap, GLOW_MIN_MS, stampCartesian, refreshCloudClaims, isClou
 import { claimedStrokeIds } from './trigger.js';
 import { tickMappings } from './sensor-mapping.js';
 import { rebuildLiveBuffer } from './audio.js';
-import { normalise, featuresToColor, tickPeakHold } from './audio-features.js';
+import { normalise, normaliseCentroid, featuresToColor, tickPeakHold, CQ_HUE, CQ_SAT } from './audio-features.js';
 
 // All VU metering moved to ui-meters.js (DOM-based, shared with audio settings modal).
 
@@ -84,7 +83,6 @@ export function drawFrame() {
   drawRadiusTooltip();
   // Meters now drawn by DOM-based startMainMetering() loop in ui-meters.js
   // Recency dial removed — visual clutter, recency-N controlled via slider/OSC
-  S.drawRadiusViz?.();
   S.updateSeedBanksUI?.();  // unified: both aliases point to updateCommitBanksUI
   S._syncSeqControls?.();
 }
@@ -109,6 +107,63 @@ const TRAIL_MIN_RAD = 0.001;
 // like … anchors should only be dropped at the end of the path"). Nothing is
 // drawn at the anchor while the pin gesture is still held — the anchor does
 // not exist until the release.
+// ── THE SELECTED PIN, on the sphere (Ek, 2026-09-13) ────────────────────────
+// "besides the pinned item being selected and highlighted in the right side
+// rail, i want there to be some indication on what's highlighted in the viz
+// sphere."
+//
+// Four corner brackets — a camera's focus frame. Chosen over the alternatives
+// for reasons that are the design system's, not taste:
+//
+//   · It is a NEW SHAPE. The sphere already spends a circle on reach and a dot
+//     on a mark; a fifth ring would have to be read against those two. Corners
+//     belong to nothing else here, so they can only mean "this one".
+//   · It does not close, so it never competes with the reach ring it frames.
+//   · It is the viewfinder convention, which is a reference rather than an
+//     invention — the instrument should not teach a new sign for "selected".
+//   · It is drawn, not dimmed. Marking the selection by fading the other pins
+//     was the obvious move and is the one DESIGN-SYSTEM forbids: never dim to
+//     mean anything.
+//
+// Bone (`--eng-pins`), because this says PINNED, not which engine made it —
+// the pin keeps its own hue inside the frame. It is drawn for a cloud and for
+// a loop: the loop passes knew nothing about the selection before this, so
+// selecting a loop in the rail changed nothing on the sphere at all.
+// r 30, not 22: a loop pin already stacks a 4px core, a 14px anchor ring and a
+// playhead square whose half-size reaches 20 at the near depth, and a frame at
+// 22 landed inside that pile (measured on a rig, 2026-09-13). 30 clears all
+// three, so the corners read as a frame AROUND the pin rather than another
+// ring in it. Arms 8, so each corner is a quarter of its side and the gaps
+// stay wide enough that it never closes into a square.
+const FOCUS_R   = 30;
+const FOCUS_ARM = 8;          // the length of each leg of a corner
+// Read once per theme, not per frame: this runs inside the render loop and a
+// getComputedStyle there is exactly the kind of per-frame cost CLAUDE.md's
+// render-path rules exist to keep out.
+let _focusInk = null, _focusInkDark = null;
+function FOCUS_INK() {
+  if (_focusInk && _focusInkDark === S.darkMode) return _focusInk;
+  _focusInk = getComputedStyle(document.body).getPropertyValue('--eng-pins').trim() || '#cfc7bc';
+  _focusInkDark = S.darkMode;
+  return _focusInk;
+}
+function _drawFocusBracket(x, y, r, alpha, color) {
+  const c = S.ctx;
+  c.save();
+  c.globalAlpha = alpha;
+  c.strokeStyle = color;
+  c.lineWidth = 1.6;
+  c.lineCap = 'round';
+  c.beginPath();
+  for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+    const cx = x + sx * r, cy = y + sy * r;
+    c.moveTo(cx - sx * FOCUS_ARM, cy); c.lineTo(cx, cy);      // the horizontal leg
+    c.lineTo(cx, cy - sy * FOCUS_ARM);                        // the vertical leg
+  }
+  c.stroke();
+  c.restore();
+}
+
 function _drawAnchorMark(x, y, color, alpha, label, paused) {
   S.ctx.save();
   S.ctx.globalAlpha = alpha;
@@ -246,9 +301,13 @@ export function drawSeeds() {
           spherePointInto(_anchorR[0], _anchorR[1], _arcW);
           cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
           const ap = project(_arcC[0], _arcC[1], _arcC[2]);
-          if (!ap) { ax = null; } else { ax = ap.sx; ay = ap.sy; adf = Math.max(0, depthFactor(ap.depth)); }
+          if (!ap) { ax = null; } else { ax = ap.sx; ay = ap.sy; adf = Math.max(0, depthFactor(rampDepth(_arcC[0], _arcC[1], _arcC[2], ap.depth))); }
         }
-        if (ax != null) _drawAnchorMark(ax, ay, seed.color, (isNearest ? 1 : 0.6) * envG * (0.35 + 0.65 * adf), i + 1, held);
+        if (ax != null) {
+          const aAlpha = (isNearest ? 1 : 0.6) * envG * (0.35 + 0.65 * adf);
+          _drawAnchorMark(ax, ay, seed.color, aAlpha, i + 1, held);
+          if (isNearest) _drawFocusBracket(ax, ay, FOCUS_R, aAlpha * 0.85, FOCUS_INK());
+        }
       }
     }
 
@@ -404,7 +463,7 @@ function _drawLiveRecordingTrail() {
       const screenR = camOffsetZ() === 0
         ? rRad * (Math.min(W, H) / 2) / (fovRad / 2)
         : ((Math.min(W, H) / 2) / Math.tan(fovRad / 2)) * Math.tan(rRad) / (p.depth / SPHERE_RADIUS);
-      const color = LIVE_PAINT_COLORS[S.liveColorIndex % LIVE_PAINT_COLORS.length];
+      const color = S._liveInk ?? livePaintColor(S.liveColorIndex);
       S.ctx.save();
       S.ctx.strokeStyle = color;
       S.ctx.fillStyle = color;
@@ -418,7 +477,12 @@ function _drawLiveRecordingTrail() {
     }
   }
   if (frames.length < 2) return;
-  const color = seed ? seed.color : LIVE_PAINT_COLORS[S.liveColorIndex % LIVE_PAINT_COLORS.length];
+  // THE TRAIL IS THE MATERIAL'S COLOUR, not the tool's (Ek, 2026-09-13): the
+  // ink of the last mark this stroke laid, so the line agrees with the dots
+  // under it and hue means centroid everywhere on the sphere. A pinned cloud
+  // keeps its SLOT colour, which is identity, not timbre. Before the first
+  // mark of a stroke lands there is no ink yet, and the engine hue answers.
+  const color = seed ? seed.color : (S._liveInk ?? livePaintColor(S.liveColorIndex));
   _drawPathTrail(frames, color, 0.5, 1.2, 50);
 }
 
@@ -878,6 +942,8 @@ let _colorBuf  = new Array(512);       // string colors can't go in a typed arra
 // documented above and load-bearing, and a Uint8Array is cheaper to clear.
 let _mutedBuf  = new Uint8Array(512);
 let _wetBuf    = new Uint8Array(512);   // 1 = a wet mark of the brush in the hand — it will move
+// Sized against S.particles to decide when every other buffer must grow — it
+// is the capacity witness, not an ordering. Nothing reads its contents.
 let _sortIdx   = new Int32Array(512);
 // ── Per-material drawing (#216 viz pass) ────────────────────────────────────
 // The brush decides how a mark reads back, visually as well as sonically:
@@ -892,10 +958,16 @@ let _strokeBuf = new Int32Array(512);   // strokeId, for polyline grouping
 let _origBuf   = new Int32Array(512);   // original index — a gap breaks the line
 let _timeBuf   = new Float32Array(512); // grainStart — a TIME gap breaks it too
 let _gapBuf    = new Uint8Array(512);   // erase stamped a hole after this mark
+let _featBuf   = new Uint8Array(512);   // 1 = this mark carries the colour axes
 let _lineIdx   = new Int32Array(512);   // ii of collected line points, in order
 let _lineColor = new Array(512);        // resolved color per collected point
 let _lineAlpha = new Float32Array(512);
 let _lineWidth = new Float32Array(512); // HALF-width per point — volume-driven
+// The two feature axes per collected point, kept beside the resolved colour so
+// the ribbon can interpolate BETWEEN two marks instead of stepping at each one.
+let _lineTilt  = new Float32Array(512);
+let _lineNoise = new Float32Array(512);
+let _lineFeat  = new Uint8Array(512);   // 1 = this mark has features to blend
 // Unit-sphere direction per collected line point — for great-circle
 // densification of the ribbon (marks are 50 ms of hand travel apart, and
 // straight screen segments between them read as a polygon).
@@ -908,6 +980,13 @@ const _LINE_SMOOTH_BUDGET = 800;
 let _cenX = new Float64Array(512 + _LINE_SMOOTH_BUDGET + 8);
 let _cenY = new Float64Array(512 + _LINE_SMOOTH_BUDGET + 8);
 let _cenW = new Float32Array(512 + _LINE_SMOOTH_BUDGET + 8);
+let _cenW2 = new Float32Array(512 + _LINE_SMOOTH_BUDGET + 8);  // width smoothing pass
+let _cenX2 = new Float64Array(512 + _LINE_SMOOTH_BUDGET + 8);  // path smoothing pass
+let _cenY2 = new Float64Array(512 + _LINE_SMOOTH_BUDGET + 8);
+let _cenXO = new Float64Array(512 + _LINE_SMOOTH_BUDGET + 8);  // where the marks really are
+let _cenYO = new Float64Array(512 + _LINE_SMOOTH_BUDGET + 8);
+let _cenC = new Array(512 + _LINE_SMOOTH_BUDGET + 8);          // colour per centre
+let _cenA = new Float32Array(512 + _LINE_SMOOTH_BUDGET + 8);   // alpha per centre
 // Ribbon scratch: screen-space offset outline for one stroke run (fwd + back).
 let _ribX = new Float32Array(2 * (512 + _LINE_SMOOTH_BUDGET + 8));
 let _ribY = new Float32Array(2 * (512 + _LINE_SMOOTH_BUDGET + 8));
@@ -963,6 +1042,21 @@ function updateDepthRamp() {
   const span = 2 * Math.min(SPHERE_RADIUS, offZ);
   _dfInvSpan = span > 0 ? 1 / span : 0;
 }
+// THE RAMP WANTS THE TRUE DISTANCE WHEN THE CAMERA IS PULLED (2026-09-13).
+// `projectInto`/`project` always hand back the z-component, and near the
+// silhouette z and the real distance diverge badly — the dot loop has said so
+// since 2026-08-28 and packs `pulled ? mag : pdepth` into its own buffer, but
+// every OTHER layer fed the raw z straight in. At camPull 0.5 a mark near the
+// silhouette has z ≈ 0.2R against mag ≈ 1.1R, so depthFactor(z) clamps to 1 —
+// full size, full brightness — where depthFactor(mag) gives 0.4. The playheads,
+// the anchor marks and the overdub heads therefore stayed at maximum across the
+// whole far side while the paint under them receded, which is exactly what the
+// note above _drawPlayheadSquare says that layer must not do: the marker
+// detached from its own material.
+function rampDepth(cx, cy, cz, z) {
+  return _dfPulled ? Math.sqrt(cx * cx + cy * cy + cz * cz) : z;
+}
+
 function depthFactor(depth) {
   // Centred clamp (2026-08-28): the equidistant view draws the FAR
   // hemisphere too, where z goes negative and the unclamped ramp exceeded 1
@@ -994,6 +1088,7 @@ export function drawParticles() {
     _origBuf   = new Int32Array(maxCount);
     _timeBuf   = new Float32Array(maxCount);
     _gapBuf    = new Uint8Array(maxCount);
+    _featBuf   = new Uint8Array(maxCount);
     _lineIdx   = new Int32Array(maxCount);
     _lineColor = new Array(maxCount);
     _lineAlpha = new Float32Array(maxCount);
@@ -1001,9 +1096,19 @@ export function drawParticles() {
     _linePX    = new Float64Array(maxCount);
     _linePY    = new Float64Array(maxCount);
     _linePZ    = new Float64Array(maxCount);
+    _lineTilt  = new Float32Array(maxCount);
+    _lineNoise = new Float32Array(maxCount);
+    _lineFeat  = new Uint8Array(maxCount);
     _cenX      = new Float64Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
     _cenY      = new Float64Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
     _cenW      = new Float32Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
+    _cenW2     = new Float32Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
+    _cenX2     = new Float64Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
+    _cenY2     = new Float64Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
+    _cenXO     = new Float64Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
+    _cenYO     = new Float64Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
+    _cenC      = new Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
+    _cenA      = new Float32Array(maxCount + _LINE_SMOOTH_BUDGET + 8);
     _ribX      = new Float32Array(2 * (maxCount + _LINE_SMOOTH_BUDGET + 8));
     _ribY      = new Float32Array(2 * (maxCount + _LINE_SMOOTH_BUDGET + 8));
   }
@@ -1077,9 +1182,30 @@ export function drawParticles() {
     // the silhouette the two diverge badly. Centred, they are the same thing.
     _sortBuf[off + 2] = pulled ? mag : pdepth;
     _sortBuf[off + 3] = facing;
-    _sortBuf[off + 4] = p.rms ?? 0;
-    _sortBuf[off + 5] = p.centroid ?? 0;
-    _sortBuf[off + 6] = p.zcr ?? 0;
+    // A NON-FINITE LOUDNESS IS ZERO, NOT A FEATURE (2026-09-13). `p.rms` reaches
+    // here from an analyser window, from a file, and from a DFT; any of the
+    // three can hand over NaN, and `NaN > 0` is false, so the mark fell down
+    // the legacy branch below and drew GREY at nearly twice the size of its
+    // neighbours — measured, radius 8.9 became 17.1 and #3ff2ae became #888888.
+    const _r = p.rms;
+    _sortBuf[off + 4] = (typeof _r === 'number' && _r > 0 && _r === _r) ? _r : 0;
+    // Whether this mark has the colour axes at all is a DIFFERENT question from
+    // whether it made a sound. A tape take deposits on every tick including
+    // silence (paint-ticker: the gate's `!S._recordingTrigger` bypass), so a
+    // silent-but-measured mark must still be drawn from its timbre — the old
+    // `rms > 0` test dropped it to the palette and put one grey oversized dot,
+    // and one hard ribbon break, in the middle of an otherwise timbre-coloured
+    // stroke.
+    _featBuf[count]   = (p.tilt !== undefined || p.noise !== undefined
+                         || _sortBuf[off + 4] > 0) ? 1 : 0;
+    // TILT, the hue axis (2026-09-13). A mark from before it existed falls
+    // back to its centroid run through the old normalisation, so an older
+    // session still draws the colours it was painted in.
+    _sortBuf[off + 5] = p.tilt ?? normaliseCentroid(p.centroid ?? 0, S.vizCentroidMin, S.vizCentroidMax);
+    // NOISE, not zcr (2026-09-13): the second colour axis. A mark painted
+    // before this field existed falls back to its zcr, which is what it was
+    // coloured by at the time.
+    _sortBuf[off + 6] = p.noise ?? p.zcr ?? 0;
     _colorBuf[count]  = p.color;
     _mutedBuf[count]  = anyMuted && p._composerMuted ? 1 : 0;
     _wetBuf[count]    = handWetVo && p._vo === handWetVo ? 1 : 0;
@@ -1123,17 +1249,17 @@ export function drawParticles() {
 
     let size, color, alpha;
 
-    if (useViz && buf[i + 4] > 0) {
+    if (useViz && _featBuf[ii]) {
       // ── Feature-driven rendering ──
       const rmsN  = normalise(buf[i + 4], S.vizRmsMin, S.vizRmsMax);
-      const centN = normalise(buf[i + 5], S.vizCentroidMin, S.vizCentroidMax);
-      const zcrR  = buf[i + 6]; // already 0–1
+      const centN = buf[i + 5];      // already the 0–1 hue axis
+      const noiseR = buf[i + 6]; // already 0–1
 
       // Size: RMS drives a min→max lerp, then depth perspective scales it down
       // rmsN=0 → pBase (quiet floor), rmsN=1 → pMax (loud ceiling)
       const rmsSize = pBase + (pMax - pBase) * rmsN;
       size  = rmsSize * (0.5 + 0.5 * depthScale);
-      color = featuresToColor(centN, zcrR);
+      color = featuresToColor(centN, noiseR);
       alpha = (0.35 + 0.65 * depthScale) * (0.5 + 0.5 * facing);
     } else {
       // ── Original palette rendering (fallback) ──
@@ -1173,7 +1299,20 @@ export function drawParticles() {
       if (!_onCanvasish(buf[i], buf[i + 1])) continue;
       const rmsN = buf[i + 4] > 0 ? normalise(buf[i + 4], S.vizRmsMin, S.vizRmsMax) : 0;
       _lineIdx[_lineCount]   = ii;
-      _lineColor[_lineCount] = _mutedBuf[ii] ? color : _colorBuf[ii];
+      // THE SAME COLOUR A GRAIN DOT WOULD GET, computed from this mark's own
+      // features rather than read from `p.color` (Ek, 2026-09-13: "i'm
+      // expecting the colour to change and match the timbre, same scale/range
+      // as the grains"). The stored value is the ink at DEPOSIT time, so a
+      // line kept whatever the mapping was when it was painted while the dots
+      // beside it followed the mapping as it is now — two scales on one
+      // sphere. Falls back to the stored colour for a mark with no features.
+      _lineColor[_lineCount] = _mutedBuf[ii] ? color
+        : (_featBuf[ii]
+            ? featuresToColor(buf[i + 5], buf[i + 6])
+            : _colorBuf[ii]);
+      _lineTilt[_lineCount]  = buf[i + 5];
+      _lineNoise[_lineCount] = buf[i + 6];
+      _lineFeat[_lineCount]  = (!_mutedBuf[ii] && _featBuf[ii]) ? 1 : 0;
       _lineAlpha[_lineCount] = Math.min(1, alpha * (1.3 + 0.5 * rmsN));
       const rmsE = Math.pow(rmsN, 1.35);   // expand contrast: quiet stays thin
       _lineWidth[_lineCount] = (0.6 + (pBase * 0.5 + pMax * 1.8) * rmsE) * (0.55 + 0.45 * depthScale);
@@ -1248,6 +1387,8 @@ export function drawParticles() {
         _cenX[cn] = buf[iC];
         _cenY[cn] = buf[iC + 1];
         _cenW[cn] = Math.max(0.5, _lineWidth[a + k]);
+        _cenC[cn] = _lineColor[a + k];
+        _cenA[cn] = _lineAlpha[a + k];
         cn++;
         if (k + 1 < n0 && smoothLeft > 0) {
           const j0 = _lineIdx[a + k], j1 = _lineIdx[a + k + 1];
@@ -1255,30 +1396,149 @@ export function drawParticles() {
           const bx2 = _linePX[j1], by2 = _linePY[j1], bz2 = _linePZ[j1];
           const dt = ax * bx2 + ay * by2 + az * bz2;
           const ang = Math.acos(Math.max(-1, Math.min(1, dt)));
-          if (ang > 0.05) {                              // > ~3°: worth curving
-            const subs = Math.min(6, Math.ceil(ang / 0.035));
+          // TWO REASONS TO SUBDIVIDE, AND THEY ARE INDEPENDENT (2026-09-13).
+          // Geometry wants sub-points when the span bends: a straight screen
+          // segment across 3° of sphere reads as a polygon. COLOUR wants them
+          // when the sound changed, and it wants them at ANY angle — a slow
+          // hand puts its marks a pixel apart, so the span never bent, so
+          // there was nowhere to put a gradient and the colour stepped hard at
+          // the mark. That is the banding left after the caps went (Ek: "see
+          // how there blocky is it possible to make it more like a gradient").
+          // Take whichever wants more.
+          const geoSubs = ang > 0.05 ? Math.min(6, Math.ceil(ang / 0.035)) : 1;
+          {
             const sinA = Math.sin(ang);
             const w0 = _cenW[cn - 1], w1 = Math.max(0.5, _lineWidth[a + k + 1]);
+            const a0 = _lineAlpha[a + k], a1 = _lineAlpha[a + k + 1];
+            // Blend the two axes THROUGH the ramp, not the two hex strings:
+            // featuresToColor is a read off a 64 × 32 table, so an interpolated
+            // sub-point costs nothing and lands on the same colours a grain
+            // would. Only when the neighbours actually differ, and only when
+            // both carry features — a muted mark's grey must not be mixed into
+            // a live colour.
+            const t0f = _lineTilt[a + k],  t1f = _lineTilt[a + k + 1];
+            const n0f = _lineNoise[a + k], n1f = _lineNoise[a + k + 1];
+            // Only a jump worth ramping earns the extra fills. At the table's
+            // 96 hue buckets by 32 saturation ones, a one- or two-bucket
+            // step between neighbours is already below what the eye resolves
+            // and blending it would buy nothing for up to six more fills per
+            // mark pair. Measured on a sphere of twelve strokes each sweeping
+            // the whole ramp — the worst case there is — this holds the median
+            // frame at 16.8 ms against 16.5 before, where blending every step
+            // cost 18.6.
+            const jump = Math.max(Math.abs(t1f - t0f) * CQ_HUE, Math.abs(n1f - n0f) * CQ_SAT);
+            const blend = jump > 2.5
+                       && _lineColor[a + k] !== _lineColor[a + k + 1]
+                       && _lineFeat[a + k] === 1 && _lineFeat[a + k + 1] === 1;
+            // One sub-point per bucket the colour crosses, so the ramp is drawn
+            // at the resolution the table actually has — read from the table,
+            // never written here, because the two went out of step once already.
+            const colSubs = blend ? Math.min(8, 1 + Math.round(jump)) : 1;
+            const subs = geoSubs > colSubs ? geoSubs : colSubs;
+            // Below ~1° the great circle and the straight screen line agree to
+            // well under a pixel, and slerp divides by a sine that is heading
+            // for zero. A colour-only subdivision takes the straight line.
+            const useSlerp = ang > 0.02;
+            const pA = j0 * STRIDE, pB = j1 * STRIDE;
             for (let s2 = 1; s2 < subs && smoothLeft > 0; s2++) {
               const tt = s2 / subs;
-              const fA = Math.sin((1 - tt) * ang) / sinA;
-              const fB = Math.sin(tt * ang) / sinA;
-              cameraTransformInto((fA * ax + fB * bx2) * SPHERE_RADIUS,
-                                  (fA * ay + fB * by2) * SPHERE_RADIUS,
-                                  (fA * az + fB * bz2) * SPHERE_RADIUS, _arcC);
-              if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _gridProj)) continue;
-              _cenX[cn] = _gridProj[0];
-              _cenY[cn] = _gridProj[1];
+              if (useSlerp) {
+                const fA = Math.sin((1 - tt) * ang) / sinA;
+                const fB = Math.sin(tt * ang) / sinA;
+                cameraTransformInto((fA * ax + fB * bx2) * SPHERE_RADIUS,
+                                    (fA * ay + fB * by2) * SPHERE_RADIUS,
+                                    (fA * az + fB * bz2) * SPHERE_RADIUS, _arcC);
+                if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _gridProj)) continue;
+                _cenX[cn] = _gridProj[0];
+                _cenY[cn] = _gridProj[1];
+              } else {
+                _cenX[cn] = buf[pA]     + (buf[pB]     - buf[pA])     * tt;
+                _cenY[cn] = buf[pA + 1] + (buf[pB + 1] - buf[pA + 1]) * tt;
+              }
               _cenW[cn] = w0 + (w1 - w0) * tt;
+              _cenA[cn] = a0 + (a1 - a0) * tt;
+              _cenC[cn] = blend
+                ? featuresToColor(t0f + (t1f - t0f) * tt, n0f + (n1f - n0f) * tt)
+                : _lineColor[a + k];
               cn++; smoothLeft--;
             }
           }
         }
       }
+      // ── A PAINTED LINE, NOT A CHAIN OF BRICKS (2026-09-13) ──────────────
+      // Ek: "it looks super blockey it used to be smooth." Three causes, all
+      // introduced by giving the line its own timbre colour a few hours
+      // earlier, and all here.
+      //
+      // ONE — every colour change started a NEW ribbon, and every ribbon got
+      // the extended end caps below. So a mid-stroke change to the sound put
+      // two half-segment caps back to back in the middle of the line: a blunt
+      // rectangle wider than the line it interrupts. A stroke whose timbre
+      // moved became a row of them. The outline is built ONCE for the whole
+      // run now and the colours are filled as pieces of it, each piece sharing
+      // its boundary points with its neighbour, so there is nothing to cap and
+      // nothing to overlap.
+      //
+      // TWO — the colour STEPPED at each mark, 50 ms of hand travel apart. It
+      // is interpolated across the slerped sub-points instead, through the
+      // same quantised table, so a sound moving through the ramp draws a
+      // gradient. Marks whose colour already agrees cost nothing: the blend
+      // only runs where two neighbours actually differ.
+      //
+      // THREE — width came straight off each mark's rms, and rms at 20 Hz is
+      // not smooth. Two passes of a [1 2 1] kernel over the DENSIFIED centres
+      // turn the steps into swells without touching where the line goes. The
+      // stroke still reads as a pressure line; it just stops faceting.
+      //
+      // FOUR — the CORNERS. Densification curves the span between two marks
+      // along its great circle, which is the right path, but it cannot round
+      // the angle AT a mark: the hand is sampled at 20 Hz and a turn inside
+      // one tick arrives as a crease. The same [1 2 1] kernel over the centre
+      // positions rounds those over about two sub-points. The two ENDS are
+      // pinned — the caps below are measured off the original marks, and an
+      // end that crept inward would put the erase gap back out of true.
+      // AND IT IS CAPPED AT THE RIBBON'S OWN HALF-WIDTH, which is the rule that
+      // makes it safe. Unclamped, the kernel moved the drawn centre by 0.35 px
+      // at the median but by 20 px at the sharpest crease, and near the
+      // silhouette — where the rectilinear projection goes through tan and two
+      // neighbours can land a whole canvas apart — by SIX HUNDRED. A line that
+      // far off its own marks is a line the eraser and the trigger gate can no
+      // longer find. Clamped to the half-width, the smoothed centre never
+      // leaves the ribbon the unsmoothed path would have drawn, so every
+      // corner softens by as much as it can afford and no further.
+      // The clamp is applied ONCE, to the total displacement from where the
+      // mark actually is — not per pass. Clamping inside the loop let pass two
+      // start from an already-moved point and spend the whole budget again, so
+      // the guarantee the clamp exists to give ("never leaves the ribbon the
+      // unsmoothed path would have drawn") was worth 2w, not w, and near the
+      // silhouette both passes saturate. So: keep the originals, smooth freely,
+      // then pull the result back inside one half-width of where it started.
+      const n = cn;
+      for (let k = 0; k < n; k++) { _cenXO[k] = _cenX[k]; _cenYO[k] = _cenY[k]; }
+      for (let pass = 0; pass < 2; pass++) {
+        for (let k = 0; k < n; k++) {
+          const kP = k > 0 ? k - 1 : 0, kN = k < n - 1 ? k + 1 : n - 1;
+          _cenW2[k] = 0.25 * _cenW[kP] + 0.5 * _cenW[k] + 0.25 * _cenW[kN];
+          if (k === 0 || k === n - 1) { _cenX2[k] = _cenX[k]; _cenY2[k] = _cenY[k]; continue; }
+          _cenX2[k] = 0.25 * (_cenX[kP] + _cenX[kN]) + 0.5 * _cenX[k];
+          _cenY2[k] = 0.25 * (_cenY[kP] + _cenY[kN]) + 0.5 * _cenY[k];
+        }
+        for (let k = 0; k < n; k++) {
+          _cenW[k] = _cenW2[k]; _cenX[k] = _cenX2[k]; _cenY[k] = _cenY2[k];
+        }
+      }
+      for (let k = 1; k < n - 1; k++) {
+        const dx = _cenX[k] - _cenXO[k], dy = _cenY[k] - _cenYO[k];
+        const cap = _cenW[k], d2 = dx * dx + dy * dy;
+        if (d2 > cap * cap) {
+          const f = cap / Math.sqrt(d2);
+          _cenX[k] = _cenXO[k] + dx * f;
+          _cenY[k] = _cenYO[k] + dy * f;
+        }
+      }
       // Offset each point perpendicular to the local path direction by its
       // own half-width — a filled ribbon whose width IS the recorded volume.
-      // One polygon, one fill; scratch buffers are preallocated.
-      const n = cn;
+      // Scratch buffers are preallocated; this allocates nothing.
       let pnx = 0, pny = -1;   // carried normal for zero-length segments
       let snx = 0, sny = -1, enx = 0, eny = -1;   // end normals, for the caps
       for (let k = 0; k < n; k++) {
@@ -1304,7 +1564,8 @@ export function drawParticles() {
       // A cap only extends across a TRUE adjacency: if the terminal segment
       // is itself a bridge (a musical rest the gate recorded — anything past
       // the paint tick), extending half of it would draw material that was
-      // never there. Bridges get flat caps.
+      // never there. Bridges get flat caps. They belong to the RUN, so only
+      // the first and last colour piece wear one.
       const iA = _lineIdx[a] * STRIDE,     iA1 = _lineIdx[a + 1] * STRIDE;
       const iZ = _lineIdx[b - 1] * STRIDE, iZ1 = _lineIdx[b - 2] * STRIDE;
       const adjS = 1.6 * ((S.paintTicker?.intervalMs ?? 50) / 1000);
@@ -1314,20 +1575,54 @@ export function drawParticles() {
       const exSY = buf[iA + 1] + (buf[iA + 1] - buf[iA1 + 1]) * fS;
       const exEX = buf[iZ] + (buf[iZ] - buf[iZ1]) * fE;
       const exEY = buf[iZ + 1] + (buf[iZ + 1] - buf[iZ1 + 1]) * fE;
-      const sw = Math.max(0.5, _lineWidth[a]);
-      const ew = Math.max(0.5, _lineWidth[b - 1]);
-      S.ctx.globalAlpha = _lineAlpha[a];
-      S.ctx.fillStyle   = _lineColor[a];
-      S.ctx.beginPath();
-      S.ctx.moveTo(_ribX[0], _ribY[0]);
-      for (let k = 1; k < n; k++) S.ctx.lineTo(_ribX[k], _ribY[k]);
-      S.ctx.lineTo(exEX + enx * ew, exEY + eny * ew);   // end cap, extended
-      S.ctx.lineTo(exEX - enx * ew, exEY - eny * ew);
-      for (let k = n; k < 2 * n; k++) S.ctx.lineTo(_ribX[k], _ribY[k]);
-      S.ctx.lineTo(exSX - snx * sw, exSY - sny * sw);   // start cap, extended
-      S.ctx.lineTo(exSX + snx * sw, exSY + sny * sw);
-      S.ctx.closePath();
-      S.ctx.fill();
+      const sw = _cenW[0];
+      const ew = _cenW[n - 1];
+      const ctx = S.ctx;
+      // One piece of the shared outline: forward along the left edge from s to
+      // e, back along the right edge. Point e is drawn by this piece AND by
+      // the next one's start, which is what makes the seam invisible without
+      // overlapping any area.
+      const piece = (s0, e0) => {
+        ctx.globalAlpha = _cenA[s0];
+        ctx.fillStyle   = _cenC[s0];
+        ctx.beginPath();
+        ctx.moveTo(_ribX[s0], _ribY[s0]);
+        for (let k = s0 + 1; k <= e0; k++) ctx.lineTo(_ribX[k], _ribY[k]);
+        if (e0 === n - 1) {
+          ctx.lineTo(exEX + enx * ew, exEY + eny * ew);
+          ctx.lineTo(exEX - enx * ew, exEY - eny * ew);
+        }
+        for (let k = e0; k >= s0; k--) ctx.lineTo(_ribX[2 * n - 1 - k], _ribY[2 * n - 1 - k]);
+        if (s0 === 0) {
+          ctx.lineTo(exSX - snx * sw, exSY - sny * sw);
+          ctx.lineTo(exSX + snx * sw, exSY + sny * sw);
+        }
+        ctx.closePath();
+        ctx.fill();
+      };
+      // Alpha is quantised to 1/16 before it can break a piece: it varies
+      // continuously with depth along a stroke that wraps around the sphere,
+      // so without a quantum every single centre becomes its own fill — at
+      // 1/64 that measured one fill per point, and 1/16 is still finer than
+      // any alpha step the eye finds on a thin ribbon.
+      // The loop stops one short of the end so that `piece(s1, n - 1)` below is
+      // the ONLY call that can satisfy `e0 === n - 1`. It is not a tidy-up: a
+      // break landing on the last centre used to draw the body-plus-cap AND
+      // then a degenerate `piece(n-1, n-1)`, which is the cap on its own, in
+      // the next colour, composited over the first one. A two-mark run whose
+      // marks differ in colour hits it every time, and so does any run where
+      // the 1/16 alpha bucket happens to flip at the last centre — routine on
+      // a stroke that wraps around the sphere. A colour change at the very
+      // last centre is absorbed into the final piece instead, which is a run
+      // one point long and covers no area.
+      let s1 = 0;
+      for (let k = 1; k < n - 1; k++) {
+        if (_cenC[k] === _cenC[k - 1]
+            && ((_cenA[k] * 16) | 0) === ((_cenA[k - 1] * 16) | 0)) continue;
+        piece(s1, k);
+        s1 = k;
+      }
+      piece(s1, n - 1);
     };
     for (let k = 1; k <= _lineCount; k++) {
       // `_gapBuf` is the erase's own stamp on the survivor before a hole —
@@ -1507,7 +1802,7 @@ export function drawParticles() {
     const proj = project(_arcC[0], _arcC[1], _arcC[2]);
     if (!proj) continue;
     // depthFactor, not the raw 2R formulas — see the trigger playhead note.
-    const df = Math.max(0, depthFactor(proj.depth));
+    const df = Math.max(0, depthFactor(rampDepth(_arcC[0], _arcC[1], _arcC[2], proj.depth)));
     // The same square as the trigger playhead — a held loop is the same kind
     // of time; alpha floored like the particle pass.
     _drawPlayheadSquare(proj.sx, proj.sy, df, 0.9 * (0.35 + 0.65 * df));
@@ -1517,6 +1812,10 @@ export function drawParticles() {
   // ── Sequence anchor markers ──────────────────────────────────────────────
   // Ring + dot + slot number at each sequence's anchor position.
   // Uses anchorLon/anchorLat (drop point for D-drops, first particle for strokes).
+  // The selected pin is the one the rail marks and unpin takes — the same
+  // question drawSeeds asks for clouds. This pass never asked it, so a loop
+  // selected in the rail showed nothing here (2026-09-13).
+  const selLoop = S._selectedPinSlot?.(S._frameCursorLon ?? 0, S._frameCursorLat ?? 0) ?? -1;
   for (let si = 0; si < S.commitSlotCount; si++) {
     const seq = S.commitSlots[si];
     if (!seq || seq.type !== 'loop') continue;
@@ -1527,9 +1826,10 @@ export function drawParticles() {
     cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
     const proj = project(_arcC[0], _arcC[1], _arcC[2]);
     if (!proj) continue;
-    const df = Math.max(0, depthFactor(proj.depth));
+    const df = Math.max(0, depthFactor(rampDepth(_arcC[0], _arcC[1], _arcC[2], proj.depth)));
     const a = (seq.playing ? 0.9 : 0.4) * (0.35 + 0.65 * df);
     _drawAnchorMark(proj.sx, proj.sy, seq.color, a, si + 1, !seq.playing);
+    if (si === selLoop) _drawFocusBracket(proj.sx, proj.sy, FOCUS_R, a * 0.85, FOCUS_INK());
   }
 
   drawTriggers();
@@ -1596,7 +1896,7 @@ function _drawOverdubHeads(seq, mx, my) {
       spherePointInto(p.lon, p.lat, _arcW);
       cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
       if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _ovProj)) continue;
-      const df = Math.max(0, depthFactor(_ovProj[2]));
+      const df = Math.max(0, depthFactor(rampDepth(_arcC[0], _arcC[1], _arcC[2], _ovProj[2])));
       const a  = 0.35 + 0.65 * df;
       S.ctx.save();
       S.ctx.globalAlpha = 0.45 * a;
@@ -1762,7 +2062,7 @@ function drawTriggers() {
     // erases — with the camera pulled back the cursor's material sits at the
     // sphere's far surface (depth ≈ offZ + R, df ≈ 0), and a bare ·df there
     // multiplied the marker to 0.001 alpha. Same lesson as the 2R cull above.
-    const df = Math.max(0, depthFactor(_trigProj[2]));
+    const df = Math.max(0, depthFactor(rampDepth(_arcC[0], _arcC[1], _arcC[2], _trigProj[2])));
     _drawPlayheadSquare(_trigProj[0], _trigProj[1], df,
                         0.95 * (0.35 + 0.65 * df) * (live ? 1 : parkedAlpha));
   }
@@ -1780,9 +2080,17 @@ function drawTriggers() {
 //
 // Particles are bucketed by quantised colour + alpha, counting-sorted into
 // contiguous runs, then each bucket is drawn as ONE path.  That turns 20k path
-// operations into at most a few hundred.  Safe specifically because perfMode
-// does no depth sort — reordering draws is free here.  The full renderer keeps
-// its per-particle draws, since there back-to-front order is load-bearing.
+// operations into at most a few hundred.  Safe because reordering draws is free
+// here: nothing on the sphere depends on which dot lands on top.
+//
+// The full renderer keeps its per-particle beginPath/arc/fill triplet — the
+// pattern CLAUDE.md names as the main GPU stall — and the reason written here
+// used to be "back-to-front order is load-bearing there". It is not: there is
+// no depth sort anywhere in this file (2026-09-13; `_sortIdx` was allocated and
+// grown but never read, and has been dead since 7a30ab0). What IS load-bearing
+// is PAINT order — a later mark draws over an earlier one — which bucketing
+// would also break, so this is not a free change; but it should be weighed on
+// what is true rather than refused on what is not.
 //
 // Also uses projectInto() rather than project(), which allocated an object and
 // recomputed Math.tan() on every call — 300k allocations/sec at 10k particles.
@@ -1827,8 +2135,14 @@ function drawParticlesMinimal() {
     _pbB = new Int32Array(n);
     _pbOX = new Float32Array(n); _pbOY = new Float32Array(n); _pbOR = new Float32Array(n);
   }
-  const pBase = S.vizMinSize ?? PARTICLE_BASE_SIZE;
-  const pMax  = S.vizMaxSize ?? PARTICLE_MAX_SIZE;
+  // THE SAME FOV COMPENSATION THE FULL RENDERER APPLIES. Without it, pressing
+  // `p` changed every dot's size: zoomed out to the 360° map the factor clamps
+  // to 0.35, so perfMode's dots came out 2.9× larger and flooded the map, and
+  // zoomed in they shrank instead of growing. perfMode exists to be pressed
+  // mid-set, so the jump landed at the worst possible moment.
+  const _zf = Math.max(0.35, Math.min(1.6, 80 / (S.fovDeg ?? FOV_DEG)));
+  const pBase = (S.vizMinSize ?? PARTICLE_BASE_SIZE) * _zf;
+  const pMax  = (S.vizMaxSize ?? PARTICLE_MAX_SIZE) * _zf;
   const _pW = _pbW, _pC = _pbC, _pj = _pbProj;
   const hasGlow = activeGrainMap.size > 0;
   const glowColor = S.darkMode ? '#ffffff' : '#000000';
@@ -1861,7 +2175,12 @@ function drawParticlesMinimal() {
       facing = Math.min(1, ndc / (mag * SPHERE_RADIUS));
     }
     const df = Math.max(0, depthFactor(_dfPulled ? mag : depth));
-    const active = hasGlow && activeGrainMap.has(p);
+    // The same filter the full renderer uses: only the WHITE tags are grains.
+    // A loop or trigger playhead tags its mark in the loop's own colour, and
+    // lighting those here made every mark a pinned loop's playhead crossed
+    // flash solid white at 0.95 alpha in perfMode and not in the full renderer.
+    const _ag = hasGlow ? activeGrainMap.get(p) : undefined;
+    const active = !!_ag && _ag.glowColor === '#ffffff';
 
     if ((p.rms ?? 0) > 0) {
       const rmsN = normalise(p.rms, S.vizRmsMin, S.vizRmsMax);
@@ -1876,9 +2195,9 @@ function drawParticlesMinimal() {
       } else if (active) {
         bucket = _PB_GLOW;
       } else {
-        const cN = normalise(p.centroid ?? 0, S.vizCentroidMin, S.vizCentroidMax);
+        const cN = p.tilt ?? normaliseCentroid(p.centroid ?? 0, S.vizCentroidMin, S.vizCentroidMax);
         let hb = (cN * _PB_HUE) | 0;            if (hb >= _PB_HUE) hb = _PB_HUE - 1; else if (hb < 0) hb = 0;
-        let sb = ((p.zcr ?? 0) * _PB_SAT) | 0;  if (sb >= _PB_SAT) sb = _PB_SAT - 1; else if (sb < 0) sb = 0;
+        let sb = ((p.noise ?? p.zcr ?? 0) * _PB_SAT) | 0;  if (sb >= _PB_SAT) sb = _PB_SAT - 1; else if (sb < 0) sb = 0;
         let ab = (alpha * _PB_ALPHA) | 0;       if (ab >= _PB_ALPHA) ab = _PB_ALPHA - 1; else if (ab < 0) ab = 0;
         bucket = (hb * _PB_SAT + sb) * _PB_ALPHA + ab;
       }

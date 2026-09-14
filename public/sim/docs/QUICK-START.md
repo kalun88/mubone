@@ -12,7 +12,7 @@ mubone is a browser-based spatial granular synthesizer. You play into a mic, you
 
 **Enable your mic** — click the mic button in the top-left. The browser will ask for microphone permission. Once granted, audio begins recording into the internal buffer.
 
-**Set the latency once** — Settings → Audio → Latency shows what the app knows about the time in and out through your interface; press **Measure** with the output reaching the mic (speakers, or a cable) and the loop engine steers by the real figure from then on, per device pair.
+**Set the latency once** — Settings → Audio → Latency shows what the app knows about the time in and out through your interface; press **Measure** with the output reaching the mic (speakers, or a cable) and the tape engine steers by the real figure from then on, per device pair.
 
 **Paint particles** — click a tool in the left rail to take it **in hand** (the first tile of the palette, with the spacebar under it, shows it), then press **Space** or click the sphere to play it. Your live audio is captured and painted as colored dots onto the sphere at the cursor position. Press again to stop (the hand is a toggle by default; right-click that tile to make it momentary: paint only while held). The other palette tiles are quick access — each has its own key, shown under it.
 
@@ -34,19 +34,20 @@ mubone is a browser-based spatial granular synthesizer. You play into a mic, you
 
 **Monitor vs House bus** — the cursor feeds the monitor bus (your mix), seeds feed the house bus (audience mix). The **Scan** button (`S`) controls whether the cursor is also sent to the house.
 
-## Commits (Seeds)
+## Pins
 
-Seeds are the main performance tool for building layers.
+Pinning is how you build layers: a pin keeps playing on its own while you paint the next thing.
 
-**D key** is the universal commit key. Its behavior depends on commit mode:
+**↓ pins and ↑ unpins** — the last two tiles on the palette, and the two keys next to them.
+What a pin IS follows the cursor, not a mode: painting a tape stroke grows the loop until you
+let go, a stroke already in reach becomes a loop, and nothing in reach pins a cloud where the
+cursor is. Unpin takes whichever pin the **Settings → Pins** rule names — nearest by default.
 
-In **cloud mode** (default): tap `D` to drop a stationary seed at the cursor; hold `D` to draw a moving seed that traces your cursor path. In **loop mode**: tap `D` to drop a loop from the cursor; hold `D` to record a new loop.
+The pinned rail on the right (**⇧Tab**) lists every pin with its mute and solo. Settings → Pins
+holds the slot count, what happens when the slots are full, and how a moving cloud plays back.
 
-Press **Shift+D** to cycle between cloud and loop commit modes.
-
-Press **⌘D / Ctrl+D** to release (remove) the nearest seed.
-
-The right panel's **commits** section lets you set the slot count (up to 16), overflow behavior (what happens when slots are full), and playback direction for moving seeds.
+*(The `D` keys — tap to drop, hold to draw, ⇧D for the kind, ⌘D to release — went in September
+2026: what a pin is now follows the cursor, so there is nothing for a mode key to cycle.)*
 
 ## What a stroke becomes
 
@@ -81,7 +82,7 @@ Append these to the URL as query params:
 |-------|--------|
 | `?debug` | Enables verbose console logging |
 
-Checked once at startup. Example: `mubone.org/sim?debug`. The legacy `?exp` flag was removed — experimental modules either always load now (gesture, snapshot/staging) or are reachable from the DevTools console via `await import('./js/<module>.js')`.
+Checked once at startup. Example: `mubone.org/sim?debug`. The legacy `?exp` flag was removed — what it gated either always loads now or is reachable from the DevTools console via `await import('./js/<module>.js')`. The gesture, snapshot and staging modules it also gated were sunset in August 2026 and are git history.
 
 ## Sensor Mapping Module
 
@@ -130,18 +131,22 @@ The mapping module lets you wire IMU orientation axes directly to grain paramete
 |-----|--------|
 | **S** | Toggle scan (cursor → house bus) |
 | **M** | System mute |
-| **N** | Toggle nearest/snap mode |
-| **X** | Toggle radial morph |
+| **N** | The installed lens's mode: nearest / area |
 | **H** | Toggle handsfree recording |
 | **[ / ]** | Decrease / increase search radius |
 | **Alt** | Lock sphere position (freeze camera, release pointer) |
 
-### Presets
+### The palette
 
 | Key | Action |
 |-----|--------|
-| **1–9, 0** | Select user presets 1–10 |
-| **Shift + 1–9, 0** | Select user presets 11–20 |
+| **Space** | Play the tool **in hand** — the first tile, with the spacebar under it. A left-click on the sphere is the same press |
+| **1 … 9** | Fire that palette position, in that tile's verb. The key belongs to the TILE: move the tile and its key goes with it |
+| **↓ / ↑** | Pin / unpin |
+| **Tab** | Show or hide the tool rail (**~** does the same) |
+| **⇧Tab** | Show or hide the pinned rail |
+
+*(1–9 selected patch-bank presets until September 2026. The bank is gone — a tile is the preset now.)*
 
 ### Editing
 
@@ -156,11 +161,10 @@ The mapping module lets you wire IMU orientation axes directly to grain paramete
 
 | Key | Action |
 |-----|--------|
-| **P** | Toggle performance monitor |
-| **Shift+P** | Toggle high-performance render mode |
-| **Shift+G** | Toggle gesture panel |
-| **Shift+F** | Projector mirror — a popup window showing the sphere, for an external display |
 | **Esc** | Close topmost modal / blur focused field |
+
+The performance monitor, the high-performance render mode and the projector mirror lost their
+keys in September 2026 — each is a setting on its own page now. The gesture panel was sunset.
 
 ### Custom Bindings
 

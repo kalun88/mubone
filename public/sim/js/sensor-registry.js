@@ -9,8 +9,8 @@
 // both quaternion and inertial can have its quat assigned to 'cursor' and
 // its inertial assigned to 'gesture' independently.
 //
-// Quaternion roles: cursor, camera, frame, custom, unmapped
-// Inertial roles:   gesture, custom, unmapped
+// Quaternion roles: cursor, camera, frame, unmapped
+// Inertial roles:   gesture, unmapped
 //
 // "camera" — projector-aim: the sensor rotates the viewport.  Turning the
 //            sensor right pans the view right, same as head-tracking VR.
@@ -23,9 +23,6 @@
 //            Cursor is drawn at the delta direction (cursor-relative-to-frame).
 //            Rotating cursor + frame together → nothing moves on screen.
 //
-// "custom" opens per-signal routing — individual euler axes or inertial
-// signals can be sent to arbitrary destinations.
-//
 // Consumers read from the registry via getByRole('cursor'), etc.
 // ============================================================================
 
@@ -34,33 +31,12 @@ import { S, DEBUG } from './state.js';
 // ── Roles ────────────────────────────────────────────────────────────────────
 export const QUAT_ROLES     = ['cursor', 'camera', 'frame', 'unmapped'];
 export const INERTIAL_ROLES = ['gesture', 'unmapped'];
-// Future: add 'custom' to both arrays when custom routing is wired end-to-end.
-// Scaffolding exists below (dispatch, routes, destinations) — see docs/ROUTING-DESIGN.md
-
-// ── Destinations ─────────────────────────────────────────────────────────────
-// Available routing destinations.  'unmapped' means signal goes nowhere.
-// Tier 1: always available (raw calibrated signals can target these)
-// Tier 2: computed gesture features — listed separately, available only when
-//         at least one inertial stream feeds the gesture chain.
-
-export const QUAT_DESTINATIONS = [
-  'unmapped',
-  'viz azimuth',       // camera horizontal rotation
-  'viz elevation',     // camera vertical rotation
-  'viz roll',          // camera roll
-  'world reference',   // frame correction quaternion
-  'gesture chain',     // feed into gesture computation
-  'morph',             // morph parameter (future)
-];
-
-export const INERTIAL_DESTINATIONS = [
-  'unmapped',
-  'gesture chain',     // feeds gesture computation pipeline
-  'morph',             // morph parameter (future)
-  'viz azimuth',       // direct-to-viz (unusual but possible)
-  'viz elevation',
-  'viz roll',
-];
+// A 'custom' role — every breakout signal routed to a destination of its own —
+// was scaffolded here and never wired up. It was left out of both arrays above
+// ON PURPOSE, so no UI could ever select it, which meant the destination
+// tables, the per-signal route maps, their persistence and two dispatch
+// functions all ran for a role no slot could hold. Deleted 2026-09-13;
+// docs/ROUTING-DESIGN.md is the design and git has the scaffolding.
 
 // Breakout signal keys for each stream type
 export const QUAT_SIGNALS     = ['euler pitch', 'euler yaw', 'euler roll'];
@@ -87,15 +63,6 @@ export const FRAME_DEFAULTS = {
   'euler yaw':   'world reference',
   'euler roll':  'world reference',
 };
-export const GESTURE_DEFAULTS = {
-  'gyro x':  'gesture chain',
-  'gyro y':  'gesture chain',
-  'gyro z':  'gesture chain',
-  'accel x': 'gesture chain',
-  'accel y': 'gesture chain',
-  'accel z': 'gesture chain',
-};
-
 // ── Default calibration ─────────────────────────────────────────────────────
 // The pitch and yaw signs are NOT arbitrary defaults — they are a fixed
 // convention offset, and leaving them at +1 makes every freshly calibrated
@@ -122,26 +89,6 @@ function defaultInertialAxisMap() {
   };
 }
 
-// ── Default custom routes ───────────────────────────────────────────────────
-function defaultQuatRoutes() {
-  return {
-    'euler pitch': 'unmapped',
-    'euler yaw':   'unmapped',
-    'euler roll':  'unmapped',
-  };
-}
-
-function defaultInertialRoutes() {
-  return {
-    'gyro x':  'unmapped',
-    'gyro y':  'unmapped',
-    'gyro z':  'unmapped',
-    'accel x': 'unmapped',
-    'accel y': 'unmapped',
-    'accel z': 'unmapped',
-  };
-}
-
 // ── Slot factory ─────────────────────────────────────────────────────────────
 export function makeSensorSlot(name) {
   return {
@@ -151,9 +98,6 @@ export function makeSensorSlot(name) {
     quatRole:     'unmapped',
     inertialRole: 'unmapped',
 
-    // Custom routing — per-signal destination maps (only active when role === 'custom')
-    quatRoutes:     defaultQuatRoutes(),
-    inertialRoutes: defaultInertialRoutes(),
 
     // Stream presence — set to true when first data arrives
     hasQuat:     false,
@@ -228,11 +172,11 @@ export function getByRole(role) {
 export function assignQuatRole(slotName, role) {
   if (!QUAT_ROLES.includes(role)) return;
 
-  // Unassign from previous holder (except 'unmapped' and 'custom' — multiple custom allowed).
+  // Unassign from previous holder (except 'unmapped').
   // Fire _onSensorRoleChanged for every slot that just lost the role — otherwise downstream
   // consumers (DeviceState.role, UI "active" highlight, etc.) never learn about the clear
   // and stale "this is the cursor" state accumulates across switches.
-  if (role !== 'unmapped' && role !== 'custom') {
+  if (role !== 'unmapped') {
     for (const slot of _registry.values()) {
       if (slot.name !== slotName && slot.quatRole === role) {
         slot.quatRole = 'unmapped';
@@ -254,9 +198,9 @@ export function assignQuatRole(slotName, role) {
 export function assignInertialRole(slotName, role) {
   if (!INERTIAL_ROLES.includes(role)) return;
 
-  // Unassign from previous holder (except 'unmapped' and 'custom').
+  // Unassign from previous holder (except 'unmapped').
   // Notify on every clear so DeviceState + UI stay in sync — same fix as assignQuatRole.
-  if (role !== 'unmapped' && role !== 'custom') {
+  if (role !== 'unmapped') {
     for (const slot of _registry.values()) {
       if (slot.name !== slotName && slot.inertialRole === role) {
         slot.inertialRole = 'unmapped';
@@ -271,49 +215,6 @@ export function assignInertialRole(slotName, role) {
     DEBUG && console.log(`[sensor-registry] "${slotName}" inertial → ${role}`);
     S._onSensorRoleChanged?.(slot);
     saveCalibration();
-  }
-}
-
-// Convenience: assign role (auto-detects stream type from role name)
-export function assignRole(slotName, role) {
-  if (QUAT_ROLES.includes(role) && role !== 'unmapped') {
-    assignQuatRole(slotName, role);
-  } else if (INERTIAL_ROLES.includes(role) && role !== 'unmapped') {
-    assignInertialRole(slotName, role);
-  }
-}
-
-// Set a custom route for a specific signal on a slot
-export function setCustomRoute(slotName, signal, destination) {
-  const slot = _registry.get(slotName);
-  if (!slot) return;
-  if (QUAT_SIGNALS.includes(signal) && slot.quatRoutes) {
-    slot.quatRoutes[signal] = destination;
-  } else if (INERTIAL_SIGNALS.includes(signal) && slot.inertialRoutes) {
-    slot.inertialRoutes[signal] = destination;
-  }
-  saveCalibration();
-  DEBUG && console.log(`[sensor-registry] "${slotName}" custom: ${signal} → ${destination}`);
-}
-
-// Get the effective route map for a slot+stream — returns the preset defaults
-// for preset roles, or the custom map for custom role.
-export function getEffectiveRoutes(slot, stream) {
-  if (stream === 'quat') {
-    if (slot.quatRole === 'cursor') return { ...CURSOR_DEFAULTS };
-    if (slot.quatRole === 'camera') return { ...CAMERA_DEFAULTS };
-    if (slot.quatRole === 'frame')  return { ...FRAME_DEFAULTS };
-    if (slot.quatRole === 'custom') return { ...slot.quatRoutes };
-    // unmapped
-    const r = {};
-    for (const s of QUAT_SIGNALS) r[s] = 'unmapped';
-    return r;
-  } else {
-    if (slot.inertialRole === 'gesture') return { ...GESTURE_DEFAULTS };
-    if (slot.inertialRole === 'custom')  return { ...slot.inertialRoutes };
-    const r = {};
-    for (const s of INERTIAL_SIGNALS) r[s] = 'unmapped';
-    return r;
   }
 }
 
@@ -374,11 +275,6 @@ export function handleSlotQuaternion(slot, values) {
   // Apply axis remap → semantic roll/pitch/yaw
   slot.zeroEuler = applyAxisMapToEuler(rawEuler, slot.quatCal);
 
-  // Custom routing dispatch — feed signals to their destinations
-  if (slot.quatRole === 'custom') {
-    dispatchCustomQuat(slot);
-  }
-
   // Fire paint-ticker callback on every cursor-role quaternion arrival.
   // This drives velocity-adaptive particle deposition at IMU rate (up to 400Hz)
   // instead of the old render-loop gate (10Hz).
@@ -417,99 +313,8 @@ export function handleSlotInertial(slot, values) {
     autoAssignInertialIfNeeded(slot);
   }
 
-  // Custom routing dispatch
-  if (slot.inertialRole === 'custom') {
-    dispatchCustomInertial(slot);
-  }
 }
 
-
-// ── Custom routing dispatch ──────────────────────────────────────────────────
-// When a stream has role 'custom', each breakout signal is evaluated and
-// data is placed where consumers can find it.  viz-targeted signals go
-// onto slot._customVizEuler (read by getSensorCamQ).  gesture-chain-targeted
-// inertial signals build a virtual inertial object on the slot (read by
-// getCustomGestureSlots).
-
-function dispatchCustomQuat(slot) {
-  if (!slot.zeroEuler) return;
-  const routes = slot.quatRoutes;
-
-  // Collect signals that target viz — accumulate into a virtual cursor
-  const vizEuler = { x: 0, y: 0, z: 0 };
-  let anyViz = false;
-
-  for (const [signal, dest] of Object.entries(routes)) {
-    const val = signal === 'euler pitch' ? slot.zeroEuler.y
-              : signal === 'euler yaw'   ? slot.zeroEuler.z
-              : signal === 'euler roll'  ? slot.zeroEuler.x
-              : 0;
-
-    if (dest === 'viz elevation')    { vizEuler.y = val; anyViz = true; }
-    else if (dest === 'viz azimuth') { vizEuler.z = val; anyViz = true; }
-    else if (dest === 'viz roll')    { vizEuler.x = val; anyViz = true; }
-    // 'gesture chain', 'morph', 'world reference', 'unmapped' — future / no-op
-  }
-
-  if (anyViz) {
-    slot._customVizEuler = vizEuler;
-  } else {
-    slot._customVizEuler = null;
-  }
-}
-
-function dispatchCustomInertial(slot) {
-  if (!slot.inertial) return;
-  const routes = slot.inertialRoutes;
-  const d = slot.inertial;
-
-  const signalValues = {
-    'gyro x': d.gx, 'gyro y': d.gy, 'gyro z': d.gz,
-    'accel x': d.ax, 'accel y': d.ay, 'accel z': d.az,
-  };
-
-  // Build a virtual inertial object containing only gesture-chain-routed signals.
-  // Signals not routed to gesture get zeroed — the gesture module still receives
-  // a well-formed object and processes whatever is nonzero.
-  let feedsGesture = false;
-  const gi = { gx: 0, gy: 0, gz: 0, ax: 0, ay: 0, az: 0, gyroMag: 0, accelDynMag: 0 };
-
-  for (const [signal, dest] of Object.entries(routes)) {
-    if (dest === 'gesture chain') {
-      feedsGesture = true;
-      const val = signalValues[signal] ?? 0;
-      if (signal === 'gyro x')  gi.gx = val;
-      if (signal === 'gyro y')  gi.gy = val;
-      if (signal === 'gyro z')  gi.gz = val;
-      if (signal === 'accel x') gi.ax = val;
-      if (signal === 'accel y') gi.ay = val;
-      if (signal === 'accel z') gi.az = val;
-    }
-  }
-
-  if (feedsGesture) {
-    gi.gyroMag     = Math.sqrt(gi.gx*gi.gx + gi.gy*gi.gy + gi.gz*gi.gz);
-    gi.accelDynMag = Math.sqrt(gi.ax*gi.ax + gi.ay*gi.ay + gi.az*gi.az);
-    slot._customGestureInertial = gi;
-  } else {
-    slot._customGestureInertial = null;
-  }
-}
-
-
-// ── Custom routing queries (for consumers) ──────────────────────────────────
-
-// Returns all custom-role slots whose inertial signals feed the gesture chain.
-// Each returned slot has slot._customGestureInertial with the filtered data.
-export function getCustomGestureSlots() {
-  const result = [];
-  for (const slot of _registry.values()) {
-    if (slot.inertialRole === 'custom' && slot._customGestureInertial) {
-      result.push(slot);
-    }
-  }
-  return result;
-}
 
 
 // ── Quaternion calibration IS owned by this module (2026-08-31) ─────────────
@@ -717,13 +522,6 @@ export function clearMount(slot) {
   saveCalibration();
 }
 
-export function clearHeading(slot) {
-  if (!slot) return;
-  slot.quatCal.headingQuat = null;
-  saveCalibration();
-}
-
-
 // ── Axis remap (euler) ──────────────────────────────────────────────────────
 // Converts physical-board euler { x, y, z } into semantic { x:roll, y:pitch, z:yaw }
 
@@ -852,7 +650,6 @@ function applyAxisMapQuat(q, cal) {
 
 // ── getSensorCamQ — called from renderer ────────────────────────────────────
 // Returns [x, y, z, w] camera-space quaternion for the cursor role, or null.
-// Also picks up custom-role quat slots that route signals to viz.
 //
 // Returns null whenever a 'camera' or 'frame' role sensor is active — in both
 // of those multi-IMU modes the main S.camQ is forced to identity, and the
@@ -883,26 +680,6 @@ export function getSensorCamQ() {
     );
   }
 
-  // ── Custom path: any custom-role quat slot routing signals to viz ──
-  // Build euler from custom viz signals, convert to quat, layer on top.
-  for (const slot of _registry.values()) {
-    if (slot.quatRole !== 'custom' || !slot._customVizEuler) continue;
-    const e = slot._customVizEuler;
-    // Convert degrees → radians
-    const DEG = Math.PI / 180;
-    const qYaw   = eulerAxisToQuat(0, 1, 0, e.z * DEG);
-    const qPitch = eulerAxisToQuat(1, 0, 0, e.y * DEG);
-    const qRoll  = eulerAxisToQuat(0, 0, 1, e.x * DEG);
-    const customQ = qMulQ(qYaw, qMulQ(qPitch, qRoll));
-
-    if (camQ) {
-      // Blend: multiply custom on top of cursor
-      camQ = qMulQ(camQ, customQ);
-    } else {
-      camQ = customQ;
-    }
-  }
-
   return camQ;
 }
 
@@ -921,8 +698,6 @@ export function getSensorCamQ() {
 //     sensors together leaves the cursor at a fixed screen position AND the
 //     grid stays put).  Produces cursorQ = identity when cursor and frame are
 //     aligned at their tare poses.
-//
-// Custom-role viz signals are layered on top in both modes, same as before.
 export function getSensorCursorQ() {
   const cameraSlot = getByRole('camera');
   const frameSlot  = getByRole('frame');
@@ -949,50 +724,7 @@ export function getSensorCursorQ() {
     }
   }
 
-  // Custom path: layer custom-role viz signals on top
-  for (const slot of _registry.values()) {
-    if (slot.quatRole !== 'custom' || !slot._customVizEuler) continue;
-    const e = slot._customVizEuler;
-    const DEG = Math.PI / 180;
-    const qYaw   = eulerAxisToQuat(0, 1, 0, e.z * DEG);
-    const qPitch = eulerAxisToQuat(1, 0, 0, e.y * DEG);
-    const qRoll  = eulerAxisToQuat(0, 0, 1, e.x * DEG);
-    const customQ = qMulQ(qYaw, qMulQ(qPitch, qRoll));
-
-    if (curQ) {
-      curQ = qMulQ(curQ, customQ);
-    } else {
-      curQ = customQ;
-    }
-  }
-
   return curQ;
-}
-
-// ── getSensorRawCursorQ — raw tared quaternion for delta-based tracking ──────
-// Returns the cursor sensor's quaternion after tare but BEFORE axis-map /
-// Euler decomposition.  The renderer uses this for incremental (delta-based)
-// rotation, which avoids gimbal lock entirely.
-export function getSensorRawCursorQ() {
-  const cursorSlot = getByRole('cursor');
-  if (!cursorSlot?.quat) return null;
-  return applyCal(cursorSlot.quat, cursorSlot.quatCal);
-}
-
-// ── getCursorAxisSigns — yaw/pitch sign multipliers + rollMuted flag ─────────
-export function getCursorAxisSigns() {
-  const cursorSlot = getByRole('cursor');
-  if (!cursorSlot?.quatCal?.axisMap) return { yaw: 1, pitch: 1, rollMuted: true };
-  const map = cursorSlot.quatCal.axisMap;
-  let yawSign = 1, pitchSign = 1, rollMuted = false;
-  for (const phys of ['x', 'y', 'z']) {
-    const a = map[phys];
-    if (a.viz === 'roll' && a.mute) rollMuted = true;
-    if (a.mute) continue;
-    if (a.viz === 'yaw')   yawSign   = a.sign;
-    if (a.viz === 'pitch') pitchSign = a.sign;
-  }
-  return { yaw: yawSign, pitch: pitchSign, rollMuted };
 }
 
 // ── Shared helper: calibrated conj(F_world) for a slot ──────────────────────
@@ -1041,26 +773,7 @@ export function getFrameQ() {
   return _worldRefQuat(getByRole('frame'));
 }
 
-// ── getCursorWorldQ — cursor in the same world convention as getFrameQ ──────
-// Same pipeline as getFrameQ (tare → axis-map) but WITHOUT the final
-// conjugation.  Used by the staging engine's relational-features.js to compute
-// Δ = getFrameQ() * getCursorWorldQ() = conj(F_world) * C_world, which is zero
-// when both sensors rotate together.
-//
-// Parallel to getSensorRawCursorQ (tare only, no axis-map) — the two serve
-// different callers: the delta-based renderer uses the raw-tared quat because
-// it feeds sphere.cameraTransform which applies its own conventions; the
-// relational/staging path needs axis-mapped world-frame matching getFrameQ.
-export function getCursorWorldQ() {
-  const cursorSlot = getByRole('cursor');
-  if (!cursorSlot?.quat) return null;
-  return applyAxisMapQuat(
-    applyCal(cursorSlot.quat, cursorSlot.quatCal),
-    cursorSlot.quatCal
-  );
-}
-
-// Helper: quaternion from axis-angle (used for custom euler → quat)
+// Helper: quaternion from axis-angle
 function eulerAxisToQuat(ax, ay, az, angle) {
   const s = Math.sin(angle * 0.5);
   const c = Math.cos(angle * 0.5);
@@ -1109,8 +822,6 @@ function slotToJSON(slot) {
   return {
     quatRole:       slot.quatRole,
     inertialRole:   slot.inertialRole,
-    quatRoutes:     slot.quatRoutes,
-    inertialRoutes: slot.inertialRoutes,
     quatCal: {
       axisMap:     slot.quatCal.axisMap,
       mountQuat:   slot.quatCal.mountQuat,
@@ -1226,10 +937,6 @@ function applySavedCal(slot) {
     if (saved.inertialCal.gravityRef) slot.inertialCal.gravityRef = saved.inertialCal.gravityRef;
   }
 
-  // Restore custom routes
-  if (saved.quatRoutes)     slot.quatRoutes     = saved.quatRoutes;
-  if (saved.inertialRoutes) slot.inertialRoutes = saved.inertialRoutes;
-
   // Restore roles via assign functions — these unassign any previous holder
   // so we never end up with two cursors or two gestures.
   _restoring = true;
@@ -1258,12 +965,6 @@ export function forgetSlot(name) {
     try { localStorage.setItem(LS_KEY, JSON.stringify(_savedCal)); } catch (_) {}
   }
   return hadLive || hadSaved;
-}
-
-export function clearSavedCalibration() {
-  try { localStorage.removeItem(LS_KEY); } catch (_) {}
-  _savedCal = null;
-  DEBUG && console.log('[sensor-registry] saved calibration cleared');
 }
 
 export function initSensor() {

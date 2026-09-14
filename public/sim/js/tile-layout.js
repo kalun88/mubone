@@ -25,7 +25,7 @@
 // (the cc-mirror-audit lesson, applied by construction).
 // ============================================================================
 
-import { S, axisHeld } from './state.js';
+import { S, perf, axisHeld } from './state.js';
 import { initTiles, refreshValues, refreshLensStates, setPropsOpen, propsOpen } from './tiles.js';
 import { initPinsRail } from './ui-pins.js';
 
@@ -268,17 +268,28 @@ function tick() {
   {
     // The capsule FOLLOWS the cabinet — N, OSC and the settings page all move
     // the same seg, and the chrome must not be a second source of truth.
-    const cs = document.getElementById('tcCamSeg');
-    if (cs) {
+    const camBtn = document.getElementById('tcCamBtn');
+    const camMenu = document.getElementById('tcCamMenu');
+    if (camBtn && camMenu) {
       const on = document.querySelector('#cameraModeSeg button.active')?.dataset.mode;
-      // No sensor, no sensor mode (Ek, 2026-09-10): the segment takes the
+      // No sensor, no sensor mode (Ek, 2026-09-10): the row takes the
       // unavailable face and no click while S.rig says nothing is up. It
       // stays marked if it was the mode when the sensor left, so the state
       // is still readable; the click comes back with the sensor.
       const sensorUp = !!(S.rig && S.rig.up);
-      for (const sp of cs.querySelectorAll('[data-cam]')) {
-        sp.classList.toggle('active', sp.dataset.cam === on);
-        if (sp.dataset.cam === 'sensor' && sp.disabled === sensorUp) sp.disabled = !sensorUp;
+      // THE BUTTON IS THE CURRENT MODE (Ek, 2026-09-13): one glyph, the
+      // chrome's own 32px icon, and the choice lives in the menu under it.
+      const src = camMenu.querySelector(`[data-cam="${on}"] svg`);
+      if (src && camBtn.dataset.shown !== on) {
+        camBtn.innerHTML = src.outerHTML;
+        camBtn.dataset.shown = on || '';
+        camBtn.title = camMenu.querySelector(`[data-cam="${on}"]`)?.dataset.word
+          ? `camera — ${camMenu.querySelector(`[data-cam="${on}"]`).dataset.word}` : 'camera';
+      }
+      for (const row of camMenu.querySelectorAll('[data-cam]')) {
+        row.classList.toggle('on', row.dataset.cam === on);
+        row.setAttribute('aria-checked', String(row.dataset.cam === on));
+        if (row.dataset.cam === 'sensor' && row.disabled === sensorUp) row.disabled = !sensorUp;
       }
     }
     const sens = document.getElementById('tcSensor');
@@ -301,9 +312,36 @@ function tick() {
   // the palette and the pinned rail were already showing (Ek, 2026-08-29). Alt-
   // lock is the one thing here that is live state with nowhere else to appear,
   // so it is all that is left — and it renders nothing when the lock is off.
+  //
+  // THE RECORDING BUDGET IS THE OTHER ONE (2026-09-13). When the total audio
+  // in the live buffers reaches `S.recLimitSeconds` (600 s by default),
+  // startLiveRecording REFUSES: the press does nothing, no audio is captured
+  // and no mark is laid. Every warning it had — the 80% and 95% steps and the
+  // refusal itself — was written to `#vmBuffers`, which lives in `.hud`, and
+  // `body .hud { display: none }` has hidden that since the one-screen layout
+  // (#291) as "panel-era chrome". So the instrument stopped recording in
+  // silence, with nothing anywhere on screen to say so: a 14-minute
+  // continuous-play test hit it at about 13.5 minutes and deposited nothing
+  // from then on. The thresholds below are the ones ui-samples.js already
+  // computes; this only gives them somewhere a performer can see.
+  const lim = S.recLimitSeconds || 0;
+  const recPct = lim > 0 ? Math.min(1, (perf.recTotalSec || 0) / lim) : 0;
+  const fill = document.getElementById('tcRecFill');
+  if (fill) {
+    const w = (recPct * 100).toFixed(1) + '%';
+    if (fill.style.width !== w) fill.style.width = w;
+    fill.classList.toggle('warn', recPct >= 0.80 && recPct < 0.95);
+    fill.classList.toggle('crit', recPct >= 0.95);
+  }
+  // TEXT ONLY WHEN THERE IS SOMETHING TO DO. The bar carries the level; words
+  // appear at the ceiling, where the instrument has actually stopped taking
+  // new material and "sweep" is the answer. Alt-lock is a held state and wins
+  // the slot while it is on.
   const stat = document.getElementById('tcStats');
   if (stat) {
-    const want = S.altLocked ? '<b style="color:#f0c060">alt locked</b>' : '';
+    const want = S.altLocked ? '<b style="color:var(--accent-lock)">alt locked</b>'
+               : recPct >= 1 ? '<b style="color:var(--accent-danger)">rec limit — sweep</b>'
+               : '';
     if (stat.innerHTML !== want) stat.innerHTML = want;
   }
   refreshValues();
@@ -337,9 +375,10 @@ export function initTileLayout() {
   // ONE place they are written — the cabinet's #cameraModeSeg — and a mode
   // added there appears here without a second edit. A click proxies the real
   // button, which is the chrome's rule for every control on this bar.
-  const camSeg = document.getElementById('tcCamSeg');
+  const camBtn  = document.getElementById('tcCamBtn');
+  const camMenu = document.getElementById('tcCamMenu');
   const camReal = document.getElementById('cameraModeSeg');
-  if (camSeg && camReal) {
+  if (camBtn && camMenu && camReal) {
     // BUTTONS with `.grain-seg-btn`, because that is the selector `.seg-pill`
     // styles at chrome density (style.css). Bare spans matched nothing and the
     // three words ran together into one unreadable "steersurfacesensor".
@@ -352,18 +391,53 @@ export function initTileLayout() {
     // added there with no glyph here falls back to its word.
     const CAM_GLYPH = {
       steer:   '<path d="M5.5 4.5 19 10.8l-5.9 1.6-1.6 5.9z"/>',
-      surface: '<circle cx="12" cy="12" r="3.4"/><path d="M5.2 9.6a7.6 7.6 0 1 0 13.6 0"/><path d="M15.9 9.9 18.8 9.6l.4 2.9"/>',
+      // POINT is a trackpad: a soft-edged rectangle, which is the surface you
+      // actually put a finger on (Ek, 2026-09-13). The old orbit-and-arrow
+      // glyph drew the CAMERA's motion; this draws the thing in your hands.
+      surface: '<rect x="3.6" y="5.6" width="16.8" height="12.8" rx="3.2"/>',
       sensor:  '<circle cx="12" cy="12" r="2.2"/><path d="M7.8 7.8a5.9 5.9 0 0 0 0 8.4M16.2 7.8a5.9 5.9 0 0 1 0 8.4"/><path d="M5 5a9.9 9.9 0 0 0 0 14M19 5a9.9 9.9 0 0 1 0 14"/>',
     };
     const svg = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
-    camSeg.innerHTML = [...camReal.querySelectorAll('button')].map(b =>
-      `<button type="button" class="grain-seg-btn" data-cam="${b.dataset.mode}"` +
-      ` title="${(b.getAttribute('data-title') || b.title || '').replace(/"/g, '&quot;')}">` +
-      (CAM_GLYPH[b.dataset.mode] ? svg(CAM_GLYPH[b.dataset.mode]) : b.textContent.trim()) + `</button>`).join('');
-    camSeg.addEventListener('click', e => {
+    // ONE ICON, AND THE CHOICE DROPS DOWN (Ek, 2026-09-13: "for the 3 way
+    // selector make the same icon size and design but just 1 icon and when you
+    // click it a thing pops down or out and then you can select from the 3
+    // options"). The capsule spent three slots of a bar that is glyphs end to
+    // end saying one thing; the button now says which mode is on, in the same
+    // 32px glyph as every other control, and the menu is where you change it.
+    // THE WORD COMES BACK HERE. Three glyphs alone were only learnable from a
+    // tooltip; a menu row can afford the noun beside the mark, which is the
+    // rail's own row model (mark left, label, state right).
+    camMenu.innerHTML = [...camReal.querySelectorAll('button')].map(b => {
+      const word = (b.textContent || b.dataset.mode || '').trim();
+      return `<button type="button" class="tc-cam-row" role="menuitemradio" aria-checked="false"` +
+        ` data-cam="${b.dataset.mode}" data-word="${word.replace(/"/g, '&quot;')}"` +
+        ` title="${(b.getAttribute('data-title') || b.title || '').replace(/"/g, '&quot;')}">` +
+        (CAM_GLYPH[b.dataset.mode] ? svg(CAM_GLYPH[b.dataset.mode]) : '') +
+        `<span class="tc-cam-word">${word}</span></button>`;
+    }).join('');
+    const closeCam = () => {
+      camMenu.hidden = true;
+      camBtn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('pointerdown', _camAway, true);
+      document.removeEventListener('keydown', _camKey, true);
+    };
+    const _camAway = e => { if (!e.target.closest('.tc-cam-wrap')) closeCam(); };
+    const _camKey  = e => { if (e.key === 'Escape') { e.stopPropagation(); closeCam(); camBtn.focus(); } };
+    camBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      if (!camMenu.hidden) { closeCam(); return; }
+      camMenu.hidden = false;
+      camBtn.setAttribute('aria-expanded', 'true');
+      // Captured, so a click anywhere — including the sphere, which paints —
+      // shuts the menu before that click does anything else.
+      document.addEventListener('pointerdown', _camAway, true);
+      document.addEventListener('keydown', _camKey, true);
+    });
+    camMenu.addEventListener('click', e => {
       const t = e.target.closest('[data-cam]');
-      if (!t) return;
+      if (!t || t.disabled) return;
       camReal.querySelector(`button[data-mode="${t.dataset.cam}"]`)?.click();
+      closeCam();
     });
   }
   document.getElementById('tcSensor')?.addEventListener('click', () => S._openSettings?.('sensors'));

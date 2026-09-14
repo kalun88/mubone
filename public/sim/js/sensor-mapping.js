@@ -114,9 +114,6 @@ export function setMappingInput(name, value) {
   if (Number.isFinite(v)) _externalInputs[name] = v;
 }
 
-/** Read current /mappingN buckets (for diagnostics / UI). */
-export function getMappingInputs() { return { ..._externalInputs }; }
-
 // Axis definitions — maps axis name to how we read it from the sensor.
 // `format(v)` is used by the mapping modal's live readout so units stay right
 // when the axis isn't in degrees (generic inputs have no meaningful unit).
@@ -601,31 +598,6 @@ export function loadMappings() {
       }
     }
   } catch (_) { /* corrupt data — start fresh */ }
-}
-
-/** Export mappings as a JSON string (for settings export). */
-export function exportMappings() {
-  return JSON.stringify(_mappings.map(_stripTransient), null, 2);
-}
-
-/** Import mappings from a JSON string (for settings import). */
-export function importMappings(json) {
-  try {
-    const arr = JSON.parse(json);
-    if (Array.isArray(arr)) {
-      // Apply the same legacy-row migration we do on localStorage load, so
-      // older exports (pre-output-block) import cleanly.
-      _mappings = arr.map(m => {
-        if (!m.output || !m.output.kind) {
-          return { ...m, output: { kind: 'grain', param: m.targetParam } };
-        }
-        return m;
-      });
-      _saveMappings();
-      S._syncMappingUI?.();
-      S._syncMappingHighlights?.();
-    }
-  } catch (_) { /* invalid JSON — ignore */ }
 }
 
 /** Clear all mappings and reset grain overrides. Non-grain rows just stop

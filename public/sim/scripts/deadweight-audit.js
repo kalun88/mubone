@@ -37,7 +37,9 @@ const JS = [...ls('js', /\.js$/), ...ls('js/worklets', /\.js$/)];
 const jsText = new Map(JS.map(f => [f, read(f)]));
 const allJs = [...jsText.values()].join('\n');
 const html = read('index.html');
-const css = ls('css', /\.css$/).map(read).join('\n');
+// Comments stripped: a `.name` in prose ("the .io-monitor-* rows") is not a
+// rule, and 25 of the 33 classes section E listed on 2026-09-13 were exactly that.
+const css = ls('css', /\.css$/).map(read).join('\n').replace(/\/\*[\s\S]*?\*\//g, '');
 const scriptsText = ls('scripts', /\.(js|mjs)$/).map(read).join('\n') + ls('scripts/lib', /\.js$/).map(read).join('\n');
 const electronMain = read('electron-main.js');
 
@@ -102,7 +104,10 @@ if (want('ids')) {
   const ids = [...new Set([...html.matchAll(/\sid="([^"]+)"/g)].map(m => m[1]))];
   const rows = [];
   for (const id of ids) {
-    const inJs = allJs.includes(`'${id}'`) || allJs.includes(`"${id}"`) || allJs.includes(`#${id}`);
+    // An id can also be an object KEY (tile-layout.js AXIS_CYCLE = { tcAzCycle: … }),
+    // read back through getElementById — hence the bare-word test.
+    const inJs = allJs.includes(`'${id}'`) || allJs.includes(`"${id}"`) || allJs.includes(`#${id}`)
+      || new RegExp(`[{,\\s]${id}\\s*:`).test(allJs);
     const inCss = css.includes(`#${id}`);
     const inScripts = scriptsText.includes(`'${id}'`) || scriptsText.includes(`#${id}`);
     if (!inJs && !inCss && !inScripts) rows.push(`#${id}`);
@@ -130,7 +135,9 @@ if (want('css')) {
 if (want('files')) {
   const known = new Set(['CHANGELOG.md', 'CLAUDE.md', 'INSTALL.md', 'README.md', 'index.html', 'sw.js', 'package.json', 'package-lock.json',
     'electron-main.js', 'electron-preload.js', 'serve.py', '.gitignore', '.claude', 'node_modules', 'js', 'css', 'docs', 'scripts', 'sandbox',
-    'logo', 'build', 'dist', 'localhost.pem', 'localhost-key.pem', '.git', '.dev-bridge', '.DS_Store', '.fuse_hidden']);
+    'logo', 'build', 'dist', 'localhost.pem', 'localhost-key.pem', '.git', '.dev-bridge', '.DS_Store', '.fuse_hidden',
+    'flake.nix', 'flake.lock',   // the Nix dev shell (65f2757) — kept, Ek uses Nix for firmware (TODO-DONE-2026-09)
+  ]);
   const refs = read('package.json') + read('README.md') + (fs.existsSync(p('INSTALL.md')) ? read('INSTALL.md') : '') + read('CLAUDE.md')
     + ls('docs', /\.md$/).map(read).join('') + scriptsText + allJs + html + electronMain;
   const rows = [];

@@ -133,22 +133,20 @@ function _clearLong() { if (_longTimer) { clearTimeout(_longTimer); _longTimer =
 
 function _begin(latched) {
   _active = true; _latched = latched;
-  // paintLatched BEFORE the tool starts (startPaintStroke hands a latched
-  // stroke to the handsfree gate on it); _traceActive after (the trigger
-  // record pair sets and guards on it itself).
+  // paintLatched BEFORE the tool starts: startPaintStroke hands a latched
+  // stroke to the handsfree gate on it.
   S.paintLatched = latched;
   if (!_toolDown()) {           // the tool refused (an overdub with no master)
     _active = false; _latched = false; S.paintLatched = false;
     S._gestureChanged?.();
     return;
   }
-  S._traceActive = true;
   S._gestureChanged?.();
 }
 function _end() {
   _clearLong();
   _active = false; _latched = false;
-  S._traceActive = false; S.paintLatched = false;
+  S.paintLatched = false;
   _toolUp();
   S._gestureChanged?.();
 }

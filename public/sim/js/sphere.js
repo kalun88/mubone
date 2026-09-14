@@ -117,32 +117,6 @@ export function spherePointInto(lon, lat, out) {
 
 // ── 3D Math — inside-sphere camera ───────────────────────────────────────────
 
-export function spherePoint(lon, lat) {
-  // Convention: lon=0 points along +Z (camera forward at identity quaternion).
-  // Longitude increases from +Z toward +X (rightward from viewer).
-  return [
-    SPHERE_RADIUS * Math.cos(lat) * Math.sin(lon),
-    SPHERE_RADIUS * Math.sin(lat),
-    SPHERE_RADIUS * Math.cos(lat) * Math.cos(lon)
-  ];
-}
-export function cameraTransform(x, y, z) {
-  // If a frame-role sensor is active, rotate world points first.
-  // frameQ rotates the sphere; camQ orients the camera — kept separate
-  // so the frame never accumulates into the incremental camera quaternion.
-  //
-  // IMPORTANT: camQ is conjugated here, frameQ is NOT.  getFrameQ() conjugates
-  // its output to compensate, so both sensors use the same applyAxisMapQuat
-  // pipeline and produce identical visual behaviour.  Do not add/remove
-  // conjugation on either side without updating getFrameQ() to match.
-  const p = S.frameQ ? qRotateVec(S.frameQ, [x, y, z]) : [x, y, z];
-  const r = qRotateVec(qConjugate(S.camQ), p);
-  // Reads S.camPull rather than the cached _camOffZ: this path also runs from
-  // outside the render loop (where the cache may be a frame stale), and it
-  // already allocates, so one multiply costs nothing.
-  r[2] += (S.camPull || 0) * SPHERE_RADIUS;
-  return r;
-}
 // ── The projection (2026-08-28, Ek: "one view that's accurate") ─────────────
 // Centred camera: AZIMUTHAL EQUIDISTANT. Angular distance from the view axis
 // maps to LINEAR pixel distance, so a 3° radius is the same size everywhere

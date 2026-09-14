@@ -5,11 +5,11 @@
 import {
   S,
   MAX_SAMPLES, SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, DEBUG,
-  gp, perf,
+  gp, perf
 } from './state.js';
 import { ensureAudioContext, getPreviewSinks } from './audio.js';
 import { removeSeqByStrokeId, removeOverdubByStrokeId } from './ui-presets.js';
-import { flushCursorGrains, hotSwapSample } from './grain-worklet-bridge.js';
+import { hotSwapSample } from './grain-worklet-bridge.js';
 import * as history from './history.js';
 import { restoreTrigger } from './trigger.js';
 
@@ -79,7 +79,7 @@ function _strokeAction(entry) {
     // Still being painted and recorded: undo reaches past it.
     inProgress: () => entry.strokeId === S.currentStrokeId && S.isRecording && S.isPainting,
     undo() { saved = _undoStroke(entry); },
-    redo() { if (saved) _redoStroke(entry, saved); },
+    redo() { if (saved) _redoStroke(entry, saved); }
   };
 }
 
@@ -98,7 +98,7 @@ function _undoStroke(entry) {
     particles: S.particles.filter(p => p.strokeId === sid),
     bufferSlot: null, trig: null,
     slots: S.commitSlots.filter(c => c && c.strokeId === sid),
-    layers: [],
+    layers: []
   };
   for (const c of S.commitSlots) {
     if (!c?.overdubs) continue;
@@ -183,10 +183,6 @@ export function redoLastStroke() {
   S._syncCommitUI?.();
 }
 
-export function clearRedo() { history.clearRedo(); }
-export function redoCount() { return history.redoCount(); }
-S._redoLastStroke = redoLastStroke;
-S._clearRedo      = clearRedo;
 
 function _flashUndoBtn() {
   const btn = document.getElementById('undoBtn');
@@ -327,16 +323,6 @@ export function rebuildSampleListUI() {
       });
     }
   }
-}
-
-export function updateSampleListActiveState() {
-  document.querySelectorAll('.sample-slot').forEach(slot => {
-    const idx   = parseInt(slot.dataset.index);
-    const color = SAMPLE_PAINT_COLORS[idx % SAMPLE_PAINT_COLORS.length];
-    slot.classList.toggle('painting', idx === S.samplerIndex);
-    const keyEl = slot.querySelector('.slot-key');
-    if (keyEl) keyEl.style.color = (idx === S.samplerIndex) ? color : '';
-  });
 }
 
 export function deleteSample(index) {

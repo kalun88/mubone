@@ -17,18 +17,16 @@ import { sygOffers, sygConnectKnown, sygForgetKnown, sygConnectSerial } from './
 import {
   initIMUSetup,
   getDiscovered, getSerialPorts, getDevices, getDevice,
-  connectDevice, connectSerialDevice, disconnectDevice,
-  scanSerialPorts, requestSerialPort,
+  connectDevice, connectSerialDevice, scanSerialPorts, requestSerialPort,
   setAxesAlignment, togglePolarity,
   captureMountPose1, captureMountPose2, cancelMountCapture, slotQuat,
   captureHeading, clearMountCal, hasMountCal, getPolarity, getCalibratedEuler,
-  requestEulerMode, requestQuatMode,
-  setFeeding, setRole,
+  setRole,
   setOnDeviceDiscovered, setOnSerialPortsChanged, setOnDeviceUpdated,
   setOnDataReceived, setOnCommandResponse, setOnCommandSent,
   sendCommandTo, blinkDevice,
   AXES_ALIGNMENTS,
-  getAlignmentLabel,
+  getAlignmentLabel
 } from './imu-setup.js';
 
 let _modal        = null;
@@ -567,7 +565,7 @@ const _TRANSPORT_WORD = { udp: 'wifi', serial: 'usb', osc: 'osc' };
 // picture of "unknown".
 const _WIRE_GLYPH = {
   wifi: '<path d="M2.5 9.2a14 14 0 0 1 19 0"/><path d="M6 12.7a9 9 0 0 1 12 0"/><path d="M9.5 16.2a4.2 4.2 0 0 1 5 0"/><circle cx="12" cy="19.6" r="1.1" fill="currentColor" stroke="none"/>',
-  usb:  '<path d="M12 4v13.5"/><circle cx="12" cy="19.3" r="1.8"/><path d="M12 13.5 7.5 10.5V8"/><circle cx="7.5" cy="6.4" r="1.5"/><path d="M12 15.5l4.5-3V9.8"/><rect x="15" y="6.4" width="3" height="3"/><path d="m10 6.5 2-2.5 2 2.5"/>',
+  usb:  '<path d="M12 4v13.5"/><circle cx="12" cy="19.3" r="1.8"/><path d="M12 13.5 7.5 10.5V8"/><circle cx="7.5" cy="6.4" r="1.5"/><path d="M12 15.5l4.5-3V9.8"/><rect x="15" y="6.4" width="3" height="3"/><path d="m10 6.5 2-2.5 2 2.5"/>'
 };
 const _wireMark = via => {
   const w = via === 'cable' || via === 'serial' ? 'usb' : (via === 'udp' ? 'wifi' : via);

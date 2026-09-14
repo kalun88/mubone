@@ -175,4 +175,3 @@ export function initPinsRail() {
   renderPinsRail();
 }
 
-S._syncPinsUI = () => { S._pinsDirty = true; };

@@ -70,7 +70,21 @@ async function measure(rig, intervalMs, brush) {
     if (!S.isRecording) return { error: 'recording did not start' };
     S.currentStrokeId = STROKE;
     S.isPainting = true;
+    // WATCH THE REAL FRAME CADENCE. A live mark's level is folded in per
+    // RENDER FRAME, so the end of its window is quantised to whatever the
+    // renderer is actually managing — not to the nominal 30 fps. Under load
+    // (a full rig run, several Electron instances) frames stretch, and a
+    // margin hardcoded for 33 ms stops describing the machine it runs on.
+    let frameMaxS = 0, _fPrev = performance.now(), _fStop = false;
+    const _fTick = () => {
+      const now = performance.now();
+      frameMaxS = Math.max(frameMaxS, (now - _fPrev) / 1000);
+      _fPrev = now;
+      if (!_fStop) requestAnimationFrame(_fTick);
+    };
+    requestAnimationFrame(_fTick);
     await new Promise(r => setTimeout(r, 2300));
+    _fStop = true;
     S.isPainting = false;
     S.currentStrokeId = -1;
     A.stopLiveRecording();
@@ -122,11 +136,30 @@ async function measure(rig, intervalMs, brush) {
       // A live mark's level is the loudness folded in per RENDER FRAME between
       // its capture and the next mark's settle (audio-features.js
       // consumeWindowLoudness / tickPeakHold), so its window's real end is
-      // quantised to a frame, ~33 ms at 30 fps: a mark whose nominal window
-      // ended 5 ms before the burst still folded the onset in about one run in
-      // three (#337, 2026-09-05: 0.113 / 0.117 against 0.1). "Far" therefore
-      // means a frame clear of the burst, not 5 ms.
-      const far = near.filter(m => m.t + iv < on - 0.040 || m.t > on + 0.06 + 0.005);
+      // quantised to a frame: a mark whose nominal window ended 5 ms before the
+      // burst still folded the onset in (#337, 2026-09-05: 0.113 / 0.117 against
+      // a 0.1 ceiling). "Far" therefore means a frame clear of the burst, not
+      // 5 ms — and the FRAME IS MEASURED, not assumed. It was 40 ms flat, which
+      // is two frames at 30 fps and is right on an idle machine; inside a full
+      // rig run frames stretch and marks 40 ms clear were still folding the
+      // burst in, reading 0.164 (2026-09-13). One slow frame either side of the
+      // longest one actually seen, floored at the old 40 ms.
+      const margin = Math.max(0.040, frameMaxS * 2);
+      // AND NOT A NEIGHBOUR OF THE COVERING MARK. The burst is 60 ms and the
+      // deposit grid here is 50 ms, so a burst ALWAYS spans two marks and
+      // sometimes three: whichever mark the grid happens to put either side of
+      // the covering one can legitimately hold part of the same burst, and
+      // whether it does is a matter of where the grid lands that run. That is
+      // what made this check intermittent — a neighbour holding a partial fold
+      // read 0.147 / 0.164 / 0.177 against a 0.1 ceiling on some runs and 0.021
+      // on others, while the covering mark was 0.63 every time. The property
+      // under test is that a mark which CANNOT have heard the burst is quiet,
+      // so the marks that could have are excluded by construction rather than
+      // by a margin that has to be widened every time the machine is busier.
+      const ci = covering ? marks.indexOf(covering) : -1;
+      const neighbour = m => ci >= 0 && Math.abs(marks.indexOf(m) - ci) <= 1;
+      const far = near.filter(m => !neighbour(m)
+                                && (m.t + iv < on - margin || m.t > on + 0.06 + 0.005));
       return {
         on: +on.toFixed(3),
         coveringAt: covering ? +covering.t.toFixed(3) : null,
@@ -137,6 +170,7 @@ async function measure(rig, intervalMs, brush) {
       };
     });
     return { sr, takeSec: +buf.duration.toFixed(3), marks: marks.length, onsets: onsets.length, per,
+             frameMaxMs: +(frameMaxS * 1000).toFixed(1),
              peakOffsetMs: +(peakOffsetS * 1000).toFixed(1), postedChecked, postedWrong };
   }, { intervalMs, brush });
 }
@@ -157,6 +191,7 @@ async function run(rig) {
     check(`grain starts ${expectMs} ms before its mark`, Math.abs(r.peakOffsetMs - expectMs) < 0.5, `${r.peakOffsetMs} ms`);
     check(`the bridge posts every candidate that much early`, r.postedChecked > 0 && r.postedWrong === 0, `${r.postedWrong} of ${r.postedChecked} wrong`);
     check(`five bursts found in the take`, r.onsets === 5, `${r.onsets} onsets, take ${r.takeSec}s, ${r.marks} marks`);
+    console.log(`       longest render frame during the take: ${r.frameMaxMs} ms — "far" is ${Math.max(40, r.frameMaxMs * 2).toFixed(0)} ms`);
     for (const b of r.per) {
       const tag = `burst at ${b.on}s`;
       check(`${tag}: a mark's window covers it`, b.coveringAt != null, JSON.stringify(b));

@@ -9,6 +9,7 @@
 // ============================================================================
 
 import { S, MAX_COMMITS } from './state.js';
+import { settleTakeTimbre } from './audio-features.js';
 import { ensureAudioContext } from './audio.js';
 import { stampCartesian, killAllGrains, releaseSeqNodes } from './grain.js';
 import { rebuildSampleListUI } from './ui-samples.js';
@@ -350,7 +351,16 @@ function buildSessionPayload() {
       color:         p.color,
       rms:           p.rms ?? 0,
       centroid:      p.centroid ?? 0,
+      // ABSENT IS NOT ZERO (2026-09-13). `?? 0` here wrote the number 0 for a
+      // mark painted before `tilt` and `noise` existed, and 0 is a legal value
+      // — the violet end of the arc. So the renderer's own fallback,
+      // `p.tilt ?? normaliseCentroid(p.centroid …)`, could never fire across a
+      // FILE: it saw 0, not undefined, and an imported pre-2026-09-13 session
+      // came back as one colour. JSON drops an undefined key, which is exactly
+      // what the reader needs to see.
+      tilt:          p.tilt,
       zcr:           p.zcr ?? 0,
+      noise:         p.noise,
       // Trigger-vs-granular is a property of the material, so it has to travel
       // with the particle. Omitting it would import a percussion map as
       // granulation fodder. Written only when true — it's absent on the large
@@ -646,7 +656,16 @@ async function applySessionPayload(data) {
       color:         p.color,
       rms:           p.rms ?? 0,
       centroid:      p.centroid ?? 0,
+      // ABSENT IS NOT ZERO (2026-09-13). `?? 0` here wrote the number 0 for a
+      // mark painted before `tilt` and `noise` existed, and 0 is a legal value
+      // — the violet end of the arc. So the renderer's own fallback,
+      // `p.tilt ?? normaliseCentroid(p.centroid …)`, could never fire across a
+      // FILE: it saw 0, not undefined, and an imported pre-2026-09-13 session
+      // came back as one colour. JSON drops an undefined key, which is exactly
+      // what the reader needs to see.
+      tilt:          p.tilt,
       zcr:           p.zcr ?? 0,
+      noise:         p.noise,
     };
     if (p.source === 'sample') particle.sampleIndex = p.sampleIndex;
     if (p.source === 'live')   particle.liveBufferIdx = p.liveBufferIdx;
@@ -657,6 +676,20 @@ async function applySessionPayload(data) {
     S.particles.push(particle);
   }
   S._particleVersion = (S._particleVersion || 0) + 1;
+
+  // A file written before 2026-09-13 carries a colour per mark that was decided
+  // the instant the mark landed, against whatever had been played by then — so
+  // its quiet marks took their colour from the room. The rule is the same one
+  // the seal applies; run it here too, once per take, and an old session comes
+  // back in the colours it would be painted in today. Harmless on a new file:
+  // its marks already satisfy it, so nothing is written.
+  {
+    const takes = new Set();
+    for (const p of S.particles) if (p.source === 'live' && p.liveBufferIdx >= 0) takes.add(p.liveBufferIdx);
+    let repaired = 0;
+    for (const t of takes) repaired += settleTakeTimbre(t);
+    if (repaired) console.log(`[import] ${repaired} silent marks took the colour of the sound beside them`);
+  }
 
   // 5. Restore commits (unified cloud + loop slots)
   //

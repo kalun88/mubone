@@ -238,7 +238,6 @@ async function startTriggerRecord() {
   if (!gotMic) return;
   // Scan is deliberately left alone — see _commitTraceStroke.
   S._recordingTrigger = true;
-  S._traceActive      = true;
   startLiveRecording();
   recordStrokeStart('live', S.currentLiveBufferIdx);
   S.isPainting = true;
@@ -254,11 +253,11 @@ function stopTriggerRecord() {
   // The release is stamped and the recorder held by the input latency, so
   // the region from the button has the sound of the release in it.
   if (S.isRecording) stopLiveRecordingHeld(S.latency?.inS || 0);
-  S._traceActive = false;
   // _commitTraceStroke reads and clears the flag, and is the single place that
   // decides what a finished stroke becomes.
   _commitTraceStroke(savedStrokeId);
   S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+  S._liveInk = null;   // the next stroke inks itself from its own first mark
   _updateLiveRecUI();
   S._syncTriggerRecUI?.();
 }
@@ -308,8 +307,8 @@ function stopPaintStroke() {
     S.hfGateOpen  = false;
     if (wasPainting) {
       S.hfCaptureCount++;
-      S.hfCaptureFlashUntil = performance.now() + 400;
       S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+      S._liveInk = null;   // the next stroke inks itself from its own first mark
     }
     S._syncHandsfreeUI?.();
   }
@@ -326,6 +325,7 @@ function stopPaintStroke() {
     // flip mid-stroke, and a path left recording would grow for ever.
     if (S._seedRecordingDeferred) finalizeSeedPlant();
     S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+    S._liveInk = null;   // the next stroke inks itself from its own first mark
   } else if (S._recordingTrigger) {
     // ⇧space on a tool that never recorded (the mic was denied, or the
     // eraser): the flag must not leak into the next stroke.
@@ -482,8 +482,8 @@ export function setupEvents() {
     _surfaceOverlay.innerHTML = viaAlt
       ? `<span class="surface-overlay-main">cursor freed — the UI is yours</span>` +
         `<span class="surface-overlay-hint">click here or press ${altKey} again to ${back}</span>`
-      : `<span class="surface-overlay-main">click to re-enter surface mode</span>` +
-        `<span class="surface-overlay-hint">tip: use ${altKey} to free the cursor without leaving surface mode</span>`;
+      : `<span class="surface-overlay-main">click to re-enter point mode</span>` +
+        `<span class="surface-overlay-hint">tip: use ${altKey} to free the cursor without leaving point mode</span>`;
     wrapper.appendChild(_surfaceOverlay);
     _surfaceOverlay.addEventListener('click', () => {
       // Clicking is equivalent to pressing ⌥ again when cursor-locked, so route
@@ -507,8 +507,6 @@ export function setupEvents() {
   // The "surface mode — the pointer is captured" banner that popped over the
   // stage on entering surface mode is gone (Ek, 2026-09-12: "remove that box.
   // the overlay is enough"). The overlay below is the one way in and out.
-  S._showSurfaceEntryHint = () => {};
-  S._hideSurfaceEntryHint = () => {};
 
   document.addEventListener('pointerlockchange', () => {
     _pointerLocked = document.pointerLockElement === S.canvas;
@@ -1097,7 +1095,6 @@ export function setupEvents() {
       if (btn) btn.classList.remove('active');
     });
   }
-  S._toggleProjectorMode = toggleProjectorMode;
   document.getElementById('projectorModeBtn')?.addEventListener('click', () => toggleProjectorMode());
 
   // (Divider removed — projector mode uses mini canvas tile in panel flow)
@@ -1135,11 +1132,6 @@ export function setupEvents() {
   S._setMuted = setMuted;
 
   // Expose seed/undo actions for osc.js (/seed/sow, /seed/trail, /seed/uproot, /undo)
-  S._plantSeed        = plantSeed;
-  S._startSeedPlant   = startSeedPlant;
-  S._finalizeSeedPlant = finalizeSeedPlant;
-  S._uprootSeed       = uprootNearestSeed;
-  S._undo         = undoLastStroke;
 
   // Expose slot-full check for inline indicator scripts (non-module context)
   window._loopSlotsFull = () =>

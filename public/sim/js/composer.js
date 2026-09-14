@@ -220,10 +220,6 @@ export function syncParticleMarks() {
   return _anyMarked;
 }
 
-/** True when at least one particle is marked — lets the render loop skip the
- *  per-particle read entirely in the normal case. */
-export function anyParticlesMuted() { return _anyMarked; }
-
 // ── One entry point ─────────────────────────────────────────────────────────
 
 /** Is this commit currently sounding, for readouts and for the toggle. */
@@ -237,29 +233,6 @@ export function isCommitOn(c) {
 export function toggleCommit(c) {
   if (!c || (c.type !== 'loop' && c.type !== 'cloud')) return null;
   return togglePinMute(c);
-}
-
-/** Bring every pin back — every mute and solo flag cleared, on pins and on
- *  groups. The escape hatch for an arrangement you want to abandon. */
-export function allCommitsOn() {
-  let silent = 0;
-  for (let i = 0; i < S.commitSlotCount; i++) {
-    const c = S.commitSlots[i];
-    if (c && !isCommitOn(c)) silent++;
-  }
-  allOn();
-  if (silent) { S._syncComposerUI?.(); S.updateSeedBanksUI?.(); }
-  return silent;
-}
-
-/** How many commits are currently silent — drives the panel's recovery hint. */
-export function silentCommitCount() {
-  let n = 0;
-  for (let i = 0; i < S.commitSlotCount; i++) {
-    const c = S.commitSlots[i];
-    if (c && !isCommitOn(c)) n++;
-  }
-  return n;
 }
 
 // ── The proximity gate ──────────────────────────────────────────────────────
@@ -277,7 +250,3 @@ export function silentCommitCount() {
 //
 // This file is misnamed now — it is the pin-mute engine, not a composer. That
 // rename is worth doing and is deliberately NOT bundled with the deletion.
-S._toggleCommit      = toggleCommit;
-S._isCommitOn        = isCommitOn;
-S._syncParticleMarks   = syncParticleMarks;
-S._allCommitsOn        = allCommitsOn;

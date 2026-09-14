@@ -55,7 +55,7 @@ import { S } from './state.js';
 import { getDevices, sendCommandTo } from './imu-setup.js';
 import { linkForSensor, links, onLinksChanged } from './sygaldry.js';
 import { hexToChannels } from './sygaldry-led.js';
-import { normalise, timbreArc } from './audio-features.js';
+import { featuresToColor, normaliseCentroid } from './audio-features.js';
 
 const ENABLED_KEY = 'mubone-ximu-led-feedback';
 const MAP_KEY     = 'mubone-ximu-led-map';
@@ -79,7 +79,7 @@ const CLR_OFF = '#000000';
 //      hard across the whole range) is the same 10 msg/s as a fast blink.
 //   3. Only the cursor device is ever painted, as with every other pattern.
 const TIMBRE_STEP_MS   = 100;   // sampler interval → 10 Hz ceiling
-const TIMBRE_HUE_STEPS = 24;    // even buckets across the arc's 135° HSL span
+const TIMBRE_HUE_STEPS = 24;    // even buckets across the arc (265° in OKLCh since 2026-09-13)
 // Smoothing time constant, in ms. Small enough that a deliberate move reads as
 // immediate (~2τ to settle), large enough that pool churn doesn't jitter the
 // hue. Raise for calmer, lower for twitchier.
@@ -92,9 +92,6 @@ const TIMBRE_TAU_MS    = 90;
 // attempts at a "blue" that always came out cyan). So saturation is compressed
 // into a high, narrow band and lightness is pinned below the screen's — a lit
 // LED is already perceptually bright, and lifting it just desaturates it.
-const TIMBRE_SAT_MAX = 100;
-const TIMBRE_SAT_MIN = 62;
-const TIMBRE_LIT     = 50;
 
 // ── Palette ────────────────────────────────────────────────────────────────
 // Ten colours chosen to stay distinguishable from each other on a small RGB
@@ -256,17 +253,12 @@ export const LED_EVENTS = [
   // Not `scan` — that's the state row for the cursor actually granulating.
   // This is the toggle action, matching midi.js's `scan_toggle` action id.
   { id: 'scan_toggle', label: 'scan toggled on/off' },
-  { id: 'snapshot',  label: 'snapshot capture'    },
   // Priority: a trigger launching is the performer's primary action feedback,
   // so it cancels an in-flight sequence rather than being dropped as busy. A
   // turntable sweeping past three triggers would otherwise show only the first.
   { id: 'trigger',   label: 'trigger fired', priority: true,
     tip: 'a trigger buffer launched. Interrupts any other event sequence — with several triggers on the sphere this fires far more often than a commit, and it is the one you most need to see.' },
 ];
-
-export const LED_ROW_PRIORITY = new Set(
-  LED_EVENTS.filter(r => r.priority).map(r => r.id)
-);
 
 export const LED_ROW_KIND = new Map([
   ...LED_STATES.map(r => [r.id, 'state']),
@@ -305,7 +297,6 @@ const DEFAULTS = {
   sweep:     { colour: '#C8A000', pattern: 'flash', count: 2, enabled: false },
   erase_all: { colour: '#CC1A1A', pattern: 'flash', count: 3, enabled: false },
   scan_toggle: { colour: '#00A86B', pattern: 'flash', count: 1, enabled: false },
-  snapshot:  { colour: '#3B4FC8', pattern: 'flash', count: 1, enabled: false },
   // White (Ek's call). It is the brightest thing the LED can do, which is what
   // makes a 45ms stab register at a glance from across a stage — and the strike
   // pattern is unlike anything else, so the colour doesn't have to carry the
@@ -390,22 +381,6 @@ function _pulseFactor(step, steps) {
   return 0.15 + 0.85 * (0.5 - 0.5 * Math.cos((2 * Math.PI * step) / steps));
 }
 
-function _hslToHex(h, s, l) {
-  h = ((h % 360) + 360) % 360; s /= 100; l /= 100;
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-  const m = l - c / 2;
-  let r = 0, g = 0, b = 0;
-  if      (h <  60) { r = c; g = x; }
-  else if (h < 120) { r = x; g = c; }
-  else if (h < 180) { g = c; b = x; }
-  else if (h < 240) { g = x; b = c; }
-  else if (h < 300) { r = x; b = c; }
-  else              { r = c; b = x; }
-  const to = v => Math.round((v + m) * 255);
-  return '#' + ((to(r) << 16) | (to(g) << 8) | to(b)).toString(16).padStart(6, '0');
-}
-
 // ── Timbre sampler ─────────────────────────────────────────────────────────
 // Driven by the 10 Hz state poll, not a timer of its own — see _pollTraceState.
 let _timbreCent  = 0.5;    // smoothed, normalised
@@ -467,14 +442,19 @@ function _sampleCursorTimbre() {
     const prox = Math.max(0, 1 - (p._ang ?? 0) / radRad);
     const w = rms * (0.15 + 0.85 * prox * prox);
     wSum += w;
-    cSum += w * (p.centroid ?? 0);
-    zSum += w * (p.zcr ?? 0);
+    // THE SCREEN'S FALLBACK, NOT A BARE ZERO (2026-09-13). `p.tilt ?? 0` gave a
+    // mark with no tilt the violet end of the arc while renderer.js gave it
+    // `normaliseCentroid(p.centroid …)` — so on any material that predates the
+    // axis the light and the screen named different colours, which is the one
+    // thing this module exists not to do.
+    cSum += w * (p.tilt ?? normaliseCentroid(p.centroid ?? 0, S.vizCentroidMin, S.vizCentroidMax));
+    zSum += w * (p.noise ?? p.zcr ?? 0);
     n++;
   }
   _timbreGrains = n;
   if (wSum <= 0) return null;
   return {
-    centroid: normalise(cSum / wSum, S.vizCentroidMin, S.vizCentroidMax),
+    centroid: cSum / wSum,       // already the 0–1 tilt, averaged
     zcr:      Math.max(0, Math.min(1, zSum / wSum)),
   };
 }
@@ -495,27 +475,24 @@ function _advanceTimbre(f) {
   _timbreSeen = true;
 }
 
-// Same centroid→hue ARC as featuresToColor() so the LED and the screen agree on
-// what a sound looks like; saturation and lightness are remapped for the
-// emitter. When the screen's arc moved on 2026-08-29 — from a 240°→20° sweep
-// through the neon middle to an eased steel→violet→rose→ember wrap — this had
-// to move with it, or the sensor in the performer's hand would be showing green
-// for material the sphere was drawing in violet.
+// THE LED SHOWS WHAT THE SCREEN SHOWS. Ek, 2026-09-13: "led should follow
+// exactly same as what the screen shows for grains." It calls the screen's own
+// featuresToColor now, rather than an HSL re-derivation of the same arc — the
+// approximation was close on the day it was written and drifted every time the
+// ramp moved, and it was still normalising the centroid LINEARLY after the
+// screen went logarithmic, so the sensor in the hand and the sphere disagreed
+// about the scale as well as the colour. One function, one answer, and the
+// light in the performer's hand is the same word as the dot on the sphere.
 //
-// The arc is shared (timbreArc), the hue band is not: the screen works in OKLCH
-// and this works in HSL, because the emitter is driven in sRGB and its own
-// white point, not a perceptual space, is what decides whether a colour lands.
-// 250 → 385 is the HSL equivalent of the screen's wrap: blue, violet, magenta,
-// red, orange, and no green on the path.
+// The centroid is QUANTISED to TIMBRE_HUE_STEPS before the call, which is what
+// the old hue-stepping was really for: a colour drifting inside one bucket
+// sends nothing, so the emitter is not driven at the feature rate. Saturation
+// and lightness are the screen's too — zcr already ashens a noisy sound there.
 // Pure — no side effects, safe to call from anywhere.
 function _timbreHex() {
   if (!_timbreSeen) return null;
-  const { e }   = timbreArc(_timbreCent);          // matches featuresToColor()
-  const rawHue  = 250 + e * 135;                   // → 385, wrapped below
-  const stepDeg = 135 / TIMBRE_HUE_STEPS;
-  const hue     = (Math.round(rawHue / stepDeg) * stepDeg) % 360;
-  const sat     = TIMBRE_SAT_MAX - _timbreZcr * (TIMBRE_SAT_MAX - TIMBRE_SAT_MIN);
-  return _hslToHex(hue, sat, TIMBRE_LIT);
+  const q = Math.round(_timbreCent * TIMBRE_HUE_STEPS) / TIMBRE_HUE_STEPS;
+  return featuresToColor(q, _timbreZcr);
 }
 
 // Timbre only if it reflects something happening *now*. `_timbreHex()` alone

@@ -15,12 +15,12 @@
 // — see "Deposit one tick behind" below.
 // ============================================================================
 
-import { S, SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, gp, minGrainDurS } from './state.js';
+import { S, SAMPLE_PAINT_COLORS, gp, minGrainDurS } from './state.js';
 import { getCursorLonLat, screenToLonLat } from './sphere.js';
 import { rand, stampCartesian } from './grain.js';
 import { getRecordingDuration } from './audio.js';
 import { voicingForCurrentBrushLive } from './brush-voicing.js';
-import { snapshotInputFeatures, featuresFromBuffer, readGateLoudness, snapshotTimbre, consumeWindowLoudness } from './audio-features.js';
+import { snapshotInputFeatures, featuresFromBuffer, readGateLoudness, snapshotTimbre, consumeWindowLoudness, featuresToColor } from './audio-features.js';
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
@@ -62,6 +62,32 @@ let _trigT0 = 0;
 let _trigT0Stroke = -1;
 
 // ── Read configured interval ────────────────────────────────────────────────
+
+// ── ONE MEANING FOR COLOUR ON THE SPHERE (Ek, 2026-09-13) ───────────────────
+// "let's make the line also colour based on the same timbre setting as grains
+// so colour now means the same thing across the sphere."
+//
+// A mark has always been DRAWN from its own features — the renderer computes
+// `featuresToColor(centroid, zcr)` per particle, for tape and grain alike, and
+// `p.color` is only the fallback for a mark with no features at all. What did
+// NOT follow was the live recording trail and its launch ring: they wore the
+// tool's engine hue, and so said "tape" where everything under them said what
+// the audio sounded like.
+//
+// The ink is computed once per deposited mark, from that mark's own timbre,
+// and published on `S._liveInk` for the renderer to draw the trail in — so the
+// trail is the colour of the material it is laying down. Hue is centroid,
+// saturation is zcr, everywhere, whichever tool is in the hand. Tool identity
+// lives in the palette and the rail, not out here.
+//
+// One lookup per mark — featuresToColor is memoised on a quantised grid — so
+// none of this lands on the render path.
+function _liveInk(timbre) {
+  const c = timbre?.tilt ?? 0;      // the band tilt IS the hue axis, already 0–1
+  const ink = featuresToColor(c, timbre?.noise ?? 0);
+  S._liveInk = ink;
+  return ink;
+}
 
 function _intervalMs() {
   return (S.paintTicker && S.paintTicker.intervalMs) ?? _DEF_INTERVAL_MS;
@@ -174,8 +200,20 @@ export function dynamicHeadOffset(lon, lat, rms, nowMs) {
 // (the paint gate already encodes that rule). Runs at the 50 ms deposit tick,
 // never on the scheduler — a linear scan of the corpus is fine there.
 const CONCAT_W_RMS  = 1 / 0.25;   // descriptor-space normalisation
-const CONCAT_W_CENT = 1 / 6000;
+const CONCAT_W_CENT = 1 / 6000;   // per HERTZ — see _centHz below
 const CONCAT_W_ZCR  = 1.0;
+
+// `centroid` IS A FRACTION OF NYQUIST, NOT HERTZ (2026-09-13). Both brushes
+// below were written against a centroid in Hz and never re-scaled, which is the
+// same unit bug docs/EXPERIMENTAL-BRUSHES.md writes up for `staff` — and staff
+// is the one that got fixed. Unconverted, the concat weight made the brightness
+// term 1.7e-4 at its largest against an rms term reaching 1, so the brush
+// advertised as "sing bright and it digs your bright moments out" was a
+// loudness nearest-neighbour with a zcr tiebreak; and the comb's sieve compared
+// 0.02…0.4 against 2200, so `keep: high` accepted NOTHING and `keep: low`
+// accepted everything. The sort in combLayout is scale-free, so the brush
+// looked half-working, which is how it survived.
+const _centHz = c => (c || 0) * ((S.audioCtx?.sampleRate ?? 48000) / 2);
 
 export function concatMatch(feat) {
   if (!feat) return null;
@@ -184,7 +222,7 @@ export function concatMatch(feat) {
     const p = S.particles[i];
     if (p.trig || p.rms === undefined) continue;         // playable corpus only
     const dr = (p.rms - feat.rms) * CONCAT_W_RMS;
-    const dc = (p.centroid - feat.centroid) * CONCAT_W_CENT;
+    const dc = (_centHz(p.centroid) - _centHz(feat.centroid)) * CONCAT_W_CENT;
     const dz = ((p.zcr ?? 0) - (feat.zcr ?? 0)) * CONCAT_W_ZCR;
     const d = dr * dr + dc * dc + dz * dz;
     if (d < bd) { bd = d; best = p; }
@@ -209,7 +247,12 @@ function _depositConcat(lon, lat) {
     sampleIndex:    u.sampleIndex,
     grainStart:     u.grainStart,
     grainDuration:  u.grainDuration,
+    // BOTH COLOUR AXES COME WITH IT (2026-09-13). A concat mark points at a
+    // moment of material already played, so it has to LOOK like that moment —
+    // and without tilt and noise it fell through to a different measure and
+    // came out a different colour from the mark it matched.
     rms: u.rms, centroid: u.centroid, zcr: u.zcr,
+    tilt: u.tilt, noise: u.noise,
     color:          '#81c784',
   };
 }
@@ -236,7 +279,7 @@ export function resetComb() {
 
 export function combAccept(feat) {
   if (S.combKeep === 'all' || !feat) return true;
-  const v = feat[S.combAxis] ?? 0;
+  const v = S.combAxis === 'centroid' ? _centHz(feat.centroid) : (feat[S.combAxis] ?? 0);
   const t = COMB_THRESH[S.combAxis];
   return S.combKeep === 'high' ? v >= t : v < t;
 }
@@ -266,7 +309,16 @@ export function combLayout() {
 }
 
 export function combDeposit(particle, c) {
-  if (_comb.strokeId !== S.currentStrokeId) { resetComb(); _comb.strokeId = S.currentStrokeId; }
+  // THE MARK'S OWN STROKE, NOT THE CURSOR'S. `stopPaintStroke` sets
+  // `S.currentStrokeId = -1` before it stops the recording, and stopping the
+  // recording settles the pending mark — so the LAST mark of every combed
+  // stroke arrived here with the live id already cleared, failed this test,
+  // and triggered a reset that threw away the whole stroke's path and marks.
+  // combLayout then returned immediately with one mark to lay out, leaving that
+  // last mark at its raw cursor position while every sibling had been sorted
+  // onto the path: a stray dot off the end of every combed stroke.
+  const sid = particle.strokeId ?? S.currentStrokeId;
+  if (_comb.strokeId !== sid) { resetComb(); _comb.strokeId = sid; }
   const P = _comb.path;
   const last = P[P.length - 1];
   const gap = last
@@ -321,18 +373,14 @@ function _settlePending() {
   _pending = null;
   const particle = pend.particle;
   const rms = consumeWindowLoudness();
-  // HIT material is never gated (Ek, 2026-09-04): a line is a path you swipe
+  // TAPE material is never gated (Ek, 2026-09-04): a line is a path you swipe
   // across to fire it, and a gap in the path is a place it cannot be fired
   // from. The marks are the drawing; the take is the material, whole. The
-  // grain engine keeps the gate — there, a mark IS the material.
+  // grain engine keeps the gate — there, a mark IS the material. So a tape
+  // stroke deposits on EVERY tick, silence included, which is why its marks
+  // cannot read the room for a colour (audio-features.js, _HOLD_UNDER).
   if (S.paintGateThreshold > 0 && rms < S.paintGateThreshold && !S._recordingTrigger) return false;
   particle.rms = rms;
-  // The take remembers the span its KEPT marks cover, so a region built from
-  // the BUTTON can tell an untouched stroke from one erase has trimmed. Here,
-  // at the settle, not at the deposit: a mark still pending at the release
-  // is dropped, and it must not widen the span.
-  const _take = particle.source === 'live' ? S.liveRecBuffers[particle.liveBufferIdx] : null;
-  if (_take) { const g = particle.grainStart; if (!_take.markSpan) _take.markSpan = [g, g]; else { if (g < _take.markSpan[0]) _take.markSpan[0] = g; if (g > _take.markSpan[1]) _take.markSpan[1] = g; } }
   const feat = { rms, centroid: particle.centroid, zcr: particle.zcr };
   if (!particle.trig) {
     // The comb's sieve — non-qualifying material never lands at all.
@@ -340,6 +388,15 @@ function _settlePending() {
     // staff — the voice supplies the latitude, the hand only the longitude.
     if (S.brushFx === 'staff') particle.lat = staffLat(particle.centroid);
   }
+  // The take remembers the span its KEPT marks cover, so a region built from
+  // the BUTTON can tell an untouched stroke from one erase has trimmed. AFTER
+  // every rejection, not before: the gate's return above honoured that and the
+  // comb's did not, so a sieved-out mark still widened the span and the take
+  // read as erase-trimmed for ever after — it then plays the mark-derived
+  // region instead of press-to-release (trigger.js, ui-presets.js both test
+  // `hiMark >= markSpan[1]`).
+  const _take = particle.source === 'live' ? S.liveRecBuffers[particle.liveBufferIdx] : null;
+  if (_take) { const g = particle.grainStart; if (!_take.markSpan) _take.markSpan = [g, g]; else { if (g < _take.markSpan[0]) _take.markSpan[0] = g; if (g > _take.markSpan[1]) _take.markSpan[1] = g; } }
   // A take sealed between this mark's tick and now is shorter than the mark
   // thinks; keep the mark inside it. (The worklet would fit the grain anyway.)
   const slot = S.liveRecBuffers[particle.liveBufferIdx];
@@ -399,10 +456,21 @@ function _depositParticle() {
       liveBufferIdx:  S.currentLiveBufferIdx,
       grainStart:     recTime,            // the moment; the reader offsets
       // An overdub's marks wear its MASTER's colour, so the sphere shows the family.
-      color:          S._overdubTake?.seq?.color ?? LIVE_PAINT_COLORS[S.liveColorIndex % LIVE_PAINT_COLORS.length],
+      // _liveInk's ONE job is the side effect of publishing S._liveInk for the
+      // trail, and `??` short-circuited it away for the whole of an overdub —
+      // so while dubbing, the marks wore the master's family colour and the
+      // line joining them wore whatever index the legacy rotating palette had
+      // reached. Ink first, choose second.
+      color:          (ink => S._overdubTake?.seq?.color ?? ink)(_liveInk(timbre)),
       // Colour is the audio at the mark's moment; size arrives at the next tick.
       centroid:       timbre?.centroid ?? 0,
+      // The hue axis: share of energy above 800 Hz. Separates vowels ~4×
+      // better than centroid, which is kept for concat and the comb sieve.
+      tilt:           timbre?.tilt ?? 0,
       zcr:            timbre?.zcr ?? 0,
+      // The SECOND colour axis: flatness with the brightness trend removed.
+      // zcr stays for concat matching and the comb sieve, which want it.
+      noise:          timbre?.noise ?? 0,
     };
     if (S._recordingTrigger) p.trig = true;
     _pending = { particle: p, c };
@@ -460,6 +528,10 @@ function _depositParticle() {
     const feat = featuresFromBuffer(s.buffer, clampedStart);
     if (feat) {
       particle.rms = feat.rms; particle.centroid = feat.centroid; particle.zcr = feat.zcr;
+      // featuresFromBuffer carries the two colour axes now, so a sampler mark
+      // is hued by the same rule as a live one instead of by the legacy
+      // centroid fallback (which the LED did not share).
+      particle.tilt = feat.tilt; particle.noise = feat.noise;
       // The fx sieves read the FILE's features where the live branch reads the
       // mic — any brush paints from the sampler (#247 step 11). No paint gate
       // and no gate lookback here: those are properties of a live signal.
@@ -552,14 +624,6 @@ function _tick() {
 export function startPaintTicker() {
   if (_intervalId != null) return;
   _intervalId = setInterval(_tick, TICK_MS);
-}
-
-export function stopPaintTicker() {
-  if (_intervalId != null) {
-    clearInterval(_intervalId);
-    _intervalId = null;
-  }
-  _wasPainting = false;
 }
 
 export function getPaintTickerState() {

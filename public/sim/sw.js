@@ -18,7 +18,7 @@
 // visitors still get the full app from cache.
 // ============================================================================
 
-const CACHE_VERSION = 'mubone-1.15.1-alpha';
+const CACHE_VERSION = 'mubone-1.16.0-alpha';
 
 // Extensions served network-first. Everything else (fonts, images, audio) is
 // cache-first — those are content-addressed by name and rarely change.

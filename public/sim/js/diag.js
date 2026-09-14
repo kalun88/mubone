@@ -111,11 +111,13 @@ export function generateDiagReport(triggerLabel = 'manual', error = null) {
   const acBase     = actx?.baseLatency        != null ? (actx.baseLatency * 1000).toFixed(1) + ' ms' : 'n/a';
   const acOutput   = actx?.outputLatency      != null ? (actx.outputLatency * 1000).toFixed(1) + ' ms' : 'n/a';
 
-  // ── particle / seed counts ──
+  // ── particle / pin counts ──
+  // PINS, not `S.activeSeeds`: that field has never existed on S, so this
+  // line reported "active seeds: 0" with sixteen pins sounding — and the
+  // report is reachable from Settings → Diagnostics, so it was read. The
+  // pins are the non-null entries of S.commitSlots (js/pins.js).
   const particleCount = S.particles?.length ?? 0;
-  const seedCount    = S.activeSeeds
-    ? Object.values(S.activeSeeds).filter(c => c?.active).length
-    : 0;
+  const pinCount = S.commitSlots?.filter(Boolean).length ?? 0;
 
   // ── loaded samples ──
   const sampleCount = S.samples?.filter(s => s?.buffer).length ?? 0;
@@ -166,7 +168,7 @@ export function generateDiagReport(triggerLabel = 'manual', error = null) {
     '',
     '── SCENE ───────────────────────────────────────────────────────',
     `  active particles : ${particleCount}`,
-    `  active seeds     : ${seedCount}`,
+    `  pins             : ${pinCount}`,
     `  loaded samples   : ${sampleCount}`,
     `  camera mode      : ${S.cameraMode ?? 'n/a'}`,
     `  spatial panning  : ${S.spatialPanning ?? 'n/a'}`,
@@ -337,18 +339,24 @@ export function hideOverlay() {
 
 // ── Init: wire up auto-capture + keyboard shortcut ───────────────────────────
 
+// THE CRASH OVERLAY IS ?debug's, NOT THE SHOW'S. Everything else here is
+// wired unconditionally — the console helpers and ⇧D are what a debugging
+// session wants — but an overlay that throws itself over the sphere on any
+// stray `error` event is the one part that could interrupt a set, and
+// CLAUDE.md's fourth principle is that main stays playable. Under ?debug it
+// pops as written; otherwise the crash still lands in the ring buffer (dlog),
+// which is what the report prints, so nothing is lost — you open it after.
 export function initDiag() {
-  // Clean up any legacy crash snapshot from localStorage
-  try { localStorage.removeItem('grainDiagSnapshot'); } catch (_) {}
+  // (the stale `grainDiagSnapshot` key is purged centrally now — it is in
+  //  storage-registry's RETIRED_KEYS, which main.js clears at boot)
 
   // ── Auto-capture JS crashes ──
-  window.addEventListener('error', (e) => {
-    showDiagOverlay('window.onerror (crash)', e);
-  });
-
-  window.addEventListener('unhandledrejection', (e) => {
-    showDiagOverlay('unhandledrejection (crash)', e);
-  });
+  const onCrash = (label) => (e) => {
+    dlog('crash', label, { msg: String(e?.message ?? e?.reason ?? e?.type ?? '') });
+    if (DEBUG) showDiagOverlay(label, e);
+  };
+  window.addEventListener('error', onCrash('window.onerror (crash)'));
+  window.addEventListener('unhandledrejection', onCrash('unhandledrejection (crash)'));
 
   // ── Shift+D to open/close; Esc to close ──
   window.addEventListener('keydown', (e) => {

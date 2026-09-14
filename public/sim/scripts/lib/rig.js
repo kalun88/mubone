@@ -38,7 +38,7 @@ const { spawn } = require('child_process');
 const ROOT       = path.resolve(__dirname, '..', '..');
 const POLL_MS    = 100;
 const BOOT_MS    = 30000;   // electron cold start + app init
-const EVAL_MS    = 20000;   // bridge itself times out at 10s; this is the outer bound
+const EVAL_MS    = 45000;   // bridge itself times out at 30s; this is the outer bound
 const CHUNK      = 3000;    // stay under the bridge's 4000-char string cap
 const MAX_CHUNKS = 50;      // the bridge's array cap
 
@@ -198,8 +198,14 @@ function makeClient(dir, proc) {
       let last = '';
       while (Date.now() - t0 < timeoutMs) {
         try {
-          const r = await raw(`(typeof document !== 'undefined' && document.readyState === 'complete'
-             && !!document.getElementById('muteBtn'))`, 3000);
+          // Painted is not booted: main.js wires the cabinet's audio panel in a
+          // requestAnimationFrame after first layout, and under load that ran
+          // AFTER a suite's first evaluate (cc-mirror's channel mirror read a
+          // panel with no listeners, 2026-09-13). The panel's hook is the last
+          // thing that RAF sets, so it is the boot-complete mark.
+          const r = await raw(`(async () => { const { S } = await import('./js/state.js');
+             return typeof document !== 'undefined' && document.readyState === 'complete'
+               && !!document.getElementById('muteBtn') && typeof S._syncAudioPanelChannels === 'function'; })()`, 3000);
           if (r.ok && r.value === true) return true;
           last = r.ok ? 'app not painted yet' : r.error;
         } catch (e) { last = e.message; }

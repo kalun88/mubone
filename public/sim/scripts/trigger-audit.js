@@ -924,7 +924,16 @@ async function run(rig) {
   check('the looper\'s loop carries the release as its phase anchor and its region from the edges', bt.loop.made && bt.loop.anchor && bt.loop.regionFromEdges, JSON.stringify(bt.loop));
   check('… and its first pass is phased to the release, within a scheduler tick', bt.loop.made && Math.abs(bt.loop.phaseErrMs) <= 25, JSON.stringify(bt.loop));
   check('a press inside the hold cuts it: two takes, both sealed', bt.cut.heldA && bt.cut.twoTakes && bt.cut.distinct && bt.cut.aDur >= 0.28, JSON.stringify(bt.cut));
-  check('the measurement end to end: six clicks through a 27 ms loopback read as 27 ms, found 6 of 6, stored as measured', bt.measure.ms != null && Math.abs(bt.measure.ms - 27) < 1.5 && bt.measure.evidence?.found === 6 && bt.measure.source === 'measured' && Math.abs(bt.measure.rt - bt.measure.ms) < 0.01, JSON.stringify(bt.measure));
+  // A MAJORITY of the clicks, not all six — findClicks' own contract is that
+  // it needs more than half and then takes the MEDIAN of what it found, which
+  // is the whole point of sending six. Demanding 6 of 6 asserted a cleaner
+  // room than the code requires: through a real device the run found 4, then
+  // 5, then 6 on three consecutive full-suite runs and computed 27 ms every
+  // time. The delay, its source and the stored round trip are the contract;
+  // the click count is evidence, and the synthetic case above already proves
+  // the finder reads all six off a clean buffer.
+  const ev = bt.measure.evidence;
+  check('the measurement end to end: a 27 ms loopback reads as 27 ms off a majority of six clicks, stored as measured', bt.measure.ms != null && Math.abs(bt.measure.ms - 27) < 1.5 && ev?.found > ev?.of / 2 && bt.measure.source === 'measured' && Math.abs(bt.measure.rt - bt.measure.ms) < 0.01, JSON.stringify(bt.measure));
   if (bt.measure.rtMoved != null) check('… kept as the devices\' share: moving the cushion moves the round trip by two cushions, still measured, and back', bt.measure.srcMoved === 'measured' && Math.abs((bt.measure.rtMoved - bt.measure.rt) - bt.measure.movedBy) < 0.2 && Math.abs(bt.measure.rtBack - bt.measure.rt) < 0.01, JSON.stringify(bt.measure));
 
   console.log('\n§ the hops are bounded — the stall cushion (2026-09-04, #333), and the GUI thread is not in them (2026-09-06)');

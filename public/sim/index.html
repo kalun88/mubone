@@ -80,7 +80,7 @@
     <div class="top-bar-left">
       <div class="top-bar-brand">
         <span class="top-bar-logo">mubone</span>
-        <span class="top-bar-version">1.15 alpha</span>
+        <span class="top-bar-version">1.16 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="mu-btn--bare top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -109,8 +109,8 @@
         <div class="top-bar-seg-group">
           <span class="top-bar-seg-label">camera</span>
           <div class="grain-seg top-bar-seg" id="cameraModeSeg">
-            <button class="grain-seg-btn active" data-mode="steer" title="steer — mouse or trackpad steers the view from center. cursor follows the mouse. default mode. (camera DISTANCE is the pull-back slider in the viz panel, and applies to all three modes.)">steer</button>
-            <button class="grain-seg-btn" data-mode="surface" title="surface — pointer lock captures the trackpad or mouse. swipe to rotate freely around the sphere. cursor hidden, paint target is center. Alt to unlock.">surface</button>
+            <button class="grain-seg-btn active" data-mode="steer" title="pull — mouse or trackpad steers the view from center. cursor follows the mouse. default mode. (camera DISTANCE is the pull-back slider in the viz panel, and applies to all three modes.)">pull</button>
+            <button class="grain-seg-btn" data-mode="surface" title="point — pointer lock captures the trackpad or mouse. swipe to rotate freely around the sphere. cursor hidden, paint target is center. Alt to unlock.">point</button>
             <button class="grain-seg-btn" data-mode="sensor" title="sensor — the x-imu3 drives camera orientation. cursor hidden, paint target is center, mouse free for the UI.">sensor</button>
           </div>
         </div>
@@ -186,6 +186,14 @@
         <button type="button" class="tc-icon tc-danger" id="tcClear" title="erase all — every particle, buffer and stroke, pinned or not (⌫×3)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5h16M9.5 6.5V4.5h5v2"/><path d="M6.5 6.5 7.6 20h8.8l1.1-13.5"/></svg>
         </button>
+        <!-- THE RECORDING BUDGET, beside the remedy. It fills as the live
+             buffers fill and it is always there, so the one state that can
+             stop the instrument responding is never a surprise (Ek,
+             2026-09-13: "always in the chrome"). Ochre from 80%, brick at the
+             ceiling — and sweep, the button to its left, is what empties it. -->
+        <span class="tc-rec" id="tcRec" title="recording memory — the live takes held in RAM. Sweep clears everything unpinned and empties it; at full, a new take is refused until you do">
+          <span class="tc-rec-fill" id="tcRecFill"></span>
+        </span>
       </span>
       <!-- Alt-lock is the one thing the old stats readout carried that was
            LIVE STATE rather than a label for something already on screen; the
@@ -202,7 +210,7 @@
          wordmark's own colour without 9KB of path data in this file. -->
     <div class="tc-brand">
       <img class="tc-mark" src="logo/mark-light.svg" alt="" aria-hidden="true" width="18" height="18">
-      <b>mubone</b> <i>1.15</i>
+      <b>mubone</b> <i>1.16</i>
     </div>
     <!-- SHAPE ENCODES AFFORDANCE (#267), now four vocabularies:
            .tc-icon    a bare GLYPH — an action, no box. The browser toolbar's
@@ -226,8 +234,10 @@
            three words (Ek, 2026-09-09: "steer surface sensor should be 3
            icons. minimalist") — the words live in each segment's title,
            drawn by tile-layout.js from the cabinet's buttons. -->
-      <span class="tc-grp">
-        <span class="seg seg-pill seg-glyph" id="tcCamSeg" role="group" aria-label="camera mode"></span>
+      <span class="tc-grp tc-cam-wrap">
+        <button type="button" class="tc-icon tc-cam-btn" id="tcCamBtn" aria-haspopup="true" aria-expanded="false"
+                title="camera — what drives the view"></button>
+        <div class="tc-cam-menu" id="tcCamMenu" role="menu" aria-labelledby="tcCamBtn" hidden></div>
       </span>
       <span class="tc-grp">
         <button type="button" class="tc-readout" id="tcMic" title="input — mic, live, or the sampler file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/><path d="M12 18v3"/></svg><i></i></button>
@@ -389,7 +399,7 @@
       <div class="lyr-bar">
         <span class="lyr-title">Tools</span>
       </div>
-      <div class="lyr-list" id="toolRailList">
+      <div class="lyr-list">
         <div class="srcbar" id="srcBar" role="list" aria-label="source"></div>
         <div class="lensbar" id="lensBar" role="list" aria-label="lenses"></div>
         <div class="tilebar" id="tileBar" role="list" aria-label="tools"></div>
@@ -515,7 +525,7 @@
               <span class="grain-label">lens</span>
               <div class="grain-seg" id="snapToggleSeg">
                 <button class="grain-seg-btn active" data-snap="off" title="area — select particles within the search radius&#10;filtered by recency">area</button>
-                <button class="grain-seg-btn" data-snap="on" id="snapToggleBtn" title="nearest — fire the k closest particles on the whole sphere&#10;radius and recency are bypassed">nearest</button>
+                <button class="grain-seg-btn" data-snap="on" title="nearest — fire the k closest particles on the whole sphere&#10;radius and recency are bypassed">nearest</button>
               </div>
             </div>
 
@@ -531,7 +541,7 @@
               <span class="grain-label">order</span>
               <div class="grain-seg" id="kSeqSeg">
                 <button class="grain-seg-btn active" data-kseq="off" title="random — pick randomly from candidates">random</button>
-                <button class="grain-seg-btn" data-kseq="on" id="kSeqBtn" title="step — play one particle at a time in recording order">step</button>
+                <button class="grain-seg-btn" data-kseq="on" title="step — play one particle at a time in recording order">step</button>
               </div>
             </div>
 
@@ -552,7 +562,7 @@
                 <span class="grain-label">fill</span>
                 <div class="grain-seg" id="kAllSeg">
                   <button class="grain-seg-btn active" data-kall="off" title="k — cap selection to k nearest within radius">k</button>
-                  <button class="grain-seg-btn" data-kall="on" id="kAllBtn" title="all — fire every particle in radius, no k cap">all</button>
+                  <button class="grain-seg-btn" data-kall="on" title="all — fire every particle in radius, no k cap">all</button>
                 </div>
               </div>
               <!-- fade + fade curve — moved here from the cursor panel (they
@@ -747,7 +757,7 @@
                 <path d="M3 17.5C3 19.4 4.3 21 6 21c1.4 0 2.5-1 3-2.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
                 <line x1="15" y1="4" x2="20" y2="9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
               </svg>
-              <span class="play-mute-label paint-indicator-label" id="traceLabel">trace</span>
+              <span class="play-mute-label paint-indicator-label">trace</span>
               <!-- The `space` and mouse badges stood here. Both went on
                    2026-09-11 with arming: space is unbound and a click on the
                    sphere plays nothing, and what starts a trace is a palette
@@ -1094,7 +1104,7 @@
                 <path d="M14.5 8.5a5 5 0 0 1 0 7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
                 <path d="M17.5 6a9 9 0 0 1 0 12" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" opacity="0.6"/>
               </svg>
-              <span class="play-mute-label paint-indicator-label" id="trigRecordLabel">record trigger</span>
+              <span class="play-mute-label paint-indicator-label">record trigger</span>
             </div>
           </div>
 
@@ -1211,7 +1221,7 @@
          heading for a thing that reads itself (Ek). -->
     <div class="bottom-bar-levels">
       <div class="levels-meters-row bottom-bar-meters">
-        <div class="levels-meter-col" id="mainInputGroup">
+        <div class="levels-meter-col">
           <span class="bottom-bar-label">in</span>
           <div id="mainInputMeters" class="as-multi-meter-wrap main-meter-dom"></div>
         </div>
@@ -1221,7 +1231,7 @@
             title="paint gate level — adjust threshold in audio settings"></canvas>
           <span class="as-val main-gate-val" id="mainPaintGateVal"></span>
         </div>
-        <div class="levels-meter-col" id="mainDryGroup">
+        <div class="levels-meter-col">
           <span class="bottom-bar-label">dry</span>
           <div id="mainDryMeters" class="as-multi-meter-wrap main-meter-dom"></div>
         </div>
@@ -1229,7 +1239,7 @@
           <span class="bottom-bar-label">ph</span>
           <div id="mainMixMeters" class="as-multi-meter-wrap main-meter-dom"></div>
         </div>
-        <div class="levels-meter-col" id="mainHouseGroup">
+        <div class="levels-meter-col">
           <span class="bottom-bar-label">out</span>
           <div id="mainHouseMeters" class="as-multi-meter-wrap main-meter-dom"></div>
         </div>
@@ -1307,9 +1317,9 @@
          These are their OWN control, not the cabinet segments borrowed in.
          The segments stay in the cabinet as the canonical elements MIDI and
          OSC drive; both are synced by syncAxisSourceUI. -->
-    <div class="bottom-bar-cursor" id="tcCursorSlot">
+    <div class="bottom-bar-cursor">
       <button type="button" class="bb-ax" id="tcZeroHeading" title="zero heading (`) — face the audience and zero. Yaw only, about true vertical; it cannot disturb the mounting calibration"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 5.2 14 12l-2 6.8L10 12z"/></svg><i>zero</i></button>
-      <button type="button" class="bb-ax bb-ax-both" id="tcCursorLock" title="cursor lock (⌥) — locks azimuth and elevation together. In steer and surface modes it also hands the pointer back so you can use the UI"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 6.85-.95"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 7 0v3.6"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><i>⌥</i></button>
+      <button type="button" class="bb-ax bb-ax-both" id="tcCursorLock" title="cursor lock (⌥) — locks azimuth and elevation together. In pull and point modes it also hands the pointer back so you can use the UI"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 6.85-.95"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 7 0v3.6"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><i>⌥</i></button>
       <button type="button" class="bb-ax" id="tcAzCycle" data-axis="azSource" title="azimuth — click to lock or free. ⌥ locks it with elevation. Set &quot;mapped&quot; by targeting cursor azimuth in Settings → Mapping"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/><path d="M4.5 19.5 19.5 4.5"/></svg><svg class="ax-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-dasharray="3 2.6"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/></svg><i>az</i></button>
       <button type="button" class="bb-ax" id="tcElCycle" data-axis="elSource" title="elevation — click to lock or free. ⌥ locks it with azimuth. Set &quot;mapped&quot; by targeting cursor elevation in Settings → Mapping"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/><path d="M4.5 19.5 19.5 4.5"/></svg><svg class="ax-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-dasharray="3 2.6"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/></svg><i>el</i></button>
     </div>
@@ -1376,7 +1386,7 @@
     </div>
 
     <!-- The page's action, lent to the shell header while this page is hosted. -->
-    <div class="as-page-actions" id="ledPageActions">
+    <div class="as-page-actions">
       <button class="set-btn" id="ledResetBtn">Reset to defaults</button>
     </div>
 
@@ -2230,7 +2240,7 @@
     </div>
 
     <div class="set-section">
-      <div class="set-sec-title">What size and colour mean</div>
+      <div class="set-sec-title">What size means</div>
       <div class="set-sec-lede">The two windows the drawing reads. Set them to the room you are playing in, not to the numbers.</div>
 
       <div class="set-row">
@@ -2255,25 +2265,23 @@
         </div>
       </div>
 
+      <!-- THE COLOUR LEGEND IS FIXED (Ek, 2026-09-13) ─────────────────────
+           "i don't want this to be too settable — it should be very
+           predictable so that i see yellow every time and my collaborators
+           see yellow and they know what sound that is."
+           So the two bounds that map brightness onto the ramp are constants in
+           state.js, not controls and not saved per profile: every instance of
+           mubone paints the same sound the same colour. The scale below is the
+           legend, and it is the whole of the UI this needs. -->
       <div class="set-row">
         <div class="set-row-text">
-          <span class="set-row-title">Darkest timbre</span>
-          <span class="set-row-desc">The brightness reading that draws at the cold end of the colour ramp.</span>
-        </div>
-        <div class="set-ctl set-ctl--slider">
-          <input class="as-slider" type="range" id="vizCentMinSlider" min="0" max="0.3" step="0.005" value="0.04">
-          <span class="as-val" id="vizCentMinNum">0.04</span>
+          <span class="set-row-title">What the colours mean</span>
+          <span class="set-row-desc">Colour is the timbre of the sound at that moment, the same on every instrument and every screen: <b>hue</b> is brightness, from deep tones to noise, and <b>saturation</b> is how tonal it is — full colour for a clear pitch, ashen for noise. It is not settable, so a colour means the same thing to you and to whoever you are playing with.</span>
         </div>
       </div>
-
       <div class="set-row">
         <div class="set-row-text">
-          <span class="set-row-title">Brightest timbre</span>
-          <span class="set-row-desc">The reading that draws at the hot end.</span>
-        </div>
-        <div class="set-ctl set-ctl--slider">
-          <input class="as-slider" type="range" id="vizCentMaxSlider" min="0.1" max="0.8" step="0.005" value="0.45">
-          <span class="as-val" id="vizCentMaxNum">0.45</span>
+          <span class="set-row-desc" id="vizTimbreLegend"></span>
         </div>
       </div>
     </div>
@@ -2285,7 +2293,7 @@
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Minimal rendering</span>
-          <span class="set-row-desc">Draws the least it can and still play. ⇧P toggles it without opening this page.</span>
+          <span class="set-row-desc">Draws the least it can and still play: no glow, no trails, no depth sorting. Audio first.</span>
           <span class="set-row-status" id="vizPerfStat">—</span>
         </div>
         <div class="set-ctl">
@@ -2384,7 +2392,7 @@
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Latency</span>
-          <span class="set-row-desc">The time between a sound and its sample, in and out. The loop engine steers by it: a loop's edges follow your press and release, an overdub lands where you sang it. The estimate comes from the streams; Measure plays six clicks and listens for them — it needs the output to reach the mic (speakers, or a cable). Stored per device pair and rate as the devices' own share, so the buffer and the cushion can change without measuring again.</span>
+          <span class="set-row-desc">The time between a sound and its sample, in and out. The tape engine steers by it: a loop's edges follow your press and release, an overdub lands where you sang it. The estimate comes from the streams; Measure plays six clicks and listens for them — it needs the output to reach the mic (speakers, or a cable). Stored per device pair and rate as the devices' own share, so the buffer and the cushion can change without measuring again.</span>
         </div>
         <div class="set-ctl">
           <span class="latency-dot" id="asLatencyDot"></span>
@@ -2401,8 +2409,8 @@
         </div>
         <div class="set-ctl set-ctl--slider">
           <input type="range" id="asRecLimit" class="as-slider"
-                 min="120" max="1800" step="60" value="600">
-          <span class="as-val" id="asRecLimitVal">10 min</span>
+                 min="120" max="1800" step="60" value="1800">
+          <span class="as-val" id="asRecLimitVal">30 min</span>
         </div>
       </div>
     </div>
@@ -2470,7 +2478,6 @@
       <!-- Hidden elements kept for backward compat with persistence -->
       <input type="hidden" id="asPaintGateSlider" value="0.002">
       <span class="as-gate-light" id="asGateLight" style="display:none"></span>
-      <span class="as-rms-readout" id="asRmsReadout" style="display:none">—</span>
 
       <!-- ── Handsfree gate ─────────────────────────────────────────────────
            Arm and its tuning, together (#290). The arm toggle used to live in
@@ -2592,7 +2599,7 @@
 
       <!-- The page's action, lent to the shell header while this page is
            hosted (js/ui-settings.js) and living here when it is not. -->
-      <div class="as-page-actions" id="asPageActions">
+      <div class="as-page-actions">
         <button class="as-btn" id="asTestBtn" title="play a noise burst through each output channel in turn, so you can check every speaker is live and in the position you think it is.&#10;level follows the master vol slider below — ride it while the sweep loops.">Speaker sweep</button>
       </div>
 
@@ -2629,7 +2636,7 @@
       </div>
 
       <!-- Spatial panning mode — headlocked (binaural) vs worldlocked (VBAP) -->
-      <div class="set-row" id="asSpatialPanningRow">
+      <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Panning</span>
           <span class="set-row-desc as-dim" id="asSpatialPanningNote">sound rotates with camera</span>

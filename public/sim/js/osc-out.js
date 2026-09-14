@@ -130,18 +130,3 @@ export function testSend(host, port, address, values = []) {
     return 'invalid';
   }
 }
-
-/** Snapshot of per-tuple counters and module totals. For diagnostics. */
-export function getStats() {
-  const tuples = {};
-  for (const [k, v] of _state.entries()) {
-    tuples[k] = { ...v };
-  }
-  return { totalSent: _totalSent, tuples };
-}
-
-/** Clear internal throttle/dedup state. Call on destination change or reset. */
-export function resetOSCOut() {
-  _state.clear();
-  _browserWarned = false;
-}

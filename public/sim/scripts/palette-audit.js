@@ -294,6 +294,25 @@ async function run(rig) {
   await rig.evaluate(() => { localStorage.removeItem('mubone_palette');
     try { const t = JSON.parse(localStorage.getItem('mubone_tiles') || '{}'); delete t.wash; delete t.pen; localStorage.setItem('mubone_tiles', JSON.stringify(t)); } catch (_) {}
     location.reload(); return true; });
+  await rig.waitForApp();
+  // THE STRIP'S GEOMETRY COMES FROM ITS TOKENS, not from numbers written here.
+  // `--pal-gap` and `--pal-pad` moved on 2026-09-13 (7 → 11, 8 → 13, Ek asking
+  // for breathing room) and five checks failed on constants that had been
+  // copied out of the CSS — 71px beds and a 7px gap. What they are actually
+  // asserting is a RELATION: the bed is pad + border + tile + pad + border, the
+  // hand is three tiles and two gaps, the head sits one gap off the strip. Read
+  // the tokens and the relations hold at any spacing; a broken layout still
+  // fails, which a hardcoded 71 could only do by accident.
+  const PAL = await rig.evaluate(() => {
+    const el = document.querySelector('.palette');
+    const cs = getComputedStyle(el);
+    const num = v => parseFloat(cs.getPropertyValue(v)) || 0;
+    const tile = num('--pal-tile'), pad = num('--pal-pad'), gap = num('--pal-gap');
+    const border = parseFloat(cs.borderTopWidth) || 0;
+    return { tile, pad, gap, border, bed: pad * 2 + border * 2 + tile };
+  });
+  console.log(`       strip tokens: tile ${PAL.tile} · gap ${PAL.gap} · pad ${PAL.pad} · border ${PAL.border} → bed ${PAL.bed}`);
+
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 250));
     const up = await rig.evaluate(() => !!document.querySelector('#paletteDock .tile[data-pal]')).catch(() => false);
@@ -327,7 +346,8 @@ async function run(rig) {
                const caps = p ? [...p.querySelectorAll('.tile-binds .tile-bind')].map(c => ({ w: +c.getBoundingClientRect().width.toFixed(1), h: +c.getBoundingClientRect().height.toFixed(1), r: getComputedStyle(c).borderRadius, space: !!c.querySelector('.leg-space'), click: c.textContent.trim() === 'click' })) : [];
                return { isHand: p?.id === 'handKey' && p.classList.contains('tile'), badge: !!document.querySelector('.palette-badge'),
                         inside: !!(pb && bb) && pb.top >= bb.top && pb.bottom <= bb.bottom && pb.left >= bb.left,
-                        sameBox: !!(pb && tb) && Math.abs(pb.width - (3 * tb.width + 14)) < 0.5 && Math.abs(pb.height - tb.height) < 0.5 && Math.abs(pb.top - tb.top) < 0.5,
+                        sameBox: !!(pb && tb) && Math.abs(pb.height - tb.height) < 0.5 && Math.abs(pb.top - tb.top) < 0.5,
+                         headW: pb ? +pb.width.toFixed(1) : null, tileW: tb ? +tb.width.toFixed(1) : null,
                         gap: pb && tb ? +(tb.left - pb.right).toFixed(1) : null,
                         caps, notPos: !p?.dataset.pos && !p?.dataset.pal && p?.getAttribute('draggable') !== 'true' }; })(),
              draggable: [...document.querySelectorAll('#paletteDock .tile[data-pal]')].map(e => e.getAttribute('draggable')),
@@ -340,7 +360,7 @@ async function run(rig) {
   check('seven tiles, no beds and no hairlines — one row, as wide as the list', a.nTiles === 7 && a.seps === 0, `${a.nTiles} tiles, ${a.seps} beds/seps`);
   check('the pin pair is two action tiles, pin then unpin, unpin farthest right, never armed', a.acts === 2 && a.actIds.join() === 'commit_drop,commit_release' && a.actArmed === 0 && a.pinLast, `${a.actIds.join()} armed ${a.actArmed} last ${a.pinLast}`);
   check('no lens on the strip; wide installed and on in the rail; no cap tile and no cap row (the cap is no lens on)', a.lenses === 0 && !a.lens.onPalette && a.lens.inst === 'wide' && a.lens.rowOn && !a.cap.tile && !a.cap.row && !a.cap.muted, JSON.stringify({ lens: a.lens, cap: a.cap }));
-  check('the HAND TILE heads the row: first child, three tiles wide on the tiles\' line, the row\'s own gap off the first quick-access tile; no badge; not a position, not draggable', a.head.isHand && !a.head.badge && a.head.inside && a.head.sameBox && a.head.gap === 7 && a.head.notPos, JSON.stringify({ ...a.head, caps: undefined }));
+  check('the HAND TILE heads the row: first child, three tiles wide on the tiles\' line, the row\'s own gap off the first quick-access tile; no badge; not a position, not draggable', a.head.isHand && !a.head.badge && a.head.inside && a.head.sameBox && Math.abs(a.head.headW - (3 * a.head.tileW + 2 * PAL.gap)) < 0.5 && Math.abs(a.head.gap - PAL.gap) < 0.5 && a.head.notPos, JSON.stringify({ ...a.head, caps: undefined }));
   check('… and on its bottom-left corner, two 18px stickers: the drawn spacebar and the word CLICK', a.head.caps.length === 2 && a.head.caps[0].space && a.head.caps[0].r === '999px' && a.head.caps[0].w > 20 && a.head.caps[1].click && a.head.caps[1].r === '999px' && a.head.caps.every(c => Math.abs(c.h - 18) < 0.5), JSON.stringify(a.head.caps));
   check('the tools on it are dots · line · loop · dub · scrape top', a.slots.join() === 'pen,line,looper,overdub,scrape', a.slots.join());
   // NOTHING is armed (2026-09-11). No tile and no rail row may wear the box,
@@ -362,7 +382,7 @@ async function run(rig) {
   // names it.
   const aH = await rig.evaluate(() => { const H = window.__ba; return { hand: H.hand(), plate: H.plate(), marks: H.inHandMarks(), stripRing: document.querySelectorAll('#paletteDock .tile.in-hand').length, verb: H.handVerb() }; });
   check('the hand holds dots at boot, and the hand tile names it in words', aH.hand === 'pen' && aH.plate?.tool === 'pen' && aH.plate?.name === 'dots', JSON.stringify(aH));
-  check('the hand tile is three tiles wide and carries the drawn spacebar and a mouse under it', aH.plate && Math.abs(aH.plate.w - (3 * aH.plate.tileW + 14)) < 0.5 && aH.plate.space && aH.plate.mouse, JSON.stringify(aH.plate));
+  check('the hand tile is three tiles wide and carries the drawn spacebar and a mouse under it', aH.plate && Math.abs(aH.plate.w - (3 * aH.plate.tileW + 2 * PAL.gap)) < 0.5 && aH.plate.space && aH.plate.mouse, JSON.stringify(aH.plate));
   check('the hand ships MOMENTARY, and the hand tile draws the rounded plate', aH.verb === 'momentary' && aH.plate?.verb === 'momentary' && aH.plate?.r === '10px', JSON.stringify({ verb: aH.verb, r: aH.plate?.r }));
   check('the in-hand tool is marked on its rail row, and nowhere on the strip', aH.marks.join() === 'pen' && aH.stripRing === 0, JSON.stringify(aH));
   // The main button is deleted: its two rows and its two addresses are gone
@@ -1345,9 +1365,9 @@ async function run(rig) {
     H.showKind('midi'); const three = { bed: bed(), n: [1, 2, 3, 4, 5, 6, 7].map(n => H.tileAt(n).querySelectorAll('.tile-bind').length).join('') };
     H.showKind('key'); const back = { bed: bed() };
     return { one, two, three, back }; });
-  check('KEYS shown: one sticker, pin wears ↓; the bed is 71px', o0.one.n === 1 && o0.one.leg7 === '↓' && Math.abs(o0.one.bed - 71) < 0.5, JSON.stringify(o0.one));
-  check('BUTTONS shown: pin wears 3, dub the empty sticker; the bed is still 71 — no ledger, no reserved lines', o0.two.n7 === 1 && o0.two.n4 === 1 && o0.two.leg7 === '3' && Math.abs(o0.two.bed - 71) < 0.5, JSON.stringify(o0.two));
-  check('NOTES shown: nothing bound, every tile wears the empty sticker (its learn cell), 71 still', o0.three.n === '1111111' && Math.abs(o0.three.bed - 71) < 0.5 && Math.abs(o0.back.bed - 71) < 0.5, JSON.stringify(o0.three));
+  check(`KEYS shown: one sticker, pin wears ↓; the bed is ${PAL.bed}px`, o0.one.n === 1 && o0.one.leg7 === '↓' && Math.abs(o0.one.bed - PAL.bed) < 0.5, JSON.stringify(o0.one));
+  check(`BUTTONS shown: pin wears 3, dub the empty sticker; the bed is still ${PAL.bed} — no ledger, no reserved lines`, o0.two.n7 === 1 && o0.two.n4 === 1 && o0.two.leg7 === '3' && Math.abs(o0.two.bed - PAL.bed) < 0.5, JSON.stringify(o0.two));
+  check(`NOTES shown: nothing bound, every tile wears the empty sticker (its learn cell), ${PAL.bed} still`, o0.three.n === '1111111' && Math.abs(o0.three.bed - PAL.bed) < 0.5 && Math.abs(o0.back.bed - PAL.bed) < 0.5, JSON.stringify(o0.three));
   const o1 = await rig.evaluate(async () => { const H = window.__ba; const wait = ms => new Promise(r => setTimeout(r, ms));
     H.legRow(4, 'key').click(); await wait(30);
     const armed = { learning: H.S._paletteLearning(), text: H.legAt(4).text, cls: H.legAt(4).sticker?.learning, keyLearning: H.S._isKeyLearning(), hand: H.hand(), active: !!H.S._gestureActive() };

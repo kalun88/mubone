@@ -4,6 +4,7 @@
 
 import { S, DEBUG, SPHERE_RADIUS, perf, LIVE_REBUILD_INTERVAL_MS, MASTER_DEFAULT_GAIN, MAX_SAMPLES } from './state.js';
 import { dlog } from './diag.js';
+import { settleTakeTimbre, resetTimbreHold } from './audio-features.js';
 import { buildVBAPLookup, queryVBAPLookup } from './grain.js';
 import { getCursorLonLat, screenToLonLat, spherePointInto, cameraRotateInto } from './sphere.js';
 
@@ -227,14 +228,19 @@ export function ensureAudioContext() {
       if (next === 'closed' && _prevCtxState === 'running') {
         dlog('ctx', 'CRASH — AudioContext closed unexpectedly (error code 5)', { nodes: S._grainSourceCount, rec: S.isRecording });
         console.warn('AudioContext closed unexpectedly (renderer crash) — recovering…');
-        S._showToast?.('Audio engine recovered from a renderer crash.');
         setTimeout(() => {
           S.audioCtx = null;  // force ensureAudioContext to rebuild
           S._grainSourceCount = 0;  // dead nodes won't fire 'ended'
           ensureAudioContext();
           S._resetOnsetClocks?.();
-          // Re-request mic if it was active — keeps recording workflow intact
-          if (S.micRequested && !S.isRecording) {
+          // Re-open the mic if it was open. The guard was `S.micRequested`,
+          // which NOTHING has ever assigned (2026-09-13), so this branch could
+          // not run and a crash left the app rebuilt but deaf: the context
+          // came back, recording did not, and nothing said so. The flag that
+          // means "the mic is open" is micPermissionGranted, set at the one
+          // place the stream is granted (requestMicAccess, and the settings
+          // modal's own open).
+          if (S.micPermissionGranted && !S.isRecording) {
             requestMicAccess?.().catch(() => {});
           }
         }, 200);
@@ -665,6 +671,8 @@ function _buildTake() {
 
 
 export function startLiveRecording() {
+  // A new take is a new reference — see resetTimbreHold.
+  resetTimbreHold();
   // A press inside the hold cuts it: the new take starts now, the old one
   // seals with what has arrived.
   if (_holdTimer) { clearTimeout(_holdTimer); _holdTimer = null; stopLiveRecording(); }
@@ -677,14 +685,13 @@ export function startLiveRecording() {
   if (_sealPending) _sealPending.finish();   // a re-press inside the seal window
 
   // Memory guard — refuse to start a new recording if we've hit the ceiling.
-  // The performer sees the HUD flash red and knows to sweep.
+  // The chrome's stats slot carries the warning (tile-layout.js: the budget
+  // shows from 80% and reads "rec limit — sweep" here). It used to write to
+  // `#vmBuffers`, which has been inside a `display: none` HUD since the
+  // one-screen layout, so the refusal was silent — press, nothing recorded,
+  // nothing painted, no indication (2026-09-13).
   if (perf.recTotalSec >= S.recLimitSeconds) {
-    const vmBuf = document.getElementById('vmBuffers');
-    if (vmBuf) {
-      vmBuf.style.color = '#e06060';
-      vmBuf.textContent = 'rec limit — sweep!';
-      setTimeout(() => S.updateLiveRecUI?.(), 2000);
-    }
+    console.warn(`[audio] recording refused: ${Math.round(perf.recTotalSec)}s of ${S.recLimitSeconds}s used — sweep to free it`);
     return;
   }
 
@@ -790,6 +797,11 @@ export function stopLiveRecording() {
         if (p.grainStart + p.grainDuration > dur) p.grainDuration = dur - p.grainStart;
       }
     });
+
+    // THE TAKE'S COLOURS ARE DECIDED NOW, against the whole of it — see
+    // settleTakeTimbre. Until the seal the hold could only compare a mark with
+    // what had already been played, which is wrong at the start of a take.
+    settleTakeTimbre(bufIdx);
 
     // Notify listeners that a recording was completed.
     // Hot-swap path: _onRecordingComplete adds finalized buffer to running worklet
@@ -903,13 +915,6 @@ export function cushionBlocks() {
   const sr = S.audioCtx?.sampleRate ?? 48000;
   const frames = S.preferredBufferSize ?? 1024;
   return Math.max(2, Math.round((S.audioCushionMs ?? 10) / 1000 * sr / frames));
-}
-// The jitter margin above the cushion before a lead is skipped back: 10 ms,
-// or two blocks. Main's slackBlocks is the same formula.
-export function cushionSlackBlocks() {
-  const sr = S.audioCtx?.sampleRate ?? 48000;
-  const frames = S.preferredBufferSize ?? 1024;
-  return Math.max(2, Math.ceil(0.010 * sr / frames));
 }
 export function applyAudioCushion() {
   window.electronBridge?.setAudioCushion?.(S.audioCushionMs ?? 20);
@@ -1323,8 +1328,6 @@ export async function initSpeakerBuses(numChannels = 2) {
   // uses the new speaker layout.  Uses a callback to avoid circular import.
   S._onVBAPRebuilt?.(n);
 
-  // Legacy alias — keeps any remaining S.quadBuses references from crashing
-  S.quadBuses = null;
 
   // Notify the main window that channel count changed so it can rebuild the meter strip.
   // Uses a callback on S to avoid a circular import with renderer.js.
@@ -1357,8 +1360,6 @@ function _wireDryVBAPInput() {
     }
   });
 }
-export { _wireDryVBAPInput as wireDryVBAPInput };
-
 // ── Dry monitor panning update ────────────────────────────────────────────────
 // Called once per metering frame (≈30fps) to rewrite the dry signal's VBAP gains
 // (or stereo pan) based on the current cursor position.  Must be cheap: no

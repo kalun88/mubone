@@ -935,6 +935,7 @@ async function run(rig) {
     const US = await import('./js/ui-samples.js');
     const G = await import('./js/grain.js');
     const SP = await import('./js/sphere.js');
+    const R = await import('./js/renderer.js');
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const tick = async (n = 3) => { for (let i = 0; i < n; i++) { G.scheduleGrains(); await sleep(25); } };
     const W = S.canvas.width, Hh = S.canvas.height;
@@ -942,7 +943,7 @@ async function run(rig) {
     S.commitSlots = new Array(S.commitSlotCount ?? 16).fill(null); S.particles = []; S.strokeHistory = []; H.clear();
     S.traceMode = 'trace'; S.scanMuted = false; S.searchRadiusDeg = 10; S.nearestMode = false;
     const baseX = W * 0.5, baseY = Hh * 0.5;
-    S.mouseInCanvas = true; S.mousePixelX = baseX; S.mousePixelY = baseY; await sleep(120);
+    S.mouseInCanvas = true; S.mousePixelX = baseX; S.mousePixelY = baseY; R.drawFrame(); await sleep(20);
     const cur = SP.screenToLonLat(baseX, baseY);
     const actx = S.audioCtx;
     const buf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
@@ -962,7 +963,13 @@ async function run(rig) {
     for (const [name, inZone] of Object.entries(zones)) {
       let placed = null;
       for (let px = 0; px < W * 0.45; px += 4) {
-        S.mousePixelX = baseX - px; await sleep(40);
+        // drawFrame() is what turns mousePixelX into _frameCursorLon, and it
+        // runs on rAF — which Chromium throttles hard when the window is not
+        // the frontmost one. Sleeping 40 ms and hoping a frame landed made
+        // the whole section report `placed: null` (no zone ever found) on a
+        // machine running several rig instances, 2026-09-13. Ask for the
+        // frame instead of waiting for it.
+        S.mousePixelX = baseX - px; R.drawFrame(); await sleep(4);
         const a = angAt(); if (inZone(a)) { placed = { px, deg: +(a * 180 / Math.PI).toFixed(1) }; break; }
       }
       if (!placed) { out[name] = { placed: null }; continue; }
@@ -1357,14 +1364,47 @@ async function run(rig) {
     // The MIN of three frames: one line somewhere in the frame comes and
     // goes on its own clock (784 vs 785 across a full rig-audit run, three
     // times on 2026-09-12), and every assertion below is an exact difference.
+    // Counted in the FAN'S OWN INK, not every line on the frame. The fan is one
+    // path stroked in `darkMode ? '#ffffff' : '#000000'` (renderer.js), and
+    // filtering on that is what keeps this measuring reach and nothing else.
+    // It had to: the selected pin's focus bracket draws EIGHT segments, and the
+    // frame this section calls `pinned` has a selected pin while `baseline` has
+    // none — so the bracket's +8 cancelled the fan's −8 exactly and the check
+    // read 775 → 775 against an expected drop of 8 (2026-09-13).
+    // The SELECTED PIN'S FOCUS BRACKET is excluded, by its ink and its line
+    // width together — the pair is the bracket and nothing else on the frame.
+    // It draws EIGHT segments, and the frame this section calls `pinned` has a
+    // selected pin while `baseline` has none, so its +8 cancelled the fan's −8
+    // exactly and the check read 775 → 775 against an expected drop of 8
+    // (2026-09-13). Everything else on the frame is still counted, which is
+    // what keeps the three exact differences below meaningful.
+    const bone = (getComputedStyle(document.body).getPropertyValue('--eng-pins').trim() || '#cfc7bc').toLowerCase();
+    const isBracket = () => {
+      const sc = String(ctx.strokeStyle).toLowerCase();
+      return (sc === bone || sc === 'rgb(207, 199, 188)') && Math.abs(ctx.lineWidth - 1.6) < 0.01;
+    };
     const countOnce = () => {
       const realMove = ctx.moveTo.bind(ctx), realLine = ctx.lineTo.bind(ctx);
       let n = 0;
       ctx.moveTo = (...a) => realMove(...a);
-      ctx.lineTo = (...a) => { n++; return realLine(...a); };
+      ctx.lineTo = (...a) => { if (!isBracket()) n++; return realLine(...a); };
       try { R.drawFrame(); } finally { ctx.moveTo = realMove; ctx.lineTo = realLine; }
       return n;
     };
+    // THE GAZE TRAIL IS NOT PART OF THE MEASUREMENT. It is a polyline of the
+    // cursor's last `gazeTrailSec` seconds, appended per frame and shifted by
+    // AGE (renderer.js drawFrame / drawGazeTrail) — so between two counts a
+    // point can arrive or expire and the total moves by one lineTo. Every
+    // check here asserts an exact difference (a drop of 8, a drop of 5, an
+    // equality), so one stray segment fails three of them, and only sometimes:
+    // on 2026-09-13 a full-suite run read 786 → 777 for a drop of 8 while the
+    // same section alone was green. `Math.min` of three runs was an attempt to
+    // sit under the noise; zeroing the trail removes it (gazeTrailSec = 0 both
+    // skips the draw and empties the buffer), and the fan being measured is
+    // untouched by it.
+    const keepTrailSec = S.gazeTrailSec;
+    S.gazeTrailSec = 0;
+    R.drawFrame();                       // one frame to flush the buffer
     const countLines = () => Math.min(countOnce(), countOnce(), countOnce());
 
     tag(); const baseline = countLines();
@@ -1387,6 +1427,7 @@ async function run(rig) {
     S.commitSlots[0] = null;
     tag(); const unpinned = countLines();
 
+    S.gazeTrailSec = keepTrailSec;
     G.activeGrainMap.clear();
     S.particles.length = 0;
     for (const p of keepParts) S.particles.push(p);
@@ -1979,6 +2020,57 @@ async function run(rig) {
   check('the stroke\'s end finalizes it (a short one: a stationary cloud), tagged with the stroke', !dp.viaStroke.deferred && dp.viaStroke.clouds === 2 && dp.viaStroke.tagged, JSON.stringify(dp.viaStroke));
   check('undo of the stroke takes the cloud with it', dp.undone.clouds === 1 && dp.undone.gone, JSON.stringify(dp.undone));
   check('a full pool refuses at the release: no cloud, nothing left recording', !dp.full.deferred && dp.full.clouds === 1 && dp.full.frames === null, JSON.stringify(dp.full));
+
+  console.log('\n§ J2. the selected pin is framed on the sphere');
+  // Ek, 2026-09-13: "besides the pinned item being selected and highlighted in
+  // the right side rail, i want there to be some indication on what's
+  // highlighted in the viz sphere." Four corner brackets in the pin family's
+  // bone, drawn AROUND the selected pin — a cloud or a loop. The loop passes
+  // did not know the selection at all before this, so selecting a loop in the
+  // rail changed nothing out here. Counted by its ink and its line width,
+  // which together are the bracket and nothing else on the frame.
+  const bracket = await rig.evaluate(async () => {
+    const { S } = await import('./js/state.js');
+    const R = await import('./js/renderer.js');
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const ctx = S.ctx, realStroke = ctx.stroke.bind(ctx);
+    const ink = getComputedStyle(document.body).getPropertyValue('--eng-pins').trim().toLowerCase();
+    const count = () => { let n = 0;
+      ctx.stroke = (...a) => { const sc = String(ctx.strokeStyle).toLowerCase();
+        if ((sc === ink || sc === 'rgb(207, 199, 188)') && Math.abs(ctx.lineWidth - 1.6) < 0.01) n++;
+        return realStroke(...a); };
+      try { R.drawFrame(); } finally { ctx.stroke = realStroke; }
+      return n; };
+    // SWAP THE ARRAY, never clear it: clearAllCommits DESTROYS the pins, and
+    // § K below needs the ones this suite already made (it read 775 → 775 and
+    // failed on the drop it asserts, 2026-09-13). Pointing S.commitSlots at an
+    // empty array for two frames disturbs nothing.
+    // Entries, never the ARRAY: other modules hold a reference to it and
+    // swapping the identity left § K reading 775 → 775 (2026-09-13).
+    const keepSlots = S.commitSlots.slice();
+    for (let i = 0; i < S.commitSlots.length; i++) S.commitSlots[i] = null;
+    R.drawFrame(); await sleep(60);
+    const none = count();
+    // two loops, and the cursor parked on each in turn
+    // `playing: false` and a grainParams block: the scheduler walks a PLAYING
+    // loop and wants its gain, and this section is about what is DRAWN. The
+    // anchor pass draws a stopped loop too, at 0.4 alpha, so the bracket is
+    // still on the frame.
+    const loop = (i, lon, lat) => ({ type: 'loop', slotIndex: i, playing: false,
+      color: '#f2569e', anchorLon: lon, anchorLat: lat, grainParams: { volume: 1 },
+      particles: [{ lon, lat }], playheadIndex: 0 });
+    S.commitSlots[0] = loop(0, 0.2, 0.1);
+    S.commitSlots[1] = loop(1, -0.3, -0.1);
+    R.drawFrame(); await sleep(60);
+    const withPins = count();
+    const sel = S._selectedPinSlot?.(S._frameCursorLon ?? 0, S._frameCursorLat ?? 0);
+    for (let i = 0; i < keepSlots.length; i++) S.commitSlots[i] = keepSlots[i];
+    R.drawFrame(); await sleep(80);
+    return { none, withPins, sel, ink };
+  });
+  check('no pins, no bracket', bracket.none === 0, JSON.stringify(bracket));
+  check('a selected LOOP wears exactly one bracket — the pass that never knew the selection',
+        bracket.withPins === 1, JSON.stringify(bracket));
 
   check('no renderer errors after exercise', rig.errors().length === 0, rig.errors().join(' | '));
 

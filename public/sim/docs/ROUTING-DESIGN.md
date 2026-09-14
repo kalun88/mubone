@@ -1,6 +1,8 @@
 # Signal Routing Design
 
-> **Status: DESIGN INTENT — PARTIALLY IMPLEMENTED.** The registry/calibration/role pipeline ships. The custom-routing layer (`'custom'` role, `'gesture chain'` / `'morph'` / `'world reference'` destinations) is **scaffolding only — those destinations are no-ops**. Don't assume anything in the routing table is wired end-to-end without checking `js/sensor-registry.js`.
+> **Status: DESIGN INTENT — the custom-routing half is NOT BUILT, and its scaffolding is gone (2026-09-13).** The registry / calibration / role pipeline ships and is what `js/sensor-registry.js` does today: a slot's quaternion takes one of `cursor` · `camera` · `frame` · `unmapped`, its inertial one of `gesture` · `unmapped`.
+>
+> Everything below about per-signal routing — the `'custom'` role, the `'gesture chain'` / `'morph'` / `'world reference'` destinations, the breakout table — describes a design, not code. It was scaffolded (destination tables, per-signal route maps, two dispatch functions, persistence) and never wired up: `'custom'` was deliberately left out of both role arrays, so nothing could select it and none of it could run. That code was deleted at feature lock rather than left to read as shipped; `git log --diff-filter=D -- js/sensor-registry.js` has it if this is ever built for real. **Read this as a proposal.**
 
 ## Pipeline
 

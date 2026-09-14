@@ -310,10 +310,6 @@ let order = DEFAULT_ORDER.slice();
 // every position carried three verbs at once and the caller chose. All of that
 // is git history.
 const PALETTE_MAX = 9;
-// The three verbs, and the ONE property each draws with (§ 3). The radius is
-// read back off the live strip by palette-audit § I, so this table is the
-// single source — style.css names the same values and must not drift.
-export const VERBS = ['bang', 'momentary', 'toggle'];
 const VERB_RADIUS = { bang: '999px', momentary: 'var(--r-hand)', toggle: '24px 3px 24px 3px' };
 // Factory: wide · line · pen · all · overdub · unpin · pin. The first four
 // keep the positions the digits had before the list existed (a stored key or
@@ -475,7 +471,6 @@ export function verbsOf(id) {
 function defaultVerb(id) { return verbsOf(id)?.def ?? null; }
 function verbAllowed(id, verb) { return !!verbsOf(id)?.allowed.includes(verb); }
 
-export function paletteIds() { return palIds(); }
 /** The palette's entries, for a surface that needs the verbs too. */
 export function paletteEntries() { return palette.map(e => ({ ...e })); }
 /** The tools on the palette, in order — ids, and a duplicate counts twice. */
@@ -783,6 +778,10 @@ function _playDown(i, id, momentary) {
   // between presses, because nothing was in the hand. Under a grain filter it
   // changes the hand, not the glass (#292).
   _applyHand(t);
+  // THE HUE THE MARKS ARE PAINTED IN, for as long as this play runs. The
+  // playing tile's engine, not the hand's: a palette key can fire a position
+  // without the hand ever holding it (2026-09-13). state.js livePaintColor().
+  S._paintHue = _engineHueTable()[engineOf(id)] ?? null;
   _lightHeld();
   // The tool in the hand is now this position's (handTileId), so the funnel
   // starts an erase for an eraser and a stroke for a brush. Toggle or
@@ -808,6 +807,7 @@ function slotEnd(i) {
 function _releaseHeld() {
   const h = _held;
   if (!h) return;
+  S._paintHue = null;
   _held = null;
   document.querySelector(`#paletteDock .tile[data-pos="${h.i}"]`)?.classList.remove('playing');
   document.querySelector(`#toolRail [data-tile="${h.id}"]`)?.classList.remove('playing');
@@ -908,6 +908,10 @@ export function refreshPlayingState() { _lightHeld(); }
  *  when the play is the HAND's — a quick-access play of the in-hand tool
  *  lights its row and its tile, never the plate. */
 function _lightHeld() {
+  // An OPEN PIN PATH is re-asserted here for the same reason a play is: any
+  // render() rebuilds the strip and drops the class, and a held pin would go
+  // dark mid-path on a binding change or a lens toggle (2026-09-13).
+  if (_pinPathOpen) _pinLit('pin', true);
   if (!_held) return;
   document.querySelector(`#paletteDock .tile[data-pos="${_held.i}"]`)?.classList.add('playing');
   document.querySelector(`#toolRail [data-tile="${_held.id}"]`)?.classList.add('playing');
@@ -1356,10 +1360,12 @@ S._paletteFire = (i, down = true) => {
     if (verb === 'bang') { if (down) { _pinFlash('pin'); S._pinTap(); } return; }
     if (verb === 'momentary') {
       if (down === _pinPathOpen) return;
-      _pinPathOpen = down; if (down) _pinFlash('pin'); S._pinHold(down);
+      _pinPathOpen = down; _pinLit('pin', down); S._pinHold(down);
       return;
     }
-    if (down) { _pinPathOpen = !_pinPathOpen; if (_pinPathOpen) _pinFlash('pin'); S._pinHold(_pinPathOpen); }
+    // A toggle holds the path open between two presses, so it is lit for that
+    // whole time too — the flag is the same one either verb opens.
+    if (down) { _pinPathOpen = !_pinPathOpen; _pinLit('pin', _pinPathOpen); S._pinHold(_pinPathOpen); }
     return;
   }
 
@@ -1761,13 +1767,27 @@ export function renderPinChrome() {
 // midi.js calls this from the commit_drop / commit_release / commit_clear
 // cases through S._pinFlash; the key and rail paths that bypass dispatch call
 // it themselves.
-function _pinFlash(kind) {
+function _pinEls(kind) {
   if (kind === 'all') kind = 'unpinall';   // midi.js's commit_clear says `all`
   const act = { pin: 'commit_drop', unpin: 'commit_release', unpinall: 'commit_clear' }[kind];
-  const els = [document.querySelector(`#tcPins [data-pin="${kind}"]`),
-               act ? document.querySelector(`#paletteDock [data-act="${act}"]`) : null].filter(Boolean);
+  return [document.querySelector(`#tcPins [data-pin="${kind}"]`),
+          act ? document.querySelector(`#paletteDock [data-act="${act}"]`) : null].filter(Boolean);
+}
+function _pinFlash(kind) {
+  const els = _pinEls(kind);
   for (const el of els) el.classList.add('fired');
   setTimeout(() => els.forEach(el => el.classList.remove('fired')), 180);
+}
+/** A HELD pin stays lit (Ek, 2026-09-13: "for momentary hold pins, the pin
+ *  should stay lit like all the other momentary holds"). The comment above
+ *  used to say the pair has no sustained state — true of a bang, and wrong
+ *  since the pin took three verbs: a MOMENTARY holds a path open from the down
+ *  to the up, and a TOGGLE holds one open between two presses, and for that
+ *  whole time the tile went dark 180 ms in while the thing it started was
+ *  still running. Same `.fired` face as the press, held rather than timed out,
+ *  so nothing new has to be learned — it is the press look, sustained. */
+function _pinLit(kind, on) {
+  for (const el of _pinEls(kind)) el.classList.toggle('fired', !!on);
 }
 S._pinFlash = _pinFlash;
 // The pin ACTION is the `=` key (Ek, 2026-09-10: "the pin binding is old, it
@@ -4450,14 +4470,12 @@ export function initTiles() {
   render();
 }
 
-S._renderTiles = render;
 // The hand, for the record path (brush-voicing.js freezes from it), the
 // bridge (wet sync), the renderer (the ring on a wet mark) and import (a wet
 // voicing stays wet only for a tile that exists and is wet here). NULL
 // between presses — every caller asks while a stroke is running, and every
 // one of them handles the empty hand (2026-09-11).
 S._handTile   = () => { const id = handTileId(); return id ? { id, label: tileDef(id)?.label ?? id, wet: isWet(id) } : null; };
-S._tileExists = id => !!tileDef(id);
 S._tileIsWet  = id => isWet(id);
 S._setGrainOnEnd = setGrainOnEnd;
 // The wet switch is in the tool's SHEET head, so it flips the tile the sheet

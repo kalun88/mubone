@@ -185,7 +185,7 @@
     --eng-lens:   #5fbf9a;   /* sea green   — how the cursor reads; still "this is on" */
     --eng-tape:   #f2569e;   /* hot pink    — recordings that play whole */
     --eng-grain:  #e8a030;   /* gold        — grains from a buffer; dots' own colour */
-    --eng-erase:  #b07c8f;   /* mauve       — tape's hue drained: material removed */
+    --eng-erase:  #be7ace;   /* orchid      — material removed (Ek, 2026-09-13)    */
     --eng-pins:   #cfc7bc;   /* bone        — what the engines commit into */
     --eng-none:   #857f76;   /* warm ash    — no engine                */
 

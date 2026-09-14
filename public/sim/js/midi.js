@@ -6,25 +6,24 @@ import {
   S,
   SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
   DEBUG, AXIS_SOURCES, axisHeld,
-  GATE_METER_MAX, GATE_METER_GAMMA, LEVEL_FADER_GAMMA,
+  GATE_METER_MAX, GATE_METER_GAMMA, LEVEL_FADER_GAMMA
 } from './state.js';
 import { toggleHandsfree } from './handsfree.js';
 import { undoLastStroke, redoLastStroke } from './ui-samples.js';
 import {
   toggleNearestMode, clearAllCommits,
   updatePlaybackControls, flashRadiusTooltip,
-  releaseCommit,
+  releaseCommit
 } from './ui-presets.js';
 import { sweep } from './ui-sweep.js';
 import { startEraseStroke, stopEraseStroke } from './erase.js';
 import { setMixdownCursorGain, setMixdownHouseGain, gateFracToRms } from './ui-meters.js';
-import { wireSaveDefaultBtn } from './ui-audio-settings.js';
 import { setScanMuted } from './ui-meters.js';
 import { findNearestSeedSlot } from './grain.js';
 import { getCursorLonLat, screenToLonLat } from './sphere.js';
 import {
   fmtRange, scaleControl, clampGamma, toNorm, fromNorm, clampReal, fmtNumber,
-  rangeMin, rangeMax, baseGamma,
+  rangeMin, rangeMax, baseGamma
 } from './scale.js';
 
 // Each action definition: { id, label, key, osc, type, ccFn?, range? }
@@ -277,7 +276,7 @@ const ACTIONS = [
   { id: 'scan_toggle',  label: 'lens off (toggle)',               key: 'S',                 osc: '/cursor/scan',       fmt: 'int 0|1',          type: 'trigger',
     tip: 'no lens on: the cursor reads nothing (the cap). Again, the same lens is back on. S by default; a lens tile tapped when on does the same' },
   { id: 'tare',         label: 'zero',                   key: '`',                 osc: '/cursor/tare',       fmt: 'bang',             type: 'trigger',
-    tip: 'zero the cursor — in sensor mode the current heading becomes the centre; in steer and surface the camera goes back to the front. The footer\'s ZERO button' },
+    tip: 'zero the cursor — in sensor mode the current heading becomes the centre; in pull and point the camera goes back to the front. The footer\'s ZERO button' },
   { id: 'az_source',    label: 'azimuth source (cycle)',       key: '—',                 osc: '/cursor/az_source',  fmt: 'bang=cycle, str=set (sensor|locked|mapped)', type: 'trigger',
     tip: 'who drives azimuth — sensor (free), locked (frozen), or mapped (a cursor mapping row)' },
   { id: 'el_source',    label: 'elevation source (cycle)',     key: '—',                 osc: '/cursor/el_source',  fmt: 'bang=cycle, str=set (sensor|locked|mapped)', type: 'trigger',
@@ -433,7 +432,6 @@ S._setLegendKind = kind => {
 };
 // The afternoon's two-argument form, kept for the audits: "show this kind"
 // chooses it; "hide" is a no-op — one kind is always shown.
-S._legendShown = kind => kind === legendKind;
 S._setLegendShown = (kind, on) => { if (on) S._setLegendKind(kind); };
 
 // Key/scroll mappings: { actionId → { key, code, shift, ctrl, meta, type } }
@@ -450,7 +448,7 @@ let keyLearningId = null;
 const _RENAMED_IDS = {
   belt_2: 'palette_1', belt_3: 'palette_2', belt_4: 'palette_3', belt_5: 'palette_4',
   belt_3_hold: 'palette_2_hold', belt_4_hold: 'palette_3_hold', belt_5_hold: 'palette_4_hold',
-  erase_brush: 'palette_4_hold',
+  erase_brush: 'palette_4_hold'
 };
 const _RETIRED_IDS = ['belt_1', 'erase_toggle', 'trace_trigger', 'commit_mode', 'commit_volume', 'commit_speed', 'perf', 'perfmode', 'darkmode', 'projector', 'camera_mode', 'spatial_panning'];
 function _migrateIds(map) {
@@ -590,7 +588,7 @@ const PALETTE_FACTORY_ENTRIES = [
 ];
 const PALETTE_FACTORY_KEYS = {
   pen: _keyRow('1', 'Digit1', 'long'), line: _digitRow(1), looper: _digitRow(2), overdub: _digitRow(3), scrape: _digitRow(4),
-  pin: _keyRow('↓', 'ArrowDown'), unpin: _keyRow('↑', 'ArrowUp'),
+  pin: _keyRow('↓', 'ArrowDown'), unpin: _keyRow('↑', 'ArrowUp')
 };
 const _sameKey = (a, b) => a && b && a.type === 'key' && b.type === 'key' && a.code === b.code && !!a.shift === !!b.shift && !!a.ctrl === !!b.ctrl && !!a.meta === !!b.meta && (a.g || 'press') === (b.g || 'press');
 /** The lowest digit 1–9 no key row uses (unmodified, any gesture), or null. */
@@ -616,6 +614,22 @@ function seedPaletteDigitsOnce() {
   } catch (_) {}
   for (const map of [keyMappings, buttonMappings, midiMappings]) for (const k of Object.keys(map)) if (/^palette_[1-9]$/.test(k)) delete map[k];
   for (const [k, v] of Object.entries(BUTTON_DEFAULTS)) if (/^palette_[1-9]$/.test(k)) buttonMappings[k] = { ...v };
+  // AND NOTHING ELSE MAY SIT ON A GESTURE A POSITION JUST TOOK (#351, Ek's
+  // ruling 2026-09-13: "just delete the colliding old rows"). The redeal above
+  // ADDS the palette rows and leaves whatever the profile already had, so a map
+  // written before 2026-09-11 — where the pin pair were the bare ids — ended up
+  // with `commit_release` AND `palette_7` both on button 3's double, and both
+  // are unpin: one double-press released two pins. Every stale row on a taken
+  // gesture goes; a row on a free gesture is a binding you made and stays.
+  const taken = new Set();
+  for (const [k, v] of Object.entries(buttonMappings))
+    if (/^palette_[1-9]$/.test(k) && v && v.btn != null) taken.add(`${v.btn}:${v.g || 'press'}`);
+  for (const [k, v] of Object.entries(buttonMappings)) {
+    if (/^palette_[1-9]$/.test(k) || !v || v.btn == null) continue;
+    if (!taken.has(`${v.btn}:${v.g || 'press'}`)) continue;
+    console.info(`[buttons] dropping ${k} on button ${v.btn} ${v.g || 'press'} — a palette position holds that gesture now`);
+    delete buttonMappings[k];
+  }
   saveButtonMappings(); saveMidiMappings();
   const ids = PALETTE_FACTORY_ORDER;
   const given = new Set();
@@ -771,7 +785,7 @@ const BUTTON_DEFAULTS = {
   // undelayed, holds a momentary path, and the ×2 beside it takes the press's
   // pin back before unpinning (the swallow is general) — so button 3 is still
   // pin · unpin · unpin all, ~125 ms sooner.
-  palette_6:        { btn: 3, g: 'press' }, palette_7:        { btn: 3, g: 'double' }, commit_clear: { btn: 3, g: 'triple' },
+  palette_6:        { btn: 3, g: 'press' }, palette_7:        { btn: 3, g: 'double' }, commit_clear: { btn: 3, g: 'triple' }
 };
 function loadButtonMappings() {
   try {
@@ -1056,7 +1070,7 @@ function bindingOf(actionId) {
     key:    km ? keyMappingLabel(km) : null,
     removed: !!km && km.type === 'none',   // its factory key was right-clicked away
     midi:   mm ? (mm.type === 'cc' ? `cc ${mm.number}` : `n ${mm.number}${mm.g && GESTURE_LABEL[mm.g] ? ' ' + GESTURE_LABEL[mm.g] : ''}`) : null,
-    button: bm ? buttonMappingLabel(bm) : null,
+    button: bm ? buttonMappingLabel(bm) : null
   };
 }
 /** EVERY input bound to one action, for the palette's legend (PALETTE-GUI § 6).
@@ -1108,7 +1122,7 @@ function keyTaken(code) {
 const KEY_GLYPH = {
   ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
   Enter: '↩', NumpadEnter: '↩', Backspace: '⌫', Delete: '⌦',
-  PageUp: '⇞', PageDown: '⇟', Home: '↖', End: '↘',
+  PageUp: '⇞', PageDown: '⇟', Home: '↖', End: '↘'
 };
 function keyGlyph(km) { return KEY_GLYPH[km.code] ?? (km.key || km.code); }
 
@@ -1182,7 +1196,7 @@ function mapScale(mapping) {
   return {
     curve: Number.isFinite(c) && c > 0 ? c : 1,
     lo:    Number.isFinite(l) ? l : 0,
-    hi:    Number.isFinite(h) ? h : 1,
+    hi:    Number.isFinite(h) ? h : 1
   };
 }
 
@@ -1260,7 +1274,7 @@ function handleMidiMessage(event) {
   // any dispatch/learn logic so the monitor sees every byte even if unmapped.
   try {
     window.dispatchEvent(new CustomEvent('mubone-midi-in', {
-      detail: { status, num, val, type, channel, ts: performance.now() },
+      detail: { status, num, val, type, channel, ts: performance.now() }
     }));
   } catch (_) {}
 
@@ -2090,7 +2104,7 @@ function renderMappingTable() {
                : keyMap ? 'click to relearn · right-click to clear the override'
                        : takenBy ? `its factory key ${action.key} is learned onto “${ACTIONS.find(a => a.id === takenBy[0])?.label}” — click to learn another`
                                  : 'click, then press · long-press · extra-long-press · double- or triple-tap a key, or scroll · ⇧-click to learn a tap (the up edge)'
-                                   + (factoryKeyLive ? ' · right-click removes the factory key' : '')),
+                                   + (factoryKeyLive ? ' · right-click removes the factory key' : ''))
       });
       kb.addEventListener('click', e => {
         midiLearningId = null; buttonLearningId = null;   // cancel the other learns
@@ -2133,7 +2147,7 @@ function renderMappingTable() {
       const bb = _bindBtn(btnMap ? buttonMappingLabel(btnMap) : '—', {
         empty: !btnMap, learning: isBtnLearning,
         title: btnMap ? 'click to relearn · right-click to clear'
-             : 'click, then press · long-press · extra-long-press · double- or triple-tap a button on the instrument · ⇧-click to learn a tap (the up edge)',
+             : 'click, then press · long-press · extra-long-press · double- or triple-tap a button on the instrument · ⇧-click to learn a tap (the up edge)'
       });
       bb.addEventListener('click', e => {
         keyLearningId = null; midiLearningId = null;
@@ -2165,7 +2179,7 @@ function renderMappingTable() {
     else {
     const mb = _bindBtn(_midiLabel(midiMap), {
       empty: !midiMap, learning: isMidiLearning,
-      title: midiMap ? 'click to relearn · right-click to clear' : 'click to learn a control',
+      title: midiMap ? 'click to relearn · right-click to clear' : 'click to learn a control'
     });
     mb.addEventListener('click', () => {
       keyLearningId = null; buttonLearningId = null;      // cancel the other learns
@@ -2338,7 +2352,7 @@ export function setupMappingModal() {
     const dir = e.deltaY > 0 ? 'scroll_down' : 'scroll_up';
     const newMapping = {
       type: dir,
-      key: null, code: null, shift: false, ctrl: false, meta: false,
+      key: null, code: null, shift: false, ctrl: false, meta: false
     };
 
     removeConflictingKeyBinding(newMapping, keyLearningId);
@@ -2436,10 +2450,8 @@ export function setupMappingModal() {
   S._handleMidiMessage = handleMidiMessage;   // the audits' way in for a note
   S._buttonBindings = () => Object.entries(buttonMappings).map(([id, bm]) => ({ id, ...bm, label: actionLabel(ACTIONS.find(a => a.id === id)) || id }));
   S._buttonTiming   = { get: () => ({ ...buttonTiming }), set: setButtonTiming, defaults: { ...BUTTON_TIMING_DEFAULT } };
-  S._bindingOf      = bindingOf;
   S._bindingsOf     = bindingsOf;                    // the palette's legend reads these two
   S._gestureLabel   = g => GESTURE_LABEL[g] ?? '';
-  S._keyTaken       = keyTaken;
   // Continuous radius setter for the canvas wheel (2026-08-28): the
   // radius_inc/dec actions step by SEARCH_RADIUS_STEP (2°), which is right
   // for a key or a pedal and wrong for a trackpad — the radius visibly

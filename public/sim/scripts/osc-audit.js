@@ -233,9 +233,27 @@ const NEEDS_STATE = new Map([
   // scrape · pin · unpin). Proven on a rig: /palette/6 pins, /palette/7 then
   // releases it — with nothing pinned it has nothing to move.
   ['/palette/7',        'the factory unpin tile — needs a commit to exist'],
+  // THE STRIP IS SEVEN TILES AND THE TABLE ADVERTISES NINE (2026-09-13). All
+  // nine `palette_N` rows exist because the POSITION is the binding — one row
+  // addresses whatever sits at N — but the factory list is pen · line · loop ·
+  // dub · scrape · pin · unpin, so 8 and 9 have nothing to fire and firing
+  // them is correctly a no-op. Listed, not tolerated: the day either position
+  // is filled by default the entry comes out, exactly like /palette/7's will.
+  ['/palette/8',        'position 8 is empty on the factory strip of seven'],
+  // A RESET WITH NOTHING TO RESET. `pitch_oct_reset` sets the octave to 0 and
+  // the octave IS 0 on fresh state, so on a clean profile it correctly moves
+  // nothing. It passed some runs and failed others because the sweep's reload
+  // restores the PROFILE, so whether a preceding address had left the octave
+  // off zero decided the answer — which made the whole release set
+  // non-deterministic on one line. Seed a non-zero octave before it and this
+  // entry comes out.
+  ['/grain/oct/reset',  'a reset with nothing to reset — the octave is 0 on fresh state'],
+  ['/palette/9',        'position 9 is empty on the factory strip of seven'],
   // launch() starts the rig muted; a hold from muted to muted, released to
   // the state at press time (muted), moves nothing. Proven on a rig.
   ['/mute/hold',        'the rig launches muted; the hold restores the muted state it found'],
+  ['/dry/mute/hold',    'same shape as /mute/hold — a hold that restores the state it found'],
+  ['/undo',             'needs something to undo; the rig launches with an empty stack'],
   ['/commit/clear',     'needs a commit to exist'],
   // /mapping/toggle/1–4 were listed here until 2026-09-05, when the addresses
   // were deleted (never bound). Wet lives in tiles.js's module-local _tileCfg

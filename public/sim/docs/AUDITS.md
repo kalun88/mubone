@@ -14,7 +14,16 @@ Ek, 2026-09-05: *"each change is taking you like 5–20 minutes and I feel a lot
 
 **Two suites are release-only on purpose.** `osc-audit.js` reloads the renderer before every one of 99 addresses, twice, so a full run is three to five minutes; OSC is an advanced-user path Ek does not drive himself. When `js/osc.js` changes, run `AUDIT_ONLY=wiring node scripts/osc-audit.js` (static, instant) per change and the full sweep at release. `browser-audit.js` needs playwright and guards the public demo; it stays mandatory at release because it catches Electron-only assumptions leaking into shared modules, which breaks the rig too.
 
-**Run the rig suites alone.** `trigger` and `mark align` are timing suites — one measures dropped blocks in steady state, the other records bursts and reads their loudness off the audio clock — and both went red when the full rig-audit shared the machine with the OSC sweep, the browser audit and a third Electron instance (release 1.14, 2026-09-05); alone, both passed. At release run them one after another, not in parallel.
+**The rig suites are LOAD-sensitive, and a single red run proves nothing (2026-09-13).** Measured the
+same day: `mark align` on a clean tree gave 17 failures and then 0 on consecutive runs, alone;
+`pins` is 200/200 alone and twice lost five reach-fan and bracket counts when it followed another
+suite; `colour` is 43/43 alone and dropped two when it ran first in a batch. The checks that move
+are the ones that need grains actually sounding inside a window, or an audio bus that has settled —
+the first things a warm machine loses. So: **re-run a red suite alone before believing it, and
+before bisecting anything.** If it is green alone and red in company, that is the harness. A real
+regression is red alone, repeatably.
+
+**`rig-audit.js` gives each timing suite its own boot (2026-09-13) — you no longer have to remember.** `trigger` and `mark align` are timing suites: one measures dropped blocks in steady state, the other records bursts and reads their loudness off the audio clock, and neither survives sharing an instance with the other. Both went red when the full rig-audit shared the machine with the OSC sweep, the browser audit and a third Electron instance (release 1.14, 2026-09-05); alone, both passed. The rule was a sentence here for eight days and still cost a false failure on 2026-09-13 — `mark align` reported seven failures with `trigger` ahead of it in the same boot and zero alone — so the tool keeps it now: each timing suite is launched in an instance of its own and everything else shares one. `--attach` cannot do this (there is one app and you chose it) and says so. Still do not run two rig-audits in parallel.
 
 **A suite never takes the screen.** Every `launch()` sets `MUBONE_RIG_BACKGROUND=1`, so the audit window is created hidden, shown INACTIVE (`showInactive()`) and has no dock icon: it does not take focus and does not pull macOS to its Space (Ek, 2026-09-05: seven suites were seven windows landing on top of whatever he was doing on another desktop). `capturePage` renders an inactive window, so `ui-shots.js` and the probes are unaffected. `--attach` runs against the window you opened and changes nothing about it.
 
@@ -30,6 +39,7 @@ The map `scripts/audit-for.js` applies. A path is tested against every row, and 
 | `js/pins.js`, `js/ui-pins.js`, `js/composer.js`, `js/grain.js`, `js/ui-presets.js`, `js/ui-export.js`, `js/brush-voicing.js`, `js/renderer.js` | `rig-audit.js pins` | pin groups, the restore rule, cloud claims, wet paint, reach lines, session import |
 | `js/trigger.js`, `js/latency.js`, `js/audio.js`, `electron-main.js`, `electron-preload.js`, `audio-host.js`, `electron-loop-probe.js`, `js/worklets/quad-capture.worklet.js`, `js/worklets/input-meter.worklet.js` | `rig-audit.js trigger` | the proximity gate, "the button not the marks", the two audio hops and their cushion |
 | `js/paint-ticker.js`, `js/audio-features.js`, `js/grain-worklet-bridge.js`, `js/worklets/grain-engine.worklet.js` | `rig-audit.js "mark align"` | mark sizing from the audio after it, the peak offset the bridge posts |
+| `js/audio-features.js`, `js/ui-viz.js` | `rig-audit.js colour` | the room cannot decide a hue or a saturation, the axis can see the vowel space, the arc reaches every family, the bounds stay constants |
 | `js/param-registry.js`, `js/state.js` (`PARAM_DEFS`), `index.html` (cabinet ids), `js/ui-meters.js` | `rig-audit.js engine` | every engine row writes through a cabinet element; a deleted id kills a row silently |
 | `js/midi.js`, `js/accessory-registry.js` (`ACTIONS`, `ccFn`, `range`) | `rig-audit.js "action ranges" "cc mirrors"` | half-throw readings; the modal/panel mirror pair |
 | `js/osc.js` | `AUDIT_ONLY=wiring node scripts/osc-audit.js` | static cross-check, instant; the full sweep is release-only |
@@ -43,7 +53,7 @@ The map `scripts/audit-for.js` applies. A path is tested against every row, and 
 
 ## 3. The scripts
 
-`rig-audit.js` runs the sweep harnesses (`verify-action-ranges.js`, `cc-mirror-audit.js`, `trigger-audit.js`, `engine-audit.js`, `mark-align-audit.js`, `palette-audit.js`, `pins-audit.js`) against a real Electron instance it launches itself; `ui-shots.js` does layout the same way. All sit on `lib/rig.js`, need no setup, and are described in § 4. `browser-audit.js` is the one harness still on playwright, because it asserts what happens when `electronBridge` is absent. `docs-audit.js` reads files only. `osc-audit.js` and `osc-probe.js` inspect a running rig's OSC traffic; `osc-audit.js` also runs on the rig but takes minutes, so it stays out of `rig-audit.js`. `live-loop-audit.js` is wall-clock bound (a loop has to wrap) and is run by hand when the live-loop worklet changes. `composer-audit.js` **no longer exists**: it was sunset and its loop-is-muted / cloud-is-stopped checks live in `pins-audit.js`. `screen-probe.mjs` and `probe-selftest.mjs` are the before/after screen diff. `deadweight-audit.js` is the read-only inventory of what may be dead — unimported modules, unread storage keys, unreachable actions, unreferenced ids and classes, stray files, docs the archive rule covers — run at every release and whenever a sunset pass is planned; it exits 0 always, because every row is a question for Ek, not a verdict. `audit-for.js` maps the diff to the suite to run; `worktree-setup.sh` makes a fresh worktree able to run them. `dev-bridge.js` is the transport behind `.dev-bridge/`, and `lib/rig.js` is its node-side client. `build-share.command`, `launch-stations.command` and `run-stations.sh` are launch helpers Ek runs by hand.
+`rig-audit.js` runs the sweep harnesses (`verify-action-ranges.js`, `cc-mirror-audit.js`, `trigger-audit.js`, `engine-audit.js`, `mark-align-audit.js`, `palette-audit.js`, `colour-audit.js`, `pins-audit.js`) against a real Electron instance it launches itself; `ui-shots.js` does layout the same way. All sit on `lib/rig.js`, need no setup, and are described in § 4. `browser-audit.js` is the one harness still on playwright, because it asserts what happens when `electronBridge` is absent. `docs-audit.js` reads files only. `osc-audit.js` and `osc-probe.js` inspect a running rig's OSC traffic; `osc-audit.js` also runs on the rig but takes minutes, so it stays out of `rig-audit.js`. `live-loop-audit.js` is wall-clock bound (a loop has to wrap) and is run by hand when the live-loop worklet changes. `composer-audit.js` **no longer exists**: it was sunset and its loop-is-muted / cloud-is-stopped checks live in `pins-audit.js`. `screen-probe.mjs` and `probe-selftest.mjs` are the before/after screen diff. `deadweight-audit.js` is the read-only inventory of what may be dead — unimported modules, unread storage keys, unreachable actions, unreferenced ids and classes, stray files, docs the archive rule covers — run at every release and whenever a sunset pass is planned; it exits 0 always, because every row is a question for Ek, not a verdict. `audit-for.js` maps the diff to the suite to run; `worktree-setup.sh` makes a fresh worktree able to run them. `dev-bridge.js` is the transport behind `.dev-bridge/`, and `lib/rig.js` is its node-side client. `build-share.command`, `launch-stations.command` and `run-stations.sh` are launch helpers Ek runs by hand.
 
 **One command for the fast seven:** `node scripts/rig-audit.js` — one app boot, exits non-zero on any failure. It launches its own instance on a fresh `audit-<pid>` profile and OSC port 7599, so it can't touch presets, calibration or a live station, and inherits nothing from the last run; `--attach` runs against an open window instead, which every suite will disturb. Take a suite name to run just one (`rig-audit.js trigger`).
 
@@ -97,6 +107,24 @@ the test that caught it. It runs last in `rig-audit.js` because it is the only s
 session.
 
 **For anything touching the OSC dispatch `switch`:** run `node scripts/osc-audit.js` (`AUDIT_ONLY=wiring` for the static half, which is instant and needs no app; `AUDIT_FROM=<address>` starts the sweep partway when you are chasing one). Four sections: `wiring` cross-checks the ACTIONS table against the dispatch statically, `fire` sends a valid payload at every advertised address and fails any that moves nothing, `edges` reports trigger addresses that also fire on an explicit 0 (a Max `[toggle]` runs those twice per press), and `types` reports value addresses that accept a bang and write NaN. Budget two to three minutes: `fire` and `edges` reload the app before every address, because handlers write shared state and sweeping all 99 in one page leaves it in a state where `/trace` never returns.
+
+**For anything touching the timbre→colour chain — the two axes in `audio-features.js`, the ramp,
+or the viz legend:** run `node scripts/colour-audit.js` (or `rig-audit.js colour`). It exists
+because that chain was wrong in four independent ways at once and every bench test passed
+throughout. The reason they passed is the suite's design principle: **a synthesised tone has no
+noise floor, and a microphone always does.** So every sound is measured at three floor levels and
+the suite reports what the floor MOVED, not only what the spread was. A suite that reported spread
+alone would have been green at every stage of the bug. Two traps it already caught on its own first
+run. The rig's input bus keeps a tail for up to 3.25 seconds after a source stops, so a "quiet"
+reading taken straight after a floored one is a reading of the tail — every read now waits for the
+bus to fall to real silence first, and without that the audit is sloppier than the instrument. And a
+noise band's spectrum is random, so a single snapshot of a hiss is a coin toss; each reading is the
+median of three, which is still fewer than the twenty marks a second a real stroke lays down. Its
+strongest checks are § A (a floor moves no sound more than 0.06 on the hue axis; it was 0.187 before
+the peak ratio), § B (`ee` against `ah`, which fails the moment the analyser's bins go coarse
+again), § C (every noise band reads noisier than every sung sound — that one was INVERTED for
+months) and § G (no slider, numbox or Listen button may reach the axis, because a colour is only a
+shared word if nobody can quietly redefine it).
 
 **For anything touching the paint ticker's live deposit, the loudness hold in
 `audio-features.js`, or how a mark gets its size:** run `node scripts/mark-align-audit.js` (or

@@ -36,7 +36,10 @@ const path = require('path');
 const POLL_MS      = 250;
 const LOG_CAP      = 2 * 1024 * 1024;   // truncate console.log past this
 const RING         = 400;               // console entries kept in memory
-const EVAL_TIMEOUT = 10000;
+// 30 s: pins § P walks the cursor out of a take in 40 ms steps, three zones in
+// one eval, and under load (a full rig run beside four other processes,
+// 2026-09-13) that passed 10 s and the suite read "eval timeout" as a failure.
+const EVAL_TIMEOUT = 30000;
 
 // Serialiser injected into the renderer alongside the user's code.
 const SAFE = `

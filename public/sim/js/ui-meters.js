@@ -6,22 +6,15 @@
 import {
   S, GATE_METER_MAX, GATE_METER_GAMMA,
   GATE_METER_TICK_MS, GATE_METER_ATTACK_MS, GATE_METER_RELEASE_MS,
-  GATE_METER_PEAK_HOLD_MS, GATE_METER_PEAK_FALL_MS,
+  GATE_METER_PEAK_HOLD_MS, GATE_METER_PEAK_FALL_MS
 } from './state.js';
-import { dropSeqFromCursor, clearAllSeqs, releaseCommit, clearAllCommits, updateCommitBanksUI, updateSeqBanksUI } from './ui-presets.js';
+import { dropSeqFromCursor, releaseCommit, clearAllCommits, updateCommitBanksUI, updateSeqBanksUI } from './ui-presets.js';
 import { tickHandsfree } from './handsfree.js';
 import { readGateLoudness } from './audio-features.js';
 import { updateDryMonitorPanning, setDryMonitorGain, setDryMonitorMode, isDryMonitorDucked } from './audio.js';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
-
-// Return the azimuth in degrees as a compact label (e.g. "0", "45", "315").
-// No directional names — just the angle number so users see the actual position.
-export function shortAngleName(deg) {
-  const d = ((deg % 360) + 360) % 360;
-  return `${Math.round(d)}`;
-}
 
 // ── Multi-channel meter rendering ─────────────────────────────────────────────
 // Creates N vertical canvas VU bars inside a container element.
@@ -296,7 +289,6 @@ export function setScanMuted(muted) {
   if (monNum && muted) monNum.value = '(muted)';
   else if (monNum) monNum.value = Math.round(S.monitorGainValue * 100) + '%';
 }
-S._setScanMuted = setScanMuted;
 
 export function initScanToggle() {
   const btn = document.getElementById('scanBtn');
@@ -581,8 +573,6 @@ export function initMixdownGains() {
   if (hseNum) hseNum.textContent = Math.round(S.mixdownHouseGainValue * 100) + '%';
 
   // Expose setters for MIDI/OSC access
-  S._setMixdownCursorGain = setMixdownCursorGain;
-  S._setMixdownHouseGain  = setMixdownHouseGain;
 }
 
 // ── Dry monitor gain controls ────────────────────────────────────────────────
@@ -878,7 +868,7 @@ export function initGateMeter() {
       canvas,
       ctx:   canvas.getContext('2d'),
       valEl: t.val ? document.getElementById(t.val) : null,
-      sized: false,
+      sized: false
     };
     _gateMeters.push(entry);
 
@@ -1192,10 +1182,6 @@ export function tickMainMeters() {
   tickHandsfree();
 }
 
-export function stopMainMetering() {
-  if (_mainMeterRAF) { cancelAnimationFrame(_mainMeterRAF); _mainMeterRAF = null; }
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // THE SETTINGS PAGE'S METERS — element eleven (docs/SETTINGS-GUI.md § 3)
 //
@@ -1206,9 +1192,10 @@ export function stopMainMetering() {
 //
 // ONE loop drives every meter on the page — the groups and the gate row — so
 // the page's cost is one rAF callback whatever it is showing. The grain
-// scheduler shares this thread (CLAUDE.md, render-path performance), which is
-// why the per-frame work is counted rather than assumed: `S._setMeterCost`
-// carries a rolling average in ms for anyone who wants to read it.
+// scheduler shares this thread (CLAUDE.md, render-path performance), so if
+// that cost is ever in question, measure it: it carried a rolling average on
+// `S._setMeterCost` from the day it was written until 2026-09-13, and in that
+// time nothing — no panel, no audit, no console line — ever read the number.
 // ════════════════════════════════════════════════════════════════════════════
 
 // The scale, in one place. x(db) is the curve — pow 1.5 — so the top 20 dB take
@@ -1387,7 +1374,7 @@ export function initSetGateMeter() {
     thresh: row.querySelector('.set-meter-thresh'),
     tval:   row.querySelector('.set-meter-thresh-val'),
     val:    row.querySelector('.set-meter-val'),
-    lastT:  '',
+    lastT:  ''
   };
 
   // The drag writes S.paintGateThreshold through gateFracToRms — the same
@@ -1446,15 +1433,11 @@ function _tickSetGate() {
 
 export function startSetMeters() {
   if (_setRAF) return;
-  let acc = 0, n = 0;
   const tick = () => {
     const t0 = performance.now();
     _setFrame++;
     for (const g of _setGroups.values()) _tickSetGroup(g, t0);
     _tickSetGate();
-    // Rolling cost, so "does this steal from the scheduler" is a number.
-    acc += performance.now() - t0; n++;
-    if (n === 60) { S._setMeterCost = acc / n; acc = 0; n = 0; }
     _setRAF = requestAnimationFrame(tick);
   };
   _setRAF = requestAnimationFrame(tick);

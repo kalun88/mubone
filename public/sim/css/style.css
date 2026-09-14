@@ -2001,16 +2001,6 @@
     line-height: 1.2;
     transition: color var(--trans-base), border-color var(--trans-base);
   }
-  .paint-key-badge--mouse {
-    width: 12px;
-    height: 18px;
-    padding: 0;
-    border: none;
-    color: var(--text-dimmer);
-    vertical-align: middle;
-    display: inline-block;
-    flex-shrink: 0;
-  }
   /* painting state — per-button colours */
 
   /* trace (spacebar/click) — warm red */
@@ -2302,7 +2292,7 @@
   .settings-host .in-settings .seq-section-label,
   .settings-host .in-settings .device-label {
     font-size: var(--fs-eyebrow, 0.56rem); letter-spacing: var(--ls-eyebrow, 0.16em);
-    text-transform: uppercase; color: var(--text-faint); font-weight: 500;
+    text-transform: uppercase; color: var(--text-secondary); font-weight: 500;
     display: block; margin-bottom: 0.7rem;
   }
   /* One row rhythm: label left, control right, generous line height. */
@@ -2386,7 +2376,7 @@
   }
   .settings-host .in-settings .as-meter-group-label {
     font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow);
-    text-transform: uppercase; color: var(--text-faint);
+    text-transform: uppercase; color: var(--text-secondary);
   }
   /* Selects and number fields: the app's own field, not the browser's. */
   .settings-host .in-settings select,
@@ -2552,14 +2542,6 @@
     color: var(--text-muted);
     line-height: 1.35;
   }
-  /* The old factory reset: everything, plus the offline cache + service worker. */
-  .reset-cat-all {
-    margin-top: 0.5rem;
-    border-top: 1px solid var(--surface-6);
-    border-bottom: none;
-    padding-top: 0.6rem;
-  }
-  .reset-cat-all .reset-cat-label { color: var(--accent-action); }
   .dlg-btn:disabled {
     opacity: 0.4;
     cursor: default;
@@ -2567,12 +2549,6 @@
   .dlg-btn:disabled:hover {
     background: var(--surface-3);
     color: var(--text-primary);
-  }
-  .reset-warn {
-    font-size: var(--fs-sm);
-    color: var(--text-muted);
-    margin: 0 0 0.8rem;
-    line-height: 1.4;
   }
   .dlg-btns {
     display: flex;
@@ -3053,16 +3029,6 @@
 .as-gate-light.recording {
   background: #e03030;
   box-shadow: 0 0 6px #e03030;
-}
-/* Live RMS readout row */
-
-.as-rms-readout {
-  font-family: var(--font-sans);
-  font-variant-numeric: tabular-nums;
-  font-size: var(--fs-body);
-  color: var(--accent-lock);
-  letter-spacing: var(--ls-normal);
-  font-variant-numeric: tabular-nums;
 }
 .as-dim {
   font-size: var(--fs-md);
@@ -3726,11 +3692,77 @@ html.booting-reveal .main-layout {
   .tc-grp { display: flex; align-items: center; gap: 0.3rem; }
   /* The mute state reads at a glance and must not be mistaken for an action. */
   
-  .tc-grp + .tc-grp { margin-left: 0.55rem; padding-left: 0.55rem;
-    border-left: 1px solid var(--border-faint); }
+  /* ── ONE HAIRLINE PER DRAWER, AND NOWHERE ELSE (Ek, 2026-09-13) ────────
+     "there should be no divider lines in the header other than beside the
+     drawer icons." A rule between two clusters of glyphs was drawing a
+     distinction the SPACING already draws; beside a drawer handle it means
+     something — that side of the line is a panel, not a control. So the
+     default is no border, and exactly two are put back: the group after the
+     TOOLS handle, and the PINNED handle's own group. */
+  .tc-grp + .tc-grp { margin-left: 0.55rem; padding-left: 0.55rem; border-left: 0; }
+  .tc-grp:has(#tcTools) + .tc-grp,
+  .tc-grp:has(#tcPinned) { border-left: 1px solid var(--border-faint); }
+
+  /* ── The camera, one icon and a menu (Ek, 2026-09-13) ──────────────────
+     It was a three-segment capsule: three slots of a bar that is otherwise
+     glyphs end to end, spent on a choice made a few times a set. The button
+     is the CURRENT mode in the chrome's own 32px glyph; the menu under it is
+     where you change it, and it is the one place the three modes carry their
+     WORDS — three glyphs alone were learnable only from a tooltip. Flat, one
+     hairline, no gradient, no shadow beyond the one the strip already uses. */
+  .tc-cam-wrap { position: relative; }
+  /* `display: flex` here BEATS the browser's own `[hidden] { display: none }`
+     — an author rule outranks the UA sheet — so the menu rendered open at all
+     times while `menu.hidden` was perfectly true (Ek, 2026-09-13: "right now
+     the box is always open"). The probe that passed this was reading the
+     PROPERTY, not the screen, which is the trap DESIGN-SYSTEM § 3 is about. */
+  .tc-cam-menu[hidden] { display: none; }
+  .tc-cam-menu {
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+    display: flex; flex-direction: column; gap: 2px;
+    min-width: 132px; padding: 5px;
+    background: var(--bg-panel); border: 1px solid var(--border-subtle);
+    border-radius: var(--r-2);
+  }
+  .tc-cam-row {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.34rem 0.45rem; border: none; border-radius: var(--r-1);
+    background: none; cursor: pointer; text-align: left;
+    font-family: var(--font-sans); font-size: var(--fs-control);
+    letter-spacing: var(--ls-tight); color: var(--text-subtle);
+    transition: color var(--trans-base), background var(--trans-base);
+  }
+  .tc-cam-row svg { width: 20px; height: 20px; flex: none; }
+  .tc-cam-row:hover { background: var(--surface-1); color: var(--text-bright); }
+  /* ON is the row that IS the mode — the rail's mark, not a dimming of the
+     other two (DESIGN-SYSTEM: never dim to mean anything). */
+  .tc-cam-row.on { color: var(--text-light); background: var(--surface-2); }
+  .tc-cam-row:disabled { color: var(--text-faint); cursor: default; background: none; }
+
   
   
   /* Empty unless alt-lock is on, so it takes no room in the ordinary bar. */
+  /* ── The recording budget (2026-09-13) ─────────────────────────────────
+     A track and a fill, flat, no gradient, no text until there is something
+     to DO about it. It reads at a glance and it is the last thing that was
+     invisible: startLiveRecording refuses at the ceiling, and every warning
+     it had went to `#vmBuffers` inside the `display:none` HUD, so the
+     instrument stopped recording in silence (the 14-minute play test walked
+     into it at 13.5 minutes). 44px so it reads as a gauge and not a slider —
+     nothing here is draggable. */
+  .tc-rec {
+    display: inline-block; width: 44px; height: 3px; flex-shrink: 0;
+    margin-left: 0.4rem; border-radius: var(--r-1);
+    background: var(--surface-2); overflow: hidden; vertical-align: middle;
+  }
+  .tc-rec-fill {
+    display: block; height: 100%; width: 0%;
+    background: var(--text-dim); border-radius: var(--r-1);
+    transition: width var(--trans-base), background-color var(--trans-base);
+  }
+  .tc-rec-fill.warn { background: var(--accent-warn); }
+  .tc-rec-fill.crit { background: var(--accent-danger); }
+
   .tc-stats { font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase;
     color: var(--text-dim); font-variant-numeric: tabular-nums; }
   .tc-stats:not(:empty) { margin-left: 0.35rem; }
@@ -3775,7 +3807,7 @@ html.booting-reveal .main-layout {
     position: relative; display: flex; align-items: center; justify-content: center;
     width: 32px; height: 32px; flex: none;
     background: none; border: none; border-radius: 4px; padding: 0;
-    color: var(--text-dimmer); cursor: pointer;
+    color: var(--text-subtle); cursor: pointer;
     transition: color 0.14s, background 0.14s;
   }
   .tc-readout svg { width: 20px; height: 20px; display: block; }
@@ -3934,7 +3966,7 @@ html.booting-reveal .main-layout {
   }
   body .bb-ax svg { width: 20px; height: 20px; display: block; }
   body .bb-ax i { font-style: normal; font-size: var(--fs-nano); letter-spacing: 0.06em;
-    text-transform: uppercase; color: var(--text-faint); line-height: 1; }
+    text-transform: uppercase; color: var(--text-secondary); line-height: 1; }
   body .bb-ax:hover { color: var(--text-bright); background: var(--surface-1); }
   body .bb-ax .ax-mute, body .bb-ax .ax-map { display: none; }
   body .bb-ax.is-mute { color: var(--accent-action, #f26415); }
@@ -3952,7 +3984,7 @@ html.booting-reveal .main-layout {
   body .bb-cap {
     display: block; flex: none;
     font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow);
-    text-transform: uppercase; color: var(--text-faint);
+    text-transform: uppercase; color: var(--text-secondary);
   }
   /* A control's own label, quieter than the group caption. */
   
@@ -4119,7 +4151,7 @@ html.booting-reveal .main-layout {
   body #tcAudioSlot .grain-row { display: flex; flex-direction: row;
     align-items: center; gap: 0.4rem; margin: 0; flex: none; white-space: nowrap; }
   body #tcAudioSlot .grain-label { font-size: var(--fs-eyebrow);
-    letter-spacing: var(--ls-eyebrow); text-transform: uppercase; color: var(--text-faint); }
+    letter-spacing: var(--ls-eyebrow); text-transform: uppercase; color: var(--text-secondary); }
   body #tcAudioSlot .grain-slider { width: 42px; flex: none; }
   body #tcAudioSlot .grain-numbox { width: 2.5rem; }
   /* Two rows leave the footer's audio group. Each row is ~160px and four of
@@ -4160,8 +4192,7 @@ html.booting-reveal .main-layout {
   .settings-host .seq-section:has(.mu-btn),
   .settings-host .seq-section:has(#commitClearBtn),
   .settings-host [data-collapse-key="commitCloudParams"],
-  .settings-host [data-collapse-key="commitLoopParams"],
-  .settings-host #desktopMorphSection { display: none !important; }
+  .settings-host [data-collapse-key="commitLoopParams"] { display: none !important; }
 
   /* ── One type scale for this screen (#256) ─────────────────────────────
      Before this there were six micro-label sizes (0.52 → 0.63rem) at four
@@ -4469,7 +4500,7 @@ html.booting-reveal .main-layout {
   .eng-scope canvas { display: block; width: 100%; height: 68px; }
   .eng-scope-cap { display: flex; justify-content: space-between; margin-top: 0.28rem;
     font-family: var(--font-mono, monospace); font-size: var(--fs-nano); letter-spacing: 0.09em;
-    text-transform: uppercase; color: var(--text-faint); }
+    text-transform: uppercase; color: var(--text-secondary); }
 
   /* ── The filter, drawn ────────────────────────────────────────────────── */
   #engFilter { display: block; width: 100%; height: 76px; cursor: crosshair; touch-action: none; }
@@ -4481,7 +4512,7 @@ html.booting-reveal .main-layout {
     background: none; border: none; border-bottom: 1px solid var(--border-faint);
     padding: 0 0 0.3rem; margin-bottom: 0.5rem; cursor: pointer; text-align: left;
     font: inherit; font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow);
-    text-transform: uppercase; color: var(--text-faint); }
+    text-transform: uppercase; color: var(--text-secondary); }
   .ds-sec-h--fold:hover { color: var(--text-secondary); }
   .ds-fold-c { font-size: var(--fs-body); line-height: 1; opacity: 0.7; }
   .ds-fold-n { margin-left: auto; font-family: var(--font-mono, monospace);
@@ -4508,8 +4539,22 @@ html.booting-reveal .main-layout {
   }
   .tc-rail .lyr-bar, .tc-lrail .lyr-bar { display: flex; align-items: center; justify-content: space-between;
     gap: 0.5rem; padding: 0.62rem 0.75rem; border-bottom: 1px solid var(--border-faint); }
+  /* ── The eyebrow-caption layer sits where the tokens say (2026-09-13) ──
+     Ek, after the six engine hues landed on the rails and tiles: "the new
+     brighter colours on the rails and tiles are great but now everything
+     seems dull." Measured rather than guessed — the four regions sampled off
+     the running app come out at nearly the same mean lightness (chrome 66.9,
+     footer 67.5, rail 70.9, palette 74.2), so it was never brightness. It is
+     that the coloured half got brighter and the LETTERING did not: every
+     eyebrow caption in the instrument was set in `--text-faint`, 2.7:1, whose
+     own comment in tokens.css reads "disabled marks only, never a word" —
+     while the same file assigns `--text-secondary` (8.1:1) to "eyebrow
+     captions, group labels". The CSS sat five steps below its own spec, and
+     `.ds-sec-h--fold` proved it: resting faint, hovering secondary. Faint
+     keeps every genuinely-off use — disabled buttons, ghosts, `.off` rows,
+     an unbound sticker. */
   .tc-rail .lyr-title, .tc-lrail .lyr-title { font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase;
-    color: var(--text-faint); }
+    color: var(--text-secondary); }
   .tc-rail .lyr-bar button, .tc-lrail .lyr-bar button { font-family: var(--font-sans); font-size: var(--fs-meta);
     letter-spacing: 0.09em; text-transform: uppercase; background: var(--surface-1);
     border: 1px solid var(--border-faint); color: var(--text-tertiary);
@@ -4768,7 +4813,14 @@ html.booting-reveal .main-layout {
   
   .tbx-grp { display: flex; flex-direction: column; min-width: 0; }
   .tbx-lbl { font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase;
-    color: color-mix(in srgb, var(--eng) 55%, var(--text-faint));
+    /* THE HUE ITSELF. This was `color-mix(in srgb, var(--eng) 55%, var(--text-faint))`
+       — the engine hue pulled 45% of the way into the faintest grey on the ramp,
+       which is what made the section titles read as the older pastel set beside
+       their own rows (Ek, 2026-09-13: "the titles of each section in the left rail
+       bar are not as vibrant as the colours of each item"). A caption that names a
+       group is the one place the hue should be at full strength: it is the legend
+       for everything under it. Every hue clears 5.8:1 against --bg-app at full. */
+    color: var(--eng);
     padding: 0.15rem 0 0 0.34rem; }
   /* The `+` on an engine's title (2026-09-10) — the ⋯'s box and hover, just
      right of the word (Ek: "just to the right of the title"; it was flush
@@ -4931,23 +4983,6 @@ html.booting-reveal .main-layout {
      Clear-all button, then a second row for it (Ek: "way too big, just a
      simple del red text beside the esc is fine"). Disabled — the last tool
      of a kind, the last lens — it goes faint like the ✕'s kbd. */
-  /* THE VERB, in the drawer head (docs/PALETTE-GUI.md § 4) — the kit's
-     "which one?" shape: a segmented control, 24 tall, radius 2, and the
-     SELECTED segment NEUTRAL, never ember (INSTRUMENT-GUI § 3 — ember is for
-     an action, and choosing how a tile fires is not one). It offers only the
-     verbs that tile's kind allows, and a segment the position cannot take
-     (momentary under a tap binding) is inert and says why in its hover. */
-  /* .ds-verb, the drawer head's verb segment, went 2026-09-12 — the verb is set
-     by a right-click on the strip tile. Its .seg rules below stay for the kit. */
-  .ds-verb .seg { display: inline-flex; height: 24px; border-radius: 2px;
-    background: var(--surface-1); padding: 2px; gap: 2px; }
-  .ds-verb .seg span { display: inline-flex; align-items: center; padding: 0 0.42rem;
-    border-radius: 2px; font-family: var(--font-sans); font-size: var(--fs-nano);
-    letter-spacing: 0.04em; color: var(--text-tertiary); cursor: pointer; line-height: 1; }
-  .ds-verb .seg span:hover { color: var(--text-bright); }
-  .ds-verb .seg span.on { background: var(--surface-2); color: var(--text-light); }
-  .ds-verb .seg span.dis { color: var(--text-faint); cursor: default; }
-  .ds-verb .seg span.dis:hover { color: var(--text-faint); }
   .ds-del { margin-left: auto; flex: none; background: none; border: none; padding: 0.1rem 0.3rem;
     border-radius: 3px; font-family: var(--font-sans); font-size: var(--fs-meta);
     letter-spacing: var(--ls-uppercase); text-transform: uppercase; line-height: 1;
@@ -4973,7 +5008,7 @@ html.booting-reveal .main-layout {
      of cells. Knobs carry the tile's colour in their value arc. */
   .ds-sec { padding: 0.55rem 0.9rem 0.2rem; }
   .ds-sec-h { font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase;
-    color: var(--text-faint); padding-bottom: 0.3rem; border-bottom: 1px solid var(--border-faint);
+    color: var(--text-secondary); padding-bottom: 0.3rem; border-bottom: 1px solid var(--border-faint);
     margin-bottom: 0.5rem; }
   .ds-sec-cells { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; align-items: flex-start; }
   
@@ -5475,8 +5510,11 @@ html body .sensor-group .sensor-group-status { line-height: 1; }
    divider in the bar, whichever side the group happens to be on. */
 html body .tc-bar .tc-grp + .tc-grp {
   margin-left: 0.5rem;                 /* + .tc-side's 0.3rem gap = 0.8rem */
-  padding-left: calc(0.8rem - 1px);    /* + the 1px border      = 0.8rem */
+  padding-left: 0.8rem;                /* no border to account for any more  */
 }
+/* …except the two that still draw one, where the 1px is part of the 0.8rem. */
+html body .tc-bar .tc-grp:has(#tcTools) + .tc-grp,
+html body .tc-bar .tc-grp:has(#tcPinned) { padding-left: calc(0.8rem - 1px); }
 
 /* ═══ 17. THE FOOTER HAS ONE BASELINE — MEASURED, NOT ASSERTED ════════════
    §4 above bottom-aligned the three SIDES and called that a baseline. It isn't:
@@ -6075,7 +6113,12 @@ html body .bottom-bar .sensor-group[hidden] { display: none !important; }
    tokens, read by every rule below and by tiles.js for the hand tile's
    width. The bed's radius is inset + the tile's smallest radius (3) — the
    concentric rule of INSTRUMENT-GUI § 4 — so 8 + 3 ≈ --r-card. */
-html body .palette { --pal-tile: 53px; --pal-gap: 7px; --pal-pad: 8px;
+/* Air in the strip (Ek, 2026-09-13: "spread out the tiles a bit in the palette
+   bar to give it some breathing room, bigger margins as well"). Gap 7 → 11,
+   pad 8 → 13; the tile itself is untouched at 53, so every sticker, ring and
+   hairline measured against it still holds. The dock is 83px tall now, from
+   71 — 13 pad + 1 border + 53 tile + 13 pad + 1 border. */
+html body .palette { --pal-tile: 53px; --pal-gap: 11px; --pal-pad: 13px;
   align-items: center; flex-wrap: nowrap; gap: var(--pal-gap); padding: var(--pal-pad); border-radius: var(--r-card); }
 /* 71px: 8 pad + 1 border + 53 tile + 8 pad + 1 border (§ 11.4). The ledger's
    reserved lines under the tiles are gone; the binding is a sticker on the
