@@ -171,3 +171,26 @@ P1 first (it is small, and it makes every later measurement cleaner). P3 before 
 load-driven throttle the pool cap matters much less, and P2's default should be chosen with P3 in
 place. P4 and P5 after, independently. **Nothing here goes to the rig without the two runs of #347**
 — every number in this document is from one laptop.
+
+### From the settings dialog
+
+Cut from the settings rows on 2026-09-14 when descriptions went to one sentence under 92
+characters (align-audit R5). The rows keep the sentence that says what the control does; this is
+everything else they were carrying. **Checked before appending: only 7 of the 40 distinctive
+clauses across all nineteen cuts appeared anywhere in docs/ beforehand, so this is not a
+duplicate of what follows — for most of these rows the settings dialog was the only place the
+information existed.**
+
+**Latency.** The time between a sound and its sample, in and out. The tape engine steers by it: a loop's edges follow your press and release, an overdub lands where you sang it. The estimate comes from the streams; Measure plays six clicks and listens for them — it needs the output to reach the mic (speakers, or a cable). Stored per device pair and rate as the devices' own share, so the buffer and the cushion can change without measuring again.
+
+**Sample Rate.** 48 kHz is what the rig runs and what everything is tuned to. 96 kHz doubles the samples in every grain, so the pool thins sooner; it restarts the engine and both devices need re-picking after.
+
+**Buffer Size.** The native output block — Web Audio's own is fixed at 128 frames and no setting moves it. This is the dropout remedy, not a quality control: 128 frames is 2.7 ms at 48 kHz, and a bigger one only buys headroom. Needs a restart.
+
+**Stall Cushion.** How deep the two hops between the engine and the interface may run: the output queue and the input ring. Latency against stall tolerance — a freeze longer than this is a dropout; shorter cushions are tighter to play against. Applies at once, on any interface.
+
+**Max Grains.** How many grains may sound at once, and how many marks may light with them. The engine thins by its own load before this is reached, so raise it for a thicker wash and lower it only on a machine that struggles. Applies at once; anything sounding stops.
+
+**Output Ceiling.** The last stage before the interface, after master: transparent below −3.1 dBFS and bit-exact there, holding −0.1 dBFS above it, linked so the spatial image cannot shift. Nothing to set. If this reads anything but idle, the lever is master, the brush's volume or the grain pool.
+
+**Recording Limit.** Live recording stops when the buffer reaches this. Sweep to free space — undo stays available for 30 s.

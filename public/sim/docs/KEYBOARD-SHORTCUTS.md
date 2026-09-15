@@ -312,6 +312,31 @@ Gone (2026-09-03, #325). A grain tile is the preset: arm it and its whole block 
 sound, edit a row and the tile keeps it. `preset_N`, `/preset`, `/preset/N`, the cloud-morph
 actions and the `X` radial-morph key all went with the bank.
 
+## The piece — save, open
+
+A piece is the music you have played: takes, marks, pins, triggers and the sound
+they were played on, in one `.mubone` file (`js/piece.js`). The rig — devices,
+calibration, bindings, the strip, the layout — is NOT in it and never travels
+with it; that is Settings → Export · Import, a separate file for a separate job.
+
+These are the File menu's accelerators in Electron, which is what actually
+catches them; in the hosted demo the same four keys are handled in the page, and
+a save comes down as a download rather than to a path. **There is no autosave**
+— nothing is written unless you ask, and the only thing standing between a set
+and the bin is the prompt when you close the window.
+
+| Key | Action |
+|-----|--------|
+| **⌘S / Ctrl+S** | Save the piece. Straight to its file once it has one, so it is silent and quick; a piece that has never been saved gets the Save As dialog |
+| **⇧⌘S / Shift+Ctrl+S** | Save As — always asks, then that file is the piece |
+| **⌘O / Ctrl+O** | Open a piece. Replaces what is on the sphere, so save first — the quit guard cannot help you here |
+| **⌘N / Ctrl+N** | New — an empty piece. The same teardown an open runs |
+
+The open piece's name sits beside the version in the chrome, with a dot after it
+when there is something unsaved; macOS also puts it in the window title and the
+dot in the close button. **File → Open Recent** holds the last eight, and a
+double-clicked `.mubone` opens in mubone.
+
 ## Editing
 
 | Key | Action |
@@ -329,6 +354,16 @@ actions and the `X` radial-morph key all went with the bank.
 |-----|--------|
 | *(none)* | The perf monitor, high-perf render and the projector window have no keys and no actions (2026-09-09): Diagnostics, Visuals and Camera + display set them |
 | **Esc** | Close topmost modal / blur focused field |
+
+### Gestures — stated once, never in a row's description
+
+Both moved here on 2026-09-14. A global behaviour written per-row is how one sentence ended up
+written four times; a gesture belonging to a different window was documented nowhere else at all.
+
+| Gesture | Action |
+|---|---|
+| **Double-click a slider** | Reset it to its default. True of every slider with a default — the settings dialog's and the engine sheets' alike (the sheet's § 5 says the same) |
+| **Double-click the projector window's title bar** | Fullscreen it. This is the window manager's gesture, not a mubone control — mubone has no key for it |
 
 ## Inside the keys / midi / osc modal
 

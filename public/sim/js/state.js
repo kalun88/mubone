@@ -159,11 +159,6 @@ export const SAMPLE_PAINT_COLORS = [
   '#eea4c4'
 ];
 
-// The cursor's idle colour (live source, not recording). Historically this
-// came through the never-written S.sampleColorIndex — i.e. it was always
-// SAMPLE_PAINT_COLORS[0]. Named when that key died (#247).
-export const CURSOR_IDLE_COLOR = '#f5a69c';
-
 // Live-rec paint colours — the pool a stroke's colour cycles through. Nine
 // identities confined to the warm quadrant, rose through ember to ochre, at one
 // perceptual lightness (OKLCH L=0.755, C=0.105). The old set was already an
@@ -1025,13 +1020,27 @@ export const S = {
   // ── Particle visualisation (audio-feature-driven) ────────────────────
   // When true, particle color/size derived from audio features baked at
   // paint time.  When false, original palette-based colouring is used.
-  darkMode:      true,      // true = black bg (dark mode), false = white bg (light mode)
-  vizMinSize:    3,         // particle min radius (px) — quiet floor, overrides PARTICLE_BASE_SIZE
-  vizMaxSize:    22,        // particle max radius (px) — loud ceiling, overrides PARTICLE_MAX_SIZE
+  // THE CANVAS IS DARK, always (Ek, 2026-09-15). This was a setting — a Dark |
+  // Light capsule on Settings -> Visuals, for a projector in a lit room — and
+  // the option is gone. It stays as a constant only because renderer.js still
+  // branches on it in ~25 places and audio-features.js keys a colour cache on
+  // it; every one of those light halves is now unreachable, and deleting them
+  // is its own pass because it crosses modules (docs/TODO.md).
+  darkMode:      true,
+  // SET ON THE FIGURE, BY EAR AND BY EYE (Ek, 2026-09-15). These four and the
+  // paint gate below are one curve — Settings -> Visuals draws it — and Ek set
+  // it by dragging the handles and then asked for what he had as the default.
+  // It is a WIDER range than the old 3 -> 22: a 2.8px floor is nearer a speck
+  // than a dot, the 36px ceiling is half again as large, and the loudness
+  // window is 31 dB rather than 36, so the same playing spans more of the size
+  // range. -42 dB and -11 dB, in the unit the figure reads in; the state stays
+  // linear because renderer.js wants it linear.
+  vizMinSize:    2.8,       // particle min radius (px) — quiet floor, overrides PARTICLE_BASE_SIZE
+  vizMaxSize:    36,        // particle max radius (px) — loud ceiling, overrides PARTICLE_MAX_SIZE
   // At the old 120px ceiling a loud grain covered a quarter of the sphere, so
-  // paint read as fog and featuresToColor's hue was lost to overlap. 22 keeps the
-  // RMS→size ratio at ~7× while grains stop occluding each other. Both are
-  // panel sliders, so this is a default — anyone who wants fog can still have it.
+  // paint read as fog and featuresToColor's hue was lost to overlap. Even at 36
+  // the RMS→size ratio stays near 13× while grains stop occluding each other.
+  // It is the figure's right-hand handle, so this is a default, not a law.
   gazeTrail:     [],        // [{lon, lat, t}] — appended once per frame in the draw pass
   // 2s, not 6 (Ek, 2026-08-29): six seconds of wake is a drawing in its own
   // right, and it was still on screen long after it had stopped saying
@@ -1056,9 +1065,15 @@ export const S = {
   camPull:       0,         // camera distance from centre, in SPHERE_RADIUS units
   // Calibration ranges — raw feature values outside these clip to 0 or 1.
   // Users adjust via the viz panel sliders to match their input level / content.
-  paintGateThreshold: 0.002,     // RMS below this → particle not created (paint gate)
-  vizRmsMin:     0.005,     // quiet floor (below this → smallest particle)
-  vizRmsMax:     0.31,      // loud ceiling (above this → largest particle)
+  // THE GATE SITS JUST UNDER THE RAMP (Ek, 2026-09-15): -44 dB against the
+  // ramp's -42, so almost everything that lands is already on the curve rather
+  // than piled on the floor. It was -54, a full 8 dB below, which left a band
+  // where marks were deposited but could only ever draw at minimum size — the
+  // band the figure made visible for the first time. Raising it also means less
+  // of the room is painted at all.
+  paintGateThreshold: 0.0063,    // -44 dB · RMS below this → particle not created (paint gate)
+  vizRmsMin:     0.0079,    // -42 dB · quiet floor (below this → smallest particle)
+  vizRmsMax:     0.282,     // -11 dB · loud ceiling (above this → largest particle)
   // ── THE COLOUR LEGEND, FIXED (Ek, 2026-09-13) ─────────────────────────
   // "it should be very predictable so that i see yellow every time and my
   // collaborators see yellow and they know what sound that is."
@@ -1087,8 +1102,6 @@ export const S = {
   // that popup now has no control, because the window it mirrors has no HUD to
   // match. Console-only until someone wants the popup HUD back.
   hudScale:      1.0,
-  edgeIndicator:     'on',  // 'on' | 'off' — show off-screen cursor arrow when detethered
-  edgeIndicatorSize: 1.0,   // 0.5–2.0 — scale of the edge arrow
   fovDeg:        80,        // field of view (degrees) — match to projector throw for room-anchored use
 
   // ── Handsfree recording ────────────────────────────────────────────────
@@ -1301,7 +1314,9 @@ export const S = {
   // feedback.
   dryMonitorMode:     'off',
   dryMonitorEnabled:  false,  // effective on/off of the dry spatial layer
-  dryMonitorGainValue: 0.5,   // 0–2, dry signal level in the house mix
+  dryMonitorGainValue: 0.5,   // LINEAR 0–2, the gain node's own unit. Both dry
+                              // sliders read dB (ui-meters.js _dbOfLin): 0.5 is −6.0 dB,
+                              // the same level Master Volume shows, and 2.0 is +6.0.
   dryGainNode:         null,  // GainNode — dry level control
   dryAnalyser:         null,  // AnalyserNode — dry level meter tap
   dryVBAPGains:        null,  // [GainNode, ...] — one per speaker bus (Electron multi-ch)
@@ -1365,6 +1380,12 @@ export const S = {
 
   // Hardware input channel index (0-based) that feeds the granular engine.
   // Shown as "main (mono)" in audio settings input mapping table.
+  // WHICH HARDWARE CHANNELS FEED THE INSTRUMENT (2026-09-14). An array of
+  // channel indices; several at once sum to the one mono input the engine
+  // takes. `mainInputChannel` is DERIVED from it (the first one sent, or
+  // 'stereo' when more than one is) for the few readers that still ask
+  // "which channel" — the meter highlight and the sampler's label.
+  inputSends: [0],
   mainInputChannel: 0,
 
   // Physical output channel assignments for the stereo mixdown pair.

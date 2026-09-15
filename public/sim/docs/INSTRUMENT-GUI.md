@@ -37,6 +37,7 @@ the smears were padding-plus-font arithmetic nobody chose.
 | `.mu-btn` | 24 | the default for chrome |
 | `.mu-btn--lg` | 38 | the cabinet's pill row — play/mute, paint indicator, session |
 | `.mu-btn--bare` | content-sized | a text action with **no box** |
+| `.mu-h-content` | content-sized | a MARKER, not a shape: this box is sized by its text. Carried by `.lyr-hold-body`, whose two-line name (`loop 3` over the pin's coordinates) is content, not a derived height. It is how a row opts out of the kit **in the markup**, so the audit never needs a list |
 
 **The set is closed at two sizes plus `--bare`, and an audit check enforces it.** A 32px button
 fails by name. There was a `--md` at 32; it ended with zero users and was deleted, because a size

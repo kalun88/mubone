@@ -46,10 +46,10 @@ Grain playback
        ├─ [Electron] VBAP → per-speaker GainNodes → speakerBuses[0..N-1]
        │     └─ ChannelMerger → QuadCaptureWorklet → MessagePort → audio host (queue held at the cushion) → audify → hardware
        │     └─ headphone downmix (closest L/R buses → stereo dead-end, no hardware output)
-       └─ [Browser] StereoPanner → masterBus → softClipper → destination
+       └─ [Browser] StereoPanner → masterBus → ceiling → destination
 
 Master chain
-  masterBus → softClipper → masterAnalyser → muteGain
+  masterBus → ceiling → masterAnalyser → muteGain
     → [Browser]  AudioContext.destination
     → [Electron] dead-end (audify owns hardware; Web Audio destination ignored)
 

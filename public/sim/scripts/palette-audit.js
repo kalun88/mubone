@@ -1042,6 +1042,61 @@ async function run(rig) {
         !j1.before.on && j1.a.wet && j1.a.on && j1.a.picked === j1.before.picked && j1.a.drawer === j1.before.drawer && j1.a.rail === j1.before.rail, JSON.stringify({ before: j1.before, a: j1.a }));
   check('… and a second tap dries it, the drop outlined again', !j1.b.wet && !j1.b.on && j1.b.picked === j1.before.picked, JSON.stringify(j1.b));
 
+  // THE DROP IS ON THE STRIP TOO (Ek, 2026-09-14: "the wet icon should be
+  // clickable in the palette tile … all grain tools should have the wet/dry
+  // toggle on the palette tile"). Every GRAIN tile there wears it, dry face
+  // included — the tile is where you play from, and the switch was only in
+  // the rail and the sheet. A tap flips that tool and nothing else: it does
+  // not take it in hand, and on the HAND TILE, which presses on mousedown,
+  // it does not play.
+  const j2 = await rig.evaluate(async () => {
+    const H = window.__ba, T = H.T, S = H.S;
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const qa = s => [...document.querySelectorAll(s)];
+    const grain = id => T.slotKind(id) === 'granular';
+    const strip = () => qa('#paletteDock .tile[data-pal]');
+    const drops = () => strip().filter(e => e.querySelector('[data-wet-tgl]')).map(e => e.dataset.pal);
+    const pal = H.pal();
+    const want = pal.filter(grain), notWant = pal.filter(id => !grain(id));
+    const id = want[0];
+    const tile = () => strip().find(e => e.dataset.pal === id);
+    const drop = () => tile()?.querySelector('[data-wet-tgl]');
+    const was = T.isWet(id), wasHand = H.hand();
+    // a tool that is NOT in hand, so the tap can be seen not to pick it up
+    const other = pal.find(x => x !== id && T.slotKind(x)) ?? wasHand;
+    if (other && other !== id) T.pickHand(other);
+    await sleep(40);
+    const handBefore = H.hand();
+    T.setWet(id, false); await sleep(40);
+    const dry = { on: !!drop()?.classList.contains('on'), wet: T.isWet(id) };
+    drop().click(); await sleep(40);
+    const tapped = { on: !!drop()?.classList.contains('on'), wet: T.isWet(id), hand: H.hand() };
+    drop().click(); await sleep(40);
+    const again = { on: !!drop()?.classList.contains('on'), wet: T.isWet(id), hand: H.hand() };
+    // the HAND TILE's drop: a press there must not play the hand
+    T.pickHand(id); await sleep(40);
+    const hd = document.querySelector('#handKey [data-wet-tgl]');
+    const playedBefore = !!S._handTile?.();
+    hd?.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+    await sleep(40);
+    const playedDuring = !!S._handTile?.();
+    hd?.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, button: 0 }));
+    hd?.click(); await sleep(40);
+    const handTap = { wet: T.isWet(id), played: !!S._handTile?.() };
+    T.setWet(id, was); if (wasHand) T.pickHand(wasHand); await sleep(40);
+    return { drops: drops(), want, notWant, id, handBefore, dry, tapped, again,
+             hasHandDrop: !!hd, playedBefore, playedDuring, handTap };
+  });
+  check('every grain tile on the strip wears the drop, and no other tile does',
+        j2.want.every(id => j2.drops.includes(id)) && !j2.notWant.some(id => j2.drops.includes(id)),
+        JSON.stringify({ drops: j2.drops, want: j2.want, notWant: j2.notWant }));
+  check('a tap on the strip drop flips that tool and does not take it in hand',
+        !j2.dry.on && !j2.dry.wet && j2.tapped.wet && j2.tapped.on && !j2.again.wet && !j2.again.on
+        && j2.tapped.hand === j2.handBefore && j2.again.hand === j2.handBefore, JSON.stringify(j2));
+  check('the hand tile\'s drop flips too, and pressing it never plays the hand',
+        j2.hasHandDrop && !j2.playedBefore && !j2.playedDuring && !j2.handTap.played && j2.handTap.wet,
+        JSON.stringify({ hasHandDrop: j2.hasHandDrop, playedDuring: j2.playedDuring, handTap: j2.handTap }));
+
   // ── K. The `+` on an engine's title (2026-09-10) ─────────────────────────
   // It replaced a `new tool` row at the foot of the list and the engine
   // chooser it opened: the title already says the engine.

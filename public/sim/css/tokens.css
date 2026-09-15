@@ -298,15 +298,23 @@
        which is most of what "unpolished" actually is.
 
        Still rem-based, so the existing uiScale zoom keeps working. */
-    --sp-0:  0.125rem;   /*  ~2px */
-    --sp-1:  0.1875rem;  /*  ~3px */
-    --sp-2:  0.25rem;    /*  ~4px */
-    --sp-3:  0.375rem;   /*  ~6px */
-    --sp-4:  0.5rem;     /*  ~8px */
-    --sp-5:  0.75rem;    /* ~11px */
-    --sp-6:  1rem;       /* ~15px */
-    --sp-7:  1.5rem;     /* ~23px */
-    --sp-8:  2rem;       /* ~30px */
+    --sp-0:  0.125rem;   /*   2px */
+    --sp-1:  0.1875rem;  /*   3px */
+    --sp-2:  0.25rem;    /*   4px */
+    --sp-3:  0.375rem;   /*   6px */
+    --sp-4:  0.5rem;     /*   8px */
+    --sp-5:  0.75rem;    /*  12px */
+    --sp-6:  1rem;       /*  16px */
+    --sp-7:  1.5rem;     /*  24px */
+    --sp-8:  2rem;       /*  32px */
+
+    /* A SEAM, not a spacing step. Abutting objects — meter channels, tile
+       strips, the lens bar — are meant to read as ONE object with a hairline
+       in it, so the value is a border's width and does not scale with the
+       rhythm. Global rather than per-component because seven unrelated
+       components want the same hairline and a seam that differs between them
+       is just a thin gap. Never use as padding. */
+    --seam: 1px;
 
     /* ── Border radius ─────────────────────────────────────────────────────
        Three steps. It was 0 / 2 / 3 / 5 / 20, and the 20 is a consumer-app

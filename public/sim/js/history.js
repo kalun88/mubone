@@ -101,6 +101,31 @@ export function detach(pred) {
   return null;
 }
 
+/** ONE GESTURE IS ONE ACTION even when its halves land on different edges.
+ *  A pin press writes its loops on the DOWN — so the button recogniser's
+ *  swallow (`discardSince`) can still take the press back while it is still
+ *  held — and its cloud on the RELEASE, because a held pin draws a moving
+ *  cloud. This folds every entry carrying `tag` into the oldest of them, in
+ *  place: undo then takes the whole press, newest half first. Fewer than two
+ *  and nothing happens. It works on the stack directly rather than through
+ *  detach-and-push, which would have cleared the redo stack as a side effect.
+ *  A null tag matches nothing — an untagged action is nobody's gesture. */
+export function mergeTagged(tag) {
+  if (tag == null) return 0;
+  const at = [];
+  for (let i = 0; i < _undo.length; i++) if (_undo[i].tag === tag) at.push(i);
+  if (at.length < 2) return 0;
+  const parts = at.map(i => _undo[i]);
+  for (let i = at.length - 1; i >= 1; i--) _undo.splice(at[i], 1);
+  _undo[at[0]] = {
+    kind: parts[0].kind,
+    undo() { for (let i = parts.length - 1; i >= 0; i--) parts[i].undo(); },
+    redo() { for (const a of parts) a.redo(); },
+    dispose() { for (const a of parts) a.dispose?.(); },
+  };
+  return parts.length;
+}
+
 export function undoCount() { return _undo.length; }
 export function redoCount() { return _redo.length; }
 /** The stack, read-only, for audits and the console. */

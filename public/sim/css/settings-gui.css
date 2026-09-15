@@ -51,6 +51,14 @@ html body .set-nav-item.active {
   background: var(--surface-3); color: var(--text-light); box-shadow: none;
 }
 html body .set-nav-item > svg { flex: 0 0 16px; width: 16px; height: 16px; }
+/* A SUB-ITEM (2026-09-14): indented to where its parent's LABEL starts —
+   10px of padding + a 16px icon + an 11px gap = 37 — so it hangs off the
+   word above it rather than off the rail, and it is a step quieter. No icon
+   of its own: the icon belongs to the subject, and there is one subject. */
+html body .set-nav-item--sub {
+  padding-left: 37px; height: 30px; font-size: 13.5px; color: var(--text-dim);
+}
+html body .set-nav-item--sub:hover { color: var(--text-light); }
 
 html body .settings-head { height: 60px; flex: 0 0 60px; padding: 0 24px; gap: 14px; }
 html body .settings-head h2 {
@@ -83,18 +91,25 @@ html body .settings-dialog .close-btn { width: 34px; height: 34px; border-radius
 }
 
 /* ── The row ────────────────────────────────────────────────────────────── */
+/* TOP-ALIGNED ALWAYS (ruled 2026-09-14). It was `center`, with a `--top`
+   modifier on three rows that had outgrown it — so a control's height on the
+   page was a function of how long somebody's description happened to be, and a
+   page had one horizontal rhythm per row instead of one. Top-aligned, the
+   control sits on its title's line at every description length. The `--top`
+   modifier is deleted rather than kept as a no-op: a modifier that names the
+   default is the next person's wrong guess. */
 .settings-host .in-settings .set-row{
-  display: flex; align-items: center; gap: 24px;
+  display: flex; align-items: flex-start; gap: 24px;
   padding: 15px 0; min-height: 0;
   border-top: 1px solid var(--border-faint); border-bottom: none;
   background: none;
 }
 .settings-host .in-settings .set-row:last-child { border-bottom: 1px solid var(--border-faint); }
-.settings-host .in-settings .set-row--top { align-items: flex-start; }
 .settings-host .in-settings .set-row-text { flex: 1 1 auto; min-width: 0; }
 .settings-host .in-settings .set-row-title {
   display: block; font-size: var(--fs-set-row); font-weight: 500;
-  letter-spacing: var(--ls-tight); text-transform: none; color: var(--text-light);
+  letter-spacing: var(--ls-tight); text-transform: none;
+  color: var(--row-title-ink, var(--text-light));
 }
 .settings-host .in-settings .set-row-desc,
 .settings-host .in-settings .as-note {
@@ -103,8 +118,29 @@ html body .settings-dialog .close-btn { width: 34px; height: 34px; border-radius
   color: var(--text-muted); font-style: normal; text-wrap: pretty;
 }
 
+/* ── A ROW THAT IS NOT AVAILABLE DIMS ITS CONTROL, NEVER ITS WORDS ──────────
+   `style="opacity:0.35"` on the row, which is what Crossfade, Tether and the
+   fade curve carried: an INLINE style, so it outranked every rule here, and it
+   took the text with it. `.set-row-desc` is --text-muted, 4.9:1 — at 0.35 over
+   this ground it composites to about 1.4:1, and --text-faint's own note in
+   tokens.css is "disabled marks only, never a word". Those two rows carry the
+   longest descriptions on the pins page, so the copy that most needed reading
+   was the copy being erased. It also said nothing about WHY: they are off
+   because Blend is on All, which the row can now state in words that are
+   legible.
+   The row sets VARIABLES rather than styling its descendants, because
+   `.set-row--off .set-ctl` is two steps and docs-audit caps this file at one
+   (§ selector depth). The variable inherits, so the rule that owns each part
+   keeps owning it — which is the same reason the cap exists. */
 .settings-host .in-settings .set-ctl {
   flex: 0 0 auto; display: flex; align-items: center; gap: 12px; justify-content: flex-end;
+  opacity: var(--row-ctl-opacity, 1);
+  pointer-events: var(--row-ctl-events, auto);
+}
+.settings-host .in-settings .set-row--off {
+  --row-ctl-opacity: 0.4;
+  --row-ctl-events: none;
+  --row-title-ink: var(--text-secondary);   /* one stop down the ramp, 8.1:1 */
 }
 .settings-host .in-settings .set-ctl--slider { width: 300px; gap: 14px; }
 /* ── Where a unit goes ──────────────────────────────────────────────────────
@@ -359,16 +395,71 @@ html body .settings-host .in-settings .as-val,
   font-size: 14px; letter-spacing: var(--ls-tight); text-transform: none;
 }
 
-/* Column and group captions: a table header, not an engraving. */
-.settings-host .in-settings .as-meter-group-label,
+/* Column captions: a table header, not an engraving. */
 .settings-host .in-settings .as-io-col-sw,
 .settings-host .in-settings .as-io-col-hw,
 .settings-host .in-settings .as-io-col-angle {
   font-size: var(--fs-set-hint); color: var(--text-muted);
   letter-spacing: var(--ls-tight); text-transform: none;
 }
+/* A METER GROUP'S LABEL IS A SUBTITLE (Ek, 2026-09-14: "Hardware In should
+   be a proper subtitle style. Same with … Mubone Level"). It named a block
+   of rows while dressed as a column caption — 13.5px --text-muted, the same
+   size and colour as the note beside it and as every description on the
+   page, so the one word that says what you are looking at read as the
+   quietest thing in the section. One step under .set-sec-title: its weight
+   and its colour, a size between the title and the hint. */
+.settings-host .in-settings .as-meter-group-label {
+  font-size: 14px; font-weight: 600; color: var(--text-highlight);
+  letter-spacing: var(--ls-tight); text-transform: none;
+  /* A METER GROUP KEEPS THE ROW'S RHYTHM (Ek, 2026-09-14: "add the right
+     dividers and spacing for the audio settings section … it looks
+     inconsistent"). § 2 gives every row `padding: 15px 0` and a hairline
+     above it; the meter blocks had neither — measured, the Hardware In
+     label started at the exact pixel the Device row ended, 0px of air and
+     no divider, while every row around it was separated by 30 and a line.
+     The group is a row-sized thing, so it is spaced like one. */
+  border-top: 1px solid var(--border-faint);
+  /* 10 below, not 8: a subtitle over a block of meters had less air under it
+     than a row's own 15px padding, which made the label read as part of the
+     ruler beneath it. */
+  margin: 0 0 10px; padding-top: 15px;
+}
+/* …and the block it heads closes the same 15px the row does. */
+.settings-host .in-settings .set-meters { padding-bottom: 15px; }
 .settings-host .in-settings .as-dim{
   font-size: var(--fs-set-hint); color: var(--text-muted); opacity: 1;
+}
+/* …except one that is saying something. `.as-dim.as-warn` in style.css is a
+   two-class selector and loses to the three above it wherever a page is
+   hosted here — the ceiling's row read `as-warn` with the muted colour still
+   on it (measured: rgb(133,126,116), not the ochre). Specificity is not
+   reading order (DESIGN-SYSTEM's second CSS trap), so the override lives at
+   the winning weight rather than later in the file. */
+.settings-host .in-settings .as-dim.as-warn{ color: var(--accent-warn); }
+
+/* ── STATUS PILL — "is it true?", when you cannot set it here ───────────────
+   The build sheet's § 4 element, 18 tall, r999, no border, 6px dot + label.
+   The Output Ceiling row had a bare text readout in its control slot, so the
+   row was DRAWN as a control and is not one — the description had to carry the
+   words "Nothing to set", which is the row apologising for its own shape. The
+   sheet already rules this: a cell that cannot be operated is never shaped
+   like a control (§ 5).
+   The dot's ink comes through a variable so the modifier stays at one step —
+   `.set-pill--warn .set-pill-dot` is two, and this file is capped at one. */
+.settings-host .in-settings .set-pill {
+  display: inline-flex; align-items: center; gap: var(--sp-3);
+  height: 18px; padding: 0 var(--sp-4); box-sizing: border-box;
+  border: none; border-radius: 999px; background: var(--surface-1);
+  font-size: var(--fs-set-sub); line-height: 1; color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.settings-host .in-settings .set-pill-dot {
+  flex: none; width: 6px; height: 6px; border-radius: 999px;
+  background: var(--pill-dot-ink, var(--text-tertiary));
+}
+.settings-host .in-settings .set-pill--warn {
+  --pill-dot-ink: var(--accent-warn); color: var(--accent-warn);
 }
 
 /* ── Status strip: it is a badge now, not a bar ─────────────────────────── */
@@ -737,6 +828,7 @@ html body .settings-head .as-btn:hover { background: var(--surface-1); color: va
 .settings-host .set-meter-label {
   flex: 0 0 54px; font-size: var(--fs-set-hint); color: var(--text-subtle);
   font-variant-numeric: tabular-nums;
+  opacity: var(--strip-dim, 1);   /* quiet on a channel that is not sent */
 }
 .settings-host .set-meter-track {
   flex: 1; position: relative; height: 6px; border-radius: 3px;
@@ -778,6 +870,188 @@ html body .settings-head .as-btn:hover { background: var(--surface-1); color: va
 }
 .settings-host .set-meter-clip--lit { background: var(--status-error); }
 .settings-host .set-meter-row--off { opacity: 0.45; }
+/* ── The channel strip's two columns (2026-09-14) ────────────────────────
+   A hardware row is meter · trim · dB · send, and the ruler above carries
+   the same two headers, so every row's track starts and ends at one x and
+   the ticks mean the same thing on every meter in the section.
+
+   ONE STEP DEEP, all of it (docs-audit § the kit's depth rule): the dimming
+   of a channel that is not sent travels by an inherited custom property
+   rather than by `.set-meter-row--muted .set-meter-trim`, which is two. */
+.settings-host .in-settings .set-meter-trim {
+  /* 96 (Ek, 2026-09-14: "the trim/level and now degree/calib can be twice as
+     wide"). It went 78 → 48 when the meter needed the room, and 48 was too
+     mean once the azimuth field had to live in the same column: a degree
+     reads as three digits and a decimal. Twice 48, and the output tail is
+     set to match so every meter still ends at one x. */
+  flex: 0 0 96px; width: 96px; margin: 0; min-width: 0;
+  opacity: var(--strip-dim, 1);
+}
+/* The INPUT needs its own rule at the same weight as the kit's range
+   styling: `.settings-host .in-settings input[type="range"]` is (0,3,1) and
+   sets `flex: 1 1 auto; width: auto`, so the class rule above — (0,3,0) —
+   loses to it and the slider stretched to 349.5px, eating the meter.
+   Element-qualified here makes it (0,3,1) too, and later in the file wins
+   the tie. Specificity is not reading order, but a tie is. */
+.settings-host .in-settings input.set-meter-trim {
+  flex: 0 0 96px; width: 96px; height: 14px; cursor: pointer;
+}
+.settings-host .in-settings .set-meter-trimval,
+.settings-host .in-settings input.set-meter-trimval {
+  /* Element-qualified for the input, or `.settings-host .in-settings
+     input[type=text]` at (0,3,1) hands it a border, a height and padding —
+     the same weight trap the trim slider hit twice. 42px, not 34: it holds
+     an edited "−12.0" without clipping. */
+  flex: 0 0 42px; width: 42px; text-align: right;
+  font-variant-numeric: tabular-nums; color: var(--text-muted);
+  font-size: var(--fs-set-hint); font-family: var(--font-sans);
+  background: none; border: none; padding: 0; height: auto; min-width: 0;
+  opacity: var(--strip-dim, 1);
+}
+.settings-host .in-settings input.set-meter-trimval:focus {
+  outline: none; color: var(--text-highlight);
+}
+.settings-host .in-settings .set-meter-send {
+  flex: 0 0 44px; width: 44px; margin: 0; cursor: pointer;
+}
+/* The sum row has no send of its own — it IS the send — but it keeps the
+   column so its track ends where the channels' tracks end, and so does the
+   ruler's header cell: 44px is what the kit's toggle renders at. Measured,
+   not guessed — at `auto` the scale absorbed the difference and the two
+   rulers put 0 dB 29px apart on meters that share an axis. */
+.settings-host .in-settings .set-meter-send--spacer { pointer-events: none; }
+/* ── The speaker ring (2026-09-14) ──────────────────────────────────────
+   A plan view of the room on the same flat ink as the signal path: a
+   hairline ring, the listener at its centre, a box per speaker facing in.
+   The arcs between neighbours are drawn a step brighter because they are
+   the thing VBAP actually chooses between. */
+.settings-host .in-settings .as-speaker-ring { margin: 16px 0 14px; }
+.settings-host .in-settings .sr-ring {
+  fill: none; stroke: var(--border-medium); stroke-width: 1; stroke-dasharray: 2 4;
+}
+.settings-host .in-settings .sr-arc { fill: none; stroke: var(--text-dim); stroke-width: 1.4; }
+.settings-host .in-settings .sr-spk { fill: var(--bg-app); stroke: var(--text-secondary); stroke-width: 1.2; }
+.settings-host .in-settings .sr-head { fill: none; stroke: var(--text-dim); stroke-width: 1; }
+.settings-host .in-settings .sr-front { stroke: var(--text-dim); stroke-width: 1; }
+.settings-host .in-settings .sr-num {
+  fill: var(--text-highlight); font-family: var(--font-sans); font-size: 8px; font-weight: 600;
+}
+.settings-host .in-settings .sr-cap {
+  fill: var(--text-muted); font-family: var(--font-sans); font-size: 10px;
+  letter-spacing: var(--ls-tight);
+}
+.settings-host .in-settings .sr-count {
+  fill: var(--text-dim); font-family: var(--font-sans); font-size: 10px;
+  letter-spacing: var(--ls-wide); text-transform: uppercase;
+}
+
+/* ── The signal path diagram (2026-09-14) ────────────────────────────────
+   Hairlines and flat boxes, on the same ink the rest of the page uses: it
+   is a drawing of the routing, not a picture of a mixer. The instrument's
+   own box is the one thing drawn in the text colour, because everything
+   else on the line exists to get the signal to it. */
+/* A DRAWING GETS A ROW'S WORTH OF AIR ABOVE IT (Ek, 2026-09-14: "the
+   spacing below the text above both diagrams is cramped"). 16px — one step
+   past the 15 a row spends on its own padding, because a drawing has no
+   hairline to sit against and needs the separation from the caption to come
+   from space alone. Margins collapse with the label's 10 above, so 16 is
+   what lands. */
+.settings-host .in-settings .as-signal-path { margin: 16px 0 10px; }
+.settings-host .in-settings .sp-wire {
+  fill: none; stroke: var(--text-dim); stroke-width: 1;
+}
+.settings-host .in-settings .sp-off { stroke: var(--text-faint); opacity: 0.7; }
+/* A CONTROL path, not an audio one: the gate passes no signal to the sphere,
+   it decides whether a mark is deposited. Dashed is what a block diagram
+   uses for that, and it is the one line here that is not carrying audio. */
+.settings-host .in-settings .sp-ctl { stroke-dasharray: 3 3; }
+.settings-host .in-settings .sp-sym { fill: none; stroke: var(--text-dim); stroke-width: 1; }
+.settings-host .in-settings .sp-dot { fill: var(--text-dim); }
+.settings-host .in-settings .sp-box {
+  fill: none; stroke: var(--text-dim); stroke-width: 1;
+}
+.settings-host .in-settings .sp-box--strong { stroke: var(--text-secondary); }
+.settings-host .in-settings .sp-arrow { fill: var(--text-dim); }
+.settings-host .in-settings .sp-txt,
+.settings-host .in-settings .sp-lbl,
+.settings-host .in-settings .sp-cap {
+  fill: var(--text-muted); font-family: var(--font-sans); font-size: 10px;
+  letter-spacing: var(--ls-tight);
+}
+.settings-host .in-settings .sp-txt { text-anchor: middle; }
+.settings-host .in-settings .sp-txt--strong { fill: var(--text-secondary); }
+.settings-host .in-settings .sp-lbl { fill: var(--text-subtle); }
+.settings-host .in-settings text.sp-off { fill: var(--text-faint); }
+
+/* A group label may carry a short note. It is a caption, not the rest of the
+   sentence: quieter and smaller, spaced off the label, so the two do not read
+   as one line of prose — they did, as "Instrument in the mono sum, after each
+   channel's trim…". Written at (0,3,0) on purpose: the § 24 restatement near
+   the top of this file is `.settings-host .in-settings span` at (0,2,3) and
+   sweeps the TYPE of every span written one level shallower, which is what
+   left this caption at the label's own size. */
+.settings-host .in-settings .as-meter-group-note {
+  /* Its OWN LINE, not a continuation of the label's. Beside it, at the same
+     size and colour the label already has (both resolve to 12.48px
+     #776f66 — measured), the two simply read as one sentence: "Instrument in
+     the mono sum, after each channel's trim…". A line of its own is what a
+     caption is, and it needs no second colour to say so. */
+  display: block; margin: 2px 0 0; font-size: var(--fs-set-hint);
+  color: var(--text-dim); text-transform: none; letter-spacing: var(--ls-tight);
+  font-weight: 400;
+}
+/* The tail a software-output row carries: its azimuth and the socket it
+   leaves by. Fixed widths so every row's meter ends at one x, exactly as the
+   input strip's trim and send columns do. */
+/* 210px, which is what the input strip's three columns come to (96 trim +
+   14 + 42 dB + 14 + 44 send). Every meter on the page then ends at the same
+   x and runs the same length — measured before the two were tied together,
+   the output tracks were 474.1 against the inputs' 514. */
+.settings-host .in-settings .set-meter-tail {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  flex: 0 0 210px; width: 210px;
+  /* One line. "hardware out" wrapped inside its 76px cell and pushed the
+     14px ruler 7px taller than the box holding it — align-audit's "every
+     element contains what it paints". */
+  white-space: nowrap;
+}
+.settings-host .in-settings .set-meter-deg {
+  flex: 0 0 96px; width: 96px; text-align: right; background: none; border: none;
+  padding: 0; height: auto; color: var(--text-secondary);
+  font-family: var(--font-sans); font-size: var(--fs-set-hint);
+  font-variant-numeric: tabular-nums; min-width: 0;
+}
+.settings-host .in-settings input.set-meter-deg:focus { outline: none; color: var(--text-highlight); }
+.settings-host .in-settings .set-meter-deg--none { color: var(--text-dim); }
+.settings-host .in-settings .set-meter-out { flex: 0 0 76px; width: 76px; min-width: 0; }
+/* The ruler's stand-in for the capture button: the same 22px column with no
+   box of its own. Using the button class there put an 18px-tall bordered
+   cell in a 14px ruler and pushed it 2px over. */
+.settings-host .in-settings .set-meter-gap { flex: 0 0 22px; width: 22px; }
+/* The capture button, sized to the column rather than to the kit's small
+   button: this row is a meter row, not a settings row. */
+.settings-host .in-settings .set-meter-cap {
+  flex: 0 0 22px; width: 22px; height: 18px; padding: 0; border-radius: var(--r-1);
+  border: 1px solid var(--border-subtle); background: none; cursor: pointer;
+  /* --fs-set-hint, the kit's small-button size. Not 11px (invented — the
+     size set is closed) and not --fs-set-tick, which is reserved for a
+     meter's dB ruler and nothing else; align-audit has a check for each. */
+  color: var(--text-muted); font-size: var(--fs-set-hint); line-height: 1;
+}
+.settings-host .in-settings .set-meter-cap:hover { color: var(--text-light); background: var(--surface-1); }
+.settings-host .in-settings .set-meter-cap:disabled { opacity: 0.4; cursor: default; }
+.settings-host .in-settings .set-meter-hdr {
+  font-size: var(--fs-set-hint); color: var(--text-muted); text-align: center;
+  align-self: center;
+  /* line-height 1, or the header's text box is a pixel taller than the 14px
+     ruler that holds it — align-audit's "every element contains what it
+     paints" caught exactly that (+1). */
+  line-height: 1;
+}
+/* A channel that is not in the sum still METERS — you need to see what is
+   arriving on it to decide whether to send it — but it reads as out of the
+   path: the trim and the label go quiet, the meter does not. */
+.settings-host .set-meter-row--muted { --strip-dim: 0.4; }
 
 /* The gate is the same meter carrying a threshold. The marker overhangs the
    track, so the row needs its own headroom for the caption. */
@@ -789,6 +1063,9 @@ html body .settings-head .as-btn:hover { background: var(--surface-1); color: va
 .settings-host .set-meter-thresh-val {
   position: absolute; top: -13px; transform: translateX(-50%);
   font-size: var(--fs-set-tick); color: var(--text-secondary);
+  /* One line. The marker is 1px wide, so the caption's box is 1px wide and
+     "−45.8 dB" wrapped onto two, the second line sitting across the track. */
+  white-space: nowrap;
 }
 .settings-host .set-meter-gated {
   position: absolute; left: 0; top: 0; bottom: 0;
@@ -1033,7 +1310,6 @@ html body .settings-host .in-settings .set-count {
 /* Instrument buttons: its rows are read, not set — the 46ch measure left half
    the page empty under a paragraph (Ek, 2026-09-10: "make it take up full
    width"). Scoped to the one page whose descriptions are the content. */
-.settings-host .in-settings .set-row-desc--wide { max-width: none; }
 /* How a button is read — Gesture · the button · Fires · Use it for. A 200 × 40
    timeline per row: the trace is the button, the dot the fire, the band the
    window, the dash the count to long, the green the on-time. Rows hold the
@@ -1265,3 +1541,26 @@ html body .settings-host .in-settings .grain-seg .grain-seg-btn { border-radius:
    2026-09-12, night: no popup; the arm is the confirmation). The armed face
    is the danger face filled — the one moment the button is a promise. */
 .settings-host .in-settings .set-btn--danger.armed { background: var(--accent-danger); border-color: var(--accent-danger); color: var(--text-highlight); }
+
+/* ── The particle size figure ───────────────────────────────────────────────
+   A picture that IS the control (2026-09-15), replacing the four sliders that
+   were Smallest / Largest / Quietest Input / Loudest Input. It is a canvas
+   because it draws marks at their REAL pixel radii and repaints on the input,
+   neither of which the row kit can do — and because the legend beside it is
+   already proof that a viz page carries pictures the kit has no element for.
+
+   Sized here, drawn in ui-viz.js. The height is stated rather than derived, and
+   the box takes the page column like a section's rows do. */
+.settings-host .in-settings .viz-fig {
+  position: relative; width: 100%; height: 168px;
+  margin-top: var(--sp-2); border-radius: var(--r-2, 3px);
+  background: var(--surface-0); border: 1px solid var(--border-faint);
+  overflow: hidden; touch-action: none;
+}
+/* Its own class, not `.viz-fig > canvas` — one step past `.in-settings` is the
+   sheet's limit and docs-audit enforces it (the legend's dot learned this in
+   2026-09-13, three rules up). */
+.settings-host .in-settings .viz-fig-canvas {
+  display: block; width: 100%; height: 100%; cursor: grab;
+}
+.settings-host .in-settings .viz-fig-canvas.dragging { cursor: grabbing; }

@@ -29,8 +29,7 @@ let _rtInputSilenced = false;
 let _rtInputLast = null;   // the last (chIndex, nCh) routed, to restore
 S._silenceRtInput = (on) => {
   _rtInputSilenced = !!on;
-  _rtInputRoutingGains.forEach(g => { if (_rtInputSilenced) g.gain.value = 0; });
-  if (!_rtInputSilenced && _rtInputLast) rewireRtAudioRecordingChannel(_rtInputLast.ch, _rtInputLast.n);
+  applyInputRouting();   // one router: silence, the send set and the trims
 };
 // The input ring's target fill, from the stall cushion — re-sent whenever
 // the ring is rebuilt or the setting moves (audio.js applyAudioCushion).
@@ -222,25 +221,29 @@ function rewireRtAudioRecordingChannel(chIndex, nCh) {
     S.inputGainNode.connect(S.inputAnalyser);
   }
 
-  // Flip routing gains: 1 for the chosen channel(s), 0 for all others.
-  // The graph (splitter[i] → routingGain[i] → S.inputGainNode) was wired in
-  // setupRtAudioInputMeters; we just change the gain values here.
-  const isStereo = chIndex === 'stereo';
-  if (isStereo) {
-    // Stereo sum: enable channels 0 and 1, silence the rest.
-    // The routing gains all feed S.inputGainNode (mono) which auto-sums.
-    _rtInputRoutingGains.forEach((g, i) => { g.gain.value = _rtInputSilenced ? 0 : (i <= 1) ? 1 : 0; });
-    DEBUG && console.log(`[input] recording from RtAudio stereo (ch 1+2 sum)`);
-  } else {
-    const n = _rtInputRoutingGains.length || (nCh ?? as.inputAnalysers.length);
-    const safe = Math.max(0, Math.min(chIndex, n - 1));
-    _rtInputRoutingGains.forEach((g, i) => { g.gain.value = _rtInputSilenced ? 0 : (i === safe) ? 1 : 0; });
-    DEBUG && console.log(`[input] recording from RtAudio ch ${safe + 1} (index ${safe})`);
+  // The routing gains come from the SEND SET and the per-channel trims, in
+  // one place (applyInputRouting). `chIndex` still arrives from the old
+  // single-channel callers and seeds the set ONLY when there is not one yet.
+  //
+  // It used to seed on every call, which was a loop: `applyInputRouting`
+  // derives `mainInputChannel` from the set, the old callers pass that
+  // derived value straight back here, and it overwrote the set with itself.
+  // Measured — unticking channel 1 while both were sent left the set at
+  // [0,1], because a re-render round-tripped 'stereo' through here.
+  if (!Array.isArray(S.inputSends) || !S.inputSends.length) {
+    if (chIndex === 'stereo')             S.inputSends = [0, 1];
+    else if (typeof chIndex === 'number') S.inputSends = [Math.max(0, Math.min(chIndex, (_rtInputRoutingGains.length || nCh || 1) - 1))];
   }
+  applyInputRouting();
+  DEBUG && console.log(`[input] sending ch ${inputSends().map(i => i + 1).join('+')} into the instrument`);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function dbToLinear(db)   { return Math.pow(10, db / 20); }
+/** The dB column beside a meter row: signed, one decimal, no unit — the
+ *  header says `trim` and every row in the column reads the same way. A real
+ *  minus, not a hyphen (see _setDb in ui-meters). */
+function trimDb(db) { return (db > 0 ? '+' : db < 0 ? '−' : '') + Math.abs(db).toFixed(1); }
 function clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
 
 function setStatus(id, type, msg) {
@@ -361,6 +364,75 @@ function buildInputGraph(channel) {
 
 // renderMeters, tickMeters imported from ui-meters.js
 
+// ── THE SPEAKER RING (Ek, 2026-09-14) ───────────────────────────────────────
+// "add a diagram of how the spatialization works. make sure it represents
+// accurately with the degree and the count."
+//
+// A plan view of the room, drawn from the SAME `angleDeg` the rows carry and
+// VBAP's lookup is built from — so the count is the count and each speaker
+// sits where it is actually panned to, not on an idealised even ring. The
+// listener is the centre dot and 0° is straight ahead, which is the
+// convention the angle field uses.
+//
+// The arcs between neighbours are the pairs: VBAP puts a grain between the
+// two speakers it lies between, so the arc IS the thing being chosen.
+function renderSpeakerRing() {
+  const el = document.getElementById('asSpeakerRing');
+  if (!el) return;
+  const buses = S.speakerBuses;
+  if (!buses?.length) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  el.style.display = '';
+
+  // cy 92, not 82: the 0° caption sits at cy − R − 14 and was clipped by the
+  // top of the viewBox at 6px — measured, the glyph tops were above 0.
+  const R = 62, cx = 110, cy = 92, H = 186;
+  // 0° front = straight up; degrees run clockwise, the way an azimuth does.
+  const pt = (deg, r) => [cx + r * Math.sin(deg * Math.PI / 180),
+                          cy - r * Math.cos(deg * Math.PI / 180)];
+  const angles = buses.map(b => ((b.angleDeg % 360) + 360) % 360);
+  let g = '';
+
+  // the room: a ring, the listener, and the front marker
+  g += `<circle class="sr-ring" cx="${cx}" cy="${cy}" r="${R}"/>`;
+  g += `<circle class="sr-head" cx="${cx}" cy="${cy}" r="3.4"/>`;
+  g += `<path class="sr-front" d="M${cx} ${cy - R - 5} v-6"/>`;
+  g += `<text class="sr-cap" x="${cx}" y="${cy - R - 14}" text-anchor="middle">0°</text>`;
+
+  // the pair arcs — what VBAP chooses between
+  const sorted = [...angles].sort((a, b) => a - b);
+  for (let i = 0; i < sorted.length && sorted.length > 1; i++) {
+    const a = sorted[i], b = sorted[(i + 1) % sorted.length];
+    const span = ((b - a) + 360) % 360;
+    const [x1, y1] = pt(a, R), [x2, y2] = pt(b, R);
+    g += `<path class="sr-arc" d="M${x1.toFixed(1)} ${y1.toFixed(1)} A${R} ${R} 0 ${span > 180 ? 1 : 0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}"/>`;
+  }
+
+  // the speakers themselves: a box facing the listener, its number, its angle
+  buses.forEach((b, i) => {
+    const deg = angles[i];
+    const [x, y] = pt(deg, R);
+    const [lx, ly] = pt(deg, R + 19);
+    g += `<g transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${deg.toFixed(1)})">`
+       + `<rect class="sr-spk" x="-5.5" y="-4" width="11" height="8" rx="1.5"/></g>`;
+    g += `<text class="sr-num" x="${x.toFixed(1)}" y="${(y + 3).toFixed(1)}" text-anchor="middle">${i + 1}</text>`;
+    g += `<text class="sr-cap" x="${lx.toFixed(1)}" y="${(ly + 3).toFixed(1)}" text-anchor="middle">${deg.toFixed(deg % 1 ? 1 : 0)}°</text>`;
+  });
+
+  // the count, in the middle, so the picture says it without being read round
+  g += `<text class="sr-count" x="${cx}" y="${cy + 26}" text-anchor="middle">${buses.length} ch</text>`;
+  const mode = S.spatialPanning === 'headlocked' ? 'head-locked — the ring turns with you'
+                                                 : 'world-locked — the ring stays with the room';
+  g += `<text class="sr-cap" x="${cx + R + 30}" y="${cy - 6}">${mode}</text>`;
+  g += `<text class="sr-cap" x="${cx + R + 30}" y="${cy + 10}">VBAP: the two speakers a grain lies between</text>`;
+
+  el.innerHTML = `<svg viewBox="0 0 430 ${H}" width="100%" height="${H}" preserveAspectRatio="xMidYMid meet"
+    role="img" aria-label="${buses.length} speakers at ${angles.map(a => a.toFixed(0) + '°').join(', ')}">${g}</svg>`;
+}
+
+/** The ring alone, for a test that wants to draw a layout the machine does
+ *  not have (scripts + the console). Not used by the app. */
+export const __testRenderSpeakerRing = () => renderSpeakerRing();
+
 // Render output meter bars using S.speakerAnalysers (set by audio.js initSpeakerBuses).
 // Labels: house buses by angle, then "SML"/"SMR" for the stereo mixdown pair.
 function renderOutputMeters() {
@@ -373,10 +445,43 @@ function renderOutputMeters() {
   const houseLabels   = Array.from({ length: nHouse }, (_, i) => String(i + 1));
   const mixdownLabels = hasMixdown ? ['L', 'R'] : [];
   const labels = [...houseLabels, ...mixdownLabels];
-  const separatorBefore = hasMixdown ? nHouse : undefined;
   wrap.style.display = '';
-  renderSetMeters('asOutputMeters', labels);
+
+  // ONE ROW PER SOFTWARE OUTPUT (Ek, 2026-09-14: "fix the software output
+  // table, the style and formatting is not consistent with anything"). It
+  // was two lists of the same channels — this meter strip, and a separate
+  // `.as-io-table` with its own header, its own row, its own select and its
+  // own column widths, matching nothing else on the page. A software output
+  // is one row now, exactly as a hardware input is: meter, then its azimuth,
+  // then the hardware socket it leaves by.
+  const hwTotal  = S.speakerBuses?.numChannels ?? n;
+  const hwOpts   = sel => Array.from({ length: hwTotal }, (_, i) =>
+    `<option value="${i}"${i === sel ? ' selected' : ''}>out ${i + 1}</option>`).join('');
+  const routing  = S.channelRouting ?? Array.from({ length: nHouse }, (_, i) => i);
+  const hpL = S.headphoneRouting?.[0] ?? nHouse, hpR = S.headphoneRouting?.[1] ?? nHouse + 1;
+  const headlocked = S.spatialPanning === 'headlocked';
+
+  renderSetMeters('asOutputMeters', labels, {
+    tailHdr: `<span class="set-meter-deg">azimuth</span><span class="set-meter-gap"></span><span class="set-meter-out">out</span>`,
+    tail: i => {
+      if (i < nHouse) {
+        const deg = (S.speakerBuses[i]?.angleDeg ?? 0).toFixed(1);
+        return `<input type="number" class="set-meter-deg as-io-angle-input" data-bus="${i}" value="${deg}"
+                       min="0" max="359.9" step="0.5" title="azimuth in degrees — 0° is front, 90° is right">`
+             + `<button class="set-meter-cap as-io-capture-btn" data-bus="${i}"`
+             + `${headlocked ? ' disabled title="capture works in worldlocked only — a headlocked angle is relative to you, not the room"'
+                             : ' title="capture the cursor\'s azimuth"'}>⊕</button>`
+             + `<select class="set-meter-out as-io-house-sel" data-bus="${i}">${hwOpts(routing[i] ?? i)}</select>`;
+      }
+      const side = i === nHouse ? 'L' : 'R';
+      return `<span class="set-meter-deg set-meter-deg--none">mixdown</span>`
+           + `<button class="set-meter-cap" disabled style="visibility:hidden">⊕</button>`
+           + `<select class="set-meter-out as-io-hp-sel" data-side="${side}">${hwOpts(side === 'L' ? hpL : hpR)}</select>`;
+    },
+  });
   setMeterSources('asOutputMeters', S.speakerAnalysers);
+  wireOutputRowControls(wrap);
+  renderSpeakerRing();
   // Also rebuild the main-window output meters to reflect the new channel layout
   rebuildMainOutputMeters();
 }
@@ -404,8 +509,10 @@ function renderInputMeters(selectedCh) {
   // "nothing is coming in" and "nothing is routed here" are different facts.
   const live = as.inputAnalysers.length;
   const off  = Array.from({ length: numCh }, (_, i) => i).filter(i => i >= live);
-  renderSetMeters('asInputMeters', makeInputLabels(numCh, devLabel), { off });
+  renderSetMeters('asInputMeters', makeInputLabels(numCh, devLabel), { off,
+    strip: { trim: channelTrimDb, send: isSending, onTrim: setChannelTrim, onSend: setChannelSend } });
   setMeterSources('asInputMeters', as.inputAnalysers);
+  renderSignalPath();   // the diagram is drawn from the same send set
   // Keep main window input meter in sync (same channel layout + highlight)
   S._rebuildMainInputMeters?.();
 }
@@ -429,6 +536,7 @@ function startMetering() {
   // analysers into a hidden dialog for the rest of the session.
   if (!_visible()) return;
   setMeterSources('asInputMeters', as.inputAnalysers);
+  renderSignalPath();   // the diagram is drawn from the same send set
   setMeterSources('asOutputMeters', S.speakerAnalysers);
   startSetMeters();
 }
@@ -452,55 +560,285 @@ function angleToName(deg) {
   return `${d}°`;
 }
 
-// ── Input mapping table ───────────────────────────────────────────────────────
-// Shows a software-path → hardware-channel table.
-// Rows: "main (mono)" (always), "experimental (mono)" (future, disabled).
-function renderInputMappingTable() {
-  const wrap = document.getElementById('asInputMappingTable');
-  if (!wrap) return;
-  const nCh = as.inputAnalysers.length;
-  if (!nCh) { wrap.style.display = 'none'; return; }
+// ── THE SIGNAL PATH, DRAWN (Ek, 2026-09-14) ─────────────────────────────────
+// "just include a simple diagram of the path and how it sums like an
+// electronics diagram with the flow, simple. not wordy … if i add a few more
+// hw in sends then it'll show that those are the ones summing with a line."
+//
+// So it is drawn from the same `inputSends()` the rows are: a channel that is
+// sent grows a line into the bus, one that is not sits unconnected. The
+// picture cannot drift from the routing, which is the failure mode of the
+// paragraph it replaces.
+//
+// Deliberately flat: hairlines, one dot at the junction, no arrowheads except
+// where the flow leaves the app. Everything is on the 20px row pitch the
+// hardware rows use, so a channel in the diagram sits at the same rhythm as
+// its strip.
+/** Slide the viewBox so the DRAWN ink sits centred in the column. Re-runs on
+ *  the next frame if the element has no layout yet — a hidden page measures
+ *  as zero and a correction from zero is no correction. */
+function _spCentre(el, H) {
+  const svg = el?.firstElementChild;
+  if (!svg) return;
+  if (!el.clientWidth) { requestAnimationFrame(() => _spCentre(el, H)); return; }
+  const kids = [...svg.children].map(k => k.getBoundingClientRect()).filter(r => r.width || r.height);
+  if (!kids.length) return;
+  const box = svg.getBoundingClientRect();
+  const scale = box.height / H || 1;
+  const inkL = Math.min(...kids.map(r => r.left)), inkR = Math.max(...kids.map(r => r.right));
+  const d = (box.left + box.width / 2) - (inkL + inkR) / 2;   // px to move right
+  if (Math.abs(d) <= 0.5) return;
+  const vb = svg.viewBox.baseVal;
+  svg.setAttribute('viewBox', `${(vb.x - d / scale).toFixed(1)} 0 ${vb.width} ${H}`);
+}
 
-  // Build hardware channel options (ch 1 … ch N, plus stereo sum if ≥ 2 ch)
-  let hwOpts = Array.from({ length: nCh }, (_, i) =>
-    `<option value="${i}">ch ${i + 1}</option>`
-  ).join('');
-  if (nCh >= 2) hwOpts += `<option value="stereo">stereo (L+R)</option>`;
 
-  wrap.style.display = '';
-  wrap.innerHTML = `
-    <div class="as-io-table">
-      <div class="as-io-hdr">
-        <span class="as-io-col-sw">software path</span>
-        <span class="as-io-col-hw">hardware input</span>
-      </div>
-      <div class="as-io-row" title="main — feeds the granular engine (recording + live grain)">
-        <span class="as-io-sw">main (mono)</span>
-        <select class="as-io-sel" id="asMainInputSel">${hwOpts}</select>
-      </div>
-      <div class="as-io-row as-io-row--dim" title="experimental — reserved for future live-processing paths">
-        <span class="as-io-sw">experimental (mono)</span>
-        <select class="as-io-sel" id="asExperimentalInputSel" disabled>${hwOpts}</select>
-      </div>
-    </div>`;
+// audio.js redraws the path when the dry monitor's mode moves — that branch
+// and its switch are in the picture, so the picture follows the setting.
+S._redrawSignalPath = () => renderSignalPath();
 
-  // Restore current main channel (may be numeric index or 'stereo')
-  const mainSel = document.getElementById('asMainInputSel');
-  if (mainSel) {
-    mainSel.value = S.mainInputChannel === 'stereo' ? 'stereo' : String(S.mainInputChannel ?? 0);
-    mainSel.addEventListener('change', () => {
-      // asInputChannel owns the entire channel-change path — recording rewire,
-      // per-channel input-gain restore, meters, status, and the main-UI audio
-      // panel mirror. Delegate to it by dispatching a real `change` rather than
-      // reimplementing a subset here: the old inline copy assigned .value with
-      // no event, so the legacy handler never ran (no gain restore) and the
-      // panel's channel dropdown + in-gain slider both went stale.
-      const compat = document.getElementById('asInputChannel');
-      if (!compat) return;
-      compat.value = mainSel.value;
-      compat.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+// Geometry. One row pitch for the channels, one baseline for the chain, and
+// two lanes under it for the branches that leave it.
+const SP = { rowH: 18, chX: 12, triX: 30, busX: 84, sumX: 112, lvlX: 148,
+             engX: 190, engW: 78, outX: 300, ceilX: 372, ceilW: 56, ifX: 468 };
+
+/** An amplifier: the triangle every block diagram uses for a gain stage —
+ *  a trim, a fader, a level. Points the way the signal goes. */
+function spAmp(x, y, label, dim) {
+  const h = 13, w = 13;
+  return `<path class="sp-sym${dim ? ' sp-off' : ''}" d="M${x} ${y - h / 2} L${x + w} ${y} L${x} ${y + h / 2} Z"/>`
+       + (label ? `<text class="sp-cap${dim ? ' sp-off' : ''}" x="${x + w / 2}" y="${y - 10}" text-anchor="middle">${label}</text>` : '');
+}
+/** A summing junction: the circled Σ. */
+function spSum(x, y, n) {
+  return `<circle class="sp-sym" cx="${x}" cy="${y}" r="9"/>`
+       + `<text class="sp-txt" x="${x}" y="${y + 4}">Σ</text>`
+       + `<title>${n} channel${n === 1 ? '' : 's'} summed to mono</title>`;
+}
+/** A processing block. `strong` is the instrument itself. */
+function spBox(x, y, w, label, strong) {
+  return `<rect class="sp-box${strong ? ' sp-box--strong' : ''}" x="${x}" y="${y - 11}" width="${w}" height="22" rx="2"/>`
+       + `<text class="sp-txt${strong ? ' sp-txt--strong' : ''}" x="${x + w / 2}" y="${y + 4}">${label}</text>`;
+}
+/** A bus of N channels: the slash and the count, which is how a multi-channel
+ *  run is written on a block diagram rather than drawing N lines. */
+function spBus(x, y, n) {
+  // The count goes BELOW the slash. Convention puts it above, but above is
+  // where a gain stage's caption lives and the two collided — "2master".
+  return `<path class="sp-wire" d="M${x - 5} ${y + 5} L${x + 5} ${y - 5}"/>`
+       + `<text class="sp-cap" x="${x}" y="${y + 15}" text-anchor="middle">${n}</text>`;
+}
+const spWire  = (x1, y1, x2, y2, cls = '') => `<path class="sp-wire ${cls}" d="M${x1} ${y1} ${y1 === y2 ? `H${x2}` : `V${y2} H${x2}`}"/>`;
+const spArrow = (x, y) => `<path class="sp-arrow" d="M${x} ${y - 4} L${x + 7} ${y} L${x} ${y + 4} Z"/>`;
+
+// ── THE SIGNAL PATH, DRAWN (Ek, 2026-09-14) ─────────────────────────────────
+// "use proper diagram audio shapes … look up how pros do their diagrams."
+// So it is a block diagram in the ordinary language of one:
+//
+//   ▷  a triangle is a GAIN STAGE — a trim, the level, master. It points the
+//      way the signal goes.
+//   Σ  a circled sigma is a summing junction.
+//   □  a rectangle is a processing block; the instrument's own is drawn in
+//      the text colour because everything else exists to feed it.
+//   /n a slash with a number is a bus of n channels, which is how a
+//      multi-channel run is written rather than by drawing n lines.
+//   ┄  a dashed line is CONTROL, not audio: the gate does not pass a signal
+//      to the sphere, it decides whether a mark is deposited.
+//   ⊣  an open contact is a switch that is off.
+//
+// Everything in it is read from live state — the send set, the dry mode, the
+// channel counts — so the drawing cannot describe a routing the app does not
+// have (Ek: "it should change when it's off or auto or on").
+function renderSignalPath() {
+  const el = document.getElementById('asSignalPath');
+  if (!el) return;
+  const n      = as.inputAnalysers.length || 1;
+  const sends  = inputSends();
+  const dry    = S.dryMonitorMode ?? 'off';
+  const nHouse = S.speakerBuses?.length ?? 2;
+  const nMon   = S.monitorSpeakerBuses?.length ?? 0;
+  const nOut   = S.speakerBuses?.numChannels ?? nHouse;
+
+  const top    = 16;
+  const chBot  = top + (n - 1) * SP.rowH;
+  const midY   = Math.round((top + chBot) / 2);
+  const dryY   = chBot + 30;          // the monitor lane
+  const gateY  = dryY + 24;           // the control lane
+  const H      = gateY + 20;
+  let g = '';
+
+  // ── the hardware channels: each through its trim, onto the bus ──
+  for (let i = 0; i < n; i++) {
+    const y = top + i * SP.rowH;
+    const on = sends.includes(i);
+    g += `<text class="sp-lbl${on ? '' : ' sp-off'}" x="${SP.chX}" y="${y + 4}">${i + 1}</text>`;
+    g += spWire(SP.chX + 8, y, SP.triX, y, on ? '' : 'sp-off');
+    g += spAmp(SP.triX, y, i ? '' : 'trim', !on);
+    if (on) {
+      g += spWire(SP.triX + 13, y, SP.busX, y);
+      g += `<circle class="sp-dot" cx="${SP.busX}" cy="${y}" r="2.2"/>`;
+    } else {
+      // an open contact: the send is off, so the channel reaches nothing
+      g += `<path class="sp-wire sp-off" d="M${SP.triX + 13} ${y} H${SP.triX + 26}"/>`;
+      g += `<path class="sp-wire sp-off" d="M${SP.triX + 26} ${y} l8 -5"/>`;
+    }
   }
+  if (sends.length) {
+    const ys = sends.map(i => top + i * SP.rowH);
+    const a = Math.min(...ys), b = Math.max(...ys);
+    if (a !== b) g += `<path class="sp-wire" d="M${SP.busX} ${a} V${b}"/>`;
+    g += spWire(SP.busX, midY, SP.sumX - 9, midY);
+  }
+
+  // ── sum → level → the instrument ──
+  g += spSum(SP.sumX, midY, sends.length);
+  g += spWire(SP.sumX + 9, midY, SP.lvlX, midY);
+  g += spAmp(SP.lvlX, midY, 'level');
+  g += spWire(SP.lvlX + 13, midY, SP.engX, midY);
+  g += spBox(SP.engX, midY, SP.engW, 'MUBONE', true);
+
+  // ── the control tap: the gate decides whether a mark is painted ──
+  const tapX = SP.lvlX + 20;
+  g += `<path class="sp-wire sp-ctl" d="M${tapX} ${midY} V${gateY} H${SP.engX}"/>`;
+  g += `<circle class="sp-dot" cx="${tapX}" cy="${midY}" r="2.2"/>`;
+  g += spBox(SP.engX, gateY, 44, 'gate');
+  g += `<path class="sp-wire sp-ctl" d="M${SP.engX + 44} ${gateY} H${SP.engX + 62}"/>`;
+  g += spArrow(SP.engX + 62, gateY);
+  g += `<text class="sp-cap" x="${SP.engX + 74}" y="${gateY + 4}">paint · sphere</text>`;
+
+  // ── the dry monitor: a real path, and it shows its switch ──
+  const dryOn = dry !== 'off';
+  const dcls  = dryOn ? '' : 'sp-off';
+  // +44, not +34: the caption is centred on the amp and at +34 it reached
+  // back across the riser feeding it.
+  const dryX = SP.lvlX + 44;
+  g += `<path class="sp-wire ${dcls}" d="M${tapX} ${midY} V${dryY} H${dryX}"/>`;
+  if (dryOn) {
+    // The mode rides the amp's own label rather than a caption beside it: a
+    // sentence there crossed the wire it was describing, and the Monitor
+    // row already explains what auto does. The diagram says WHICH, not why.
+    g += spAmp(dryX, dryY, dry === 'auto' ? 'dry · auto' : 'dry');
+    g += `<path class="sp-wire" d="M${dryX + 13} ${dryY} H${SP.outX}"/>`;
+  } else {
+    // An open contact, and the run STOPS there. Drawing the rest of it faint
+    // still drew it — a dead path that reaches its destination is a picture
+    // of a path that works.
+    g += `<path class="sp-wire sp-off" d="M${dryX} ${dryY} h10"/>`;
+    g += `<path class="sp-wire sp-off" d="M${dryX + 10} ${dryY} l9 -6"/>`;
+    g += `<text class="sp-cap sp-off" x="${dryX + 24}" y="${dryY + 4}">dry monitor off</text>`;
+  }
+  // both the instrument and the dry monitor land on the speaker buses
+  g += `<path class="sp-wire" d="M${SP.engX + SP.engW} ${midY} H${SP.outX}"/>`;
+  if (dryOn) {
+    g += `<circle class="sp-dot" cx="${SP.outX}" cy="${midY}" r="2.2"/>`;
+    g += `<path class="sp-wire" d="M${SP.outX} ${dryY} V${midY}"/>`;
+  }
+
+  // ── the output bus: master per speaker, then the ceiling, then the device ──
+  g += spWire(SP.outX, midY, SP.outX + 26, midY);
+  g += spBus(SP.outX + 14, midY, nHouse);
+  g += spAmp(SP.outX + 26, midY, 'master');
+  g += spWire(SP.outX + 39, midY, SP.ceilX, midY);
+  g += spBox(SP.ceilX, midY, SP.ceilW, 'ceiling');
+  g += spWire(SP.ceilX + SP.ceilW, midY, SP.ifX - 8, midY);
+  g += spBus(SP.ceilX + SP.ceilW + 14, midY, nHouse);
+  g += spArrow(SP.ifX - 8, midY);
+  g += `<text class="sp-cap" x="${SP.ifX + 4}" y="${midY + 4}">interface</text>`;
+
+  // The headphone pair is its own destination and its own ceiling group — a
+  // hot monitor mix must not duck the room (ceiling.worklet.js), so it is
+  // drawn as the separate run it is.
+  if (nMon) {
+    const hy = midY - 26;
+    g += `<path class="sp-wire" d="M${SP.outX} ${midY} V${hy} H${SP.ceilX}"/>`;
+    g += spBus(SP.outX + 14, hy, nMon);
+    g += spBox(SP.ceilX, hy, SP.ceilW, 'ceiling');
+    g += spWire(SP.ceilX + SP.ceilW, hy, SP.ifX - 8, hy);
+    g += spArrow(SP.ifX - 8, hy);
+    g += `<text class="sp-cap" x="${SP.ifX + 4}" y="${hy + 4}">phones</text>`;
+  }
+
+  el.innerHTML = `<svg viewBox="0 0 560 ${H}" width="100%" height="${H}" preserveAspectRatio="xMidYMid meet" role="img"
+    aria-label="signal path: ${sends.length} of ${n} hardware channels summed to mono, into the instrument; dry monitor ${dry}; ${nHouse} channels out through master and the ceiling${nMon ? `, plus a ${nMon}-channel headphone run` : ''}">${g}</svg>`;
+
+  // …then centre what was actually DRAWN. Centring the viewBox is not the
+  // same thing: the ink ran x≈12 to x≈512 inside a 560-wide box, so the
+  // drawing sat 36px left of centre (measured, 162px of air against 197.7).
+  // getBBox does not settle it either — it is geometry only, no stroke and
+  // no real text metrics, and left 21px of bias. So the correction is made
+  // from the children's own screen rects, which are what the eye sees, and
+  // applied by sliding the viewBox the other way.
+  // CENTRING IS A SECOND PASS, on the next frame. Centring the viewBox is
+  // not centring the picture — the ink ran x≈12 to x≈512 inside a 560-wide
+  // box, so the drawing sat 36px left of centre (measured: 162px of air
+  // against 197.7) — and getBBox does not settle it either, being geometry
+  // only, no stroke and no text metrics: 21px of bias left. So the offset is
+  // measured from the children's own screen rects, which are what the eye
+  // sees, and corrected by sliding the viewBox the other way.
+  //
+  // On the NEXT FRAME because the page is often not settled when this runs:
+  // the diagram is first built while the settings page is still hidden
+  // (renderInputMeters runs at device init), and on a revisit it is rebuilt
+  // mid-transition. Measured both: correct on a redraw, 21.5px out on first
+  // open and again on every revisit, until the measurement moved off the
+  // render's own tick.
+  requestAnimationFrame(() => _spCentre(el, H));
+}
+
+// ── WHICH HARDWARE CHANNELS FEED THE INSTRUMENT (Ek, 2026-09-14) ─────────────
+// "a check box to decide if we are sending that to the mubone system, which
+// takes 1 mono input. so if i check multiple it will sum them into a mono."
+//
+// The graph could already do this — `splitter[i] → routingGain[i] →
+// S.inputGainNode` has been a mono sum bus all along, and the old 'stereo'
+// setting was exactly two channels enabled at once. What was missing was the
+// ability to say so per channel, and a TRIM per channel to balance them with.
+// So `routingGain[i]` carries `send ? dbToLinear(trim) : 0` now, and the
+// single main-channel setting is derived from the set rather than driving it.
+//
+// `S.inputSends` is the truth: an array of channel indices, never empty if it
+// can help it — an input with nothing sent is an instrument that hears
+// nothing, which is a state worth being able to reach but not to land in by
+// accident (a device swap keeps channel 0 if the old set is out of range).
+function inputSends() {
+  const n = as.inputAnalysers.length || 1;
+  let set = Array.isArray(S.inputSends) ? S.inputSends.filter(i => i >= 0 && i < n) : null;
+  if (!set || !set.length) set = [0];
+  return set;
+}
+function isSending(ch) { return inputSends().includes(ch); }
+function channelTrimDb(ch) { return as.inputGains[String(ch)] ?? 0; }
+
+/** Push the trim × send of every channel into its routing gain. */
+function applyInputRouting() {
+  if (!_rtInputRoutingGains?.length) return;
+  const sends = inputSends();
+  const t = S.audioCtx?.currentTime ?? 0;
+  _rtInputRoutingGains.forEach((g, i) => {
+    const v = _rtInputSilenced || !sends.includes(i) ? 0 : dbToLinear(channelTrimDb(i));
+    g.gain.setTargetAtTime(v, t, 0.01);
+  });
+  // The one channel the rest of the app still asks about (the meter
+  // highlight, ui-source's label) is the FIRST one sent. Derived, never set:
+  // two sources for "which channel" is how the dropdown and the graph used to
+  // disagree.
+  S.mainInputChannel = sends.length > 1 ? 'stereo' : sends[0];
+}
+
+function setChannelTrim(ch, db) {
+  as.inputGains[String(ch)] = db;
+  applyInputRouting();
+  saveAllDefaults();
+}
+function setChannelSend(ch, on) {
+  const set = new Set(inputSends());
+  if (on) set.add(ch); else set.delete(ch);
+  S.inputSends = [...set].sort((a, b) => a - b);
+  if (!S.inputSends.length) S.inputSends = [ch];   // never leave it deaf
+  applyInputRouting();
+  renderInputMeters();
+  renderSignalPath();
+  saveAllDefaults();
 }
 
 // ── Output mapping table ──────────────────────────────────────────────────────
@@ -570,134 +908,35 @@ async function applySpeakerAngleEdit(busIdx, angleDeg) {
   if (totalCh) {
     await initSpeakerBuses(totalCh);
     renderOutputMeters();
-    renderRoutingTable();
-  }
-}
-
-// Reset all custom angles back to computed defaults.
-async function resetSpeakerAngles() {
-  S.customSpeakerAngles = null;
-  saveCustomSpeakerAngles();
-  const totalCh = S.speakerBuses?.numChannels;
-  if (totalCh) {
-    await initSpeakerBuses(totalCh);
     renderOutputMeters();
-    renderRoutingTable();
   }
 }
 
-function renderRoutingTable() {
-  const wrap = document.getElementById('asRoutingTable');
-  if (!wrap) return;
-  const houseBuses = S.speakerBuses;
-  const nHouse     = houseBuses?.length ?? 0;
-  const nTotal     = S.speakerAnalysers?.length ?? 0;  // house + headphone
+/** Wire the controls a software-output row carries. Same handlers the old
+ *  `.as-io-table` used — only the markup they live in has changed. */
+function wireOutputRowControls(wrap) {
+  wrap.querySelectorAll('.as-io-house-sel, .as-io-hp-sel').forEach(sel =>
+    sel.addEventListener('change', applyOutputMapping));
 
-  if (!nHouse) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
-
-  wrap.style.display = '';
-
-  // Physical output channel options — must span ALL hardware outputs, not just
-  // active buses. S.speakerBuses.numChannels holds the true hardware channel count
-  // (set in initSpeakerBuses); speakerAnalysers.length only counts active buses.
-  const hwTotalCh = S.speakerBuses?.numChannels ?? nTotal;
-  const hwOpts = Array.from({ length: hwTotalCh }, (_, i) =>
-    `<option value="${i}">out ${i + 1}</option>`
-  ).join('');
-
-  // Current house routing (bus i → physical ch i by default)
-  const houseRouting = S.channelRouting ?? houseBuses.map((_, i) => i);
-  // Mixdown defaults: immediately sequential after the last house output
-  const hpL = S.headphoneRouting?.[0] ?? nHouse;
-  const hpR = S.headphoneRouting?.[1] ?? nHouse + 1;
-
-  const hasCustom = !!S.customSpeakerAngles;
-  const isHeadlocked = S.spatialPanning === 'headlocked';
-
-  // Build house rows — now with editable angle + capture button
-  const houseRows = houseBuses.map((b, i) => {
-    const name = `Position ${i + 1}`;
-    const deg  = b.angleDeg.toFixed(1);
-    return `<div class="as-io-row" title="${name} — ${deg}°">
-      <span class="as-io-sw">${name}</span>
-      <input type="number" class="as-io-angle-input" data-bus="${i}"
-             value="${deg}" min="0" max="359.9" step="0.5"
-             title="azimuth in degrees (0° = front, 90° = right)">
-      <span class="as-io-angle-unit">°</span>
-      <button class="set-btn set-btn--sm as-io-capture-btn" data-bus="${i}"
-              ${isHeadlocked ? 'disabled title="capture only works in worldlocked mode — headlocked angles are relative to the listener, not the room"' : 'title="capture current cursor azimuth"'}>⊕</button>
-      <select class="as-io-sel as-io-house-sel" data-bus="${i}">${hwOpts}</select>
-    </div>`;
-  }).join('');
-
-  // Build stereo mixdown rows (only when mixdown bus is enabled)
-  const hpRows = S.monitorSpeakerBuses?.length ? `
-    <div class="as-io-row as-io-row--hp" title="Stereo Mixdown L — cursor grain monitor mix, left channel">
-      <span class="as-io-sw">Stereo Mixdown L <span class="as-io-angle">mixdown</span></span>
-      <select class="as-io-sel as-io-hp-sel" data-side="L">${hwOpts}</select>
-    </div>
-    <div class="as-io-row as-io-row--hp" title="Stereo Mixdown R — cursor grain monitor mix, right channel">
-      <span class="as-io-sw">Stereo Mixdown R <span class="as-io-angle">mixdown</span></span>
-      <select class="as-io-sel as-io-hp-sel" data-side="R">${hwOpts}</select>
-    </div>` : '';
-
-  // Reset button (only shown when custom angles are active)
-  const resetBtn = hasCustom
-    ? `<div class="as-io-row as-io-row--reset">
-         <button class="as-btn as-io-reset-btn" id="asResetSpeakerAngles"
-                 title="reset all angles to computed defaults">reset angles</button>
-       </div>`
-    : '';
-
-  wrap.innerHTML = `
-    <div class="as-io-table">
-      <div class="as-io-hdr">
-        <span class="as-io-col-sw">software output</span>
-        <span class="as-io-col-angle">azimuth</span>
-        <span class="as-io-col-hw">hardware out</span>
-      </div>
-      ${houseRows}
-      ${hpRows}
-      ${resetBtn}
-    </div>`;
-
-  // Set initial values for house dropdowns and attach listeners
-  wrap.querySelectorAll('.as-io-house-sel').forEach(sel => {
-    const busIdx = parseInt(sel.dataset.bus, 10);
-    sel.value = String(houseRouting[busIdx] ?? busIdx);
-    sel.addEventListener('change', applyOutputMapping);
-  });
-
-  // Angle input change — apply on blur or Enter
   wrap.querySelectorAll('.as-io-angle-input').forEach(inp => {
-    const busIdx = parseInt(inp.dataset.bus, 10);
-    const apply = () => {
-      const val = parseFloat(inp.value);
-      if (!isNaN(val)) applySpeakerAngleEdit(busIdx, val);
-    };
+    const bus = parseInt(inp.dataset.bus, 10);
+    const apply = () => { const v = parseFloat(inp.value); if (!isNaN(v)) applySpeakerAngleEdit(bus, v); };
     inp.addEventListener('change', apply);
-    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); apply(); } });
-  });
-
-  // Capture button — snapshot cursor azimuth into angle field
-  wrap.querySelectorAll('.as-io-capture-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const busIdx = parseInt(btn.dataset.bus, 10);
-      const azDeg = getCursorAzDeg();
-      const inp = wrap.querySelector(`.as-io-angle-input[data-bus="${busIdx}"]`);
-      if (inp) inp.value = azDeg.toFixed(1);
-      applySpeakerAngleEdit(busIdx, azDeg);
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); apply(); }
+      e.stopPropagation();                 // a digit here is not a palette key
     });
   });
 
-  // Reset button
-  document.getElementById('asResetSpeakerAngles')?.addEventListener('click', resetSpeakerAngles);
-
-  // Set initial values for headphone dropdowns
-  const hpSelL = wrap.querySelector('.as-io-hp-sel[data-side="L"]');
-  const hpSelR = wrap.querySelector('.as-io-hp-sel[data-side="R"]');
-  if (hpSelL) { hpSelL.value = String(hpL); hpSelL.addEventListener('change', applyOutputMapping); }
-  if (hpSelR) { hpSelR.value = String(hpR); hpSelR.addEventListener('change', applyOutputMapping); }
+  wrap.querySelectorAll('.as-io-capture-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const bus = parseInt(btn.dataset.bus, 10);
+      const az = getCursorAzDeg();
+      const inp = wrap.querySelector(`.as-io-angle-input[data-bus="${bus}"]`);
+      if (inp) inp.value = az.toFixed(1);
+      applySpeakerAngleEdit(bus, az);
+    });
+  });
 }
 
 // Apply output routing from the table — updates S.channelRouting + S.headphoneRouting
@@ -705,7 +944,7 @@ function renderRoutingTable() {
 function applyOutputMapping() {
   // House routing: collect busIndex → physicalCh from each house dropdown
   const houseMapping = [];
-  document.querySelectorAll('#asRoutingTable .as-io-house-sel').forEach(sel => {
+  document.querySelectorAll('#asOutputMeters .as-io-house-sel').forEach(sel => {
     houseMapping[parseInt(sel.dataset.bus, 10)] = parseInt(sel.value, 10);
   });
   if (houseMapping.length) {
@@ -714,8 +953,8 @@ function applyOutputMapping() {
   }
 
   // Headphone routing: L and R dropdowns
-  const hpSelL = document.querySelector('#asRoutingTable .as-io-hp-sel[data-side="L"]');
-  const hpSelR = document.querySelector('#asRoutingTable .as-io-hp-sel[data-side="R"]');
+  const hpSelL = document.querySelector('#asOutputMeters .as-io-hp-sel[data-side="L"]');
+  const hpSelR = document.querySelector('#asOutputMeters .as-io-hp-sel[data-side="R"]');
   if (hpSelL && hpSelR) {
     S.headphoneRouting = [parseInt(hpSelL.value, 10), parseInt(hpSelR.value, 10)];
     rewireMonitorChannels();
@@ -724,8 +963,6 @@ function applyOutputMapping() {
   setStatus('asOutputStatus', 'ok', 'routing updated');
 }
 
-// Legacy alias so any remaining renderRoutingTable() calls still work
-function renderOutputMappingTable() { renderRoutingTable(); }
 
 // ── Start audio ───────────────────────────────────────────────────────────────
 async function startAudio() {
@@ -847,6 +1084,15 @@ function updateLatency() {
   }
   if (btn) btn.textContent = L.source === 'measured' ? 'Re-measure' : 'Measure';
   if (fgt) fgt.hidden = L.source !== 'measured';
+  // MEASURE'S PRECONDITION, ON THE ROW. It plays six clicks and listens for
+  // them, so it needs a path from the output back to the mic — speakers, or a
+  // cable. That lived only in the description, and a description is the one
+  // place a cut can take it: on a headphone rig Measure would then just fail,
+  // with no standing reason. The app cannot DETECT an acoustic path, and does
+  // not pretend to — a completed measurement is the only proof one existed, so
+  // that is exactly when this goes quiet.
+  const pre = document.getElementById('asLatencyPrereq');
+  if (pre) pre.hidden = L.source === 'measured';
 }
 S._latencyChanged = updateLatency;
 
@@ -891,6 +1137,25 @@ function updateCushionLive() {
   const drops = S.transportDiag.outDropped ? ` · dropped ${S.transportDiag.outDropped}` : '';
   const dry   = S.transportDiag.outDry ? ` · dry ${S.transportDiag.outDry}` : '';
   el.textContent = `out queue ${d.toFixed(1)} ms · in ring ${S.transportDiag.inFillMs.toFixed(1)} ms${skips}${drops}${dry}`;
+  // THE CEILING HAS ITS OWN ROW (2026-09-14). It rode on the transport line
+  // for an hour, which is where the queue depths live and not where anyone
+  // would look for the output stage. `idle` is the answer it should give all
+  // night; a figure means it has taken level off, and the cue is a lever
+  // above it — master, the brush's volume, the pool — not the ceiling.
+  // A STATUS PILL, not a readout (2026-09-14): you cannot set the ceiling, so
+  // the row must not be shaped like something you can. The label is written,
+  // never the pill — `cel.textContent = …` would delete the dot.
+  const cel = document.getElementById('asCeilingLive');
+  if (cel) {
+    const gr = S.transportDiag.ceilingGrDb ?? 0;
+    const engaged = gr < -0.05;
+    const want = engaged
+      ? `−${(-gr).toFixed(1)} dB · ${(S.transportDiag.ceilingEngagedPct ?? 0).toFixed(0)}% of the time`
+      : 'idle';
+    const lbl = cel.querySelector('.set-pill-label') || cel;
+    if (lbl.textContent !== want) lbl.textContent = want;
+    cel.classList.toggle('set-pill--warn', engaged);
+  }
 }
 
 async function handleMeasureLatency() {
@@ -1327,7 +1592,6 @@ async function applyInputDevice() {
     await setupRtAudioInputMeters(nCh);
     repopulateChannelSelect(meteredCh);
     renderInputMeters(S.mainInputChannel ?? 0);
-    renderInputMappingTable();  // show software-path → hardware-channel table
 
     as.started = true;
     const devLabel = devSel.options[devSel.selectedIndex]?.text || String(deviceId);
@@ -1544,7 +1808,7 @@ async function applyOutputDevice() {
       // Show output meters + mapping table now that speaker buses are set up.
       // Also reveal the house-speaker count + stereo mixdown controls.
       renderOutputMeters();
-      renderRoutingTable();
+    renderOutputMeters();
       const houseRow = document.getElementById('asHouseSpeakersRow');
       if (houseRow) houseRow.style.display = '';
       syncHouseSpeakersSeg();  // reveals mixdown row, syncs dropdown + checkbox
@@ -1598,7 +1862,8 @@ function _buildPayloads() {
       inputDeviceName:   _inputDeviceName,
       outputDeviceId:    _outputDeviceId,
       outputDeviceName:  _outputDeviceName,
-      mainInputChannel:  S.mainInputChannel ?? 0,
+      mainInputChannel:  S.mainInputChannel ?? 0,   // derived; kept for older builds reading this file
+      inputSends:        inputSends(),
 
       // Engine
       sampleRate:       S.audioCtx?.sampleRate ?? null,
@@ -1848,6 +2113,16 @@ export function loadAudioDefaults() {
       _outputDeviceId = d.outputDeviceId;
       S._savedOutputDeviceId = d.outputDeviceId;
     }
+    // The send SET is the truth. A file from before it existed carries only
+    // `mainInputChannel`, so read that once into a set — 'stereo' was two
+    // channels sent at once, which is exactly what the set now says.
+    if (Array.isArray(d.inputSends) && d.inputSends.length) {
+      S.inputSends = d.inputSends.filter(i => Number.isInteger(i) && i >= 0);
+    } else if (d.mainInputChannel === 'stereo') {
+      S.inputSends = [0, 1];
+    } else if (typeof d.mainInputChannel === 'number') {
+      S.inputSends = [d.mainInputChannel];
+    }
     if (d.mainInputChannel === 'stereo' || typeof d.mainInputChannel === 'number') S.mainInputChannel = d.mainInputChannel;
 
     // Engine
@@ -2030,7 +2305,6 @@ export async function activateSavedInputDevice(nCh, dev = null) {
 
   // Render meters + mapping table (may be invisible until modal opens, but DOM ready)
   renderInputMeters(selCh);
-  renderInputMappingTable();
 
   // Mark as.started so modal-open knows input is already live
   as.started = true;
@@ -2109,14 +2383,14 @@ export function initAudioSettings() {
         if (ogVal)    ogVal.textContent = formatDb(Math.round(liveDb * 2) / 2);
       }
 
-      // Sync input gain slider to the saved gain for the currently selected channel
+      // Sync the sum's level slider to the live node.
       {
-        const ch = document.getElementById('asInputChannel')?.value ?? '0';
-        const savedGain = as.inputGains[ch] ?? 0;
+        const lin = S.inputGainNode?.gain.value ?? S.inputGainValue ?? 1;
+        const db  = 20 * Math.log10(Math.max(lin, 1e-6));
         const igSlider = document.getElementById('asInputGain');
         const igVal    = document.getElementById('asInputGainVal');
-        if (igSlider) igSlider.value = String(savedGain);
-        if (igVal)    igVal.textContent = formatDb(savedGain);
+        if (igSlider) igSlider.value = String(db.toFixed(1));
+        if (igVal)    igVal.value = trimDb(db);
       }
 
       // Sync paint gate slider to S.paintGateThreshold (may have been restored from saved defaults)
@@ -2141,7 +2415,7 @@ export function initAudioSettings() {
       // If speaker buses are already running (startup auto-select), show meters + routing
       if (S.speakerAnalysers?.length) {
         renderOutputMeters();
-        renderRoutingTable();
+    renderOutputMeters();
         const houseRow = document.getElementById('asHouseSpeakersRow');
         if (houseRow) houseRow.style.display = '';
         // Sync house-speakers seg to S.numHouseSpeakers
@@ -2153,8 +2427,7 @@ export function initAudioSettings() {
       // If input is already running, render its meters + mapping table and show active status.
       if (as.inputAnalysers.length > 0) {
         renderInputMeters();
-        renderInputMappingTable();
-        if (as.started && _inputDeviceId != null) {
+              if (as.started && _inputDeviceId != null) {
           const nCh = as.inputAnalysers.length;
           const chDesc = S.mainInputChannel === 'stereo' ? 'stereo (L+R)' : `ch ${(S.mainInputChannel ?? 0) + 1}`;
           setStatus('asInputStatus', 'ok', `${nCh} ch input active — recording ${chDesc}`);
@@ -2243,32 +2516,52 @@ export function initAudioSettings() {
     });
   }
 
-  // Input gain — browser only (in Electron, trim at the interface hardware).
-  // Writes to S.inputGainNode which sits between the mic source and S.inputAnalyser
-  // (the recording path), so this actually affects what gets recorded.
-  const inputGainRow = document.getElementById('asInputGain')?.closest('.set-row');
-  if (window.electronBridge?.isElectron && inputGainRow) {
-    inputGainRow.style.display = 'none';
-  }
-  document.getElementById('asInputGain')?.addEventListener('input', e => {
-    const db  = parseFloat(e.target.value);
-    const ch  = document.getElementById('asInputChannel')?.value ?? '0';
-    as.inputGains[ch] = db;  // remember gain for this channel
+  // Input gain — BOTH builds since 2026-09-14 (Ek). It writes S.inputGainNode,
+  // which sits between the source and S.inputAnalyser on either path, so it
+  // is the same node and the same effect in Electron as in the browser: it
+  // moves what is recorded and what the dry monitor carries. It used to be
+  // hidden here on the argument that the MOTU's trim should own the decision;
+  // the trim still owns the part that matters (the converter's headroom, and
+  // the noise floor under it), but the interface's knob position is not in
+  // the setup file and not every input has one.
+  // THE SUM'S LEVEL, not a per-channel one (2026-09-14). It used to write
+  // `as.inputGains[ch]` — the trim of whichever channel was selected — and
+  // the app had no other input gain. The channels keep their own trims on
+  // their own rows now, so this is what it always looked like it was: one
+  // level over the summed mono input, after the balance and before the
+  // engine. Same id, so the footer's `in` mirror needs no change.
+  const _setSumLevel = db => {
+    const v = Math.max(-24, Math.min(24, Math.round(db * 2) / 2));
+    const sl = document.getElementById('asInputGain');
     const lbl = document.getElementById('asInputGainVal');
-    if (lbl) lbl.textContent = formatDb(db);
-    // Write to S.inputGainNode — actual recording input gain
-    if (S.inputGainNode) S.inputGainNode.gain.value = dbToLinear(db);
-    // Also update the meter gain node(s) so bars respond live while dragging
-    const lin = dbToLinear(db);
-    if (ch === 'stereo') {
-      // Stereo mode sums L+R — update both channel meter gain nodes
-      if (as._meterGainNodes[0]) as._meterGainNodes[0].gain.value = lin;
-      if (as._meterGainNodes[1]) as._meterGainNodes[1].gain.value = lin;
-    } else {
-      const idx = parseInt(ch, 10) || 0;
-      if (as._meterGainNodes[idx]) as._meterGainNodes[idx].gain.value = lin;
-    }
-  });
+    if (sl) sl.value = String(v);
+    if (lbl) lbl.value = trimDb(v);          // the channels' column format
+    const lin = dbToLinear(v);
+    if (S.inputGainNode) S.inputGainNode.gain.value = lin;
+    S.inputGainValue = lin;
+    S._syncAudioPanelLevels?.();             // the footer's `in` mirror
+    saveAllDefaults();
+  };
+  document.getElementById('asInputGain')?.addEventListener('input', e => _setSumLevel(parseFloat(e.target.value)));
+  document.getElementById('asInputGain')?.addEventListener('dblclick', () => _setSumLevel(0));
+  // The number is a control too (Ek, 2026-09-14): type and Enter, or
+  // double-click to reset. Same behaviour as a channel's trim beside it.
+  {
+    const lbl = document.getElementById('asInputGainVal');
+    const show = () => { const lin = S.inputGainNode?.gain.value ?? 1;
+      lbl.value = trimDb(Math.round(20 * Math.log10(Math.max(lin, 1e-6)) * 2) / 2); };
+    const commit = () => { const n = parseFloat(String(lbl.value).replace('−', '-'));
+      if (Number.isFinite(n)) _setSumLevel(n); else show(); };
+    lbl?.addEventListener('focus', () => lbl.select());
+    lbl?.addEventListener('change', commit);
+    lbl?.addEventListener('blur', commit);
+    lbl?.addEventListener('dblclick', () => _setSumLevel(0));
+    lbl?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { commit(); lbl.blur(); }
+      else if (e.key === 'Escape') { show(); lbl.blur(); }
+      e.stopPropagation();
+    });
+  }
 
   // ── Paint gate slider ──────────────────────────────────────────────────────
   const gateSlider = document.getElementById('asPaintGateSlider');
@@ -2478,13 +2771,9 @@ export function initAudioSettings() {
     // reflect the user's actual selection (was missing — caused stale highlight)
     S.mainInputChannel = isStereo ? 'stereo' : chIndex;
 
-    // Restore the remembered gain for this channel and update the slider + gain node
-    const savedGain = as.inputGains[val] ?? 0;
-    const gainSlider = document.getElementById('asInputGain');
-    const gainLbl    = document.getElementById('asInputGainVal');
-    if (gainSlider) gainSlider.value = String(savedGain);
-    if (gainLbl)    gainLbl.textContent = formatDb(savedGain);
-    if (S.inputGainNode) S.inputGainNode.gain.value = dbToLinear(savedGain);
+    // The per-channel trim lives on that channel's own row now and is
+    // applied by applyInputRouting — changing which channel is sent must not
+    // move the SUM's level, which is what this used to do.
 
     // Both assignments above fire no `input` event, so the main-UI audio panel's
     // mirror listener never runs — push channel + gain into it explicitly.
@@ -2532,7 +2821,7 @@ export function initAudioSettings() {
         S.headphoneRouting = null;
         await initSpeakerBuses(totalCh);
         renderOutputMeters();
-        renderRoutingTable();
+    renderOutputMeters();
       }
     }
   });
@@ -2560,7 +2849,7 @@ export function initAudioSettings() {
       S.headphoneRouting = null;
       await initSpeakerBuses(totalCh);
       renderOutputMeters();
-      renderRoutingTable();
+    renderOutputMeters();
     }
   });
 
@@ -2602,10 +2891,12 @@ export function initAudioSettings() {
 
   // ── S callback for MIDI / OSC access to master output gain ──────────────
   // Accepts dB value (-60 to +18), syncs the slider, label, and audio nodes.
-  // Upper bound is +18, not the +6 this shipped with: the Electron path never
-  // passes through the soft clipper (browser-only, see js/audio.js), so it has
-  // no makeup gain at all and unity is as loud as it gets. Keep in step with
-  // the max on asOutputGain / apMasterGainSlider and the master_vol ccFn.
+  // Upper bound is +18, not the +6 this shipped with: there is no make-up
+  // gain anywhere in the path — the browser's WaveShaper, which had 4× of it,
+  // was deleted on 2026-09-14 and both builds end in the ceiling now — so
+  // unity is as loud as the material is, and the headroom above it is the
+  // performer's. Keep in step with the max on asOutputGain /
+  // apMasterGainSlider and the master_vol ccFn.
   S._setOutputGainDb = (db) => {
     db = Math.max(-60, Math.min(18, db));
     as.outputGain = db;
@@ -2631,18 +2922,33 @@ export function initAudioSettings() {
   // Direct listener on dropdown covers UI changes; wrapping S._setSpatialPanning
   // covers MIDI/OSC toggles that bypass the dropdown.
   document.getElementById('asSpatialPanningSel')?.addEventListener('change', () => {
-    setTimeout(renderRoutingTable, 0);
+    setTimeout(renderOutputMeters, 0);
   });
   setTimeout(() => {
     const orig = S._setSpatialPanning;
     if (orig) {
       S._setSpatialPanning = (mode) => {
         orig(mode);
-        renderRoutingTable();
+    renderOutputMeters();
       };
     }
   }, 0);
 
+  // ── THE BOOT MIRROR (2026-09-14) ─────────────────────────────────────────
+  // `loadAudioDefaults()` runs before this module has a setter (main.js: 232
+  // against 330), so a restored master landed in `S.outputGainValue` and
+  // nowhere else. Measured on a fresh boot with a saved default of +0.3 dB:
+  // the engine ran at +0.3 while BOTH faders read −6.0, the markup's value —
+  // a 6.3 dB lie, and the first touch of either fader jumped the output by
+  // that much. The modal healed itself when opened (it syncs from the live
+  // bus); the footer never did, because it mirrors the modal ELEMENT at init
+  // and that element still held −6.
+  //
+  // One push through the canonical setter fixes both: it writes the slider,
+  // the label, the nodes and `S._syncAudioPanelLevels`, and initAudioPanel
+  // (main.js: 693) copies the corrected element afterwards. Idempotent when
+  // nothing was restored — it re-applies the same −6.
+  if (typeof as.outputGain === 'number') S._setOutputGainDb(as.outputGain);
 }
 
 // Sync the house-speakers dropdown + stereo mixdown checkbox to S state.

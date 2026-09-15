@@ -333,6 +333,24 @@ function tick() {
     fill.classList.toggle('warn', recPct >= 0.80 && recPct < 0.95);
     fill.classList.toggle('crit', recPct >= 0.95);
   }
+  // …and the number beside it (Ek, 2026-09-14): m:ss RECORDED, which is the
+  // one fact the bar cannot give. The bar carries the fraction of the budget,
+  // so the pair says how much and how close, never the same thing twice.
+  const recNum = document.getElementById('tcRecNum');
+  if (recNum) {
+    const t = Math.max(0, Math.round(perf.recTotalSec || 0));
+    const txt = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    if (recNum.textContent !== txt) recNum.textContent = txt;
+    recNum.classList.toggle('warn', recPct >= 0.80 && recPct < 0.95);
+    recNum.classList.toggle('crit', recPct >= 0.95);
+  }
+  const recWrap = document.getElementById('tcRecWrap');
+  if (recWrap && lim > 0) {
+    const tot = Math.round(lim), t = Math.max(0, Math.round(perf.recTotalSec || 0));
+    const mmss = x => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, '0')}`;
+    const want = `recording memory — ${mmss(t)} of ${mmss(tot)} held in RAM. Sweep clears everything unpinned and empties it; at full, a new take is refused until you do`;
+    if (recWrap.title !== want) recWrap.title = want;
+  }
   // TEXT ONLY WHEN THERE IS SOMETHING TO DO. The bar carries the level; words
   // appear at the ceiling, where the instrument has actually stopped taking
   // new material and "sweep" is the answer. Alt-lock is a held state and wins
@@ -397,7 +415,11 @@ export function initTileLayout() {
       surface: '<rect x="3.6" y="5.6" width="16.8" height="12.8" rx="3.2"/>',
       sensor:  '<circle cx="12" cy="12" r="2.2"/><path d="M7.8 7.8a5.9 5.9 0 0 0 0 8.4M16.2 7.8a5.9 5.9 0 0 1 0 8.4"/><path d="M5 5a9.9 9.9 0 0 0 0 14M19 5a9.9 9.9 0 0 1 0 14"/>',
     };
-    const svg = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+    // The mode's own class rides on the svg: the three glyphs are 13.8, 16.8
+    // and 19.8 units wide, so the optical-size factor (`--gk`, style.css) is
+    // the GLYPH's and not the button's — without it the camera icon changed
+    // size when you changed camera mode.
+    const svg = (d, m) => `<svg class="cam-g cam-g--${m}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
     // ONE ICON, AND THE CHOICE DROPS DOWN (Ek, 2026-09-13: "for the 3 way
     // selector make the same icon size and design but just 1 icon and when you
     // click it a thing pops down or out and then you can select from the 3
@@ -412,7 +434,7 @@ export function initTileLayout() {
       return `<button type="button" class="tc-cam-row" role="menuitemradio" aria-checked="false"` +
         ` data-cam="${b.dataset.mode}" data-word="${word.replace(/"/g, '&quot;')}"` +
         ` title="${(b.getAttribute('data-title') || b.title || '').replace(/"/g, '&quot;')}">` +
-        (CAM_GLYPH[b.dataset.mode] ? svg(CAM_GLYPH[b.dataset.mode]) : '') +
+        (CAM_GLYPH[b.dataset.mode] ? svg(CAM_GLYPH[b.dataset.mode], b.dataset.mode) : '') +
         `<span class="tc-cam-word">${word}</span></button>`;
     }).join('');
     const closeCam = () => {

@@ -82,6 +82,7 @@ export const KEYS = [
   { key: 'mubone_cycle_off',         cat: 'ui', note: 'tool and lens ids SKIPPED when a palette tile cycles (2026-09-03 evening) — the rail\'s cycle mark; stored as exclusions so new tools are in by default' },
   { key: 'mubone_slots',             cat: 'ui', note: 'the palette\'s three slots, { loop, granular, erase } → tile id (2026-09-03 evening; folded mubone_belt and the mubone_brush_slot / mubone_erase_slot pair, migrated on first load)' },
   // ── the palette (2026-09-11) ──
+  { key: 'mubone_recent_pieces',     cat: 'ui', note: 'the File > Open Recent list: up to 8 .mubone paths, most recent first (js/piece.js). Per-machine, like everything else here — the pieces themselves are files' },
   { key: 'mubone_palette',           cat: 'ui', note: 'the palette: [{ id, verb }] in strip order, ≤ 9 (tiles.js LS_PALETTE) — position N is what `palette_N`, the key digit and the OSC address name' },
   { key: 'mubone_palette_verbs',     cat: 'ui', guards: ['mubone_palette'],
     note: 'stamp: tiles.js derived each tile\'s verb from the pre-2026-09-11 per-verb bindings once; without it the derivation re-runs over the maps' },
@@ -124,11 +125,8 @@ export const KEYS = [
 
   // ── ui ──
   { key: 'mubone_uiScale',              cat: 'ui', note: 'also read pre-paint by the boot script in index.html' },
-  { key: 'mubone_darkMode',             cat: 'ui' },
   { key: 'mubone_settings_section',     cat: 'ui', note: 'the settings door reopens on the section last open (ui-settings.js). Unregistered from c425c3e to 1.15: the reset page listed it as an orphan and probe-selftest read the orphan row as reload drift' },
   { key: 'mubone_fovDeg',               cat: 'ui' },
-  { key: 'mubone_edgeIndicator',        cat: 'ui' },
-  { key: 'mubone_edgeIndicatorSize',    cat: 'ui' },
   { key: 'mubone-learn-mode',           cat: 'ui' },
   { key: 'mubone_build',                cat: 'ui', note: 'the service worker CACHE_VERSION the hosted demo last booted on (main.js _wipeOnNewBuild, 2026-09-12): a different one wipes the store and reloads — collaborators open every new build at factory. Electron and localhost never write it' },
   { key: 'mubone_hand',                 cat: 'ui', note: 'the tool IN HAND — what the spacebar and a left-click on the sphere play (tiles.js, 2026-09-12); a tool id' },

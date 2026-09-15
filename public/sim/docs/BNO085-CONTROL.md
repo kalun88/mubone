@@ -167,3 +167,22 @@ Sensible order of work: §3.4 (persistence) → §5.1 (int encoding) → §3.2 (
 - [BNO080/BNO085 Sensor Calibration Procedure (1000-4044)](https://xdevs.com/doc/CEVA/BNO080-BNO085-Sesnor-Calibration-Procedure.pdf)
 - [BNO08X Datasheet](https://www.ceva-ip.com/wp-content/uploads/BNO080_085-Datasheet.pdf)
 - [CEVA/Hillcrest `sh2.h` driver API](https://github.com/hcrest/bno080-driver/blob/master/sh2.h) — `sh2_saveDcdNow` vs `sh2_setDcdAutoSave`, `sh2_setReorientation`, `sh2_clearTare`, `SH2_CAL_*`
+
+### From the settings dialog
+
+Cut from the settings rows on 2026-09-14 when descriptions went to one sentence under 92
+characters (align-audit R5). The rows keep the sentence that says what the control does; this is
+everything else they were carrying. **Checked before appending: only 7 of the 40 distinctive
+clauses across all nineteen cuts appeared anywhere in docs/ beforehand, so this is not a
+duplicate of what follows — for most of these rows the settings dialog was the only place the
+information existed.**
+
+**Calibration.** The chip's own bias learning, one routine per sensor, off on every boot: the device readout is what is actually on. Accel and gyro for a show; the mag routine only matters with the magnetometer on and streams mag reports at the full rate. The gyro learns its bias only while the sensor is still on a surface, three seconds or more, and the bias moves as the board warms — power on early, rest it on a table, then zero heading. Every change here is one write that also clears the sensor's on-table gyro calibration, a firmware bug, so set the boxes once and leave them.
+
+**Magnetometer.** On, heading holds to a global north but bends near metal and jumps as you move. Off, heading has no reference: gestures are precise and the heading drifts at the rate of the gyro's bias. Off for a show. The sensor boots with it on and nothing re-sends this, so switch it off after every power-up.
+
+**Access Point.** The instrument's own network at 192.168.4.1, no router in the path: a laptop that joins it gets an address from the instrument and a 6 ms round trip. Off on every boot whatever it was before, so switch it on after each power-up; switching it off while connected through it drops this connection.
+
+**Access Point Name.** What the network is called and its password. The instrument keeps both and reports neither; blank is the instrument's own name and its factory password. Read when the access point comes up, so setting them restarts it if it is on.
+
+**Router.** Join a network. The instrument keeps the name and password and reports neither back — the Uplink row says which one it was last asked for. Joining over wifi drops this connection while it moves; the cable is quicker.

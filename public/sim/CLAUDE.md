@@ -1,8 +1,8 @@
 # CLAUDE.md — Project Context for Cowork / Claude Code
 
-> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-13 (1.16 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
+> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-15 (5.0 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
 
-> **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`. It was 72 KB of changelog on 2026-09-05 — no paragraph here per change.
+> **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative — no paragraph here per change. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`.
 
 ---
 
@@ -63,13 +63,12 @@ The repo carries finished experiments alongside running code. Recency is not evi
   unless it is declared in `KNOWN_ORPHANS`, which is empty). `node scripts/deadweight-audit.js`
   lists what has drifted toward the wrong side.
 - **`docs/`** — the gate is the status banner under the H1. See the table below.
-- **`sandbox/` is gone (2026-09-05).** The graveyard is git. `docs/archive/SANDBOX.md` is the ledger:
-  every file that left, why, and how to read it (`git log --diff-filter=D -- <path>`). A `sandbox/…`
-  path a doc still cites means exactly that. Nothing comes back from history unless Ek names it.
-- **Max is a prototyping tool, not part of the app** (Ek, 2026-09-05): a Max patch tests custom OSC
-  mappings and tries a control on the fly. No module loads anything from it, the build never carried
-  it, the old patches are git history (the ledger). Never add a code path that assumes Max, never
-  describe it as a setup step, and name OSC senders generically with Max as one example.
+- **`sandbox/` is gone (2026-09-05).** The graveyard is git; `docs/archive/SANDBOX.md` is the ledger —
+  every file that left, why, and how to read it (`git log --diff-filter=D -- <path>`). Nothing comes
+  back from history unless Ek names it.
+- **Max is a prototyping tool, not part of the app** (Ek, 2026-09-05): a patch tests custom OSC
+  mappings on the fly. No module loads anything from it; the old patches are git history. Never add a
+  code path that assumes Max, never describe it as a setup step, and name OSC senders generically.
 - **`scripts/`** — the verification harnesses and launch helpers, all run by hand. Which one covers
   which file, and what each guards, is `docs/AUDITS.md`; `node scripts/audit-for.js` answers it from
   the diff. `dev-bridge.js` is the transport behind `.dev-bridge/`, `lib/rig.js` its node client.
@@ -103,6 +102,15 @@ demo in a phone's browser** (`js/mobile.js`: gyro steers, a touch is the spaceba
 no separate app, no phone work beyond `node scripts/phone-audit.js` staying green.
 
 ## Design and UX work
+
+**Writing a GUI element? Read `docs/GUI-BUILD-SHEET.md` — that one page, not the long docs.**
+It is the lookup: scope table, spacing scale, type, radius, both kits, the colour order of
+operations, motion, and the always-wrong list. Every row is already argued somewhere else and the
+*why* is not your problem while you are building. Read `DESIGN-SYSTEM.md` when you want to
+**change** a rule; read the build sheet when you want to **follow** one.
+
+**If the answer is not on the sheet, use the nearest thing that already exists.** Do not invent a
+size, hue or radius. Adding to a kit is a decision Ek makes, not a side effect of a feature.
 
 **Read `docs/DESIGN-SYSTEM.md` before touching `css/`, UI markup, or the cursor.** It carries Ek's
 standing brief in his own words (flat, no gradients, simplicity as the tie-breaker, symbol and
@@ -140,28 +148,23 @@ words — read that entry before touching the area, and put a new ruling there, 
 - **`_held` is what plays, null between presses** (`js/tiles.js`). The engine flags (`traceMode`, `commitMode`, `scanMuted`, `lensReads`, `composerMode`) are the truth underneath; the tile screen drives them and follows them. `docs/archive/BRUSH-MODEL.md`.
 - **One screen, and the rig cabinet** (`js/tile-layout.js`): the tile screen IS the app. `.top-bar` and `.right-panel` are permanently `display:none` and hold the 41 cabinet elements the engine pages write through. **Never delete a control there because nothing shows it** — move it to whatever owns its state, `engine-audit` green after.
 - **ONE TILE, ONE VERB, and the verb is the TILE's** (`docs/PALETTE-GUI.md` is the authority — read it): `mubone_palette` is `[{id,verb}]`, ≤ 9; a tile fires `bang` · `momentary` · `toggle`, set by right-click on the strip tile from `verbsOf`. One action and one OSC address per POSITION (`palette_N`; its `type` is a getter over the verb), the same tool may sit twice in two verbs, built by DRAG only. The verb is DRAWN as the shape — `border-radius` (`VERB_RADIUS`).
-- **The hand, and quick access** (2026-09-12; arming stays deleted). **The hand is ONE tool** (`inHand`): a CLICK on its row or tile picks it; **space** and a **left-click on the sphere** play it in one global verb (`handVerb`), the hand tile at the strip's head; both are unlearnable. **The strip is quick access**: a tile fires from its own key in its own verb, never touching the hand; a key belongs to its TILE (a drop takes the next free digit); its sticker is the learn cell. `Tab` shows the tool rail, never a drawer; the row's panel button (`[data-more]`) is the drawer's door. **Every learned key and note is a button** — one recogniser.
+- **The hand is ONE tool** (`inHand`), played by **space** and a left-click on the sphere in one global verb (`handVerb`); **the strip is quick access** — a tile fires from its own key in its own verb, never touching the hand. `Tab` shows the tool rail, never a drawer; the row's panel button (`[data-more]`) is the drawer's door. **Every learned key and note is a button** — one recogniser.
 - **Overdub** (tape kind) records into the NEAREST pinned loop as a phase-locked layer on the master's gain nodes, pass by pass; nothing pinned, the first take IS the main loop, pinned on release like the looper. **Wash** (grain kind) pins its stroke at release as a moving cloud through the grain sheet's `on end` row (`S.traceMode`: `trace` / `trace+cloud`; `trace+loop` is deleted). `docs/archive/OVERDUB-PLAN.md`.
 - **Shape encodes affordance** (rectangle = action, switch = yes/no, capsule = which one), **one hue per engine** (`--eng-*`), **never dim to mean anything**, flat surfaces. A true boolean on an engine sheet is the SWITCH, not an `on | off` capsule (2026-09-07). `docs/INSTRUMENT-GUI.md`.
+- **A piece is the music, the rig is an export** (`js/piece.js`; `.mubone` is a zip of manifest + float32 audio, `js/mubone-file.js`): ⌘S · ⇧⌘S · ⌘O, a File menu, a quit guard, no autosave, nothing migrates.
 - **One settings door** (`#settingsModal`, `js/ui-settings.js`): a section's body is the REAL modal's `.mu-dialog` moved in and moved back on close — never a copy, and anything borrowed must be returned. A setting with no nav item has no way in.
 - **The engine page** (`renderProps`): one line per parameter, every number typeable, double-click resets to the tick. A `slider` param's raw value is its POSITION (the grain sliders are log-mapped) — typed values go through the numbox's `fromDisplay`, never a re-derived one.
 - **Two left rails** (`#toolRail`, `#propRail`) overlay the stage, never resizing the sphere. A row that is a CHOICE (a lens, a source) wears `.on`; `.open` is the drawer's mark. A tool row wears neither.
-- **The loop follows the button, and the machine knows its latency** (`js/latency.js`): a tape take stamps press and release on the audio clock; `S.latency` is estimated from the streams or measured by loopback; one stall cushion (`S.audioCushionMs`, 10 ms) is the depth of both audio hops, which are MessagePorts worklet ↔ the audio host — **the GUI thread is not in the audio path**. On a rig the engine's device and RtAudio's must be the same device. Reasoning: `docs/RULINGS.md` "the two IPC hops are bounded".
+- **The loop follows the button, and the machine knows its latency** (`js/latency.js`): press and release stamped on the audio clock, `S.latency` estimated or measured by loopback, one cushion (`S.audioCushionMs`, 10 ms) for both MessagePort hops — **the GUI thread is not in the audio path**. `docs/RULINGS.md` "the two IPC hops are bounded".
 - **A pinned cloud owns its material** (`grain.js` `_refreshCloudClaims`): the cursor never granulates inside one; the claim is by PINNING, not sounding; `forCursor` keeps the cloud's own playback out of the skip; nearest mode needs its own. **The reach line is one per CANDIDATE** (`S._cursorPool`), the ring one per grain.
-- **Pin groups are derived** (`groupOf(c)` is `c.type`), and **so is audibility** (`js/pins.js` `isPinAudible`: every pin and group has `mute` and `solo`, nothing stores on/off; `applyMix()` makes the engine agree). **Mute is immediate; waiting for the pass end is RELEASE** (unpin). **The selected pin** (`selectedPinSlot`, nearest / oldest) is what unpin takes and the rail marks. Every pin parameter is on Settings → Pins and nowhere else.
-- **A stroke freezes the brush that painted it** (`brush-voicing.js`): `resolveGrainParams()` is the ONE builder of a grain block; voicings are interned and keyed on the TILE; `isCursor` decides a voice's bus. **Wet paint** is the exception: one live voicing per wet brush, every stroke follows its knobs, dried on switch-off or when the brush goes. **The lens owns how the cursor reads** (`k`, order, fill, radius, nearest, recency); the brush owns the sound; no lens field returns to a patch.
+- **Pin groups are derived** (`groupOf(c)` is `c.type`) and **so is audibility** (`js/pins.js` `isPinAudible`: every pin has `mute` and `solo`, nothing stores on/off; `applyMix()` makes the engine agree). **The selected pin** (`selectedPinSlot`) is what unpin takes and the rail marks. Every pin parameter is on Settings → Pins — except the slot COUNT, which the rail's tracker sets too.
+- **One pin press takes the whole moment** (`tiles.js` `pinDown`, 2026-09-14): every line the cursor is on becomes a loop — by `trigger._inside`, the gate's own geometry — and a granulating cursor (`S._cursorPool`) adds a cloud beside them. Nothing in reach still pins the ghost. One press is ONE undo (`history.js` `mergeTagged`).
+- **A stroke freezes the brush that painted it** (`brush-voicing.js`): `resolveGrainParams()` is the ONE builder of a grain block, voicings interned and keyed on the TILE. **Wet paint** is the exception. **The lens owns how the cursor reads** (`k`, order, fill, radius, nearest, recency); the brush owns the sound.
 - **A live mark is sized by the audio AFTER it**; **its grain starts before it** by `grainPeakOffsetS`, which the bridge subtracts per candidate for the voice that plays it — the mark stores only its moment.
 
-### Render-path performance — protect the scheduler
-
-The grain scheduler is timing-sensitive (10 ms interval, audio-rate onset precision). The render loop (30fps RAF) shares the main thread and can starve it. **Moving cloud trail rendering was the #1 source of scheduler drift** until the Mar 29 optimization pass (#108). Key invariants to preserve:
-
-- **`projectInto()` + `updateProjectionCache()`** — zero-alloc projection for hot paths. Trail rendering must never use `project()` (allocates per call). The projection cache (focalLen, canvas half-dims) is set once per frame in `drawFrame()`.
-- **Batched canvas fills** — all trail dots go into a single `beginPath()/fill()`. Never revert to per-dot `beginPath()/arc()/fill()` triplets — that was the main GPU stall.
-- **`_TRAIL_BUDGET = 120`** — total trail projections per frame, shared across all moving seeds. Keep this low. The old value (200) caused measurable scheduler drift.
-- **`_interpolateMovingSeed()` reuses `seed._currentFrame`** — no per-tick object allocation in the scheduler. Don't change this to return a new object.
-
-New per-frame render work (trig, projection, canvas calls): profile against scheduler drift first.
+**Render-path performance.** The 10 ms grain scheduler shares the main thread with the render loop
+and trails have starved it (#108); four invariants hold it — `docs/RULINGS.md` "Render path".
+Profile new per-frame work against scheduler drift first.
 
 ## Off-main-GUI work lives in the DevTools console
 
@@ -178,17 +181,14 @@ A module mature enough to always load is wired into `main.js`; otherwise it stay
 
 ## Versioning — releases are explicit, never automatic
 
-Current version: **1.16 alpha** (`1.16.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
+Current version: **5.0 alpha** (`5.0.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
 
-1. **`index.html`** — BOTH version strings: the `<span class="top-bar-version">` (cabinet, hidden) and the chrome brand `<b>mubone</b> <i>1.14</i>`, which is the one the player sees. 1.14 bumped the span and left the brand on 1.13
+1. **`index.html`** — BOTH version strings: the `<span class="top-bar-version">` (cabinet, hidden) and the chrome brand `<b>mubone</b> <i>1.14</i>`, which is the one the player sees
 2. **`package.json`** line 3 — the `"version"` field (semver, e.g. `"1.10.0-alpha"`)
 3. **`CHANGELOG.md`** — add a new section at the top with the version, date, and what changed (grouped into Fixed / Added / Changed / Removed)
-4. **`sw.js`** — `CACHE_VERSION` (must match, e.g. `'mubone-1.12.0-alpha'`) **and** `APP_SHELL` if any `js/` module was added or renamed since the last release. This is the browser deploy's cache key; it went un-bumped for the whole 1.11 cycle. Check with:
-   `node -e "const s=require('fs').readFileSync('sw.js','utf8'),l=new Set([...s.matchAll(/'\.\/(js\/[^']+)'/g)].map(m=>m[1]));require('fs').readdirSync('js').filter(f=>f.endsWith('.js')&&!l.has('js/'+f)).forEach(f=>console.log('missing from APP_SHELL:',f))"`
+4. **`sw.js`** — `CACHE_VERSION` (must match, e.g. `'mubone-1.12.0-alpha'`) **and** `APP_SHELL` if any `js/` module was added or renamed since the last release. This is the browser deploy's cache key. The `/release` skill carries the one-liner that lists modules missing from `APP_SHELL`.
 
-5. **This file** — the version in the status banner at the top and in the line above. Both said
-   1.12 through the whole 1.13 cycle, in the one file every session reads first, because the
-   checklist did not name them.
+5. **This file** — the version in the status banner at the top and in the line above.
 
 Bump the minor for feature work or meaningful fixes (1.10 → 1.11), the patch for hotfixes (1.10.1). Stay on "alpha" until public beta. `git push` is explicit, never automatic; a commit closes every change.
 
@@ -201,12 +201,13 @@ Bump the minor for feature work or meaningful fixes (1.10 → 1.11), the patch f
 - **HISTORICAL** — completed work, kept as record + revert instructions; **does not describe today**
 - **PROPOSAL — NOT IMPLEMENTED** — never built; do not treat as reality
 
-**Nothing HISTORICAL lives in `docs/` any more** (2026-09-05). The four that did are in the archive, and the unrun checklists they held are named by their TODO items (#127, #129, #138, #336), so a checklist is found from the work, not from a doc.
+**Nothing HISTORICAL lives in `docs/` any more** (2026-09-05); the unrun checklists the four archived ones held are named by their TODO items (#127, #129, #138, #336), so a checklist is found from the work, not from a doc.
 
 **A doc about shipped behaviour is kept only for what the code cannot say** (Ek, 2026-09-05: most docs were plans for things that had shipped, and every session read them). Kept: a ruling and its why (`docs/RULINGS.md`), an operating procedure (the runbook, multi-instance), a hardware fact (x-imu3, BNO085, mounting), a design brief (the three GUI docs), a file or wire contract (export/import, OSC). Archived the day it ships: a plan, a brief for a round, a reading copy of the code — its rulings become one paragraph in `docs/RULINGS.md` first, and the archived file gets a banner saying where they went. A table cell says WHEN to read, with a concrete trigger. A session reads a doc's **Read this first** block and goes deeper only when the task is inside what it names.
 
 | Doc | Status | When to read |
 |---|---|---|
+| `docs/GUI-BUILD-SHEET.md` | CURRENT | **The GUI lookup — read before writing any GUI element.** Scopes, spacing scale, type, radius, the instrument + settings kits, colour order-of-operations, motion, always-wrong. Sourced from `DESIGN-SYSTEM.md`, `INSTRUMENT-GUI.md`, `SETTINGS-GUI.md`, `PALETTE-GUI.md` |
 | `docs/TODO.md` | CURRENT | **The OPEN list only** — done items are in `docs/archive/TODO-DONE-<month>.md`. Read the items that touch the task, not the file |
 | `docs/RULINGS.md` | CURRENT | **The reasoning behind every architecture ruling** — palette, main button, overdub, wash, latency, cloud claims, pin groups, brush/lens split, wet paint, mark timing, and the rulings left by the archived plans (trigger tool, composer mode, the release glitch, sensors round ten). Read the entry for the area you touch; a new ruling goes here as one paragraph |
 | `docs/AUDITS.md` | CURRENT | **Which audit to run for which file, and what each guards.** § 1 the two-tier rule, § 2 the file-to-suite map (`scripts/audit-for.js` is it as code), § 4 the per-suite reasoning and traps. Read before running any audit |
@@ -234,7 +235,7 @@ Bump the minor for feature work or meaningful fixes (1.10 → 1.11), the patch f
 | `docs/EXP-NOTES.md` | MIXED | Gesture, snapshot and staging were sunset 2026-08-29 (git history); the rest is unbuilt idea-space. **Staging is DEAD (2026-08-30)** — no module, no markup, no way in; this file called it shipped for months |
 | `docs/BROWSER-AUDIT-2026-07.md` | CURRENT | The browser (non-Electron) build and deploying to mubone.org/sim; the service-worker caching contract. Verification #153 unrun |
 | `docs/OSC-AUDIT-2026-08.md` | CURRENT | The OSC dispatch audit — the release-edge guard, station addressing, what `js/osc.js` does and does not handle. Read before touching the dispatch `switch` |
-| `docs/EXPORT-IMPORT-AUDIT-2026-08.md` | CURRENT | **Read before touching export/import.** `EXPORT_VERSION` 5: setup and session are disjoint file types, the pre-v4 normaliser, merge-vs-replace, open items E6–E8 |
+| `docs/EXPORT-IMPORT-AUDIT-2026-08.md` | CURRENT (setup half) | **Read before touching the SETUP file.** Its session half records a format nothing reads — the music is a document (`js/piece.js`) |
 | `docs/EXPERIMENTAL-BRUSHES.md` | CURRENT | The #218 inventory: four experimental brushes beside `spray`; echo, chop and pour deleted and why; staff's unit bug as a worked example. Read before touching `js/paint-ticker.js` or adding a brush |
 | `docs/VOCABULARY.md` | MIXED | The naming half of the redesign: why `trace` is the outlier, the glossary, what each rename breaks. **New surfaces speak it; the old panels, actions and OSC namespace do not** |
 | `docs/archive/` | ARCHIVED | Completed plans and audits, and `TODO-DONE-<month>.md` — record only, may use superseded terminology. Don't learn current behaviour from these |

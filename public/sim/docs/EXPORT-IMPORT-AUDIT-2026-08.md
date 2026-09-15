@@ -1,5 +1,18 @@
 # Export / Import Audit — 2026-08-01
 
+> **Status: CURRENT for the SETUP file; the session half is a RECORD.** On
+> 2026-09-14 the music stopped being an export and became a document: `.mubone`,
+> saved and opened, `js/piece.js` + `js/mubone-file.js`, and the reasoning is in
+> `docs/RULINGS.md` under "The document". **Nothing in the session format below
+> is read any more** — a piece is v1 and reads v1, and every migration this file
+> describes was deleted with the format. Read the session sections to learn why a
+> field exists (§ E9 in particular: values not indices, which is why loop
+> particles are stored the way they are), never to learn what mubone reads.
+> **§ E7 and § E8 are CLOSED by the container**: members are content-addressed, so
+> a shared buffer is written once, and they are raw float32 rather than base64.
+> The rest of this file — § E1-E5, the key registry, merge-vs-replace — is the
+> setup file, which is unchanged and still current.
+
 > **Status: CURRENT** — second audit of `js/ui-export.js`, following the storage-registry refactor (#157). **E1–E5 fixed** (`EXPORT_VERSION` 3 → 5); E6–E8 open. Supersedes the *format* description in `EXPORT-IMPORT-AUDIT-2026-07.md`, which stays as the record of the A/B/C/D findings.
 >
 > **`EXPORT_VERSION` 11 → 12 on 2026-09-04 (#330)** — the overdub brush. A loop slot carries

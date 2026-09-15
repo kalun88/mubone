@@ -505,6 +505,19 @@ export function handleOSC(rawAddress, values) {
     case '/commit/draw':    S._dispatchAction?.('commit_draw', values[0] ? 127 : 0); break;
     case '/commit/release': S._dispatchAction?.('commit_release', 127); break;
     case '/commit/clear':   S._dispatchAction?.('commit_clear', 127);   break;
+    // ── The MIX pair ────────────────────────────────────────────────────────
+    // Both were advertised in the ACTIONS table from the day the MIX group was
+    // built and NEITHER had a case here, so over OSC they did nothing while the
+    // OSC modal listed them — the exact shape CLAUDE.md warns about, that the
+    // switch in this file IS the namespace whatever a table or a doc says.
+    // Caught by osc-audit's wiring check at the 5.0 release.
+    //
+    // `/pins/mute` carries its value: an explicit 1 mutes and 0 lets go, and a
+    // BARE bang flips — that is what midi.js's `midiVal == null` branch is for,
+    // so a pad that only ever sends 127 is still a toggle. Passing `?? null`
+    // rather than `?? 127` is what keeps the flip reachable from OSC at all.
+    case '/pins/mute':      S._dispatchAction?.('pins_mute', values.length ? (values[0] ? 127 : 0) : null); break;
+    case '/pins/unmuteall': S._dispatchAction?.('pins_unmute_all', 127); break;
     case '/commit/blend':   S._dispatchAction?.('commit_blend', _bangOrStr(values));   break;
     case '/commit/tether':  S._dispatchAction?.('commit_tether', 127);  break;
     case '/commit/xfade':

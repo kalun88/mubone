@@ -774,6 +774,22 @@ How to use this file: find the heading for the area you are about to touch and r
 
 **A button always sends 1 and 0; the action decides (Ek, 2026-09-09).** Every physical button and every key sends both edges, the down and the up. A **momentary** action (type id `hold`) takes the whole button — on at the down, off at the up — and has no gestures: learning it binds the button itself, whatever was done. A **toggle** action flips on each press; it and every other **bang** (type id `trigger`, the OSC word) can sit on any of the five gestures — press (the down, never delayed: "the down edge needs to be the thing that starts and ends a take"), tap (the up), **long press** (at the end of the long time, still held), ×2 and ×3 (on the second and third press inside the window, INSTEAD of the press). Where an action exists in both versions the version is in its title — `system mute (toggle)`, `system mute (momentary)` — and the keys page's sub-line carries OSC facts only, the address and the format. The three slots' `(play)` actions are momentary in shape but follow the Main button setting, toggle by default, which is the one mode setting above every tool. No per-button momentary-or-bang option: "the hardware button always sends 1 and 0. the software deals with those in special ways depending on what it's bound to." An earlier draft the same day used "on/off" for the action type and reserved toggle for the Main button; Ek ruled it more complicated than the thing it described. "Hold" is not a word of the instrument.
 
+**The pin takes the whole moment, not the nearest half of it (Ek, 2026-09-14).** "it's unclear if my cursor is actively on top of grains AND triggering a line (loop), and i drop a pin, does a pin drop on both? it doesn't do that now and it seems it's choosing whatever's closer … the point of the pin is to take that moment, whatever it is and have it continue off cursor." It was choosing: `pinDown` took the NEAREST mark, asked whether it was tape, and did one thing — a loop from that one stroke, or a cloud. So a cursor standing on a chord of three lines pinned one of them, and a cursor over grains AND a line pinned whichever mark happened to be closer. The two halves are independent in the engine and always were — the grain scheduler skips `trig` material, so grains and lines never read the same marks — which is what makes taking both honest rather than a doubling. Now every line the cursor is on becomes a loop and a granulating cursor adds a cloud beside them; nothing in reach still pins the ghost.
+
+WHICH LINES is the trigger gate's OWN answer (`trigger._inside`), not a second search. Three things follow from that and none of them is free: the gate measures to the drawn SEGMENT between marks, so a cursor resting on the ribbon between two far-apart marks is inside for it and would have been outside for a mark-based search — the same hole that made lines "sometimes not fire" before the gate moved to segments; `_inside` keeps tracking while a stroke is CLAIMED by a pinned loop, so pinning a second playhead onto an already-pinned line still works, which a `playing` test would have silently removed; and it keeps tracking while the scan is muted, so a press still takes what the cursor is standing on when nothing is sounding. The anchor is the gate's `_nearestIdx` — the mark the cursor is over, which under `start: touch` is where that line fired from, so the loop begins on the sound you just heard. Tape material no armed trigger covers has no gate to ask, and falls back to the nearest `trig` mark in radius; granular marks are never candidates, which is the `.trig` test that used to live in the caller.
+
+Three consequences were paid for rather than assumed. A press must not evict what the SAME press just pinned (`_thisPress`), or under overflow oldest/nearest the third pin of a press takes back the first — the overflow rule is about the pins that were there BEFORE the gesture. A press is ONE undo even though its halves land on different edges, the loops on the down so the button recogniser's swallow can still take the press back mid-hold and the cloud on the release because a held pin draws a moving cloud: `history.mergeTagged` folds them on the stack in place, rather than a detach-and-push pair, which would clear the redo stack as a side effect. And `createSeqFromStroke` now builds its audio BEFORE it evicts and records what it evicted — it had been doing neither, so a drop on unusable material silently emptied a slot and undoing a loop that had evicted a pin brought back the loop and not the pin, while the cloud path beside it had always been correct.
+
+**The pinned rail carries the slot tracker, and the max (Ek, 2026-09-14).** "there used to be a tracker with slots of how many pins are filled, i want to bring that back and put that in the pin rail. also the max slot number and ability to set that should also be in the pin rail." It still existed — `#commitSlotsCanvas` and `#commitCountLabel` in the hidden cabinet, borrowed by Settings → Pins — so the answer to "how full am I" was behind a door, which is no answer during a set and less of one now that one press can take several slots. One cell per slot, a filled cell in its pin's ENGINE hue so fullness and mix read together, `3 / 8` beside them with the 8 typeable and steppable. This is the ONE amendment to "every pin parameter is on Settings → Pins and nowhere else": the count is not a parameter you set and forget, it is the tracker's own scale, and the pips are unreadable without it. Both doors write `S.commitSlotCount` and refresh each other; there is no second copy. A pin above the line when the max shrinks is drawn as an over-the-line pip, because shrinking does not unpin — the engine simply stops servicing those slots — and nothing else on screen said so. The strip sits OUTSIDE `.lyr-bar`: that bar's two buttons are measured against each other by `npm run audit:align`, and the tracker has its own invariants there (one cell per slot, the cells on the title's x, the count on the buttons' right edge, cells and count on one centre line, eight to a row, no clash with the count).
+
+**Every cell carries its pin's number, and the selected pin is ringed (Ek, 2026-09-14).** "maybe have it more informationally consistent with the actual loop number or cloud number and if it's the closest one highlight it as so in the tracker?" A pin is named by its SLOT — `loop 3` is the pin in slot 3, clouds and loops sharing one sequence because they share one pool — so the cell's POSITION was already the answer and only the counting was left to the eye. The digit is `_pinName`'s, not a second derivation, and `pins-audit` § J3 asserts a cell names what its row names rather than merely holding a number. The cells wrap at eight a row, declared as a `max-width` rather than left to fall out of the column, so sixteen slots always read as two rows of eight. The cell is sized from the widest thing it holds (`10` is 11px of ink, leaving 6.6px of slack) and the gap from the SELECTION RING, which reaches 2px past the cell and had 1.2px of clearance before the gap went to 0.25rem. Past eight slots the count centres on the BLOCK of cells, not on the first of them — an invariant written against the one-row case only, which the audit caught the moment the count went to sixteen.
+
+**One readout, one size, one weight (Ek, 2026-09-14).** "the number sizes dont match the 4/8 number, just make it look more like the rest of the app design wise." The cells were `--fs-nano`/600 and the count `--fs-meta`/bold, and the typeable max — a form control, which inherits neither family nor weight — had quietly fallen to 400 beside both. They are one number said four ways, so only COLOUR may separate them: size is for hierarchy LEVELS and weight is for ROLES (`docs/DESIGN-SYSTEM.md` § 2), and neither applies inside a single readout. Everything is `--fs-meta` at 500, and the cells grew to meet the count rather than the count shrinking to meet them — "text can afford to be bigger" is the standing brief. The ramp that does the work is colour: an empty slot `--text-muted`, the filled count `--text-secondary`, the settable max `--text-light`, and a taken slot the app's own ground on its engine hue. `align-audit` asserts the one-size-one-weight-one-family rule, because it is the thing that drifts.
+
+The same pass took the BORDERS out. An empty slot lost its chip entirely — the ground says "slot" and the hue says "taken", so a line around either is the second mark simplicity breaks the tie against — and the resting rail is now a row of quiet numbers rather than eight outlined boxes. The typeable max lost its box too: it now rests transparent and takes the tint on focus, exactly as `.grain-numbox` and the rail's own `.trow-rn` do. That box was not merely extra; sitting at the end of eight cells with a ground of its own, it read as a NINTH cell, which is the one thing this readout must not say. The over-the-line state dropped its dashed border for its hue as an unfilled ring — outlined-not-filled is already the instrument's way of saying a thing is not live, and a dash was a language nothing else here speaks.
+
+The ring is the SELECTED pin, off the same `selectedPinSlot` the rail's half-moon and the sphere's bracket read: three marks, one answer. Under the default mode that is the pin nearest the cursor, which is what Ek asked for by name; under `oldest` / `farthest` it keeps saying what unpin will actually take rather than offering a second opinion about "closest", because a mark that means something different from the other two is worse than no mark. The way this breaks is not a disagreement about the rule but two SEARCHES a few milliseconds apart while the cursor moves, so the rail's tick does ONE search and hands it to both painters. A ring rather than a moon because a cell has no left edge to wear one on, and a hue mark would vanish against a hue fill; the inner ring is the rail's own ground, so the bright one reads as separate from the cell rather than as a thicker border.
+
 ## Colour — what a timbre looks like
 
 **For anything touching `js/audio-features.js` or the viz legend:** the hue axis is a **ratio of
@@ -847,6 +863,166 @@ uniformly populated and cannot be, since below the split means voiced and above 
 everything sung lands in a third of the range. Four measured piecewise-linear knots hand the voiced
 cluster 54% of the wheel. Monotone, so it reorders nothing; constant, so it is not a setting.
 
+## Render path — protect the scheduler
+
+**For anything adding per-frame work to `js/renderer.js`:** moved here verbatim from CLAUDE.md on
+2026-09-14, unchanged. It was the one block in that file that was reasoning rather than rule, and
+it existed nowhere else, so it moved rather than being cut; CLAUDE.md keeps one line pointing here.
+
+The grain scheduler is timing-sensitive (10 ms interval, audio-rate onset precision). The render loop (30fps RAF) shares the main thread and can starve it. **Moving cloud trail rendering was the #1 source of scheduler drift** until the Mar 29 optimization pass (#108). Key invariants to preserve:
+
+- **`projectInto()` + `updateProjectionCache()`** — zero-alloc projection for hot paths. Trail rendering must never use `project()` (allocates per call). The projection cache (focalLen, canvas half-dims) is set once per frame in `drawFrame()`.
+- **Batched canvas fills** — all trail dots go into a single `beginPath()/fill()`. Never revert to per-dot `beginPath()/arc()/fill()` triplets — that was the main GPU stall.
+- **`_TRAIL_BUDGET = 120`** — total trail projections per frame, shared across all moving seeds. Keep this low. The old value (200) caused measurable scheduler drift.
+- **`_interpolateMovingSeed()` reuses `seed._currentFrame`** — no per-tick object allocation in the scheduler. Don't change this to return a new object.
+
+New per-frame render work (trig, projection, canvas calls): profile against scheduler drift first.
+
+## The canvas is part of the GUI — what it inks, and what it sets type in
+
+**For anything drawing on `S.ctx` in `js/renderer.js`:** the canvas is not exempt from the design
+system just because no stylesheet can reach it. **Colour comes from tokens** (2026-09-14). The
+cursor carried nine hand-written colours while the tiles it is meant to match carried tokens, so it
+had drifted in every direction at once — recording in a red that was not the mic-live ramp, erase
+in a red borrowing `--accent-danger`'s "it will not come back", nearest in a violet in no ramp, and
+three pin-slot fallbacks a few points off the engine hues they were copying. `_tok()` reads the
+token and caches it, the way `FOCUS_INK` does, because this runs per frame and `getComputedStyle`
+is a layout read on the thread the grain scheduler shares; it flushes on the `mubone-theme` event,
+since unlike `FOCUS_INK` it has no `S.darkMode` key of its own. The invariant is that the tile you
+pressed and the mark under your hand are the same colour BY CONSTRUCTION rather than by two lists
+agreeing, and `align-audit`'s R4 holds it — its allowance list is empty.
+
+**The ring says whose hands, the dot says what material (Ek, 2026-09-14).** The last two cursor
+literals were both a wrong OBJECT rather than a wrong hue, which is why neither could be settled by
+picking a nicer colour. `CURSOR_IDLE_COLOR` was `#f5a69c`, and `#f5a69c` is `SAMPLE_PAINT_COLORS[0]`
+— `state.js` said so outright — so the one mark whose whole job is to name the material you are
+inking from showed the same dot for the live mic and for sample 1. It is the mic's colour now
+(`--mic-live-border`), the same fact the top bar states, and recording falls into the same branch
+because recording IS the mic; recording stays unmistakable by taking the 2.4x dot and the ring as
+well. The hands-free mark was a green pip drawn over the centre dot **at the dot's own radius**, so
+it hid the material, and it sat below `painting` in the ring's branch chain — and latched MEANS
+painting, so the green ring only ever rendered while latched and not painting, absent exactly when
+it had something to say. Hands-free is now the RING, in `--accent-sensor` ("the body is driving
+it"), and it outranks everything. Every combination shows both facts at once: recording hands-free
+is a violet ring around a mic-red 2.4x dot; painting hands-free is a violet ring around the
+material's colour. One object each — the ring is whose hands, the dot is what material.
+
+**Canvas labels are Urbanist (Ek, 2026-09-14).** All four named `"Roboto Mono", monospace`, which
+is not loaded — `css/fonts/` holds Inter and Urbanist and nothing else — so they rendered in
+whatever mono the machine had, the only foreign glyph on screen. Measured, `bold 11px "Roboto
+Mono", monospace` came out at exactly the width of `bold 11px "NoSuchFaceXYZ", monospace`: naming
+it did nothing at all. (`document.fonts.check()` is not a way to test this — it answers "can this
+be rendered", fallback included, and returns true.) The obvious objection is tabular figures:
+canvas 2D cannot set `font-variant-numeric`, and Urbanist's ten digits span 36.30px to 59.95px at
+bold 11px, so a numeric column would shuffle. It does not apply here — **tabular figures exist to
+stop a right-aligned or fixed-position column from shuffling, and all four labels are
+`textAlign: 'center'` on strings of one to four characters.** Centring absorbs a proportional
+width change (a centred single digit's edge moves at most 1.51px), and the one label that changes
+digit count changes width anyway. So the tie-breaker is the house rule: one typeface on screen.
+**If a right-aligned numeric column ever appears on canvas, that is when this reopens** — and this
+paragraph belongs in § 2 of `docs/GUI-BUILD-SHEET.md` the day that file lands.
+
+## The kit's sizes — a control's height is stated, not fallen out
+
+**Every control-shaped element in the instrument computes to a kit height, and the tail that
+recorded the exceptions is empty (Ek, 2026-09-15: "snap them all").** The kit is 18 · 24 · 32 · 38
+— status pill, button and segmented, icon, `--lg` — and `align-audit`'s R6 keys the expectation on
+WHICH kit element a thing is, not on a flat set, so a 32px `.mu-btn` still fails while a 32px
+`.tc-icon` passes. Nine elements were off it and all nine were the same defect, not nine
+judgements: a height nobody chose, left over from `padding` plus whatever line box the font
+happened to produce. `.trow` was 27.9, `span.seg` 25, `.tbx-add` and `.trow-more` 22.4,
+`#lyrSettings` a named 22 that named nothing but itself, `.ds-editbtn` 21.7, `.ds-close` 17.3,
+`.ds-del` 15.7. All are 24 now, with `height` + `box-sizing: border-box` carrying the box and the
+vertical padding removed where it had been doing the sizing — because a padding that is load-bearing
+is the derivation coming back. `.tc-cam-row` (30.9) joined them the same day, found by the empty
+tail on its first run: it is a dropdown menu row whose own comment calls it the rail's row model, so
+it takes the row's 24.
+
+**An empty tail is the strongest form of the check, which is why nothing may be added back to it.**
+While it held entries, a new off-kit element could hide behind "the known tail, unchanged"; empty,
+any off-kit element fails by name and the failure line already says which kit height it should take.
+The one thing R6 cannot do is see an element that did not render on that run — coverage is
+state-dependent, and both `.tc-cam-row` and `.lyr-hold-body` surfaced only when the app happened to
+be in the state that draws them. So a green R6 means "nothing off-kit among what rendered", never
+"nothing off-kit".
+
+**A row sized by its own CONTENT is not this defect, and snapping it is a bug — so it says so:
+`mu-h-content` (Ek, 2026-09-15).** `.lyr-hold-body` is 44.2px because it carries a two-line name,
+`loop 3` over the pin's coordinates, and forcing it to 24 or 38 would clip the second line. The kit
+governs controls whose height is a DECISION; a row whose height is its text belongs with `.set-row`,
+which `docs/SETTINGS-GUI.md` already says "runs taller by design".
+
+The marker is its own kind in R6 (`content`), deliberately not folded into `bare`: `mu-btn--bare` is
+a SHAPE — a button with no box, no border, no background, no radius — and a two-line row is not a
+bare button, so collapsing them would cost the failure line its ability to say which one a thing
+claimed. What the two share is the mechanism, and the mechanism is the point: **both are keyed on a
+class the author writes in the markup, so being content-sized is DECLARED, not whitelisted in the
+audit.** An exemption that lives in the audit is a list nobody reads; an exemption that lives on the
+element is a sentence the next person edits right next to the thing it describes. The check still
+bites — verified both ways on the running app, 2026-09-15: the same row without the class resolves
+to kind `any` at 44.2 and fails.
+
+## The size law is one picture, and the picture is the control
+
+**Four sliders across two sections became one figure (Ek, 2026-09-15: "for the
+particles smallest largest quietest loudest i really have no idea what those
+numbers mean").** Smallest, Largest, Quietest Input and Loudest Input are not
+four settings — they are the two ENDS of one straight line, `size = min + (max −
+min) · normalise(rms, rmsMin, rmsMax)`, which `renderer.js` runs for every mark
+of every frame. A line with two ends is a picture, so it is drawn and you drag
+the ends. The two loudness values were raw RMS, 0.005 and 0.31; the axis is dB
+now (−60…0, the meters' own domain) because −46 and −10 are numbers a player can
+act on and dB is the unit every other level on every other page already reads in.
+The state stays linear, because `renderer.js` wants it linear; the conversion
+lives at that one boundary.
+
+**It is the LAW RUNNING, not an illustration of it.** The live needle reads
+`readGateLoudness()`, which is the same metric a mark's own `rms` is
+(`snapshotInputFeatures` → `consumeWindowLoudness` → `gateLoudness`), so it shows
+where the mark you play right now would land. The dots are drawn at their real
+pixel radii, and the tape ribbon's thickness is its real stroke width. The cost
+is that if those formulas change this must change with them, which is the price
+of a figure that cannot quietly drift from what you see on the sphere.
+
+**THE PAINT GATE BELONGS ON IT** (Ek, 2026-09-15: "why would it not be better if
+the gate control for the paint be with the figure you created, it's literally for
+that. it's what gets painted"). I argued it should only be SHOWN here, on the
+grounds that the gate decides whether material is captured rather than how it is
+drawn, and that it already had a good control on Settings → Audio. Overruled, and
+rightly: it is the same metric on the same axis, and it is the leftmost threshold
+on it — under the gate a grain mark is never deposited at all, so the flat
+minimum this figure drew down there was a lie for half the marks on the sphere.
+It is draggable here and still settable there; one number, two doors, the way the
+pin slot count already is. It writes through `S._setPaintGateThreshold`, never
+`S.paintGateThreshold` directly — that setter clamps and calls `_syncGateVal()`,
+which pushes the value into the modal slider, the hidden main-panel carrier and
+the readouts. Writing the state raw sets the threshold correctly and leaves every
+mirror stale; `cc-mirror-audit` holds this now, and the gate's mirror PAIR was
+missing from that suite's list entirely until this round.
+
+**The figure draws the tape line too, because the numbers are not grain-only.**
+The same four values set three materials through three formulas: a grain dot's
+RADIUS, a tape line's WIDTH (its own 1.35 exponent, so a line blooms much later
+than a dot grows), and a stamp bar's height. Two facts the drawing settles that
+four sliders hid: tape is NEVER gated — `paint-ticker.js`, Ek 2026-09-04, "a gap
+in the path is a place it cannot be fired from" — and the thin line that keeps a
+path continuous through a silence already exists, at 0.60px, but it sits at the
+RAMP's left end and not at the gate, 8 dB higher up. Ek asked whether those two
+were the same threshold; they are not, and the figure now shows them as two marks
+so the question can be answered by looking.
+
+## A legend is a section, not a row
+
+**A cell that cannot be operated is never shaped like one** — `docs/SETTINGS-GUI.md` § 3 says it
+about binding cells, and the viz page was the one place that broke it. "What The Colours Mean" and
+the timbre ramp under it were two `.set-row`s with no `.set-ctl` between them and no interactive
+descendant at all: a hairline and a right edge promising a control that was never coming. The fix
+needed no new element and the kit stays closed at eleven. A heading with prose under it and no rows
+beneath is exactly `.set-section` + `.set-sec-title` + `.set-sec-lede`, which is what the rest of
+that page is already built from — so the legend became its own section, and moved OUT of "What Size
+Means", where a block about colour had no business sitting. The general form: **if a settings block
+has nothing to operate, it is not a row — it is a section, or it is a lede on one.**
+
 ## Brush, lens and voicing — what freezes, what is wet
 
 **For anything touching how the cursor voices material, or `js/brush-voicing.js`:** a stroke
@@ -914,6 +1090,28 @@ Covered by `pins-audit.js` § H and § L and `engine-audit.js` § D.
 
 ---
 
+## Audio quality — which knob is which
+
+**The render quantum is not a setting, and the buffer dropdown is not the same buffer** (measured 2026-09-14, Chrome 146). A probe worklet reports exactly 128 frames per `process()` call; `renderQuantumSize` is not exposed in the worklet scope, and an `AudioContext({ renderSizeHint: 'hardware' })` is accepted without error and changes nothing (baseLatency stays 5.33 ms — two quanta). So Web Audio's block is 128 and no UI can move it. `#asBufferSize` is the RtAudio output block in the audio host, a different number that happens to share the word: 128 frames = 2.7 ms at 48 kHz, it needs an app restart (CoreAudio crashes on repeated close/open), and it is a DROPOUT remedy, not a quality control — a bigger block changes nothing about the sound.
+
+**The gain structure, and where the ceiling goes** (Ek, 2026-09-14: "we also have the grain volume, so there are a few levers before we even hit the software ceiling … i want it more unified, there should be no special case for web version"). In order: the interface's own trim, which alone decides the converter's headroom and the noise floor under it; each hardware channel's own TRIM and its SEND, on its row in the Hardware in block (2026-09-14 — several channels sent at once sum to the one mono input the engine takes, which the graph could always do: `splitter[i] → routingGain[i] → S.inputGainNode` is a mono sum bus, and the old 'stereo' setting was two channels enabled at once); `S.inputGainNode`, now the SUM's level rather than a per-channel memory, on the Instrument in row and mirrored by the footer's `in`; the brush's `volume` per voicing and the grain COUNT, which together set how loud a wash is and are the two levers a performer actually plays; dry vol; master, which is `masterGain` in the browser and the per-speaker bus gains in Electron. **The ceiling is last and is not a lever** — it is `js/worklets/ceiling.worklet.js`, the same node at the end of both chains, bit-exact below −3.1 dBFS and bending to −0.09 dBFS above, linked across channels so it cannot pull a VBAP pair's image sideways, and zero-latency because a lookahead brickwall would cost the thing the whole engine is built around. It has to be in software: the clip it prevents happens inside the converter, and no outboard limiter is upstream of that. **The ceiling goes AFTER master, and its link is GROUPED** (Ek, 2026-09-14: "help me rule on the ceiling after or before master … it needs to be good for every case i want the ceiling to be more automatic and just doing the job"). After, because that is the only position that actually does the job: master is the per-speaker bus gain, and a ceiling upstream of it would be defeated by a fader that goes to +18 dB. It also makes the obvious fix work — the ceiling acts, you pull master down, it stops acting. Before master the crunch would follow the fader down unchanged, which is the behaviour nobody expects. The cost is that how hard you hit the ceiling is a property of the master setting rather than of the material alone; at the −6 dB default the grains have to sum past 1.4 before the knee is reached at all, so in practice the fader is the control that decides how close you run, which is the right shape. **Nothing about it scales with speaker count**: the threshold is each channel against its own full scale, and VBAP splits a grain across two speakers whatever the total is, so six speakers carry fewer grains each than two. What DOES depend on the rig is which channels belong together — the house and the headphone pair are different destinations sharing one interface, so they are separate link groups (`groups` in the processor options, built from `headphoneRouting`). Linked across everything, a hot monitor mix would duck the room. Proven with a 4-channel render, groups [0,0,1,1]: channel 0 at 1.6 comes out at 0.989, its partner ducks with it, and the other group's two channels come back bit-exact.
+
+**It is a meter, not a lamp** (Ek, 2026-09-14: "i don't see anything in the gui re ceiling"): the node posts its deepest gain reduction every ~50 ms and the levels row draws it as a CEIL column beside OUT, hanging from the top the way every compressor's GR meter does, empty in the normal state — which is the state it should be in all night. The dB figure is also on the audio page beside the queue depths. A safety net nobody can see is a crutch, and when this one moves the answer is one of the levers above it, not the ceiling.
+
+**The order of the levers, for quality** (Ek, 2026-09-14: "first lever is max grains … no need to change from 48k"). The live path is float32 end to end — worklet → MessagePort → audio host → `RTAUDIO_FLOAT32` — so nothing in playback is quantised and bit depth is not a lever at all. What is, in order: (1) MAX GRAINS, because a wash stealing voices sounds worse than anything else on this list; (2) the grain engine's INTERPOLATION, which is 2-point linear in `_readSample` / `_readLiveChunked` and therefore the dominant distortion the moment pitch shift, pitch jitter or tape speed leaves 1.0 (TODO #355); (3) sample rate, which mostly buys a better linear interpolation for twice the cost per grain — Chrome grants 44.1 and 96 k on request here, and both stay selectable with the consequences written into the row (Ek kept the dropdown, 2026-09-14); (4) the buffer, which is not about quality at all. `S.audioCushionMs` (10 ms) is the separate robustness/latency dial for the two IPC hops.
+
+## The document — a piece, and the file it lives in
+
+**A piece is the music; the rig is an export** (Ek, 2026-09-14: "right now we have export and import, not sure why, since that's for changing platforms. we won't change platforms, we are always in mubone … what we want is a save and save as, open, all that good stuff, with a proper file extension"). Two file types, two verbs, and the split is not a technicality: a piece is samples, takes, marks, pins, triggers and the sound they were played on, it has a PATH, and it saves; the rig — devices, calibration, bindings, the tool strip, the layout — is per-machine localStorage and it EXPORTS, because carrying it somewhere else is the only reason to write it down. Ek chose the split knowing the cost: opening a piece from months ago brings back its material but not the tiles it was played with, so the tools you would play NEXT are whatever is on the strip today. What you already played is safe either way — a stroke freezes its voicing and the piece carries the table.
+
+**`.mubone` is a zip, and nothing about that shows** (`js/mubone-file.js`, 2026-09-14): `manifest.json` deflated, plus one STORED float32 WAV member per distinct audio buffer, each named by a hash of its samples. No dependency — deflate is Chromium's own `CompressionStream`, CRC32 and the zip records are a hundred lines, and the module works in the browser demo through a Blob exactly as it does in Electron through the file IPC. The extension is not `.zip`, so no file manager expands it; renaming a COPY to `.zip` is the debugging escape hatch, and a member drags into a DAW. Three measured faults in the JSON it replaces drove every part of this: the audio was 16-bit, undithered and hard-clamped at ±1.0 (a sine peaking at 1.5 came back at 1.0, and a float32 member round-trips it intact); base64 added 33% over the PCM it wrapped; and two slots sharing one AudioBuffer encoded it twice (§ E7), which content addressing collapses — verified on the real path, a take and the loop pinned from it write one member and come back sharing one buffer, which the worklet's identity-keyed `_bufferMap` also wants. The trade Ek took knowingly: float32 is twice 16-bit per distinct buffer, so a piece with nothing shared is bigger. A project file should be lossless. Container overhead measured at 0.36%. **What content addressing does NOT collapse is a pinned loop**: `createSeqFromStroke` copies a region AND crossfades its tail, so the loop is derived material, not a slice — storing it as a recipe against its take is the open follow-up (#354), and it is the same shape as the overdub rule, where a file cannot carry a layer that disagrees with its master.
+
+**Nothing migrates** (Ek, 2026-09-14). A piece is v1 and reads v1; every legacy read path the old session format carried went with it — the v1–v5 particle indices, the v≤4 embedded settings, the v<8 voicing fallback, the v7–v9 layer set, `_preGroupOn`/`_preLayerOn`, the pre-v9 `activeSampleIndex`, `migrateBlockKeys` on a stored block, the pre-2026-09-13 colour repair — along with the pins-audit § G tests that asserted them. This is the no-compat-hedging rule applied to a file format: a reader kept for files that no longer exist is a persistent fallback, and it is the thing that made the old format's import path the most delicate code in the app. `docs/EXPORT-IMPORT-AUDIT-2026-08.md` keeps the history as a record.
+
+**Dirty is the manifest, hashed, and nothing runs on a timer** (Ek, 2026-09-14: "this a performance app i dont want it to try to save every 2 min or something. it needs to be peak performance … maybe if the app closes, then a warning to save or not can come up"). No autosave, no crash recovery file, one quit guard. The signature being the manifest itself is what stops it going stale as the document grows — a field that is saved is a field that is signed — and it is why the container work had to come first: with the audio outside the manifest, the manifest is small enough to hash. Two measurements shaped it. A freshly booted mubone compared dirty against its own baseline, because the app goes on settling after the document takes it, so an UNTITLED session with no material is never dirty whatever the signature says (a piece WITH a path is compared honestly — opening one and erasing it is worth being asked about). And the signature costs 1.6 ms at a thousand marks, 11.6 at ten thousand, 101 at thirty thousand on a loaded instance — fine at the quit, where the answer must be exact and the pause costs nothing, and far too expensive to watch the document with. **So there are two signatures** (Ek, 2026-09-14: "once i open or change the doc, if it's already saved as, can there be an indication … to show that new things aren't saved?" — the first build refreshed the mark only at a save, an open and a window blur, and an indication you only see after clicking away is not an indication). `quickSignature()` writes the mark array as its length and version — the pair `renderer.js` already trusts as its own cache key — and costs 0.05 ms at thirty thousand marks, so the chrome polls it twice a second for 0.01% of a core, and everything that is not a mark is still exact: a knob moved with nothing painted shows. What it can miss is a mark edited in place by code that bumps neither, which is why the quit guard asks the exact one. **It is deliberately not event-driven**: the document has no single mutation point — every knob writes its own field — so a mark driven by the seams anyone remembered to call would go on saying "saved" after the one they forgot. Audio is identified by object identity for this, never content-hashed; its frame count rides in the id so a take that grew in place still reads as changed. **The mark is the only dot in the line**: a separator dot before the name was the first try and failed at exactly what it was for — two faint dots either side of a word read as decoration, and neither one could be the one that meant something. The gap separates now, and the dot left over is brighter and bigger than the name it follows, because it is the signal and the name is only what the signal is about.
+
+**The main process owns the menu and the guard, and asks the renderer everything** (`electron-main.js`, 2026-09-14). The File menu is the only menu mubone defines — New, Open, Open Recent, Save, Save As — with the rest left as Electron's roles so ⌘Q, services and the window list keep working; a double-clicked `.mubone` arrives on `open-file` and goes through the same door, held until the window exists on a cold start. None of it owns state: main cannot reach the module graph, so the document answers on `window.__mubonePiece` with three questions (state, save, run). The quit guard asks at the moment of the close rather than reading a flag pushed earlier, so the answer can never be one edit stale, and a Save that raises its own dialog and is cancelled cancels the quit too. The file IPC underneath is deliberately narrow — two native dialogs, a ranged read, a streamed write — and a write lands through a `<path>.part` renamed on close, because a piece can be hundreds of MB and a crash halfway through must leave the previous document intact rather than a truncated one.
+
 ## Plans that shipped — the rulings they left behind
 
 The plans below are in `docs/archive/` (2026-09-05). Each shipped; what a session still needs from each is here. `BRUSH-MODEL.md` and `OVERDUB-PLAN.md` are covered by the palette, main-button and overdub entries above, and `TIMING-REFERENCE.md` by the constants block at the top of `js/state.js`.
@@ -958,3 +1156,20 @@ The plans below are in `docs/archive/` (2026-09-05). Each shipped; what a sessio
 **A press's neighbour swallows the take the press started (Ek, 2026-09-10, evening).** "set loop (toggle) using button 1 press. on the same button i want grain (momentary) to be button 1 long. so when button 1 long activates it'll cancel the loop that just started as if it was never meant to be, then do cloud." The press cannot wait — the down edge is the take's start — so exclusivity with a long is impossible; what is possible is the abort. When long, extra long, ×2 or ×3 fires on a button whose press fired an ACTIVATE this sequence (`palette_N_toggle` / `_hold`, `trace_toggle`, `recpaint`), the recogniser calls `S._gestureAbort()` before the neighbour fires: brush.js ends the gesture with the stroke id stamped in `S._abortStrokeId`, and `_commitTraceStroke` (events.js) discards the stroke once it has sealed — `history.discard()`, the stroke's own undo run and the action gone for good, never redoable, nothing armed — waiting for the seal so the recorder's last bundle cannot land in a freed slot. Only activates are aborted: a press that pinned or undid is a fact, and its neighbour is bound to what follows it (button 3's press · ×2 · ×3 = pin · unpin · unpin all nets to a cancel by its own actions). Proven: a take started on button 1's press is thrown away at 300 ms and the grain momentary runs and is kept; a plain toggle take on the same button is kept and armed.
 
 **The swallow is general (Ek, 2026-09-10, later).** "pin with button 3 press, then pin (drawn momentary) with button 3 long. i see the first pin drop with the press, but once the long activated it started a new pin. i was expecting it to remove that first pin like it was never meant." The paragraph above limited the swallow to activates; that was wrong. A press's neighbour takes back WHATEVER the press did: `st.pressMark` is the undo stack's height at the down, and `_abortPress` runs `history.discardSince(mark)` — every action the press wrote since (a pin, a sweep, an erase), undone newest-first and gone for good — before aborting a gesture the press started (the take path, unchanged: an in-progress stroke is left to the seal). A press that only undid wrote nothing above the mark, so nothing is taken back and the undo stands.
+
+### From the settings dialog
+
+Cut from the settings rows on 2026-09-14 when descriptions went to one sentence under 92
+characters (align-audit R5). The rows keep the sentence that says what the control does; this is
+everything else they were carrying. **Checked before appending: only 7 of the 40 distinctive
+clauses across all nineteen cuts appeared anywhere in docs/ beforehand, so this is not a
+duplicate of what follows — for most of these rows the settings dialog was the only place the
+information existed.**
+
+**Blend.** All plays every pin at equal weight. Focus leans toward whichever is closest to the cursor.
+
+**Crossfade.** How wide the handover is between two pins. 100% blends the whole way from one anchor to the next; 0% snaps at the midpoint. On an anchor, that pin is alone. Focus only.
+
+**Selected Pin.** The pin unpin takes, marked in the rail: the one nearest the cursor, the one farthest from it, or the one pinned first.
+
+**Tap Window.** The gap after a release in which the next press counts as the ×2 or ×3, and how long a tap waits beside them.

@@ -595,6 +595,11 @@ export function nearestLoopPin(refLon, refLat) {
   }
   return best;
 }
+// Read by the pins rail, which marks the master so you can see which loop a dub
+// would join before you press (Ek, 2026-09-15: "when there's both a cloud and a
+// loop pinned ... i don't know which one is the closest loop"). Through S rather
+// than an import: ui-pins.js already reaches the engine only this way.
+S._nearestLoopPin = nearestLoopPin;
 
 // ── Overdub layers ──────────────────────────────────────────────────────────
 // An overdub is a take folded onto its master's cycle (ui-presets.js

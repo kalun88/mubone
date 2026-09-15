@@ -295,6 +295,10 @@ const ACTIONS = [
     tip: 'hold =: while painting the loop grows to the release; otherwise a cloud path is drawn — release to pin it' },
   { id: 'commit_release', label: 'unpin',               key: '−',                 osc: '/commit/release',  fmt: 'bang',             type: 'trigger',
     tip: 'unpin the selected pin, cloud or loop — nearest, farthest or oldest is Settings → Pins' },
+  { id: 'pins_mute',       label: 'mute pins',       key: '—', osc: '/pins/mute',      fmt: 'int 0|1', type: 'hold',
+    tip: 'silence every pin, and let it back on the next press — your per-pin mutes and solos survive the round trip. 1 mutes, 0 lets back, no value flips it' },
+  { id: 'pins_unmute_all', label: 'unmute all pins', key: '—', osc: '/pins/unmuteall', fmt: 'bang', type: 'trigger',
+    tip: 'bring every pin back — clears every mute and solo, on the groups and on each pin' },
   { id: 'commit_clear', label: 'unpin all',                 key: '—',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
     tip: 'unpin every cloud and loop — the pinned rail\'s UNPIN ALL' },
   { id: 'commit_selection', label: 'selected pin · nearest / oldest (toggle)', key: '—',               osc: '/commit/selection', fmt: 'bang=toggle, str=set (nearest|oldest)',                 type: 'trigger',
@@ -1452,6 +1456,21 @@ function dispatchAction(id, midiVal) {
       clearAllCommits();
       _flash(document.getElementById('commitClearBtn'));
       S._pinFlash?.('all');
+      break;
+    // The MIX pair (Ek, 2026-09-15): silence everything, bring it back. They
+    // are not unpin — nothing is released, so the pins and their material are
+    // still there when the sound comes back.
+    // Explicit 1/0 sets it, a bare bang flips it — so one OSC address and one
+    // MIDI note both work, and a pad that only sends 127 is still a toggle.
+    case 'pins_mute': {
+      const want = midiVal == null ? !S._pinsAllMuted?.() : midiVal > 0;
+      S._pinsSetAllMuted?.(want);
+      S._pinsMuteLit?.(want);
+      break;
+    }
+    case 'pins_unmute_all':
+      S._pinsAllOn?.();
+      S._pinFlash?.('unmuteall');
       break;
     case 'commit_selection': {
       S.selectionMode = _strMode(midiVal, ['nearest', 'oldest'], { closest: 'nearest' })

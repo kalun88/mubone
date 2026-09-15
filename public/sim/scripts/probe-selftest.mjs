@@ -103,9 +103,23 @@ const snapNow = async (label) => {
   execFileSync(process.execPath, ['scripts/screen-probe.mjs', label], { stdio: 'pipe' });
   return (await import('node:fs')).readFileSync(`/tmp/mubone-snap-${label}.txt`, 'utf8');
 };
+// BOTH snapshots are of a FRESH load (2026-09-14). Taking the first one of the
+// session as it stands made this check fail whenever anything had been driven
+// beforehand — and `audit-for.js` recommends exactly that, `npm run
+// audit:align && node scripts/probe-selftest.mjs`, which can never have passed:
+// align-audit opens Settings pages, and the modal builds its pages lazily, so
+// it leaves ~1100 elements in the DOM (`bind-cell`, `set-table-row`,
+// `set-meter-*`) that a fresh load has not built yet. Every one of those is a
+// difference between "this session" and "this build", and the invariant is
+// about the BUILD. Reloading first costs one more wait and makes the check say
+// what it claims to say, in any order.
+const reload = async () => {
+  await rig.evaluate(() => { location.href = location.pathname + '?r=' + Date.now(); return 1; }).catch(() => {});
+  await new Promise(r => setTimeout(r, 7500));
+};
+await reload();
 const a1 = await snapNow('selftest1');
-await rig.evaluate(() => { location.href = location.pathname + '?r=' + Date.now(); return 1; }).catch(() => {});
-await new Promise(r => setTimeout(r, 7500));
+await reload();
 const a2 = await snapNow('selftest2');
 const la = a1.split('\n'), lb = a2.split('\n');
 const drift = la.filter((l, i) => l !== lb[i]).length;

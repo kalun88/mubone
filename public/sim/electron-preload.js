@@ -124,6 +124,36 @@ contextBridge.exposeInMainWorld('electronBridge', {
   ximu3SendCommand: (ip, port, jsonStr) =>
     ipcRenderer.invoke('ximu3-send-command', ip, port, jsonStr),
 
+  // ── Document files (.mubone) ────────────────────────────────────────────────
+  // The renderer's only filesystem access, and it is deliberately this narrow:
+  // two native dialogs, a ranged read, and a streamed write that lands through
+  // a .part file. `js/mubone-file.js` is the only module that calls any of it.
+
+  // Renderer → Main: native Save-as / Open dialogs. → { canceled, path }
+  docSaveDialog: (opts) => ipcRenderer.invoke('doc-save-dialog', opts || {}),
+  docOpenDialog: (opts) => ipcRenderer.invoke('doc-open-dialog', opts || {}),
+
+  // Renderer → Main: size + mtime, for the recent list and the open check
+  docStat: (path) => ipcRenderer.invoke('doc-stat', path),
+
+  // Renderer → Main: whole file, or a byte range (the zip reader takes ranges
+  // so a 300 MB piece is never one copy in the renderer). → { ok, bytes }
+  docRead: (path, offset, length) => ipcRenderer.invoke('doc-read', path, offset, length),
+
+  // Renderer → Main: what is open and whether it is dirty. macOS draws it —
+  // window title, proxy icon, the dot in the close button.
+  docSetState: (state) => ipcRenderer.send('doc-set-state', state),
+
+  // Renderer → Main: the Open Recent list, whenever it changes.
+  docSetRecent: (list) => ipcRenderer.send('doc-set-recent', list),
+
+  // Renderer → Main: streamed write. begin → chunk… → end (renames into place),
+  // or abort (drops the .part and leaves the old document alone).
+  docWriteBegin: (path)      => ipcRenderer.invoke('doc-write-begin', path),
+  docWriteChunk: (id, bytes) => ipcRenderer.invoke('doc-write-chunk', id, bytes),
+  docWriteEnd:   (id)        => ipcRenderer.invoke('doc-write-end', id),
+  docWriteAbort: (id)        => ipcRenderer.invoke('doc-write-abort', id),
+
   // ── x-IMU3 serial (USB CDC) bridge ──────────────────────────────────────────
   // Same ASCII protocol as UDP, just over a serial port.
 

@@ -433,13 +433,31 @@ S._removePinSlot   = removePinSlot;
 S._restorePinSlot  = restorePinSlot;
 S._reattachOverdub = reattachOverdub;
 
-function _pinAction(slot, evicted = null) {
+/** A pin, or SEVERAL: one press now pins every line the cursor is on, and
+ *  that is one thing the performer did (history.js: "one gesture is one
+ *  action"). Undo takes them back newest first, each putting back whatever the
+ *  overflow rule evicted to make room for it. `tag` is the press this belongs
+ *  to (S._pinPressTag) so the release can fold the loops and the cloud — two
+ *  edges of one press — into a single entry; null outside a press. */
+function _pinsAction(made) {
   return {
     kind: 'pin',
-    undo() { removePinSlot(slot); if (evicted) restorePinSlot(evicted); },
-    redo() { if (evicted) removePinSlot(evicted); restorePinSlot(slot); }
+    tag: S._pinPressTag ?? null,
+    undo() {
+      for (let i = made.length - 1; i >= 0; i--) {
+        removePinSlot(made[i].slot);
+        if (made[i].evicted) restorePinSlot(made[i].evicted);
+      }
+    },
+    redo() {
+      for (const m of made) {
+        if (m.evicted) removePinSlot(m.evicted);
+        restorePinSlot(m.slot);
+      }
+    }
   };
 }
+function _pinAction(slot, evicted = null) { return _pinsAction([{ slot, evicted }]); }
 function _unpinAction(slots) {
   const at = slots.map(sl => S.commitSlots.indexOf(sl));
   return {
@@ -501,6 +519,13 @@ function _captureSeedFrame(startOverride) {
  * Unified for both clouds and loops — they share one pool.
  * Releasing clouds are treated as free (already fading out).
  */
+// A press must not evict what the SAME press just pinned. One press pins every
+// line the cursor is on (see dropSeqFromCursor), so under overflow oldest or
+// nearest the third pin of a press would take back the first — the overflow
+// rule, which is about the pins that were there BEFORE the gesture, turned on
+// the gesture itself. Held for the length of one drop and cleared after it.
+const _thisPress = new Set();
+
 function _findCommitSlot(lon, lat) {
   const limit = S.commitSlotCount;
   // 1. First empty or releasing-cloud slot within active range
@@ -515,7 +540,7 @@ function _findCommitSlot(lon, lat) {
     let oldestIdx = -1, oldestTime = Infinity;
     for (let i = 0; i < limit; i++) {
       const slot = S.commitSlots[i];
-      if (!slot) continue;
+      if (!slot || _thisPress.has(i)) continue;
       const t = slot._plantedAt || slot._createdAt || 0;
       if (t < oldestTime) { oldestTime = t; oldestIdx = i; }
     }
@@ -525,7 +550,7 @@ function _findCommitSlot(lon, lat) {
     let nearIdx = -1, nearAng = Infinity;
     for (let i = 0; i < limit; i++) {
       const slot = S.commitSlots[i];
-      if (!slot) continue;
+      if (!slot || _thisPress.has(i)) continue;
       let sLon, sLat;
       if (slot.type === 'cloud') {
         sLon = slot.lon; sLat = slot.lat;
@@ -1239,14 +1264,23 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
     window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'full' } }));
     return;
   }
-  // If replacing an existing seq, stop its audio first
-  if (S.seqSlots[slotIndex]) {
-    _stopSeqAudio(S.seqSlots[slotIndex]);
-    S.seqSlots[slotIndex] = null;
-  }
-
+  // The audio BEFORE the eviction: a stroke that cannot make a playable region
+  // must not cost the pin that was sitting in the slot. It used to be built
+  // after, so a drop on unusable material silently emptied a slot.
   const payload = buildLoopPayload(strokeId, anchorParticle);
   if (!payload) return;
+
+  // If the overflow rule picked an occupied slot, take the pin out through the
+  // ONE path and remember it: the drop's undo puts it back. Until 2026-09-14
+  // this stopped the audio and nulled the slot by hand, so `_lastEvicted` was
+  // never set on the create path and undoing a loop that had evicted a pin
+  // brought back the loop and not the pin — the cloud path (_reserveCloud) and
+  // the extra-playhead path had both been doing it correctly beside it.
+  _lastEvicted = null;
+  if (S.commitSlots[slotIndex]) {
+    _lastEvicted = S.commitSlots[slotIndex];
+    removePinSlot(_lastEvicted);
+  }
 
   const color = COMMIT_COLORS[slotIndex];
   // The first pass starts ON THE RELEASE (2026-09-04): the looper commits a
@@ -1905,45 +1939,96 @@ function _cleanupSeqNodes(seq) {
  * (same as granulation candidate logic). Uses the nearest particle's strokeId
  * to collect all particles from that stroke into a new sequence slot.
  */
-export function dropSeqFromCursor() {
+/** The nearest TRIGGER mark in reach — the fallback search, for tape material
+ *  no armed trigger covers (an unarmed take, a `plain` stroke): there is no
+ *  gate to ask where the cursor is, so ask the marks. Granular marks are not
+ *  candidates — the cursor granulates them, it does not play them whole, and
+ *  before 2026-09-14 the `.trig` test lived in the caller. */
+function _nearestTrigParticle() {
   const { lon, lat } = getCursorPos();
   const searchRad = S.searchRadiusDeg * Math.PI / 180;
-
-  // Find the nearest particle within the search radius
   let nearest = null, nearestAng = Infinity;
   for (let i = 0; i < S.particles.length; i++) {
     const p = S.particles[i];
-    if (p.strokeId == null || p.strokeId < 0) continue;
+    if (!p.trig || p.strokeId == null || p.strokeId < 0) continue;
     const ang = angleBetweenSphere(p.lon, p.lat, lon, lat);
     if ((S.nearestMode || ang < searchRad) && ang < nearestAng) {
       nearestAng = ang;
       nearest = p;
     }
   }
-  if (!nearest) return false;  // nothing within radius — the caller decides
+  return nearest;
+}
 
-  // Check if this stroke already has a loop — if so, add another playhead
-  // on the same buffer rather than blocking creation.
-  let existingSlot = null;
+/** The live loop slot already playing a stroke, if any: pinning it again adds
+ *  another PLAYHEAD on the same buffer rather than refusing. */
+function _loopOnStroke(strokeId) {
   for (let i = 0; i < S.commitSlotCount; i++) {
     const slot = S.commitSlots[i];
-    if (slot && slot.type === 'loop' && slot.strokeId === nearest.strokeId) {
-      existingSlot = slot;
-      break;
-    }
+    if (slot && slot.type === 'loop' && slot.strokeId === strokeId) return slot;
+  }
+  return null;
+}
+
+/** THE PIN TAKES THE MOMENT — ALL OF IT (Ek, 2026-09-14): "if my cursor touches
+ *  more than 1 line, on one pin drop it should launch the same thing (sound) i
+ *  heard when my cursor went on that position … the point of the pin is to take
+ *  that moment, whatever it is and have it continue off cursor." One press pins
+ *  EVERY line the cursor is on. It used to pin the nearest mark's stroke and
+ *  only that, so standing on a chord of three lines and pinning kept one of
+ *  them — the pin answered "what is closest" when the question is "what am I
+ *  hearing".
+ *
+ *  WHICH LINES THE CURSOR IS ON IS THE TRIGGER GATE'S OWN ANSWER (`_inside`,
+ *  js/trigger.js), not a second search of our own, for three reasons. The gate
+ *  measures to the drawn SEGMENT between marks, so a cursor resting on the
+ *  ribbon between two far-apart marks is inside for it and was outside for a
+ *  mark-only search — the same hole that made lines "sometimes not fire". It
+ *  keeps tracking while a stroke is CLAIMED by a pinned loop, so pinning a
+ *  second playhead onto a line that is already pinned still works. And it keeps
+ *  tracking while the scan is muted or the lens reads grains only, so a press
+ *  still pins what the cursor is standing on when nothing is sounding.
+ *
+ *  The anchor is the gate's own `_nearestIdx` — the mark the cursor is over,
+ *  which under `start: touch` is exactly where that line fired from, so the
+ *  loop begins on the sound you just heard.
+ *
+ *  Returns the slots it made, `[]` when nothing was in reach — the caller
+ *  decides what that means (tiles.js pinDown: a ghost cloud). */
+export function dropSeqFromCursor() {
+  const targets = [];
+  for (const t of (S.triggers || [])) {
+    if (!t?.trigger?._inside || !t.particles?.length || t.strokeId == null || t.strokeId < 0) continue;
+    const i = Math.max(0, Math.min(t.particles.length - 1, t._nearestIdx | 0));
+    targets.push({ strokeId: t.strokeId, anchor: t.particles[i] });
+  }
+  if (!targets.length) {
+    const p = _nearestTrigParticle();
+    if (!p) return [];
+    targets.push({ strokeId: p.strokeId, anchor: p });
   }
 
-  if (existingSlot) {
-    addPlayheadFromExisting(existingSlot, nearest);
-  } else {
-    const before = S.commitSlots.slice();
-    _lastEvicted = null;
-    createSeqFromStroke(nearest.strokeId, nearest);
-    const made = S.commitSlots.find((c, i) => c && c !== before[i]);
-    if (made) history.push(_pinAction(made, _lastEvicted));
-    _lastEvicted = null;
+  const made = [];
+  _thisPress.clear();
+  try {
+    for (const tg of targets) {
+      const before = S.commitSlots.slice();
+      _lastEvicted = null;
+      const existing = _loopOnStroke(tg.strokeId);
+      if (existing) addPlayheadFromExisting(existing, tg.anchor);
+      else createSeqFromStroke(tg.strokeId, tg.anchor);
+      const slot = S.commitSlots.find((c, i) => c && c !== before[i]);
+      if (slot) {
+        made.push({ slot, evicted: _lastEvicted });
+        _thisPress.add(slot.slotIndex);
+      }
+      _lastEvicted = null;
+    }
+  } finally {
+    _thisPress.clear();
   }
-  return true;
+  if (made.length) history.push(_pinsAction(made));
+  return made.map(m => m.slot);
 }
 
 /**

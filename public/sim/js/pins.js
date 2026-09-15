@@ -71,6 +71,19 @@ export function pinsIn(g) {
   return out;
 }
 
+/** A pin on its way OUT — a cloud fading through its release, a loop fading
+ *  or playing to its end after an unpin — is no longer IN its group: the slot
+ *  lingers for the tail, and counting it kept the flags alive exactly long
+ *  enough for the next pin to be born under them (Ek: "same issue with
+ *  clouds" — a release time was set). ui-presets treats such a slot as free,
+ *  the selected-pin search skips it, and the rail's slot tracker draws its pip
+ *  empty. One test, exported, since 2026-09-14 — there were two copies of it
+ *  here and they disagreed about `_selfKilled`. */
+export function isPinLeaving(c) {
+  if (!c) return false;
+  return c.type === 'cloud' ? c._releasingAt > 0
+                            : !!(c._playingToEnd || c._fadingOut || c._selfKilled);
+}
 /** AN EMPTY GROUP HOLDS NO STATE (Ek, 2026-09-12, night: "i muted the group.
  *  then i erase that loop. when i go to make a new loop it starts muted. the
  *  mute flag should reset if it's coming from no loops pinned"). The two
@@ -78,18 +91,10 @@ export function pinsIn(g) {
  *  left there is nothing the intent is about, and the rail hides the row, so
  *  a flag left set was invisible until the next pin was born silent. Called
  *  from the rail's tick (ui-pins.js, on every change) and from applyMix. */
-/** A pin on its way OUT — a cloud fading through its release, a loop fading
- *  or playing to its end after an unpin — is no longer IN its group: the slot
- *  lingers for the tail, and counting it kept the flags alive exactly long
- *  enough for the next pin to be born under them (Ek: "same issue with
- *  clouds" — a release time was set). ui-presets treats such a slot as free. */
-function leaving(c) {
-  return c.type === 'cloud' ? c._releasingAt > 0 : !!(c._playingToEnd || c._fadingOut);
-}
 export function pruneEmptyGroups() {
   let changed = false;
   for (const g of GROUPS) {
-    if (!(g.muted || g.solo) || pinsIn(g).some(c => !leaving(c))) continue;
+    if (!(g.muted || g.solo) || pinsIn(g).some(c => !isPinLeaving(c))) continue;
     g.muted = false; g.solo = false; changed = true;
   }
   if (changed) S._pinsDirty = true;
@@ -200,13 +205,42 @@ export function allOn() {
 }
 S._pinsAllOn = allOn;
 
-// ── The selected pin ────────────────────────────────────────────────────────
-
-/** A pin already on its way out is nobody's target. */
-function _leaving(c) {
-  if (c.type === 'cloud') return c._releasingAt > 0;
-  return !!(c._playingToEnd || c._fadingOut || c._selfKilled);
+/** Is everything silenced? The toggle's state, and derived rather than stored —
+ *  there is no fourth flag to keep in step with the three that exist.
+ *
+ *  ONLY THE GROUPS THAT HOLD PINS COUNT (2026-09-15). It asked `GROUPS.every`
+ *  over both, and GROUPS is a static pair — so with clouds pinned and no loops,
+ *  the empty loop group was never muted and this read false while the player was
+ *  looking at silence. Not a near-miss either: `pruneEmptyGroups` runs inside the
+ *  `applyMix()` that `setAllMuted` itself calls, and clears the flag on every
+ *  empty group the moment it is set, so the answer was false for as long as one
+ *  group was empty — the ordinary case. It made `pins_mute` with no value a
+ *  one-way trip (`!allMuted()` was always true, so a bang or a pad muted and
+ *  never let go) and the rail's light disagree with the sound.
+ *
+ *  The liveness test is pruneEmptyGroups' own, deliberately: the two must agree
+ *  about which groups exist, or this reads a flag prune has already cleared. */
+export function allMuted() {
+  const live = GROUPS.filter(g => pinsIn(g).some(c => !isPinLeaving(c)));
+  return live.length > 0 && live.every(g => g.muted);
 }
+
+/** Silence everything, or let it back (Ek, 2026-09-15 — ONE toggle, not a pair
+ *  of buttons). It sets the GROUP flags and NOTHING else, which is what makes it
+ *  a true toggle: isPinAudible reads mute before solo, so a group mute silences
+ *  the lot whatever the per-pin flags say, and letting go restores the mix
+ *  exactly as the hand left it — every per-pin mute, every solo. That is the
+ *  whole difference from `allOn`, which is still here and still clears
+ *  everything: a toggle you can round-trip safely, and a hammer when you want
+ *  the slate clean. */
+export function setAllMuted(on) {
+  for (const g of GROUPS) g.muted = !!on;
+  applyMix();
+}
+S._pinsSetAllMuted = setAllMuted;
+S._pinsAllMuted = allMuted;
+
+// ── The selected pin ────────────────────────────────────────────────────────
 
 /** A pin's ANCHOR: where the pin gesture RELEASED (Ek, 2026-09-05). A loop
  *  dropped by hand is anchored where the hand was; a loop or a cloud that a
@@ -249,7 +283,7 @@ export function selectedPinSlot(lon, lat) {
   let best = -1, bestKey = Infinity;
   for (let i = 0; i < S.commitSlotCount; i++) {
     const c = S.commitSlots[i];
-    if (!c || _leaving(c)) continue;
+    if (!c || isPinLeaving(c)) continue;
     let key;
     if (oldest) {
       key = c._plantedAt || c._createdAt || 0;

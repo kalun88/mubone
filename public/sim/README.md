@@ -315,6 +315,8 @@ js/
   composer.js           — composer mode: latch-toggle pins by cursor proximity
   history.js            — ONE action stack: undo is the last thing the performer did
   param-registry.js     — the sparse parameter registry a session's patch applies through
+  piece.js              — the document: save, save as, open; a piece is the music
+  mubone-file.js        — the .mubone container: a zip of manifest + float32 audio members
   storage-registry.js   — the one authoritative map of persisted keys → category
 
   sphere.js             — 3D math, quaternion ops, projection
@@ -356,7 +358,7 @@ js/
   ui-trigger.js         — the trigger tool's controls
   ui-buttons.js         — Settings → Instrument buttons
   ui-learn.js           — learning mode tooltips
-  ui-export.js          — settings export/import
+  ui-export.js          — the RIG as one JSON file: setup export/import
   ui-diagnostics.js     — measurements you run, and verdicts you read
   ui-imu-setup.js       — x-imu3 connection UI
   ui-sensor-mapping.js  — sensor mapping UI (axis map, calibration)

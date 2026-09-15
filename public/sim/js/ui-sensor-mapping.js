@@ -525,7 +525,7 @@ function _buildTransports() {
     b.addEventListener('click', () => { initMIDIOut().then(() => _renderList()); });
     midiCtl.push(b);
   }
-  host.appendChild(_setRow('MIDI', 'The browser grants Web MIDI once per origin. Until it does, no device list exists to pick from.', midiCtl));
+  host.appendChild(_setRow('MIDI', 'The browser grants Web MIDI once per origin — until it does, no device list exists.', midiCtl));
 
   // ── OSC ──
   const oscDot    = _el('span', 'map-tx', '●');

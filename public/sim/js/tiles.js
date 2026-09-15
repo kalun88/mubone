@@ -89,7 +89,8 @@
 
 import { S, perf, gp } from './state.js';
 import { setBrush } from './brush.js';
-import { resolveGrainParams, dryVoicing, wetVoicingOf } from './brush-voicing.js';
+import { resolveGrainParams, dryVoicing } from './brush-voicing.js';
+import * as HIST from './history.js';
 
 const LS_ORDER = 'mubone_tile_order';
 const LS_PALETTE = 'mubone_palette';   // the palette: ordered tile ids, ≤ PALETTE_MAX (2026-09-11)
@@ -157,6 +158,11 @@ const G = {
   pin:        '<circle cx="12" cy="8.5" r="5"/><path d="M12 13.5v7.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>',
   unpin:      '<circle cx="12" cy="8.5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 12.7v8.3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M4.5 19.5l15-15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   unpinAll:   '<circle cx="7.3" cy="8.5" r="3.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7.3 11.9v8.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="16.7" cy="8.5" r="3.4" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M16.7 11.9v8.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M3 20.5L21 3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  // The MIX pair. A speaker with its wave, and the same speaker struck
+  // through — the footer's mute button already speaks this shape, so the rail
+  // is not teaching a new one.
+  muteAll:    '<path d="M11 5.5 6.5 9.5H3v5h3.5L11 18.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M16 9.5 21.5 15M21.5 9.5 16 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+  unmuteAll:  '<path d="M11 5.5 6.5 9.5H3v5h3.5L11 18.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M15 9.6a3.4 3.4 0 0 1 0 4.8M17.6 7a7 7 0 0 1 0 10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
   palette:    '<path fill-rule="evenodd" d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zM4.9 12a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0zM7.9 8a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0zM12.9 8a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0zM15.9 12a1.6 1.6 0 1 0 3.2 0a1.6 1.6 0 1 0 -3.2 0z"/>',
   // A drop: the mark of a WET brush, whose knobs keep moving its strokes.
   wet: '<path d="M12 3.4C9.2 7.4 6.6 10.4 6.6 13.6a5.4 5.4 0 0 0 10.8 0c0-3.2-2.6-6.2-5.4-10.2z"/>',
@@ -426,6 +432,12 @@ const ACT_TILES = {
   // rows, "consistent with being able to drag those tools from the right
   // rail into and out of the palette bar"). A bang, always; nothing to aim.
   unpinall: { g: 'unpinAll', action: 'commit_clear', label: 'unpin all', tip: 'unpin all — release every pin, clouds and loops', danger: true },
+  // MIX, not PIN (Ek, 2026-09-15). These change what you HEAR and release
+  // nothing, which is why they are their own group on the rail rather than two
+  // more rows under pin: `unpin all` beside `mute all` would read as two
+  // degrees of the same act, and one of them cannot be undone.
+  mute:      { g: 'muteAll',   action: 'pins_mute',       label: 'mute',       tip: 'silence every pin, and let it back on the next press — your per-pin mutes and solos survive the round trip. Hold it instead for a cut: set the tile momentary in its drawer' },
+  unmuteall: { g: 'unmuteAll', action: 'pins_unmute_all', label: 'unmute all', tip: 'bring every pin back — clears every mute and solo' },
 };
 function isActTile(id) { return Object.prototype.hasOwnProperty.call(ACT_TILES, id); }
 /** A tool you play — a brush or an eraser, not a ghost. Custom tiles qualify. */
@@ -460,6 +472,10 @@ const VERBS_OF = {
   pin:   { allowed: ['bang', 'momentary', 'toggle'], def: 'bang' },
   unpin: { allowed: ['bang'], def: 'bang' },
   unpinall: { allowed: ['bang'], def: 'bang' },
+  // A toggle by factory, and momentary allowed because holding it is a CUT —
+  // the same tool in two verbs, which the strip already supports.
+  mute:      { allowed: ['toggle', 'momentary'], def: 'toggle' },
+  unmuteall: { allowed: ['bang'], def: 'bang' },
 };
 export function verbsOf(id) {
   const k = paletteKind(id);
@@ -911,7 +927,7 @@ function _lightHeld() {
   // An OPEN PIN PATH is re-asserted here for the same reason a play is: any
   // render() rebuilds the strip and drops the class, and a held pin would go
   // dark mid-path on a binding change or a lens toggle (2026-09-13).
-  if (_pinPathOpen) _pinLit('pin', true);
+  if (_pinPathPos !== null) _pinLit('pin', true, _pinPathPos);
   if (!_held) return;
   document.querySelector(`#paletteDock .tile[data-pos="${_held.i}"]`)?.classList.add('playing');
   document.querySelector(`#toolRail [data-tile="${_held.id}"]`)?.classList.add('playing');
@@ -1029,26 +1045,53 @@ async function pinDown() {
     return;
   }
 
-  // What is the cursor on? Nearest particle decides granular vs trigger.
-  // The type test is coarse (1.5× the radius) and the drop is strict (the
-  // radius itself), so between the two the drop finds nothing — and until
-  // 2026-09-12 that was a press that did NOTHING: no loop, and no ghost
-  // either, measured as a band from ~100 to ~130 px out from a take where
-  // nearer pinned the loop and farther pinned a cloud. The drop now says
-  // whether it pinned, and a press it declines falls through to the ghost.
-  const near = _nearestParticle();
-  if (near && near.trig && UP.dropSeqFromCursor()) {
-    S._pinsDirty = true;
-    return;
-  }
-  // Nothing in reach is NOT a no-op: the press still pins a cloud at the
+  // ONE PRESS TAKES THE MOMENT, ALL OF IT (Ek, 2026-09-14): "the point of the
+  // pin is to take that moment, whatever it is and have it continue off
+  // cursor". Lines and grains are two INDEPENDENT halves of what the cursor is
+  // doing — the scheduler skips trig material, so the two never read the same
+  // marks — and the press used to pick one of them by whichever mark happened
+  // to be closer, with a coarse 1.5×-radius type test in front of a strict
+  // drop that between them left a dead band doing nothing at all. Both halves
+  // now go: every line the cursor is on becomes a loop (dropSeqFromCursor),
+  // and if the cursor is granulating as well, the grains become a cloud.
+  S._pinPressTag = ++_pinPress;
+  const loops = UP.dropSeqFromCursor();
+  if (loops.length) S._pinsDirty = true;
+  // Nothing in reach is NOT a no-op either: the press still pins a cloud at the
   // cursor — a GHOST PIN (Ek, 2026-08-28). Pin the place first, paint scratch
   // into it later, and it keeps sounding: a cloud stores a place and re-reads
   // S.particles every tick. Ghosts are cloud-only by nature — a cloud is a
   // place that reads, a loop is a recording that plays, and with no stroke
   // there is nothing to record.
-  UP.startSeedPlant();
-  S._pinPlantPending = true;
+  if (_cursorGranulating() || !loops.length) {
+    UP.startSeedPlant();
+    S._pinPlantPending = true;
+  } else {
+    _sealPinPress();
+  }
+}
+
+/** Is the cursor MAKING GRAINS right now? The scheduler publishes the pool it
+ *  hands the worklet on every tick (`S._cursorPool`), already minus whatever a
+ *  pinned cloud claims, so this asks the engine rather than re-deriving a
+ *  radius search that could disagree with it. The lens decides whether any of
+ *  it is heard; a stale timestamp means the scheduler is not running, which is
+ *  also not granulating. */
+function _cursorGranulating() {
+  if (S.scanMuted || S.lensReads === 'tape') return false;
+  if (!(S._cursorPool?.length)) return false;
+  return performance.now() - (S._cursorPoolAt || 0) < 250;
+}
+
+// The press this pin belongs to. Its two halves land on different edges — the
+// loops on the down so the button recogniser's swallow can still take the press
+// back while it is held, the cloud on the release because a held pin draws a
+// moving cloud — and this folds them into one undo (history.js mergeTagged).
+let _pinPress = 0;
+function _sealPinPress() {
+  const tag = S._pinPressTag;
+  S._pinPressTag = null;
+  if (tag != null) HIST.mergeTagged(tag);
 }
 
 async function pinUp() {
@@ -1064,24 +1107,12 @@ async function pinUp() {
     }
     return;
   }
-  if (!S._pinPlantPending) return;
+  if (!S._pinPlantPending) { _sealPinPress(); return; }
   S._pinPlantPending = false;
   const UP = await import('./ui-presets.js');
   UP.finalizeSeedPlant();
+  _sealPinPress();
   S._pinsDirty = true;
-}
-
-function _nearestParticle() {
-  const lon = S._frameCursorLon ?? 0, lat = S._frameCursorLat ?? 0;
-  const rad = S.searchRadiusDeg * Math.PI / 180;
-  let best = null, bd = Infinity;
-  for (const p of S.particles) {
-    if (p.strokeId == null || p.strokeId < 0) continue;
-    const dLon = (p.lon - lon), dLat = (p.lat - lat);
-    const d = Math.hypot(dLon, dLat);            // coarse — only picks a type
-    if (d < bd) { bd = d; best = p; }
-  }
-  return bd < rad * 1.5 ? best : null;
 }
 
 /** `-` — unpin the SELECTED pin (#238), through the real release path. Which
@@ -1336,7 +1367,15 @@ function onKeyup(e) {
 // Guarded as the key handler is: one tool playing at a time, and a press on an
 // empty position is a no-op.
 let _downExternal = null;   // externally-held palette index, or null
-let _pinPathOpen = false;   // a pin path is being drawn (toggle or momentary)
+let _pinPathPos = null;     // palette index drawing a pin path (toggle or momentary), or null
+// THE MIX MUTE'S STATE IS DERIVED, never stored (2026-09-15). It was a local
+// `_muteHeld` "mirrored from pins.js", and a mirror is a second truth: mute from
+// the rail and the palette tile's own flag still said off, so the next press on
+// the tile muted again instead of letting go. CLAUDE.md's rule for pins is that
+// audibility is derived and nothing stores on/off — this is that rule, applied
+// to the toggle above them. `allMuted()` is the one answer, and it is correct
+// now that it counts only the groups holding pins.
+const muteOn = () => !!S._pinsAllMuted?.();
 S._paletteFire = (i, down = true) => {
   const e = palAt(i); if (!e) return;
   const { id, verb } = e;
@@ -1352,20 +1391,35 @@ S._paletteFire = (i, down = true) => {
   }
   if (k === 'act') {
     if (id === 'unpinall') { if (down) { _pinFlash('unpinall'); document.getElementById('commitClearBtn')?.click(); } return; }
+    // MIX. Bangs, both — and routed by NAME rather than by "everything that is
+    // not pin", which is what the line below used to be and would have sent
+    // them to unpin the moment they existed.
+    if (id === 'unmuteall') { if (down) { _pinFlash('unmuteall'); S._pinsAllOn?.(); } return; }
+    // MUTE is the one act tile with a sustained state, so it LIGHTS rather than
+    // flashes — the same rule the pin's momentary and toggle follow.
+    if (id === 'mute') {
+      const want = verb === 'momentary' ? down : !muteOn();
+      if (verb === 'momentary' ? down === muteOn() : !down) return;
+      S._pinsSetAllMuted?.(want); _pinLit('mute', muteOn(), i);
+      return;
+    }
     if (id !== 'pin') { if (down) { _pinFlash('unpin'); unpinSelected(); } return; }
     // Pin in three verbs (Ek, 2026-09-11): a BANG pins where you stand; a
     // MOMENTARY draws a path from the down to the up; a TOGGLE opens the path
     // on one press and seals it on the next. One flag says whether a path is
     // open, whichever way it was opened.
-    if (verb === 'bang') { if (down) { _pinFlash('pin'); S._pinTap(); } return; }
+    if (verb === 'bang') { if (down) { _pinFlash('pin', i); S._pinTap(); } return; }
     if (verb === 'momentary') {
-      if (down === _pinPathOpen) return;
-      _pinPathOpen = down; _pinLit('pin', down); S._pinHold(down);
+      if (down === (_pinPathPos !== null)) return;
+      _pinPathPos = down ? i : null; _pinLit('pin', down, i); S._pinHold(down);
       return;
     }
     // A toggle holds the path open between two presses, so it is lit for that
     // whole time too — the flag is the same one either verb opens.
-    if (down) { _pinPathOpen = !_pinPathOpen; _pinLit('pin', _pinPathOpen); S._pinHold(_pinPathOpen); }
+    if (down) {
+      const open = _pinPathPos === null;
+      _pinPathPos = open ? i : null; _pinLit('pin', open, i); S._pinHold(open);
+    }
     return;
   }
 
@@ -1466,6 +1520,42 @@ function legendKind() { return S._legendKind?.() ?? 'key'; }
 // WORD in a keycap (Ek, night: "make the left click more obvious or spell out
 // left click, i can't see what that icon is") — a 7×10 mouse in a 15px cap
 // was not a symbol anyone could read.
+// ── The tile's two corner STICKERS ──────────────────────────────────────────
+// Top-left wet, top-right pins-on-end, each half outside the outline on its
+// own disc of the app ground (the CSS says why). Built here for BOTH the
+// strip tile and the hand tile, which drew their own copies and could
+// disagree.
+//
+// THE DROP IS A BUTTON ON EVERY GRAIN TILE, dry face included (Ek,
+// 2026-09-14: "the wet icon should be clickable in the palette tile … that
+// means that if the tool is a dry tool it should also show, so basically all
+// grain tools should have the wet/dry toggle on the palette tile then"). It
+// is the rail row's rule brought to the strip — outlined is dry, filled is
+// wet, a tap flips it and never takes the tool in hand — and it makes the
+// switch reachable from the surface you actually play from, which the sheet
+// and the rail did not. Wet is granular-only (`setWet` refuses the rest), so
+// no other tile shows one.
+//
+// THE PIN STICKER STAYS A MARK, shown only when the tile pins on end: its
+// switch is the row's and the sheet's. Ek asked for the drop, and one
+// clickable thing on a tile is enough to learn at a time.
+function tileStickers(id) {
+  const grain = engineOf(id) === 'granular';
+  const wetOn = isWet(id), pinOn = isAutoPin(id);
+  if (!grain && !pinOn) return '';
+  const wet = grain
+    ? `<span class="tile-wet tile-wet--btn${wetOn ? ' on' : ''}" data-wet-tgl role="switch" tabindex="-1"` +
+      ` aria-checked="${wetOn}" title="${wetOn ? 'wet — its knobs move every stroke it painted; tap to dry them'
+                                               : 'dry — its strokes keep the sound they were painted with; tap to make it wet'}">` +
+      `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${wetOn ? G.wet : G.wetOff}</svg></span>`
+    : '';
+  const pin = pinOn
+    ? `<span class="tile-pin" title="pins on end — the stroke is pinned when you let go; the switch is in its sheet">` +
+      `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.pin}</svg></span>`
+    : '';
+  return `<span class="tile-marks">${wet}${pin}</span>`;
+}
+
 function handTileHTML(ENGINE_HUE) {
   const t = tileById(inHand);
   if (!t) return '';
@@ -1479,7 +1569,7 @@ function handTileHTML(ENGINE_HUE) {
     ` style="--c:${c};--eng:${c};--pal-r:${VERB_RADIUS[verb]}" data-hand="${t.id}" data-verb="${verb}" title="${esc(title)}">` +
     `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G[t.g]}</svg>` +
     `<span class="tile-nm">${esc(t.label)}</span>` +
-    ((isWet(t.id) || isAutoPin(t.id)) ? `<span class="tile-marks">${isWet(t.id) ? `<span class="tile-wet"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.wet}</svg></span>` : ''}${isAutoPin(t.id) ? `<span class="tile-pin"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.pin}</svg></span>` : ''}</span>` : '') +
+    tileStickers(t.id) +
     `<span class="tile-binds"><kbd class="tile-bind tile-bind--key" aria-label="spacebar">${SPACE_MARK}</kbd>` +
     `<kbd class="tile-bind tile-bind--key" aria-label="left click">click</kbd></span></button>`;
 }
@@ -1534,24 +1624,13 @@ export function render() {
     ` title="its drawer — opens beside the rail">` +
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">` +
     `<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M14.5 5v14"/></svg></span>`;
-  // The WET mark (Ek, 2026-09-03): a drop after the name of a brush whose
-  // knobs keep moving every stroke it painted (brush-voicing.js, "Wet
-  // paint"). On the row AND the palette tile, because the point of wet being a
-  // property of the brush rather than a mode is that you can see which
-  // brush it is from the palette.
-  const WET = `<span class="tile-wet" title="wet — its knobs move every stroke it painted; switch it off in its sheet to dry them">` +
-    `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.wet}</svg></span>`;
-  // The PIN mark (Ek, 2026-09-12, night): the tile pins what it plays on
-  // release — a cloud for grain, a loop for tape — read off its own on-end
-  // flag. On the palette tile beside the wet drop; on the row a button that
-  // flips it, exactly as the drop does.
-  const PIN = `<span class="tile-pin" title="pins on end — the stroke is pinned when you let go; the switch is in its sheet">` +
-    `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.pin}</svg></span>`;
+  // The two tile STICKERS — the wet drop and the pin — are `tileStickers`,
+  // module scope, shared with the hand tile. On the RAIL each is a button on
+  // the row: the pin here, the drop just below.
   const PIN_BTN = (on, eng) => `<span class="tile-pin tile-pin--btn${on ? ' on' : ''}" data-pin-tgl role="switch" tabindex="-1" aria-checked="${on}"` +
     ` title="${on ? `pins on end — the stroke becomes a ${eng === 'tape' ? 'loop' : 'cloud'} when you let go; tap to stop pinning`
                  : `does not pin — the stroke stays scratch; tap to pin it as a ${eng === 'tape' ? 'loop' : 'cloud'} on release`}">` +
     `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${on ? G.pin : G.pinOff}</svg></span>`;
-  const MARKS = id => { const w = isWet(id), p = isAutoPin(id); return (w || p) ? `<span class="tile-marks">${w ? WET : ''}${p ? PIN : ''}</span>` : ''; };
   // On the RAIL the drop is a BUTTON (Ek, 2026-09-06), on every grain brush's
   // row — the palette mark's shape rule: outlined is dry, filled is wet, and
   // a tap flips it without loading the row (the capture handler in init).
@@ -1605,7 +1684,7 @@ export function render() {
       return `<button type="button" class="tile` +
         `${t.ghost ? ' ghost' : ''}${dirty}${wet ? ' wet' : ''}" style="--c:${c};--eng:${c};${SHAPE(verb)}"` +
         ` data-tile="${id}" data-pal="${id}" data-zone="palette"${pos} draggable="true" title="${title}">` +
-        body + MARKS(id) + html + `</button>`;
+        body + tileStickers(id) + html + `</button>`;
     }
     // A rail row carries `open` (its drawer is up) and `in-hand` (space plays
     // it, 2026-09-12) — the one place the hand is marked besides the hand
@@ -1756,7 +1835,10 @@ export function renderPinChrome() {
       `<span class="tile-nm">${a.label}</span></button>`; };
   wrap.innerHTML =
     `<div class="tbx-grp" data-grp="pin"><span class="tbx-lbl" style="--eng:var(--eng-pins)">pin</span>` +
-    `<div class="tbx-tiles">${row('pin', ' (hold to draw a path)')}${row('unpin')}${row('unpinall')}</div></div>`;
+    `<div class="tbx-tiles">${row('pin', ' (hold to draw a path)')}${row('unpin')}${row('unpinall')}</div></div>` +
+    // MIX is its own group: these move what you HEAR and release nothing.
+    `<div class="tbx-grp" data-grp="mix"><span class="tbx-lbl" style="--eng:var(--eng-pins)">mix</span>` +
+    `<div class="tbx-tiles">${row('mute')}${row('unmuteall')}</div></div>`;
 }
 
 /** The pressed look for the pin pair — they have no `playing` state (nothing
@@ -1767,14 +1849,33 @@ export function renderPinChrome() {
 // midi.js calls this from the commit_drop / commit_release / commit_clear
 // cases through S._pinFlash; the key and rail paths that bypass dispatch call
 // it themselves.
-function _pinEls(kind) {
+// BY POSITION, like every other tile (Ek, 2026-09-15: "i hold down arrow, the
+// take over is working on the viz but the pin down (short) is still lit up in
+// the palette"). This looked up the strip tile by ACTION with a SINGULAR
+// querySelector, and both pin verbs carry the same `data-act="commit_drop"` —
+// so with a pin bang and a pin momentary on the strip it could only ever reach
+// the FIRST of them. Holding the momentary lit the bang tile and left the
+// momentary dark: the light said the wrong verb was running, while the viz did
+// the right thing. _lightHeld's own comment eight hundred lines up already
+// states the rule this broke — "the same tool may sit on the strip twice in two
+// verbs, and lighting both would say the wrong one is sounding".
+//
+// `pos` is the palette index the action came FROM. Given, exactly that tile
+// lights. Omitted — the `=` key, OSC, MIDI, a rail click — the action is not
+// attributable to a position, so every pin tile flashes; that is the "the flash
+// belongs to the ACTION, not to the way in" rule above, unchanged.
+function _pinEls(kind, pos) {
   if (kind === 'all') kind = 'unpinall';   // midi.js's commit_clear says `all`
-  const act = { pin: 'commit_drop', unpin: 'commit_release', unpinall: 'commit_clear' }[kind];
-  return [document.querySelector(`#tcPins [data-pin="${kind}"]`),
-          act ? document.querySelector(`#paletteDock [data-act="${act}"]`) : null].filter(Boolean);
+  const act = { pin: 'commit_drop', unpin: 'commit_release', unpinall: 'commit_clear',
+                mute: 'pins_mute', unmuteall: 'pins_unmute_all' }[kind];
+  const rail = document.querySelector(`#tcPins [data-pin="${kind}"]`);
+  const tiles = pos == null
+    ? (act ? [...document.querySelectorAll(`#paletteDock [data-act="${act}"]`)] : [])
+    : [...document.querySelectorAll(`#paletteDock .tile[data-pos="${pos}"]`)];
+  return [rail, ...tiles].filter(Boolean);
 }
-function _pinFlash(kind) {
-  const els = _pinEls(kind);
+function _pinFlash(kind, pos) {
+  const els = _pinEls(kind, pos);
   for (const el of els) el.classList.add('fired');
   setTimeout(() => els.forEach(el => el.classList.remove('fired')), 180);
 }
@@ -1786,10 +1887,15 @@ function _pinFlash(kind) {
  *  whole time the tile went dark 180 ms in while the thing it started was
  *  still running. Same `.fired` face as the press, held rather than timed out,
  *  so nothing new has to be learned — it is the press look, sustained. */
-function _pinLit(kind, on) {
-  for (const el of _pinEls(kind)) el.classList.toggle('fired', !!on);
+function _pinLit(kind, on, pos) {
+  // A sustained light must be the one position that is running, never every
+  // tile that shares the action — see _pinEls.
+  for (const el of _pinEls(kind, pos)) el.classList.toggle('fired', !!on);
 }
 S._pinFlash = _pinFlash;
+// The direct road — a key, a pad, an OSC address bound to `pins_mute` — comes
+// through here so the tile agrees with the engine whichever way it was changed.
+S._pinsMuteLit = (on) => { _pinLit('mute', !!on); };
 // The pin ACTION is the `=` key (Ek, 2026-09-10: "the pin binding is old, it
 // only pins clouds. it should pin the same as the = button"): what the cursor
 // is on decides — a tape stroke becomes a loop, painting grows the loop,
@@ -4246,6 +4352,21 @@ export function initTiles() {
   // (midi.js `_learnGesture` refuses the same pairing). A bang-only tile has
   // nothing to cycle.
   const onStripClick = e => {
+    // THE WET STICKER IS A BUTTON HERE TOO (Ek, 2026-09-14). It is checked
+    // before everything else on the strip, the hand tile included: a tap on
+    // the drop flips that tool's wet and does nothing else — it does not take
+    // the tool in hand, fire the position, or press the plate (onPlateDown
+    // steps over it on the way down). The tile it belongs to is the one it
+    // sits on, so the id comes off the host — `data-tile` on a strip tile,
+    // `data-hand` on the hand tile.
+    const drop = e.target.closest('[data-wet-tgl]');
+    if (drop) {
+      e.preventDefault(); e.stopPropagation();
+      const host = drop.closest('[data-tile],[data-hand]');
+      const id = host?.dataset.tile ?? host?.dataset.hand;
+      if (id) setWet(id);
+      return;
+    }
     if (e.target.closest('#handKey')) return;   // the hand tile presses on mousedown (onPlateDown); its legend is fixed
     const row = e.target.closest('.tile-bind[data-learn-kind]');
     if (row) {
@@ -4289,6 +4410,9 @@ export function initTiles() {
   // its verb, the way a tile's right-click cycles the tile's.
   const onPlateDown = e => {
     if (e.button !== 0 || !e.target.closest('#handKey')) return;
+    // …except on the wet drop, which is a switch sitting on the plate: a
+    // press there must not play the hand (it is handled on click, above).
+    if (e.target.closest('[data-wet-tgl]')) return;
     e.preventDefault(); e.stopPropagation();
     if (_downHandMouse) return;
     _downHandMouse = true; handDown();
@@ -4326,9 +4450,26 @@ export function initTiles() {
   const onPinClick = async e => {
     const b = e.target.closest('[data-pin]');
     if (!b) return;
-    _pinFlash(b.dataset.pin);
-    if (b.dataset.pin === 'unpinall') { document.getElementById('commitClearBtn')?.click(); return; }
-    if (b.dataset.pin === 'unpin') { unpinSelected(); return; }
+    const kind = b.dataset.pin;
+    // A SUSTAINED CONTROL LIGHTS; ONLY A BANG FLASHES (2026-09-15). `_pinFlash`
+    // fired here unconditionally, before the routing below, and it ends with a
+    // 180 ms timeout that removes `.fired` from the very elements `_pinLit` had
+    // just lit — so mute engaged and then went dark, and on the release press
+    // `_pinLit(false)` beat the timeout and no flash showed at all. That is the
+    // reported "it only flashes every two clicks": press 1 a flash and silence
+    // the light does not admit to, press 2 nothing at all. The palette path six
+    // hundred lines up already states the rule and already obeys it, which is
+    // why the tile worked and the row did not. So flash the bangs only.
+    if (kind !== 'mute') _pinFlash(kind);
+    if (kind === 'unpinall') { document.getElementById('commitClearBtn')?.click(); return; }
+    if (kind === 'unpin') { unpinSelected(); return; }
+    // The MIX rows live in this handler too, and the fall-through below PINS —
+    // so they are routed by name before it, or clicking `mute all` would drop
+    // a pin. Named rather than "anything that is not pin" for the same reason.
+    if (kind === 'unmuteall') { S._pinsAllOn?.(); _pinLit('mute', false); return; }
+    // A click on the rail row is the toggle too — it is the same control, so it
+    // reads and writes the same derived state the tile does.
+    if (kind === 'mute') { S._pinsSetAllMuted?.(!muteOn()); _pinLit('mute', muteOn()); return; }
     await pinDown();
     await pinUp();
   };
@@ -4354,6 +4495,7 @@ export function initTiles() {
   // would be a press of no length.
   const onPlateTouch = e => {
     if (!e.target.closest('#handKey')) return;
+    if (e.target.closest('[data-wet-tgl]')) return;   // the drop is a switch, not the plate
     e.preventDefault(); e.stopPropagation();
     if (e.type === 'touchstart') { if (_downHandMouse) return; _downHandMouse = true; handDown(); }
     else if (_downHandMouse) { _downHandMouse = false; handUp(); }
@@ -4482,6 +4624,11 @@ S._setGrainOnEnd = setGrainOnEnd;
 // is about — it used to flip the hand's, which was the same tile back when
 // the sheet followed the armed tool.
 S._setWet     = on => setWet(sheetTileId(), on);
+// The hue a WET mark's ring wears (renderer.js). Wet exists only on granular
+// tiles — `setWet` refuses the rest — so it is the grain engine's hue, and
+// unlike `S._handHue` it is NOT null between presses: a mark stays wet when
+// nothing is in the hand.
+S._wetHue     = () => _engineHueTable().granular;
 // ui-source.js opens the properties rail for the sampler through this — its
 // sheet is rendered by that module, so the shell only has to open the rail.
 S._openProps = (id, kind) => {

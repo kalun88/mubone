@@ -191,3 +191,18 @@ a venue is not a bedroom.
   shows; see `docs/BNO085-CONTROL.md` § 3.1.
 - **`/WiFi/channel` is ignored while the station is associated** — one radio, one channel. mubone
   can only set a channel in the instrument's own AP mode, never on a router it did not create.
+
+### From the settings dialog
+
+Cut from the settings rows on 2026-09-14 when descriptions went to one sentence under 92
+characters (align-audit R5). The rows keep the sentence that says what the control does; this is
+everything else they were carrying. **Checked before appending: only 7 of the 40 distinctive
+clauses across all nineteen cuts appeared anywhere in docs/ beforehand, so this is not a
+duplicate of what follows — for most of these rows the settings dialog was the only place the
+information existed.**
+
+**WiFi Channel.** Surveys 2.4 GHz from this machine and picks between 1, 6 and 11 — the only three that do not overlap. Weighted by signal, because one close network matters more than four distant ones. Set the answer on the router: the instrument has one radio and follows whatever channel it joins.
+
+**Link Quality.** Six seconds of the live stream: what the sensor produced against what arrived, and how long the worst gap was. A stall longer than a render frame is what jitter looks like as a number.
+
+**Diagnostic Report.** Audio state, grain parameters, particle and sample counts, and the last eighty logged events. Generated on demand — the event log is always being filled, so this reaches back before whatever you noticed.

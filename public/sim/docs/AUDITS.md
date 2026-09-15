@@ -44,7 +44,7 @@ The map `scripts/audit-for.js` applies. A path is tested against every row, and 
 | `js/midi.js`, `js/accessory-registry.js` (`ACTIONS`, `ccFn`, `range`) | `rig-audit.js "action ranges" "cc mirrors"` | half-throw readings; the modal/panel mirror pair |
 | `js/osc.js` | `AUDIT_ONLY=wiring node scripts/osc-audit.js` | static cross-check, instant; the full sweep is release-only |
 | `js/sensor-registry.js`, `js/imu-setup.js`, `js/sensor-mapping.js`, `js/ximu-settings.js` | `npm run audit:sensor` | pure maths, under a second |
-| `css/`, `js/ui-settings.js`, `js/tile-layout.js` | `npm run audit:align` (needs `npm run electron:dev`), `node scripts/probe-selftest.mjs`, `node scripts/ui-shots.js` | measured alignment, never asserted; the probe must be green before any before/after claim |
+| `css/`, **`index.html`**, `js/ui-settings.js`, `js/tile-layout.js` | `npm run audit:align` (needs `npm run electron:dev`), `node scripts/probe-selftest.mjs`, `node scripts/ui-shots.js` | measured alignment, never asserted; the probe must be green before any before/after claim. **`index.html` joined 2026-09-14**: it routed to `rig-audit engine` only, so a new GUI element — which is markup in this file — met none of the 108 measured checks |
 | `js/*.test.mjs`, `js/sygaldry*.js`, `js/worklets/grain-engine.worklet.js` | `npm test` | the node unit tests, sub-second |
 | `docs/`, `CLAUDE.md`, `README.md`, `INSTALL.md`, `sw.js`, `package.json`, any `js/*.js` (orphan check) | `node scripts/docs-audit.js` | banners, table rows, versions, orphans, dead script references |
 | `js/live-loop.js`, `js/worklets/live-loop.worklet.js` | `node scripts/live-loop-audit.js` | real-time, ~15 s of playback; not in rig-audit |
@@ -200,7 +200,12 @@ leave `S.isPainting` true — and a stuck `isPainting` turns the next PIN into a
 fire pair is paced too. That is a real race in the audio path, not in the palette.
 
 **Before trusting ANY before/after claim about the screen:** `node scripts/probe-selftest.mjs`
-must be green — all seven, including the across-a-reload assertion. `scripts/screen-probe.mjs`
+must be green — all seven, including the across-a-reload assertion, which takes BOTH its snapshots
+of a fresh load (2026-09-14). It used to take the first as the session stood, and so failed after
+anything had driven the app — including `npm run audit:align` immediately before it, which is the
+order `audit-for.js` prints: align-audit opens Settings pages, the modal builds its pages lazily,
+and the ~1100 elements it leaves behind (`bind-cell`, `set-table-row`, `set-meter-*`) are a
+difference between that SESSION and a fresh one, never between two builds. `scripts/screen-probe.mjs`
 snapshots the rig view (with the `display:none` cabinet revealed off-screen in place) and every
 settings page, recording each visible element's box plus font-size, letter-spacing, colour,
 background, radius, border and a short text fingerprint; `scripts/lib/probe.js` holds the element

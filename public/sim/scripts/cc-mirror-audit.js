@@ -36,6 +36,12 @@ const MIRRORS = {
   apNoiseGateSlider:   'asNoiseGateSlider',
   apDryGainSlider:     'dryMonitorGainSlider',
   apInputChannelSelect:'asInputChannel',
+  // The paint gate (2026-09-15). Its cc action was already being walked by the
+  // sweep below, but the pair was never declared here, so nothing checked that
+  // the two copies agreed — the one control on this list that is now written
+  // from THREE doors: the Audio page's meter drag, MIDI/OSC, and the size
+  // figure on Settings -> Visuals.
+  apPaintGateSlider:   'asPaintGateSlider',
 };
 
 async function run(rig) {
@@ -159,6 +165,59 @@ async function run(rig) {
   else for (const [name, ok, detail] of ch.checks) {
     if (!ok) bad++;
     console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : '  — ' + detail}`);
+  }
+
+  // ── The size figure's gate drag reaches every mirror ──────────────────────
+  // The figure on Settings -> Visuals sets the paint gate by dragging its line,
+  // which is a THIRD writer of S.paintGateThreshold beside the Audio page's
+  // meter and the cc road. It has to go through S._setPaintGateThreshold: that
+  // setter clamps and then calls _syncGateVal(), which pushes the value into
+  // the modal slider, the hidden main-panel carrier and the numeric readout.
+  // Writing S.paintGateThreshold directly sets the threshold correctly and
+  // leaves all three stale — right sound, wrong everywhere you would read it —
+  // and that is exactly what the first cut of the figure did.
+  await rig.reload();
+  const fig = await rig.evaluate(async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const { S } = await import('./js/state.js');
+    if (!document.querySelector('.settings-dialog')?.offsetParent) {
+      document.getElementById('tcSettings')?.click(); await sleep(800);
+    }
+    [...document.querySelectorAll('.set-nav-item')].find(n => n.dataset.sec === 'viz')?.click();
+    await sleep(800);
+    const cv = [...document.querySelectorAll('#vizSizeFigCanvas')].find(e => e.offsetParent);
+    if (!cv) return { fatal: 'the size figure did not render on Settings -> Visuals' };
+    const sizesBefore = [S.vizMinSize, S.vizMaxSize, S.vizRmsMin, S.vizRmsMax].join(',');
+    const r = cv.getBoundingClientRect();
+    const pd = (x, t) => cv.dispatchEvent(new PointerEvent(t, {
+      clientX: r.left + x, clientY: r.top + r.height / 2, pointerId: 1, bubbles: true }));
+    // The gate line's x for a given dB, from the figure's own padding.
+    const xAt = db => 46 + (r.width - 62) * (db + 60) / 60;
+    const startDb = 20 * Math.log10(Math.max(S.paintGateThreshold, 1e-3));
+    pd(xAt(startDb), 'pointerdown'); await sleep(50);
+    pd(xAt(-34), 'pointermove');     await sleep(50);
+    pd(xAt(-34), 'pointerup');       await sleep(250);
+    const g = id => document.getElementById(id);
+    return {
+      movedState: Math.abs(20 * Math.log10(Math.max(S.paintGateThreshold, 1e-3)) + 34) < 2,
+      asSlider:   parseFloat(g('asPaintGateSlider')?.value) === S.paintGateThreshold,
+      apSlider:   parseFloat(g('apPaintGateSlider')?.value) === S.paintGateThreshold,
+      apNum:      (g('apPaintGateNum')?.value || '').length > 0,
+      sizesHeld:  [S.vizMinSize, S.vizMaxSize, S.vizRmsMin, S.vizRmsMax].join(',') === sizesBefore,
+    };
+  });
+
+  console.log('\n── the size figure writes the gate through the one setter ──');
+  if (fig.fatal) { console.log('  FATAL:', fig.fatal); bad++; }
+  else for (const [name, ok] of [
+    ['dragging the gate line moves the threshold',      fig.movedState],
+    ['the modal slider follows',                        fig.asSlider],
+    ['the main-panel carrier follows',                  fig.apSlider],
+    ['the numeric readout is written',                  fig.apNum],
+    ['and the four size values are untouched',          fig.sizesHeld],
+  ]) {
+    if (!ok) bad++;
+    console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${name}`);
   }
 
   console.log(`\n${bad} desync(s).`);

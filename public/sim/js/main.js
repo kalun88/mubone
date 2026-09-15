@@ -214,8 +214,13 @@ function init() {
     // sends people to configure a [udpsend] that nothing is listening on.
     const st = document.getElementById('oscStationInline');
     if (st) {
+      // Reworded 2026-09-14 when this moved out of the description and into the
+      // row's status line: it used to complete "This station is …", so alone it
+      // read as a fragment. The other two values already stood on their own.
+      // It still has to OUTRANK the description's [udpsend] line, which is the
+      // Electron path — prose is the general case, the live value is this build.
       st.textContent = !_isElectron
-        ? 'browser — OSC arrives over the ws://localhost:8080 bridge, not UDP'
+        ? 'browser — OSC arrives on ws://localhost:8080, not UDP'
         : _instName
           ? `station ${_instName} (port ${_oscPort ?? '?'})`
           : `solo (port ${_oscPort ?? 7500})`;
@@ -502,6 +507,9 @@ function init() {
         allBtn.textContent = 'Click again to reset all';
         allBtn.classList.add('armed');
         armTimer = setTimeout(disarm, 4000);
+        // And stand down when you leave it: an armed danger button that keeps
+        // its charge while you are somewhere else is a trap you walk back into.
+        allBtn.addEventListener('blur', disarm, { once: true });
         return;
       }
       disarm();

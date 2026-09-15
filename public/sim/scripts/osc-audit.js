@@ -255,6 +255,21 @@ const NEEDS_STATE = new Map([
   ['/dry/mute/hold',    'same shape as /mute/hold — a hold that restores the state it found'],
   ['/undo',             'needs something to undo; the rig launches with an empty stack'],
   ['/commit/clear',     'needs a commit to exist'],
+  // The MIX pair's second half (2026-09-15). `allOn()` clears every group and
+  // pin flag, so on a rig that launches with nothing muted there is nothing for
+  // it to clear and the snapshot cannot see it act. Proven live rather than
+  // assumed: with one pin muted by setAllMuted, firing S._pinsAllOn() takes
+  // isPinAudible false -> true. The address is not dead; the probe is blind to
+  // it from a clean start, the same way /undo and /commit/clear are.
+  ['/pins/unmuteall',   'needs something muted; the rig launches with nothing muted'],
+  // And its other half, quiet for a DIFFERENT reason worth stating: with no
+  // pins there is no group to mute. setAllMuted sets both group flags and then
+  // calls applyMix(), whose pruneEmptyGroups clears the flag on any group
+  // holding no pins — so on an empty rig the mute is undone inside the same
+  // call. That is correct (a flag about pins in a group means nothing with none
+  // in it) and it is the same fact allMuted() was taught to respect on
+  // 2026-09-15. Proven with a pin present by pins-audit's ten MIX invariants.
+  ['/pins/mute',        'needs a pin to exist; an empty group has its mute pruned in the same call'],
   // /mapping/toggle/1–4 were listed here until 2026-09-05, when the addresses
   // were deleted (never bound). Wet lives in tiles.js's module-local _tileCfg
   // and reaches localStorage on a 10 Hz poll, so the S snapshot cannot see it;

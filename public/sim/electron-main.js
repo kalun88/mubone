@@ -2,7 +2,7 @@
 // ELECTRON MAIN PROCESS — mubone desktop wrapper
 // ============================================================================
 
-const { app, BrowserWindow, session, ipcMain, screen, nativeImage } = require('electron');
+const { app, BrowserWindow, session, ipcMain, screen, nativeImage, dialog, Menu } = require('electron');
 
 // Who held the loop (2026-09-06, R6): every ipcMain handler, socket and
 // serial callback is timed, and the loop's own gaps and GC pauses counted —
@@ -13,6 +13,7 @@ const timed = probe.timed;
 probe.wrapIpcMain(ipcMain);
 const path  = require('path');
 const dgram = require('dgram');
+const fs    = require('fs');
 
 // ── Timer throttling — off, unconditionally ──────────────────────────────────
 // Chromium throttles setTimeout/setInterval to ~1 Hz in any renderer it thinks
@@ -532,6 +533,169 @@ function hostCall(type, args = {}) {
   });
 }
 
+// ── Document files (.mubone) ─────────────────────────────────────────────────
+// The renderer has no filesystem. This is the whole of what it can reach: the
+// two native dialogs, a ranged read, and a streamed write. Nothing else in the
+// app opens a file by path.
+//
+// A write goes to `<path>.part` and is renamed on close, so a crash or a pulled
+// plug mid-save leaves the previous document intact rather than a truncated
+// one — a piece can be hundreds of MB of float32 audio and the write is not
+// instant. Chunks stream because holding the whole document as one Uint8Array
+// in the renderer AND again as a structured-clone copy here would double a
+// large piece's peak memory for no reason.
+
+const DOC_EXT = '.mubone';
+const _docWrites = new Map();   // id → { fd, tmp, dest }
+let _docWriteSeq = 0;
+
+function _isDocPath(p) {
+  return typeof p === 'string' && p.length > 0 && p.endsWith(DOC_EXT);
+}
+
+function _docWindow() {
+  const live = w => (w && !w.isDestroyed() ? w : null);
+  return live(BrowserWindow.getFocusedWindow()) || live(_oscWin) || live(BrowserWindow.getAllWindows()[0]) || null;
+}
+
+function docWriteBegin(dest) {
+  if (!_isDocPath(dest)) return { ok: false, error: 'not a ' + DOC_EXT + ' path' };
+  const tmp = dest + '.part';
+  let fd;
+  try { fd = fs.openSync(tmp, 'w'); }
+  catch (e) { return { ok: false, error: String(e.message || e) }; }
+  const id = ++_docWriteSeq;
+  _docWrites.set(id, { fd, tmp, dest });
+  return { ok: true, id };
+}
+
+function docWriteChunk(id, bytes) {
+  const w = _docWrites.get(id);
+  if (!w) return { ok: false, error: 'no such write' };
+  // View, not copy — the chunk already crossed the IPC boundary once.
+  const buf = ArrayBuffer.isView(bytes)
+    ? Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    : Buffer.from(bytes);
+  try { fs.writeSync(w.fd, buf); }
+  catch (e) { docWriteAbort(id); return { ok: false, error: String(e.message || e) }; }
+  return { ok: true };
+}
+
+function docWriteEnd(id) {
+  const w = _docWrites.get(id);
+  if (!w) return { ok: false, error: 'no such write' };
+  _docWrites.delete(id);
+  try {
+    fs.closeSync(w.fd);
+    fs.renameSync(w.tmp, w.dest);          // atomic on the same volume
+  } catch (e) { try { fs.unlinkSync(w.tmp); } catch (_) {} return { ok: false, error: String(e.message || e) }; }
+  return { ok: true, path: w.dest };
+}
+
+function docWriteAbort(id) {
+  const w = _docWrites.get(id);
+  if (!w) return { ok: true };
+  _docWrites.delete(id);
+  try { fs.closeSync(w.fd); } catch (_) {}
+  try { fs.unlinkSync(w.tmp); } catch (_) {}
+  return { ok: true };
+}
+
+// ── The document: menu, quit guard, double-click ─────────────────────────────
+//
+// The File menu is the only menu mubone defines; the rest are Electron's own
+// roles, which is what keeps ⌘Q, the services menu and the window list working.
+// Its items do nothing here — they ask the renderer, which owns the document
+// (js/piece.js `window.__mubonePiece`). The main process cannot reach the module
+// graph, so the renderer answers on `window` and this file asks.
+
+let _recentPieces = [];
+let _closing = false;     // the guard has had its answer; let the close through
+
+function askRenderer(expr) {
+  const win = _docWindow();
+  if (!win) return Promise.resolve(null);
+  return win.webContents.executeJavaScript(expr, true).catch(() => null);
+}
+
+function sendDocCommand(cmd, arg) {
+  askRenderer(`window.__mubonePiece?.run(${JSON.stringify(cmd)}, ${JSON.stringify(arg ?? null)})`);
+}
+
+function buildMenu() {
+  const recent = _recentPieces.length
+    ? _recentPieces.map(p => ({
+        label: path.basename(p, DOC_EXT),
+        click: () => sendDocCommand('open-at', p),
+      }))
+    : [{ label: 'Nothing yet', enabled: false }];
+
+  const template = [
+    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
+    {
+      label: 'File',
+      submenu: [
+        { label: 'New',      accelerator: 'CmdOrCtrl+N',       click: () => sendDocCommand('new') },
+        { label: 'Open…',    accelerator: 'CmdOrCtrl+O',       click: () => sendDocCommand('open') },
+        { label: 'Open Recent', submenu: recent },
+        { type: 'separator' },
+        { label: 'Save',     accelerator: 'CmdOrCtrl+S',       click: () => sendDocCommand('save') },
+        { label: 'Save As…', accelerator: 'Shift+CmdOrCtrl+S', click: () => sendDocCommand('save-as') },
+      ],
+    },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/**
+ * The quit guard. Ek asked for exactly this and nothing more (2026-09-14: "if
+ * the app closes, then a warning to save or not can come up") — there is no
+ * autosave and nothing on a timer, so this is the only thing standing between a
+ * session and the bin.
+ *
+ * The renderer is asked at the moment of the close rather than pushing a flag
+ * as it goes, so the answer can never be one edit stale.
+ */
+function guardClose(win) {
+  win.on('close', async (e) => {
+    if (_closing) return;
+    e.preventDefault();
+    const state = await askRenderer('window.__mubonePiece?.state()');
+    if (!state?.dirty) { _closing = true; win.close(); return; }
+
+    const name = state.name || 'this piece';
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: ['Save', "Don't Save", 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      message: `Save changes to ${name}?`,
+      detail: 'Your recording, marks and pins are lost if you don\'t.',
+    });
+    if (response === 2) return;                       // cancel: stay open
+    if (response === 1) { _closing = true; win.close(); return; }
+
+    // Save may put its own dialog up (a piece with no path yet), and may be
+    // cancelled there — in which case the quit is cancelled too.
+    const saved = await askRenderer('window.__mubonePiece?.save()');
+    if (saved) { _closing = true; win.close(); }
+  });
+}
+
+// A double-clicked .mubone, or one dropped on the dock icon. macOS delivers it
+// here, and before the window exists on a cold start — so hold it until there
+// is something to open it in.
+let _pendingOpen = null;
+app.on('open-file', (e, filePath) => {
+  e.preventDefault();
+  const win = _docWindow();
+  if (win && !win.webContents.isLoading()) sendDocCommand('open-at', filePath);
+  else _pendingOpen = filePath;
+});
+
 // ── IPC handlers ──────────────────────────────────────────────────────────────
 
 function setupIPC() {
@@ -692,6 +856,78 @@ function setupIPC() {
     return { ok: true };
   });
 
+  // ── Document files ──────────────────────────────────────────────────────
+  ipcMain.handle('doc-save-dialog', async (_e, opts = {}) => {
+    const win = _docWindow();
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Save piece',
+      defaultPath: opts.defaultPath || undefined,
+      filters: [{ name: 'mubone piece', extensions: ['mubone'] }],
+      properties: ['createDirectory', 'showOverwriteConfirmation'],
+    });
+    if (r.canceled || !r.filePath) return { canceled: true };
+    const p = r.filePath.endsWith(DOC_EXT) ? r.filePath : r.filePath + DOC_EXT;
+    return { canceled: false, path: p };
+  });
+
+  ipcMain.handle('doc-open-dialog', async (_e, opts = {}) => {
+    const win = _docWindow();
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Open piece',
+      defaultPath: opts.defaultPath || undefined,
+      filters: [{ name: 'mubone piece', extensions: ['mubone'] }],
+      properties: ['openFile'],
+    });
+    if (r.canceled || !r.filePaths?.length) return { canceled: true };
+    return { canceled: false, path: r.filePaths[0] };
+  });
+
+  ipcMain.handle('doc-stat', (_e, p) => {
+    if (typeof p !== 'string') return { ok: false, error: 'bad path' };
+    try {
+      const st = fs.statSync(p);
+      return { ok: true, size: st.size, mtimeMs: st.mtimeMs };
+    } catch (e) { return { ok: false, error: String(e.code || e.message || e) }; }
+  });
+
+  // Whole file when offset/length are omitted; a range otherwise, which is how
+  // the zip reader pulls the directory and then one member at a time.
+  ipcMain.handle('doc-read', (_e, p, offset, length) => {
+    if (typeof p !== 'string') return { ok: false, error: 'bad path' };
+    try {
+      if (offset == null) return { ok: true, bytes: fs.readFileSync(p) };
+      const fd = fs.openSync(p, 'r');
+      try {
+        const buf = Buffer.allocUnsafe(Math.max(0, length | 0));
+        const n = fs.readSync(fd, buf, 0, buf.length, offset);
+        return { ok: true, bytes: n === buf.length ? buf : buf.subarray(0, n) };
+      } finally { fs.closeSync(fd); }
+    } catch (e) { return { ok: false, error: String(e.code || e.message || e) }; }
+  });
+
+  ipcMain.handle('doc-write-begin', (_e, p)        => docWriteBegin(p));
+  ipcMain.handle('doc-write-chunk', (_e, id, b)    => docWriteChunk(id, b));
+  ipcMain.handle('doc-write-end',   (_e, id)       => docWriteEnd(id));
+  ipcMain.handle('doc-write-abort', (_e, id)       => docWriteAbort(id));
+
+  // The renderer's document state. macOS draws it: the title, the proxy icon for
+  // the file itself, and the dot in the close button — the conventions a
+  // document window already has, so the instrument's chrome stays uncluttered.
+  ipcMain.on('doc-set-state', (_e, state) => {
+    const win = _docWindow();
+    if (!win || !state) return;
+    const base = INSTANCE ? `mubone [${INSTANCE}]` : 'mubone';
+    win.setTitle(state.name ? `${state.name} — ${base}` : base);
+    win.setDocumentEdited(!!state.dirty);
+    if (process.platform === 'darwin') win.setRepresentedFilename(state.path || '');
+  });
+
+  ipcMain.on('doc-set-recent', (_e, list) => {
+    _recentPieces = Array.isArray(list) ? list.filter(p => typeof p === 'string').slice(0, 10) : [];
+    for (const p of _recentPieces) app.addRecentDocument(p);
+    buildMenu();
+  });
+
   // Fullscreen toggle — native OS fullscreen on the current display.
   // Note: on macOS this creates a Space, which dims the other display.
   // This is a macOS limitation; simpleFullScreen avoids it but has sizing
@@ -816,6 +1052,9 @@ function cleanupBeforeQuit() {
   for (const entry of _ximu3DataSocks.values()) { try { entry.sock.close(); } catch(_) {} }
   _ximu3DataSocks.clear();
   if (_ximu3CmdSock)       { try { _ximu3CmdSock.close(); } catch(_) {} _ximu3CmdSock = null; }
+  // Any half-written document goes with its .part file — never a truncated .mubone
+  for (const id of [..._docWrites.keys()]) docWriteAbort(id);
+
   // Close serial ports
   for (const [, entry] of _serialPorts) {
     try { entry.port.close(); } catch(_) {}
@@ -840,8 +1079,13 @@ app.whenReady().then(() => {
     else app.dock.setIcon(nativeImage.createFromPath(path.join(__dirname, 'logo', 'icon-512.png')));
   }
   setupIPC();
+  buildMenu();
   const win = createWindow();
   _oscWin = win;
+  guardClose(win);
+  win.webContents.once('did-finish-load', () => {
+    if (_pendingOpen) { sendDocCommand('open-at', _pendingOpen); _pendingOpen = null; }
+  });
 
   // Opt-in diagnosis channel (npm run electron:dev). Never loaded otherwise.
   if (process.env.MUBONE_DEV_BRIDGE === '1') {

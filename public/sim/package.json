@@ -1,6 +1,6 @@
 {
   "name": "mubone",
-  "version": "1.16.0-alpha",
+  "version": "5.0.0-alpha",
   "description": "mubone — spatial granular synthesizer",
   "main": "electron-main.js",
   "author": "mubone",
@@ -105,6 +105,15 @@
           "path": "build/dmg/Open mubone (first time).command"
         }
       ]
-    }
+    },
+    "fileAssociations": [
+      {
+        "ext": "mubone",
+        "name": "mubone piece",
+        "description": "A mubone piece",
+        "role": "Editor",
+        "rank": "Owner"
+      }
+    ]
   }
 }

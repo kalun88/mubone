@@ -5,7 +5,7 @@
 import {
   S, SPHERE_PALETTE, GRID_SEGMENTS_LON, GRID_SEGMENTS_LAT,
   SPHERE_RADIUS, FOV_DEG, PARTICLE_BASE_SIZE, PARTICLE_MAX_SIZE,
-  SAMPLE_PAINT_COLORS, livePaintColor, CURSOR_IDLE_COLOR, MAX_SEEDS, AUTO_ROTATION_SPEED, ROTATION_SPEED,
+  SAMPLE_PAINT_COLORS, livePaintColor, MAX_SEEDS, AUTO_ROTATION_SPEED, ROTATION_SPEED,
   RENDER_TARGET_FPS, GRAIN_SCHEDULER_INTERVAL_MS,
   perf, perfTick, gp, minGrainDurS, axisHeld,
   SENSOR_CAM_SWING_DEG_S, SENSOR_CAM_OVERSHOOT_DEG, SENSOR_CAM_TELEPORT_DEG
@@ -147,6 +147,26 @@ function FOCUS_INK() {
   _focusInkDark = S.darkMode;
   return _focusInk;
 }
+// Cursor ink comes from tokens (ruled 2026-09-14). The invariant: the tile you
+// pressed and the mark under your hand are the same colour BY CONSTRUCTION, not
+// by two lists agreeing. Cached for the same reason FOCUS_INK is — this runs
+// per frame and getComputedStyle is a layout read, on the thread the grain
+// scheduler shares.
+const _tokCache = new Map();
+function _tok(name, fallback) {
+  let v = _tokCache.get(name);
+  if (v === undefined) {
+    v = getComputedStyle(document.body).getPropertyValue(name).trim() || fallback;
+    _tokCache.set(name, v);
+  }
+  return v;
+}
+export function flushCursorTokens() { _tokCache.clear(); }
+// The one event that can change what a token resolves to. FOCUS_INK keys its
+// own cache on S.darkMode; this cache has no such key, so it is flushed here
+// rather than left to go stale the way a second copy of a colour always does.
+window.addEventListener('mubone-theme', flushCursorTokens);
+
 function _drawFocusBracket(x, y, r, alpha, color) {
   const c = S.ctx;
   c.save();
@@ -172,7 +192,7 @@ function _drawAnchorMark(x, y, color, alpha, label, paused) {
   S.ctx.beginPath(); S.ctx.arc(x, y, 14, 0, Math.PI * 2); S.ctx.stroke();
   S.ctx.fillStyle = color;
   S.ctx.beginPath(); S.ctx.arc(x, y, 4, 0, Math.PI * 2); S.ctx.fill();
-  S.ctx.font = 'bold 11px "Roboto Mono", monospace';
+  S.ctx.font = 'bold 11px Urbanist, sans-serif';
   S.ctx.textAlign = 'center';
   S.ctx.textBaseline = 'middle';
   S.ctx.fillText(label, x, y - 20);
@@ -372,7 +392,7 @@ export function drawSeeds() {
       if (fadeT > 0.6) {
         S.ctx.globalAlpha  = alpha * 0.8;
         S.ctx.fillStyle    = seed.color;
-        S.ctx.font         = `8px "Roboto Mono", monospace`;
+        S.ctx.font         = '8px Urbanist, sans-serif';
         S.ctx.textAlign    = 'center';
         S.ctx.textBaseline = 'middle';
         const labelOff   = dotR + 6;
@@ -823,9 +843,11 @@ function _drawArcSegment(lon, _type, lat0, lat1) {
  *  anything else falls through unchanged and the caller's alpha is lost rather
  *  than the colour. Memoised on the string because the hue changes when a
  *  position starts or stops playing and not once per frame. */
-//  Two slots, not one: the reticle asks for the same colour at two alphas on
-//  every frame, and a single slot would miss on both calls for ever.
-const _hexASlots = [{ k: '', a: -1, v: '' }, { k: '', a: -1, v: '' }];
+//  Four slots, not one: the reach ring asks for its colour at two alphas on
+//  every frame and the reticle asks for a second colour at two more while
+//  recording, so a smaller cache would miss on every call for ever.
+const _hexASlots = [{ k: '', a: -1, v: '' }, { k: '', a: -1, v: '' },
+                    { k: '', a: -1, v: '' }, { k: '', a: -1, v: '' }];
 let _hexASlot = 0;
 function _hexA(c, a) {
   for (const s of _hexASlots) if (s.k === c && s.a === a) return s.v;
@@ -834,7 +856,7 @@ function _hexA(c, a) {
     v = 'rgba(' + parseInt(c.slice(1, 3), 16) + ',' + parseInt(c.slice(3, 5), 16)
       + ',' + parseInt(c.slice(5, 7), 16) + ',' + a + ')';
   }
-  const s = _hexASlots[_hexASlot]; _hexASlot ^= 1;
+  const s = _hexASlots[_hexASlot]; _hexASlot = (_hexASlot + 1) & 3;
   s.k = c; s.a = a; s.v = v;
   return v;
 }
@@ -908,24 +930,35 @@ export function drawRadiusTooltip() {
   const label = S.nearestMode ? 'nearest' : `${S.searchRadiusDeg}°`;
   const fs    = 9;
 
-  // Flash calculation — brighter on change, fades to ghost
+  // THE RING IS THE RADIUS. The number is confirmation that it CHANGED, not a
+  // fact that needs standing, and it was standing: a 0.20 floor put a permanent
+  // 9px readout under the cursor for ever, saying in text what the ring beside
+  // it was already saying in geometry. It now lives exactly as long as its
+  // flash, which is also the end of the 9px resting type.
+  //
+  // `nearest` is the exception, and the reason is that it is not a VALUE — it is
+  // a mode, and the ring looks identical in it (nearest bypasses the radius for
+  // grain selection only; loops, triggers and cloud focus still gate on
+  // searchRadiusDeg, which is why the ring keeps drawing). Its control is the
+  // lens sheet's snap capsule inside #propRail, a DRAWER, so with the drawer
+  // shut this word is the only thing on screen that says the mode is on. It
+  // keeps its ghost until the mode has somewhere else to live.
   const now       = performance.now();
   const flashLeft = S.radiusTooltipUntil - now;
   const flashFade = 600;
-  const baseAlpha = 0.20;
-  const alpha     = flashLeft > 0
-    ? baseAlpha + (0.65 * Math.min(1, flashLeft / flashFade))
-    : baseAlpha;
+  const baseAlpha = S.nearestMode ? 0.20 : 0;
+  if (flashLeft <= 0 && baseAlpha === 0) return;
+  const alpha = baseAlpha + 0.65 * Math.max(0, Math.min(1, flashLeft / flashFade));
 
   // Position: centered below the radius circle
   const py = my + Math.max(brushR + 14, 28);
 
   S.ctx.save();
   S.ctx.globalAlpha  = alpha;
-  S.ctx.font         = `${fs}px "Roboto Mono", monospace`;
+  S.ctx.font         = `${fs}px Urbanist, sans-serif`;
   S.ctx.textAlign    = 'center';
   S.ctx.textBaseline = 'top';
-  S.ctx.fillStyle    = S.nearestMode ? '#b8a0ff' : (S.darkMode ? '#ffffff' : '#000000');
+  S.ctx.fillStyle    = S.nearestMode ? _tok('--accent-sensor', '#a793c0') : (S.darkMode ? '#ffffff' : '#000000');
   S.ctx.fillText(label, mx, py);
   S.ctx.restore();
 }
@@ -1013,6 +1046,8 @@ const GLOW_ALPHA = 0.917;
 // the same number of lines, spread evenly through the pool, so the fan keeps
 // its shape and its reach while alpha carries the density as it already did.
 const REACH_MAX = 128;
+// The no-wet-brushes answer, so the frame never allocates one to say nothing.
+const EMPTY_IDS = [];
 
 // ── Depth ramp ──────────────────────────────────────────────────────────────
 // depth → 0..1 "how near", the input to every size and alpha ramp in the three
@@ -1116,10 +1151,20 @@ export function drawParticles() {
   // Returns false in the normal case, which lets the loops below skip the
   // per-particle read entirely.
   const anyMuted = syncParticleMarks();
-  // The wet voicing of the brush in the HAND, if it is wet — its marks wear a
-  // ring below. Read once per frame; a dry hand costs one call.
-  const _hand = S._handTile?.();
-  const handWetVo = _hand?.wet ? (S._wetVoicingOf?.(_hand.id) ?? 0) : 0;
+  // THE WET VOICINGS — the marks that wear a ring below, because their sound
+  // can still move (brush-voicing.js, "Wet paint"). Read from the voicing
+  // TABLE, not from the hand (2026-09-14): wet is a property of the brush and
+  // lasts until the brush is dried, while `_handTile()` is null between
+  // presses — so keying the ring on the hand lit the marks only while that
+  // brush was actually painting, which is the opposite of what wet means.
+  // Read once per frame; usually zero or one wet brush exists.
+  const wetVos   = S._wetVoicingIds?.() ?? EMPTY_IDS;
+  const nWet     = wetVos.length;
+  const wetVo0   = nWet === 1 ? wetVos[0] : 0;
+  // Wet is granular-only (tiles.js `setWet` refuses the rest), so the ring is
+  // always the grain engine's hue — and unlike `S._handHue` it must not go
+  // null between presses.
+  const wetHue   = S._wetHue?.() ?? null;
 
   _glowCache.clear();
   const hasGlow = activeGrainMap.size > 0;
@@ -1208,7 +1253,9 @@ export function drawParticles() {
     _sortBuf[off + 6] = p.noise ?? p.zcr ?? 0;
     _colorBuf[count]  = p.color;
     _mutedBuf[count]  = anyMuted && p._composerMuted ? 1 : 0;
-    _wetBuf[count]    = handWetVo && p._vo === handWetVo ? 1 : 0;
+    _wetBuf[count]    = nWet === 0 ? 0
+                      : nWet === 1 ? (p._vo === wetVo0 ? 1 : 0)
+                      : (wetVos.indexOf(p._vo) >= 0 ? 1 : 0);
     _matBuf[count]    = p.trig ? 1 : (p.source === 'sample' ? 2 : 0);
     _strokeBuf[count] = p.strokeId ?? -1;
     _origBuf[count]   = origIdx;
@@ -1334,13 +1381,13 @@ export function drawParticles() {
     } else {
       S.ctx.fillStyle = color;
       S.ctx.beginPath(); S.ctx.arc(sx, sy, size, 0, Math.PI * 2); S.ctx.fill();
-      // A WET mark of the brush in the hand wears a ring in the hand's hue:
-      // these are the marks the sheet's knobs will move (brush-voicing.js,
-      // "Wet paint"). Only the hand's — a wet brush you are not holding
-      // cannot move, so its marks read like any dry ones. One extra stroke
-      // per such mark, and only while a wet brush is playing.
+      // A WET mark wears a ring in the grain hue: these are the marks a
+      // brush's knobs can still move (brush-voicing.js, "Wet paint"). Every
+      // mark of every wet brush, held or not — the ring is the answer to
+      // "which paint is still wet", and paint does not dry because you put
+      // the brush down. One extra stroke per such mark.
       if (_wetBuf[ii]) {
-        S.ctx.strokeStyle = S._handHue || color;
+        S.ctx.strokeStyle = wetHue || color;
         S.ctx.lineWidth = 1;
         S.ctx.beginPath(); S.ctx.arc(sx, sy, size + 2, 0, Math.PI * 2); S.ctx.stroke();
       }
@@ -2282,10 +2329,10 @@ function drawSeedAnchorsMinimal() {
     if (!pinAnchorInto(slot, _anchorR)) continue;
     aLon = _anchorR[0]; aLat = _anchorR[1];
     if (slot.type === 'cloud') {
-      color = slot.color || '#4a9fd4';
+      color = slot.color || _tok('--eng-source', '#4aa3e8');
       radiusDeg = slot.searchRadiusDeg;
     } else if (slot.type === 'loop') {
-      color = slot.color || '#ff6b9d';
+      color = slot.color || _tok('--eng-tape', '#f2569e');
       radiusDeg = slot.searchRadiusDeg;
     } else continue;
     if (aLon == null || aLat == null) continue;
@@ -2311,7 +2358,7 @@ function drawSeedAnchorsMinimal() {
     S.ctx.fillStyle = color;
     S.ctx.beginPath(); S.ctx.arc(proj.sx, proj.sy, 5, 0, Math.PI * 2); S.ctx.fill();
     // Slot number
-    S.ctx.font = 'bold 11px "Roboto Mono", monospace';
+    S.ctx.font = 'bold 11px Urbanist, sans-serif';
     S.ctx.textAlign = 'center'; S.ctx.textBaseline = 'middle';
     S.ctx.fillText(si + 1, proj.sx, proj.sy - 14);
   }
@@ -2320,14 +2367,18 @@ function drawSeedAnchorsMinimal() {
 
 // ── Cursor ────────────────────────────────────────────────────────────────────
 //
-// Redesigned "Mode Ring" HUD — 3 concentric zones:
-//   Zone 1  Center reticle  — crosshair + dot (white idle, paint color, red record)
-//   Zone 2  Mode Ring       — 4 arc segments at ~14px radius:
-//             Top    = scan off           (amber #e8a030)
-//             Bottom = loop lock on       (pink  #ff6b9d)
-//             Right  = patch number       (white, always shown, flashes on change)
-//             Left   = seed tether on     (violet #b8a0ff)
-//   Zone 3  Radius circle   — search radius (solid, minimal)
+// Two concentric zones. (There were three: Zone 2 was a "Mode Ring" of four
+// arc segments at ~14px, and it is GONE from the code — this header went on
+// describing it, in literal hexes, long after the last arc was deleted. That
+// is how the six-colour cursor survived: a comment nobody could disagree with.)
+//   Zone 1  Center reticle  — crosshair + dot: neutral idle, the tool's colour
+//                             while painting, --mic-live-border while recording
+//   Zone 3  Radius circle   — the reach. Its ink is the HAND's (S._handHue, the
+//                             tile you pressed), and the two cursor states that
+//                             outrank the hand wear their own token: erase is
+//                             --eng-erase, scan-off is an empty ring in
+//                             --text-faint. Nothing in hand: --text-tertiary.
+// EVERY ONE OF THOSE IS READ FROM THE TOKEN, never copied here — see _tok().
 //
 // The reach ring drawn as the PROJECTED image of the true angular circle on
 // the sphere. A flat screen circle of focalLen·tan(r) is exact only on the
@@ -2556,14 +2607,13 @@ export function drawCursor() {
     my = (S.mouseInCanvas || S.altLocked) ? S.mousePixelY : cy;
   }
 
+  // The save() is the early-return guard's and everything below it — NOT the
+  // anchor dot's. A 2.5px centre dot used to be drawn here in standard mode:
+  // two objects for one fact. With no mouse in the canvas the cursor sits at
+  // cx,cy and the dot was drawn underneath the reticle, invisible; with the
+  // mouse in the canvas it marked a point that means nothing on its own. The
+  // reticle is the mark.
   S.ctx.save();
-
-  // Center-of-canvas anchor dot — only in standard (1-IMU / mouse) mode
-  // In detethered (2-IMU) mode the cursor roams freely, so a fixed center dot is misleading
-  if (!S.cursorQ) {
-    S.ctx.fillStyle = S.darkMode ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)';
-    S.ctx.beginPath(); S.ctx.arc(cx, cy, 2.5, 0, Math.PI * 2); S.ctx.fill();
-  }
 
   // ── Early return guard ──────────────────────────────────────────────────
   // In detethered mode cursor is always active (driven by IMU, not mouse).
@@ -2577,53 +2627,43 @@ export function drawCursor() {
   S._cursorScreenX = cursorOffScreen ? NaN : mx;
   S._cursorScreenY = cursorOffScreen ? NaN : my;
 
-  // ── Edge indicator — off-screen cursor arrow ────────────────────────────
-  if (cursorOffScreen) {
-    if (S.edgeIndicator === 'on') {
-      const sz = 8 * (S.edgeIndicatorSize || 1);
-      const edgePad = sz + 4;
-      // Clamp indicator inside viewport with padding
-      const ex = Math.max(edgePad, Math.min(w - edgePad, mx));
-      const ey = Math.max(edgePad, Math.min(h - edgePad, my));
-      // Arrow direction: point toward the off-screen cursor
-      const angle = Math.atan2(my - cy, mx - cx);
-
-      S.ctx.save();
-      S.ctx.translate(ex, ey);
-      S.ctx.rotate(angle);
-      // Draw chevron arrow pointing in the direction of the cursor
-      S.ctx.strokeStyle = S.darkMode ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.7)';
-      S.ctx.lineWidth   = 2 * (S.edgeIndicatorSize || 1);
-      S.ctx.lineCap     = 'round';
-      S.ctx.beginPath();
-      S.ctx.moveTo(-sz * 0.6, -sz * 0.5);
-      S.ctx.lineTo(sz * 0.4, 0);
-      S.ctx.lineTo(-sz * 0.6, sz * 0.5);
-      S.ctx.stroke();
-      // Small dot at the tip
-      S.ctx.fillStyle = S.darkMode ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)';
-      S.ctx.beginPath(); S.ctx.arc(sz * 0.4, 0, 2.5 * (S.edgeIndicatorSize || 1), 0, Math.PI * 2); S.ctx.fill();
-      S.ctx.restore();
-    }
-    S.ctx.restore();
-    return;  // Don't draw reticle/radius when cursor is off-screen
-  }
+  // OFF SCREEN, NOTHING IS DRAWN (Ek, 2026-09-15: remove the off-screen
+  // indicator and its size). There was a chevron at the edge pointing after the
+  // cursor, with a slider to scale it for a projector. Both rows are gone from
+  // Settings -> Visuals and so is the arrow: when the cursor leaves the view
+  // there is no reticle, no radius and now no mark at the edge either.
+  if (cursorOffScreen) { S.ctx.restore(); return; }
 
   const painting    = S.isPainting;
   const scanOff = S.scanMuted;
   const recording   = S.isRecording;
-  // Recording is red; sampler source wears its current sample's colour so
-  // the cursor says what it would ink from (#247); live idles neutral.
-  const color       = recording
-    ? '#e83030'
-    : S.sourceKind === 'sampler'
-      ? SAMPLE_PAINT_COLORS[S.samplerIndex % SAMPLE_PAINT_COLORS.length]
-      : CURSOR_IDLE_COLOR;
+  // THE DOT SAYS WHAT YOU INK FROM (Ek, 2026-09-14). From a loaded sample it is
+  // that sample's colour; from the mic it is the mic's, which the top bar
+  // already uses to say the mic is live. NOT --accent-danger — that one means
+  // "it will not come back".
+  //
+  // "Live" used to be CURSOR_IDLE_COLOR, which WAS SAMPLE_PAINT_COLORS[0]:
+  // state.js said so outright ("it was always SAMPLE_PAINT_COLORS[0]", #247).
+  // So the one mark whose whole job is to name the material showed the same
+  // #f5a69c for the live mic and for sample 1, and could not tell you which you
+  // were painting. That is why this is not a hue preference: the dot was
+  // ambiguous about the only fact it carries.
+  //
+  // Recording lands here too, and should: recording IS the mic. It stays
+  // unmistakable because it also takes the 2.4x dot and the ring.
+  const color = (!recording && S.sourceKind === 'sampler')
+    ? SAMPLE_PAINT_COLORS[S.samplerIndex % SAMPLE_PAINT_COLORS.length]
+    : _tok('--mic-live-border', '#d25e3e');
 
   // ─── ZONE 3: Radius circle ─────────────────────────────────────────────
 
-  // Erase brush held: red tint (danger). Scan off: amber matching the scan
-  // button. Otherwise neutral grey. Pure color swap — no extra draw calls.
+  // Erase held: --eng-erase, so the ring matches the tile that is doing it —
+  // the old red was borrowing danger's meaning. Scan off: no fill at all and an
+  // outline in --text-faint — the wash IS the reach, and with nothing being
+  // read the ring is empty; no palette hue was free that did not already mean
+  // something else on a 60px object carrying five signals. Otherwise the warm
+  // neutral --text-tertiary, not a cool grey over a warm black.
+  // Pure colour swap — no extra draw calls.
   const erasing  = S.eraseHeld;
   // ─── The hand: what is PLAYING ─────────────────────────────────────────
   // This was a CAP ARC at twelve o'clock in the engine's hue, and Ek could not
@@ -2650,12 +2690,14 @@ export function drawCursor() {
   // Erase and scan-off still win: those are states you must not misread, and
   // they are about the CURSOR rather than about what is in the hand.
   const _hue = (!erasing && !scanOff) ? S._handHue : null;
-  const _rFill   = erasing ? 'rgba(224,64,64,0.12)'
-    : scanOff ? 'rgba(232,160,48,0.10)'
-    : _hue ? _hexA(_hue, 0.10) : 'rgba(180,180,180,0.10)';
-  const _rStroke = erasing ? 'rgba(224,64,64,0.85)'
-    : scanOff ? 'rgba(232,160,48,0.55)'
-    : _hue ? _hexA(_hue, 0.62) : 'rgba(200,200,200,0.55)';
+  const _rFill   = erasing ? _hexA(_tok('--eng-erase', '#be7ace'), 0.12)
+    : scanOff ? 'transparent'
+    : _hue ? _hexA(_hue, 0.10) : _hexA(_tok('--text-tertiary', '#938d83'), 0.10);
+  // 0.85, not 0.55: the fill is gone, and --text-faint is a 2.7:1 token — at
+  // 0.55 over the canvas there is no visible ring left to read.
+  const _rStroke = erasing ? _hexA(_tok('--eng-erase', '#be7ace'), 0.85)
+    : scanOff ? _hexA(_tok('--text-faint', '#5c564c'), 0.85)
+    : _hue ? _hexA(_hue, 0.62) : _hexA(_tok('--text-tertiary', '#938d83'), 0.55);
 
   const kAll = S.grainKAllMode;
 
@@ -2805,7 +2847,7 @@ export function drawCursor() {
       if (pr) {
         S.ctx.save();
         S.ctx.globalAlpha = 0.45 + 0.35 * Math.min(1, w);
-        S.ctx.strokeStyle = slot.color || '#8aa6bc';
+        S.ctx.strokeStyle = slot.color || _tok('--accent-lock', '#7fa8ae');
         S.ctx.lineWidth = 1.5;
         S.ctx.lineCap = 'round';
         S.ctx.setLineDash([2, 4]);
@@ -2826,29 +2868,37 @@ export function drawCursor() {
   // Handsfree + toggle-trace active in plain trace mode — green reticle indicator
   const _toggleTraceOn = S.paintLatched && S.hfArmed && S.traceMode === 'trace';
 
-  // Outer ring — white/black normally, green when toggle-trace, red when recording
+  // Outer ring — HANDS OFF first, then recording, then painting (Ek,
+  // 2026-09-14). The ring is where "the instrument is playing itself" belongs,
+  // in --accent-sensor, whose own note is "the body is driving it" — which is
+  // what hands-free latched is. Two things were wrong before and neither was
+  // the hue. It sat BELOW `painting` in this chain, and latched means painting,
+  // so the green ring only ever rendered while latched and NOT painting — it
+  // was absent exactly when it had something to say. And its other half was a
+  // pip drawn over the centre dot at the dot's own radius, so it hid what you
+  // were inking from (see the dot, above).
+  //
+  // On the ring, every combination now shows BOTH facts at once: recording
+  // hands-free is a violet ring around the 2.4x mic dot; painting hands-free is
+  // a violet ring around the material's colour. The ring says whose hands, the
+  // dot says what material — one object each.
   const _rtic = S.darkMode ? '255,255,255' : '0,0,0';
-  S.ctx.strokeStyle = recording
-    ? 'rgba(232,48,48,0.95)'
+  S.ctx.strokeStyle = _toggleTraceOn
+    ? _hexA(_tok('--accent-sensor', '#a793c0'), 0.95)
+    : recording ? _hexA(_tok('--mic-live-border', '#d25e3e'), 0.95)
     : painting ? `rgba(${_rtic},0.95)`
-    : _toggleTraceOn ? 'rgba(77,204,122,0.80)'
     : `rgba(${_rtic},0.7)`;
   S.ctx.lineWidth   = 2;
   S.ctx.beginPath(); _retEllipse(mx, my, tipR); S.ctx.stroke();
 
-  // Center dot — large solid red when recording, paint color when painting, white/black idle
+  // Center dot — large solid mic-live dot when recording, paint color when
+  // painting, white/black idle
   if (recording) {
-    const recDotR = tipR * 2.4;  // big red dot — primary recording indicator
-    S.ctx.fillStyle = 'rgba(232,48,48,0.90)';
+    const recDotR = tipR * 2.4;  // the primary recording indicator
+    S.ctx.fillStyle = _hexA(_tok('--mic-live-border', '#d25e3e'), 0.90);
     S.ctx.beginPath(); _retEllipse(mx, my, recDotR); S.ctx.fill();
   } else {
     S.ctx.fillStyle = painting ? color : `rgba(${_rtic},0.8)`;
-    S.ctx.beginPath(); _retEllipse(mx, my, tipR * 0.65); S.ctx.fill();
-  }
-  // Green toggle-trace pip — always drawn on top so it nests inside the red
-  // recording dot, giving a visual "recording via toggle-trace" indicator
-  if (_toggleTraceOn) {
-    S.ctx.fillStyle = 'rgba(77,204,122,0.95)';
     S.ctx.beginPath(); _retEllipse(mx, my, tipR * 0.65); S.ctx.fill();
   }
 

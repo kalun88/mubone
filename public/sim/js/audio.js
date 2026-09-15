@@ -14,18 +14,43 @@ let _recWorkletReady = false;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-export function makeSoftClipCurve(amount = 10) {
-  // Tanh soft clipper: y = tanh(amount * x) / tanh(amount)
-  // Higher amount = harder knee. amount=10 is near brick-wall — heavily saturates anything
-  // above ~+-0.3 input, smoothly, with no aliasing (oversample='4x' downstream).
-  const N    = 4096; // more curve points = smoother nonlinearity at 4x oversample
-  const curve = new Float32Array(N);
-  const norm  = Math.tanh(amount);
-  for (let i = 0; i < N; i++) {
-    const x    = (i * 2) / (N - 1) - 1; // -1 to +1
-    curve[i]   = Math.tanh(amount * x) / norm;
+// ── The output ceiling (2026-09-14) ─────────────────────────────────────────
+// One node, used at the end of BOTH output chains — the browser's
+// masterGain → destination and Electron's merger → capture worklet. The
+// reasoning and the numbers are in js/worklets/ceiling.worklet.js; the rule
+// here is that neither build gets its own. It replaced `makeSoftClipCurve`,
+// a WaveShaper curve with 4× of hidden make-up gain that only the browser
+// path ever ran.
+let _ceilingModule = null;   // one addModule promise per context
+
+/** Register the ceiling processor on this context (idempotent). */
+export function ceilingReady(actx) {
+  if (!_ceilingModule) _ceilingModule = actx.audioWorklet.addModule('js/worklets/ceiling.worklet.js');
+  return _ceilingModule;
+}
+
+/** An N-channel ceiling node, or null if the module has not registered yet.
+ *  Its once-a-second report lands in S.transportDiag beside the transport's
+ *  own faults — the deepest gain reduction and how much of the second it
+ *  acted on, so "am I running hot" is a number. */
+export function makeCeilingNode(actx, n, groups = null) {
+  try {
+    const node = new AudioWorkletNode(actx, 'ceiling', {
+      numberOfInputs: 1, numberOfOutputs: 1,
+      channelCount: n, channelCountMode: 'explicit', channelInterpretation: 'discrete',
+      outputChannelCount: [n],
+      processorOptions: { numChannels: n, groups },
+    });
+    node.port.onmessage = e => {
+      const d = e.data || {};
+      S.transportDiag = S.transportDiag || {};
+      S.transportDiag.ceilingGrDb      = +(d.grDb ?? 0).toFixed(2);
+      S.transportDiag.ceilingEngagedPct = +(d.engagedPct ?? 0).toFixed(2);
+    };
+    return node;
+  } catch (_) {
+    return null;   // module not registered on this context yet
   }
-  return curve;
 }
 
 // ── Audio context & master bus ──────────────────────────────────────────────
@@ -80,12 +105,16 @@ export function ensureAudioContext() {
     const masterGain = S.audioCtx.createGain();
     masterGain.gain.value = S.isMobile ? 3.0 : (S.outputGainValue ?? MASTER_DEFAULT_GAIN);
 
-    // Soft clipper (WaveShaper with tanh curve) — sample-accurate, no attack time,
-    // frequency-transparent. Replaces DynamicsCompressor which was too slow for
-    // transient whistle peaks and introduced frequency-dependent distortion.
-    const softClipper = S.audioCtx.createWaveShaper();
-    softClipper.curve     = makeSoftClipCurve(4);
-    softClipper.oversample = '2x'; // 2x internal oversampling — enough to avoid aliasing at both 22050 and 44100
+    // THE CEILING IS A WORKLET NOW, AND BOTH BUILDS USE THE SAME ONE (Ek,
+    // 2026-09-14). What stood here was a WaveShaper carrying
+    // tanh(4x)/tanh(4), which normalises the top to 1.0 and leaves the drive
+    // in: measured 4.00× (+12.0 dB) of small-signal gain and 1.18 % THD at
+    // −20 dBFS, 8.8 % at −10. It was doing the job of a saturator while being
+    // described as a clipper, and only on this path — the Electron output
+    // never saw it. `js/worklets/ceiling.worklet.js` replaces it in both
+    // chains: bit-exact below −3.1 dBFS, bending to a −0.09 dBFS ceiling
+    // above, linked across channels, zero latency.
+    const ceilingNode = makeCeilingNode(S.audioCtx, 2);
 
     // Analyser tap — post-clipper, pre-mute, so meter stays active even when muted
     S.masterAnalyser = S.audioCtx.createAnalyser();
@@ -96,12 +125,29 @@ export function ensureAudioContext() {
     const muteGain = S.audioCtx.createGain();
     muteGain.gain.value = 1;
 
-    // Chain: masterGain -> softClipper -> analyser -> muteGain -> destination
+    // Chain: masterGain -> ceiling -> analyser -> muteGain -> destination
     // In Electron, RtAudio owns hardware output — don't connect to Web Audio
     // destination (it always goes to OS default / MacBook speakers regardless
     // of the selected interface). The speaker buses tap masterBus directly.
-    masterGain.connect(softClipper);
-    softClipper.connect(S.masterAnalyser);
+    // The node may be null until its module has loaded (see makeCeilingNode);
+    // the chain is then master → analyser, which is what it was before the
+    // ceiling existed, and it is rebuilt on the next context.
+    if (ceilingNode) { masterGain.connect(ceilingNode); ceilingNode.connect(S.masterAnalyser); S._masterCeiling = ceilingNode; }
+    else {
+      // First context of the session: the module has not registered yet, so
+      // run master → analyser and splice the ceiling in when it lands. A
+      // context replaced meanwhile drops the result on the floor.
+      masterGain.connect(S.masterAnalyser);
+      const ctx = S.audioCtx;
+      ceilingReady(ctx).then(() => {
+        if (S.audioCtx !== ctx) return;
+        const node = makeCeilingNode(ctx, 2);
+        if (!node) return;
+        try { masterGain.disconnect(S.masterAnalyser); } catch (_) {}
+        masterGain.connect(node); node.connect(S.masterAnalyser);
+        S._masterCeiling = node;
+      }).catch(e => console.warn('[audio] ceiling:', e.message));
+    }
     S.masterAnalyser.connect(muteGain);
     if (!window.electronBridge) {
       muteGain.connect(S.audioCtx.destination);
@@ -445,6 +491,23 @@ export async function requestMicAccess() {
     // In Electron mode, rewireRtAudioRecordingChannel will disconnect this
     // once RtAudio takes over as sole input source.
     monitorSrc.connect(S.inputGainNode);
+
+    // HARDWARE IN, PRE-TRIM — the same thing the Electron path meters, so the
+    // footer's `hw in` column means one thing in both builds (Ek, 2026-09-14:
+    // "in the footer, the IN, looks like hardware in, not post input trim").
+    // Measured before this: Electron's meter tapped the splitter ahead of the
+    // trim and did not move when the trim did, while the browser fell back to
+    // `S.inputAnalyser`, which is POST-trim and does. One label, two
+    // meanings. This taps the source itself, where nothing of ours has
+    // touched the signal yet; `S.inputAnalyser` stays post-trim, because the
+    // gate and the recording path are supposed to read what is captured.
+    if (!S.inputAnalysers?.length) {
+      const hw = actx.createAnalyser();
+      hw.fftSize = 256;
+      hw.smoothingTimeConstant = 0.3;
+      monitorSrc.connect(hw);
+      S.inputAnalysers = [hw];
+    }
 
     // Store monitorSrc so we can disconnect on hypothetical future cleanup
     window._micMonitorSrc = monitorSrc;
@@ -982,8 +1045,9 @@ export async function initSpeakerBuses(numChannels = 2) {
 
   const actx = ensureAudioContext();
 
-  // Register worklet once (addModule is idempotent after first call)
+  // Register worklets once (addModule is idempotent after first call)
   await actx.audioWorklet.addModule('js/worklets/quad-capture.worklet.js');
+  await ceilingReady(actx);
 
   // Tear down any previous graph
   if (_captureNode) {
@@ -1247,7 +1311,23 @@ export async function initSpeakerBuses(numChannels = 2) {
   const batchSize    = Math.max(1, Math.round(bufferFrames / 128));
   _captureNode.port.postMessage({ type: 'init', numChannels: n, batchSize });
 
-  _merger.connect(_captureNode);
+  // THE CEILING, last before the audio leaves for the interface (2026-09-14).
+  // Same node as the browser chain's — nothing downstream of this point can
+  // undo a clip, because the next stop is the converter. Linked across all N
+  // channels so it cannot pull a VBAP pair's image sideways.
+  // THE HOUSE AND THE HEADPHONES ARE NOT ONE LINK GROUP (2026-09-14). They
+  // are different destinations sharing one interface, so a hot monitor mix
+  // must not duck the room and a loud room must not duck the player. Group 0
+  // is the house, group 1 the monitor pair at whatever physical channels the
+  // headphone routing put them on.
+  const ceilGroups = new Array(n).fill(0);
+  if (hasMonitorCh) {
+    if (hpPhysL >= 0 && hpPhysL < n) ceilGroups[hpPhysL] = 1;
+    if (hpPhysR >= 0 && hpPhysR < n) ceilGroups[hpPhysR] = 1;
+  }
+  const ceil = makeCeilingNode(actx, n, ceilGroups);
+  if (ceil) { _merger.connect(ceil); ceil.connect(_captureNode); S._outputCeiling = ceil; }
+  else { _merger.connect(_captureNode); console.warn('[audio] ceiling node unavailable — output runs unprotected'); }
 
   // Main regulates the queue to the cushion (electron-main.js); this side
   // tells it the cushion, and polls the depth and the faults once a second.
@@ -1519,6 +1599,12 @@ export function setDryMonitorMode(mode) {
   S.dryMonitorMode = mode;
   _dryAutoDucked = false;
   setDryMonitorEnabled(mode === 'on' || mode === 'auto');
+  // The signal-path drawing shows this branch and its switch, so it is
+  // redrawn from here (Ek, 2026-09-14: "it should change when it's off or
+  // auto or on"). The diagram was hooked only to the send set, so the mode
+  // moved and the picture did not — measured: identical SVG text across
+  // off · on · auto.
+  S._redrawSignalPath?.();
 }
 
 export function isDryMonitorDucked() { return _dryAutoDucked; }

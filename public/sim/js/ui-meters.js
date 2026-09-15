@@ -326,7 +326,13 @@ export function initRadiusFade() {
     seg.querySelectorAll('.grain-seg-btn').forEach(b => {
       b.classList.toggle('active', (b.dataset.fade === 'on') === effectiveOn);
     });
-    if (curveRow) curveRow.style.opacity = effectiveOn ? '1' : '0.35';
+    // The class, never an inline opacity — see ui-pin-settings.js `setRowOff`.
+    // `.grain-row--off` dims the slider and the numbox and leaves the label.
+    if (curveRow) {
+      curveRow.classList.toggle('grain-row--off', !effectiveOn);
+      if (effectiveOn) curveRow.removeAttribute('aria-disabled');
+      else curveRow.setAttribute('aria-disabled', 'true');
+    }
     if (slider)   slider.disabled = !effectiveOn;
     // Reflect the curve value too. Every remote writer (MIDI cc, OSC
     // /cursor/radiusfadecurve, accessory pots) writes S.radiusFadeCurve and
@@ -576,13 +582,29 @@ export function initMixdownGains() {
 }
 
 // ── Dry monitor gain controls ────────────────────────────────────────────────
+// DRY IS A LEVEL, AND LEVELS ARE IN dB (Ek, 2026-09-15: "i dont understand why
+// we had dry vol as a percentage"). It is not a mix — nothing crossfades
+// against it: the dry path is inputGainNode → dryGain → dryPanner → houseBus,
+// and turning it down turns nothing else up — so naming it wet/dry would
+// promise a coupling that does not exist. It was a LINEAR 0–2 multiplier shown
+// as a percentage of unity, which is why 50% was the default and why 200% was
+// reachable; and the row above it, Master Volume, showed the same kind of
+// quantity in dB. Both sliders read dB now, on master's own scale.
+//
+// The STATE stays linear, because the gain node is: the conversion lives here,
+// at the one boundary, rather than being repeated at each of the six readouts.
+// state.js:308 is the note about the last time a gain wore two units at once.
+const _fmtDb   = db => (db >= 0 ? '+' : '−') + Math.abs(db).toFixed(1) + ' dB';
+const _dbOfLin = v => 20 * Math.log10(Math.max(v, 1e-3));
+const _linOfDb = db => (db <= -60 ? 0 : Math.pow(10, db / 20));
+
 export function initDryMonitorGains() {
   const slider = document.getElementById('dryMonitorGainSlider');
   const sel    = document.getElementById('dryMonitorModeSel');
 
   if (slider) {
-    slider.value = S.dryMonitorGainValue;
-    slider.addEventListener('input', () => setDryMonitorGain(parseFloat(slider.value)));
+    slider.value = _dbOfLin(S.dryMonitorGainValue);
+    slider.addEventListener('input', () => setDryMonitorGain(_linOfDb(parseFloat(slider.value))));
   }
   // Always start OFF, regardless of persisted/preset state — the mode is a
   // session setting on purpose (state.js, dryMonitorMode).
@@ -593,7 +615,7 @@ export function initDryMonitorGains() {
     sel.addEventListener('change', () => setDryMonitorMode(sel.value));
   }
   const num = document.getElementById('dryMonitorGainNum');
-  if (num) num.textContent = Math.round(S.dryMonitorGainValue * 100) + '%';
+  if (num) num.textContent = _fmtDb(_dbOfLin(S.dryMonitorGainValue));
 
   // Expose setter for MIDI/OSC access
   S._setDryMonitorGain = setDryMonitorGain;
@@ -654,11 +676,14 @@ export function initAudioPanel() {
   };
 
   // ── Input gain ──
-  // Hidden in Electron (trim at hardware interface, same as the modal row).
-  const apInputGainRow    = document.getElementById('apInputGainSlider')?.closest('.grain-row');
-  if (window.electronBridge?.isElectron && apInputGainRow) {
-    apInputGainRow.style.display = 'none';
-  }
+  // IN THE FOOTER IN BOTH BUILDS since 2026-09-14 (Ek: "i believe in browser
+  // you already auto put the input gain along with the other gains (it's
+  // above dry vol), can you put it there also for electron?"). It was hidden
+  // here by the same branch as the settings row — and the same argument,
+  // that the MOTU's trim should own it. It writes S.inputGainNode, which is
+  // in the Electron path too, so the row worked; only its display was off.
+  // The footer is the strip you ride mid-piece, and the input is the first
+  // of the four gains on it: in · dry · dry vol · master.
   const apInputGain    = document.getElementById('apInputGainSlider');
   const apInputGainNum = document.getElementById('apInputGainNum');
   const modalInputGain = document.getElementById('asInputGain');
@@ -741,22 +766,22 @@ export function initAudioPanel() {
   const modalDryGain = document.getElementById('dryMonitorGainSlider');
   const modalDryNum  = document.getElementById('dryMonitorGainNum');
   if (apDryGain) {
-    apDryGain.value = S.dryMonitorGainValue;
-    if (apDryGainNum) apDryGainNum.value = fmtPercent(S.dryMonitorGainValue);
+    apDryGain.value = _dbOfLin(S.dryMonitorGainValue);
+    if (apDryGainNum) apDryGainNum.value = _fmtDb(_dbOfLin(S.dryMonitorGainValue));
     apDryGain.addEventListener('input', () => {
-      const v = parseFloat(apDryGain.value);
-      setDryMonitorGain(v);
-      if (apDryGainNum) apDryGainNum.value = fmtPercent(v);
-      if (modalDryGain) modalDryGain.value = String(v);
-      if (modalDryNum)  modalDryNum.textContent = fmtPercent(v);
+      const db = parseFloat(apDryGain.value);
+      setDryMonitorGain(_linOfDb(db));
+      if (apDryGainNum) apDryGainNum.value = _fmtDb(db);
+      if (modalDryGain) modalDryGain.value = String(db);
+      if (modalDryNum)  modalDryNum.textContent = _fmtDb(db);
     });
   }
   if (modalDryGain) {
     modalDryGain.addEventListener('input', () => {
       if (document.activeElement === apDryGain) return;
-      const v = parseFloat(modalDryGain.value);
-      if (apDryGain)    apDryGain.value    = String(v);
-      if (apDryGainNum) apDryGainNum.value = fmtPercent(v);
+      const db = parseFloat(modalDryGain.value);
+      if (apDryGain)    apDryGain.value    = String(db);
+      if (apDryGainNum) apDryGainNum.value = _fmtDb(db);
     });
   }
 
@@ -781,8 +806,8 @@ export function initAudioPanel() {
       if (apGateNum) apGateNum.value = fmtGate(S.paintGateThreshold);
     }
     if (apDryGain && document.activeElement !== apDryGain) {
-      apDryGain.value = S.dryMonitorGainValue;
-      if (apDryGainNum) apDryGainNum.value = fmtPercent(S.dryMonitorGainValue);
+      apDryGain.value = _dbOfLin(S.dryMonitorGainValue);
+      if (apDryGainNum) apDryGainNum.value = _fmtDb(_dbOfLin(S.dryMonitorGainValue));
     }
   };
 
@@ -1175,6 +1200,26 @@ export function tickMainMeters() {
       tickMeters(mixAnalysers, 'mainMixMeters');
     }
   }
+  // THE CEILING'S GR METER (2026-09-14). Not an analyser — the ceiling
+  // worklet posts its own figure at ~20 Hz into S.transportDiag, and this
+  // just draws it. Full scale is 12 dB of reduction, which is far more than
+  // the ceiling should ever be taking; the number under the bar appears only
+  // when there is one, the way the gate's does.
+  {
+    const bar = document.getElementById('mainCeilBar');
+    if (bar) {
+      const gr = -(S.transportDiag?.ceilingGrDb ?? 0);       // positive dB of reduction
+      const pct = Math.max(0, Math.min(100, (gr / 12) * 100));
+      const want = pct.toFixed(1) + '%';
+      if (bar.style.height !== want) bar.style.height = want;
+      bar.classList.toggle('deep', gr >= 3);
+      // No number under the bar: a `.as-val` there makes this column a
+      // different height from IN · DRY · OUT and the row stops being one row
+      // (measured — its wrap came out 21px at y 817.6 against OUT's 25px at
+      // 813.6). The figure in dB is on the audio page, and the tooltip says
+      // what the bar means.
+    }
+  }
   // Dry monitor: tick meter + update spatial panning
   if (S.dryAnalyser) tickMeters([S.dryAnalyser], 'mainDryMeters');
   updateDryMonitorPanning();
@@ -1207,6 +1252,14 @@ export function setMeterX(db) {
   const f = (db - SET_METER_FLOOR) / -SET_METER_FLOOR;
   return Math.pow(f < 0 ? 0 : f > 1 ? 1 : f, SET_METER_CURVE) * 100;
 }
+/** The inverse: a position along the meter (0–1) back to dB. The gate's
+ *  marker is dragged along this axis, so the drag and the draw share it. */
+export function setMeterDbAt(frac) {
+  const f = frac < 0 ? 0 : frac > 1 ? 1 : frac;
+  return SET_METER_FLOOR + Math.pow(f, 1 / SET_METER_CURVE) * -SET_METER_FLOOR;
+}
+const _rmsToX  = rms => setMeterX(rms > 0 ? 20 * Math.log10(rms) : -Infinity);
+const _xToRms  = frac => Math.pow(10, setMeterDbAt(frac) / 20);
 const SET_METER_TICKS = [-60, -40, -30, -20, -12, -6, 0];
 
 // Ballistics, in frames. Attack is instant — a transient you cannot see is a
@@ -1256,6 +1309,20 @@ export function renderSetMeters(containerId, labels, opts = {}) {
   const rc = document.createElement('span');
   rc.className = 'set-meter-clip';
   ruler.append(rl, scale, rv, rc);
+  // The strip's two columns need their place in the ruler as well, or every
+  // row is wider than the scale above it and the ticks stop meaning anything.
+  if (opts.strip) {
+    const h1 = document.createElement('span'); h1.className = 'set-meter-trim set-meter-hdr'; h1.textContent = 'trim';
+    const h2 = document.createElement('span'); h2.className = 'set-meter-trimval';
+    const h3 = document.createElement('span'); h3.className = 'set-meter-send set-meter-hdr'; h3.textContent = 'send';
+    ruler.append(h1, h2, h3);
+  }
+  if (opts.tailHdr) {
+    const h = document.createElement('span');
+    h.className = 'set-meter-tail set-meter-hdr';
+    h.innerHTML = opts.tailHdr;
+    ruler.appendChild(h);
+  }
   el.appendChild(ruler);
 
   const rows = [];
@@ -1287,6 +1354,79 @@ export function renderSetMeters(containerId, labels, opts = {}) {
     clip.className = 'set-meter-clip';
 
     row.append(lbl, track, val, clip);
+
+    // ── THE CHANNEL STRIP (Ek, 2026-09-14) ────────────────────────────────
+    // "to the right of each row should be a small slider for each row's
+    // input gain with db. then to the right of that, a check box to decide
+    // if we are sending that to the mubone system … if i check multiple it
+    // will sum them into a mono." So a hardware row is a channel strip now:
+    // its meter is what ARRIVES (pre-trim, unchanged), the trim is what that
+    // channel contributes, and the send decides whether it is in the sum at
+    // all. Optional — a group with no `strip` option draws the bare meter it
+    // always did, which is what the output and dry groups want.
+    // A generic TAIL: cells the caller appends to every row and wires itself.
+    // The output list uses it for an azimuth field and a hardware-out
+    // picker, so a software output is one row — meter, angle, destination —
+    // the way a hardware input is one row. It had a meter strip AND a
+    // separate `.as-io-table` of its own invention describing the same
+    // channels, in a shape that matched nothing else on the page.
+    if (opts.tail) {
+      const cell = document.createElement('span');
+      cell.className = 'set-meter-tail';
+      cell.innerHTML = opts.tail(i);
+      row.appendChild(cell);
+    }
+    if (opts.strip) {
+      const trim = document.createElement('input');
+      trim.type = 'range'; trim.className = 'set-meter-trim';
+      trim.min = '-24'; trim.max = '24'; trim.step = '0.5';
+      trim.value = String(opts.strip.trim(i));
+      trim.title = 'trim for this hardware channel, in dB — what it contributes to the sum. The meter to its left is what ARRIVES, before this.';
+      // THE NUMBER IS EDITABLE (Ek, 2026-09-14: "the trim and level number
+      // should be editable and double clickable as well") — type a figure and
+      // press Enter, or double-click either the number or the slider to go
+      // back to 0. Every other number on this screen behaves that way; this
+      // one was a label.
+      const tval = document.createElement('input');
+      tval.type = 'text';
+      tval.className = 'set-meter-trimval';
+      tval.title = 'dB — type a value and press Enter, or double-click to reset';
+      // The minus sign, not a hyphen — a column of numbers where one glyph
+      // is narrower than the others reads as a dash (the same rule _setDb
+      // follows two screens up).
+      const showTrim = () => { const v = +trim.value;
+        tval.value = (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1); };
+      const setTrim = db => {
+        const v = Math.max(-24, Math.min(24, Math.round(db * 2) / 2));
+        trim.value = String(v); showTrim(); opts.strip.onTrim(i, v);
+      };
+      showTrim();
+      trim.addEventListener('input', () => { showTrim(); opts.strip.onTrim(i, +trim.value); });
+      // Double-click resets, like every other slider on the page — on the
+      // slider AND on the number, since either is the control now.
+      trim.addEventListener('dblclick', () => setTrim(0));
+      tval.addEventListener('dblclick', () => setTrim(0));
+      tval.addEventListener('focus', () => tval.select());
+      // A real minus pasted back in has to parse, so it is normalised first.
+      const commit = () => { const n = parseFloat(tval.value.replace('−', '-'));
+        if (Number.isFinite(n)) setTrim(n); else showTrim(); };
+      tval.addEventListener('change', commit);
+      tval.addEventListener('blur', commit);
+      tval.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { commit(); tval.blur(); }
+        else if (e.key === 'Escape') { showTrim(); tval.blur(); }
+        e.stopPropagation();          // never let a digit reach the palette
+      });
+
+      const send = document.createElement('input');
+      send.type = 'checkbox'; send.className = 'set-toggle set-meter-send';
+      send.checked = !!opts.strip.send(i);
+      send.title = 'send this channel into the instrument. Several at once sum to the one mono input.';
+      send.addEventListener('change', () => opts.strip.onSend(i, send.checked));
+      row.append(trim, tval, send);
+      row.classList.toggle('set-meter-row--muted', !send.checked);
+    }
+
     el.appendChild(row);
     rows.push({ track, fill, peak, val, clip, off, lvl: -60, pk: -60, pkAt: 0, clipAt: 0, lastTxt: '' });
   });
@@ -1365,6 +1505,18 @@ let _setGate = null;
 export function initSetGateMeter() {
   const row = document.getElementById('asGateMeterRow');
   if (!row) { _setGate = null; return; }
+  // The sum's ruler carries the same ticks as Hardware in, from the same
+  // function — the point of the row is that the two can be read against each
+  // other, and a scale you have to remember from two rows up is not one.
+  const scale = document.querySelector('#asGateRuler .set-meter-scale');
+  if (scale && !scale.childElementCount) {
+    for (const db of SET_METER_TICKS) {
+      const t = document.createElement('span');
+      t.style.left = setMeterX(db).toFixed(1) + '%';
+      t.textContent = db === 0 ? '0' : '−' + Math.abs(db);
+      scale.appendChild(t);
+    }
+  }
   _setGate = {
     row,
     track:  row.querySelector('.set-meter-track'),
@@ -1374,6 +1526,8 @@ export function initSetGateMeter() {
     thresh: row.querySelector('.set-meter-thresh'),
     tval:   row.querySelector('.set-meter-thresh-val'),
     val:    row.querySelector('.set-meter-val'),
+    clip:   row.querySelector('.set-meter-clip'),
+    clipUntil: 0,
     lastT:  ''
   };
 
@@ -1383,7 +1537,7 @@ export function initSetGateMeter() {
   const toThreshold = e => {
     const r = _setGate.track.getBoundingClientRect();
     if (!r.width) return S.paintGateThreshold;
-    return gateFracToRms((e.clientX - r.left) / r.width);
+    return _xToRms((e.clientX - r.left) / r.width);   // the hardware axis
   };
   let dragging = false;
   _setGate.track.addEventListener('mousedown', e => {
@@ -1417,16 +1571,44 @@ function _rmsToDb(rms) { return rms > 0 ? 20 * Math.log10(rms) : -Infinity; }
 
 function _tickSetGate() {
   if (!_setGate || !_setGate.row.offsetParent) return;
-  const threshF = gateRmsToFrac(S.paintGateThreshold);
-  _setGate.fill.style.width  = (_smoothedFrac * 100).toFixed(2) + '%';
-  _setGate.peak.style.left   = (_peakFrac * 100).toFixed(2) + '%';
+  // ON THE HARDWARE METER'S SCALE (Ek, 2026-09-14: "it's not the same scale
+  // as the hardware in levels … let's just standardize it"). The ballistics
+  // still run in the gate's own position domain — they are a smoothing, and
+  // GATE_METER_GAMMA is what the cc pot's taper is built on — but everything
+  // DRAWN converts through rms to dB and lands on `setMeterX`, the same axis
+  // and the same ticks as Hardware in directly above it. Two meters of one
+  // signal, a few inches apart, reading it two different distances along was
+  // the whole complaint.
+  const threshX = _rmsToX(S.paintGateThreshold);
+  _setGate.fill.style.width  = _rmsToX(gateFracToRms(_smoothedFrac)).toFixed(2) + '%';
+  _setGate.peak.style.left   = _rmsToX(gateFracToRms(_peakFrac)).toFixed(2) + '%';
   _setGate.peak.style.opacity = _peakFrac > 0.005 ? '1' : '0';
-  _setGate.gated.style.width = (threshF * 100).toFixed(2) + '%';
-  _setGate.thresh.style.left = (threshF * 100).toFixed(2) + '%';
+  _setGate.gated.style.width = threshX.toFixed(2) + '%';
+  _setGate.thresh.style.left = threshX.toFixed(2) + '%';
   const t = _setDb(_rmsToDb(S.paintGateThreshold)) + ' dB';
   if (t !== _setGate.lastT) { _setGate.tval.textContent = t; _setGate.lastT = t; }
   if (_setGate.val) _setGate.val.textContent = _setDb(_rmsToDb(gateFracToRms(_smoothedFrac)));
-  _setGate.row.classList.toggle('is-gated', _smoothedFrac < threshF && S.paintGateThreshold > 0);
+  _setGate.row.classList.toggle('is-gated',
+    gateFracToRms(_smoothedFrac) < S.paintGateThreshold && S.paintGateThreshold > 0);
+  // THE CLIP CELL (2026-09-14). This row is the post-trim signal, so full
+  // scale here means the TAKE is clipping — the one thing the app's own trim
+  // can cause and nothing later can undo. Held for a second after the last
+  // one, the way a clip light always is: a single sample over is easy to
+  // miss and worth knowing about.
+  //
+  // Read from `_smoothedFrac`, the number the FILL is drawing, not from an
+  // analyser of its own: a second source for a number already on screen is a
+  // second thing to be wrong. Two attempts before this one were wrong in
+  // ways only a measurement showed. Reading `S.inputAnalyser` never lit at
+  // all, because that node is silent unless the recording path happens to be
+  // wired to it. Reading `_peakFrac` lit and then STAYED lit — it is a
+  // peak-HOLD with a slow fall, so it kept re-arming the latch: measured
+  // still lit 1.5 s after the level had dropped to −32 dB.
+  if (_setGate.clip) {
+    const now = performance.now();
+    if (_rmsToDb(gateFracToRms(_smoothedFrac)) >= -0.5) _setGate.clipUntil = now + 1000;
+    _setGate.clip.classList.toggle('set-meter-clip--lit', now < _setGate.clipUntil);
+  }
 }
 
 // ── One loop ────────────────────────────────────────────────────────────────

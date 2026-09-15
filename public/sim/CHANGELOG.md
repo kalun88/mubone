@@ -7,6 +7,86 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.0 alpha — 2026-09-15
+
+**A major number, and a jump.** 2, 3 and 4 were never cut — the work went in and the version did
+not follow it — so this closes that gap rather than pretending the versions in between existed.
+71 commits since 1.16.0, and the two largest are a file format and an audio page.
+
+### Added
+
+- **A piece is the music, and `.mubone` is the file it lives in** (`js/piece.js`,
+  `js/mubone-file.js`). A zip of a deflated manifest and STORED float32 WAV members,
+  content-addressed, with no dependency and no base64 — lossless where the old session blob was
+  16-bit and clamped, and a buffer two slots share is written once. ⌘S · ⇧⌘S · ⌘O, a File menu with
+  Open Recent, the document's name and an unsaved dot in the chrome, and a guard on the way out.
+  No autosave and nothing migrates. `js/mubone-file.test.mjs` is the invariant — 17 tests, one of
+  them a real `unzip -t`. Electron gained its first file IPC for it: two dialogs, a ranged read, a
+  streamed write through a `.part`, and `fileAssociations`.
+- **The audio page is two pages, in signal order**, with a channel strip per hardware input, a sum
+  with its own meter, a drawn signal path in the conventions of a block diagram, and a plan view of
+  the speaker layout. The output ceiling became a meter beside OUT, then a row of its own, and
+  stopped tying the room to the headphones.
+- **Settings → Visuals draws its law instead of listing it.** Smallest, Largest, Quietest Input and
+  Loudest Input were four sliders across two sections holding the two ENDS of one straight line;
+  they are one figure now, with the paint gate on it as a third handle, the tape line's own curve
+  beside the grain dot's, and a live needle reading the same loudness metric a mark carries.
+- **The pinned rail says how full it is** — one cell per slot in its pin's engine hue, carrying the
+  pin's own number, with the max typeable there as well as on Settings → Pins, and the selected pin
+  ringed off the one `selectedPinSlot` the rail, the sphere and the tracker all read.
+- **Mute all and unmute all are a MIX group** you can drag onto the palette, mute a toggle that
+  round-trips a hand-made mix safely.
+- **`docs/GUI-BUILD-SHEET.md`** — the GUI lookup: scopes, spacing scale, type, radius, both kits,
+  the colour order of operations, motion, and the always-wrong list.
+
+### Changed
+
+- **One pin press takes the whole moment** — every line the cursor is on becomes a loop, by the
+  gate's own geometry, and a granulating cursor adds a cloud beside them. One undo.
+- **The settings row model**: rows top-align always, descriptions are one sentence under 92
+  characters, titles are Title Case and everything else is prose. Nineteen descriptions were cut and
+  what they carried was kept in `docs/RULINGS.md` rather than deleted.
+- **Every control-shaped element in the instrument computes to a kit height** (18 · 24 · 32 · 38).
+  Ten elements were off it, all the same defect — a height left over from padding plus a line box —
+  and `align-audit`'s exception tail is now empty, so any new one fails by name.
+- **The cursor inks from tokens**, so the mark under your hand and the tile you pressed are the same
+  colour by construction; canvas labels are Urbanist, so there is one typeface on screen.
+- **Dry is a level and reads in dB** on master's own scale, and the ring says whose hands while the
+  dot says what material.
+- **Default size curve** (5.0): −42 dB → 2.8px, −11 dB → 36px, gate −44 dB. A wider size range over
+  a narrower loudness window, and a gate 10 dB higher — it used to sit 8 dB below the ramp, which
+  left a band where marks were deposited and could only ever draw at minimum size.
+
+### Fixed
+
+- **The MIX mute engages, and its light stops lying.** `allMuted()` counted a static pair of groups
+  while `pruneEmptyGroups` cleared the flag on every empty one, so with clouds pinned and no loops
+  the answer was false the instant it was set — and `pins_mute` with no value was a one-way trip. The
+  rail also flashed a sustained control, so the light went dark 180 ms after a press that had
+  worked. Ten invariants in `pins-audit`.
+- **The wet ring belongs to the paint, not the hand**, and the wet drop is a switch on the tile you
+  play from.
+- **The unsaved mark shows while you play**, not after you click away.
+- **Four-point reads in the grain engine**, which cost less than the two they replaced.
+- **A pinned loop and its take no longer disagree** about what a file carries — content-addressed
+  members mean a shared buffer is written once.
+- **`/pins/mute` and `/pins/unmuteall` reach the app.** Both were advertised in the ACTIONS table
+  from the day the MIX group was built and neither had a case in `js/osc.js`, so the OSC modal
+  listed two addresses that did nothing over the wire. Found by `osc-audit`'s wiring check at this
+  release. `/pins/mute` takes an explicit 1 or 0 and flips on a bare bang, so a pad that only sends
+  127 is still a toggle.
+
+### Removed
+
+- **Canvas Theme, Off-screen Indicator and Indicator Size**, with the edge chevron itself: off screen
+  nothing is drawn now. `S.darkMode` is a constant and its light path is unreachable, logged for its
+  own deletion pass.
+- **The experimental mono input path**, sunset.
+- **The pins figure**, reverted the day after it landed: crossfade acts on a ratio and tether on an
+  absolute distance, so no single plot was honest about both.
+
+---
+
 ## 1.16.0 alpha — 2026-09-13
 
 Colour. A whole day on what a sound looks like, and then on everything else in the painting path.

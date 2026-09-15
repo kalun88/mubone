@@ -258,6 +258,105 @@ async function run(rig) {
   check('and it sounds once the group comes back', restore.thenSounds === true);
   check('no restore bookkeeping is stored on the slot', restore.noBookkeeping === true);
 
+  // ── The MIX toggle, and the two ways it lied (2026-09-15) ────────────────
+  // Ek: "when i click the mute button the mix it only flashes every two clicks,
+  // doesn't seem to engage. it seems to work as expected when the pin mute tile
+  // is in the palette bar." Two independent faults under one symptom, so two
+  // invariants.
+  //
+  // ONE: allMuted() asked `GROUPS.every(g => g.muted)` over a STATIC pair, while
+  // pruneEmptyGroups — which runs inside the applyMix() that setAllMuted itself
+  // calls — clears the flag on every group holding no pins. So with clouds
+  // pinned and no loops, the answer was false the instant it was set. That made
+  // `pins_mute` with no value a one-way trip: `!allMuted()` was always true, so
+  // a bang, a pad or a key muted and never let go.
+  const mixToggle = await rig.evaluate(async () => {
+    const { S } = await import('./js/state.js');
+    const P = await import('./js/pins.js');
+    P.restoreGroups([]);
+    // ONE group populated — the ordinary case, and the one that was broken.
+    const cloud = { type: 'cloud', slotIndex: 0, playing: true,
+                    color: '#e8a030', grainParams: {}, grainOverrides: {} };
+    S.commitSlots = [cloud];
+    const empty = P.allMuted();
+    P.setAllMuted(true);
+    const onFlag = P.groupOf(cloud).muted, onRead = P.allMuted(), onAudible = P.isPinAudible(cloud);
+    P.setAllMuted(false);
+    const offRead = P.allMuted(), offAudible = P.isPinAudible(cloud);
+    // The flip the OSC / MIDI road takes, twice: it must round-trip.
+    P.setAllMuted(!P.allMuted()); const flip1 = P.allMuted();
+    P.setAllMuted(!P.allMuted()); const flip2 = P.allMuted();
+    // Nothing pinned at all is not "everything is muted".
+    S.commitSlots = [];
+    P.setAllMuted(true);
+    const nothingPinned = P.allMuted();
+    return { empty, onFlag, onRead, onAudible, offRead, offAudible, flip1, flip2, nothingPinned };
+  });
+
+  check('nothing is muted to begin with', mixToggle.empty === false);
+  check('mute all silences the group that holds the pins', mixToggle.onFlag === true && mixToggle.onAudible === false,
+    `flag=${mixToggle.onFlag} audible=${mixToggle.onAudible}`);
+  check('and allMuted() says so with the OTHER group empty', mixToggle.onRead === true,
+    `${mixToggle.onRead} — it counted a static pair, so an empty group read as not-muted`);
+  check('letting go brings the sound back', mixToggle.offRead === false && mixToggle.offAudible === true,
+    `read=${mixToggle.offRead} audible=${mixToggle.offAudible}`);
+  check('the bare flip round-trips, so a bang is not one-way', mixToggle.flip1 === true && mixToggle.flip2 === false,
+    `${mixToggle.flip1} then ${mixToggle.flip2} — both true means mute with no value can never let go`);
+  check('nothing pinned is not "everything muted"', mixToggle.nothingPinned === false);
+
+  // TWO: the rail row flashed. _pinFlash ends in a 180 ms timeout that removes
+  // `.fired` from the very elements _pinLit had just lit, so mute engaged and
+  // then went dark; on the release press _pinLit(false) beat the timeout and no
+  // flash showed at all — "only flashes every two clicks". A SUSTAINED control
+  // lights and HOLDS; only a bang flashes. Measured past the timeout, or the
+  // check cannot tell the two apart.
+  const railLight = await rig.evaluate(async () => {
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const { S } = await import('./js/state.js');
+    const P = await import('./js/pins.js');
+    // A DRAWABLE FAKE SLOT, not plantSeed (2026-09-15). The rail renders from
+    // S.commitSlots, so a slot is all this needs — and plantSeed costs a real
+    // take, a sealed buffer and a history entry, which made § I's undo counts
+    // fail on roughly one run in three. § B says why a partial slot crashes the
+    // live render loop; this carries the same fields § C's do.
+    const keep = { slots: S.commitSlots.slice() };
+    try {
+      P.restoreGroups([]);
+      const pin = { type: 'cloud', slotIndex: 0, playing: true,
+                    color: '#e8a030', grainParams: {}, grainOverrides: {} };
+      S.commitSlots = [pin];
+      S._pinsDirty = true; await sleep(350);
+      const row = document.querySelector('#tcPins [data-pin="mute"]');
+      if (!row) return { row: false };
+      const seen = [];
+      for (let i = 0; i < 4; i++) {
+        row.click();
+        await sleep(260);                     // PAST the 180 ms flash timeout
+        seen.push({ lit: row.classList.contains('fired'), muted: P.allMuted(),
+                    audible: P.isPinAudible(pin) });
+      }
+      return { row: true, seen };
+    } finally {
+      S.commitSlots = keep.slots;
+      P.restoreGroups([]); P.applyMix();
+      S._pinsDirty = true; await sleep(120);
+    }
+  });
+
+  check('the rail has a mute row', railLight.row === true);
+  if (railLight.row) {
+    const s4 = railLight.seen;
+    check('the rail row HOLDS its light past the flash window',
+      s4[0].lit === true && s4[2].lit === true,
+      s4.map(x => x.lit).join(',') + ' — a flash is dark again by 260 ms');
+    check('the rail row alternates, so every click engages',
+      s4[0].muted === true && s4[1].muted === false && s4[2].muted === true && s4[3].muted === false,
+      s4.map(x => x.muted).join(','));
+    check('the light says what the sound is doing, every press',
+      s4.every(x => x.lit === x.muted && x.audible === !x.muted),
+      s4.map(x => `lit=${x.lit}/muted=${x.muted}/audible=${x.audible}`).join(' '));
+  }
+
   // A group mute must not reach across the kinds — that is the entire feature.
   const across = await rig.evaluate(async () => {
     const { S } = await import('./js/state.js');
@@ -620,7 +719,7 @@ async function run(rig) {
   const trip = await rig.evaluate(async () => {
     const { S } = await import('./js/state.js');
     const P = await import('./js/pins.js');
-    const X = await import('./js/ui-export.js');
+    const X = await import('./js/piece.js');
     P.restoreGroups([]);
 
     // A muted group holding a pin muted by hand, and a live group beside it
@@ -634,7 +733,8 @@ async function run(rig) {
     P.setPinSolo(b, true);
     P.setGroupMuted(P.groupOf(a), true);
 
-    const payload = JSON.parse(JSON.stringify(X.__testBuildSessionPayload()));
+    const built   = X.__testBuildPiece();
+    const payload = JSON.parse(JSON.stringify(built.manifest));
     const wire = payload.live?.pinGroups;
     const slotA = payload.commits?.[0];
     const noMembership = payload.commits.every(c => !c || !('layerId' in c));
@@ -642,7 +742,7 @@ async function run(rig) {
     // Wipe memory the way a fresh launch would, then import.
     P.restoreGroups([]);
     S.commitSlots = [];
-    await X.__testApplySessionPayload(payload);
+    await X.__testApplyPiece(payload, built.audio);
 
     const [clBack, lpBack] = P.groups();
     const rb = S.commitSlots[0], rbB = S.commitSlots[1];
@@ -669,7 +769,7 @@ async function run(rig) {
   // `grainParams` is a grain block like any other and goes through
   // `migrateBlockKeys` on the way in, so a v13 file's shared Q arrives on both
   // corners — the same filter it had. The pins half is unchanged.
-  check('the session file is v14', trip.version === 14, String(trip.version));
+  check('the piece is v1', trip.version === 1, String(trip.version));
   check('the two groups are on the wire', trip.wireKeys === 'cloud,loop', String(trip.wireKeys));
   check('a muted group is written muted', trip.wireMuted === true, String(trip.wireMuted));
   check('no pin carries a stored group', trip.noMembership === true,
@@ -694,20 +794,21 @@ async function run(rig) {
   const order = await rig.evaluate(async () => {
     const { S } = await import('./js/state.js');
     const P = await import('./js/pins.js');
-    const X = await import('./js/ui-export.js');
+    const X = await import('./js/piece.js');
     P.restoreGroups([]);
 
     const a = { type: 'loop', slotIndex: 0, playing: true, particles: [], lon: 0, lat: 0,
                 anchorLon: 0, anchorLat: 0, color: '#4fc3f7', grainParams: { volume: 1 } };
     S.commitSlots = [a];
     P.setGroupMuted(P.groupOf(a), true);
-    const payload = JSON.parse(JSON.stringify(X.__testBuildSessionPayload()));
+    const built   = X.__testBuildPiece();
+    const payload = JSON.parse(JSON.stringify(built.manifest));
 
     // Leave memory holding the OPPOSITE flags, as a previous session would.
     P.restoreGroups([{ key: 'cloud', muted: true, solo: true }, { key: 'loop', muted: false }]);
     S.commitSlots = [];
 
-    const importing = X.__testApplySessionPayload(payload);
+    const importing = X.__testApplyPiece(payload, built.audio);
     // Repaint pressure while the import is mid-flight — the rail's own read.
     const spin = setInterval(() => {
       try { for (const c of S.commitSlots) if (c) P.groupOf(c); } catch (_) {}
@@ -729,84 +830,27 @@ async function run(rig) {
   check('the imported mute lands on the right group', order.loopsMuted === true, String(order.loopsMuted));
   check('the previous session\'s flags are replaced, not merged', order.cloudsClean === true);
 
-  // ── G. Old files ──────────────────────────────────────────────────────────
-  console.log('\n§ G. v6-v12 — older files import, and their named groups go');
+  // ── G. restoreGroups takes what it is given ───────────────────────────────
+  // The version-ageing half of this section went with the old session format
+  // (2026-09-14): a piece is v1, nothing older is read, and there is no
+  // migration left to assert. What remains is what a hand-edited or truncated
+  // file can still hand restoreGroups.
+  console.log('\n§ G. restoreGroups takes what it is given');
   const old = await rig.evaluate(async () => {
-    const { S } = await import('./js/state.js');
     const P = await import('./js/pins.js');
-    const X = await import('./js/ui-export.js');
-    P.restoreGroups([]);
-
-    const a = { type: 'cloud', slotIndex: 0, playing: true, lon: 0, lat: 0,
-                color: '#e8a030', grainParams: {}, grainOverrides: {} };
-    S.commitSlots = [a];
-    const payload = JSON.parse(JSON.stringify(X.__testBuildSessionPayload()));
-
-    // Age the file to v6: nothing about groups at all.
-    const v6 = JSON.parse(JSON.stringify(payload));
-    v6._version = 6;
-    delete v6.live.pinGroups;
-    for (const c of v6.commits) if (c) { delete c._preGroupOn; delete c.mute; delete c.solo; }
-    P.restoreGroups([]); S.commitSlots = [];
-    await X.__testApplySessionPayload(v6);
-    const v6Group = P.groupOf(S.commitSlots[0])?.key;
-    const v6Live = P.groups().every(g => !g.muted);
-
-    // Age it to v7-v9: a named layer set and a per-hold layerId, plus the old
-    // spelling of the restore flag. The groups it names are gone, so they must
-    // be discarded — but `_preLayerOn` is the SAME fact under an old name and
-    // has to survive, or a session saved mid-mute unmutes into a lie.
-    const v9 = JSON.parse(JSON.stringify(payload));
-    v9._version = 9;
-    delete v9.live.pinGroups;
-    v9.live.layers = { list: [{ id: 7, key: 'q', name: 'group Q', color: '#fff', muted: true, solo: false }], seq: 7 };
-    v9.commits[0].layerId = 7;
-    v9.commits[0]._preLayerOn = true;              // the GROUP silenced it: not a hand mute
-    delete v9.commits[0]._preGroupOn; delete v9.commits[0].mute; delete v9.commits[0].solo;
-    P.restoreGroups([]); S.commitSlots = [];
-    await X.__testApplySessionPayload(v9);
-    const rb = S.commitSlots[0];
-    const v9Group = P.groupOf(rb)?.key;
-    const v9Migrated = rb?.mute === false;
-    const v9NoId = !('layerId' in rb) && !('_preGroupOn' in rb);
-
-    // A v12 file with the restore flag saying the pin was ALREADY silent when
-    // its group went down: that was a hand mute, and it is one now.
-    const v12 = JSON.parse(JSON.stringify(payload));
-    v12._version = 12;
-    v12.commits[0]._preGroupOn = false; v12.commits[0].playing = false;
-    delete v12.commits[0].mute; delete v12.commits[0].solo;
-    v12.live.pinGroups = [{ key: 'cloud', muted: true, solo: false }, { key: 'loop', muted: false, solo: false }];
-    P.restoreGroups([]); S.commitSlots = [];
-    await X.__testApplySessionPayload(v12);
-    const v12Mute = S.commitSlots[0]?.mute === true;
-    P.setGroupMuted(P.groupOf(S.commitSlots[0]), false);
-    const v12StaysSilent = P.isPinAudible(S.commitSlots[0]) === false;
-    const v9NoNamed = P.groups().length === 2 && P.groups().every(g => g.key === 'cloud' || g.key === 'loop');
-
-    // And the degenerate cases a hand-edited file can produce.
     P.restoreGroups([{ key: 'cloud', muted: true }]);
     const partial = P.groups().map(g => `${g.key}:${g.muted ? 'm' : '-'}`).join(',');
     P.restoreGroups([{ key: 'nope', muted: true }]);
     const unknownIgnored = P.groups().every(g => !g.muted);
     P.restoreGroups(undefined);
     const undefFallback = P.groups().length === 2 && P.groups().every(g => !g.muted);
-
-    return { v6Group, v6Live, v9Group, v9Migrated, v9NoId, v9NoNamed, v12Mute, v12StaysSilent,
-             partial, unknownIgnored, undefFallback };
+    return { partial, unknownIgnored, undefFallback };
   });
 
-  check('a v6 session still imports', old.v6Group === 'cloud', String(old.v6Group));
-  check('and nothing comes back muted', old.v6Live === true);
-  check('a v7-v9 pin lands in its kind\'s group', old.v9Group === 'cloud', String(old.v9Group));
-  check('its _preLayerOn (group did it) reads as no hand mute', old.v9Migrated === true, String(old.v9Migrated));
-  check('neither its layerId nor a restore flag is carried forward', old.v9NoId === true);
-  check('a v12 _preGroupOn:false reads as a hand mute', old.v12Mute === true);
-  check('which unmuting the group does not lift', old.v12StaysSilent === true);
-  check('its named groups are discarded', old.v9NoNamed === true);
   check('a partial block leaves the unnamed group alone', old.partial === 'cloud:m,loop:-', old.partial);
   check('an unknown key is ignored rather than added', old.unknownIgnored === true);
   check('a missing block is not an error', old.undefFallback === true);
+
 
   // Hand back a clean pool. The suite leaves short arrays of synthetic slots in
   // S.commitSlots, and rig-audit.js runs the other suites in the SAME app.
@@ -855,8 +899,13 @@ async function run(rig) {
       const idx = S.liveRecBuffers.length - 1;
       US.recordStrokeStart('live', idx);
       const sid = S.currentStrokeId;
+      // TAPE marks (`trig`), which is what a line brush deposits. A loop comes
+      // from tape and only tape: the drop's fallback search — the one that runs
+      // when no armed trigger covers the stroke — skips granular marks, as the
+      // `=` key's caller always did before that test moved into the drop
+      // (2026-09-14). Untagged marks made this fixture pin a ghost cloud.
       for (let k = 0; k < 8; k++) S.particles.push({ lon: cur.lon + k * 0.6 * Math.PI / 180, lat: cur.lat, strokeId: sid, source: 'live',
-        liveBufferIdx: idx, grainStart: 0.1 * k, grainDuration: 0.1, color: '#fff', _vo: S.currentVoicing });
+        liveBufferIdx: idx, grainStart: 0.1 * k, grainDuration: 0.1, color: '#fff', trig: true, _vo: S.currentVoicing });
       S._particleVersion++;
       S.currentStrokeId = -1;
       return sid;
@@ -995,7 +1044,7 @@ async function run(rig) {
     const { S } = await import('./js/state.js');
     const BV = await import('./js/brush-voicing.js');
     const US = await import('./js/ui-samples.js');
-    const X  = await import('./js/ui-export.js');
+    const X  = await import('./js/piece.js');
     S.voicings = []; S.voicingSeq = 0; S.particles.length = 0;
 
     // A voicing is keyed on the TILE in the hand (2026-09-03), so two tiles
@@ -1026,24 +1075,15 @@ async function run(rig) {
     S.particles.push({ lon: 0.1, lat: 0, strokeId: 2, _vo: voB, source: 'live',
                        liveBufferIdx: 0, grainStart: 0, grainDuration: 0.1, color: '#fff' });
 
-    const payload = JSON.parse(JSON.stringify(X.__testBuildSessionPayload()));
+    const built   = X.__testBuildPiece();
+    const payload = JSON.parse(JSON.stringify(built.manifest));
     const wire = payload.live?.voicings;
     const wireVo = payload.particles.map(p => p.vo);
 
     S.voicings = []; S.voicingSeq = 0; S.particles.length = 0;
-    await X.__testApplySessionPayload(payload);
+    await X.__testApplyPiece(payload, built.audio);
     const back = S.particles.map(p => p._vo);
     const pABack = BV.voicingById(back[0])?.params;
-
-    // A v7 file: strip the voicings and the per-particle ids, keep `patch`.
-    const legacy = JSON.parse(JSON.stringify(payload));
-    legacy._version = 7;
-    delete legacy.live.voicings;
-    for (const p of legacy.particles) delete p.vo;
-    S.voicings = []; S.voicingSeq = 0; S.particles.length = 0;
-    await X.__testApplySessionPayload(legacy);
-    const legacyVos = S.particles.map(p => p._vo);
-    const legacyLabel = BV.voicingById(legacyVos[0])?.label;
 
     S.particles.length = 0;
     return {
@@ -1053,8 +1093,6 @@ async function run(rig) {
       sameBlock: JSON.stringify(pA) === JSON.stringify(pB),
       wireVo, back,
       paramsSurvived: JSON.stringify(pABack) === JSON.stringify(pA),
-      legacyVos, legacyLabel,
-      legacyOne: new Set(legacyVos).size === 1 && legacyVos[0] !== 0,
     };
   });
 
@@ -1069,9 +1107,6 @@ async function run(rig) {
   check('marks come back pointing at the same voicings', JSON.stringify(froz.back) === JSON.stringify([froz.voA, froz.voB]),
     JSON.stringify(froz.back));
   check('and the params behind them survived intact', froz.paramsSurvived === true);
-  check('a v7 session migrates onto its own embedded patch', froz.legacyOne === true,
-    JSON.stringify(froz.legacyVos) + ' — must be one non-zero voicing, not the live params');
-  check('...labelled as imported rather than as a live brush', froz.legacyLabel != null, String(froz.legacyLabel));
 
   // ── I. k is the LENS's (#233, reversing #212's k half) ───────────────────
   // Flow made density a painted, visible property of the material, so how
@@ -1546,7 +1581,7 @@ async function run(rig) {
     const { S } = await import('./js/state.js');
     const BV = await import('./js/brush-voicing.js');
     const US = await import('./js/ui-samples.js');
-    const X  = await import('./js/ui-export.js');
+    const X  = await import('./js/piece.js');
     const savedHand = S._handTile, savedIsWet = S._tileIsWet, savedPitch = S.grainOverrides.pitchShift;
     const hand = { id: 'W', label: 'W', wet: true };
     S._handTile = () => hand;
@@ -1579,16 +1614,17 @@ async function run(rig) {
     // Round trip: `wet` on the wire, honoured where the tile is wet, dried where it is not.
     S.particles.push({ lon: 0, lat: 0, strokeId: 1, _vo: w1, source: 'live',
                        liveBufferIdx: 0, grainStart: 0, grainDuration: 0.1, color: '#fff' });
-    const payload = JSON.parse(JSON.stringify(X.__testBuildSessionPayload()));
+    const built   = X.__testBuildPiece();
+    const payload = JSON.parse(JSON.stringify(built.manifest));
     const list = payload.live?.voicings?.list || [];
     const wireWet = list.find(v => v.id === w1)?.wet === true;
     const wireDry = !('wet' in (list.find(v => v.id === d1) || { wet: 1 }));
     reset();
-    await X.__testApplySessionPayload(payload);
+    await X.__testApplyPiece(payload, built.audio);
     const backWet = BV.voicingById(w1)?.wet === true && BV.voicingById(w1)?.tile === 'W';
     S._tileIsWet = () => false;
     reset();
-    await X.__testApplySessionPayload(payload);
+    await X.__testApplyPiece(payload, built.audio);
     const backDried = BV.voicingById(w1)?.wet === false && pitchOf(w1) === p2;
     S._tileIsWet = id => id === 'W' && hand.wet;
 
@@ -1623,6 +1659,55 @@ async function run(rig) {
     `dried ${wet.dried}, wet=${!wet.driedFlag}, sync→${wet.syncAfterDry}, pitch ${wet.p3}`);
   check('the next wet stroke starts a new voicing', wet.w4 !== wet.w3 && wet.w4Wet, `${wet.w3} → ${wet.w4}`);
 
+  // ── L2. the ring is the PAINT's, not the hand's ───────────────────────────
+  // The regression this section exists for (Ek, 2026-09-14: "they only light
+  // up wet with the extra ring when i'm painting with that tool but i imagine
+  // that they should always look wet until i dry it"). The renderer keyed the
+  // ring on `S._handTile()`, which is null between presses — so the one
+  // question the ring answers, WHICH PAINT IS STILL WET, was answered only
+  // while that brush was actually painting. Counted by its ink and its line
+  // width, with the hand empty for every frame here.
+  console.log('\n§ L2. a wet mark wears its ring with nothing in the hand');
+  const wring = await rig.evaluate(async () => {
+    const { S } = await import('./js/state.js');
+    const R  = await import('./js/renderer.js');
+    const BV = await import('./js/brush-voicing.js');
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const ctx = S.ctx, realStroke = ctx.stroke.bind(ctx);
+    const ink = getComputedStyle(document.body).getPropertyValue('--eng-grain').trim().toLowerCase();
+    const count = () => { let n = 0;
+      ctx.stroke = (...a) => { const sc = String(ctx.strokeStyle).toLowerCase();
+        if (sc === ink && Math.abs(ctx.lineWidth - 1) < 0.01) n++;
+        return realStroke(...a); };
+      try { R.drawFrame(); } finally { ctx.stroke = realStroke; }
+      return n; };
+    const keepParts = S.particles.slice(), keepVos = S.voicings, keepSeq = S.voicingSeq;
+    const savedHand = S._handTile, savedIsWet = S._tileIsWet;
+    let wet = -1, dry = -1;
+    try {
+      S.voicings = []; S.voicingSeq = 0; S.particles.length = 0;
+      S._handTile = () => null;          // the brush is DOWN for every frame below
+      S._tileIsWet = id => id === 'W';
+      const vo = BV.voicingFor('W', 'W', true);
+      for (const [lon, lat] of [[0.2, 0.1], [-0.2, -0.1]])
+        S.particles.push({ lon, lat, _vo: vo, source: 'live', liveBufferIdx: 0,
+                           grainStart: 0, grainDuration: 0.1, rms: 0.5, color: '#ffffff' });
+      R.drawFrame(); await sleep(60);
+      wet = count();
+      BV.dryVoicing('W');                // dried: the same marks, no ring
+      R.drawFrame(); await sleep(60);
+      dry = count();
+    } finally {
+      S._handTile = savedHand; S._tileIsWet = savedIsWet;
+      S.voicings = keepVos; S.voicingSeq = keepSeq;
+      S.particles.length = 0; for (const p of keepParts) S.particles.push(p);
+      R.drawFrame(); await sleep(60);
+    }
+    return { wet, dry, ink };
+  });
+  check('both marks of a wet brush ring while the hand is empty', wring.wet === 2, JSON.stringify(wring));
+  check('drying them takes the ring off — the count discriminates', wring.dry === 0, JSON.stringify(wring));
+
   // ── M. The overdub brush ──────────────────────────────────────────────────
   console.log('\n§ M. the overdub brush — a take inside a pinned loop\'s cycle');
   const od = await rig.evaluate(async () => {
@@ -1632,7 +1717,7 @@ async function run(rig) {
     const A  = await import('./js/audio.js');
     const B  = await import('./js/brush.js');
     const US = await import('./js/ui-samples.js');
-    const X  = await import('./js/ui-export.js');
+    const X  = await import('./js/piece.js');
     const actx = A.ensureAudioContext();
     const sr = actx.sampleRate;
     const keepSlots = S.commitSlots.slice(), keepParts = S.particles.slice();
@@ -1742,10 +1827,11 @@ async function run(rig) {
 
       // (f) export → import: the take and its phase travel; the layer is rebuilt
       mB.overdubs.push({ strokeId: 4242, phase0: 2.5, buffer: take(1, 0.25), layer: UP.buildOverdubLayer(mB, take(1, 0.25), 2.5), _src: null });
-      const payload = JSON.parse(JSON.stringify(X.__testBuildSessionPayload()));
+      const built   = X.__testBuildPiece();
+    const payload = JSON.parse(JSON.stringify(built.manifest));
       const wire = payload.live?.commits?.find?.(c => c && c.slotIndex === 1) ?? (payload.commits || []).find(c => c && c.slotIndex === 1);
-      out.wire = { n: wire?.overdubs?.length | 0, phase0: wire?.overdubs?.[0]?.phase0, hasWav: !!wire?.overdubs?.[0]?.wav, noLayer: !('layer' in (wire?.overdubs?.[0] || {})) };
-      await X.__testApplySessionPayload(payload);
+      out.wire = { n: wire?.overdubs?.length | 0, phase0: wire?.overdubs?.[0]?.phase0, hasAudio: !!wire?.overdubs?.[0]?.audio, noLayer: !('layer' in (wire?.overdubs?.[0] || {})) };
+      await X.__testApplyPiece(payload, built.audio);
       const back = S.commitSlots.find(c => c && c.type === 'loop' && c.overdubs?.length);
       out.back = { n: back?.overdubs?.length | 0, phase0: back?.overdubs?.[0]?.phase0, layerDur: back ? +back.overdubs[0].layer.duration.toFixed(3) : null,
         hits: back ? hits(back.overdubs[0].layer) : null };
@@ -1839,7 +1925,7 @@ async function run(rig) {
   check('a live layer knows how much take it holds (the heads walk that, one per folded pass), and the seal drops the figure', od.live.a.foldedS > 0.2 && od.live.a.foldedS < od.live.a.layerDur && od.live.a.heads === 3 && od.live.foldedGone, JSON.stringify({ f: od.live.a.foldedS, h: od.live.a.heads, gone: od.live.foldedGone }));
   check('the master unpinned mid-take: not armed while still recording, a plain line at the seal, no layer left, take cleared', od.gone.hadProv === 1 && !od.gone.armedEarly && od.gone.armed === 1 && od.gone.orphanLayers === 0 && od.gone.cleared, JSON.stringify(od.gone));
   check('undo removes the layer and stops it; the master stays', od.undo.n === 0 && od.undo.srcStopped && od.undo.master, JSON.stringify(od.undo));
-  check('the session file carries the take and its phase, not the layer', od.wire.n === 1 && od.wire.phase0 === 2.5 && od.wire.hasWav && od.wire.noLayer, JSON.stringify(od.wire));
+  check('the piece carries the take and its phase, not the layer', od.wire.n === 1 && od.wire.phase0 === 2.5 && od.wire.hasAudio && od.wire.noLayer, JSON.stringify(od.wire));
   check('import rebuilds the layer against the master\'s cycle', od.back.n === 1 && od.back.phase0 === 2.5 && od.back.layerDur === 10 && JSON.stringify(od.back.hits) === '[[2.75,1]]', JSON.stringify(od.back));
   check('removing the master stops its layers', od.stop.live && od.stop.stopped, JSON.stringify(od.stop));
   check('… and hands each overdub back as ONE plain line: armed once, marks kept, no slice under a slice tool, no looper hook, no new pin',
@@ -2071,6 +2157,64 @@ async function run(rig) {
   check('no pins, no bracket', bracket.none === 0, JSON.stringify(bracket));
   check('a selected LOOP wears exactly one bracket — the pass that never knew the selection',
         bracket.withPins === 1, JSON.stringify(bracket));
+
+  console.log('\n§ J3. one selected pin, three marks that agree');
+  // The rail's half-moon, the tracker's ring and the sphere's bracket all say
+  // "this one", and they must say it about the SAME pin (Ek, 2026-09-14: "if
+  // it's the closest one highlight it as so in the tracker"). Each reads
+  // `selectedPinSlot`, so the way this breaks is not a disagreement about the
+  // rule but two SEARCHES a few milliseconds apart while the cursor moves —
+  // which is why the rail's tick does one search and hands it to both painters.
+  // The cell also has to name the pin the row names: `loop 3` is the pin in
+  // slot 3, and a tracker that numbered its own cells independently of
+  // `_pinName` would drift the moment either changed.
+  const marks = await rig.evaluate(async () => {
+    const { S } = await import('./js/state.js');
+    const TL = await import('./js/tile-layout.js');
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const wasOpen = document.body.classList.contains('pinned-open');
+    TL.setPinnedRail(true);
+    const keep = S.commitSlots.slice(), wasMode = S.selectionMode;
+    for (let i = 0; i < S.commitSlots.length; i++) S.commitSlots[i] = null;
+    S.selectionMode = 'nearest';
+    const lon = S._frameCursorLon ?? 0, lat = S._frameCursorLat ?? 0;
+    // Three pins at rising distance, so "nearest" has one right answer and it
+    // is NOT the first slot — a tracker that just rang cell 0 would pass.
+    const pin = (type, i, d) => ({ type, slotIndex: i, playing: false, mute: false, solo: false,
+      color: '#f2569e', lon: lon + d, lat, anchorLon: lon + d, anchorLat: lat,
+      grainParams: { volume: 1 }, particles: [{ lon: lon + d, lat }], playheadIndex: 0,
+      _plantedAt: performance.now() / 1000, _createdAt: performance.now() / 1000, _releasingAt: 0 });
+    S.commitSlots[0] = pin('loop',  0, 0.30);
+    S.commitSlots[1] = pin('loop',  1, 0.05);   // ← nearest
+    S.commitSlots[2] = pin('cloud', 2, 0.60);
+    S._pinsDirty = true;
+    await sleep(500);
+    const cells = [...document.querySelectorAll('#lyrPips i')];
+    const ringed = cells.findIndex(e => e.classList.contains('sel'));
+    const row = document.querySelector('.lyr-hold.sel');
+    const out = {
+      want:   S._selectedPinSlot?.(lon, lat),
+      ringed,
+      row:    row ? +row.dataset.slot : -1,
+      // The cell's name against the row's, for the same slot.
+      cellNm: cells[1]?.getAttribute('data-title') ?? cells[1]?.title ?? '',
+      rowNm:  document.querySelector('.lyr-hold[data-slot="1"] .lyr-hold-nm')?.firstChild?.textContent ?? '',
+      digits: cells.map((e, i) => e.textContent.trim() === String(i + 1)).every(Boolean),
+    };
+    for (let i = 0; i < keep.length; i++) S.commitSlots[i] = keep[i];
+    S.selectionMode = wasMode;
+    S._pinsDirty = true;
+    if (!wasOpen) TL.setPinnedRail(false);
+    await sleep(200);
+    return out;
+  });
+  check('the nearest pin is the selected one, and it is not simply the first slot',
+        marks.want === 1, JSON.stringify(marks));
+  check('the tracker rings the pin the rail marks',
+        marks.ringed === marks.want && marks.row === marks.want, JSON.stringify(marks));
+  check('a tracker cell names the pin its row names',
+        !!marks.cellNm && marks.cellNm === marks.rowNm, JSON.stringify(marks));
+  check('every tracker cell reads its own slot number', marks.digits === true, JSON.stringify(marks));
 
   check('no renderer errors after exercise', rig.errors().length === 0, rig.errors().join(' | '));
 

@@ -284,9 +284,18 @@ export function syncWetVoicing() {
   return v.id;
 }
 
-/** The wet voicing a tile owns, or 0. */
-export function wetVoicingOf(tile) {
-  return S.voicings?.find(v => v.wet && v.tile === tile)?.id ?? 0;
+/** Every voicing that is still WET, by id — the marks whose sound can still
+ *  move. Asked once per frame by the renderer (the ring on a wet mark), so it
+ *  fills a reused array rather than returning a fresh one, and the caller must
+ *  not hold on to it across frames. Wet is a property of the BRUSH, not of the
+ *  hand: a brush stays wet until it is dried, and the hand is null between
+ *  presses — so this is read from the voicing table, never from `_hand()`. */
+const _wetIds = [];
+export function wetVoicingIds() {
+  _wetIds.length = 0;
+  const list = S.voicings;
+  if (list) for (const v of list) if (v.wet) _wetIds.push(v.id);
+  return _wetIds;
 }
 
 /** One-shot key migrations for a stored grain block. Read old key → write new
@@ -396,6 +405,6 @@ export function voicingFromLegacyPatch(patch, label) {
 S._voicingForCurrentBrush = voicingForCurrentBrush;
 S._voicingById            = voicingById;
 S._syncWetVoicing         = syncWetVoicing;
-S._wetVoicingOf           = wetVoicingOf;
+S._wetVoicingIds          = wetVoicingIds;
 S._peakOffsetForVoicing   = peakOffsetForVoicing;
 S._grainPeakOffsetS       = grainPeakOffsetS;

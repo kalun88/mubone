@@ -105,9 +105,22 @@ nobody had signed off.
 
 ## 5. Casing
 
-Sentence case, inside the settings dialog only: "Sample rate", "Master volume", "Recording limit".
-The instrument stays lowercase. This is the one place the app runs prose — a description line in
-lowercase reads as a code comment, not as an explanation.
+**Every TITLE is Title Case; everything else is prose** (Ek, 2026-09-14: "all titles and subtitles
+should have all first letters of each word capital. Signal Path. Master Volume. etc."). That covers
+the left nav ("Audio Advanced", "LED Feedback", "Camera + Display"), section titles ("Signal Path"),
+meter-group subtitles ("Hardware In", "Mubone Level") and row titles ("Master Volume", "Max Grains",
+"Recording Limit") — a title NAMES a thing, and a name is capitalised.
+
+It is literal: every word, including the small ones ("Drive The LED", "What Each Button Does").
+Acronyms and units keep their own shape — MIDI, OSC, LED, dB, ch, x-imu3 — and so does the
+instrument's name where it is written lowercase in the chrome.
+
+**Descriptions, ledes and captions stay sentence case.** They are prose about a setting, not the
+name of one, and a description line in Title Case reads as a headline. The group eyebrows above the
+nav (sound · sensors · view · control) are an eyebrow, uppercased by CSS, and are not titles.
+
+Before 2026-09-14 the rule here was sentence case throughout, and the earlier sweep that title-cased
+the nav alone is folded into the rule above.
 
 ### The kit loses to its own page contract unless it is stated at the same depth
 

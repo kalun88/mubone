@@ -8,6 +8,52 @@
 
 ## Open — by date found
 
+### Sep 15
+
+- [ ] **The light canvas is unreachable code** — `S.darkMode` is a constant `true` since the Canvas Theme
+  option was removed (Ek, 2026-09-15). `renderer.js` still branches on it in ~25 places and
+  `audio-features.js` keys a colour cache on it; every light half is now dead. Deleting them is mechanical
+  but crosses modules (`renderer.js`, `audio-features.js`, `state.js`), so it wants its own sketch and a
+  confirmation rather than riding along with a settings change. `SPHERE_PALETTE.light`, `TRAIL_INK_LIGHT`
+  and `MUTED_PARTICLE_LIGHT` go with them.
+
+- [ ] **Selecting stereo does not reach `S.mainInputChannel`** — found 2026-09-15 by the paint-gate work,
+  NOT caused by it: `cc-mirror-audit` fails `stereo reaches S.mainInputChannel — 0` on a clean checkout of
+  HEAD as well. The modal's channel select mirrors `stereo` into the panel correctly, so the UI agrees with
+  itself and disagrees with the engine. Pre-existing and unrelated to the viz round; logged here rather than
+  fixed inside it.
+
+- [ ] **`colour-audit` listens to the room and cries wolf** — its two room-sensitivity checks fail on a
+  different axis, a different sound and a different margin on almost every run, on a clean checkout too
+  (measured four runs, 2026-09-15: hue `breath` 0.066 / hue `click` 0.082 / saturation 0.31 / hue `breath`
+  0.073). It is measuring the live mic, so it reports the room rather than the code. Either give it a fixed
+  signal or widen the thresholds — until then a red `colour` says nothing. `§ J`'s perfMode check is
+  separately flaky: it reported `over 0 dots` once in three, because at 30° fov its test marks are off-screen.
+
+### Sep 14
+
+- [ ] **#357 A pinned loop still duplicates its take in the file** — left open by #354, 2026-09-14. The piece's
+  audio members are content-addressed, so two slots sharing one AudioBuffer now write once — but
+  `createSeqFromStroke` (ui-presets.js) copies a REGION of the take and crossfades its tail, so a pinned loop is
+  derived material with a different hash and is carried in full beside the take it came from. Each overdub take
+  likewise. Storing it as a recipe — `{ from: <take id>, start, end }`, re-derived on open through the same
+  function — is the fix, and it is the shape the overdub format already uses for its layers ("a file cannot carry
+  a layer that disagrees with its master"). The risk is that the re-derivation must reproduce the crossfade
+  exactly, or a reopened loop wraps differently than the one that was saved.
+
+- [ ] **#352 Wet (and pin-on-end) may belong to the cursor, not to each tool** — Ek, 2026-09-14, thinking aloud while
+  the wet ring was fixed: "it's honestly a bit non performative and confusing. right now it's treated as a property
+  or flag of a tool. which seems overkill to have each tool carry its own flag. arguably the same with pin on end
+  behaviour. in reality i'm not gonna keep track of each tool's wet or not. it's kinda more a cursor behaviour or
+  global one. it's more like, are the paintbrushes i use wet." **Not a decision — the per-tool flag stays for now**
+  ("i think i'll stick with this wet implementation for now"), and the drop became a button on every grain tile the
+  same day so the flag is at least flippable from the surface you play from. What to weigh if it is revisited: a
+  global wet would be ONE switch above the tools (the shape memory says a performance control is boolean and its
+  third state goes to a settings page), it would make `isWet(tile)` a cursor read and `dryVoicing` a sweep over every
+  wet voicing at once, and it would cost the thing the per-tool flag buys — a wet brush and a dry brush side by side
+  on the strip, which is what `docs/RULINGS.md` "wet paint" argues wet is FOR. Auto-pin has the same shape and should
+  move with it or not at all. See the wet-ring fix (2026-09-14) for why the visible half kept going wrong.
+
 ### Sep 13
 
 ### Sep 12

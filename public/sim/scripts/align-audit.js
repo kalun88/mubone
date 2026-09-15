@@ -159,6 +159,107 @@ if (bar) {
   });
 }
 
+// ── ONE OPTICAL SIZE FOR EVERY MAIN-PAGE GLYPH (2026-09-14) ───────────────
+// The BOXES were one size for a year while the DRAWINGS inside them ran
+// 11.5 → 18.3px, which is what the eye reads: the cog was half again the
+// broom beside it, and the camera button changed size with the camera mode.
+// --gk (style.css) scales each glyph's geometry to the garbage can's
+// 13.3px. Measured here as bbox × (svg box / viewBox) — the transform is on
+// the CONTENTS, so the svg's own box is unscaled and the ratio is the truth.
+// A redrawn path moves its bbox and needs a new factor; that is the drift
+// this catches.
+{
+  const glyphs = [];
+  // Chromium leaves a var()-fed division as "calc(2.02931px)" in the computed
+  // value — already divided, still wrapped — and parseFloat reads NaN off it.
+  const swPx = v => { const f = parseFloat(v); if (!isNaN(f)) return f;
+    const m = /(-?[\\d.]+)px/.exec(v || ''); return m ? +m[1] : NaN; };
+  const meas = (n, tag) => {
+    for (const svg of n.querySelectorAll('svg')) {
+      if (getComputedStyle(svg).display === 'none') continue;
+      let bb = null; try { bb = svg.getBBox(); } catch (_) { continue; }
+      const r = svg.getBoundingClientRect(); if (!r.width || !bb.width) continue;
+      const vb = (svg.getAttribute('viewBox') || '0 0 24 24').trim().split(/[ ,]+/).map(Number);
+      const per = r.width / (vb[2] || 24);
+      // getBBox on the root already includes the children's own scale, so the
+      // drawn size needs no k. The STROKE does: stroke-width is declared in
+      // user units, before that transform, so the pen on screen is
+      // sw x per x k — which is the whole point of the divisor in the CSS.
+      const k = parseFloat(getComputedStyle(svg).getPropertyValue('--gk')) || 1;
+      glyphs.push({ t: tag || n.id || 'glyph',
+        v: +(Math.max(bb.width, bb.height) * per).toFixed(2),
+        sw: +(swPx(getComputedStyle(svg).strokeWidth) * per * k).toFixed(2) });
+    }
+  };
+  for (const b of all('.tc-bar .tc-icon, .tc-bar .tc-readout')) meas(b);
+  for (const b of all('.bottom-bar .bb-ax, .bottom-bar .bb-mute')) meas(b);
+  out.glyphs = glyphs;
+}
+
+// ── THE CHROME'S TWO RUNS ─────────────────────────────────────────────────
+// Equal space between every icon that is not across a divider (Ek,
+// 2026-09-14), on both sides of the bar. Measured as the gap between
+// neighbouring controls inside one .tc-grp; a group boundary is the divider's
+// business and is not in this list.
+{
+  // BUTTONS only: they are the ones that share a box, so their gap is exact.
+  // The recording gauge has no button around it and is spaced by its ink
+  // instead — the second measurement below, which is the one that reads the
+  // way the eye does.
+  const runs = [];
+  for (const grp of all('.tc-bar .tc-grp')) {
+    const kids = all('button', grp).filter(k => k.closest('.tc-grp') === grp);
+    for (let i = 1; i < kids.length; i++) {
+      const a = kids[i - 1].getBoundingClientRect(), b = kids[i].getBoundingClientRect();
+      runs.push({ t: (kids[i - 1].id || '?') + '→' + (kids[i].id || '?'), v: +(b.left - a.right).toFixed(2) });
+    }
+  }
+  out.chromeRun = runs;
+  // …and the same run measured as INK: where the glyph actually paints. The
+  // box gap above is exact and says nothing about a control with no button
+  // around it — the recording gauge sat 14.1px from the garbage can while
+  // every pair of icons left ~24, and the box gap was 4.8px for both
+  // (2026-09-14). Spread here is naturally 2px, since matched-height glyphs
+  // still differ in WIDTH, so this is bounded rather than collapsed.
+  const inkBox = el => {
+    const svg = el.querySelector('svg');
+    if (svg) { let bb; try { bb = svg.getBBox(); } catch (_) { return null; }
+      const r = svg.getBoundingClientRect(); if (!r.width) return null;
+      const vb = (svg.getAttribute('viewBox') || '0 0 24 24').trim().split(/[ ,]+/).map(Number);
+      const per = r.width / (vb[2] || 24);
+      return { l: r.left + bb.x * per, r: r.left + (bb.x + bb.width) * per }; }
+    const r = el.getBoundingClientRect();
+    return r.width ? { l: r.left, r: r.right } : null;
+  };
+  const inks = [];
+  for (const grp of all('.tc-bar .tc-grp')) {
+    const kids = all('button, .tc-rec', grp).filter(k => k.closest('.tc-grp') === grp);
+    for (let i = 1; i < kids.length; i++) {
+      const a = inkBox(kids[i - 1]), b = inkBox(kids[i]);
+      if (a && b) inks.push({ t: (kids[i - 1].id || '?') + '→' + (kids[i].id || kids[i].className), v: +(b.l - a.r).toFixed(2) });
+    }
+  }
+  out.chromeInk = inks;
+}
+
+// ── ONE BRIGHTNESS ACROSS BOTH BARS (Ek, 2026-09-14) ──────────────────────
+// "the brightness of the stuff in the footer bar is not the same as the top,
+// match top." The chrome's glyphs were --text-subtle and the footer's
+// --text-dim, 40 luma apart, which reads as two families. A glyph in a STATE
+// (muted, mapped, dry-on, a disabled history arrow) is a colour with a
+// meaning and is excluded — the rest must agree.
+{
+  const stateful = el => el.classList.contains('tc-dis') || el.classList.contains('muted')
+    || el.classList.contains('is-mute') || el.classList.contains('is-map')
+    || el.classList.contains('on') || el.classList.contains('live')
+    || el.classList.contains('found') || el.classList.contains('lost');
+  const ink = [];
+  for (const b of all('.tc-bar .tc-icon, .tc-bar .tc-readout, .bottom-bar .bb-ax, .bottom-bar .bb-mute'))
+    if (!stateful(b)) ink.push({ t: b.id || 'glyph', v: getComputedStyle(b).color });
+  out.glyphInk = ink;
+}
+
+
 // ── THE BRAND ─────────────────────────────────────────────────────────────
 // The chrome's mark and wordmark. The row aligns on the baseline, which is
 // right for type and wrong for a square glyph — so the two are compared by
@@ -265,8 +366,31 @@ if (!wasOpen) { document.getElementById('tcSettings')?.click(); await sleep(700)
 const dlg = document.querySelector('.settings-dialog');
 if (!dlg || !dlg.offsetParent) return { unavailable: true };
 const pages = {}, ctl = {}, contentBox = {}, overlap = {}, contain = {}, tick = {}, loanAfterNav = {};
+// THE SENSOR CARD IS A TEMPLATE, AND NOTHING BUILDS IT HERE (2026-09-14).
+// ui-sygaldry.js render() clones #sygInstrumentTpl once per CONNECTED link, and
+// an audit runs with nothing plugged in — so the sensors page renders zero
+// cards and every check below has been enumerating a page that is missing its
+// eleven rows. Not a query bug: document.querySelectorAll never sees template
+// content either, so the fix has to BUILD the card, not look harder.
+// One place, here, rather than in each of the checks that walks these pages.
+// It is removed again before the next page so the probe cannot disturb what it
+// measures - the same rule screen-probe.mjs learned the hard way.
+let _stand = null;
+const buildTemplateCard = () => {
+  const tpl = document.getElementById('sygInstrumentTpl');
+  const host = document.querySelector('.settings-host .in-settings');
+  if (!tpl || !host || host.querySelector('.syg-instrument')) return null;
+  const node = tpl.content.cloneNode(true);
+  const holder = document.createElement('div');
+  holder.dataset.auditStandIn = '1';
+  holder.appendChild(node);
+  host.appendChild(holder);
+  return holder;
+};
 for (const nav of [...document.querySelectorAll('.set-nav-item')]) {
+  if (_stand) { _stand.remove(); _stand = null; }
   nav.click(); await sleep(320);
+  if (nav.dataset.sec === 'sensors') { _stand = buildTemplateCard(); await sleep(260); }
   const host = document.querySelector('.settings-host .in-settings');
   if (!host) continue;
   const hist = {};
@@ -392,6 +516,7 @@ const tokens = { body: tok('--fs-set-body'), row: tok('--fs-set-row'), hint: tok
 _probeEl.remove();
 if (!wasOpen) document.querySelector('.settings-dialog .close-btn')?.click();
 // and after the dialog is CLOSED, the ledger must be empty outright.
+if (_stand) { _stand.remove(); _stand = null; }   // never leave the stand-in behind
 document.getElementById('settingsClose')?.click();
 await sleep(600);
 const loanAfterClose = (S._settingsBorrowed ? S._settingsBorrowed() : []).map(b2 => b2.what + ' (' + b2.node + ')');
@@ -502,19 +627,70 @@ const footLines = (() => {
   return new Set(rects.map(r => Math.round(r.top))).size;
 })();
 
-// The rail's HEADER buttons — \`all on\` (text) and the settings door (an icon).
-// They sit side by side, so they must be one height on one baseline. An icon
-// button sized by its own contents came out 13px against its neighbour's 22
-// and nothing on screen said so; the fix was a declared height both share, and
-// this is the reading that keeps it.
+// The rail's HEADER buttons. There were two — \`all on\` (text) and the settings
+// door (an icon) — and the invariant demanded both, which is what it said when
+// the all-on button was deleted on 2026-09-15 (it became mute all / unmute all
+// in the rail's own MIX group, where they can be dragged onto the palette and
+// given keys; a header button can do neither). The measurement that mattered was
+// the COUNT: it is that buttons sitting side by side share a height and a
+// baseline — an icon button sized by its own contents came out 13px against its
+// neighbour's 22 and nothing on screen said so. So the spread is still asserted,
+// on however many there are, and one button trivially passes it.
 const barBtns = [...rail.querySelectorAll('.lyr-bar button')].map(b => {
   const r = b.getBoundingClientRect();
   return [b.id || 'btn', px(r.height), px(r.y), px(r.x), px(r.right)];
 });
 
+// The SLOT TRACKER (2026-09-14). It is a header-level readout, so its pips
+// start where the rail's TITLE does and its number ends where the header's
+// buttons do — two columns it could each drift out of independently, and both
+// invisible by eye at 246px. One pip per slot, and the pips and the number on
+// one centre line.
+const { S: _S } = await import('./js/state.js');
+const _pipEls = [...rail.querySelectorAll('#lyrPips i')];
+const _pipRow = rail.querySelector('#lyrPips');
+const _num    = rail.querySelector('.lyr-slots-n');
+const _title  = rail.querySelector('.lyr-title');
+const mid = el => { const r = el.getBoundingClientRect(); return px(r.y + r.height / 2); };
+const _tops = [...new Set(_pipEls.map(e => px(e.getBoundingClientRect().y)))];
+const slots = !_pipRow || !_num ? null : {
+  n:        _pipEls.length,
+  want:     Math.max(_S.commitSlotCount | 0, ..._S.commitSlots.map((c, i) => c ? i + 1 : 0)),
+  pipX:     px(_pipRow.getBoundingClientRect().x),
+  titleX:   _title ? px(_title.getBoundingClientRect().x) : null,
+  numRight: px(_num.getBoundingClientRect().right),
+  btnRight: barBtns.length ? Math.max(...barBtns.map(b => b[4])) : null,
+  // The count centres on the BLOCK of cells, not on the first of them: past
+  // eight slots the cells are two rows and the first row's centre is a row
+  // above the count by design. Measuring the first cell asserted the one-row
+  // case and failed the moment the slot count went to sixteen (2026-09-14).
+  pipMid:   _pipEls.length ? mid(_pipRow) : null,
+  numMid:   mid(_num),
+  // Each cell carries its slot NUMBER, the same one the row below it wears.
+  digits:   _pipEls.map((e, i) => e.textContent.trim() === String(i + 1)),
+  // Eight to a row, declared rather than left to the column width, and the
+  // cells must never run into the count beside them.
+  perRow:   _tops.length ? _pipEls.filter(e => px(e.getBoundingClientRect().y) === _tops[0]).length : 0,
+  clash:    px(_pipRow.getBoundingClientRect().right) > px(_num.getBoundingClientRect().x),
+  // EVERY NUMBER IN THE STRIP IS ONE SIZE AND ONE WEIGHT (Ek, 2026-09-14: "the
+  // number sizes dont match the 4/8 number"). The cells, the filled count, the
+  // separator and the typeable max are the same number said four ways, so only
+  // COLOUR may separate them — size is for hierarchy levels and weight is for
+  // roles (DESIGN-SYSTEM § 2), and neither applies within one readout. A form
+  // control inherits neither family nor weight, which is exactly how the max
+  // drifted to 400 beside everything else at 500.
+  type: (() => {
+    const bits = [_pipRow.querySelector('i'), _num, document.getElementById('lyrSlotsFilled'),
+                  document.querySelector('.lyr-slots-sep'), document.getElementById('lyrSlotsMax')]
+                 .filter(Boolean).map(e => { const c = getComputedStyle(e); return [c.fontSize, c.fontWeight, c.fontFamily]; });
+    return { sizes: [...new Set(bits.map(b => b[0]))], weights: [...new Set(bits.map(b => b[1]))],
+             fams: [...new Set(bits.map(b => b[2]))].length };
+  })(),
+};
+
 if (list && prev !== null) list.innerHTML = prev;
 if (!wasOpen) document.body.classList.remove('pinned-open');
-return { lefts, rights, wrapped, clipped, barBtns, footLines };
+return { lefts, rights, wrapped, clipped, barBtns, footLines, slots };
 `;
 
 // ── The freeze wash ─────────────────────────────────────────────────────────
@@ -595,6 +771,512 @@ function auditOpenGating() {
   return findings;
 }
 
+// ── SPACING RHYTHM (R1–R4, 2026-09-14) ──────────────────────────────────────
+// The suite had 27 invariants and not one about spacing, which is why the
+// scale drifted invisibly: --sp-5..--sp-8's own comments were computed at a
+// 15px rem base and said ~11/~15/~23/~30 while the base had been 16 for
+// months, and seven unrelated components had settled on a bare 5px that is on
+// no scale at all. Nothing in the file could have caught either, because
+// nothing read the DECLARATIONS — every other check reads the rendered box,
+// and a rendered box cannot tell you a number was chosen by feel.
+//
+// These four read the stylesheets and the cursor's source instead. They are
+// the cheapest checks in the file and they close a whole class.
+
+const SPACING_DECL = /(?<![\w-])(padding|margin|gap|row-gap|column-gap)(-top|-right|-bottom|-left)?\s*:\s*([^;}\n]*)/g;
+const NESTED_FN    = /\b(var|calc|env|min|max|clamp)\([^()]*(?:\([^()]*\)[^()]*)*\)/g;
+
+/** Blank out comments so a hex or a measurement quoted in prose is not a
+ *  finding. renderer.js's cursor header used to name three colours in literal
+ *  hex, and half the reason it went stale is that nobody could tell the note
+ *  from the code. Blanked rather than deleted: line numbers must survive. */
+function stripComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '))
+            .replace(/(^|[^:])\/\/[^\n]*/g, (m, p) => p + ' '.repeat(m.length - p.length));
+}
+
+// R1 — no bare px or rem literal in padding / margin / gap.
+//
+// A RATCHET, not a clean assertion, and deliberately so. style.css still
+// carries a known tail of bare literals: the px ones are centring offsets and
+// a handful of one-offs, the rem ones are a whole named round that has not
+// been run (and cannot be run by sed — some are deliberate rem so they track
+// --ui-base-px). Asserting zero today would only mean a suite that is red for
+// a reason nobody is allowed to fix in passing, and a red suite that stays red
+// teaches people to ignore the whole file. So the tail is frozen: the class
+// cannot GROW, and the moment the round is run these numbers come down.
+//
+// The px tail is frozen BY SIGNATURE — "property: literal", with a count —
+// rather than by a total, so a failure names the thing that appeared instead
+// of pointing at whatever happened to be last in the list. Line numbers are
+// deliberately not part of a signature: they shift under every edit above
+// them, and a baseline that goes stale on an unrelated commit is a baseline
+// nobody trusts. The rem tail is a COUNT: 124 distinct signatures is not a
+// list anyone reads, and until the round is run the only fact worth asserting
+// about it is that it is not growing.
+// ── ABSENCE IS NOT EVIDENCE — how every frozen tail in this file is read ────
+// Three instances of one bug in a single week: eleven settings rows behind a
+// <template> that nothing instantiated, thirty-three of this file's checks
+// querying a document that never built it, and two buttons that exist only
+// while their drawer is rendered. Same shape every time — a check mistook
+// "did not see it" for "it is fine."
+//
+// So a frozen tail is read in THREE states, never two:
+//
+//   FIXED        measured this run, and clean        -> drop it from the tail
+//   STILL WRONG  measured this run, still failing    -> stays, silent
+//   NOT REACHED  not measured this run at all        -> STAYS, and is reported
+//
+// The detail line carries the coverage, and a low number is the useful fact
+// rather than an embarrassment: 21 of 660 control-shaped elements with the
+// rails shut is exactly what told us R6 needed to open the doors. THE FIX FOR A
+// COVERAGE GAP IS NEVER TO WIDEN THE PROBE UNTIL THE NUMBER LOOKS BETTER — an
+// entry no path can reach is a finding about the AUDIT, and is named as one.
+//
+// `seen` is the set of keys the probe actually measured. A static file read
+// passes `null`, which means full coverage by construction — there is no such
+// thing as an unreachable line in a file you read end to end.
+function readTail(tail, offenders, seen) {
+  const off = new Set(offenders);
+  const keys = [...tail];
+  const reached = k => seen === null || seen.has(k);
+  return {
+    fixed:       keys.filter(k => reached(k) && !off.has(k)),
+    notReached:  keys.filter(k => !reached(k)),
+    isNew:       [...off].filter(k => !tail.has(k)),
+    coverage:    seen === null
+      ? `${keys.length} in tail, static read — full coverage`
+      : `${keys.filter(reached).length} of ${keys.length} in tail reached`,
+  };
+}
+
+const R1_PX_TAIL = {
+  "gap: 3px": 1,
+  "margin-bottom: 4px": 1,
+  "margin-bottom: 8px": 1,
+  "margin-left: 10px": 1,
+  "margin-left: 4px": 1,
+  "margin-top: -1px": 2,
+  "margin-top: -2.5px": 1,
+  "margin-top: -3px": 1,
+  "margin-top: -4.5px": 1,
+  "margin-top: -6px": 3,
+  "margin-top: 10px": 1,
+  "margin-top: 22px": 1,
+  "margin-top: 26px": 1,
+  "margin-top: 2px": 1,
+  "margin-top: 4px": 1,
+  "margin: 8px": 1,
+  "padding-left: 2px": 1,
+  "padding-top: 10px": 1,
+  "padding-top: 6px": 1,
+  "padding: 1px": 1,
+  "padding: 2px": 1
+};
+// 364 since 2026-09-15: the height-snap round took the vertical padding off `.trow`
+// `.ds-del` and `.tc-cam-row`, which is how a stated height replaces a derived one.
+const R1_REM_TAIL = 363;
+
+function auditSpacingLiterals() {
+  const raw = fs.readFileSync(path.join(ROOT, 'css', 'style.css'), 'utf8');
+  // The marker is read from the RAW source and the exemption carried by line
+  // number: stripComments() blanks the comment it lives in, so testing for it
+  // afterwards silently exempts nothing at all.
+  const exempt = new Set();
+  raw.split('\n').forEach((ln, i) => { if (ln.includes('/* geometry */')) exempt.add(i + 1); });
+  const lines = stripComments(raw).split('\n');
+  const px = new Map();
+  let rem = 0;
+  lines.forEach((ln, i) => {
+    if (exempt.has(i + 1)) return;   // a centring offset is not a spacing step
+    for (const m of ln.matchAll(SPACING_DECL)) {
+      const prop = m[1] + (m[2] || '');
+      const value = m[3].replace(NESTED_FN, '');   // whatever a var/calc/env already owns is fine
+      for (const lit of value.matchAll(/(?<![\w.#-])-?\d*\.?\d+(px|rem)(?![\w-])/g)) {
+        if (lit[1] === 'rem') { rem++; continue; }
+        const sig = `${prop}: ${lit[0]}`;
+        px.set(sig, (px.get(sig) || 0) + 1);
+      }
+    }
+  });
+  const added = [], gone = [];
+  for (const [sig, n] of px) { const was = R1_PX_TAIL[sig] || 0; if (n > was) added.push(`${sig} ×${n - was}`); }
+  for (const sig of Object.keys(R1_PX_TAIL)) { const n = px.get(sig) || 0; if (n < R1_PX_TAIL[sig]) gone.push(sig); }
+  // Static read of one file end to end, so there is no third state here: every
+  // entry is reached by construction. Said out loud rather than assumed, because
+  // "gone means fixed" is only safe when that is actually true — see readTail().
+  const cover = readTail(new Set(Object.keys(R1_PX_TAIL)), [...px.keys()], null).coverage;
+  return { added, gone, pxTotal: [...px.values()].reduce((a, b) => a + b, 0), rem, cover };
+}
+
+// R2 — a named component spacing token is a whole number of px, and it lives
+// with the component it spaces.
+//
+// --footer-cap-gap is the pattern this states: measured, named, and declared
+// on .bottom-bar right above the rule that spends it, so the number and the
+// thing it spaces cannot drift apart. A FRACTIONAL token is the other failure,
+// and it is not hypothetical — "32.4px of air against 18.4" in this file's own
+// header is 1.15rem, still declared as 1.15rem today.
+//
+// Two deliberate softenings of the rule as first written, each because the
+// strict form was wrong rather than inconvenient:
+//
+//   "declared in the same rule BLOCK" — no. A custom property is inherited on
+//   purpose: --footer-cap-gap is declared on .bottom-bar and spent by
+//   .bb-ax / .bb-mute inside it, which is correct and is the pattern. What
+//   actually protects the design is that the token is SPENT — a declared token
+//   with no var() reading it is a number nobody can find the effect of.
+//
+//   the fractional ones FAIL, but by a named tail rather than by going red.
+//   Converting --footer-inset from 1.15rem to 18px moves the footer, which is
+//   a design call and Ek's, not a side effect of adding an invariant. They are
+//   listed by name so the next person meets them; the check fails the moment a
+//   NEW one appears.
+//
+// NAMED EXCEPTION: --seam. Seven unrelated components (meter channels, tile
+// strips, the lens bar) want the SAME hairline between abutting objects, and a
+// seam that differs between them is just a thin gap. It is global on purpose
+// and lives in tokens.css with the scale.
+const R2_GLOBAL = new Set(['--seam']);
+// The scale itself, read from tokens.css so this cannot go stale against it.
+const SPACING_SCALE = (() => {
+  const src = fs.readFileSync(path.join(ROOT, 'css', 'tokens.css'), 'utf8');
+  const out = {};
+  for (const m of src.matchAll(/(--sp-\d)\s*:\s*([\d.]+)rem/g)) out[m[1]] = parseFloat(m[2]) * 16;
+  return out;
+})();
+// EMPTY since 2026-09-14, and that is the point of having dated it: --prow-gap
+// (9.6px) and --footer-inset (18.4px) both snapped to the scale the day neither
+// could state a derivation. An allowlist that outlives its rows is the staleness
+// this file exists to catch.
+const R2_FRACTIONAL = new Set();
+
+function auditNamedSpacing() {
+  const bad = [], known = [], seenNames = new Set();
+  for (const file of ['style.css', 'settings-gui.css', 'tokens.css']) {
+    const src = stripComments(fs.readFileSync(path.join(ROOT, 'css', file), 'utf8'));
+    for (const m of src.matchAll(/(--[\w-]*(?:gap|pad|inset|seam))\s*:\s*([^;}\n]+)/g)) {
+      const [name, raw] = [m[1], m[2].trim()];
+      const line = src.slice(0, m.index).split('\n').length;
+      const where = `${file}:${line} ${name}`;
+      const px = /^(-?\d*\.?\d+)px$/.exec(raw);
+      const rem = /^(-?\d*\.?\d+)rem$/.exec(raw);
+      // A token that DEFERS to the scale is the best answer, not a violation:
+      // var(--sp-4) cannot be fractional and cannot drift, which is more than a
+      // literal can promise. Resolved through tokens.css so the value is still
+      // checked rather than trusted.
+      const scale = /^var\(\s*(--sp-\d)\s*\)$/.exec(raw);
+      const asPx = px ? parseFloat(px[1]) : rem ? parseFloat(rem[1]) * 16
+                 : scale ? SPACING_SCALE[scale[1]] ?? null : null;
+      if (asPx === null) bad.push(`${where}: ${raw} is not a px, a rem or a --sp-* step`);
+      else if (!Number.isInteger(asPx)) (R2_FRACTIONAL.has(name) ? known : bad)
+        .push(`${where}: ${raw} = ${asPx}px, not a whole pixel`);
+      if (R2_GLOBAL.has(name)) continue;
+      if (!src.includes(`var(${name})`)) bad.push(`${where} is declared and never spent`);
+      seenNames.add(name);
+    }
+  }
+  // Same: three css files read end to end. Full coverage, stated.
+  const cover = readTail(R2_FRACTIONAL, [...seenNames], null).coverage;
+  return { bad, known, cover };
+}
+
+// R4 — the cursor inks from tokens, not from a second list of colours.
+//
+// The cursor carried nine hand-written colours for months while the tiles it
+// is supposed to match carried tokens: recording was a red that was not the
+// mic-live ramp, erase was a red borrowing danger's meaning, nearest was a
+// violet in no ramp, and three slot fallbacks were a few points off the engine
+// hues they were copying. None of it was visible as a bug — it was visible as
+// a cursor that never quite matched the tile you pressed.
+//
+// Exempt: a fallback inside a _tok() call (that is the whole point of one),
+// and pure black or white at an alpha, which is the theme's own ink rather
+// than a palette hue.
+//
+// The allowance list is EMPTY, and that is the point: it held the toggle-trace
+// green for one day until Ek ruled on it (2026-09-14, --accent-sensor on the
+// ring). An entry here is a debt with a name and a date, not a permanent
+// exemption — add one only to park a colour someone is actively deciding.
+const CURSOR_LITERAL_ALLOWED = new Set();
+
+function auditCursorInk() {
+  const src = stripComments(fs.readFileSync(path.join(ROOT, 'js', 'renderer.js'), 'utf8'));
+  const i = src.indexOf('export function drawCursor()');
+  if (i < 0) return ['renderer.js: drawCursor() not found — this check has gone stale'];
+  let depth = 0, end = -1;
+  for (let k = src.indexOf('{', i); k < src.length; k++) {
+    if (src[k] === '{') depth++;
+    else if (src[k] === '}' && --depth === 0) { end = k; break; }
+  }
+  const body = src.slice(i, end + 1);
+  const base = src.slice(0, i).split('\n').length;
+  const bad = [];
+  for (const m of body.matchAll(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g)) {
+    const lit = m[0];
+    if (CURSOR_LITERAL_ALLOWED.has(lit)) continue;
+    if (/\$\{/.test(lit)) continue;                                  // rgba(${_rtic},…) — the theme's ink
+    const chans = lit.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+    if (chans && chans.slice(1).every(c => c === '255' || c === '0')) continue;   // black / white
+    const line = body.slice(0, m.index);
+    const ln = base + line.split('\n').length - 1;
+    const stmt = body.split('\n')[line.split('\n').length - 1];
+    if (/_tok\(\s*'[^']+'\s*,\s*'?$/.test(stmt.slice(0, stmt.indexOf(lit)))) continue;  // a _tok fallback
+    bad.push(`renderer.js:${ln} ${lit}`);
+  }
+  return bad;
+}
+
+
+// ── R5: A DESCRIPTION IS SHORT, AND AT MOST TWO SENTENCES ───────────────────
+// The only check in this file that catches a WRITING regression, which is how
+// all of them got in: nothing here ever read a row's words, so a description
+// could grow to 107 words — the Calibration row — without a single check
+// noticing. 92 characters is two lines of the 46ch column the description is
+// already capped to (measured: 278px, 56.8 ch/line).
+//
+// THE SENTENCE RULE WAS ONE, AND ONE WAS THE WRONG PROXY (amended 2026-09-14).
+// It stood in for "not a paragraph", and measured against the remainder it fired
+// on eleven rows with nothing wrong with them — "The floor, in pixels. Quiet
+// material never draws smaller than this." is 67 characters and two clean
+// sentences, and joining them with a semicolon makes it worse. A 67-character
+// description is not a paragraph. THREE sentences inside 92 characters is choppy
+// rather than dense, and that is what the count is actually for. The character
+// cap is geometric and unchanged; this one is editorial and now says so.
+//
+// IT MUST OPEN THE TEMPLATES, and this is the part worth keeping. 11 of the
+// app's 88 described rows live inside <template id="sygInstrumentTpl">, and
+// document.querySelectorAll() does not see template content — so the longest
+// description in the app has been sitting behind every check in this file.
+// Worse than a query bug: ui-sygaldry.js render() only clones that template for
+// a CONNECTED link, and audits run with no sensor attached, so instantiating
+// the page does not help either. Measured on 2026-09-14: walking all thirteen
+// settings pages finds 77 descriptions, the template holds 11 more, and the
+// sensors page renders 0 instrument cards with nothing plugged in.
+//
+// THE SAME BLIND SPOT IS IN 33 OF THIS FILE'S 104 CHECKS — everything driven by
+// SETTINGS_PROBE, which walks the rendered pages. They are not wrong about what
+// they measure; they simply cannot see a row that is never built. Fixing that
+// properly means a probe that instantiates the template with a fake link, and
+// it is a bigger job than this check.
+const DESC_PROBE = `
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const wasOpen = !!document.querySelector('.settings-dialog') && !!document.querySelector('.settings-dialog').offsetParent;
+if (!wasOpen) { document.getElementById('tcSettings') && document.getElementById('tcSettings').click(); await sleep(700); }
+const dlg = document.querySelector('.settings-dialog');
+if (!dlg || !dlg.offsetParent) return { unavailable: true };
+// The bridge's serialiser caps an array at 50 and a string at 4000 chars, and
+// there are 88 described rows — so the counting happens HERE and only the
+// offenders come back, joined into strings. (No backticks in this block: it is
+// inside a template literal.)
+const rows = [];
+const push = (sec, d) => {
+  const row = d.closest('.set-row');
+  const t = row ? row.querySelector('.set-row-title') : null;
+  rows.push({ sec: sec, title: t ? t.textContent.replace(/\\s+/g, ' ').trim() : '?',
+              text: d.textContent.replace(/\\s+/g, ' ').trim() });
+};
+for (const nav of [...document.querySelectorAll('.set-nav-item')]) {
+  nav.click(); await sleep(300);
+  for (const d of document.querySelectorAll('.settings-host .in-settings .set-row-desc')) push(nav.dataset.sec, d);
+}
+// The templates, which a document query cannot reach.
+for (const t of document.querySelectorAll('template')) {
+  for (const d of t.content.querySelectorAll('.set-row-desc')) push('tpl:' + (t.id || 'anon'), d);
+}
+const close = document.querySelector('.settings-dialog .close-btn') || document.getElementById('settingsClose');
+if (!wasOpen && close) close.click();
+const key = r => r.sec + '/' + r.title;
+const sentences = t => t.split(/(?<=[.!?])\\s+/).filter(x => x.trim()).length;
+return {
+  n: rows.length,
+  tpl: rows.filter(r => r.sec.indexOf('tpl:') === 0).length,
+  seen:  rows.map(key).join('\u2016'),
+  long:  rows.filter(r => r.text.length > 92).map(r => key(r) + '|' + r.text.length).join('\u2016'),
+  multi: rows.filter(r => sentences(r.text) > 2).map(r => key(r) + '|' + sentences(r.text)).join('\u2016'),
+};
+`;
+
+const DESC_MAX = 92;   // two lines of the 46ch column, measured
+
+// The tail, frozen 2026-09-14 by "page/title" so a failure names the row that
+// grew rather than pointing at whatever sorted last. These are A7's cut list
+// and the 13 behind it; every entry disappears as its row is rewritten, and the
+// check says so. Nothing may be ADDED.
+const R5_LONG_TAIL = new Set([
+  // EMPTY since 2026-09-14. Every settings description in the app is now one or
+  // two sentences inside 92 characters, template rows included. The tail stays
+  // as the mechanism — the next one that grows is named, not absorbed.
+]);
+const R5_MULTI_TAIL = new Set([
+]);
+
+function auditDescriptions(d) {
+  const split = s => (s ? s.split('\u2016') : []).map(e => {
+    const i = e.lastIndexOf('|');
+    return { key: e.slice(0, i), metric: e.slice(i + 1) };
+  });
+  const L = split(d.long), M = split(d.multi);
+  // Every row the probe actually reached — the third state's evidence. R5's own
+  // tail covers rows inside a <template> that is not always instantiated, which
+  // is the exact case this distinction exists for.
+  const seen = new Set((d.seen ? String(d.seen).split('\u2016') : []).filter(Boolean));
+  const metric = new Map([...L, ...M].map(e => [e.key, e.metric]));
+  const rl = readTail(R5_LONG_TAIL,  L.map(e => e.key), seen.size ? seen : null);
+  const rm = readTail(R5_MULTI_TAIL, M.map(e => e.key), seen.size ? seen : null);
+  const dress = ks => ks.map(k => k + ' (' + (metric.get(k) || '?') + ')');
+  return { n: d.n, tpl: d.tpl, long: dress(rl.isNew), multi: dress(rm.isNew),
+           goneL: rl.fixed, goneM: rm.fixed,
+           coverL: rl.coverage, coverM: rm.coverage,
+           unreachedL: rl.notReached, unreachedM: rm.notReached };
+}
+
+
+// ── R6: THE INSTRUMENT'S CONTROLS ARE KIT SIZES ─────────────────────────────
+// The settings scope has had "uses only the kit's sizes" for a while and that
+// is why settings drift stopped. The instrument scope had only PER-COMPONENT
+// invariants — the footer's glyphs, the rail's rows, the stickers, the lens
+// page — so a BRAND-NEW element matched none of them and was therefore measured
+// by nothing. That is the half of the symptom prose cannot fix: the build sheet
+// says "a 32px button fails the audit by name", and until now it did not.
+//
+// IT MUST OPEN THE DOORS. With the rails shut only 21 control-shaped elements
+// render, out of 660 that match the selector; opening the 15 [data-more] doors
+// takes it to 68, and 27 distinct components. A check that reads 3% of the
+// surface is the template blind spot again in a different costume.
+//
+// IT MUST NOT CLICK A TOOL ROW. Clicking a .trow picks that tool into the hand,
+// which is real instrument state — a probe may not play the instrument to
+// measure it. Measured first: the doors alone reach exactly the same 27
+// components, so the row clicks bought nothing and were dropped.
+//
+// Heights are keyed STRUCTURALLY — the component, not the state it is in. A key
+// carrying `.on` / `.open` / `.wet` would churn the tail every time something
+// is selected.
+// PER KIND, not a flat list — and this is what makes the sheet's own sentence
+// true. "A 32px button fails the audit by name" cannot hold against a set that
+// merely contains 32, because 32 is legal for the ICON button: the sheet says
+// .tc-icon is the precedent when you think you need a 32px button. So the
+// expectation is keyed on WHICH kit element it is. Verified by injecting a 32px
+// .mu-btn — a flat list waved it straight through; this does not.
+const KIT_HEIGHTS = [18, 24, 32, 38];   // status pill · button + segmented · icon · --lg
+const KIT_BY_KIND = { lg: [38], btn: [24], icon: [32], pill: [18], seg: [24], any: KIT_HEIGHTS };
+
+// A CONTROL THAT FILLS A NAMED STRUCTURAL BOX TAKES THE BOX, AND GETS NO SIZE
+// OF ITS OWN (Ek, 2026-09-14). The footer's six buttons are 40 because
+// --footer-row is 40 — the box is stated once and the button fills it, the same
+// reason a settings button in a table cell is 30 rather than 36. They are not a
+// sixth kit size and they are not off-kit, so they are neither frozen nor
+// exempt: the check reads the TOKEN and compares. NOTHING ELSE MAY BE 40 — 40
+// is not in KIT_HEIGHTS, so any other element at that height still fails.
+// Asserting the token rather than the literal is the point: a frozen 40 would
+// rot silently the day the footer row moves.
+
+const R6_PROBE = `
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const SEL = 'button,[role=button],.mu-btn,.tc-icon,.seg,.seg-pill,.set-pill';
+const STATE = /^(on|open|active|armed|wet|in-hand|autopin|is-mute|selected|playing|disabled|hidden|current)$/;
+const seen = new Map();
+const sweep = () => {
+  for (const el of document.querySelectorAll(SEL)) {
+    if (el.closest('#settingsModal,#settingsPanels,.palette')) continue;
+    const h = el.getBoundingClientRect().height;
+    if (h <= 0) continue;
+    const cls = (typeof el.className === 'string' ? el.className.trim() : '')
+      .split(/\\s+/).filter(c => c && !STATE.test(c));
+    const key = el.id ? el.tagName.toLowerCase() + '#' + el.id
+                      : el.tagName.toLowerCase() + (cls.length ? '.' + cls[0] : '');
+    const kc = el.classList;
+    // Box-filler first: it outranks every class-based kind.
+    const box = (kc.contains('bb-ax') || kc.contains('bb-mute')) && el.closest('.bottom-bar')
+      ? { token: '--footer-row', host: el.closest('.bottom-bar') } : null;
+    const kind = box ? 'box'
+               // A box that STATES it is sized by its text. Its own kind, not
+               // folded into 'bare': --bare is a SHAPE (a button with no box),
+               // and a two-line row is not a bare button. Keeping them apart
+               // means a failure line can still say which one a thing claimed.
+               : kc.contains('mu-h-content') ? 'content'
+               : kc.contains('mu-btn--bare') ? 'bare'
+               : kc.contains('mu-btn--lg') ? 'lg'
+               : kc.contains('mu-btn') ? 'btn'
+               : kc.contains('tc-icon') ? 'icon'
+               : kc.contains('set-pill') ? 'pill'
+               : (kc.contains('seg') || kc.contains('seg-pill') || kc.contains('grain-seg')
+                  || kc.contains('grain-seg-btn')) ? 'seg' : 'any';
+    const want = box ? parseFloat(getComputedStyle(box.host).getPropertyValue(box.token)) : null;
+    if (!seen.has(key)) seen.set(key, { h: Math.round(h * 10) / 10, kind: kind,
+                                        want: want, token: box ? box.token : '' });
+  }
+};
+const wasOpen = new Set([...document.querySelectorAll('.open')]);
+sweep();
+for (const d of [...document.querySelectorAll('[data-more]')]) { d.click(); await sleep(240); sweep(); }
+// Put the rails back: close anything this opened, leave anything that was open.
+for (const el of [...document.querySelectorAll('.open')]) {
+  if (wasOpen.has(el)) continue;
+  const door = el.querySelector('[data-more]') || el.closest('[data-more]');
+  if (door) { door.click(); await sleep(120); }
+}
+return [...seen.entries()].map(e => e[0] + '@' + e[1].h + '@' + e[1].kind + '@' + (e[1].want == null ? '' : e[1].want) + '@' + e[1].token).join('‖');
+`;
+
+// THE TAIL IS SPENT (2026-09-15). It is empty, and an empty tail is the
+// strongest form of this check: every control-shaped element in the instrument
+// computes to a kit height, so ANY off-kit element now fails by name. Nothing
+// may be added — a new one is a bug, not a line here.
+//
+// It held nine entries, all closed by Ek's ruling of 2026-09-15 (snap them
+// all): .trow 27.9, span.seg 25, .tbx-add and .trow-more 22.4, #lyrSettings 22,
+// .ds-editbtn (#srcRecBtn/#srcTestBtn) 21.7, .ds-close 17.3, .ds-del 15.7 — all
+// to 24, the kit's button height, STATED rather than fallen out of a padding
+// plus a line box. See the commit and `docs/RULINGS.md` "a control's height is
+// stated".
+//
+// THE SIX 40px FOOTER BUTTONS ARE A QUESTION, NOT A BUG: 40 is `--footer-row`,
+// a measured and named value with its own ruling ("the box is stated once").
+// Either the kit has a sixth size that the sheet's table omits, or the footer
+// is genuinely off it. Ek's call — until then they are frozen like the rest.
+// NOTE ON DELETION, 2026-09-15: readTail cannot tell "not rendered this run"
+// from "no longer exists" — both look like absence, which is the whole point of
+// the three-state read, and is also its one blind spot. button#lyrAllOn was
+// removed from the source when the rail's all-on button became the MIX group,
+// so its entry was deleted by hand after grepping index.html, js/ and css/ for
+// it. An entry that goes NOT REACHED for a while is fine; one whose element is
+// gone from the source is a line to delete.
+const R6_TAIL = new Set([]);
+
+function auditKitSizes(raw) {
+  const rows = String(raw || '').split('‖').filter(Boolean).map(e => {
+    const p = e.split('@');
+    return { key: p[0], h: parseFloat(p[1]), kind: p[2] || 'any',
+             want: p[3] === '' || p[3] === undefined ? null : parseFloat(p[3]), token: p[4] || '' };
+  });
+  const legalFor = r => r.kind === 'box' ? (r.want == null ? [] : [Math.round(r.want)])
+                      : (KIT_BY_KIND[r.kind] || KIT_HEIGHTS);
+  const nearest = r => { const L = legalFor(r); return L.length
+    ? L.reduce((a, b) => Math.abs(b - r.h) < Math.abs(a - r.h) ? b : a) : '?'; };
+  // 'bare' and 'content' are the two kinds with no kit height to hold them to,
+  // and both are DECLARED in the markup rather than listed here — the class is
+  // the author saying so, which is the difference between an exemption and a
+  // whitelist. Everything else must land on the kit.
+  const off = rows.filter(r => r.kind !== 'bare' && r.kind !== 'content'
+                            && !legalFor(r).includes(Math.round(r.h)));
+  // The agent's next move should be readable straight off the failure line.
+  const isNew = off.filter(r => !R6_TAIL.has(r.key + '@' + r.h))
+                   .map(r => `${r.key} is ${r.h}px — ${
+                     r.kind === 'box' ? `it fills a named box and must equal ${r.token} (${r.want}px)`
+                     : r.kind === 'any' ? 'no kit height matches'
+                     : 'the kit says ' + legalFor(r).join('/') + ' for a ' + r.kind} · nearest ${nearest(r)}`);
+  // A tail entry is keyed selector@height; it is REACHED when its element was
+  // enumerated at all, whatever height it came back at. (srcRecBtn/srcTestBtn
+  // live in a sheet that only exists while the source drawer is rendered.)
+  const seenKeys = new Set(rows.map(r => r.key));
+  const reached = new Set([...R6_TAIL].filter(k => seenKeys.has(k.slice(0, k.lastIndexOf('@')))));
+  const t = readTail(R6_TAIL, off.map(r => r.key + '@' + r.h), reached);
+  return { n: rows.length, onKit: rows.length - off.length, off: off.length,
+           isNew, gone: t.fixed, notReached: t.notReached, coverage: t.coverage };
+}
+
 // ── Assertions ──────────────────────────────────────────────────────────────
 const spread = xs => xs.length ? +(Math.max(...xs) - Math.min(...xs)).toFixed(2) : 0;
 
@@ -663,6 +1345,29 @@ function collapses(label, items, key) {
   }
 
   console.log('\n── the brand ──');
+  console.log('\n── one optical size ──');
+  if (!d.glyphs || d.glyphs.length < 8) skipped('the main-page glyphs', 'none measured', 2);
+  else {
+    collapses('every main-page glyph is drawn at one size', d.glyphs, 'v');
+    collapses('…at one stroke weight',                      d.glyphs, 'sw');
+  }
+  if (!d.chromeRun || !d.chromeRun.length) skipped('the chrome runs', 'no groups', 3);
+  else {
+    collapses('every icon in a chrome run sits at one gap', d.chromeRun, 'v');
+    // Bounded, not collapsed: glyph widths differ, so the ink gap has a
+    // legitimate ~2px spread. 4px catches a control with no button box.
+    const ink = d.chromeInk || [];
+    const lo = Math.min(...ink.map(i => i.v)), hi = Math.max(...ink.map(i => i.v));
+    check(ink.length > 0 && hi - lo <= 4,
+      'and the AIR between their drawings is the same to 4px',
+      ink.length ? `${lo.toFixed(1)}–${hi.toFixed(1)}px` + (hi - lo > 4
+        ? ' · off: ' + ink.filter(i => i.v - lo > 4).map(i => `${i.t}@${i.v}`).join(', ') : '') : 'none');
+    const inks = [...new Set((d.glyphInk || []).map(g => g.v))];
+    check(inks.length === 1, 'the footer\'s glyphs are the chrome\'s own value',
+      inks.length === 1 ? inks[0] : inks.join(' vs ') + ' · ' +
+        (d.glyphInk || []).filter(g => g.v !== d.glyphInk[0].v).map(g => g.t).join(', '));
+  }
+
   if (!d.brand) skipped('the brand', 'no mark in the chrome', 3);
   else {
     check(d.brand.loaded === true, 'the mark actually loaded',
@@ -942,9 +1647,9 @@ function collapses(label, items, key) {
     const bb = rr.barBtns || [];
     const hSpread = bb.length ? +(Math.max(...bb.map(b => b[1])) - Math.min(...bb.map(b => b[1]))).toFixed(2) : 0;
     const ySpread = bb.length ? +(Math.max(...bb.map(b => b[2])) - Math.min(...bb.map(b => b[2]))).toFixed(2) : 0;
-    check(bb.length >= 2 && hSpread <= TOLERANCE && ySpread <= TOLERANCE,
+    check(bb.length >= 1 && hSpread <= TOLERANCE && ySpread <= TOLERANCE,
       'the rail header\'s buttons are one height on one baseline',
-      bb.length < 2 ? `only ${bb.length} header button(s) — \`all on\` and the settings door are both expected`
+      bb.length < 1 ? 'no header button at all — the settings door has gone missing'
         : `n=${bb.length} height spread ${hSpread}px, top spread ${ySpread}px` +
           (hSpread > TOLERANCE || ySpread > TOLERANCE
             ? ' · ' + bb.map(b => `${b[0]} h=${b[1]} y=${b[2]}`).join(', ') +
@@ -956,6 +1661,50 @@ function collapses(label, items, key) {
     check(bb.length < 2 || gaps.every(g => g >= 0 && g <= 12),
       'the rail header\'s buttons sit together, not spread across the bar',
       bb.length < 2 ? 'n/a' : `gaps ${gaps.join(', ')}px`);
+
+    // ── The slot tracker ────────────────────────────────────────────────
+    const sl = rr.slots;
+    if (!sl) {
+      check(false, 'the pinned rail carries a slot tracker', 'no #lyrPips / .lyr-slots-n');
+    } else {
+      check(sl.n === sl.want,
+        'the tracker draws one pip per slot',
+        `${sl.n} pip(s) for ${sl.want} slot(s)` +
+          (sl.n === sl.want ? '' : ' — the count is max(commitSlotCount, the highest slot still holding a pin)'));
+      check(sl.titleX == null || Math.abs(sl.pipX - sl.titleX) <= TOLERANCE,
+        'the tracker starts where the rail title does',
+        `pips ${sl.pipX} vs title ${sl.titleX}` +
+          (sl.titleX != null && Math.abs(sl.pipX - sl.titleX) > TOLERANCE
+            ? ' — it is a header readout, not a row; the row column starts further in'
+            : ''));
+      check(sl.btnRight == null || Math.abs(sl.numRight - sl.btnRight) <= TOLERANCE,
+        'the tracker ends where the header buttons do',
+        `number ${sl.numRight} vs buttons ${sl.btnRight}`);
+      check(sl.pipMid == null || Math.abs(sl.pipMid - sl.numMid) <= TOLERANCE,
+        'the tracker and the count share one centre line',
+        `cells ${sl.pipMid} vs count ${sl.numMid}` +
+          (sl.pipMid != null && Math.abs(sl.pipMid - sl.numMid) > TOLERANCE
+            ? ' — the count centres on the whole block of cells, one row or two'
+            : ''));
+      // The cell IS the pin's number (Ek, 2026-09-14). A cell that has drifted
+      // off its slot names the wrong loop, which is worse than naming none.
+      const bad = sl.digits.map((ok, i) => ok ? null : i + 1).filter(Boolean);
+      check(bad.length === 0,
+        'every tracker cell is numbered by its slot',
+        bad.length ? `cell(s) ${bad.join(', ')} do not read their own slot number` : `1–${sl.n}`);
+      check(sl.perRow === Math.min(8, sl.n),
+        'the tracker wraps at eight to a row',
+        `${sl.perRow} in the first row of ${sl.n}` +
+          (sl.perRow === Math.min(8, sl.n) ? '' : ' — the wrap is declared (max-width), not the column width'));
+      check(!sl.clash,
+        'the tracker never runs into the count beside it',
+        sl.clash ? 'the cells overlap the count — the row is wider than the strip allows' : 'clear');
+      check(sl.type.sizes.length === 1 && sl.type.weights.length === 1 && sl.type.fams === 1,
+        'every number in the tracker is one size, one weight, one family',
+        `size ${sl.type.sizes.join(' / ')} · weight ${sl.type.weights.join(' / ')} · ${sl.type.fams} famil${sl.type.fams === 1 ? 'y' : 'ies'}` +
+          (sl.type.sizes.length === 1 && sl.type.weights.length === 1 && sl.type.fams === 1 ? ''
+            : ' — one readout said four ways; only COLOUR may separate them. An <input> inherits neither family nor weight.'));
+    }
   }
 
   // ── Sheet heads: one line each ──────────────────────────────────────────
@@ -1122,6 +1871,66 @@ function collapses(label, items, key) {
       bt.wrapped.length ? `wrapped: ${bt.wrapped.join(', ')}` : `${bt.heads} heads, ${bt.tops} top`);
     check(bt.rows.length === 3 && bt.rows.every(h => h <= 56), 'one row per button, none past the 56px ceiling', `rows ${bt.rows.join(', ')}px`);
     check(bt.howTops === 1 && bt.howRows.length >= 9 && bt.howRows.every(h => h <= 56), 'the drawn how-a-button-is-read table: one head line, every row under 56px', `rows ${bt.howRows.join(', ')}px`);
+  }
+
+  console.log('\n── spacing rhythm ──');
+  {
+    const lits = auditSpacingLiterals();
+    check(lits.added.length === 0, 'no NEW bare px literal in padding / margin / gap',
+      lits.added.length ? `new: ${lits.added.join(' · ')}`
+        : lits.gone.length ? `${lits.pxTotal}, the known tail — ${lits.gone.length} gone, drop from R1_PX_TAIL: ${lits.gone.join(', ')}`
+        : `${lits.pxTotal}, the known tail, unchanged · ${lits.cover}`);
+    check(lits.rem <= R1_REM_TAIL, 'no NEW bare rem literal in padding / margin / gap',
+      lits.rem > R1_REM_TAIL ? `${lits.rem} against a frozen ${R1_REM_TAIL} — the round has not been run, so this is a count: ${lits.rem - R1_REM_TAIL} appeared`
+        : lits.rem < R1_REM_TAIL ? `${lits.rem} against a frozen ${R1_REM_TAIL} — the tail shrank, lower R1_REM_TAIL to ${lits.rem}`
+        : `${lits.rem}, the known tail, unchanged`)
+    const named = auditNamedSpacing();
+    check(named.bad.length === 0, 'every named component spacing token is spent, and a whole pixel',
+      named.bad.length ? named.bad.join(' · ')
+                       : `clean · ${named.known.length} named fractional token(s) outstanding: ${named.known.join(', ') || 'none'} · ${named.cover}`);
+    const ink = auditCursorInk();
+    check(ink.length === 0, 'the cursor inks only from tokens',
+      ink.length ? ink.join(' · ')
+                 : `clean (${CURSOR_LITERAL_ALLOWED.size} named allowance(s) outstanding)`);
+  }
+
+  console.log('\n── row descriptions ──');
+  {
+    const dd = await evalInApp(DESC_PROBE, 'desc_' + Date.now().toString(36));
+    if (!dd || dd.unavailable) skipped('row descriptions', 'settings would not open', 3);
+    else {
+      const a = auditDescriptions(dd);
+      check(a.tpl > 0, 'the probe opened the templates',
+        a.tpl ? `${a.n} described rows, ${a.tpl} of them inside a <template>` :
+                'ZERO template rows seen — R5 is measuring the wrong set (see its header)');
+      check(a.long.length === 0, `no NEW description over ${DESC_MAX} characters`,
+        a.long.length ? a.long.join(' · ') + ` · ${a.coverL}`
+          : a.goneL.length ? `${R5_LONG_TAIL.size - a.goneL.length} of the known tail left — drop from R5_LONG_TAIL: ${a.goneL.join(', ')} · ${a.coverL}`
+          : `${R5_LONG_TAIL.size}, the known tail, unchanged · ${a.coverL}` +
+            (a.unreachedL.length ? ` · NOT REACHED: ${a.unreachedL.join(', ')}` : ''));
+      check(a.multi.length === 0, 'no NEW description of more than two sentences',
+        a.multi.length ? a.multi.join(' · ') + ` · ${a.coverM}`
+          : a.goneM.length ? `${R5_MULTI_TAIL.size - a.goneM.length} of the known tail left — drop from R5_MULTI_TAIL: ${a.goneM.join(', ')} · ${a.coverM}`
+          : `${R5_MULTI_TAIL.size}, the known tail, unchanged · ${a.coverM}` +
+            (a.unreachedM.length ? ` · NOT REACHED: ${a.unreachedM.join(', ')}` : ''));
+    }
+  }
+
+  console.log('\n── the instrument kit\'s sizes ──');
+  {
+    const raw = await evalInApp(R6_PROBE, 'kit_' + Date.now().toString(36));
+    if (!raw) skipped('the instrument kit sizes', 'probe returned nothing', 2);
+    else {
+      const k = auditKitSizes(raw);
+      check(k.n >= 20, 'the probe opened the rails',
+        `${k.n} control-shaped elements enumerated, ${k.onKit} on the kit` +
+        (k.n < 20 ? ' — too few; the doors did not open and this is measuring 3% of the surface' : ''));
+      check(k.isNew.length === 0, 'every instrument control computes to a kit height',
+        k.isNew.length ? k.isNew.join(' · ') + ` · ${k.coverage}`
+          : k.gone.length ? `${R6_TAIL.size - k.gone.length} of the known tail left — drop from R6_TAIL: ${k.gone.join(', ')}`
+          : `${k.off} off-kit, the known tail, unchanged · ${k.coverage}` +
+            (k.notReached.length ? ` · NOT REACHED: ${k.notReached.join(', ')}` : ''));
+    }
   }
 
   console.log(`\n${FAILURES === 0 ? 'All alignment invariants hold.' : `${FAILURES} invariant(s) broken.`}`);

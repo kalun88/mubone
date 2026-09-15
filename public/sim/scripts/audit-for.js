@@ -36,9 +36,9 @@ const MAP = [
   [/^js\/(tiles|brush|events|midi)\.js$/,
     { rig: ['palette'] },
     'the palette list, placing by drag, the drawer doors, the digits, both button modes'],
-  [/^js\/(pins|ui-pins|composer|grain|ui-presets|ui-export|brush-voicing|renderer)\.js$/,
+  [/^js\/(pins|ui-pins|composer|grain|ui-presets|ui-export|piece|mubone-file|brush-voicing|renderer)\.js$/,
     { rig: ['pins'] },
-    'pin groups, the restore rule, cloud claims, wet paint, reach lines, session import'],
+    'pin groups, the restore rule, cloud claims, wet paint, reach lines, the piece round trip'],
   [/^(js\/(trigger|latency|audio)\.js|electron-main\.js|electron-preload\.js|audio-host\.js|electron-loop-probe\.js|js\/worklets\/(quad-capture|input-meter)\.worklet\.js)$/,
     { rig: ['trigger'] },
     'the proximity gate, "the button not the marks", the two audio hops and their cushion'],
@@ -60,7 +60,12 @@ const MAP = [
   [/^js\/(sensor-registry|imu-setup|sensor-mapping|ximu-settings)\.js$/,
     'npm run audit:sensor',
     'calibration maths, pure, under a second'],
-  [/^css\/|^js\/(ui-settings|tile-layout)\.js$/,
+  // index.html IS routed — to rig-audit engine, which checks that every engine
+  // row still writes through its cabinet element. What it was never routed to
+  // is the ALIGNMENT suite, and a new GUI element is markup in this file. So on
+  // exactly the change class that keeps going wrong, all 108 measured checks —
+  // the spacing scale, the kit sizes, the row model, the copy cap — sat out.
+  [/^css\/|^index\.html$|^js\/(ui-settings|tile-layout)\.js$/,
     'npm run audit:align && node scripts/probe-selftest.mjs',
     'measured alignment against the running app (needs `npm run electron:dev`), and the screen probe must be green before any before/after claim; `node scripts/ui-shots.js` for the widths'],
   [/^docs\/|^CLAUDE\.md$|^README\.md$|^INSTALL\.md$|^sw\.js$|^package\.json$|^js\/[^/]+\.js$|^scripts\/audit-for\.js$/,

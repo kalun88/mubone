@@ -2544,3 +2544,259 @@
   last mark; the dub's trail fell back to the legacy palette; and the hold's reference outlived its take.
   `colour-audit.js` grew § J. `renderer.js`, `audio-features.js`, `paint-ticker.js`, `audio.js`, `ui-export.js`,
   `ui-viz.js`, `ximu-led-feedback.js`.
+
+- [x] **The wet ring is the paint's, not the hand's (Ek, 2026-09-14: "they only light up wet … when i'm painting
+  with that tool")** — `drawParticles` asked `S._handTile()` for the wet voicing, and the hand is null between
+  presses (2026-09-11), so the ring answered "which paint is still wet" only while that brush was mid-stroke. Read
+  from the voicing table instead (`wetVoicingIds`, replacing the unused `wetVoicingOf`), and the ring wears
+  `S._wetHue` — wet is granular-only, so the grain hue, and it must not go null with an empty hand. `pins-audit`
+  § L2 counts the rings with the hand down: 0 → 2 on the fix, 0 when dried. pins + palette 202 ok.
+
+- [x] **The wet drop is a button on every grain TILE (Ek, 2026-09-14: "the wet icon should be clickable in the
+  palette tile … all grain tools should have the wet/dry toggle on the palette tile then")** — the sticker showed
+  only when wet and only as a mark, so the one switch that changes how paint behaves was reachable from the rail row
+  and the sheet but not from the surface you play from. One `tileStickers()` now builds both corners for the strip
+  tile and the hand tile (they drew their own copies); the drop is the row's button, outlined dry, filled wet, and
+  `onStripClick` takes it before everything else — no pick-up, and `onPlateDown`/`onPlateTouch` step over it so a
+  press on the hand tile's drop does not play. `palette-audit` § J grew three checks; the hand-plate one fails
+  without the guard. Measured: both faces 18.4px at −4,−4, filled vs outlined in the grain hue. Ek's reservation
+  about per-tool flags is TODO #352. palette 184 ok, align + docs green.
+
+- [x] **#355 The grain engine reads with four points now, and it got cheaper (Ek, 2026-09-14: "fix the interpolation
+  issue so long as it doesn't make it more latent or cpu intensive")** — `_readSample`, `_readLiveChunked` and the
+  live loop's `_read` are 4-point Hermite (Catmull-Rom). It costs LESS because the wrap moved out of the reader:
+  the old one spent most of its time in two float modulos per sample. Benchmarked 4M reads on this V8 —
+  linear+modulo 11.3 ns, Hermite+compare 10.0 ns, so ~3 % of a core back at a full pool. Reconstruction of a 3 kHz
+  tone improves 25–31 dB at typical transposition rates; rate 1.0 and 2.0 stay bit-exact. No latency: the four
+  points sit around a position the grain already has. npm test 49/49, live-loop 32/32, mark-align 70/70.
+
+- [x] **#356 One ceiling, both builds, and input gain stops being browser-only (Ek, 2026-09-14)** — the browser's
+  WaveShaper (tanh(4x)/tanh(4): 4.00× small-signal gain, 1.18 % THD at −20 dBFS) is deleted and the Electron path,
+  which had nothing at all between the grains and the converter, gains the same node:
+  `js/worklets/ceiling.worklet.js`, linked across channels, zero latency, bit-exact below −3.1 dBFS — proven by
+  rendering it offline: 0.1 / 0.5 / 0.69 come back sample-identical, and 1.0 / 1.5 / 3.0 come out 0.925 / 0.988 /
+  0.990. It reports its deepest gain reduction each second into the audio page. Input gain's row is no longer
+  hidden in Electron (the node was always there at 1.0); the row says the interface trim comes first. engine 44/44,
+  trigger, browser-audit, docs, npm test 49/49 — align-audit not run, the app was closed.
+
+- [x] **The footer's input gain shows in Electron too (Ek, 2026-09-14)** — a second `isElectron` branch in
+  `ui-meters.js` hid the `in gain` row in the footer's level group, the twin of the settings one removed an hour
+  earlier. The row always worked — the slider writes `S.inputGainNode`, which is in the Electron path — so only its
+  display was off; verified live, the footer slider moves the node 1 → 1.995 at +6 dB and back. The level group is
+  `in · dry vol · master` now, three rows sharing one label edge, one fader edge and one readout edge, still filling
+  the 40px row exactly. align-audit green.
+
+- [x] **The ceiling is a meter, not a hidden number (Ek, 2026-09-14: "i don't see anything in the gui re ceiling")** —
+  it reported only into Settings → Audio and only while acting, so there was no evidence in the GUI that it existed.
+  Now a CEIL column in the levels row beside OUT: a gain-reduction bar hanging from the top, empty at rest, ochre
+  then brick past 3 dB, full scale at 12 dB. The worklet's report went from 1 Hz to ~20 Hz — once a second reads as
+  a lamp. Measured: 0 % idle, 8.3 % at −1 dB, 33.3 % at −4, clamped at −12; and all six columns share one top, one
+  40 px height, one 25 px wrap and one label baseline. The `.as-val` number under the bar was dropped for exactly
+  that reason — it made the column 21 px where the others are 25. align-audit green (13 captions on one baseline).
+
+- [x] **The ceiling gets a row, and its link is grouped (Ek, 2026-09-14)** — Settings → Audio has an `Output
+  ceiling` row now, read-only: `idle` all night, `−2.4 dB · 12% of the time` in the ochre when it acts. Nothing is
+  exposed as a control — both numbers have one correct value, and a lower ceiling is just a quieter instrument.
+  Ruling on before/after master, and on speaker count, is one paragraph in `docs/RULINGS.md`. The question turned
+  up a real fault: the house and the headphone pair were one link group, so a hot monitor mix would have ducked
+  the room. Now two groups from `headphoneRouting`, proven with a 4-channel render — group 0's hot channel is held
+  at 0.989 and takes its partner with it, group 1 comes back bit-exact. Also a CSS trap worth the note:
+  `.as-dim.as-warn` lost to `.settings-host .in-settings .as-dim`, so the row read as warn in the muted colour
+  until the override moved to the winning weight. align + docs green.
+
+- [x] **Audio splits in two, and the master fader stopped lying at boot (Ek, 2026-09-14)** — the page opened on
+  Sample rate · Buffer · Max grains before it said which mic. `Audio` is now Input (3 rows) then Output (9), both
+  devices at the top; `Audio advanced` is a new page with the seven Engine rows and the handsfree gate's nine. A
+  MOVE, not a rebuild — every control kept its id and listener, verified live (max grains still drives S.maxGrains,
+  the Tune… disclosure still opens, the ceiling and cushion readouts still tick). **The bug found on the way:**
+  `loadAudioDefaults()` runs before this module defines `S._setOutputGainDb`, so a restored master landed in
+  `S.outputGainValue` alone — measured on a fresh boot, the engine ran at +0.3 dB while BOTH faders read −6.0, and
+  the first touch of either jumped the output 6.3 dB. One push through the canonical setter at the end of init
+  fixes both. Also: three comments still described the deleted soft clipper. docs + align + engine + palette green.
+
+- [x] **The audio page is laid out in signal order, and the nav is Title Case (Ek, 2026-09-14: "i can't tell what is
+  downstream of what … honesty and clarity first")** — four sections top to bottom: **Signal path** (one paragraph
+  naming the order out loud), **Input** (device, record trim, gate), **Monitor** (dry mode, dry gain, headphone
+  cursor/house — the one section that changes nothing downstream of itself; it had been sitting under the master
+  fader in Output), **Output** (device, speakers, panning, mixdown, master). Row descriptions now say what is
+  upstream and downstream: input gain is "the record trim … nothing downstream can undo it", the gate "reads the
+  signal after input gain", master "IS the per-speaker bus gain … only the ceiling is after it". No new controls —
+  the three stages a pro strip wants (record trim · monitor · output) all existed and were just scattered. Nav
+  titles are Title Case per Ek, the exception now written into `docs/SETTINGS-GUI.md` § 5. Measured: 10 visible
+  rows on one title x and one control right edge. **A claim I got wrong and checked:** the speaker sweep does NOT
+  bypass master and mute — `electronVol()` applies both by hand because the Electron path skips the bus gains.
+
+- [x] **The footer's input meter is `hw in`, and it means the same thing in both builds (Ek, 2026-09-14: "the IN
+  looks like hardware in, not post input trim … the naming is not clear for me")** — he was right, and measured:
+  with the trim moved 0.47 → 4.0 the footer column read −28.6 → −32.8 (unmoved; it taps the splitter AHEAD of the
+  trim, which is what Settings calls Hardware in) while the gate's analyser read −45.9 → −22.6 (post-trim). The
+  browser fell back to `S.inputAnalyser`, which IS post-trim — one label, two meanings. The column is `hw in` now,
+  the browser gets its own pre-trim tap off the source, and the two tooltips say which is which: hw in is where a
+  clipped converter shows, the gate column is the same signal after the trim and is what a take is recorded at.
+  Re-measured after: hw in −48.3 → −47.6 under a ×4 trim, gate −44.3 → −28. align + docs + engine green.
+
+- [x] **The settings paint gate is the same meter as Hardware in (Ek, 2026-09-14: "make the paint gate meter in the
+  settings the exact same width and design … it's much smaller")** — it was already the same kit element,
+  `.set-meter-row`, but it sat in the row's CONTROL column: 297px of track against Hardware in's 690, for the same
+  signal. It is a `.set-meters` block in the section now, with the channel rows' leading label cell and their clip
+  cell so all three columns line up: both tracks start at x 528.5 and are 690 wide, measured. The clip cell is
+  REAL, not a spacer — this row is post-trim, so a clip here is the take clipping. Two wrong sources found by
+  measuring before the right one: `S.inputAnalyser` never lit (silent unless the recording path is wired to it),
+  `_peakFrac` lit and stayed lit 1.5 s after the level fell to −32 dB (it is a peak-HOLD). It reads `_smoothedFrac`,
+  the number the fill draws. Drag and double-click-reset re-verified through the moved element.
+
+- [x] **The experimental (mono) input path is sunset (Ek, 2026-09-14: "it was meant for something else that we
+  won't use now")** — the input mapping table's second row, permanently `disabled` and dimmed since it was written,
+  reserved for a live-processing path that is not coming. The row, its `#asExperimentalInputSel` and the
+  `.as-io-row--dim` rule it was the only user of are gone; no state key, no storage key and no export field ever
+  existed for it, so there is nothing to migrate. Verified in the app: the table renders one enabled `main (mono)`
+  row and no errors. The table is now one row — worth collapsing into a plain setting row if it stays that way.
+
+- [x] **The input section is a channel strip per hardware channel (Ek, 2026-09-14)** — each Hardware in row now
+  carries its own TRIM (dB, double-click to reset) and a SEND toggle; several sends sum to the one mono input, which
+  the graph could always do (`splitter[i] → routingGain[i] → S.inputGainNode` is a sum bus, and the old 'stereo'
+  setting was two channels at once). `S.inputSends` is the truth, `mainInputChannel` is derived from it, and the
+  software-path table is gone with `renderInputMappingTable`. Below them, **Instrument in**: the summed mono level,
+  on the SAME scale and geometry as Hardware in (both tracks 272px at one x, both rulers' ticks identical — the
+  gate's own γ=6 curve is off the drawn axis and `setMeterX` is on it), with the paint gate as a MARKER on it
+  rather than the name of it, and the sum's own level in the channels' trim column (the footer's `in`, same id, so
+  its mirror needed no change). Three faults found by measuring: a seeding loop that re-added a channel you
+  unticked, the trim flexing to 239.5px because a kit rule outranked mine, and the two rulers' scales 29px apart
+  because the send column defaulted to `auto`. docs, align, probe-selftest, engine all green.
+
+- [x] **The input strip's trim is 48px, not 78 (Ek, 2026-09-14: "the trim and level should be much smaller
+  width")** — the meter took the difference: tracks went 272 → 522px. Getting there cost a third round with the
+  same trap: `.settings-host .in-settings input[type="range"]` is (0,3,1) and sets `flex: 1 1 auto`, so the
+  one-step class rule the depth limit forced me to is (0,3,0) and LOST — the slider measured 349.5px and squeezed
+  the meter to 220. Element-qualifying my own rule ties the weight and wins on order. Also: the group note now sits
+  on its own line (beside the label it resolved to the same 12.48px #776f66 and the two read as one sentence), and
+  the threshold caption is `nowrap` (the marker's box is 1px, so "−45.8 dB" wrapped across the track).
+
+- [x] **Titles are Title Case, subtitles look like subtitles, and the numbers are editable (Ek, 2026-09-14)** — 63
+  titles retitled across every settings page ("Signal Path", "Master Volume", "Max Grains"), literally every word
+  per Ek, with acronyms and units left alone; `docs/SETTINGS-GUI.md` § 5 is rewritten around it (titles name a
+  thing, descriptions stay prose). `.as-meter-group-label` was a column caption at 13.5px --text-muted, the same as
+  the note beside it — it is a subtitle now, 14px/600/--text-highlight, one step under the 16px section title.
+  "Instrument in" → **Mubone Level**. The trim and level numbers are `<input>`s: type and Enter, double-click
+  either the number or the slider to reset, Escape reverts, rubbish falls back. The device row's "there is no
+  apply step" line is gone. Verified live: typed −7.5 lands on the slider, +4 on the sum moves the node to 1.585
+  and the footer mirror with it.
+
+- [x] **Advanced nests under Audio, the signal path is drawn, and the meter groups keep the row rhythm (Ek,
+  2026-09-14)** — `SECTIONS` gains `under`, which indents a nav item to where its parent's LABEL starts (37px =
+  10 padding + 16 icon + 11 gap), drops its icon and quiets it; "Audio Advanced" is just **Advanced** there. The
+  Signal Path lede is a LIVE SVG instead of three sentences: it is drawn from the same `inputSends()` the rows
+  are, so a sent channel grows a line into the bus and an unsent one sits dashed and unconnected — the picture
+  cannot drift from the routing the way a paragraph can. And the meter groups had neither the hairline nor the
+  `padding: 15px 0` § 2 gives every row: measured, Hardware In began at the exact pixel the Device row ended, 0px
+  of air and no divider, between rows separated by 30 and a line. They are spaced like rows now.
+
+- [x] **The signal path is a real block diagram (Ek, 2026-09-14: "use proper diagram audio shapes … look up how
+  pros do their diagrams")** — the conventions, applied: a TRIANGLE for every gain stage (each channel's trim, the
+  level, master), a circled Σ for the summing junction, rectangles for processing blocks with the instrument's own
+  in the text colour, an OPEN CONTACT for a switch that is off (an unsent channel, the dry monitor), DASHED for
+  the one path that is control rather than audio (the gate → paint · sphere, which is what was unreadable before),
+  and `/n` slash notation for a multi-channel bus instead of n drawn lines. Everything is read live: the send set,
+  `S.dryMonitorMode` (off draws an open contact and the run STOPS there; on draws a real `dry` amp into the bus;
+  auto says so on the amp), the house channel count on both buses, and a separate run with its own ceiling when
+  the headphone pair exists — they are separate ceiling groups, so the drawing says that too. `setDryMonitorMode`
+  redraws it; without that hook the mode moved and the picture did not (measured: identical SVG across all three).
+
+- [x] **The diagram is centred and the title has air (Ek, 2026-09-14)** — 12px after the title, the rhythm a
+  section's lede leaves. Centring took three goes, each ruled out by measurement: centring the VIEWBOX is not
+  centring the picture (the ink ran x≈12–512 inside a 560 box, 36px left of centre — 162px of air against 197.7);
+  `getBBox` does not fix it either, being geometry only with no stroke and no text metrics (21px left); and the
+  correction from the children's real screen rects did nothing at all until it moved OFF the render's own tick —
+  the diagram is first built while the settings page is hidden, and rebuilt mid-transition on a revisit, so it
+  measured zero or a transformed box. On the next frame, with a retry while the page has no width: 179.8 against
+  179.9 on first open, on redraw, and on revisit.
+
+- [x] **Software Out is one list, and the speaker layout is drawn (Ek, 2026-09-14: "fix the software output table
+  … not consistent with anything. add a diagram of how the spatialization works")** — the output was TWO lists of
+  the same channels: a meter strip, and an `.as-io-table` with its own header, row, select and column widths
+  matching nothing else. `renderSetMeters` gained a generic `tail`, so a software output is one row — meter,
+  azimuth, capture, hardware socket — exactly as a hardware input is, and every meter on the page is 514px
+  (measured; the output tracks were 474.1 before the tail was sized to the input strip's 162). `renderRoutingTable`
+  and its legacy alias are deleted. Above it, a plan view drawn from the same `angleDeg` the rows carry: the
+  listener at the centre, 0° front, a box per speaker at its true azimuth with its number and degrees, arcs
+  between neighbours because that pair IS what VBAP chooses between, and the count in the middle. Verified at 2 ch
+  (270°/90°) and with a synthetic 6 (0/60/120/180/240/300). Two kit rules broken and fixed on the way: an invented
+  11px, and `--fs-set-tick` used off a meter tick.
+
+- [x] **The trim / level / azimuth column is 96px (Ek, 2026-09-14: "the trim/level and now degree/calib can be
+  twice as wide, the degrees are crushed")** — twice 48. It had gone 78 → 48 when the meter wanted the room, and
+  48 was too mean once an azimuth had to live in the same column: a degree is three digits and a decimal. Both
+  tails move together (96 + 14 + 42 + 14 + 44 = 210), so the input and output meters stay locked at one length —
+  466px each, measured. Nothing clips at the worst case either: 359.5 in a 96px field scrolls to 94.
+
+- [x] **A spacing pass over the audio page (Ek, 2026-09-14: "the spacing below the text above both diagrams is
+  cramped … make sure it looks professionally designed")** — measured every vertical gap on the page rather than
+  adjusting by eye. Two were out: a group label gave its block 8px where a row spends 15 on its own padding, so
+  the subtitle read as part of the ruler under it (now 10), and the caption above each DIAGRAM gave 12 and 8 (now
+  16 — one step past a row's 15, because a drawing has no hairline to sit against and the separation has to come
+  from space alone; margins collapse, so 16 is what lands). The page's rhythm now reads: 30 between sections, 2
+  from a title to its first row, hairline + 15/15 per row, 10 under a subtitle, 16 under a caption above a
+  drawing.
+
+- [x] **#353 A document model: save · save as · open, with a real extension** — the music is a piece now
+  (`.mubone`, `js/piece.js`), the rig stays an export (`js/ui-export.js`, 1206 → 368 lines). Electron's first file
+  IPC (two dialogs, ranged read, streamed write through a `.part`), a current document in `S.doc`, dirty as the
+  hashed manifest, the name and its unsaved dot in the chrome, a File menu with Open Recent, a quit guard, and
+  `fileAssociations`. Nothing migrates. Reasoning in the three commits and `docs/RULINGS.md` "The document".
+
+- [x] **#354 The session file's audio is 16-bit base64 inside JSON** — closed by the container.
+  `js/mubone-file.js`: a zip of deflated manifest + STORED float32 WAV members, content-addressed, no dependency
+  and no base64. Lossless where it was 16-bit and clamped, and a shared buffer writes once (§ E7/E8 closed).
+  `js/mubone-file.test.mjs` is the invariant, 17 tests including a real `unzip -t`. **Still open**: a pinned loop
+  is a crossfaded region COPY, so it does not collapse into its take — stored as a recipe it would — now #357.
+
+
+- [x] **The pin takes the whole moment** — one press pins EVERY line the cursor is on (`trigger._inside`, the
+  gate's own geometry, anchored at its `_nearestIdx`) and adds a cloud when the cursor is granulating too;
+  nothing in reach still pins the ghost. A press cannot evict its own pins, and it is one undo
+  (`history.mergeTagged`) though its halves land on different edges. `createSeqFromStroke` picked up two fixes
+  on the way: build the audio before evicting, and record what was evicted.
+
+- [x] **The slot tracker is back, in the pinned rail** — one cell per slot in its pin's engine hue, carrying the
+  pin's own number (`loop 3` is slot 3, from `_pinName`, not a second derivation), `3 / 8` with the max typeable
+  and steppable there as well as on Settings → Pins (one number, two doors). The SELECTED pin is ringed, off the
+  same `selectedPinSlot` the rail's half-moon and the sphere's bracket read — one search per tick, handed to both
+  painters. A pin above the line after a shrink draws as an over-the-line cell. `pins.js` lost its duplicate
+  `leaving()` (the two disagreed about `_selfKilled`).
+
+- [x] **The tracker on one type size, and borderless** — every number in the strip is `--fs-meta` at 500 (the max
+  is an `<input>`, which inherits neither family nor weight and had drifted to 400); colour alone separates an
+  empty slot, the count and the settable max. Empty cells lost their chip, the max lost its box (it read as a
+  ninth cell), and the over-the-line state trades a dash for its hue as an unfilled ring. Eight invariants in
+  `align-audit` — one of which was wrong for two rows and said so.
+
+- [x] **Every instrument control is on a kit height, and the R6 tail is empty** — Ek's ruling of
+  2026-09-15 ("snap them all"). Nine off-kit elements plus `.tc-cam-row`, all the same defect: a height
+  left over from padding plus a line box. `height` + `box-sizing` state it now; `css/style.css`,
+  `scripts/align-audit.js` (`R6_TAIL` emptied, `R1_REM_TAIL` 366 → 363). `docs/RULINGS.md` "The kit's
+  sizes" has the why and the two blind spots. Left open: `.lyr-hold-body`, 44.2 by content — now #358.
+
+- [x] **The viz legend is a section, not two rows** — closes the Sep 14 item. "What The Colours Mean" had
+  no `.set-ctl` and no interactive descendant, which is the one place the page broke § 3's "a cell that
+  cannot be operated is never shaped like one". No new element: `.set-section` + `.set-sec-title` +
+  `.set-sec-lede`, the kit stays closed at eleven, and the block moved out of "What Size Means".
+  `index.html` only. `docs/RULINGS.md` "A legend is a section, not a row".
+
+- [x] **#358 `.lyr-hold-body` declares itself content-sized** — Ek's call, 2026-09-15: the row keeps its
+  two-line name and says so with `mu-h-content`, rather than being snapped (which clips the sub-line) or
+  whitelisted in the audit. Its own R6 kind, `content`, not folded into `bare` — `--bare` is a shape, this
+  is a marker. `js/ui-pins.js`, `scripts/align-audit.js`, both GUI docs. Verified both ways on the running
+  app: with the class kind `content` and skipped, without it kind `any` at 44.2 and failing.
+
+- [x] **The viz page loses three options and gains a figure** — Ek, 2026-09-15. Canvas Theme, Off-screen
+  Indicator and Indicator Size removed outright (rows, handlers, state, storage keys, and the edge arrow in
+  `renderer.js`); `S.darkMode` is a constant and its dead light path is now #359. Smallest / Largest /
+  Quietest Input / Loudest Input — four sliders in two sections — became ONE figure carrying all four plus
+  the paint gate. `docs/RULINGS.md` "The size law is one picture".
+
+- [x] **Minimal Rendering still works, and here is by how much** — Ek asked. Measured on 25 000 synthetic
+  marks: full 24.1 ms median / 28.1 p90, minimal 21.7 / 23.9 — 2.4 ms at the median, 4.2 at p90, about
+  10–15 %. Real but not a rescue; both are over the 16.7 ms vsync budget at that load. At 3 000 marks the
+  gap is 1.4 ms and at 0 marks there is none, so the row's "draws the least it can and still play" is
+  honest about the direction and generous about the size.
+

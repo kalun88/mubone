@@ -33,11 +33,43 @@ export function initPinSettings() {
   const alwaysSeg    = document.getElementById('seedAlwaysSeg');
   const snapRow      = document.getElementById('improvSnapRow');
 
+  // A row that is not available wears `.set-row--off`, which dims the CONTROL
+  // and steps the title one stop down the ramp. It must never be an inline
+  // style: an inline write outranks the stylesheet exactly the way the markup's
+  // old `style="opacity:0.35"` did, so the class would be there and do nothing.
+  // The 0.35 on the whole row also erased the description — --text-muted at
+  // 4.9:1 composites to about 1.4:1 — and these two carry the longest copy on
+  // the page. `aria-disabled` goes with it: the opacity said nothing to the
+  // accessibility tree.
+  // THE REASON BELONGS TO THE STATE, NOT THE PROSE (2026-09-14). Tether's
+  // description used to end "Focus only." — a third sentence carrying a
+  // condition that is already known at render time and changes while you play.
+  // A description is what the control IS; why it is unavailable right now is
+  // what the off state says, in the row's own status line. Same shape as
+  // Latency's "needs output → mic".
+  const setRowOff = (row, off, why) => {
+    if (!row) return;
+    row.classList.toggle('set-row--off', off);
+    if (off) row.setAttribute('aria-disabled', 'true'); else row.removeAttribute('aria-disabled');
+    const text = row.querySelector('.set-row-text');
+    let note = row.querySelector('.set-row-status--why');
+    if (off && why) {
+      if (!note) {
+        note = document.createElement('span');
+        note.className = 'set-row-status set-row-status--why';
+        text?.appendChild(note);
+      }
+      if (note.textContent !== why) note.textContent = why;
+      note.hidden = false;
+    } else if (note) note.hidden = true;
+  };
+
   function dimFocusRows(isFocus) {
-    if (alwaysRow) { alwaysRow.style.opacity = isFocus ? '1' : '0.35'; alwaysRow.style.pointerEvents = isFocus ? '' : 'none'; }
-    // xfade only active in focus mode AND tether on
-    const xfadeActive = isFocus && S.seedTether;
-    if (snapRow) { snapRow.style.opacity = xfadeActive ? '1' : '0.35'; snapRow.style.pointerEvents = xfadeActive ? '' : 'none'; }
+    setRowOff(alwaysRow, !isFocus, 'Focus only');
+    // xfade only active in focus mode AND tether on — and it says WHICH of the
+    // two is missing, because "Focus only" on a row that is already in Focus is
+    // a reason that reads as a lie.
+    setRowOff(snapRow, !(isFocus && S.seedTether), isFocus ? 'needs Tether on' : 'Focus only');
   }
 
   function applySeedMode(mode) {

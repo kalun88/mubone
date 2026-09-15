@@ -404,11 +404,18 @@ async function auditReset(browser) {
     'every stored key is in storage-registry.js',
     orphans.length ? `unregistered: ${orphans.join(', ')} — add them to js/storage-registry.js` : '');
 
-  // The split moved dark mode out of the audio blob and made ui-viz.js the sole
-  // owner. If that key stops being written, a migrated bucket silently loses
-  // the theme, so assert the remaining owner still writes it.
+  // NOBODY OWNS mubone_darkMode ANY MORE, and that is the point (2026-09-15).
+  // The split had moved dark mode out of the audio blob and made ui-viz.js its
+  // sole owner, and this asserted the remaining owner still wrote it — a real
+  // guard while the Canvas Theme capsule existed. Ek removed that option in 5.0:
+  // the canvas is dark, `S.darkMode` is a constant in state.js, the key is gone
+  // from storage-registry.js and nothing writes it. So the assertion inverts —
+  // the key must NOT come back, because a key written by nobody and read by
+  // nobody is exactly the orphan the check above exists to catch.
   const darkOwned = await page.evaluate(() => localStorage.getItem('mubone_darkMode'));
-  check(darkOwned !== null, 'ui-viz.js writes mubone_darkMode (sole owner since the blob split)');
+  check(darkOwned === null,
+    'mubone_darkMode is unwritten — the canvas theme option is gone (5.0)',
+    darkOwned === null ? '' : `found "${darkOwned}" — something is still writing a key with no setting behind it`);
 
   // ── 5b. Pre-split audio blob migrates into its four successor keys ──
   await page.evaluate(() => {
@@ -538,14 +545,13 @@ async function auditReset(browser) {
   check(legacyImport.blobStripped && legacyImport.blobKept === -3,
     'pre-v4 import: blob is reshaped, audio fields survive', JSON.stringify(legacyImport));
 
-  // ── 5c4. Session payload is decoupled from settings (audit § E4) ──
-  // A session must carry the sound it was played on as a SNAPSHOT of the live
-  // parameter set (v11 — there is no bank to index into any more), and must
-  // NOT carry settings — the format stopped promising to apply them because a
-  // session import can't reload. Exercised through the real builder, since the
-  // point is what the file contains.
+  // ── 5c4. The piece carries the music, never the rig ──
+  // A piece carries the sound it was played on as a SNAPSHOT of the live
+  // parameter set (there is no bank to index into), and carries no settings at
+  // all — the rig is a separate file (ui-export.js). Exercised through the real
+  // builder, since the point is what the file contains.
   const sess = await page.evaluate(async () => {
-    const { __testBuildSessionPayload } = await import('./js/ui-export.js');
+    const { __testBuildPiece } = await import('./js/piece.js');
     const { S } = await import('./js/state.js');
 
     // Arm one trigger so the payload has something to serialise. Built through
@@ -570,7 +576,7 @@ async function auditReset(browser) {
     Object.assign(S.triggerParams, { rearmMs: 250, dwell: 'loop', start: 'touch' });
     armTrigger(77);
 
-    const p = __testBuildSessionPayload();
+    const p = __testBuildPiece().manifest;
     S.triggers.length = 0;
     return {
       version:     p._version,
@@ -591,20 +597,20 @@ async function auditReset(browser) {
       // particles of its own — both are already in the payload once. Storing
       // them again would duplicate the audio and let the copies drift, which is
       // the exact shape of the § E9 bug that made loop slots import silent.
-      trigNoAudio:     p.triggers?.[0] ? !('wav' in p.triggers[0]) : false,
+      trigNoAudio:     p.triggers?.[0] ? !('audio' in p.triggers[0]) : false,
       trigNoParticles: p.triggers?.[0] ? !('particles' in p.triggers[0]) : false,
       // The type has to travel with the material or a percussion map imports as
       // granulation fodder.
       trigParticleFlagged: (p.particles || []).some(q => q.strokeId === 77 && q.trig === 1),
     };
   });
-  const EXPORT_VERSION = Number(fs.readFileSync(path.join(ROOT, 'js', 'ui-export.js'), 'utf8').match(/EXPORT_VERSION = (\d+)/)[1]);
-  check(sess.version === EXPORT_VERSION && sess.hasSettings === false,
-    `a v${EXPORT_VERSION} session carries no settings block`, JSON.stringify(sess));
+  const PIECE_VERSION = Number(fs.readFileSync(path.join(ROOT, 'js', 'piece.js'), 'utf8').match(/PIECE_VERSION = (\d+)/)[1]);
+  check(sess.version === PIECE_VERSION && sess.hasSettings === false,
+    `a v${PIECE_VERSION} piece carries no settings block`, JSON.stringify(sess));
   check(sess.patchIsSnapshot && sess.noIndex,
-    'session embeds a snapshot of the live sound and no bank index', JSON.stringify(sess));
+    'a piece embeds a snapshot of the live sound and no bank index', JSON.stringify(sess));
   check(sess.trigCount === 1 && sess.trigStroke === 77,
-    'session carries the triggers as views onto their strokes', JSON.stringify(sess));
+    'a piece carries the triggers as views onto their strokes', JSON.stringify(sess));
   check(sess.trigNoAudio && sess.trigNoParticles && sess.trigNoPerEntrySettings,
     'a trigger serialises as a strokeId alone — no audio, particles or settings', JSON.stringify(sess));
   check(sess.trigParamsRearm === 250 && sess.trigParamsDwell === 'loop',

@@ -70,7 +70,13 @@ const ICON = {
   buttons:  '<rect x="2.5" y="4" width="11" height="8" rx="2.5"/><circle cx="8" cy="8" r="1.6"/>',
   osc:      '<path d="M3 5h10"/><path d="M3 8h10"/><path d="M3 11h6"/>',
   diag:     '<path d="M2 8h3l2-4 2 8 2-5 1.5 3H14"/>',
+  // Two faders at different settings — the engine's tuning, one level in
+  // from Audio's own circle.
+  audioadv: '<path d="M4 2.5v11M12 2.5v11"/><path d="M2.2 6h3.6M10.2 10.5h3.6"/>',
   session:  '<rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M8 5.2v5.3"/><path d="M5.9 8.4 8 10.5l2.1-2.1"/>',
+  // Reset: the counter-clockwise hook back to a start, open at the top so it
+  // reads as "back to factory" and not as the sweep's broom or a reload.
+  reset:    '<path d="M8 3.2a4.8 4.8 0 1 1-4.5 3.2"/><path d="M3.2 2.6v3.9h3.9"/>',
 };
 
 // Each section: what it is called, and where its body comes from. `modal` is
@@ -80,20 +86,36 @@ const ICON = {
 // (SETTINGS-GUI § 4) — a thing the PAGE does, which is not a row.
 // Labels are sentence case: inside this dialog the app runs prose (§ 5), and
 // the shell's title is this same string.
+// NAV TITLES ARE TITLE CASE (Ek, 2026-09-14: "all words with capital first
+// letter please in the settings left side nav titles"). The nav is a list of
+// PLACES, and a place has a name — "Audio Advanced" reads as one, "Audio
+// advanced" reads as a sentence someone stopped writing. Everything INSIDE a
+// page stays sentence case: a row title is prose about a setting, not a name
+// (docs/SETTINGS-GUI.md § 5, which now says both).
 const SECTIONS = [
   { id: 'audio',     label: 'Audio',        group: 'sound',   modal: 'audioSettingsModal', opener: 'audioSettingsBtn', closer: 'audioSettingsClose', action: 'asTestBtn' },
   // Pins were the rig view's "commits" device. Same node, borrowed — every
   // control in it keeps its id, its listener and its wiring (#262).
+  // AUDIO SPLIT IN TWO (Ek, 2026-09-14). Audio is the two questions you open
+  // it to answer — which input, which output — and the levels around them;
+  // everything that tunes the ENGINE rather than the rig is here. It sits
+  // straight after Audio so the pair reads as one subject.
+  { id: 'audioadv',  label: 'Advanced',      group: 'sound', panel: 'setPanelAudioAdv', under: 'audio' },
   { id: 'pins',      label: 'Pins',         group: 'sound',   node: 'commitPanel' },
   { id: 'sensors',   label: 'Sensors',      group: 'sensor',  modal: 'imuSetupModal', opener: 'imuSetupBtn', closer: 'imuSetupClose' },
   { id: 'mapping',   label: 'Mapping',      group: 'sensor',  modal: 'sensorMappingModal', opener: 'mappingBtn', closer: 'sensorMappingClose', action: 'sensorMappingAddBtn' },
-  { id: 'feedback',  label: 'LED feedback', group: 'sensor',  modal: 'ledModal', opener: 'ximuLedBtn', closer: 'ledClose', action: 'ledResetBtn' },
+  { id: 'feedback',  label: 'LED Feedback', group: 'sensor',  modal: 'ledModal', opener: 'ximuLedBtn', closer: 'ledClose', action: 'ledResetBtn' },
   { id: 'viz',       label: 'Visuals',      group: 'view',    modal: 'vizModal', opener: 'vizSettingsBtn', closer: 'vizModalClose' },
-  { id: 'view',      label: 'Camera + display', group: 'view', panel: 'setPanelView' },
+  { id: 'view',      label: 'Camera + Display', group: 'view', panel: 'setPanelView' },
   { id: 'keys',      label: 'Keys + MIDI',   group: 'control', modal: 'mappingModal', opener: 'helpBtn', closer: 'mappingClose', action: 'keysClearAll' },
-  { id: 'buttons',   label: 'Instrument buttons', group: 'control', panel: 'setPanelButtons' },
+  { id: 'buttons',   label: 'Instrument Buttons', group: 'control', panel: 'setPanelButtons' },
   { id: 'diag',      label: 'Diagnostics',  group: 'control', panel: 'setPanelDiag' },
-  { id: 'session',   label: 'Export · import · reset', group: 'control', panel: 'setPanelSession' },
+  { id: 'session',   label: 'Export · Import', group: 'control', panel: 'setPanelSession' },
+  // RESET IS ITS OWN PAGE (Ek, 2026-09-14). It rode with export and import,
+  // which are the two things you do to KEEP work; this is the one that throws
+  // it away, and nothing destructive should share a page you open to write a
+  // file. Last in the list for the same reason.
+  { id: 'reset',     label: 'Reset',        group: 'control', panel: 'setPanelReset' },
 ];
 const GROUP_LABEL = { sound: 'sound', sensor: 'sensors', view: 'view', control: 'control' };
 
@@ -364,7 +386,17 @@ export function initSettings() {
       ? `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" `
         + `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[sec.id]}</svg>`
       : '';
-    html += `<button type="button" class="set-nav-item" data-sec="${sec.id}">${icon}<span>${sec.label}</span></button>`;
+    // A SUB-ITEM SITS UNDER ITS PARENT (Ek, 2026-09-14: "audio advanced
+    // should be under audio in the settings nav"). `under` names the page it
+    // belongs to and the nav indents it, so the pair reads as one subject
+    // with a second page rather than two subjects that happen to be
+    // adjacent. Its label is just the distinguishing word — "Advanced" under
+    // "Audio" says everything "Audio Advanced" did, with less. It keeps its
+    // own icon (Ek: "add back a logo for Advanced"): the indent alone says
+    // it is a child, and a gap where every other row has a mark read as a
+    // missing icon rather than as a hierarchy.
+    const sub = sec.under ? ' set-nav-item--sub' : '';
+    html += `<button type="button" class="set-nav-item${sub}" data-sec="${sec.id}">${icon}<span>${sec.label}</span></button>`;
   }
   nav.innerHTML = html;
   nav.addEventListener('click', e => {

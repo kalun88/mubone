@@ -18,7 +18,7 @@
 // visitors still get the full app from cache.
 // ============================================================================
 
-const CACHE_VERSION = 'mubone-1.16.0-alpha';
+const CACHE_VERSION = 'mubone-5.0.0-alpha';
 
 // Extensions served network-first. Everything else (fonts, images, audio) is
 // cache-first — those are content-addressed by name and rarely change.
@@ -43,6 +43,11 @@ const APP_SHELL = [
   './js/scale.js',
   './js/grain.js',
   './js/history.js',
+  // The document (5.00): a piece is the music and `.mubone` is the file it
+  // lives in. Both shipped in 1.16's cycle and neither was in the shell, so
+  // the browser build would have gone to the network for them.
+  './js/piece.js',
+  './js/mubone-file.js',
   './js/grain-worklet-bridge.js',
   './js/brush.js',
   './js/sampler.js',
@@ -105,6 +110,7 @@ const APP_SHELL = [
   './js/worklets/quad-capture.worklet.js',
   './js/worklets/input-meter.worklet.js',
   './js/worklets/grain-engine.worklet.js',
+  './js/worklets/ceiling.worklet.js',
 ];
 
 // — Install: pre-cache the entire app shell

@@ -211,7 +211,13 @@ class LiveLoopProcessor extends AudioWorkletProcessor {
     this._writePos += block.length;
   }
 
-  // Linear interpolation, clamped to written material.
+  // 4-point Hermite, clamped to written material (2026-09-14). The same swap
+  // the grain engine got: at speed 1.0 this never interpolates at all (the
+  // position walks whole samples), but a loop played at any other speed read
+  // a straight line between two samples, and that is the dominant distortion
+  // the moment the speed leaves 1. Catmull-Rom through x0 and x1; the guard
+  // and the read-ahead counter are unchanged, and the ends hold rather than
+  // reaching for material that is not written yet.
   _read(pos) {
     const i = pos | 0;
     if (i + 1 >= this._writePos) {
@@ -219,7 +225,15 @@ class LiveLoopProcessor extends AudioWorkletProcessor {
       return i < this._writePos ? this._buf[i] : 0;
     }
     const f = pos - i;
-    return this._buf[i] * (1 - f) + this._buf[i + 1] * f;
+    if (f === 0) return this._buf[i];             // whole sample: nothing to interpolate
+    const b = this._buf, w = this._writePos;
+    const x0 = b[i], x1 = b[i + 1];
+    const xm = i > 0 ? b[i - 1] : x0;
+    const x2 = i + 2 < w ? b[i + 2] : x1;
+    const c1 = 0.5 * (x1 - xm);
+    const c2 = xm - 2.5 * x0 + 2 * x1 - 0.5 * x2;
+    const c3 = 0.5 * (x2 - xm) + 1.5 * (x0 - x1);
+    return ((c3 * f + c2) * f + c1) * f + x0;
   }
 
   process(inputs, outputs) {

@@ -1109,7 +1109,7 @@ export function setupEvents() {
     ensureAudioContext();
     const t      = S.audioCtx.currentTime;
     const target = muted ? 0 : 1;
-    // Browser path: audio flows masterBus → softClipper → analyser → _muteGain → destination
+    // Browser path: audio flows masterBus → ceiling → analyser → _muteGain → destination
     const mg = window._muteGain;
     if (mg) mg.gain.setTargetAtTime(target, t, 0.01);
     // Electron path: grains connect directly to speaker buses → ChannelMerger → audify.
