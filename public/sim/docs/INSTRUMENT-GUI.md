@@ -37,7 +37,7 @@ the smears were padding-plus-font arithmetic nobody chose.
 | `.mu-btn` | 24 | the default for chrome |
 | `.mu-btn--lg` | 38 | the cabinet's pill row — play/mute, paint indicator, session |
 | `.mu-btn--bare` | content-sized | a text action with **no box** |
-| `.mu-h-content` | content-sized | a MARKER, not a shape: this box is sized by its text. Carried by `.lyr-hold-body`, whose two-line name (`loop 3` over the pin's coordinates) is content, not a derived height. It is how a row opts out of the kit **in the markup**, so the audit never needs a list |
+| `.mu-h-content` | content-sized | a MARKER, not a shape: this box is sized by its text. It is how a row opts out of the kit **in the markup**, so the audit never needs a list. Its one carrier, the pinned rail's two-line hold, went with the mixer (2026-09-16) — nothing wears it today, and the next two-line box is what it is for |
 
 **The set is closed at two sizes plus `--bare`, and an audit check enforces it.** A 32px button
 fails by name. There was a `--md` at 32; it ended with zero users and was deleted, because a size
@@ -96,7 +96,7 @@ carried by `.muted` on the chrome's play/mute pill. The flash has two carriers:
 | carrier | surface | note |
 | --- | --- | --- |
 | `.flash` / `.flashing` / `.sweep-flash` | `.mu-btn` | ember, or sage for a sweep |
-| `.fired` | `.lyr-act`, the pinned rail's action rows | ember, no border — a rail row has no box |
+| `.fired` | `.trow--act`, the pinned rail's action rows | ember, no border — a rail row has no box |
 
 Both read the same `--mu-flash` / `--mu-flash-soft` variables, which is what makes them one modifier
 rather than two that happen to look alike. `.fired` was written into `_pinFlash()` in #256 and had
@@ -173,27 +173,24 @@ arithmetic first.
 caption names a control.
 
 **One documented exception: the side rails.** Neither rail can afford 0.18em on a multi-word label
-— the tool rail (`.tc-lrail`) is 248px (216 until 2026-09-10) and the pinned rail (`.tc-rail`) 246.4px, and inside the
-pinned rail's 221.4px content box `unpin all` wrapped to two lines at the tracking it already had.
-The exception has a reason and the reason is the rail's width. `.lyr-bar button` also carries a
-0.09em literal that no token equals, so tokenising it would change what renders; it stays,
-deliberately.
+— the tool rail (`.tc-lrail`) is 248px (216 until 2026-09-10), and the pinned rail (`.tc-rail`) was
+246.4px until the mixer (320px since 2026-09-16), inside whose 221.4px content box `unpin all`
+wrapped to two lines at the tracking it already had. The exception has a reason and the reason was
+the rail's width; the tool rail still has it. `.lyr-bar button` also carries a 0.09em literal that
+no token equals, so tokenising it would change what renders; it stays, deliberately.
 
 **The rail has one row model, and it is the fix for the wrapping:** one item per row, mark or label
-left, keycap or affordance flush right — the shape the pinned list already used. The action cluster
-was the only thing in that column still laid out as a wrapping chip group, which is why it fought
-the width: a 246px column cannot carry two layout models, and the inline one is the one that broke.
-Stacking the actions costs one row of height (70.3 → 80) and buys a fixed rail height and explicit
-copy, which matters for a destructive action you hit mid-set.
+left, keycap or affordance flush right. The action cluster was the only thing in that column still
+laid out as a wrapping chip group, which is why it fought the width: a narrow column cannot carry
+two layout models, and the inline one is the one that broke. Stacking the actions costs one row of
+height and buys a fixed rail height and explicit copy, which matters for a destructive action you
+hit mid-set.
 
-**As built** (`.lyr-act`, measured 2026-08-30) — the grid is `1rem 1fr auto`, gap 0.5rem, padding
-0.38rem 0.75rem, which is `.lyr-hold`'s grid exactly, so the two halves of the rail share their
-columns rather than merely resembling each other:
-
-| | mark left edge | label left edge | right column right edge |
-| --- | --- | --- | --- |
-| `.lyr-act` (action) | 5px dot centred on 1214.6 | 1230.6 | `kbd` ends 1428.0 |
-| `.lyr-hold` (pinned) | 16px glyph centred on 1214.6 | 1230.6 | state ends 1428.0 |
+**The pinned rail is a mixer since 2026-09-16** (`docs/RULINGS.md` "the track is its fader"): the
+pin rows above are the action rows at its foot (`.trow--act`); the pins themselves are TRACKS — a
+32px bar per pin whose fill is the level, the material drawn inside it, the number in the engine hue,
+M and S (the 18px pair) at the right, and every bar, every bus row and the mode bar's content box on
+one left and one right edge. `npm run audit:align` "the mixer" measures exactly that.
 
 **The principle behind the right column: no fact appears twice in a row.** If the label says
 `pin Q` and the right column says `Q`, the row states one fact in two places and the column stops

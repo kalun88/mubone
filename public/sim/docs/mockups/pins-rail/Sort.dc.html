@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body { background: #0b0a09; font-family: 'Urbanist', 'Helvetica Neue', Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #c5c0b9; }
+    a { color: #e07b3c; } a:hover { color: #f0955c; }
+    .eb { font-size: 11.04px; letter-spacing: 0.18em; text-transform: uppercase; color: #aba59d; }
+    .h { font-size: 17.92px; color: #e4ddd0; letter-spacing: 0.02em; }
+    .p { font-size: 12.48px; line-height: 1.5; color: #9d978e; text-wrap: pretty; }
+    .p b { font-weight: 500; color: #e4ddd0; }
+    .seg { display: inline-flex; height: 24px; border-radius: 2px; background: rgba(255,240,224,0.03); }
+    .seg b { height: 24px; padding: 0 9px; display: grid; place-items: center; border-radius: 2px; color: #857e74; font-size: 11.04px; font-weight: 400; letter-spacing: 0.06em; }
+    .seg b.on { background: rgba(255,240,224,0.14); color: #e4ddd0; }
+    .col { display: flex; flex-direction: column; gap: 6px; width: 260px; padding-left: 12px; }
+    .row { position: relative; height: 32px; border-radius: 2px; overflow: hidden; background: rgba(255,240,224,0.03); }
+    .row .fill { position: absolute; inset: 0; opacity: 0.18; }
+    .row .num { position: absolute; left: 0; top: 0; width: 24px; height: 32px; display: grid; place-items: center; font-size: 12.48px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .row .mat { position: absolute; left: 26px; top: 0; height: 32px; width: 152px; }
+    .row canvas { display: block; }
+    .row .edge { position: absolute; top: 0; bottom: 0; right: 0; width: 2px; }
+    .row .ms { position: absolute; right: 4px; top: 7px; display: flex; gap: 3px; }
+    .row .ms b { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 2px; background: rgba(255,240,224,0.05); color: #857e74; font-size: 10.24px; font-weight: 600; }
+    .sel { position: relative; }
+    .sel::before { content: ''; position: absolute; left: -12px; top: 10px; width: 6px; height: 12px; border-radius: 0 6px 6px 0; background: #e4ddd0; z-index: 1; }
+    .dline { position: relative; height: 44px; }
+    .dline .ln { position: absolute; left: 0; right: 0; top: 21px; height: 2px; background: rgba(255,240,224,0.11); }
+    .dline .cur { position: absolute; left: 0; top: 12px; width: 20px; height: 20px; margin-left: -10px; border-radius: 50%; border: 1.5px solid #a793c0; }
+    .dline .cur::after { content: ''; position: absolute; left: 7px; top: 7px; width: 3px; height: 3px; border-radius: 50%; background: #a793c0; }
+    .dline .pt { position: absolute; top: 12px; width: 20px; height: 20px; margin-left: -10px; border-radius: 2px; display: grid; place-items: center; font-size: 12.48px; font-weight: 500; font-variant-numeric: tabular-nums; color: #0b0a09; }
+  </style>
+</helmet>
+
+<div style="position: relative; width: 1000px; height: 520px; background: #0b0a09; padding: 32px 40px;">
+  <div style="display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px;">
+    <span class="h">Sort is the selected pin</span>
+    <span class="p">Settings → Pins has <b>Selected pin: nearest · farthest · oldest</b>. That is a sort order. Row one is always what unpin takes.</span>
+  </div>
+
+  <div class="eb" style="margin-bottom: 4px;">the same six pins, by distance from the cursor</div>
+  <div class="dline" style="margin: 0 10px 22px;">
+    <div class="ln"></div>
+    <div class="cur"></div>
+    <div class="pt" style="left: 12%; background: #e8a030;">4</div>
+    <div class="pt" style="left: 31%; background: #f2569e;">3</div>
+    <div class="pt" style="left: 55%; background: #f2569e;">1</div>
+    <div class="pt" style="left: 68%; background: #f2569e;">6</div>
+    <div class="pt" style="left: 84%; background: #e8a030;">2</div>
+    <div class="pt" style="left: 97%; background: #e8a030;">5</div>
+  </div>
+
+  <div style="display: flex; gap: 40px;">
+    <div class="col">
+      <div style="display: flex; align-items: center; gap: 8px; height: 24px; margin-bottom: 4px;"><span class="eb">sort</span><div class="seg"><b class="on">near</b><b>far</b><b>old</b></div></div>
+      <div class="row sel" data-p="4"></div><div class="row" data-p="3"></div><div class="row" data-p="1"></div><div class="row" data-p="6"></div><div class="row" data-p="2"></div><div class="row" data-p="5"></div>
+      <div class="p" style="margin-top: 6px;"><b>near.</b> The default, and in focus it is a proximity meter: the loudest bar is at the top.</div>
+    </div>
+    <div class="col">
+      <div style="display: flex; align-items: center; gap: 8px; height: 24px; margin-bottom: 4px;"><span class="eb">sort</span><div class="seg"><b>near</b><b class="on">far</b><b>old</b></div></div>
+      <div class="row sel" data-p="5"></div><div class="row" data-p="2"></div><div class="row" data-p="6"></div><div class="row" data-p="1"></div><div class="row" data-p="3"></div><div class="row" data-p="4"></div>
+      <div class="p" style="margin-top: 6px;"><b>far.</b> Unpin takes the one you have left behind. The list is the near list upside down.</div>
+    </div>
+    <div class="col">
+      <div style="display: flex; align-items: center; gap: 8px; height: 24px; margin-bottom: 4px;"><span class="eb">sort</span><div class="seg"><b>near</b><b>far</b><b class="on">old</b></div></div>
+      <div class="row sel" data-p="1"></div><div class="row" data-p="2"></div><div class="row" data-p="3"></div><div class="row" data-p="4"></div><div class="row" data-p="5"></div><div class="row" data-p="6"></div>
+      <div class="p" style="margin-top: 6px;"><b>old.</b> Today's order — the order you placed them. Nothing moves while you play.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1000,"height":520}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+  componentDidMount() {
+    const rnd = (seed) => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const mk = (r, n) => Array.from({ length: n }, (_, i) => ({ t: (i + 0.5) / n, a: 0.25 + 0.75 * Math.pow(r(), 1.4), y: r() }));
+    const P = {
+      1: { type: 'loop',  color: '#e4a58d', eng: '#f2569e', marks: mk(rnd(11), 34), ovd: 0 },
+      2: { type: 'cloud', color: '#dbab7e', eng: '#e8a030', marks: mk(rnd(23), 26), ovd: 0 },
+      3: { type: 'loop',  color: '#ccb378', eng: '#f2569e', marks: mk(rnd(37), 22), ovd: 2 },
+      4: { type: 'moving', color: '#b9bb7d', eng: '#e8a030', marks: mk(rnd(41), 30), ovd: 0 },
+      5: { type: 'cloud', color: '#a3c18b', eng: '#e8a030', marks: mk(rnd(53), 18), ovd: 0 },
+      6: { type: 'loop',  color: '#8cc69f', eng: '#f2569e', marks: mk(rnd(67), 48), ovd: 0 },
+    };
+    const draw = (cv, p) => {
+      const ctx = cv.getContext('2d'); const W = 152, H = 32;
+      ctx.setTransform(2, 0, 0, 2, 0, 0); ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = p.color; ctx.strokeStyle = p.color;
+      const mx = (m) => 4 + m.t * (W - 8);
+      if (p.type === 'loop') {
+        ctx.lineWidth = 1.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        const my = (m) => 16 + (m.y - 0.5) * 8;
+        for (let L = p.ovd; L >= 0; L--) { ctx.globalAlpha = L === 0 ? 0.9 : 0.35; ctx.beginPath(); p.marks.forEach((m, i) => { const x = mx(m), y = my(m) + L * 3.2; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); }
+        ctx.globalAlpha = 1; for (const m of p.marks) { ctx.beginPath(); ctx.arc(mx(m), my(m), 0.8 + m.a * 2.2, 0, 6.283); ctx.fill(); }
+      } else {
+        for (const m of p.marks) { const y = p.type === 'moving' ? 16 + Math.sin(m.t * 6.2) * 7 + (m.y - 0.5) * 6 : 6 + m.y * 20; ctx.globalAlpha = 0.55 + m.a * 0.45; ctx.beginPath(); ctx.arc(mx(m), y, 0.9 + m.a * 2.6, 0, 6.283); ctx.fill(); }
+      }
+    };
+    document.querySelectorAll('.row[data-p]').forEach(row => {
+      const p = P[row.dataset.p];
+      row.innerHTML = '<div class="fill" style="background:' + p.color + '"></div><div class="num" style="color:' + p.eng + '">' + row.dataset.p + '</div>' +
+        '<div class="mat"><canvas width="304" height="64" style="width:152px;height:32px"></canvas></div>' +
+        '<div class="edge" style="background:' + p.color + '"></div><div class="ms"><b>M</b><b>S</b></div>';
+      draw(row.querySelector('canvas'), p);
+    });
+  }
+}
+</script>
+</body>
+</html>

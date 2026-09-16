@@ -133,6 +133,11 @@ contextBridge.exposeInMainWorld('electronBridge', {
   docSaveDialog: (opts) => ipcRenderer.invoke('doc-save-dialog', opts || {}),
   docOpenDialog: (opts) => ipcRenderer.invoke('doc-open-dialog', opts || {}),
 
+  // Renderer → Main: the unsaved-changes ask, before a New or an Open lets go
+  // of the piece in the window. The same native three-button box the quit
+  // guard puts up, because it is the same question. → 'save' | 'discard' | 'cancel'
+  docConfirmDiscard: (name) => ipcRenderer.invoke('doc-confirm-discard', name),
+
   // Renderer → Main: size + mtime, for the recent list and the open check
   docStat: (path) => ipcRenderer.invoke('doc-stat', path),
 

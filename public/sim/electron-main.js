@@ -560,11 +560,22 @@ function _docWindow() {
 
 function docWriteBegin(dest) {
   if (!_isDocPath(dest)) return { ok: false, error: 'not a ' + DOC_EXT + ' path' };
-  const tmp = dest + '.part';
+  // ONE WRITER PER DOCUMENT. Two saves of the same piece used to share one
+  // `<dest>.part`: the second `openSync(…, 'w')` truncated the first's file
+  // while it was still streaming audio into it, and then both renamed the
+  // wreck over the document. Two ⌘S in a row on a long take was all it took.
+  // Refused rather than queued — the caller has a piece in hand and should be
+  // told, not left waiting (js/ui-export.js shows it).
+  for (const w of _docWrites.values()) {
+    if (w.dest === dest) return { ok: false, error: 'this piece is already being written' };
+  }
+  const id = ++_docWriteSeq;
+  // The temp name carries the write's id too, so an abandoned `.part` from a
+  // crash can never be adopted by the next save of the same document.
+  const tmp = `${dest}.${id}.part`;
   let fd;
   try { fd = fs.openSync(tmp, 'w'); }
   catch (e) { return { ok: false, error: String(e.message || e) }; }
-  const id = ++_docWriteSeq;
   _docWrites.set(id, { fd, tmp, dest });
   return { ok: true, id };
 }
@@ -651,6 +662,25 @@ function buildMenu() {
 }
 
 /**
+ * THE ONE QUESTION, wherever a piece is about to be let go of: the quit, and —
+ * through `doc-confirm-discard` — a New, an Open, a recent item and a
+ * double-clicked file, which used to discard an unsaved session in silence
+ * while this dialog's own words were "your recording, marks and pins are lost
+ * if you don't" (2026-09-15). One wording, one set of buttons, one meaning.
+ */
+async function askAboutUnsaved(win, name) {
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['Save', "Don't Save", 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+    message: `Save changes to ${name || 'this piece'}?`,
+    detail: 'Your recording, marks and pins are lost if you don\'t.',
+  });
+  return response === 0 ? 'save' : response === 1 ? 'discard' : 'cancel';
+}
+
+/**
  * The quit guard. Ek asked for exactly this and nothing more (2026-09-14: "if
  * the app closes, then a warning to save or not can come up") — there is no
  * autosave and nothing on a timer, so this is the only thing standing between a
@@ -666,17 +696,9 @@ function guardClose(win) {
     const state = await askRenderer('window.__mubonePiece?.state()');
     if (!state?.dirty) { _closing = true; win.close(); return; }
 
-    const name = state.name || 'this piece';
-    const { response } = await dialog.showMessageBox(win, {
-      type: 'warning',
-      buttons: ['Save', "Don't Save", 'Cancel'],
-      defaultId: 0,
-      cancelId: 2,
-      message: `Save changes to ${name}?`,
-      detail: 'Your recording, marks and pins are lost if you don\'t.',
-    });
-    if (response === 2) return;                       // cancel: stay open
-    if (response === 1) { _closing = true; win.close(); return; }
+    const answer = await askAboutUnsaved(win, state.name);
+    if (answer === 'cancel') return;                              // stay open
+    if (answer === 'discard') { _closing = true; win.close(); return; }
 
     // Save may put its own dialog up (a piece with no path yet), and may be
     // cancelled there — in which case the quit is cancelled too.
@@ -903,6 +925,14 @@ function setupIPC() {
         return { ok: true, bytes: n === buf.length ? buf : buf.subarray(0, n) };
       } finally { fs.closeSync(fd); }
     } catch (e) { return { ok: false, error: String(e.code || e.message || e) }; }
+  });
+
+  // The unsaved-changes ask, for the renderer's own New / Open paths. The quit
+  // guard runs the same function; this is the only other caller.
+  ipcMain.handle('doc-confirm-discard', async (_e, name) => {
+    const win = _docWindow();
+    if (!win) return 'discard';
+    return askAboutUnsaved(win, typeof name === 'string' ? name : null);
   });
 
   ipcMain.handle('doc-write-begin', (_e, p)        => docWriteBegin(p));

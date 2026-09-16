@@ -257,9 +257,21 @@ function initPieceKeys() {
   });
 }
 
-/** Run one document action behind a progress overlay that reports what it did. */
+/**
+ * Run one document action behind a progress overlay that reports what it did.
+ *
+ * RETURNS WHAT THE ACTION RETURNED — the quit guard reads it to decide whether
+ * the window may close, so a save that failed or was cancelled must come back
+ * falsy rather than as a silent undefined. A refusal because another document
+ * action is already in flight is falsy for the same reason: the quit waits.
+ *
+ * Registered on `S` (below) so js/piece.js can put the File menu, the quit
+ * guard and a double-clicked file through it too, without importing this
+ * module. The overlay, the failure panel and the one-at-a-time rule are the
+ * document's, not the keyboard's.
+ */
 async function pieceAction(fn, verb) {
-  if (_pieceBusy) return;
+  if (_pieceBusy) return null;
   _pieceBusy = true;
   const overlay = document.createElement('div');
   overlay.className = 'dlg-overlay';
@@ -278,17 +290,25 @@ async function pieceAction(fn, verb) {
     const r = await fn((status) => { if (shown) desc().textContent = status; });
     clearTimeout(show);
     if (shown) overlay.remove();
-    if (r) S._flashDoc?.(verb === 'saving' ? 'saved' : 'opened');
+    // The chrome's word for what just happened. Only these two have one —
+    // 'clearing' (⌘N) leaves an empty session, which announces itself.
+    if (r) {
+      const done = verb === 'saving' ? 'saved' : verb === 'opening' ? 'opened' : null;
+      if (done) S._flashDoc?.(done);
+    }
+    return r;
   } catch (err) {
     clearTimeout(show);
     if (!shown) { document.body.appendChild(overlay); shown = true; }
     overlay.querySelector('.dlg-title').textContent = `${verb} failed`;
     desc().textContent = err.message;
     setTimeout(() => overlay.remove(), 4000);
+    return null;
   } finally {
     _pieceBusy = false;
   }
 }
+S._pieceAction = pieceAction;
 
 let _pieceBusy = false;
 

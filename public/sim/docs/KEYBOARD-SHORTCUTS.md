@@ -90,17 +90,18 @@ gesture, no group to aim: a bang pins where you stand, a momentary or toggle pin
 | **paint + the pin tile's key** | the looper gesture: while painting a line, hold a momentary pin tile's key and the stroke-so-far loops immediately and keeps growing with the stroke; releasing it freezes it |
 | **Q W E · ⇧Q W E** | **free.** They addressed the named pin groups, which no longer exist |
 
-**The pin buttons** live in the pinned rail, above the material they act on — **pin**, **unpin**
+**The pin buttons** live in the pinned rail, at its foot under the mix — **pin**, **unpin**
 (played by their palette tiles' keys, `↓` / `↑` by factory) and **unpin all**. They are not tools:
 they cannot be in hand and `Tab` never lands on them; they act on what already exists. They carry no state: there is one pin gesture and
 nothing to aim it at, so the label is the verb.
 
-**Pinned material groups by kind** — the rail shows a **clouds** row and a **loops** row, each
+**Pinned material groups by kind** — the rail's two BUSSES, **clouds** and **loops**, each
 appearing only when it holds something, each with **M** (mute the group) and **S** (solo it, one
-at a time). Muting a group remembers what was already silent inside it, so unmuting brings back
-only what was sounding. Every pin *parameter* — blend, crossfade, tether, slot count — is on
-**Settings → Pins**, reached from the gear in the rail's own header and from nowhere else; the
-lens reads the scratch layer and does not touch the pins.
+at a time). A pin muted by hand stays muted when its group comes back. Every pin is a TRACK above
+them (2026-09-16): the bar is its fader, its number folds its own in / out open, its M and S are
+the same pair. Blend, tether, sort and width are the rail's mode bar; the rest — when full, what a
+new pin is born with — is **Settings → Pins**, reached from the ≡ in the rail's own header and from
+nowhere else; the lens reads the scratch layer and does not touch the pins.
 
 **The palette floats over the lower sphere**, centred and large — it is the instrument, so it sits on
 the instrument's surface rather than in the chrome. The gaps around its tiles still paint (the

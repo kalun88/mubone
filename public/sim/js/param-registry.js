@@ -210,16 +210,13 @@ export const PARAM_REGISTRY = [
     set: v  => { S.commitMode = v; S._syncCommitUI?.(); },
     fmt: v  => v,
     parse: s => ['cloud', 'loop'].includes(s.trim()) ? s.trim() : null },
-  { key: 'selectionMode', label: 'select', group: 'commits', type: 'enum', options: ['nearest', 'oldest'],
+  // The rail's SORT reads this on its own tick (ui-pins.js), so there is no
+  // element to refresh here since 2026-09-16.
+  { key: 'selectionMode', label: 'select', group: 'commits', type: 'enum', options: ['nearest', 'farthest', 'oldest'],
     get: () => S.selectionMode,
-    set: v  => {
-      S.selectionMode = v;
-      const seg = document.getElementById('commitSelectionSeg');
-      if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active', b.dataset.selection === v));
-    },
+    set: v  => { S.selectionMode = v; },
     fmt: v  => v,
-    parse: s => ['nearest', 'oldest'].includes(s.trim()) ? s.trim() : null },
+    parse: s => ['nearest', 'farthest', 'oldest'].includes(s.trim()) ? s.trim() : null },
   { key: 'seedMode',         label: 'playback',      group: 'commits', type: 'enum', options: ['all', 'focus'],
     get: () => S.seedMode,
     set: v  => { S.seedMode = v; },

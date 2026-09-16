@@ -2053,8 +2053,9 @@ const PARAM_DEFS = {
   // sheet. They are pin parameters, so on 2026-08-30 they went back to being
   // only that: Settings → Pins, beside the Blend they shape. A lens reads the
   // scratch layer; it does not touch the pins, so nothing about the pins may
-  // appear on its page (Ek). The cabinet controls they drove — #improvSnapSlider
-  // and #seedAlwaysSeg — are unmoved, because that panel IS the settings page.
+  // appear on its page (Ek). The cabinet controls they drove went with the
+  // mixer (2026-09-16): blend, tether, crossfade and the selected pin are the
+  // pinned rail's mode bar now (js/ui-pins.js), writing the same S fields.
   efrom:    { label: 'from',    kind: 'efrom', sec: 'scrape' },
   // 'erases: stroke' (#243) — the brush's contact picks WHICH strokes, then
   // the whole take goes: erase a stroke by touching it anywhere. 'touch' is

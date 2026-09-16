@@ -80,7 +80,7 @@
     <div class="top-bar-left">
       <div class="top-bar-brand">
         <span class="top-bar-logo">mubone</span>
-        <span class="top-bar-version">5.0 alpha</span>
+        <span class="top-bar-version">5.2 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="mu-btn--bare top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -221,7 +221,7 @@
          wordmark's own colour without 9KB of path data in this file. -->
     <div class="tc-brand">
       <img class="tc-mark" src="logo/mark-light.svg" alt="" aria-hidden="true" width="18" height="18">
-      <b>mubone</b> <i>5.0</i>
+      <b>mubone</b> <i>5.2</i>
       <!-- The open piece, in the version's own engraved lettering. The unsaved
            mark is a DOT that is there or is not (js/piece.js) — nothing here is
            dimmed to mean anything. Empty and hidden until there is a piece. -->
@@ -360,51 +360,89 @@
       </div>
     </div>
 
-    <!-- Pinned rail — the right bar is theirs, permanently (tile layout only).
-         Rendering in js/ui-pins.js; behaviour stays in js/pins.js. -->
+    <!-- THE PINNED RAIL — the right bar is theirs, permanently (tile layout
+         only). A MIXER since 2026-09-16 (Ek: "think of it more as a mixer
+         where each pin has its own track"): one TRACK per pin, and the track
+         IS its fader — the bar's fill is the level, the material you drew sits
+         inside it laid flat, and its number is the same one the sphere wears.
+         Above the tracks, the MODE BAR holds the four things you switch during a
+         set (blend · tether · sort · width); below them the two BUSSES (clouds,
+         loops) and the pin acts. Rendering in js/ui-pins.js; behaviour stays in
+         js/pins.js. The slot tracker that sat under the header went with it
+         (Ek: "it was only to help track which was closest, which is now the top
+         item, and also when i was getting full, which is more obvious with each
+         track listed") — only the typeable max survived, in the header. -->
     <aside class="tc-rail" id="tcRail" aria-label="pinned">
       <div class="lyr-bar">
         <span class="lyr-title">Pinned</span>
-        <!-- Every pin PARAMETER is on Settings → Pins and nowhere else. The
-             door sits on the material it configures rather than in a nav the
-             player has to remember — the same rule the pin actions follow. -->
-        <button type="button" id="lyrSettings" class="lyr-bar-set"
-                title="pin settings — blend, crossfade, tether, slots"
-                aria-label="pin settings">
-          <!-- Three lines, the menu everyone knows (Ek, 2026-09-06) — the
-               gear-that-read-as-a-sun said "settings" to nobody. -->
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
-            <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
-          </svg>
-        </button>
-      </div>
-      <!-- THE SLOT TRACKER (Ek, 2026-09-14: "there used to be a tracker with
-           slots of how many pins are filled, i want to bring that back and put
-           that in the pin rail"). One pip per slot, a filled one in its pin's
-           ENGINE hue so the fullness and the mix read in one glance; the max is
-           typeable here as well as on Settings → Pins, which is the same
-           number through S.commitSlotCount. js/ui-pins.js fills it. It sits
-           OUTSIDE .lyr-bar on purpose: that bar's buttons are measured against
-           each other by npm run audit:align. -->
-      <div class="lyr-slots">
-        <span class="lyr-pips" id="lyrPips" aria-hidden="true"></span>
-        <span class="lyr-slots-n">
-          <b id="lyrSlotsFilled">0</b><span class="lyr-slots-sep">/</span><input
-            type="text" class="lyr-slots-max" id="lyrSlotsMax" value="8"
-            inputmode="numeric" maxlength="2" spellcheck="false"
-            title="how many pins can be held at once (1–16)"
-            aria-label="how many pins can be held at once">
+        <span class="lyr-bar-r">
+          <!-- The count, and the max made typeable — the same number Settings →
+               Pins holds on a slider, through S.commitSlotCount. -->
+          <span class="lyr-slots-n">
+            <b id="lyrSlotsFilled">0</b><span class="lyr-slots-sep">/</span><input
+              type="text" class="lyr-slots-max" id="lyrSlotsMax" value="8"
+              inputmode="numeric" maxlength="2" spellcheck="false"
+              title="how many pins can be held at once (1–16)"
+              aria-label="how many pins can be held at once">
+          </span>
+          <!-- The rest of the pin parameters — count, when full, what a new pin
+               is born with — are on Settings → Pins; this is their door. -->
+          <button type="button" id="lyrSettings" class="lyr-bar-set"
+                  title="pin settings — count, when full, the defaults a new pin is born with"
+                  aria-label="pin settings">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
+              <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
+            </svg>
+          </button>
         </span>
       </div>
-      <!-- The pin ROWS live with the thing they act on (#267), in the tool
-           rail's own row model since 2026-09-12: glyph, name, key; a click
-           fires, a drag places the act on the palette. js/tiles.js
-           renderPinChrome fills this. -->
-      <div class="lyr-actions" id="tcPins"></div>
+      <!-- THE MODE BAR: the four pin settings you switch mid-set, each a second
+           door onto the same S field Settings → Pins holds (js/ui-pins.js
+           keeps both sides agreeing). Blend and sort are "which one?" —
+           segmented; tether is "do you want it?" — the switch, in the SENSOR
+           hue, because what it turns on is the body driving the faders. -->
+      <div class="lyr-modes" id="lyrModes">
+        <div class="lyr-mrow">
+          <span class="lyr-eb">blend</span>
+          <span class="seg-pill" id="lyrBlend" role="group" aria-label="blend">
+            <button type="button" class="grain-seg-btn" data-v="all" title="all — every pin at equal weight">all</button>
+            <button type="button" class="grain-seg-btn" data-v="focus" title="focus — the faders follow the cursor">focus</button>
+          </span>
+          <span class="lyr-mrow-gap"></span>
+          <span class="lyr-eb lyr-eb--r">tether</span>
+          <button type="button" class="ds-sw lyr-sw" id="lyrTether" aria-pressed="false" style="--c:var(--accent-sensor)"
+                  title="tether — on, a pin keeps sounding wherever the cursor goes; off, only within its reach">
+            <span class="mu-switch"><b></b></span>
+          </button>
+        </div>
+        <div class="lyr-mrow">
+          <span class="lyr-eb">sort</span>
+          <!-- Sort IS the selected pin (S.selectionMode): row one is what unpin takes. -->
+          <span class="seg-pill" id="lyrSort" role="group" aria-label="sort — the selected pin">
+            <button type="button" class="grain-seg-btn" data-v="nearest" title="nearest to the cursor first — and it is what unpin takes">near</button>
+            <button type="button" class="grain-seg-btn" data-v="farthest" title="farthest from the cursor first — unpin lets go of what is behind you">far</button>
+            <button type="button" class="grain-seg-btn" data-v="oldest" title="oldest first — the order you placed them; nothing moves while you play">old</button>
+          </span>
+          <span class="lyr-mrow-gap"></span>
+        </div>
+        <!-- Its own row: three words and a slider do not share 296px. -->
+        <div class="lyr-mrow lyr-mrow--xf">
+          <span class="lyr-eb">width</span>
+          <span class="lyr-xf" title="how wide the handover is between two pins — 0% snaps at the midpoint (focus only)">
+            <input type="range" class="grain-slider" id="lyrXfade" min="0" max="1" step="0.01" value="0.5" aria-label="crossfade width">
+            <span class="lyr-xf-v" id="lyrXfadeV">50%</span>
+          </span>
+        </div>
+      </div>
+      <!-- The TRACKS. js/ui-pins.js builds one .lyr-trk per pin. -->
       <div class="lyr-list" id="lyrList"></div>
-      <!-- No foot (Ek, 2026-09-12, night: "remove all this helper text …
-           remove that area that it holds too"). The rules live in
-           docs/KEYBOARD-SHORTCUTS.md and in the pin buttons' own tooltips. -->
+      <!-- The two BUSSES — the groups' M and S, with the members' mean level. -->
+      <div class="lyr-bus" id="lyrBus"></div>
+      <!-- The pin ROWS live with the thing they act on (#267), in the tool
+           rail's own row model since 2026-09-12: glyph, name; a click fires, a
+           drag places the act on the palette. js/tiles.js renderPinChrome
+           fills this. At the FOOT since the mixer (2026-09-16), under the mix. -->
+      <div class="lyr-actions" id="tcPins"></div>
     </aside>
 
     <!-- The PALETTE (#250) — floats over the lower stage, centred: up to nine
@@ -958,23 +996,15 @@
             <span class="seq-section-label seq-section-toggle">params</span>
             <div class="seq-section-body">
 
+              <!-- WHAT THE RAIL DOES NOT HOLD (Ek, 2026-09-16: "any pin settings
+                   that are now on the pin rail can be removed from the settings
+                   page since it's covered on the pin rail"). Count, blend,
+                   crossfade, tether and the selected pin (the rail's sort) all
+                   left; this page keeps the rule for a full pool and what a new
+                   pin is born with. The two ramp sliders keep their ids —
+                   osc.js and midi.js write to them. -->
               <div class="set-sec-title">Slots</div>
-              <div class="set-sec-lede">How many pins there can be, and what happens when they are all taken.</div>
-
-              <div class="set-row">
-                <div class="set-row-text">
-                  <span class="set-row-title">Count</span>
-                  <span class="set-row-desc">How many pins can be held at once.</span>
-                </div>
-                <div class="set-ctl set-ctl--slider">
-                  <!-- The slider keeps the legacy `commitSlotCountSelect` id so
-                       osc.js and midi.js keep working on a
-                       range input; the numbox is the typeable copy and the two
-                       stay in sync via _wireCommitSlotCountCount(). -->
-                  <input class="grain-slider" type="range" id="commitSlotCountSelect" min="1" max="16" step="1" value="8">
-                  <input type="text" class="grain-numbox" id="commitSlotCountNum" value="8">
-                </div>
-              </div>
+              <div class="set-sec-lede">What happens when every slot is taken. How many there are is the number in the rail's header.</div>
 
               <div class="set-row">
                 <div class="set-row-text">
@@ -990,57 +1020,28 @@
                 </div>
               </div>
 
-              <div class="set-row">
-                <div class="set-row-text">
-                  <span class="set-row-title">Selected Pin</span>
-                  <span class="set-row-desc">The pin unpin takes, marked in the rail.</span>
-                </div>
-                <div class="set-ctl">
-                  <div class="grain-seg" id="commitSelectionSeg">
-                    <button class="grain-seg-btn active" data-selection="nearest">Nearest</button>
-                    <button class="grain-seg-btn" data-selection="farthest">Farthest</button>
-                    <button class="grain-seg-btn" data-selection="oldest">Oldest</button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="set-sec-title">Playback</div>
-              <div class="set-sec-lede">How the held pins sound together.</div>
+              <div class="set-sec-title">A New Pin</div>
+              <div class="set-sec-lede">What a pin is born with. Each one keeps its own after, in the rail.</div>
 
               <div class="set-row">
                 <div class="set-row-text">
-                  <span class="set-row-title">Blend</span>
-                  <span class="set-row-desc">All plays every pin at equal weight; Focus leans toward the closest.</span>
-                </div>
-                <div class="set-ctl">
-                  <div class="grain-seg" id="seedModeSelect">
-                    <button class="grain-seg-btn active" data-mode="all">All</button>
-                    <button class="grain-seg-btn" data-mode="focus">Focus</button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="set-row set-row--off" id="improvSnapRow" aria-disabled="true">
-                <div class="set-row-text">
-                  <span class="set-row-title">Crossfade</span>
-                  <span class="set-row-desc">How wide the handover is between two pins — 0% snaps at the midpoint.</span>
+                  <span class="set-row-title">In</span>
+                  <span class="set-row-desc">How a new pin comes up — on pin, and on unmute.</span>
                 </div>
                 <div class="set-ctl set-ctl--slider">
-                  <input class="grain-slider" type="range" id="improvSnapSlider" min="0" max="1" step="0.01" value="0">
-                  <input type="text" class="grain-numbox" id="improvSnapNum" value="0%" readonly>
+                  <input class="grain-slider" type="range" id="seedAttackSlider" min="0" max="10" step="0.1" value="0">
+                  <input type="text" class="grain-numbox" id="seedAttackNum" value="0.0s" readonly>
                 </div>
               </div>
 
-              <div class="set-row set-row--off" id="improvAlwaysRow" aria-disabled="true">
+              <div class="set-row">
                 <div class="set-row-text">
-                  <span class="set-row-title">Tether</span>
-                  <span class="set-row-desc">On, a pin keeps sounding wherever the cursor goes; off, only within its radius.</span>
+                  <span class="set-row-title">Out</span>
+                  <span class="set-row-desc">How a new pin leaves — on unpin, and on mute.</span>
                 </div>
-                <div class="set-ctl">
-                  <div class="grain-seg" id="seedAlwaysSeg">
-                    <button class="grain-seg-btn active" data-always="on">On</button>
-                    <button class="grain-seg-btn" data-always="off">Off</button>
-                  </div>
+                <div class="set-ctl set-ctl--slider">
+                  <input class="grain-slider" type="range" id="seedReleaseSlider" min="0" max="10" step="0.1" value="0">
+                  <input type="text" class="grain-numbox" id="seedReleaseNum" value="0.0s" readonly>
                 </div>
               </div>
 
@@ -1060,22 +1061,8 @@
             </div>
           </div>
 
-          <!-- Cloud params (collapsible) -->
-          <div class="seq-section seq-section--collapsible" data-collapse-key="commitCloudParams">
-            <span class="seq-section-label seq-section-toggle">cloud</span>
-            <div class="seq-section-body">
-              <div class="grain-row" title="fade in — fade-in time when committing a cloud&#10;0s = instant, up to 10s swell">
-                <span class="grain-label">fade in</span>
-                <input class="grain-slider" type="range" id="seedAttackSlider" min="0" max="10" step="0.1" value="0">
-                <input type="text" class="grain-numbox" id="seedAttackNum" value="0.0s" readonly>
-              </div>
-              <div class="grain-row" title="fade out — fade-out time when releasing a cloud&#10;0s = instant, up to 10s fade">
-                <span class="grain-label">fade out</span>
-                <input class="grain-slider" type="range" id="seedReleaseSlider" min="0" max="10" step="0.1" value="0">
-                <input type="text" class="grain-numbox" id="seedReleaseNum" value="0.0s" readonly>
-              </div>
-            </div>
-          </div>
+          <!-- The cloud's two ramps moved up into the params page as In / Out
+               (2026-09-16) — they are what every new pin is born with now. -->
 
           <!-- Loop params (collapsible) -->
           <div class="seq-section seq-section--collapsible" data-collapse-key="commitLoopParams">

@@ -8,6 +8,27 @@ How to use this file: find the heading for the area you are about to touch and r
 
 ## The instrument — tiles, palette, button, pins, latency
 
+- **The pinned rail is a mixer, and the track is its fader** (`js/ui-pins.js`, 2026-09-16; designed on
+  the canvas in `docs/mockups/pins-rail/`). One 32px bar per pin. Its FILL is the level, read from the
+  audio every frame — a loop's `_gainNode × _muteGain × _pinGain`, a cloud's envelope × focus weight ×
+  volume — so the bar is the truth, never a copy; dragging it writes `grainParams.volume`, the one
+  volume both kinds already had. The MATERIAL you drew sits inside the bar laid flat, in the pin's slot
+  colour (the sphere's), each mark at the size its rms gives it there; a loop is marks on one line, a
+  cloud loose dots — the shape says the kind, so the words and the bearing readout went. The NUMBER is
+  the engine hue, and folds the pin's own `fadeIn` / `fadeOut` open; **a mute rides those ramps** the
+  same as an unpin, so a pin set to leave over ten seconds leaves that way by either verb
+  (`composer.js`), and the playhead runs on through it — the DJ mute made visible. **Sort IS
+  `S.selectionMode`**: nearest / farthest / oldest, rows laid out by the key `selectedPinSlot` uses, so
+  row one is always what unpin takes and the half moon never disagrees with the order; under nearest in
+  focus the rail is a proximity meter. The mode bar (blend · tether · sort · width) is the door to the
+  four settings switched mid-set, each writing the S field it always had; the rail polls S on its tick,
+  so OSC, MIDI and the settings page land in it without a hook. **Focus is said by the fader edge
+  turning `--accent-sensor`** — "the body is driving it" is literally true — never by an ember segment.
+  The two groups are the busses at the foot, their fill the members' mean level (derived, no new
+  state). The slot tracker is gone: the list is the count, row one the nearest, and a pin above the max
+  wears its number outlined. Settings → Pins keeps only what the rail does not hold — when full, and
+  what a new pin is born with (Ek: "any pin settings that are now on the pin rail can be removed").
+
 - **A tile is the preset** — every grain tile owns its whole block and persists it (2026-09-03).
   The 20-slot patch bank, its table editor, param locks and cloud morph are in
   `sandbox/sunset-2026-09-03/` (#325); `js/param-registry.js` keeps the sparse parameter
@@ -497,6 +518,20 @@ How to use this file: find the heading for the area you are about to touch and r
   threshold's position — two frames over identical marks, one played slowly and once each, the other
   short and hammered, must issue the same arcs at the same alpha, and eight marks must add eight
   arcs rather than sixteen.
+
+- **Bright means SOUNDING, and the MARK carries that, not the cap** (2026-09-15, Ek: "when i turn
+  the lens off … the pinned clouds still are audible as i expect but they are greyed out in the
+  viz"). With the lens capped the cursor posts no candidates and `grain.js` simulates the onsets it
+  would have had, so you can still see what the cursor is over; those entries are tagged `ghost` in
+  `activeGrainMap` and the renderer draws them at a quarter weight. It used to dim on `S.scanMuted`
+  instead — the whole batch, in one `globalAlpha` — and a PINNED CLOUD goes on playing under the cap,
+  so the marks it was audibly granulating were greyed along with the simulation. The tag is the fix
+  because the two are indistinguishable from outside: the worklet's feedback is a flat list of
+  particle ids and the cloud's grains and the cursor's carry the same white tag. perfMode had the
+  same bug pointing the other way — no faint pass at all, so it lit the simulation at full weight —
+  and now treats a ghost as not active. **A mark that is lit and silent is a lie either way round.**
+  The two cannot collide on one mark: a pinned cloud claims its material, the cursor's pool skips it,
+  and the preview is drawn from that pool.
 
 - **k is a CEILING with a live count beside it, and `fill` is one end of it** (2026-09-07, Ek:
   "K is more of the max pool size — so we can set it at a higher number and once it hits it, then i
@@ -1000,6 +1035,8 @@ the readouts. Writing the state raw sets the threshold correctly and leaves ever
 mirror stale; `cc-mirror-audit` holds this now, and the gate's mirror PAIR was
 missing from that suite's list entirely until this round.
 
+**The figure is the control, so the DEFAULTS are whatever it was left at** (Ek, 2026-09-15, twice in one day). The first pass set 2.8 px at −42 dB with the gate just under it at −44, to close a band where marks landed but could only ever draw at minimum size. The second dropped the quiet end to the floor the figure allows — 1.0 px at −54 dB, the gate at −53 — which closes the same band from the other side and widens the loudness window from 31 dB to 43, so quiet playing spends its whole range inside the ramp instead of arriving half-grown. The gate now sits one dB ABOVE the foot of the ramp rather than under it; the dB beneath belongs to tape, which is never gated. Both passes are the same ruling: Ek drags the handles, and what he leaves them at is what `state.js` ships. Note the defaults only reach a machine with no saved calibration — `mubone_viz_calibration` and `mubone_audio_defaults` override them at boot.
+
 **The figure draws the tape line too, because the numbers are not grain-only.**
 The same four values set three materials through three formulas: a grain dot's
 RADIUS, a tape line's WIDTH (its own 1.35 exponent, so a line blooms much later
@@ -1109,6 +1146,10 @@ Covered by `pins-audit.js` § H and § L and `engine-audit.js` § D.
 **Nothing migrates** (Ek, 2026-09-14). A piece is v1 and reads v1; every legacy read path the old session format carried went with it — the v1–v5 particle indices, the v≤4 embedded settings, the v<8 voicing fallback, the v7–v9 layer set, `_preGroupOn`/`_preLayerOn`, the pre-v9 `activeSampleIndex`, `migrateBlockKeys` on a stored block, the pre-2026-09-13 colour repair — along with the pins-audit § G tests that asserted them. This is the no-compat-hedging rule applied to a file format: a reader kept for files that no longer exist is a persistent fallback, and it is the thing that made the old format's import path the most delicate code in the app. `docs/EXPORT-IMPORT-AUDIT-2026-08.md` keeps the history as a record.
 
 **Dirty is the manifest, hashed, and nothing runs on a timer** (Ek, 2026-09-14: "this a performance app i dont want it to try to save every 2 min or something. it needs to be peak performance … maybe if the app closes, then a warning to save or not can come up"). No autosave, no crash recovery file, one quit guard. The signature being the manifest itself is what stops it going stale as the document grows — a field that is saved is a field that is signed — and it is why the container work had to come first: with the audio outside the manifest, the manifest is small enough to hash. Two measurements shaped it. A freshly booted mubone compared dirty against its own baseline, because the app goes on settling after the document takes it, so an UNTITLED session with no material is never dirty whatever the signature says (a piece WITH a path is compared honestly — opening one and erasing it is worth being asked about). And the signature costs 1.6 ms at a thousand marks, 11.6 at ten thousand, 101 at thirty thousand on a loaded instance — fine at the quit, where the answer must be exact and the pause costs nothing, and far too expensive to watch the document with. **So there are two signatures** (Ek, 2026-09-14: "once i open or change the doc, if it's already saved as, can there be an indication … to show that new things aren't saved?" — the first build refreshed the mark only at a save, an open and a window blur, and an indication you only see after clicking away is not an indication). `quickSignature()` writes the mark array as its length and version — the pair `renderer.js` already trusts as its own cache key — and costs 0.05 ms at thirty thousand marks, so the chrome polls it twice a second for 0.01% of a core, and everything that is not a mark is still exact: a knob moved with nothing painted shows. What it can miss is a mark edited in place by code that bumps neither, which is why the quit guard asks the exact one. **It is deliberately not event-driven**: the document has no single mutation point — every knob writes its own field — so a mark driven by the seams anyone remembered to call would go on saying "saved" after the one they forgot. Audio is identified by object identity for this, never content-hashed; its frame count rides in the id so a take that grew in place still reads as changed. **The mark is the only dot in the line**: a separator dot before the name was the first try and failed at exactly what it was for — two faint dots either side of a word read as decoration, and neither one could be the one that meant something. The gap separates now, and the dot left over is brighter and bigger than the name it follows, because it is the signal and the name is only what the signal is about.
+
+**A piece opens the way it was played, and nothing lets go of it in silence** (2026-09-15, the debugging round after the format shipped). Five faults, one shape: the file was right and the restore was not. A pinned LOOP came back `playing: false` — "the performer starts it" — and no control in the app can set it true (only the pin gesture and undo do; composer mode rides `composerMuted`, and the loop's own stroke stays CLAIMED so the cursor cannot fire its trigger either), so every tape line in an opened piece was visible, silent and untouchable while the clouds, which restore playing, sounded. A loop is MUTED, never stopped — the composer ruling above — so it comes back playing and `composerMuted` carries the arrangement's silence. The take's `edges` and `markSpan` were not saved, so "the loop follows the button" was quietly undone on every open and each take was re-cut to its paint ticks (measured: a 0.04–1.96 s region came back 0.10–1.90, and a re-pinned loop is then a different LENGTH than the one saved). `_gapAfter` was not saved, so an erased hole came back drawn closed and the trigger gate would fire from inside it. The dirty signature included `playheadIndex`, which the audio clock moves every tick, so any piece holding a running loop read unsaved one tick after it was saved and the quit guard offered to save a piece nobody had touched — the hash now drops what moves on its own, while the file still carries it. And `refreshAfterOpen` ran the patch fourth inside one `try` that began with a UI rebuild, so a throw anywhere in the screens left the piece playing on the PREVIOUS piece's grain block behind a `console.warn`; sound is applied first now, each half guarded on its own. **The cap is not saved and must not survive either**: opening a piece into a muted scan reads as a broken file, so the open lifts it through `setScanMuted`.
+
+**The quit is not the only door** (2026-09-15). ⌘N, ⌘O, Open Recent and a double-clicked file each discarded an unsaved session without a word — the exact loss the quit guard exists to prevent, reachable by four other keys, in an app with no autosave. The ask lives in `js/piece.js` at the top of `newPiece` / `openPiece` / `openPieceAt` rather than in the File menu, because the menu is not the only caller: the keyboard, the recent list and the Finder all arrive at those three functions. It is the quit guard's own three-button box (`doc-confirm-discard` → `askAboutUnsaved`, one wording for both), and Save writes first — cancelled or failed there, the open is cancelled too. `S._askDiscard` is the audit's seam, since a native modal cannot be answered by a script. **Every document command goes through one wrapper** (`S._pieceAction`, `ui-export.js`): on macOS a menu accelerator takes ⌘S before the page sees it, so the path Ek actually uses had no progress panel on a long write, no failure panel (a disk error died in a main-process catch — quit, Save, and the window just stayed open saying nothing) and no re-entrancy guard. Underneath, two saves of one piece shared one `<dest>.part`: the second truncated the first mid-stream and both renamed the wreck over the document, so `docWriteBegin` refuses a second writer per destination and the temp name carries the write id.
 
 **The main process owns the menu and the guard, and asks the renderer everything** (`electron-main.js`, 2026-09-14). The File menu is the only menu mubone defines — New, Open, Open Recent, Save, Save As — with the rest left as Electron's roles so ⌘Q, services and the window list keep working; a double-clicked `.mubone` arrives on `open-file` and goes through the same door, held until the window exists on a cold start. None of it owns state: main cannot reach the module graph, so the document answers on `window.__mubonePiece` with three questions (state, save, run). The quit guard asks at the moment of the close rather than reading a flag pushed earlier, so the answer can never be one edit stale, and a Save that raises its own dialog and is cancelled cancels the quit too. The file IPC underneath is deliberately narrow — two native dialogs, a ranged read, a streamed write — and a write lands through a `<path>.part` renamed on close, because a piece can be hundreds of MB and a crash halfway through must leave the previous document intact rather than a truncated one.
 

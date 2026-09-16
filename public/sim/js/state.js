@@ -1030,12 +1030,14 @@ export const S = {
   // SET ON THE FIGURE, BY EAR AND BY EYE (Ek, 2026-09-15). These four and the
   // paint gate below are one curve — Settings -> Visuals draws it — and Ek set
   // it by dragging the handles and then asked for what he had as the default.
-  // It is a WIDER range than the old 3 -> 22: a 2.8px floor is nearer a speck
-  // than a dot, the 36px ceiling is half again as large, and the loudness
-  // window is 31 dB rather than 36, so the same playing spans more of the size
-  // range. -42 dB and -11 dB, in the unit the figure reads in; the state stays
-  // linear because renderer.js wants it linear.
-  vizMinSize:    2.8,       // particle min radius (px) — quiet floor, overrides PARTICLE_BASE_SIZE
+  // The quiet end went to the FLOOR of what the figure allows on the second
+  // pass: 1.0px at -54 dB, where the first pass had put it at 2.8px at -42.
+  // A 1px radius is a speck — the smallest mark the ramp can make — and it
+  // starts 12 dB quieter, so the window is 43 dB rather than 31: quiet playing
+  // now spends its whole range inside the ramp instead of arriving already
+  // half-grown. The 36px ceiling at -11 dB is untouched. dB is the unit the
+  // figure reads in; the state stays linear because renderer.js wants it linear.
+  vizMinSize:    1.0,       // particle min radius (px) — quiet floor, overrides PARTICLE_BASE_SIZE
   vizMaxSize:    36,        // particle max radius (px) — loud ceiling, overrides PARTICLE_MAX_SIZE
   // At the old 120px ceiling a loud grain covered a quarter of the sphere, so
   // paint read as fog and featuresToColor's hue was lost to overlap. Even at 36
@@ -1065,14 +1067,16 @@ export const S = {
   camPull:       0,         // camera distance from centre, in SPHERE_RADIUS units
   // Calibration ranges — raw feature values outside these clip to 0 or 1.
   // Users adjust via the viz panel sliders to match their input level / content.
-  // THE GATE SITS JUST UNDER THE RAMP (Ek, 2026-09-15): -44 dB against the
-  // ramp's -42, so almost everything that lands is already on the curve rather
-  // than piled on the floor. It was -54, a full 8 dB below, which left a band
-  // where marks were deposited but could only ever draw at minimum size — the
-  // band the figure made visible for the first time. Raising it also means less
-  // of the room is painted at all.
-  paintGateThreshold: 0.0063,    // -44 dB · RMS below this → particle not created (paint gate)
-  vizRmsMin:     0.0079,    // -42 dB · quiet floor (below this → smallest particle)
+  // THE GATE SITS AT THE FOOT OF THE RAMP (Ek, 2026-09-15, second pass on the
+  // figure): -53 dB, one dB above the ramp's own -54. The first pass put it at
+  // -44 against a ramp starting at -42 — the gate UNDER the ramp — to close a
+  // band where marks landed but could only ever draw at minimum size. With both
+  // ends dropped to the floor the band closes from the other side and the gate
+  // is the quieter thing it was: everything a grain paints is on the curve, and
+  // the one dB beneath belongs to TAPE, which is never gated (ui-viz.js draws
+  // the tape line under the gate for exactly that reason).
+  paintGateThreshold: 0.0022,    // -53 dB · RMS below this → particle not created (paint gate)
+  vizRmsMin:     0.0020,    // -54 dB · quiet floor (below this → smallest particle)
   vizRmsMax:     0.282,     // -11 dB · loud ceiling (above this → largest particle)
   // ── THE COLOUR LEGEND, FIXED (Ek, 2026-09-13) ─────────────────────────
   // "it should be very predictable so that i see yellow every time and my

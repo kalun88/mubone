@@ -80,7 +80,15 @@ const ONESHOT_FADE_S = 0.005;
 
 export function rand(min, max) { return min + Math.random() * (max - min); }
 
-// activeGrainMap: particle → { expiry, glowColor } — shared with renderer
+// activeGrainMap: particle → { expiry, glowColor, ghost } — shared with renderer
+//
+// `ghost` is a mark that is LIT BUT NOT SOUNDING: the muted-scan simulation
+// below draws what the cursor would be reading with the cap on. It has to be
+// its own bit rather than a mood the renderer infers from `S.scanMuted`,
+// because a PINNED CLOUD goes on sounding with the lens off — and the renderer,
+// asking the cap instead of the mark, dimmed the cloud's live marks along with
+// the simulation (Ek, 2026-09-15: "the pinned clouds still are audible as i
+// expect but they are greyed out in the viz").
 export let activeGrainMap = new Map();
 
 // ── The glow map's FLOOR (Ek, 2026-09-06) ──────────────────────────────────
@@ -94,11 +102,16 @@ export let activeGrainMap = new Map();
 // i want the same"); renderer.js, the glow pass, has that reasoning. A hit on
 // a live entry updates it in place — the old set() allocated per grain.
 export const GLOW_MIN_MS = 80;
-export function markGlow(p, durMs, glowColor = '#ffffff', now = performance.now()) {
+export function markGlow(p, durMs, glowColor = '#ffffff', now = performance.now(), ghost = false) {
   const life = Math.max(durMs, GLOW_MIN_MS);
   const e = activeGrainMap.get(p);
-  if (e && e.glowColor === glowColor) e.expiry = now + life;
-  else activeGrainMap.set(p, { expiry: now + life, glowColor });
+  // The LATEST event decides, on a refresh as on a fresh entry — a mark that
+  // sounded a moment ago and is now only being previewed is being previewed.
+  // The two cannot collide on one mark anyway: a pinned cloud CLAIMS its
+  // material and the cursor's pool skips it (_refreshCloudClaims), and the
+  // preview is drawn from that same pool.
+  if (e && e.glowColor === glowColor) { e.expiry = now + life; e.ghost = ghost; }
+  else activeGrainMap.set(p, { expiry: now + life, glowColor, ghost });
 }
 
 /** Stop all in-flight grain source nodes immediately (erase-all, undo).
@@ -990,7 +1003,10 @@ export function scheduleGrains() {
             // voicing), as the live glow does; the simulated onset clock is
             // the brush's, which is what a muted scan would fire at.
             const v = p._vo ? voicingById(p._vo) : null;
-            markGlow(p, v ? (v.params.duration ?? 0.1) * 1000 : durMs, '#ffffff', now);
+            // GHOST: lit, not sounding. The renderer draws these faint and
+            // everything else at full weight, so a pinned cloud playing under
+            // a capped lens stays bright.
+            markGlow(p, v ? (v.params.duration ?? 0.1) * 1000 : durMs, '#ffffff', now, true);
           }
         }
       } else {
@@ -1427,6 +1443,18 @@ export function scheduleGrains() {
       const pinW = (!isTrigger && S.commitPlayback === 'focus') ? (S._pinWeights[si] || 0) : 1;
       try { seq._pinGain.gain.setTargetAtTime(pinW, S.audioCtx.currentTime, 0.015); }
       catch (e) { dlog('pinweight', e.message); }
+    }
+    // ── The loop's LEVEL follows its fader (2026-09-16) ──────────────────
+    // `grainParams.volume` was read once, when the source was built; the rail's
+    // track is a fader on it now, so the gain node follows it — only when it
+    // moved, because the same node carries the per-pass decay (below) and the
+    // stop fades, and a write every tick would fight both.
+    if (seq._gainNode && S.audioCtx && !isTrigger && !seq._playingToEnd && !seq._fadingOut && !seq._selfKilled) {
+      const vol = seq.grainParams?.volume ?? 1;
+      if (seq._lastVol !== vol) {
+        seq._lastVol = vol;
+        try { seq._gainNode.gain.setTargetAtTime(vol, S.audioCtx.currentTime, 0.015); } catch (_) {}
+      }
     }
     // Mute loops beyond active slot count (data preserved, audio paused).
     // Full node release, not just stop (perf audit M2) — idempotent, cheap

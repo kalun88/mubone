@@ -1,0 +1,125 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body { background: #0b0a09; font-family: 'Urbanist', 'Helvetica Neue', Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #c5c0b9; }
+    a { color: #e07b3c; } a:hover { color: #f0955c; }
+    .eb { font-size: 11.04px; letter-spacing: 0.18em; text-transform: uppercase; color: #aba59d; }
+    .h { font-size: 17.92px; color: #e4ddd0; letter-spacing: 0.02em; }
+    .p { font-size: 12.48px; line-height: 1.5; color: #9d978e; text-wrap: pretty; }
+    .p b { font-weight: 500; color: #e4ddd0; }
+    .bar { position: relative; height: 32px; width: 296px; border-radius: 2px; overflow: hidden; background: rgba(255,240,224,0.03); }
+    .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; opacity: 0.18; }
+    .bar .edge { position: absolute; top: 0; bottom: 0; width: 2px; right: 0; }
+    .bar .num { position: absolute; left: 0; top: 0; width: 24px; height: 32px; display: grid; place-items: center; font-size: 12.48px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .bar .mat { position: absolute; left: 26px; top: 0; height: 32px; width: 188px; }
+    .bar canvas { display: block; }
+    .bar .ph { position: absolute; top: 0; bottom: 0; width: 1px; left: 26px; opacity: 0.95; }
+    .bar .ph::before { content: ''; position: absolute; top: 0; left: -1px; width: 3px; height: 3px; background: inherit; }
+    .bar .ms { position: absolute; right: 4px; top: 7px; display: flex; gap: 3px; }
+    .bar .ms b { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 2px; background: rgba(255,240,224,0.05); color: #857e74; font-size: 10.24px; font-weight: 600; }
+    .ovd { position: absolute; right: 82px; top: 13px; display: flex; gap: 3px; }
+    .ovd i { width: 5px; height: 5px; border-radius: 50%; display: block; }
+    .cell { display: flex; flex-direction: column; gap: 8px; width: 296px; }
+    .cell .cap { font-size: 12.48px; line-height: 1.45; color: #9d978e; }
+    .cell .cap b { font-weight: 500; color: #e4ddd0; }
+  </style>
+</helmet>
+
+<div style="position: relative; width: 1000px; height: 440px; background: #0b0a09; padding: 32px 40px;">
+  <div style="display: flex; align-items: baseline; gap: 14px; margin-bottom: 20px;">
+    <span class="h">What you drew, laid flat</span>
+    <span class="p">The word <b>loop</b> and the word <b>cloud</b> are gone. The shape says it.</span>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px 16px;">
+    <div class="cell">
+      <div class="bar" data-m="cloud">
+        <div class="fill" style="background: #dbab7e;"></div><div class="num" style="color: #e8a030;">2</div>
+        <div class="mat"><canvas width="376" height="64" style="width: 188px; height: 32px;"></canvas></div>
+        <div class="edge" style="background: #dbab7e;"></div><div class="ms"><b>M</b><b>S</b></div>
+      </div>
+      <div class="cap"><b>a cloud.</b> Loose dots — the marks the lens read when you pinned, each at the size it has on the sphere. No playhead; it does not travel.</div>
+    </div>
+    <div class="cell">
+      <div class="bar" data-m="moving">
+        <div class="fill" style="background: #b9bb7d;"></div><div class="num" style="color: #e8a030;">4</div>
+        <div class="mat"><canvas width="376" height="64" style="width: 188px; height: 32px;"></canvas></div>
+        <div class="ph" style="background: #b9bb7d; transform: translateX(70px);"></div>
+        <div class="edge" style="background: #b9bb7d;"></div><div class="ms"><b>M</b><b>S</b></div>
+      </div>
+      <div class="cap"><b>a moving cloud.</b> The dots drift because the pin does — it was drawn as a held path. The playhead walks that path, ping-pong or forward.</div>
+    </div>
+    <div class="cell">
+      <div class="bar" data-m="loop">
+        <div class="fill" style="background: #e4a58d;"></div><div class="num" style="color: #f2569e;">1</div>
+        <div class="mat"><canvas width="376" height="64" style="width: 188px; height: 32px;"></canvas></div>
+        <div class="ph" style="background: #e4a58d; transform: translateX(120px);"></div>
+        <div class="edge" style="background: #e4a58d;"></div><div class="ms"><b>M</b><b>S</b></div>
+      </div>
+      <div class="cap"><b>a loop.</b> The same marks, on one connected line — tape plays a take whole. The bigger a mark, the louder that moment.</div>
+    </div>
+    <div class="cell">
+      <div class="bar" data-m="loop2">
+        <div class="fill" style="background: #ccb378;"></div><div class="num" style="color: #f2569e;">3</div>
+        <div class="mat"><canvas width="376" height="64" style="width: 188px; height: 32px;"></canvas></div>
+        <div class="ph" style="background: #ccb378; transform: translateX(40px);"></div>
+        <div class="ovd"><i style="background: #ccb378;"></i><i style="background: #ccb378;"></i></div>
+        <div class="edge" style="background: #ccb378;"></div><div class="ms"><b>M</b><b>S</b></div>
+      </div>
+      <div class="cap"><b>a loop with two overdubs.</b> Each pass is a fainter line under the master, and the two dots at the right count them, as today.</div>
+    </div>
+    <div class="cell" style="grid-column: span 2;">
+      <div style="display: flex; gap: 32px; align-items: flex-start;">
+        <div style="display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 12px; border-radius: 2px; background: rgba(255,240,224,0.03);">
+          <span class="eb" style="color: #857e74;">quiet</span>
+          <svg width="120" height="16" viewBox="0 0 120 16" style="display: block;"><circle cx="8" cy="8" r="0.9" fill="#e4ddd0"></circle><circle cx="28" cy="8" r="1.4" fill="#e4ddd0"></circle><circle cx="48" cy="8" r="1.9" fill="#e4ddd0"></circle><circle cx="68" cy="8" r="2.4" fill="#e4ddd0"></circle><circle cx="88" cy="8" r="2.9" fill="#e4ddd0"></circle><circle cx="110" cy="8" r="3.5" fill="#e4ddd0"></circle></svg>
+          <span class="eb" style="color: #857e74;">loud</span>
+        </div>
+        <div class="cap" style="flex: 1;"><b>two colours, two facts.</b> The number is in the <span style="color: #e8a030;">engine hue</span> or the <span style="color: #f2569e;">tape hue</span> — the kind, the same colour the slot tracker cell wears. The material and the fill are in the pin's <span style="color: #ccb378;">own slot colour</span> — the same colour it has on the sphere, so you can find it there by eye. A tweak on the live artboard tries the number in the slot colour instead.</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1000,"height":440}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+  componentDidMount() {
+    const rnd = (seed) => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const mk = (r, n) => Array.from({ length: n }, (_, i) => ({ t: (i + 0.5) / n, a: 0.25 + 0.75 * Math.pow(r(), 1.4), y: r() }));
+    const draw = (cv, type, marks, color, ovd) => {
+      const ctx = cv.getContext('2d'); const W = 188, H = 32;
+      ctx.setTransform(2, 0, 0, 2, 0, 0); ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = color; ctx.strokeStyle = color;
+      const mx = (m) => 4 + m.t * (W - 8);
+      if (type === 'loop') {
+        ctx.lineWidth = 1.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        const my = (m) => 16 + (m.y - 0.5) * 8;
+        for (let L = ovd; L >= 0; L--) { ctx.globalAlpha = L === 0 ? 0.9 : 0.35; ctx.beginPath(); marks.forEach((m, i) => { const x = mx(m), y = my(m) + L * 3.2; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); }
+        ctx.globalAlpha = 1; for (const m of marks) { ctx.beginPath(); ctx.arc(mx(m), my(m), 0.8 + m.a * 2.2, 0, 6.283); ctx.fill(); }
+      } else {
+        for (const m of marks) {
+          const y = type === 'moving' ? 16 + Math.sin(m.t * 6.2) * 7 + (m.y - 0.5) * 6 : 6 + m.y * 20;
+          ctx.globalAlpha = 0.55 + m.a * 0.45; ctx.beginPath(); ctx.arc(mx(m), y, 0.9 + m.a * 2.6, 0, 6.283); ctx.fill();
+        }
+      }
+    };
+    draw(document.querySelector('[data-m="cloud"] canvas'), 'cloud', mk(rnd(23), 26), '#dbab7e', 0);
+    draw(document.querySelector('[data-m="moving"] canvas'), 'moving', mk(rnd(41), 30), '#b9bb7d', 0);
+    draw(document.querySelector('[data-m="loop"] canvas'), 'loop', mk(rnd(11), 34), '#e4a58d', 0);
+    draw(document.querySelector('[data-m="loop2"] canvas'), 'loop', mk(rnd(37), 22), '#ccb378', 2);
+  }
+}
+</script>
+</body>
+</html>

@@ -30,6 +30,7 @@ import * as history from './history.js';
 import { restoreTrigger, stopTriggerAudio } from './trigger.js';
 import { exportGroups, restoreGroups, applyMix } from './pins.js';
 import { exportVoicings, restoreVoicings } from './brush-voicing.js';
+import { setScanMuted } from './ui-meters.js';
 import {
   AudioTable, writePiece, readPiece,
   pathSink, pathSource, blobSink, blobSource,
@@ -92,8 +93,18 @@ function buildManifest(audio, { particleWitness = false } = {}) {
     })),
 
     // ── Live recording buffers ──
+    // THE TAKE'S OWN EDGES TRAVEL WITH IT. `edges` is the region the BUTTON
+    // described — press to release, shifted by the input latency (audio.js) —
+    // and `markSpan` is what the marks covered, the pair that says the stroke
+    // is still untrimmed. Loops and line triggers read them over the marks
+    // (trigger.js _applyCluster, ui-presets.js buildLoopPayload), so a piece
+    // that dropped them came back with every take re-cut to its paint ticks:
+    // a different head, a different tail, and a re-pinned loop a different
+    // LENGTH than the one saved (~12 ms on Ek's own take, 2026-09-15).
     liveBuffers: (S.liveRecBuffers || []).map(slot => ({
       audio: audio.idFor(slot.buffer || slot.liveBuffer),
+      ...(slot.edges    ? { edges:    { startS: slot.edges.startS, endS: slot.edges.endS } } : {}),
+      ...(slot.markSpan ? { markSpan: [slot.markSpan[0], slot.markSpan[1]] } : {}),
     })),
 
     // ── Particles ──
@@ -127,6 +138,12 @@ function buildManifest(audio, { particleWitness = false } = {}) {
       // Path order for a looping sample trigger stroke (#247) — its grainStart
       // rewinds each pass, so without takeT the stroke re-meshes on open.
       ...(p.takeT !== undefined ? { takeT: p.takeT } : {}),
+      // THE HOLE AN ERASE LEFT (erase.js stamps the survivor before each one).
+      // Same "write only when set" reasoning as `trig`. Both the ribbon and
+      // the trigger gate refuse to pair across it, so a piece that dropped it
+      // came back with its erased gaps drawn closed again — and the gate
+      // firing from inside a hole you had erased.
+      ...(p._gapAfter ? { gap: 1 } : {}),
     })),
 
     // ── Pins (unified cloud + loop slots) ──
@@ -156,6 +173,9 @@ function buildManifest(audio, { particleWitness = false } = {}) {
           radiusFadeCurve:   slot.radiusFadeCurve,
           _envAttack:        slot._envAttack,
           _envRelease:       slot._envRelease,
+          // The pin's own two ramps (2026-09-16).
+          fadeIn:            slot.fadeIn,
+          fadeOut:           slot.fadeOut,
           // Composer mode can hold a cloud at silence with its slot intact.
           // Without these two the arrangement is lost and every pin comes back
           // sounding at once.
@@ -187,6 +207,8 @@ function buildManifest(audio, { particleWitness = false } = {}) {
           loopStart:     slot.loopStart,
           loopEnd:       slot.loopEnd,
           grainParams:   slot.grainParams,
+          fadeIn:        slot.fadeIn,
+          fadeOut:       slot.fadeOut,
           audio:         audio.idFor(slot.buffer),
           particles:     slot.particles.map(_packParticle),
           // The TAKES, not the layers — a layer is rebuilt from its take and
@@ -324,7 +346,18 @@ async function applyManifest(data, audio) {
   // 2. Live buffers
   S.liveRecBuffers = [];
   for (const slot of (data.liveBuffers || [])) {
-    S.liveRecBuffers.push({ buffer: bufFor(slot.audio), liveBuffer: null, grainCursor: 0 });
+    const take = { buffer: bufFor(slot.audio), liveBuffer: null, grainCursor: 0 };
+    // Both or neither: the two are read as a PAIR (a stroke is untrimmed when
+    // its marks still span markSpan), so half of it would be read as no answer
+    // anyway. Validated, since a hand-edited file reaching _applyCluster with
+    // a string here would re-cut every take to nonsense.
+    const e = slot.edges, ms = slot.markSpan;
+    if (e && Number.isFinite(e.startS) && Number.isFinite(e.endS) && e.endS > e.startS &&
+        Array.isArray(ms) && ms.length === 2 && Number.isFinite(ms[0]) && Number.isFinite(ms[1])) {
+      take.edges    = { startS: e.startS, endS: e.endS };
+      take.markSpan = [ms[0], ms[1]];
+    }
+    S.liveRecBuffers.push(take);
   }
 
   // 3. Particles
@@ -354,6 +387,7 @@ async function applyManifest(data, audio) {
     if (p.source === 'live')   particle.liveBufferIdx = p.liveBufferIdx;
     if (p.trig)                particle.trig = true;   // trigger material, never granulated
     if (typeof p.takeT === 'number') particle.takeT = p.takeT;
+    if (p.gap)                 particle._gapAfter = true;   // an erase hole follows
     particle._vo = typeof p.vo === 'number' ? p.vo : 0;
     stampCartesian(particle);
     S.particles.push(particle);
@@ -397,6 +431,10 @@ async function applyManifest(data, audio) {
         _releasingAt:      0,
         _envAttack:        c._envAttack ?? 0,
         _envRelease:       c._envRelease ?? 0,
+        // A file from before the ramps were the pin's own carries the global
+        // pair it was pinned under, which is what it would have used.
+        fadeIn:            c.fadeIn  ?? c._envAttack  ?? 0,
+        fadeOut:           c.fadeOut ?? c._envRelease ?? 0,
         // A cloud held silent by composer mode comes back held, not sounding.
         // Only an explicit false holds; undefined means playing.
         playing:           c.playing === false ? false : undefined,
@@ -423,15 +461,25 @@ async function applyManifest(data, audio) {
         anchorLat:     c.anchorLat,
         speed:         c.speed ?? 1,
         direction:     c.direction ?? 1,
-        playing:       false, // starts stopped — the performer starts it
-        // Carried so the mute survives: when the performer does start it, it
-        // starts in the state the arrangement was saved in.
+        // A LOOP IS MUTED, NEVER STOPPED (RULINGS, composer mode) — and an
+        // opened piece is the music, so a pinned loop comes back sounding.
+        // This said `playing: false`, "the performer starts it", and nothing
+        // in the app could: `playing` is only ever set true by the pin gesture
+        // and by undo (ui-presets.js restorePinSlot), composer mode rides
+        // `composerMuted` instead, and the loop's own stroke stays CLAIMED
+        // (#241) so the cursor cannot fire its trigger either. Every tape line
+        // in an opened piece was visible, silent and untouchable while the
+        // clouds — which restore playing — sounded (Ek, 2026-09-15).
+        playing:       true,
+        // The arrangement's own silence, which is the mute and not the stop.
         composerMuted: !!c.composerMuted,
         playheadIndex: c.playheadIndex ?? 0,
         startOffset:   c.startOffset ?? 0,
         loopStart:     c.loopStart ?? 0,
         loopEnd:       c.loopEnd ?? (buf ? buf.duration : 0),
         grainParams:   c.grainParams ?? { volume: 1 },
+        fadeIn:        c.fadeIn  ?? 0,
+        fadeOut:       c.fadeOut ?? (S.loopFadeTimeMs || 15) / 1000,
         buffer:        buf,
         particles,
         _sourceNode:   null,
@@ -532,6 +580,13 @@ function applyLiveState(live) {
     if (['cut', 'layer'].includes(f.retrig))            tp.retrig  = f.retrig;
     if (typeof f.chop === 'number')    tp.chop   = Math.max(0, Math.min(2000, f.chop));
     if (typeof f.chopOn === 'boolean') tp.chopOn = f.chopOn;
+    // These two were written into every piece and read back from none of it —
+    // the block's other nine were all here (2026-09-15). `passes` is the
+    // self-killing loop's count (#239) and `loopOnEnd` the looper CONTRACT
+    // (#244), so a piece saved with a tape tile set to loop-on-end reopened
+    // as a plain armed line. Same bounds the tile's own param carries.
+    if (typeof f.passes === 'number')     tp.passes    = Math.max(0, Math.min(8, Math.round(f.passes)));
+    if (typeof f.loopOnEnd === 'boolean') tp.loopOnEnd = f.loopOnEnd;
     if (['play-to-end', 'fade'].includes(f.release))    tp.release = f.release;
   }
   if (typeof live.commitMode === 'string')      S.commitMode      = live.commitMode;
@@ -550,14 +605,37 @@ function applyLiveState(live) {
   S._pinsDirty = true;
 }
 
-/** The UI that has to follow a piece into place. */
+/**
+ * The SOUND of the piece, then the UI that has to follow it into place.
+ *
+ * The two are separated because they were in one try block, in this order:
+ * `rebuildSampleListUI()` first and the patch fourth. One throw anywhere in the
+ * UI half — a panel not built yet, an element the demo does not have — and the
+ * piece opened with the PREVIOUS piece's sound and live block, silently, behind
+ * a console.warn. A screen that did not repaint is a blemish; a piece playing
+ * on the wrong grain block is the wrong music.
+ */
 function refreshAfterOpen(manifest) {
+  // 1. The sound the piece was played on, then the live block over it. Each on
+  //    its own, so a patch that throws still lets the live block land.
+  try { if (manifest.patch) applyPresetObject(manifest.patch); }
+  catch (e) { console.warn('[piece] the saved patch did not apply:', e); }
+  try { applyLiveState(manifest.live); }
+  catch (e) { console.warn('[piece] the saved live state did not apply:', e); }
+
+  // 2. THE CAP COMES OFF. `scanMuted` is deliberately not in the file — a piece
+  //    that opened into a muted scan would read as broken — but not saving it
+  //    left it wherever the last session had put it, which is the same silence
+  //    arriving by the other door: open a piece with scan capped and nothing
+  //    the cursor touches sounds (2026-09-15). Through the setter, so the
+  //    button, the gains and the trigger UI all follow.
+  try { if (S.scanMuted) setScanMuted(false); }
+  catch (e) { console.warn('[piece] could not lift the scan cap:', e); }
+
+  // 3. The screens that read it back.
   try {
     rebuildSampleListUI();
     S.updateSeedBanksUI?.();
-    // The sound the piece was played on, then the live block over it.
-    if (manifest.patch) applyPresetObject(manifest.patch);
-    applyLiveState(manifest.live);
     updatePlaybackControls?.();
     S._syncImprovUI?.();
     S.syncGrainControlsUI?.();
@@ -618,10 +696,25 @@ function hashString(str) {
  * instance. Used where the answer must be right and a pause costs nothing — the
  * quit guard, which is all that stands between a set and the bin.
  */
+/**
+ * Drop what MOVES ON ITS OWN before hashing. A loop's `playheadIndex` is
+ * re-derived from the audio clock on every scheduler tick (grain.js), so with
+ * it in the hash any piece holding a running loop read dirty one tick after it
+ * was saved and never came clean again: the chrome's dot stood on a piece
+ * nobody had touched, and the quit guard offered to save it (Ek, 2026-09-15).
+ * Where a playhead has got to is not an edit. It is still WRITTEN to the file —
+ * the mark comes back where it was — it just does not count as a change.
+ */
+function _unmoved(m) {
+  if (Array.isArray(m.commits)) {
+    for (const c of m.commits) if (c && c.type === 'loop') delete c.playheadIndex;
+  }
+  delete m._savedAt;      // the clock is not a change either
+  return m;
+}
+
 export function documentSignature() {
-  const m = buildManifest(new IdentityTable());
-  delete m._savedAt;      // the clock is not a change
-  return hashString(JSON.stringify(m));
+  return hashString(JSON.stringify(_unmoved(buildManifest(new IdentityTable()))));
 }
 
 /**
@@ -637,9 +730,7 @@ export function documentSignature() {
  * not this one, is what the quit guard asks.
  */
 export function quickSignature() {
-  const m = buildManifest(new IdentityTable(), { particleWitness: true });
-  delete m._savedAt;
-  return hashString(JSON.stringify(m));
+  return hashString(JSON.stringify(_unmoved(buildManifest(new IdentityTable(), { particleWitness: true }))));
 }
 
 /**
@@ -788,9 +879,43 @@ export async function savePiece(statusFn) {
   return S.doc.path;
 }
 
+/**
+ * NOTHING LETS GO OF UNSAVED MUSIC WITHOUT ASKING. The quit guard was the only
+ * one of these, so ⌘N, ⌘O, a recent item and a double-clicked file each threw a
+ * whole session away in silence — the one thing the quit dialog exists to
+ * prevent, reachable by four other keys (2026-09-15). Asked here rather than in
+ * the File menu because the menu is not the only door: the keyboard, the recent
+ * list and the Finder all arrive at these three functions.
+ *
+ * Returns true if the caller may go ahead. In Electron it is the quit guard's
+ * own three-button box; the browser demo, which has no main process to ask,
+ * gets the two-button version of the same question.
+ */
+async function mayLetGoOfPiece() {
+  if (!isDirty()) return true;
+  const name = S.doc.name || 'this piece';
+  // `S._askDiscard` is the audit's seam: the real ask is a NATIVE MODAL, which
+  // an audit driving the app cannot answer, so the suite that proves the guard
+  // stands in for the performer here. Nothing in the app sets it.
+  const ask = S._askDiscard || window.electronBridge?.docConfirmDiscard;
+  if (!ask) {
+    try { return window.confirm(`${name} has unsaved changes.\n\nDiscard them?`); }
+    catch (_) { return true; }   // no way to ask is not a reason to block the app
+  }
+  const answer = await ask(name);
+  if (answer === 'cancel') return false;
+  if (answer !== 'save')   return true;
+  // Save first — it may put its own dialog up for a piece with no path yet, and
+  // may be cancelled or fail there, in which case so is this. No status
+  // callback: this already runs inside the caller's progress overlay.
+  try { return !!(await savePiece()) && !isDirty(); }
+  catch (e) { console.warn('[piece] save before discard failed:', e); return false; }
+}
+
 /** Open — the dialog, then the file, then the session it describes. */
 export async function openPiece(statusFn) {
-  let source = null, path = null;
+  if (!(await mayLetGoOfPiece())) return null;
+  let source = null, path = null, pickedName = null;
   if (onDisk()) {
     const r = await window.electronBridge.docOpenDialog({ defaultPath: S.doc.path || undefined });
     if (r?.canceled) return null;
@@ -801,7 +926,10 @@ export async function openPiece(statusFn) {
     if (!file) return null;
     source = blobSource(file);
     path = null;
-    S.doc.name = file.name.endsWith(PIECE_EXT) ? file.name.slice(0, -PIECE_EXT.length) : file.name;
+    // Held, not applied: this used to write S.doc.name here, so a file that
+    // failed to read left the chrome naming a piece that had never opened —
+    // over a session still holding the previous one's music.
+    pickedName = file.name.endsWith(PIECE_EXT) ? file.name.slice(0, -PIECE_EXT.length) : file.name;
   }
 
   statusFn?.('reading…');
@@ -809,6 +937,7 @@ export async function openPiece(statusFn) {
   statusFn?.('opening…');
   await applyManifest(manifest, audio);
   refreshAfterOpen(manifest);
+  if (pickedName) S.doc.name = pickedName;
 
   if (path) { S.doc.path = path; S.doc.name = nameFromPath(path); rememberRecent(path); }
   markSaved();
@@ -818,6 +947,7 @@ export async function openPiece(statusFn) {
 
 /** Open a path directly — the recent list and a double-clicked file. */
 export async function openPieceAt(path, statusFn) {
+  if (!(await mayLetGoOfPiece())) return null;
   statusFn?.('reading…');
   const { manifest, audio } = await readPiece(await pathSource(path), ensureAudioContext());
   statusFn?.('opening…');
@@ -837,6 +967,7 @@ export async function openPieceAt(path, statusFn) {
  * one that is exercised on every open is the one that is right.
  */
 export async function newPiece() {
+  if (!(await mayLetGoOfPiece())) return false;
   await applyManifest({ _magic: PIECE_MAGIC, _version: PIECE_VERSION }, new Map());
   S.doc.path = null;
   S.doc.name = null;
@@ -893,15 +1024,25 @@ export function initPieceBridge() {
   window.electronBridge?.docSetRecent?.(readRecent());
   syncDocChrome();
 
+  // EVERY DOOR IS THE SAME DOOR. The menu asked these functions directly while
+  // ⌘S / ⌘O went through ui-export.js's `pieceAction` — so on macOS, where the
+  // menu accelerator takes the key before the page sees it, the path Ek uses had
+  // no progress panel ("saving…" on a take that is hundreds of MB), no failure
+  // panel (a disk error reached a catch in the main process and died there:
+  // quit → Save → the window just stays open, saying nothing) and no
+  // re-entrancy guard (two saves to one path share one `.part` file). Routed
+  // through the same wrapper, all three come free; without it — the browser
+  // demo, or before ui-export has run — the call still goes straight through.
+  const through = (fn, verb) => (S._pieceAction ? S._pieceAction(fn, verb) : fn());
   window.__mubonePiece = {
     state: () => ({ dirty: isDirty(), name: S.doc.name, path: S.doc.path }),
-    save:  async () => !!(await savePiece()),
+    save:  async () => !!(await through((st) => savePiece(st), 'saving')),
     run:   async (cmd, arg) => {
-      if (cmd === 'new')      return newPiece();
-      if (cmd === 'open')     return !!(await openPiece());
-      if (cmd === 'open-at')  return !!(await openPieceAt(arg));
-      if (cmd === 'save')     return !!(await savePiece());
-      if (cmd === 'save-as')  return !!(await savePieceAs());
+      if (cmd === 'new')      return !!(await through(()     => newPiece(),          'clearing'));
+      if (cmd === 'open')     return !!(await through((st)   => openPiece(st),       'opening'));
+      if (cmd === 'open-at')  return !!(await through((st)   => openPieceAt(arg, st), 'opening'));
+      if (cmd === 'save')     return !!(await through((st)   => savePiece(st),       'saving'));
+      if (cmd === 'save-as')  return !!(await through((st)   => savePieceAs(st),     'saving'));
       return false;
     },
   };

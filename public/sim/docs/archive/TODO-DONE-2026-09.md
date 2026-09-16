@@ -2,6 +2,30 @@
 
 > **Status: ARCHIVED** · done items moved out of `docs/TODO.md` on 2026-09-05, verbatim, so the open list stays short enough to read every session. Record only: entries describe the code the day they closed and may use superseded terminology. `git log` and `CHANGELOG.md` are the other two records.
 
+### Sep 15
+
+- [x] **A piece plays when it is opened, and no door drops one in silence (Ek, 2026-09-15)** — five restore
+  faults and the guard: a pinned loop came back stopped with nothing able to start it; takes lost `edges` /
+  `markSpan` (the button region) and marks lost `_gapAfter`; the dirty hash counted a moving playhead; the
+  patch was hostage to a UI throw. ⌘N/⌘O/recent/double-click now ask, every command goes through one
+  wrapper (progress, failure, re-entrancy), one writer per `.part`. `js/piece.js`, `js/ui-export.js`,
+  `electron-main.js`, `electron-preload.js`; reasoning in `docs/RULINGS.md` "The document".
+
+- [x] **The size law's quiet end, second pass (Ek, 2026-09-15)** — dragged to the figure's floor and asked for
+  as the default: 1.0 px at −54 dB, gate −53 (was 2.8 px at −42, gate −44). Window 31 dB → 43. `js/state.js`;
+  `docs/RULINGS.md` "The size law is one picture".
+
+- [x] **Bright means sounding, not un-capped (Ek, 2026-09-15)** — the lens off greyed a pinned cloud's live
+  marks along with the muted-scan preview, because the renderer read `S.scanMuted` instead of the mark. The
+  preview is tagged `ghost` in `activeGrainMap` and drawn faint; everything else draws at full weight, and
+  perfMode stops lighting the preview as if it sounded. `js/grain.js`, `js/renderer.js`; ruling under the
+  glow bullets in `docs/RULINGS.md`.
+
+- [x] **colour § J's size check measured a default, not the fault (2026-09-15)** — `maxR < 24` was an
+  assertion about `vizMaxSize`, red since the ceiling became 36 and silent about the NaN mark it is named
+  after. It compares the same field poisoned against unpoisoned now, so it catches a mark that doubles at
+  any ceiling. `scripts/colour-audit.js`.
+
 ### Sep 6
 
 - [x] **pins § C's crossfade floor is an audible bound** — "alone at xfade 100 %" asked the smoothstep for zero, and
@@ -2799,4 +2823,18 @@
   10–15 %. Real but not a rescue; both are over the 16.7 ms vsync budget at that load. At 3 000 marks the
   gap is 1.4 ms and at 0 marks there is none, so the row's "draws the least it can and still play" is
   honest about the direction and generous about the size.
+
+- [x] **The pinned rail is a mixer** — Ek, 2026-09-15/16, designed on a canvas first (`docs/mockups/pins-rail/`).
+  One track per pin and the track IS its fader (fill read from the audio nodes, drag writes `grainParams.volume`);
+  what you drew laid flat inside it in its sphere colour; number in the engine hue; playhead runs through a mute.
+  Mode bar blend · tether · sort · width; sort IS `S.selectionMode`, row one is what unpin takes. Busses at the
+  foot, acts under them, the slot tracker gone. 320px. `docs/RULINGS.md` "the track is its fader".
+
+- [x] **A pin keeps its own two ramps, and a mute rides them** — `fadeIn` / `fadeOut` on every slot, born from
+  the settings' defaults, edited in the track's fold; pin and unmute ride in, unpin and mute ride out
+  (`composer.js`); a loop's level follows its volume live (`grain.js`); both persist in the piece.
+
+- [x] **Settings → Pins keeps only what the rail does not hold** — Ek: "any pin settings that are now on the pin
+  rail can be removed from the settings page". Count, blend, crossfade, tether and the selected pin left; When
+  Full stays and the cloud's fade in / out became "A new pin: In / Out" beside Path.
 

@@ -81,7 +81,9 @@ export function pinsIn(g) {
  *  here and they disagreed about `_selfKilled`. */
 export function isPinLeaving(c) {
   if (!c) return false;
-  return c.type === 'cloud' ? c._releasingAt > 0
+  // A cloud fading under a MUTE (`_composerHold`, composer.js) is going quiet,
+  // not going: its slot stays and an unmute turns it round (2026-09-16).
+  return c.type === 'cloud' ? (c._releasingAt > 0 && !c._composerHold)
                             : !!(c._playingToEnd || c._fadingOut || c._selfKilled);
 }
 /** AN EMPTY GROUP HOLDS NO STATE (Ek, 2026-09-12, night: "i muted the group.

@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for Cowork / Claude Code
 
-> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-15 (5.0 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
+> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-16 (5.2 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
 
 > **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative — no paragraph here per change. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`.
 
@@ -157,7 +157,7 @@ words — read that entry before touching the area, and put a new ruling there, 
 - **Two left rails** (`#toolRail`, `#propRail`) overlay the stage, never resizing the sphere. A row that is a CHOICE (a lens, a source) wears `.on`; `.open` is the drawer's mark. A tool row wears neither.
 - **The loop follows the button, and the machine knows its latency** (`js/latency.js`): press and release stamped on the audio clock, `S.latency` estimated or measured by loopback, one cushion (`S.audioCushionMs`, 10 ms) for both MessagePort hops — **the GUI thread is not in the audio path**. `docs/RULINGS.md` "the two IPC hops are bounded".
 - **A pinned cloud owns its material** (`grain.js` `_refreshCloudClaims`): the cursor never granulates inside one; the claim is by PINNING, not sounding; `forCursor` keeps the cloud's own playback out of the skip; nearest mode needs its own. **The reach line is one per CANDIDATE** (`S._cursorPool`), the ring one per grain.
-- **Pin groups are derived** (`groupOf(c)` is `c.type`) and **so is audibility** (`js/pins.js` `isPinAudible`: every pin has `mute` and `solo`, nothing stores on/off; `applyMix()` makes the engine agree). **The selected pin** (`selectedPinSlot`) is what unpin takes and the rail marks. Every pin parameter is on Settings → Pins — except the slot COUNT, which the rail's tracker sets too.
+- **Pin groups are derived** (`groupOf(c)` is `c.type`) and **so is audibility** (`js/pins.js` `isPinAudible`: every pin has `mute` and `solo`, nothing stores on/off; `applyMix()` makes the engine agree). **The selected pin** (`selectedPinSlot`) is what unpin takes and the rail marks. **The pinned rail is a MIXER** (`js/ui-pins.js`, 2026-09-16): one track per pin, the track IS its fader (`grainParams.volume`), the material laid flat inside it, its number in the engine hue; the mode bar (blend · tether · sort · width) is the door to those four, **sort IS `S.selectionMode`** so row one is what unpin takes; a pin's own `fadeIn` / `fadeOut` ride pin/unmute and unpin/mute and fold open under its bar. Settings → Pins keeps only what the rail does not hold.
 - **One pin press takes the whole moment** (`tiles.js` `pinDown`, 2026-09-14): every line the cursor is on becomes a loop — by `trigger._inside`, the gate's own geometry — and a granulating cursor (`S._cursorPool`) adds a cloud beside them. Nothing in reach still pins the ghost. One press is ONE undo (`history.js` `mergeTagged`).
 - **A stroke freezes the brush that painted it** (`brush-voicing.js`): `resolveGrainParams()` is the ONE builder of a grain block, voicings interned and keyed on the TILE. **Wet paint** is the exception. **The lens owns how the cursor reads** (`k`, order, fill, radius, nearest, recency); the brush owns the sound.
 - **A live mark is sized by the audio AFTER it**; **its grain starts before it** by `grainPeakOffsetS`, which the bridge subtracts per candidate for the voice that plays it — the mark stores only its moment.
@@ -181,7 +181,7 @@ A module mature enough to always load is wired into `main.js`; otherwise it stay
 
 ## Versioning — releases are explicit, never automatic
 
-Current version: **5.0 alpha** (`5.0.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
+Current version: **5.2 alpha** (`5.2.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
 
 1. **`index.html`** — BOTH version strings: the `<span class="top-bar-version">` (cabinet, hidden) and the chrome brand `<b>mubone</b> <i>1.14</i>`, which is the one the player sees
 2. **`package.json`** line 3 — the `"version"` field (semver, e.g. `"1.10.0-alpha"`)

@@ -1,0 +1,195 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body { background: #0b0a09; font-family: 'Urbanist', 'Helvetica Neue', Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #c5c0b9; }
+    a { color: #e07b3c; } a:hover { color: #f0955c; }
+    button { font: inherit; cursor: pointer; }
+    .eb { font-size: 11.04px; letter-spacing: 0.18em; text-transform: uppercase; color: #aba59d; }
+    .h { font-size: 17.92px; color: #e4ddd0; letter-spacing: 0.02em; }
+    .p { font-size: 12.48px; line-height: 1.5; color: #9d978e; text-wrap: pretty; }
+    .p b { font-weight: 500; color: #e4ddd0; }
+    /* a track, at 1× and at 2× (every metric doubled, nothing scaled) */
+    .bar { position: relative; height: 32px; width: 296px; border-radius: 2px; overflow: hidden; background: rgba(255,240,224,0.03); }
+    .bar .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; transform-origin: left center; opacity: 0.18; }
+    .bar .edge { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -2px; }
+    .bar .num { position: absolute; left: 0; top: 0; width: 24px; height: 32px; display: grid; place-items: center; font-size: 12.48px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .bar .mat { position: absolute; left: 26px; top: 0; height: 32px; width: 188px; }
+    .bar canvas { display: block; }
+    .bar .ph { position: absolute; top: 0; bottom: 0; width: 1px; left: 26px; opacity: 0.95; }
+    .bar .ph::before { content: ''; position: absolute; top: 0; left: -1px; width: 3px; height: 3px; background: inherit; }
+    .bar .db { position: absolute; right: 48px; top: 0; height: 32px; display: flex; align-items: center; font-size: 10.24px; font-variant-numeric: tabular-nums; color: #938d83; }
+    .bar .ms { position: absolute; right: 4px; top: 7px; display: flex; gap: 3px; }
+    .bar .ms b { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 2px; background: rgba(255,240,224,0.05); color: #857e74; font-size: 10.24px; font-weight: 600; }
+    .bar .ms b.m.on { background: rgba(204,106,85,0.30); color: #e4ddd0; }
+    .bar .ms b.s.on { background: rgba(224,123,60,0.32); color: #e4ddd0; }
+    .x2 { height: 64px; width: 592px; border-radius: 4px; }
+    .x2 .edge { width: 4px; margin-left: -4px; }
+    .x2 .num { width: 48px; height: 64px; font-size: 24.96px; }
+    .x2 .mat { left: 52px; height: 64px; width: 376px; }
+    .x2 .ph { width: 2px; left: 52px; }
+    .x2 .ph::before { left: -2px; width: 6px; height: 6px; }
+    .x2 .db { right: 96px; height: 64px; font-size: 20.48px; }
+    .x2 .ms { right: 8px; top: 14px; gap: 6px; }
+    .x2 .ms b { width: 36px; height: 36px; font-size: 20.48px; border-radius: 4px; }
+    .ovd { position: absolute; right: 82px; top: 13px; display: flex; gap: 3px; }
+    .ovd i { width: 5px; height: 5px; border-radius: 50%; display: block; }
+    /* callouts */
+    .co { position: absolute; display: flex; flex-direction: column; gap: 4px; width: 132px; }
+    .co .tick { width: 1px; background: rgba(255,240,224,0.24); }
+    .co .n { width: 18px; height: 18px; border-radius: 999px; display: grid; place-items: center; background: rgba(255,240,224,0.14); color: #e4ddd0; font-size: 10.24px; font-weight: 600; }
+    .co .t { font-size: 12.48px; line-height: 1.4; color: #aba59d; text-wrap: pretty; }
+    .co .t b { font-weight: 500; color: #e4ddd0; display: block; }
+    /* the fold */
+    .fold { padding: 2px 0 0 26px; display: flex; flex-direction: column; gap: 2px; width: 296px; }
+    .frow { display: grid; grid-template-columns: 34px 1fr 40px; align-items: center; gap: 8px; height: 26px; }
+    .frow .eb { font-size: 10.24px; }
+    .sld { position: relative; height: 22px; }
+    .sld::before { content: ''; position: absolute; left: 0; right: 0; top: 10px; height: 2px; background: rgba(255,240,224,0.11); }
+    .sld i { position: absolute; top: 5px; width: 2px; height: 12px; margin-left: -1px; background: #c5c0b9; }
+    .frow .v { font-size: 10.24px; font-variant-numeric: tabular-nums; color: #aba59d; text-align: right; }
+    .seg { display: inline-flex; height: 24px; border-radius: 2px; background: rgba(255,240,224,0.03); }
+    .seg b { height: 24px; padding: 0 8px; display: grid; place-items: center; border-radius: 2px; color: #857e74; font-size: 11.04px; font-weight: 400; }
+    .seg b.on { background: rgba(255,240,224,0.14); color: #e4ddd0; }
+  </style>
+</helmet>
+
+<div style="position: relative; width: 1000px; height: 640px; background: #0b0a09; padding: 32px 40px;">
+
+  <div style="display: flex; align-items: baseline; gap: 14px; margin-bottom: 20px;">
+    <span class="h">One track</span>
+    <span class="p">A pin is a channel, and the channel is its fader. Nothing on it is a label.</span>
+  </div>
+
+  <!-- the 2× track -->
+  <div style="position: relative; height: 190px;">
+    <div class="bar x2" id="big">
+      <div class="fill" style="background: #ccb378; transform: scaleX(1);"></div>
+      <div class="num" style="color: #f2569e;">3</div>
+      <div class="mat"><canvas width="752" height="128" style="width: 376px; height: 64px;"></canvas></div>
+      <div class="ph" style="background: #ccb378; transform: translateX(216px);"></div>
+      <div class="ovd" style="right: 164px; top: 26px; gap: 6px;"><i style="background: #ccb378; width: 10px; height: 10px;"></i><i style="background: #ccb378; width: 10px; height: 10px;"></i></div>
+      <div class="db"></div>
+      <div class="edge" style="background: #ccb378; left: 100%;"></div>
+      <div class="ms"><b class="m">M</b><b class="s">S</b></div>
+    </div>
+    <div class="co" style="left: 0; top: 72px;"><div class="tick" style="height: 14px; margin-left: 24px;"></div><div style="display: flex; gap: 8px; align-items: flex-start;"><span class="n">1</span><span class="t"><b>slot number</b>gold = cloud, pink = loop. Tap it: the pin's own settings fold open.</span></div></div>
+    <div class="co" style="left: 150px; top: 72px;"><div class="tick" style="height: 14px; margin-left: 90px;"></div><div style="display: flex; gap: 8px; align-items: flex-start;"><span class="n">2</span><span class="t"><b>what you drew</b>the stroke laid flat, in its own colour. A loop is marks on one line; a cloud is loose dots.</span></div></div>
+    <div class="co" style="left: 300px; top: 72px;"><div class="tick" style="height: 14px; margin-left: 40px;"></div><div style="display: flex; gap: 8px; align-items: flex-start;"><span class="n">3</span><span class="t"><b>playhead</b>where the loop is. Keeps running through a mute — that is what a DJ mute is.</span></div></div>
+    <div class="co" style="left: 450px; top: 72px;"><div class="tick" style="height: 14px; margin-left: 40px;"></div><div style="display: flex; gap: 8px; align-items: flex-start;"><span class="n">4</span><span class="t"><b>the fader</b>the whole bar. Its fill is the level; 0 dB is full. Drag anywhere.</span></div></div>
+    <div class="co" style="left: 600px; top: 72px;"><div class="tick" style="height: 14px; margin-left: 0;"></div><div style="display: flex; gap: 8px; align-items: flex-start;"><span class="n">5</span><span class="t"><b>the edge</b>the exact value. Violet when the cursor is driving it.</span></div></div>
+    <div class="co" style="left: 750px; top: 72px;"><div class="tick" style="height: 14px; margin-left: 40px;"></div><div style="display: flex; gap: 8px; align-items: flex-start;"><span class="n">6</span><span class="t"><b>M · S</b>as today. The readout beside them prints only when the hand set a level.</span></div></div>
+  </div>
+
+  <!-- three states at 1× -->
+  <div class="eb" style="margin-bottom: 10px;">three states of one loop</div>
+  <div style="display: flex; gap: 24px; align-items: flex-start;">
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div class="bar" data-m="loop">
+        <div class="fill" style="background: #ccb378; transform: scaleX(1);"></div>
+        <div class="num" style="color: #f2569e;">3</div>
+        <div class="mat"><canvas width="376" height="64" style="width: 188px; height: 32px;"></canvas></div>
+        <div class="ph" style="background: #ccb378; transform: translateX(60px);"></div>
+        <div class="edge" style="background: #ccb378; left: 100%;"></div>
+        <div class="ms"><b class="m">M</b><b class="s">S</b></div>
+      </div>
+      <div class="p"><b>at rest.</b> 0 dB, full bar, no number to read.</div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div class="bar" data-m="loop">
+        <div class="fill" style="background: #ccb378; transform: scaleX(0);"></div>
+        <div class="num" style="color: #f2569e;">3</div>
+        <div class="mat"><canvas width="376" height="64" style="width: 188px; height: 32px;"></canvas></div>
+        <div class="ph" style="background: #ccb378; transform: translateX(131px);"></div>
+        <div class="edge" style="background: #ccb378; left: 0;"></div>
+        <div class="ms"><b class="m on">M</b><b class="s">S</b></div>
+      </div>
+      <div class="p"><b>muted.</b> The fill is gone, M is lit, the playhead is still moving. Nothing is dimmed.</div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div class="bar" data-m="loop">
+        <div class="fill" style="background: #ccb378; transform: scaleX(0.42);"></div>
+        <div class="num" style="color: #f2569e;">3</div>
+        <div class="mat"><canvas width="376" height="64" style="width: 188px; height: 32px;"></canvas></div>
+        <div class="ph" style="background: #ccb378; transform: translateX(98px);"></div>
+        <div class="edge" style="background: #a793c0; left: 42%;"></div>
+        <div class="ms"><b class="m">M</b><b class="s">S</b></div>
+      </div>
+      <div class="p"><b>focus + tether.</b> The cursor sets the level; the violet edge says so. You never touch this one.</div>
+    </div>
+  </div>
+
+  <!-- the fold -->
+  <div class="eb" style="margin: 28px 0 10px;">the fold — one pin's own settings, under its bar</div>
+  <div style="display: flex; gap: 40px; align-items: flex-start;">
+    <div>
+      <div class="bar" data-m="loop">
+        <div class="fill" style="background: #ccb378; transform: scaleX(1);"></div>
+        <div class="num" style="color: #f2569e;">3</div>
+        <div class="mat"><canvas width="376" height="64" style="width: 188px; height: 32px;"></canvas></div>
+        <div class="ph" style="background: #ccb378; transform: translateX(20px);"></div>
+        <div class="edge" style="background: #ccb378; left: 100%;"></div>
+        <div class="ms"><b class="m">M</b><b class="s">S</b></div>
+      </div>
+      <div class="fold">
+        <div class="frow"><span class="eb">in</span><div class="sld"><i style="left: 0;"></i></div><span class="v">0 ms</span></div>
+        <div class="frow"><span class="eb">out</span><div class="sld"><i style="left: 15%;"></i></div><span class="v">1.5 s</span></div>
+        <div class="frow"><span class="eb">speed</span><div class="sld"><i style="left: 20%;"></i></div><span class="v">1.00×</span></div>
+        <div class="frow"><span class="eb">path</span><div class="seg"><b>⇄</b><b class="on">→</b><b>←</b></div><span></span></div>
+      </div>
+    </div>
+    <div>
+      <div class="bar" data-m="cloud">
+        <div class="fill" style="background: #a3c18b; transform: scaleX(1);"></div>
+        <div class="num" style="color: #e8a030;">5</div>
+        <div class="mat"><canvas width="376" height="64" style="width: 188px; height: 32px;"></canvas></div>
+        <div class="edge" style="background: #a3c18b; left: 100%;"></div>
+        <div class="ms"><b class="m">M</b><b class="s">S</b></div>
+      </div>
+      <div class="fold">
+        <div class="frow"><span class="eb">in</span><div class="sld"><i style="left: 100%;"></i></div><span class="v">10.0 s</span></div>
+        <div class="frow"><span class="eb">out</span><div class="sld"><i style="left: 100%;"></i></div><span class="v">10.0 s</span></div>
+      </div>
+    </div>
+    <div class="p" style="width: 260px; padding-top: 4px;"><b>in / out</b> are the pin's ramps — pin and unmute ride <b>in</b>, unpin and mute ride <b>out</b>. A cloud with 10 s on both swells and dies slowly every time; a loop with 0 / 1.5 s cuts in and tails out. Today these are one global pair snapshotted at pin time; here every pin keeps and edits its own.<br><br>Speed and path are the loop's; a stationary cloud has neither.</div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"$preview":{"width":1000,"height":640}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+  componentDidMount() {
+    const rnd = (seed) => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const mk = (r, n) => Array.from({ length: n }, (_, i) => ({ t: (i + 0.5) / n, a: 0.25 + 0.75 * Math.pow(r(), 1.4), y: r() }));
+    const loop = mk(rnd(37), 22), cloud = mk(rnd(53), 18);
+    const draw = (cv, type, marks, color, ovd, scale) => {
+      const ctx = cv.getContext('2d'); const W = cv.width / (2 * scale), H = 32;
+      ctx.setTransform(2 * scale, 0, 0, 2 * scale, 0, 0); ctx.clearRect(0, 0, W, H);
+      ctx.fillStyle = color; ctx.strokeStyle = color;
+      const mx = (m) => 4 + m.t * (W - 8);
+      if (type === 'loop') {
+        ctx.lineWidth = 1.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        const my = (m) => 16 + (m.y - 0.5) * 8;
+        for (let L = ovd; L >= 0; L--) { ctx.globalAlpha = L === 0 ? 0.9 : 0.35; ctx.beginPath(); marks.forEach((m, i) => { const x = mx(m), y = my(m) + L * 3.2; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); }
+        ctx.globalAlpha = 1; for (const m of marks) { ctx.beginPath(); ctx.arc(mx(m), my(m), 0.8 + m.a * 2.2, 0, 6.283); ctx.fill(); }
+      } else {
+        for (const m of marks) { ctx.globalAlpha = 0.55 + m.a * 0.45; ctx.beginPath(); ctx.arc(mx(m), 6 + m.y * 20, 0.9 + m.a * 2.6, 0, 6.283); ctx.fill(); }
+      }
+    };
+    draw(document.querySelector('#big canvas'), 'loop', loop, '#ccb378', 2, 2);
+    document.querySelectorAll('.bar[data-m="loop"] canvas').forEach(cv => draw(cv, 'loop', loop, '#ccb378', 2, 1));
+    document.querySelectorAll('.bar[data-m="cloud"] canvas').forEach(cv => draw(cv, 'cloud', cloud, '#a3c18b', 0, 1));
+  }
+}
+</script>
+</body>
+</html>

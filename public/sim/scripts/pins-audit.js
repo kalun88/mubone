@@ -2189,17 +2189,20 @@ async function run(rig) {
     S.commitSlots[2] = pin('cloud', 2, 0.60);
     S._pinsDirty = true;
     await sleep(500);
-    const cells = [...document.querySelectorAll('#lyrPips i')];
-    const ringed = cells.findIndex(e => e.classList.contains('sel'));
-    const row = document.querySelector('.lyr-hold.sel');
+    // THE MIXER (2026-09-16): sort IS the selected pin. The tracks are laid
+    // out by transform in `S.selectionMode` order, so the selected pin is the
+    // one wearing the half moon AND the one at the top.
+    const rows = [...document.querySelectorAll('#lyrList .lyr-trk')];
+    const yOf = el => { const m = /translateY\(([-\d.]+)px\)/.exec(el.style.transform || ''); return m ? +m[1] : 0; };
+    rows.sort((a, b) => yOf(a) - yOf(b));
+    const row = document.querySelector('.lyr-trk.sel');
     const out = {
       want:   S._selectedPinSlot?.(lon, lat),
-      ringed,
       row:    row ? +row.dataset.slot : -1,
-      // The cell's name against the row's, for the same slot.
-      cellNm: cells[1]?.getAttribute('data-title') ?? cells[1]?.title ?? '',
-      rowNm:  document.querySelector('.lyr-hold[data-slot="1"] .lyr-hold-nm')?.firstChild?.textContent ?? '',
-      digits: cells.map((e, i) => e.textContent.trim() === String(i + 1)).every(Boolean),
+      first:  rows.length ? +rows[0].dataset.slot : -1,
+      n:      rows.length,
+      // A track's number is its slot's, the same digit the sphere wears.
+      digits: rows.every(r => r.querySelector('.lyr-num')?.textContent.trim() === String(+r.dataset.slot + 1)),
     };
     for (let i = 0; i < keep.length; i++) S.commitSlots[i] = keep[i];
     S.selectionMode = wasMode;
@@ -2210,11 +2213,10 @@ async function run(rig) {
   });
   check('the nearest pin is the selected one, and it is not simply the first slot',
         marks.want === 1, JSON.stringify(marks));
-  check('the tracker rings the pin the rail marks',
-        marks.ringed === marks.want && marks.row === marks.want, JSON.stringify(marks));
-  check('a tracker cell names the pin its row names',
-        !!marks.cellNm && marks.cellNm === marks.rowNm, JSON.stringify(marks));
-  check('every tracker cell reads its own slot number', marks.digits === true, JSON.stringify(marks));
+  check('the rail marks the pin unpin takes', marks.row === marks.want, JSON.stringify(marks));
+  check('… and under `nearest` it is row one — sort is the selected pin',
+        marks.n === 3 && marks.first === marks.want, JSON.stringify(marks));
+  check('every track is numbered by its slot', marks.digits === true, JSON.stringify(marks));
 
   check('no renderer errors after exercise', rig.errors().length === 0, rig.errors().join(' | '));
 

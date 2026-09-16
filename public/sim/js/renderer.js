@@ -1033,6 +1033,22 @@ const _glowCache = new Map();   // particle → { sx, sy, depth }
 // It was four alpha bins and then six while heat and the onset rate weighted
 // each mark; both are gone (Ek: "i don't want different core or alphas").
 const _glowDots = [];
+const _ghostDots = [];   // lit but not sounding — the muted-scan preview
+/** One batched fill for a run of [x, y, r] triples. A module function, not a
+ *  closure in the draw pass: this is the render loop, and the pass runs every
+ *  frame a grain is lit. */
+function _strokeGlowDots(dots, alpha, ink) {
+  if (!dots.length) return;
+  const ctx = S.ctx;
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle   = ink;
+  ctx.beginPath();
+  for (let i = 0; i < dots.length; i += 3) {
+    ctx.moveTo(dots[i] + dots[i + 2], dots[i + 1]);
+    ctx.arc(dots[i], dots[i + 1], dots[i + 2], 0, Math.PI * 2);
+  }
+  ctx.fill();
+}
 // The mark's whole appearance, and the only two numbers in it (Ek, 2026-09-07):
 // twice the 0.42 core the weighted face used at its lightest, at the alpha the
 // six-bin ramp reached at its top. Both are on the marker layer's own size
@@ -1770,10 +1786,16 @@ export function drawParticles() {
   // ── Active grain highlight (second pass) ──────────────────────────────────
   // Draw a bright dot over every particle that currently has a grain playing.
   // Uses projections cached during the main loop to avoid redundant math.
-  // When scan is off, cursor-triggered grains render as black/transparent
-  // to visually distinguish them from seed-triggered grains (which stay white).
+  //
+  // BRIGHT MEANS SOUNDING, and the MARK says which it is, not the cap. With the
+  // lens off the cursor fires nothing and grain.js simulates the onsets it
+  // would have had, so you can still see what the cursor is over; those marks
+  // are tagged `ghost` and drawn faint. This pass used to dim on `S.scanMuted`
+  // instead — the whole batch, cursor and cloud alike — which greyed the live
+  // marks of a PINNED CLOUD that was still playing perfectly audibly under the
+  // cap (Ek, 2026-09-15). The tag survives the cap, so the two can be told
+  // apart in the one place that has to tell them apart.
   if (_glowCache.size > 0) {
-    const scanOff = S.scanMuted;
     const ink = S.darkMode ? '#ffffff' : '#000000';
     // ONE MARK, ONE WEIGHT (Ek, 2026-09-07: "i don't want different core or
     // alphas, i want the same. use the x2 and 0.92 alpha for all"). Everything
@@ -1812,6 +1834,7 @@ export function drawParticles() {
     // counted twice and the far side would fade out of a layer whose whole
     // job is to be findable.
     _glowDots.length = 0;
+    _ghostDots.length = 0;
     for (const [particle, { sx, sy, depth }] of _glowCache) {
       const entry = activeGrainMap.get(particle);
       // A loop or trigger tags its playhead mark in the loop's own colour
@@ -1822,18 +1845,11 @@ export function drawParticles() {
       if (!entry || entry.glowColor !== '#ffffff') continue;
       const df   = Math.max(0, depthFactor(depth));
       const base = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df;
-      _glowDots.push(sx, sy, Math.max(3.2, base * GLOW_CORE));
+      (entry.ghost ? _ghostDots : _glowDots).push(sx, sy, Math.max(3.2, base * GLOW_CORE));
     }
-    if (_glowDots.length) {
-      S.ctx.globalAlpha = scanOff ? GLOW_ALPHA * 0.25 : GLOW_ALPHA;
-      S.ctx.fillStyle   = ink;
-      S.ctx.beginPath();
-      for (let i = 0; i < _glowDots.length; i += 3) {
-        S.ctx.moveTo(_glowDots[i] + _glowDots[i + 2], _glowDots[i + 1]);
-        S.ctx.arc(_glowDots[i], _glowDots[i + 1], _glowDots[i + 2], 0, Math.PI * 2);
-      }
-      S.ctx.fill();
-    }
+    // Two paths, one stroke each — the batching the pass exists for, kept.
+    _strokeGlowDots(_glowDots,  GLOW_ALPHA, ink);
+    _strokeGlowDots(_ghostDots, GLOW_ALPHA * 0.25, ink);
     S.ctx.globalAlpha = 1;
   }
 
@@ -2226,8 +2242,12 @@ function drawParticlesMinimal() {
     // A loop or trigger playhead tags its mark in the loop's own colour, and
     // lighting those here made every mark a pinned loop's playhead crossed
     // flash solid white at 0.95 alpha in perfMode and not in the full renderer.
+    // A GHOST is not active. perfMode has no faint second pass to put the
+    // muted-scan preview in, and lighting it here would say "sounding" at 0.95
+    // alpha about a mark making no sound — the same lie the full renderer told
+    // in the other direction by dimming the clouds (2026-09-15).
     const _ag = hasGlow ? activeGrainMap.get(p) : undefined;
-    const active = !!_ag && _ag.glowColor === '#ffffff';
+    const active = !!_ag && _ag.glowColor === '#ffffff' && !_ag.ghost;
 
     if ((p.rms ?? 0) > 0) {
       const rmsN = normalise(p.rms, S.vizRmsMin, S.vizRmsMax);

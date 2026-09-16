@@ -43,8 +43,11 @@ What a pin IS follows the cursor, not a mode: painting a tape stroke grows the l
 let go, a stroke already in reach becomes a loop, and nothing in reach pins a cloud where the
 cursor is. Unpin takes whichever pin the **Settings → Pins** rule names — nearest by default.
 
-The pinned rail on the right (**⇧Tab**) lists every pin with its mute and solo. Settings → Pins
-holds the slot count, what happens when the slots are full, and how a moving cloud plays back.
+The pinned rail on the right (**⇧Tab**) is a mixer: one track per pin, the bar its fader (drag
+it), what you drew laid flat inside it, M and S at the right, and its own in / out under its
+number. The mode bar above holds blend, tether, sort and width; sort is the selected pin, so the
+top track is what unpin takes. Settings → Pins keeps what happens when the slots are full and what
+a new pin is born with.
 
 *(The `D` keys — tap to drop, hold to draw, ⇧D for the kind, ⌘D to release — went in September
 2026: what a pin is now follows the cursor, so there is nothing for a mode key to cycle.)*

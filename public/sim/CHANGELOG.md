@@ -7,6 +7,93 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.2 alpha — 2026-09-16
+
+**The pinned rail is a mixer.** Designed on a canvas first (`docs/mockups/pins-rail/`), built as drawn.
+
+### Added
+- One TRACK per pin, and the track is its fader: a 32px bar whose fill is the level read from the
+  audio every frame, a 2px edge for the exact value, drag anywhere to set it; a dB readout that
+  prints only when the hand set a level.
+- What you drew, laid flat inside the bar in the pin's own sphere colour — a loop's marks on one
+  connected line, a cloud's loose dots, a moving cloud's along its path — each mark at the size its
+  loudness gives it on the sphere. The shape says the kind.
+- A playhead on every loop and moving cloud, running on through a mute.
+- Every pin's own **in / out** ramps, folded open under its number; pin and unmute ride in, unpin and
+  mute ride out. Saved in the piece.
+- The mode bar — blend · tether · sort · width — the four pin settings switched mid-set. Sort IS the
+  selected pin (nearest / farthest / oldest), so row one is always what unpin takes; in focus the
+  fader edges turn the sensor violet and, under nearest, the rail is a proximity meter.
+- Two busses at the foot (clouds, loops) with their M / S and their members' mean level.
+
+### Changed
+- The rail is 320px (an overlay; the sphere is untouched). The pin acts sit under the mix.
+- A mute is no longer 20 ms / instant: it rides the pin's own out, an unmute its in, turned round
+  from wherever the ramp is. A loop's level follows its volume while it plays.
+- Settings → Pins keeps only what the rail does not hold: When Full, and A New Pin (In, Out, Path).
+  A new loop takes the same Out as a new cloud, floored at its 15 ms declick.
+- The M / S pressed faces are on the accent ramps, not raw hex.
+
+### Removed
+- The slot tracker, the coordinate readout under each pin, the words "loop" / "cloud" on a row, and
+  the Count, Blend, Crossfade, Tether and Selected Pin rows on Settings → Pins.
+
+---
+
+## 5.1 alpha — 2026-09-15
+
+**A debugging round on the format 5.0 shipped.** Ek saved a piece, reopened it, and every tape line
+on the sphere was silent and untouchable. Six restore faults behind that one symptom, the guard the
+quit dialog had all to itself, and two viz corrections — all found by driving a real instance and
+measuring, not by reading.
+
+### Fixed
+
+- **A pinned loop comes back PLAYING.** It restored `playing: false` — "the performer starts it" —
+  and nothing in the app can set it true: only the pin gesture and undo do, composer mode rides
+  `composerMuted` instead, and the loop's own stroke stays CLAIMED (#241) so the cursor cannot fire
+  its trigger either. Clouds restore playing, which is why the grains still sounded. A loop is muted,
+  never stopped, so it comes back sounding with `composerMuted` carrying the arrangement's silence.
+- **A take keeps the region its BUTTON described.** `edges` and `markSpan` were not written to the
+  file, so every open re-cut each take to its paint ticks: a 0.04–1.96 s region came back 0.10–1.90,
+  and a loop re-pinned after a reopen was a different length than the one saved.
+- **An erased hole stays a hole.** `_gapAfter` is saved, so a stroke no longer comes back drawn
+  closed across its gap with the trigger gate firing from inside it.
+- **An untouched piece stops reading as unsaved.** `playheadIndex` moves with the audio clock every
+  tick and was in the dirty signature, so any piece holding a running loop read dirty one tick after
+  being saved; the quit guard offered to save a piece nobody had touched. The hash drops what moves
+  on its own; the file still carries it.
+- **A piece opens on ITS OWN sound.** `refreshAfterOpen` ran the patch fourth inside one `try` that
+  began with a UI rebuild, so a throw in the screens left the piece playing on the previous piece's
+  grain block behind a `console.warn`.
+- **The scan cap does not survive an open**, and the browser demo no longer renames the session
+  after a file that failed to read.
+- **Pinned clouds stay bright with the lens off.** The muted-scan preview and a cloud's real grains
+  carried the same tag, so the renderer dimmed the whole batch on `S.scanMuted` — greying the live
+  marks of a cloud that was still audibly playing. The preview is tagged `ghost` and drawn faint;
+  everything else draws at full weight. perfMode had the same bug reversed and lit the preview as if
+  it sounded.
+- **Two saves of one piece cannot corrupt it.** They shared one `<dest>.part`; the second truncated
+  the first mid-stream and both renamed the wreck over the document.
+- **A failed save says so.** Through the File menu and the quit dialog it died in a main-process
+  catch: quit → Save → the window simply stayed open, silent. Every document command now goes
+  through the same wrapper as ⌘S, which carries the progress panel, the failure panel and the
+  one-at-a-time rule — on macOS the menu accelerator takes the key before the page sees it, so that
+  wrapper had been unreachable from the path in use.
+
+### Added
+
+- **New, Open, Open Recent and a double-clicked file ask before discarding an unsaved piece** — the
+  loss the quit guard exists to prevent was reachable by four other doors, with no autosave behind
+  them. Same three-button dialog, same wording; Save writes first, and a cancelled save cancels the
+  open.
+
+### Changed
+
+- **The size law's quiet end** is 1.0 px at −54 dB with the paint gate at −53 (was 2.8 px at −42,
+  gate −44) — Ek's own drag, read off the figure's arithmetic. The loudness window widens from
+  31 dB to 43. Boot defaults only: a machine with saved calibration keeps what it saved.
+
 ## 5.0 alpha — 2026-09-15
 
 **A major number, and a jump.** 2, 3 and 4 were never cut — the work went in and the version did

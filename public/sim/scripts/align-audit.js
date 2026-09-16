@@ -577,23 +577,29 @@ const wasOpen = document.body.classList.contains('pinned-open');
 if (!wasOpen) document.body.classList.add('pinned-open');
 const list = document.getElementById('lyrList');
 const prev = list ? list.innerHTML : null;
-// A probe hold, built from the same markup ui-layers.js writes.
-if (list && !list.querySelector('.lyr-hold')) {
-  list.innerHTML = '<div class="lyrgroup" style="--c:#f26415">' +
-    '<div class="lyr-hold" style="--m:#f26415" data-slot="0">' +
-    '<button type="button" class="lyr-hold-body"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>' +
-    '<span class="lyr-hold-nm">probe</span></button>' +
-    '<button type="button" class="lyrmute">M</button><button type="button" class="lyrsolo">S</button></div></div>';
+// A probe track and a probe bus, built from the same markup ui-pins.js
+// writes (the mixer, 2026-09-16), so an empty rail still measures.
+const bus = document.getElementById('lyrBus');
+const prevBus = bus ? bus.innerHTML : null;
+if (list && !list.querySelector('.lyr-trk')) {
+  list.innerHTML = '<div class="lyr-trk" style="--m:#f26415;--c:var(--eng-tape)" data-slot="0">' +
+    '<div class="lyr-trk-bar"><div class="lyr-fill"></div><button type="button" class="lyr-num">1</button>' +
+    '<div class="lyr-mat"><canvas></canvas></div><div class="lyr-ph" hidden></div><span class="lyr-db"></span><div class="lyr-edge"></div>' +
+    '<span class="lyr-ms"><button type="button" class="lyrmute">M</button><button type="button" class="lyrsolo">S</button></span></div>' +
+    '<div class="lyr-fold"></div></div>';
+  if (bus && !bus.querySelector('.lyr-bus-row')) {
+    bus.innerHTML = '<div class="lyr-bus-row" style="--c:var(--eng-tape);--m:var(--eng-tape)"><div class="lyr-fill"></div>' +
+      '<span class="lyr-bus-nm">loops<b>1</b></span><span class="lyr-ms"><button type="button" class="lyrmute">M</button><button type="button" class="lyrsolo">S</button></span></div>';
+  }
 }
 await new Promise(r => setTimeout(r, 200));
 const px = v => Math.round(v * 100) / 100;
 const lefts = [], rights = [], wrapped = [], clipped = [];
-// The pin rows are TOOL ROWS (.trow, 2026-09-12) beside the holds: one label
-// x for both models. A pin row has no right column of its own — no key cap,
-// no drawer — so its name's right edge is where the hold's S ends.
-for (const row of rail.querySelectorAll('.trow, .lyr-hold')) {
-  const nm = row.querySelector('.tile-nm, .lyr-hold-nm');
-  const rt = row.querySelector('.lyrsolo') ?? (row.classList.contains('trow') ? nm : null);
+// The pin rows are TOOL ROWS (.trow, 2026-09-12): one label x across the pin
+// and mix groups. A track is not a row with a label — it is a bar (below).
+for (const row of rail.querySelectorAll('.trow')) {
+  const nm = row.querySelector('.tile-nm');
+  const rt = nm;
   const tag = (row.dataset.pin || (nm ? nm.textContent.trim() : 'row')).slice(0, 14);
   if (nm) lefts.push([tag, px(nm.getBoundingClientRect().x)]);
   if (rt) rights.push([tag, px(rt.getBoundingClientRect().right)]);
@@ -641,56 +647,43 @@ const barBtns = [...rail.querySelectorAll('.lyr-bar button')].map(b => {
   return [b.id || 'btn', px(r.height), px(r.y), px(r.x), px(r.right)];
 });
 
-// The SLOT TRACKER (2026-09-14). It is a header-level readout, so its pips
-// start where the rail's TITLE does and its number ends where the header's
-// buttons do — two columns it could each drift out of independently, and both
-// invisible by eye at 246px. One pip per slot, and the pips and the number on
-// one centre line.
-const { S: _S } = await import('./js/state.js');
-const _pipEls = [...rail.querySelectorAll('#lyrPips i')];
-const _pipRow = rail.querySelector('#lyrPips');
-const _num    = rail.querySelector('.lyr-slots-n');
-const _title  = rail.querySelector('.lyr-title');
+// THE MIXER (2026-09-16). What a glance-only surface has to get right is that
+// its objects are ONE set of edges and ONE set of heights: every track bar,
+// every bus row and the mode bar's content box start and end at the same x;
+// a bar is 32 tall and a bus 24 (the kit's heights); M and S are the 18px
+// pair, centred on whatever they sit in; the header's count and its door share
+// a centre line, as do a track's number and its bar.
 const mid = el => { const r = el.getBoundingClientRect(); return px(r.y + r.height / 2); };
-const _tops = [...new Set(_pipEls.map(e => px(e.getBoundingClientRect().y)))];
-const slots = !_pipRow || !_num ? null : {
-  n:        _pipEls.length,
-  want:     Math.max(_S.commitSlotCount | 0, ..._S.commitSlots.map((c, i) => c ? i + 1 : 0)),
-  pipX:     px(_pipRow.getBoundingClientRect().x),
-  titleX:   _title ? px(_title.getBoundingClientRect().x) : null,
-  numRight: px(_num.getBoundingClientRect().right),
-  btnRight: barBtns.length ? Math.max(...barBtns.map(b => b[4])) : null,
-  // The count centres on the BLOCK of cells, not on the first of them: past
-  // eight slots the cells are two rows and the first row's centre is a row
-  // above the count by design. Measuring the first cell asserted the one-row
-  // case and failed the moment the slot count went to sixteen (2026-09-14).
-  pipMid:   _pipEls.length ? mid(_pipRow) : null,
-  numMid:   mid(_num),
-  // Each cell carries its slot NUMBER, the same one the row below it wears.
-  digits:   _pipEls.map((e, i) => e.textContent.trim() === String(i + 1)),
-  // Eight to a row, declared rather than left to the column width, and the
-  // cells must never run into the count beside them.
-  perRow:   _tops.length ? _pipEls.filter(e => px(e.getBoundingClientRect().y) === _tops[0]).length : 0,
-  clash:    px(_pipRow.getBoundingClientRect().right) > px(_num.getBoundingClientRect().x),
-  // EVERY NUMBER IN THE STRIP IS ONE SIZE AND ONE WEIGHT (Ek, 2026-09-14: "the
-  // number sizes dont match the 4/8 number"). The cells, the filled count, the
-  // separator and the typeable max are the same number said four ways, so only
-  // COLOUR may separate them — size is for hierarchy levels and weight is for
-  // roles (DESIGN-SYSTEM § 2), and neither applies within one readout. A form
-  // control inherits neither family nor weight, which is exactly how the max
-  // drifted to 400 beside everything else at 500.
-  type: (() => {
-    const bits = [_pipRow.querySelector('i'), _num, document.getElementById('lyrSlotsFilled'),
-                  document.querySelector('.lyr-slots-sep'), document.getElementById('lyrSlotsMax')]
-                 .filter(Boolean).map(e => { const c = getComputedStyle(e); return [c.fontSize, c.fontWeight, c.fontFamily]; });
-    return { sizes: [...new Set(bits.map(b => b[0]))], weights: [...new Set(bits.map(b => b[1]))],
-             fams: [...new Set(bits.map(b => b[2]))].length };
-  })(),
-};
+const mix = (() => {
+  const bars = [...rail.querySelectorAll('.lyr-trk-bar')], buses = [...rail.querySelectorAll('.lyr-bus-row')];
+  const modes = rail.querySelector('.lyr-modes');
+  if (!bars.length || !modes) return null;
+  const cs = getComputedStyle(modes), mr = modes.getBoundingClientRect();
+  const edge = b => { const r = b.getBoundingClientRect(); return [px(r.x), px(r.right), px(r.height)]; };
+  const ms = [...rail.querySelectorAll('.lyr-trk-bar .lyrmute, .lyr-trk-bar .lyrsolo, .lyr-bus-row .lyrmute, .lyr-bus-row .lyrsolo')]
+    .map(b => { const r = b.getBoundingClientRect(); const p = b.closest('.lyr-trk-bar, .lyr-bus-row').getBoundingClientRect();
+                return [px(r.height), px((r.y + r.height / 2) - (p.y + p.height / 2))]; });
+  const cnt = rail.querySelector('.lyr-slots-n'), door = rail.querySelector('#lyrSettings');
+  const num = rail.querySelector('.lyr-trk-bar .lyr-num');
+  return {
+    n: bars.length, nb: buses.length,
+    modeL: px(mr.x + parseFloat(cs.paddingLeft)), modeR: px(mr.right - parseFloat(cs.paddingRight)),
+    bars: bars.map(edge), buses: buses.map(edge), ms,
+    segs: [...rail.querySelectorAll('.lyr-modes .seg-pill')].map(e => px(e.getBoundingClientRect().height)),
+    // The chrome-density segment as it renders ELSEWHERE in the chrome — the
+    // rail's two must be the same control at the same size, whatever that is.
+    refSeg: (() => { const o = [...document.querySelectorAll('.seg-pill')].find(e => !rail.contains(e) && e.offsetHeight > 0); return o ? px(o.getBoundingClientRect().height) : null; })(),
+    swH: rail.querySelector('.lyr-modes .mu-switch') ? px(rail.querySelector('.lyr-modes .mu-switch').getBoundingClientRect().height) : null,
+    rowMids: [...rail.querySelectorAll('.lyr-mrow')].map(r => [...r.children].filter(c => c.offsetWidth > 0).map(mid)),
+    cntMid: cnt ? mid(cnt) : null, doorMid: door ? mid(door) : null,
+    numMid: num ? mid(num) : null, barMid: mid(bars[0]),
+  };
+})();
 
 if (list && prev !== null) list.innerHTML = prev;
+if (bus && prevBus !== null) bus.innerHTML = prevBus;
 if (!wasOpen) document.body.classList.remove('pinned-open');
-return { lefts, rights, wrapped, clipped, barBtns, footLines, slots };
+return { lefts, rights, wrapped, clipped, barBtns, footLines, mix };
 `;
 
 // ── The freeze wash ─────────────────────────────────────────────────────────
@@ -851,7 +844,6 @@ function readTail(tail, offenders, seen) {
 }
 
 const R1_PX_TAIL = {
-  "gap: 3px": 1,
   "margin-bottom: 4px": 1,
   "margin-bottom: 8px": 1,
   "margin-left: 10px": 1,
@@ -860,7 +852,7 @@ const R1_PX_TAIL = {
   "margin-top: -2.5px": 1,
   "margin-top: -3px": 1,
   "margin-top: -4.5px": 1,
-  "margin-top: -6px": 3,
+  "margin-top: -6px": 2,
   "margin-top: 10px": 1,
   "margin-top: 22px": 1,
   "margin-top: 26px": 1,
@@ -875,7 +867,9 @@ const R1_PX_TAIL = {
 };
 // 364 since 2026-09-15: the height-snap round took the vertical padding off `.trow`
 // `.ds-del` and `.tc-cam-row`, which is how a stated height replaces a derived one.
-const R1_REM_TAIL = 363;
+// 346 since 2026-09-16: the pinned rail's rows, groups and tracker went with the
+// mixer, and their rem literals with them (the mixer's rules are all --sp-*).
+const R1_REM_TAIL = 346;
 
 function auditSpacingLiterals() {
   const raw = fs.readFileSync(path.join(ROOT, 'css', 'style.css'), 'utf8');
@@ -1631,7 +1625,7 @@ function collapses(label, items, key) {
       'no rail label wraps',
       (rr.wrapped || []).length
         ? `${rr.wrapped.join(', ')} — the answer is NOT a wider rail and NOT shorter copy. The rail ` +
-          `is 246px against the canvas and \`unpin all\` is destructive, so it stays spelled out. ` +
+          `is 320px against the canvas and \`unpin all\` is destructive, so it stays spelled out. ` +
           `One item per row, mark left, keycap flush right — INSTRUMENT-GUI § 5.`
         : 'all one line');
     check((rr.clipped || []).length === 0,
@@ -1662,48 +1656,39 @@ function collapses(label, items, key) {
       'the rail header\'s buttons sit together, not spread across the bar',
       bb.length < 2 ? 'n/a' : `gaps ${gaps.join(', ')}px`);
 
-    // ── The slot tracker ────────────────────────────────────────────────
-    const sl = rr.slots;
-    if (!sl) {
-      check(false, 'the pinned rail carries a slot tracker', 'no #lyrPips / .lyr-slots-n');
+    // ── The mixer ─────────────────────────────────────────────────────
+    const mx = rr.mix;
+    if (!mx) {
+      check(false, 'the pinned rail carries a mixer', 'no .lyr-trk-bar / .lyr-modes');
     } else {
-      check(sl.n === sl.want,
-        'the tracker draws one pip per slot',
-        `${sl.n} pip(s) for ${sl.want} slot(s)` +
-          (sl.n === sl.want ? '' : ' — the count is max(commitSlotCount, the highest slot still holding a pin)'));
-      check(sl.titleX == null || Math.abs(sl.pipX - sl.titleX) <= TOLERANCE,
-        'the tracker starts where the rail title does',
-        `pips ${sl.pipX} vs title ${sl.titleX}` +
-          (sl.titleX != null && Math.abs(sl.pipX - sl.titleX) > TOLERANCE
-            ? ' — it is a header readout, not a row; the row column starts further in'
-            : ''));
-      check(sl.btnRight == null || Math.abs(sl.numRight - sl.btnRight) <= TOLERANCE,
-        'the tracker ends where the header buttons do',
-        `number ${sl.numRight} vs buttons ${sl.btnRight}`);
-      check(sl.pipMid == null || Math.abs(sl.pipMid - sl.numMid) <= TOLERANCE,
-        'the tracker and the count share one centre line',
-        `cells ${sl.pipMid} vs count ${sl.numMid}` +
-          (sl.pipMid != null && Math.abs(sl.pipMid - sl.numMid) > TOLERANCE
-            ? ' — the count centres on the whole block of cells, one row or two'
-            : ''));
-      // The cell IS the pin's number (Ek, 2026-09-14). A cell that has drifted
-      // off its slot names the wrong loop, which is worse than naming none.
-      const bad = sl.digits.map((ok, i) => ok ? null : i + 1).filter(Boolean);
-      check(bad.length === 0,
-        'every tracker cell is numbered by its slot',
-        bad.length ? `cell(s) ${bad.join(', ')} do not read their own slot number` : `1–${sl.n}`);
-      check(sl.perRow === Math.min(8, sl.n),
-        'the tracker wraps at eight to a row',
-        `${sl.perRow} in the first row of ${sl.n}` +
-          (sl.perRow === Math.min(8, sl.n) ? '' : ' — the wrap is declared (max-width), not the column width'));
-      check(!sl.clash,
-        'the tracker never runs into the count beside it',
-        sl.clash ? 'the cells overlap the count — the row is wider than the strip allows' : 'clear');
-      check(sl.type.sizes.length === 1 && sl.type.weights.length === 1 && sl.type.fams === 1,
-        'every number in the tracker is one size, one weight, one family',
-        `size ${sl.type.sizes.join(' / ')} · weight ${sl.type.weights.join(' / ')} · ${sl.type.fams} famil${sl.type.fams === 1 ? 'y' : 'ies'}` +
-          (sl.type.sizes.length === 1 && sl.type.weights.length === 1 && sl.type.fams === 1 ? ''
-            : ' — one readout said four ways; only COLOUR may separate them. An <input> inherits neither family nor weight.'));
+      const all = [...mx.bars, ...mx.buses];
+      const lSpread = +(Math.max(...all.map(e => e[0]), mx.modeL) - Math.min(...all.map(e => e[0]), mx.modeL)).toFixed(2);
+      const rSpread = +(Math.max(...all.map(e => e[1]), mx.modeR) - Math.min(...all.map(e => e[1]), mx.modeR)).toFixed(2);
+      check(lSpread <= TOLERANCE && rSpread <= TOLERANCE,
+        'every track, every bus and the mode bar share one left and one right edge',
+        `left spread ${lSpread}px · right spread ${rSpread}px` +
+          (lSpread > TOLERANCE || rSpread > TOLERANCE ? ` · mode ${mx.modeL}–${mx.modeR} · bars ${mx.bars.map(e => e[0] + '–' + e[1]).join(', ')} · buses ${mx.buses.map(e => e[0] + '–' + e[1]).join(', ')}` : ''));
+      check(mx.bars.every(e => Math.abs(e[2] - 32) <= TOLERANCE) && mx.buses.every(e => Math.abs(e[2] - 24) <= TOLERANCE),
+        'a track bar is 32 tall and a bus row 24',
+        `bars ${[...new Set(mx.bars.map(e => e[2]))].join('/')} · buses ${[...new Set(mx.buses.map(e => e[2]))].join('/') || 'none'}`);
+      const msH = [...new Set(mx.ms.map(m => m[0]))], msOff = mx.ms.length ? Math.max(...mx.ms.map(m => Math.abs(m[1]))) : 0;
+      check(mx.ms.length >= 2 && msH.every(h => Math.abs(h - 18.4) <= TOLERANCE) && msOff <= TOLERANCE,
+        'M and S are the 18px pair, centred on the bar they sit in',
+        `n=${mx.ms.length} height ${msH.join('/')} · worst centre offset ${msOff}px`);
+      const segRef = mx.refSeg ?? mx.segs[0];
+      check(mx.segs.length === 2 && mx.segs.every(h => Math.abs(h - segRef) <= TOLERANCE) && mx.swH != null && Math.abs(mx.swH - 18) <= TOLERANCE,
+        'the mode bar\'s two segments are the chrome\'s .seg-pill at its own height, and its switch is 18',
+        `segments ${mx.segs.join('/')} vs the chrome\'s ${mx.refSeg ?? 'n/a'} · switch ${mx.swH}`);
+      const rowSpread = Math.max(...mx.rowMids.map(m => m.length ? +(Math.max(...m) - Math.min(...m)).toFixed(2) : 0));
+      check(mx.rowMids.length === 3 && rowSpread <= TOLERANCE,
+        'each of the three mode-bar rows centres its label, its control and its readout on one line',
+        `${mx.rowMids.length} rows · worst spread ${rowSpread}px`);
+      check(mx.cntMid != null && mx.doorMid != null && Math.abs(mx.cntMid - mx.doorMid) <= TOLERANCE,
+        'the header count and the settings door share a centre line',
+        `count ${mx.cntMid} vs door ${mx.doorMid}`);
+      check(mx.numMid != null && Math.abs(mx.numMid - mx.barMid) <= TOLERANCE,
+        'a track\'s number centres on its bar',
+        `number ${mx.numMid} vs bar ${mx.barMid}`);
     }
   }
 

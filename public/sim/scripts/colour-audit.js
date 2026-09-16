@@ -514,8 +514,14 @@ async function run(rig) {
       for (let i = 0; i < Math.min(full.length, perf.length); i++) worst = Math.max(worst, Math.abs(full[i].r - perf[i].r));
       gaps.push({ fov, worst: +worst.toFixed(2), n: Math.min(full.length, perf.length) });
     }
-    // and the zero-loudness mark, in the full renderer
+    // and the zero-loudness mark, in the full renderer. Measured against the
+    // SAME FIELD undisturbed, never against a pixel number: the fault is a mark
+    // that doubles, and a fixed ceiling here is really an assertion about
+    // whatever `vizMaxSize` happens to default to — it read `< 24` against a
+    // 22 px ceiling and went red the day the ceiling became 36, saying nothing
+    // about the mark it is named after (2026-09-15).
     S.fovDeg = 80; S.perfMode = false;
+    const before = (await draw()).filter(a => a.fill !== 'rgba(255, 255, 255, 0.25)');
     S.particles[4].rms = NaN;
     S._particleVersion++;
     const poisoned = await draw();
@@ -523,7 +529,8 @@ async function run(rig) {
     S.particles.length = 0; for (const p of keep) S.particles.push(p);
     S.fovDeg = fov0; S.perfMode = perf0; S.camPull = pull0; S._particleVersion++;
     return { gaps, grey: clean.filter(a => /^#(\w)\1(\w)\2(\w)\3$/.test(a.fill) || a.fill === '#888888').length,
-             maxR: Math.max(...clean.map(a => a.r)), n: clean.length };
+             maxR: Math.max(...clean.map(a => a.r)),
+             baseR: Math.max(...before.map(a => a.r)), n: clean.length };
   });
   for (const g of j0.gaps) {
     check(`perfMode draws the same dot sizes as the full renderer at ${g.fov}° fov`,
@@ -535,7 +542,8 @@ async function run(rig) {
   check('a mark with a non-finite loudness keeps its timbre colour',
     j0.grey === 0, `${j0.grey} of ${j0.n} dots drew grey`);
   check('and is drawn at the quiet floor, not at double size',
-    j0.maxR < 24, `largest dot ${j0.maxR} px`);
+    j0.baseR > 0 && j0.maxR <= j0.baseR + 0.5,
+    `largest dot ${j0.maxR} px against ${j0.baseR} px with the same field unpoisoned`);
 
   console.log(`\n${pass} ok · ${fail} failed`);
   return fail;

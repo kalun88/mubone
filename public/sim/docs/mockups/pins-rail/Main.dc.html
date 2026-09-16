@@ -1,0 +1,507 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body { background: #000000; font-family: 'Urbanist', 'Helvetica Neue', Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #c5c0b9; }
+    a { color: #e07b3c; } a:hover { color: #f0955c; }
+    button { font: inherit; cursor: pointer; }
+
+    /* ── the rail ── */
+    .rail { position: absolute; top: 0; right: 0; width: 320px; height: 940px; display: flex; flex-direction: column;
+      background: #0b0a09; border-left: 1px solid rgba(255,240,224,0.055); user-select: none; }
+    .stage { position: absolute; inset: 0; background: #000; }
+    .stage .grid { position: absolute; left: 0; top: 0; width: 60px; height: 940px; opacity: 0.35;
+      background-image: linear-gradient(rgba(228,221,208,0.12) 1px, transparent 1px); background-size: 100% 47px; }
+
+    .bar { display: flex; align-items: center; justify-content: space-between; height: 38px; padding: 0 12px;
+      border-bottom: 1px solid rgba(255,240,224,0.055); }
+    .title { font-size: 11.04px; letter-spacing: 0.18em; text-transform: uppercase; color: #aba59d; }
+    .tc-icon { width: 32px; height: 32px; margin-right: -8px; display: grid; place-items: center; background: none; border: 0; border-radius: 4px; color: #9d978e; }
+    .tc-icon:hover { color: #e4ddd0; background: rgba(255,240,224,0.03); }
+    .tc-icon svg { width: 13.33px; height: 13.33px; }
+
+    /* slot tracker — one cell per slot, filled in the engine hue, ringed if selected */
+    .slots { display: flex; align-items: center; justify-content: space-between; height: 30px; padding: 0 12px;
+      border-bottom: 1px solid rgba(255,240,224,0.055); }
+      font-size: 12.48px; font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1; color: #857e74; }
+    .cnt { display: flex; align-items: center; font-size: 12.48px; font-weight: 500; font-variant-numeric: tabular-nums; color: #aba59d; line-height: 1; }
+    .cnt i { font-style: normal; color: #857e74; margin: 0 2.4px; }
+    .cnt input { width: 21.6px; height: 16px; padding: 0; margin: 0; background: none; border: 0; border-radius: 2px; color: #e4ddd0;
+      font: inherit; font-size: 12.48px; font-weight: 500; font-variant-numeric: tabular-nums; text-align: center; }
+
+    /* ── the mode bar: what you switch during a set ── */
+    .modes { padding: 6px 12px 8px; border-bottom: 1px solid rgba(255,240,224,0.055); display: flex; flex-direction: column; gap: 6px; }
+    .mrow { display: grid; grid-template-columns: 38px auto 1fr auto auto; align-items: center; gap: 8px; height: 24px; }
+    .eb { font-size: 11.04px; letter-spacing: 0.18em; text-transform: uppercase; color: #aba59d; }
+    .eb.r { text-align: right; }
+    .seg { display: inline-flex; height: 24px; border-radius: 2px; background: rgba(255,240,224,0.03); padding: 0; }
+    .seg button { height: 24px; padding: 0 9px; border: 0; background: none; border-radius: 2px; color: #857e74;
+      font-size: 11.04px; letter-spacing: 0.06em; text-transform: lowercase; transition: color 90ms cubic-bezier(0.16,0.84,0.34,1), background 90ms cubic-bezier(0.16,0.84,0.34,1); }
+    .seg button:hover { color: #b8b2aa; }
+    .seg button.on { background: rgba(255,240,224,0.14); color: #e4ddd0; }
+    .sw { position: relative; width: 32px; height: 18px; border-radius: 999px; border: 0; padding: 0; background: rgba(255,240,224,0.13);
+      transition: background 190ms cubic-bezier(0.16,0.84,0.34,1); }
+    .sw i { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #938d83;
+      transition: transform 190ms cubic-bezier(0.30,0,0,1), background 190ms; }
+    .sw.on { background: #a793c0; }
+    .sw.on i { transform: translateX(14px); background: #0b0a09; }
+    .sw.off-mode { opacity: 1; }
+    .sld { position: relative; width: 64px; height: 24px; cursor: ew-resize; }
+    .sld::before { content: ''; position: absolute; left: 0; right: 0; top: 11px; height: 2px; background: rgba(255,240,224,0.11); }
+    .sld i { position: absolute; top: 6px; width: 2px; height: 12px; margin-left: -1px; background: #c5c0b9; }
+    .sld.dis::before { background: rgba(255,240,224,0.055); }
+    .sld.dis i { background: #5c564c; }
+    .sld-v { font-size: 10.24px; font-variant-numeric: tabular-nums; color: #938d83; width: 26px; text-align: right; }
+
+    /* ── the tracks ── */
+    .list { flex: 1; min-height: 0; overflow-y: auto; position: relative; padding: 6px 12px; }
+    .trk { position: absolute; left: 12px; right: 12px; top: 6px; height: 32px;
+      transition: transform 190ms cubic-bezier(0.30,0,0,1); will-change: transform; }
+    .bar32 { position: relative; height: 32px; border-radius: 2px; overflow: hidden; background: rgba(255,240,224,0.03); cursor: ew-resize; }
+    .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 100%; transform-origin: left center; opacity: 0.18;
+      will-change: transform; }
+    .edge { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -2px; will-change: transform, left; }
+    .edge.auto { background: #a793c0 !important; }
+    .num { position: absolute; left: 0; top: 0; width: 24px; height: 32px; display: grid; place-items: center;
+      font-size: 12.48px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
+    .num.cell { width: 20px; height: 20px; top: 6px; left: 4px; border-radius: 2px; font-weight: 500; }
+    .mat { position: absolute; left: 26px; top: 0; height: 32px; }
+    .mat canvas { display: block; }
+    .ph { position: absolute; top: 0; bottom: 0; width: 1px; left: 26px; will-change: transform; opacity: 0.95; }
+    .ph::before { content: ''; position: absolute; top: 0; left: -1px; width: 3px; height: 3px; background: inherit; }
+    .db { position: absolute; right: 48px; top: 0; height: 32px; display: flex; align-items: center; font-size: 10.24px;
+      font-variant-numeric: tabular-nums; color: #938d83; pointer-events: none; }
+    .ms { position: absolute; right: 4px; top: 7px; display: flex; gap: 3px; }
+    .ms button { width: 18px; height: 18px; padding: 0; border: 0; border-radius: 2px; background: rgba(255,240,224,0.05);
+      color: #857e74; font-size: 10.24px; font-weight: 600; line-height: 1; transition: color 90ms, background 90ms; }
+    .ms button:hover { color: #cec9c2; background: rgba(255,240,224,0.11); }
+    .ms button.on.m { background: rgba(204,106,85,0.30); color: #e4ddd0; }
+    .ms button.on.s { background: rgba(224,123,60,0.32); color: #e4ddd0; }
+    .sel::before { content: ''; position: absolute; left: -12px; top: 10px; width: 6px; height: 12px; border-radius: 0 6px 6px 0; background: #e4ddd0; }
+    .ovd { position: absolute; right: 82px; top: 13px; display: flex; gap: 3px; pointer-events: none; }
+    .ovd i { width: 5px; height: 5px; border-radius: 50%; display: block; }
+
+    /* the fold — a track's own settings, opened by its number */
+    .fold { position: absolute; left: 0; right: 0; top: 34px; height: 0; overflow: hidden; opacity: 0;
+      transition: opacity 190ms cubic-bezier(0.16,0.84,0.34,1); }
+    .trk.open .fold { opacity: 1; }
+    .frow { display: grid; grid-template-columns: 34px 1fr 40px; align-items: center; gap: 8px; height: 26px; }
+    .frow .eb { font-size: 10.24px; }
+    .frow .sld { width: 100%; height: 22px; }
+    .frow .sld::before { top: 10px; }
+    .frow .sld i { top: 5px; }
+    .frow .v { font-size: 10.24px; font-variant-numeric: tabular-nums; color: #aba59d; text-align: right; }
+    .frow .seg { height: 24px; }
+    .frow .seg button { height: 24px; padding: 0 8px; font-size: 11.04px; }
+    .fold-in { padding: 2px 0 0 26px; display: flex; flex-direction: column; gap: 2px; }
+
+    /* busses and acts */
+    .busses { padding: 6px 12px; border-top: 1px solid rgba(255,240,224,0.055); display: flex; flex-direction: column; gap: 4px; }
+    .bus { position: relative; height: 24px; border-radius: 2px; overflow: hidden; background: rgba(255,240,224,0.03); }
+    .bus .fill { opacity: 0.14; }
+    .bus .nm { position: absolute; left: 8px; top: 0; height: 24px; display: flex; align-items: center; gap: 6px;
+      font-size: 11.04px; letter-spacing: 0.18em; text-transform: uppercase; }
+    .bus .nm b { font-weight: 500; color: #857e74; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+    .bus .ms { top: 3px; }
+    .acts { display: flex; flex-direction: column; padding: 4px 4px 8px; border-top: 1px solid rgba(255,240,224,0.055); }
+    .trow { display: grid; grid-template-columns: 16.8px 1fr; align-items: center; gap: 8.8px; height: 24px; padding: 0 8px;
+      border: 0; background: none; border-radius: 2px; color: #776f66; font-size: 14.08px; text-align: left; letter-spacing: 0.02em; }
+    .trow svg { width: 16.8px; height: 16.8px; color: #776f66; }
+    .trow:hover { background: rgba(255,240,224,0.03); color: #cec9c2; }
+    .trow:hover svg { color: #cec9c2; }
+    .trow.danger:hover { color: #cc6a55; background: rgba(204,106,85,0.07); }
+    .trow.danger:hover svg { color: #cc6a55; }
+    .empty { padding: 22px 14px; font-size: 12.48px; color: #857e74; text-align: center; }
+  </style>
+</helmet>
+
+<div style="position: relative; width: 380px; height: 940px; background: #000000;">
+  <div class="stage"><div class="grid"></div></div>
+  <div class="rail" id="rail">
+
+    <div class="bar">
+      <span class="title">pinned</span>
+      <span style="display: flex; align-items: center; gap: 12px;">
+      <span class="cnt" title="how many pins can be held at once (1–16) — type the max"><b id="cntF">6</b><i>/</i><input id="cntM" value="8" maxlength="2"></span>
+      <button type="button" class="tc-icon" id="btnSet" title="pin settings — count, when full, path, the defaults for a new pin">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"></path></svg>
+      </button>
+      </span>
+    </div>
+
+    <div class="modes">
+      <div class="mrow">
+        <span class="eb">blend</span>
+        <div class="seg" id="segBlend"><button type="button" data-v="all">all</button><button type="button" data-v="focus" class="on">focus</button></div>
+        <span></span>
+        <span class="eb r">tether</span>
+        <button type="button" class="sw on" id="swTether" aria-pressed="true"><i></i></button>
+      </div>
+      <div class="mrow">
+        <span class="eb">sort</span>
+        <div class="seg" id="segSort"><button type="button" data-v="near" class="on">near</button><button type="button" data-v="far">far</button><button type="button" data-v="old">old</button></div>
+        <span></span>
+        <span class="eb r">width</span>
+        <div style="display: flex; align-items: center; gap: 6px;"><div class="sld" id="sldX"><i style="left: 50%;"></i></div><span class="sld-v" id="sldXv">50%</span></div>
+      </div>
+    </div>
+
+    <div class="list" id="list"></div>
+
+    <div class="busses" id="busses"></div>
+
+    <div class="acts">
+      <button type="button" class="trow" draggable="true" title="pin — every line under the cursor becomes a loop; a granulating cursor adds a cloud">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 3v12M8 11l4 4 4-4"></path><path d="M5 20h14"></path></svg><span>pin</span>
+      </button>
+      <button type="button" class="trow" draggable="true" title="unpin — takes the selected pin, the first row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M12 21V9M8 13l4-4 4 4"></path><path d="M5 4h14"></path></svg><span>unpin</span>
+      </button>
+      <button type="button" class="trow danger" draggable="true" title="unpin all">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg><span>unpin all</span>
+      </button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"numberHue":{"editor":"enum","options":["engine","slot"],"default":"engine","section":"track"},"rowPitch":{"editor":"int","min":34,"max":48,"step":2,"unit":"px","default":38,"section":"track"},"showMaterial":{"editor":"boolean","default":true,"section":"track"},"$preview":{"width":380,"height":940}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+
+  componentDidMount() { this._boot(); }
+  componentDidUpdate() { this._applyProps(); }
+  componentWillUnmount() { cancelAnimationFrame(this._raf); }
+
+  // ── the six pins on this stage ──────────────────────────────────────
+  _boot() {
+    const ENG = { cloud: '#e8a030', loop: '#f2569e' };
+    const rnd = (seed) => () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const mk = (r, n, opts) => Array.from({ length: n }, (_, i) => ({ t: (i + 0.5) / n, a: 0.25 + 0.75 * Math.pow(r(), 1.4), y: r() }));
+    this.pins = [
+      { slot: 1, type: 'loop',  color: '#e4a58d', dur: 4.2, lon: 0.4,  lat: 0.2,  marks: mk(rnd(11), 34), ovd: 0, gain: 1, mute: false, solo: false, inS: 0,   outS: 0.02, speed: 1, path: 'fwd',  ph: 0.1, ago: 41 },
+      { slot: 2, type: 'cloud', color: '#dbab7e', dur: 0,   lon: -1.1, lat: 0.5,  marks: mk(rnd(23), 26), ovd: 0, gain: 1, mute: false, solo: false, inS: 2.5, outS: 4,    speed: 1, path: 'pp',   ph: 0,   ago: 33 },
+      { slot: 3, type: 'loop',  color: '#ccb378', dur: 2.6, lon: 0.9,  lat: -0.3, marks: mk(rnd(37), 22), ovd: 2, gain: 0.72, mute: false, solo: false, inS: 0, outS: 0.02, speed: 1, path: 'fwd', ph: 0.6, ago: 20 },
+      { slot: 4, type: 'cloud', color: '#b9bb7d', dur: 6.0, lon: 2.2,  lat: 0.1,  marks: mk(rnd(41), 30), ovd: 0, gain: 1, mute: false, solo: false, inS: 0.6, outS: 1.2,  speed: 1, path: 'pp',   ph: 0.3, ago: 14, moving: true },
+      { slot: 5, type: 'cloud', color: '#a3c18b', dur: 0,   lon: -2.4, lat: -0.6, marks: mk(rnd(53), 18), ovd: 0, gain: 1, mute: false, solo: false, inS: 10,  outS: 10,   speed: 1, path: 'pp',   ph: 0,   ago: 9 },
+      { slot: 6, type: 'loop',  color: '#8cc69f', dur: 6.8, lon: 1.6,  lat: 0.9,  marks: mk(rnd(67), 48), ovd: 0, gain: 1, mute: false, solo: false, inS: 0,   outS: 1.5,  speed: 1, path: 'pp',   ph: 0.8, ago: 3 },
+    ];
+    this.pins.forEach(p => { p.eng = ENG[p.type]; p.level = p.gain; p.target = p.gain; p.fwd = true; p.open = false; });
+    this.state2 = { blend: 'focus', tether: true, sort: 'near', xfade: 0.5, max: 8, selected: 0 };
+    this.cursor = { lon: 0, lat: 0 };
+    this.t0 = performance.now();
+
+    this._build();
+    this._applyProps();
+    this._wire();
+    const tick = (now) => { this._frame(now); this._raf = requestAnimationFrame(tick); };
+    this._raf = requestAnimationFrame(tick);
+  }
+
+  _applyProps() {
+    const p = this.props;
+    this.pitch = p.rowPitch ?? 38;
+    this.numberHue = p.numberHue ?? 'engine';
+    this.showMaterial = p.showMaterial ?? true;
+    for (const pin of this.pins) {
+      const el = pin.el;
+      const hue = this.numberHue === 'slot' ? pin.color : pin.eng;
+      el.num.style.color = hue;
+      el.num.classList.toggle('cell', false);
+      el.mat.style.display = this.showMaterial ? '' : 'none';
+    }
+    this._layout(true);
+  }
+
+  // ── build the DOM once ──────────────────────────────────────────────
+  _build() {
+    const list = document.getElementById('list');
+    list.innerHTML = '';
+    const W = 296, MATW = W - 26 - 82; // number column · mat · db + M S
+    for (const pin of this.pins) {
+      const t = document.createElement('div');
+      t.className = 'trk';
+      t.innerHTML =
+        '<div class="bar32">' +
+          '<div class="fill" style="background:' + pin.color + '"></div>' +
+          '<div class="num" title="open this pin’s own settings">' + pin.slot + '</div>' +
+          '<div class="mat" style="width:' + MATW + 'px"><canvas width="' + (MATW * 2) + '" height="64" style="width:' + MATW + 'px;height:32px"></canvas></div>' +
+          '<div class="ph" style="background:' + pin.color + '"></div>' +
+          (pin.ovd ? '<div class="ovd">' + '<i style="background:' + pin.color + '"></i>'.repeat(pin.ovd) + '</div>' : '') +
+          '<div class="db"></div>' +
+          '<div class="edge" style="background:' + pin.color + '"></div>' +
+          '<div class="ms"><button type="button" class="m" title="mute — the playhead keeps running">M</button><button type="button" class="s" title="solo">S</button></div>' +
+        '</div>' +
+        '<div class="fold"><div class="fold-in">' +
+          '<div class="frow"><span class="eb">in</span><div class="sld" data-k="inS"><i></i></div><span class="v"></span></div>' +
+          '<div class="frow"><span class="eb">out</span><div class="sld" data-k="outS"><i></i></div><span class="v"></span></div>' +
+          (pin.type === 'loop'
+            ? '<div class="frow"><span class="eb">speed</span><div class="sld" data-k="speed"><i></i></div><span class="v"></span></div>' +
+              '<div class="frow"><span class="eb">path</span><div class="seg"><button type="button" data-p="pp">⇄</button><button type="button" data-p="fwd">→</button><button type="button" data-p="rev">←</button></div><span></span></div>'
+            : (pin.moving
+              ? '<div class="frow"><span class="eb">path</span><div class="seg"><button type="button" data-p="pp">⇄</button><button type="button" data-p="fwd">→</button><button type="button" data-p="rev">←</button></div><span></span></div>'
+              : '')) +
+        '</div></div>';
+      list.appendChild(t);
+      pin.el = {
+        root: t, bar: t.querySelector('.bar32'), fill: t.querySelector('.fill'), edge: t.querySelector('.edge'),
+        num: t.querySelector('.num'), mat: t.querySelector('.mat'), cv: t.querySelector('canvas'), ph: t.querySelector('.ph'),
+        db: t.querySelector('.db'), m: t.querySelector('.m'), s: t.querySelector('.s'), fold: t.querySelector('.fold'),
+      };
+      pin.matW = MATW;
+      this._drawMaterial(pin);
+      this._syncFold(pin);
+    }
+    // busses
+    const busses = document.getElementById('busses');
+    busses.innerHTML = '';
+    this.busses = [
+      { key: 'cloud', name: 'clouds', hue: '#e8a030', mute: false, solo: false },
+      { key: 'loop',  name: 'loops',  hue: '#f2569e', mute: false, solo: false },
+    ];
+    for (const b of this.busses) {
+      const d = document.createElement('div');
+      d.className = 'bus';
+      d.innerHTML = '<div class="fill" style="background:' + b.hue + '"></div>' +
+        '<div class="nm" style="color:' + b.hue + '">' + b.name + '<b></b></div>' +
+        '<div class="ms"><button type="button" class="m" title="mute every pinned ' + b.key + '">M</button><button type="button" class="s" title="solo the ' + b.name + '">S</button></div>';
+      busses.appendChild(d);
+      b.el = { root: d, fill: d.querySelector('.fill'), n: d.querySelector('b'), m: d.querySelector('.m'), s: d.querySelector('.s') };
+    }
+    // tracker
+    this._drawPips();
+  }
+
+  // The material, flattened: every mark at its own size, in the pin's own
+  // colour. A loop is its marks on one connected line; a cloud is loose dots.
+  _drawMaterial(pin) {
+    const cv = pin.el.cv, ctx = cv.getContext('2d');
+    const W = pin.matW, H = 32;
+    ctx.setTransform(2, 0, 0, 2, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = pin.color; ctx.strokeStyle = pin.color;
+    const mx = (m) => 4 + m.t * (W - 8);
+    if (pin.type === 'loop') {
+      // the connecting line, then a mark at every particle, sized by its own loudness
+      ctx.lineWidth = 1.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      const my = (m) => 16 + (m.y - 0.5) * 8;
+      const layers = 1 + pin.ovd;
+      for (let L = layers - 1; L >= 0; L--) {
+        ctx.globalAlpha = L === 0 ? 0.9 : 0.35;
+        ctx.beginPath();
+        pin.marks.forEach((m, i) => { const x = mx(m), y = my(m) + L * 3.2; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      for (const m of pin.marks) { ctx.beginPath(); ctx.arc(mx(m), my(m), 0.8 + m.a * 2.2, 0, 6.283); ctx.fill(); }
+    } else {
+      // a cloud: dots where they were read, a moving one drifting across
+      for (const m of pin.marks) {
+        const y = pin.moving ? 16 + Math.sin(m.t * 6.2) * 7 + (m.y - 0.5) * 6 : 6 + m.y * 20;
+        ctx.globalAlpha = 0.55 + m.a * 0.45;
+        ctx.beginPath(); ctx.arc(mx(m), y, 0.9 + m.a * 2.6, 0, 6.283); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  _drawPips() {
+    // The slot tracker is gone (Ek): the list is the count and row one is the
+    // nearest. Only the typeable max survives, in the header.
+    document.getElementById('cntF').textContent = String(this.pins.length);
+  }
+
+  // ── wiring ──────────────────────────────────────────────────────────
+  _wire() {
+    const st = this.state2;
+    const seg = (id, key, after) => {
+      const el = document.getElementById(id);
+      el.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+        st[key] = b.dataset.v;
+        el.querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+        after && after();
+      }));
+    };
+    seg('segBlend', 'blend', () => this._modeChanged());
+    seg('segSort', 'sort', () => this._layout());
+    const sw = document.getElementById('swTether');
+    sw.addEventListener('click', () => { st.tether = !st.tether; sw.classList.toggle('on', st.tether); sw.setAttribute('aria-pressed', String(st.tether)); });
+    // the xfade slider: drag anywhere on it
+    const sx = document.getElementById('sldX');
+    const setX = (e) => {
+      const r = sx.getBoundingClientRect();
+      st.xfade = Math.max(0.02, Math.min(1, (e.clientX - r.left) / r.width));
+      sx.firstElementChild.style.left = (st.xfade * 100) + '%';
+      document.getElementById('sldXv').textContent = Math.round(st.xfade * 100) + '%';
+    };
+    this._drag(sx, setX);
+    this._modeChanged();
+
+    for (const pin of this.pins) {
+      const el = pin.el;
+      el.m.addEventListener('click', (e) => { e.stopPropagation(); pin.mute = !pin.mute; this._mix(); });
+      el.s.addEventListener('click', (e) => { e.stopPropagation(); pin.solo = !pin.solo; this._mix(); });
+      el.num.addEventListener('click', (e) => { e.stopPropagation(); this.pins.forEach(q => { if (q !== pin) q.open = false; }); pin.open = !pin.open; this._layout(); });
+      // the whole bar is the fader
+      this._drag(el.bar, (e) => {
+        if (e.target.closest('.ms, .num')) return;
+        const r = el.bar.getBoundingClientRect();
+        pin.gain = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+        pin.touched = true; this._mix();
+      }, () => { pin.touched = false; });
+      // the fold's own sliders
+      el.fold.querySelectorAll('.sld').forEach(s => {
+        this._drag(s, (e) => {
+          const r = s.getBoundingClientRect(), f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+          const k = s.dataset.k;
+          pin[k] = k === 'speed' ? +(0.25 + f * 3.75).toFixed(2) : +(f * 10).toFixed(1);
+          this._syncFold(pin);
+        });
+      });
+      el.fold.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', () => { pin.path = b.dataset.p; this._syncFold(pin); }));
+    }
+    for (const b of this.busses) {
+      b.el.m.addEventListener('click', () => { b.mute = !b.mute; this._mix(); });
+      b.el.s.addEventListener('click', () => { b.solo = !b.solo; this._mix(); });
+    }
+    const cntM = document.getElementById('cntM');
+    cntM.addEventListener('change', () => { st.max = Math.max(1, Math.min(16, parseInt(cntM.value, 10) || 8)); cntM.value = st.max; this._drawPips(); });
+    this._mix();
+  }
+
+  _drag(el, onMove, onEnd) {
+    let on = false;
+    el.addEventListener('pointerdown', (e) => { if (e.button !== 0) return; on = true; el.setPointerCapture?.(e.pointerId); onMove(e); });
+    el.addEventListener('pointermove', (e) => { if (on) onMove(e); });
+    const end = () => { if (on) { on = false; onEnd && onEnd(); } };
+    el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  }
+
+  _modeChanged() {
+    const focus = this.state2.blend === 'focus';
+    document.getElementById('sldX').classList.toggle('dis', !focus);
+    document.getElementById('sldXv').style.color = focus ? '#938d83' : '#5c564c';
+  }
+
+  _syncFold(pin) {
+    const el = pin.el.fold;
+    const fmt = (v) => v < 1 ? Math.round(v * 1000) + ' ms' : v.toFixed(1) + ' s';
+    el.querySelectorAll('.frow').forEach(row => {
+      const s = row.querySelector('.sld'), v = row.querySelector('.v');
+      if (s) {
+        const k = s.dataset.k;
+        const f = k === 'speed' ? (pin.speed - 0.25) / 3.75 : pin[k] / 10;
+        s.firstElementChild.style.left = (f * 100) + '%';
+        v.textContent = k === 'speed' ? pin.speed.toFixed(2) + '×' : fmt(pin[k]);
+      }
+    });
+    el.querySelectorAll('[data-p]').forEach(b => b.classList.toggle('on', b.dataset.p === pin.path));
+  }
+
+  // audible(pin) = !mute && !bus.mute && (nothing soloed || pin.solo || bus.solo)
+  _mix() {
+    const anySolo = this.pins.some(p => p.solo) || this.busses.some(b => b.solo);
+    for (const pin of this.pins) {
+      const bus = this.busses.find(b => b.key === pin.type);
+      pin.audible = !pin.mute && !bus.mute && (!anySolo || pin.solo || bus.solo);
+      pin.el.m.classList.toggle('on', pin.mute);
+      pin.el.s.classList.toggle('on', pin.solo);
+    }
+    for (const b of this.busses) { b.el.m.classList.toggle('on', b.mute); b.el.s.classList.toggle('on', b.solo); b.el.n.textContent = this.pins.filter(p => p.type === b.key).length; }
+  }
+
+  // ── the sort, and the row positions ─────────────────────────────────
+  _order() {
+    const st = this.state2, c = this.cursor;
+    const d = (p) => Math.acos(Math.max(-1, Math.min(1, Math.sin(p.lat) * Math.sin(c.lat) + Math.cos(p.lat) * Math.cos(c.lat) * Math.cos(p.lon - c.lon))));
+    const ps = this.pins.slice();
+    if (st.sort === 'near') ps.sort((a, b) => d(a) - d(b));
+    else if (st.sort === 'far') ps.sort((a, b) => d(b) - d(a));
+    else ps.sort((a, b) => b.ago - a.ago);
+    return ps;
+  }
+
+  _layout(force) {
+    const ps = this._order();
+    const key = ps.map(p => p.slot + (p.open ? 'o' : '')).join(',') + this.pitch;
+    if (!force && key === this._lastKey) return;
+    this._lastKey = key;
+    let y = 0;
+    const FOLD = { cloud: 58, cloudMoving: 86, loop: 114 };
+    ps.forEach((p, i) => {
+      const fh = p.open ? FOLD[p.type === 'loop' ? 'loop' : (p.moving ? 'cloudMoving' : 'cloud')] : 0;
+      p.el.root.style.transform = 'translateY(' + y + 'px)';
+      p.el.root.classList.toggle('open', p.open);
+      p.el.root.classList.toggle('sel', i === 0);
+      p.el.fold.style.height = fh + 'px';
+      y += this.pitch + fh;
+    });
+    document.getElementById('list').style.minHeight = (y + 12) + 'px';
+  }
+
+  // ── every frame: the cursor drifts, the faders follow, the playheads run ──
+  _frame(now) {
+    const st = this.state2, t = (now - this.t0) / 1000;
+    // a slow, wandering cursor standing in for the x-imu3
+    this.cursor.lon = Math.sin(t * 0.21) * 2.4 + Math.sin(t * 0.07) * 0.8;
+    this.cursor.lat = Math.sin(t * 0.13 + 1) * 0.7;
+    const c = this.cursor;
+    const dist = (p) => Math.acos(Math.max(-1, Math.min(1, Math.sin(p.lat) * Math.sin(c.lat) + Math.cos(p.lat) * Math.cos(c.lat) * Math.cos(p.lon - c.lon))));
+    const focus = st.blend === 'focus';
+    const gate = st.tether ? Infinity : 0.9;   // the search radius, in radians, when not tethered
+    let sum = 0; const w = [];
+    for (const p of this.pins) {
+      const d = dist(p);
+      let v = 0;
+      if (focus) { if (d <= gate) { v = Math.pow(1 / (d + 0.001), 1 / Math.max(0.01, st.xfade)); } }
+      else v = 1;
+      w.push(v); sum += v;
+    }
+    const busLevel = { cloud: 0, loop: 0 }, busN = { cloud: 0, loop: 0 };
+    this.pins.forEach((p, i) => {
+      // weight × the fader × the mix; a ramp on the way in and out, per pin
+      const weight = focus ? (sum > 0 ? w[i] / sum * Math.min(this.pins.length, 3) : 0) : 1;
+      p.target = Math.min(1, weight) * p.gain * (p.audible ? 1 : 0);
+      const dt = 1 / 60;
+      const ramp = p.target > p.level ? p.inS : p.outS;
+      const step = ramp > 0.02 ? dt / ramp : 1;
+      p.level += Math.max(-step, Math.min(step, p.target - p.level));
+      if (Math.abs(p.target - p.level) < 0.002) p.level = p.target;
+      const el = p.el;
+      el.fill.style.transform = 'scaleX(' + p.level.toFixed(4) + ')';
+      el.edge.style.left = (p.level * 100) + '%';
+      el.edge.classList.toggle('auto', focus);
+      // the readout says something only when the hand set it
+      const db = p.gain <= 0.0005 ? '−∞' : (20 * Math.log10(p.gain)).toFixed(1);
+      el.db.textContent = (p.touched || p.gain < 0.999) ? db : '';
+      el.db.style.color = p.touched ? '#e4ddd0' : '#938d83';
+      // the playhead runs whether or not it sounds — that is what a DJ mute is
+      if (p.dur > 0) {
+        const span = p.dur / p.speed;
+        let ph;
+        if (p.path === 'pp') { const u = (t / span) % 2; ph = u < 1 ? u : 2 - u; }
+        else if (p.path === 'rev') ph = 1 - (t / span) % 1;
+        else ph = (t / span) % 1;
+        el.ph.style.transform = 'translateX(' + (ph * (p.matW - 1)).toFixed(1) + 'px)';
+        el.ph.style.display = '';
+      } else el.ph.style.display = 'none';
+      busLevel[p.type] += p.level; busN[p.type]++;
+    });
+    for (const b of this.busses) {
+      const n = busN[b.key];
+      b.el.fill.style.transform = 'scaleX(' + (n ? (busLevel[b.key] / n).toFixed(3) : 0) + ')';
+    }
+    if (focus && st.sort !== 'old' && (now - (this._lastSortAt || 0)) > 240) { this._lastSortAt = now; this._layout(); }
+  }
+}
+</script>
+</body>
+</html>

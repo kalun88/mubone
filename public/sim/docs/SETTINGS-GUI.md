@@ -247,7 +247,9 @@ with the same words on them.
 
 `pins` is params only, and that is #270's ruling, not this round's: the slot bank, the mode picker, the
 D / hold-D / ⌘D buttons, clear-all, cloud, loop and morph are all hidden by `style.css` because the tile
-screen owns them. Seven rows survive, in two sections — Slots and Playback. Two traps it paid for: the
+screen owns them. Seven rows survived, in two sections — Slots and Playback — until the mixer
+(2026-09-16) took blend, crossfade, tether, the selected pin and the count into the rail; four remain,
+When Full, and what a new pin is born with (In, Out, Path). Two traps it paid for: the
 shell puts `.in-settings` on the borrowed node **itself**, so `.in-settings .device--commit` matches
 nothing (they are one element, not two), and `style.css` caps a commit section at 34rem for the rig
 view's narrow column, which left the whole page ending 316px short of the app's only right edge.

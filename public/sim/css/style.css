@@ -4671,7 +4671,10 @@ html.booting-reveal .main-layout {
   body.pinned-open .tc-rail {
     display: flex; grid-column: 1; grid-row: 1;
     justify-self: end; align-self: stretch;
-    width: 15.4rem; min-height: 0; z-index: 4;
+    /* 20rem since the mixer (2026-09-16, Ek: "wider — ~320px"): a track carries
+       the material, the fader and M / S on one line at a readable size. It is
+       an overlay on the stage, so the sphere is untouched. */
+    width: 20rem; min-height: 0; z-index: 4;
     flex-direction: column;
     background: var(--bg-app); border-left: 1px solid var(--border-faint);
     font-family: var(--font-sans);
@@ -4704,183 +4707,166 @@ html.booting-reveal .main-layout {
      as TOOL ROWS (.trow, renderPinChrome) since 2026-09-12: the old .lyr-act
      row model (dot, eyebrow label, keycap) is gone with the keycaps. The
      rail's flash is `.tc-rail .trow--act.fired` above. */
-  /* ── The slot tracker (2026-09-14) ─────────────────────────────────────
-     One pip per slot, a filled one in its pin's engine hue. Flat shapes, no
-     text for what a shape says: the count beside them is there because "how
-     many more" is a number, and the max is that number made typeable. Pips sit
-     on their own strip rather than in .lyr-bar — that bar's two buttons are
-     measured against each other by npm run audit:align, and a third child of a
-     different species is exactly what that check exists to catch. */
-  .lyr-slots { display: flex; align-items: center; justify-content: space-between;
-    gap: 0.5rem; padding: 0.45rem 0.75rem;
-    border-bottom: 1px solid var(--border-faint); }
-  /* ONE SIZE ACROSS THE STRIP (Ek, 2026-09-14: "the number sizes dont match the
-     4/8 number, just make it look more like the rest of the app"). Every number
-     here — the cells and the count — is one step of the ramp, --fs-meta, and
-     the cells grew to meet the count rather than the count shrinking to meet
-     them ("text can afford to be bigger", DESIGN-SYSTEM § 1). The cell is sized
-     from the widest thing it has to hold — `10` measures 11px of ink, so 1.1rem
-     leaves 6.6px of slack at sixteen slots — and the 0.25rem gap from the
-     SELECTION RING, which reaches 2px past the cell and had 1.2px of clearance
-     at the tighter spacing. Eight to a row, DECLARED rather than left to fall
-     out of the column width, so sixteen slots always read as two rows of
-     eight: 8 × 1.1rem + 7 × 0.25rem = 168.8px inside 176px of column. */
-  .lyr-pips { display: flex; align-items: center; flex-wrap: wrap; gap: 0.25rem;
-    min-width: 0; max-width: calc(8 * 1.1rem + 7 * 0.25rem); }
-  /* A cell, not a dot: it carries its pin's NUMBER, the same one the row below
-     wears (`loop 3` is the pin in slot 3). <i> is a marker here, never italic.
-     NO BORDER at rest, on a filled cell or an empty one — the ground says
-     "slot" and the hue says "taken", and a line around either is the second
-     mark simplicity breaks the tie against (DESIGN-SYSTEM § 2). */
-  .lyr-pips i { display: grid; place-items: center; width: 1.1rem; height: 1rem;
-    border-radius: var(--r-1); background: none; border: 0;
-    font-family: var(--font-sans); font-size: var(--fs-meta); font-style: normal;
-    font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1;
-    color: var(--text-muted); }
-  /* Filled: the engine hue carries the digit, so the number and the kind are
-     one mark rather than two things to line up by eye. */
-  .lyr-pips i.on { background: var(--c); color: var(--bg-app); }
-  /* Over the line: the slot holds a pin the engine no longer services, because
-     the max was pulled below it. Its hue as a ring with no fill — outlined, not
-     filled, is the instrument's own way of saying a thing is not live, and it
-     keeps the over state in ONE language with the rest rather than adding a
-     dash nothing else in the app uses. */
-  .lyr-pips i.on.over { background: none; box-shadow: inset 0 0 0 1px var(--c); color: var(--c); }
-  .lyr-pips i.over { opacity: 0.6; }
-  /* THE SELECTED PIN — what unpin will take, `selectedPinSlot`, the same answer
-     the rail's half-moon reads. A ring rather than a moon: a cell has no left
-     edge to wear one on, and a hue mark would vanish against a hue fill. The
-     inner ring is the rail's own ground, so the bright one reads as separate
-     from the cell rather than as a thicker border. */
-  .lyr-pips i.sel { box-shadow: 0 0 0 1px var(--bg-app), 0 0 0 2px var(--text-light); }
-  /* THE TRACKER CARRIES ONE MARK, AND IT IS THE NEAREST PIN (Ek, 2026-09-15:
-     "for the tracker it looks like you added a black border, that's not as
-     clear, let's skip any loop tracker on the tracker"). The master was drawn
-     here too, as an inset ring — at 17.6x16 there is no room for the glyph, and
-     every shape that fits reads as a border rather than as a mark. The rail's
-     rows have the space to say it properly and do; a cell this size can carry
-     one fact, so it carries the one that is true of every pin. */
-  /* ONE WEIGHT TOO. Weight separates ROLES, not levels (DESIGN-SYSTEM § 2), so
-     the count is not bolder than the cells it counts — it is the same number,
-     one step brighter. Declared on the input as well as the span: a form control
-     inherits neither the family nor the weight, which is how the max sat at 400
-     beside everything else at 500 and read as a different kind of number. */
+  /* ── THE MIXER (2026-09-16) ──────────────────────────────────────────────
+     One TRACK per pin, and the track IS its fader (Ek: "the whole track is a
+     slider bar that's the volume of that track"). Its fill is the level, a 2px
+     edge is the exact value, the material sits inside it laid flat, in the
+     pin's own slot colour — the colour it has on the sphere — and the number is
+     in the ENGINE hue, the kind. Nothing on a track is a label: the shape of
+     the material says loop or cloud, and the coordinates are gone (Ek: "i dont
+     ever look at it"). Instrument scope: 32px bar, 18px M / S, eyebrow type.
+
+     --m is the pin's slot colour, --c its engine hue — the same two variables
+     the old rows carried, so the audits' probes still find them. */
+
+  /* The header's right half: the count, and the settings door. The max is
+     typeable exactly as .grain-numbox is: transparent at rest, the tint on
+     focus, the colour lifting on hover. */
+  .lyr-bar-r { display: flex; align-items: center; gap: var(--sp-5); }
   .lyr-slots-n { display: flex; align-items: center; flex: none;
     font-size: var(--fs-meta); font-weight: 500; font-variant-numeric: tabular-nums;
     line-height: 1; color: var(--text-secondary); }
   #lyrSlotsFilled { font-weight: 500; color: var(--text-secondary); }
-  .lyr-slots-sep { color: var(--text-muted); margin: 0 0.15rem; }
-  /* The typeable max, exactly as .grain-numbox is typeable: TRANSPARENT at rest,
-     the tint on focus, the colour lifting on hover. A resting ground made it
-     the same object as a slot cell — a ninth cell at the end of eight, which is
-     the one thing this readout must not say. */
+  .lyr-slots-sep { color: var(--text-muted); margin: 0 var(--sp-0); }
   .lyr-slots-max { width: 1.35rem; height: 1rem; padding: 0; margin: 0;
     background: none; border: 0; border-radius: var(--r-1);
     color: var(--text-light); font-family: var(--font-sans);
     font-size: var(--fs-meta); font-weight: 500; font-variant-numeric: tabular-nums;
     line-height: 1; text-align: center; cursor: text; }
   .lyr-slots-max:hover { color: var(--text-highlight); background: var(--surface-0); }
-  .lyr-slots-max:focus { outline: none; color: var(--text-highlight);
-    background: var(--surface-0); }
+  .lyr-slots-max:focus { outline: none; color: var(--text-highlight); background: var(--surface-0); }
 
-  .lyr-actions { border-bottom: 1px solid var(--border-faint); }
-  /* The rails' FOOT (helper text) is gone (Ek, 2026-09-12, night). */
-
-  .lyrgroup { border-top: 1px solid var(--border-faint); }
-  .lyrgroup:first-child { border-top: 0; }
-  /* A muted group is not dimmed — never dim to mean anything (RULINGS). Its
-     M is lit and every row in it reads faint, because none of them sound. */
-  .lyrgroup.soloed { box-shadow: inset 2px 0 0 var(--accent-action); }
-  .lyrgroup-h { display: grid; grid-template-columns: auto 1fr auto auto auto;
-    align-items: center; gap: 0.42rem; padding: 0.45rem 0.75rem;
-    background: var(--surface-0); font-size: var(--fs-nano); letter-spacing: 0.08em;
+  /* ── The mode bar: blend · tether · sort · width ──────────────────────
+     The four pin settings you switch mid-set, each a second door onto the S
+     field Settings → Pins holds. Blend and sort are "which one?" — the
+     chrome-density segment; tether is "do you want it?" — the 32×18 switch,
+     in the SENSOR hue because what it turns on is the body driving the faders
+     (the same violet the fader edges wear while it does). */
+  .lyr-modes { display: flex; flex-direction: column; gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-5) var(--sp-4); border-bottom: 1px solid var(--border-faint); }
+  .lyr-mrow { display: grid; grid-template-columns: 2.5rem auto 1fr auto auto;
+    align-items: center; gap: var(--sp-4); min-height: 24px; }
+  .lyr-eb { font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow);
     text-transform: uppercase; color: var(--text-secondary); }
-  .lyrname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  /* Colour identity only — the mute affordance is the M button beside S. */
-  .lyrdot { width: 0.62rem; height: 0.62rem; border-radius: 50%; flex: none;
-    background: var(--c); border: 1px solid var(--c); }
-  .lyrgroup.muted .lyrdot { background: transparent; }
+  .lyr-eb--r { text-align: right; }
+  .lyr-mrow-gap { min-width: 0; }
+  .lyr-sw { color: var(--text-dim); }
+  .lyr-mrow--xf { grid-template-columns: 2.5rem 1fr; }
+  .lyr-xf { display: flex; align-items: center; gap: var(--sp-3); }
+  .lyr-xf .grain-slider { flex: 1; }
+  .lyr-xf-v { font-size: var(--fs-nano); font-variant-numeric: tabular-nums;
+    color: var(--text-tertiary); width: 1.7rem; text-align: right; }
+  /* Width has no say outside focus: the control steps down the ramp, as a
+     settings row does under .set-row--off. A mark, never a word. */
+  .lyr-xf.off .grain-slider { background: var(--border-faint); }
+  .lyr-xf.off .lyr-xf-v { color: var(--text-faint); }
+
+  /* ── The tracks ───────────────────────────────────────────────────────
+     Absolutely placed and moved by transform: the SORT reorders them (near /
+     far / old, which is the selected pin), and a row that moves by transform
+     costs the render loop nothing. The list sets its own min-height. */
+  .lyr-list { position: relative; padding: var(--sp-3) var(--sp-5); }
+  .lyr-trk { position: absolute; left: var(--sp-5); right: var(--sp-5); top: var(--sp-3);
+    transition: transform var(--m-state) var(--ease-snap); will-change: transform; }
+  .lyr-trk-bar { position: relative; height: 32px; border-radius: var(--r-1); overflow: hidden;
+    background: var(--surface-0); cursor: ew-resize; }
+  /* The fill is the LEVEL: the pin's hue at low alpha, scaled from the left.
+     Read from the audio nodes every frame (ui-pins.js), so the bar is the
+     truth rather than a copy of it — a fader the cursor is driving moves. */
+  .lyr-fill { position: absolute; inset: 0; transform-origin: left center;
+    background: var(--m); opacity: 0.18; will-change: transform; }
+  .lyr-edge { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -2px; /* geometry */
+    background: var(--m); pointer-events: none; }
+  /* The body is driving it: the edge turns the sensor hue while the blend is
+     focus. This is the one mark that says "focus is on", and it is on every
+     track at once. */
+  .lyr-trk.auto .lyr-edge { background: var(--accent-sensor); }
+  /* The NUMBER is the identity — the same digit the sphere's anchor mark
+     wears — in the engine hue: gold is a cloud, pink is a loop. Pressing it
+     folds the pin's own settings open under the bar. */
+  .lyr-num { position: absolute; left: 0; top: 0; width: 1.5rem; height: 32px;
+    display: grid; place-items: center; padding: 0; margin: 0; border: 0; background: none;
+    font-family: var(--font-sans); font-size: var(--fs-meta); font-weight: 600;
+    font-variant-numeric: tabular-nums; line-height: 1; color: var(--c); cursor: pointer; }
+  .lyr-num:hover { color: var(--text-light); }
+  /* Over the line: the max was pulled below this slot, so the engine no longer
+     services it. Its number outlined, not filled — the instrument's own way of
+     saying a thing is not live (the old tracker cell did the same). */
+  .lyr-trk.over .lyr-num { box-shadow: inset 0 0 0 1px var(--c); border-radius: var(--r-1); }
+  /* The strip ends short of the readout and the overdub marks, so a dot or
+     the dub glyph never lands on the material's tail. */
+  .lyr-mat { position: absolute; left: 1.625rem; right: 6.5rem; top: 0; height: 32px; pointer-events: none; }
+  .lyr-trk.dub .lyr-mat { right: 7.9rem; }
+  .lyr-mat canvas { display: block; width: 100%; height: 32px; }
+  /* The playhead: where the loop (or the moving cloud) is. It keeps running
+     through a mute — that is what a DJ mute is, and the bar shows it. */
+  .lyr-ph { position: absolute; top: 0; bottom: 0; width: 1px; left: 1.625rem;
+    background: var(--m); will-change: transform; pointer-events: none; }
+  .lyr-ph::before { content: ''; position: absolute; top: 0; left: -1px; width: 3px; height: 3px; background: inherit; }
+  /* The readout prints only when the HAND set a level: eight tracks at 0 dB
+     are eight bars of one length, not eight numbers to read. */
+  .lyr-db { position: absolute; right: 3rem; top: 0; height: 32px; display: flex; align-items: center;
+    font-size: var(--fs-nano); font-variant-numeric: tabular-nums; color: var(--text-tertiary); pointer-events: none; }
+  .lyr-trk.touched .lyr-db { color: var(--text-light); }
+  .lyr-ms { position: absolute; right: var(--sp-2); top: 7px; /* geometry: (32 − 18.4) / 2 */
+    display: flex; gap: var(--sp-1); }
+  /* A dot per overdub (docs/archive/OVERDUB-PLAN.md § 2.5), and the tool's
+     own glyph on the loop a dub would JOIN (Ek, 2026-09-15) — two different
+     questions about two possibly-different pins, beside the readout. */
+  .lyr-ovd { position: absolute; right: 5.2rem; top: 13px; /* geometry */ display: flex; gap: var(--sp-1); pointer-events: none; }
+  .lyr-ovd i { width: 5px; height: 5px; border-radius: 50%; background: var(--m); display: block; }
+  .lyr-dub { display: none; position: absolute; right: 5.2rem; top: 7px; /* geometry */ width: 1.05rem; height: 1.05rem;
+    fill: none; stroke: var(--eng-tape); stroke-width: 1.7; pointer-events: none; }
+  .lyr-trk.dub .lyr-dub { display: block; }
+  .lyr-trk.dub .lyr-ovd { right: 6.6rem; }
+  /* The rail's radio mark (DESIGN-SYSTEM § 5): a half moon flush at the rail's
+     edge — the SELECTED pin, what unpin takes. Under near / far / old it is
+     always row one, so the moon and the order say the same thing. */
+  .lyr-trk.sel::before { content: ''; position: absolute; left: calc(-1 * var(--sp-5)); top: 10px; /* geometry */
+    width: 6px; height: 12px; border-radius: 0 6px 6px 0; background: var(--text-light); pointer-events: none; }
+
+  /* The FOLD — one pin's own settings, under its bar: in and out (its ramps,
+     which pin / unmute and unpin / mute ride). Height is set by ui-pins.js so
+     the rows below move by the same transform. */
+  .lyr-fold { padding: var(--sp-0) 0 0 1.625rem; display: flex; flex-direction: column; gap: var(--sp-0); overflow: hidden; }
+  .lyr-frow { display: grid; grid-template-columns: 2.1rem 1fr 2.8rem; align-items: center; gap: var(--sp-4); height: 24px; }
+  .lyr-frow .lyr-eb { font-size: var(--fs-nano); }
+  .lyr-frow .grain-numbox { width: 2.8rem; text-align: right; font-size: var(--fs-nano); }
+
+  /* M and S — the same two on a track, on a bus, and on the mute tile. Pressed
+     faces from the ramps (danger for a mute, ember for a solo): the raw reds
+     that sat here were the last hand-written colours in the rail. */
   .lyrmute { font-family: var(--font-sans); font-size: var(--fs-nano); font-weight: 600;
     width: 1.15rem; height: 1.15rem; display: grid; place-items: center; padding: 0;
     background: var(--surface-1); border: 1px solid var(--border-faint);
     color: var(--text-faint); border-radius: 2px; cursor: pointer; }
   .lyrmute:hover { color: var(--text-bright); border-color: var(--border-soft); }
-  .lyrmute[aria-pressed="true"] { background: rgba(232, 72, 72, 0.22);
-    border-color: #b25555; color: #ffb3b3; }
+  .lyrmute[aria-pressed="true"] { background: color-mix(in srgb, var(--accent-danger) 30%, transparent);
+    border-color: var(--accent-danger); color: var(--text-light); }
   .lyrsolo { font-family: var(--font-sans); font-size: var(--fs-nano); font-weight: 600;
     width: 1.15rem; height: 1.15rem; display: grid; place-items: center; padding: 0;
     background: var(--surface-1); border: 1px solid var(--border-faint);
     color: var(--text-faint); border-radius: 2px; cursor: pointer; }
   .lyrsolo:hover { color: var(--text-bright); border-color: var(--border-soft); }
-  .lyrsolo[aria-pressed="true"] { background: rgba(242,100,21,0.22);
-    border-color: var(--accent-action); color: #ffcda9; }
-  .lyrn { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .lyrsolo[aria-pressed="true"] { background: color-mix(in srgb, var(--accent-action) 32%, transparent);
+    border-color: var(--accent-action); color: var(--text-light); }
 
-  /* A pin row: the body (icon, name, position — tap = mute) and the same M
-     and S the group header has. Faint = NOT SOUNDING, derived from the four
-     flags, so a pin silenced by its group or by another pin's solo reads
-     faint with its own M unlit. `sel` is the pin unpin will take. */
-  /* Its metrics are the tool row's (.trow: a 2px edge, 0.7rem of padding, a
-     1.05rem glyph, a 0.55rem gap) so a hold's name starts at the same x as
-     the pin rows above it, which ARE tool rows since 2026-09-12. Measured:
-     0.75rem / 1rem / 0.5rem put the name 2.8px left of theirs. */
-  .lyr-hold { position: relative; display: grid; grid-template-columns: 1fr auto auto;
-    align-items: center; gap: 0.42rem; width: 100%;
-    border-top: 1px solid var(--border-faint); padding: 0.38rem 0.7rem 0.38rem calc(0.7rem + 2px);
-    color: var(--text-secondary); }
-  .lyr-hold-body { display: grid; grid-template-columns: 1.05rem 1fr; align-items: center;
-    gap: 0.55rem; min-width: 0; background: transparent; border: none; padding: 0;
-    margin: -0.38rem 0; padding: 0.38rem 0; cursor: pointer; text-align: left;
-    color: inherit; font-family: var(--font-sans); }
-  .lyr-hold-body:hover { color: var(--text-bright); }
-  .lyr-hold svg { width: 1.05rem; height: 1.05rem; color: var(--m); }
-  .lyr-hold.off { color: var(--text-faint); }
-  .lyr-hold.off svg { color: var(--text-faint); }
-  .lyr-hold-nm { font-size: var(--fs-control); font-weight: 500; min-width: 0; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
-  .lyr-hold-nm small { display: block; font-size: var(--fs-meta); font-weight: 400;
-    color: var(--text-faint); font-variant-numeric: tabular-nums; }
-  /* a dot per overdub, inline after the name, in the row's hue */
-  .lyr-ovd { display: inline-flex; gap: 3px; margin-left: 0.4rem; vertical-align: middle; }
-  .lyr-ovd i { width: 5px; height: 5px; border-radius: 50%; background: var(--m); display: block; }
-  /* The rail's radio mark (DESIGN-SYSTEM § 5): a half moon flush at the edge,
-     in the row's hue — one of these, the pin that is selected. Same geometry
-     as `.trow--radio.on::before` so the two rails say "this one" alike. */
-  .lyr-hold.sel::before {
-    content: '';
-    position: absolute; left: 0; top: 50%;
-    width: 6px; height: 12px; margin-top: -6px;
-    border-radius: 0 6px 6px 0;
-    background: var(--m);
-    pointer-events: none;
-  }
-  .lyr-hold.sel { color: var(--text-light); }
+  /* ── The busses: the two groups' M and S, with their members' mean level ── */
+  .lyr-bus { display: flex; flex-direction: column; gap: var(--sp-2);
+    padding: var(--sp-3) var(--sp-5); border-top: 1px solid var(--border-faint); }
+  .lyr-bus:empty { display: none; }
+  .lyr-bus-row { position: relative; height: 24px; border-radius: var(--r-1); overflow: hidden; background: var(--surface-0); }
+  .lyr-bus-row .lyr-fill { opacity: 0.14; }
+  .lyr-bus-row.soloed { box-shadow: inset 2px 0 0 var(--accent-action); }
+  .lyr-bus-nm { position: absolute; left: var(--sp-4); top: 0; height: 24px; display: flex; align-items: center; gap: var(--sp-3);
+    font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase; color: var(--c); }
+  .lyr-bus-nm b { font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+  .lyr-bus-row .lyr-ms { top: 3px; /* geometry: (24 − 18.4) / 2 */ }
 
-  /* ── THE LOOP A DUB WOULD JOIN (Ek, 2026-09-15) ─────────────────────────
-     Two different questions about two possibly-different pins: the half-moon
-     says what UNPIN takes, this says what an OVERDUB take would fold onto.
-     The tool's own glyph rather than a hue, because every loop row is already
-     in the tape hue — a tape-coloured mark on a loop says nothing. It sits at
-     the row's right, inside the body button and clear of the half-moon at the
-     left, so a pin that is BOTH wears both marks without either moving. */
-  /* IN THE TYPE ICON'S PLACE, and the row is measured to have nowhere else.
-     At the right there are 6.7px between where the position text ends and where
-     M begins — a 13px glyph does not fit, and as a flex child it shifted the
-     row's name 2.8px, a row changing shape to say something about itself. The
-     icon slot is the one place with room, and it costs nothing: a master is
-     always a LOOP, and the row already says `loop 3` in words, so the type
-     glyph there was the only thing on the row saying something already said.
-     `visibility`, not `display`, so the column keeps its width and no other
-     row moves. */
-  .lyr-dub { display: none; }
-  .lyr-hold-body { position: relative; }
-  .lyr-hold.dub .lyr-hold-body > svg:first-of-type { visibility: hidden; }
-  .lyr-hold.dub .lyr-dub {
-    display: block; position: absolute; left: 0; top: 50%; margin-top: -8.4px; /* geometry */
-    width: 1.05rem; height: 1.05rem; pointer-events: none;
-    fill: none; stroke: var(--eng-tape); stroke-width: 1.7;
-  }
-  .lyr-empty { padding: 1.4rem 0.9rem; font-size: var(--fs-meta); color: var(--text-faint);
+  /* The pin acts, at the foot since the mixer. The rails' FOOT (helper text)
+     is gone (Ek, 2026-09-12, night). */
+  .lyr-actions { border-top: 1px solid var(--border-faint); }
+  .lyr-empty { padding: var(--sp-7) var(--sp-5); font-size: var(--fs-meta); color: var(--text-faint);
     line-height: 1.6; text-align: center; }
 
   /* ── Tile row ─────────────────────────────────────────────────────────── */
@@ -5147,7 +5133,7 @@ html.booting-reveal .main-layout {
        you navigate with. */
     body.props-open .tc-lrail { width: 11.5rem; }
     body.prail-open .tc-prail { width: 12rem; margin-left: 11.5rem; }
-    body.pinned-open .tc-rail { width: 12rem; }
+    body.pinned-open .tc-rail { width: 16rem; }
 
     /* The palette keeps its precedence on a small screen — it is still the
        instrument — but ten squares at full size would overflow a 520px stage,

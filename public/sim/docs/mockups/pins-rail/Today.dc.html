@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600&display=swap">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body { background: #000000; font-family: 'Urbanist', 'Helvetica Neue', Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; color: #c5c0b9; }
+    a { color: #e07b3c; } a:hover { color: #f0955c; }
+    button { font: inherit; cursor: pointer; }
+    .rail { position: absolute; top: 0; right: 0; width: 246.4px; height: 940px; display: flex; flex-direction: column;
+      background: #0b0a09; border-left: 1px solid rgba(255,240,224,0.055); }
+    .grid { position: absolute; left: 0; top: 0; width: 133px; height: 940px; opacity: 0.35;
+      background-image: linear-gradient(rgba(228,221,208,0.12) 1px, transparent 1px); background-size: 100% 47px; }
+    .lyr-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9.92px 12px; border-bottom: 1px solid rgba(255,240,224,0.055); }
+    .lyr-title { font-size: 11.04px; letter-spacing: 0.18em; text-transform: uppercase; color: #aba59d; }
+    .lyr-set { width: 32px; height: 32px; margin: -6px -8px -6px 0; display: grid; place-items: center; background: none; border: 0; border-radius: 4px; color: #9d978e; }
+    .lyr-set svg { width: 13.33px; height: 13.33px; }
+    .lyr-slots { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7.2px 12px; border-bottom: 1px solid rgba(255,240,224,0.055); }
+    .pips { display: flex; align-items: center; gap: 4px; }
+    .pips i { display: grid; place-items: center; width: 17.6px; height: 16px; border-radius: 2px; font-style: normal; font-size: 12.48px; font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1; color: #857e74; }
+    .pips i.on { color: #0b0a09; }
+    .pips i.sel { box-shadow: 0 0 0 1px #0b0a09, 0 0 0 2px #e4ddd0; }
+    .cnt { display: flex; align-items: center; font-size: 12.48px; font-weight: 500; font-variant-numeric: tabular-nums; color: #aba59d; line-height: 1; }
+    .cnt i { font-style: normal; color: #857e74; margin: 0 2.4px; }
+    .cnt b { font-weight: 500; color: #e4ddd0; }
+    .acts { border-bottom: 1px solid rgba(255,240,224,0.055); padding-bottom: 9.6px; }
+    .tbx-lbl { display: flex; align-items: center; padding: 12px 11.2px 4px; font-size: 11.04px; letter-spacing: 0.18em; text-transform: uppercase; color: #aba59d; }
+    .trow { display: flex; align-items: center; gap: 8.8px; width: 100%; height: 24px; background: none; border: 0; border-left: 2px solid transparent; padding: 0 11.2px; text-align: left; color: #776f66; font-size: 14.08px; }
+    .trow svg { width: 16.8px; height: 16.8px; flex: none; color: #776f66; }
+    .lyrgroup { border-top: 1px solid rgba(255,240,224,0.055); }
+    .lyrgroup:first-child { border-top: 0; }
+    .lyrgroup-h { display: grid; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: 6.72px; padding: 7.2px 12px; background: rgba(255,240,224,0.03); font-size: 10.24px; letter-spacing: 0.08em; text-transform: uppercase; color: #aba59d; }
+    .lyrdot { width: 9.92px; height: 9.92px; border-radius: 50%; }
+    .lyrn { color: #5c564c; font-variant-numeric: tabular-nums; }
+    .ms { width: 18.4px; height: 18.4px; display: grid; place-items: center; padding: 0; background: rgba(255,240,224,0.05); border: 1px solid rgba(255,240,224,0.055); color: #5c564c; border-radius: 2px; font-size: 10.24px; font-weight: 600; }
+    .ms.on-m { background: rgba(232,72,72,0.22); border-color: #b25555; color: #ffb3b3; }
+    .lyr-hold { position: relative; display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6.72px; border-top: 1px solid rgba(255,240,224,0.055); padding: 6.08px 11.2px 6.08px 13.2px; color: #aba59d; }
+    .lyr-hold.off { color: #5c564c; }
+    .lyr-hold.off svg { color: #5c564c !important; }
+    .lyr-hold.sel { color: #e4ddd0; }
+    .lyr-hold.sel::before { content: ''; position: absolute; left: 0; top: 50%; width: 6px; height: 12px; margin-top: -6px; border-radius: 0 6px 6px 0; background: #e8a030; }
+    .body { display: grid; grid-template-columns: 16.8px 1fr; align-items: center; gap: 8.8px; min-width: 0; }
+    .body svg { width: 16.8px; height: 16.8px; }
+    .nm { font-size: 14.08px; font-weight: 500; white-space: nowrap; }
+    .nm small { display: block; font-size: 12.48px; font-weight: 400; color: #5c564c; font-variant-numeric: tabular-nums; }
+    .ovd { display: inline-flex; gap: 3px; margin-left: 6.4px; vertical-align: middle; }
+    .ovd i { width: 5px; height: 5px; border-radius: 50%; display: block; }
+    .note { position: absolute; left: 16px; top: 16px; width: 104px; font-size: 12.48px; line-height: 1.45; color: #857e74; }
+    .note b { display: block; font-weight: 500; color: #aba59d; font-size: 11.04px; letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 6px; }
+  </style>
+</helmet>
+
+<div style="position: relative; width: 380px; height: 940px; background: #000000;">
+  <div class="grid"></div>
+  <div class="note"><b>today</b>246 px. Two groups, each row a name and a bearing. Every parameter is behind ≡, on Settings → Pins.</div>
+  <div class="rail">
+    <div class="lyr-bar">
+      <span class="lyr-title">Pinned</span>
+      <button type="button" class="lyr-set"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"></path></svg></button>
+    </div>
+    <div class="lyr-slots">
+      <span class="pips">
+        <i class="on" style="background: #f2569e;">1</i><i class="on" style="background: #e8a030;">2</i><i class="on" style="background: #f2569e;">3</i><i class="on sel" style="background: #e8a030;">4</i><i class="on" style="background: #e8a030;">5</i><i class="on" style="background: #f2569e;">6</i><i>7</i><i>8</i>
+      </span>
+      <span class="cnt"><b>6</b><i>/</i><b>8</b></span>
+    </div>
+    <div class="acts">
+      <div class="tbx-lbl">pins</div>
+      <button type="button" class="trow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 3v12M8 11l4 4 4-4"></path><path d="M5 20h14"></path></svg><span>pin</span></button>
+      <button type="button" class="trow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M12 21V9M8 13l4-4 4 4"></path><path d="M5 4h14"></path></svg><span>unpin</span></button>
+      <button type="button" class="trow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg><span>unpin all</span></button>
+    </div>
+    <div class="lyrgroup">
+      <div class="lyrgroup-h"><span class="lyrdot" style="background: #e8a030;"></span><span>clouds</span><span class="lyrn">3</span><button type="button" class="ms">M</button><button type="button" class="ms">S</button></div>
+      <div class="lyr-hold"><div class="body"><svg viewBox="0 0 24 24" fill="#e8a030"><circle cx="12" cy="12" r="1.5"></circle><circle cx="6.6" cy="8.2" r="1"></circle><circle cx="7.6" cy="16.8" r="1"></circle><circle cx="17.4" cy="7.8" r="1"></circle><circle cx="16.6" cy="16.4" r="1"></circle></svg><span class="nm">cloud 2<small>297° · +29°</small></span></div><button type="button" class="ms">M</button><button type="button" class="ms">S</button></div>
+      <div class="lyr-hold sel" style="--m: #e8a030;"><div class="body"><svg viewBox="0 0 24 24" fill="#e8a030"><circle cx="12" cy="12" r="1.5"></circle><circle cx="6.6" cy="8.2" r="1"></circle><circle cx="7.6" cy="16.8" r="1"></circle><circle cx="17.4" cy="7.8" r="1"></circle><circle cx="16.6" cy="16.4" r="1"></circle></svg><span class="nm">cloud 4<small>126° · +6°</small></span></div><button type="button" class="ms">M</button><button type="button" class="ms">S</button></div>
+      <div class="lyr-hold off"><div class="body"><svg viewBox="0 0 24 24" fill="#e8a030"><circle cx="12" cy="12" r="1.5"></circle><circle cx="6.6" cy="8.2" r="1"></circle><circle cx="7.6" cy="16.8" r="1"></circle><circle cx="17.4" cy="7.8" r="1"></circle><circle cx="16.6" cy="16.4" r="1"></circle></svg><span class="nm">cloud 5<small>222° · −34°</small></span></div><button type="button" class="ms on-m">M</button><button type="button" class="ms">S</button></div>
+    </div>
+    <div class="lyrgroup">
+      <div class="lyrgroup-h"><span class="lyrdot" style="background: #f2569e;"></span><span>loops</span><span class="lyrn">3</span><button type="button" class="ms">M</button><button type="button" class="ms">S</button></div>
+      <div class="lyr-hold"><div class="body"><svg viewBox="0 0 24 24" fill="none" stroke="#f2569e" stroke-width="1.6" stroke-linecap="round"><path d="M3 16c3-7 6-9 9-5s6 2 9-4"></path></svg><span class="nm">loop 1<small>23° · +11°</small></span></div><button type="button" class="ms">M</button><button type="button" class="ms">S</button></div>
+      <div class="lyr-hold"><div class="body"><svg viewBox="0 0 24 24" fill="none" stroke="#f2569e" stroke-width="1.6" stroke-linecap="round"><path d="M3 16c3-7 6-9 9-5s6 2 9-4"></path></svg><span class="nm">loop 3<span class="ovd"><i style="background: #f2569e;"></i><i style="background: #f2569e;"></i></span><small>52° · −17°</small></span></div><button type="button" class="ms">M</button><button type="button" class="ms">S</button></div>
+      <div class="lyr-hold"><div class="body"><svg viewBox="0 0 24 24" fill="none" stroke="#f2569e" stroke-width="1.6" stroke-linecap="round"><path d="M3 16c3-7 6-9 9-5s6 2 9-4"></path></svg><span class="nm">loop 6<small>92° · +52°</small></span></div><button type="button" class="ms">M</button><button type="button" class="ms">S</button></div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

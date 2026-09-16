@@ -156,8 +156,9 @@ region is 7.3:1 – 8.7:1 across chrome, footer, tool rail and palette, and 9:1 
 ### The rails keep their own tracking, and the reason is width
 
 `--ls-widest` (0.18em) is the instrument's engraved-lettering setting and the rails do **not** take
-it. A **rail under 250px cannot afford 0.18em** (the tool rail is 248, the pinned rail 246.4; the
-tool rail was 216 when this was measured): four labels already wrap at the tracking they have —
+it. A **rail under 250px cannot afford 0.18em** (the tool rail is 248; the pinned rail was 246.4
+when this was measured and is 320 since the mixer, 2026-09-16, whose eyebrows DO take 0.18em; the
+tool rail was 216): four labels already wrap at the tracking they have —
 
 | label | rendered width | rail |
 |---|---|---|
@@ -195,7 +196,8 @@ left over — the grid decides the spacing, not the reverse.
 **The rail says how it selects.** One mark per row, flush at the left edge, in the row's own hue,
 and its *shape* carries the rule:
 
-- **half moon** — radio. One of these. Source and lens. **Tool rows wore it until 2026-09-11**
+- **half moon** — radio. One of these. Source and lens, and the pinned rail's SELECTED track
+  (what unpin takes — always row one, since the sort is the selection). **Tool rows wore it until 2026-09-11**
   and do not any more: arming is gone, so nothing selects a tool — a click on one points the
   DRAWER at it (`.open`, the raised ground) and its key plays it, and neither is a selection.
 - **half square** — additive. As many as you like. Off is the same solid block at 24%, not an

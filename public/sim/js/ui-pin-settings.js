@@ -1,11 +1,15 @@
 // ============================================================================
 // UI — SETTINGS → PINS, and the monitor/house split
-// Wires the pins page: blend (all / focus), cloud fade in / out, loop fade
-// time and release mode, tether and crossfade (the two rows that dim when
-// blend is "all" — a live disabled state), pin / unpin / clear, and the
-// monitor→house sliders on the audio side. Was ui-improv.js — the name of a
+// Wires the pins page: what a new pin is born with (in / out, path), the loop
+// release mode and fade, pin / unpin / clear, and the monitor→house sliders on
+// the audio side. Blend, tether, crossfade and the selected pin LEFT this page
+// on 2026-09-16 — the pinned rail's mode bar is their door (js/ui-pins.js),
+// and Ek: "any pin settings that are now on the pin rail can be removed from
+// the settings page". The apply* functions below stay because they are how S
+// takes its defaults and how `S._syncImprovUI` refreshes whatever controls are
+// present; every element read is optional. Was ui-improv.js — the name of a
 // March "improv mode" that no longer exists — until 2026-09-05; the element
-// ids (improvSnapRow, improvHouseSlider…) still carry the old word.
+// ids (improvHouseSlider…) still carry the old word.
 // ============================================================================
 
 import { S } from './state.js';
@@ -37,16 +41,11 @@ export function initPinSettings() {
   // and steps the title one stop down the ramp. It must never be an inline
   // style: an inline write outranks the stylesheet exactly the way the markup's
   // old `style="opacity:0.35"` did, so the class would be there and do nothing.
-  // The 0.35 on the whole row also erased the description — --text-muted at
-  // 4.9:1 composites to about 1.4:1 — and these two carry the longest copy on
-  // the page. `aria-disabled` goes with it: the opacity said nothing to the
-  // accessibility tree.
-  // THE REASON BELONGS TO THE STATE, NOT THE PROSE (2026-09-14). Tether's
-  // description used to end "Focus only." — a third sentence carrying a
-  // condition that is already known at render time and changes while you play.
-  // A description is what the control IS; why it is unavailable right now is
-  // what the off state says, in the row's own status line. Same shape as
-  // Latency's "needs output → mic".
+  // THE REASON BELONGS TO THE STATE, NOT THE PROSE (2026-09-14): a description
+  // is what the control IS; why it is unavailable right now is what the off
+  // state says, in the row's own status line. The two rows this dimmed (tether,
+  // crossfade) are the rail's since 2026-09-16, where width steps down under
+  // `all` the same way; the helper stays for the next row that needs it.
   const setRowOff = (row, off, why) => {
     if (!row) return;
     row.classList.toggle('set-row--off', off);
