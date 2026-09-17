@@ -196,8 +196,13 @@ left over — the grid decides the spacing, not the reverse.
 **The rail says how it selects.** One mark per row, flush at the left edge, in the row's own hue,
 and its *shape* carries the rule:
 
-- **half moon** — radio. One of these. Source and lens, and the pinned rail's SELECTED track
-  (what unpin takes — always row one, since the sort is the selection). **Tool rows wore it until 2026-09-11**
+- **half moon** — radio. One of these. Source and lens. **The pinned rail's SELECTED track wore it
+  until 2026-09-16** and wears a FRAME now (`.lyr-sel`: a hairline in the pins hue around row one's
+  place, a fixture that stays when the rail is empty and holds "nothing pinned", the word SELECTED as
+  the rail's eyebrow sitting on its top-right corner the way a sticker sits on a tile's outline). What
+  unpin takes is always row one, since the sort is the selection, and a radio mark nobody reads
+  mid-show was not saying so (Ek: "sure we have the half moon dot but that's old"). Neutral, never
+  ember: chosen is not exceptional. **Tool rows wore it until 2026-09-11**
   and do not any more: arming is gone, so nothing selects a tool — a click on one points the
   DRAWER at it (`.open`, the raised ground) and its key plays it, and neither is a selection.
 - **half square** — additive. As many as you like. Off is the same solid block at 24%, not an

@@ -77,19 +77,23 @@ export function readGateLoudness() {
   return l ? gateLoudness(l.rms, l.peak) : null;
 }
 
+/** Peak + RMS over the LAST `n` samples of the gate analyser's window. */
+function _readTail(an, n) {
+  an.getFloatTimeDomainData(_gateBuf);
+  let sumSq = 0, peak = 0;
+  for (let i = GATE_FFT_SIZE - n; i < GATE_FFT_SIZE; i++) {
+    const v = _gateBuf[i];
+    sumSq += v * v;
+    const abs = v < 0 ? -v : v;
+    if (abs > peak) peak = abs;
+  }
+  return { peak, rms: Math.sqrt(sumSq / n) };
+}
+
 /** Peak + RMS over the gate analyser's full window. */
 function _readLoudness() {
   const an = _ensureGateAnalyser();
-  if (!an) return null;
-  an.getFloatTimeDomainData(_gateBuf);
-  let sumSq = 0, peak = 0;
-  for (let i = 0; i < GATE_FFT_SIZE; i++) {
-    const s = _gateBuf[i];
-    sumSq += s * s;
-    const abs = s < 0 ? -s : s;
-    if (abs > peak) peak = abs;
-  }
-  return { peak, rms: Math.sqrt(sumSq / GATE_FFT_SIZE) };
+  return an ? _readTail(an, GATE_FFT_SIZE) : null;
 }
 
 // ── Window loudness (2026-09-02) ─────────────────────────────────────────────
@@ -131,15 +135,7 @@ function _readNewLoudness() {
   }
   _lastReadTime = now;
   if (n <= 0) return null;
-  an.getFloatTimeDomainData(_gateBuf);
-  let sumSq = 0, peak = 0;
-  for (let i = GATE_FFT_SIZE - n; i < GATE_FFT_SIZE; i++) {
-    const v = _gateBuf[i];
-    sumSq += v * v;
-    const abs = v < 0 ? -v : v;
-    if (abs > peak) peak = abs;
-  }
-  return { peak, rms: Math.sqrt(sumSq / n) };
+  return _readTail(an, n);
 }
 
 function _foldIntoHold() {
@@ -162,6 +158,44 @@ export function consumeWindowLoudness() {
   _heldPeak = 0;
   _heldRms  = 0;
   return rms;
+}
+
+// ── A window read off the TAKE ITSELF (2026-09-17) ──────────────────────────
+// The analyser fold above sizes a window by WHEN the main thread got round to
+// reading: each read takes "the last n samples" for the audio-clock time since
+// the previous read, and under load the audio thread is a block or more ahead
+// of the clock the main thread sees, so a burst's first samples leak into the
+// window before it. Measured with the cursor granulating the take as it is
+// painted (the normal case when you play): marks a frame clear of a burst read
+// 0.10–0.15 against a 0.1 ceiling on every run, 70/70 clean at rest.
+//
+// A live mark's window is a span of the RECORDING, [its moment, the next
+// mark's moment) — positions, not times — and the recorder delivers the take
+// into S.recordingRaw by position. So the honest read is the take's own
+// samples over that span, whatever any thread's clock said. The same law as
+// the fold — the loudest ~32 ms inside the window (max sub-window RMS) against
+// the peak — so a mark's size means what it meant.
+//
+// Returns null while the recorder has not yet delivered up to `toS` (its
+// chunks arrive ~43 ms behind the clock), so the caller can wait a tick;
+// `force` reads what has arrived — the stroke's last mark, at the seal.
+const _WIN_SUB = 1536;   // ~32 ms at 48 kHz — the frame the fold read in
+export function recordedWindowLoudness(fromS, toS, force = false) {
+  const raw = S.recordingRaw, sr = S.recordingSampleRate;
+  if (!raw || !(sr > 0)) return null;
+  const a = Math.max(0, Math.floor(fromS * sr));
+  let b = Math.floor(toS * sr);
+  if (b > S.recordingWritePos) { if (!force) return null; b = S.recordingWritePos; }
+  if (b <= a) return null;
+  let peak = 0, maxRms = 0;
+  for (let s = a; s < b; s += _WIN_SUB) {
+    const e = Math.min(b, s + _WIN_SUB);
+    let sumSq = 0;
+    for (let i = s; i < e; i++) { const v = raw[i]; sumSq += v * v; const abs = v < 0 ? -v : v; if (abs > peak) peak = abs; }
+    const rms = Math.sqrt(sumSq / (e - s));
+    if (rms > maxRms) maxRms = rms;
+  }
+  return gateLoudness(maxRms, peak);
 }
 
 // ── Timbre at an instant ─────────────────────────────────────────────────────
@@ -476,13 +510,13 @@ export function snapshotInputFeatures() {
   return { rms: consumeWindowLoudness(), centroid: t.centroid, zcr: t.zcr, noise: t.noise, tilt: t.tilt };
 }
 
-// ── Feature extraction from an AudioBuffer (for sample-source particles) ──────
+// ── Feature extraction from a take (for sample-source particles) ─────────────
 
 /**
- * Compute features from a decoded AudioBuffer at a given time offset.
+ * Compute features from a take (js/take.js) at a given time offset.
  * Used when painting with loaded samples (no live analyser to snapshot).
  *
- * @param {AudioBuffer} buffer  - the decoded audio buffer
+ * @param {object}      buffer  - the take
  * @param {number}      startSec - position in seconds to analyse
  * @returns {{ rms: number, centroid: number, zcr: number }}
  */
@@ -490,7 +524,7 @@ const _dftMag = new Float64Array(128);   // scratch for the DFT above
 
 export function featuresFromBuffer(buffer, startSec) {
   const sr  = buffer.sampleRate;
-  const ch  = buffer.getChannelData(0);
+  const ch  = buffer.data;
   const off = Math.max(0, Math.min(Math.floor(startSec * sr), ch.length - 256));
   const len = Math.min(256, ch.length - off);
 

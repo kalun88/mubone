@@ -22,7 +22,8 @@
 
 import { S, MAX_COMMITS } from './state.js';
 import { ensureAudioContext } from './audio.js';
-import { stampCartesian, killAllGrains, releaseSeqNodes } from './grain.js';
+import { audioBufferOf } from './take.js';
+import { stampCartesian, releaseSeqNodes } from './grain.js';
 import { rebuildSampleListUI } from './ui-samples.js';
 import { applyPresetObject, updatePlaybackControls, buildOverdubLayer } from './ui-presets.js';
 import { snapshotCurrentState } from './param-registry.js';
@@ -173,9 +174,10 @@ function buildManifest(audio, { particleWitness = false } = {}) {
           radiusFadeCurve:   slot.radiusFadeCurve,
           _envAttack:        slot._envAttack,
           _envRelease:       slot._envRelease,
-          // The pin's own two ramps (2026-09-16).
+          // The pin's own two ramps, and its fader (2026-09-16).
           fadeIn:            slot.fadeIn,
           fadeOut:           slot.fadeOut,
+          level:             slot.level,
           // Composer mode can hold a cloud at silence with its slot intact.
           // Without these two the arrangement is lost and every pin comes back
           // sounding at once.
@@ -209,6 +211,7 @@ function buildManifest(audio, { particleWitness = false } = {}) {
           grainParams:   slot.grainParams,
           fadeIn:        slot.fadeIn,
           fadeOut:       slot.fadeOut,
+          level:         slot.level,
           audio:         audio.idFor(slot.buffer),
           particles:     slot.particles.map(_packParticle),
           // The TAKES, not the layers — a layer is rebuilt from its take and
@@ -293,7 +296,7 @@ function buildManifest(audio, { particleWitness = false } = {}) {
 
 /**
  * Rebuild the session from a manifest and the audio members it names.
- * `audio` is a Map of id → AudioBuffer, as readPiece returns it.
+ * `audio` is a Map of id → take (js/take.js), as readPiece returns it.
  */
 async function applyManifest(data, audio) {
   // 0a. Validate shape BEFORE touching any state — a truncated or hand-edited
@@ -321,7 +324,6 @@ async function applyManifest(data, audio) {
   //    forever with nothing referencing it.
   // (Worklet grains are handled by _reloadWorkletEngine at the end.)
   history.clear();
-  killAllGrains();
   for (let i = 0; i < MAX_COMMITS; i++) {
     const slot = S.commitSlots[i];
     if (slot && slot.type === 'loop') releaseSeqNodes(slot);
@@ -435,6 +437,7 @@ async function applyManifest(data, audio) {
         // pair it was pinned under, which is what it would have used.
         fadeIn:            c.fadeIn  ?? c._envAttack  ?? 0,
         fadeOut:           c.fadeOut ?? c._envRelease ?? 0,
+        level:             c.level ?? 1,
         // A cloud held silent by composer mode comes back held, not sounding.
         // Only an explicit false holds; undefined means playing.
         playing:           c.playing === false ? false : undefined,
@@ -447,7 +450,12 @@ async function applyManifest(data, audio) {
         _pingForward:      true,
       };
     } else if (c.type === 'loop') {
-      const buf = bufFor(c.audio);
+      // The region a source node plays is an AudioBuffer; the member is a take.
+      // From a file the member is a take and a source node needs an AudioBuffer;
+      // from the same session (the pins suite's round trip) the table still holds
+      // the region itself.
+      const region = bufFor(c.audio);
+      const buf = !region ? null : region.data ? audioBufferOf(region, ensureAudioContext()) : region;
       const particles = (c.particles || []).map(a => ({ lon: a[0], lat: a[1], grainStart: a[2], grainDuration: a[3] }));
 
       S.commitSlots[i] = {
@@ -480,11 +488,12 @@ async function applyManifest(data, audio) {
         grainParams:   c.grainParams ?? { volume: 1 },
         fadeIn:        c.fadeIn  ?? 0,
         fadeOut:       c.fadeOut ?? (S.loopFadeTimeMs || 15) / 1000,
+        level:         c.level ?? 1,
         buffer:        buf,
         particles,
         _sourceNode:   null,
         _gainNode:     null,
-        _revBuffer:    null,
+        _regionBuf:    null,
         _startedAt:    0,
       };
       // The family. Each take's layer is rebuilt against THIS slot's cycle;
@@ -537,8 +546,8 @@ async function applyManifest(data, audio) {
   if (maxSid > S.strokeIdCounter) S.strokeIdCounter = maxSid;
 
   // 6. Refresh the worklet's buffer map.
-  // The worklet keys its _bufferMap on AudioBuffer object identity. Steps 1–2
-  // swapped in fresh AudioBuffers, so every candidate's audioBuf lookup now
+  // The worklet keys its _bufferMap on take object identity. Steps 1–2
+  // swapped in fresh takes, so every candidate's audioBuf lookup now
   // misses → all candidates filtered out → the cursor enters particle radii but
   // no grains fire (marks still render). Stop+start rebuilds _bufferMap from
   // the opened S.samples / S.liveRecBuffers via startWorkletGrain.
@@ -592,7 +601,7 @@ function applyLiveState(live) {
   if (typeof live.commitMode === 'string')      S.commitMode      = live.commitMode;
   if (typeof live.commitSlotCount === 'number') S.commitSlotCount = live.commitSlotCount;
   if (typeof live.commitOverflow === 'string')  S.commitOverflow  = live.commitOverflow;
-  if (['nearest', 'oldest'].includes(live.selectionMode)) S.selectionMode = live.selectionMode;
+  if (['nearest', 'farthest', 'oldest'].includes(live.selectionMode)) S.selectionMode = live.selectionMode;
   if (typeof live.paintTickerMs === 'number' && S.paintTicker) {
     S.paintTicker.intervalMs = live.paintTickerMs;
   }
@@ -793,12 +802,18 @@ export function syncDocChrome() {
   // macOS knows how to show a document: the window title, the proxy icon for
   // the file itself, and the dot in the close button. Free, and right even when
   // the chrome is hidden in fullscreen.
+  // Only when it changed: the poll is 2 Hz for the whole session, and main
+  // set the title, the edited dot and the proxy icon on every tick.
+  const sig = `${S.doc.name || ''} ${S.doc.path || ''} ${dirty ? 1 : 0}`;
+  if (sig === _docChromeSent) return;
+  _docChromeSent = sig;
   window.electronBridge?.docSetState?.({
     name: S.doc.name || null,
     path: S.doc.path || null,
     dirty,
   });
 }
+let _docChromeSent = null;
 S._syncDocUI = syncDocChrome;
 
 function nameFromPath(p) {

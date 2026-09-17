@@ -1,15 +1,9 @@
 // ============================================================================
 // GRAIN WORKLET BRIDGE — Phase 2: main-thread interface to the grain engine
 //
-// Manages the AudioWorkletNode, SharedArrayBuffers, parameter forwarding,
-// candidate list posting (50Hz), VBAP LUT transfer, feedback ring reading.
-//
-// Usage:
-//   import { startWorkletGrain, stopWorkletGrain, updateWorkletParams } from './grain-worklet-bridge.js';
-//   await startWorkletGrain(voiceId, opts);
-//   S._postWorkletCandidates(pool, lon, lat);   // from the scheduler at 50Hz
-//   updateWorkletParams({ period: 0.020, pitchShift: 100 });
-//   stopWorkletGrain(voiceId);
+// Manages the AudioWorkletNode, the SharedArrayBuffers (the primary take, the
+// candidate tables the 10 ms scheduler writes), parameter forwarding, buffer
+// registration, VBAP LUT transfer and the feedback ring.
 // ============================================================================
 
 import { S, gp } from './state.js';
@@ -103,12 +97,12 @@ export function isCrossOriginIsolated() {
 // ── Start the worklet grain engine ──────────────────────────────────────────
 /**
  * @param {AudioContext} actx
- * @param {AudioBuffer} audioBuffer - recording buffer to granulate
+ * @param {object} take - the primary take (js/take.js)
  * @param {object} params - initial grain parameters
  * @param {object} [options] - { numChannels, onFeedback }
  * @returns {AudioWorkletNode|null}
  */
-export async function startWorkletGrain(actx, audioBuffer, params = {}, options = {}) {
+export async function startWorkletGrain(actx, take, params = {}, options = {}) {
   if (!actx) {
     console.warn('grain-worklet-bridge: no AudioContext');
     return null;
@@ -129,24 +123,19 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
   // Stop any existing worklet
   stopWorkletGrain();
 
-  // ── Copy AudioBuffer data into a SharedArrayBuffer ──────────────────
-  const channelData = audioBuffer.getChannelData(0); // mono
-  const byteLength = channelData.length * Float32Array.BYTES_PER_ELEMENT;
-
-  try {
-    _sab = new SharedArrayBuffer(byteLength);
-  } catch (e) {
-    console.error('grain-worklet-bridge: SharedArrayBuffer creation failed:', e);
-    dlog('worklet', 'SAB creation failed', { error: e.message });
+  // ── The primary IS the take's own SharedArrayBuffer (2026-09-17) ─────
+  // A take's samples already live in shared memory (js/take.js), so the
+  // engine starts on them in place. Until then the primary was copied into a
+  // SAB of its own — a third copy of one take.
+  if (!(take?.data?.buffer instanceof SharedArrayBuffer)) {
+    console.error('grain-worklet-bridge: the primary must be a take (js/take.js)');
     return null;
   }
-
-  const sabView = new Float32Array(_sab);
-  sabView.set(channelData);
-  _sabSampleRate = audioBuffer.sampleRate;
-  _sabLengthSamples = channelData.length;
-  _sabAudioBuffer = audioBuffer;
-  dlog('worklet', 'SAB created', { samples: channelData.length, bytes: byteLength });
+  _sab = take.data.buffer;
+  _sabSampleRate = take.sampleRate;
+  _sabLengthSamples = take.length;
+  _sabAudioBuffer = take;
+  dlog('worklet', 'primary take shared', { samples: take.length, bytes: take.data.byteLength });
 
   // ── Register the worklet processor (once per AudioContext) ──────────
   if (!_registered) {
@@ -183,6 +172,12 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
       if (data._diag) {
         _lastWorkletDiag = data._diag;
         S._lastWorkletDiag = data._diag;      // Settings → Audio's live readout (P2)
+        // The audio thread's own worst process() since load, held beside the
+        // transport counters: when inSkipped / outDropped jump, this says
+        // whether the audio thread itself stalled (a GC pause, a bulk buffer
+        // post) or the queues did (2026-09-16, two ~50 ms bursts a session).
+        if (S.transportDiag && data._diag.procMaxMs > (S.transportDiag.wkProcMaxMs || 0))
+          S.transportDiag.wkProcMaxMs = +data._diag.procMaxMs.toFixed(1);
         // The worklet used its spare (or never had one): allocate HERE and
         // transfer it — the audio thread must not (R5, 2026-09-06).
         if (data._diag.spareLow) _sendSpareChunk();
@@ -451,7 +446,7 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
 
   // The voicing a mark is READ with. A painted mark's own (`_vo`, frozen at
   // its stroke's start; 0 = the live params). A TRIGGER's mark has no grain
-  // voicing of its own: a hit brush froze whatever grain block happened to be
+  // voicing of its own: a tape brush froze whatever grain block happened to be
   // live when the stroke was recorded, which nothing displays and no setting
   // owns. Under dwell `grain` the trigger opens to the cursor, and it reads
   // with the LIVE grain block — the grain brush in the palette, wet or dry —
@@ -933,7 +928,7 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
     const validLen = S.liveBufferSampleCount;
     if (validLen <= _provisionalSentLen) return;
 
-    const channelData = liveBuf.getChannelData(0);
+    const channelData = liveBuf.data;
     const delta = validLen - _provisionalSentLen;
     const chunk = new Float32Array(delta);
     chunk.set(channelData.subarray(_provisionalSentLen, validLen));
@@ -980,7 +975,7 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
     type: 'init',
     sab: _sab,
     sampleRate: sr,
-    bufferLength: channelData.length,
+    bufferLength: take.length,
     numChannels,
     maxGrains: S.maxGrains ?? 512,     // the pool and the glow ring (P2)
     params: {
@@ -1003,45 +998,38 @@ export async function startWorkletGrain(actx, audioBuffer, params = {}, options 
   // The SAB holds the primary buffer (bufIndex -1 in the worklet).
   // All other live recordings are sent as sampleBufs (bufIndex 0, 1, 2, ...).
   _bufferMap = new Map();
-  _bufferMap.set(audioBuffer, -1);  // primary → SAB
+  _bufferMap.set(take, -1);  // primary → SAB
 
+  // Every other take and sample goes by reference: its data is a view over
+  // shared memory, so the post shares it — nothing copied, nothing transferred.
   const otherBufs = [];
   if (S.liveRecBuffers) {
     for (let i = 0; i < S.liveRecBuffers.length; i++) {
       const rec = S.liveRecBuffers[i];
-      if (!rec?.buffer || rec.buffer === audioBuffer) continue;
+      if (!rec?.buffer || rec.buffer === take) continue;
       const idx = otherBufs.length;  // 0-based index into sampleBufs
       _bufferMap.set(rec.buffer, idx);
-      const data = rec.buffer.getChannelData(0);
-      otherBufs.push({ data: new Float32Array(data), length: data.length });
+      otherBufs.push({ data: rec.buffer.data, length: rec.buffer.length });
     }
   }
-  // Also include loaded samples
   if (S.samples) {
     for (let i = 0; i < S.samples.length; i++) {
       const smp = S.samples[i];
       if (!smp?.buffer || _bufferMap.has(smp.buffer)) continue;
       const idx = otherBufs.length;
       _bufferMap.set(smp.buffer, idx);
-      const data = smp.buffer.getChannelData(0);
-      otherBufs.push({ data: new Float32Array(data), length: data.length });
+      otherBufs.push({ data: smp.buffer.data, length: smp.buffer.length });
     }
   }
   if (otherBufs.length > 0) {
-    // Transfer list (perf audit H2, Jul 2026): avoids structured-cloning
-    // every retained recording on engine start. The Float32Array views
-    // arrive intact on the worklet side, backed by the transferred buffers.
-    _workletNode.port.postMessage(
-      { type: 'buffers', list: otherBufs },
-      otherBufs.map(b => b.data.buffer)
-    );
-    dlog('worklet', `sent ${otherBufs.length} additional buffers to worklet (transferred)`);
+    _workletNode.port.postMessage({ type: 'buffers', list: otherBufs });
+    dlog('worklet', `shared ${otherBufs.length} additional takes with the worklet`);
   }
 
   dlog('worklet', 'grain engine started', {
     period: params.period ?? 0.050,
     duration: params.duration ?? 0.100,
-    bufferLen: channelData.length,
+    bufferLen: take.length,
     totalBuffers: 1 + otherBufs.length,
     numChannels,
     sr,
@@ -1056,25 +1044,17 @@ export function updateWorkletParams(params) {
   _workletNode.port.postMessage({ type: 'params', ...params });
 }
 
-// ── Hot-swap a sample buffer into the running worklet (#247) ────────────────
+// ── Hot-swap a sample into the running worklet (#247) ───────────────────────
 // The addBuffer half of hotSwapRecording, with none of the live-rec teardown:
-// registers ANY AudioBuffer (a dropped file, a sampler take) with a running
-// engine so painting from it is audible immediately. Before this, a sample
-// added mid-session sat unmapped — candidates hit `bufIndex === undefined`
-// and counted into _skipNoMap until the engine restarted. Cold start needs
+// registers ANY take (a dropped file, a sampler take) with a running engine
+// so painting from it is audible immediately. Before this, a sample added
+// mid-session sat unmapped — candidates hit `bufIndex === undefined` and
+// counted into _skipNoMap until the engine restarted. Cold start needs
 // nothing from us: _startWorkletEngine rebuilds the map from S.samples.
-export function hotSwapSample(audioBuffer) {
-  if (!_workletNode || !audioBuffer) return false;
-  if (_bufferMap.has(audioBuffer)) return true;
-  const data = audioBuffer.getChannelData(0);
-  const newIndex = _sampleBufsCount();
-  const copy = new Float32Array(data);
-  _workletNode.port.postMessage({
-    type: 'addBuffer',
-    data: copy,
-    length: data.length,
-  }, [copy.buffer]);
-  _bufferMap.set(audioBuffer, newIndex);
+export function hotSwapSample(take) {
+  if (!_workletNode || !take) return false;
+  if (_bufferMap.has(take)) return true;
+  _registerBuffer(take);
   return true;
 }
 
@@ -1084,26 +1064,11 @@ export function hotSwapSample(audioBuffer) {
 // New candidates will resolve to the finalized buffer on the next post cycle
 // because slot.buffer is now set (takes priority over slot.liveBuffer in the
 // candidate resolution: `slot?.buffer || slot?.liveBuffer`).
-export function hotSwapRecording(audioBuffer) {
-  if (!_workletNode || !audioBuffer) return false;
+export function hotSwapRecording(take) {
+  if (!_workletNode || !take) return false;
 
-  // Send finalized buffer data to the worklet.
-  // Transfer the copy's ArrayBuffer (perf audit H2, Jul 2026): without the
-  // transfer list, postMessage structured-clones the entire recording — a
-  // third full copy of the take, deserialized ON THE AUDIO THREAD at the
-  // exact moment provisional grains are still playing. With the transfer,
-  // the worklet receives the same Float32Array view zero-copy.
-  const data = audioBuffer.getChannelData(0);
-  const newIndex = _sampleBufsCount();
-  const copy = new Float32Array(data);
-  _workletNode.port.postMessage({
-    type: 'addBuffer',
-    data: copy,
-    length: data.length,
-  }, [copy.buffer]);
-
-  // Register in _bufferMap so candidate posting resolves it
-  _bufferMap.set(audioBuffer, newIndex);
+  // The sealed take, shared with the worklet in place (see _registerBuffer).
+  const newIndex = _registerBuffer(take);
 
   // Stop live mic accumulation in the worklet and disconnect mic input.
   if (S.inputAnalyser && _workletNode) {
@@ -1135,8 +1100,20 @@ export function hotSwapRecording(audioBuffer) {
     }
   }, 500);
 
-  dlog('worklet', 'hot-swapped recording', { index: newIndex, duration: audioBuffer.duration });
+  dlog('worklet', 'hot-swapped recording', { index: newIndex, duration: take.duration });
   return true;
+}
+
+/** Hand one take to the worklet as a sampleBuf and map it. The take's data
+ *  is a view over a SharedArrayBuffer (js/take.js), so the post SHARES it:
+ *  no copy on either thread and nothing to transfer. Until 2026-09-17 this
+ *  copied the take and transferred the copy — the second copy of every live
+ *  take, which is what the long-set memory fault was made of. */
+function _registerBuffer(take) {
+  const newIndex = _sampleBufsCount();
+  _workletNode.port.postMessage({ type: 'addBuffer', data: take.data, length: take.length });
+  _bufferMap.set(take, newIndex);
+  return newIndex;
 }
 
 // Count current sampleBufs in the worklet (for index assignment)
@@ -1216,7 +1193,7 @@ export function resyncWorkletBuffers() {
     if (live.has(buf)) keepOld.push(idx);
     else dropKeys.push(buf);
   });
-  if (dropKeys.length === 0) return 0;
+  if (dropKeys.length === 0) return _reregisterMissing(live);
   keepOld.sort((a, b) => a - b);
 
   // Worklet first (message is queued in order — any 'candidates' post that
@@ -1231,7 +1208,23 @@ export function resyncWorkletBuffers() {
   });
 
   dlog('worklet', `resync: dropped ${dropKeys.length} dead buffers, kept ${keepOld.length}`);
+  _reregisterMissing(live);
   return dropKeys.length;
+}
+
+// The other direction: a take the main thread holds that the worklet does
+// not. Undo of a sweep after its redo restores takes the redo's resync had
+// dropped, and until 2026-09-16 nothing re-registered them — every mark on
+// them hit `bufIndex === undefined` and was silent until an engine restart.
+// AFTER the compaction above, so the new index lands past the kept ones on
+// both sides (a buffer added before the `compactBuffers` post would have been
+// dropped by it while the map still carried it). Returns 0 for the early
+// return above.
+function _reregisterMissing(live) {
+  let added = 0;
+  for (const buf of live) if (!_bufferMap.has(buf)) { _registerBuffer(buf); added++; }
+  if (added) dlog('worklet', `resync: re-registered ${added} restored buffer(s)`);
+  return 0;
 }
 
 // ── Stop the worklet grain engine ───────────────────────────────────────────

@@ -4,9 +4,10 @@
 
 import { S, DEBUG, SPHERE_RADIUS, perf, LIVE_REBUILD_INTERVAL_MS, MASTER_DEFAULT_GAIN, MAX_SAMPLES } from './state.js';
 import { dlog } from './diag.js';
+import { makeTake } from './take.js';
 import { settleTakeTimbre, resetTimbreHold } from './audio-features.js';
 import { buildVBAPLookup, queryVBAPLookup } from './grain.js';
-import { getCursorLonLat, screenToLonLat, spherePointInto, cameraRotateInto } from './sphere.js';
+import { cursorLonLatNow, spherePointInto, cameraRotateInto } from './sphere.js';
 
 // Track whether the recording-capture worklet module has been registered.
 // Reset to false on AudioContext recreation (new context needs fresh addModule).
@@ -262,9 +263,6 @@ export function ensureAudioContext() {
     S.audioCtx.addEventListener('statechange', () => {
       const next = S.audioCtx?.state;
       dlog('ctx', `statechange: ${_prevCtxState} → ${next}`, { nodes: S._grainSourceCount });
-      if (next === 'running' && _prevCtxState === 'suspended') {
-        S._resetOnsetClocks?.();
-      }
       // ── Error code 5 recovery ──────────────────────────────────────────
       // Chrome's native audio renderer can crash (error code 5) under heavy
       // load — the AudioContext state goes to 'closed' with no JS error.
@@ -278,7 +276,6 @@ export function ensureAudioContext() {
           S.audioCtx = null;  // force ensureAudioContext to rebuild
           S._grainSourceCount = 0;  // dead nodes won't fire 'ended'
           ensureAudioContext();
-          S._resetOnsetClocks?.();
           // Re-open the mic if it was open. The guard was `S.micRequested`,
           // which NOTHING has ever assigned (2026-09-13), so this branch could
           // not run and a crash left the app rebuilt but deaf: the context
@@ -323,10 +320,7 @@ export async function recreateAudioContext(newSampleRate) {
   S.preferredSampleRate = newSampleRate;
 
   // Stop any active recording
-  if (S.isRecording) {
-    const { stopLiveRecording } = await import('./audio.js');
-    stopLiveRecording?.();
-  }
+  if (S.isRecording) stopLiveRecording();
 
   // Stop all active commits — their source nodes will be invalid after context close
   const { clearAllCommits } = await import('./ui-presets.js');
@@ -396,9 +390,9 @@ export async function recreateAudioContext(newSampleRate) {
 // ── Mic access ──────────────────────────────────────────────────────────────
 
 export function warmUpAudioEngine() {
-  // Fire a zero-length silent buffer through the full grain chain so V8 JIT-compiles
-  // the WaveShaper and all AudioNode constructors before the first real recording.
-  // This eliminates the CPU spike that causes clipping on the very first spacebar press.
+  // Fire a one-sample silent buffer through source → gain → panner → master so
+  // the AudioNode constructors are warm before the first real recording. This
+  // takes the CPU spike off the very first spacebar press.
   const actx = ensureAudioContext();
   const silentBuf = actx.createBuffer(1, 1, actx.sampleRate);
   const src  = actx.createBufferSource();
@@ -641,7 +635,7 @@ function _acceptBundle(data) {
 // oversized live buffer. A record press inside the window seals with what has
 // arrived, which is the old behaviour on a race no hand can produce.
 let _sealPending = null;      // { finish } while a stop waits on the recorder
-// A hit take is held open past the release by the input latency (js/latency.js
+// A tape take is held open past the release by the input latency (js/latency.js
 // `inS`): the last thing sung before the button arrives that much later, and
 // a loop whose region ends at the release would be short by exactly that.
 let _holdTimer = null;
@@ -665,7 +659,6 @@ function _captureStop(onSealed) {
   const node        = S.recordingNode;
   const analyserRef = S.inputAnalyser;
   S.recordingNode = null;
-  if (S.recordingSourceNode) { S.recordingSourceNode.disconnect(); S.recordingSourceNode = null; }
 
   let timer = 0;
   let done  = false;
@@ -696,7 +689,6 @@ function _captureStop(onSealed) {
 }
 
 function _buildTake() {
-  const actx = ensureAudioContext();
   const totalLength = S.recordingWritePos;
 
   // Minimum kept length: 80 ms. Shorter than this is an accidental graze.
@@ -704,8 +696,6 @@ function _buildTake() {
   const MIN_REC_SAMPLES = Math.floor(S.recordingSampleRate * 0.08);
   if (totalLength < MIN_REC_SAMPLES) return null;
 
-  // Build final AudioBuffer
-  const audioBuffer = actx.createBuffer(1, totalLength, S.recordingSampleRate);
   const channelData = S.recordingRaw.subarray(0, totalLength);
 
   // Declick the buffer edges. This is DESTRUCTIVE — it is written into the
@@ -728,8 +718,9 @@ function _buildTake() {
     channelData[totalLength - 1 - i]  *= env;
   }
 
-  audioBuffer.getChannelData(0).set(channelData);
-  return audioBuffer;
+  // ONE copy, into shared memory (js/take.js): the worklet reads this same
+  // buffer, so the take is never held twice.
+  return makeTake(channelData, S.recordingSampleRate);
 }
 
 
@@ -794,7 +785,7 @@ export function startLiveRecording() {
   S.updateLiveRecUI?.();
 }
 
-/** The release of a HIT take: stamp when the button went up, keep recording
+/** The release of a TAPE take: stamp when the button went up, keep recording
  *  for `holdS` (the input latency) so the sound of the release itself lands
  *  in the take, then stop. The take's `edges` — its region from the button,
  *  not the marks — are set at the seal. */
@@ -844,6 +835,7 @@ export function stopLiveRecording() {
     const dur = audioBuffer.duration;
     if (slot) {
       slot.buffer      = audioBuffer;
+      slot.liveBuffer  = null;   // the provisional view is the NEXT take's from here
       slot.grainCursor = 0;
       // The region from the BUTTON (2026-09-04): the press is heard `inS`
       // into the take and the recorder held `inS` past the release, so the
@@ -876,16 +868,6 @@ export function stopLiveRecording() {
     S.recordingWritePos    = 0;
     S.liveBufferSampleCount = 0;
     S.currentLiveBufferIdx = -1;
-    // Keep the reusable live buffer across recordings (perf audit H1, Jul 2026).
-    // It was released here, so every take re-grew it from scratch via amortised
-    // doubling — each doubling a full alloc+copy on the main thread MID-TAKE
-    // (a 4-min take pays a ~55 MB copy around the 2-min mark). Retaining it
-    // means subsequent takes start at the largest size seen so far and never
-    // reallocate unless they exceed it. Safe to share the object across takes:
-    // candidate resolution prefers slot.buffer over slot.liveBuffer, so stale
-    // liveBuffer refs on finalized slots are never read. Only the copy cursor
-    // resets. Revert: restore `_liveAudioBuf = null; _liveAudioBufLen = 0;`.
-    _liveCopiedUpTo  = 0;
     S.updateLiveRecUI?.();
   });
 }
@@ -980,7 +962,7 @@ export function cushionBlocks() {
   return Math.max(2, Math.round((S.audioCushionMs ?? 10) / 1000 * sr / frames));
 }
 export function applyAudioCushion() {
-  window.electronBridge?.setAudioCushion?.(S.audioCushionMs ?? 20);
+  window.electronBridge?.setAudioCushion?.(S.audioCushionMs ?? 10);
   S._inputRingTarget?.();
 }
 /** The output queue's depth: frames written to audify and not yet played,
@@ -1331,7 +1313,7 @@ export async function initSpeakerBuses(numChannels = 2) {
 
   // Main regulates the queue to the cushion (electron-main.js); this side
   // tells it the cushion, and polls the depth and the faults once a second.
-  window.electronBridge.setAudioCushion?.(S.audioCushionMs ?? 20);
+  window.electronBridge.setAudioCushion?.(S.audioCushionMs ?? 10);
   if (!_outDepthTimer) _outDepthTimer = setInterval(_pollOutputDepth, 1000);
   // The direct port to the main process, transferred into the worklet. Until
   // it arrives the worklet drops its blocks unheard; if the graph was rebuilt
@@ -1458,14 +1440,7 @@ export function updateDryMonitorPanning() {
   if (!S.dryMonitorEnabled) return;
   if (!S.audioCtx || S.audioCtx.state !== 'running') return;
 
-  // Compute cursor world-space position (same logic as scheduleGrains)
-  const { lon, lat } = S.cursorQ
-    ? getCursorLonLat()
-    : (S.mouseInCanvas || S.altLocked)
-      ? screenToLonLat(
-          S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
-          S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY)
-      : getCursorLonLat();
+  const { lon, lat } = cursorLonLatNow();
 
   spherePointInto(lon, lat, _dryW);
   const wx = _dryW[0], wy = _dryW[1], wz = _dryW[2];
@@ -1769,17 +1744,20 @@ export function getRecordingDuration() {
   return (performance.now() - S.recordingStartTime) / 1000;
 }
 
-// Pre-allocated live buffer — reused across rebuilds to avoid creating a new
-// AudioBuffer every 200ms.  Only reallocated when recording outgrows it.
-let _liveAudioBuf    = null;
-let _liveAudioBufLen = 0;
-let _liveCopiedUpTo  = 0;  // samples already copied — only copy the delta
+// The provisional take: ONE record for the life of the app, a VIEW over the
+// raw pool (2026-09-17). Until then this was an AudioBuffer the raw samples
+// were copied into every 200 ms, grown by doubling and retained across takes
+// — a second copy of the take being recorded, up to twice its size. Readers
+// (`slot.liveBuffer`) see the same shape as a sealed take (js/take.js); the
+// bridge keys the worklet's provisional index on this object's identity.
+const _liveTake = { data: null, sampleRate: 0, length: 0, duration: 0 };
 
 export function rebuildLiveBuffer() {
-  // Build a running AudioBuffer from raw PCM so grains can play during recording.
-  // Also registered as S._flushLiveBuffer so the grain scheduler can flush
-  // before posting candidates (minimises frontier latency).
-  // Throttled to LIVE_REBUILD_INTERVAL_MS — the incremental copy is cheap
+  // Re-cut the provisional take to what has landed, so grains and the
+  // tape tools can read the recording while it runs. Also registered as
+  // S._flushLiveBuffer so the grain scheduler can flush before posting
+  // candidates (minimises frontier latency).
+  // Throttled to LIVE_REBUILD_INTERVAL_MS — a subarray is a view, no copy.
   if (!S.isRecording || S.recordingWritePos === 0) return;
   if (S.recordingWritePos === S.liveBufferSampleCount) return;
 
@@ -1787,34 +1765,16 @@ export function rebuildLiveBuffer() {
   if (now - S.lastLiveRebuildTime < LIVE_REBUILD_INTERVAL_MS) return;
   S.lastLiveRebuildTime = now;
 
-  const actx = ensureAudioContext();
   const len = S.recordingWritePos;
-
-  // Reuse the existing AudioBuffer if it's large enough; otherwise allocate
-  // with 2× headroom so reallocations are rare (amortised doubling).
-  let needFullCopy = false;
-  if (!_liveAudioBuf || _liveAudioBufLen < len || _liveAudioBuf.sampleRate !== S.recordingSampleRate) {
-    const allocLen = Math.max(len, (_liveAudioBufLen || len) * 2);
-    _liveAudioBuf    = actx.createBuffer(1, allocLen, S.recordingSampleRate);
-    _liveAudioBufLen = allocLen;
-    _liveCopiedUpTo  = 0;  // new buffer — must copy everything
-    needFullCopy = true;
-  }
-
-  // Incremental copy — only transfer new samples since last rebuild.
-  // At 48kHz with 200ms interval that's ~9600 samples (38KB) instead of
-  // the full recording (which grows to millions of samples over minutes).
-  const channelData = _liveAudioBuf.getChannelData(0);
-  const copyFrom = needFullCopy ? 0 : _liveCopiedUpTo;
-  if (copyFrom < len) {
-    channelData.set(S.recordingRaw.subarray(copyFrom, len), copyFrom);
-  }
-  _liveCopiedUpTo = len;
+  _liveTake.data       = S.recordingRaw.subarray(0, len);
+  _liveTake.sampleRate = S.recordingSampleRate;
+  _liveTake.length     = len;
+  _liveTake.duration   = len / S.recordingSampleRate;
   S.liveBufferSampleCount = len;
 
   if (S.currentLiveBufferIdx >= 0 && S.currentLiveBufferIdx < S.liveRecBuffers.length) {
-    S.liveRecBuffers[S.currentLiveBufferIdx].liveBuffer = _liveAudioBuf;
-    S.liveRecBuffers[S.currentLiveBufferIdx].duration   = len / S.recordingSampleRate;
+    S.liveRecBuffers[S.currentLiveBufferIdx].liveBuffer = _liveTake;
+    S.liveRecBuffers[S.currentLiveBufferIdx].duration   = _liveTake.duration;
   }
 
   // Stream the updated liveBuffer data to the worklet engine (delta append)

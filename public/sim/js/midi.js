@@ -308,7 +308,6 @@ const ACTIONS = [
     range: { min: 1, max: 16, int: true },
     ccFn: v => {
       S.commitSlotCount = Math.max(1, Math.min(16, Math.round(1 + v * 15 / 127)));
-      S._syncCommitSlotCount?.();    // syncs slider + numbox
       (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))();
     } },
   { id: 'commit_overflow', label: 'pin overflow (cycle)', key: '—',                osc: '/commit/overflow', fmt: 'bang=cycle, str=set (off|oldest|nearest)',                   type: 'trigger',
@@ -318,11 +317,11 @@ const ACTIONS = [
   { id: 'commit_attack', label: 'cloud fade in',             key: '—',                 osc: '/commit/attack',   type: 'cc',
     tip: 'cloud fade-in time — 0s instant, up to 10s swell',
     range: { min: 0, max: 10, unit: 's' },
-    ccFn: v => { S.seedAttack = (v / 127) * 10; const sl = document.getElementById('seedAttackSlider'); if (sl) sl.value = S.seedAttack; const nb = document.getElementById('seedAttackNum'); if (nb) nb.value = S.seedAttack < 1 ? (S.seedAttack * 1000).toFixed(0) + 'ms' : S.seedAttack.toFixed(1) + 's'; } },
+    ccFn: v => { S.commitAttack = (v / 127) * 10; const sl = document.getElementById('seedAttackSlider'); if (sl) sl.value = S.commitAttack; const nb = document.getElementById('seedAttackNum'); if (nb) nb.value = S.commitAttack < 1 ? (S.commitAttack * 1000).toFixed(0) + 'ms' : S.commitAttack.toFixed(1) + 's'; } },
   { id: 'commit_release_time', label: 'cloud fade out',     key: '—',               osc: '/commit/release_time', type: 'cc',
     tip: 'cloud fade-out time — 0s instant, up to 10s fade',
     range: { min: 0, max: 10, unit: 's' },
-    ccFn: v => { S.seedRelease = (v / 127) * 10; const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.seedRelease; const nb = document.getElementById('seedReleaseNum'); if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; } },
+    ccFn: v => { S.commitRelease = (v / 127) * 10; const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.commitRelease; const nb = document.getElementById('seedReleaseNum'); if (nb) nb.value = S.commitRelease < 1 ? (S.commitRelease * 1000).toFixed(0) + 'ms' : S.commitRelease.toFixed(1) + 's'; } },
   { id: 'loop_release_mode', label: 'loop fade out · fade / play-to-end (toggle)',   key: '—',                 osc: '/commit/loop_release', fmt: 'bang=toggle, str=set (fade|play-to-end)',                 type: 'trigger',
     tip: 'fade = fade out over time, play-to-end = loop finishes current pass then stops' },
   { id: 'loop_fade_time', label: 'loop fade out time',    key: '—',                 osc: '/commit/loop_fade_time', type: 'cc',
@@ -336,7 +335,7 @@ const ACTIONS = [
   { id: 'commit_xfade', label: 'pin xfade',              key: '—',                 osc: '/commit/xfade',    type: 'cc',
     tip: '0 = hard snap to nearest commit, 1 = smooth distance-weighted crossfade',
     range: { min: 0, max: 1 },
-    ccFn: v => { S.seedXfade = v / 127; S._syncImprovUI?.(); } },
+    ccFn: v => { S.commitXfade = v / 127; S._syncImprovUI?.(); } },
 
   // ── Levels ─────────────────────────────────────────────────────────────────
   { id: null, group: 'levels' },
@@ -1064,22 +1063,8 @@ function dispatchGesture(btn, down) {
   }
 }
 
-/** What fires an action today, for a surface that shows its bindings (the
- *  palette's key legend, tiles.js): the learned key if there is one, the
- *  MIDI assignment if there is one. Read through a function, never through
- *  the map objects — the keys page replaces a map wholesale on "clear". */
-function bindingOf(actionId) {
-  const km = keyMappings[actionId], mm = midiMappings[actionId], bm = buttonMappings[actionId];
-  return {
-    key:    km ? keyMappingLabel(km) : null,
-    removed: !!km && km.type === 'none',   // its factory key was right-clicked away
-    midi:   mm ? (mm.type === 'cc' ? `cc ${mm.number}` : `n ${mm.number}${mm.g && GESTURE_LABEL[mm.g] ? ' ' + GESTURE_LABEL[mm.g] : ''}`) : null,
-    button: bm ? buttonMappingLabel(bm) : null
-  };
-}
 /** EVERY input bound to one action, for the palette's legend (PALETTE-GUI § 6).
- *  `bindingOf` above answers with LABELS for the keys page's three cells; this
- *  answers with the parts, because the tile draws source, gesture and delay in
+ *  Answers with the parts, because the tile draws source, gesture and delay in
  *  three colours and needs them apart.
  *
  *  `delayed` is § 7: binding `×2` or `×3` anywhere on an input makes that
@@ -1480,11 +1465,10 @@ function dispatchAction(id, midiVal) {
     }
     case 'commit_overflow': {
       const modes = ['off', 'oldest', 'nearest'];
-      const curOF = S.seedOverflow || 'off';
+      const curOF = S.commitOverflow || 'off';
       const nextOF = _strMode(midiVal, modes)
         ?? modes[(modes.indexOf(curOF) + 1) % modes.length];
-      S.seedOverflow = nextOF;
-      S.seqOverflow  = nextOF;
+      S.commitOverflow = nextOF;
       const seg = document.getElementById('commitOverflowSeg');
       if (seg) seg.querySelectorAll('.grain-seg-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.overflow === nextOF));
@@ -1492,12 +1476,12 @@ function dispatchAction(id, midiVal) {
     }
     case 'commit_dir': {
       const cycle = { pingpong: 'forward', forward: 'rev', rev: 'pingpong' };
-      S.seedLoopMode = _strMode(midiVal, ['pingpong', 'forward', 'rev'],
+      S.commitCloudLoopMode = _strMode(midiVal, ['pingpong', 'forward', 'rev'],
         { fwd: 'forward', reverse: 'rev', 'ping-pong': 'pingpong' })
-        ?? cycle[S.seedLoopMode] ?? 'forward';
+        ?? cycle[S.commitCloudLoopMode] ?? 'forward';
       const seg = document.getElementById('seedLoopModeSeg');
       if (seg) seg.querySelectorAll('[data-loopmode]').forEach(b =>
-        b.classList.toggle('active', b.dataset.loopmode === S.seedLoopMode));
+        b.classList.toggle('active', b.dataset.loopmode === S.commitCloudLoopMode));
       break;
     }
     case 'loop_release_mode': {
@@ -1510,12 +1494,12 @@ function dispatchAction(id, midiVal) {
       break;
     }
     case 'commit_blend':
-      S.seedMode = _strMode(midiVal, ['focus', 'all'])
-        ?? (S.seedMode === 'focus' ? 'all' : 'focus');
+      S.commitPlayback = _strMode(midiVal, ['focus', 'all'])
+        ?? (S.commitPlayback === 'focus' ? 'all' : 'focus');
       S._syncImprovUI?.();
       break;
     case 'commit_tether':
-      S.seedTether = !S.seedTether;
+      S.commitTether = !S.commitTether;
       S._syncImprovUI?.();
       break;
 

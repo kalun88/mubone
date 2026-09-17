@@ -1,11 +1,21 @@
 import { S, MAX_SEEDS, GRAIN_SCHEDULER_INTERVAL_MS, SPHERE_RADIUS, perf, gp } from './state.js';
 import { ensureAudioContext, getMasterBus } from './audio.js';
-import { getCursorLonLat, screenToLonLat, cameraRotateInto, spherePointInto, updateFusedCamQ } from './sphere.js';
+import { cursorLonLatNow, cameraRotateInto, spherePointInto, updateFusedCamQ } from './sphere.js';
 import { tickSeedRecording } from './ui-presets.js';
 import { dlog } from './diag.js';
-import { pinAnchorInto } from './pins.js';
+import { pinAnchorInto, isPinLeaving } from './pins.js';
+import { isCommitOn } from './composer.js';
 import { voicingById } from './brush-voicing.js';
 const _anchor = [0, 0];   // scratch for pinAnchorInto on the tick
+
+// A PIN'S FADER IS ITS OWN NUMBER (Ek, 2026-09-16): `level`, 1 at pin time,
+// the rail's track writes it. The block's `volume` — the tape tool's or the
+// brush's slider, copied in when the pin was made — rides underneath as a
+// second stage, so a fresh pin sounds exactly as the cursor did and its
+// track reads 0 dB. Before this the track wrote `grainParams.volume`, and a
+// grain tool at 0.85 pinned a cloud whose fader read −1.4 dB. Every loop
+// gain write goes through here; a cloud's fader rides its seed gain.
+const _loopGain = seq => (seq.grainParams?.volume ?? 1) * (seq.level ?? 1);
 
 // ── Pre-computed VBAP lookup table ──────────────────────────────────────────
 // Built once at initSpeakerBuses time. Maps integer degrees [0, 359] to
@@ -112,13 +122,6 @@ export function markGlow(p, durMs, glowColor = '#ffffff', now = performance.now(
   // preview is drawn from that same pool.
   if (e && e.glowColor === glowColor) { e.expiry = now + life; e.ghost = ghost; }
   else activeGrainMap.set(p, { expiry: now + life, glowColor, ghost });
-}
-
-/** Stop all in-flight grain source nodes immediately (erase-all, undo).
- *  Legacy: with the worklet grain engine, main-thread source nodes are only
- *  created for sequential/loop playback. Kept for callers that expect it. */
-export function killAllGrains() {
-  S._grainSourceCount = 0;
 }
 
 /** Disconnect and release a loop (seq) playback subgraph — source, gain, and
@@ -601,8 +604,7 @@ export function nearestLoopPin(refLon, refLat) {
   let best = -1, bestAng = Infinity;
   for (let i = 0; i < S.commitSlots.length; i++) {
     const c = S.commitSlots[i];
-    if (!c || c.type !== 'loop') continue;
-    if (c._fadingOut || c._playingToEnd || c._selfKilled) continue;
+    if (!c || c.type !== 'loop' || isPinLeaving(c)) continue;
     const ang = angleBetweenSphere(c.anchorLon ?? 0, c.anchorLat ?? 0, refLon, refLat);
     if (ang < bestAng) { bestAng = ang; best = i; }
   }
@@ -650,6 +652,28 @@ export function overdubHeads(ov, phaseWall, takeDur, out = []) {
   let t = (((phaseWall - (ov.phase0 || 0)) % cyc) + cyc) % cyc;
   for (; t < takeDur && out.length < 8; t += cyc) out.push(t);
   return out;
+}
+
+/** The [loopStart, loopEnd) of `buffer` as an AudioBuffer of its own, reversed
+ *  or not — see the tape playback block. `buffer` is a loop payload (an
+ *  AudioBuffer) or a take (`.data` over shared memory). One copy per slot,
+ *  re-cut when the region, the direction or the take's length changes;
+ *  `_regionBuf = null` drops it after an in-place edit of the source. */
+function _regionCopy(seq, buffer, reverse, actx) {
+  const sr = buffer.sampleRate;
+  const lo = Math.max(0, Math.floor(seq.loopStart * sr));
+  const hi = Math.min(buffer.length, Math.ceil(seq.loopEnd * sr));
+  const n  = hi - lo;
+  if (n <= 0) return null;
+  const c = seq._regionBuf;
+  if (c && c.from === buffer && c.lo === lo && c.hi === hi && c.reverse === reverse && c.len === buffer.length) return c.buf;
+  const src = buffer.data ?? buffer.getChannelData(0);
+  const buf = actx.createBuffer(1, n, sr);
+  const dst = buf.getChannelData(0);
+  if (reverse) for (let i = 0; i < n; i++) dst[i] = src[hi - 1 - i];
+  else dst.set(src.subarray(lo, hi));
+  seq._regionBuf = { buf, from: buffer, lo, hi, reverse, len: buffer.length };
+  return buf;
 }
 
 const _LAYER_XFADE_S = 0.008;   // the swap seam while a take is still recording
@@ -728,12 +752,10 @@ let _schedTickCount = 0;  // for periodic dlog snapshot
 // thread.  It performs spatial search (cursor + seed candidate pools) and posts
 // candidate lists to the AudioWorklet grain engine via postMessage.  The worklet
 // handles all grain synthesis at sample rate.
-//
-// Seed onset clocks (seed._nextOnsetT) are still maintained here so seed data
-// posting stays in sync and doesn't burst when weights change.
-//
-// SCHED_LOOKAHEAD: how far ahead seed onset clocks advance per tick.
-const SCHED_LOOKAHEAD = 0.040;   // 40ms
+// Every onset clock — the cursor's and each seed's — is the worklet's
+// (grain-engine.worklet.js `nextOnset`); the main thread posts candidates and
+// nothing else. The seed clocks it used to keep beside them (`_nextOnsetT`)
+// were advanced every tick and read by nothing (deleted 2026-09-16).
 
 // ── Moving seed helpers ────────────────────────────────────────────────────
 // Interpolate a moving seed's frame data at its current playhead position.
@@ -742,7 +764,7 @@ const SCHED_LOOKAHEAD = 0.040;   // 40ms
 // per moving seed (at 16 seeds × 50 ticks/sec = 800 objects/sec of GC
 // pressure).  When the effective time lands exactly on a keyframe,
 // returns that keyframe directly (no allocation either way).
-export function _interpolateMovingSeed(seed) {
+function _interpolateMovingSeed(seed) {
   const { frames, duration, loopMode, _playheadMs } = seed;
   if (!frames.length) return null;
   let effectiveT;
@@ -855,20 +877,14 @@ export function scheduleGrains() {
 
   // The grain edit lens no longer freezes the cursor (#284) — it is browsed
   // with, so the scan auditions wherever you actually are.
-  const { lon: cursorLon, lat: cursorLat } =
-    S.cursorQ
-        ? getCursorLonLat()                     // detethered: cursor IMU drives position
-        : (S.mouseInCanvas || S.altLocked)
-          ? screenToLonLat(S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
-                           S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY)
-          : getCursorLonLat();
+  const { lon: cursorLon, lat: cursorLat } = cursorLonLatNow();
   const k = S.grainOverrides.k ?? gp().k;
   const searchRadiusRad = S.searchRadiusDeg * Math.PI / 180;
 
   S.liveGranulatingThisFrame = false;
   perf.seedsPosted = 0;
 
-  if (S.particles.length && !(S.seqModeEnabled && S.isPainting)) {
+  if (S.particles.length && !((S.commitMode === 'loop') && S.isPainting)) {
 
     // What the pinned clouds own, once per tick — read by both pool builders
     // below. Cheap enough to do unconditionally (a walk of ≤16 slots) and it
@@ -1106,7 +1122,11 @@ export function scheduleGrains() {
       _seedDist[i] = -1;
       if (!slot || i >= S.commitSlotCount) continue;
       if (slot.type !== 'cloud' && slot.type !== 'loop') continue;
-      if (slot.type === 'cloud' && slot.playing === false) continue;
+      // A pin you cannot hear is not a crossfade partner: a muted loop, a cloud
+      // under a mute hold, or a pin on its way out (2026-09-16) used to become
+      // `nearest`, and with d0 = 0 every audible pin's weight went to zero
+      // while the cursor sat on the silent one.
+      if (!isCommitOn(slot) || isPinLeaving(slot)) continue;
       // A pin's ANCHOR — where its gesture released (pins.js pinAnchorInto),
       // never the position the scheduler writes into a moving cloud's `lon`
       // every tick (Ek, 2026-09-05: "an anchor is an anchor, it should not
@@ -1218,18 +1238,7 @@ export function scheduleGrains() {
 
     // Phase 3: skip seeds with negligible weight in nearest mode
     const seedWeight = _seedWeights[i];
-    if (seedWeight < 0.001) {
-      // Still advance the onset clock so it doesn't burst when weight returns
-      if (seed._nextOnsetT !== undefined) {
-        const cgpSkip = seed.grainParams;
-        const skipPeriod = Math.max(S.minPeriodS, cgpSkip.period);
-        const skipUntil = (ensureAudioContext().currentTime) + SCHED_LOOKAHEAD;
-        while (seed._nextOnsetT < skipUntil) {
-          seed._nextOnsetT += skipPeriod;
-        }
-      }
-      continue;
-    }
+    if (seedWeight < 0.001) continue;
 
     // Phase 4: merge seed.grainOverrides (written by gesture/desktop morph)
     // on top of the base params. Overrides with non-null values take precedence.
@@ -1246,9 +1255,6 @@ export function scheduleGrains() {
       const baseGP = isMoving ? frame.grainParams : seed.grainParams;
       cgp = hasOverrides ? Object.assign(Object.create(baseGP), cgo) : baseGP;
     }
-    const basePeriodS  = cgp.period;
-    const periodVarS   = cgp.periodVar ?? 0;
-
     // For moving seeds, use frame's modes; for stationary, use seed's snapshot.
     const cNearestMode = isMoving ? frame.nearestMode : seed.nearestMode;
     const cKAllMode    = isMoving ? frame.kAllMode    : seed.kAllMode;
@@ -1256,12 +1262,6 @@ export function scheduleGrains() {
     const cSearchDeg   = isMoving ? frame.searchRadiusDeg : seed.searchRadiusDeg;
     const cFadeOn      = isMoving ? frame.radiusFadeEnabled : seed.radiusFadeEnabled;
     const cFadeCurve   = isMoving ? frame.radiusFadeCurve   : seed.radiusFadeCurve;
-
-    // Initialise seed onset clock on first use — same 5ms forward margin as
-    // the cursor init so the first seed grain is never at exactly currentTime.
-    if (seed._nextOnsetT === undefined) {
-      seed._nextOnsetT = ensureAudioContext().currentTime + 0.005;
-    }
 
     // ── Stamp angular distances on particles ────────────────────────────
     const cParts  = S.particles;
@@ -1341,19 +1341,7 @@ export function scheduleGrains() {
       }
     }
 
-    // Advance onset clock horizon — keep it roughly current for smooth
-    // transition if the seed's weight changes (avoids burst on re-entry).
-    const seedSchedUntil = audioNow + SCHED_LOOKAHEAD;
-
-    if (!pool.length) {
-      // Still advance the clock even if no particles in range.
-      // Floor at S.minPeriodS to match the OOM guard on the firing path.
-      while (seed._nextOnsetT < seedSchedUntil) {
-        const p = Math.max(S.minPeriodS, basePeriodS + rand(-periodVarS, periodVarS));
-        seed._nextOnsetT += p;
-      }
-      continue;
-    }
+    if (!pool.length) continue;
 
     // ── Collect seed data for worklet ────────────────────────────────────
     // Worklet handles all grain synthesis; main thread just posts candidates.
@@ -1370,7 +1358,7 @@ export function scheduleGrains() {
     _workletSeedData.push({
       slotIndex: i,
       pool: pool.slice(),
-      gain: _seedWeights[i] * seedEnvGain,
+      gain: _seedWeights[i] * seedEnvGain * (seed.level ?? 1),   // × the pin's fader
       grainParams: cgp,
       overrides: hasOverrides ? cgo : null,
       kSeqMode: cKSeqMode,
@@ -1382,11 +1370,6 @@ export function scheduleGrains() {
       fadeCurve:   cFadeCurve ?? 0.5,
       angKey:      cAngKey,   // pass the key, don't re-derive it in the bridge
     });
-    // Advance the onset clock so it stays current
-    while (seed._nextOnsetT < seedSchedUntil) {
-      const p = Math.max(S.minPeriodS, basePeriodS + rand(-periodVarS, periodVarS));
-      seed._nextOnsetT += p;
-    }
     perf.seedsPosted++;   // count for diagnostics
     if (pool.some(p => p.source === 'live')) S.liveGranulatingThisFrame = true;
   }
@@ -1402,7 +1385,7 @@ export function scheduleGrains() {
 
   // ── Moving seed recording tick ───────────────────────────────────────────
   // Capture cursor frame if ↓ key is held (recording a moving seed path)
-  if (S._seedRecordingFrames || S._shelvedSeed) tickSeedRecording();
+  if (S._commitRecordingFrames || S._shelvedSeed) tickSeedRecording();
 
   // ── Trigger gates ───────────────────────────────────────────────────────
   // Flip `playing` on armed triggers according to cursor proximity, before the
@@ -1441,8 +1424,13 @@ export function scheduleGrains() {
     // mid-teardown, but it no longer hides a missing binding.
     if (seq._pinGain && S.audioCtx) {
       const pinW = (!isTrigger && S.commitPlayback === 'focus') ? (S._pinWeights[si] || 0) : 1;
-      try { seq._pinGain.gain.setTargetAtTime(pinW, S.audioCtx.currentTime, 0.015); }
-      catch (e) { dlog('pinweight', e.message); }
+      // Only when it moved: in `all` mode this is a constant 1, and a timeline
+      // event per loop per 10 ms tick is work the audio thread does for nothing.
+      if (seq._lastPinW !== pinW) {
+        seq._lastPinW = pinW;
+        try { seq._pinGain.gain.setTargetAtTime(pinW, S.audioCtx.currentTime, 0.015); }
+        catch (e) { dlog('pinweight', e.message); }
+      }
     }
     // ── The loop's LEVEL follows its fader (2026-09-16) ──────────────────
     // `grainParams.volume` was read once, when the source was built; the rail's
@@ -1450,7 +1438,10 @@ export function scheduleGrains() {
     // moved, because the same node carries the per-pass decay (below) and the
     // stop fades, and a write every tick would fight both.
     if (seq._gainNode && S.audioCtx && !isTrigger && !seq._playingToEnd && !seq._fadingOut && !seq._selfKilled) {
-      const vol = seq.grainParams?.volume ?? 1;
+      let vol = _loopGain(seq);
+      // A self-killing loop steps down per pass (below); a fader move mid-life
+      // must land on the stepped value, not reset the decay.
+      if (seq.passes > 0 && seq._wrapIdx > 0) vol *= 1 - seq._wrapIdx / seq.passes;
       if (seq._lastVol !== vol) {
         seq._lastVol = vol;
         try { seq._gainNode.gain.setTargetAtTime(vol, S.audioCtx.currentTime, 0.015); } catch (_) {}
@@ -1482,28 +1473,22 @@ export function scheduleGrains() {
 
       // For reverse playback, create a reversed copy of the loop region.
       // Cache it on the seq object so we don't re-reverse every tick.
+      // A pinned loop's `buffer` is its own crossfaded region (buildLoopPayload);
+      // a trigger's is the TAKE it stands on (trigger.js rebuildTrigger) — shared
+      // memory (js/take.js), which a source node cannot play. Either way the
+      // source plays a REGION copy when one is needed: reversed, or forward out
+      // of a take. Cached on the slot, keyed on what it was cut from, so a
+      // trigger whose region moved is re-cut and a loop pin never copies.
       let playBuffer = buffer;
       let playLoopStart = seq.loopStart;
       let playLoopEnd   = seq.loopEnd;
-      if (seq.direction === -1) {
-        if (!seq._revBuffer) {
-          const loopLen = seq.loopEnd - seq.loopStart;
-          const startSamp = Math.floor(seq.loopStart * buffer.sampleRate);
-          const endSamp   = Math.min(buffer.length, Math.ceil(seq.loopEnd * buffer.sampleRate));
-          const regionLen = endSamp - startSamp;
-          const revBuf = actx.createBuffer(buffer.numberOfChannels, regionLen, buffer.sampleRate);
-          for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
-            const src = buffer.getChannelData(ch);
-            const dst = revBuf.getChannelData(ch);
-            for (let i = 0; i < regionLen; i++) {
-              dst[i] = src[endSamp - 1 - i];
-            }
-          }
-          seq._revBuffer = revBuf;
-        }
-        playBuffer    = seq._revBuffer;
+      const reverse = seq.direction === -1;
+      if (reverse || buffer.data) {
+        const region = _regionCopy(seq, buffer, reverse, actx);
+        if (!region) continue;
+        playBuffer    = region;
         playLoopStart = 0;
-        playLoopEnd   = playBuffer.duration;
+        playLoopEnd   = region.duration;
       }
 
       const src  = actx.createBufferSource();
@@ -1516,7 +1501,7 @@ export function scheduleGrains() {
       src.loopStart    = playLoopStart;
       src.loopEnd      = playLoopEnd;
       src.playbackRate.value = Math.abs(seq.speed);
-      gain.gain.value  = seq.grainParams.volume ?? 1.0;
+      gain.gain.value  = _loopGain(seq);
 
       src.connect(gain);
 
@@ -1568,8 +1553,7 @@ export function scheduleGrains() {
           spkGains.push(g);
         }
         seq._vbapGains = spkGains;       // per-speaker gain nodes
-        seq._vbapLastIdxA = -1;           // last active pair — skip update if unchanged
-        seq._vbapLastIdxB = -1;
+        seq._vbapLast = null;             // the last pair + weights written, so the tick can skip
         seq._extraNodes = spkGains;
         seq._panner = null;
       } else {
@@ -1614,8 +1598,6 @@ export function scheduleGrains() {
               else if (si === iLut.idxB)  seq._vbapGains[si].gain.value = iElB > 0.01 ? iLut.wB + (iEq - iLut.wB) * iElB : iLut.wB;
               else                        seq._vbapGains[si].gain.value = iElB > 0.01 ? iEq * iElB : 0;
             }
-            seq._vbapLastIdxA = iLut.idxA;
-            seq._vbapLastIdxB = iLut.idxB;
           }
         } else if (seq._panner) {
           const iRawPan = Math.abs(iCz) > 1e-6
@@ -1656,7 +1638,7 @@ export function scheduleGrains() {
       // starts mid-waveform (which `start: touch` and `ends` both do, and which
       // is the case this ramp actually exists for), short enough to leave a
       // transient intact.
-      const targetVol = seq.grainParams.volume ?? 1.0;
+      const targetVol = _loopGain(seq);
       gain.gain.setValueAtTime(0, startAt);
       gain.gain.linearRampToValueAtTime(targetVol, startAt + DECLICK_S);
 
@@ -1761,7 +1743,8 @@ export function scheduleGrains() {
             if (wrapIdx >= n) {
               S._selfKillSlot?.(seq);
             } else if (seq._gainNode) {
-              const g = (seq.grainParams?.volume ?? 1) * (1 - wrapIdx / n);
+              const g = _loopGain(seq) * (1 - wrapIdx / n);
+              seq._lastVol = g;
               try { seq._gainNode.gain.setTargetAtTime(g, actx.currentTime, 0.05); } catch (_) {}
             }
           }
@@ -1827,16 +1810,20 @@ export function scheduleGrains() {
             const spWA  = spElB > 0.01 ? spLut.wA + (spEq - spLut.wA) * spElB : spLut.wA;
             const spWB  = spElB > 0.01 ? spLut.wB + (spEq - spLut.wB) * spElB : spLut.wB;
             const spSpread = spElB > 0.01 ? spEq * spElB : 0;
-            // Update all speakers — bracketing pair + spread to others
-            for (let si = 0; si < spN; si++) {
-              let target;
-              if (si === idxA)       target = spWA;
-              else if (si === idxB)  target = spWB;
-              else                   target = spSpread;
-              seq._vbapGains[si].gain.setTargetAtTime(target, _panNow, _panRampTau);
+            // Update all speakers — bracketing pair + spread to others — but
+            // only when the pair or a weight moved: a pinned loop's anchor
+            // does not, so this was N timeline events per loop per tick.
+            const L = seq._vbapLast || (seq._vbapLast = { a: -1, b: -1, wa: -1, wb: -1, sp: -1 });
+            if (L.a !== idxA || L.b !== idxB || Math.abs(L.wa - spWA) > 1e-4 || Math.abs(L.wb - spWB) > 1e-4 || Math.abs(L.sp - spSpread) > 1e-4) {
+              L.a = idxA; L.b = idxB; L.wa = spWA; L.wb = spWB; L.sp = spSpread;
+              for (let si = 0; si < spN; si++) {
+                let target;
+                if (si === idxA)       target = spWA;
+                else if (si === idxB)  target = spWB;
+                else                   target = spSpread;
+                seq._vbapGains[si].gain.setTargetAtTime(target, _panNow, _panRampTau);
+              }
             }
-            seq._vbapLastIdxA = idxA;
-            seq._vbapLastIdxB = idxB;
           }
         } else if (seq._panner) {
           // Stereo: smoothly ramp pan position with elevation center-bias
@@ -1862,30 +1849,3 @@ export function scheduleGrains() {
   }
 }
 
-// Reset onset clock when period/periodVar changes (called from ui-presets.js).
-// Always snap the next onset to audioNow + newPeriod so the new spacing takes
-// effect immediately — no stale grains, no gap.
-//
-// History: the original approach nulled the clock, causing a 12-grain burst on
-// reinit → OOM during slider dragging.  The second approach only reset when the
-// clock was beyond the lookahead horizon, but that missed medium→short period
-// changes (e.g. 100ms→10ms) causing 50-100ms silence gaps.
-//
-// Current approach: unconditionally snap forward to one period ahead.  The
-// scheduler sees exactly one grain due on the next tick.  With the tighter 40ms
-// lookahead, this gives immediate response without burst risk.
-export function resetCursorPeriod() {
-  // No-op: cursor onset timing is handled by the AudioWorklet.
-  // Kept as an export so callers (ui-presets.js) don't break.
-}
-
-// Reset onset clocks when AudioContext transitions from 'suspended' → 'running'.
-// Cursor onset timing is handled by the worklet; only seed onset clocks need reset.
-S._resetOnsetClocks = () => {
-  if (S.seedSlots) {
-    for (let i = 0; i < S.seedSlots.length; i++) {
-      const seed = S.seedSlots[i];
-      if (seed) delete seed._nextOnsetT;
-    }
-  }
-};

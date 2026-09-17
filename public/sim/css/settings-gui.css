@@ -59,6 +59,15 @@ html body .set-nav-item--sub {
   padding-left: 37px; height: 30px; font-size: 13.5px; color: var(--text-dim);
 }
 html body .set-nav-item--sub:hover { color: var(--text-light); }
+/* A LINK ROW (2026-09-16): the cheat sheet. Same row as a section — height,
+   type, hover — because it sits in the same rail; the one thing that differs
+   is that it leaves, and the external mark at the row's right edge says so.
+   Never `.active`: it opens elsewhere and this rail never shows it. */
+html body .set-nav-link { text-decoration: none; }
+html body .set-nav-ext {
+  margin-left: auto; font-style: normal; font-size: 12px; color: var(--text-dim);
+}
+html body .set-nav-link:hover .set-nav-ext { color: var(--text-light); }
 
 html body .settings-head { height: 60px; flex: 0 0 60px; padding: 0 24px; gap: 14px; }
 html body .settings-head h2 {
@@ -180,7 +189,6 @@ html body .settings-host .in-settings .set-ctl > .as-val { order: 99; }
 .settings-host .in-settings .set-btn,
 .settings-host .in-settings .top-bar-btn,
 .settings-host .in-settings .as-btn,
-.settings-host .in-settings .as-io-reset-btn,
 .settings-host .in-settings .mu-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   height: 36px; padding: 0 16px;
@@ -387,20 +395,8 @@ html body .settings-host .in-settings .as-val,
 .settings-host td,
 .settings-host button,
 .settings-host .as-dim,
-.settings-host .as-meter-group-label,
-.settings-host .as-io-col-sw,
-.settings-host .as-io-col-hw,
-.settings-host .as-io-col-angle,
-.settings-host .as-io-sw {
+.settings-host .as-meter-group-label {
   font-size: 14px; letter-spacing: var(--ls-tight); text-transform: none;
-}
-
-/* Column captions: a table header, not an engraving. */
-.settings-host .in-settings .as-io-col-sw,
-.settings-host .in-settings .as-io-col-hw,
-.settings-host .in-settings .as-io-col-angle {
-  font-size: var(--fs-set-hint); color: var(--text-muted);
-  letter-spacing: var(--ls-tight); text-transform: none;
 }
 /* A METER GROUP'S LABEL IS A SUBTITLE (Ek, 2026-09-14: "Hardware In should
    be a proper subtitle style. Same with … Mubone Level"). It named a block
@@ -430,13 +426,6 @@ html body .settings-host .in-settings .as-val,
 .settings-host .in-settings .as-dim{
   font-size: var(--fs-set-hint); color: var(--text-muted); opacity: 1;
 }
-/* …except one that is saying something. `.as-dim.as-warn` in style.css is a
-   two-class selector and loses to the three above it wherever a page is
-   hosted here — the ceiling's row read `as-warn` with the muted colour still
-   on it (measured: rgb(133,126,116), not the ochre). Specificity is not
-   reading order (DESIGN-SYSTEM's second CSS trap), so the override lives at
-   the winning weight rather than later in the file. */
-.settings-host .in-settings .as-dim.as-warn{ color: var(--accent-warn); }
 
 /* ── STATUS PILL — "is it true?", when you cannot set it here ───────────────
    The build sheet's § 4 element, 18 tall, r999, no border, 6px dot + label.

@@ -107,7 +107,7 @@ const SECTIONS = [
   { id: 'feedback',  label: 'LED Feedback', group: 'sensor',  modal: 'ledModal', opener: 'ximuLedBtn', closer: 'ledClose', action: 'ledResetBtn' },
   { id: 'viz',       label: 'Visuals',      group: 'view',    modal: 'vizModal', opener: 'vizSettingsBtn', closer: 'vizModalClose' },
   { id: 'view',      label: 'Camera + Display', group: 'view', panel: 'setPanelView' },
-  { id: 'keys',      label: 'Keys + MIDI',   group: 'control', modal: 'mappingModal', opener: 'helpBtn', closer: 'mappingClose', action: 'keysClearAll' },
+  { id: 'keys',      label: 'Keys + MIDI',   group: 'control', modal: 'mappingModal', opener: 'keysBtn', closer: 'mappingClose', action: 'keysClearAll' },
   { id: 'buttons',   label: 'Instrument Buttons', group: 'control', panel: 'setPanelButtons' },
   { id: 'diag',      label: 'Diagnostics',  group: 'control', panel: 'setPanelDiag' },
   { id: 'session',   label: 'Export · Import', group: 'control', panel: 'setPanelSession' },
@@ -398,6 +398,22 @@ export function initSettings() {
     const sub = sec.under ? ' set-nav-item--sub' : '';
     html += `<button type="button" class="set-nav-item${sub}" data-sec="${sec.id}">${icon}<span>${sec.label}</span></button>`;
   }
+  // THE CHEAT SHEET IS A LINK, NOT A SECTION (Ek, 2026-09-16). Settings is the
+  // one door, so it is where a player looks for anything the stage cannot
+  // tell them — but the manual is a page that LEAVES the app, and a nav row
+  // that navigates away must not wear the shape of one that shows a panel.
+  // So it is an <a> with the external mark, in its own eyebrow, last. The
+  // path is relative on purpose: `manual/` ships beside `js/` in both builds,
+  // and Electron's file:// needs the `index.html` spelled out. In Electron the
+  // window-open handler (electron-main.js) hands `_blank` to the system
+  // browser, so the instrument never navigates mid-show.
+  html += `<span class="set-nav-grp">help</span>`
+    + `<a class="set-nav-item set-nav-link" href="manual/index.html" target="_blank" rel="noopener">`
+    + `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" `
+    + `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`
+    + `<path d="M2.5 3.5h4A1.5 1.5 0 0 1 8 5v8a1.2 1.2 0 0 0-1.2-1.2H2.5Z"/>`
+    + `<path d="M13.5 3.5h-4A1.5 1.5 0 0 0 8 5v8a1.2 1.2 0 0 1 1.2-1.2h4.3Z"/></svg>`
+    + `<span>Cheat sheet</span><i class="set-nav-ext" aria-hidden="true">\u2197</i></a>`;
   nav.innerHTML = html;
   nav.addEventListener('click', e => {
     const b = e.target.closest('[data-sec]');

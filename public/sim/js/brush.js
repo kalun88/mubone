@@ -10,7 +10,7 @@
 //
 //   grain  — granular; the sound is the PLAYING tile's block (tiles.js), not
 //            the patch bank's slot, since 2026-09-03.
-//   hit    — the primary gesture records a TRIGGER instead of granular
+//   tape   — the primary gesture records a TRIGGER instead of granular
 //            material: #183's rule ("the player knows before pressing
 //            record") with the decision moved onto the brush.
 //
@@ -42,7 +42,7 @@ export function setBrush(key) {
   const b = brushLibrary().find(x => x.key === key);
   if (!b) return;
   S.brushKey = key;
-  // The key says WHAT the gesture deposits (grain or hit) and nothing about
+  // The key says WHAT the gesture deposits (grain or tape) and nothing about
   // how it sounds: a grain tile owns its whole block and `applyTileParams`
   // writes it right after this (2026-09-03). Loading the patch-bank slot
   // here as well used to run first and be overwritten a frame later, with a

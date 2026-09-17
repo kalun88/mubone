@@ -89,7 +89,7 @@ function first(link, address) {
 // Walk [data-osc] under any root and paint the link's latest values — the
 // block uses it, and Diagnostics reuses it for the instrument stream (R8),
 // which is what keeps the formats one set instead of two.
-export function paintOscInto(root, link) {
+function paintOscInto(root, link) {
   for (const node of root.querySelectorAll('[data-osc]')) {
     const v = value(link, node.dataset.osc);
     const text = v === null ? '—' : (FORMAT[node.dataset.fmt] || FORMAT.text)(v);

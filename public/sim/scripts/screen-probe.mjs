@@ -54,7 +54,7 @@ const built = await rig.evaluate(async (walkSrc) => {
   for (const [el, prev] of hidden) { if (prev === null) el.removeAttribute('style'); else el.setAttribute('style', prev); }
   await z(300);
   document.getElementById('tcSettings')?.click(); await z(800);
-  for (const nav of [...document.querySelectorAll('.set-nav-item')]) {
+  for (const nav of [...document.querySelectorAll('.set-nav-item[data-sec]')]) {
     nav.click(); await z(550);
     const host = document.querySelector('.settings-host');
     if (host) rows = rows.concat(snapOf(host, 'set:' + nav.dataset.sec));

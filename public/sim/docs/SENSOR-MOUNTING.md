@@ -51,7 +51,7 @@ With the frame correct, anything still backwards is a genuine one-bit problem:
 - twist → the **horizon rolls**, the cursor does not translate
 - turn → the cursor sweeps along the **ivory equator**
 
-Flip the offending axis in the sensor's polarity row. Those write `slot.quatCal.axisMap`, downstream of the mount and heading rotations, so they cannot invalidate the calibration.
+Flip the offending axis with the flip button in the sensor's Axes table. Those write `slot.quatCal.axisMap`, downstream of the mount and heading rotations, so they cannot invalidate the calibration.
 
 **If sign-flipping does not converge, stop flipping.** A rotated reference frame is not a one-bit problem and no sequence of sign changes can fix it — recalibrate the mounting instead. That distinction cost a full debugging session on 2026-08-31; `docs/TARE-RECENTER-ZERO.md` has the reasoning.
 

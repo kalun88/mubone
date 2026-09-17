@@ -64,11 +64,24 @@ export const RETIRED_KEYS = [
   // so the reset page offered to reset a value nothing writes (2026-09-13).
   // One mechanism for a retired key, and this is it.
   'grainDiagSnapshot',
+  // The rig view's layout state (#291) — cleared by hand in main.js until
+  // 2026-09-16 — the two single-instrument sygaldry keys that a fold-in read
+  // once (2026-09-16: the fold-in is gone, every rig has run it), and the
+  // sensor-cal schema flag whose two migrations (frame → camera, tareQuat)
+  // were deleted the same day.
+  'mubone_projector_layout', 'mubone_projector_layout_v2', 'mubone_panel_order', 'mubone_tile_layout',
+  'muboneSygaldryAddress', 'muboneSygaldrySsid',
+  'mubone_sensor_cal_v',
 ];
+// Prefixes retired the same way — the per-device collapse state of the rig
+// view (`mubone_panel_<id>`, #291).
+export const RETIRED_PREFIXES = ['mubone_panel_'];
 export function purgeRetiredKeys() {
   let n = 0;
-  try { for (const k of RETIRED_KEYS) if (localStorage.getItem(k) !== null) { localStorage.removeItem(k); n++; } }
-  catch (_) {}
+  try {
+    for (const k of RETIRED_KEYS) if (localStorage.getItem(k) !== null) { localStorage.removeItem(k); n++; }
+    for (const k of Object.keys(localStorage)) if (RETIRED_PREFIXES.some(p => k.startsWith(p))) { localStorage.removeItem(k); n++; }
+  } catch (_) {}
   if (n) console.info(`[storage] removed ${n} key(s) of sunset features`);
   return n;
 }
@@ -116,8 +129,7 @@ export const KEYS = [
 
   // ── sensor ──
   { key: 'mubone_sensor_cal',    cat: 'sensor' },
-  { key: 'mubone_sensor_cal_v',  cat: 'sensor', guards: ['mubone_sensor_cal'],
-    note: 'schema flag — MUST travel with mubone_sensor_cal or the frame→camera migration re-runs on migrated data' },
+  { key: 'mubone_settings_sensor', cat: 'ui', note: 'which sensor Settings → Sensor shows (ui-imu-setup.js _SEL_KEY) — unregistered until 2026-09-16' },
   { key: 'mubone-sensor-prefs',  cat: 'sensor', note: 'per-serial axis signs and role' },
   { key: 'mubone_sygaldry_known', cat: 'sensor',
     note: 'per-instrument { ssid, address } keyed by the name the instrument reports; '
@@ -145,24 +157,6 @@ export const KEYS = [
 // the export both scan localStorage for these rather than listing them.
 export const PREFIXES = [
   { prefix: 'mubone_sec_',   cat: 'ui', note: 'per-section collapse state' },
-];
-
-// Keys a migration deletes on sight. Listed so the audit doesn't flag them as
-// unregistered if it catches a bucket mid-migration — NOT resettable targets,
-// and never exported.
-export const LEGACY_KEYS = [
-  // The rig view's layout state, cleared once at boot in main.js (#291): the
-  // panel order, the projector column partition (and its pre-v2 form), and
-  // which of the two layouts was on. Nothing writes any of them any more.
-  'mubone_projector_layout',
-  'mubone_projector_layout_v2',
-  'mubone_panel_order',
-  'mubone_tile_layout',
-];
-
-// Prefixes a migration deletes on sight — same rule as LEGACY_KEYS.
-export const LEGACY_PREFIXES = [
-  'mubone_panel_',             // per-device collapse state (#291)
 ];
 
 // ── Queries ─────────────────────────────────────────────────────────────────
@@ -195,8 +189,8 @@ export function keysFor(cats) {
       if (k && prefixes.some(p => k.startsWith(p))) out.add(k);
     }
   } catch (_) { /* storage unavailable */ }
-  // A legacy key is wiped along with the category its successor belongs to.
-  if (want.has('ui')) for (const k of LEGACY_KEYS) out.add(k);
+  // (A retired key is purged at boot — purgeRetiredKeys — so a reset never
+  // needs to name one.)
 
   // Withhold any schema flag whose guarded data isn't all going with it —
   // see the `guards` note on KEYS. Keeping a stale flag is harmless (the
@@ -223,8 +217,10 @@ export function keysFor(cats) {
  * shared origin — or a devtools scratch value — doesn't trip it.
  */
 export function unregisteredKeys() {
-  const known = new Set([...KEYS.map(e => e.key), ...LEGACY_KEYS]);
-  const prefixes = [...PREFIXES.map(e => e.prefix), ...LEGACY_PREFIXES];
+  // A retired key or prefix is known: a bucket read between boot and the purge
+  // is not drift.
+  const known = new Set([...KEYS.map(e => e.key), ...RETIRED_KEYS]);
+  const prefixes = [...PREFIXES.map(e => e.prefix), ...RETIRED_PREFIXES];
   const out = [];
   try {
     for (let i = 0; i < localStorage.length; i++) {

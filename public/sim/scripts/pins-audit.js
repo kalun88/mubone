@@ -388,7 +388,7 @@ async function run(rig) {
     P.restoreGroups([]);
     S.commitSlots = new Array(S.commitSlotCount ?? 16).fill(null);
     // A cloud with a LONG fade out: the mute must not ride it.
-    S.seedRelease = 5; S.commitRelease = 5;
+    S.commitRelease = 5;
     const cl = { type: 'cloud', slotIndex: 0, playing: true, lon: 0, lat: 0,
                  color: '#e8a030', grainParams: {}, grainOverrides: {}, _releasingAt: 0 };
     S.commitSlots[0] = cl;
@@ -396,7 +396,7 @@ async function run(rig) {
     const cloudNow = cl.playing === false && !(cl._releasingAt > 0) && cl._composerHold === true;
     P.setPinMuted(cl, false);
     const cloudBack = cl.playing === true && cl._composerHold === false;
-    S.seedRelease = 0; S.commitRelease = 0;
+    S.commitRelease = 0;
 
     // A loop with a live mute node: the ramp lands within the 20 ms ramp, not
     // at the end of a pass. Fake the node the way grain.js builds it.
@@ -461,7 +461,7 @@ async function run(rig) {
     const loop = { type: 'loop', slotIndex: 0, strokeId: 998, particles: [0, 1, 2, 3].map(mk), buffer: buf,
       loopStart: 0, loopEnd: 1, playheadIndex: 0, startOffset: 0, direction: 1, speed: 1, playing: true,
       color: '#4fc3f7', anchorLon: cur.lon, anchorLat: cur.lat, _sourceNode: null, _gainNode: null,
-      _revBuffer: null, _createdAt: performance.now() / 1000, _startedAt: 0, grainParams: { volume: 1 },
+      _regionBuf: null, _createdAt: performance.now() / 1000, _startedAt: 0, grainParams: { volume: 1 },
       mute: false, solo: false };
     const cloud = { type: 'cloud', slotIndex: 1, playing: true, lon: cur.lon + 6 * Math.PI / 180, lat: cur.lat,
       color: '#e8a030', grainParams: { ...S.grainParams }, grainOverrides: {}, searchRadiusDeg: 10,
@@ -544,11 +544,11 @@ async function run(rig) {
     //    drawn from 60° east to 3° east, released there. The slot it makes
     //    must be anchored at the END.
     const wasOverflow = S.commitOverflow;
-    S._seedRecordingFrames   = [fr(0, cur.lon + 60 * D), fr(2000, cur.lon + 30 * D), fr(4000, cur.lon + 3 * D)];
-    S._seedRecordingStart    = performance.now() - 4000;
-    S._seedRecordingSlot     = -1;
-    S._seedRecordingDeferred = true;
-    S._seedRecordingStrokeId = -1;
+    S._commitRecordingFrames   = [fr(0, cur.lon + 60 * D), fr(2000, cur.lon + 30 * D), fr(4000, cur.lon + 3 * D)];
+    S._commitRecordingStart    = performance.now() - 4000;
+    S._commitRecordingSlot     = -1;
+    S._commitRecordingDeferred = true;
+    S._commitRecordingStrokeId = -1;
     UP.finalizeSeedPlant();
     const sealed = S.commitSlots.find(c => c && c.type === 'cloud');
     const sealedAnchorDeg = sealed ? (sealed.anchorLon - cur.lon) / D : null;
@@ -592,6 +592,7 @@ async function run(rig) {
   // looper pins it (no hand particle): anchored at its LAST mark. Pinned as
   // a drop (a hand particle): anchored at the hand.
   const lpa = await rig.evaluate(async () => {
+    const T = await import('./js/take.js');
     const { S } = await import('./js/state.js');
     const P = await import('./js/pins.js');
     const UP = await import('./js/ui-presets.js');
@@ -599,7 +600,7 @@ async function run(rig) {
     if (!actx) return { noCtx: true };
     const keepParts = S.particles, keepSlots = S.commitSlots.slice(), keepLive = S.liveRecBuffers.slice();
     S.commitSlots = new Array(S.commitSlotCount ?? 16).fill(null);
-    const buf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);          // 1 s of silence
+    const buf = T.makeTake(new Float32Array(actx.sampleRate), actx.sampleRate);          // 1 s of silence
     S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
     const idx = S.liveRecBuffers.length - 1;
     const D = Math.PI / 180, sid = 424242;
@@ -870,6 +871,7 @@ async function run(rig) {
   // releaseCommit unpins, the erase brush erases, clearAllCommits clears.
   console.log('\n§ O. undo — the last user action, of any kind');
   const und = await rig.evaluate(async () => {
+    const T = await import('./js/take.js');
     const { S } = await import('./js/state.js');
     const H = await import('./js/history.js');
     const UP = await import('./js/ui-presets.js');
@@ -894,7 +896,7 @@ async function run(rig) {
     const cur = SP.screenToLonLat(S.mousePixelX, S.mousePixelY);
     const actx = S.audioCtx;
     const paint = () => {
-      const buf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+      const buf = T.makeTake(new Float32Array(actx.sampleRate), actx.sampleRate);
       S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
       const idx = S.liveRecBuffers.length - 1;
       US.recordStrokeStart('live', idx);
@@ -978,6 +980,7 @@ async function run(rig) {
   // inside the radius is a loop, and a press anywhere else is a cloud.
   console.log('\n§ P. the pin\'s dead band — a press the drop declines still plants a ghost');
   const db = await rig.evaluate(async () => {
+    const T = await import('./js/take.js');
     const { S } = await import('./js/state.js');
     const H = await import('./js/history.js');
     const UP = await import('./js/ui-presets.js');
@@ -995,7 +998,7 @@ async function run(rig) {
     S.mouseInCanvas = true; S.mousePixelX = baseX; S.mousePixelY = baseY; R.drawFrame(); await sleep(20);
     const cur = SP.screenToLonLat(baseX, baseY);
     const actx = S.audioCtx;
-    const buf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+    const buf = T.makeTake(new Float32Array(actx.sampleRate), actx.sampleRate);
     S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
     const idx = S.liveRecBuffers.length - 1;
     US.recordStrokeStart('live', idx);
@@ -1266,6 +1269,7 @@ async function run(rig) {
   // the whole change, and what the worklet receives is what it plays.
   console.log('\n§ J2. a cloud reads a mark with the mark\'s voicing — a wet brush reaches its wash');
   const cv = await rig.evaluate(async () => {
+    const T = await import('./js/take.js');
     const { S } = await import('./js/state.js');
     const BV = await import('./js/brush-voicing.js');
     const US = await import('./js/ui-samples.js');
@@ -1274,7 +1278,7 @@ async function run(rig) {
     const actx = A.ensureAudioContext();
     // A buffer the worklet knows. The rig has not recorded yet, so the engine
     // is cold-started on it the way a sample paint does (main.js).
-    const buf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+    const buf = T.makeTake(new Float32Array(actx.sampleRate), actx.sampleRate);
     if (!S._postWorkletSeeds) await S._ensureWorkletForSample?.(buf);
     else WB.hotSwapRecording(buf);
     if (!S._postWorkletSeeds) return { noWorklet: true };
@@ -1739,7 +1743,7 @@ async function run(rig) {
         const seq = { type: 'loop', slotIndex: i, strokeId: 9000 + i, particles: [{ lon, lat: 0, grainStart: 0 }],
           buffer: buf, loopStart: 0, loopEnd: loopS, playheadIndex: 0, startOffset: 0, direction: 1,
           speed, playing: true, color: '#abcdef', anchorLon: lon, anchorLat: 0,
-          _sourceNode: src, _gainNode: gain, _revBuffer: null, _startedAt: actx.currentTime - 13,
+          _sourceNode: src, _gainNode: gain, _regionBuf: null, _startedAt: actx.currentTime - 13,
           grainParams: { volume: 1 } };
         S.commitSlots[i] = seq; return seq;
       };
@@ -1761,7 +1765,7 @@ async function run(rig) {
       mA.speed = 0.5; out.phaseHalf = G.masterPhaseWall(mA, actx.currentTime); mA.speed = 1;
 
       // (c) the layer's maths: impulses at known times, folded at phase 3
-      const take = (lenS, ...atS) => { const b = actx.createBuffer(1, Math.round(lenS * sr), sr); const d = b.getChannelData(0); for (const t of atS) d[Math.round(t * sr)] = 1; return b; };
+      const T = await import('./js/take.js'); const take = (lenS, ...atS) => { const d = new Float32Array(Math.round(lenS * sr)); for (const t of atS) d[Math.round(t * sr)] = 1; return T.makeTake(d, sr); };
       const hits = (layer) => { const d = layer.getChannelData(0); const r = []; for (let i = 0; i < d.length; i++) if (d[i] !== 0) r.push([+(i / sr).toFixed(3), d[i]]); return r; };
       const L1 = UP.buildOverdubLayer(mA, take(2, 0.5, 1.5), 3);
       out.lay1 = { dur: +L1.duration.toFixed(3), hits: hits(L1) };
@@ -1952,14 +1956,14 @@ async function run(rig) {
     try {
       S.commitSlots = new Array(keepSlots.length).fill(null);
       S.particles = [];
-      const take = (lenS, ...atS) => { const b = actx.createBuffer(1, Math.round(lenS * sr), sr); const d = b.getChannelData(0); for (const t of atS) d[Math.round(t * sr)] = 1; return b; };
+      const T = await import('./js/take.js'); const take = (lenS, ...atS) => { const d = new Float32Array(Math.round(lenS * sr)); for (const t of atS) d[Math.round(t * sr)] = 1; return T.makeTake(d, sr); };
       const hits = (layer) => { const d = layer.getChannelData(0); const r = []; for (let i = 0; i < d.length; i++) if (d[i] !== 0) r.push([+(i / sr).toFixed(3), +d[i].toFixed(3)]); return r; };
       const buf = actx.createBuffer(1, Math.round(10 * sr), sr);
       const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
       const gain = actx.createGain(); gain.gain.value = 0; src.connect(gain); src.start();
       const m = { type: 'loop', slotIndex: 0, strokeId: 9100, particles: [{ lon: 0, lat: 0, grainStart: 0 }], buffer: buf, loopStart: 0, loopEnd: 10,
         playheadIndex: 0, startOffset: 0, direction: 1, speed: 1, playing: true, color: '#abcdef', anchorLon: 0, anchorLat: 0,
-        _sourceNode: src, _gainNode: gain, _revBuffer: null, _startedAt: actx.currentTime - 13.5, grainParams: { volume: 1 } };
+        _sourceNode: src, _gainNode: gain, _regionBuf: null, _startedAt: actx.currentTime - 13.5, grainParams: { volume: 1 } };
       S.commitSlots[0] = m;
       // a 2 s take with a hit at 0.5 and at 1.5, folded at phase 3 → 3.5 and 4.5
       const ov = { strokeId: 7171, phase0: 3, buffer: take(2, 0.5, 1.5), layer: null, _src: null, _gain: null };
@@ -1985,7 +1989,7 @@ async function run(rig) {
       const firstSrc = ov._src;
       S.particles = S.particles.filter(p => p !== pA); S._particleVersion = (S._particleVersion || 0) + 1;
       S._onMarksErased([pA]);
-      const e = ov.buffer.getChannelData(0);
+      const e = ov.buffer.data;
       out.part = { n: m.overdubs.length, hits: hits(ov.layer), takeAt05: +e[Math.round(0.5 * sr)].toFixed(3), takeAt15: +e[Math.round(1.5 * sr)].toFixed(3),
         swapped: ov._src !== firstSrc && !!ov._src && !ov._src._stopped, oldStopped: !!firstSrc?._stopped };
       // erase the rest: the overdub leaves its master
@@ -2037,7 +2041,7 @@ async function run(rig) {
       const copies = marks.map(p => ({ lon: p.lon, lat: p.lat, grainStart: p.grainStart, grainDuration: p.grainDuration }));
       const m = { type: 'loop', slotIndex: 0, strokeId: 9300, particles: copies, buffer: buf, loopStart: 0, loopEnd: 4,
         playheadIndex: 0, startOffset: 0, direction: 1, speed: 1, playing: true, color: '#abcdef', anchorLon: 0, anchorLat: 0,
-        _sourceNode: src, _gainNode: gain, _revBuffer: null, _startedAt: actx.currentTime, grainParams: { volume: 1 } };
+        _sourceNode: src, _gainNode: gain, _regionBuf: null, _startedAt: actx.currentTime, grainParams: { volume: 1 } };
       S.commitSlots[0] = m;
       // erase the mark at 1 s: only its window, [1, 2), goes quiet
       S.particles = S.particles.filter(p => p !== marks[1]); S._particleVersion++;
@@ -2073,11 +2077,11 @@ async function run(rig) {
     // The scheduler ticks the recording at ~15 fps; drive it too, in case the
     // audit rig's context is suspended.
     for (let i = 0; i < 6; i++) { await wait(60); UP.tickSeedRecording(); }
-    const mid = { deferred: !!S._seedRecordingDeferred, clouds: clouds().length - n0, frames: S._seedRecordingFrames?.length ?? 0 };
+    const mid = { deferred: !!S._commitRecordingDeferred, clouds: clouds().length - n0, frames: S._commitRecordingFrames?.length ?? 0 };
     UP.finalizeSeedPlant();
     const made = clouds().filter(c => !(c._plantedAt < performance.now() / 1000 - 5));
     const c = made[made.length - 1];
-    const end = { deferred: !!S._seedRecordingDeferred, clouds: clouds().length - n0, moving: !!(c && c.frames && c.frames.length >= 2), dur: c?.duration ?? 0,
+    const end = { deferred: !!S._commitRecordingDeferred, clouds: clouds().length - n0, moving: !!(c && c.frames && c.frames.length >= 2), dur: c?.duration ?? 0,
                   // plays from its first frame; ANCHORED at its last, where the hand let go (2026-09-05)
                   anchored: !!c && c.lon === c.frames?.[0]?.lon && c.lat === c.frames?.[0]?.lat
                             && c.anchorLon === c.frames?.[c.frames.length - 1]?.lon && c.anchorLat === c.frames?.[c.frames.length - 1]?.lat,
@@ -2088,7 +2092,7 @@ async function run(rig) {
     S.isPainting = true; S.currentStrokeId = -1;
     S._stopPaintStroke(); S.isPainting = wasP;
     const washed = clouds().find(c => c.strokeId === 777001);
-    const viaStroke = { deferred: !!S._seedRecordingDeferred, clouds: clouds().length - n0, tagged: !!washed };
+    const viaStroke = { deferred: !!S._commitRecordingDeferred, clouds: clouds().length - n0, tagged: !!washed };
     // Undo of the stroke takes the cloud with it (Ek, 2026-09-05).
     UP.removeSeqByStrokeId(777001);
     const undone = { clouds: clouds().length - n0, gone: !clouds().some(c => c.strokeId === 777001) };
@@ -2096,7 +2100,7 @@ async function run(rig) {
     // A full pool refuses at the release, and the stroke stays scratch.
     const cnt = S.commitSlotCount, ovf = S.commitOverflow; S.commitSlotCount = 0; S.commitOverflow = 'off';
     UP.startSeedPath(); await wait(30); UP.finalizeSeedPlant();
-    const full = { deferred: !!S._seedRecordingDeferred, clouds: clouds().length - n0, frames: S._seedRecordingFrames };
+    const full = { deferred: !!S._commitRecordingDeferred, clouds: clouds().length - n0, frames: S._commitRecordingFrames };
     S.commitSlotCount = cnt; S.commitOverflow = ovf;
     for (const x of clouds()) if (!(x._plantedAt < performance.now() / 1000 - 5)) S.commitSlots[S.commitSlots.indexOf(x)] = null;
     return { mid, end, viaStroke, undone, full };
@@ -2159,7 +2163,7 @@ async function run(rig) {
         bracket.withPins === 1, JSON.stringify(bracket));
 
   console.log('\n§ J3. one selected pin, three marks that agree');
-  // The rail's half-moon, the tracker's ring and the sphere's bracket all say
+  // The rail's SELECTED frame, the tracker's ring and the sphere's bracket all say
   // "this one", and they must say it about the SAME pin (Ek, 2026-09-14: "if
   // it's the closest one highlight it as so in the tracker"). Each reads
   // `selectedPinSlot`, so the way this breaks is not a disagreement about the
@@ -2191,7 +2195,7 @@ async function run(rig) {
     await sleep(500);
     // THE MIXER (2026-09-16): sort IS the selected pin. The tracks are laid
     // out by transform in `S.selectionMode` order, so the selected pin is the
-    // one wearing the half moon AND the one at the top.
+    // inside the SELECTED frame (`.sel`, row one) AND the one at the top.
     const rows = [...document.querySelectorAll('#lyrList .lyr-trk')];
     const yOf = el => { const m = /translateY\(([-\d.]+)px\)/.exec(el.style.transform || ''); return m ? +m[1] : 0; };
     rows.sort((a, b) => yOf(a) - yOf(b));

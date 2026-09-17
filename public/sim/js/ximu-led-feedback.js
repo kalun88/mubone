@@ -126,8 +126,8 @@ export const LED_PALETTE = [
 // It reaches the device map by a different road. It is not an x-IMU3 and has no
 // JSON command channel; sygaldry.js republishes its orientation as
 // /sensor/<name>/quaternion, which imu-setup auto-discovers as an `osc` device
-// keyed `osc-<name>`. That transport is otherwise the Max bridge, whose sensors
-// have no LED at all — hence the identity check rather than a transport check.
+// keyed `osc-<name>`. Any other OSC sender's sensors have no LED at all —
+// hence the identity check rather than a transport check.
 //
 // The conversion from a palette hex to what the instrument wants — sRGB gamma
 // out, this board's channel trim in — lives in sygaldry-led.js, where it can be
@@ -293,7 +293,6 @@ const DEFAULTS = {
   // the first time the app updates.
   mute_toggle: { colour: '#D04A8C', pattern: 'flash', count: 1, enabled: false },
   tare:      { colour: '#1E90D0', pattern: 'flash', count: 1, enabled: false },
-  patch:     { colour: '#8A3FC0', pattern: 'flash', count: 1, enabled: false },
   sweep:     { colour: '#C8A000', pattern: 'flash', count: 2, enabled: false },
   erase_all: { colour: '#CC1A1A', pattern: 'flash', count: 3, enabled: false },
   scan_toggle: { colour: '#00A86B', pattern: 'flash', count: 1, enabled: false },

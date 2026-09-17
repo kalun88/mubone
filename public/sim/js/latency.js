@@ -190,7 +190,7 @@ export async function measureRoundTrip() {
   if (i >= 0) { S.liveRecBuffers.splice(i, 1); S.particles.forEach(p => { if (p.liveBufferIdx > i) p.liveBufferIdx--; }); }
   try { out.disconnect(); } catch (_) {}
   if (!buf) { S._latencyLast = { error: 'the take did not seal' }; return null; }
-  const r = findClicks(buf.getChannelData(0), sr, expected);
+  const r = findClicks(buf.data, sr, expected);
   S._latencyLast = r;
   const d = r.delayS;
   if (d == null || d < 0) return null;

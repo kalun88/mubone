@@ -29,6 +29,7 @@
 import { S, LIVE_PAINT_COLORS } from './state.js';
 import { ensureAudioContext, startLiveRecording, stopLiveRecording } from './audio.js';
 import { recordStrokeStart } from './ui-samples.js';
+import { dlog } from './diag.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const TICK_INTERVAL_MS = 33;  // ~30fps — called from meter loop, not our own timer
@@ -232,7 +233,7 @@ export function tickHandsfree() {
   // ── Debug: log why gate isn't re-opening (throttled ~1/s) ──────────
   if (!S.hfRecording && !S.hfGateOpen && inputRms > 0.001 && now - (_dbgLastLog || 0) > 1000) {
     _dbgLastLog = now;
-    console.log(`hf: gate blocked? inputRms=${inputRms.toFixed(4)} thresh=${effectiveThreshold.toFixed(4)} outputRms=${outputRms.toFixed(4)} margin=${marginLinear.toFixed(2)} gateLevel=${_gateLevel.toFixed(3)} isPaint=${S.isPainting} isRec=${S.isRecording} hfRec=${S.hfRecording}`);
+    dlog('hf', 'gate blocked?', { inputRms: +inputRms.toFixed(4), thresh: +effectiveThreshold.toFixed(4), outputRms: +outputRms.toFixed(4), margin: +marginLinear.toFixed(2), gateLevel: +_gateLevel.toFixed(3), isPaint: S.isPainting, isRec: S.isRecording, hfRec: S.hfRecording });
   }
 
   // GATE CLOSED (or forced close) → finalize buffer segment

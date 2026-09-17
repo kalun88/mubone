@@ -206,7 +206,8 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 
 | Address | Args | Description |
 |---|---|---|
-| `/cursor/scan` | `i` | The cap — the cursor's ONE mute: capped, it reads nothing, granular and hits alike (1 = reading, 0 = capped, bang = toggle). `/trigger/mute` was folded into this on 2026-09-07 |
+| `/cursor/scan` | `i` | The cap — the cursor's ONE mute: capped, it reads nothing, granular and triggers alike (1 = reading, 0 = capped, bang = toggle). `/trigger/mute` was folded into this on 2026-09-07
+| `/scan/fade` | `f` | The cap's fade time constant, ms |
 | `/cursor/tare` | *(bang)* | Zero the cursor — the sensor's heading in sensor mode; the camera back to the front in steer / surface |
 | `/cursor/az_source` `/el_source` | *(bang)* = cycle, `sensor`\|`locked`\|`mapped` = set | Who drives azimuth / elevation — the sensor, frozen at the held value, or a cursor mapping row |
 | `/cursor/radiusfade` | *(bang)* | Toggle radius fade |
@@ -243,7 +244,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 |---|---|---|
 | `/mapping1` `/mapping2` `/mapping3` | `f` | Generic OSC inputs that appear as axes in the mapping modal — any peer can drive these |
 
-> Source of truth: the dispatch `switch` in `js/osc.js`. If an address isn't in there, it isn't handled — no `/seed/*`, no `/grain/duration`, no `/grain/radius`, no `/space/cursor`. A few legacy `/space/*` addresses are still emitted by the example Max patch but silently dropped by the current dispatch.
+> Source of truth: the dispatch `switch` in `js/osc.js`. If an address isn't in there, it isn't handled — no `/seed/*`, no `/grain/duration`, no `/grain/radius`, no `/space/cursor`, no `/space/*`.
 
 ---
 
@@ -312,11 +313,12 @@ js/
   scale.js              — control shaping for continuous controllers
 
   pins.js               — pin groups (clouds / loops), derived from kind; mute + solo
-  composer.js           — composer mode: latch-toggle pins by cursor proximity
+  composer.js           — the pin mute engine (misnamed; the composer gate is gone)
   history.js            — ONE action stack: undo is the last thing the performer did
   param-registry.js     — the sparse parameter registry a session's patch applies through
   piece.js              — the document: save, save as, open; a piece is the music
   mubone-file.js        — the .mubone container: a zip of manifest + float32 audio members
+  take.js               — a take: samples in ONE SharedArrayBuffer, read by both threads
   storage-registry.js   — the one authoritative map of persisted keys → category
 
   sphere.js             — 3D math, quaternion ops, projection

@@ -757,14 +757,6 @@
     border-radius: 50%;
     flex-shrink: 0;
   }
-  /* ── Viewer monitor — now inline inside .hud ─────────────────────────────── */
-  #viewerMonitor {
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
-    color: var(--text-muted);
-  }
-
   /* ── Mobile mode ─────────────────────────────────────────────────────────── */
   body.mobile-mode {
     gap: 0 !important;
@@ -807,8 +799,7 @@
   }
   /* In mobile, hide desktop-only HUD items that clutter the bottom bar */
   body.mobile-mode #coordinates,
-  body.mobile-mode #altLockIndicator,
-  body.mobile-mode #loadIndicatorHud { display: none !important; }
+  body.mobile-mode #altLockIndicator { display: none !important; }
 
   /* Mobile fullscreen toggle button (bottom-right of HUD row) */
   #mobileFullscreenBtn {
@@ -1158,7 +1149,6 @@
   
   /* right side: narrow column, canvas fills full height */
   
-  #inputGainVal { display: none; }
   #micEnableBtn {
     display: flex;
     flex-direction: column;
@@ -1646,9 +1636,7 @@
   /* output fader+meter column — mirrors liveinput-body */
   
   /* Multi-channel output meter strip — row of fixed-width bar slots.
-  /* compat — old IDs hidden */
-  #outputMeterCanvas, #outputMeterCanvasBottom,
-  .meter-row, .meter-wrap, #meterClipDot { display: none; }
+  .meter-row, .meter-wrap { display: none; }
 
   /* ── Improv mode device (right panel) — LEGACY, kept for compat ────────── */
   
@@ -2374,13 +2362,9 @@
   }
   /* Nothing nests: the #269 rule flattened `.as-section` and `.seq-section`,
      but the tables and framed sub-boxes inside them kept their own cards. */
-  .settings-host .in-settings .as-io-table,
-  .settings-host .in-settings .as-io-row{
+  .settings-host .in-settings .as-io-table {
     border: none !important; background: none !important;
     border-radius: 0 !important; box-shadow: none !important;
-  }
-  .settings-host .in-settings .as-io-row + .as-io-row {
-    border-top: 1px solid var(--border-faint) !important;
   }
   .settings-host .in-settings .as-meter-group-label {
     font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow);
@@ -2584,13 +2568,6 @@
     color: #f0b040;
   }
 
-  /* ── Sweep button ──────────────────────────────────────────────────────── */
-  #sweepBtn.sweep-flash {
-    color: var(--accent-sweep);
-    background: rgba(118,255,3,0.12);
-    transition: color var(--trans-slow), background var(--trans-slow);
-  }
-
   /* ── Export/Import buttons ──────────────────────────────────────────────── */
   #exportSetupBtn.export-flash {
     color: var(--accent-sweep);
@@ -2738,23 +2715,6 @@
   
   
   
-  /* Button highlight when modal is open */
-  #bottomPanelToggleBtn.open { color: var(--text-highlight); }
-
-  /* Sample viewer deleted (#247) — the hidden compat canvases and their
-     ~250 lines of drawing code went with the stamp brush. */
-
-  /* ── Input meter: vertical ───────────────────────────────────────────────── */
-  
-  #inputMeterCanvas {
-    display: block;
-    width: 8px;
-    flex: 1;
-    min-height: 0;
-    border-radius: var(--r-1);
-    background: var(--chrome-bg-raised);
-  }
-
   /* ── Fullscreen button ───────────────────────────────────────────────────── */
   #fullscreenBtn {
     background: none;
@@ -3047,7 +3007,6 @@
    ordinary state and takes the warn ochre only when it has acted — the same
    step the recording budget and the CEIL meter use, so "getting close" looks
    the same wherever it appears. */
-.as-dim.as-warn { color: var(--accent-warn); }
 .as-note {
   font-size: var(--fs-md);
   color: var(--text-dim);
@@ -3199,48 +3158,6 @@
   border-radius: 0;
   overflow: hidden;
 }
-.as-io-hdr {
-  display: flex;
-  background: var(--chrome-bg-sunk);
-  padding: 0.2rem 0.5rem;
-  gap: 0.5rem;
-  border-bottom: 1px solid var(--surface-5);
-}
-.as-io-col-sw {
-  flex: 1;
-  font-size: var(--fs-body);
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: var(--ls-display);
-}
-.as-io-col-hw {
-  width: 7rem;
-  flex-shrink: 0;
-  font-size: var(--fs-body);
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: var(--ls-display);
-}
-.as-io-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.25rem 0.5rem;
-  border-bottom: 1px solid var(--surface-3);
-  font-size: var(--fs-md);
-}
-.as-io-row:last-child { border-bottom: none; }
-/* Headphone rows: subtle tint to distinguish from house speakers */
-.as-io-row--hp {
-  background: rgba(40,40,60,0.4);
-}
-.as-io-sw {
-  flex: 1;
-  color: var(--text-emphasis);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 /* Small secondary label (angle / "monitor") shown inside the sw cell */
 .as-io-angle {
   font-size: var(--fs-body);
@@ -3248,21 +3165,6 @@
   margin-left: 0.35rem;
   letter-spacing: var(--ls-normal);
 }
-.as-io-sel {
-  width: 7rem;
-  flex-shrink: 0;
-  background: #232323;
-  border: none;
-  border-radius: 0;
-  color: var(--text-primary);
-  font-family: var(--font-sans);
-  font-size: var(--fs-md);
-  padding: 0.15rem 0.3rem;
-  cursor: pointer;
-}
-.as-io-sel:disabled { opacity: 0.35; cursor: default; }
-.as-io-sel:focus    { outline: none; background: var(--chrome-border-dark); }
-
 /* ── Speaker angle input (editable azimuth per speaker) ────────────────── */
 .as-io-angle-input {
   width: 3.8rem;
@@ -3285,35 +3187,6 @@
   background: var(--chrome-bg-option);
   color: var(--text-light);
 }
-.as-io-angle-unit {
-  font-size: var(--fs-2xs);
-  color: var(--text-dimmer);
-  margin-left: -0.15rem;
-  margin-right: 0.15rem;
-}
-/* Capture cursor azimuth button */
-/* Azimuth column header */
-.as-io-col-angle {
-  width: 5.5rem;
-  flex-shrink: 0;
-  text-align: right;
-  font-size: var(--fs-2xs);
-  color: var(--text-dimmer);
-}
-/* Reset angles button row */
-.as-io-row--reset {
-  justify-content: flex-end;
-  border-bottom: none;
-  padding-top: 0.35rem;
-}
-.as-io-reset-btn {
-  font-size: var(--fs-body);
-  opacity: 0.5;
-}
-.as-io-reset-btn:hover {
-  opacity: 0.8;
-}
-
 /* ── Pre-fader meter group label ─────────────────────────────────────────── */
 .as-meter-group-label {
   font-size: var(--fs-body);
@@ -3975,9 +3848,6 @@ html.booting-reveal .main-layout {
   }
   .tc-btn:hover { border-color: var(--border-soft); color: var(--text-secondary); }
   .tc-btn:active { background: var(--surface-3); color: var(--text-bright); }
-  /* Only a TOGGLE has a dot, and only a toggle lights up. */
-  #tcMuteSeg.muted { color: var(--accent-action); border-color: rgba(242,100,21,0.5); }
-  #tcMuteSeg .muted i { background: var(--accent-action); }
   /* The way back to the old view is the quietest thing in the bar — it is
      on its way out (#255). */
   
@@ -4156,11 +4026,6 @@ html.booting-reveal .main-layout {
      is left after the caption and its gap. */
   body .bottom-bar-meters .as-multi-meter-wrap { height: var(--footer-meter, 34px) !important; }
   body .bottom-bar-gate .main-gate-meter { height: var(--footer-meter, 34px) !important; }
-  /* The two source pickers are the smallest segmented controls on screen and
-     they are read, not hunted for. */
-  body #tcAzSlot .grain-seg-btn,
-  body #tcElSlot .grain-seg-btn { font-size: var(--fs-meta); padding: 0.18rem 0.42rem; }
-
   /* ── The segmented PILL (#266) ─────────────────────────────────────────
      Same shape and the same reading as a chrome pill: a rounded capsule with
      a hairline, the chosen segment filled. A three-way choice is one control,
@@ -4716,8 +4581,8 @@ html.booting-reveal .main-layout {
      the material says loop or cloud, and the coordinates are gone (Ek: "i dont
      ever look at it"). Instrument scope: 32px bar, 18px M / S, eyebrow type.
 
-     --m is the pin's slot colour, --c its engine hue — the same two variables
-     the old rows carried, so the audits' probes still find them. */
+     --c is the pin's engine hue and the only colour a track wears: the slot
+     colour (--m) left the rail on 2026-09-17 — Ek does not read it live. */
 
   /* The header's right half: the count, and the settings door. The max is
      typeable exactly as .grain-numbox is: transparent at rest, the tint on
@@ -4756,17 +4621,41 @@ html.booting-reveal .main-layout {
   .lyr-xf .grain-slider { flex: 1; }
   .lyr-xf-v { font-size: var(--fs-nano); font-variant-numeric: tabular-nums;
     color: var(--text-tertiary); width: 1.7rem; text-align: right; }
-  /* Width has no say outside focus: the control steps down the ramp, as a
-     settings row does under .set-row--off. A mark, never a word. */
-  .lyr-xf.off .grain-slider { background: var(--border-faint); }
-  .lyr-xf.off .lyr-xf-v { color: var(--text-faint); }
+  /* The curve has no say outside focus: the whole row steps down the ramp,
+     label included, as a settings row does under .set-row--off. */
+  .lyr-mrow--xf.off .lyr-eb { color: var(--text-faint); }
+  .lyr-mrow--xf.off .grain-slider { background: var(--border-faint); }
+  .lyr-mrow--xf.off .lyr-xf-v { color: var(--text-faint); }
 
   /* ── The tracks ───────────────────────────────────────────────────────
      Absolutely placed and moved by transform: the SORT reorders them (near /
      far / old, which is the selected pin), and a row that moves by transform
      costs the render loop nothing. The list sets its own min-height. */
   .lyr-list { position: relative; padding: var(--sp-3) var(--sp-5); }
-  .lyr-trk { position: absolute; left: var(--sp-5); right: var(--sp-5); top: var(--sp-3);
+  /* THE SELECTED FRAME (Ek, 2026-09-16: "i dont think it's obvious enough that
+     the first item on the pinned rail is the selected one … it needs to be a
+     full border around the first item that's always there, even when there
+     are no pins"). Row one is what unpin takes — the sort IS the selection —
+     and the half moon said so in the rail's radio language, which a player
+     mid-show does not read. So the slot itself is drawn: a hairline frame in
+     the pins hue around the first track's place, a FIXTURE of the rail that
+     stays when the list is empty and holds "nothing pinned" until there is a
+     track to hold. Its label, SELECTED, is the rail's eyebrow sitting ON the
+     line at the top-right corner, the rail ground behind it so the line reads
+     as passing under — a tile's sticker with a word. Nothing new in the kit:
+     the hairline, the eyebrow, the sticker's rule. Neutral, never ember —
+     chosen is not exceptional (INSTRUMENT-GUI, the faces). The moon is gone
+     from this rail: one mark per thing. Geometry: the bar is r-1 (2px), the
+     frame sits 2px out, so its radius is r-3 (4) — the concentric rule; the
+     8px of room above row one is the label's half above the line. ui-pins.js
+     mirrors SEL_INSET and SEL_ROOM. */
+  .lyr-sel { position: absolute; left: calc(var(--sp-5) - 2px); right: calc(var(--sp-5) - 2px);
+    top: calc(var(--sp-3) + 8px - 2px); height: 36px; /* geometry: 32 + 2 × 2 */
+    border: 1px solid var(--eng-pins); border-radius: var(--r-3); pointer-events: none; }
+  .lyr-sel::after { content: 'selected'; position: absolute; right: var(--sp-3); top: -7px; /* geometry: half the eyebrow's line above the border */
+    padding: 0 var(--sp-1); line-height: 12px; background: var(--bg-app);
+    font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase; color: var(--eng-pins); }
+  .lyr-trk { position: absolute; left: var(--sp-5); right: var(--sp-5); top: calc(var(--sp-3) + 8px);
     transition: transform var(--m-state) var(--ease-snap); will-change: transform; }
   .lyr-trk-bar { position: relative; height: 32px; border-radius: var(--r-1); overflow: hidden;
     background: var(--surface-0); cursor: ew-resize; }
@@ -4774,9 +4663,14 @@ html.booting-reveal .main-layout {
      Read from the audio nodes every frame (ui-pins.js), so the bar is the
      truth rather than a copy of it — a fader the cursor is driving moves. */
   .lyr-fill { position: absolute; inset: 0; transform-origin: left center;
-    background: var(--m); opacity: 0.18; will-change: transform; }
+    background: var(--c); opacity: 0.18; will-change: transform; }
   .lyr-edge { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -2px; /* geometry */
-    background: var(--m); pointer-events: none; }
+    background: var(--c); pointer-events: none; }
+  /* UNITY is a tick two thirds along (ui-pins.js, the fader law): the kit's
+     2px slider tick, under the material and over the fill, so the eye has
+     0 dB to read the fill against — the right third is +12 dB of gain. */
+  .lyr-unity { position: absolute; left: 66.667%; top: 0; bottom: 0; width: 2px; margin-left: -1px; /* geometry */
+    background: var(--border-medium); pointer-events: none; }
   /* The body is driving it: the edge turns the sensor hue while the blend is
      focus. This is the one mark that says "focus is on", and it is on every
      track at once. */
@@ -4801,7 +4695,7 @@ html.booting-reveal .main-layout {
   /* The playhead: where the loop (or the moving cloud) is. It keeps running
      through a mute — that is what a DJ mute is, and the bar shows it. */
   .lyr-ph { position: absolute; top: 0; bottom: 0; width: 1px; left: 1.625rem;
-    background: var(--m); will-change: transform; pointer-events: none; }
+    background: var(--c); will-change: transform; pointer-events: none; }
   .lyr-ph::before { content: ''; position: absolute; top: 0; left: -1px; width: 3px; height: 3px; background: inherit; }
   /* The readout prints only when the HAND set a level: eight tracks at 0 dB
      are eight bars of one length, not eight numbers to read. */
@@ -4814,16 +4708,14 @@ html.booting-reveal .main-layout {
      own glyph on the loop a dub would JOIN (Ek, 2026-09-15) — two different
      questions about two possibly-different pins, beside the readout. */
   .lyr-ovd { position: absolute; right: 5.2rem; top: 13px; /* geometry */ display: flex; gap: var(--sp-1); pointer-events: none; }
-  .lyr-ovd i { width: 5px; height: 5px; border-radius: 50%; background: var(--m); display: block; }
+  .lyr-ovd i { width: 5px; height: 5px; border-radius: 50%; background: var(--c); display: block; }
   .lyr-dub { display: none; position: absolute; right: 5.2rem; top: 7px; /* geometry */ width: 1.05rem; height: 1.05rem;
     fill: none; stroke: var(--eng-tape); stroke-width: 1.7; pointer-events: none; }
   .lyr-trk.dub .lyr-dub { display: block; }
   .lyr-trk.dub .lyr-ovd { right: 6.6rem; }
-  /* The rail's radio mark (DESIGN-SYSTEM § 5): a half moon flush at the rail's
-     edge — the SELECTED pin, what unpin takes. Under near / far / old it is
-     always row one, so the moon and the order say the same thing. */
-  .lyr-trk.sel::before { content: ''; position: absolute; left: calc(-1 * var(--sp-5)); top: 10px; /* geometry */
-    width: 6px; height: 12px; border-radius: 0 6px 6px 0; background: var(--text-light); pointer-events: none; }
+  /* The selected pin wore the rail's half moon here until 2026-09-16; the
+     frame above (.lyr-sel) is its one mark now. `.sel` stays on the row for
+     anything that reads it. */
 
   /* The FOLD — one pin's own settings, under its bar: in and out (its ramps,
      which pin / unmute and unpin / mute ride). Height is set by ui-pins.js so
@@ -4866,8 +4758,10 @@ html.booting-reveal .main-layout {
   /* The pin acts, at the foot since the mixer. The rails' FOOT (helper text)
      is gone (Ek, 2026-09-12, night). */
   .lyr-actions { border-top: 1px solid var(--border-faint); }
-  .lyr-empty { padding: var(--sp-7) var(--sp-5); font-size: var(--fs-meta); color: var(--text-faint);
-    line-height: 1.6; text-align: center; }
+  /* Inside the selected frame when there is nothing to hold: the track's own
+     box, the words centred in it. */
+  .lyr-empty { position: absolute; left: var(--sp-5); right: var(--sp-5); top: calc(var(--sp-3) + 8px);
+    height: 32px; line-height: 32px; text-align: center; font-size: var(--fs-meta); color: var(--text-faint); }
 
   /* ── Tile row ─────────────────────────────────────────────────────────── */
   /* The row is a flex wrap holding the source tiles then the hand tiles —
@@ -5060,8 +4954,11 @@ html.booting-reveal .main-layout {
   .tbx-add { display: flex; flex: none; margin-left: 0.35rem; margin-top: -0.3rem; margin-bottom: -0.3rem;
     height: 24px; box-sizing: border-box;
     width: 1.4rem; align-items: center; justify-content: center;
-    border-radius: var(--r-2, 3px); letter-spacing: 0; font-size: var(--fs-control);
+    border-radius: var(--r-2, 3px);
     color: var(--text-tertiary); cursor: pointer; }
+  /* Drawn, so the box centres it (2026-09-16); 12px puts its ink at the
+     title's cap height. */
+  .tbx-add svg { width: 12px; height: 12px; display: block; }
   .tbx-add:hover { color: var(--text-bright); background: var(--surface-3); }
   .tbx-tiles { display: flex; gap: var(--seam); min-width: 0; }
   /* Box tiles are the same tool, quieter until you point at one. */
@@ -5256,8 +5153,6 @@ html.booting-reveal .main-layout {
   .ds-chips { display: flex; flex-direction: column; gap: 0.2rem; }
   .ds-extras { padding: 0.4rem 0.9rem 0.8rem; border-top: 1px solid var(--border-faint);
     display: flex; gap: 1rem; flex-wrap: wrap; }
-  #tcDesign.on { color: var(--text-bright); border-color: rgba(122,188,188,0.4); }
-  #tcDesign.on i { background: var(--grid-teal, #7abcbc); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    THE 2026-08-29 DESIGN PASS (#293)
@@ -5660,11 +5555,6 @@ html body .palette .tile:hover { background: var(--surface-3); color: var(--text
 /* The two "is my rig up" pills. One rule, not two id rules: they are the same
    control asked about two devices, and a second copy is how the sensor pill
    turned up a rounded rectangle beside a capsule (Ek, 2026-08-30). */
-
-/* Off is not an error, it is just not plugged in — so the dim pill keeps the
-   tracking its lit twin has and only steps down the ramp. Without this the two
-   pills side by side were set in two different letterforms. */
-html body #tcMuteSeg.muted { color: var(--accent-action); border-color: var(--tint-action-border); }
 
 /* ═══ 10. MOTION ══════════════════════════════════════════════════════════
    There was none — every transition ran the browser default `ease`, which
@@ -6554,7 +6444,7 @@ html body .trow.open .trow-more { color: var(--c, var(--text-bright)); }
 /* THREE TILES WIDE, like a spacebar (Ek, night: "3 tiles wide in design, like
    a spacebar to look special"), at the row's own gap — no extra air: the
    width is the separator. Room for the name beside the glyph. */
-html body .palette .tile--hand { width: calc(3 * var(--pal-tile) + 2 * var(--pal-gap)); cursor: pointer;
+html body .palette .tile--hand { width: calc(3 * var(--pal-tile) + 2 * var(--pal-gap)); cursor: default;
   display: flex; flex-direction: row; align-items: center; justify-content: center; gap: var(--sp-5); }
 html body .palette .tile--hand .tile-nm { display: inline; font-size: 12px; font-weight: 500; letter-spacing: var(--ls-uppercase);
   text-transform: uppercase; color: var(--text-bright); }

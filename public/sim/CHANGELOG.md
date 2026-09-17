@@ -7,6 +7,71 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.3 alpha — 2026-09-17
+
+**A take is held once, and the app has had its whole-app check.** The long-set audio fault on the
+8 GB laptop was memory, not the audio thread; the material was held twice. And a cheat sheet ships
+with the instrument.
+
+### Fixed
+- The long-set fault attributed (a quiet 40-minute driven run): holes at minute 38 with every loop
+  clean and the renderer at 939 MB, swap in use. Memory pressure. The take change below is the lever.
+- A live mark is sized from the take's own samples, by position, not from the analyser's last window;
+  a burst no longer leaks into the mark before it under load.
+- The cursor is ONE rule (`sphere.js`): the paint ticker and the eraser read the pointer where the scan
+  reads it, so painting with the pointer off the canvas is audible again.
+- The camera could be put on SENSOR again — the pill's click, `/spatial/mode` and the first-quaternion
+  restore had been refused since 2026-09-12 by one line.
+- Focus no longer counts pins you cannot hear; a muted loop on the anchor zeroed every audible pin.
+- Undo after redo of a sweep was silent: the worklet re-registers a take the redo dropped.
+- A sampler tape stroke unmuted the master; one OSC sensor made two registry slots; sygaldry's unload
+  release was a no-op; a piece with `selectionMode: farthest` was refused on open.
+- Long-session leaks: the accessory rate stamps, the x-imu3 line buffer, a per-candidate `Array.find`,
+  per-frame writes that never changed, a 1 Hz console log.
+- The rail's curve slider follows its own double-click. The rail title's + sits on the caps.
+- Choosing a channel or stereo in the input dropdown reaches the engine again: it writes the send set
+  the channel strip owns, instead of a derived value the strip overwrote.
+- A mouse press on the big hand tile no longer plays the hand: the spacebar and the sphere are its
+  inputs; the right-click still flips the verb; a finger still presses on the phone.
+
+### Added
+- `js/take.js`: a take's samples live in ONE SharedArrayBuffer both threads read. The worklet is handed
+  a take by reference; the engine starts on the take's own memory; the provisional take is a view over
+  the raw pool; erase and undo move nothing. A trigger and a reversed loop play a cached region copy
+  (`grain.js`). Halves the live cost of every take.
+- The cheat sheet (`manual/index.html`): one page with search, reachable from Settings › help and
+  Electron's Help menu — scratch and pinned, the three stickers, wet paint, the drawer, saving.
+- The selected pin is a frame, always there: a hairline round row one with the eyebrow SELECTED, and
+  "nothing pinned" inside it when empty.
+- A pin's fader is its own stage over the block's volume, unity a tick at two thirds, +12 dB at the
+  end (a channel fader's law); saved in the piece.
+- The loop is its waveform: a peak envelope of its take across the cycle; an overdub the same from its
+  own take, drawn where it landed in the cycle, one row per pass. Cached per pin, nothing per frame.
+- The hand's verb comes with the tool: a strip tile hands over its own, a rail row its engine's (tape
+  toggle, grain and erase momentary); right-click still flips it.
+- `S.transportDiag.wkProcMaxMs`, the audio thread's worst `process()`.
+
+### Changed
+- The mode bar's "width" is **curve**, the DJ mixer's word for whether the handover between two pins
+  is gradual or sharp; the whole row greys outside focus.
+- The rail wears the engine hue only: the pin's stroke colour left the fill, the material, the playhead
+  and the overdub dots.
+- `.mubone` members are written mono; a stereo member from an older file loads as its first channel.
+- `seed*` / `seq*` aliases are gone from `state.js` and 14 modules; the persisted keys renamed one-shot.
+- Vocabulary: "hit", "loop-engine", "staging", "polarity", "wand" and Max-as-peer are out of comments,
+  tooltips, the manual and README. `helpBtn` is `keysBtn`. The Axes column is Flip.
+- Discovery forgets a sensor after 15 s; the two dead disconnect IPC channels are gone.
+
+### Removed
+- Dead code across the engine and UI: the seed onset clocks, `killAllGrains`, the worklet's
+  `flush-cursor`, `initSweepUI`, the radius-viz canvas, the slot-count slider wiring, five unread `S`
+  fields, and the rest of the 2026-09-16 inventory.
+- The legacy shims: imu-setup's polarity / rollMute migration, sygaldry's single-slot fold-in, the
+  sensor-registry cal migrations, `splitLegacyAudioBlob`, the `'pull'` camera-mode rename.
+- The pinned rail's moon (the frame replaced it), the dead house / monitor sliders on Settings › Pins.
+
+---
+
 ## 5.2 alpha — 2026-09-16
 
 **The pinned rail is a mixer.** Designed on a canvas first (`docs/mockups/pins-rail/`), built as drawn.

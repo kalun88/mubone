@@ -10,7 +10,7 @@ import {
   perf, perfTick, gp, minGrainDurS, axisHeld,
   SENSOR_CAM_SWING_DEG_S, SENSOR_CAM_OVERSHOOT_DEG, SENSOR_CAM_TELEPORT_DEG
 } from './state.js';
-import { project, projectInto, updateProjectionCache, getCursorLonLat, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto, camOffsetZ } from './sphere.js';
+import { project, projectInto, updateProjectionCache, cursorLonLatNow, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto, camOffsetZ } from './sphere.js';
 import { syncParticleMarks } from './composer.js';
 import { pinAnchorInto } from './pins.js';
 const _anchorR = [0, 0];
@@ -43,8 +43,7 @@ export function drawFrame() {
     // The grain filter's first version froze the cursor here, because it
     // edited the one stroke underneath it. It does not any more (#284/#292):
     // it targets nothing and writes nothing, so the cursor just moves.
-    const { lon, lat } = S.cursorQ ? getCursorLonLat()
-      : S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY) : getCursorLonLat();
+    const { lon, lat } = cursorLonLatNow();
     S._frameCursorLon = lon;
     S._frameCursorLat = lat;
     // perfMode never draws the trail, so don't pay to accumulate one.
@@ -75,7 +74,6 @@ export function drawFrame() {
 
   drawGridLines();
   drawParticles();
-  S.updateLiveGranulatingIndicator?.();
   drawTetherLine();
   drawGazeTrail();          // under the cursor, over the particles
   drawCursor();
@@ -84,7 +82,6 @@ export function drawFrame() {
   // Meters now drawn by DOM-based startMainMetering() loop in ui-meters.js
   // Recency dial removed — visual clutter, recency-N controlled via slider/OSC
   S.updateSeedBanksUI?.();  // unified: both aliases point to updateCommitBanksUI
-  S._syncSeqControls?.();
 }
 
 // ── Seed rendering ───────────────────────────────────────────────────────────
@@ -206,8 +203,7 @@ function _drawAnchorMark(x, y, color, alpha, label, paused) {
 }
 
 export function drawSeeds() {
-  const { lon: curLon, lat: curLat } = S.cursorQ ? getCursorLonLat()
-    : S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY) : getCursorLonLat();
+  const { lon: curLon, lat: curLat } = cursorLonLatNow();
   // The highlighted cloud is the SELECTED pin — nearest or oldest by
   // Settings → Pins — the same one the rail marks and unpin takes.
   const nearestSlot = S._selectedPinSlot?.(curLon, curLat) ?? -1;
@@ -303,7 +299,7 @@ export function drawSeeds() {
       S.ctx.restore();
       // The pin gesture still held: the cloud reads here, but its anchor does
       // not exist yet — no mark until the release (Ek, 2026-09-05).
-      const recording = i === S._seedRecordingSlot;
+      const recording = i === S._commitRecordingSlot;
       if (isMoving || recording) {
         // The head: where a moving cloud reads right now — a small dot inside
         // its travelling reach circle, no number (the number is the anchor's).
@@ -461,10 +457,10 @@ function _drawPathTrail(frames, color, alpha, width, maxSamples) {
 // ── Live recording trail ────────────────────────────────────────────────────
 // While the user holds ↓ and moves, draw the in-progress path in real time.
 function _drawLiveRecordingTrail() {
-  const frames = S._seedRecordingFrames;
+  const frames = S._commitRecordingFrames;
   if (!frames || !frames.length) return;
-  const slot = S._seedRecordingSlot;
-  const seed = slot >= 0 ? S.seedSlots[slot] : null;
+  const slot = S._commitRecordingSlot;
+  const seed = slot >= 0 ? S.commitSlots[slot] : null;
   // A deferred path (the wash, `on end: cloud`) has no slot until the release,
   // so nothing used to show where it began — the held pin's ghost cloud drops
   // its head and reach at the press, and this one looked like it was "waiting
@@ -3194,8 +3190,7 @@ export function animate() {
   }
   S.updateWaveformPlayheads?.();
 
-  const { lon, lat } = S.cursorQ ? getCursorLonLat()
-    : S.mouseInCanvas ? screenToLonLat(S.mousePixelX, S.mousePixelY) : getCursorLonLat();
+  const { lon, lat } = cursorLonLatNow();
   const lonDeg = (lon * 180 / Math.PI).toFixed(1).padStart(7);
   const latDeg = (lat * 180 / Math.PI).toFixed(1).padStart(6);
   if (_coordEl) _coordEl.textContent = `${lonDeg}°,${latDeg}°`;

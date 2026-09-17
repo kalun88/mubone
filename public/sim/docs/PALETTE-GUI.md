@@ -36,7 +36,7 @@ The two models are **not** in conflict once each owns its inputs:
 
 | | what it is | how you choose it | what plays it | its verb |
 | --- | --- | --- | --- | --- |
-| **the hand** | ONE tool — a brush or an eraser | a **click** on its rail row or its strip tile | the **spacebar** and a **left-click on the sphere** — reserved, learnable onto nothing | one global switch, `handVerb`, drawn as the hand tile's shape |
+| **the hand** | ONE tool — a brush or an eraser | a **click** on its rail row or its strip tile | the **spacebar** and a **left-click on the sphere** — reserved, learnable onto nothing | one switch, `handVerb`, drawn as the hand tile's shape — it **comes with the tool** (2026-09-16): a strip tile hands over its own verb, a rail row its engine's (tape toggle, grain and erase momentary) |
 | **quick access** | the palette: up to nine positions, tools, lenses and the pin pair | drag it onto the strip | its **own key, button or note** — an explicit row that follows the tile | the tile's own (§ 3, § 4) |
 
 A quick-access play never touches the hand, and the hand never touches the strip: pen can be in
@@ -56,10 +56,16 @@ one momentary; it lights like any tile while the hand plays. Under it, in the le
 "make the left click more obvious or spell out left click" — a mouse glyph at cap size was not a
 symbol anyone could read) — fixed, not learn cells. **The strip's measures** are tokens on `.palette` (night, "generally too crowded"):
 tile 53 · gap 7 · inset 8 · legend row 15 with 6 above; the bed's radius `--r-card`, inset + the
-tile's smallest radius. No `data-pos`, no `data-pal`, not draggable: it is not a position. Pressing it presses
-the hand. A right-click flips the verb (the same gesture that cycles a tile's, § 4). Toggle is
-the factory verb (the standing ruling: buttons are toggle by default, the mode is one setting
-above every tool). A bang tool in hand ignores the switch. The in-hand tool is also marked on its
+tile's smallest radius. No `data-pos`, no `data-pal`, not draggable: it is not a position. ~~Pressing it presses
+the hand.~~ **Reversed 2026-09-17** (Ek: "it shouldn't actually be clickable"): a mouse press on it
+does nothing and it wears no pointer — the spacebar and the sphere are the hand's inputs; a FINGER on
+it still presses, because the phone's palette is the hand tile alone and has no spacebar (§ 5, 7).
+A right-click flips the verb (the same gesture that cycles a tile's, § 4). **The verb comes
+with the tool** (Ek, 2026-09-16: "the toggle / momentary verb type should follow that tile it came
+from. if something from the left rail is chosen, by default, tape tools should be toggle, grain
+tools should be momentary held. erase should be momentary held"): a strip tile's click hands the
+hand its own verb, a rail row's click its engine's factory verb (`handVerbFor`), and the
+right-click flips it from there. It was one global switch, toggle by factory, until then. A bang tool in hand ignores the switch. The in-hand tool is also marked on its
 RAIL row (`.in-hand`: the ground lifted a step, a 2px left inset in the hue), so it can be found
 in the library; the quick-access tile of the same tool wears nothing — the hand tile shows the
 same glyph, and a ring there said it twice. The armed BOX is not back.
@@ -176,6 +182,9 @@ taking `int 0|1`, a bang or a toggle a `trigger` taking a bang. Five places read
    **Reversed**: a rail click takes the tool in hand. Dragging is still the only way onto the strip.
 4. **A delayed gesture is drawn** (§ 7). Stands.
 5. ~~The diamond stays for bang.~~ Superseded by § 3 (correction 1): the circle is the bang.
+7. **2026-09-17**: ~~a mouse press on the hand tile presses the hand.~~ **Reversed**: the tile is a
+   legend and a right-click target, not a button — the press belongs to the spacebar and the sphere.
+   A finger on it still presses (the phone).
 6. ~~Space is a binding like any other and carries no privilege in code.~~ **Reversed**: space is
    the hand's and cannot be a binding.
 

@@ -8,6 +8,32 @@
 
 ## Open — by date found
 
+### Sep 16
+
+- [ ] **The long-set fault is MEMORY PRESSURE on the 8 GB laptop, not the audio thread** — three driven runs.
+  2026-09-16: `inSkipped` jumped by exactly 2464 frames (51 ms) once around minute 14 and once around 18, with
+  three review agents and a second Electron instance loading the machine. 2026-09-17, machine quiet: nothing for
+  38 minutes, then one output hole (`outDry` 1) and three skipped blocks (`outDropped` 3) at minutes 38 and 40,
+  with the worklet's own `process()` never over 1 ms and load ≤ 6 % (`wkProcMaxMs`), the audio host's loop and
+  the main process's loop never gapped, and the RENDERER 30–40 ms late on its scheduler tick at the same moments.
+  The renderer sat at 939 MB (1372 s recorded = 263 MB of float32 held twice, takes + worklet copies, over a
+  ~400 MB baseline), the machine has 8 GB, swap was in use and the compressor held ~200 MB. Everything that moves
+  at once with nothing on any loop is the OS paging the process, and a page fault on the audio path is a hole. So
+  on this machine memory IS stability, and the levers are the memory ones: (1) a take held ONCE, shared with the worklet
+  (shipped 2026-09-17, `js/take.js`), (2) erased takes compressed losslessly in a Worker, (3) a memory readout in Settings →
+  Audio so a set can see it coming. Reproduce: `session3.js`'s driver in the scratchpad, 40 min, `FAULT` lines.
+- [ ] **The x-imu3 has no disconnect verb** — the two dead IPC channels (`ximu3-stop-data`, `serial-close`) went
+  2026-09-16 with nothing calling them, and discovery now forgets a sensor after 15 s; what is left is the
+  choice: a device stays connected until quit. If a disconnect is ever wanted it is a settings-kit button on the
+  connected row plus the two channels back.
+- [ ] **`sensor-mapping.js` stores a row's param twice** (`targetParam` and `output.param`, with sync code in
+  add / update and a load-time "legacy row" migration) — the one small redundancy of the 2026-09-16 pass not
+  taken, because the rows are persisted (`mubone_sensorMappings`) and want a one-shot migration of their own.
+- [ ] **PARAM_DEFS keys and cabinet ids still say `seed*` / `seq*`** (`param-registry.js` `key:` strings,
+  `seedAttackSlider`, `seedLoopModeSeg`, `commitOverflowSeg`'s siblings) — the S fields and the persisted
+  seed-settings keys were renamed 2026-09-16; these are the identifiers the engine page and `engine-audit`'s
+  cabinet list use, and a tile block may carry a param key, so they wait for a migration of their own.
+
 ### Sep 15
 
 - [ ] **The light canvas is unreachable code** — `S.darkMode` is a constant `true` since the Canvas Theme
@@ -141,4 +167,16 @@ Parked in `docs/archive/TODO-SOMEDAY.md` at feature lock (2026-09-13): 24 ideas 
   recorder and the paint tick lining up under load. Until it is fixed the suite cannot witness a
   regression in `audio-features.js` or `paint-ticker.js`, which is most of the colour and deposit work.
   Likely fix: drive the bursts off the audio clock rather than wall time, or assert a rank ordering
-  instead of absolute loudness.
+  instead of absolute loudness. **Measured 2026-09-16, the load half:** with the one cursor rule the
+  suite's marks land under the cursor and are granulated as they are laid (the normal case when you
+  play), and then marks a frame clear of a burst read 0.10–0.15 against the 0.1 ceiling on every run
+  (64/70 twice) while HEAD and a capped take read 70/70 — no audio reaches the input bus from the
+  grains (probed: 0.000 RMS while granulating), so this is the fold's wall-clock timing slipping under
+  the scheduler's load, i.e. the size of a live mark is ~10 % less honest while the cursor is reading
+  the take. **Fixed 2026-09-17:** a live mark is sized from the TAKE's own samples over [its moment, the
+  next mark's moment) (`audio-features.js` `recordedWindowLoudness`, the paint ticker's settle queue) —
+  positions, not any thread's clock. The suite is 70/70 capped; UNCAPPED it is still 65/70 with far marks
+  at 0.14–0.16, and the deposit gaps are a steady 50–57 ms either way (probed 2026-09-17), so the excess is
+  neither the fold's timing nor the deposit clock. Still open: why a mark two away from a burst reads loud
+  while the cursor granulates the take it is painting. Next probe: print the take's own RMS over each far
+  mark's window in the failing section — if the take carries it, something reaches the recorder.

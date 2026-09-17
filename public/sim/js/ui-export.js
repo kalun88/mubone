@@ -14,7 +14,7 @@
 // ============================================================================
 
 import { S } from './state.js';
-import { saveAllDefaults, splitLegacyAudioBlob, objectStore } from './ui-audio-settings.js';
+import { saveAllDefaults } from './ui-audio-settings.js';
 import { allKeys, allPrefixes, keysFor, CATEGORIES } from './storage-registry.js';
 import { savePiece, savePieceAs, openPiece, initPieceBridge } from './piece.js';
 
@@ -100,14 +100,9 @@ function clearGovernedKeys() {
 }
 
 function applySettingsPayload(data) {
-  // Normalise a pre-v4 payload BEFORE writing anything. Files up to v3 carry
-  // the old grab-bag `mubone_audio_defaults` and none of the four keys it was
-  // split into; reshaping afterwards silently dropped the imported seed
-  // settings, viz calibration and active patch on any machine that had already
-  // migrated its own storage. `overwrite: true` because an import is an
-  // explicit instruction to take the file's values.
-  splitLegacyAudioBlob(objectStore(data), { overwrite: true });
-
+  // A pre-v4 setup file (the grab-bag `mubone_audio_defaults` blob, before
+  // 2026-08-01) is no longer reshaped on the way in (2026-09-16): its keys are
+  // written as they are and the blob's moved fields are ignored.
   for (const key of STATIC_KEYS) {
     if (!(key in data)) continue;
     // Values are raw localStorage strings. A hand-edited file with an object

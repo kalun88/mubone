@@ -148,9 +148,20 @@ export function ensureVoicings() {
   return S.voicings;
 }
 
+// An index over the list, rebuilt when the list is replaced (restore) or grows
+// (a new voicing). `voicingById` runs per candidate per cloud per 10 ms tick
+// in the bridge, and the list was searched linearly every time (2026-09-16).
+let _byIdList = null, _byIdLen = -1;
+const _byId = new Map();
 export function voicingById(id) {
   if (!id) return null;                       // 0 / undefined → live params
-  return ensureVoicings().find(v => v.id === id) || null;
+  const list = ensureVoicings();
+  if (list !== _byIdList || list.length !== _byIdLen) {
+    _byId.clear();
+    for (const v of list) _byId.set(v.id, v);
+    _byIdList = list; _byIdLen = list.length;
+  }
+  return _byId.get(id) || null;
 }
 
 /**

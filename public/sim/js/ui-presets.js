@@ -9,7 +9,7 @@ import {
   gp, minGrainDurS, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, K_MAX
 } from './state.js';
 import { resolveGrainParams } from './brush-voicing.js';
-import { angleBetweenSphere, findNearestSeedSlot, resetCursorPeriod, nearestLoopPin, masterPhaseWall, startOverdubLayer, swapOverdubLayer, stopOverdubLayers, releaseSeqNodes } from './grain.js';
+import { angleBetweenSphere, findNearestSeedSlot, nearestLoopPin, masterPhaseWall, startOverdubLayer, swapOverdubLayer, stopOverdubLayers, releaseSeqNodes } from './grain.js';
 import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js';
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
 import { applySparsePreset, syncAllUI } from './param-registry.js';
@@ -49,16 +49,6 @@ function _fmtPeriodSmart(v) {
     return `${samples}smp ${Math.round(hz)}Hz`;
   }
   return fmtMs(v);
-}
-
-// Snap to integer sample count when below threshold.
-function _snapPeriodToSamples(seconds) {
-  const sr = S.audioCtx?.sampleRate ?? 48000;
-  const samples = seconds * sr;
-  if (samples <= _SAMPLE_EXACT_THRESHOLD) {
-    return Math.max(1, Math.round(samples)) / sr;
-  }
-  return seconds;
 }
 
 // Step by ±1 sample (arrow keys in sample-exact zone).
@@ -252,7 +242,7 @@ export function setupPresets() {
   }
 
   // ? button opens mapping modal (midi.js registers S.openMappingModal)
-  document.getElementById('helpBtn')?.addEventListener('click', () => S.openMappingModal?.());
+  document.getElementById('keysBtn')?.addEventListener('click', () => S.openMappingModal?.());
 
   // Perf monitor button
   document.getElementById('perfMonBtn')?.addEventListener('click', () => {
@@ -481,7 +471,7 @@ export function plantSeed() {
 /** Capture a single frame of cursor position + all grain-relevant params. */
 function _captureSeedFrame(startOverride) {
   const now = performance.now();
-  const t = now - (startOverride ?? S._seedRecordingStart);
+  const t = now - (startOverride ?? S._commitRecordingStart);
   const { lon, lat } = getCursorPos();
 
   // Merge overrides into params for a complete snapshot
@@ -599,15 +589,15 @@ function _reserveCloud(lon, lat) {
     _nextPeriodMs: 0,
     _plantedAt:    performance.now() / 1000,
     _releasingAt:  0,
-    _envAttack:    S.seedAttack,     // the attack ramp NOW RUNNING (fadeIn at birth, again on unmute)
+    _envAttack:    S.commitAttack,     // the attack ramp NOW RUNNING (fadeIn at birth, again on unmute)
     _envRelease:   0,                // the release ramp now running (fadeOut, set when it starts)
-    _envGainCurrent: S.seedAttack > 0 ? 0 : 1,
+    _envGainCurrent: S.commitAttack > 0 ? 0 : 1,
     // THE PIN'S OWN TWO RAMPS (2026-09-16): born from the settings' defaults,
     // then the pin's to keep and edit in the rail. Pin and unmute ride `fadeIn`,
     // unpin and mute ride `fadeOut` — one pair for both verbs, both kinds
     // (js/composer.js). Before this the pair was global and a mute was 20 ms.
-    fadeIn:  S.seedAttack,
-    fadeOut: S.seedRelease,
+    fadeIn:  S.commitAttack,
+    fadeOut: S.commitRelease,
     mute: false, solo: false,        // the pin's own flags (pins.js)
     grainParams: {
       ...S.grainParams,
@@ -625,7 +615,7 @@ function _reserveCloud(lon, lat) {
     // Moving seed fields (null = stationary, populated on finalize if held long enough)
     frames:   null,
     duration: 0,
-    loopMode: S.seedLoopMode ?? 'pingpong',
+    loopMode: S.commitCloudLoopMode ?? 'pingpong',
     _playheadMs:  0,
     _pingForward: true
   };
@@ -642,10 +632,10 @@ export function startSeedPlant() {
   const slotIndex = _reserveCloud(lon, lat);
   if (slotIndex === -1) return;
   // Start recording cursor path for potential moving seed
-  S._seedRecordingFrames   = [_captureSeedFrame(performance.now())];
-  S._seedRecordingStart    = performance.now();
-  S._seedRecordingSlot     = slotIndex;
-  S._seedRecordingDeferred = false;
+  S._commitRecordingFrames   = [_captureSeedFrame(performance.now())];
+  S._commitRecordingStart    = performance.now();
+  S._commitRecordingSlot     = slotIndex;
+  S._commitRecordingDeferred = false;
 }
 
 /** A stroke that ENDS as a cloud (the grain sheet's `on end: cloud`, the
@@ -658,14 +648,14 @@ export function startSeedPlant() {
  *  from deferring: a full pool refuses at the RELEASE, leaving the stroke
  *  scratch, and the cloud's snapshot (block, lens, radius) is the release's. */
 export function startSeedPath() {
-  S._seedRecordingFrames   = [_captureSeedFrame(performance.now())];
-  S._seedRecordingStart    = performance.now();
-  S._seedRecordingSlot     = -1;
-  S._seedRecordingDeferred = true;
+  S._commitRecordingFrames   = [_captureSeedFrame(performance.now())];
+  S._commitRecordingStart    = performance.now();
+  S._commitRecordingSlot     = -1;
+  S._commitRecordingDeferred = true;
   // The stroke this path belongs to — read now, because the stroke's end
   // clears currentStrokeId before it finalizes the path. Undo of the stroke
   // takes the cloud with it (removeSeqByStrokeId), as it takes a loop.
-  S._seedRecordingStrokeId = S.currentStrokeId;
+  S._commitRecordingStrokeId = S.currentStrokeId;
 }
 
 /** Capture a frame during ↓ hold. Called from grain scheduler tick (50/sec).
@@ -677,22 +667,22 @@ export function tickSeedRecording() {
   const now = performance.now();
   if (now - _lastSeedFrameT < _SEED_FRAME_INTERVAL_MS) return;
   _lastSeedFrameT = now;
-  if (S._seedRecordingFrames) S._seedRecordingFrames.push(_captureSeedFrame());
+  if (S._commitRecordingFrames) S._commitRecordingFrames.push(_captureSeedFrame());
   if (S._shelvedSeed?.frames) S._shelvedSeed.frames.push(_captureSeedFrame(S._shelvedSeed.start));
 }
 
 /** Finalize seed plant on ↓ key release. Short hold = stationary, long = moving. */
 export function finalizeSeedPlant() {
-  const frames   = S._seedRecordingFrames;
-  const start    = S._seedRecordingStart;
-  const deferred = !!S._seedRecordingDeferred;
-  const sid      = S._seedRecordingStrokeId;
-  let   slot     = S._seedRecordingSlot;
-  S._seedRecordingFrames   = null;
-  S._seedRecordingStart    = 0;
-  S._seedRecordingSlot     = -1;
-  S._seedRecordingDeferred = false;
-  S._seedRecordingStrokeId = -1;
+  const frames   = S._commitRecordingFrames;
+  const start    = S._commitRecordingStart;
+  const deferred = !!S._commitRecordingDeferred;
+  const sid      = S._commitRecordingStrokeId;
+  let   slot     = S._commitRecordingSlot;
+  S._commitRecordingFrames   = null;
+  S._commitRecordingStart    = 0;
+  S._commitRecordingSlot     = -1;
+  S._commitRecordingDeferred = false;
+  S._commitRecordingStrokeId = -1;
 
   // A deferred path (startSeedPath) gets its slot NOW, anchored where the
   // stroke ENDED — the pool may be full, in which case the stroke stays
@@ -702,10 +692,10 @@ export function finalizeSeedPlant() {
     const end = frames[frames.length - 1];
     slot = _reserveCloud(end.lon, end.lat);
     if (slot === -1) return;
-    if (sid > 0) S.seedSlots[slot].strokeId = sid;
+    if (sid > 0) S.commitSlots[slot].strokeId = sid;
   }
-  if (slot < 0 || !S.seedSlots[slot]) return;
-  const seed = S.seedSlots[slot];
+  if (slot < 0 || !S.commitSlots[slot]) return;
+  const seed = S.commitSlots[slot];
 
   const holdDuration = performance.now() - start;
   if (!frames || frames.length < 2 || holdDuration < MOVING_SEED_THRESHOLD_MS) {
@@ -737,15 +727,15 @@ export function uprootNearestSeed() {
   // Skip seeds already fading out so rapid uproot hits the next live seed
   const nearestSlot = findNearestSeedSlot(lon, lat, { skipReleasing: true });
   if (nearestSlot === -1) return;
-  const seed = S.seedSlots[nearestSlot];
+  const seed = S.commitSlots[nearestSlot];
   if (!seed) return;
   history.push(_unpinAction([seed]));
   // Use the current release time (performance gesture), not a stored value
-  const rel = S.seedRelease || 0;
+  const rel = S.commitRelease || 0;
   seed._composerHold = false;   // uproot destroys — see releaseCommit()
   if (rel <= 0) {
     // Instant removal
-    S.seedSlots[nearestSlot] = null;
+    S.commitSlots[nearestSlot] = null;
   } else {
     // Stamp the current release duration onto the seed and start the ramp
     seed._envRelease  = rel;
@@ -794,9 +784,9 @@ export function clearAllSeeds() {
  */
 S._syncSeqButtonStates = null; // assigned below after definition
 export function seqSlotsFull() {
-  if (S.seqOverflow !== 'off') return false;
-  for (let i = 0; i < S.seqSlotCount; i++) {
-    const sl = S.seqSlots[i];
+  if (S.commitOverflow !== 'off') return false;
+  for (let i = 0; i < S.commitSlotCount; i++) {
+    const sl = S.commitSlots[i];
     if (!sl || (sl.type === 'cloud' && sl._releasingAt > 0) || (sl.type === 'loop' && (sl._playingToEnd || sl._fadingOut))) return false;
   }
   return true;
@@ -843,9 +833,6 @@ function _syncCommitUI() {
       b.classList.toggle('active', b.dataset.mode === S.commitMode));
   }
 
-  // ── Legacy button compat ──
-  const legacyMode = document.getElementById('seqModeBtn');
-  if (legacyMode) legacyMode.classList.toggle('active', isLoop);
 
   // ── Commit action buttons — swap mode class, labels, and titles ──
   const modeName = isLoop ? 'loop' : 'cloud';
@@ -866,15 +853,15 @@ function _syncCommitUI() {
   if (dirSeg) {
     if (isLoop && prevMode !== 'loop') {
       // cloud → loop: save current cloud dir, fall back from ping-pong to fwd
-      _savedCloudLoopMode = S.seedLoopMode ?? 'pingpong';
-      if (S.seedLoopMode === 'pingpong') S.seedLoopMode = 'forward';
+      _savedCloudLoopMode = S.commitCloudLoopMode ?? 'pingpong';
+      if (S.commitCloudLoopMode === 'pingpong') S.commitCloudLoopMode = 'forward';
     } else if (!isLoop && prevMode === 'loop') {
       // loop → cloud: restore saved cloud dir (default ping-pong if never set)
-      S.seedLoopMode = _savedCloudLoopMode ?? 'pingpong';
+      S.commitCloudLoopMode = _savedCloudLoopMode ?? 'pingpong';
     }
     // Sync active button
     dirSeg.querySelectorAll('[data-loopmode]').forEach(b =>
-      b.classList.toggle('active', b.dataset.loopmode === S.seedLoopMode));
+      b.classList.toggle('active', b.dataset.loopmode === S.commitCloudLoopMode));
     // Grey-out ping-pong button in loop mode
     const pingpongBtn = dirSeg.querySelector('[data-loopmode="pingpong"]');
     if (pingpongBtn) {
@@ -1004,7 +991,7 @@ export function buildLoopPayload(strokeId, anchorParticle) {
   }
   let loopEnd   = Math.min(buffer.duration, maxStart + tailS);
   // The button, not the marks — the same rule as _applyCluster in trigger.js,
-  // for the same reasons: an untrimmed hit stroke's region is press to
+  // for the same reasons: an untrimmed tape stroke's region is press to
   // release, from the take's `edges`.
   const takeSlot = p0.source === 'live' ? S.liveRecBuffers[p0.liveBufferIdx] : null;
   if (p0.trig && takeSlot?.edges && takeSlot.markSpan &&
@@ -1020,7 +1007,7 @@ export function buildLoopPayload(strokeId, anchorParticle) {
   const XFADE_S = 0.030;
   const actx = S.audioCtx || new AudioContext();
   const sr   = buffer.sampleRate;
-  const nCh  = buffer.numberOfChannels;
+  const nCh  = 1;                    // a take is mono (js/take.js)
   // Symmetric rounding — the old floor/ceil pair biased the region longer,
   // padding the tail with extra (possibly silent) samples.
   const startSamp = Math.round(loopStart * sr);
@@ -1034,7 +1021,7 @@ export function buildLoopPayload(strokeId, anchorParticle) {
 
   const loopBuffer = actx.createBuffer(nCh, regionLen, sr);
   for (let ch = 0; ch < nCh; ch++) {
-    const src = buffer.getChannelData(ch);
+    const src = buffer.data;
     const dst = loopBuffer.getChannelData(ch);
     // Copy the region
     for (let i = 0; i < regionLen; i++) dst[i] = src[startSamp + i];
@@ -1088,12 +1075,12 @@ export function buildLoopPayload(strokeId, anchorParticle) {
 // A take recorded while a pinned loop plays, folded onto that loop's cycle
 // and played back as a LAYER of the pin: every cycle, at the phase it was
 // played, at 1× whatever the master's speed. The take's marks land on the
-// sphere as their own stroke (hit material, never armed as a trigger), so
+// sphere as their own stroke (tape material, never armed as a trigger), so
 // the cursor can erase and undo them; the layer is the pin's.
 
 /** The press: pick the master — the nearest pinned loop, no radius — and
  *  hold it for the whole take. Nothing pinned, and the take SEEDS (Ek,
- *  2026-09-06): it runs as an ordinary hit take with `S._overdubSeed` set,
+ *  2026-09-06): it runs as an ordinary tape take with `S._overdubSeed` set,
  *  and events.js arms it with `loop: true`, so the looper hook pins it on
  *  release — the first press lays the main loop, the second overdubs onto
  *  it. Nothing refuses any more; the hook it flashed is gone with it. */
@@ -1113,7 +1100,7 @@ export function beginOverdub() {
  *  where it was played. Nothing is resampled. */
 export function buildOverdubLayer(seq, take, phase0) {
   if (!take) return null;
-  return _foldOntoCycle(seq, take.getChannelData(0), take.sampleRate, phase0);
+  return _foldOntoCycle(seq, take.data, take.sampleRate, phase0);
 }
 function _foldOntoCycle(seq, samples, sr, phase0) {
   const actx = ensureAudioContext();
@@ -1206,7 +1193,7 @@ export function attachOverdub(strokeId, seq, provisional = null) {
 
 /** The pin goes, the family becomes ordinary lines (Ek, 2026-09-04: "all
  *  overdubs should become normal loops once unpinned"). Each overdub's marks
- *  are still on the sphere as a hit stroke that was never armed; arming it
+ *  are still on the sphere as a tape stroke that was never armed; arming it
  *  plain — one trigger, no audition, no looper hook — makes it what a line
  *  stroke is once its own pin is released: scratch the cursor can fire. The
  *  layers stop with the master's source. `keepPaint` false (a self-killing
@@ -1310,25 +1297,25 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
     loopEnd:        payload.loopEnd,
     playheadIndex:  payload.startIdx,
     startOffset:    anchorParticle ? payload.particles[payload.startIdx].grainStart : 0,
-    direction:      S.seedLoopMode === 'rev' ? -1 : 1,
-    speed:          S.seqNextParams.speed ?? 1.0,
+    direction:      S.commitCloudLoopMode === 'rev' ? -1 : 1,
+    speed:          S.commitLoopParams.speed ?? 1.0,
     playing:        true,
     color,
     anchorLon:      payload.anchorLon,  // position used for distance/nearest calcs
     anchorLat:      payload.anchorLat,
     _sourceNode:    null,           // AudioBufferSourceNode (created by scheduler)
     _gainNode:      null,           // GainNode for volume control
-    _revBuffer:     null,           // cached reversed buffer (created lazily if direction=-1)
+    _regionBuf:     null,           // the region copy the source plays (grain.js _regionCopy), cut lazily
     _createdAt:     performance.now() / 1000, // wallclock creation time (seconds)
     _startedAt:     0,              // audioContext.currentTime when started
     mute: false, solo: false,       // the pin's own flags (pins.js)
     // The loop's own ramps (2026-09-16): the same In / Out every new pin is
     // born with (Settings → Pins), the out never under the loop's declick —
     // the 15 ms the release used to read globally. See the cloud's.
-    fadeIn:  S.seedAttack,
-    fadeOut: Math.max(S.seedRelease || 0, (S.loopFadeTimeMs || 15) / 1000),
+    fadeIn:  S.commitAttack,
+    fadeOut: Math.max(S.commitRelease || 0, (S.loopFadeTimeMs || 15) / 1000),
     grainParams: {
-      volume: S.seqNextParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0
+      volume: S.commitLoopParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0
     }
   };
   // Born under a solo or a group mute, it is silent from its first tick.
@@ -1377,21 +1364,21 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     // (non-monotonic strokes — see buildLoopPayload), and a negative offset
     // makes src.start() throw inside the scheduler.
     startOffset:    anchorParticle ? Math.max(0, anchorParticle.grainStart - sourceSeq.loopStart) : 0,
-    direction:      S.seedLoopMode === 'rev' ? -1 : 1,
-    speed:          S.seqNextParams.speed ?? 1.0,
+    direction:      S.commitCloudLoopMode === 'rev' ? -1 : 1,
+    speed:          S.commitLoopParams.speed ?? 1.0,
     playing:        true,
     color,
     anchorLon:      aLon,                     // drop point — used for distance calcs
     anchorLat:      aLat,
     _sourceNode:    null,
     _gainNode:      null,
-    _revBuffer:     null,
+    _regionBuf:     null,
     _createdAt:     performance.now() / 1000,
     _startedAt:     0,
-    fadeIn:  S.seedAttack,
-    fadeOut: Math.max(S.seedRelease || 0, (S.loopFadeTimeMs || 15) / 1000),
+    fadeIn:  S.commitAttack,
+    fadeOut: Math.max(S.commitRelease || 0, (S.loopFadeTimeMs || 15) / 1000),
     grainParams: {
-      volume: S.seqNextParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0
+      volume: S.commitLoopParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0
     }
   };
   S._applyPinMix?.();
@@ -1598,9 +1585,8 @@ S._selfKillSlot = selfKillSlot;
  *  edge ramps left a comb of ~6 ms full-level blips through a contiguous
  *  erase (the end-ramp of one span meeting the start-ramp of the next),
  *  ticking at the mark rate. One erase bite is one silence. */
-function _zeroSpans(buf, spans) {
+function _zeroSpans(d, sr, spans) {
   if (!spans.length) return;
-  const sr = buf.sampleRate;
   const ramp = Math.floor(sr * 0.003);
   spans.sort((x, y) => x[0] - y[0]);
   const merged = [];
@@ -1612,18 +1598,15 @@ function _zeroSpans(buf, spans) {
   for (const [m0, m1] of merged) {
     if (m1 <= m0) continue;
     const r = Math.min(ramp, Math.max(1, (m1 - m0) >> 1));
-    for (let chn = 0; chn < buf.numberOfChannels; chn++) {
-      const d = buf.getChannelData(chn);
-      // Ramp only against live audio — a neighbour already silent from an
-      // earlier bite gets a hard (inaudible) cut instead of a blip.
-      const rampIn  = m0 > 0 && Math.abs(d[m0 - 1]) > 1e-4;
-      const rampOut = m1 < buf.length && Math.abs(d[m1]) > 1e-4;
-      for (let s = m0; s < m1; s++) {
-        let f = 0;
-        if (rampIn && s < m0 + r) f = 1 - (s - m0) / r;
-        else if (rampOut && s >= m1 - r) f = (s - (m1 - r)) / r;
-        d[s] *= f;
-      }
+    // Ramp only against live audio — a neighbour already silent from an
+    // earlier bite gets a hard (inaudible) cut instead of a blip.
+    const rampIn  = m0 > 0 && Math.abs(d[m0 - 1]) > 1e-4;
+    const rampOut = m1 < d.length && Math.abs(d[m1]) > 1e-4;
+    for (let s = m0; s < m1; s++) {
+      let f = 0;
+      if (rampIn && s < m0 + r) f = 1 - (s - m0) / r;
+      else if (rampOut && s >= m1 - r) f = (s - (m1 - r)) / r;
+      d[s] *= f;
     }
   }
 }
@@ -1670,8 +1653,8 @@ function onMarksErased(removed) {
       // master's own audio is silenced whole and the cycle runs on for its
       // layers; the last overdub leaving is what releases the pin (below).
       if (slot.overdubs?.length && buf) {
-        _zeroSpans(buf, [[0, buf.length]]);
-        slot._revBuffer = null;
+        _zeroSpans(buf.getChannelData(0), buf.sampleRate, [[0, buf.length]]);
+        slot._regionBuf = null;
         S._pinsDirty = true;
         continue;
       }
@@ -1686,7 +1669,7 @@ function onMarksErased(removed) {
     const sr = buf.sampleRate;
     const spans = [];
     // The copies are the loop's whole timeline (they are never removed, see
-    // below), so a hit copy's span ends at the next copy's moment.
+    // below), so a copy's span ends at the next copy's moment.
     const starts = _sortedStarts(slot.particles);
     for (const c of slot.particles) {
       const hit = rem.some(r => Math.abs(r.lon - c.lon) < 1e-6 && Math.abs(r.lat - c.lat) < 1e-6);
@@ -1696,7 +1679,7 @@ function onMarksErased(removed) {
                   Math.min(buf.length, Math.ceil(_spanEndAfter(starts, c.grainStart, buf.duration) * sr))]);
     }
     if (!spans.length) continue;
-    _zeroSpans(buf, spans);
+    _zeroSpans(buf.getChannelData(0), buf.sampleRate, spans);
     // The copies STAY (Ek, 2026-08-28): a pinned loop's path is its CLOCK —
     // a 4-second circuit stays a 4-second circuit however much audio is
     // erased out of it, leaving creative gaps rather than a shorter loop.
@@ -1708,7 +1691,7 @@ function onMarksErased(removed) {
     // copies keep the playhead and VBAP travelling the full circuit through
     // the gaps. The loop dies only when its whole scratch stroke goes — the
     // anyLeft check above.
-    slot._revBuffer = null;   // a cached reversed copy is stale now
+    slot._regionBuf = null;   // a cached reversed copy is stale now
   }
 
   // Overdubs (Ek, 2026-09-05: "if I erase an overdub … that part of the
@@ -1752,7 +1735,8 @@ function onMarksErased(removed) {
       // plus whatever of the stroke still stands (a mark erased earlier is
       // already silent, so its absence from the list changes nothing).
       const starts = _sortedStarts(rem.concat(S.particles.filter(p => p.strokeId === ov.strokeId)));
-      _zeroSpans(take, rem.map(r => [Math.max(0, Math.floor(r.grainStart * sr)),
+      // The take is shared memory (js/take.js): the bite lands for the grains too.
+      _zeroSpans(take.data, sr, rem.map(r => [Math.max(0, Math.floor(r.grainStart * sr)),
                                      Math.min(take.length, Math.ceil(_spanEndAfter(starts, r.grainStart, take.duration) * sr))]));
       const layer = buildOverdubLayer(slot, take, ov.phase0);
       if (layer) swapOverdubLayer(slot, ov, layer, ensureAudioContext());
@@ -1805,7 +1789,7 @@ export function clearAllCommits() {
  */
 export function findNearestSeqSlot(refLon, refLat, filterPlaying = null) {
   let nearestSlot = -1, nearestAng = Infinity;
-  for (let i = 0; i < S.seqSlotCount; i++) {
+  for (let i = 0; i < S.commitSlotCount; i++) {
     const seq = S.commitSlots[i];
     if (!seq || seq.type !== 'loop') continue;
     if (filterPlaying !== null && seq.playing !== filterPlaying) continue;
@@ -2066,9 +2050,6 @@ export function updateCommitBanksUI() {
     countEl.textContent = parts.length ? `${parts.join(' + ')} / ${total}` : `0 / ${total}`;
   }
 
-  // Legacy count element
-  const seedsEl = document.getElementById('seedsPlantedCount');
-  if (seedsEl) seedsEl.textContent = clouds + ' planted';
 
   // HUD commit dots — one dot per slot, colored when filled, grey when empty
   const dotsEl = document.getElementById('vmCommitDots');
@@ -2492,69 +2473,13 @@ export function updatePlaybackControls() {
 
 // Dirty-flag cache: skip canvas redraw when radius and nearestMode haven't changed.
 // The numbox is always updated; only the canvas draw is gated.
-let _rvLastDeg      = -1;
-let _rvLastNearest  = null;
-
+/** The radius slider + numbox readout. The little canvas this also drew
+ *  (`#radiusViz`) left the markup long ago; the name stays for its callers. */
 export function drawRadiusViz() {
-  // Always sync the slider + numbox readout regardless of whether the canvas exists
   const radSliderEl = document.getElementById('radiusSlider');
   if (radSliderEl) radSliderEl.value = S.searchRadiusDeg;
   const radValEl = document.getElementById('radiusVal');
   if (radValEl) radValEl.value = `${Math.round(S.searchRadiusDeg)}°`;
-
-  const canvas = document.getElementById('radiusViz');
-  if (!canvas) return;
-
-  // Skip canvas redraw if nothing that affects the visualization has changed.
-  if (S.searchRadiusDeg === _rvLastDeg && S.nearestMode === _rvLastNearest &&
-      canvas.width > 0) return;
-  _rvLastDeg     = S.searchRadiusDeg;
-  _rvLastNearest = S.nearestMode;
-  const rect = canvas.parentElement.getBoundingClientRect();
-  const w = rect.width  || 180;
-  const h = rect.height || 48;
-  const dpr = window.devicePixelRatio;
-  const needW = Math.round(w * dpr), needH = Math.round(h * dpr);
-  if (canvas.width !== needW || canvas.height !== needH) {
-    canvas.width  = needW;
-    canvas.height = needH;
-  }
-  const c = canvas.getContext('2d');
-  c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  c.clearRect(0, 0, w, h);
-
-  const cx = w / 2, cy = h / 2;
-
-  if (S.nearestMode) {
-    const d = Math.min(w, h) * 0.36;
-    c.strokeStyle = '#e8a030';
-    c.lineWidth = 1.5;
-    c.beginPath();
-    c.moveTo(cx,     cy - d);
-    c.lineTo(cx + d, cy    );
-    c.lineTo(cx,     cy + d);
-    c.lineTo(cx - d, cy    );
-    c.closePath();
-    c.stroke();
-    c.fillStyle = '#e8a030';
-    c.beginPath(); c.arc(cx, cy, 2.5, 0, Math.PI * 2); c.fill();
-  } else {
-    const maxR = Math.min(cx, cy) - 3;
-    const minR = 4;
-    const t = (S.searchRadiusDeg - 1) / (180 - 1);
-    const r = minR + t * (maxR - minR);
-
-    c.strokeStyle = '#2a2a2a';
-    c.lineWidth = 1;
-    c.beginPath(); c.arc(cx, cy, maxR, 0, Math.PI * 2); c.stroke();
-
-    c.strokeStyle = '#7abcbc';
-    c.lineWidth = 1.5;
-    c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.stroke();
-
-    c.fillStyle = 'rgba(255,255,255,0.35)';
-    c.beginPath(); c.arc(cx, cy, 2, 0, Math.PI * 2); c.fill();
-  }
 }
 
 export function flashRadiusTooltip() {
@@ -2916,7 +2841,6 @@ export function initGrainControls() {
       if (param === 'period')   internalVal = Math.max(S.minPeriodS, internalVal);
       S.grainOverrides[param] = internalVal;
       if (param === 'duration' || param === 'period' || param === 'fadeRatio' || param === 'fadeMs') requestWaveformRedraw();
-      if (param === 'period' || param === 'periodVar') resetCursorPeriod();
     }
     // When period or duration changes independently, passively update the overlap display
     if (param === 'duration' || param === 'period') _syncOverlapDisplay();

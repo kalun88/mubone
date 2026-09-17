@@ -2,7 +2,7 @@
 // ELECTRON MAIN PROCESS — mubone desktop wrapper
 // ============================================================================
 
-const { app, BrowserWindow, session, ipcMain, screen, nativeImage, dialog, Menu } = require('electron');
+const { app, BrowserWindow, session, ipcMain, screen, nativeImage, dialog, Menu, shell } = require('electron');
 
 // Who held the loop (2026-09-06, R6): every ipcMain handler, socket and
 // serial callback is timed, and the loop's own gaps and GC pauses counted —
@@ -12,6 +12,7 @@ const probe = require('./electron-loop-probe.js');
 const timed = probe.timed;
 probe.wrapIpcMain(ipcMain);
 const path  = require('path');
+const { pathToFileURL } = require('url');
 const dgram = require('dgram');
 const fs    = require('fs');
 
@@ -109,9 +110,10 @@ if (INSTANCE) {
   console.log(`[instance] "${INSTANCE}" — userData: ${app.getPath('userData')}`);
 }
 
-// ── OSC UDP receiver (x-imu3 from Max) ────────────────────────────────────────
-// Max sends OSC to 127.0.0.1:7500. We parse it here and push to the renderer
-// via webContents.send('osc-sensor') — no WebSocket, no server script needed.
+// ── OSC UDP receiver ──────────────────────────────────────────────────────────
+// Any OSC sender on 127.0.0.1:7500 (the show path, CLAUDE.md "Control
+// surface"). Parsed here and pushed to the renderer via
+// webContents.send('osc-message') — no WebSocket, no server script needed.
 // Multi-station: each instance listens on its own port (--osc-port); the port
 // is the instance address — OSC address strings are identical across stations.
 
@@ -145,8 +147,8 @@ function sendOSCUplink(address, values) {
 
 // ── OSC UDP external (renderer → main → UDP → arbitrary peer) ────────────────
 // Separate from the uplink above: real OSC 1.0 binary sent to a user-configured
-// host:port. Used by the staging module to drive oVox / VocalSynth / Ableton /
-// hardware. Each unique host:port destination gets its own dgram socket, reused
+// host:port. Driven by the sensor mapping rows (js/sensor-mapping.js through
+// js/osc-out.js). Each unique host:port destination gets its own dgram socket, reused
 // across messages.
 //
 // Encoding: OSC 1.0 binary — null-terminated address string, null-terminated
@@ -330,6 +332,9 @@ function startXIMU3DataListener(port) {
     // x-IMU3 data can be ASCII (LF-delimited) or binary.
     // We handle ASCII mode here — multiple messages may arrive per packet.
     buf += msg.toString('utf8');
+    // A device still in binary mode (the factory default) sends no newline, so
+    // the line would grow for the rest of the set. Past 64 KB it is not a line.
+    if (buf.length > 65536) buf = '';
     let nlIdx;
     while ((nlIdx = buf.indexOf('\n')) !== -1) {
       const line = buf.slice(0, nlIdx);
@@ -357,25 +362,6 @@ function startXIMU3DataListener(port) {
   sock.bind(port, '0.0.0.0', () => {
     console.log(`[x-IMU3] data listening on UDP 0.0.0.0:${port}`);
   });
-}
-
-function stopXIMU3DataListener(port) {
-  // If no port is passed, close every listener (e.g. on app quit).
-  if (port === undefined || port === null) {
-    for (const entry of _ximu3DataSocks.values()) {
-      try { entry.sock.close(); } catch (_) {}
-    }
-    _ximu3DataSocks.clear();
-    return;
-  }
-  const entry = _ximu3DataSocks.get(port);
-  if (!entry) return;
-  entry.refs--;
-  if (entry.refs <= 0) {
-    try { entry.sock.close(); } catch (_) {}
-    _ximu3DataSocks.delete(port);
-    console.log(`[x-IMU3] data listener on UDP ${port} closed`);
-  }
 }
 
 function sendXIMU3Command(ip, port, jsonStr) {
@@ -469,13 +455,6 @@ function openSerialPortFn(portPath) {
 
     _serialPorts.set(portPath, { port, parser });
   });
-}
-
-function closeSerialPortFn(portPath) {
-  const entry = _serialPorts.get(portPath);
-  if (!entry) return;
-  try { entry.port.close(); } catch (_) {}
-  _serialPorts.delete(portPath);
 }
 
 function sendSerialCommandFn(portPath, jsonStr) {
@@ -633,6 +612,8 @@ function sendDocCommand(cmd, arg) {
   askRenderer(`window.__mubonePiece?.run(${JSON.stringify(cmd)}, ${JSON.stringify(arg ?? null)})`);
 }
 
+const MANUAL_URL = pathToFileURL(path.join(__dirname, 'manual', 'index.html')).href;
+
 function buildMenu() {
   const recent = _recentPieces.length
     ? _recentPieces.map(p => ({
@@ -657,6 +638,15 @@ function buildMenu() {
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
+    // Help > Cheat Sheet is the native idiom — every Mac app has it, and it
+    // costs no chrome. Same page the settings nav links to, opened in the
+    // system browser so the instrument's window is never navigated.
+    {
+      role: 'help',
+      submenu: [
+        { label: 'mubone Cheat Sheet', click: () => shell.openExternal(MANUAL_URL) },
+      ],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -728,10 +718,9 @@ function setupIPC() {
     sendOSCUplink(address, values);
   });
 
-  // Renderer → main: outbound real OSC binary to an arbitrary external peer.
-  // Used by the staging module (MIDI/OSC-out) to drive oVox / VocalSynth /
-  // Ableton / hardware via OSC. Distinct from 'osc-send' above, which targets
-  // the internal relay in JSON format for joycon-GUI feedback.
+  // Renderer → main: outbound real OSC binary to an arbitrary external peer
+  // (the sensor mapping rows, js/osc-out.js). Distinct from 'osc-send' above,
+  // which targets the internal relay in JSON format for joycon-GUI feedback.
   ipcMain.on('osc-send-external', (_e, host, port, address, values) => {
     sendOSCExternal(host, port, address, values);
   });
@@ -793,12 +782,6 @@ function setupIPC() {
   ipcMain.handle('ximu3-start-data', (_event, port) => {
     startXIMU3DataListener(port);
     return { ok: true, port };
-  });
-
-  ipcMain.handle('ximu3-stop-data', (_event, port) => {
-    // Ref-counted per port; if port is omitted, close every listener.
-    stopXIMU3DataListener(port);
-    return { ok: true };
   });
 
   ipcMain.handle('ximu3-send-command', (_event, ip, port, jsonStr) => {
@@ -866,11 +849,6 @@ function setupIPC() {
   ipcMain.handle('serial-open', async (_event, portPath) => {
     const ok = await openSerialPortFn(portPath);
     return { ok, path: portPath };
-  });
-
-  ipcMain.handle('serial-close', (_event, portPath) => {
-    closeSerialPortFn(portPath);
-    return { ok: true };
   });
 
   ipcMain.handle('serial-send-command', (_event, portPath, jsonStr) => {
@@ -1049,6 +1027,25 @@ function createWindow() {
     });
   }
 
+  // A LINK NEVER NAVIGATES THE INSTRUMENT (2026-09-16). Anything that asks
+  // for a new window — the cheat sheet's target="_blank", anything a future
+  // page links to — goes to the system browser and the ask is denied here.
+  // The same for an in-window navigation to anything but the app itself:
+  // `location.href = location.pathname + '?debug'` (CLAUDE.md) must still
+  // work, so index.html on its own path is let through and nothing else is.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  const APP_PATH = pathToFileURL(path.join(__dirname, 'index.html')).pathname;
+  win.webContents.on('will-navigate', (e, url) => {
+    let p = null;
+    try { p = new URL(url).pathname; } catch (_) {}
+    if (p === APP_PATH) return;
+    e.preventDefault();
+    shell.openExternal(url);
+  });
+
   win.loadFile('index.html');
 
   // Forward native fullscreen state changes to the renderer so the
@@ -1124,12 +1121,8 @@ app.whenReady().then(() => {
   startOSCReceiver();
   initOSCUplink();
   startXIMU3Discovery();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      _oscWin = createWindow();
-    }
-  });
+  // No `activate` handler: window-all-closed quits, so there is never a dock
+  // click with no window to answer it.
 });
 
 app.on('window-all-closed', () => {

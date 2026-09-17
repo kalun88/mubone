@@ -694,12 +694,18 @@ async function run(rig) {
   const d4 = await rig.evaluate(async () => { const H = window.__ba; const wait = ms => new Promise(r => setTimeout(r, ms));
     H.S._gestureEnd?.(); await wait(200);
     document.getElementById('commitClearBtn')?.click(); await wait(400);
-    const n0 = H.S.commitSlots.filter(Boolean).length;
+    const n0 = H.S.commitSlots.filter(Boolean).length, u0 = H.S._undoCount();
     H.tap('ArrowDown'); await wait(900);
-    const n1 = H.S.commitSlots.filter(Boolean).length;
+    const n1 = H.S.commitSlots.filter(Boolean).length, u1 = H.S._undoCount();
     document.getElementById('commitClearBtn')?.click(); await wait(300);
-    return { n0, n1, active: H.S._gestureActive() }; });
-  check('6 is a BANG tile on ↓: one press pins once and starts no gesture', d4.n0 === 0 && d4.n1 === 1 && !d4.active, JSON.stringify(d4));
+    return { n0, n1, presses: u1 - u0, active: H.S._gestureActive() }; });
+  // ONE press is ONE undo action (history.js mergeTagged), and it pins what the
+  // cursor is on — every line there (tiles.js pinDown), so the count is
+  // "more", not "one": the earlier digit plays left lines at the cursor. Until
+  // 2026-09-16 the paint ticker laid marks at the pointer's projection while
+  // the scan read the centre, so nothing was ever under the cursor here but
+  // the cloud.
+  check('6 is a BANG tile on ↓: one press is one pin press, pins what is there, and starts no gesture', d4.presses === 1 && d4.n1 > d4.n0 && !d4.active, JSON.stringify(d4));
   // A lens tile dropped at 8 takes the next free digit, 5, and toggles from it.
   const d5 = await rig.evaluate(() => { const H = window.__ba; H.lensOn(); H.T.placeTile('wide', undefined, 'toggle'); const key = H.S._keyMappings.palette_8?.code;
     H.tap('Digit5'); const a = { muted: !!H.S.scanMuted, lit: H.lensT().lit };
@@ -839,13 +845,14 @@ async function run(rig) {
   await rig.evaluate(() => { const H = window.__ba; H.plateRightClick(); });
   const tV2 = await rig.evaluate(() => ({ hv: window.__ba.handVerb(), r: window.__ba.plate()?.r, active: window.__ba.S._gestureActive() }));
   check('… and flipped back to momentary, the rounded plate returns', tV2.hv === 'momentary' && tV2.r === '10px' && !tV2.active, JSON.stringify(tV2));
-  // The hand tile is a spacebar: pressing IT presses the hand.
+  // The hand tile is a LEGEND (2026-09-17, reversing 2026-09-12): a mouse press
+  // on it presses nothing — the spacebar and the sphere are the hand's inputs.
   const tP = await rig.evaluate(async () => { const H = window.__ba; const wait = ms => new Promise(r => setTimeout(r, ms));
     document.getElementById('handKey').dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true, cancelable: true })); await wait(260);
-    const a = { active: H.S._gestureActive(), plate: H.plate()?.lit };
+    const a = { active: H.S._gestureActive(), plate: H.plate()?.lit, cursor: getComputedStyle(document.getElementById('handKey')).cursor };
     H.sphere('mouseup'); await wait(260);
     return { a, b: { active: H.S._gestureActive() } }; });
-  check('a press on the hand tile itself is a press on the hand (momentary: down starts, up ends)', tP.a.active && tP.a.plate && !tP.b.active, JSON.stringify(tP));
+  check('a mouse press on the hand tile presses nothing, and the tile wears no pointer', !tP.a.active && !tP.a.plate && tP.a.cursor !== 'pointer' && !tP.b.active, JSON.stringify(tP));
   // SPACE CANNOT BE LEARNED: with a learn armed, space binds nothing, plays
   // nothing, and the learn stays armed; a stored Space row is dropped at load.
   const tL = await rig.evaluate(async () => { const H = window.__ba; const wait = ms => new Promise(r => setTimeout(r, ms));

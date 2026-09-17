@@ -13,7 +13,7 @@
 
 import { S } from './state.js';
 import { getByRole } from './sensor-registry.js';
-import { getCursorLonLat, screenToLonLat } from './sphere.js';
+import { cursorLonLatNow } from './sphere.js';
 import { sendCC as midiSendCC, isMIDIOutAvailable } from './midi-out.js';
 import { sendOSCExternal, isOSCOutAvailable } from './osc-out.js';
 
@@ -92,7 +92,10 @@ export const MAPPABLE_PARAMS = [
   { key: 'duration',        label: 'duration',        min: 0.002, max: 4.0,   default: 0.1,   unit: 's',   log: true },
   { key: 'period',          label: 'period',          min: 0.010, max: 4.0,   default: 0.06,  unit: 's',   log: true },
   { key: 'pitchShift',      label: 'pitch shift',    min: -2400, max: 2400,  default: 0,     unit: '¢',   log: false },
-  { key: 'pitchJitter',     label: 'pitch jitter',   min: 0,     max: 0.498, default: 0,     unit: '¢',   log: false },
+  // The engine's value is the RATIO 2^(¢/1200) − 1 (0.498 = 700 ¢, the same
+  // span osc.js converts from cents); a row maps onto that number, so the
+  // unit is the ratio's, not cents — it read `¢` until 2026-09-16.
+  { key: 'pitchJitter',     label: 'pitch jitter',   min: 0,     max: 0.498, default: 0,     unit: '×',   log: false },
   { key: 'durJitter',       label: 'dur jitter',     min: 0,     max: 1,     default: 0,     unit: '%',   log: false },
   { key: 'startJitter',     label: 'start jitter',   min: 0,     max: 0.5,   default: 0,     unit: 's',   log: false },
   { key: 'panSpread',       label: 'pan spread',     min: 0,     max: 1,     default: 0.05,  unit: '%',   log: false },
@@ -331,16 +334,8 @@ export function getCursorEuler() {
   const slot = getByRole('cursor');
   if (slot?.zeroEuler) return slot.zeroEuler;
 
-  // 2. Derive from cursor position on the sphere (same pattern used by
-  //    renderer, grain scheduler, seed-morph, etc.)
-  const { lon, lat } = S.cursorQ
-    ? getCursorLonLat()
-    : (S.mouseInCanvas || S.altLocked)
-      ? screenToLonLat(
-          S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
-          S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY
-        )
-      : getCursorLonLat();
+  // 2. Derive from the cursor's position on the sphere (the one rule).
+  const { lon, lat } = cursorLonLatNow();
 
   // Convert lon/lat (radians) → degrees matching the AXIS_DEFS conventions:
   //   elevation (y) = latitude  in degrees (-90..90)

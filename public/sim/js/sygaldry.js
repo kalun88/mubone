@@ -564,11 +564,6 @@ export class SygaldryLink {
 
 const KNOWN_KEY = 'mubone_sygaldry_known';   // { [name]: { ssid, address } }
 
-// The keys before there could be two. Read once, folded into the new record
-// under the name they turn out to belong to, and deleted.
-const LEGACY_ADDRESS_KEY = 'muboneSygaldryAddress';
-const LEGACY_SSID_KEY    = 'muboneSygaldrySsid';
-
 function _readKnown() {
   try { return JSON.parse(localStorage.getItem(KNOWN_KEY) || '{}') || {}; }
   catch (_) { return {}; }
@@ -607,25 +602,6 @@ export function forgetInstrument(name) {
   const all = _readKnown();
   delete all[name];
   _writeKnown(all);
-}
-
-// One shot, on load: the old pair described whichever instrument was last
-// used, but never said which one that was. It is folded in under the first
-// name that claims it — the same instrument, on the next connection.
-let _legacyPending = null;
-try {
-  const a = localStorage.getItem(LEGACY_ADDRESS_KEY);
-  const s = localStorage.getItem(LEGACY_SSID_KEY);
-  if (a || s) _legacyPending = { address: a || undefined, ssid: s || undefined };
-  localStorage.removeItem(LEGACY_ADDRESS_KEY);
-  localStorage.removeItem(LEGACY_SSID_KEY);
-} catch (_) {}
-
-function _claimLegacy(name) {
-  if (!_legacyPending || !name) return;
-  const pending = _legacyPending;
-  _legacyPending = null;
-  rememberInstrument(name, pending);
 }
 
 // ── The set of instruments ───────────────────────────────────────────────────
@@ -694,7 +670,7 @@ function _resolvePrimary() {
 export function addLink() {
   const l = new SygaldryLink();
   l.id = ++_seq;
-  l.onChange((event) => { if (event === 'name') _claimLegacy(l.name); _notifySet(); });
+  l.onChange(() => _notifySet());
   _links.push(l);
   _notifySet();
   return l;
@@ -733,7 +709,9 @@ function matchesFilter(port, filters) {
 // not do that for us. Without this, refreshing the page left the instrument
 // locked away until the browser itself was quit.
 if (typeof window !== 'undefined') {
-  const release = () => { try { link.disconnect('unload'); } catch (_) {} };
+  // Every link, not a `link` that never existed here — the ReferenceError was
+  // swallowed and the release was a no-op until 2026-09-16.
+  const release = () => { for (const l of _links) { try { l.disconnect('unload'); } catch (_) {} } };
   window.addEventListener('pagehide', release);
   window.addEventListener('beforeunload', release);
 }

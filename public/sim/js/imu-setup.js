@@ -14,7 +14,7 @@
 import { S, DEBUG } from './state.js';
 import {
   getOrCreateSlot, handleSlotQuaternion, handleSlotInertial, assignQuatRole, forgetSlot,
-  saveCalibration,
+  saveCalibration, quatToEulerDeg,
   captureMountPose1 as regMountPose1,
   captureMountPose2 as regMountPose2,
   cancelMountCapture as regCancelMount,
@@ -59,20 +59,8 @@ export const AXES_ALIGNMENTS = [
   [23, '-Z+X-Y', ''],
 ];
 
-// ── Quaternion → Euler (ZYX Tait-Bryan, degrees) ────────────────────────────
-// Duplicated here so imu-setup is self-contained.  [x, y, z, w] convention.
-
-function quatToEulerDeg(qx, qy, qz, qw) {
-  const roll  = Math.atan2(2 * (qw * qx + qy * qz), 1 - 2 * (qx * qx + qy * qy)) * (180 / Math.PI);
-  const sinp  = 2 * (qw * qy - qz * qx);
-  const pitch = (Math.abs(sinp) >= 1
-    ? Math.sign(sinp) * 90
-    : Math.asin(sinp) * (180 / Math.PI));
-  const yaw   = Math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)) * (180 / Math.PI);
-  return { roll, pitch, yaw };
-}
-
 // ── Euler (degrees) → Quaternion [x, y, z, w] ──────────────────────────────
+// (quatToEulerDeg is sensor-registry's — one copy since 2026-09-16.)
 // ZYX order (yaw first, then pitch, then roll) to match the decomposition above.
 
 function eulerDegToQuat(rollDeg, pitchDeg, yawDeg) {
@@ -104,8 +92,8 @@ class DeviceState {
 
     // KIND is what the thing IS; transport is how the app reaches it. They are
     // not the same question and nothing on the wire answers the first one: an
-    // 'osc' transport is any peer sending /sensor/{name}/…, which is a Max
-    // patch, a proxy, or a first-party mubone instrument on its own cable.
+    // 'osc' transport is any peer sending /sensor/{name}/… — a proxy, an OSC
+    // sender of any kind, or a first-party mubone instrument on its own cable.
     // Whoever owns the connection declares it — see declareSensorKind().
     //   'x-imu3' — the third-party unit; settings enforcement, LED, accessory
     //   'mubone'  — first-party instrument (js/sygaldry.js)
@@ -179,7 +167,7 @@ class DeviceState {
 
     // Registry integration
     // OSC devices keep their original slot name (e.g. 'cursor')
-    // so the Max patch's slot name flows through unchanged.
+    // so the sender's slot name flows through unchanged.
     this.slotName   = transport === 'osc' ? sn : `ximu3-${sn}`;
     this.role       = 'cursor';     // default role — user can change
     this.feeding    = false;        // whether data is being pushed to registry
@@ -244,37 +232,10 @@ function _saveDevicePrefs() {
   } catch (_) {}
 }
 
-// Signs read out of the OLD prefs key, waiting for the slot to exist.
-const _migratedSigns = new Map();   // slotName → { polarity, rollMute }
-
-// Fold a migrated polarity/rollMute into the slot's axis map. Called once,
-// when the slot is created; the prefs key is rewritten without them after.
-function _applyMigratedSigns(slot) {
-  const mig = _migratedSigns.get(slot.name);
-  if (!mig) return;
-  _migratedSigns.delete(slot.name);
-  const map = slot.quatCal.axisMap;
-  if (mig.polarity) {
-    for (const a of Object.values(map)) {
-      const sgn = mig.polarity[a.viz];
-      if (sgn === -1) a.sign = -a.sign;
-    }
-  }
-  // (mig.rollMute is deliberately dropped: the Mute control is gone, so a
-  // migrated mute would be invisible and unremovable.)
-  saveCalibration();
-  _saveDevicePrefs();   // rewrites without polarity/rollMute
-}
-
 function _applyDevicePrefs(dev) {
   const all = _loadDevicePrefs();
   const p = all[dev.sn];
   if (!p) return;
-  // One-shot migration: a stored polarity/rollMute from before 2026-08-31
-  // becomes axis-map signs on the slot, then is dropped from prefs.
-  if (p.polarity || p.rollMute !== undefined) {
-    _migratedSigns.set(dev.slotName, { polarity: p.polarity, rollMute: p.rollMute });
-  }
   if (p.role) dev.role = p.role;
 }
 
@@ -320,7 +281,7 @@ export function setOnCommandSent(cb)       { _onCommandSent = cb; }
 // When not in Electron, we use:
 //   - WebSerial API (Chrome) for USB serial connections
 //   - WebSocket to proxy.js control channel (port 8081) for WiFi discovery/commands
-// The proxy data channel (port 8080) is handled by osc.js, same as Max bridge.
+// The proxy data channel (port 8080) is handled by osc.js.
 
 let _proxyWs = null;
 let _proxyRetryTimer = null;
@@ -962,9 +923,9 @@ export function sendCommandTo(dev, jsonObj) {
 
 // ── Settings enforcement ────────────────────────────────────────────────────
 // mubone does not trust the device's stored configuration.  The x-IMU3 GUI and
-// the Max patches both write settings that persist in flash — max/x-imu3.maxpat
-// leaves inertial messages at 400 Hz, max/x-imu3 copy.maxpat turns the
-// magnetometer stream on — and a device that has been through either arrives
+// any other host that has talked to the device write settings that persist in
+// flash (the old prototyping patches left inertial messages at 400 Hz and the
+// magnetometer stream on), and a device that has been through one arrives
 // streaming data mubone parses and discards.  Every connect re-asserts the
 // whole table from ximu-settings.js, then reads it back.
 //
@@ -1208,8 +1169,7 @@ export function setFeeding(dev, enabled) {
     // This used to reset it to identity on every connect, on the old rule that
     // "imu-setup owns calibration" — which meant a mounting calibration did
     // not survive a reload, or even a feeding toggle. The registry owns it now.
-    const slot = getOrCreateSlot(dev.slotName);
-    _applyMigratedSigns(slot);
+    getOrCreateSlot(dev.slotName);
     assignQuatRole(dev.slotName, dev.role);
   }
   _syncSensorStatus();
@@ -1319,7 +1279,7 @@ function _noteUnexpectedType(dev, type) {
     console.warn(
       `[imu-setup] ${dev.name} (${dev.sn}) is streaming '${type}' messages that mubone does not consume — ` +
       `settings enforcement did not take.  Check the console for setting mismatches, and check whether a ` +
-      `Max patch or the x-IMU3 GUI has written a message rate divisor since.`
+      `the x-IMU3 GUI or another host has written a message rate divisor since.`
     );
   }
 }
@@ -1342,7 +1302,7 @@ function feedToRegistry(dev) {
 // namespace carries a name, never a make. So the module that owns the
 // connection says what it is, once, as soon as it knows: sygaldry.js calls this
 // when the instrument reports its own name. Without it a first-party instrument
-// is indistinguishable from a Max bridge, which is exactly how one came to be
+// is indistinguishable from any OSC relay, which is exactly how one came to be
 // listed as "x-imu3 · osc" while sitting on a USB cable.
 export function declareSensorKind(name, kind, via = null) {
   const dev = _devices.get('osc-' + name);
@@ -1391,8 +1351,8 @@ export function handleOSCSensorQuaternion(name, values) {
     DEBUG && console.log(`[imu-setup] OSC sensor auto-discovered: ${name} (role: ${dev.role})`);
   }
 
-  // Store raw quaternion — osc.js sends [qx, qy, qz, qw] or [w, x, y, z]
-  // Registry convention from Max is [qx, qy, qz, qw] (same as sphere.js)
+  // Store raw quaternion — the wire convention is [qx, qy, qz, qw], the same
+  // as sphere.js; nothing here reorders.
   //
   // Replaced whole, never field by field. Four separate assignments leave the
   // object briefly holding two packets at once, and any async reader — a rAF
@@ -1452,8 +1412,7 @@ function _initOscSlot(dev) {
   // until the next reload: the first OSC packet arrives, the slot is created
   // with its saved mount and heading, and the old code nulled both on the
   // very next line (2026-08-31).
-  const slot = getOrCreateSlot(dev.slotName);
-  _applyMigratedSigns(slot);
+  getOrCreateSlot(dev.slotName);
   assignQuatRole(dev.slotName, dev.role);
 }
 
@@ -1508,8 +1467,18 @@ function _liveTick() {
     dev.live = now; changed = true;
     _onDeviceUpdated?.(dev);
   }
+  // Discovery forgets: a sensor not heard from in DISCOVERY_STALE_MS leaves the
+  // list (proxy.js prunes the same way; Electron never did, so "N more found"
+  // counted a powered-off sensor for the whole set — 2026-09-16).
+  const cutoff = Date.now() - DISCOVERY_STALE_MS;
+  let forgot = false;
+  for (const [sn, e] of _discovered) {
+    if (!_devices.has(sn) && e.lastSeen < cutoff) { _discovered.delete(sn); forgot = true; }
+  }
+  if (forgot) { _onDeviceDiscovered?.(null); changed = true; }
   if (changed) _syncSensorStatus();
 }
+const DISCOVERY_STALE_MS = 15000;
 
 // Notify the rest of the app that sensor connection state changed.
 // A device is "connected" while it is LIVE — see isLive.

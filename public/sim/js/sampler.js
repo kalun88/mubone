@@ -19,6 +19,7 @@
 
 import { S, MAX_SAMPLES, DEBUG, perf, gp } from './state.js';
 import { ensureAudioContext, getPreviewSinks, startSamplerCapture, stopSamplerCapture } from './audio.js';
+import { makeTake } from './take.js';
 import { recordStrokeStart, rebuildSampleListUI } from './ui-samples.js';
 import { createSeqFromStroke } from './ui-presets.js';
 import { setScanMuted } from './ui-meters.js';
@@ -61,7 +62,7 @@ export function selectSample(v) {
 }
 
 // ── Monitor voice — hear the sample playing in (Ek, 2026-08-28) ─────────────
-// A loop-engine stroke mutes the scan (below), which is right for a live
+// A tape stroke mutes the scan (below), which is right for a live
 // source: the instrument is acoustic, you hear it anyway, and the take is
 // what you played. The sampler's "instrument" is a buffer — with the scan
 // off nothing plays it, so a line or slice from the sampler was silent
@@ -71,23 +72,30 @@ export function selectSample(v) {
 // the stroke's t=0), routed where the sample preview goes. Granular strokes
 // deliberately get none of this — there you hear the grains forming, not
 // the sample doubled.
-let _monitor = null;   // { source, gain } while a loop-engine stroke is held
+let _monitor = null;   // { source, gain } while a tape stroke is held
 
 function _startMonitor(s) {
   _stopMonitor();
   const actx    = ensureAudioContext();
   const crop0   = s.cropStart * s.duration;
   const cropLen = Math.max(0.01, (s.cropEnd - s.cropStart) * s.duration);
+  // A source node reads an AudioBuffer only, so the crop is copied out of the
+  // take (shared memory, js/take.js) for as long as the pedal is held.
+  const sr = s.buffer.sampleRate;
+  const c0 = Math.min(s.buffer.length - 1, Math.floor(crop0 * sr));
+  const cN = Math.max(1, Math.min(s.buffer.length - c0, Math.floor(cropLen * sr)));
+  const crop = actx.createBuffer(1, cN, sr);
+  crop.getChannelData(0).set(s.buffer.data.subarray(c0, c0 + cN));
   const source  = actx.createBufferSource();
-  source.buffer    = s.buffer;
+  source.buffer    = crop;
   source.loop      = true;
-  source.loopStart = crop0;
-  source.loopEnd   = crop0 + cropLen;
+  source.loopStart = 0;
+  source.loopEnd   = cN / sr;
   const gain = actx.createGain();
   gain.gain.value = gp().volume;
   source.connect(gain);
   for (const sink of getPreviewSinks()) gain.connect(sink);
-  source.start(actx.currentTime, crop0);
+  source.start(actx.currentTime);
   _monitor = { source, gain };
 }
 
@@ -106,7 +114,7 @@ function _stopMonitor() {
 }
 
 // ── Take materialization — "the sampler is audio playing in" (Ek) ──────────
-// A loop-engine stroke held past its sample LOOPS it, and the take is the
+// A tape stroke held past its sample LOOPS it, and the take is the
 // LOOPED AUDIO for exactly as long as the hold: on release the stroke gets
 // its own buffer — the crop repeated for the held duration — and converts to
 // an ordinary live-style stroke (source 'live', its own liveRecBuffers slot,
@@ -121,7 +129,6 @@ function _materializeSamplerTake(strokeId) {
   const s = S.samples[marks[0].sampleIndex];
   if (!s?.buffer) return false;
 
-  const actx  = ensureAudioContext();
   const sr    = s.buffer.sampleRate;
   const crop0 = s.cropStart * s.duration;
   const cropLen = Math.max(0.01, (s.cropEnd - s.cropStart) * s.duration);
@@ -132,12 +139,12 @@ function _materializeSamplerTake(strokeId) {
   const budget = Math.max(1, (S.recLimitSeconds ?? 180) - (perf.recTotalSec ?? 0));
   if (takeDur > budget) { takeDur = budget; _refuse('rec limit — take clipped'); }
 
-  const out = actx.createBuffer(1, Math.max(1, Math.ceil(takeDur * sr)), sr);
-  const src = s.buffer.getChannelData(0);
-  const dst = out.getChannelData(0);
+  const dst = new Float32Array(Math.max(1, Math.ceil(takeDur * sr)));
+  const src = s.buffer.data;
   const c0  = Math.floor(crop0 * sr);
   const cN  = Math.max(1, Math.floor(cropLen * sr));
   for (let i = 0; i < dst.length; i++) dst[i] = src[c0 + (i % cN)] ?? 0;
+  const out = makeTake(dst, sr);
 
   const idx = S.liveRecBuffers.length;
   S.liveRecBuffers.push({ buffer: out, grainCursor: 0 });
@@ -171,10 +178,10 @@ function _materializeSamplerTake(strokeId) {
  *  the current sample, release ends it (making a loop under seq mode, same
  *  as a live stroke).
  *
- *  opts.trigger — the hit brush over the sampler source: the same stroke,
+ *  opts.trigger — a tape brush over the sampler source: the same stroke,
  *  but deposits are stamped `trig` (paint-ticker is source-agnostic there)
  *  and release ARMS the stroke instead of looping it — the old stamp's
- *  fires-on-touch, rebuilt as hit + sampler (#247 step 10). trigger.js
+ *  fires-on-touch, rebuilt as tape + sampler (#247 step 10). trigger.js
  *  already resolves sample-sourced particles (`bufferForParticle`). */
 export function samplerTrace(pressed, opts) {
   if (pressed) {
@@ -182,9 +189,11 @@ export function samplerTrace(pressed, opts) {
     const s = S.samples[S.samplerIndex];
     if (!s?.buffer) { _refuse('no sample in current slot'); return; }
     ensureAudioContext();
-    // Ported verbatim from the old paintN handler — the || chain looks like a
-    // mangled "unmute master, mute scan" and is preserved as-was (#247 flag).
-    if (S.seqModeEnabled && !S.scanMuted) S._setMuted?.(false) || setScanMuted?.(true);
+    // A tape stroke mutes the scan so the cursor does not granulate over the
+    // take. This used to be `S._setMuted?.(false) || setScanMuted?.(true)` —
+    // setMuted returns nothing, so BOTH ran and a sampler stroke silently
+    // cleared the master mute (2026-09-16).
+    if ((S.commitMode === 'loop') && !S.scanMuted) setScanMuted?.(true);
     s.grainCursor = s.cropStart * s.duration;
     if (opts?.trigger) { S._recordingTrigger = true; _startMonitor(s); }
     recordStrokeStart('sample');
@@ -208,7 +217,7 @@ export function samplerTrace(pressed, opts) {
       // over the take, not the crop.
       try { _materializeSamplerTake(strokeId); } catch (e) { DEBUG && console.warn('[sampler] materialize failed', e); }
       try { armTrigger(strokeId); } catch (_) {}
-    } else if (S.seqModeEnabled && strokeId > 0) {
+    } else if ((S.commitMode === 'loop') && strokeId > 0) {
       try { createSeqFromStroke(strokeId); } catch (_) {}
     }
     S._syncTriggerRecUI?.();
@@ -246,16 +255,16 @@ function _finishCapture() {
 // ── Test sounds ─────────────────────────────────────────────────────────────
 // Three synthesized samples with deliberately different characters, so the
 // sampler (a testing tool, § 1g) can be exercised with no files at hand:
-// plucks for attacks (chop/hit), a swelling FM pad for sustained brightness
+// plucks for attacks (chop/line), a swelling FM pad for sustained brightness
 // (staff/match), a filtered bass line for rhythmic level jumps. Pure math
 // into AudioBuffers — nothing shipped, nothing fetched.
 function _synthTestBuffers(actx) {
   const sr = actx.sampleRate;
 
   const mk = (sec, fill) => {
-    const buf = actx.createBuffer(1, Math.floor(sr * sec), sr);
-    fill(buf.getChannelData(0), sr);
-    return buf;
+    const d = new Float32Array(Math.floor(sr * sec));
+    fill(d, sr);
+    return makeTake(d, sr);
   };
 
   // 1. pluck arp — Karplus–Strong on a minor pentatonic, one pluck per 300 ms.

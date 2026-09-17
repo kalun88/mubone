@@ -58,9 +58,9 @@ function stopFlood() { clearInterval(floodTimer); floodTimer = null; try { flood
       const G  = await import('./js/grain.js');
       const L  = await import('./js/latency.js');
       const actx = S.audioCtx;
-      const buf = actx.createBuffer(1, actx.sampleRate * 4, actx.sampleRate);
-      const d = buf.getChannelData(0);
+      const d = new Float32Array(actx.sampleRate * 4);
       for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.3;
+      const buf = (await import('./js/take.js')).makeTake(d, actx.sampleRate);
       S.samples.push({ buffer: buf, name: 'perf-noise', duration: 4, grainCursor: 0, cropStart: 0, cropEnd: 1 });
       const idx = S.samples.length - 1;
       await S._ensureWorkletForSample?.(buf);

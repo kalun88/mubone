@@ -60,7 +60,7 @@ export function renderSourceTiles() {
             `<span class="tile-nm">in ${i + 1}</span></button>`;
   }
   html += `<button class="trow trow--radio src-tile src-sampler" data-src="sampler" style="--c:${SRC_HUE};--eng:${SRC_HUE}"` +
-          ` title="source: the sample instrument — any brush paints from the current sample">` +
+          ` title="source: the sampler — a file instead of the mic; any brush paints from the current take">` +
           `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${SRC_G.sampler}</svg>` +
           `<span class="tile-nm src-sampler-lbl"></span></button>`;
   bar.innerHTML = `<div class="tbx-grp"><span class="tbx-lbl" style="--eng:${SRC_HUE}">source</span>` +

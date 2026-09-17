@@ -3,13 +3,12 @@
 //
 // Builds dynamic device cards for each connected x-IMU3.  Each card shows:
 //   • axes alignment dropdown (hardware — sent to sensor)
-//   • raw Euler readout
-//   • polarity toggles + calibrated output
-//   • tare capture / clear
-//   • role dropdown (cursor / frame / gesture)
-//   • feed-to-sphere toggle
+//   • raw Euler readout, the axis map's flip buttons, calibrated output
+//   • the two calibration gestures (mount, heading) and their clear
+//   • role dropdown (cursor / camera / frame; gesture for the inertial stream)
 //
-// Discovery list at the top shows all visible devices with connect/disconnect.
+// Discovery list at the top shows all visible devices with connect. There is
+// no disconnect verb (docs/TODO.md 2026-09-16).
 // ============================================================================
 
 import { S, DEBUG } from './state.js';
@@ -880,7 +879,7 @@ function renderSelected() {
       <div class="set-row set-row--head">
         <div class="set-row-text">
           <span class="set-row-title">Axes</span>
-          <span class="set-row-desc">Raw is what the sensor sends. Calibrated is after mounting, heading and polarity — what drives the cursor. Flip an axis that turns the wrong way. + − − is the default, not a flip: the sensor counts pitch and yaw about its Z-up, the sphere about Y-up, and those two signs are the difference; a button is marked only when it differs from that.</span>
+          <span class="set-row-desc">Raw is what the sensor sends. Calibrated is after mounting, heading and the flips — what drives the cursor. Flip an axis that turns the wrong way. + − − is the default, not a flip: the sensor counts pitch and yaw about its Z-up, the sphere about Y-up, and those two signs are the difference; a button is marked only when it differs from that.</span>
         </div>
       </div>
       <!-- A small dial beside each number (Ek, 2026-09-09: "i should have a
@@ -890,7 +889,7 @@ function renderSelected() {
       <div class="set-table set-table--orient">
         <div class="set-table-head">
           <span>Axis</span><span>Maps to</span><span>Raw</span>
-          <span>Polarity</span><span>Calibrated</span>
+          <span>Flip</span><span>Calibrated</span>
         </div>
         <div class="set-table-row">
           <span>Roll</span><span class="js-axis-n">+X</span>

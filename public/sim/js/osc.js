@@ -7,10 +7,9 @@
 //   Electron  — electronBridge.onOSC (IPC from main process, UDP 7500)
 //   Browser   — { address, values } JSON over ws://localhost:8080
 //
-// The WebSocket port is a published interface, not a Max feature. proxy.js in
-// this repo (x-IMU3 UDP → WebSocket) is the implementation mubone maintains;
-// mubone-joycon-gui ships another, and the example patches in sandbox/max a
-// third. Nothing here knows which is on the other end.
+// The WebSocket port is a published interface. proxy.js in this repo (x-IMU3
+// UDP → WebSocket) is the implementation mubone maintains; mubone-joycon-gui
+// ships another. Nothing here knows which is on the other end.
 //
 // Hosted origins skip the WebSocket entirely — see _bridgeReachable() — so the
 // demo at mubone.org/sim has no OSC input at all, by design. With no relay
@@ -24,7 +23,6 @@ import {
 } from './imu-setup.js';
 import { updateGestureMorph } from './seed-morph.js';
 import { setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
-import { updatePlaybackControls } from './ui-presets.js';
 import { setMappingInput } from './sensor-mapping.js';
 
 // #105: multi-option controls accept either a bang (cycle to next mode) or a
@@ -38,8 +36,8 @@ function _bangOrStr(values) {
 
 // ── Release-edge guard ────────────────────────────────────────────────────────
 // Almost every trigger case below hardcodes 127 and throws the incoming value
-// away, so without this an explicit `0` — which is what a Max [toggle], [t 1 0]
-// or any controller that sends both edges emits on release — runs the action a
+// away, so without this an explicit `0` — which is what any controller that
+// sends both edges emits on release — runs the action a
 // SECOND time.  A latching toggle then cancels itself and looks broken; a mode
 // cycle skips a mode; /undo undoes two strokes.  The MIDI path has always had
 // this guard (a trigger action mapped to a CC ignores val === 0, and note-off
@@ -62,8 +60,8 @@ function _bangOrStr(values) {
 const _VALUED_TRIGGERS = new Set(['/cursor/scan', '/trigger/chop']);
 
 // The one bang address with no ACTIONS row, so the registry can't classify it.
-// Legacy compound toggle (camera mode + spatial panning in one message); kept
-// working from old Max patches, and it double-fired like everything else.
+// A compound toggle (camera mode + spatial panning in one message) that
+// double-fired like everything else.
 const _EXTRA_TRIGGERS = new Set(['/spatial/mode']);
 
 // ── Numeric-payload guard ─────────────────────────────────────────────────────
@@ -293,8 +291,10 @@ export function handleOSC(rawAddress, values) {
       }
       if (type === 'inertial' && values.length >= 6) {
         handleOSCSensorInertial(name, values);
-        // If this slot's inertial is gesture source, run downstream
-        const slot = getOrCreateSlot(name);
+        // If this slot's inertial is gesture source, run downstream. The slot
+        // is the device's (`osc-<name>`, imu-setup.js) — asking for the bare
+        // name minted a second, empty slot per OSC sensor (2026-09-16).
+        const slot = getOrCreateSlot('osc-' + name);
         if (slot.inertialRole === 'gesture') {
           updateGestureMorph();
         }
@@ -521,7 +521,7 @@ export function handleOSC(rawAddress, values) {
     case '/commit/blend':   S._dispatchAction?.('commit_blend', _bangOrStr(values));   break;
     case '/commit/tether':  S._dispatchAction?.('commit_tether', 127);  break;
     case '/commit/xfade':
-      S.seedXfade = clamp(values[0], 0, 1);
+      S.commitXfade = clamp(values[0], 0, 1);
       S._syncImprovUI?.();
       break;
     case '/commit/loop_fade_time':
@@ -530,18 +530,17 @@ export function handleOSC(rawAddress, values) {
         const nb = document.getElementById('loopFadeTimeNum');    if (nb) nb.value = S.loopFadeTimeMs < 1000 ? Math.round(S.loopFadeTimeMs) + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; }
       break;
     case '/commit/attack':
-      S.seedAttack = clamp(values[0], 0, 10);
-      { const sl = document.getElementById('seedAttackSlider');  if (sl) sl.value = S.seedAttack;
-        const nb = document.getElementById('seedAttackNum');     if (nb) nb.value = S.seedAttack < 1 ? (S.seedAttack * 1000).toFixed(0) + 'ms' : S.seedAttack.toFixed(1) + 's'; }
+      S.commitAttack = clamp(values[0], 0, 10);
+      { const sl = document.getElementById('seedAttackSlider');  if (sl) sl.value = S.commitAttack;
+        const nb = document.getElementById('seedAttackNum');     if (nb) nb.value = S.commitAttack < 1 ? (S.commitAttack * 1000).toFixed(0) + 'ms' : S.commitAttack.toFixed(1) + 's'; }
       break;
     case '/commit/release_time':
-      S.seedRelease = clamp(values[0], 0, 10);
-      { const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.seedRelease;
-        const nb = document.getElementById('seedReleaseNum');    if (nb) nb.value = S.seedRelease < 1 ? (S.seedRelease * 1000).toFixed(0) + 'ms' : S.seedRelease.toFixed(1) + 's'; }
+      S.commitRelease = clamp(values[0], 0, 10);
+      { const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.commitRelease;
+        const nb = document.getElementById('seedReleaseNum');    if (nb) nb.value = S.commitRelease < 1 ? (S.commitRelease * 1000).toFixed(0) + 'ms' : S.commitRelease.toFixed(1) + 's'; }
       break;
     case '/commit/slots':
       S.commitSlotCount = Math.max(1, Math.min(16, Math.round(values[0])));
-      S._syncCommitSlotCount?.();    // syncs slider + numbox
       (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))();
       break;
     case '/commit/overflow':  S._dispatchAction?.('commit_overflow', _bangOrStr(values));  break;
@@ -672,12 +671,13 @@ export function handleOSC(rawAddress, values) {
   }
 }
 
-// ── Outbound (browser → Max, or Electron → relay uplink) ─────────────────────
+// ── Outbound (Electron → relay uplink, or the browser's WebSocket) ───────────
 // Sends an OSC-style message out. Transport depends on runtime:
 //   Electron — IPC to main, which forwards over UDP 7501 to the relay.
 //              The relay rebroadcasts to its WS peers (e.g. the joycon GUI).
-//   Browser  — the same WebSocket we use for inbound; relay fans it out to
-//              every other peer. Silently dropped when the WS isn't open.
+//   Browser  — the same WebSocket we use for inbound. proxy.js drops what a
+//              browser sends it (only the relay it was written for fanned it
+//              out). Silently dropped when the WS isn't open.
 // Used by js/status-publisher.js to push /status/* messages so the joycon GUI
 // can drive LED/rumble feedback in response to app state.
 // Usage: sendOSC('/my/address', [1, 2, 3])

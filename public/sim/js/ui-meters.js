@@ -8,7 +8,7 @@ import {
   GATE_METER_TICK_MS, GATE_METER_ATTACK_MS, GATE_METER_RELEASE_MS,
   GATE_METER_PEAK_HOLD_MS, GATE_METER_PEAK_FALL_MS
 } from './state.js';
-import { dropSeqFromCursor, releaseCommit, clearAllCommits, updateCommitBanksUI, updateSeqBanksUI } from './ui-presets.js';
+import { dropSeqFromCursor, releaseCommit, updateCommitBanksUI } from './ui-presets.js';
 import { tickHandsfree } from './handsfree.js';
 import { readGateLoudness } from './audio-features.js';
 import { updateDryMonitorPanning, setDryMonitorGain, setDryMonitorMode, isDryMonitorDucked } from './audio.js';
@@ -255,8 +255,8 @@ export function setScanMuted(muted) {
   const changed = S.scanMuted !== muted;
   S.scanMuted = muted;
   // THE CAP IS THE ONE MUTE (2026-09-07). The cursor reads nothing when it is
-  // on — granular and hits alike. The gains below only gate the CURSOR bus,
-  // and a hit plays through the loop commit engine instead, so silencing it
+  // on — granular and triggers alike. The gains below only gate the CURSOR bus,
+  // and a trigger plays through the tape engine instead, so silencing it
   // is a separate call rather than a consequence; the trigger gate reads
   // `S.scanMuted` directly from here on. See trigger.js for why there is no
   // second flag any more.
@@ -383,28 +383,9 @@ export function initSeqMode() {
     });
   }
 
-  // Legacy compat — old button IDs still wired if present
-  const legacyModeBtn = document.getElementById('seqModeBtn');
-  if (legacyModeBtn) {
-    legacyModeBtn.addEventListener('click', () => {
-      S.seqModeEnabled = !S.seqModeEnabled;
-      S._syncCommitUI?.();
-    });
-  }
-
   // Panel action buttons
   document.getElementById('commitDropBtn')?.addEventListener('click', () => {
     dropSeqFromCursor();
-  });
-  document.getElementById('seqDropBtn')?.addEventListener('click', () => {
-    releaseCommit();  // resume nearest paused loop
-  });
-  document.getElementById('seqPickupRemoveBtn')?.addEventListener('click', () => {
-    releaseCommit();  // lift nearest loop
-  });
-  // Clear all — unified (both old and new IDs)
-  document.getElementById('seqClearBtn')?.addEventListener('click', () => {
-    clearAllCommits();
   });
   // commitClearBtn: click handler wired in inline script
   // Unified release button
@@ -413,7 +394,7 @@ export function initSeqMode() {
   });
 
   // ── Seq record params (speed, volume, direction for next loop) ───────────
-  // These controls always edit S.seqNextParams. Recorded loops inherit these
+  // These controls always edit S.commitLoopParams. Recorded loops inherit these
   // values at creation time and can't be modified after.
   const seqControlsEl = document.getElementById('seqControls');
   const seqVolSlider  = document.getElementById('seqVolumeSlider');
@@ -423,7 +404,7 @@ export function initSeqMode() {
   if (seqVolSlider) {
     seqVolSlider.addEventListener('input', () => {
       const v = parseFloat(seqVolSlider.value);
-      S.seqNextParams.volume = v;
+      S.commitLoopParams.volume = v;
       if (seqVolNum) seqVolNum.value = Math.round(v * 100) + '%';
     });
   }
@@ -431,69 +412,14 @@ export function initSeqMode() {
   if (seqSpdSlider) {
     seqSpdSlider.addEventListener('input', () => {
       const spd = parseFloat(seqSpdSlider.value);
-      S.seqNextParams.speed = spd;
+      S.commitLoopParams.speed = spd;
       if (seqSpdNum) seqSpdNum.value = spd.toFixed(2) + '×';
     });
   }
 
-  // Show/hide the controls based on seq mode toggle
-  // Controls are always visible — no need for a sync toggle.
-  S._syncSeqControls = function syncSeqControls() {};
-
-  // ── Commit slot count slider + editable numbox (unified) ──
-  // The range input keeps the legacy `commitSlotCountSelect` id so every
-  // other call site (main.js change listener, osc.js, midi.js, patch-table
-  // recall) that does `sel.value = String(...)` still works on the slider.
-  // The numbox stays in sync live during drag, and typing a value commits
-  // on Enter/blur (clamped 1–16). Both are refreshable from external
-  // state changes via S._syncCommitSlotCount().
-  const commitSlotSelect = document.getElementById('commitSlotCountSelect');
-  const commitSlotNum    = document.getElementById('commitSlotCountNum');
-
-  function _clampSlotCount(v) {
-    const n = parseInt(v, 10);
-    if (!Number.isFinite(n)) return S.commitSlotCount;
-    return Math.max(1, Math.min(16, n));
-  }
-  function _applySlotCount(v) {
-    const n = _clampSlotCount(v);
-    S.commitSlotCount = n;
-    if (commitSlotSelect) commitSlotSelect.value = String(n);
-    if (commitSlotNum)    commitSlotNum.value    = String(n);
-    S._syncCommitUI?.();
-  }
-  // Exposed for external callers (osc.js, midi.js, param-registry.js) that
-  // used to do `sel.value = String(S.commitSlotCount)` — a single call
-  // now updates both slider and numbox.
-  S._syncCommitSlotCount = () => {
-    if (commitSlotSelect) commitSlotSelect.value = String(S.commitSlotCount);
-    if (commitSlotNum)    commitSlotNum.value    = String(S.commitSlotCount);
-  };
-
-  if (commitSlotSelect) {
-    commitSlotSelect.value = S.commitSlotCount;
-    // Live numbox update during drag so the readout tracks the slider.
-    commitSlotSelect.addEventListener('input', () => {
-      if (commitSlotNum) commitSlotNum.value = commitSlotSelect.value;
-    });
-    // Commit on release — pushes state + fires downstream sync.
-    commitSlotSelect.addEventListener('change', () => {
-      _applySlotCount(commitSlotSelect.value);
-    });
-  }
-
-  if (commitSlotNum) {
-    commitSlotNum.value = S.commitSlotCount;
-    const commit = () => { _applySlotCount(commitSlotNum.value); };
-    commitSlotNum.addEventListener('blur', commit);
-    commitSlotNum.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { commit(); commitSlotNum.blur(); }
-      else if (e.key === 'Escape') {
-        commitSlotNum.value = String(S.commitSlotCount);
-        commitSlotNum.blur();
-      }
-    });
-  }
+  // The pin slot count has ONE door, the pinned rail's max (`#lyrSlotsMax`,
+  // ui-pins.js). The Settings slider + numbox that stood here left the markup
+  // long ago; its sync hook was a no-op every caller optional-chained.
 
   // ── Commit overflow seg (unified) ──
   const commitOverflowSeg = document.getElementById('commitOverflowSeg');
@@ -503,6 +429,7 @@ export function initSeqMode() {
         S.commitOverflow = btn.dataset.overflow;
         commitOverflowSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
+        S._syncSeqButtonStates?.();
       });
     });
   }
@@ -512,11 +439,11 @@ export function initSeqMode() {
     // Commit mode + lock
     S._syncCommitUI?.();
     // Volume slider + numbox
-    if (seqVolSlider) seqVolSlider.value = S.seqNextParams.volume;
-    if (seqVolNum)    seqVolNum.value    = Math.round(S.seqNextParams.volume * 100) + '%';
+    if (seqVolSlider) seqVolSlider.value = S.commitLoopParams.volume;
+    if (seqVolNum)    seqVolNum.value    = Math.round(S.commitLoopParams.volume * 100) + '%';
     // Speed slider + numbox
-    if (seqSpdSlider) seqSpdSlider.value = S.seqNextParams.speed;
-    if (seqSpdNum)    seqSpdNum.value    = S.seqNextParams.speed.toFixed(2) + '×';
+    if (seqSpdSlider) seqSpdSlider.value = S.commitLoopParams.speed;
+    if (seqSpdNum)    seqSpdNum.value    = S.commitLoopParams.speed.toFixed(2) + '×';
     // Commit slot count select
     if (commitSlotSelect) commitSlotSelect.value = S.commitSlotCount;
   };

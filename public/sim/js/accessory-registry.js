@@ -24,7 +24,7 @@
 // outLo / outHi.  It sits in the normalised 0–1 domain, before the ×127, so it
 // works against any destination without knowing what that destination is.
 //
-// Initialised from main.js alongside the UI in ui-accessory.js.  Also exposed
+// Initialised from main.js (its table UI was sunset 2026-08-28).  Also exposed
 // on `window.acc` for console work — every table control has an equivalent
 // method (setRole, setAction, armCalibration, dump, watch), addressed by PAD
 // NUMBER 1–8 to match the silkscreen.
@@ -72,16 +72,6 @@ let _watchdog = null;
 let _inited   = false;
 
 const _rateStamps = [];
-
-// Presence transitions (data starts / goes stale), for status chrome that has
-// to stay right while the modal is closed. Rides the watchdog that is already
-// running rather than adding a second always-on timer near the grain
-// scheduler — it fires on the edge only, so an idle app costs one boolean
-// compare per 250 ms tick.
-const _presenceListeners = new Set();
-function _notifyPresence(live) {
-  for (const cb of _presenceListeners) { try { cb(live); } catch (_) {} }
-}
 
 function makeChannel(i) {
   return {
@@ -165,6 +155,9 @@ function handleAccessoryData(dev, fields) {
   _lastDev = dev;
   _lastAt  = performance.now();
   _rateStamps.push(_lastAt);
+  // Trimmed here, at 100 Hz, not only when something reads the rate — nothing
+  // in the app does, so the array grew for the whole session (2026-09-16).
+  while (_rateStamps.length && _lastAt - _rateStamps[0] > RATE_WINDOW_MS) _rateStamps.shift();
 
   // A8-ONLY: fields are volts, one per channel, in pad order 1–8.
   const n = Math.min(CHANNEL_COUNT, fields.length);
@@ -263,11 +256,9 @@ function tickWatchdog() {
       }
     }
     DEBUG && console.log('[accessory] data stale — held buttons released');
-    _notifyPresence(false);
   } else if (!stale && _wasStale) {
     _wasStale = false;
     DEBUG && console.log('[accessory] data resumed');
-    _notifyPresence(true);
   }
 }
 

@@ -12,7 +12,7 @@ import { renderMeters, tickMeters, rebuildMainOutputMeters,
          renderSetMeters, setMeterSources, clearSetMeters,
          startSetMeters, stopSetMeters, initSetGateMeter } from './ui-meters.js';
 import { armHandsfree, disarmHandsfree, updateHPFFreq } from './handsfree.js';
-import { getCursorLonLat, screenToLonLat, spherePointInto, cameraRotateInto } from './sphere.js';
+import { cursorLonLatNow, spherePointInto, cameraRotateInto } from './sphere.js';
 
 // ── RtAudio input meter worklet (Electron only) ───────────────────────────────
 // In Electron, getUserMedia is capped at 2ch by the browser. Instead, we open an
@@ -429,10 +429,6 @@ function renderSpeakerRing() {
     role="img" aria-label="${buses.length} speakers at ${angles.map(a => a.toFixed(0) + '°').join(', ')}">${g}</svg>`;
 }
 
-/** The ring alone, for a test that wants to draw a layout the machine does
- *  not have (scripts + the console). Not used by the app. */
-export const __testRenderSpeakerRing = () => renderSpeakerRing();
-
 // Render output meter bars using S.speakerAnalysers (set by audio.js initSpeakerBuses).
 // Labels: house buses by angle, then "SML"/"SMR" for the stereo mixdown pair.
 function renderOutputMeters() {
@@ -546,19 +542,6 @@ function stopMetering() {
   stopSetMeters();
 }
 
-// ── Angle helpers ─────────────────────────────────────────────────────────────
-function angleToName(deg) {
-  const d = ((deg % 360) + 360) % 360;
-  if (d < 15 || d >= 345)  return 'front';
-  if (d < 75)  return 'front-R';
-  if (d < 105) return 'right';
-  if (d < 165) return 'rear-R';
-  if (d < 195) return 'rear';
-  if (d < 255) return 'rear-L';
-  if (d < 285) return 'left';
-  if (d < 345) return 'front-L';
-  return `${d}°`;
-}
 
 // ── THE SIGNAL PATH, DRAWN (Ek, 2026-09-14) ─────────────────────────────────
 // "just include a simple diagram of the path and how it sums like an
@@ -811,18 +794,20 @@ function channelTrimDb(ch) { return as.inputGains[String(ch)] ?? 0; }
 
 /** Push the trim × send of every channel into its routing gain. */
 function applyInputRouting() {
-  if (!_rtInputRoutingGains?.length) return;
   const sends = inputSends();
+  // Derived first, gains second: the choice is the truth before the stream is
+  // up (the modal's dropdown at boot, a private instance with no input).
+  S.mainInputChannel = sends.length > 1 ? 'stereo' : sends[0];
+  if (!_rtInputRoutingGains?.length) return;
   const t = S.audioCtx?.currentTime ?? 0;
   _rtInputRoutingGains.forEach((g, i) => {
     const v = _rtInputSilenced || !sends.includes(i) ? 0 : dbToLinear(channelTrimDb(i));
     g.gain.setTargetAtTime(v, t, 0.01);
   });
-  // The one channel the rest of the app still asks about (the meter
-  // highlight, ui-source's label) is the FIRST one sent. Derived, never set:
-  // two sources for "which channel" is how the dropdown and the graph used to
-  // disagree.
-  S.mainInputChannel = sends.length > 1 ? 'stereo' : sends[0];
+  // `mainInputChannel` — the one channel the rest of the app still asks about
+  // (the meter highlight, ui-source's label) — is the FIRST one sent, derived
+  // above and never set: two sources for "which channel" is how the dropdown
+  // and the graph used to disagree.
 }
 
 function setChannelTrim(ch, db) {
@@ -872,13 +857,7 @@ function saveCustomSpeakerAngles() {
 const _capW = new Float32Array(3);
 const _capC = new Float32Array(3);
 function getCursorAzDeg() {
-  const { lon, lat } = S.cursorQ
-    ? getCursorLonLat()                          // sensor quaternion
-    : (S.mouseInCanvas || S.altLocked)
-      ? screenToLonLat(                          // mouse / steer / surface cursor
-          S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
-          S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY)
-      : getCursorLonLat();                       // fallback (camQ forward)
+  const { lon, lat } = cursorLonLatNow();
   spherePointInto(lon, lat, _capW);
   const wx = _capW[0], wy = _capW[1], wz = _capW[2];
   let cx, cz;
@@ -963,103 +942,6 @@ function applyOutputMapping() {
   setStatus('asOutputStatus', 'ok', 'routing updated');
 }
 
-
-// ── Start audio ───────────────────────────────────────────────────────────────
-async function startAudio() {
-  const startBtn = document.getElementById('asStartBtn');
-  if (as.started) { stopAudio(); return; }
-
-  startBtn.textContent = 'starting…';
-  startBtn.disabled = true;
-
-  try {
-    const channel = document.getElementById('asInputChannel').value;
-
-    // Prefer the shared stream already opened by the mic button in main app.
-    // S.audioCtx and S.inputStream are set by audio.js when mic is enabled.
-    // In Electron, RtAudio is the ONLY input path — never getUserMedia here
-    // (R8, 2026-09-06). This used to gate on `_rtAudioInputListening`, which
-    // is set asynchronously after boot, so a start that ran before the RtAudio
-    // input landed opened a second client on the microphone.
-    // Falls back to its own getUserMedia only when running standalone in browser.
-    if (!S.inputStream && !window.electronBridge?.isElectron) {
-      S.inputStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount:     { ideal: 2 },
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl:  false,
-          sampleRate:       { ideal: as.sampleRate },
-        }
-      });
-      as.ownStream = true;
-    }
-
-    if (!S.audioCtx) {
-      S.audioCtx = new AudioContext({ sampleRate: as.sampleRate });
-      as.ownCtx  = true;
-    }
-
-    buildInputGraph(channel);
-
-    // Render meter bars for the number of channels just opened
-    renderInputMeters();
-
-    as.started = true;
-    startBtn.textContent = 'stop audio';
-    startBtn.disabled = false;
-
-    const lbl = channel === 'stereo' ? 'stereo' : `ch ${parseInt(channel) + 1}`;
-    setStatus('asInputStatus',  'ok', `active — ${lbl} — ${S.audioCtx.sampleRate} Hz`);
-    setStatus('asOutputStatus', 'ok', 'monitoring via system audio');
-    startMetering();
-
-    // Sync the main screen mic button — audio is now active regardless of how it was started
-    S.micPermissionGranted = true;
-    const micBtn = document.getElementById('micEnableBtn');
-    if (micBtn) {
-      setMicBtnLabel('mic ready');
-      micBtn.classList.remove('mic-denied');
-      micBtn.classList.add('mic-ready');
-      micBtn.disabled = false;
-    }
-
-  } catch(e) {
-    startBtn.textContent = 'start audio';
-    startBtn.disabled = false;
-    setStatus('asInputStatus', 'error', `error: ${e.message}`);
-  }
-}
-
-function stopAudio() {
-  stopMetering();
-  try { if (as.sourceNode)   as.sourceNode.disconnect();   } catch(_) {}
-  try { if (as.splitterNode) as.splitterNode.disconnect(); } catch(_) {}
-  try { if (as.gainNodeIn)   as.gainNodeIn.disconnect();   } catch(_) {}
-
-  // Only close what we opened — don't touch the shared S.audioCtx/S.inputStream
-  if (as.ownStream && S.inputStream) {
-    S.inputStream.getTracks().forEach(t => t.stop());
-    S.inputStream = null;
-    as.ownStream  = false;
-  }
-  if (as.ownCtx && S.audioCtx) {
-    S.audioCtx.close();
-    S.audioCtx = null;
-    as.ownCtx  = false;
-  }
-
-  as.sourceNode = as.splitterNode = as.gainNodeIn = as.analyserIn = null;
-  as.inputAnalysers = [];
-  as._meterGainNodes.forEach(g => { try { g.disconnect(); } catch(_) {} });
-  as._meterGainNodes = [];
-  as.started = false;
-
-  const startBtn = document.getElementById('asStartBtn');
-  if (startBtn) startBtn.textContent = 'start audio';
-  setStatus('asInputStatus',  'idle', 'no input active');
-  setStatus('asOutputStatus', 'idle', 'no output active');
-}
 
 // ── Latency display ───────────────────────────────────────────────────────────
 // What js/latency.js knows: in + out = the round trip, and where the figure
@@ -1546,8 +1428,6 @@ async function applyInputDevice() {
 
     // Reset UI
     renderSetMeters('asInputMeters', ['1']);  // minimal placeholder meter
-    const mapTable = document.getElementById('asInputMappingTable');
-    if (mapTable) mapTable.style.display = 'none';
     setStatus('asInputStatus', 'idle', 'no input device');
 
     const micBtn = document.getElementById('micEnableBtn');
@@ -1827,16 +1707,8 @@ async function applyOutputDevice() {
 // calibration, dark mode, the seed settings, the active patch index and a
 // sensor calibration — so "reset audio settings" would silently have reset the
 // theme and the particle sizing too. Split 2026-08-01 so the reset categories
-// in js/storage-registry.js mean what they say. One-shot migration lives in
-// loadAudioDefaults(); after it runs the old blob holds audio fields only.
-//
-// Two fields left persistence entirely in that split:
-//   darkMode   — ui-viz.js already owned `mubone_darkMode`, and both wrote it.
-//                Load order decided which won. ui-viz is now the sole owner.
-//   sensor3Cal — nothing in the app ever assigned to it; only the separate
-//                gesture-window.html read it, and both left on 2026-09-05.
-//                It stays in SPLIT_DROPPED so an old blob carrying it is
-//                dropped rather than moved.
+// in js/storage-registry.js mean what they say. The blob holds audio fields
+// only (the one-shot split that made it so ran on 2026-08-01 and is gone).
 const LS_AUDIO_DEFAULTS = 'mubone_audio_defaults';
 const LS_SEED_SETTINGS  = 'mubone_seed_settings';
 const LS_VIZ_CAL        = 'mubone_viz_calibration';
@@ -1906,12 +1778,12 @@ function _buildPayloads() {
 
     // Seed / loop playback setup — persisted as rig setup, not live performance
     seed: {
-      seedMode:        S.seedMode ?? 'all',
-      seedTether:      S.seedTether ?? false,
-      seedXfade:       S.seedXfade ?? 0.5,
-      seedAttack:      S.seedAttack ?? 0,
-      seedRelease:     S.seedRelease ?? 0,
-      seedLoopMode:    S.seedLoopMode ?? 'pingpong',
+      commitPlayback:      S.commitPlayback ?? 'all',
+      commitTether:        S.commitTether ?? false,
+      commitXfade:         S.commitXfade ?? 0.5,
+      commitAttack:        S.commitAttack ?? 0,
+      commitRelease:       S.commitRelease ?? 0,
+      commitCloudLoopMode: S.commitCloudLoopMode ?? 'pingpong',
       loopReleaseMode: S.loopReleaseMode ?? 'fade',
       loopFadeTimeMs:  S.loopFadeTimeMs ?? 15,
       // Trigger playback params. Live performance state (a session carries them
@@ -1985,104 +1857,13 @@ export function startAutoSave() {
   setInterval(_checkAndSave, 2000);
 }
 
-// ── Pre-split blob normalisation (2026-08-01) ───────────────────────────────
-// The old single blob carried viz calibration, seed settings and the active
-// patch index; those now live in their own keys so the reset categories are
-// honest. Read old → write new → strip from old.
-//
-// darkMode and sensor3Cal are dropped rather than moved — see the note above
-// LS_AUDIO_DEFAULTS. darkMode already had a home in ui-viz.js, and the value
-// here could only ever be a duplicate of it or the state.js default.
-//
-// This runs against an abstract store rather than localStorage directly,
-// because it has TWO callers with the same problem:
-//
-//   1. loadAudioDefaults() — migrating this machine's own localStorage, once.
-//   2. applySettingsPayload() in ui-export.js — normalising a v1–v3 setup or
-//      session file on the way in. A pre-v4 file carries the grab-bag blob and
-//      none of the successor keys, so it MUST be reshaped before its keys are
-//      written. Doing it afterwards silently lost the imported seed settings,
-//      viz calibration and active patch on any machine that had already
-//      migrated: the destination key existed, so `overwrite:false` skipped the
-//      write while the strip still removed the fields from the blob.
-//
-// `overwrite` is the difference between them. Migrating in place must never
-// clobber already-split data (a second run would wipe it); an import is an
-// explicit instruction to take the file's values, so it overwrites.
-const SPLIT_MOVED = {
-  seed: ['seedMode', 'seedTether', 'seedXfade', 'seedAttack', 'seedRelease',
-         'seedLoopMode', 'loopReleaseMode', 'loopFadeTimeMs',
-         // NOTE: triggerParams is deliberately absent. This list
-         // is what the pre-v4 grab-bag blob held; those fields postdate the
-         // split and can never appear in one, so listing them would describe
-         // history that didn't happen.
-         // legacy aliases _loadSeedSettings still honours
-         'seedNearestAlways', 'seedSnapFade', 'seedCrossfade'],
-  viz:  ['vizMinSize', 'vizMaxSize', 'vizRmsMin', 'vizRmsMax',
-         'radiusFadeEnabled', 'radiusFadeCurve', 'cameraMode'],
-};
-const SPLIT_DROPPED = ['darkMode', 'vizMode', 'sensor3Cal', 'wandCal', 'fovDeg'];
-
-/** localStorage as a `{get,set,has}` store, for splitLegacyAudioBlob. */
-const LS_STORE = {
-  get: k => { try { return localStorage.getItem(k); } catch (_) { return null; } },
-  set: (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} },
-  has: k => { try { return localStorage.getItem(k) !== null; } catch (_) { return false; } },
-};
-
-/** A plain `{key: rawString}` map (an import payload) as the same store. */
-export function objectStore(obj) {
-  return {
-    get: k => (k in obj ? obj[k] : null),
-    set: (k, v) => { obj[k] = v; },
-    has: k => k in obj && obj[k] != null,
-  };
-}
-
-/**
- * Reshape a pre-v4 `mubone_audio_defaults` blob in `store` into the four keys
- * it was split into. No-op when the blob is absent or already split.
- * Returns the number of fields moved or dropped.
- */
-export function splitLegacyAudioBlob(store, { overwrite = false } = {}) {
-  let d;
-  try {
-    const raw = store.get(LS_AUDIO_DEFAULTS);
-    if (!raw) return 0;
-    d = JSON.parse(raw);
-  } catch (_) { return 0; }
-  if (!d || typeof d !== 'object') return 0;
-
-  const DEST = { seed: LS_SEED_SETTINGS, viz: LS_VIZ_CAL };
-  let touched = 0;
-
-  for (const [group, fields] of Object.entries(SPLIT_MOVED)) {
-    const destKey = DEST[group];
-    const carried = {};
-    for (const f of fields) if (f in d) { carried[f] = d[f]; touched++; }
-    if (!Object.keys(carried).length) continue;
-    if (overwrite || !store.has(destKey)) store.set(destKey, JSON.stringify(carried));
-    for (const f of fields) delete d[f];
-  }
-
-  // `activePresetIndex` pointed into the patch bank, sunset 2026-09-03: dropped.
-  if ('activePresetIndex' in d) { delete d.activePresetIndex; touched++; }
-
-  for (const f of SPLIT_DROPPED) if (f in d) { delete d[f]; touched++; }
-
-  if (touched) {
-    store.set(LS_AUDIO_DEFAULTS, JSON.stringify(d));
-    console.log(`[defaults] split ${touched} field(s) out of the legacy audio blob`);
-  }
-  return touched;
-}
+// The pre-split blob normalisation (2026-08-01: the one grab-bag blob split
+// into audio / seed / viz keys, with `splitLegacyAudioBlob` also reshaping a
+// pre-v4 setup file on import) was deleted 2026-09-16 — every rig and every
+// file Ek keeps postdate it.
 
 export function loadAudioDefaults() {
   try {
-    // Split first, then load — so the three loaders below see the successor
-    // keys whether they were already there or created a moment ago. In-place
-    // migration never overwrites: a second run would wipe split data.
-    splitLegacyAudioBlob(LS_STORE);
     // These three keys stand alone — a reset of `audio` wipes the blob but must
     // leave viz calibration and the active patch intact, so they can't sit
     // behind an early return on the blob's absence.
@@ -2194,16 +1975,21 @@ function _loadSeedSettings() {
     const raw = localStorage.getItem(LS_SEED_SETTINGS);
     if (!raw) return;
     const d = JSON.parse(raw);
-    if (typeof d.seedMode === 'string')    S.seedMode   = d.seedMode;
-    if (typeof d.seedTether === 'boolean') S.seedTether = d.seedTether;
-    else if (typeof d.seedNearestAlways === 'boolean') S.seedTether = d.seedNearestAlways;
-    if (typeof d.seedXfade === 'number')         S.seedXfade = d.seedXfade;
-    else if (typeof d.seedSnapFade === 'number') S.seedXfade = d.seedSnapFade;
-    else if (typeof d.seedCrossfade === 'number') S.seedXfade = d.seedCrossfade;
-    if (typeof d.seedAttack === 'number')  S.seedAttack  = d.seedAttack;
-    if (typeof d.seedRelease === 'number') S.seedRelease = d.seedRelease;
-    if (typeof d.seedLoopMode === 'string' && ['pingpong', 'forward'].includes(d.seedLoopMode))
-      S.seedLoopMode = d.seedLoopMode;
+    // One-shot rename (2026-09-16): the keys said `seed*` after the fields
+    // they persist had been `commit*` for weeks. Read the old name, write the
+    // new, delete the old — once, on the next save.
+    const RENAMED = { seedMode: 'commitPlayback', seedTether: 'commitTether', seedXfade: 'commitXfade',
+                      seedAttack: 'commitAttack', seedRelease: 'commitRelease', seedLoopMode: 'commitCloudLoopMode' };
+    let renamed = 0;
+    for (const [old, now] of Object.entries(RENAMED)) if (old in d) { if (!(now in d)) d[now] = d[old]; delete d[old]; renamed++; }
+    if (renamed) { try { localStorage.setItem(LS_SEED_SETTINGS, JSON.stringify(d)); } catch (_) {} }
+    if (typeof d.commitPlayback === 'string') S.commitPlayback = d.commitPlayback;
+    if (typeof d.commitTether === 'boolean')  S.commitTether   = d.commitTether;
+    if (typeof d.commitXfade === 'number')    S.commitXfade    = d.commitXfade;
+    if (typeof d.commitAttack === 'number')   S.commitAttack   = d.commitAttack;
+    if (typeof d.commitRelease === 'number')  S.commitRelease  = d.commitRelease;
+    if (typeof d.commitCloudLoopMode === 'string' && ['pingpong', 'forward'].includes(d.commitCloudLoopMode))
+      S.commitCloudLoopMode = d.commitCloudLoopMode;
     if (typeof d.loopReleaseMode === 'string' && ['fade', 'play-to-end'].includes(d.loopReleaseMode))
       S.loopReleaseMode = d.loopReleaseMode;
     if (typeof d.loopFadeTimeMs === 'number') S.loopFadeTimeMs = Math.max(0, Math.min(2000, d.loopFadeTimeMs));
@@ -2244,12 +2030,8 @@ function _loadVizCalibration() {
     // carry them; they are ignored rather than migrated.
     if (typeof d.radiusFadeEnabled === 'boolean') S.radiusFadeEnabled = d.radiusFadeEnabled;
     if (typeof d.radiusFadeCurve   === 'number')  S.radiusFadeCurve   = d.radiusFadeCurve;
-    // One-shot rename migration (2026-08-24): 'pull' was the mouse-offset
-    // ROTATION mode, and the word now belongs to camera distance. Anything
-    // saved or exported before the rename says 'pull' and means 'steer'.
-    const mode = d.cameraMode === 'pull' ? 'steer' : d.cameraMode;
-    if (typeof mode === 'string' && ['steer', 'surface', 'sensor'].includes(mode))
-      S.cameraMode = mode;
+    if (typeof d.cameraMode === 'string' && ['steer', 'surface', 'sensor'].includes(d.cameraMode))
+      S.cameraMode = d.cameraMode;
     // camPull deliberately NOT restored (2026-08-28): the outside view is
     // retired — one centred, azimuthal-equidistant view. Old calibrations
     // carrying a pull (this is how every rig booted at 1.2 without anyone
@@ -2299,8 +2081,6 @@ export async function activateSavedInputDevice(nCh, dev = null) {
   // the default ch 1, and the line above then moves the modal past it without
   // an event. Re-sync or the panel boots showing the wrong channel.
   S._syncAudioPanelChannels?.();
-  const mainSel = document.getElementById('asMainInputSel');
-  if (mainSel) mainSel.value = String(selCh);
   rewireRtAudioRecordingChannel(selCh, nCh);
 
   // Render meters + mapping table (may be invisible until modal opens, but DOM ready)
@@ -2767,9 +2547,13 @@ export function initAudioSettings() {
     const isStereo = val === 'stereo';
     const chIndex  = isStereo ? 0 : (parseInt(val, 10) || 0);
 
-    // Keep S.mainInputChannel in sync so main UI meters and mapping table
-    // reflect the user's actual selection (was missing — caused stale highlight)
-    S.mainInputChannel = isStereo ? 'stereo' : chIndex;
+    // The dropdown is a DOOR onto the send set (the strip's switches are the
+    // other): a choice here IS the set, and `mainInputChannel` is derived from
+    // it by applyInputRouting. Until 2026-09-17 this wrote `mainInputChannel`
+    // directly and left the set alone (the rewire seeds it only when empty,
+    // 2026-09-14), so the derived value overwrote the choice a moment later —
+    // "stereo" in the modal never reached the engine (cc-mirror-audit).
+    S.inputSends = isStereo ? [0, 1] : [chIndex];
 
     // The per-channel trim lives on that channel's own row now and is
     // applied by applyInputRouting — changing which channel is sent must not
@@ -2779,11 +2563,6 @@ export function initAudioSettings() {
     // mirror listener never runs — push channel + gain into it explicitly.
     S._syncAudioPanelChannels?.();
     S._syncAudioPanelLevels?.();
-
-    // The input-mapping table's own dropdown is a second view of this value;
-    // keep it honest when the change came from anywhere else (panel, restore).
-    const mainSel = document.getElementById('asMainInputSel');
-    if (mainSel && mainSel.value !== val) mainSel.value = val;
 
     const highlight = isStereo ? [0, 1] : chIndex;
 
@@ -2849,7 +2628,6 @@ export function initAudioSettings() {
       S.headphoneRouting = null;
       await initSpeakerBuses(totalCh);
       renderOutputMeters();
-    renderOutputMeters();
     }
   });
 

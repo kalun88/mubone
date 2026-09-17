@@ -155,8 +155,11 @@ async function run(rig) {
 
     modal.value = 'stereo'; modal.dispatchEvent(new Event('change', { bubbles: true }));
     checks.push(['stereo mirrors to panel', panel.value === 'stereo', panel.value]);
-    checks.push(['stereo reaches S.mainInputChannel', S.mainInputChannel === 'stereo',
-                 String(S.mainInputChannel)]);
+    // The choice reaches the SEND SET, which the channel strip owns (2026-09-14);
+    // `mainInputChannel` is derived from it, clamped to the device's channels —
+    // and this instance has no input device, so it cannot read 'stereo' here.
+    checks.push(['stereo reaches the send set', JSON.stringify(S.inputSends) === '[0,1]',
+                 JSON.stringify(S.inputSends)]);
     return { checks };
   });
 

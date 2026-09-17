@@ -1,5 +1,7 @@
 # OSC Audit — 2026-08-11
 
+> **2026-09-16:** the address tables below predate several sunsets. `/trace`, `/erase/toggle`, `/app/darkmode`, `/morph/sticky`, `/commit/mode`, `/camera/mode`, `/paint/N` and `/preset/N` are no longer in the dispatch `switch`; `README.md` is the live table, `AUDIT_ONLY=wiring node scripts/osc-audit.js` the proof. The edge-semantics findings (O1–O4) still describe the code.
+
 > **Status: CURRENT** — audit of the inbound OSC surface (`js/osc.js` dispatch + the `ACTIONS` table in `js/midi.js`), run against 1.12 alpha ahead of driving mubone from Max. **Nothing here is fixed yet** — O1–O6 are findings with proposed fixes, pending Ek's decisions. Verification harness: `scripts/osc-audit.js` (new).
 >
 > **Headline: the wiring is clean, the *edge semantics* are not.** Every address mubone advertises reaches a handler, and every handler reaches a real function — there is no dead address anywhere in the surface. But 39 of the 106 addresses ignore the value you send and fire on both edges, and 38 of them write `NaN` into `S` if you send a bang instead of a number. Both are silent. Both are reachable from an ordinary Max `[toggle]`.

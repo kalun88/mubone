@@ -25,6 +25,7 @@
 // browser demo (through a Blob) exactly as it does in Electron (through the file
 // IPC in electron-preload.js, which nothing else in the app calls).
 
+import { makeTake, takeFromAudioBuffer } from './take.js';
 const TEXT = new TextEncoder();
 
 export const MANIFEST_NAME = 'manifest.json';
@@ -273,8 +274,13 @@ async function readMember(source, e, name) {
 
 const WAV_HEADER = 44;
 
+// A member is written from a TAKE (js/take.js) or from a pinned loop's region,
+// which is an AudioBuffer because a source node plays it (buildLoopPayload).
+// Both are mono; this is the one place the two shapes meet.
+const samplesOf = (buf) => buf.data ?? buf.getChannelData(0);
+
 function wavByteLength(buf) {
-  return WAV_HEADER + buf.length * buf.numberOfChannels * 4;
+  return WAV_HEADER + buf.length * 4;
 }
 
 function wavHeader(numCh, frames, sampleRate) {
@@ -298,29 +304,15 @@ function wavHeader(numCh, frames, sampleRate) {
 // at ~1 MB per channel rather than the whole take.
 const WAV_CHUNK_FRAMES = 1 << 18;
 
-/** Header + interleaved float32 data, a chunk at a time. */
+/** Header + float32 data, a chunk at a time. The material is mono, so the
+ *  chunks are the buffer's own bytes: no interleave and no copy. */
 function* wavChunks(buf) {
-  const numCh  = buf.numberOfChannels;
   const frames = buf.length;
-  yield wavHeader(numCh, frames, buf.sampleRate);
-  const chans = [];
-  for (let ch = 0; ch < numCh; ch++) chans.push(buf.getChannelData(ch));
-  if (numCh === 1) {
-    // The common case: the channel's own bytes, no interleave and no copy.
-    const src = chans[0];
-    for (let i = 0; i < frames; i += WAV_CHUNK_FRAMES) {
-      const n = Math.min(WAV_CHUNK_FRAMES, frames - i);
-      yield new Uint8Array(src.buffer, src.byteOffset + i * 4, n * 4);
-    }
-    return;
-  }
-  const scratch = new Float32Array(WAV_CHUNK_FRAMES * numCh);
+  yield wavHeader(1, frames, buf.sampleRate);
+  const src = samplesOf(buf);
   for (let i = 0; i < frames; i += WAV_CHUNK_FRAMES) {
     const n = Math.min(WAV_CHUNK_FRAMES, frames - i);
-    for (let f = 0; f < n; f++) {
-      for (let ch = 0; ch < numCh; ch++) scratch[f * numCh + ch] = chans[ch][i + f];
-    }
-    yield new Uint8Array(scratch.buffer, 0, n * numCh * 4);
+    yield new Uint8Array(src.buffer, src.byteOffset + i * 4, n * 4);
   }
 }
 
@@ -366,17 +358,16 @@ function parseFloatWav(bytes) {
 
 function hashBuffer(buf) {
   let h1 = 0x811c9dc5 | 0, h2 = 0x01000193 | 0;
-  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
-    const words = new Uint32Array(buf.getChannelData(ch).buffer, buf.getChannelData(ch).byteOffset, buf.length);
-    for (let i = 0; i < words.length; i++) {
-      const w = words[i];
-      h1 = Math.imul(h1 ^ w, 0x01000193);
-      h2 = Math.imul(h2 + w, 0x85ebca6b) ^ (h1 >>> 15);
-    }
-    h1 = Math.imul(h1 ^ ch, 0x01000193);
+  const d = samplesOf(buf);
+  const words = new Uint32Array(d.buffer, d.byteOffset, buf.length);
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    h1 = Math.imul(h1 ^ w, 0x01000193);
+    h2 = Math.imul(h2 + w, 0x85ebca6b) ^ (h1 >>> 15);
   }
+  h1 = Math.imul(h1, 0x01000193);
   const hex = (n) => (n >>> 0).toString(16).padStart(8, '0');
-  return `${hex(h1)}${hex(h2)}-${buf.length}-${buf.numberOfChannels}`;
+  return `${hex(h1)}${hex(h2)}-${buf.length}-1`;
 }
 
 /**
@@ -386,8 +377,8 @@ function hashBuffer(buf) {
  */
 export class AudioTable {
   constructor() {
-    this.byId = new Map();          // id → AudioBuffer
-    this._seen = new WeakMap();     // AudioBuffer → id (identity, before hashing)
+    this.byId = new Map();          // id → take
+    this._seen = new WeakMap();     // take → id (identity, before hashing)
   }
   idFor(buf) {
     if (!buf) return null;
@@ -517,19 +508,17 @@ async function bufferFromWav(bytes, ctx) {
   const w = parseFloatWav(bytes);
   if (w.sampleRate !== ctx.sampleRate) {
     // Hand the member back verbatim — it is already a valid WAV file.
-    return ctx.decodeAudioData(bytes.slice().buffer);
+    return takeFromAudioBuffer(await ctx.decodeAudioData(bytes.slice().buffer));
   }
-  const buf = ctx.createBuffer(w.numCh, Math.max(1, w.frames), w.sampleRate);
-  // The data need not be 4-byte aligned inside the member, so read it as a view
-  // over the bytes rather than casting to Float32Array.
+  // Channel 0 of the member (a take is mono; an older file may carry more).
+  // The data need not be 4-byte aligned inside the member, so read it as a
+  // view over the bytes rather than casting to Float32Array.
+  const samples = new Float32Array(Math.max(1, w.frames));
   const dv = new DataView(bytes.buffer, bytes.byteOffset + w.at, w.frames * w.numCh * 4);
-  for (let ch = 0; ch < w.numCh; ch++) {
-    const dst = buf.getChannelData(ch);
-    for (let f = 0; f < w.frames; f++) dst[f] = dv.getFloat32((f * w.numCh + ch) * 4, true);
-  }
-  return buf;
+  for (let f = 0; f < w.frames; f++) samples[f] = dv.getFloat32(f * w.numCh * 4, true);
+  return makeTake(samples, w.sampleRate);
 }
 
 // Exported for the audits only — the format's own round trip, with no app state
 // in the way.
-export const __testInternals = { crc32, hashBuffer, wavChunks, parseFloatWav, wavByteLength };
+export const __testInternals = { crc32, hashBuffer, wavChunks, parseFloatWav, wavByteLength, bufferFromWav };

@@ -58,7 +58,7 @@ contextBridge.exposeInMainWorld('electronBridge', {
   setInputDevice: (deviceId, numChannels, bufferFrames, sampleRate) =>
     ipcRenderer.invoke('set-input-device', deviceId, numChannels, bufferFrames, sampleRate),
 
-  // Main → Renderer: OSC message received from Max over UDP
+  // Main → Renderer: OSC message received over UDP 7500
   // All OSC addresses are forwarded — cb(address: string, values: any[])
   // osc.js dispatches to sensor, grain params, preset, etc.
   onOSC: (cb) =>
@@ -71,26 +71,20 @@ contextBridge.exposeInMainWorld('electronBridge', {
   sendOSC: (address, values = []) =>
     ipcRenderer.send('osc-send', address, values),
 
-  // Renderer → Main: send outbound real OSC binary to an arbitrary host:port.
-  // Used by the staging module (js/osc-out.js) to drive external apps like
-  // oVox / VocalSynth / Ableton / hardware via OSC. Distinct from sendOSC above
+  // Renderer → Main: send outbound real OSC binary to an arbitrary host:port
+  // (js/osc-out.js, for the sensor mapping rows). Distinct from sendOSC above
   // which targets the local relay in JSON format.
   sendOSCExternal: (host, port, address, values = []) =>
     ipcRenderer.send('osc-send-external', host, port, address, values),
 
-  // Toggle fullscreen (uses simpleFullScreen to avoid macOS Spaces blackout).
-  // Returns the new fullscreen state so the renderer can update immediately
-  // (simpleFullScreen doesn't fire enter/leave-full-screen events on all platforms).
+  // Toggle fullscreen (setFullScreen in electron-main.js). Returns the new
+  // state so the renderer can update immediately.
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
 
   // Main → Renderer: native fullscreen state changed (enter/leave)
   // cb(isFullscreen: boolean)
   onFullscreenChanged: (cb) =>
     ipcRenderer.on('fullscreen-changed', (_e, isFullscreen) => cb(isFullscreen)),
-
-  // Main → Renderer: forwarded main-process log for DevTools visibility
-  onMainLog: (cb) =>
-    ipcRenderer.on('main-log', (_e, level, msg) => cb(level, msg)),
 
   // ── x-IMU3 direct UDP bridge ──────────────────────────────────────────────
   // Discovery announcements arrive at 1 Hz on UDP 10000 (auto-started).
@@ -114,10 +108,6 @@ contextBridge.exposeInMainWorld('electronBridge', {
 
   // Renderer → Main: start listening for data on the device's send port
   ximu3StartData: (port) => ipcRenderer.invoke('ximu3-start-data', port),
-
-  // Renderer → Main: stop the data listener on a specific port (ref-counted).
-  // If called with no port, every listener is closed.
-  ximu3StopData: (port) => ipcRenderer.invoke('ximu3-stop-data', port),
 
   // Renderer → Main: send a JSON command string to the device
   // ip: device IP, port: device receive port, jsonStr: e.g. '{"axes_alignment":16}'
@@ -171,9 +161,6 @@ contextBridge.exposeInMainWorld('electronBridge', {
 
   // Renderer → Main: open a serial port by path
   serialOpen: (portPath) => ipcRenderer.invoke('serial-open', portPath),
-
-  // Renderer → Main: close a serial port
-  serialClose: (portPath) => ipcRenderer.invoke('serial-close', portPath),
 
   // Renderer → Main: send a JSON command string over serial
   serialSendCommand: (portPath, jsonStr) =>

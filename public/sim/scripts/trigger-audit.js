@@ -146,8 +146,8 @@ async function run(rig) {
     // and rejects it when nothing is left (js/trigger.js:181), so the chop take
     // below — four bursts a second apart, ending near 5.9 s — silently lost its
     // last two segments against a 3 s buffer and read as a chop bug.
-    const octx = new OfflineAudioContext(1, 44100 * 8, 44100);
-    S.liveRecBuffers = [{ buffer: octx.createBuffer(1, 44100 * 8, 44100), liveBuffer: null, grainCursor: 0 }];
+    const TK = await import('./js/take.js');
+    S.liveRecBuffers = [{ buffer: TK.makeTake(new Float32Array(44100 * 8), 44100), liveBuffer: null, grainCursor: 0 }];
     S.particles.length = 0;
     S.triggers.length = 0;
     S.scanMuted = false;
@@ -192,7 +192,7 @@ async function run(rig) {
       // row by the mark's global index: map this take and stamp the indices,
       // as the scheduler and a hot-swap would have.
       if (!S.liveRecBuffers[0]?.buffer) {
-        const actx = S.audioCtx; const b = actx.createBuffer(1, actx.sampleRate * 8, actx.sampleRate);
+        const actx = S.audioCtx; const b = TK.makeTake(new Float32Array(actx.sampleRate * 8), actx.sampleRate);
         S.liveRecBuffers[0] = { ...(S.liveRecBuffers[0] || {}), buffer: b, grainCursor: 0 };
       }
       // The engine is not up yet in this section: bring the worklet up for
@@ -733,8 +733,8 @@ async function run(rig) {
     const { S } = await import('./js/state.js');
     const grain = await import('./js/grain.js');
     const { armTrigger } = await import('./js/trigger.js');
-    const octx = new OfflineAudioContext(1, 44100 * 8, 44100);
-    S.liveRecBuffers = [{ buffer: octx.createBuffer(1, 44100 * 8, 44100), liveBuffer: null, grainCursor: 0 }];
+    const TK = await import('./js/take.js');
+    S.liveRecBuffers = [{ buffer: TK.makeTake(new Float32Array(44100 * 8), 44100), liveBuffer: null, grainCursor: 0 }];
     let nextStroke = 5000;
     function fill(n, each) {
       S.particles.length = 0;
@@ -996,6 +996,7 @@ async function run(rig) {
 
   console.log('\n§ the end of a one-shot fades — the segment click (2026-09-04)');
   const ef = await rig.evaluate(async () => {
+    const TK = await import('./js/take.js');
     const { S } = await import('./js/state.js');
     const G = await import('./js/grain.js');
     const T = await import('./js/trigger.js');
@@ -1008,9 +1009,9 @@ async function run(rig) {
       // A 0.30 s region of full-scale sine that ends mid-cycle: the worst case
       // for a hard stop. Armed as a plain line, fired by hand (the scheduler is
       // quiesced), the source built by one scheduler pass.
-      const buf = actx.createBuffer(1, sr, sr);
-      const ch = buf.getChannelData(0);
+      const ch = new Float32Array(sr);
       for (let i = 0; i < ch.length; i++) ch[i] = 0.9 * Math.sin(2 * Math.PI * 333 * i / sr);
+      const buf = TK.makeTake(ch, sr);
       S.liveRecBuffers.length = 0; S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
       S.particles.length = 0; S.triggers = [];
       const sid = ++S.strokeIdCounter; S.strokeHistory.push({ strokeId: sid });
@@ -1054,6 +1055,7 @@ async function run(rig) {
 
   console.log('\n§ slice — onset segmentation adapts to the floor');
   const sl = await rig.evaluate(async () => {
+    const TK = await import('./js/take.js');
     const { S } = await import('./js/state.js');
     const G = await import('./js/grain.js');
     const T = await import('./js/trigger.js');
@@ -1104,11 +1106,11 @@ async function run(rig) {
     // 3. slice arm: 3 hits over a -24 dB floor + pre-roll → 3 triggers, none
     //    before the first attack
     {
-      const buf = actx.createBuffer(1, sr * 2, sr);
-      const ch = buf.getChannelData(0);
+      const ch = new Float32Array(sr * 2);
       const fa = Math.pow(10, -24 / 20);
       for (let i = 0; i < ch.length; i++) ch[i] = (rnd() * 2 - 1) * fa;
       [0.5, 1.0, 1.5].forEach(t => hit(ch, t));
+      const buf = TK.makeTake(ch, sr);
       S.liveRecBuffers.length = 0;
       S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
       S.particles.length = 0; S.triggers = [];
@@ -1146,11 +1148,11 @@ async function run(rig) {
         }
       };
       const arm = () => {
-        const buf = actx.createBuffer(1, sr * 2, sr);
-        const ch = buf.getChannelData(0);
+        const ch = new Float32Array(sr * 2);
         const fa = Math.pow(10, -24 / 20);
         for (let i = 0; i < ch.length; i++) ch[i] = (rnd() * 2 - 1) * fa;
         [0.5, 0.65, 1.3].forEach(t => sharpHit(ch, t));
+        const buf = TK.makeTake(ch, sr);
         S.liveRecBuffers.length = 0;
         S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
         S.particles.length = 0; S.triggers = [];

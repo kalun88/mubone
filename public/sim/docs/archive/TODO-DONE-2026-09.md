@@ -2838,3 +2838,155 @@
   rail can be removed from the settings page". Count, blend, crossfade, tether and the selected pin left; When
   Full stays and the cloud's fade in / out became "A new pin: In / Out" beside Path.
 
+
+- [x] **The cheat sheet is reachable from the app** (2026-09-16) — `docs/manual/` moved to `manual/` so it ships
+  beside `js/` in both builds and the link is one relative path (`manual/index.html`, spelled out because
+  file:// has no directory index). Settings nav gets a `help` eyebrow with "Cheat sheet ↗" as an `<a>`, not a
+  section; Electron gets Help › mubone Cheat Sheet, a window-open handler and a will-navigate guard so no link
+  ever navigates the instrument. `align-audit` / `screen-probe` walk `.set-nav-item[data-sec]` only.
+
+- [x] **`helpBtn` → `keysBtn`** (2026-09-16) — it opens Keys + MIDI, not help; the name would have collided with a
+  real help link the moment one existed. Three references.
+
+- [x] **Cheat sheet: scratch · pinned, the three stickers, wet, the drawer** (2026-09-16) — Ek: "doesn't explain
+  how Wet works. and loop on pin. and a clear differentiation between scratch layer and pinned layer. also the
+  extra flags … and how you can press those"; "it's not clear with the drawer and how to access it … i dont even
+  see a pic". Four sections: Scratch, and pinned (the claim, three ways across); The three stickers (drawn on a
+  tile at the app's offsets; the drop is a tap, the pin a mark, the key the learn cell); Wet paint in four lines;
+  The drawer with a capture of the rail + dots drawer (`img/drawer.jpg`), Tab → the door → what's in it.
+
+- [x] **The rail title's + sits on the caps** (2026-09-16) — Ek: "the plus sign … looks a bit lower than the
+  title". It was the `+` character at 14px on its own baseline in a 24px box; flex centred the box and the ink
+  fell under the 11px caps. Drawn now (12px SVG, ink = the cap height), measured ink against ink: +0.13 · +0.25 ·
+  +0.13 · +0.13 px on the four groups. `align-audit` keeps the invariant (the baseline is read inside an inline
+  wrapper — a flex child is blockified). Unrun as a suite at Ek's ask; its probe ran once, green.
+
+- [x] **The selected pin is a frame, always there** (2026-09-16) — Ek: "not obvious enough that the first item
+  on the pinned rail is the selected one … a full border around the first item that's always there, even when
+  there are no pins … a little text flag SELECTED". `.lyr-sel`: a hairline in the pins hue 2px outside row one
+  (r-3 on r-1), the eyebrow SELECTED on the line at its top-right corner (the sticker's rule), "nothing pinned"
+  inside it when empty. The moon left this rail. Measured: 2px each side on both states. Kit unchanged. No
+  audits run (Ek). `DESIGN-SYSTEM` § 5, a `RULINGS` paragraph, the cheat sheet's specimen follow.
+
+- [x] **A pin's fader is its own stage** (2026-09-16) — Ek: a grain tool at 0.85 pinned clouds whose track read
+  −1.4 dB while loops read 0; "a new pin's fader start at unity and keep the brush's volume as a separate
+  multiplier underneath … same with loops". `c.level` (1 at pin time) over the block's `volume`: `grain.js`
+  `_loopGain` at the four loop gain writes, the cloud's seed gain × level, the rail writes and shows `level`
+  (a loop's bar divides the block stage back out), `piece.js` saves and loads it. No audits run (Ek); the rail
+  checked on a private launch: fresh 0 dB, a press sets, double-click resets.
+
+- [x] **The fader has headroom: unity is a tick, +12 dB at the end** (2026-09-16) — Ek: "should it start at unity
+  0 then i can make things louder or softer?" then "+6db doesnt sound like it's enough". A channel fader's law:
+  `level = 4 · pos^k`, unity the kit's 2px tick at two thirds, +12 dB at the right (Pro Tools' range); `level`
+  stays the amplitude so the engine never sees the law; the readout wears `+`; double-click is the tick.
+  Measured on a private launch: fresh = tick, end +12.0, half −8.5, quarter −29.1, double-click back. No audits.
+
+- [x] **A layer is drawn where it landed** (2026-09-16) — Ek: "the overdubbed lines under the main loop line should
+  be accurate … a little 1 beat loop overdub on the 4th beat should be in the right position and right length".
+  The bar is one cycle; each overdub is drawn from `phase0` for its take's length in that cycle, wrapping at the
+  end, a take longer than the cycle one row per pass, the shape its own marks (`strokeId`, as renderer.js reads
+  them). The master's band rises and narrows to leave the rows the bar's bottom. Measured on a synthetic 4 s loop:
+  a 1 s dub at 3 s → 0.74–0.98 of the bar; a 6 s dub at 1 s → a full row then 0.24–0.73. No audits.
+
+- [x] **The hand's verb comes with the tool** (2026-09-16) — Ek: "the toggle / momentary verb type should follow
+  that tile it came from. if something from the left rail is chosen, by default, tape tools should be toggle,
+  grain tools should be momentary held. erase should be momentary held". `pickHand(id, verb)`: a strip tile hands
+  over its own verb, a rail row its engine's (`handVerbFor`: tape toggle, else momentary); right-click still flips.
+  Checked on a private launch: line/looper → toggle, pen/scrape → momentary from the rail; the strip's four tiles
+  each carry their own. PALETTE-GUI § 1, CLAUDE.md, a RULINGS paragraph follow. No audits.
+
+- [x] **The loop is its waveform** (2026-09-16) — Ek: the loop's line "tries to follow the movement … is there a
+  better way to draw it to decipher at a glance". The line's up-and-down was latitude, which the sphere shows; a
+  track is time against loudness. A loop is a peak envelope of its take across the cycle, mirrored; an overdub the
+  same from its own take at its phase, per pass; a cloud keeps its scatter. One scan per pixel column, cached on
+  the pin, redrawn only on rebuild or resize: 7 ms once for a 60 s take, 11 ms for eight tracks, nothing per
+  frame. Measured on a synthetic loop: a hit on beat 3 draws 13–20 px tall against 2.5 elsewhere; a 1 s dub at
+  beat 4 draws in 0.75–0.875 of the bar and nowhere before it. No audits.
+
+- [x] **The whole-app check** (2026-09-16) — Ek: "do a full check of the whole app … redundancies stale code, bugs,
+  do a real run simulating the sensor". Three read-throughs (engine, UI, sensor/IO) verified against callers, then
+  two driven sessions on a private instance (a simulated x-imu3 over OSC 7599, a synthetic sawtooth phrase into
+  the input bus, the real device streams open): 25 min of tape/pins/undo, then 25 min with the camera on the
+  sensor and the cursor granulating. Findings and fixes are the entries below; the reasoning is in the commit.
+- [x] **The cursor is one rule** (2026-09-16) — `sphere.js` `cursorLonLatNow` replaces seven copies; the paint
+  ticker and the eraser read the pointer wherever it was, so with the pointer off the canvas the marks and the scan
+  disagreed and nothing sounded (the first session's whole 25 minutes). `docs/RULINGS.md` "The cursor is ONE rule".
+- [x] **The camera could not be put on SENSOR** (2026-09-16) — `main.js` `sensorLive` did `Object.values(Map)`,
+  always `[]`, so the pill's click, `/spatial/mode` and the first-quaternion restore were all refused since
+  2026-09-12; only the boot restore (`ui-audio-settings.js`, a direct write) got the rig there. One line.
+- [x] **Focus counted pins you cannot hear** (2026-09-16) — `grain.js` weight pass skips `!isCommitOn` and
+  `isPinLeaving` pins; a muted loop on the anchor used to zero every audible pin. RULINGS "A pin you cannot hear".
+- [x] **Undo after redo of a sweep was silent** (2026-09-16) — `resyncWorkletBuffers` only ever dropped; a take
+  the redo dropped came back to `S.liveRecBuffers` unmapped. It re-registers now (`_registerBuffer`, shared with
+  `hotSwapRecording`). The worklet's copies of history-held takes are the open item (TODO Sep 16).
+- [x] **A sampler tape stroke unmuted the master** (2026-09-16) — `sampler.js` `S._setMuted?.(false) ||
+  setScanMuted?.(true)` ran both halves. Only the scan mute stays.
+- [x] **One OSC sensor made two registry slots** (2026-09-16) — `osc.js` asked `getOrCreateSlot(name)` for the
+  inertial branch while the device's slot is `osc-<name>`; every OSC sensor minted an empty twin.
+- [x] **`sygaldry.js` unload release was a no-op** (2026-09-16) — `link.disconnect('unload')` on a name that
+  does not exist, swallowed; every link is released now. `piece.js` refused `selectionMode: 'farthest'` on open.
+- [x] **Long-session leaks and per-frame waste** (2026-09-16) — accessory `_rateStamps` grew unbounded at 100 Hz
+  (trimmed at push, `_presenceListeners` deleted); the x-imu3 line buffer is capped at 64 KB (a binary-mode
+  device never sends a newline); `voicingById` is a Map (it was `Array.find` per candidate per tick); the pin
+  weight and VBAP writes skip when unchanged; `ui-pins.js` `_frame` keeps its element refs and reads the
+  material's width on the 160 ms tick, not per rAF after a transform write; `syncDocChrome` sends the title only
+  when it changed; handsfree's 1 Hz `console.log` is a `dlog`; the sample list builder returns when its list is
+  gone; two dead per-frame calls left the render loop.
+- [x] **Dead code out** (2026-09-16) — the seed onset clocks grain.js advanced and nothing read
+  (`_nextOnsetT`, `SCHED_LOOKAHEAD`, `_resetOnsetClocks`), `resetCursorPeriod` (a documented no-op) and
+  `killAllGrains` (overwritten at 30 Hz) with their callers, the worklet's `'flush-cursor'` case (no sender) and
+  a duplicated `steals`, `startAudio` / `stopAudio` / `angleToName` / `__testRenderSpeakerRing`, `initSweepUI`,
+  `bindingOf`, `isEraseTile`, `_sliderRow`, `_knobArc`, `_snapPeriodToSamples`, the radius-viz canvas, the
+  Settings slot-count slider wiring and its hook, main.js's duplicate overflow-seg binding (two handlers per
+  press) and the dead `main-log` channel, the sensor routing constants nothing imported, five unread `S` fields,
+  the LED map's `patch` row, a stale keyup on Space in events.js that ended a mouse-held play on ⇧Space, and the
+  persistent all-+1 axis-map replacement in `sensor-registry.js` (a fallback, not a one-shot).
+- [x] **Vocabulary** (2026-09-16) — "hit", "loop-engine", "Max" as a live peer, "staging", "polarity", "wand"
+  in comments, tooltips, the manual, README and two docs; composer.js's header says what the file is; the Axes
+  table column is Flip. `mubone_settings_sensor` registered; README gains `/scan/fade`.
+- [x] **The worklet holds only what can sound** (2026-09-16) — Ek: "unbounded undo is very important … double
+  check if there's a less memory costly way". `sweep()` / `eraseAll()` resync the worklet the moment they
+  compact; undo re-registers. RULINGS "Undo is unbounded" has the price and the cheaper design left in TODO.
+- [x] **`seed*` / `seq*` aliases gone** (2026-09-16) — twenty getter/setter pairs deleted from `state.js`, every
+  reader in 14 modules and two audits says `commit*`, the persisted seed-settings keys renamed one-shot in
+  `_loadSeedSettings`. The PARAM_DEFS keys and cabinet ids keep the old word (TODO Sep 16).
+- [x] **Legacy shims out** (2026-09-16) — imu-setup's polarity / rollMute migration, sygaldry's single-slot key
+  fold-in, `LEGACY_KEYS` / `LEGACY_PREFIXES` and main.js's hand purge (now `RETIRED_KEYS` / `RETIRED_PREFIXES`),
+  sensor-registry's two cal migrations and their flag, `splitLegacyAudioBlob` with its `sensor3Cal` / `wandCal`
+  drop-list and the browser audit's two sections for it, the `'pull'` camera-mode rename, the three seed-key
+  fallbacks. `ui-pin-settings.js` is its four live rows; the dead house / monitor sliders went (OSC keeps them).
+- [x] **Small redundancies** (2026-09-16) — one `quatToEulerDeg`; `restoreTrigger` builds on `_newTriggerShell`;
+  one `_readTail` under both loudness readers; `nearestLoopPin` asks `isPinLeaving`; the renderer's three cursor
+  reads use the one rule; the held yaw is per slot; `pitchJitter`'s unit is the ratio's; discovery forgets a
+  sensor after 15 s and the two dead IPC channels are gone; proxy.js buffers per source; the dead CSS (`.as-io-*`
+  rows, `.as-warn`, eleven ids) deleted; `docs/OSC-AUDIT-2026-08.md` says which addresses are gone;
+  `S.transportDiag.wkProcMaxMs` holds the audio thread's worst `process()`. `palette-audit` d4 counts pin PRESSES,
+  not pins — one press pins every line under the cursor, which the old cursor split had hidden.
+
+- [x] **A live mark is sized from the take's own samples** (2026-09-17) — Ek: "go ahead with 1, 2". The analyser
+  fold read "the last n samples" for the clock's elapsed time, and under load the audio thread is a block ahead
+  of that clock, so a burst leaked into the mark before it (0.10–0.15 against 0.1, every run, once the cursor
+  granulates what it paints). `audio-features.js` `recordedWindowLoudness(fromS, toS)` reads `S.recordingRaw`
+  over [the mark's moment, the next mark's moment) — positions — with the fold's own law (max ~32 ms RMS
+  against the peak); the paint ticker settles marks through a small in-order queue as the recorder delivers
+  (~43 ms behind), forcing at the seal. Audits: mark align 70/70 (capped), colour 43/43. Uncapped it is still
+  65/70 with far marks at 0.14–0.16, and the deposit gaps are a steady 50–57 ms capped or not (probed), so it
+  is NOT the fold's timing and not the deposit clock; why a mark two away from a burst reads loud while the
+  cursor granulates the take is open — the suite keeps its cap and the item stays in TODO.
+- [x] **The long-set fault attributed** (2026-09-17) — a quiet 40-minute driven run with `wkProcMaxMs`: no
+  50 ms stall this time; one hole and three skipped blocks at minutes 38 and 40 with every loop clean and the
+  renderer at 939 MB on 8 GB with swap in use. Memory pressure, not the audio thread. TODO Sep 16 reweighed.
+- [x] **A take is held ONCE** (2026-09-17) — `js/take.js`: samples in one SharedArrayBuffer both threads read;
+  the bridge shares a take instead of copying it, the primary starts on the take's own memory, the provisional
+  take is a view over the raw pool, erase and undo move nothing. The nine readers take `.data`; `.mubone`
+  members are mono. The TODO's transfer design was dropped: the main thread reads a live take in nine places.
+  Audits: npm test 17/17, docs, and the mark-align · colour · trigger · pins rig suites.
+- [x] **The rail's crossfade is the CURVE, and the rail wears the engine hue only** (2026-09-17) — Ek: "width"
+  read as a size; the DJ mixer's word is curve (gradual ↔ sharp cut). Renamed in the rail, its title and
+  aria label, the ruling's glossary; the whole row greys outside focus, label too. The pin's slot colour
+  left the rail (fill, material, playhead, overdub dots): "when i'm playing live i'm not keeping track of
+  those colours". The width slider now follows its own double-click. pins suite 206/0.
+- [x] **The hand tile is not a button** (2026-09-17) — Ek: clicking the big spacebar tile "shouldn't
+  activate, it shouldn't actually be clickable". The mouse press handler is gone and the tile wears no
+  pointer; the spacebar and a left-click on the sphere are the hand's inputs, the right-click still flips
+  the verb, and a finger on it still presses (the phone's palette is the hand tile alone). PALETTE-GUI § 5.7.

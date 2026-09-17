@@ -39,7 +39,7 @@
 // ============================================================================
 
 import { S } from './state.js';
-import { getCursorLonLat, screenToLonLat } from './sphere.js';
+import { cursorLonLatNow } from './sphere.js';
 import { getBufferKey, stampCartesian } from './grain.js';
 import { snapshotMaterial, materialAction } from './ui-sweep.js';
 import * as history from './history.js';
@@ -126,14 +126,8 @@ function _distSegSeg2(p1x, p1y, p1z, q1x, q1y, q1z,
 // pass over what was audible; release and press again to dig deeper.
 const _strokeFate = new Map();  // bufferKey → true (erase) | false (protect)
 
-// ── Cursor position (same resolution order as paint-ticker.js) ──────────────
-function _cursorLonLat() {
-  if (S.cursorQ) return getCursorLonLat();
-  return screenToLonLat(
-    S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
-    S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY
-  );
-}
+// ── Cursor position — the ONE rule (sphere.js cursorLonLatNow) ─────────────
+const _cursorLonLat = cursorLonLatNow;
 
 // ── Core tick — erase what the scan can hear ─────────────────────────────────
 function _eraseTick() {

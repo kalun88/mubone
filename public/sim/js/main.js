@@ -4,6 +4,7 @@
 
 import { S, DEBUG, GRAIN_SCHEDULER_INTERVAL_MS, AXIS_SOURCES, axisHeld } from './state.js';
 import { scheduleGrains } from './grain.js';
+import { makeTake } from './take.js';
 import { setupEvents, setupDragDrop } from './events.js';
 import { rebuildSampleListUI, initUndoBtn } from './ui-samples.js';
 import {
@@ -25,7 +26,7 @@ import { initAudioSettings, loadAudioDefaults, activateSavedInputDevice, noteAct
 import { initPinSettings } from './ui-pin-settings.js';
 import { initTriggerUI } from './ui-trigger.js';
 import { initVizUI } from './ui-viz.js';
-import { initSweepUI, initSessionPanel } from './ui-sweep.js';
+import { initSessionPanel } from './ui-sweep.js';
 import { initEraseUI } from './erase.js';
 import './brush.js';   // registers S._currentBrush and the main button (S._gesturePress …)
 import './sampler.js'; // registers S._samplerSelectSource / _samplerTrace / capture (#247)
@@ -181,12 +182,6 @@ function init() {
   // offline cache, the service worker — then the new stamp and a reload.
   // A store with no stamp is fresh (or just reset) and needs no wipe.
   _wipeOnNewBuild();
-  // Forward main-process logs to DevTools console
-  if (window.electronBridge?.onMainLog) {
-    window.electronBridge.onMainLog((level, msg) => {
-      (console[level] || console.log)(`[main] ${msg}`);
-    });
-  }
 
   // Multi-station: show which instance this window is (solo = no badge)
   const _instName = window.electronBridge?.instanceName;
@@ -336,7 +331,6 @@ function init() {
   initPinSettings();
   initTriggerUI();
   initVizUI();
-  initSweepUI();
   initSessionPanel();
   initEraseUI();
   initTileLayout();
@@ -353,19 +347,11 @@ function init() {
   // the settings shell write through. Dragging is at
   // sandbox/sunset-2026-08-29/panel-drag.js.
   //
-  // The stale keys are cleared once rather than left to rot, and one of them
-  // could actually bite: a `.device.collapsed` class hides `.device-body`, and
-  // the commits device is BORROWED whole by Settings → pins (#262) — so a
-  // device someone collapsed in the rig view a week ago would have shown up as
-  // an empty settings page with nothing to explain it.
-  try {
-    for (const k of Object.keys(localStorage)) {
-      if (k.startsWith('mubone_panel_')) localStorage.removeItem(k);
-    }
-    localStorage.removeItem('mubone_projector_layout');
-    localStorage.removeItem('mubone_projector_layout_v2');
-    localStorage.removeItem('mubone_tile_layout');
-  } catch (_) {}
+  // Its stale keys are RETIRED_KEYS / RETIRED_PREFIXES (storage-registry.js,
+  // purged at boot). One of them could bite: a `.device.collapsed` class hides
+  // `.device-body`, and the commits device is BORROWED whole by Settings → pins
+  // (#262) — so a device someone collapsed in the rig view would show up as an
+  // empty settings page with nothing to explain it.
   for (const d of document.querySelectorAll('.device.collapsed')) d.classList.remove('collapsed');
 
   // ── Collapsible sections (within devices) ─────────────────────────────
@@ -579,7 +565,11 @@ function init() {
   // A sensor is CONNECTED when one has spoken in the last few seconds — the
   // registry stamps every quaternion.
   const SENSOR_LIVE_MS = 3000;
-  const sensorLive = () => Object.values(getSensorRegistry() || {}).some(sl => sl && Date.now() - (sl.lastSeenQuat || 0) < SENSOR_LIVE_MS);
+  // The registry is a Map: `Object.values(map)` is always `[]`, so this said
+  // "no sensor" with one streaming, and the pill could never be put on SENSOR
+  // by a click or by OSC — only a persisted mode restored at boot got there
+  // (found on the 2026-09-16 long run, where the driver's switch was refused).
+  const sensorLive = () => [...(getSensorRegistry()?.values() || [])].some(sl => sl && Date.now() - (sl.lastSeenQuat || 0) < SENSOR_LIVE_MS);
   S._sensorLive = sensorLive;
 
   function applyCameraMode(mode) {
@@ -937,7 +927,7 @@ function init() {
     if (!S.audioCtx) return;
     // Create a minimal silent buffer to bootstrap the worklet.
     // The provisional live buffer will provide the actual audio.
-    const silentBuf = S.audioCtx.createBuffer(1, 128, S.audioCtx.sampleRate);
+    const silentBuf = makeTake(new Float32Array(128), S.audioCtx.sampleRate);
     console.log('worklet: first recording started — cold-starting worklet');
     const ok = await _startWorkletEngine(silentBuf);
     if (ok) {
@@ -1110,27 +1100,9 @@ function init() {
   S._setCursorLock   = setCursorLock;
   S._toggleCursorLock = () => setCursorLock(!cursorLocked());
   syncAxisSourceUI();
-  // ── Commit slot config (unified cloud + loop pool) ──────────────────
-  const commitSlotSelect = document.getElementById('commitSlotCountSelect')
-                        || document.getElementById('seedSlotCountSelect');  // fallback to old ID
-  if (commitSlotSelect) {
-    commitSlotSelect.addEventListener('change', () => {
-      S.commitSlotCount = parseInt(commitSlotSelect.value, 10);
-      (S.updateSeedBanksUI || (() => {}))();
-    });
-  }
-  const commitOverflowSeg = document.getElementById('commitOverflowSeg')
-                          || document.getElementById('seedOverflowSeg');  // fallback to old ID
-  if (commitOverflowSeg) {
-    commitOverflowSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        S.commitOverflow = btn.dataset.overflow;
-        commitOverflowSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
-          b.classList.toggle('active', b === btn));
-        S._syncSeqButtonStates?.();
-      });
-    });
-  }
+  // The pin slot count is the pinned rail's (`#lyrSlotsMax`, ui-pins.js) and
+  // the overflow seg is wired in ui-meters.js — a second binding here fired
+  // every press twice (2026-09-16).
 
   // ── Global backdrop click → close that modal ─────────────────────────────
   // Every .mu-overlay closes when its backdrop is clicked. Delegated and

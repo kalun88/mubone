@@ -10,6 +10,7 @@ import {
 import { ensureAudioContext, getPreviewSinks } from './audio.js';
 import { removeSeqByStrokeId, removeOverdubByStrokeId } from './ui-presets.js';
 import { hotSwapSample } from './grain-worklet-bridge.js';
+import { takeFromAudioBuffer } from './take.js';
 import * as history from './history.js';
 import { restoreTrigger } from './trigger.js';
 
@@ -20,26 +21,26 @@ export async function loadAudioFile(file) {
   }
   const actx = ensureAudioContext();
   const arrayBuffer = await file.arrayBuffer();
-  const audioBuffer = await actx.decodeAudioData(arrayBuffer);
+  const take = takeFromAudioBuffer(await actx.decodeAudioData(arrayBuffer));
 
   const sampleIdx = S.samples.length;
   S.samples.push({
-    buffer:     audioBuffer,
+    buffer:     take,
     name:       file.name,
-    duration:   audioBuffer.duration,
+    duration:   take.duration,
     grainCursor: 0,
     cropStart:  0,
     cropEnd:    1
   });
   // A running engine needs the new buffer registered or painting from it is
   // silent until restart (#247 — no-op when the worklet isn't up yet).
-  hotSwapSample(audioBuffer);
+  hotSwapSample(take);
 
   rebuildSampleListUI();
   // Keep the source tiles + the open design sheet honest about the new slot —
   // a file dropped while the sampler sheet is up must appear in it (#247).
   S._renderSourceUI?.();
-  DEBUG && console.log(`Loaded sample ${S.samples.length}: ${file.name} (${audioBuffer.duration.toFixed(2)}s)`);
+  DEBUG && console.log(`Loaded sample ${S.samples.length}: ${file.name} (${take.duration.toFixed(2)}s)`);
 }
 
 // ============================================================================
@@ -205,8 +206,11 @@ export function initUndoBtn() {
 export function rebuildSampleListUI() {
   teardownCropListeners();           // remove stale document-level crop handlers
   const list = document.getElementById('sampleList');
-  if (list) list.innerHTML = '';
   S.waveformOverlays = [];
+  // No list in the markup (the sample list left with the source panel) — the
+  // eight slots below were built and dropped on every call until 2026-09-16.
+  if (!list) return;
+  list.innerHTML = '';
 
   for (let i = 0; i < MAX_SAMPLES; i++) {
     const s        = i < S.samples.length ? S.samples[i] : null;
@@ -373,19 +377,6 @@ export function reorderSample(fromIdx, toIdx) {
 
 // ── Live rec UI ──────────────────────────────────────────────────────────────
 
-function updateLiveGranulatingIndicator() {
-  const el = document.getElementById('liveGranulating');
-  if (el) {
-    if (S.liveGranulatingThisFrame) el.classList.add('active');
-    else el.classList.remove('active');
-  }
-  const dot = document.getElementById('vmDot');
-  if (dot) {
-    if (S.liveGranulatingThisFrame) dot.classList.add('active');
-    else dot.classList.remove('active');
-  }
-}
-
 function updateLiveRecUI() {
   const bufCount = S.liveRecBuffers.filter(b => b.buffer !== null).length;
   const countEl = document.getElementById('liveRecCount');
@@ -431,7 +422,7 @@ export function drawSlotWaveform(wc, buffer) {
   wc.width  = rect.width * 2;
   wc.height = rect.height * 2;
   const wctx = wc.getContext('2d');
-  const data = buffer.getChannelData(0);
+  const data = buffer.data;
   const step = Math.max(1, Math.floor(data.length / wc.width));
   const mid  = wc.height / 2;
   wctx.clearRect(0, 0, wc.width, wc.height);
@@ -676,5 +667,4 @@ function updateWaveformPlayheads() {
 
 // ── Register late-bound callbacks on S so renderer/audio can call them ────────
 S.updateLiveRecUI              = updateLiveRecUI;
-S.updateLiveGranulatingIndicator = updateLiveGranulatingIndicator;
 S.updateWaveformPlayheads      = updateWaveformPlayheads;

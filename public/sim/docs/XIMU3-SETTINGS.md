@@ -38,7 +38,7 @@ Every connect writes all of this, sends `apply`, then reads it back. Source: `js
 | `ahrs_ignore_magnetometer` | `true` | 11.1.63 | Mag is unusable next to speakers, laptops, stage metal. Yaw drifts instead; tare and heading-zero handle it. |
 | `ahrs_acceleration_rejection_enabled` | `true` | 11.1.64 | Fast playing can't corrupt pitch/roll. |
 | `gyroscope_offset_correction_enabled` | `true` | 11.1.60 | Continuous gyro bias estimation. |
-| `axes_alignment` | `0` | 11.1.59 | `+X+Y+Z`. All mount remapping stays in mubone software (polarity / roll mute) so it can change live. |
+| `axes_alignment` | `0` | 11.1.59 | `+X+Y+Z`. All mount remapping stays in mubone software (the mount + heading calibration and the axis map's flips) so it can change live. |
 | `binary_mode_enabled` | `false` | 11.1.66 | Device default is binary; mubone's parser only speaks ASCII. A sensor left in binary hands over silently-broken frames. |
 | `serial_mode` | `2` | 11.1.18 | Accessory. Enforced unconditionally, whether or not an SA-A8 is currently attached — see below. |
 | `inertial_message_rate_divisor` | `0` | 11.1.68 | Off — see above. |

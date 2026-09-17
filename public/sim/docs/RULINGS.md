@@ -11,8 +11,17 @@ How to use this file: find the heading for the area you are about to touch and r
 - **The pinned rail is a mixer, and the track is its fader** (`js/ui-pins.js`, 2026-09-16; designed on
   the canvas in `docs/mockups/pins-rail/`). One 32px bar per pin. Its FILL is the level, read from the
   audio every frame — a loop's `_gainNode × _muteGain × _pinGain`, a cloud's envelope × focus weight ×
-  volume — so the bar is the truth, never a copy; dragging it writes `grainParams.volume`, the one
-  volume both kinds already had. The MATERIAL you drew sits inside the bar laid flat, in the pin's slot
+  volume — so the bar is the truth, never a copy; dragging it writes the pin's `level`. **The fader is
+  its own stage** (Ek, 2026-09-16: a grain tool at 0.85 pinned clouds whose track read −1.4 dB while a
+  loop read 0 — "it should be like … a new pin's fader start at unity and keep the brush's volume as a
+  separate multiplier underneath … same with loops"): `level` is 1 when the pin is made, the block's
+  `volume` (the brush's or the tape tool's slider, copied in at pin time) rides under it, a loop's gain
+  node carries the product (`grain.js` `_loopGain`) and a cloud's seed gain does; the bar shows the
+  fader alone. **The fader has headroom** (Ek, the same hour: "i see the mixer as increasing or
+  decreasing the volume so should it start at unity 0 then i can make things louder or softer?"): a
+  channel fader's law — unity is the kit's 2px TICK two thirds along, the right end +12 dB (Ek: "+6db
+  doesnt sound like it's enough"; Pro Tools' range), one power curve through both (`_levelOf` / `_posOf`, ui-pins.js); `level` stays the amplitude so the
+  engine never sees the law; the readout wears a `+` above unity; double-click is the tick. It used to write `grainParams.volume`, the one volume both kinds already had. The MATERIAL you drew sits inside the bar laid flat, in the pin's slot
   colour (the sphere's), each mark at the size its rms gives it there; a loop is marks on one line, a
   cloud loose dots — the shape says the kind, so the words and the bearing readout went. The NUMBER is
   the engine hue, and folds the pin's own `fadeIn` / `fadeOut` open; **a mute rides those ramps** the
@@ -20,7 +29,7 @@ How to use this file: find the heading for the area you are about to touch and r
   (`composer.js`), and the playhead runs on through it — the DJ mute made visible. **Sort IS
   `S.selectionMode`**: nearest / farthest / oldest, rows laid out by the key `selectedPinSlot` uses, so
   row one is always what unpin takes and the half moon never disagrees with the order; under nearest in
-  focus the rail is a proximity meter. The mode bar (blend · tether · sort · width) is the door to the
+  focus the rail is a proximity meter. The mode bar (blend · tether · sort · curve) is the door to the
   four settings switched mid-set, each writing the S field it always had; the rail polls S on its tick,
   so OSC, MIDI and the settings page land in it without a hook. **Focus is said by the fader edge
   turning `--accent-sensor`** — "the body is driving it" is literally true — never by an ember segment.
@@ -28,6 +37,33 @@ How to use this file: find the heading for the area you are about to touch and r
   state). The slot tracker is gone: the list is the count, row one the nearest, and a pin above the max
   wears its number outlined. Settings → Pins keeps only what the rail does not hold — when full, and
   what a new pin is born with (Ek: "any pin settings that are now on the pin rail can be removed").
+
+- **The hand's verb comes with the tool** (`js/tiles.js` `pickHand(id, verb)`, `handVerbFor`, 2026-09-16,
+  Ek: "when i press on a tool from the palette bar, it goes to the hand. but the toggle / momentary
+  verb type should follow that tile it came from. if something from the left rail is chosen, by
+  default, tape tools should be toggle, grain tools should be momentary held. erase should be
+  momentary held. lens of course toggle"). `handVerb` was one global switch above every tool
+  (toggle by factory, then momentary). Now a strip tile's click hands over its own verb — the shape
+  you see is the shape you get — and a rail row's click hands over its engine's: a take plays whole
+  and latches, paint and erase are held while the key is. The hand tile's right-click still flips it
+  afterwards; a pick with no verb (the fallback when a tool is deleted) leaves it. A lens is not a
+  hand tool; its tile verb stays `VERBS_OF.lens`, toggle. The 2026-09-04 ruling that the mode sits
+  above the tool stands for a BUTTON's tap-vs-hold (never a hybrid); this is which mode the hand
+  wakes up in.
+
+- **The selected pin is a FRAME, a fixture of the rail** (`js/ui-pins.js` `.lyr-sel`, 2026-09-16, Ek: "i
+  dont think it's obvious enough that the first item on the pinned rail is the selected one. sure we
+  have the half moon dot but that's old. i think it needs to be a full border around the first item
+  that's always there, even when there are no pins"). Row one is what unpin takes because the sort is
+  the selection, and the half moon said so in the rail's radio language — a mark for a reader of the
+  design system, not a player mid-show. So the slot itself is drawn: a hairline in the pins hue, 2px
+  outside row one's bar (radius r-3 against the bar's r-1, the concentric rule), labelled SELECTED by
+  the rail's own eyebrow on the line at its top-right corner with the ground behind it — a tile's
+  sticker with a word. It is there when the rail is empty and holds "nothing pinned" in the track's
+  own 32px box, so the rail explains itself before the first pin. Nothing new in the kit, and never
+  ember: chosen is not exceptional (INSTRUMENT-GUI, the faces). One mark per thing — the moon left
+  this rail; source and lens keep it. `_layout` sizes the frame with row one's fold; `SEL_INSET` and
+  `SEL_ROOM` mirror the stylesheet.
 
 - **A tile is the preset** — every grain tile owns its whole block and persists it (2026-09-03).
   The 20-slot patch bank, its table editor, param locks and cloud morph are in
@@ -797,6 +833,41 @@ How to use this file: find the heading for the area you are about to touch and r
   cursor goes to the NEAREST pin whenever there is one**: it used to need a share over 0.34, which
   four pins around the cursor never give the nearest, so it hid exactly where the hand needed it;
   and it was 1 px at ≤ 0.46 alpha, which vanished beside a 2.5 px ring — 1.5 px at 0.45–0.8 now.
+  **A pin you cannot hear is not a crossfade partner** (2026-09-16): the weight pass skipped only a
+  cloud with `playing === false`, so a muted loop, a cloud under a mute hold and a pin on its way
+  out (`isPinLeaving`) could still be `nearest` — and with `d0` = 0 on a silent pin every audible
+  pin's weight went to zero while the cursor sat on it. The pass now skips anything `isCommitOn`
+  says is off or `isPinLeaving` says is going, so focus is a crossfade between the pins that sound.
+
+- **The cursor is ONE rule** (`js/sphere.js` `cursorLonLatNow`, 2026-09-16): a cursor sensor
+  (`cursorQ`, the two-sensor modes) is the cursor; otherwise the pointer is, while it is ON the
+  canvas or frozen there by ⌥; off the canvas the cursor is the camera's centre, which is what the
+  sensor steers in single-sensor mode. The rule had been copied into seven modules and two of the
+  copies — the paint ticker and the eraser — read the pointer wherever it was. Found on the
+  2026-09-16 long run: with the pointer resting outside the private window, forty minutes of
+  strokes were laid at the pointer's last projection while the scan read the centre, so the ink and
+  the ear never met and the worklet fired no grain the whole session. On the rig the same happens
+  whenever the pointer rests on a rail while the sensor drives. Everything that paints, erases,
+  scans, listens or maps at the cursor calls the one function, the renderer's three included.
+
+- **Undo is unbounded, and the worklet holds only what can sound** (2026-09-16, Ek: "i really
+  want to be able to undo to the beginning just by undoing, that's worth the price — but double
+  check if there's a less memory costly way"). The price is ONE copy of every take ever recorded,
+  on the main thread, as the AudioBuffer history's entries reference — 48 kHz mono float32 is
+  11.5 MB a minute, so an hour's playing is ~700 MB whatever else is done, and that is the cost
+  Ek accepts. What was NOT the price: the worklet's own Float32 copy of every take, kept after
+  the take was swept or erased (only undo and redo ever resynced it) — a second ~700 MB on the
+  audio thread's side, the "group-show noise glitch" retention, and on the 2026-09-16 long runs
+  the place both ~50 ms audio stalls landed. Since 2026-09-16 `sweep()` and `eraseAll()` call
+  `resyncWorkletBuffers()` the moment they compact, so the worklet carries only takes a candidate
+  can read; an undo that brings a take back re-registers it (one memcpy + a zero-copy transfer,
+  ~1 MB for a five-second take). The less costly way that is still on the table, sketched in
+  `docs/TODO.md`: erased material held ONCE as a raw Float32Array moved between the threads by
+  transfer (the AudioBuffer rebuilt on undo), which halves the live copies too. Not Int16: the
+  file is float32 on purpose and undo must give back exactly what was taken. **Measured the next day
+  (2026-09-17, a quiet 40-minute run):** the audio thread itself never stalled (`process()` ≤ 1 ms),
+  the faults came at minute 38 with the renderer at 939 MB on an 8 GB machine with swap in use — so on
+  the laptop the memory IS the stability, and the transfer design is on the list for that reason.
   It is the only pin cue on the cursor: the pin COMPASS (a short arc per pin in reach, on a ring
   outside the reach ring, opacity by share) went the same day (Ek: "now that we have the one-line
   selector we can remove those indicators") — the line says which pin, the rail's mark which is
@@ -825,6 +896,25 @@ The same pass took the BORDERS out. An empty slot lost its chip entirely — the
 
 The ring is the SELECTED pin, off the same `selectedPinSlot` the rail's half-moon and the sphere's bracket read: three marks, one answer. Under the default mode that is the pin nearest the cursor, which is what Ek asked for by name; under `oldest` / `farthest` it keeps saying what unpin will actually take rather than offering a second opinion about "closest", because a mark that means something different from the other two is worse than no mark. The way this breaks is not a disagreement about the rule but two SEARCHES a few milliseconds apart while the cursor moves, so the rail's tick does ONE search and hands it to both painters. A ring rather than a moon because a cell has no left edge to wear one on, and a hue mark would vanish against a hue fill; the inner ring is the rail's own ground, so the bright one reads as separate from the cell rather than as a thicker border.
 
+- **A take is held ONCE — one SharedArrayBuffer both threads read** (2026-09-17). A take is
+  `{ data, sampleRate, length, duration }` (`js/take.js`), `data` a Float32Array over shared memory; the
+  bridge posts it by reference (no copy, no transfer list — transferring a SAB is an error), the primary
+  starts on the take's own buffer, the provisional take is a view over the raw pool re-cut every tick, and
+  erase and undo move nothing: the worklet drops or re-takes a reference. Before, a live take was an
+  AudioBuffer here plus a Float32Array there, the engine-start take a third time, and the 40-minute run of
+  2026-09-17 faulted at 939 MB on the 8 GB laptop with the material held twice. The TODO's transfer design
+  (samples in the worklet, handed back on erase) was dropped: the main thread reads a LIVE take in nine
+  places (the waveform, onsets, the loop region, the fold, the save, the sampler), and every one would have
+  become a round trip. A source node cannot play shared memory, so tape copies the region it plays: a pinned loop's
+  `buffer` IS its crossfaded region AudioBuffer (`buildLoopPayload`, unchanged), a trigger's `buffer` is the
+  take and `grain.js` `_regionCopy` cuts the [loopStart, loopEnd) it plays into a cached AudioBuffer on the
+  slot (the reverse copy used the same cache; a moved region re-cuts), the sampler's monitor copies its crop
+  while the pedal is held. The `.mubone` writer takes either shape (`samplesOf` in `mubone-file.js`, the
+  one place the two meet) and the loader hands a loop its region back as an AudioBuffer. Copy into an
+  AudioBuffer with `getChannelData(0).set`, never `copyToChannel`, which rejects a shared view. The instrument is mono: `.mubone` members are written mono,
+  a stereo member from an older file loads as its first channel. Remaining copies, by design: a pinned loop's
+  crossfaded region, an overdub's folded layer, the raw pool (5 min, retained), and history's hold on every
+  erased take — the next lever is compressing those.
 ## Colour — what a timbre looks like
 
 **For anything touching `js/audio-features.js` or the viz legend:** the hue axis is a **ratio of
@@ -1209,7 +1299,7 @@ information existed.**
 
 **Blend.** All plays every pin at equal weight. Focus leans toward whichever is closest to the cursor.
 
-**Crossfade.** How wide the handover is between two pins. 100% blends the whole way from one anchor to the next; 0% snaps at the midpoint. On an anchor, that pin is alone. Focus only.
+**Curve.** The crossfader curve between two pins — the DJ mixer's word (Ek, 2026-09-17: "width" read as a size; it is whether the handover is gradual or sharp). 100% blends the whole way from one anchor to the next; 0% cuts at the midpoint. On an anchor, that pin is alone. Focus only; outside focus the row is greyed.
 
 **Selected Pin.** The pin unpin takes, marked in the rail: the one nearest the cursor, the one farthest from it, or the one pinned first.
 

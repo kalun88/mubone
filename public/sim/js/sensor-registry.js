@@ -38,31 +38,6 @@ export const INERTIAL_ROLES = ['gesture', 'unmapped'];
 // functions all ran for a role no slot could hold. Deleted 2026-09-13;
 // docs/ROUTING-DESIGN.md is the design and git has the scaffolding.
 
-// Breakout signal keys for each stream type
-export const QUAT_SIGNALS     = ['euler pitch', 'euler yaw', 'euler roll'];
-export const INERTIAL_SIGNALS = ['gyro x', 'gyro y', 'gyro z', 'accel x', 'accel y', 'accel z'];
-
-// Default routing for each preset role — what signals go where implicitly
-export const CURSOR_DEFAULTS = {
-  'euler pitch': 'viz elevation',
-  'euler yaw':   'viz azimuth',
-  'euler roll':  'viz roll',
-};
-export const CAMERA_DEFAULTS = {
-  'euler pitch': 'world reference',
-  'euler yaw':   'world reference',
-  'euler roll':  'world reference',
-};
-// FRAME_DEFAULTS identical to CAMERA_DEFAULTS for now — both feed the world-
-// reference quaternion.  The difference between camera and frame is how the
-// renderer *applies* that quat (world rotation vs. cursor delta), not what
-// signals feed it.  Kept as a separate export so UI copy can differ and so
-// future work can diverge their routing if it ever needs to.
-export const FRAME_DEFAULTS = {
-  'euler pitch': 'world reference',
-  'euler yaw':   'world reference',
-  'euler roll':  'world reference',
-};
 // ── Default calibration ─────────────────────────────────────────────────────
 // The pitch and yaw signs are NOT arbitrary defaults — they are a fixed
 // convention offset, and leaving them at +1 makes every freshly calibrated
@@ -553,7 +528,6 @@ export function applyAxisMapToEuler(euler, cal) {
 //    offset in the tared quaternion, the offset is subtracted before
 //    decomposition to prevent pitch↔yaw coupling from the tilted roll axis.
 
-let _axisMapLastYaw = 0;  // held yaw when sensor points near a pole
 
 // Find the physical axis that serves as the sensor's forward/pointing direction.
 // Returns the physical axis key ('x', 'y', or 'z'), or null if all axes are
@@ -614,11 +588,13 @@ function applyAxisMapQuat(q, cal) {
       let pitch = Math.asin(Math.max(-1, Math.min(1, -fz)));
       const xyLen = Math.sqrt(fx*fx + fy*fy);
       let yaw;
+      // The held yaw is the SLOT's: one module-level value was shared by every
+      // slot, so two sensors at the pole overwrote each other's (2026-09-16).
       if (xyLen > 0.15) {
         yaw = Math.atan2(fy, fx);
-        _axisMapLastYaw = yaw;
+        cal._lastYaw = yaw;
       } else {
-        yaw = _axisMapLastYaw;
+        yaw = cal._lastYaw || 0;
       }
       yaw   *= yawEntry[1].sign;
       pitch *= pitchEntry[1].sign;
@@ -762,8 +738,6 @@ export function getCameraQ() {
 // ── getFrameQ — body-reference quaternion from frame-role sensor ────────────
 // Returns conj(F_world) for the sensor assigned the 'frame' role, or null.
 // Consumed by:
-//   - the staging sphere (relational-features + ui-posture-map) for computing
-//     the Δ between cursor and body, and
 //   - the main renderer's body-frame path, where the cursor is drawn at the
 //     delta direction and no world rotation is applied.
 //
@@ -783,7 +757,7 @@ function eulerAxisToQuat(ax, ay, az, angle) {
 
 // ── Quaternion math [x, y, z, w] ────────────────────────────────────────────
 
-function quatToEulerDeg(x, y, z, w) {
+export function quatToEulerDeg(x, y, z, w) {
   const roll  = Math.atan2(2*(w*x + y*z), 1 - 2*(x*x + y*y)) * (180 / Math.PI);
   const sinp  = 2*(w*y - z*x);
   const pitch = (Math.abs(sinp) >= 1
@@ -813,8 +787,6 @@ function qConjugate(q) {
 // page reloads.  Saved per slot name; applied to slots as they're discovered.
 
 const LS_KEY          = 'mubone_sensor_cal';
-const LS_VERSION_KEY  = 'mubone_sensor_cal_v';   // schema version flag
-const CURRENT_VERSION = '2';                     // bumped 2026-08-31: tareQuat → mountQuat + headingQuat
 let _restoring = false;   // true while applying saved cal — suppresses re-saves
 
 // Serialise just the bits we need to restore
@@ -861,41 +833,11 @@ function loadSavedCal() {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) _savedCal = JSON.parse(raw);
   } catch (_) { _savedCal = null; }
-  _migrateSavedCal();
 }
-
-// One-shot schema migrations.  Runs once per localStorage bucket — gated by
-// LS_VERSION_KEY so re-loading after a successful migration is a no-op.
-//
-// v→1 (2026-04-23): the original 'frame' role did projector-aim rendering
-// (rotating the viewport with the sensor).  That semantic is now named
-// 'camera' so the new 'frame' role can mean body-reference.  Any slot saved
-// with quatRole='frame' before this migration is the OLD semantic → rewrite
-// to 'camera' so the live-set keeps behaving identically.
-function _migrateSavedCal() {
-  try {
-    const v = localStorage.getItem(LS_VERSION_KEY);
-    if (v === CURRENT_VERSION) return;
-
-    if (_savedCal) {
-      let migrated = 0;
-      for (const name of Object.keys(_savedCal)) {
-        const slot = _savedCal[name];
-        if (slot && slot.quatRole === 'frame') {
-          slot.quatRole = 'camera';
-          migrated++;
-        }
-      }
-      if (migrated > 0) {
-        console.log(`[sensor-registry] migrated ${migrated} slot(s) frame → camera`);
-        try { localStorage.setItem(LS_KEY, JSON.stringify(_savedCal)); } catch (_) {}
-      }
-    }
-    try { localStorage.setItem(LS_VERSION_KEY, CURRENT_VERSION); } catch (_) {}
-  } catch (e) {
-    console.warn('[sensor-registry] migration failed:', e);
-  }
-}
+// The two schema migrations that ran here (frame → camera, 2026-04-23;
+// tareQuat → mountQuat + headingQuat, 2026-08-31) and their version flag
+// were deleted 2026-09-16: every rig has been through both, and the flag is in
+// RETIRED_KEYS. A bucket older than 2026-08-31 recalibrates — two gestures.
 
 // Apply saved calibration to a slot (called when slot is first created).
 // Slot must already be in _registry so assignQuatRole/assignInertialRole
@@ -911,26 +853,13 @@ function applySavedCal(slot) {
 
   // Restore calibration data (no conflict concerns)
   if (saved.quatCal) {
+    // Verbatim. An all-+1 map used to be replaced by the default here on EVERY
+    // load, to undo hand-flips made before the convention offset moved into
+    // the default (2026-08-31) — a persistent fallback that made + + + an
+    // unsettable map. Deleted 2026-09-16; the rig's map was rewritten long ago.
     if (saved.quatCal.axisMap)  slot.quatCal.axisMap  = saved.quatCal.axisMap;
-    // A map stored before the convention offset moved into the default (2026-08-31)
-    // carries whatever the player flipped by hand to compensate. Restoring it
-    // verbatim would double-apply the correction, so an all-+1 map — the old
-    // default, which never worked without manual flips — is replaced.
-    if (saved.quatCal.axisMap &&
-        Object.values(saved.quatCal.axisMap).every(a => a.sign === 1 && !a.mute)) {
-      slot.quatCal.axisMap = defaultQuatAxisMap();
-    }
     if (saved.quatCal.mountQuat)   slot.quatCal.mountQuat   = saved.quatCal.mountQuat;
     if (saved.quatCal.headingQuat) slot.quatCal.headingQuat = saved.quatCal.headingQuat;
-    // One-shot migration: a v1 `tareQuat` was the whole orientation at tare
-    // time and was left-multiplied, which is exactly what mountQuat is now.
-    // Carry it across verbatim — the behaviour is identical, so a rig that was
-    // calibrated before this change keeps its calibration.
-    if (!saved.quatCal.mountQuat && saved.quatCal.tareQuat) {
-      const H = twistAboutZ(saved.quatCal.tareQuat);
-      slot.quatCal.headingQuat = H;
-      slot.quatCal.mountQuat   = qMulQ(qConjugate(H), saved.quatCal.tareQuat);
-    }
   }
   if (saved.inertialCal) {
     if (saved.inertialCal.axisMap)    slot.inertialCal.axisMap    = saved.inertialCal.axisMap;

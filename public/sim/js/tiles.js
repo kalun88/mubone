@@ -8,7 +8,7 @@
 // the spacebar or click does. that should be always the truth." Two things,
 // cleanly split. THE HAND is one tool, picked by a click on its rail row or
 // its strip tile, played by the SPACEBAR and a LEFT-CLICK on the sphere in
-// one global verb (`handVerb`), and drawn as the spacebar plate under the
+// the verb that came with the tool (`handVerb`), and drawn as the spacebar plate under the
 // strip. THE PALETTE is quick access: a POSITION is a button with its own
 // key, button or note, in its own verb; pressing it plays what sits there
 // and never touches what is in hand. "What would space do?" has one answer
@@ -564,7 +564,6 @@ export function removeFromPalette(id) {
   if (i < 0) return false;
   return removeAt(i);
 }
-function isEraseTile(id) { return tileDef(id)?.kind === 'edit'; }
 
 // ── The pin pair (#252) ────────────────────────────────────────────────────
 // The palette's second section: UNPIN and PIN on `-` and `=`, the two keys next
@@ -590,7 +589,8 @@ let _optSel = { kind: 'tool', id: 'pen' };  // what the options bar shows
 // The hand is ONE tool — a brush or an eraser — picked by a CLICK on its rail
 // row or its strip tile, and played by the SPACEBAR and a LEFT-CLICK on the
 // sphere: the two inputs reserved for it, learnable onto nothing else. Its
-// verb is one global switch, `handVerb`, drawn as the spacebar plate under
+// verb, `handVerb`, COMES WITH THE TOOL (pickHand / handVerbFor) and the hand
+// tile's right-click flips it; it is drawn as the spacebar plate under
 // the strip (the tile's own two shapes). The palette tiles are QUICK ACCESS:
 // each fires from its own key, button or note, in its own verb, and never
 // touches what is in hand. `_held` (below) stays what is PLAYING, from either
@@ -615,13 +615,28 @@ export function setHandVerb(v) {
 /** PICK a tool into the hand. The one gesture that does it is a click — the
  *  rail row or the strip tile — and the drawer follows the pick (Photoshop's
  *  options bar, through pickTile). Placing on the strip is still a drag. */
-export function pickHand(id) {
+export function pickHand(id, verb) {
   const t = tileById(id);
   if (!t || t.ghost || !isToolTile(id)) return false;
   inHand = id;
   try { localStorage.setItem(LS_HAND, id); } catch (_) {}
+  // THE VERB COMES WITH THE TOOL (Ek, 2026-09-16: "when i press on a tool
+  // from the palette bar, it goes to the hand. but the toggle / momentary
+  // verb type should follow that tile it came from. if something from the
+  // left rail is chosen, by default, tape tools should be toggle, grain
+  // tools should be momentary held. erase should be momentary held"). A
+  // strip tile hands over its own verb; a rail row hands over its engine's
+  // factory verb (handVerbFor). The hand tile's right-click still flips it
+  // afterwards, and a pick with no verb — the fallback when a tool is
+  // deleted — leaves it as it was.
+  if (verb) setHandVerb(verb);
   pickTile(id);
   return true;
+}
+/** The verb a tool comes into the hand with from the RAIL, by engine: a
+ *  take is played whole, so it latches; paint and erase are held. */
+export function handVerbFor(id) {
+  return engineOf(id) === 'tape' ? 'toggle' : 'momentary';
 }
 // A digit held on the keyboard. It came back on 2026-09-11 evening with the
 // VERB: a digit carries both edges now, because the tile decides what they
@@ -956,7 +971,7 @@ export function refreshLensStates() {
 
 /** A lens's name, factory or yours. */
 function lensLabel(id) { return LENSES.find(l => l.id === id)?.label ?? tileDef(id)?.label ?? id; }
-const lensTileTitle = (label, verb) => `${label} · lens · ${verb === 'momentary' ? 'on while its key is down' : 'fires on / off'} — no lens on, the cursor reads nothing; the ⋯ on its rail row is its drawer`;
+const lensTileTitle = (label, verb) => `${label} · lens · ${verb === 'momentary' ? 'on while its key is down' : 'fires on / off'} — no lens on, the cursor reads nothing; the door on its rail row is its drawer`;
 
 // ── The hold gesture — Q W E file material into a layer ─────────────────────
 // § 1c through today's engine: on granular material the layer key runs the
@@ -1564,7 +1579,7 @@ function handTileHTML(ENGINE_HUE) {
   const playing = _held && _held.i === HAND_POS;
   const title = `${t.label} is in hand — the spacebar and a left-click on the sphere play it, ` +
     (verb === 'toggle' ? 'from one press to the next (toggle)' : 'while held (momentary)') +
-    ` · right-click for ${verb === 'toggle' ? 'momentary' : 'toggle'} · click a tool in the rail or on the strip to take it in hand · its ⋯ in the rail opens its drawer`;
+    ` · right-click for ${verb === 'toggle' ? 'momentary' : 'toggle'} · click a tool in the rail or on the strip to take it in hand · the door on its rail row opens its drawer`;
   return `<button type="button" class="tile tile--hand${playing ? ' playing' : ''}" id="handKey"` +
     ` style="--c:${c};--eng:${c};--pal-r:${VERB_RADIUS[verb]}" data-hand="${t.id}" data-verb="${verb}" title="${esc(title)}">` +
     `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G[t.g]}</svg>` +
@@ -1653,7 +1668,15 @@ export function render() {
   const grpLabel = (label, engine, hue) =>
     `<span class="tbx-lbl" style="--eng:${hue}">${label}` +
     `<span class="tbx-add" data-add="${engine}" role="button" tabindex="-1"` +
-    ` title="new ${label} tool — starts from what is on the sliders now">+</span></span>`;
+    ` title="new ${label} tool — starts from what is on the sliders now">` +
+    // A DRAWN plus, not the character (Ek, 2026-09-16: "the plus sign … is
+    // not vertically aligned, it looks a bit lower than the title"). The
+    // glyph sat on a 14px font's baseline inside a 24px box, and a baseline
+    // is (ascent − descent)/2 below the box's centre — one pixel lower than
+    // the 11px title's caps beside it, measured. An SVG is centred by the
+    // box, not by a baseline: 12px, so its ink is the title's 7px cap height.
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">` +
+    `<path d="M12 5v14M5 12h14"/></svg></span></span>`;
   const tileHTML = (id, { html = '', zone, verb = null, pos = '' }) => {
     const t = tileDef(id); if (!t) return '';
     const eng = engineOf(id);
@@ -1669,9 +1692,9 @@ export function render() {
     const hand = id === inHand ? ' · IN HAND — space and a click on the sphere play it' : ' · click to take it in hand';
     const title = `${t.label}${eng ? ' · ' + eng : ''}` +
       (zone === 'palette'
-        ? `${hand} · ${verbWord(id, verb) ?? verb} from its own key — right-click for the other verb · the ⋯ in the rail opens its drawer · drag to move it, drag off the palette to remove it`
-        : inPalette(id) ? `${hand} · the ⋯ opens its drawer · on the palette at ${posesOf(id).join(' and ')} · drag it onto the palette for another verb`
-        : `${hand} · the ⋯ opens its drawer · drag it onto the palette to place it`) +
+        ? `${hand} · ${verbWord(id, verb) ?? verb} from its own key — right-click for the other verb · the door on its rail row opens its drawer · drag to move it, drag off the palette to remove it`
+        : inPalette(id) ? `${hand} · the door opens its drawer · on the palette at ${posesOf(id).join(' and ')} · drag it onto the palette for another verb`
+        : `${hand} · the door opens its drawer · drag it onto the palette to place it`) +
       `${t.ghost ? ' · not built yet' : ''}`;
     const body = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G[t.g]}</svg>` +
       `<span class="tile-nm">${t.label}</span>`;
@@ -2701,16 +2724,6 @@ function _segRowAuto(label, segId) {
 
 // ── Options bar — the selected tile's settings, write-through ───────────────
 
-// A slider row that writes through a real panel element and dispatches
-// 'input', reading its display value back from S via `read`.
-function _sliderRow(label, elId, read) {
-  const el = document.getElementById(elId);
-  if (!el) return '';
-  const min = +el.min, max = +el.max, v = (+el.value - min) / (max - min || 1);
-  return `<span class="opt"><i>${label}</i>` +
-    `<span class="tr live" data-slider="${elId}"><i class="thumb" style="left:calc(${(v * 100).toFixed(1)}% - 1px)"></i></span>` +
-    `<b data-read="${read}">${_readVal(read)}</b></span>`;
-}
 
 const READS = {
   radius:  () => `${S.searchRadiusDeg}°`,
@@ -3342,15 +3355,6 @@ function _paramDefault(pid) {
     return el ? +el.defaultValue : null;
   }
   return null;
-}
-function _knobArc(f) {
-  // 270° sweep starting at 225° (7:30) — the audio-gear standard.
-  const a0 = Math.PI * 0.75, a1 = a0 + Math.PI * 1.5 * Math.max(0, Math.min(1, f));
-  const large = (a1 - a0) > Math.PI ? 1 : 0;
-  const r = 14, cx = 18, cy = 18;
-  const x0 = cx + r * Math.cos(a0), y0 = cy + r * Math.sin(a0);
-  const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
-  return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
 }
 /** ONE LINE per parameter: name · track · number (#261, replacing the knob).
  *  A knob on screen is bigger than a track for the same precision, has
@@ -4328,9 +4332,10 @@ export function initTiles() {
       if (t.id === 'undo') S._dispatchAction?.('undo', 127);
       flash(id); return;
     }
-    // Anywhere else on the row: in hand. It plays nothing — space and the
-    // sphere's click do that — and an open drawer follows the pick.
-    pickHand(id);
+    // Anywhere else on the row: in hand, in its engine's verb. It plays
+    // nothing — space and the sphere's click do that — and an open drawer
+    // follows the pick.
+    pickHand(id, handVerbFor(id));
   };
 
   // ── A CLICK ON THE STRIP (Ek, 2026-09-12) ────────────────────────────────
@@ -4356,8 +4361,7 @@ export function initTiles() {
     // THE WET STICKER IS A BUTTON HERE TOO (Ek, 2026-09-14). It is checked
     // before everything else on the strip, the hand tile included: a tap on
     // the drop flips that tool's wet and does nothing else — it does not take
-    // the tool in hand, fire the position, or press the plate (onPlateDown
-    // steps over it on the way down). The tile it belongs to is the one it
+    // the tool in hand or fire the position. The tile it belongs to is the one it
     // sits on, so the id comes off the host — `data-tile` on a strip tile,
     // `data-hand` on the hand tile.
     const drop = e.target.closest('[data-wet-tgl]');
@@ -4368,7 +4372,7 @@ export function initTiles() {
       if (id) setWet(id);
       return;
     }
-    if (e.target.closest('#handKey')) return;   // the hand tile presses on mousedown (onPlateDown); its legend is fixed
+    if (e.target.closest('#handKey')) return;   // the hand tile is a legend: a click does nothing
     const row = e.target.closest('.tile-bind[data-learn-kind]');
     if (row) {
       e.preventDefault(); e.stopPropagation();
@@ -4381,7 +4385,7 @@ export function initTiles() {
     const b = e.target.closest('.tile[data-pos]'); if (!b) return;
     const i = Number(b.dataset.pos), en = palAt(i); if (!en) return;
     const k = paletteKind(en.id);
-    if (k === 'tool') { pickHand(en.id); return; }
+    if (k === 'tool') { pickHand(en.id, en.verb === 'toggle' || en.verb === 'momentary' ? en.verb : undefined); return; }
     if (k === 'lens') { lensTap(en.id); return; }
     S._paletteFire(i, true); S._paletteFire(i, false);
   };
@@ -4405,19 +4409,12 @@ export function initTiles() {
   // ── THE SPACEBAR PLATE (Ek, 2026-09-12) ──────────────────────────────────
   // "beside the palette bar it should show what tool is in hand … the space
   // bar actually had the icon and the name of the tool on the spacebar
-  // 'image', big and wide the width of the palette bar." It is a spacebar,
-  // so pressing it presses the hand — both edges, the release on the window
-  // so a drag off it still ends what it started — and a right-click flips
-  // its verb, the way a tile's right-click cycles the tile's.
-  const onPlateDown = e => {
-    if (e.button !== 0 || !e.target.closest('#handKey')) return;
-    // …except on the wet drop, which is a switch sitting on the plate: a
-    // press there must not play the hand (it is handled on click, above).
-    if (e.target.closest('[data-wet-tgl]')) return;
-    e.preventDefault(); e.stopPropagation();
-    if (_downHandMouse) return;
-    _downHandMouse = true; handDown();
-  };
+  // 'image', big and wide the width of the palette bar." It is a LEGEND: a
+  // mouse press on it does nothing (Ek, 2026-09-17: "it shouldn't actually
+  // be clickable" — it pressed the hand from 2026-09-12 until then; the
+  // spacebar and the sphere are the hand's inputs). A right-click flips its
+  // verb, the way a tile's right-click cycles the tile's, and a finger still
+  // presses it (below) because the phone's palette is this tile alone.
   const onPlateContext = e => {
     if (!e.target.closest('#handKey')) return;
     e.preventDefault(); e.stopPropagation();
@@ -4489,7 +4486,6 @@ export function initTiles() {
   paletteDock?.addEventListener('click', onStripClick);
   paletteDock?.addEventListener('contextmenu', onStripContext);
   paletteDock?.addEventListener('contextmenu', onPlateContext);
-  paletteDock?.addEventListener('mousedown', onPlateDown);
   // A FINGER ON THE HAND TILE is the same press (the phone, 2026-09-12: the
   // palette there is the hand tile alone). preventDefault, so the browser
   // sends no compat mousedown/up pair after the finger lifts — that pair

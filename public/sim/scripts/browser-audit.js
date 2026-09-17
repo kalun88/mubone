@@ -417,50 +417,8 @@ async function auditReset(browser) {
     'mubone_darkMode is unwritten — the canvas theme option is gone (5.0)',
     darkOwned === null ? '' : `found "${darkOwned}" — something is still writing a key with no setting behind it`);
 
-  // ── 5b. Pre-split audio blob migrates into its four successor keys ──
-  await page.evaluate(() => {
-    localStorage.clear();
-    // A v1.11-shaped blob: audio fields plus the four concerns that moved out.
-    localStorage.setItem('mubone_audio_defaults', JSON.stringify({
-      outputGain: -7.5, recLimitSeconds: 42, hfHoldMs: 321,
-      seedMode: 'nearest', loopFadeTimeMs: 99,
-      vizRmsMax: 0.77, cameraMode: 'surface',
-      activePresetIndex: 3,   // the bank's index — sunset 2026-09-03; must be DROPPED, not carried
-      darkMode: false, sensor3Cal: { axisMap: { roll: 'gx' } },
-      ts: 1,
-    }));
-  });
-  await boot();
-  const mig = await page.evaluate(async () => {
-    const j = k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
-    // Modules are scoped, so reach the live shared state through the module
-    // registry — a dynamic import returns the same instance main.js is using.
-    const { S } = await import('./js/state.js');
-    return {
-      blob:   j('mubone_audio_defaults'),
-      seed:   j('mubone_seed_settings'),
-      viz:    j('mubone_viz_calibration'),
-      patch:  localStorage.getItem('mubone_active_patch'),   // retired key — must stay absent
-      live:   { seedMode: S.seedMode, loopFadeTimeMs: S.loopFadeTimeMs,
-                vizRmsMax: S.vizRmsMax, cameraMode: S.cameraMode,
-                recLimitSeconds: S.recLimitSeconds, hfHoldMs: S.hfHoldMs },
-    };
-  });
-  check(mig.live.seedMode === 'nearest' && mig.live.loopFadeTimeMs === 99,
-    'migration: seed settings survive into S', JSON.stringify(mig.live));
-  check(mig.live.vizRmsMax === 0.77 && mig.live.cameraMode === 'surface',
-    'migration: viz calibration survives into S');
-  check(mig.patch === null, 'migration: the retired active-patch key is not written');
-  check(mig.live.recLimitSeconds === 42 && mig.live.hfHoldMs === 321,
-    'migration: audio fields that did not move are untouched');
-  check(mig.seed?.seedMode === 'nearest' && mig.viz?.vizRmsMax === 0.77,
-    'migration: values landed in the new keys',
-    `seed=${!!mig.seed} viz=${!!mig.viz} patch=${mig.patch}`);
-  check(mig.blob && !('seedMode' in mig.blob) && !('vizRmsMax' in mig.blob) &&
-        !('activePresetIndex' in mig.blob) && !('sensor3Cal' in mig.blob) &&
-        !('darkMode' in mig.blob),
-    'migration: moved + dropped fields are stripped from the old blob',
-    mig.blob ? Object.keys(mig.blob).join(',') : '(blob gone)');
+  // (5b, the pre-split audio blob migration, was deleted with the migration on
+  // 2026-09-16 — every rig had run it.)
 
   // ── 5c. A partial reset clears exactly its categories ──
   const DIRT = {
@@ -511,39 +469,7 @@ async function auditReset(browser) {
     'partial reset left every other category alone',
     Object.entries(partial).filter(([, v]) => v === null).map(([k]) => k).join(', '));
 
-  // ── 5c3. A pre-v4 setup file imports onto an already-split machine ──
-  // The regression this guards: applySettingsPayload used to write the payload's
-  // keys and let loadAudioDefaults reshape afterwards. On a machine that had
-  // already split its own storage the destination keys existed, so the
-  // non-clobber guard skipped the write while the strip still emptied the blob —
-  // the imported seed settings, viz calibration and active patch vanished. The
-  // split now runs on the payload, with overwrite, before anything is written.
-  const legacyImport = await page.evaluate(async () => {
-    const { splitLegacyAudioBlob, objectStore } = await import('./js/ui-audio-settings.js');
-    // This machine is already migrated and holds DIFFERENT values.
-    localStorage.setItem('mubone_seed_settings',   JSON.stringify({ seedMode: 'all' }));
-    localStorage.setItem('mubone_viz_calibration', JSON.stringify({ vizRmsMax: 0.1 }));
-    // A v3 payload: grab-bag blob, none of the successor keys.
-    const payload = {
-      _magic: 'mubone-setup', _version: 3,
-      mubone_audio_defaults: JSON.stringify({
-        outputGain: -3, seedMode: 'nearest', vizRmsMax: 0.9, activePresetIndex: 5, darkMode: false,
-      }),
-    };
-    splitLegacyAudioBlob(objectStore(payload), { overwrite: true });
-    const blob = JSON.parse(payload.mubone_audio_defaults);
-    return {
-      seed:  payload.mubone_seed_settings ? JSON.parse(payload.mubone_seed_settings).seedMode : null,
-      viz:   payload.mubone_viz_calibration ? JSON.parse(payload.mubone_viz_calibration).vizRmsMax : null,
-      patch: payload.mubone_active_patch ?? null,
-      blobStripped: !('seedMode' in blob) && !('darkMode' in blob) && !('activePresetIndex' in blob),
-      blobKept: blob.outputGain,
-    };
-  });
-  check(legacyImport.seed === 'nearest' && legacyImport.viz === 0.9 && legacyImport.patch === null,
-    'pre-v4 import: the file\'s values win over the local split keys, and the bank index is dropped', JSON.stringify(legacyImport));
-  check(legacyImport.blobStripped && legacyImport.blobKept === -3,
-    'pre-v4 import: blob is reshaped, audio fields survive', JSON.stringify(legacyImport));
+  // (5c3, the pre-v4 setup import reshaping, went with the migration, 2026-09-16.)
 
   // ── 5c4. The piece carries the music, never the rig ──
   // A piece carries the sound it was played on as a SNAPSHOT of the live

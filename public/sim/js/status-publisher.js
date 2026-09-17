@@ -10,8 +10,8 @@
 // (joycon reload, relay restart, etc.) lights up correctly.
 //
 // What's on the wire (tailored to the joycon feedback consumer):
-//   /status/trace          — trace armed, hands-free OFF
-//   /status/trace/hf       — trace armed, hands-free ON
+//   /status/trace          — a stroke is being painted, hands-free OFF
+//   /status/trace/hf       — a stroke is being painted, hands-free ON
 //   /status/slots/filled   — integer 0..MAX_COMMITS: raw count of occupied
 //                            commit slots. The consumer does all the gauge
 //                            math (N-LED fill, near-full, full), so this

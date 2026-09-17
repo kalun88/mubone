@@ -16,11 +16,11 @@
 // ============================================================================
 
 import { S, SAMPLE_PAINT_COLORS, gp, minGrainDurS } from './state.js';
-import { getCursorLonLat, screenToLonLat } from './sphere.js';
+import { cursorLonLatNow } from './sphere.js';
 import { rand, stampCartesian } from './grain.js';
 import { getRecordingDuration } from './audio.js';
 import { voicingForCurrentBrushLive } from './brush-voicing.js';
-import { snapshotInputFeatures, featuresFromBuffer, readGateLoudness, snapshotTimbre, consumeWindowLoudness, featuresToColor } from './audio-features.js';
+import { snapshotInputFeatures, featuresFromBuffer, readGateLoudness, snapshotTimbre, consumeWindowLoudness, recordedWindowLoudness, featuresToColor } from './audio-features.js';
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
@@ -99,15 +99,10 @@ function _intervalMs() {
 // so it follows whichever engine reads the mark. The `align` numbox this
 // replaced was a hand-set guess at that number.
 
-// ── Cursor position helper ──────────────────────────────────────────────────
-
-function _cursorLonLat() {
-  if (S.cursorQ) return getCursorLonLat();
-  return screenToLonLat(
-    S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
-    S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY
-  );
-}
+// ── Cursor position — the ONE rule, sphere.js cursorLonLatNow ──────────────
+// This used to read the pointer wherever it was; with it resting on a rail
+// the marks went to its last projection while the scan read the centre.
+const _cursorLonLat = cursorLonLatNow;
 
 // ── Core deposit function ───────────────────────────────────────────────────
 // Creates a particle at the current cursor position with audio feature snapshot.
@@ -231,7 +226,7 @@ export function concatMatch(feat) {
 }
 
 function _depositConcat(lon, lat) {
-  const feat = S._concatTarget ?? snapshotInputFeatures();
+  const feat = snapshotInputFeatures();
   if (!feat) return null;
   if (S.paintGateThreshold > 0 && feat.rms < S.paintGateThreshold && !S._recordingTrigger) return null;
   const u = concatMatch(feat);
@@ -240,7 +235,6 @@ function _depositConcat(lon, lat) {
   return {
     lon, lat,
     strokeId:       S.currentStrokeId,
-    lastTriggeredAt: undefined,
     _vo:            S.currentVoicing ?? 0,
     source:         u.source,
     liveBufferIdx:  u.liveBufferIdx,
@@ -363,16 +357,49 @@ export function staffLat(centroidNorm) {
 // docs/EXPERIMENTAL-BRUSHES.md, which now records why they went rather than
 // how they worked.
 
-/** Materialise the live mark captured at the previous tick, sized by the
- *  window that has elapsed since. Returns true if a mark was pushed. Safe to
+/** The live mark captured at the previous tick has its window's END now: it
+ *  joins the settle queue with `toS`, the recording moment the next mark (or
+ *  the stroke's end) starts at, and is materialised by _flushSettled once the
+ *  recorder has delivered the take up to there — the take's own samples over
+ *  [its moment, toS) are what size it (audio-features.js
+ *  recordedWindowLoudness). Returns true if a mark was pushed NOW. Safe to
  *  call with nothing pending. Registered on S as _settlePaintPending so
- *  stopLiveRecording() can settle the last mark before the take seals. */
-function _settlePending() {
+ *  stopLiveRecording() can settle the last mark before the take seals — that
+ *  call forces, reading what has arrived. */
+function _settlePending(toS, force = false) {
   const pend = _pending;
-  if (!pend) return false;
+  if (!pend) return _flushSettled(force);
   _pending = null;
+  // The analyser hold is consumed — reset — at every window's end whether or
+  // not its value is used, so the fallback read below is ever the window's.
+  pend.fold = consumeWindowLoudness();
+  pend.toS = toS;
+  _settling.push(pend);
+  return _flushSettled(force);
+}
+
+// Marks whose window has ended, oldest first, waiting for the recorder to
+// deliver their samples (~43 ms behind the clock). Flushed in order, so a
+// stroke's marks are pushed in the order they were laid.
+const _settling = [];
+function _flushSettled(force = false) {
+  let pushed = false;
+  while (_settling.length) {
+    const pend = _settling[0];
+    let rms = recordedWindowLoudness(pend.particle.grainStart, pend.toS, force);
+    if (rms === null) {
+      if (!force) break;                  // not delivered yet — next tick
+      rms = pend.fold;                    // nothing of it arrived: the fold's read
+    }
+    _settling.shift();
+    if (_materialise(pend, rms)) pushed = true;
+  }
+  return pushed;
+}
+
+/** Push the settled mark, sized `rms`. Returns true if it landed. */
+function _materialise(pend, rms) {
   const particle = pend.particle;
-  const rms = consumeWindowLoudness();
   // TAPE material is never gated (Ek, 2026-09-04): a line is a path you swipe
   // across to fire it, and a gap in the path is a place it cannot be fired
   // from. The marks are the drawing; the take is the material, whole. The
@@ -409,7 +436,14 @@ function _settlePending() {
   if ((S.brushFx === 'comb') && !particle.trig) combDeposit(particle, pend.c);
   return true;
 }
-S._settlePaintPending = _settlePending;
+/** The recording's moment NOW — the clock while it records, the delivered end
+ *  once it has stopped (the seal settles the last mark after `isRecording`
+ *  has dropped). */
+function _recNow() {
+  if (S.isRecording) return getRecordingDuration();
+  return S.recordingRaw && S.recordingSampleRate > 0 ? S.recordingWritePos / S.recordingSampleRate : 0;
+}
+S._settlePaintPending = () => _settlePending(_recNow(), true);
 
 function _depositParticle() {
   if (!S.isPainting) return false;
@@ -438,16 +472,15 @@ function _depositParticle() {
     // marks this brush lays down point at MATCHED moments, not at now.
     particle = _depositConcat(lon, lat);
   } else if (S.isRecording && S.currentLiveBufferIdx >= 0) {
-    // Settle the mark captured last tick — its window ends now — THEN capture
-    // this one, so the next window starts empty at this instant.
-    const settled = _settlePending();
+    // Settle the mark captured last tick — its window ends now, at THIS mark's
+    // moment — THEN capture this one, so the next window starts at this instant.
     const recTime = getRecordingDuration();
+    const settled = _settlePending(recTime);
     const timbre  = snapshotTimbre();
     const p = {
       lon, lat,
       strokeId:       S.currentStrokeId,
-      lastTriggeredAt: undefined,
-      // Which frozen brush setting plays this mark. Stamped from the stroke,
+        // Which frozen brush setting plays this mark. Stamped from the stroke,
       // not resolved per particle — an int the scheduler reads directly, since
       // it is touched once per candidate per 20 ms tick.
       _vo:            S.currentVoicing ?? 0,
@@ -501,8 +534,7 @@ function _depositParticle() {
     particle = {
       lon, lat,
       strokeId:       S.currentStrokeId,
-      lastTriggeredAt: undefined,
-      // Which frozen brush setting plays this mark. Stamped from the stroke,
+        // Which frozen brush setting plays this mark. Stamped from the stroke,
       // not resolved per particle — an int the scheduler reads directly, since
       // it is touched once per candidate per 20 ms tick.
       _vo:            S.currentVoicing ?? 0,
@@ -512,7 +544,7 @@ function _depositParticle() {
       grainDuration:  grainDur,
       color:          SAMPLE_PAINT_COLORS[S.samplerIndex % SAMPLE_PAINT_COLORS.length]
     };
-    // Loop-engine strokes outliving the sample LOOP it (Ek, 2026-08-28):
+    // A tape stroke outliving the sample LOOPS it (Ek, 2026-08-28):
     // grainStart wraps at the crop seam, so it cannot order the path — a
     // grainStart-sorted outline interleaved the passes and drew as a mesh of
     // chords. takeT is the stroke's own clock (elapsed hold time, the exact
@@ -539,7 +571,7 @@ function _depositParticle() {
       if (particle && S.brushFx === 'staff') particle.lat = staffLat(feat.centroid);
     }
 
-    // A loop-engine stroke hears the sample "playing in" at 1× — the cursor
+    // A tape stroke hears the sample "playing in" at 1× — the cursor
     // advances one tick of sample time per tick of real time, so the marks'
     // positions and features match the take the stroke materializes on
     // release (sampler.js). Spray keeps the grain-period stride: its cursor
@@ -572,7 +604,7 @@ function _depositParticle() {
 // ── Tick ─────────────────────────────────────────────────────────────────────
 // 200Hz poll — deposits when the fixed clock interval has elapsed.
 
-// Only a granular stroke has a voicing; a `hit` stroke would intern a row
+// Only a granular stroke has a voicing; a tape stroke would intern a row
 // nothing ever reads, and the voicing table is persisted.
 function _refreshVoicing() {
   if (!(S.currentStrokeId > 0)) return;
@@ -585,7 +617,7 @@ function _tick() {
     if (_wasPainting) {
       _wasPainting = false;
       // The stroke's last mark: its window ends with the stroke.
-      _settlePending();
+      _settlePending(_recNow(), true);
       // A new stroke must not compute its first velocity against the end of
       // the previous one — a big reposition would read as a monster flick.
       // The comb likewise freezes: its layout is final at release.
@@ -596,6 +628,9 @@ function _tick() {
   }
 
   const nowMs = performance.now();
+  // A settled mark whose samples have arrived since the last poll lands now,
+  // in order, a tick or two after its window closed.
+  _flushSettled(false);
 
   // Painting just started — deposit immediately
   if (!_wasPainting) {

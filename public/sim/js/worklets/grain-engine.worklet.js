@@ -1,23 +1,16 @@
 // ============================================================================
 // GRAIN ENGINE WORKLET — Phase 3: cursor + seed grain engine
 //
-// Sample-accurate onset clock, 256-slot grain pool, pitch shifting,
+// Sample-accurate onset clocks, a 512-slot grain pool, pitch shifting,
 // period/duration jitter, multi-grain mixing, VBAP multi-channel output,
 // candidate list selection, active-grain feedback ring.
 // Per-seed independent onset clocks and candidate lists.
 //
 // Zero allocations inside process() — all buffers pre-allocated.
 //
-// Messages from main thread:
-//   { type: 'init', sab, sampleRate, bufferLength, params }
-//   { type: 'params', ... }          — cursor parameter updates
-//   { type: 'cursorVoices', list }   — cursor candidates, bucketed by the brush
-//                                      each stroke froze (50Hz). vo 0 routes to
-//                                      the global cursor params; see the case.
-//   { type: 'seeds', list }          — per-seed state updates (50Hz)
-//   { type: 'vbapLUT', data }        — VBAP lookup table (once)
-//   { type: 'buffers', list }        — sample buffer registration
-//   { type: 'stop' }
+// Messages from main thread — the `switch` in _handleMessage is the list; the
+// scheduler posts candidates through the shared tables (`cursorTables`,
+// `cursorVoicesTab`) every 10 ms and the rest are one-off control messages.
 // ============================================================================
 
 const BLOCK = 128;              // render quantum size (Web Audio spec)
@@ -266,7 +259,10 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         break;
 
       case 'candidates':
-        // Compact candidate list from main thread spatial search
+        // Compact candidate list as a MESSAGE. The app posts through the
+        // shared tables (`cursorTables` below) since R3; only
+        // grain-engine.test.mjs still sends this, as its seam into the
+        // candidate path. Kept for that.
         this._candidates = data.list || [];
         this._candidateCount = this._candidates.length;
         this._candTab = -1;
@@ -607,28 +603,6 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         break;
       }
 
-      // Cursor-only flush: kill cursor grains, leave seeds alive.
-      // Used by undo — the undone stroke's particles are gone but in-flight
-      // grains would keep playing for up to the grain duration.
-      case 'flush-cursor':
-        this._candidates = [];
-        this._candidateCount = 0;
-        // Frozen-brush voices are cursor grains too — undo has to silence them
-        // or the undone stroke keeps sounding from its own voice.
-        for (let vi = 0; vi < MAX_CURSOR_VOICES; vi++) {
-          this._cursorVoices[vi].candidates = [];
-          this._cursorVoices[vi].candidateCount = 0;
-          this._cursorVoices[vi].active = false;
-        }
-        for (let i = 0; i < this._pool; i++) {
-          if (this._gActive[i] && this._gIsCursor[i]) {
-            const remaining = 1.0 - this._gPhase[i];
-            if (remaining > 0) {
-              this._gPhaseInc[i] = remaining / 128;
-            }
-          }
-        }
-        break;
     }
   }
 
@@ -1751,7 +1725,6 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
           dirFwd: this._diagDirFwd,
           jitterDropped: this._diagJitterDrop,
           dirRev: this._diagDirRev,
-          steals: this._diagSteals,
           // Buffer retention diagnostics (group-show noise glitch investigation):
           // _sampleBufs only grows within a node lifetime — erase-all never
           // clears it. Expose count + retained MB to confirm/refute the leak.

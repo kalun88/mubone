@@ -1,5 +1,6 @@
 // ============================================================================
-// osc-out.js — External OSC transport wrapper (staging Change A)
+// osc-out.js — External OSC transport wrapper (the sensor mapping rows'
+// OSC destinations, js/sensor-mapping.js)
 //
 // Renderer-side wrapper for sending real OSC 1.0 binary to arbitrary host:port.
 // Backed by electronBridge.sendOSCExternal. Browser mode (no Electron bridge)

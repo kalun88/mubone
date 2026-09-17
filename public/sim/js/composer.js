@@ -1,28 +1,21 @@
 // ============================================================================
-// composer.js — composer mode: latch-toggle commits by cursor proximity
+// composer.js — the pin MUTE engine (misnamed: the composer gate it was
+// written for was sunset 2026-08-29, see the footer)
 //
-// Design + reasoning: docs/archive/COMPOSER-MODE-PLAN.md. The short version:
+//   • A loop is MUTED, never stopped — its source keeps running so unmuting
+//     drops you where the loop would have been, not at the top.
+//   • A cloud is STOPPED through its own fade in/out envelope, held at silence
+//     with its slot intact (`_composerHold`), which is a different verb on
+//     different machinery.
+//   • Pins only. A trigger owns nothing — it is a view onto a stroke.
 //
-//   • Composer mode is a LATCHED mode. While it is on, scan is muted and the
-//     cursor toggles any commit it reaches: playing → silent, silent → playing.
-//   • The gate is an ENTER EDGE with hysteresis and a rearm window. A latch
-//     makes those load-bearing: with a momentary gate, boundary chatter is a
-//     glitch you forget; with a latch it toggles twice and the error persists.
-//   • Loops are MUTED, never stopped — the source keeps running so unmuting
-//     drops you where the loop would have been, not at the top (§0 of the
-//     plan). Clouds are stopped with their existing fade in/out envelope,
-//     which is a different verb on different machinery.
-//   • Commits only. Triggers are deliberately out of scope: a trigger owns
-//     nothing, it is a view onto a stroke, and latching one would fight that.
-//
-// The gate runs from the 20 ms scheduler tick, so everything in the hot path
-// is allocation-free and leans on the same cached-cartesian bounding cap the
-// trigger tool uses.
+// The flags (`mute`, `solo`, a group's `muted` / `solo`) are the player's
+// intent and live in pins.js; `applyMix()` here makes the engine agree.
 // ============================================================================
 
 import { S } from './state.js';
 import { stampCartesian } from './grain.js';
-import { togglePinMute, allOn } from './pins.js';
+import { togglePinMute } from './pins.js';
 
 // The FLOOR of a mute ramp. Long enough not to click, short enough that the
 // gesture feels immediate. The 3 ms start declick is for a source opening

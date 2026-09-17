@@ -871,21 +871,9 @@ export const S = {
   traceMode:          'trace',
   commitMode:         'cloud',  // 'cloud' | 'loop' — what the next C press creates
   selectionMode:      'nearest', // 'nearest' | 'farthest' | 'oldest' — the SELECTED pin: what unpin takes, what the rail marks (pins.js)
-  // Legacy aliases for code that still references old names
-  get seedSlots()       { return this.commitSlots; },
-  set seedSlots(v)      { this.commitSlots = v; },
-  get seedSlotCount()   { return this.commitSlotCount; },
-  set seedSlotCount(v)  { this.commitSlotCount = v; },
-  get seedOverflow()    { return this.commitOverflow; },
-  set seedOverflow(v)   { this.commitOverflow = v; },
-  get seqSlots()        { return this.commitSlots; },
-  set seqSlots(v)       { this.commitSlots = v; },
-  get seqSlotCount()    { return this.commitSlotCount; },
-  set seqSlotCount(v)   { this.commitSlotCount = v; },
-  get seqOverflow()     { return this.commitOverflow; },
-  set seqOverflow(v)    { this.commitOverflow = v; },
-  get seqModeEnabled()  { return this.commitMode === 'loop'; },
-  set seqModeEnabled(v) { this.commitMode = v ? 'loop' : 'cloud'; },
+  // (The `seed*` / `seq*` getter aliases over these — twenty of them — went on
+  // 2026-09-16; every reader says commit*. The persisted seed-settings keys
+  // were renamed with them, one-shot, in ui-audio-settings.js.)
 
   // ── Trigger tool ───────────────────────────────────────────────────────
   // Whether a recording is granular or trigger material is decided BEFORE the
@@ -1008,7 +996,6 @@ export const S = {
   // throttle reads LOAD (the worklet), so this is a ceiling on the sound, not
   // the thing that protects the thread.
   maxGrains: 512,
-  recordingSourceNode: null,
   recordingRaw:       null,
   recordingWritePos:  0,
   recordingStartTime: 0,
@@ -1096,7 +1083,6 @@ export const S = {
   //   4.5 kHz breath 0.80 · 8.3 kHz cymbal and hiss 0.95 · noise 1.00
   vizCentroidMin: 0.0083,   // 200 Hz — below a chest tone
   vizCentroidMax: 0.4167,   // 10 kHz — above a cymbal
-  modeRingSize:  30,        // mode ring radius (px) — controls how big the 4 status arcs are
   uiScale:       1.0,       // UI scale factor — multiplied with base font-size (15px)
   // Canvas HUD scale — multiplied edge bar height, text size, dot size and
   // spacing. Its slider went with the HUD (2026-08-29): the main screen's
@@ -1126,7 +1112,6 @@ export const S = {
   hfMaxBufferSec:   30,      // auto-close after this many seconds
   hfFeedbackDetect: true,    // enable rising-RMS feedback trend detection
   hfCompEnabled:    false,   // optional pre-gate compressor (off by default)
-  hfCompRatio:      3,       // compressor ratio (2:1–4:1)
   hfCaptureCount:   0,       // number of buffers auto-captured this session
 
   // ── Audio ──────────────────────────────────────────────────────────────
@@ -1140,7 +1125,6 @@ export const S = {
 
   // Grain tracking for waveform playhead (ring buffer)
   activeGrains: [],
-  _agWriteIdx: 0,    // ring-buffer write cursor for activeGrains
 
   // ── Performance mode ──────────────────────────────────────────────────
   // When true: minimal rendering — equator + meridian, particles (no glow),
@@ -1149,7 +1133,7 @@ export const S = {
 
   // ── Performance monitor ────────────────────────────────────────────────
   perfMonitorVisible: false,
-  _grainSourceCount: 0, // incremented on start, decremented on ended
+  _grainSourceCount: 0, // the worklet's sounding-grain count, posted at 30 Hz (grain-worklet-bridge.js)
 
   // ── Grain period floor ──────────────────────────────────────────────────
   // Mutable period floor — defaults to SCHED_SAFE_PERIOD_S (50µs).
@@ -1218,13 +1202,6 @@ export const S = {
   commitXfade:     0.5,      // 0.0 = hard snap (focus only), 1.0 = full crossfade (distance blend)
   commitTether:    false,    // true = always plays closest commit(s) even if far away
                               // false = gated by cursor radius — commits outside radius fade to silence
-  // Legacy aliases
-  get seedMode()    { return this.commitPlayback; },
-  set seedMode(v)   { this.commitPlayback = v; },
-  get seedXfade()   { return this.commitXfade; },
-  set seedXfade(v)  { this.commitXfade = v; },
-  get seedTether()  { return this.commitTether; },
-  set seedTether(v) { this.commitTether = v; },
 
   // ── Monitor / House bus split (Phase 1 — Improv Mode) ─────────────────
   // monitorBus:  cursor grains route here (private monitoring, always on)
@@ -1267,34 +1244,19 @@ export const S = {
   commitCloudLoopMode: 'pingpong', // default loop mode for moving clouds: 'pingpong' | 'forward'
   loopReleaseMode: 'fade',        // loop fade out mode: 'fade' = fade over loopFadeTimeMs, 'play-to-end' = finish buffer then stop
   loopFadeTimeMs: 15,             // loop fade out duration in ms (0 = instant, max 2000)
-  // Legacy aliases
-  get seedAttack()       { return this.commitAttack; },
-  set seedAttack(v)      { this.commitAttack = v; },
-  get seedRelease()      { return this.commitRelease; },
-  set seedRelease(v)     { this.commitRelease = v; },
-  get seedLoopMode()     { return this.commitCloudLoopMode; },
-  set seedLoopMode(v)    { this.commitCloudLoopMode = v; },
 
   // The recording stroke ID — set when painting starts in loop commit mode,
   // used on release to collect particles into a loop.
-  _seqRecordingStrokeId: -1,
   // Defaults for the *next* loop commit — sliders in the commit panel edit these.
   commitLoopParams: { direction: 1, speed: 1.0, volume: 1.0 },
-  get seqNextParams()  { return this.commitLoopParams; },
-  set seqNextParams(v) { this.commitLoopParams = v; },
 
   // ── Commit recording state ────────────────────────────────────────────
   // Non-null while C is held and recording cursor movement for a moving cloud.
   _commitRecordingFrames: null,
   _commitRecordingStart:  0,     // performance.now() of C keydown
   _commitRecordingSlot:   -1,    // which commit slot is being recorded into
-  // Legacy aliases
-  get _seedRecordingFrames()  { return this._commitRecordingFrames; },
-  set _seedRecordingFrames(v) { this._commitRecordingFrames = v; },
-  get _seedRecordingStart()   { return this._commitRecordingStart; },
-  set _seedRecordingStart(v)  { this._commitRecordingStart = v; },
-  get _seedRecordingSlot()    { return this._commitRecordingSlot; },
-  set _seedRecordingSlot(v)   { this._commitRecordingSlot = v; },
+  _commitRecordingDeferred: false,   // a path drawn under a brush stroke: no slot until the release
+  _commitRecordingStrokeId: -1,      // the stroke that path belongs to
 
   // ── Mixdown source gains ────────────────────────────────────────────────
   // Independent volume controls for house fold-down and cursor contributions
@@ -1412,7 +1374,6 @@ export const S = {
   // ── Channel label overrides ───────────────────────────────────────────────
   // Short names shown on VU meter bars. null = auto-generate.
   inputChannelLabels:  null,   // string[] | null
-  outputChannelLabels: null,   // string[] | null
 
 };
 

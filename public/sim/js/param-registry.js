@@ -12,7 +12,6 @@
 // ============================================================================
 
 import { S, AXIS_SOURCES } from './state.js';
-import { resetCursorPeriod } from './grain.js';
 
 // ── Parameter registry ──────────────────────────────────────────────────────
 // Each entry describes one mappable parameter.
@@ -83,7 +82,7 @@ export const PARAM_REGISTRY = [
     parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(0.5, v)); } },
   { key: 'period',     label: 'period',       group: 'grain', type: 'number',
     get: () => S.grainOverrides.period ?? S.grainParams.period,
-    set: v  => { S.grainOverrides.period = v; resetCursorPeriod(); },
+    set: v  => { S.grainOverrides.period = v; },
     fmt: v  => fmtMs(v),
     parse: s => parseMs(s) },
   { key: 'overlap',    label: 'overlap',      group: 'grain', type: 'number',
@@ -100,7 +99,7 @@ export const PARAM_REGISTRY = [
     parse: s => { const v = parseFloat(s.replace('×', '').replace('x', '')); return isNaN(v) ? null : Math.max(0.01, Math.min(100, v)); } },
   { key: 'periodVar',  label: 'period var',   group: 'grain', type: 'number',
     get: () => S.grainOverrides.periodVar ?? S.grainParams.periodVar,
-    set: v  => { S.grainOverrides.periodVar = v; resetCursorPeriod(); },
+    set: v  => { S.grainOverrides.periodVar = v; },
     fmt: v  => Math.round(v * 1000) + 'ms',
     parse: s => { const v = parseMs(s); return v === null ? null : Math.max(0, Math.min(0.5, v)); } },
   { key: 'pitchShift', label: 'pitch shift',  group: 'grain', type: 'number',
@@ -189,7 +188,6 @@ export const PARAM_REGISTRY = [
     get: () => S.commitSlotCount,
     set: v  => {
       S.commitSlotCount = Math.max(1, Math.min(16, Math.round(v)));
-      S._syncCommitSlotCount?.();    // syncs slider + numbox
       S._syncCommitUI?.();
     },
     fmt: v  => String(v),
@@ -218,47 +216,47 @@ export const PARAM_REGISTRY = [
     fmt: v  => v,
     parse: s => ['nearest', 'farthest', 'oldest'].includes(s.trim()) ? s.trim() : null },
   { key: 'seedMode',         label: 'playback',      group: 'commits', type: 'enum', options: ['all', 'focus'],
-    get: () => S.seedMode,
-    set: v  => { S.seedMode = v; },
+    get: () => S.commitPlayback,
+    set: v  => { S.commitPlayback = v; },
     fmt: v  => v,
     parse: s => ['all', 'focus'].includes(s.trim()) ? s.trim() : null },
   { key: 'seedTether',       label: 'tether',         group: 'commits', type: 'boolean',
-    get: () => S.seedTether,
-    set: v  => { S.seedTether = v; },
+    get: () => S.commitTether,
+    set: v  => { S.commitTether = v; },
     fmt: v  => v ? 'on' : 'off',
     parse: s => parseBool(s) },
   { key: 'seedXfade',    label: 'xfade',      group: 'commits', type: 'number',
-    get: () => S.seedXfade,
-    set: v  => { S.seedXfade = Math.max(0, Math.min(1, v)); },
+    get: () => S.commitXfade,
+    set: v  => { S.commitXfade = Math.max(0, Math.min(1, v)); },
     fmt: v  => Math.round(v * 100) + '%',
     parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
   { key: 'seedLoopMode',     label: 'path dir',       group: 'commits', type: 'enum', options: ['pingpong', 'forward', 'rev'],
-    get: () => S.seedLoopMode,
-    set: v  => { S.seedLoopMode = v; },
+    get: () => S.commitCloudLoopMode,
+    set: v  => { S.commitCloudLoopMode = v; },
     fmt: v  => v,
     parse: s => ['pingpong', 'forward', 'rev'].includes(s.trim()) ? s.trim() : null },
 
   // ── Cloud params ─────────────────────────────────────────────────────────
   { key: 'seedAttack',       label: 'fade in',         group: 'cloud', type: 'number',
-    get: () => S.seedAttack,
-    set: v  => { S.seedAttack = Math.max(0, Math.min(10, v)); },
+    get: () => S.commitAttack,
+    set: v  => { S.commitAttack = Math.max(0, Math.min(10, v)); },
     fmt: v  => v.toFixed(1) + 's',
     parse: s => { const v = parseFloat(s.replace('s', '')); return isNaN(v) ? null : Math.max(0, Math.min(10, v)); } },
   { key: 'seedRelease',      label: 'fade out',        group: 'cloud', type: 'number',
-    get: () => S.seedRelease,
-    set: v  => { S.seedRelease = Math.max(0, Math.min(10, v)); },
+    get: () => S.commitRelease,
+    set: v  => { S.commitRelease = Math.max(0, Math.min(10, v)); },
     fmt: v  => v.toFixed(1) + 's',
     parse: s => { const v = parseFloat(s.replace('s', '')); return isNaN(v) ? null : Math.max(0, Math.min(10, v)); } },
 
   // ── Loop params ──────────────────────────────────────────────────────────
   { key: 'seqNextVolume', label: 'volume',    group: 'loop', type: 'number',
-    get: () => S.seqNextParams.volume,
-    set: v  => { S.seqNextParams.volume = Math.max(0, Math.min(1, v)); },
+    get: () => S.commitLoopParams.volume,
+    set: v  => { S.commitLoopParams.volume = Math.max(0, Math.min(1, v)); },
     fmt: v  => Math.round(v * 100) + '%',
     parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
   { key: 'seqNextSpeed', label: 'speed',      group: 'loop', type: 'number',
-    get: () => S.seqNextParams.speed,
-    set: v  => { S.seqNextParams.speed = Math.max(0.25, Math.min(4, v)); },
+    get: () => S.commitLoopParams.speed,
+    set: v  => { S.commitLoopParams.speed = Math.max(0.25, Math.min(4, v)); },
     fmt: v  => '×' + v.toFixed(2),
     parse: s => { const v = parseFloat(s.replace('×', '')); return isNaN(v) ? null : Math.max(0.25, Math.min(4, v)); } },
 

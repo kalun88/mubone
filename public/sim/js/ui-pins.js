@@ -10,10 +10,12 @@
 //     the bar is the truth and not a copy of it. In focus the cursor drives the
 //     faders and you see them move; the fill's edge turns the SENSOR hue while
 //     it does, which is the one mark that says "focus is on".
-//   · the MATERIAL you drew sits inside it, laid flat, in the pin's own slot
-//     colour — the colour it has on the sphere — every mark at the size its
-//     loudness gives it there. A loop is its marks on one connected line; a
-//     cloud is loose dots. The shape says the kind, so the word is gone.
+//   · the MATERIAL you drew sits inside it, laid flat, every mark at the size
+//     its loudness gives it there. A loop is its marks on one connected line; a
+//     cloud is loose dots. The shape says the kind, so the word is gone. The
+//     rail wears the ENGINE hue only (fill, material, playhead): it carried the
+//     pin's slot colour until 2026-09-17, and Ek does not read it — "when i'm
+//     playing live i'm not keeping track of those colours".
 //   · the NUMBER is the identity — the same digit the sphere's anchor wears —
 //     in the ENGINE hue (gold = cloud, pink = loop). Pressing it folds the
 //     pin's own settings open: its two ramps, `fadeIn` / `fadeOut`.
@@ -31,7 +33,7 @@
 // `nearest` in focus the rail is a proximity meter: the loudest bar at the top.
 //
 // THE MODE BAR holds the four pin settings you switch mid-set — blend, tether,
-// sort, width — each a second door onto the S field Settings → Pins already
+// sort, curve — each a second door onto the S field Settings → Pins already
 // holds (the slot count set the precedent, 2026-09-14). Both doors read the
 // same field; the rail polls it on its own tick so an OSC or settings-page
 // change lands here without a hook.
@@ -43,10 +45,9 @@
 // The slot tracker that sat under the header is gone (Ek, 2026-09-15: "it was
 // only to help track which was closest, which is now the top item, and also
 // when i was getting full, which is more obvious with each track listed").
-// The typeable max survived, in the header; the same number Settings → Pins
-// holds on a slider, through `S.commitSlotCount`, each door refreshing the
-// other. A pin ABOVE the max — the count pulled below it — wears its number
-// outlined: the engine no longer services that slot.
+// The typeable max survived, in the header — the ONE door to
+// `S.commitSlotCount`. A pin ABOVE the max — the count pulled below it — wears
+// its number outlined: the engine no longer services that slot.
 //
 // Rendering only. All behaviour is js/pins.js. Two clocks: the LIST is rebuilt
 // on its own ~6 Hz timer when a change signature moves (a pin arriving, a flag,
@@ -74,6 +75,28 @@ const BAR_H = 32;            // the track bar — the .tc-icon precedent (GUI-BU
 const ROW_GAP = 6;           // --sp-3, between bars
 const FOLD_ROW = 24;         // one fold row — the kit's 24px control height
 const FOLD_PAD = 4;          // --sp-0 top + the fold's gap
+const SEL_INSET = 2;         // the selected frame sits this far outside row one (.lyr-sel)
+
+// THE FADER LAW (Ek, 2026-09-16: "i see the mixer as increasing or decreasing
+// the volume so should it start at unity 0 then i can make things louder or
+// softer? but whatever volume is stamped unity, that's the same volume it
+// should be when the cursor is on it"; then "there should be more headroom …
+// +6db doesnt sound like it's enough if i really want to make certain things
+// louder"). A channel fader: unity is a TICK two thirds along, the right end
+// is +12 dB — Pro Tools' range; Ableton and Logic stop at +6 — the left end
+// silence. One law, a power curve through both fixed points: level = 4 · pos^k
+// with k solving 4 · (2/3)^k = 1, so the third above the tick is the 12 dB of
+// gain and the two thirds below taper the way a real fader does (half way
+// ≈ −8.6 dB, a quarter ≈ −29). `level` is stored as the AMPLITUDE (1 = unity)
+// so the engine multiplies and never sees the law; the rail alone converts,
+// both ways. Double-click is the tick. Clipping is the master's to watch, as
+// on any desk.
+const FADER_MAX = 4;                                   // +12 dB at the right end
+const UNITY_POS = 2 / 3;                               // the tick
+const FADER_K = Math.log(1 / FADER_MAX) / Math.log(UNITY_POS);
+const _levelOf = pos => FADER_MAX * Math.pow(Math.max(0, Math.min(1, pos)), FADER_K);
+const _posOf = level => Math.max(0, Math.min(1, Math.pow(Math.max(0, level) / FADER_MAX, 1 / FADER_K)));
+const SEL_ROOM = 8;          // room above row one for the frame's SELECTED label
 
 function _pinName(c) {
   return (c.type === 'cloud' ? 'cloud ' : 'loop ') + (c.slotIndex + 1);
@@ -114,7 +137,9 @@ function _sig() {
   let s = `${S.commitSlotCount}#`;
   for (const g of GROUPS) s += `${g.key}${g.muted ? 'm' : ''}${g.solo ? 's' : ''}|`;
   for (const c of S.commitSlots) {
-    s += c ? `${c.slotIndex}${c.type[0]}${c.mute ? 'm' : ''}${c.solo ? 's' : ''}${c.overdubs?.length | 0}${c._railOpen ? 'o' : ''}${isPinLeaving(c) ? 'x' : ''}|` : '.';
+    // An overdub counts as a letter: 'r' while its take records, 'B' once
+    // sealed — the canvas is redrawn at both, so a layer lands where it is.
+    s += c ? `${c.slotIndex}${c.type[0]}${c.mute ? 'm' : ''}${c.solo ? 's' : ''}${(c.overdubs || []).map(o => o.buffer ? 'B' : 'r').join('')}${c._railOpen ? 'o' : ''}${isPinLeaving(c) ? 'x' : ''}|` : '.';
   }
   return s;
 }
@@ -136,6 +161,45 @@ function _markR(p) { const n = Math.pow(_rmsN(p.rms), 1.35); return 0.8 + 2.2 * 
 // Scratch for the cloud's particle gather — grown on demand, never per frame.
 const _anch = [0, 0];
 
+// THE LOOP IS ITS WAVEFORM (Ek, 2026-09-16: the loop's line "tries to follow
+// the movement … is there a better way to draw how it's drawn to better
+// decipher at a glance what it is"). The line's up-and-down was LATITUDE,
+// which the sphere already shows; a track is time against loudness, the way
+// every looper and DAW draws a clip. So a loop is a peak envelope of its
+// take across the cycle, mirrored on its centre line; an overdub the same
+// from its own take, at its phase. Cheap by construction: one pass over the
+// samples per PIXEL COLUMN, computed once and cached on the pin (keyed on
+// the buffer, the region and the width), redrawn only when the bar is
+// rebuilt or resized — nothing per frame. A cloud has no timeline and keeps
+// its scatter.
+function _peaks(host, buf, t0, span, cols) {
+  const w = host._wave;
+  if (w && w.buf === buf && w.t0 === t0 && w.span === span && w.cols === cols) return w.peaks;
+  const peaks = new Float32Array(cols);
+  if (buf?.data && cols > 0) {
+    const d = buf.data, sr = buf.sampleRate;
+    const s0 = Math.max(0, Math.floor(t0 * sr)), s1 = Math.min(d.length, Math.ceil((t0 + span) * sr));
+    const step = (s1 - s0) / cols;
+    for (let i = 0; i < cols; i++) {
+      const a = s0 + Math.floor(i * step), b = Math.min(s1, s0 + Math.floor((i + 1) * step));
+      let m = 0;
+      for (let k = a; k < b; k++) { const v = d[k] < 0 ? -d[k] : d[k]; if (v > m) m = v; }
+      peaks[i] = m;
+    }
+  }
+  host._wave = { buf, t0, span, cols, peaks };
+  return peaks;
+}
+// A peak's height in the band: absolute, so a quiet take draws quiet beside
+// a loud one, on a gentle curve so a quiet take still has a shape.
+const _peakH = (pk, amp) => amp * Math.pow(Math.min(1, pk), 0.6);
+/** Mirrored envelope: columns [i0, i1) of `peaks` drawn from bar x `xa`. */
+function _envelope(ctx, peaks, i0, i1, xa, y, amp) {
+  ctx.beginPath();
+  for (let i = i0; i < i1; i++) { const h = _peakH(peaks[i], amp); ctx.rect(xa + (i - i0), y - h, 1, Math.max(0.6, 2 * h)); }
+  ctx.fill();
+}
+
 function _drawMaterial(c, cv) {
   const W = cv.clientWidth | 0, H = BAR_H;
   if (W < 8) return;
@@ -144,30 +208,74 @@ function _drawMaterial(c, cv) {
   const ctx = cv.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = c.color; ctx.strokeStyle = c.color;
+  // The engine hue, resolved from the track's --c (a var() over --eng-*).
+  const hue = getComputedStyle(cv).getPropertyValue('--c').trim() || '#888';
+  ctx.fillStyle = hue; ctx.strokeStyle = hue;
   const x0 = 4, xs = W - 8;
 
   if (c.type === 'loop') {
-    // A loop's marks by TIME along the take, their own latitude wobble as the
-    // line's shape, connected — tape plays a take whole.
-    const ps = c.particles;
-    if (!ps || !ps.length) return;
+    // A loop's take by TIME across the cycle, its loudness as the height —
+    // tape plays a take whole.
     const t0 = c.loopStart ?? 0, span = Math.max(1e-6, (c.loopEnd ?? (t0 + 1)) - t0);
-    let mean = 0; for (const p of ps) mean += p.lat; mean /= ps.length;
-    const xy = ps.map(p => [x0 + Math.max(0, Math.min(1, ((p.grainStart ?? t0) - t0) / span)) * xs,
-                            H / 2 - Math.max(-8, Math.min(8, (p.lat - mean) * 60)), _markR(p)])
-                 .sort((a, b) => a[0] - b[0]);
+    // The master's band gives way to its layers: with n layer rows below it
+    // (one per pass, counted first), its centre rises and its wobble
+    // narrows so the rows have the bottom of the bar to themselves.
+    const spd = Math.abs(c.speed || 1), cyc = span / spd;     // wall seconds per cycle
+    const ovs = c.overdubs || [];
+    let nRows = 0;
+    for (const ov of ovs) { const d = ov.buffer?.duration ?? ov.foldedS ?? ov.layer?.duration ?? 0; if (d > 0 && cyc > 0) nRows += Math.min(8, Math.ceil(d / cyc - 1e-9)); }
+    const ampM = nRows ? Math.max(1.5, H / 2 - 2 - 3.2 * nRows) : 8;
+    const yM = nRows ? Math.max(ampM + 1, H / 2 - 1.6 * nRows) : H / 2;
+    const rowY = L => yM + ampM + 2 + 3.2 * (L - 1);
+    const cols = Math.max(1, Math.round(xs));
     ctx.lineWidth = 1.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    // Each overdub is a fainter line under the master's — a pass laid on a pass.
-    const layers = 1 + (c.overdubs?.length | 0);
-    for (let L = layers - 1; L >= 0; L--) {
-      ctx.globalAlpha = L === 0 ? 0.9 : 0.35;
-      ctx.beginPath();
-      for (let i = 0; i < xy.length; i++) { const [x, y] = xy[i]; i ? ctx.lineTo(x, y + L * 3.2) : ctx.moveTo(x, y + L * 3.2); }
-      ctx.stroke();
+    // EACH OVERDUB WHERE IT LANDED (Ek, 2026-09-16: "if i'm doing a little 1
+    // beat loop overdub on the 4th beat it should be in the right position
+    // and right length"). The bar is one CYCLE of the master. A layer is its
+    // take folded onto that cycle at `phase0` (ui-presets.js _foldOntoCycle),
+    // so it is drawn from `phase0` for the take's length — wrapping at the
+    // bar's end, and a take longer than the cycle laid once per pass, each
+    // pass its own fainter line under the last. The shape is the take's own
+    // marks (its stroke, `strokeId`, grainStart in take seconds — the same
+    // read as renderer.js _overdubMarks), so a pass with no marks yet is a
+    // flat segment of the right length. They used to be copies of the
+    // master's line, full width, one under another.
+    let L = 1;
+    const rowAmp = 1.3;                                  // a row's half height: rows are 3.2 apart
+    for (const ov of ovs) {
+      const takeDur = ov.buffer?.duration ?? ov.foldedS ?? ov.layer?.duration ?? 0;
+      if (!(takeDur > 0) || !(cyc > 0)) continue;
+      const ph = (((ov.phase0 || 0) % cyc) + cyc) % cyc;
+      // The take's own envelope, one column per bar column — its length in
+      // columns is its length in the cycle.
+      const tcols = Math.max(1, Math.round(takeDur / cyc * cols));
+      const peaks = ov.buffer?.data ? _peaks(ov, ov.buffer, 0, takeDur, tcols) : null;
+      ctx.globalAlpha = 0.5;
+      for (let n = 0, t0 = 0; t0 < takeDur && n < 8; n++, t0 += cyc, L++) {
+        const t1 = Math.min(takeDur, t0 + cyc), y = rowY(L);
+        // This pass's columns of the take, laid from ph + t0, wrapping once.
+        const ci0 = Math.round(t0 / cyc * cols), ci1 = Math.min(tcols, Math.round(t1 / cyc * cols));
+        const xa = x0 + (((ph + t0) % cyc) / cyc) * xs;
+        const room = Math.round(x0 + xs - xa);              // columns before the bar's end
+        const first = Math.min(ci1 - ci0, room);
+        if (peaks) {
+          _envelope(ctx, peaks, ci0, ci0 + first, xa, y, rowAmp);
+          if (ci0 + first < ci1) _envelope(ctx, peaks, ci0 + first, ci1, x0, y, rowAmp);
+        } else {
+          // Still recording, or no take: a flat segment of the right length.
+          ctx.beginPath();
+          ctx.rect(xa, y - 0.5, first, 1);
+          if (ci0 + first < ci1) ctx.rect(x0, y - 0.5, ci1 - ci0 - first, 1);
+          ctx.fill();
+        }
+      }
     }
+    // The master's envelope over its layers.
+    ctx.globalAlpha = 0.95;
+    const buf = c.buffer ?? c.liveBuffer;
+    if (buf?.data) _envelope(ctx, _peaks(c, buf, t0, span, cols), 0, cols, x0, yM, ampM);
+    else { ctx.beginPath(); ctx.rect(x0, yM - 0.5, xs, 1); ctx.fill(); }
     ctx.globalAlpha = 1;
-    for (const [x, y, r] of xy) { ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill(); }
     return;
   }
 
@@ -228,13 +336,10 @@ function renderCount() {
   if (mx && document.activeElement !== mx) mx.value = String(max);
 }
 
-/** The max, from the rail. It is the same number Settings → Pins holds, so the
- *  slider there is refreshed through the one sync hook rather than left to
- *  drift until something else happens to touch it. */
+/** The max, from the rail — the one door to the slot count. */
 function _setSlotMax(v) {
   const n = Math.max(1, Math.min(16, parseInt(v, 10) || S.commitSlotCount));
   S.commitSlotCount = n;
-  S._syncCommitSlotCount?.();
   S._syncCommitUI?.();
   S._pinsDirty = true;
   return n;
@@ -278,7 +383,9 @@ function syncModes() {
   if (sl && document.activeElement !== sl) sl.value = String(xf);
   const v = document.getElementById('lyrXfadeV');
   if (v) v.textContent = Math.round(xf * 100) + '%';
-  sl?.parentElement?.classList.toggle('off', blend !== 'focus');
+  // The curve has no say outside focus: the WHOLE row steps down, label too
+  // (Ek, 2026-09-17: grey it out or hide it).
+  sl?.closest('.lyr-mrow')?.classList.toggle('off', blend !== 'focus');
 }
 
 function _wireModes() {
@@ -296,7 +403,10 @@ function _wireModes() {
     S.commitXfade = parseFloat(sl.value); S._syncImprovUI?.(); _modesShown = ''; syncModes();
   });
   // Double-click resets a slider to its default — kit-wide (GUI-BUILD-SHEET § 5).
-  sl?.addEventListener('dblclick', () => { S.commitXfade = 0.5; S._syncImprovUI?.(); _modesShown = ''; syncModes(); });
+  // The slider is written HERE: syncModes leaves a focused slider alone so it
+  // never fights a drag, and a double-click leaves it focused — so the number
+  // reset and the knob stayed put (Ek, 2026-09-17).
+  sl?.addEventListener('dblclick', () => { S.commitXfade = 0.5; sl.value = '0.5'; S._syncImprovUI?.(); _modesShown = ''; syncModes(); });
 }
 
 // ── The tracks ──────────────────────────────────────────────────────────────
@@ -348,7 +458,11 @@ function _layout(force) {
     if (fold) fold.style.height = fh + 'px';
     y += BAR_H + fh + ROW_GAP;
   }
-  box.style.minHeight = rows.length ? (y - ROW_GAP + 2 * ROW_GAP) + 'px' : '';
+  // The frame holds row one, fold and all: it grows with the fold the same
+  // way the rows below move for it.
+  const frame = box.querySelector('.lyr-sel');
+  if (frame) frame.style.height = (BAR_H + (rows[0] ? _foldH(rows[0]) : 0) + 2 * SEL_INSET) + 'px';
+  box.style.minHeight = rows.length ? (SEL_ROOM + y - ROW_GAP + 2 * ROW_GAP) + 'px' : '';
 }
 
 function _syncFold(c) {
@@ -373,23 +487,27 @@ export function renderPinsRail(selected) {
   if (!box) return;
   const held = S.commitSlots.some(c => c);
 
+  // THE SELECTED FRAME IS A FIXTURE (Ek, 2026-09-16): row one's place is
+  // drawn whether or not a pin is in it, labelled, and "nothing pinned" sits
+  // inside it until there is a track to hold. style.css .lyr-sel says why.
   if (!held) {
-    box.innerHTML = '<div class="lyr-empty">nothing pinned</div>';
-    box.style.minHeight = '';
+    box.innerHTML = '<div class="lyr-sel"></div><div class="lyr-empty">nothing pinned</div>';
+    box.style.minHeight = (SEL_ROOM + BAR_H + 2 * ROW_GAP) + 'px';
     for (const c of S.commitSlots) if (c) c._railEl = null;
     _lastOrder = '';
     renderBusses();
     return;
   }
 
-  let out = '';
+  let out = '<div class="lyr-sel"></div>';
   for (const c of S.commitSlots) {
     if (!c) continue;
     const g = groupOf(c), nm = _pinName(c);
     const n = c.overdubs?.length | 0;
-    out += `<div class="lyr-trk${c._railOpen ? ' open' : ''}" style="--m:${c.color};--c:var(${g?.hue ?? '--eng-grain'})" data-slot="${c.slotIndex}">` +
+    out += `<div class="lyr-trk${c._railOpen ? ' open' : ''}" style="--c:var(${g?.hue ?? '--eng-grain'})" data-slot="${c.slotIndex}">` +
       `<div class="lyr-trk-bar" title="${nm} — drag to set its level">` +
         `<div class="lyr-fill"></div>` +
+        `<div class="lyr-unity"></div>` +
         `<button type="button" class="lyr-num" data-fold="${c.slotIndex}" title="${nm} · its own in and out">${c.slotIndex + 1}</button>` +
         `<div class="lyr-mat"><canvas></canvas></div>` +
         `<div class="lyr-ph" hidden></div>` +
@@ -431,6 +549,17 @@ export function renderPinsRail(selected) {
 
 function _wireTrack(c, el) {
   const bar = el.querySelector('.lyr-trk-bar');
+  // What the frame writes to, found ONCE here rather than four querySelectors
+  // per pin per rAF; the material's width is read on the 160 ms tick, never
+  // in the frame, so a transform write is not followed by a forced layout.
+  c._railRefs = {
+    fill: el.children[0].children[0],        // .lyr-trk-bar > .lyr-fill
+    edge: el.querySelector('.lyr-edge'),
+    db:   el.querySelector('.lyr-db'),
+    ph:   el.querySelector('.lyr-ph'),
+    mat:  el.querySelector('.lyr-mat'),
+  };
+  c._railMatW = c._railRefs.mat?.clientWidth || 0;
   el.querySelector('[data-pmute]')?.addEventListener('click', e => { e.stopPropagation(); togglePinMute(c); });
   el.querySelector('[data-psolo]')?.addEventListener('click', e => { e.stopPropagation(); togglePinSolo(c); });
   el.querySelector('[data-fold]')?.addEventListener('click', e => {
@@ -443,14 +572,14 @@ function _wireTrack(c, el) {
 
   // THE WHOLE BAR IS THE FADER. A press anywhere on it that is not a button
   // sets the level to where the finger is; a drag rides it. Writes the pin's
-  // `grainParams.volume` — the loop's gain node follows it (grain.js), a
-  // cloud's next grain reads it.
+  // `level` (grain.js `_loopGain`) — its own number since 2026-09-16, 1 at
+  // pin time, over the block's volume rather than into it: a loop's gain
+  // node follows the product, a cloud's seed gain carries it.
   let dragging = false;
   const setFromEvent = e => {
     const r = bar.getBoundingClientRect();
-    const v = Math.max(0, Math.min(1, (e.clientX - r.left) / Math.max(1, r.width)));
-    if (!c.grainParams) c.grainParams = {};
-    c.grainParams.volume = +v.toFixed(3);
+    const pos = (e.clientX - r.left) / Math.max(1, r.width);
+    c.level = +_levelOf(pos).toFixed(3);
   };
   bar.addEventListener('pointerdown', e => {
     if (e.button !== 0 || e.target.closest('.lyr-num, .lyrmute, .lyrsolo')) return;
@@ -466,16 +595,15 @@ function _wireTrack(c, el) {
   // Double-click resets a fader to unity — the kit's rule for a slider.
   bar.addEventListener('dblclick', e => {
     if (e.target.closest('.lyr-num, .lyrmute, .lyrsolo')) return;
-    if (!c.grainParams) c.grainParams = {};
-    c.grainParams.volume = 1;
+    c.level = 1;
   });
 
   // The fold: in and out. The slider and the numbox are one value, typeable
   // either way; double-click on the slider is the pins' default for a new pin.
   el.querySelectorAll('.lyr-frow').forEach(row => {
     const k = row.dataset.k, sl = row.querySelector('.grain-slider'), nb = row.querySelector('.grain-numbox');
-    const dflt = () => k === 'fadeIn' ? (S.seedAttack || 0)
-                     : (c.type === 'loop' ? Math.max(S.seedRelease || 0, (S.loopFadeTimeMs || 15) / 1000) : (S.seedRelease || 0));
+    const dflt = () => k === 'fadeIn' ? (S.commitAttack || 0)
+                     : (c.type === 'loop' ? Math.max(S.commitRelease || 0, (S.loopFadeTimeMs || 15) / 1000) : (S.commitRelease || 0));
     sl?.addEventListener('input', () => { c[k] = +(+sl.value).toFixed(2); _syncFold(c); });
     sl?.addEventListener('dblclick', () => { c[k] = dflt(); _syncFold(c); });
     const commit = () => {
@@ -500,7 +628,7 @@ function renderBusses() {
   for (const g of GROUPS) {
     const ps = pinsIn(g);
     if (!ps.length) { g._railEl = null; continue; }
-    out += `<div class="lyr-bus-row${g.solo ? ' soloed' : ''}" style="--c:var(${g.hue});--m:var(${g.hue})" data-bus="${g.key}">` +
+    out += `<div class="lyr-bus-row${g.solo ? ' soloed' : ''}" style="--c:var(${g.hue})" data-bus="${g.key}">` +
       `<div class="lyr-fill"></div>` +
       `<span class="lyr-bus-nm">${g.name}<b>${ps.length}</b></span>` +
       `<span class="lyr-ms">` +
@@ -522,14 +650,17 @@ function renderBusses() {
 // carries; writes transforms. No allocation, no layout read.
 
 function _level(c, focus) {
-  const vol = c.grainParams?.volume ?? 1;
+  const vol = c.level ?? 1;                                 // the fader, not the block's volume
   if (c.slotIndex >= S.commitSlotCount) return 0;     // over the line: not serviced
   const weight = focus ? (S._pinWeights?.[c.slotIndex] || 0) : 1;
   if (c.type === 'loop') {
     // Each gain read from its node when the node exists, and from the FLAG or
     // the WEIGHT it will be built from when it does not yet — a loop whose
     // source is not up is still muted if its mute says so.
-    const g = c._gainNode ? c._gainNode.gain.value : vol;
+    // The node carries block volume × fader; the bar shows the FADER, so
+    // the block's stage is divided back out (a stop fade still reads).
+    const bv = Math.max(1e-6, c.grainParams?.volume ?? 1);
+    const g = c._gainNode ? c._gainNode.gain.value / bv : vol;
     const m = c._muteGain ? c._muteGain.gain.value : (isPinAudible(c) ? 1 : 0);
     const w = c._pinGain ? c._pinGain.gain.value : weight;
     if (isPinLeaving(c)) return c._gainNode ? g * m : 0;
@@ -562,34 +693,30 @@ function _frame() {
   const focus = S.commitPlayback === 'focus';
   const busSum = { cloud: 0, loop: 0 }, busN = { cloud: 0, loop: 0 };
   for (const c of S.commitSlots) {
-    const el = c?._railEl;
-    if (!el) continue;
-    const lv = Math.max(0, Math.min(1, _level(c, focus)));
+    const el = c?._railEl, R = c?._railRefs;
+    if (!el || !R) continue;
+    // The bar is drawn in fader POSITIONS, the law above: unity at the tick.
+    const lv = _posOf(_level(c, focus));
     el.classList.toggle('auto', focus);
     el.classList.toggle('over', c.slotIndex >= S.commitSlotCount);
     el.classList.toggle('touched', !!c._railTouched);
-    const fill = el.children[0].children[0];        // .lyr-trk-bar > .lyr-fill
-    fill.style.transform = `scaleX(${lv.toFixed(4)})`;
-    const edge = el.querySelector('.lyr-edge');
-    if (edge) edge.style.left = (lv * 100).toFixed(2) + '%';
-    // The readout: only when the hand set a level.
-    const vol = c.grainParams?.volume ?? 1;
-    const db = el.querySelector('.lyr-db');
-    if (db) {
-      const want = (c._railTouched || vol < 0.999)
-        ? (vol <= 0.0005 ? '−∞' : (20 * Math.log10(vol)).toFixed(1))
+    R.fill.style.transform = `scaleX(${lv.toFixed(4)})`;
+    if (R.edge) R.edge.style.left = (lv * 100).toFixed(2) + '%';
+    // The readout: only when the hand set a level, or it is off unity.
+    const vol = c.level ?? 1;
+    const dbv = vol <= 0.0005 ? -Infinity : 20 * Math.log10(vol);
+    if (R.db) {
+      const want = (c._railTouched || Math.abs(dbv) >= 0.05)
+        ? (dbv === -Infinity ? '−∞' : (dbv > 0 ? '+' : '') + dbv.toFixed(1))
         : '';
-      if (db.textContent !== want) db.textContent = want;
+      if (R.db.textContent !== want) R.db.textContent = want;
     }
-    const ph = el.querySelector('.lyr-ph');
-    if (ph) {
+    if (R.ph) {
       const t = _playhead(c);
-      if (t < 0) { if (!ph.hidden) ph.hidden = true; }
+      if (t < 0) { if (!R.ph.hidden) R.ph.hidden = true; }
       else {
-        if (ph.hidden) ph.hidden = false;
-        const mat = el.querySelector('.lyr-mat');
-        const w = mat ? mat.clientWidth : 0;
-        ph.style.transform = `translateX(${(t * Math.max(0, w - 1)).toFixed(1)}px)`;
+        if (R.ph.hidden) R.ph.hidden = false;
+        R.ph.style.transform = `translateX(${(t * Math.max(0, c._railMatW - 1)).toFixed(1)}px)`;
       }
     }
     busSum[c.type] += lv; busN[c.type]++;
@@ -643,6 +770,7 @@ export function initPinsRail() {
     for (const c of S.commitSlots) {
       const cv = c?._railEl?.querySelector('canvas');
       if (cv && cv.clientWidth && Math.abs(cv.width / Math.min(2, window.devicePixelRatio || 1) - cv.clientWidth) > 1) _drawMaterial(c, cv);
+      if (c?._railRefs?.mat) c._railMatW = c._railRefs.mat.clientWidth || 0;   // the frame's playhead reads this
     }
     if (!_raf && document.body.classList.contains('pinned-open')) _raf = requestAnimationFrame(_loop);
   }, 160);

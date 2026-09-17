@@ -5,7 +5,7 @@
 // ============================================================================
 
 import { S, MAX_COMMITS } from './state.js';
-import { angleBetweenSphere, killAllGrains, releaseSeqNodes } from './grain.js';
+import { angleBetweenSphere, releaseSeqNodes } from './grain.js';
 import { flushWorkletGrains, resyncWorkletBuffers } from './grain-worklet-bridge.js';
 
 // ── Sweep snapshot — allows one-level undo of sweep ──────────────────────────
@@ -36,7 +36,6 @@ export function snapshotMaterial() {
 }
 
 export function applyMaterial(snap) {
-  killAllGrains();
   flushWorkletGrains();
   S.particles            = [...snap.particles];
   S.liveRecBuffers       = [...snap.liveRecBuffers];
@@ -179,55 +178,18 @@ export function sweep() {
   if (removed > 0) history.push(materialAction('sweep', snapBefore, snapshotMaterial()));
 
   S.updateLiveRecUI?.();
+  // The worklet drops the swept takes NOW (2026-09-16). History still holds
+  // them on the main thread, so undo can bring them back — resync re-registers
+  // what it finds missing — and the audio thread stops carrying a second copy
+  // of material nothing can read. docs/RULINGS.md "Undo is unbounded".
+  resyncWorkletBuffers();
 
   return { removed, kept: S.particles.length };
 }
 
 // ── UI wiring ────────────────────────────────────────────────────────────────
 
-export function initSweepUI() {
-  const btn = document.getElementById('sweepBtn');
-  if (!btn) return;
 
-  btn.addEventListener('click', () => {
-    if (S.isPainting) return;
-
-    const hasActive = S.commitSlots.some(c => c !== null);
-
-    if (!hasActive) {
-      const count = S.particles.length;
-      if (count === 0) { flashSweepFeedback(btn, 0, 0); return; }
-      const before = snapshotMaterial();
-      S.particles = [];
-      S._particleVersion++;
-      if (S.liveRecBuffers) {
-        S.liveRecBuffers.length = 0;
-        S.currentLiveBufferIdx = 0;
-      }
-      S.strokeHistory = [];
-      S.updateLiveRecUI?.();
-      history.push(materialAction('sweep', before, snapshotMaterial()));
-      flashSweepFeedback(btn, count, 0);
-      return;
-    }
-
-    const { removed, kept } = sweep();
-    flashSweepFeedback(btn, removed, kept);
-  });
-}
-
-function flashSweepFeedback(btn, removed, kept) {
-  if (removed === 0) {
-    btn.textContent = '✓ nothing to sweep';
-  } else {
-    btn.textContent = `✓ swept ${removed}`;
-  }
-  btn.classList.add('sweep-flash');
-  setTimeout(() => {
-    btn.textContent = '⌁ sweep';
-    btn.classList.remove('sweep-flash');
-  }, 1500);
-}
 
 // ── Session panel wiring ────────────────────────────────────────────────────
 
@@ -245,8 +207,7 @@ function eraseAll() {
   if (count === 0 && !hadCommits) return 0;
   const before = snapshotMaterial();
   // Stop all in-flight grains so they don't ring out
-  killAllGrains();        // main-thread AudioBufferSourceNodes
-  flushWorkletGrains();   // worklet grain pool
+  flushWorkletGrains();
 
   // Clear particles & buffers
   S.particles = [];
@@ -291,6 +252,8 @@ function eraseAll() {
     S.currentLiveBufferIdx = 0;
     S.liveRecBuffers.push({ buffer: null, grainCursor: 0 });
   }
+  // As in sweep(): the worklet lets the erased takes go, history keeps them.
+  resyncWorkletBuffers();
 
   return count + (hadCommits ? 1 : 0);
 }

@@ -251,6 +251,22 @@ export function getCursorLonLat() {
     lat: Math.asin(Math.max(-1, Math.min(1, w[1])))
   };
 }
+
+/** WHERE THE CURSOR IS, for everything that paints, erases, scans or listens
+ *  at it — ONE rule (2026-09-16). A cursor sensor (`cursorQ`, the two-sensor
+ *  modes) is the cursor. Otherwise the pointer is, while it is ON the canvas
+ *  (or frozen there by ⌥); off the canvas the cursor is the camera's centre,
+ *  which is what the sensor steers in single-sensor mode. This rule was copied
+ *  five times and two of the copies (paint-ticker, erase) read the pointer
+ *  wherever it was, so with the pointer resting on a rail the marks were laid
+ *  at its last projection while the scan read the centre: the ink and the ear
+ *  disagreed, and nothing sounded. */
+export function cursorLonLatNow() {
+  if (S.cursorQ) return getCursorLonLat();
+  if (S.altLocked) return screenToLonLat(S.altFrozenMousePixelX, S.altFrozenMousePixelY);
+  if (S.mouseInCanvas) return screenToLonLat(S.mousePixelX, S.mousePixelY);
+  return getCursorLonLat();
+}
 // Screen pixel → the sphere point under it.
 //
 // From the centre (camPull 0) a ray DIRECTION is already a surface point, which

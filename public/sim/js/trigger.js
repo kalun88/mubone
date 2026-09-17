@@ -212,7 +212,7 @@ function _applyCluster(t, ps, buffer) {
   // it goes stale the moment the region moves. Without this, erasing the tail of
   // a trigger being played backwards would keep playing the pre-erase audio.
   const oldLo = t.loopStart, oldHi = t.loopEnd;
-  if (oldLo !== lo || oldHi !== hi) t._revBuffer = null;
+  if (oldLo !== lo || oldHi !== hi) t._regionBuf = null;
   t.particles = ps;
   t.buffer    = buffer;
   t.loopStart = lo;
@@ -478,7 +478,7 @@ function _sliceStroke(strokeId) {
   const b = Math.min(buffer.length, Math.ceil(t1 * sr));
   if (b - a < sr * 0.05) return [strokeId];
 
-  let onsets = detectOnsets(buffer.getChannelData(0).subarray(a, b), sr)
+  let onsets = detectOnsets(buffer.data.subarray(a, b), sr)
     .map(t => t + t0);
   if (onsets.length <= 1) return [strokeId];
 
@@ -538,7 +538,7 @@ function _sliceStroke(strokeId) {
     // Peak-based, not RMS-of-the-whole: the take's RMS is diluted by decay
     // tails and inter-hit floor, which put a real floor right at the margin.
     // Peaks separate cleanly — noise peaks sit near the floor, any hit does not.
-    const ch = buffer.getChannelData(0);
+    const ch = buffer.data;
     const peakDb = (from, to) => {
       const i0 = Math.max(0, Math.floor(from * sr)), i1 = Math.min(buffer.length, Math.ceil(to * sr));
       let pk = 0;
@@ -641,7 +641,7 @@ function _newTriggerShell(strokeId, audition) {
     color:         COMMIT_COLORS[S.triggers.length % COMMIT_COLORS.length],
     _sourceNode:   null,
     _gainNode:     null,
-    _revBuffer:    null,
+    _regionBuf:    null,
     _createdAt:    performance.now() / 1000,
     _startedAt:    0,
     _builtAt:      -1,
@@ -674,41 +674,16 @@ function _newTriggerShell(strokeId, audition) {
 export function restoreTrigger(c) {
   if (!S.triggers) S.triggers = [];
   const d = S.triggerParams;
-  const t = {
-    type:          'loop',
-    slotIndex:     -1,
-    strokeId:      c.strokeId ?? -1,
-    particles:     [],
-    buffer:        null,
-    loopStart:     0,
-    loopEnd:       0,
-    playheadIndex: 0,
-    startOffset:   0,
-    direction:     1,
-    // Arm-time snapshots — the file's own values when it carries them (the
-    // edit filter can set them per stroke); the live params for older files.
-    speed:         c.speed ?? d.speed ?? 1,
-    passes:        c.passes ?? d.passes ?? 0,
-    endCap:        typeof c.endCap === 'number' ? c.endCap : undefined,   // a slice's cut
-    playing:       false,
-    color:         c.color || COMMIT_COLORS[S.triggers.length % COMMIT_COLORS.length],
-    _sourceNode:   null,
-    _gainNode:     null,
-    _revBuffer:    null,
-    _createdAt:    performance.now() / 1000,
-    _startedAt:    0,
-    _builtAt:      -1,
-    grainParams:   { volume: c.volume ?? d.volume ?? 1 },
-    trigger: {
-      // Primed inside, like a freshly recorded one: an import should never make
-      // noise before the performer has moved.
-      _inside:     true,
-      _lastFireAt: performance.now(),
-      _capX: 0, _capY: 0, _capZ: 1, _capRad: 0,
-    },
-    _nearestIdx: 0,
-    _nearestDot: -1,
-  };
+  // The same shell a fresh stroke gets (no audition: primed inside, so an
+  // import never makes noise before the performer has moved), then the
+  // arm-time snapshots — the file's own values when it carries them (the edit
+  // filter can set them per stroke), the live params for older files.
+  const t = _newTriggerShell(c.strokeId ?? -1, false);
+  t.speed  = c.speed ?? d.speed ?? 1;
+  t.passes = c.passes ?? d.passes ?? 0;
+  if (typeof c.endCap === 'number') t.endCap = c.endCap;   // a slice's cut
+  if (c.color) t.color = c.color;
+  t.grainParams.volume = c.volume ?? d.volume ?? 1;
   if (!rebuildTrigger(t)) return null;
   S.triggers.push(t);
   return t;
@@ -878,12 +853,12 @@ function _stopAllVoices(t, fadeSec = null) {
  * everything on the scratch surface including loops aren't triggered by the
  * cursor if the cap is on"). There used to be a second global flag,
  * `trigMuted`, sitting on the lens sheet as `triggers on|off`: the cap stopped
- * the cursor granulating and hits went on firing, because a hit plays through
- * the LOOP commit engine, not the cursor bus that `setScanMuted` gates. So
+ * the cursor granulating and triggers went on firing, because a trigger plays
+ * through the TAPE engine, not the cursor bus that `setScanMuted` gates. So
  * capping the lens silenced half of what the cursor does and nothing said
  * which half. The cap's own footnote had promised this since it was written —
- * "hits still fire; their own mute is in the trigger panel until lenses absorb
- * it". They have absorbed it.
+ * "triggers still fire; their own mute is in the trigger panel until lenses
+ * absorb it". They have absorbed it.
  *
  * `setScanMuted` (ui-meters.js) is the one writer now and calls
  * `silenceTriggers()` on the way down. Muting stops what is sounding through

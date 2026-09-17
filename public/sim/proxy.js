@@ -39,8 +39,10 @@ let dataSock = null;
 let dataPort = 0;
 let cmdSock = null;
 
-// Line buffer for ASCII data (LF-terminated)
-let dataBuf = '';
+// Line buffers for ASCII data (LF-terminated), one per source IP: two
+// instruments interleave packets, and one shared buffer spliced their frames
+// (electron-main.js made the same fix for the show path).
+const dataBufs = new Map();
 
 // ── WebSocket servers ────────────────────────────────────────────────────────
 
@@ -112,13 +114,14 @@ function startDataListener(port) {
     dataSock = null;
   }
   dataPort = port;
-  dataBuf = '';
+  dataBufs.clear();
 
   dataSock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
   dataSock.on('message', (msg, rinfo) => {
-    dataBuf += msg.toString('utf8');
     const sourceIP = rinfo.address;
+    let dataBuf = (dataBufs.get(sourceIP) || '') + msg.toString('utf8');
+    if (dataBuf.length > 65536) dataBuf = '';   // a binary-mode device never sends a newline
     let nlIdx;
     while ((nlIdx = dataBuf.indexOf('\n')) !== -1) {
       const line = dataBuf.slice(0, nlIdx).trim();
@@ -136,6 +139,7 @@ function startDataListener(port) {
         routeDataLine(line, sourceIP);
       }
     }
+    dataBufs.set(sourceIP, dataBuf);
   });
 
   dataSock.on('error', (err) => {
@@ -152,7 +156,7 @@ function stopDataListener() {
     try { dataSock.close(); } catch (_) {}
     dataSock = null;
     dataPort = 0;
-    dataBuf = '';
+    dataBufs.clear();
   }
 }
 

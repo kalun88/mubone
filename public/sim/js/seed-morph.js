@@ -17,7 +17,7 @@
 import { S, MAX_SEEDS } from './state.js';
 import { getByRole } from './sensor-registry.js';
 import { angleBetweenSphere, findNearestSeedSlot } from './grain.js';
-import { getCursorLonLat, screenToLonLat } from './sphere.js';
+import { cursorLonLatNow } from './sphere.js';
 
 // Agitation axis delta definitions — max delta at morphT=0 or morphT=1.
 const AGITATE_DELTAS = {
@@ -55,19 +55,13 @@ export function updateGestureMorph() {
   if (dt <= 0) return;
 
   // Get cursor position for nearest-seed lookup
-  const { lon: cursorLon, lat: cursorLat } =
-    S.cursorQ
-      ? getCursorLonLat()                       // detethered: cursor IMU drives position
-      : (S.mouseInCanvas || S.altLocked)
-        ? screenToLonLat(S.altLocked ? S.altFrozenMousePixelX : S.mousePixelX,
-                         S.altLocked ? S.altFrozenMousePixelY : S.mousePixelY)
-        : getCursorLonLat();
+  const { lon: cursorLon, lat: cursorLat } = cursorLonLatNow();
 
   // Determine which seeds to morph and their weights.
   const morphTargets = [];
 
-  if (S.seedMode === 'focus' && S.seedXfade > 0.001) {
-    const radiusGated = !S.seedTether;
+  if (S.commitPlayback === 'focus' && S.commitXfade > 0.001) {
+    const radiusGated = !S.commitTether;
     const gateRadRad = radiusGated ? (S.searchRadiusDeg * Math.PI / 180) : Infinity;
     const seedDists = [];
     for (let i = 0; i < S.commitSlotCount; i++) {
@@ -79,7 +73,7 @@ export function updateGestureMorph() {
     }
     if (seedDists.length === 0) return;
 
-    const sf = S.seedXfade;
+    const sf = S.commitXfade;
     const sharpness = 1 / Math.max(0.01, sf);
     const EPSILON = 0.001;
     let sumW = 0;
@@ -94,7 +88,7 @@ export function updateGestureMorph() {
   } else {
     const nearestSlot = findNearestSeedSlot(cursorLon, cursorLat);
     if (nearestSlot < 0) return;
-    morphTargets.push({ seed: S.seedSlots[nearestSlot], weight: 1 });
+    morphTargets.push({ seed: S.commitSlots[nearestSlot], weight: 1 });
   }
 
   // Compute morph velocity from gyro

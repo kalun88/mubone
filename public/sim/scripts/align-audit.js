@@ -387,7 +387,7 @@ const buildTemplateCard = () => {
   host.appendChild(holder);
   return holder;
 };
-for (const nav of [...document.querySelectorAll('.set-nav-item')]) {
+for (const nav of [...document.querySelectorAll('.set-nav-item[data-sec]')]) {
   if (_stand) { _stand.remove(); _stand = null; }
   nav.click(); await sleep(320);
   if (nav.dataset.sec === 'sensors') { _stand = buildTemplateCard(); await sleep(260); }
@@ -582,13 +582,13 @@ const prev = list ? list.innerHTML : null;
 const bus = document.getElementById('lyrBus');
 const prevBus = bus ? bus.innerHTML : null;
 if (list && !list.querySelector('.lyr-trk')) {
-  list.innerHTML = '<div class="lyr-trk" style="--m:#f26415;--c:var(--eng-tape)" data-slot="0">' +
+  list.innerHTML = '<div class="lyr-trk" style="--c:var(--eng-tape)" data-slot="0">' +
     '<div class="lyr-trk-bar"><div class="lyr-fill"></div><button type="button" class="lyr-num">1</button>' +
     '<div class="lyr-mat"><canvas></canvas></div><div class="lyr-ph" hidden></div><span class="lyr-db"></span><div class="lyr-edge"></div>' +
     '<span class="lyr-ms"><button type="button" class="lyrmute">M</button><button type="button" class="lyrsolo">S</button></span></div>' +
     '<div class="lyr-fold"></div></div>';
   if (bus && !bus.querySelector('.lyr-bus-row')) {
-    bus.innerHTML = '<div class="lyr-bus-row" style="--c:var(--eng-tape);--m:var(--eng-tape)"><div class="lyr-fill"></div>' +
+    bus.innerHTML = '<div class="lyr-bus-row" style="--c:var(--eng-tape)"><div class="lyr-fill"></div>' +
       '<span class="lyr-bus-nm">loops<b>1</b></span><span class="lyr-ms"><button type="button" class="lyrmute">M</button><button type="button" class="lyrsolo">S</button></span></div>';
   }
 }
@@ -1070,7 +1070,7 @@ const push = (sec, d) => {
   rows.push({ sec: sec, title: t ? t.textContent.replace(/\\s+/g, ' ').trim() : '?',
               text: d.textContent.replace(/\\s+/g, ' ').trim() });
 };
-for (const nav of [...document.querySelectorAll('.set-nav-item')]) {
+for (const nav of [...document.querySelectorAll('.set-nav-item[data-sec]')]) {
   nav.click(); await sleep(300);
   for (const d of document.querySelectorAll('.settings-host .in-settings .set-row-desc')) push(nav.dataset.sec, d);
 }
@@ -1915,6 +1915,53 @@ function collapses(label, items, key) {
           : k.gone.length ? `${R6_TAIL.size - k.gone.length} of the known tail left — drop from R6_TAIL: ${k.gone.join(', ')}`
           : `${k.off} off-kit, the known tail, unchanged · ${k.coverage}` +
             (k.notReached.length ? ` · NOT REACHED: ${k.notReached.join(', ')}` : ''));
+    }
+  }
+
+  // ── The rail title's + sits on the title's cap line (2026-09-16) ─────────
+  // Ek: "the plus sign for adding a new tile beside the left rail title is not
+  // vertically aligned, it looks a bit lower than the title." It was the `+`
+  // CHARACTER at 14px on its own baseline inside a 24px box: flex centred the
+  // box, and a baseline sits (ascent − descent)/2 below a box's centre, so the
+  // glyph's ink landed under the 11px caps beside it. Drawn now, and this
+  // reads INK against INK: the path's box against the caps' ink, whose
+  // position comes from the real baseline — taken with a zero-size inline
+  // box inside an inline wrapper around the text node. A direct child of the
+  // flex label would be blockified and centred, and the number would be the
+  // box's centre, not the baseline (that was the first, wrong, reading).
+  console.log('\n── the rail title\'s + ──');
+  {
+    const PLUS_PROBE = `(async () => {
+  const m = await import('./js/tiles.js');
+  const was = m.propsOpen();
+  if (!was) m.toggleRail();
+  await new Promise(r => setTimeout(r, 600));
+  const out = [];
+  for (const lbl of [...document.querySelectorAll('#toolRail .tbx-lbl')].filter(l => l.querySelector('.tbx-add path'))) {
+    const grp = lbl.closest('.tbx-grp').dataset.grp;
+    const pb = lbl.querySelector('.tbx-add path').getBoundingClientRect();
+    const tn = lbl.firstChild; const w = document.createElement('span'); lbl.insertBefore(w, tn); w.appendChild(tn);
+    const z = document.createElement('span'); z.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline'; w.appendChild(z);
+    const base = z.getBoundingClientRect().top;
+    z.remove(); lbl.insertBefore(tn, w); w.remove();
+    const cs = getComputedStyle(lbl); const S = 4;
+    const c = document.createElement('canvas'); c.width = 400; c.height = 200; const g = c.getContext('2d'); g.scale(S, S);
+    g.font = cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily; g.fillStyle = '#fff'; g.fillText(tn.textContent.trim().toUpperCase(), 5, 30);
+    const d = g.getImageData(0, 0, 400, 200).data; let top = 200, bot = 0;
+    for (let y = 0; y < 200; y++) for (let x = 0; x < 400; x++) if (d[(y * 400 + x) * 4 + 3] > 80) { top = Math.min(top, y); bot = Math.max(bot, y); }
+    const capsMid = base + ((top + bot + 1) / 2) / S - 30, plusMid = (pb.top + pb.bottom) / 2;
+    out.push({ grp, delta: +(plusMid - capsMid).toFixed(2) });
+  }
+  if (!was) m.toggleRail();
+  return out;
+})()`;
+    const pl = await evalInApp(PLUS_PROBE, 'plus_' + Date.now().toString(36));
+    if (!pl || !pl.length) skipped('the rail title\'s +', 'no engine title with a + was found', 1);
+    else {
+      const off = pl.filter(x => Math.abs(x.delta) > TOLERANCE);
+      check(off.length === 0, 'every engine title\'s + is centred on its caps',
+        off.length ? off.map(x => `${x.grp} ${x.delta > 0 ? '+' : ''}${x.delta}px`).join(' · ')
+                   : pl.map(x => `${x.grp} ${x.delta > 0 ? '+' : ''}${x.delta}`).join(' · ') + ' — ink against ink');
     }
   }
 

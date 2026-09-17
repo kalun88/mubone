@@ -60,7 +60,8 @@ export const ENFORCED_SETTINGS = {
   gyroscope_offset_correction_enabled: true,
 
   // §11.1.59 — 0 = +X+Y+Z.  All mount remapping stays in mubone software
-  // (polarity / roll mute in imu-setup.js) so it can be changed live.
+  // (the mount + heading calibration and the axis map, sensor-registry.js)
+  // so it can be changed live.
   axes_alignment: 0,
 
   // §11.1.66 — device default is binary (true).  mubone's parser only speaks
@@ -89,7 +90,7 @@ export const ENFORCED_SETTINGS = {
   // Inertial in particular: parseDataLine used to fill dev.rawInertial from 'I'
   // messages, but feedToRegistry() only ever forwards the quaternion, so the
   // gesture and seed-morph engines never saw it on a direct connection.  Those
-  // run off the Max/OSC path (/sensor/{name}/inertial), which is unaffected by
+  // run off the OSC path (/sensor/{name}/inertial), which is unaffected by
   // this table.  If direct-connect gesture is ever wired up, set this to 8
   // (50 Hz) and make feedToRegistry() call handleSlotInertial().
   inertial_message_rate_divisor: 0,             // §11.1.68

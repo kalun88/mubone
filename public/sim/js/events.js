@@ -173,7 +173,7 @@ function _commitTraceStroke(strokeId) {
   const wasTrigger = S._recordingTrigger;
   S._recordingTrigger = false;
   S._syncTriggerRecUI?.();
-  // An overdub take: hit material that is never armed — it joins its master
+  // An overdub take: tape material that is never armed — it joins its master
   // as a layer instead (ui-presets.js attachOverdub). Read once and cleared
   // here, whatever the stroke came to, so a refused or empty take cannot
   // hand its master to the next stroke.
@@ -220,7 +220,7 @@ function _commitTraceStroke(strokeId) {
 
 /**
  * Start / stop a trigger-type recording: what the main button does when the
- * hand holds a hit brush (the line brushes), from any wire.
+ * hand holds a tape brush (the line brushes), from any wire.
  *
  * One implementation reached from the trigger panel's record button and the
  * bindable `trace_trigger` action, so a pad, a pedal and the mouse can't drift
@@ -323,7 +323,7 @@ function stopPaintStroke() {
     _commitTraceStroke(savedStrokeId);
     // Keyed on the recording in flight, not the mode: the sheet's row can
     // flip mid-stroke, and a path left recording would grow for ever.
-    if (S._seedRecordingDeferred) finalizeSeedPlant();
+    if (S._commitRecordingDeferred) finalizeSeedPlant();
     S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
     S._liveInk = null;   // the next stroke inks itself from its own first mark
   } else if (S._recordingTrigger) {
@@ -713,7 +713,7 @@ export function setupEvents() {
     // whatever tool was armed — and with arming gone it has no tool to name.
     // It is learnable onto any palette position on the keys page, which is
     // what Ek asked for: "now spacebar is just like any other key".
-    // (⇧space recorded a trigger buffer until 2026-09-09 — "record a hit",
+    // (⇧space recorded a trigger buffer until 2026-09-09 — the old "record a hit",
     // out of the vocabulary with the action and its address.)
 
     // The letter and digit rows belong to the tile screen (#214): digits are
@@ -830,9 +830,9 @@ export function setupEvents() {
       }
     }
 
-    // Spacebar release: the main button's up edge (nothing in toggle mode).
-    if (e.code === 'Space') { e.preventDefault(); S._gestureRelease?.(); }
-
+    // Space is the hand's, both edges (tiles.js onKeydown / onKeyup). A second
+    // up edge here ended a play the MOUSE was holding whenever ⇧Space was
+    // released (2026-09-16).
   });
 
   // Coalesce resize handling to one run per frame — macOS fires resize
@@ -1063,7 +1063,6 @@ export function setupEvents() {
         coords:    document.getElementById('coordinates'),
         hfLabel:   document.getElementById('hfHudLabel'),
         altLock:   document.getElementById('altLockIndicator'),
-        patchInfo: document.getElementById('vmPatchInfo'),
         dots:      document.getElementById('vmCommitDots'),
         buffers:   document.getElementById('vmBuffers'),
       };
@@ -1073,8 +1072,6 @@ export function setupEvents() {
         _popHud.hfLabel.style.display = src.hfLabel.style.display;
       if (src.altLock && _popHud.altLock)
         _popHud.altLock.style.display = src.altLock.style.display;
-      if (src.patchInfo && _popHud.patchInfo)
-        _popHud.patchInfo.textContent = src.patchInfo.textContent;
       if (src.dots && _popHud.dots)
         _popHud.dots.innerHTML = src.dots.innerHTML;
       if (src.buffers && _popHud.buffers)
@@ -1135,8 +1132,8 @@ export function setupEvents() {
 
   // Expose slot-full check for inline indicator scripts (non-module context)
   window._loopSlotsFull = () =>
-    S.seqOverflow === 'off' &&
-    Array.from({ length: S.seqSlotCount }, (_, i) => S.seqSlots[i]).every(Boolean);
+    S.commitOverflow === 'off' &&
+    Array.from({ length: S.commitSlotCount }, (_, i) => S.commitSlots[i]).every(Boolean);
 
 
 
