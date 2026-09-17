@@ -222,8 +222,8 @@ export function rebuildMainInputMeter() {
   if (!wrap) return;
   const analysers = S.inputAnalysers;
   if (analysers?.length) {
-    // Highlight both channels when stereo sum is selected
-    const sel = S.mainInputChannel === 'stereo' ? [0, 1] : (S.mainInputChannel ?? 0);
+    // Every channel sent lights — the set is the truth, not one channel.
+    const sel = Array.isArray(S.inputSends) && S.inputSends.length ? S.inputSends : (S.mainInputChannel ?? 0);
     const labels = Array.from({ length: analysers.length }, (_, i) => String(i + 1));
     renderMeters('mainInputMeters', analysers.length, labels, sel);
   } else {
@@ -589,7 +589,7 @@ export function initAudioPanel() {
 
   // Helper: sync the panel's channel <select> options + value from the modal's.
   // Called from ui-audio-settings.js after repopulateChannelSelect so the two
-  // dropdowns carry identical options (ch 1…N plus optional 'stereo').
+  // dropdowns carry identical options (ch 1…N).
   S._syncAudioPanelChannels = () => {
     if (!apChanSel || !modalChanSel) return;
     apChanSel.innerHTML = '';

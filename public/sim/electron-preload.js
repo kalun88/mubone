@@ -109,6 +109,9 @@ contextBridge.exposeInMainWorld('electronBridge', {
   // Renderer → Main: start listening for data on the device's send port
   ximu3StartData: (port) => ipcRenderer.invoke('ximu3-start-data', port),
 
+  // Renderer → Main: let go of the device's send port (ref-counted per port)
+  ximu3StopData: (port) => ipcRenderer.invoke('ximu3-stop-data', port),
+
   // Renderer → Main: send a JSON command string to the device
   // ip: device IP, port: device receive port, jsonStr: e.g. '{"axes_alignment":16}'
   ximu3SendCommand: (ip, port, jsonStr) =>
@@ -161,6 +164,9 @@ contextBridge.exposeInMainWorld('electronBridge', {
 
   // Renderer → Main: open a serial port by path
   serialOpen: (portPath) => ipcRenderer.invoke('serial-open', portPath),
+
+  // Renderer → Main: close a serial port by path
+  serialClose: (portPath) => ipcRenderer.invoke('serial-close', portPath),
 
   // Renderer → Main: send a JSON command string over serial
   serialSendCommand: (portPath, jsonStr) =>

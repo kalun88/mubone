@@ -1,16 +1,20 @@
 # Audits — which check to run, when, and what each one guards
 
-> **Status: CURRENT.** The verification harnesses in `scripts/`, the policy for when a session runs them, and the reasoning behind each suite, moved here verbatim from CLAUDE.md on 2026-09-05. CLAUDE.md keeps the two-tier rule and points here; `scripts/audit-for.js` is the rule as code.
+> **Status: CURRENT.** The verification harnesses in `scripts/`, the policy for when a session runs them, and the reasoning behind each suite, moved here verbatim from CLAUDE.md on 2026-09-05. CLAUDE.md keeps the three-tier rule and points here; `scripts/audit-for.js` is the rule as code.
 
 ---
 
-## 1. Two tiers — a change runs ONE suite, a release runs them all
+## 1. Three tiers — a change runs the fast checks, a release runs them all, the rig suites run when asked
 
-Ek, 2026-09-05: *"each change is taking you like 5–20 minutes and I feel a lot of it comes with the checks at the end … the osc audit … I don't really use the osc pathway, that's for advanced users. Of course I should check before I ship but it seems to check this every time."*
+Ek, 2026-09-05: *"each change is taking you like 5–20 minutes and I feel a lot of it comes with the checks at the end … the osc audit … I don't really use the osc pathway, that's for advanced users. Of course I should check before I ship but it seems to check this every time."* And 2026-09-18, after the per-file map had fanned a three-change diff out to six rig suites: *"we have tons of audit suites and honestly they take a ton of time and seem to run everything i do a little edit. i can't work like this."*
 
-**Per change.** Run the suite that covers the files you touched, and nothing else. `node scripts/audit-for.js` reads the working tree's diff against the map in § 2 and prints the suites; `--run` runs them. A change to one module should cost one suite, typically 10–40 s including the app boot. Say in the report what ran and what did not. If nothing in the map matches, run nothing and say so — a doc edit does not need Electron.
+Measured that day: `docs-audit` + `audit:sensor` + `npm test` together, under one second; `rig-audit` on six suites (676 checks), 5 min 41 s; `cc-mirror` alone, about a minute. The rig suites are the whole cost, and the per-file map spent them on changes that were not about what they measure — a colour constant in `renderer.js` ran the 206-check pins suite.
 
-**Per release** (Ek says "release", "ship", "bump", "commit & push"). Run everything: `node scripts/rig-audit.js`, `node scripts/osc-audit.js`, `node scripts/browser-audit.js`, `node scripts/docs-audit.js`, `npm run audit:sensor`, `npm run audit:align` against `npm run electron:dev` if CSS or markup changed since the last release, and `node scripts/deadweight-audit.js` (the inventory of what may be dead — report its rows, it is not a gate). Budget ten minutes. `/release` is these steps as one command; `/finish` is the per-change routine as one command. This is the only time the full osc sweep or browser-audit runs unasked.
+**Tier 1 — per change, always.** The FAST rows of the map (§ 2): `node scripts/docs-audit.js`, `npm run audit:sensor`, `npm test`, `AUDIT_ONLY=wiring node scripts/osc-audit.js`. File-only, under a second together. `node scripts/audit-for.js --run` runs exactly these and nothing else. A red one is fixed before the commit. If none applies, run nothing and say so.
+
+**Tier 2 — on Ek's word.** Every row that boots Electron or playwright or waits on real time: the rig suites, `audit:align`, `live-loop`, `browser`, `phone`. `audit-for.js` prints them under *on request only* with the exact command; `--run --slow` includes them. They run when the change is ABOUT the thing a suite measures (the paint ticker's sizing → `mark align`; a cabinet id → `engine`; the cushion → `trigger`) and Ek says "audit this" — never because a file was touched. The trade is stated and accepted: a rig regression is found at release rather than at the commit that caused it, and `git bisect` across the release's commits attributes it then.
+
+**Tier 3 — per release** (Ek says "release", "ship", "bump", "commit & push"). Run everything: `node scripts/rig-audit.js`, `node scripts/osc-audit.js`, `node scripts/browser-audit.js`, `node scripts/docs-audit.js`, `npm run audit:sensor`, `npm test`, `npm run audit:align` against `npm run electron:dev` if CSS or markup changed since the last release, and `node scripts/deadweight-audit.js` (the inventory of what may be dead — report its rows, it is not a gate). Budget ten minutes. `/release` is these steps as one command; `/finish` is the per-change routine as one command. This is the only time the full osc sweep or browser-audit runs unasked.
 
 **Two suites are release-only on purpose.** `osc-audit.js` reloads the renderer before every one of 99 addresses, twice, so a full run is three to five minutes; OSC is an advanced-user path Ek does not drive himself. When `js/osc.js` changes, run `AUDIT_ONLY=wiring node scripts/osc-audit.js` (static, instant) per change and the full sweep at release. `browser-audit.js` needs playwright and guards the public demo; it stays mandatory at release because it catches Electron-only assumptions leaking into shared modules, which breaks the rig too.
 
@@ -31,7 +35,7 @@ regression is red alone, repeatably.
 
 ## 2. Which suite for which file
 
-The map `scripts/audit-for.js` applies. A path is tested against every row, and every rig suite a change needs runs in ONE `rig-audit.js` boot (`rig-audit.js palette pins`). Keep this table and the script's `MAP` identical — `docs-audit.js` checks that every suite named here is a file.
+The map `scripts/audit-for.js` applies. A path is tested against every row, and every rig suite a change needs runs in ONE `rig-audit.js` boot (`rig-audit.js palette pins`). Keep this table and the script's `MAP` identical — `docs-audit.js` checks that every suite named here is a file. **Only four rows are tier 1** (`audit:sensor`, the osc wiring check, `docs-audit`, `npm test` — the script's `FAST` set); every other row is a tier-2 suite the script lists but does not run unasked.
 
 | Files touched | Suite | Why that one |
 |---|---|---|

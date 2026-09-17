@@ -85,9 +85,8 @@ export function initVizUI() {
   // THE CANVAS IS DARK (Ek, 2026-09-15: remove / sunset the canvas theme
   // option). There was a Dark | Light capsule here writing `mubone_darkMode`,
   // for a projector in a lit room. The row is gone and the instrument boots
-  // dark and stays dark; `S.darkMode` is now a constant in state.js and the
-  // light half of every palette in renderer.js is unreachable behind it — named
-  // in docs/TODO.md as the deletion pass that owes, since it crosses modules.
+  // dark and stays dark; `S.darkMode` and the light half of every palette
+  // went on 2026-09-18 — there is one canvas.
   // ── Performance mode toggle (on / off) ─────────────────────────────────
   const perfSeg = document.getElementById('vizPerfModeSeg');
   if (perfSeg) {
@@ -240,8 +239,6 @@ export function initVizUI() {
       }).join('');
     };
     paint();
-    // The ramp is built from the tokens' own arc, so a theme change redraws it.
-    window.addEventListener('mubone-theme', paint);
   }
 
   initSizeFigure();
@@ -280,7 +277,6 @@ const _tok = (name, fallback) => {
   _figTok.set(name, v);
   return v;
 };
-window.addEventListener('mubone-theme', () => { _figTok = null; });
 
 function initSizeFigure() {
   const cv = document.getElementById('vizSizeFigCanvas');

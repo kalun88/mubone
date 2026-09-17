@@ -135,8 +135,6 @@ async function run(rig) {
       const o = document.createElement('option');
       o.value = String(i); o.textContent = 'ch ' + (i + 1); modal.appendChild(o);
     }
-    const st = document.createElement('option');
-    st.value = 'stereo'; st.textContent = 'stereo (L+R)'; modal.appendChild(st);
     modal.value = '0';
     S._syncAudioPanelChannels?.();
 
@@ -153,13 +151,14 @@ async function run(rig) {
     panel.value = '1'; panel.dispatchEvent(new Event('change', { bubbles: true }));
     checks.push(['panel → modal channel', modal.value === '1', modal.value]);
 
-    modal.value = 'stereo'; modal.dispatchEvent(new Event('change', { bubbles: true }));
-    checks.push(['stereo mirrors to panel', panel.value === 'stereo', panel.value]);
     // The choice reaches the SEND SET, which the channel strip owns (2026-09-14);
-    // `mainInputChannel` is derived from it, clamped to the device's channels —
-    // and this instance has no input device, so it cannot read 'stereo' here.
-    checks.push(['stereo reaches the send set', JSON.stringify(S.inputSends) === '[0,1]',
+    // `mainInputChannel` is derived from it. (The 'stereo' option went
+    // 2026-09-18 — a sum is the strip's switches' to make, not the dropdown's.)
+    checks.push(['the choice reaches the send set', JSON.stringify(S.inputSends) === '[1]',
                  JSON.stringify(S.inputSends)]);
+    // `mainInputChannel` is derived from the set clamped to the device's
+    // channels, and this instance has no input device — so it reads 0 here
+    // whatever was chosen, and is not asserted.
     return { checks };
   });
 

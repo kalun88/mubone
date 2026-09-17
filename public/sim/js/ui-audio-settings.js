@@ -144,7 +144,6 @@ async function setupRtAudioInputMeters(rawCh) {
   // Both must be severed so RtAudio is the sole source.
   try { window._micMonitorSrc?.disconnect(); }               catch(_) {}
   try { as.splitterNode?.disconnect(S.inputGainNode); }       catch(_) {}
-  try { as._sumMerger?.disconnect(S.inputGainNode); }         catch(_) {}
   const selCh = parseInt(document.getElementById('asInputChannel')?.value ?? '0', 10) || 0;
   const safeSel = Math.max(0, Math.min(selCh, nCh - 1));
   _rtInputRoutingGains = Array.from({ length: nCh }, (_, i) => {
@@ -183,7 +182,9 @@ async function setupRtAudioInputMeters(rawCh) {
 }
 
 // Switch which RtAudio channel feeds S.inputGainNode (recording path).
-// chIndex can be a number (single channel) or 'stereo' (sum ch 0 + ch 1).
+// chIndex is a channel number. (It took 'stereo' for a sum of ch 0 + 1 until
+// 2026-09-18; the send set's switches say which channels sum now, so the
+// option went — a fixed pair was the one sum the strip could already make.)
 // Uses per-channel routing GainNodes (0/1) instead of disconnect() to avoid
 // the unreliable 3-arg disconnect(node, output, input) form.
 function rewireRtAudioRecordingChannel(chIndex, nCh) {
@@ -206,10 +207,9 @@ function rewireRtAudioRecordingChannel(chIndex, nCh) {
   // (through as.splitterNode), so it persisted and kept piping getUserMedia ch1.
   //
   // Fix: disconnect the source from everything (kills its downstream chain),
-  // AND explicitly disconnect as.splitterNode and as._sumMerger from S.inputGainNode.
+  // AND explicitly disconnect as.splitterNode from S.inputGainNode.
   try { window._micMonitorSrc?.disconnect(); }               catch(_) {}
   try { as.splitterNode?.disconnect(S.inputGainNode); }       catch(_) {}
-  try { as._sumMerger?.disconnect(S.inputGainNode); }         catch(_) {}
 
   // Ensure inputAnalyser exists but do NOT recreate it.
   // startLiveRecording() wires S.inputAnalyser → S.recordingNode; recreating
@@ -229,10 +229,9 @@ function rewireRtAudioRecordingChannel(chIndex, nCh) {
   // derives `mainInputChannel` from the set, the old callers pass that
   // derived value straight back here, and it overwrote the set with itself.
   // Measured — unticking channel 1 while both were sent left the set at
-  // [0,1], because a re-render round-tripped 'stereo' through here.
+  // [0,1], because a re-render round-tripped the derived value through here.
   if (!Array.isArray(S.inputSends) || !S.inputSends.length) {
-    if (chIndex === 'stereo')             S.inputSends = [0, 1];
-    else if (typeof chIndex === 'number') S.inputSends = [Math.max(0, Math.min(chIndex, (_rtInputRoutingGains.length || nCh || 1) - 1))];
+    if (typeof chIndex === 'number') S.inputSends = [Math.max(0, Math.min(chIndex, (_rtInputRoutingGains.length || nCh || 1) - 1))];
   }
   applyInputRouting();
   DEBUG && console.log(`[input] sending ch ${inputSends().map(i => i + 1).join('+')} into the instrument`);
@@ -260,7 +259,7 @@ function formatDb(v) {
 
 // ── Local audio state (separate from main S.audioCtx / S.inputStream) ────────
 const as = {
-  inputGains:     { '0': 0, '1': 0, 'stereo': 0 },  // per-channel input gain (dB), keyed by channel value
+  inputGains:     { '0': 0, '1': 0 },  // per-channel input gain (dB), keyed by channel index
   _meterGainNodes: [],  // one GainNode per channel, between splitter and meter analyser
   outputGain:    MASTER_DEFAULT_DB,   // -6 dB; single source in state.js
   sampleRate:     48000,
@@ -276,7 +275,7 @@ const as = {
 };
 
 // ── Build input graph ─────────────────────────────────────────────────────────
-// Taps the selected channel (or L+R sum) from the getUserMedia stream and routes
+// Taps the selected channel from the getUserMedia stream and routes
 // it into S.inputGainNode → S.inputAnalyser — the exact chain startLiveRecording
 // reads from. This is the granular engine's mono recording input.
 //
@@ -318,19 +317,11 @@ function buildInputGraph(channel) {
   // Disconnect any previous splitter→inputGain connection before re-tapping
   try { as.splitterNode.disconnect(S.inputGainNode); } catch(_) {}
 
-  // Route selected channel (or stereo sum) into S.inputGainNode → S.inputAnalyser
-  // This is what startLiveRecording reads from.
-  if (channel === 'stereo') {
-    // Sum L+R into a ChannelMerger → inputGainNode (mono sum of two channels)
-    const sumMerger = ctx.createChannelMerger(2);
-    as.splitterNode.connect(sumMerger, 0, 0);
-    as.splitterNode.connect(sumMerger, Math.min(1, numCh - 1), 1);
-    // sumMerger output is 2-ch; inputGainNode is mono — Web Audio down-mixes automatically
-    sumMerger.connect(S.inputGainNode);
-    as._sumMerger = sumMerger;
-  } else {
-    try { as._sumMerger?.disconnect(); } catch(_) {}
-    as._sumMerger = null;
+  // Route the selected channel into S.inputGainNode → S.inputAnalyser.
+  // This is what startLiveRecording reads from. The browser path taps ONE
+  // channel — the send set's sum is the RtAudio graph's (applyInputRouting);
+  // the browser is the demo and hears its first send.
+  {
     const chIndex = clamp(parseInt(channel, 10), 0, numCh - 1);
     as.splitterNode.connect(S.inputGainNode, chIndex, 0);
   }
@@ -497,10 +488,8 @@ function renderInputMeters(selectedCh) {
   const numCh = as.inputAnalysers.length || 1;
   const devSel = document.getElementById('asInputDevice');
   const devLabel = devSel?.options[devSel.selectedIndex]?.text ?? '';
-  // Which bar(s) to highlight: use explicit arg, or fall back to S.mainInputChannel.
-  // Convert 'stereo' to [0, 1] for the highlight array.
-  let sel = selectedCh !== undefined ? selectedCh : (S.mainInputChannel ?? 0);
-  if (sel === 'stereo') sel = [0, 1];
+  // Which bar(s) to highlight: the explicit arg, else every channel sent.
+  const sel = selectedCh !== undefined ? selectedCh : inputSends();
   // A channel with no signal path reads `off` rather than sitting at silence —
   // "nothing is coming in" and "nothing is routed here" are different facts.
   const live = as.inputAnalysers.length;
@@ -797,7 +786,7 @@ function applyInputRouting() {
   const sends = inputSends();
   // Derived first, gains second: the choice is the truth before the stream is
   // up (the modal's dropdown at boot, a private instance with no input).
-  S.mainInputChannel = sends.length > 1 ? 'stereo' : sends[0];
+  S.mainInputChannel = sends[0];
   if (!_rtInputRoutingGains?.length) return;
   const t = S.audioCtx?.currentTime ?? 0;
   _rtInputRoutingGains.forEach((g, i) => {
@@ -1377,13 +1366,6 @@ function repopulateChannelSelect(numCh) {
     sel.appendChild(opt);
   }
 
-  if (numCh >= 2) {
-    const stereo = document.createElement('option');
-    stereo.value = 'stereo';
-    stereo.textContent = 'stereo (L+R)';
-    sel.appendChild(stereo);
-  }
-
   sel.value = '0'; // default to ch 1
 
   // Mirror the new options into the main-UI audio panel's dropdown so the
@@ -1895,7 +1877,7 @@ export function loadAudioDefaults() {
       S._savedOutputDeviceId = d.outputDeviceId;
     }
     // The send SET is the truth. A file from before it existed carries only
-    // `mainInputChannel`, so read that once into a set — 'stereo' was two
+    // `mainInputChannel`, so read that once into a set — its 'stereo' was two
     // channels sent at once, which is exactly what the set now says.
     if (Array.isArray(d.inputSends) && d.inputSends.length) {
       S.inputSends = d.inputSends.filter(i => Number.isInteger(i) && i >= 0);
@@ -1904,7 +1886,7 @@ export function loadAudioDefaults() {
     } else if (typeof d.mainInputChannel === 'number') {
       S.inputSends = [d.mainInputChannel];
     }
-    if (d.mainInputChannel === 'stereo' || typeof d.mainInputChannel === 'number') S.mainInputChannel = d.mainInputChannel;
+    S.mainInputChannel = S.inputSends[0] ?? 0;
 
     // Engine
     if (typeof d.sampleRate === 'number') S.savedSampleRate = d.sampleRate;
@@ -2209,7 +2191,7 @@ export function initAudioSettings() {
         renderInputMeters();
               if (as.started && _inputDeviceId != null) {
           const nCh = as.inputAnalysers.length;
-          const chDesc = S.mainInputChannel === 'stereo' ? 'stereo (L+R)' : `ch ${(S.mainInputChannel ?? 0) + 1}`;
+          const chDesc = 'ch ' + inputSends().map(i => i + 1).join('+');
           setStatus('asInputStatus', 'ok', `${nCh} ch input active — recording ${chDesc}`);
         }
       } else if (as.started && S.inputAnalyser) {
@@ -2542,18 +2524,17 @@ export function initAudioSettings() {
   // Channel change — always live, no stream restart needed
   document.getElementById('asInputChannel')?.addEventListener('change', e => {
     const val = e.target.value;
-    const lbl = val === 'stereo' ? 'stereo (L+R)' : `ch ${parseInt(val) + 1}`;
-
-    const isStereo = val === 'stereo';
-    const chIndex  = isStereo ? 0 : (parseInt(val, 10) || 0);
+    const chIndex = parseInt(val, 10) || 0;
+    const lbl = `ch ${chIndex + 1}`;
 
     // The dropdown is a DOOR onto the send set (the strip's switches are the
     // other): a choice here IS the set, and `mainInputChannel` is derived from
     // it by applyInputRouting. Until 2026-09-17 this wrote `mainInputChannel`
     // directly and left the set alone (the rewire seeds it only when empty,
     // 2026-09-14), so the derived value overwrote the choice a moment later —
-    // "stereo" in the modal never reached the engine (cc-mirror-audit).
-    S.inputSends = isStereo ? [0, 1] : [chIndex];
+    // the choice never reached the engine (cc-mirror-audit). A sum of several
+    // channels is the strip's to make; the dropdown picks ONE.
+    S.inputSends = [chIndex];
 
     // The per-channel trim lives on that channel's own row now and is
     // applied by applyInputRouting — changing which channel is sent must not
@@ -2564,13 +2545,11 @@ export function initAudioSettings() {
     S._syncAudioPanelChannels?.();
     S._syncAudioPanelLevels?.();
 
-    const highlight = isStereo ? [0, 1] : chIndex;
+    const highlight = chIndex;
 
     if (window.electronBridge?.isElectron) {
       // Electron: RtAudio path — rewire splitter output into recording chain.
-      // Pass 'stereo' through rather than chIndex — the rewire sums L+R for it,
-      // and collapsing to 0 here recorded ch 1 only.
-      rewireRtAudioRecordingChannel(isStereo ? 'stereo' : chIndex, as.inputAnalysers.length);
+      rewireRtAudioRecordingChannel(chIndex, as.inputAnalysers.length);
       renderInputMeters(highlight);
       setStatus('asInputStatus', 'ok', `${lbl} → granular engine`);
     } else if (S.inputStream) {

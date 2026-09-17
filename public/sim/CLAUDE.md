@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for Cowork / Claude Code
 
-> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-17 (5.3 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
+> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-18 (5.3 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
 
 > **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative — no paragraph here per change. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`.
 
@@ -8,7 +8,7 @@
 
 ## What is mubone?
 
-A browser-based spatial granular synthesizer for live acoustic instrumentalists. The performer plays into a mic, audio is recorded into a particle cloud on a 3D sphere, and grains are spatialized via VBAP to multi-channel speakers. An **x-imu3** sensor tracks orientation for the cursor; additional sensors can be added via the generic sensor registry (`/sensor/{name}/quaternion`).
+A browser-based spatial granular synthesizer for live acoustic instrumentalists. The performer plays into a mic, audio is recorded into a particle cloud on a 3D sphere, and grains are spatialized via VBAP to multi-channel speakers. The **mubone instrument** (first-party BNO085 over sygaldry, `js/sygaldry.js`, kind `mubone`) tracks orientation for the cursor; the **x-imu3** is the backup; anything else joins via the sensor registry (`/sensor/{name}/quaternion`).
 
 Deployed to **mubone.org/sim** via Cloudflare Workers (static). Source is private.
 
@@ -25,10 +25,10 @@ Ek is the only user of mubone. This shapes how we approach changes:
   all. `loop` still names the PIN KIND (`slot.type`, the pins rail, `commitMode`) and only that.
   The brush material is `tape`, never `hit` — **hit is out of the vocabulary** (Ek: "i hate hit,
   we should remove it from the vocab").
-- **Canonical terminology.** The performer-held sensor is an **x-imu3** — never "wand" or "IMU wand". Generic word is **sensor**. Active per-slot calibration lives in `sensor-registry.js` — `quatCal.mountQuat` + `quatCal.headingQuat`, the two gestures described under Debugging approach. No `sensor3Cal` (deleted with `gesture-window.html`, 2026-09-05), no `wandCal`, no `tareEuler`, no device-level `polarity`. OSC convention: `/sensor/{name}/{type}`. If you see legacy terminology in code or docs, flag it as a rename candidate — don't match it.
+- **Canonical terminology.** The performer-held sensor is the **mubone instrument** (BNO085, sygaldry); an **x-imu3** is the backup — never "wand" or "IMU wand". Generic word is **sensor**. Active per-slot calibration lives in `sensor-registry.js` — `quatCal.mountQuat` + `quatCal.headingQuat`, the two gestures described under Debugging approach. No `sensor3Cal`, no `wandCal`, no `tareEuler`, no device-level `polarity`. OSC convention: `/sensor/{name}/{type}`. If you see legacy terminology in code or docs, flag it as a rename candidate — don't match it.
 - **Plan before executing — for what cannot be unwound.** A rename, a deletion, or a refactor that crosses modules gets a sketch first (naming, files, risks) and a confirmation. A bounded change inside one module, or anything a green audit proves, just goes; the round trip on every change cost more than it saved (Ek).
 - **Surface debt.** Flag stale docs, inconsistent naming and dead code — never silently accommodate.
-- **Session hygiene — the cheap session is the goal.** Start with this file and the open items in `docs/TODO.md` that touch the task; read nothing else end to end. Run the ONE audit the diff maps to (`node scripts/audit-for.js`, see Debugging approach), never the whole set. End by writing one entry of five lines or fewer per thing done into `docs/archive/TODO-DONE-<month>.md`, any new ruling as one paragraph in `docs/RULINGS.md`, and the long reasoning in the commit message. Nothing is added to this file unless a rule of the codebase changed. `/finish` is this close-out as one command; `/release` is the release checklist; a parallel session lives in its own worktree (`claude --worktree`, then `sh scripts/worktree-setup.sh`).
+- **Session hygiene — the cheap session is the goal.** Start with this file and the open items in `docs/TODO.md` that touch the task; read nothing else end to end. Run the fast checks the diff maps to (`node scripts/audit-for.js --run`, under a second); the rig suites only when Ek asks, everything at release. End by writing one entry of five lines or fewer per thing done into `docs/archive/TODO-DONE-<month>.md`, any new ruling as one paragraph in `docs/RULINGS.md`, and the long reasoning in the commit message. Nothing is added to this file unless a rule of the codebase changed. `/finish` is this close-out as one command; `/release` is the release checklist; a parallel session lives in its own worktree (`claude --worktree`, then `sh scripts/worktree-setup.sh`).
 
 ## Tech stack
 
@@ -73,8 +73,6 @@ The repo carries finished experiments alongside running code. Recency is not evi
 - **`scripts/`** — the verification harnesses and launch helpers, all run by hand. Which one covers
   which file, and what each guards, is `docs/AUDITS.md`; `node scripts/audit-for.js` answers it from
   the diff. `dev-bridge.js` is the transport behind `.dev-bridge/`, `lib/rig.js` its node client.
-  `composer-audit.js` no longer exists (its checks are in `pins-audit.js`); `live-loop-audit.js`
-  exists and is run by hand.
 
 ## Control surface, and what browser mode is for
 
@@ -142,7 +140,7 @@ words — read that entry before touching the area, and put a new ruling there, 
 
 - **Shared state object `S`** (`state.js`): all modules read/write `S`; callback hooks (`S._funcName = handler`) avoid circular imports.
 - **AudioWorklet grain engine** (`js/worklets/grain-engine.worklet.js`): synthesis on the audio thread; the 10 ms main-thread scheduler (`grain.js`) only does spatial search and writes candidates into shared tables through `grain-worklet-bridge.js`; **a take is ONE SharedArrayBuffer** (`js/take.js`) both threads read, never held twice.
-- **Sensor registry** (`sensor-registry.js`): sensors self-register from `/sensor/{name}/{type}`; roles (cursor / frame / gesture) per stream; the x-imu3 is the primary sensor.
+- **Sensor registry** (`sensor-registry.js`): sensors self-register from `/sensor/{name}/{type}`; roles (cursor / frame / gesture) per stream; the mubone instrument is primary, the x-imu3 the backup.
 - **Accessory registry** (`accessory-registry.js`; its table UI was sunset 2026-08-28, git history): the x-IMU3-SA-A8's 8 channels (pad numbers 1–8, not indices) bind to the shared `ACTIONS` registry (`S._actions` / `S._dispatchAction`). Accessory, MIDI, keys and OSC all dispatch through ONE table — never add a parallel mapping system. Device settings are read on connect, never written automatically.
 - **VBAP** spatial panning: pre-computed lookup, O(1) per grain, any speaker count. Head-locked vs world-locked modes.
 - **A tile is the preset**: every grain tile owns and persists its whole block (`mubone_tiles`); the patch bank was sunset 2026-09-03 (git history).
@@ -233,7 +231,7 @@ Bump the minor for feature work or meaningful fixes (1.10 → 1.11), the patch f
 | `docs/INSTRUMENT-GUI.md` | CURRENT | **Read before any change to the rig view** — chrome, tool rail, footer, cabinet, engine sheet, palette. The element kit: the button's two sizes, the five faces, the four boolean shapes, the radius scale. Companion to `docs/SETTINGS-GUI.md` |
 | `docs/INTERACTION-MODEL.md` | DESIGN INTENT | Trace / scan / commit — the reasoning behind the model (largely shipped) |
 | `docs/ROUTING-DESIGN.md` | DESIGN INTENT (partial) | Routing architecture — **custom-routing destinations are no-op scaffolding**, verify against `sensor-registry.js` |
-| `docs/EXP-NOTES.md` | MIXED | Gesture, snapshot and staging were sunset 2026-08-29 (git history); the rest is unbuilt idea-space. **Staging is DEAD (2026-08-30)** — no module, no markup, no way in; this file called it shipped for months |
+| `docs/EXP-NOTES.md` | MIXED | Gesture, snapshot and staging were sunset 2026-08-29 (git history); the rest is unbuilt idea-space. **Staging is DEAD (2026-08-30)** — no module, no markup, no way in |
 | `docs/BROWSER-AUDIT-2026-07.md` | CURRENT | The browser (non-Electron) build and deploying to mubone.org/sim; the service-worker caching contract. Verification #153 unrun |
 | `docs/OSC-AUDIT-2026-08.md` | CURRENT | The OSC dispatch audit — the release-edge guard, station addressing, what `js/osc.js` does and does not handle. Read before touching the dispatch `switch` |
 | `docs/EXPORT-IMPORT-AUDIT-2026-08.md` | CURRENT (setup half) | **Read before touching the SETUP file.** Its session half records a format nothing reads — the music is a document (`js/piece.js`) |
@@ -253,7 +251,7 @@ Bump the minor for feature work or meaningful fixes (1.10 → 1.11), the patch f
 
 **The app is drivable from here.** `npm run electron:dev` arms the dev bridge (`scripts/dev-bridge.js`): write JS to `.dev-bridge/in/<id>.js` and the renderer evaluates it, `in/<id>.shot` returns a PNG of the window, and every renderer console line, load failure and crash lands in `.dev-bridge/console.log`. `scripts/lib/rig.js` is the node-side client — `launch()` starts a private instance (own profile, own OSC port, muted), `attach()` talks to the open one, `evaluate(fn)` mirrors playwright's `page.evaluate`. Plain `npm run electron` loads none of it. `location.href = location.pathname + '?debug'` turns on verbose logging without a restart. A live app is a **concurrent writer** — `js/grain.js` drives the trigger gates from the 10 ms scheduler — so anything driving the engine with synthetic timestamps calls `rig.quiesce()` first.
 
-**Audits are two-tier. Read `docs/AUDITS.md` § 1–2 before running one.** Per change: the ONE suite that covers the files touched — `node scripts/audit-for.js` names it from the diff, `--run` runs it, and a doc-only change runs nothing but `docs-audit`. Per release (Ek says "release" / "ship" / "bump"): everything. `osc-audit.js` (minutes of reloads, for a path Ek does not use) and `browser-audit.js` (playwright) are **release-only**; for an `osc.js` edit run `AUDIT_ONLY=wiring node scripts/osc-audit.js`, which is static and instant. Say what ran and what did not. Every launch is a fresh profile, deleted on close; a second concurrent session sets `MUBONE_RIG_PORT` so the two do not share port 7599.
+**Audits are three-tier (Ek, 2026-09-18). Read `docs/AUDITS.md` § 1–2 before running one.** Per change: only the fast, file-only checks — `node scripts/audit-for.js --run` (docs, sensor maths, unit tests, osc wiring; under a second). The rig suites, align, browser, phone and live-loop boot the app and take minutes: **never unasked** — `audit-for` lists them as *on request*, and they run when the change is about what they measure and Ek says so (`--run --slow`). At release (Ek says "release" / "ship" / "bump"): everything. Say what ran and what did not. Every launch is a fresh profile, deleted on close; a second concurrent session sets `MUBONE_RIG_PORT` so the two do not share port 7599.
 
 **Before any before/after claim about the screen** `node scripts/probe-selftest.mjs` must be green (`docs/AUDITS.md` says why); CSS work runs `npm run audit:align` and `node scripts/ui-shots.js`.
 

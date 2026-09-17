@@ -1404,7 +1404,7 @@ async function run(rig) {
     // goes on its own clock (784 vs 785 across a full rig-audit run, three
     // times on 2026-09-12), and every assertion below is an exact difference.
     // Counted in the FAN'S OWN INK, not every line on the frame. The fan is one
-    // path stroked in `darkMode ? '#ffffff' : '#000000'` (renderer.js), and
+    // path stroked in '#ffffff' (renderer.js), and
     // filtering on that is what keeps this measuring reach and nothing else.
     // It had to: the selected pin's focus bracket draws EIGHT segments, and the
     // frame this section calls `pinned` has a selected pin while `baseline` has

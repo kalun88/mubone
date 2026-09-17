@@ -892,6 +892,33 @@ export async function connectSerialDevice(portPathOrObj) {
   return true;
 }
 
+// Let a connected sensor go: its transport closes and the device leaves the
+// list, and NOTHING ELSE — its registry slot keeps its mounting calibration,
+// its role and its saved prefs, so a reconnect is the same sensor (a forget is
+// forgetOscSensor). A wifi x-imu3 keeps announcing itself, so it is back in
+// the list as a Connect row within a second; a cable is back on Rescan. A
+// mubone instrument's link is sygaldry's to close (ui-sygaldry sygDisconnect)
+// and it calls this afterwards to drop the device row.
+export async function disconnectDevice(sn) {
+  const dev = _devices.get(sn);
+  if (!dev) return false;
+  const bridge = window.electronBridge;
+  dev.feeding = false;
+  _devices.delete(sn);
+  if (dev.transport === 'udp') {
+    if (bridge?.isElectron) await bridge.ximu3StopData(dev.send);
+    else _sendProxyControl({ type: 'disconnect', sn });
+  } else if (dev.transport === 'serial') {
+    _serialPathToDevice.delete(dev.serialPath);
+    if (bridge?.isElectron) await bridge.serialClose(dev.serialPath);
+    else await _webSerialClose(dev.serialPath);
+  }
+  _onDeviceUpdated?.(dev);
+  _syncSensorStatus();
+  DEBUG && console.log(`[imu-setup] disconnected ${dev.name} (${sn})`);
+  return true;
+}
+
 // ── Send command to a specific device ───────────────────────────────────────
 
 export function sendCommandTo(dev, jsonObj) {

@@ -128,12 +128,11 @@ export const axisHeld = src => src !== 'sensor';
 // chrome had, one layer down, and it is the black every other colour in the app
 // is now derived against. `graph` lost its blue cast for the same reason —
 // structure should read as structure, and `north` should be the only cool thing
-// in the sky.
+// in the sky. ONE palette: the light canvas was sunset 2026-09-15 (Ek) and its
+// half of this table deleted 2026-09-18.
 export const SPHERE_PALETTE = {
-  dark:  { ink: '#090806', horizon: '#e4ddd0', behind: '#8b8478',
-           graph: '#6e6963', north: '#6d8ea6', south: '#a8806b' },
-  light: { ink: '#ffffff', horizon: '#3b3529', behind: '#8a8377',
-           graph: '#98a2a9', north: '#41708f', south: '#8d6448' },
+  ink: '#090806', horizon: '#e4ddd0', behind: '#8b8478',
+  graph: '#6e6963', north: '#6d8ea6', south: '#a8806b',
 };
 
 // NOTE: the precomputed HANN_ATTACK / HANN_RELEASE arrays and the
@@ -1007,13 +1006,9 @@ export const S = {
   // ── Particle visualisation (audio-feature-driven) ────────────────────
   // When true, particle color/size derived from audio features baked at
   // paint time.  When false, original palette-based colouring is used.
-  // THE CANVAS IS DARK, always (Ek, 2026-09-15). This was a setting — a Dark |
-  // Light capsule on Settings -> Visuals, for a projector in a lit room — and
-  // the option is gone. It stays as a constant only because renderer.js still
-  // branches on it in ~25 places and audio-features.js keys a colour cache on
-  // it; every one of those light halves is now unreachable, and deleting them
-  // is its own pass because it crosses modules (docs/TODO.md).
-  darkMode:      true,
+  // THE CANVAS IS DARK, always (Ek, 2026-09-15). The Dark | Light capsule on
+  // Settings -> Visuals went that day and `S.darkMode` with every light
+  // branch it guarded on 2026-09-18 — SPHERE_PALETTE is one palette.
   // SET ON THE FIGURE, BY EAR AND BY EYE (Ek, 2026-09-15). These four and the
   // paint gate below are one curve — Settings -> Visuals draws it — and Ek set
   // it by dragging the handles and then asked for what he had as the default.
@@ -1348,9 +1343,11 @@ export const S = {
   // Shown as "main (mono)" in audio settings input mapping table.
   // WHICH HARDWARE CHANNELS FEED THE INSTRUMENT (2026-09-14). An array of
   // channel indices; several at once sum to the one mono input the engine
-  // takes. `mainInputChannel` is DERIVED from it (the first one sent, or
-  // 'stereo' when more than one is) for the few readers that still ask
-  // "which channel" — the meter highlight and the sampler's label.
+  // takes. `mainInputChannel` is DERIVED from it (the first one sent) for the
+  // few readers that still ask "which channel" — the sampler's label. The
+  // dropdown's 'stereo (L+R)' option went 2026-09-18: a fixed pair was one
+  // sum the switches already make, and it was the one choice that never
+  // reached the engine.
   inputSends: [0],
   mainInputChannel: 0,
 

@@ -84,7 +84,7 @@
        not be trusted, and hierarchy drifted wherever someone guessed.
 
        The top of the ramp is the horizon: --text-light is exactly
-       SPHERE_PALETTE.dark.horizon, so the brightest text in the interface is
+       SPHERE_PALETTE.horizon, so the brightest text in the interface is
        the same colour as the equator.
 
        ── Contrast, and the trap in "warm it up" (Ek, 2026-08-29) ──────────
@@ -105,7 +105,7 @@
        --text-dim or below. Getting that wrong is what made the first cut
        read as "way too low" even where the ramp itself was defensible. */
     --text-highlight:#faf7f4;   /* modal headings, the one true white    18.5:1 */
-    --text-light:    #e4ddd0;   /* == SPHERE_PALETTE.dark.horizon        14.7:1 */
+    --text-light:    #e4ddd0;   /* == SPHERE_PALETTE.horizon             14.7:1 */
     --text-emphasis: #dbd7d1;   /* numbox focus, option text             13.8:1 */
     --text-bright:   #cec9c2;   /* session-btn hover                     12.0:1 */
     --text-primary:  #c5c0b9;   /* body, most buttons                    10.9:1 */

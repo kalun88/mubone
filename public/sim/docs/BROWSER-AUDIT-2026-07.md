@@ -171,7 +171,7 @@ Also removed: `_showResetDialog()`, a 21-line generic reset-dialog helper that w
 
 Verified in `scripts/browser-audit.js`, which drives the real dialog: it dirties storage, plants a sentinel cache entry, clicks through with "keep my patches" ticked, and then asserts the presets survived, the sentinel is gone, and the app boots clean on the other side. Counting caches after the reset proves nothing — the service worker legitimately re-registers and re-caches on the reload, and *that is* day one.
 
-For reference, the keys a clean boot immediately re-writes (so seeing them after a reset is correct, not leakage): `mubone-learn-mode`, `mubone-hud-scale`, `mubone_darkMode`, `mubone_sensor_cal_v`, `mubone_preset_view`, `mubone_projector_layout_v2`, `mubone_uiScale`.
+For reference, the keys a clean boot immediately re-writes (so seeing them after a reset is correct, not leakage): `mubone-learn-mode`, `mubone-hud-scale`, `mubone_sensor_cal_v`, `mubone_preset_view`, `mubone_projector_layout_v2`, `mubone_uiScale`.
 
 ---
 

@@ -77,7 +77,7 @@ export function refreshSourceTiles() {
   if (!bar) return;
   if (_liveCount() !== _builtCount) { renderSourceTiles(); return; }
   const liveSel = S.sourceKind === 'live';
-  const selCh   = S.mainInputChannel === 'stereo' ? 0 : (S.mainInputChannel ?? 0);
+  const selCh   = S.mainInputChannel ?? 0;
   bar.querySelectorAll('[data-src-ch]').forEach(el => {
     el.classList.toggle('on', liveSel && parseInt(el.dataset.srcCh, 10) === selCh);
   });

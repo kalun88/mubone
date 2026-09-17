@@ -7,16 +7,17 @@
 //   • the two calibration gestures (mount, heading) and their clear
 //   • role dropdown (cursor / camera / frame; gesture for the inertial stream)
 //
-// Discovery list at the top shows all visible devices with connect. There is
-// no disconnect verb (docs/TODO.md 2026-09-16).
+// Discovery list at the top shows all visible devices with connect; a
+// connected row that was connected from here carries Disconnect (2026-09-18).
+// An OSC peer has neither — it registers itself from its first packet.
 // ============================================================================
 
 import { S, DEBUG } from './state.js';
-import { sygOffers, sygConnectKnown, sygForgetKnown, sygConnectSerial } from './ui-sygaldry.js';
+import { sygOffers, sygConnectKnown, sygForgetKnown, sygConnectSerial, sygDisconnect } from './ui-sygaldry.js';
 import {
   initIMUSetup,
   getDiscovered, getSerialPorts, getDevices, getDevice,
-  connectDevice, connectSerialDevice, scanSerialPorts, requestSerialPort,
+  connectDevice, connectSerialDevice, disconnectDevice, scanSerialPorts, requestSerialPort,
   setAxesAlignment, togglePolarity,
   captureMountPose1, captureMountPose2, cancelMountCapture, slotQuat,
   captureHeading, clearMountCal, hasMountCal, getPolarity, getCalibratedEuler,
@@ -731,6 +732,23 @@ function renderSensors() {
       b.className = 'set-badge set-device-id ' + (e.dev.live ? 'set-badge--ok' : 'set-badge--err');
       b.textContent = e.dev.live ? 'Connected' : 'No signal';
       row.appendChild(b);
+      // Disconnect sits with Connect: every row that was connected from this
+      // list can be let go from it (Ek, 2026-09-18). An OSC peer was never
+      // connected from here, so it has no such verb — it registers itself.
+      const d = e.dev;
+      if (d.transport === 'udp' || d.transport === 'serial' || d.kind === 'mubone') {
+        const x = document.createElement('button');
+        x.className = 'set-btn set-btn--sm';
+        x.textContent = 'Disconnect';
+        x.title = 'let this sensor go — its mounting and role are kept for the next connect';
+        x.addEventListener('click', async ev => {
+          ev.stopPropagation(); x.disabled = true;
+          if (d.kind === 'mubone') await sygDisconnect(d.sn.replace(/^osc-/, ''));
+          await disconnectDevice(d.sn);
+          renderSensors(); renderSelected();
+        });
+        row.appendChild(x);
+      }
       // The door to its settings, the rail's ⋯: the block below is this
       // row's drawer, and a drawer's handle sits on the row it opens. Lit
       // while the block is showing this sensor.

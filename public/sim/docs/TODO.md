@@ -22,10 +22,11 @@
   on this machine memory IS stability, and the levers are the memory ones: (1) a take held ONCE, shared with the worklet
   (shipped 2026-09-17, `js/take.js`), (2) erased takes compressed losslessly in a Worker, (3) a memory readout in Settings →
   Audio so a set can see it coming. Reproduce: `session3.js`'s driver in the scratchpad, 40 min, `FAULT` lines.
-- [ ] **The x-imu3 has no disconnect verb** — the two dead IPC channels (`ximu3-stop-data`, `serial-close`) went
-  2026-09-16 with nothing calling them, and discovery now forgets a sensor after 15 s; what is left is the
-  choice: a device stays connected until quit. If a disconnect is ever wanted it is a settings-kit button on the
-  connected row plus the two channels back.
+  **Checked 2026-09-18:** (2) still stands after take-held-once — the erase brush frees NOTHING (`erase.js` header:
+  the slot stays in `S.liveRecBuffers` so particle indices hold, and the unbounded undo stack holds the same
+  references), so an erased take costs its full float32 until a sweep. The worklet drops its reference on erase,
+  so the main thread is free to compress and drop the SAB, re-inflating into a new one on undo. The cheaper
+  first move may be a bound on how much erased audio undo keeps.
 - [ ] **`sensor-mapping.js` stores a row's param twice** (`targetParam` and `output.param`, with sync code in
   add / update and a load-time "legacy row" migration) — the one small redundancy of the 2026-09-16 pass not
   taken, because the rows are persisted (`mubone_sensorMappings`) and want a one-shot migration of their own.
@@ -35,19 +36,6 @@
   cabinet list use, and a tile block may carry a param key, so they wait for a migration of their own.
 
 ### Sep 15
-
-- [ ] **The light canvas is unreachable code** — `S.darkMode` is a constant `true` since the Canvas Theme
-  option was removed (Ek, 2026-09-15). `renderer.js` still branches on it in ~25 places and
-  `audio-features.js` keys a colour cache on it; every light half is now dead. Deleting them is mechanical
-  but crosses modules (`renderer.js`, `audio-features.js`, `state.js`), so it wants its own sketch and a
-  confirmation rather than riding along with a settings change. `SPHERE_PALETTE.light`, `TRAIL_INK_LIGHT`
-  and `MUTED_PARTICLE_LIGHT` go with them.
-
-- [ ] **Selecting stereo does not reach `S.mainInputChannel`** — found 2026-09-15 by the paint-gate work,
-  NOT caused by it: `cc-mirror-audit` fails `stereo reaches S.mainInputChannel — 0` on a clean checkout of
-  HEAD as well. The modal's channel select mirrors `stereo` into the panel correctly, so the UI agrees with
-  itself and disagrees with the engine. Pre-existing and unrelated to the viz round; logged here rather than
-  fixed inside it.
 
 - [ ] **`colour-audit` listens to the room and cries wolf** — its two room-sensitivity checks fail on a
   different axis, a different sound and a different margin on almost every run, on a clean checkout too
@@ -81,6 +69,26 @@
   move with it or not at all. See the wet-ring fix (2026-09-14) for why the visible half kept going wrong.
 
 ### Sep 13
+
+- [ ] **`mark align` is non-deterministic on its own** — measured 2026-09-13 on a clean tree with no
+  changes: 17 failures, then 0, on consecutive solo runs. The checks that move are the burst-loudness
+  ones ("marks that cannot contain it stay small", "the covering mark is loud"), which depend on the
+  recorder and the paint tick lining up under load. Until it is fixed the suite cannot witness a
+  regression in `audio-features.js` or `paint-ticker.js`, which is most of the colour and deposit work.
+  Likely fix: drive the bursts off the audio clock rather than wall time, or assert a rank ordering
+  instead of absolute loudness. **Measured 2026-09-16, the load half:** with the one cursor rule the
+  suite's marks land under the cursor and are granulated as they are laid (the normal case when you
+  play), and then marks a frame clear of a burst read 0.10–0.15 against the 0.1 ceiling on every run
+  (64/70 twice) while HEAD and a capped take read 70/70 — no audio reaches the input bus from the
+  grains (probed: 0.000 RMS while granulating), so this is the fold's wall-clock timing slipping under
+  the scheduler's load, i.e. the size of a live mark is ~10 % less honest while the cursor is reading
+  the take. **Fixed 2026-09-17:** a live mark is sized from the TAKE's own samples over [its moment, the
+  next mark's moment) (`audio-features.js` `recordedWindowLoudness`, the paint ticker's settle queue) —
+  positions, not any thread's clock. The suite is 70/70 capped; UNCAPPED it is still 65/70 with far marks
+  at 0.14–0.16, and the deposit gaps are a steady 50–57 ms either way (probed 2026-09-17), so the excess is
+  neither the fold's timing nor the deposit clock. Still open: why a mark two away from a burst reads loud
+  while the cursor granulates the take it is painting. Next probe: print the take's own RMS over each far
+  mark's window in the failing section — if the take carries it, something reaches the recorder.
 
 ### Sep 12
 
@@ -126,9 +134,6 @@
   `outDropped` / `inSkipped` / dry per minute (`S.transportDiag`). If they skip once a minute or more, a resampling
   ring in `input-meter.worklet.js` and a rate trim in the host's `onOutputBlock` (drop or duplicate one sample per N)
   replace the skips; if they never skip, `docs/RIG-RUNBOOK.md` § 4.9 stays as it is and R9 closes.
-- [ ] **#336 Viz settings that should follow** — the deferred list at the end of `docs/archive/viz-changes-for-cli.md`
-  (§ *Settings that should follow*): the render-path additions of 2026-08-24 (dot+ring grains, reach lines, size
-  ceiling, gaze trail) shipped without their settings. The doc moved to the archive 2026-09-05; this item is its door.
 
 ---
 
@@ -136,7 +141,6 @@
 
 ### From Workshop Prep (Dartmouth, week of Mar 30)
 
-- [ ] **#36 Stress-test long sessions** — record continuously for 15–30 min in Chrome, monitor memory in DevTools.
 - [ ] **#39 Stretch: test 42-channel VBAP** — try the full Dartmouth layout. Identify any performance cliffs (lookup table size, per-grain cost). Have a fallback plan if 42 is too heavy.
 
 ---
@@ -161,22 +165,3 @@ Parked in `docs/archive/TODO-SOMEDAY.md` at feature lock (2026-09-13): 24 ideas 
 
 **Earlier:** #54, #55, #56, #57, #58, #59, #60, #61, #62, #63, #64, #65, #66, #67, #68, #80, #81
 
-- [ ] **`mark align` is non-deterministic on its own** — measured 2026-09-13 on a clean tree with no
-  changes: 17 failures, then 0, on consecutive solo runs. The checks that move are the burst-loudness
-  ones ("marks that cannot contain it stay small", "the covering mark is loud"), which depend on the
-  recorder and the paint tick lining up under load. Until it is fixed the suite cannot witness a
-  regression in `audio-features.js` or `paint-ticker.js`, which is most of the colour and deposit work.
-  Likely fix: drive the bursts off the audio clock rather than wall time, or assert a rank ordering
-  instead of absolute loudness. **Measured 2026-09-16, the load half:** with the one cursor rule the
-  suite's marks land under the cursor and are granulated as they are laid (the normal case when you
-  play), and then marks a frame clear of a burst read 0.10–0.15 against the 0.1 ceiling on every run
-  (64/70 twice) while HEAD and a capped take read 70/70 — no audio reaches the input bus from the
-  grains (probed: 0.000 RMS while granulating), so this is the fold's wall-clock timing slipping under
-  the scheduler's load, i.e. the size of a live mark is ~10 % less honest while the cursor is reading
-  the take. **Fixed 2026-09-17:** a live mark is sized from the TAKE's own samples over [its moment, the
-  next mark's moment) (`audio-features.js` `recordedWindowLoudness`, the paint ticker's settle queue) —
-  positions, not any thread's clock. The suite is 70/70 capped; UNCAPPED it is still 65/70 with far marks
-  at 0.14–0.16, and the deposit gaps are a steady 50–57 ms either way (probed 2026-09-17), so the excess is
-  neither the fold's timing nor the deposit clock. Still open: why a mark two away from a burst reads loud
-  while the cursor granulates the take it is painting. Next probe: print the take's own RMS over each far
-  mark's window in the failing section — if the take carries it, something reaches the recorder.

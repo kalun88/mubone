@@ -1012,8 +1012,8 @@ had drifted in every direction at once — recording in a red that was not the m
 in a red borrowing `--accent-danger`'s "it will not come back", nearest in a violet in no ramp, and
 three pin-slot fallbacks a few points off the engine hues they were copying. `_tok()` reads the
 token and caches it, the way `FOCUS_INK` does, because this runs per frame and `getComputedStyle`
-is a layout read on the thread the grain scheduler shares; it flushes on the `mubone-theme` event,
-since unlike `FOCUS_INK` it has no `S.darkMode` key of its own. The invariant is that the tile you
+is a layout read on the thread the grain scheduler shares; nothing flushes it, because the canvas has
+one theme (the `mubone-theme` event and `S.darkMode` went with the light canvas, 2026-09-18). The invariant is that the tile you
 pressed and the mark under your hand are the same colour BY CONSTRUCTION rather than by two lists
 agreeing, and `align-audit`'s R4 holds it — its allowance list is empty.
 

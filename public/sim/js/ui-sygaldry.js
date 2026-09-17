@@ -18,7 +18,7 @@
 
 import { S } from './state.js';
 import {
-  links, addLink, dropLink, onLinksChanged, unsupportedReason,
+  links, addLink, dropLink, linkForSensor, onLinksChanged, unsupportedReason,
   knownInstruments, rememberedFor, rememberInstrument, forgetInstrument,
 } from './sygaldry.js';
 
@@ -436,6 +436,13 @@ export async function sygConnectSerial() { await connectUsb(); }
 export function sygForgetKnown(name) {
   forgetInstrument(name);
   S._refreshSensorList?.();
+}
+// Close a connected instrument's link — the sensor list's Disconnect, for a
+// row whose kind is mubone. The row itself is imu-setup's to drop.
+export async function sygDisconnect(name) {
+  const link = linkForSensor(name);
+  if (link) await dropLink(link);
+  render();
 }
 
 function startPainting() {

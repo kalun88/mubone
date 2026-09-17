@@ -364,6 +364,17 @@ function startXIMU3DataListener(port) {
   });
 }
 
+// The mirror of start, ref-counted the same way: the socket closes when the
+// last device on that port lets go. Back on 2026-09-18 with the Disconnect
+// button (it went 2026-09-16 with nothing calling it).
+function stopXIMU3DataListener(port) {
+  const entry = _ximu3DataSocks.get(port);
+  if (!entry) return;
+  if (--entry.refs > 0) return;
+  try { entry.sock.close(); } catch (_) {}
+  _ximu3DataSocks.delete(port);
+}
+
 function sendXIMU3Command(ip, port, jsonStr) {
   if (!_ximu3CmdSock) {
     _ximu3CmdSock = dgram.createSocket('udp4');
@@ -455,6 +466,13 @@ function openSerialPortFn(portPath) {
 
     _serialPorts.set(portPath, { port, parser });
   });
+}
+
+function closeSerialPortFn(portPath) {
+  const entry = _serialPorts.get(portPath);
+  if (!entry) return;
+  try { entry.port.close(); } catch (_) {}
+  _serialPorts.delete(portPath);   // the 'close' handler does this too; a failed close must not leave a ghost
 }
 
 function sendSerialCommandFn(portPath, jsonStr) {
@@ -784,6 +802,11 @@ function setupIPC() {
     return { ok: true, port };
   });
 
+  ipcMain.handle('ximu3-stop-data', (_event, port) => {
+    stopXIMU3DataListener(port);
+    return { ok: true, port };
+  });
+
   ipcMain.handle('ximu3-send-command', (_event, ip, port, jsonStr) => {
     sendXIMU3Command(ip, port, jsonStr);
     return { ok: true };
@@ -849,6 +872,11 @@ function setupIPC() {
   ipcMain.handle('serial-open', async (_event, portPath) => {
     const ok = await openSerialPortFn(portPath);
     return { ok, path: portPath };
+  });
+
+  ipcMain.handle('serial-close', (_event, portPath) => {
+    closeSerialPortFn(portPath);
+    return { ok: true, path: portPath };
   });
 
   ipcMain.handle('serial-send-command', (_event, portPath, jsonStr) => {

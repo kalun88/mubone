@@ -2,6 +2,34 @@
 
 > **Status: ARCHIVED** · done items moved out of `docs/TODO.md` on 2026-09-05, verbatim, so the open list stays short enough to read every session. Record only: entries describe the code the day they closed and may use superseded terminology. `git log` and `CHANGELOG.md` are the other two records.
 
+### Sep 18
+
+- [x] **Audits are three-tier: fast per change, rig suites on request, everything at release** (Ek, 2026-09-18:
+  "they take a ton of time and seem to run everything i do a little edit. i can't work like this"). Measured:
+  the file-only checks under 1 s, six rig suites 5 min 41 s. `audit-for.js` runs only its `FAST` rows by
+  default and lists the rest as on-request (`--run --slow`); `docs/AUDITS.md` § 1, CLAUDE.md, `/finish`.
+- [x] **The mubone instrument is the first-party sensor** (2026-09-18) — Ek: the BNO085 instrument over sygaldry
+  (`js/sygaldry.js`, kind `mubone`) is primary; the x-imu3 units are secondary, still used, still supported.
+  CLAUDE.md's three sensor lines say so now; sessions had been reading "x-imu3" as the instrument.
+- [x] **A connected sensor can be let go** (2026-09-18) — Disconnect beside Connect on every list row that was
+  connected from the list (wifi and cable x-imu3, the mubone instrument); an OSC peer has neither verb.
+  `ximu3-stop-data` / `serial-close` are back in `electron-main.js` + preload, `disconnectDevice` in
+  `js/imu-setup.js` (the slot keeps its mounting, role and prefs — a forget is `forgetOscSensor`),
+  `sygDisconnect` in `js/ui-sygaldry.js`, the button in `js/ui-imu-setup.js`.
+- [x] **The light canvas is gone** (2026-09-18, Ek: "light canvas is not a thing, sunset it") — `S.darkMode`,
+  `SPHERE_PALETTE.light`, `TRAIL_INK_LIGHT`, `MUTED_PARTICLE_LIGHT`, the light L-pull in `featuresToColor`,
+  and the `mubone-theme` event nothing dispatched; the three token caches keyed on the theme resolve once.
+  `SPHERE_PALETTE` is flat. `renderer.js`, `audio-features.js`, `state.js`, `tiles.js`, `ui-viz.js`.
+- [x] **The input dropdown's `stereo (L+R)` option went** (2026-09-18, Ek) — the strip's send switches sum any
+  channels; a fixed pair was one sum they already make and the one choice that never reached the engine
+  (TODO Sep 15). `mainInputChannel` is a number, the first send; the meters light every send; a saved
+  `'stereo'` still reads in once as `[0,1]`. `js/ui-audio-settings.js`, `ui-meters.js`, `ui-source.js`,
+  `scripts/cc-mirror-audit.js`.
+- [x] **#336 closed as already done** (2026-09-18) — its own doc (`docs/archive/viz-changes-for-cli.md` § Settings
+  that should follow) records all three follow-ons closed 2026-08-24. The TODO item was a door onto nothing.
+- [x] **#36 superseded** (2026-09-18) — a 15–30 min Chrome stress test; the driven 40-minute Electron runs of
+  2026-09-16/17 (TODO Sep 16) are that test on the product that ships.
+
 ### Sep 15
 
 - [x] **A piece plays when it is opened, and no door drops one in silence (Ek, 2026-09-15)** — five restore

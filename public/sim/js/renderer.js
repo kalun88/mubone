@@ -33,7 +33,7 @@ export function drawFrame() {
   // Cache focalLen + canvas half-dimensions for zero-alloc projectInto().
   updateProjectionCache();
 
-  S.ctx.fillStyle = (S.darkMode ? SPHERE_PALETTE.dark : SPHERE_PALETTE.light).ink;
+  S.ctx.fillStyle = SPHERE_PALETTE.ink;
   S.ctx.fillRect(0, 0, S.canvas.width, S.canvas.height);
 
   // Cursor lon/lat resolved once per frame, before anything that needs it.
@@ -134,14 +134,13 @@ const TRAIL_MIN_RAD = 0.001;
 // stay wide enough that it never closes into a square.
 const FOCUS_R   = 30;
 const FOCUS_ARM = 8;          // the length of each leg of a corner
-// Read once per theme, not per frame: this runs inside the render loop and a
+// Read once, not per frame: this runs inside the render loop and a
 // getComputedStyle there is exactly the kind of per-frame cost CLAUDE.md's
 // render-path rules exist to keep out.
-let _focusInk = null, _focusInkDark = null;
+let _focusInk = null;
 function FOCUS_INK() {
-  if (_focusInk && _focusInkDark === S.darkMode) return _focusInk;
+  if (_focusInk) return _focusInk;
   _focusInk = getComputedStyle(document.body).getPropertyValue('--eng-pins').trim() || '#cfc7bc';
-  _focusInkDark = S.darkMode;
   return _focusInk;
 }
 // Cursor ink comes from tokens (ruled 2026-09-14). The invariant: the tile you
@@ -158,11 +157,8 @@ function _tok(name, fallback) {
   }
   return v;
 }
-export function flushCursorTokens() { _tokCache.clear(); }
-// The one event that can change what a token resolves to. FOCUS_INK keys its
-// own cache on S.darkMode; this cache has no such key, so it is flushed here
-// rather than left to go stale the way a second copy of a colour always does.
-window.addEventListener('mubone-theme', flushCursorTokens);
+// Nothing flushes the cache: the canvas has one theme (Ek, 2026-09-15), so a
+// token resolves once and stays resolved.
 
 function _drawFocusBracket(x, y, r, alpha, color) {
   const c = S.ctx;
@@ -528,14 +524,13 @@ function _drawMovingSeedTrail(seed, slotIndex, isNearest, maxSamples) {
 // line, arriving exactly when the cursor was steady enough to be painting
 // carefully. The append gate in drawFrame() stops most of them at the source;
 // this catches slow drift.
-const TRAIL_INK_DARK  = '150,162,178';   // cool grey — vapour, not ink
-const TRAIL_INK_LIGHT = '96,110,126';
+const TRAIL_INK       = '150,162,178';   // cool grey — vapour, not ink
 const TRAIL_MIN_PX    = 1.2;             // shorter than this is a dot, not a line
 export function drawGazeTrail() {
   const n = S.gazeTrail.length;
   if (n < 2 || S.gazeTrailSec <= 0) return;
   const now = performance.now() / 1000;
-  const ink = S.darkMode ? TRAIL_INK_DARK : TRAIL_INK_LIGHT;
+  const ink = TRAIL_INK;
   const seamLimit = S.canvas.width * 0.25;
   S.ctx.save();
   S.ctx.lineCap = 'round';
@@ -580,7 +575,7 @@ export function drawTetherLine() {
   if (dist < 20) return;
   const maxDist = Math.min(S.canvas.width, S.canvas.height) * 0.5;
   const alpha   = Math.min(0.30, 0.06 + 0.24 * (dist / maxDist));
-  const ink     = S.darkMode ? TRAIL_INK_DARK : TRAIL_INK_LIGHT;
+  const ink     = TRAIL_INK;
   S.ctx.save();
   S.ctx.strokeStyle = `rgba(${ink},${alpha})`;
   S.ctx.lineWidth   = 1;
@@ -599,7 +594,7 @@ export function drawGridLines() {
   // Weights here are the other half of it: the grid used to be loud in BOTH
   // chroma and line weight, and dropping only the colour would have left a
   // grey gunsight. Everything below is lighter than it was.
-  const P = S.darkMode ? SPHERE_PALETTE.dark : SPHERE_PALETTE.light;
+  const P = SPHERE_PALETTE;
 
   if (S.perfMode) {
     // Minimal: equator + prime meridian only, very light
@@ -954,7 +949,7 @@ export function drawRadiusTooltip() {
   S.ctx.font         = `${fs}px Urbanist, sans-serif`;
   S.ctx.textAlign    = 'center';
   S.ctx.textBaseline = 'top';
-  S.ctx.fillStyle    = S.nearestMode ? _tok('--accent-sensor', '#a793c0') : (S.darkMode ? '#ffffff' : '#000000');
+  S.ctx.fillStyle    = S.nearestMode ? _tok('--accent-sensor', '#a793c0') : '#ffffff';
   S.ctx.fillText(label, mx, py);
   S.ctx.restore();
 }
@@ -1077,8 +1072,7 @@ const EMPTY_IDS = [];
 // Colour for a particle whose loop is muted. Desaturated, not just dimmed:
 // dimming alone reads as "far away" or "quiet", which are things the paint
 // already means. Grey is the one thing that reads as "not sounding".
-const MUTED_PARTICLE_DARK  = '#5c5c5c';
-const MUTED_PARTICLE_LIGHT = '#b0b0b0';
+const MUTED_PARTICLE = '#5c5c5c';
 
 let _dfNear = 0, _dfInvSpan = 0, _dfPulled = false;
 function updateDepthRamp() {
@@ -1331,7 +1325,7 @@ export function drawParticles() {
     // it overrides both the feature-driven and the palette path — the point is
     // that timbre colour stops meaning anything while the buffer is silent.
     if (_mutedBuf[ii]) {
-      color = S.darkMode ? MUTED_PARTICLE_DARK : MUTED_PARTICLE_LIGHT;
+      color = MUTED_PARTICLE;
       alpha *= 0.7;
     }
 
@@ -1738,7 +1732,7 @@ export function drawParticles() {
   const poolFresh = pool && (performance.now() - (S._cursorPoolAt || 0)) < 120;
   if (poolFresh && pool.length > 0) {
     const scanOff = S.scanMuted;
-    const ink = S.darkMode ? '#ffffff' : '#000000';
+    const ink = '#ffffff';
     spherePointInto(S._frameCursorLon, S._frameCursorLat, _arcW);
     cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
     const cProj = project(_arcC[0], _arcC[1], _arcC[2]);
@@ -1792,7 +1786,7 @@ export function drawParticles() {
   // cap (Ek, 2026-09-15). The tag survives the cap, so the two can be told
   // apart in the one place that has to tell them apart.
   if (_glowCache.size > 0) {
-    const ink = S.darkMode ? '#ffffff' : '#000000';
+    const ink = '#ffffff';
     // ONE MARK, ONE WEIGHT (Ek, 2026-09-07: "i don't want different core or
     // alphas, i want the same. use the x2 and 0.92 alpha for all"). Everything
     // that made one sounding grain look different from another is gone: the
@@ -1941,7 +1935,7 @@ function _markAtTakeTime(marks, t) {
 }
 function _drawOverdubHeads(seq, mx, my) {
   const phase = masterPhaseWall(seq, S.audioCtx.currentTime);
-  const ink = S.darkMode ? '#ffffff' : '#000000';
+  const ink = '#ffffff';
   for (const ov of seq.overdubs) {
     if (!(ov.strokeId > 0) || !ov.layer) continue;
     const marks = _overdubMarks(ov);
@@ -1982,7 +1976,7 @@ function _drawPlayheadSquare(x, y, df, alpha) {
   const base = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df;
   const core = Math.max(1.6, base * 0.42);
   const half = Math.max(6,   base * 1.5);
-  const ink  = S.darkMode ? '#ffffff' : '#000000';
+  const ink  = '#ffffff';
   S.ctx.save();
   S.ctx.globalAlpha = alpha;
   S.ctx.fillStyle   = ink;
@@ -2159,10 +2153,10 @@ const _PB_GLOW  = _PB_VIZ;                         // active grains — one buck
 const _PB_MUTED = _PB_VIZ + 1;                     // muted loop material — one more
 const _PB_N     = _PB_VIZ + 2;
 
-// Cached bucket → colour string table (rebuilt only when dark mode flips).
-let _pbColors = null, _pbColorsDark = null;
+// Cached bucket → colour string table, built once.
+let _pbColors = null;
 function _pbColorTable() {
-  if (_pbColors && _pbColorsDark === S.darkMode) return _pbColors;
+  if (_pbColors) return _pbColors;
   _pbColors = new Array(_PB_VIZ);
   for (let h = 0; h < _PB_HUE; h++) {
     for (let s = 0; s < _PB_SAT; s++) {
@@ -2170,7 +2164,6 @@ function _pbColorTable() {
       for (let a = 0; a < _PB_ALPHA; a++) _pbColors[(h * _PB_SAT + s) * _PB_ALPHA + a] = col;
     }
   }
-  _pbColorsDark = S.darkMode;
   return _pbColors;
 }
 
@@ -2204,8 +2197,8 @@ function drawParticlesMinimal() {
   const pMax  = (S.vizMaxSize ?? PARTICLE_MAX_SIZE) * _zf;
   const _pW = _pbW, _pC = _pbC, _pj = _pbProj;
   const hasGlow = activeGrainMap.size > 0;
-  const glowColor = S.darkMode ? '#ffffff' : '#000000';
-  const mutedColor = S.darkMode ? MUTED_PARTICLE_DARK : MUTED_PARTICLE_LIGHT;
+  const glowColor = '#ffffff';
+  const mutedColor = MUTED_PARTICLE;
   // Same self-healing mark pass as the full renderer, so perfMode does not
   // quietly lose the one cue that says which material is silent.
   const anyMuted = syncParticleMarks();
@@ -2898,7 +2891,7 @@ export function drawCursor() {
   // hands-free is a violet ring around the 2.4x mic dot; painting hands-free is
   // a violet ring around the material's colour. The ring says whose hands, the
   // dot says what material — one object each.
-  const _rtic = S.darkMode ? '255,255,255' : '0,0,0';
+  const _rtic = '255,255,255';
   S.ctx.strokeStyle = _toggleTraceOn
     ? _hexA(_tok('--accent-sensor', '#a793c0'), 0.95)
     : recording ? _hexA(_tok('--mic-live-border', '#d25e3e'), 0.95)

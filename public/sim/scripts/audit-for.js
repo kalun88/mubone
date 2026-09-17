@@ -2,23 +2,32 @@
 // ============================================================================
 // audit-for.js — which audit does THIS change need?
 //
-// The two-tier rule (docs/AUDITS.md § 1): a change runs the one suite that
-// covers the files it touched; a release runs everything. This script is the
-// per-change half as code, so a session does not have to remember the map or
-// argue itself into running the whole set "to be safe" — which is what cost
-// 5–20 minutes per change before 2026-09-05.
+// The three-tier rule (docs/AUDITS.md § 1, Ek 2026-09-18: "they take a ton of
+// time and seem to run everything i do a little edit. i can't work like this"):
 //
-//   node scripts/audit-for.js              # print the suites for the working tree's diff
-//   node scripts/audit-for.js --run        # run them, exit non-zero on any failure
+//   1. per change, always — the FAST rows: file-only checks, under a second
+//      together. This is the default, and the only thing `--run` runs.
+//   2. on Ek's word — the SLOW rows: anything that boots Electron or playwright
+//      or waits on real time. Printed under "on request" with the exact
+//      command; `--slow` includes them in the run. Nobody runs these because
+//      a file was touched; they run when the change is ABOUT the thing they
+//      measure and Ek asks.
+//   3. at release — everything (`/release`).
+//
+// Before this, the map was per file and a colour constant in renderer.js ran
+// the 206-check pins suite: six rig suites, 5 min 41 s, on 2026-09-18.
+//
+//   node scripts/audit-for.js              # print the fast suites for the diff, list the slow ones
+//   node scripts/audit-for.js --run        # run the fast ones, exit non-zero on any failure
+//   node scripts/audit-for.js --run --slow # run the slow ones too
 //   node scripts/audit-for.js --base main  # diff against a ref instead of HEAD
 //   node scripts/audit-for.js js/tiles.js  # ask about specific paths instead of the diff
 //
 // The MAP below is the same table as docs/AUDITS.md § 2 — keep the two identical.
-// A path is tested against every row; a change to several areas runs several
-// suites. Rows never name osc-audit's full sweep or browser-audit: those are
-// release-only (osc: minutes of reloads for a path Ek does not use; browser:
-// needs playwright). `AUDIT_ONLY=wiring` is the instant static half of osc-audit
-// and is what an osc.js edit gets.
+// A path is tested against every row. Rows never name osc-audit's full sweep or
+// browser-audit's release role: osc is minutes of reloads for a path Ek does
+// not use; `AUDIT_ONLY=wiring` is its instant static half and is what an
+// osc.js edit gets.
 // ============================================================================
 
 'use strict';
@@ -32,6 +41,13 @@ const ROOT = path.resolve(__dirname, '..');
 // [pattern, command | { rig: [suite names] }, why]. Patterns are RegExps over
 // repo-relative paths. Every rig suite a change needs runs in ONE rig-audit
 // boot (`rig-audit.js palette pins`), so several matches cost one Electron.
+// A row is FAST when its command is in FAST below; every other row is slow.
+const FAST = new Set([
+  'npm run audit:sensor',
+  'AUDIT_ONLY=wiring node scripts/osc-audit.js',
+  'node scripts/docs-audit.js',
+  'npm test',
+]);
 const MAP = [
   [/^js\/(tiles|brush|events|midi)\.js$/,
     { rig: ['palette'] },
@@ -97,6 +113,7 @@ function changedFiles(base) {
 
 const args = process.argv.slice(2);
 const run = args.includes('--run');
+const slow = args.includes('--slow');
 const bi = args.indexOf('--base');
 const base = bi >= 0 ? args[bi + 1] : 'HEAD';
 const explicit = args.filter((a, i) => !a.startsWith('--') && !(bi >= 0 && i === bi + 1));
@@ -119,19 +136,28 @@ if (rig.names.size) {
 
 if (!files.length) { console.log('no changed files'); process.exit(0); }
 console.log(`${files.length} changed file(s)${explicit.length ? '' : ` against ${base}`}\n`);
+const fast = [...suites].filter(([c]) => FAST.has(c));
+const rest = [...suites].filter(([c]) => !FAST.has(c));
 if (!suites.size) {
   console.log('no suite maps to these files — run nothing, and say so:\n  ' + files.join('\n  '));
   process.exit(0);
 }
-for (const [cmd, { why, files: fs_ }] of suites) {
+const show = ([cmd, { why, files: fs_ }]) =>
   console.log(`  ${cmd}\n      because: ${fs_.join(', ')}\n      guards:  ${why}\n`);
+console.log(fast.length ? 'per change (fast, file-only):' : 'per change: nothing — no fast check covers these files');
+fast.forEach(show);
+if (rest.length) {
+  console.log(`on request only (boots the app, minutes) — run when the change is ABOUT what it measures and Ek asks; \`--slow\` includes them:`);
+  rest.forEach(show);
 }
-console.log(`release-only, not listed: node scripts/osc-audit.js · node scripts/browser-audit.js (docs/AUDITS.md § 1)`);
+console.log(`at release, always: node scripts/rig-audit.js · node scripts/osc-audit.js · node scripts/browser-audit.js (docs/AUDITS.md § 1)`);
 
-if (!run) { console.log('\n(add --run to execute)'); process.exit(0); }
+if (!run) { console.log('\n(add --run to execute the fast ones; --run --slow for all of the above)'); process.exit(0); }
 
 let failed = 0;
-for (const cmd of suites.keys()) {
+const toRun = (slow ? [...suites] : fast).map(([c]) => c);
+if (!toRun.length) { console.log('\nnothing to run'); process.exit(0); }
+for (const cmd of toRun) {
   console.log(`\n${'═'.repeat(64)}\n  ${cmd}\n${'═'.repeat(64)}`);
   const r = spawnSync(cmd, { cwd: ROOT, stdio: 'inherit', shell: true });
   if (r.status !== 0) { failed++; console.log(`  ✗ exit ${r.status}`); }

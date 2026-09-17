@@ -706,14 +706,13 @@ function sheetTileId() { return _optSel.id; }
  *  copy of that table in the renderer would have been a drift hazard of
  *  exactly the kind this file keeps finding — so there is one table, and
  *  everything reads it. */
-let _engHueTable = null, _engHueDark = null;
+let _engHueTable = null;
 function _engineHueTable() {
-  if (_engHueTable && _engHueDark === S.darkMode) return _engHueTable;
+  if (_engHueTable) return _engHueTable;
   const cs = getComputedStyle(document.body);
   const hue = k => cs.getPropertyValue('--eng-' + k).trim() || '#8a9090';
   _engHueTable = { tape: hue('tape'), erase: hue('erase'), granular: hue('grain'),
                    lens: hue('lens'), source: hue('source'), pins: hue('pins'), none: hue('none') };
-  _engHueDark = S.darkMode;
   return _engHueTable;
 }
 

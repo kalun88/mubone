@@ -765,7 +765,7 @@ export function timbreArc(tiltNorm) {
 export const CQ_HUE = 96;   // hue buckets in the memo table
 export const CQ_SAT = 32;   // saturation buckets
 const _CQ_CENT = CQ_HUE, _CQ_ZCR = CQ_SAT;
-let _cqTable = null, _cqDark = null;
+let _cqTable = null;
 
 // ── THE ARC GOES ROUND THE OTHER SIDE, AND RIDES THE GAMUT (2026-09-13) ─────
 // Ek, on a sphere painted with the fixed hue axis: "still cant see to get
@@ -860,11 +860,7 @@ const _cuspL = new Float32Array(_CQ_CENT);
  *                same thing as centroid and the two collapsed to one)
  */
 export function featuresToColor(centroidNorm, noiseNorm) {
-  const dark = S.darkMode;
-  if (!_cqTable || _cqDark !== dark) {
-    _cqTable = new Array(_CQ_CENT * _CQ_ZCR);
-    _cqDark  = dark;
-  }
+  if (!_cqTable) _cqTable = new Array(_CQ_CENT * _CQ_ZCR);
   const c = centroidNorm < 0 ? 0 : centroidNorm > 1 ? 1 : centroidNorm;
   const z = noiseNorm    < 0 ? 0 : noiseNorm    > 1 ? 1 : noiseNorm;
   const ci = (c * (_CQ_CENT - 1) + 0.5) | 0;
@@ -876,12 +872,10 @@ export function featuresToColor(centroidNorm, noiseNorm) {
     const { e } = timbreArc(cn);
     const H  = _HUE_FROM - e * _HUE_SPAN;
     const Lc = _cuspL[ci];
-    // On black, sit almost on the cusp. On the light page the same arc has to
-    // come DOWN to be seen at all — a cusp yellow is L 0.96 against a 0.97
-    // page — so it is pulled most of the way to 0.45, which costs some chroma
-    // and turns the yellow olive. That is the light theme's own limit, not a
-    // choice: a yellow light enough to be yellow is invisible on white.
-    const L = dark ? Lc + (0.72 - Lc) * 0.12 : Lc + (0.45 - Lc) * 0.60;
+    // On black, sit almost on the cusp. (The light page's pull toward 0.45
+    // went with the light canvas, 2026-09-18 — a cusp yellow was invisible on
+    // white and had to turn olive; on the one canvas that remains it does not.)
+    const L = Lc + (0.72 - Lc) * 0.12;
     // Saturation is still the tonal/noisy axis, but it now moves between two
     // shares of what the gamut allows rather than two absolute numbers, so a
     // noisy sound reads flatter WITHOUT losing the hue that names it.
