@@ -201,6 +201,8 @@ function buildManifest(audio, { particleWitness = false } = {}) {
           anchorLat:     slot.anchorLat,
           speed:         slot.speed,
           direction:     slot.direction,
+          pitch:         slot.pitch ?? 0,
+          wear:          slot.wear ?? 1,      // what later dubs' decay left of the master
           playing:       slot.playing,
           // A muted loop is still `playing` — the mute is its own flag.
           composerMuted: slot.composerMuted,
@@ -221,6 +223,9 @@ function buildManifest(audio, { particleWitness = false } = {}) {
             strokeId: o.strokeId,
             phase0:   o.phase0,
             audio:    audio.idFor(o.buffer),
+            decay:    o.decay ?? 0,          // the dub's own REPEATS, for the fold
+            oneShot:  !!o.oneShot,           // the bang verb: one cycle exactly
+            wear:     o.wear ?? 1,
           })),
         };
       }
@@ -245,6 +250,8 @@ function buildManifest(audio, { particleWitness = false } = {}) {
       speed:    t.speed,
       volume:   t.grainParams?.volume,
       passes:   t.passes,
+      reverse:  !!t.reverse,
+      pitch:    t.pitch ?? 0,
       endCap:   t.endCap,   // a slice's cut at the next onset; absent on a plain line
     })),
 
@@ -263,7 +270,7 @@ function buildManifest(audio, { particleWitness = false } = {}) {
     live: {
       searchRadiusDeg:  S.searchRadiusDeg,
       recencyN:         S.recencyN,
-      nearestMode:      S.nearestMode,
+      lensMode:         S.lensMode,
       lensReads:        S.lensReads,
       grainKAllMode:    S.grainKAllMode,
       grainKSeqMode:    S.grainKSeqMode,
@@ -469,6 +476,8 @@ async function applyManifest(data, audio) {
         anchorLat:     c.anchorLat,
         speed:         c.speed ?? 1,
         direction:     c.direction ?? 1,
+        pitch:         c.pitch ?? 0,
+        wear:          typeof c.wear === 'number' ? c.wear : 1,
         // A LOOP IS MUTED, NEVER STOPPED (RULINGS, composer mode) — and an
         // opened piece is the music, so a pinned loop comes back sounding.
         // This said `playing: false`, "the performer starts it", and nothing
@@ -504,8 +513,9 @@ async function applyManifest(data, audio) {
         for (const o of c.overdubs) {
           const tb = bufFor(o?.audio);
           if (!tb) continue;
-          const layer = buildOverdubLayer(seq, tb, +o.phase0 || 0);
-          if (layer) seq.overdubs.push({ strokeId: o.strokeId, phase0: +o.phase0 || 0, buffer: tb, layer, _src: null });
+          const layer = buildOverdubLayer(seq, tb, +o.phase0 || 0, +o.decay || 0, !!o.oneShot);
+          if (layer) seq.overdubs.push({ strokeId: o.strokeId, phase0: +o.phase0 || 0, buffer: tb, layer, _src: null,
+                                         decay: +o.decay || 0, oneShot: !!o.oneShot, wear: typeof o.wear === 'number' ? o.wear : 1 });
         }
       }
     } else {
@@ -565,7 +575,7 @@ function applyLiveState(live) {
     if (typeof S.setRecency === 'function') S.setRecency(live.recencyN);
     else S.recencyN = live.recencyN;
   }
-  if (typeof live.nearestMode === 'boolean')   S.nearestMode   = live.nearestMode;
+  if (['area', 'nearest', 'stroke'].includes(live.lensMode)) S.lensMode = live.lensMode;
   if (['both', 'grains', 'tape'].includes(live.lensReads)) S.lensReads = live.lensReads;
   if (typeof live.grainKAllMode === 'boolean') S.grainKAllMode = live.grainKAllMode;
   if (typeof live.grainKSeqMode === 'boolean') S.grainKSeqMode = live.grainKSeqMode;
@@ -596,6 +606,10 @@ function applyLiveState(live) {
     // as a plain armed line. Same bounds the tile's own param carries.
     if (typeof f.passes === 'number')     tp.passes    = Math.max(0, Math.min(8, Math.round(f.passes)));
     if (typeof f.loopOnEnd === 'boolean') tp.loopOnEnd = f.loopOnEnd;
+    if (typeof f.reverse === 'boolean')   tp.reverse   = f.reverse;
+    if (typeof f.pitch === 'number')      tp.pitch     = Math.max(-2400, Math.min(2400, f.pitch));
+    if (typeof f.dubDecay === 'number')   tp.dubDecay  = Math.max(0, Math.min(100, f.dubDecay));
+    if (['free', 'semi', 'oct5'].includes(f.step)) tp.step = f.step;
     if (['play-to-end', 'fade'].includes(f.release))    tp.release = f.release;
   }
   if (typeof live.commitMode === 'string')      S.commitMode      = live.commitMode;

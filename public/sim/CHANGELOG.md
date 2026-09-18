@@ -7,6 +7,73 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.4 alpha — 2026-09-18
+
+**The tape engine is brought up to the field's spec, and grain strokes can be played like tape.**
+Seventeen experimental loopers and tape machines were read from their manuals first
+(`docs/TAPE-STUDY-2026-09.md`); what they agree on is that only audio is stored and everything else
+rides live, and that a looper has a reverse, a pitch, and a decay on its overdub. mubone had none
+of the three. The lens gained a third mode and then a reorganised sheet.
+
+### Added
+- **Reverse on the tape sheet**, baked like speed: the trigger carries it, the pinned loop's
+  direction is stamped from it, the piece file keeps it. The lens's `start: ends` COMPOSES with it —
+  arriving at a stroke's tail flips the tape's own direction, so a reversed tape entered at its tail
+  runs forward (Tensor's rule).
+- **Pitch on the tape sheet**, independent of speed and baked. Speed stays tape — pitch follows it,
+  as on every machine in the study — and pitch is a shift on top at constant length. Because a baked
+  value never needs real time, the region is stretched once in a Worker by a phase vocoder
+  (`js/workers/phase-vocoder.worker.js`: 2048-point frames, identity phase locking, exact output
+  length, circular reads for a loop's seam) and played at speed × ratio. No runtime cost, no added
+  latency, and overdub layers keep the pitch they were sung at.
+- **`step`**, one capsule quantising both dials: free, semitones, or octaves and fifths — Blooper's
+  smooth / chromatic / stepped speed as a single setting.
+- **Overdub decay** on the dub tile, a percentage, baked at the press. At every wrap while a dub
+  records, the master and every earlier layer step down by it, and a long take's earlier passes fold
+  in already worn. Nothing fades in playback. Held as a `wear` per family member, never written into
+  the audio, saved in the piece, restored by undo. The one looper control every reference has.
+- **The dub's bang verb is a one-shot**: press, and it records exactly one cycle of its master and
+  releases itself. Its three verbs are now Blooper's three record gestures — toggle the overdub,
+  momentary the punch-in, bang the one-shot. With nothing pinned it refuses and flashes.
+- **The lens's `stroke` mode and the stroke WALKER** (`js/walker.js`). Touch a grain stroke and a
+  reading cursor launches from where you touched, retracing that stroke's path at the pace it was
+  painted — the marks' own buffer times are its clock — and playing what is in ITS reach with the
+  lens's live radius, k and order. `order` still picks random or step inside it, so the walker
+  carries the time and the order decides the texture of each moment. It is not a pin: it plays once
+  or loops while you are on the stroke and dies when you lift off, and the pin press freezes it into
+  the moving cloud it already is. Wet paint reaches it — each mark keeps its own voicing.
+
+### Fixed
+- **`dwell: grain` opened its material the instant the cursor arrived**, so the grains sounded over
+  the take's own first pass instead of after it. A stroke now opens when its playthrough ENDS with
+  the cursor still on it, and closes when the cursor leaves. The same rule serves the walker: when a
+  walk finishes, the cursor granulates that stroke area-style until you move away.
+- A pinned tape loop took its direction from the CLOUD's `path dir`, a setting no tape tile shows.
+  That control is the cloud's alone now.
+- The tape speed row's tooltip still claimed it rides live; #240 made it baked.
+- An opened stroke could outlive its dwell: the open set is consulted only under `grain`, so
+  changing the dwell closes every stroke at once rather than waiting for a gate tick. Caught by the
+  full sweep — the leak surfaced two suites away, in colour and palette.
+
+### Changed
+- **The tape sheet's sections are named by effect**, as the grain sheet's are: `tape` (speed ·
+  pitch · step · reverse · vol), `on end` (loop · passes), `slicing`. `baked in` said how a value is
+  stored, not what it does, and `on end`'s row is the sentence `loop`.
+- **The lens sheet is three sections**, named for the question each answers: `reach` (reads ·
+  radius — the only two that govern both engines), `on grains` (mode leading, then depth · k ·
+  order · fade · falloff — all grains-only), `on strokes` (dwell · start · release · retrig ·
+  rearm). Every dead row hides now, and symmetrically: a tape-only lens loses the whole grain
+  section, a grains-only lens the whole stroke section unless the mode is `stroke`. A section
+  carries one quiet line where its rows cannot say it themselves, and the `mode` row says what it
+  does underneath itself, per value. `on dwell` is `dwell`.
+- `S.nearestMode` is `S.lensMode`, three-way (`area` · `nearest` · `stroke`), across twelve modules
+  and five rig scripts; stored tile params migrate once on load. A pinned cloud keeps its own
+  boolean — a cloud is area or nearest, never a walker.
+- The lens's `on tape` family is `on strokes`: dwell, start, release, retrig and rearm mean the same
+  thing to a take and to a walker.
+
+---
+
 ## 5.3 alpha — 2026-09-17
 
 **A take is held once, and the app has had its whole-app check.** The long-set audio fault on the

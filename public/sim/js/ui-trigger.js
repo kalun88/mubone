@@ -14,6 +14,7 @@
 // ============================================================================
 
 import { S } from './state.js';
+import { quantSpeed } from './tape-pitch.js';
 
 const pct = v => Math.round(v * 100) + '%';
 const mul = v => '×' + v.toFixed(2);
@@ -105,7 +106,9 @@ export function initTriggerUI() {
     sl.value = td()[key];
     if (nb) nb.value = fmt(td()[key]);
     sl.addEventListener('input', () => {
-      td()[key] = parseFloat(sl.value);
+      let v = parseFloat(sl.value);
+      if (key === 'speed') { v = quantSpeed(v); sl.value = v; }   // the tape's `step` snaps the dial
+      td()[key] = v;
       if (nb) nb.value = fmt(td()[key]);
     });
   }

@@ -619,8 +619,8 @@ How to use this file: find the heading for the area you are about to touch and r
   `loop`, which named it after **one outcome of half its tools**: `line` and `slice` are strokes you
   touch to fire, `dwell: once` is a one-shot, and only `looper` loops on contact. Its own hue token
   had the honest definition all along — `--eng-loop: /* recordings that play */`. The rename is
-  `ENGINES.tape`, `engineOf → 'tape'`, `SLOT_KINDS`, `DEFAULT_SLOTS`, the rail group, the `on tape`
-  section, `--eng-tape`, and the brush material — with a one-shot `mubone_slots` key migration and
+  `ENGINES.tape`, `engineOf → 'tape'`, `SLOT_KINDS`, `DEFAULT_SLOTS`, the rail group, the lens's
+  touch section (`on tape` then, `on strokes` since the walker), `--eng-tape`, and the brush material — with a one-shot `mubone_slots` key migration and
   no fallback. **`loop` still names the PIN KIND and only that** (`slot.type`, `commitMode`, the
   pins rail's `loops` group): a loop is what a tape take becomes once you pin it, which is exactly
   the distinction the old name blurred. **`hit` is out of the vocabulary** ("i hate hit, we should
@@ -639,7 +639,8 @@ How to use this file: find the heading for the area you are about to touch and r
   gate's edges while its geometry keeps running, so switching back does not bang whatever the
   cursor is resting on. **The cap outranks it**: capped, the cursor reads nothing whatever the lens
   says. And the page follows the same dead-row rule the rest of the lens sheet now does — reading
-  tape hides `k` and `order`, reading grains hides the whole `on tape` family.
+  tape hides `k` and `order`, reading grains hides the whole `on strokes` family — unless the
+  lens is in `stroke` mode, where a grain stroke's WALKER answers to exactly those rows.
 
 - **A boolean on an engine sheet is a SWITCH** (2026-09-07, Ek: "there's a bunch of on and off
   simple toggles… the engine sheet should use that if it is on and off"). `INSTRUMENT-GUI` § 3 had
@@ -654,6 +655,110 @@ How to use this file: find the heading for the area you are about to touch and r
   `engine-audit` gained a switch pass: a switch is clicked TWICE and the state must move both
   ways, which a segment could never be asked (clicking the option already on is a no-op) and which
   is the real question for a toggle. A row that stops being audited is how a dead control survives.
+- **The tape has its own direction, and the lens flips it** (2026-09-18, `docs/TAPE-STUDY-2026-09.md`).
+  Until then the only backwards playback was the lens's `start: ends` turntable rule, and a pinned
+  loop took its direction from the CLOUD's `path dir`, a setting no tape tile shows. `reverse` is
+  a switch on the tape sheet, baked like speed: `S.triggerParams.reverse` → the trigger shell's
+  own `reverse` field (`direction` is what a FIRE runs at and `_onEnter` rewrites it every time,
+  so the baked value needs a field nothing rewrites) → the pinned slot's `direction`, stamped by
+  `createSeqFromStroke` from the trigger; the piece file carries it beside speed and passes.
+  `start: ends` composes: arriving at the tail flips the tape's own direction, so a reversed tape
+  entered at its tail runs forward — Tensor's DIR switch against its SPEED sign, both reversed is
+  forward. `path dir` is the cloud's alone. The tape sheet's sections are named by EFFECT like the
+  grain sheet's (`tape` · `on end` · `slicing`), because `baked in` said how a value is stored and
+  not what it does; `loop on end` is the row `loop` under `on end`, the sentence the switch ruling
+  above asked for. What the field does with reverse, speed and pitch, and the rounds that follow
+  (pitch by an offline phase vocoder, overdub decay, the dub's one-shot), are the study's § 3–4.
+- **The tape's pitch is a second dial, baked, and computed offline** (2026-09-18, the study § 3).
+  The field has three parametrisations of speed and pitch — the tape's one knob, Tensor's and
+  Blooper's three, Octatrack's two plus a switch — and mubone takes two dials with no switch:
+  `speed` is tape (pitch follows), `pitch` is Blooper's Pitcher, a shift on top at constant length.
+  Stretcher is speed with pitch cancelling it, a gesture nobody rides while drawing, so it is not
+  baked; if it ever rides live from the instrument it is the wet-loop round, and the live path is
+  the grain engine reading the take SEQUENTIALLY. Because a baked value never needs real time, the
+  region is stretched ONCE in a Worker by a phase vocoder (`js/workers/phase-vocoder.worker.js`,
+  2048-point frames, identity phase locking, the output trimmed to the exact length) and played
+  at speed × ratio: the stretch and the rate cancel in time, so every reader of `seq.speed`
+  against the original region — the playhead, the overdub fold, the tail — is untouched, and
+  overdub layers keep the pitch they were sung at. Electron refuses a Worker from a `file://`
+  URL, so `js/tape-pitch.js` fetches the source and spins the worker from a blob. `step` is one
+  capsule for the pair (`free · semi · oct+5th`), quantising the DIAL so a stored value is always
+  what the sheet shows. Measured: a 2 s region stretched ×2 in 72 ms; the stretch starts at arm
+  and at pin (`S._prepareTapePitch`) so the first fire does not wait on it.
+- **Overdub decay is a wear on the family, and the dub's bang is Blooper's one-shot** (2026-09-18,
+  the study § 4 and § 6.3). `decay` is the dub tile's one dial, a percentage, baked at the press:
+  at every wrap of the master WHILE THE DUB RECORDS, the master's own material and every earlier
+  layer step down by that much, and the take's own earlier passes fold in already worn (pass p of
+  P scaled by (1 − d)^(P − 1 − p)). Nothing fades in playback — Blooper's REPEATS rule, Tensor's
+  loop decay, Octatrack's GAIN. It is held as `wear` per family member, never written into the
+  audio: the master got a gain of its own in front of the family node the layers share
+  (`seq._ownGain`), each layer's gain carries its wear, the piece file carries both, and undoing
+  the dub gives the family the wears it had at the press (`ov.wearBefore` / `wearAfter`). The dub
+  is the one TOOL allowed the bang verb (`VERBS_OF.overdub`): toggle is the overdub, momentary the
+  punch-in, bang the ONE-SHOT — press, and it records exactly one cycle of its master and releases
+  itself. A timer lands the release near the wrap and the fold trims the take to the cycle
+  exactly, so the layer is one pass whatever the timer did; with nothing pinned the bang refuses
+  (a one-shot has no length without a cycle) where the dub already flashes. Measured on the real
+  path: two wraps at 50 % wore the master to 0.25 with its gain following, undo restored 1, redo
+  restored 0.25.
+- **The stroke WALKER is the lens's third mode** (2026-09-18, `js/walker.js`, the study § 7). The
+  lens's `order: step` was sold as a line loop for the grain engine and could not be one: the
+  candidate list is only what sits inside the CURSOR's circle, rebuilt every tick, played one per
+  grain period — so it faked a loop for a short stroke under a still cursor and was a shuffle with
+  a memory otherwise (Ek: "it's on the lens and it only works on the cursor, which is circular,
+  and strokes are not always falling into the cursor circle"). `S.nearestMode` becomes
+  `S.lensMode`: `area · nearest · stroke`. Under `stroke` the cursor reads NOTHING on its own;
+  touching a grain stroke launches a walker, a reading cursor that retraces the stroke's own path
+  at the pace it was painted — the marks' buffer times ARE its clock, so nothing new is recorded —
+  and plays what is in ITS reach with the lens's live radius, `k` and `order`. **`order` still
+  applies, and that is the point**: the walker carries the time, `random` or `step` decides the
+  texture inside each moment, which is meta-sequential. The result is a granular tape — the loop's
+  path and pace, every instant a cloud — and the radius is a time smear. **It is not a pin**: a pin
+  is off-cursor and keeps playing; a walker plays once (`dwell: once`) or loops while you are on
+  the stroke and dies when you lift off. The pin press takes it exactly as it takes a line, and
+  what it freezes into IS a moving cloud — same path, same phase — because that is what a walker
+  already is. The gates live beside the tape triggers in `trigger.js` (same cap, nearest-segment,
+  hysteresis and swept-crossing geometry, `walk: true`), built only in `stroke` mode; the lens's
+  `on tape` family is `on strokes` now, because dwell / start / release / retrig / rearm mean the
+  same thing to a take and to a walker. Wet paint reaches a walker for free: the bridge buckets
+  its pool by each mark's own voicing, as a cloud's.
+- **The lens sheet is three sections, named for the question each answers** (2026-09-18, Ek: "the
+  lens engine sheet is getting pretty confusing … it's really hard to tell just from the params how
+  things work together and what links to what or depends on what"). `reach` (reads · radius) holds
+  the only two rows that govern BOTH engines — the radius is the grain reach and the distance at
+  which a stroke is touched (`enterRad`). `on grains` (mode · depth · k · order · fade · falloff)
+  is everything grains-only, with **`mode` leading it**: the tape gate reads the mode in one place,
+  to decide whether to build walk gates, and never to decide how a take is touched, so Ek's hunch
+  that it belonged with the grains was right. `on strokes` (dwell · start · release · retrig ·
+  rearm) is what a touch does. It is NOT "and loops": a pinned loop is claimed and the cursor is
+  forbidden to re-fire it (#241), so the lens never reads one.
+  **Dependency is shown, not inferred.** Three devices, all already in the kit: every dead row
+  hides, and now consistently — the fade pair was dead in nearest and still drawn, and the two
+  halves hide as one each way round (`reads: tape` takes the whole grain section, `reads: grains`
+  the whole stroke section unless the mode is `stroke`). A section carries one quiet
+  `--fs-nano` line where its rows cannot say it themselves, and both notes are computed at render
+  so a note never names a row the mode has hidden. And **the `mode` row says what it does under
+  itself**, per value — "every mark in reach", "the k closest, anywhere — radius, depth and fade
+  are off", "touch a stroke and it plays itself, at its own pace" — which puts the answer at the
+  moment of the decision instead of in a tooltip. `on dwell` is `dwell`: the section already says
+  it. The eraser borrows `depth` and would have borrowed its section name, so it calls it `reach`
+  too, which is what its reach in time is.
+- **`dwell: grain` is PLAY ONCE, THEN OPEN** (2026-09-18, Ek: "on loops when on dwell: grain, i
+  hear the grain immediate, not after the first loop playback … i want the loop to play once then
+  cursor becomes granulator, same as mode stroke, on a grain stroke"). It used to be the bare flag
+  `dwell === 'grain'` read in the pool builders, so a tape stroke's material opened to the cursor
+  the INSTANT the cursor arrived — the grains sounded over the take's own first pass instead of
+  after it. A stroke now lands in `S._openStrokes` when its playthrough ENDS with the cursor still
+  on it — a take's one-shot reaching `ended` (`onTriggerSourceEnded`), or a WALKER finishing its
+  walk (`walker.js`, `openOnEnd`) — and leaves when the cursor leaves it (`_onExit`). Until then
+  the cursor granulates it exactly as `area` would, radius, k, order and fade, whatever the lens's
+  mode: **in `stroke` mode the cursor reads nothing of its own EXCEPT an opened stroke**, which is
+  what "after the walker is done the cursor should granulate as per mode: area, until i move away
+  from it" asks for. So the three dwells read the same in both modes: `once` plays through and
+  stops, `grain` plays through and hands the material to the cursor, `loop` repeats. The set is
+  empty in every other case, so the builders' hot loop costs one `.size` read; a walker asks
+  `gateInside` before opening, because a `once` walker plays out after the cursor has left and
+  must not re-open what the exit closed.
 - **Pen and pencil are one tool in two permanences** (2026-09-07, Ek: "pen is permanent (no wet),
   pencil starts wet"). `wet` already WAS that distinction — a wet brush's strokes keep following
   its knobs, a dry brush's freeze where they sound — and the pair now names it, which is the whole

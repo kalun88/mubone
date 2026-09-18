@@ -991,9 +991,9 @@ async function run(rig) {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const tick = async (n = 3) => { for (let i = 0; i < n; i++) { G.scheduleGrains(); await sleep(25); } };
     const W = S.canvas.width, Hh = S.canvas.height;
-    const keep = { parts: S.particles, slots: S.commitSlots.slice(), hist: S.strokeHistory, mode: S.traceMode, r: S.searchRadiusDeg, muted: S.scanMuted, nearest: S.nearestMode };
+    const keep = { parts: S.particles, slots: S.commitSlots.slice(), hist: S.strokeHistory, mode: S.traceMode, r: S.searchRadiusDeg, muted: S.scanMuted, nearest: S.lensMode };
     S.commitSlots = new Array(S.commitSlotCount ?? 16).fill(null); S.particles = []; S.strokeHistory = []; H.clear();
-    S.traceMode = 'trace'; S.scanMuted = false; S.searchRadiusDeg = 10; S.nearestMode = false;
+    S.traceMode = 'trace'; S.scanMuted = false; S.searchRadiusDeg = 10; S.lensMode = 'area';
     const baseX = W * 0.5, baseY = Hh * 0.5;
     S.mouseInCanvas = true; S.mousePixelX = baseX; S.mousePixelY = baseY; R.drawFrame(); await sleep(20);
     const cur = SP.screenToLonLat(baseX, baseY);
@@ -1031,7 +1031,7 @@ async function run(rig) {
     }
     out.radiusDeg = S.searchRadiusDeg;
     UP.clearAllCommits(); S.particles = keep.parts; S.commitSlots = keep.slots; S.strokeHistory = keep.hist; H.clear();
-    S.traceMode = keep.mode; S.searchRadiusDeg = keep.r; S.scanMuted = keep.muted; S.nearestMode = keep.nearest; S.mouseInCanvas = false;
+    S.traceMode = keep.mode; S.searchRadiusDeg = keep.r; S.scanMuted = keep.muted; S.lensMode = keep.nearest; S.mouseInCanvas = false;
     return out;
   });
   check('inside the radius the press drops the take as a loop', db.inside?.kinds === 'loop', JSON.stringify(db.inside));
@@ -1126,7 +1126,7 @@ async function run(rig) {
     const BV = await import('./js/brush-voicing.js');
     const PT = await import('./js/param-registry.js');
     S.voicings = []; S.voicingSeq = 0; S.particles.length = 0;
-    S.nearestMode = false; S.searchRadiusDeg = 90; S.recencyN = 0;
+    S.lensMode = 'area'; S.searchRadiusDeg = 90; S.recencyN = 0;
     const prevAll = S.grainKAllMode; S.grainKAllMode = false;
 
     // Two brushes = two TILES in the hand (see § H); the bank is gone.
@@ -1186,11 +1186,11 @@ async function run(rig) {
     const G = await import('./js/grain.js');
     const keepParts = S.particles.slice();
     const keepSlots = S.commitSlots.slice();
-    const keepNear = S.nearestMode, keepRec = S.recencyN;
+    const keepNear = S.lensMode, keepRec = S.recencyN;
     const keepRad = S.searchRadiusDeg, keepAll = S.grainKAllMode;
     S.commitSlots = new Array(keepSlots.length).fill(null);
     S.particles.length = 0;
-    S.nearestMode = false; S.recencyN = 0; S.searchRadiusDeg = 20;
+    S.lensMode = 'area'; S.recencyN = 0; S.searchRadiusDeg = 20;
     S.grainKAllMode = true;          // fill:'all' — no k cap, so counts are exact
 
     // Two clusters ~68° apart: A under the cursor, B out of reach.
@@ -1233,7 +1233,7 @@ async function run(rig) {
     S.particles.length = 0;
     for (const p of keepParts) S.particles.push(p);
     S.commitSlots = keepSlots;
-    S.nearestMode = keepNear; S.recencyN = keepRec;
+    S.lensMode = keepNear; S.recencyN = keepRec;
     S.searchRadiusDeg = keepRad; S.grainKAllMode = keepAll;
     S._particleVersion = (S._particleVersion || 0) + 1;
     return { beforeRad, beforeNear, claims, pinnedRad, pinnedNear, otherRad, seedPool,
@@ -1369,10 +1369,10 @@ async function run(rig) {
     const R = await import('./js/renderer.js');
     const keepParts = S.particles.slice();
     const keepSlots = S.commitSlots.slice();
-    const keepNear = S.nearestMode, keepRad = S.searchRadiusDeg;
+    const keepNear = S.lensMode, keepRad = S.searchRadiusDeg;
     S.commitSlots = new Array(keepSlots.length).fill(null);
     S.particles.length = 0;
-    S.nearestMode = false; S.searchRadiusDeg = 20;
+    S.lensMode = 'area'; S.searchRadiusDeg = 20;
 
     // Material at the cursor's own position, so every particle is in reach.
     const cLon = S._frameCursorLon ?? 0, cLat = S._frameCursorLat ?? 0;
@@ -1471,7 +1471,7 @@ async function run(rig) {
     S.particles.length = 0;
     for (const p of keepParts) S.particles.push(p);
     S.commitSlots = keepSlots;
-    S.nearestMode = keepNear; S.searchRadiusDeg = keepRad;
+    S.lensMode = keepNear; S.searchRadiusDeg = keepRad;
     S._particleVersion = (S._particleVersion || 0) + 1;
     S._cursorPool = null; S._cursorPoolAt = 0;
     return { baseline, silent, kThree, stale, pinned, unpinned };

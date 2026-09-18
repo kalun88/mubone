@@ -16,6 +16,7 @@ import { applySparsePreset, syncAllUI } from './param-registry.js';
 import { getMappings } from './sensor-mapping.js';
 import { pinAnchorInto } from './pins.js';
 import * as history from './history.js';
+import { clearWalkers } from './walker.js';
 
 // ── Recency slider constants (module-level so both setupPresets & initGrainControls see them)
 const RECENCY_MIN = 1, RECENCY_MAX = 16;
@@ -71,9 +72,9 @@ export function setupPresets() {
   if (snapSeg) {
     snapSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        S.nearestMode = (btn.dataset.snap === 'on');
+        S.lensMode = btn.dataset.mode || 'area';
         // fill=all is incompatible with nearest — force it off
-        if (S.nearestMode && S.grainKAllMode) S.grainKAllMode = false;
+        if (S.lensMode === 'nearest' && S.grainKAllMode) S.grainKAllMode = false;
         updatePlaybackControls();
         S._syncRadiusFadeUI?.();
         flashRadiusTooltip();
@@ -331,9 +332,9 @@ export function setupPresets() {
 }
 
 export function toggleNearestMode() {
-  S.nearestMode = !S.nearestMode;
+  S.lensMode = S.lensMode === 'nearest' ? 'area' : 'nearest';
   // k-all is incompatible with k-nearest — force it off
-  if (S.nearestMode && S.grainKAllMode) S.grainKAllMode = false;
+  if (S.lensMode === 'nearest' && S.grainKAllMode) S.grainKAllMode = false;
   updatePlaybackControls();
   S._syncRadiusFadeUI?.();
   flashRadiusTooltip();
@@ -488,7 +489,7 @@ function _captureSeedFrame(startOverride) {
     lon, lat,
     grainParams:       mergedParams,
     searchRadiusDeg:   S.searchRadiusDeg,
-    nearestMode:       S.nearestMode,
+    nearestMode:       S.lensMode === 'nearest',
     kAllMode:          S.grainKAllMode,
     kSeqMode:          S.grainKSeqMode,
     grainDirection:    S.grainDirection,
@@ -582,7 +583,7 @@ function _reserveCloud(lon, lat) {
     // The anchor: where the pin gesture releases (pins.js pinAnchorInto). A
     // tap is here; a held path is re-stamped at its END in finalizeSeedPlant.
     anchorLon: lon, anchorLat: lat,
-    nearestMode: S.nearestMode,
+    nearestMode: S.lensMode === 'nearest',
     kAllMode: S.grainKAllMode,
     kSeqMode: S.grainKSeqMode,
     _lastFiredAt:  0,
@@ -625,6 +626,45 @@ function _reserveCloud(lon, lat) {
   window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'commit' } }));
   return slotIndex;
 }
+
+/** The pin press takes every running WALKER too (2026-09-18): a walker is a
+ *  reading cursor, and pinning one freezes it into the moving cloud it
+ *  already is — same path, same phase, the lens's reach as it stands. The
+ *  cloud's own snapshot is taken by `_reserveCloud`, so what is added here is
+ *  the path: the walker's frames in the cloud's own shape, its playhead, and
+ *  the direction it was walking. Returns the slots made, for the undo entry. */
+export function pinWalkers() {
+  const ws = S._walkers;
+  if (!ws?.length) return [];
+  const made = [];
+  for (const w of ws) {
+    if (!(w.level > 0) || w._dead) continue;
+    const slotIndex = _reserveCloud(w.lon, w.lat);
+    if (slotIndex < 0 || slotIndex === undefined) continue;
+    const slot = S.commitSlots[slotIndex];
+    if (!slot) continue;
+    // The cloud's frame shape carries the params; a walker's path carries only
+    // geometry, so each frame takes the cloud's own snapshot beside it.
+    const snap = {
+      grainParams: slot.grainParams, searchRadiusDeg: slot.searchRadiusDeg,
+      nearestMode: false, kAllMode: slot.kAllMode ?? S.grainKAllMode,
+      kSeqMode: S.grainKSeqMode, grainDirection: S.grainDirection,
+      grainCurveType: S.grainCurveType, grainProbability: S.grainProbability,
+      radiusFadeEnabled: slot.radiusFadeEnabled, radiusFadeCurve: slot.radiusFadeCurve,
+    };
+    slot.frames      = w.frames.map(f => ({ t: f.t, lon: f.lon, lat: f.lat, ...snap }));
+    slot.duration    = w.duration;
+    slot.loopMode    = w.loopMode === 'rev' ? 'rev' : 'forward';
+    slot._playheadMs = w._playheadMs;
+    slot.strokeId    = w.strokeId;
+    made.push(slot);
+  }
+  if (made.length) { S._pinsDirty = true; S._syncCommitUI?.(); }
+  return made;
+}
+S._pinWalkers = pinWalkers;
+/** The walkers are gone: their clouds read for them now. */
+export function clearWalkersNow() { clearWalkers(); }
 
 /** Start a seed plant. Reserves a slot and begins recording movement. */
 export function startSeedPlant() {
@@ -1090,19 +1130,69 @@ export function beginOverdub() {
   if (i < 0) { S._overdubSeed = true; S._overdubTake = null; return true; }
   const seq = S.commitSlots[i];
   seq._ovdWrap = undefined;            // the wrap counter starts with the take
-  S._overdubTake = { seq, ov: null };  // `ov` is the provisional layer once the first wrap has passed
+  S._overdubTake = {
+    seq, ov: null,                     // `ov` is the provisional layer once the first wrap has passed
+    // Baked at the press (docs/TAPE-STUDY-2026-09.md § 4): the decay this dub
+    // wears the family by at every wrap while it records — Blooper's REPEATS —
+    // and whether it is a ONE-SHOT (the bang verb: exactly one cycle). What the
+    // family's wear was before, so undoing the dub gives it back.
+    decay:   Math.max(0, Math.min(1, (S.triggerParams.dubDecay || 0) / 100)),
+    oneShot: false,
+    wearBefore: _wearsOf(seq),
+  };
   return true;
+}
+/** Is there a pinned loop for a dub to join at the cursor? The bang verb
+ *  asks before it presses — a one-shot with no cycle has no length. */
+S._loopPinNear = () => { const { lon, lat } = getCursorPos(); return nearestLoopPin(lon, lat) >= 0; };
+
+/** The family's wear, member by member — the master and each layer. */
+function _wearsOf(seq) {
+  return { master: seq.wear ?? 1, layers: (seq.overdubs || []).map(o => [o.strokeId, o.wear ?? 1]) };
+}
+/** Put a family's wear back (undo and redo of a dub). */
+export function applyWears(seq, w) {
+  if (!seq || !w) return;
+  const actx = S.audioCtx, now = actx?.currentTime ?? 0;
+  seq.wear = w.master ?? 1;
+  if (seq._ownGain) { try { seq._ownGain.gain.setTargetAtTime(seq.wear, now, 0.01); } catch (_) {} }
+  for (const [sid, wear] of w.layers || []) {
+    const o = (seq.overdubs || []).find(x => x.strokeId === sid);
+    if (!o) continue;
+    o.wear = wear;
+    if (o._gain && o._src && !o._src._stopped) { try { o._gain.gain.setTargetAtTime(wear, now, 0.01); } catch (_) {} }
+  }
+}
+S._applyWears = applyWears;
+/** One pass of a recording dub has ended: everything already in the loop —
+ *  the master's own material and every earlier layer, not the take still
+ *  recording — steps down by the dub's decay. Nothing fades in playback. */
+function _wearStep(seq, decay, except) {
+  if (!(decay > 0)) return;
+  const k = 1 - decay;
+  const actx = S.audioCtx, now = actx?.currentTime ?? 0;
+  seq.wear = (seq.wear ?? 1) * k;
+  if (seq._ownGain) { try { seq._ownGain.gain.setTargetAtTime(seq.wear, now, 0.01); } catch (_) {} }
+  for (const o of seq.overdubs || []) {
+    if (o === except) continue;
+    o.wear = (o.wear ?? 1) * k;
+    if (o._gain && o._src && !o._src._stopped) { try { o._gain.gain.setTargetAtTime(o.wear, now, 0.01); } catch (_) {} }
+  }
 }
 
 /** Fold a take onto a master's cycle: one buffer the length of the wall
  *  cycle (loop length ÷ |speed|), the take written in from `phase0` and
  *  wrapping — every pass of a long take summed, a short take landing once
  *  where it was played. Nothing is resampled. */
-export function buildOverdubLayer(seq, take, phase0) {
+export function buildOverdubLayer(seq, take, phase0, decay = 0, oneShot = false) {
   if (!take) return null;
-  return _foldOntoCycle(seq, take.data, take.sampleRate, phase0);
+  return _foldOntoCycle(seq, take.data, take.sampleRate, phase0, decay, oneShot);
 }
-function _foldOntoCycle(seq, samples, sr, phase0) {
+/** `decay` (0–1) is the dub's own REPEATS: a long take's earlier passes fold
+ *  in already worn — pass p of P is scaled by (1 − decay)^(P − 1 − p) — the
+ *  same step the family took at each of those wraps. `oneShot` trims the take
+ *  to exactly one cycle from its first sample (the bang verb). */
+function _foldOntoCycle(seq, samples, sr, phase0, decay = 0, oneShot = false) {
   const actx = ensureAudioContext();
   const spd = Math.abs(seq.speed || 1);
   const cycleS = (seq.loopEnd - seq.loopStart) / spd;
@@ -1111,9 +1201,13 @@ function _foldOntoCycle(seq, samples, sr, phase0) {
   const layer = actx.createBuffer(1, L, sr);
   const dst = layer.getChannelData(0);
   let pos = Math.round(((phase0 % cycleS) + cycleS) % cycleS * sr) % L;
-  for (let n = 0; n < samples.length; n++) {
-    dst[pos] += samples[n];
-    if (++pos === L) pos = 0;
+  const N = oneShot ? Math.min(samples.length, L) : samples.length;
+  const k = 1 - Math.max(0, Math.min(1, decay || 0));
+  const passes = Math.floor((pos + N - 1) / L) + 1;
+  let pass = 0, w = k === 1 ? 1 : Math.pow(k, passes - 1);
+  for (let n = 0; n < N; n++) {
+    dst[pos] += samples[n] * w;
+    if (++pos === L) { pos = 0; if (k !== 1) w = Math.pow(k, passes - 1 - (++pass)); }
   }
   return layer;
 }
@@ -1131,16 +1225,19 @@ export function refreshLiveOverdub() {
   if (S.commitSlots.indexOf(seq) < 0) return null;
   const slot = S.liveRecBuffers[S.currentLiveBufferIdx];
   const phase0 = masterPhaseWall(seq, (slot?.startedAt ?? 0) - (S.latency?.roundTripS || 0));
-  const layer = _foldOntoCycle(seq, S.recordingRaw.subarray(0, S.recordingWritePos), S.recordingSampleRate, phase0);
+  const layer = _foldOntoCycle(seq, S.recordingRaw.subarray(0, S.recordingWritePos), S.recordingSampleRate, phase0, t.decay, t.oneShot);
   if (!layer) return null;
   const actx = ensureAudioContext();
+  // One pass of this dub is over: the family wears by its decay.
+  _wearStep(seq, t.decay, t.ov);
   // How much of the take this layer holds, in seconds — what is HEARD of it
   // so far, which is what the renderer draws heads for (Ek, 2026-09-05: "as
   // I continue to overdub over 2 or 3 or 4 times longer I also expect new
   // playheads to appear for those portions").
   const foldedS = S.recordingWritePos / S.recordingSampleRate;
   if (!t.ov) {
-    t.ov = { strokeId: S.currentStrokeId, phase0, buffer: null, layer, live: true, foldedS, _src: null, _gain: null };
+    t.ov = { strokeId: S.currentStrokeId, phase0, buffer: null, layer, live: true, foldedS, _src: null, _gain: null,
+             wear: 1, decay: t.decay, oneShot: t.oneShot, wearBefore: t.wearBefore };
     (seq.overdubs ||= []).push(t.ov);
     if (seq._sourceNode && !seq._sourceNode._stopped) startOverdubLayer(seq, t.ov, actx, { fadeIn: 0.008 });
     S._pinsDirty = true;
@@ -1173,7 +1270,13 @@ export function attachOverdub(strokeId, seq, provisional = null) {
   // The round trip (js/latency.js): the take was sung against what was
   // HEARD, late by `out`, and captured late by `in` — pull the phase back.
   const phase0 = masterPhaseWall(seq, (slot.startedAt ?? 0) - (S.latency?.roundTripS || 0));
-  const layer  = buildOverdubLayer(seq, slot.buffer, phase0);
+  // The dub's baked half rides the provisional layer (a take that wrapped) or
+  // the press record (one that did not — no wraps, so no wear to speak of).
+  const t = S._overdubTake?.seq === seq ? S._overdubTake : null;
+  const decay   = provisional?.decay   ?? t?.decay   ?? 0;
+  const oneShot = provisional?.oneShot ?? t?.oneShot ?? false;
+  const wearBefore = provisional?.wearBefore ?? t?.wearBefore ?? null;
+  const layer  = buildOverdubLayer(seq, slot.buffer, phase0, decay, oneShot);
   if (!layer) return null;
   const actx = ensureAudioContext();
   let ov = provisional && seq.overdubs?.includes(provisional) ? provisional : null;
@@ -1182,10 +1285,12 @@ export function attachOverdub(strokeId, seq, provisional = null) {
     ov.strokeId = strokeId; ov.phase0 = phase0; ov.buffer = slot.buffer; ov.live = false; delete ov.foldedS;
     swapOverdubLayer(seq, ov, layer, actx);
   } else {
-    ov = { strokeId, phase0, buffer: slot.buffer, layer, _src: null, _gain: null };
+    ov = { strokeId, phase0, buffer: slot.buffer, layer, _src: null, _gain: null, wear: 1, decay, oneShot, wearBefore };
     (seq.overdubs ||= []).push(ov);
     if (seq._sourceNode && !seq._sourceNode._stopped) startOverdubLayer(seq, ov, actx);
   }
+  // What the family wears now, with this dub in it — redo puts it back.
+  ov.wearAfter = _wearsOf(seq);
   S._pinsDirty = true;
   S._syncCommitUI?.();
   return ov;
@@ -1297,7 +1402,11 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
     loopEnd:        payload.loopEnd,
     playheadIndex:  payload.startIdx,
     startOffset:    anchorParticle ? payload.particles[payload.startIdx].grainStart : 0,
-    direction:      S.commitCloudLoopMode === 'rev' ? -1 : 1,
+    // The tape's own baked `reverse` (the trigger it was armed as, or the
+    // tile's dial for a stroke never armed) — never the cloud's `path dir`,
+    // which decided this until 2026-09-18 from a sheet no tape tile shows.
+    direction:      (S.triggers?.find(x => x.strokeId === strokeId)?.reverse ?? S.triggerParams.reverse) ? -1 : 1,
+    pitch:          S.triggers?.find(x => x.strokeId === strokeId)?.pitch ?? S.triggerParams.pitch ?? 0,
     speed:          S.commitLoopParams.speed ?? 1.0,
     playing:        true,
     color,
@@ -1320,6 +1429,7 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
   };
   // Born under a solo or a group mute, it is silent from its first tick.
   S._applyPinMix?.();
+  S._prepareTapePitch?.(S.commitSlots[slotIndex]);
   _syncSeqButtonStates();
 }
 
@@ -1364,7 +1474,8 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     // (non-monotonic strokes — see buildLoopPayload), and a negative offset
     // makes src.start() throw inside the scheduler.
     startOffset:    anchorParticle ? Math.max(0, anchorParticle.grainStart - sourceSeq.loopStart) : 0,
-    direction:      S.commitCloudLoopMode === 'rev' ? -1 : 1,
+    direction:      sourceSeq.direction ?? 1,   // the same tape, the same way round
+    pitch:          sourceSeq.pitch ?? 0,
     speed:          S.commitLoopParams.speed ?? 1.0,
     playing:        true,
     color,
@@ -1382,6 +1493,7 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     }
   };
   S._applyPinMix?.();
+  S._prepareTapePitch?.(S.commitSlots[slotIndex]);
   _syncSeqButtonStates();
 }
 
@@ -1738,7 +1850,7 @@ function onMarksErased(removed) {
       // The take is shared memory (js/take.js): the bite lands for the grains too.
       _zeroSpans(take.data, sr, rem.map(r => [Math.max(0, Math.floor(r.grainStart * sr)),
                                      Math.min(take.length, Math.ceil(_spanEndAfter(starts, r.grainStart, take.duration) * sr))]));
-      const layer = buildOverdubLayer(slot, take, ov.phase0);
+      const layer = buildOverdubLayer(slot, take, ov.phase0, ov.decay, ov.oneShot);
       if (layer) swapOverdubLayer(slot, ov, layer, ensureAudioContext());
       ov._marks = null;   // the renderer's head cache
     }
@@ -1950,7 +2062,7 @@ function _nearestTrigParticle() {
     const p = S.particles[i];
     if (!p.trig || p.strokeId == null || p.strokeId < 0) continue;
     const ang = angleBetweenSphere(p.lon, p.lat, lon, lat);
-    if ((S.nearestMode || ang < searchRad) && ang < nearestAng) {
+    if ((S.lensMode === 'nearest' || ang < searchRad) && ang < nearestAng) {
       nearestAng = ang;
       nearest = p;
     }
@@ -2441,12 +2553,12 @@ export function updatePlaybackControls() {
   const snapSeg = document.getElementById('snapToggleSeg');
   if (snapSeg) {
     snapSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
-      btn.classList.toggle('active', (btn.dataset.snap === 'on') === S.nearestMode);
+      btn.classList.toggle('active', btn.dataset.mode === S.lensMode);
     });
   }
   // Show/hide area-only params based on scope
   const areaOnly = document.getElementById('areaOnlyParams');
-  if (areaOnly) areaOnly.style.display = S.nearestMode ? 'none' : '';
+  if (areaOnly) areaOnly.style.display = S.lensMode === 'nearest' ? 'none' : '';
 
   // Sync fill segmented toggle (all / k)
   const kAllSeg = document.getElementById('kAllSeg');
@@ -2465,7 +2577,7 @@ export function updatePlaybackControls() {
   // Grey out k slider/numbox when fill=all is active (k is bypassed)
   const skSlider = document.getElementById('searchKSlider');
   const kNum = document.getElementById('kBigNum');
-  const kDisabled = S.grainKAllMode && !S.nearestMode;
+  const kDisabled = S.grainKAllMode && S.lensMode !== 'nearest';
   if (skSlider) skSlider.disabled = kDisabled;
   if (kNum) kNum.style.opacity = kDisabled ? '0.4' : '';
   drawRadiusViz();
@@ -3071,7 +3183,7 @@ export function initGrainControls() {
     // Boolean toggles — sync segment button active states
     const snapSeg = document.getElementById('snapToggleSeg');
     if (snapSeg) snapSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
-      b.classList.toggle('active', (b.dataset.snap === 'on') === S.nearestMode));
+      b.classList.toggle('active', b.dataset.mode === S.lensMode));
     const kAllSeg = document.getElementById('kAllSeg');
     if (kAllSeg) kAllSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
       b.classList.toggle('active', (b.dataset.kall === 'on') === S.grainKAllMode));
@@ -3101,7 +3213,7 @@ export function initGrainControls() {
   ];
   // Segment/toggle controls — use the segment container's parent .grain-row
   const EXTRA_MORPH_SEGS = [
-    { param: 'nearestMode',      segId: 'snapToggleSeg' },
+    { param: 'lensMode',         segId: 'snapToggleSeg' },
     { param: 'grainKAllMode',    segId: 'kAllSeg' },
     { param: 'grainKSeqMode',    segId: 'kSeqSeg' },
     { param: 'radiusFadeEnabled', segId: 'radiusFadeSeg' },

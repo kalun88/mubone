@@ -198,7 +198,44 @@ function _drawAnchorMark(x, y, color, alpha, label, paused) {
   S.ctx.restore();
 }
 
+/** The WALKERS (js/walker.js): a reading cursor retracing a grain stroke, so
+ *  it is drawn like the moving cloud it is about to become if pinned — a
+ *  dashed reach ring at its head and the path it walks. Not a pin: it wears no
+ *  slot colour, only the cursor's own accent. */
+function drawWalkers() {
+  const ws = S._walkers;
+  if (!ws?.length || !S.ctx) return;
+  const col = _tok('--accent-sensor', '#a793c0');
+  const rDeg = S.searchRadiusDeg;
+  for (const w of ws) {
+    if (!(w.level > 0)) continue;
+    spherePointInto(w.lon, w.lat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    const proj = project(_arcC[0], _arcC[1], _arcC[2]);
+    if (!proj) continue;
+    _drawPathTrail(w.frames, col, 0.30 * w.level, 1.0, 50);
+    S.ctx.save();
+    S.ctx.globalAlpha = 0.65 * w.level;
+    S.ctx.strokeStyle = col;
+    S.ctx.lineWidth = 1.5;
+    S.ctx.setLineDash([2, 3]);
+    // The same reach ring a cloud draws, at the LIVE radius — a walker reads
+    // with the lens as it stands, not with a snapshot.
+    const W = S.canvas.width, H = S.canvas.height;
+    const rRad   = rDeg * Math.PI / 180;
+    const fovRad = ((S.fovDeg ?? FOV_DEG) * Math.PI) / 180;
+    const screenR = camOffsetZ() === 0
+      ? rRad * (Math.min(W, H) / 2) / (fovRad / 2)
+      : ((Math.min(W, H) / 2) / Math.tan(fovRad / 2)) * Math.tan(rRad) / (proj.depth / SPHERE_RADIUS);
+    S.ctx.beginPath();
+    S.ctx.arc(proj.sx, proj.sy, Math.max(10, screenR), 0, Math.PI * 2);
+    S.ctx.stroke();
+    S.ctx.restore();
+  }
+}
+
 export function drawSeeds() {
+  drawWalkers();
   const { lon: curLon, lat: curLat } = cursorLonLatNow();
   // The highlighted cloud is the SELECTED pin — nearest or oldest by
   // Settings → Pins — the same one the rail marks and unpin takes.
@@ -918,7 +955,7 @@ export function drawRadiusTooltip() {
   // so the label always positions below the real ring.
   const brushR   = brushScreenRadius(focalLen);
 
-  const label = S.nearestMode ? 'nearest' : `${S.searchRadiusDeg}°`;
+  const label = S.lensMode === 'nearest' ? 'nearest' : `${S.searchRadiusDeg}°`;
   const fs    = 9;
 
   // THE RING IS THE RADIUS. The number is confirmation that it CHANGED, not a
@@ -937,7 +974,7 @@ export function drawRadiusTooltip() {
   const now       = performance.now();
   const flashLeft = S.radiusTooltipUntil - now;
   const flashFade = 600;
-  const baseAlpha = S.nearestMode ? 0.20 : 0;
+  const baseAlpha = S.lensMode === 'nearest' ? 0.20 : 0;
   if (flashLeft <= 0 && baseAlpha === 0) return;
   const alpha = baseAlpha + 0.65 * Math.max(0, Math.min(1, flashLeft / flashFade));
 
@@ -949,7 +986,7 @@ export function drawRadiusTooltip() {
   S.ctx.font         = `${fs}px Urbanist, sans-serif`;
   S.ctx.textAlign    = 'center';
   S.ctx.textBaseline = 'top';
-  S.ctx.fillStyle    = S.nearestMode ? _tok('--accent-sensor', '#a793c0') : '#ffffff';
+  S.ctx.fillStyle    = S.lensMode === 'nearest' ? _tok('--accent-sensor', '#a793c0') : '#ffffff';
   S.ctx.fillText(label, mx, py);
   S.ctx.restore();
 }
@@ -2803,7 +2840,7 @@ export function drawCursor() {
     S.ctx.setLineDash([]);
   }
 
-  if (S.nearestMode) {
+  if (S.lensMode === 'nearest') {
     // Snap/nearest: big diamond shape over the ring
     const d = 40;
     S.ctx.fillStyle = _rFill;

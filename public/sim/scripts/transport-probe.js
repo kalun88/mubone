@@ -68,7 +68,7 @@ function stopFlood() { clearInterval(floodTimer); floodTimer = null; try { flood
       S.samplerIndex = idx;
       S._paletteTap?.(2);
       S._setWet?.(true);
-      S.scanMuted = false; S.nearestMode = false; S.searchRadiusDeg = 12; S.recencyN = 0;
+      S.scanMuted = false; S.lensMode = 'area'; S.searchRadiusDeg = 12; S.recencyN = 0;
       const cur = SP.getCursorLonLat();
       US.recordStrokeStart('sample', -1);
       const vo = S.currentVoicing, r = 6 * Math.PI / 180;

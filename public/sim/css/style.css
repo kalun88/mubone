@@ -4512,6 +4512,13 @@ html.booting-reveal .main-layout {
   /* ── A folded section (#283) ───────────────────────────────────────────
      Same eyebrow as every other section header, plus a chevron and a count,
      so a shut section still says how much is behind it. */
+  /* A section's one quiet line, and the mode row's (2026-09-18). The sheet's
+     dependencies were only visible by inference; this is the same faint
+     `--fs-nano` the options bar's `.opt-none` uses, at the point of the
+     decision rather than in a tooltip. */
+  .ds-sec-note { font-size: var(--fs-nano); color: var(--text-faint);
+    margin: 0 0 var(--sp-3); line-height: 1.35; }
+  .ds-sec-cells > .ds-sec-note { margin: calc(-1 * var(--sp-1)) 0 var(--sp-3); }
   .ds-sec-h--fold { display: flex; align-items: center; gap: 0.4rem; width: 100%;
     background: none; border: none; border-bottom: 1px solid var(--border-faint);
     padding: 0 0 0.3rem; margin-bottom: 0.5rem; cursor: pointer; text-align: left;

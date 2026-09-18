@@ -479,7 +479,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
     if (_ctVoCount.has(0)) _ctVoSlot.set(0, 0);
     // Pass 2: rows into the unpublished half of each region.
     const sr = _sabSampleRate;
-    const fadeOn = S.radiusFadeEnabled && !S.nearestMode && S.searchRadiusDeg > 0;
+    const fadeOn = S.radiusFadeEnabled && S.lensMode !== 'nearest' && S.searchRadiusDeg > 0;
     const fadeRad = S.searchRadiusDeg * Math.PI / 180;
     const fadeExp = 1 + (S.radiusFadeCurve ?? 0.5) * 3;
     const offLive = _peakOffsetFor(0);
@@ -588,7 +588,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
     // computed live: the cursor moves every tick, so a stamp would be stale.
     // Nearest mode has no radius to fade against, which is why the UI forces
     // the toggle off there (ui-meters.js syncUI) — mirror that here.
-    const fadeOn = S.radiusFadeEnabled && !S.nearestMode && S.searchRadiusDeg > 0;
+    const fadeOn = S.radiusFadeEnabled && S.lensMode !== 'nearest' && S.searchRadiusDeg > 0;
     const fadeRad = S.searchRadiusDeg * Math.PI / 180;
     const fadeExp = 1 + (S.radiusFadeCurve ?? 0.5) * 3;
     let _skipNoBuf = 0, _skipNoMap = 0;

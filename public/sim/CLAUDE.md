@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for Cowork / Claude Code
 
-> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-18 (5.3 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
+> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-18 (5.4 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
 
 > **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative — no paragraph here per change. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`.
 
@@ -180,7 +180,7 @@ A module mature enough to always load is wired into `main.js`; otherwise it stay
 
 ## Versioning — releases are explicit, never automatic
 
-Current version: **5.3 alpha** (`5.3.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
+Current version: **5.4 alpha** (`5.4.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
 
 1. **`index.html`** — BOTH version strings: the `<span class="top-bar-version">` (cabinet, hidden) and the chrome brand `<b>mubone</b> <i>1.14</i>`, which is the one the player sees
 2. **`package.json`** line 3 — the `"version"` field (semver, e.g. `"1.10.0-alpha"`)
@@ -211,8 +211,9 @@ Bump the minor for feature work or meaningful fixes (1.10 → 1.11), the patch f
 | `docs/RULINGS.md` | CURRENT | **The reasoning behind every architecture ruling** — palette, main button, overdub, wash, latency, cloud claims, pin groups, brush/lens split, wet paint, mark timing, and the rulings left by the archived plans (trigger tool, composer mode, the release glitch, sensors round ten). Read the entry for the area you touch; a new ruling goes here as one paragraph |
 | `docs/AUDITS.md` | CURRENT | **Which audit to run for which file, and what each guards.** § 1 the two-tier rule, § 2 the file-to-suite map (`scripts/audit-for.js` is it as code), § 4 the per-suite reasoning and traps. Read before running any audit |
 | `docs/CONSOLIDATION-PLAN.md` | CURRENT | The pre-ruled plan for consolidation rounds 26+. Every item is decided: work through them in order, come back only on a **STOP** condition or at the end |
-| `docs/PERFORMANCE-AUDIT-2026-09.md` | PROPOSAL — NOT IMPLEMENTED | **Read before any latency or audio-glitch work.** The 2026-09-06 measurements (the GUI thread out of the hops, the cushion at 10 ms, the sensor flood, the full pool), the app's latency budget, and the ranked plan R1–R10 with files and proofs. `scripts/transport-probe.js` reproduces the numbers |
-| `docs/FADING-STROKES.md` | PROPOSAL — NOT IMPLEMENTED | The 2026-09-05 study for a brush whose marks leave on their own (`life` per mark, heard through the per-candidate gain, the pin following its stroke into death). Nothing built |
+| `docs/PERFORMANCE-AUDIT-2026-09.md` | PROPOSAL — NOT IMPLEMENTED | **Read before any latency or audio-glitch work.** The 2026-09-06 measurements, the latency budget, the ranked plan R1–R10. `scripts/transport-probe.js` reproduces the numbers |
+| `docs/TAPE-STUDY-2026-09.md` | PROPOSAL — NOT IMPLEMENTED | **Read before touching the tape sheet or a pin's direction.** 17 loopers: frozen vs live, why speed is varispeed, the proposed sheet, round two |
+| `docs/FADING-STROKES.md` | PROPOSAL — NOT IMPLEMENTED | The 2026-09-05 study for a brush whose marks leave on their own (`life` per mark). Nothing built |
 | `docs/CAPS-AND-THROTTLES-2026-09.md` | CURRENT (audit) + PROPOSAL | **Read before touching any grain cap, throttle or budget.** What each one protects, whether it still binds, what the gauges themselves cost (measured), and the ranked plan P1–P6. § 3 is the answer to "how do we know the machine is at its limit" |
 | `docs/MULTI-INSTANCE-PLAN.md` | CURRENT | Multi-station setups (3 windows/sensors on one machine), instance profiles, per-instance OSC ports, WiFi findings |
 | `docs/KEYBOARD-SHORTCUTS.md` | CURRENT | Working on UI / hotkeys / input handling |

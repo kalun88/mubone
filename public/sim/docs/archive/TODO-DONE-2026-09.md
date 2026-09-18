@@ -3018,3 +3018,45 @@
   activate, it shouldn't actually be clickable". The mouse press handler is gone and the tile wears no
   pointer; the spacebar and a left-click on the sphere are the hand's inputs, the right-click still flips
   the verb, and a finger on it still presses (the phone's palette is the hand tile alone). PALETTE-GUI § 5.7.
+- [x] **The tape engine studied against the loopers people love** (2026-09-18) — Ek: reverse belongs on
+  the tape sheet, baked; "what is baked in and what is part of the lens" needs thinking through; "research
+  what the coolest musical / experimental tape and loopers have", the Blooper especially. Seventeen
+  devices read from their manuals into `docs/TAPE-STUDY-2026-09.md`: frozen vs live, speed vs pitch,
+  reverse, the proposed sheet (`tape` · `on end` · `slicing`) and round two. Nothing built yet. docs green.
+- [x] **Reverse is the tape's own, the sections are named by effect** (2026-09-18) — round one of the
+  tape study: `reverse` switch on the tape sheet, baked through the trigger shell to the pinned slot
+  and the piece; the lens's `ends` flips it at the tail; a pinned loop no longer reads the cloud's
+  `path dir`; sections `tape` · `on end` · `slicing`, the row `loop` under `on end`; the speed
+  tooltip stopped claiming it rides live (#240). RULINGS "The tape has its own direction". docs, wiring green.
+- [x] **The tape's pitch, baked and offline** (2026-09-18) — `pitch` (cents, ±2 oct, free) and `step`
+  (`free · semi · oct+5th`, snapping speed and pitch) on the tape sheet; a phase vocoder Worker
+  (`js/workers/`) stretches the region once, the seq block plays it at speed × ratio; carried by the
+  trigger, the slot and the piece. Proven in the running app: octave up → rate 2 on a 2× buffer;
+  reversed fifth down → rate 0.6674, exact length, loud half at the tail. RULINGS "The tape's pitch".
+- [x] **Overdub decay, and the dub's one-shot** (2026-09-18) — `decay` % on the dub tile (its own sheet,
+  `DUB_PIDS`), baked at the press; each wrap while recording wears the master's own gain and every
+  earlier layer, the fold weights a long take's passes; `wear` per member in the piece; undo/redo
+  restore it. The dub takes the bang verb: one master cycle from the press, self-released, the fold
+  trimming it exact; refused with nothing pinned. RULINGS "Overdub decay is a wear on the family".
+- [x] **The stroke walker: the lens's third mode** (2026-09-18) — `S.nearestMode` → `S.lensMode`
+  (`area · nearest · stroke`, migrated across 12 modules and 5 rig scripts); a grain-stroke gate per
+  stroke in `stroke` mode launches a walker (`js/walker.js`) that retraces the stroke at its recorded
+  pace and reads with the live lens; `order` still picks random or step inside it; the pin press
+  freezes a walker into the moving cloud it already is; `on tape` → `on strokes`. RULINGS "The stroke
+  WALKER". Proven headless: pool follows the walker, wet paint reaches it, two strokes two walkers.
+- [x] **`dwell: grain` plays once THEN opens** (2026-09-18) — the long-standing bug Ek had not
+  reported: under `grain` a take's material opened the instant the cursor arrived, so the grains were
+  heard over its own first pass. A stroke now opens when its playthrough ENDS (`S._openStrokes`,
+  set by the take's `ended` or a walker's last frame) and closes when the cursor leaves. In `stroke`
+  mode the cursor reads nothing except an opened stroke, so a finished walk hands the material to
+  the cursor area-style. RULINGS "`dwell: grain` is PLAY ONCE, THEN OPEN".
+- [x] **The lens sheet, reorganised** (2026-09-18) — three sections named for the question each answers:
+  `reach` (reads · radius, the two that govern both engines), `on grains` (mode leading, then depth · k ·
+  order · fade · falloff — all grains-only), `on strokes` (the five touch rows). Every dead row now hides,
+  both halves symmetrically; a computed section note where the rows cannot say it; the `mode` row carries a
+  caption per value. `on dwell` → `dwell`. RULINGS "The lens sheet is three sections".
+- [x] **5.4 alpha released** (2026-09-18) — the tape round (reverse, pitch, step, decay, the dub's
+  one-shot), the stroke walker and the lens sheet's reorganisation. Five version places, CHANGELOG,
+  the three new modules into `APP_SHELL`, and the user-facing docs: README's `/search/scope` row,
+  QUICK-START's N key, and five new cheat-sheet items (tape speed/pitch/reverse, ends flipping,
+  stroke mode, dwell grain, dub decay and its one-shot). Every audit green.

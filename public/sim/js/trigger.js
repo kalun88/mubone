@@ -35,6 +35,7 @@
 import { S, COMMIT_COLORS } from './state.js';
 import { stampCartesian } from './grain.js';
 import { detectOnsets } from './onsets.js';
+import { startWalker, exitWalker, clearWalkers } from './walker.js';
 
 export const MAX_TRIGGERS = 32;
 
@@ -253,6 +254,7 @@ function _applyCluster(t, ps, buffer) {
   // The playhead index is into the old list; clamp rather than carry a stale
   // index into a shorter array.
   if (t.playheadIndex >= ps.length) t.playheadIndex = 0;
+  if (!t.walk) S._prepareTapePitch?.(t);   // the baked pitch's stretch, before the first fire
   return true;
 }
 
@@ -634,7 +636,13 @@ function _newTriggerShell(strokeId, audition) {
     loopEnd:       0,
     playheadIndex: 0,
     startOffset:   0,
-    direction:     1,
+    // `reverse` is the BAKED direction (2026-09-18), `direction` what this
+    // fire runs at: _onEnter rewrites `direction` on every fire, and the
+    // lens's `start: ends` flips it at the tail, so the baked value needs a
+    // field of its own that nothing rewrites.
+    reverse:       !!d.reverse,
+    direction:     d.reverse ? -1 : 1,
+    pitch:         d.pitch ?? 0,      // cents, applied offline (js/tape-pitch.js)
     speed:         d.speed ?? 1.0,
     passes:        d.passes ?? 0,
     playing:       false,           // the gate owns this
@@ -681,6 +689,9 @@ export function restoreTrigger(c) {
   const t = _newTriggerShell(c.strokeId ?? -1, false);
   t.speed  = c.speed ?? d.speed ?? 1;
   t.passes = c.passes ?? d.passes ?? 0;
+  t.reverse = typeof c.reverse === 'boolean' ? c.reverse : !!d.reverse;
+  t.direction = t.reverse ? -1 : 1;
+  t.pitch  = c.pitch ?? d.pitch ?? 0;
   if (typeof c.endCap === 'number') t.endCap = c.endCap;   // a slice's cut
   if (c.color) t.color = c.color;
   t.grainParams.volume = c.volume ?? d.volume ?? 1;
@@ -976,13 +987,56 @@ function _pSeg2(px, py, pz, ax, ay, az, bx, by, bz) {
   return dx * dx + dy * dy + dz * dz;
 }
 
+// ── The stroke gates (2026-09-18, js/walker.js) ─────────────────────────────
+// Under `mode: stroke` every GRAIN stroke gets a gate of its own: the same
+// shell and the same geometry as a tape trigger — bounding cap, nearest mark
+// or segment, hysteresis, the swept crossing — with `walk: true`, so the
+// enter edge launches a walker instead of a tape voice. Built only in stroke
+// mode, per stroke, and rebuilt when a stroke's mark count changes (paint,
+// erase, undo); gone the moment the mode leaves, walkers with them.
+const _walkGates = new Map();   // strokeId → shell
+let _walkList = null;           // the map's values, cached for the tick
+let _walkVer = -1;
+function refreshWalkGates() {
+  if (S.lensMode !== 'stroke') {
+    if (_walkGates.size) { _walkGates.clear(); _walkList = null; clearWalkers(); }
+    _walkVer = -1;
+    return;
+  }
+  const ver = S._particleVersion;
+  if (_walkVer === ver) return;
+  _walkVer = ver;
+  const counts = new Map();
+  for (const p of S.particles) {
+    if (p.trig || !(p.strokeId > 0)) continue;
+    counts.set(p.strokeId, (counts.get(p.strokeId) || 0) + 1);
+  }
+  let changed = false;
+  for (const sid of [..._walkGates.keys()]) if (!counts.has(sid)) { _walkGates.delete(sid); changed = true; }
+  for (const [sid, n] of counts) {
+    let g = _walkGates.get(sid);
+    if (g && g.particles.length === n) continue;
+    if (!g) {
+      g = _newTriggerShell(sid, false);
+      g.walk = true;
+      g.trigger._inside = false;      // a gate starts OUTSIDE — the first touch is the enter edge
+      g.trigger._lastFireAt = -Infinity;
+    }
+    if (rebuildTrigger(g)) { _walkGates.set(sid, g); changed = true; }
+    else if (_walkGates.delete(sid)) changed = true;
+  }
+  if (changed || !_walkList) _walkList = [..._walkGates.values()];
+}
+/** The walk gates, for anything that reads them (the pin, the renderer). */
+export function walkGates() { return _walkList || []; }
+
 export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
   const trigs = S.triggers;
-  if (!trigs || trigs.length === 0) return;
-
   // Pick up erases, undos and new particles before testing against them.
-  refreshTriggers();
-  if (trigs.length === 0) return;
+  if (trigs && trigs.length) refreshTriggers();
+  refreshWalkGates();
+  const walks = _walkList && _walkList.length ? _walkList : null;
+  if ((!trigs || trigs.length === 0) && !walks) return;
 
   // The CAP is the on/off, for hits exactly as for granulation. The geometry
   // still runs so `_inside` stays accurate — otherwise uncapping would fire
@@ -994,6 +1048,8 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
   // uncapping, or switching back to a lens that reads tape, would fire
   // whatever the cursor happened to be resting on.
   const live = !S.scanMuted && S.lensReads !== 'grains';
+  // A stroke gate fires when the lens reads GRAINS: the mirror of the tape's.
+  const liveW = !S.scanMuted && S.lensReads !== 'tape';
 
   // ── Off-cursor rule (#241, Ek): a stroke CLAIMED by a live loop slot is in
   // a layer — it plays on its own, off cursor — and scratch is what the lens
@@ -1011,6 +1067,8 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
   // same cursor and the same gesture, and erase already follows it. Riding the
   // radius slider therefore widens the trigger zones too, which is the point.
   const tp = S.triggerParams;
+  // Nothing is open unless `grain` is what opened it.
+  if (tp.dwell !== 'grain' && S._openStrokes.size) S._openStrokes.clear();
   const enterRad = S.searchRadiusDeg * DEG2RAD;
   const exitRad  = enterRad * (tp.hysteresis || 1);
   const chordEnter2 = Math.pow(2 * Math.sin(enterRad / 2), 2);
@@ -1056,8 +1114,12 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
   if (_gwAt === 0 || _gwX * rx + _gwY * ry + _gwZ * rz < 0.99996) {
     _gwX = rx; _gwY = ry; _gwZ = rz; _gwAt = nowMs;
   }
-  for (let i = 0; i < trigs.length; i++) {
-    const t  = trigs[i];
+  for (let li = 0; li < 2; li++) {
+  const list = li === 0 ? trigs : walks;
+  if (!list || !list.length) continue;
+  const liveL = li === 0 ? live : liveW;
+  for (let i = 0; i < list.length; i++) {
+    const t  = list[i];
     const tg = t.trigger;
     if (!tg || !t.particles.length) continue;
 
@@ -1081,7 +1143,7 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
     if (capDot < capGate) {
       if (tg._inside) {
         tg._inside = false;
-        if (live && !(_claimed && _claimed.has(t.strokeId))) _onExit(t);
+        if (liveL && !(_claimed && _claimed.has(t.strokeId))) _onExit(t);
       }
       continue;
     }
@@ -1119,7 +1181,7 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
     //    Without it a sensor parked on the boundary machine-guns the sample —
     //    exactly what a turntable held near a bearing does.
     const insideNow = bestD2 < (tg._inside ? chordExit2 : chordEnter2);
-    const readable = live && !(_claimed && _claimed.has(t.strokeId));
+    const readable = liveL && !(_claimed && _claimed.has(t.strokeId));
 
     if (insideNow && !tg._inside) {
       tg._inside = true;
@@ -1176,6 +1238,7 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
       }
     }
   }
+  }
 }
 
 /**
@@ -1202,6 +1265,8 @@ function _onEnter(t, nearestIdx, nowMs) {
   // Rearm window — suppress a refire that lands too soon after the last.
   if (nowMs - tp.rearmMs < tg._lastFireAt) return;
   tg._lastFireAt = nowMs;
+  // A grain stroke's gate launches a walker; everything below is tape.
+  if (t.walk) { startWalker(t, nearestIdx, tp); return; }
 
   // What a refire does to the pass already sounding.
   if (t._sourceNode && !t._sourceNode._stopped) {
@@ -1209,14 +1274,19 @@ function _onEnter(t, nearestIdx, nowMs) {
     else stopTriggerAudio(t, 'immediate', RETRIGGER_FADE_S);   // fade and restart
   }
 
+  // The tape's own direction, baked when it was drawn. Every branch below
+  // starts from it; `ends` is the one that flips it.
+  const base = t.reverse ? -1 : 1;
+  const lastIdx = Math.max(0, t.particles.length - 1);
   if (tg._audition) {
     // The one playback you get on releasing the record button: always the whole
-    // thing from the top, so you hear what you captured. See _audition in
-    // armTrigger for why `start: 'touch'` must not apply here.
+    // thing from the top, so you hear what you captured — a reversed tape's
+    // top is its tail. See _audition in armTrigger for why `start: 'touch'`
+    // must not apply here.
     tg._audition    = false;
-    t.direction     = 1;
+    t.direction     = base;
     t.startOffset   = 0;
-    t.playheadIndex = 0;
+    t.playheadIndex = base < 0 ? lastIdx : 0;
   } else if (tp.start === 'ends') {
     // Direction follows the end you arrived at, and it always plays IN FULL —
     // never from the point of contact.
@@ -1231,16 +1301,16 @@ function _onEnter(t, nearestIdx, nowMs) {
     //
     // Measured in buffer time rather than particle index, so an unevenly painted
     // stroke still splits at its actual midpoint.
+    //
+    // It COMPOSES with the baked `reverse` (2026-09-18): arriving at the tail
+    // flips the tape's own direction, so a reversed tape entered at its tail
+    // runs forward. Tensor's DIR switch against its SPEED sign — both reversed
+    // is forward — and the turntable point survives either way.
     const p    = t.particles[nearestIdx];
     const span = t.loopEnd - t.loopStart;
     const frac = span > 0 ? ((p?.grainStart ?? t.loopStart) - t.loopStart) / span : 0;
-    if (frac >= 0.5) {
-      t.direction     = -1;                     // arrived at the tail — run it backwards
-      t.playheadIndex = t.particles.length - 1;
-    } else {
-      t.direction     = 1;
-      t.playheadIndex = 0;
-    }
+    t.direction     = frac >= 0.5 ? -base : base;   // arrived at the tail — flip
+    t.playheadIndex = t.direction < 0 ? lastIdx : 0;
     // Zero either way: forward that is the region start, reversed it is the
     // start of the reversed copy, which is the region's end.
     t.startOffset = 0;
@@ -1252,14 +1322,17 @@ function _onEnter(t, nearestIdx, nowMs) {
     // there is little left to play. That is what 'touch' means — if it reads as
     // "quiet from one side" on the rig, 'top' is the setting that ignores
     // approach direction.
+    // A reversed tape reads the reversed copy, whose offsets run from the
+    // region's END: the contact point is measured from there.
     const p = t.particles[nearestIdx];
-    t.direction     = 1;
-    t.startOffset   = Math.max(0, (p?.grainStart ?? t.loopStart) - t.loopStart);
+    const at = Math.max(0, (p?.grainStart ?? t.loopStart) - t.loopStart);
+    t.direction     = base;
+    t.startOffset   = base < 0 ? Math.max(0, (t.loopEnd - t.loopStart) - at) : at;
     t.playheadIndex = nearestIdx;
   } else {
-    t.direction     = 1;
+    t.direction     = base;
     t.startOffset   = 0;
-    t.playheadIndex = 0;
+    t.playheadIndex = base < 0 ? lastIdx : 0;
   }
 
   t.playing = true;   // the seq block builds the source node on its next pass
@@ -1270,6 +1343,9 @@ function _onEnter(t, nearestIdx, nowMs) {
 }
 
 function _onExit(t) {
+  // Off the stroke: its material closes again, whichever reader opened it.
+  if (t.strokeId > 0) S._openStrokes.delete(t.strokeId);
+  if (t.walk) { exitWalker(t, S.triggerParams); return; }
   // One-shot deliberately does nothing on exit. A cursor sweeping past a
   // triangle at performance speed should still get the whole triangle;
   // truncating it would make the sample's length a function of how fast the
@@ -1296,7 +1372,24 @@ export function onTriggerSourceEnded(t, src) {
   if (src && src !== t._sourceNode) return;
   t.playing    = false;
   t._startedAt = 0;
+  // THE TAKE HAS PLAYED. Under `grain` that is what opens its material to the
+  // cursor — not the arrival (state.js `_openStrokes`). Still on it, or the
+  // exit already closed it.
+  if (S.triggerParams.dwell === 'grain' && t.trigger?._inside && t.strokeId > 0) {
+    S._openStrokes.add(t.strokeId);
+  }
 }
+
+/** Is the cursor on this stroke right now? A walker asks before it opens its
+ *  own stroke — a `once` walker plays out after the cursor has left, and that
+ *  must not re-open material the exit closed. */
+export function gateInside(strokeId) {
+  const g = _walkGates.get(strokeId);
+  if (g) return !!g.trigger?._inside;
+  const t = (S.triggers || []).find(x => x.strokeId === strokeId);
+  return !!t?.trigger?._inside;
+}
+S._gateInside = gateInside;
 
 // Hooks for grain.js and the UI (avoids circular imports — house pattern).
 S._updateTriggerGates   = updateTriggerGates;

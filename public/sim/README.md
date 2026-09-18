@@ -158,7 +158,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/search/radius/inc` `/dec` | *(bang)* | Step radius up / down |
 | `/search/k` | `i` | Nearest-neighbor pool size |
 | `/search/recency` | `i` | Recency window, 0 = all, up to 16 |
-| `/search/scope` | *(bang)* | Toggle nearest/snap scope |
+| `/search/scope` | *(bang)* | Toggle the lens between nearest and area (its third mode, `stroke`, is set on the sheet) |
 | `/search/fill` | *(bang)* | Toggle k-fill mode |
 | `/search/order` | *(bang)* | Toggle k ordering |
 
@@ -309,6 +309,8 @@ js/
   brush-voicing.js      — a stroke freezes the brush that painted it
   erase.js              — the erase brush
   trigger.js            — the trigger tool: a view onto a stroke, gated by proximity
+  tape-pitch.js         — the tape's baked pitch: an offline phase vocoder (js/workers/) and the step quantiser
+  walker.js             — the stroke walker: the lens's `stroke` mode, a reading cursor that retraces a grain stroke
   seed-morph.js         — seed agitate/smooth morphing, driven by an inertial stream
   scale.js              — control shaping for continuous controllers
 

@@ -1772,10 +1772,10 @@ function collapses(label, items, key) {
     const T = await import('./js/tiles.js');
     const { S } = await import('./js/state.js');
     const wait = ms => new Promise(r => setTimeout(r, ms));
-    const wasOpen = T.propsOpen(), nearWas = S.nearestMode, allWas = S.grainKAllMode;
+    const wasOpen = T.propsOpen(), nearWas = S.lensMode, allWas = S.grainKAllMode;
     if (!wasOpen) { T.setPropsOpen(true); await wait(300); }
     const read = async (near, all) => {
-      S.nearestMode = near; S.grainKAllMode = all;
+      S.lensMode = near ? 'nearest' : 'area'; S.grainKAllMode = all;
       T.openProps('wide', 'lens'); T.renderProps(); await wait(120);
       const k = document.querySelector('#propRail .prow--lensk');
       if (!k) return null;
@@ -1794,7 +1794,7 @@ function collapses(label, items, key) {
       };
     };
     const out = { areaK: await read(false, false), areaAll: await read(false, true), near: await read(true, false) };
-    S.nearestMode = nearWas; S.grainKAllMode = allWas;
+    S.lensMode = nearWas; S.grainKAllMode = allWas;
     T.renderProps();
     if (!wasOpen) T.setPropsOpen(false);
     return out;

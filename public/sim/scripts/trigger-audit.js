@@ -91,12 +91,15 @@ async function run(rig) {
   check('hits start live — the cap is off at boot', boot.capped === false);
   check('there is no second mute: the cap absorbed it (2026-09-07)', boot.noTrigMuted);
   check('trigger-recording flag starts clear', boot.recFlag === false);
-  // 12 since 2026-08-30: `layerGroup` (which named pin group a looper's loop
-  // filed into) went with the named groups themselves — a loop joins the loops
-  // group by being a loop. No radius, either: a trigger follows the search radius.
-  check('triggerParams has all 12 fields',
+  // 16 since 2026-09-18: `reverse`, `pitch` and `step` are the tape's own
+  // baked half (docs/TAPE-STUDY-2026-09.md) and `dubDecay` is the dub's. 12
+  // before that — `layerGroup` went with the named pin groups on 2026-08-30,
+  // a loop joins the loops group by being a loop. No radius: a trigger
+  // follows the search radius.
+  check('triggerParams has all 16 fields',
     JSON.stringify(boot.params) === JSON.stringify(
-      ['chop', 'chopOn', 'dwell', 'hysteresis', 'loopOnEnd', 'passes', 'rearmMs', 'release', 'retrig', 'speed', 'start', 'volume']),
+      ['chop', 'chopOn', 'dubDecay', 'dwell', 'hysteresis', 'loopOnEnd', 'passes', 'pitch',
+       'rearmMs', 'release', 'retrig', 'reverse', 'speed', 'start', 'step', 'volume']),
     JSON.stringify(boot.params));
   check('no triggerDefaults — playback params are live, not baked in', boot.noDefaults);
   check('gate registered on S', boot.gate === 'function');
@@ -173,7 +176,15 @@ async function run(rig) {
     // dwell:'grain' is the ONE exception — stop on a trigger and its material
     // opens up to the granular cursor. Both pools have to honour it, and both
     // have to close again when dwell moves off 'grain'.
+    //
+    // PLAY ONCE, THEN OPEN (2026-09-18, RULINGS): arriving must NOT open it —
+    // that is what made the grains sound over the take's own first pass — the
+    // playthrough's END does, which is `onTriggerSourceEnded` adding the
+    // stroke to `S._openStrokes` with the cursor still on it.
     S.triggerParams.dwell = 'grain';
+    out.grainDwellArrivalShut = !grain.__testCandidatePool(0, 0)
+      .some(p => p.strokeId === trigSid);
+    S._openStrokes.add(trigSid);              // the take has played through
     out.grainDwellRadiusOpens = grain.__testCandidatePool(0, 0)
       .some(p => p.strokeId === trigSid);
     out.grainDwellNearestOpens = grain.__testCandidatePool(0, 0, { nearest: true, k: 60 })
@@ -210,9 +221,12 @@ async function run(rig) {
       out.dwellReadsLive = trigRows.length > 0 && trigRows.every(r => r.region === 0);
       out.dwellRows = trigRows.length; out.dwellAllRows = rows.length;
     }
+    // Leaving the dwell closes every open stroke at once — the set is only
+    // ever consulted under `grain`, so no gate tick is needed for this.
     S.triggerParams.dwell = 'oneshot';
     out.grainDwellClosesAgain = !grain.__testCandidatePool(0, 0)
       .some(p => p.strokeId === trigSid);
+    S._openStrokes.clear();
 
     // ── C. The gate ──────────────────────────────────────────────────────
     S.particles.length = 0;
@@ -635,7 +649,8 @@ async function run(rig) {
   check('trigger stroke is excluded from the radius pool', r.radiusPoolHasTrigger === false);
   check('granular stroke reaches the nearest-mode pool', r.nearestPoolHasGranular);
   check('trigger stroke is excluded from the nearest-mode pool', r.nearestPoolHasTrigger === false);
-  check("dwell:'grain' opens trigger material to the radius pool", r.grainDwellRadiusOpens);
+  check("dwell:'grain' does NOT open on arrival — the take plays first", r.grainDwellArrivalShut);
+  check("dwell:'grain' opens trigger material to the radius pool once the take has played", r.grainDwellRadiusOpens);
   check("dwell:'grain' opens it to the nearest-mode pool too", r.grainDwellNearestOpens);
   check("...but nearest mode still requires proximity (it has no radius of its own)",
     r.grainDwellNearestStillBounded);

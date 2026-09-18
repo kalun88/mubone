@@ -63,7 +63,7 @@ const SNAP = `JSON.stringify({
    glink: S.grainLink,
   curve: S.grainCurveType, dir: S.grainDirection,
   r: S.searchRadiusDeg, n: S.recencyN, k: S.grainK,
-  kAll: S.grainKAllMode, kSeq: S.grainKSeqMode, near: S.nearestMode,
+  kAll: S.grainKAllMode, kSeq: S.grainKSeqMode, near: S.lensMode === 'nearest',
   prob: S.grainProbability, flow: S.paintTicker && S.paintTicker.intervalMs,
   head: S.headWidthDeg, headEdge: S.headEdge,
   fade: S.radiusFadeEnabled, fadeC: S.radiusFadeCurve,
@@ -103,7 +103,7 @@ async function run(rig) {
     const wait = ms => new Promise(r => setTimeout(r, ms));
     window.__wet = () => { const t = selectedTile(); return t ? isWet(t.id) : null; };
     window.__snap = () => ${SNAP};
-    window.__near = () => !!S.nearestMode;
+    window.__near = () => (S.lensMode === 'nearest');
     await wait(700);
     document.getElementById('tcTools').click();
     await wait(300);

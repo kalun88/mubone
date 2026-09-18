@@ -18,7 +18,7 @@
 // visitors still get the full app from cache.
 // ============================================================================
 
-const CACHE_VERSION = 'mubone-5.3.0-alpha';
+const CACHE_VERSION = 'mubone-5.4.0-alpha';
 
 // Extensions served network-first. Everything else (fonts, images, audio) is
 // cache-first — those are content-addressed by name and rarely change.
@@ -57,6 +57,11 @@ const APP_SHELL = [
   './js/brush-voicing.js',
   './js/pins.js',
   './js/take.js',
+  './js/tape-pitch.js',
+  './js/walker.js',
+  // The tape's baked pitch runs in a Worker; the page fetches its source and
+  // spins it from a blob, so the demo needs the file cached like any module.
+  './js/workers/phase-vocoder.worker.js',
   './js/tiles.js',
   './js/tile-layout.js',
   './js/ui-pins.js',

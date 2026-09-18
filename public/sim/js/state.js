@@ -626,11 +626,11 @@ export function perfTick() {
   const worldCount = S.particles.length;
   let kLabel, kPct;
   if (perf.kPool > 0) {
-    const effectiveAll = S.grainKAllMode && !S.nearestMode;
+    const effectiveAll = S.grainKAllMode && S.lensMode !== 'nearest';
     if (effectiveAll) {
       kLabel = `${perf.kCount} all [${worldCount}]`;
       kPct = Math.min(100, perf.kCount * 2);
-    } else if (S.nearestMode) {
+    } else if (S.lensMode === 'nearest') {
       kLabel = `${perf.kCount} / ${kSetting} [${worldCount}]`;
       kPct = (perf.kCount / Math.max(kSetting, 1)) * 100;
     } else {
@@ -742,7 +742,25 @@ export const S = {
   // 'both' | 'grains' | 'tape'. The cap still overrides it — capped, the
   // cursor reads nothing whatever this says.
   lensReads: 'both',
-  nearestMode: false,   // when true: ignore radius, always pick closest particle
+  // OPEN STROKES (2026-09-18) — `dwell: grain` is PLAY ONCE, THEN OPEN (Ek:
+  // "if it's on grain, i want the loop to play once then cursor becomes
+  // granulator, same as mode stroke, on a grain stroke"). A stroke lands here
+  // when its playthrough ENDS under `grain` with the cursor still on it — a
+  // take's one-shot reaching 'ended' (trigger.js), or a walker finishing its
+  // walk (walker.js) — and leaves when the cursor leaves it. Until then the
+  // cursor granulates it as `area` does, whatever the lens's mode. It used to
+  // be the bare flag `dwell === 'grain'`, which opened the material the
+  // INSTANT the cursor arrived, so the grains were heard over the take's own
+  // first pass instead of after it.
+  _openStrokes: new Set(),
+
+  // The lens's MODE (2026-09-18, docs/TAPE-STUDY-2026-09.md § 7): 'area' reads
+  // what is inside the radius, 'nearest' the k closest on the whole sphere,
+  // 'stroke' reads nothing on its own — touching a grain stroke launches a
+  // WALKER that plays it along its own path at its own pace (grain.js). It
+  // used to be the boolean `nearestMode`; a pinned cloud's snapshot keeps
+  // that boolean, since a cloud is area or nearest and never a walker.
+  lensMode: 'area',
   grainKAllMode: false, // when true: k limit is removed — all particles within radius fire
   grainKSeqMode: false, // when true: step through candidates sequentially by grainStart order
   radiusTooltipUntil: 0, // performance.now() -- show transient radius label until this time
@@ -930,6 +948,23 @@ export const S = {
                                // (#242): 'q' | 'w' | 'e', default the first.
                                // Every group is key-addressable — the inbox
                                // was cut 2026-08-28. Baked.
+    reverse:    false,         // the tape plays backwards (2026-09-18). Baked
+                               // like speed: the trigger shell takes it, the
+                               // pinned slot's `direction` is stamped from it,
+                               // and the lens's `start: ends` FLIPS it at the
+                               // tail (Tensor's DIR × SPEED-sign rule).
+    pitch:      0,             // cents, ± PITCH_MAX_CENTS (js/tape-pitch.js):
+                               // Blooper's Pitcher, a shift at constant
+                               // length, baked and applied OFFLINE by the
+                               // phase vocoder — never a real-time node.
+    step:       'free',        // 'free' | 'semi' | 'oct5' — quantises the
+                               // speed and pitch dials (Blooper's smooth /
+                               // chromatic / stepped speed as one setting).
+    dubDecay:   0,             // % per pass — Blooper's REPEATS: while a dub
+                               // records, everything already in the loop
+                               // steps down by this at every wrap; nothing
+                               // fades in playback. Held as `wear` on each
+                               // family member (never written into audio).
     loopOnEnd:  false,         // the looper CONTRACT as a param (#244): end
                                // the stroke and it loops immediately into its
                                // group. line/slice fix 'arm' via

@@ -134,7 +134,7 @@ The mapping module lets you wire IMU orientation axes directly to grain paramete
 |-----|--------|
 | **S** | Toggle scan (cursor → house bus) |
 | **M** | System mute |
-| **N** | The installed lens's mode: nearest / area |
+| **N** | The installed lens's mode: nearest / area (the third, `stroke`, is set on the lens sheet) |
 | **H** | Toggle handsfree recording |
 | **[ / ]** | Decrease / increase search radius |
 | **Alt** | Lock sphere position (freeze camera, release pointer) |

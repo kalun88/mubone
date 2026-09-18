@@ -80,7 +80,7 @@
     <div class="top-bar-left">
       <div class="top-bar-brand">
         <span class="top-bar-logo">mubone</span>
-        <span class="top-bar-version">5.3 alpha</span>
+        <span class="top-bar-version">5.4 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="mu-btn--bare top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -221,7 +221,7 @@
          wordmark's own colour without 9KB of path data in this file. -->
     <div class="tc-brand">
       <img class="tc-mark" src="logo/mark-light.svg" alt="" aria-hidden="true" width="18" height="18">
-      <b>mubone</b> <i>5.3</i>
+      <b>mubone</b> <i>5.4</i>
       <!-- The open piece, in the version's own engraved lettering. The unsaved
            mark is a DOT that is there or is not (js/piece.js) — nothing here is
            dimmed to mean anything. Empty and hidden until there is a piece. -->
@@ -595,8 +595,9 @@
             <div class="grain-row" title="lens — how the cursor finds particles&#10;area: plays within a radius, filtered by recency&#10;nearest: always plays the k closest on the whole sphere">
               <span class="grain-label">lens</span>
               <div class="grain-seg" id="snapToggleSeg">
-                <button class="grain-seg-btn active" data-snap="off" title="area — select particles within the search radius&#10;filtered by recency">area</button>
-                <button class="grain-seg-btn" data-snap="on" title="nearest — fire the k closest particles on the whole sphere&#10;radius and recency are bypassed">nearest</button>
+                <button class="grain-seg-btn active" data-mode="area" title="area — select particles within the search radius&#10;filtered by recency">area</button>
+                <button class="grain-seg-btn" data-mode="nearest" title="nearest — fire the k closest particles on the whole sphere&#10;radius and recency are bypassed">nearest</button>
+                <button class="grain-seg-btn" data-mode="stroke" title="stroke — the cursor reads nothing on its own; touch a grain stroke and a walker plays it along its own path at its own pace, reading with this lens's radius, k and order">stroke</button>
               </div>
             </div>
 
@@ -1199,7 +1200,7 @@
                 <input class="grain-slider" type="range" id="trigVolumeSlider" min="0" max="1" step="0.01" value="1">
                 <input type="text" class="grain-numbox" id="trigVolumeNum" value="100%" readonly>
               </div>
-              <div class="grain-row" title="trigger speed — playback rate for all triggers&#10;rides live, including on one that's currently sounding&#10;0.25× to 4×, 1× = original speed">
+              <div class="grain-row" title="tape speed — playback rate, pitch follows like tape&#10;frozen into each stroke when it ends; moving it changes the next one, never what is on the sphere&#10;0.25× to 4×, 1× = original speed">
                 <span class="grain-label">speed</span>
                 <input class="grain-slider" type="range" id="trigSpeedSlider" min="0.25" max="4" step="0.01" value="1">
                 <input type="text" class="grain-numbox" id="trigSpeedNum" value="1.00×" readonly>

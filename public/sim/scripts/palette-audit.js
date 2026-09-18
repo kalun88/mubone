@@ -755,7 +755,7 @@ async function run(rig) {
   const f1 = await rig.evaluate(() => { const H = window.__ba; H.clickLens(H.T.installedLens()); return { cap: H.capT(), lens: H.lensT() }; });
   check('tapping the lens tile that is on turns it off: the cursor reads nothing, tile and row dark', f1.cap.muted && !f1.lens.on && !f1.lens.rowOn && f1.lens.lit.length === 0, JSON.stringify(f1));
   check('… wide stays the installed lens, so the same lens comes back', f1.lens.inst === 'wide', f1.lens.inst);
-  const f2 = await rig.evaluate(() => { const H = window.__ba; H.lensRow('spot').click(); return { cap: H.capT(), lens: H.lensT(), nearest: !!H.S.nearestMode, wideTile: !!document.querySelector('#paletteDock .tile--lens[data-lens="wide"].on') }; });
+  const f2 = await rig.evaluate(() => { const H = window.__ba; H.lensRow('spot').click(); return { cap: H.capT(), lens: H.lensT(), nearest: H.S.lensMode === 'nearest', wideTile: !!document.querySelector('#paletteDock .tile--lens[data-lens="wide"].on') }; });
   check('choosing spot in the rail with no lens on installs it AND turns reading on', f2.lens.inst === 'spot' && !f2.cap.muted && f2.lens.rowOn && f2.nearest, JSON.stringify(f2));
   check('… the wide tile on the palette is dark: spot is not on the palette, so no tile is lit', !f2.wideTile && f2.lens.lit.length === 0 && !f2.lens.onPalette, JSON.stringify(f2.lens));
   const f3 = await rig.evaluate(() => { const H = window.__ba; H.lensRow('spot').click(); return { cap: H.capT(), lens: H.lensT() }; });

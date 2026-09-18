@@ -230,6 +230,8 @@ export const PARAM_REGISTRY = [
     set: v  => { S.commitXfade = Math.max(0, Math.min(1, v)); },
     fmt: v  => Math.round(v * 100) + '%',
     parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
+  // Cloud-only (2026-09-18): a pinned LOOP's direction is the tape's own
+  // baked `reverse`; until then createSeqFromStroke read this for both.
   { key: 'seedLoopMode',     label: 'path dir',       group: 'commits', type: 'enum', options: ['pingpong', 'forward', 'rev'],
     get: () => S.commitCloudLoopMode,
     set: v  => { S.commitCloudLoopMode = v; },
@@ -304,7 +306,7 @@ export function snapshotCurrentState(keys) {
 const INLINE_HANDLED_KEYS = new Set([
   'duration', 'durJitter', 'durVar', 'fadeRatio', 'period', 'periodVar',
   'pitchJitter', 'pitchShift', 'panSpread', 'volume', 'k', 'retriggerMs',
-  'direction', 'curveType', 'nearestMode', 'grainKAllMode', 'grainKSeqMode',
+  'direction', 'curveType', 'lensMode', 'grainKAllMode', 'grainKSeqMode',
   'searchRadiusDeg', 'recencyN', 'probability', 'radiusFadeEnabled', 'radiusFadeCurve',
 ]);
 

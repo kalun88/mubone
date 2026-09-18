@@ -107,11 +107,14 @@ function _undoStroke(entry) {
   }
   const trigOf = (S.triggers || []).find(t => t.strokeId === sid);
   if (trigOf) saved.trig = { color: trigOf.color, speed: trigOf.speed,
-    volume: trigOf.grainParams?.volume, passes: trigOf.passes };
+    volume: trigOf.grainParams?.volume, passes: trigOf.passes, reverse: trigOf.reverse, pitch: trigOf.pitch };
   // Stop and remove any loop or cloud spawned from this stroke — and, for an
   // overdub take, its layer on the master (the master stays).
   removeSeqByStrokeId(sid);
   removeOverdubByStrokeId(sid);
+  // A dub's decay wore the family at every wrap; undoing the dub gives that
+  // back (the wears as they stood at the press).
+  for (const { master, ov } of saved.layers) if (ov.wearBefore) S._applyWears?.(master, ov.wearBefore);
   // No cursor-grain flush: the next scheduler tick (≤20 ms) rebuilds the pool
   // without these particles, and grains already in flight finish their own
   // envelopes — the same tail as lifting the pen. A flush faded the whole scan.
@@ -158,11 +161,12 @@ function _redoStroke(entry, saved) {
   // inside like a session import, so redo makes no noise on its own.
   if (saved.trig && !(S.triggers || []).some(t => t.strokeId === entry.strokeId)) {
     restoreTrigger({ strokeId: entry.strokeId, color: saved.trig.color,
-      speed: saved.trig.speed, volume: saved.trig.volume, passes: saved.trig.passes });
+      speed: saved.trig.speed, volume: saved.trig.volume, passes: saved.trig.passes,
+      reverse: saved.trig.reverse, pitch: saved.trig.pitch });
     S._syncTriggerUI?.();
   }
   for (const slot of saved.slots) S._restorePinSlot?.(slot);
-  for (const { master, ov } of saved.layers) S._reattachOverdub?.(master, ov);
+  for (const { master, ov } of saved.layers) { S._reattachOverdub?.(master, ov); if (ov.wearAfter) S._applyWears?.(master, ov.wearAfter); }
   console.log(`[redo] sid=${entry.strokeId} type=${entry.type} bufIdx=${bufIdx} | parts=${S.particles.length} bufs=${S.liveRecBuffers.length} slots=${saved.slots.length} layers=${saved.layers.length}`);
 }
 

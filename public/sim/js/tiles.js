@@ -91,6 +91,7 @@ import { S, perf, gp } from './state.js';
 import { setBrush } from './brush.js';
 import { resolveGrainParams, dryVoicing } from './brush-voicing.js';
 import * as HIST from './history.js';
+import { fmtPitch, quantPitch, quantSpeed, PITCH_MAX_CENTS, TAPE_STEPS } from './tape-pitch.js';
 
 const LS_ORDER = 'mubone_tile_order';
 const LS_PALETTE = 'mubone_palette';   // the palette: ordered tile ids, ≤ PALETTE_MAX (2026-09-11)
@@ -244,7 +245,7 @@ const DEFAULT_ORDER = ['line', 'slice', 'looper', 'overdub',   // tape engine
 // lens for the subject, set its radius and depth, leave it on, paint. The CAP
 // is the toggle tile at the end of the set: the lens stays mounted with its
 // settings, the cursor just stops reading. Selection is DERIVED from the
-// engine flags (composerMode, nearestMode, scanMuted), never stored — ⇧K and
+// engine flags (composerMode, lensMode, scanMuted), never stored — ⇧K and
 // N keep working and the tiles can never lie (the § 3e audibility lesson).
 // This retires the toggle tile: sweep-to-flip was an eye behaviour wearing a
 // hand costume, which is why it confused.
@@ -468,6 +469,11 @@ function kindAll(kind) { return order.filter(id => slotKind(id) === kind); }
  *  lets one pin tile pin where you stand and a second draw a path. */
 const VERBS_OF = {
   tool:  { allowed: ['momentary', 'toggle'], def: 'momentary' },
+  // The dub is the one TOOL with a bang (2026-09-18): Blooper's three record
+  // gestures are its three verbs — toggle is the overdub, momentary the
+  // punch-in, and BANG the one-shot: exactly one cycle of the master, then it
+  // lets go of itself.
+  overdub: { allowed: ['toggle', 'momentary', 'bang'], def: 'toggle' },
   lens:  { allowed: ['momentary', 'toggle'], def: 'toggle' },
   pin:   { allowed: ['bang', 'momentary', 'toggle'], def: 'bang' },
   unpin: { allowed: ['bang'], def: 'bang' },
@@ -480,7 +486,7 @@ const VERBS_OF = {
 export function verbsOf(id) {
   const k = paletteKind(id);
   if (!k) return null;
-  return VERBS_OF[k === 'act' ? id : k] ?? null;
+  return VERBS_OF[id] ?? (k === 'act' ? null : VERBS_OF[k]) ?? null;
 }
 /** The verb a tile lands on when it is dropped, and the one a stored entry
  *  falls back to when its verb is missing or not allowed for its kind. */
@@ -803,6 +809,15 @@ function _playDown(i, id, momentary) {
   if (!t) return;
   if (_held) { if (_held.latched && _held.i === i) slotEnd(i); return; }
   if (S._gestureActive?.()) return;   // another wire already has the hand
+  // The dub's ONE-SHOT (the bang verb): a press that records exactly one
+  // cycle of its master and releases itself. It needs a master — a one-shot
+  // with nothing pinned has no length, so it refuses where the dub already
+  // refuses visibly.
+  const oneShot = id === 'overdub' && (i === HAND_POS ? handVerb : palette[i]?.verb) === 'bang';
+  if (oneShot) {
+    if (!S._loopPinNear?.()) { _pinFlash('overdub', i); return; }
+    momentary = true;
+  }
   _held = { i, id, latched: false };
   // A tile is a preset, and the press is what applies it — nothing did
   // between presses, because nothing was in the hand. Under a grain filter it
@@ -818,12 +833,22 @@ function _playDown(i, id, momentary) {
   // momentary is the binding's, not a mode.
   S._gesturePress?.(momentary);
   if (_held) _held.latched = !!S._gestureLatched?.();
+  if (oneShot && _held) {
+    _held.oneShot = true;                          // slotUp lets the cycle end it
+    const tk = S._overdubTake, seq = tk?.seq;
+    if (tk) tk.oneShot = true;                     // the fold trims to the cycle exactly
+    const cycleS = seq ? (seq.loopEnd - seq.loopStart) / Math.abs(seq.speed || 1) : 0;
+    const held = _held;
+    // The timer lands the release near the wrap; the fold makes it exact.
+    setTimeout(() => { if (_held === held) slotEnd(i); }, Math.max(20, cycleS * 1000));
+  }
 }
 
 /** The up edge from a key or the wire: ends a momentary hold, nothing to a
  *  latched one. */
 function slotUp(i) {
-  if (_held && _held.i === i && !_held.latched) slotEnd(i);
+  // A one-shot ignores the up: a bang acts on the down, and its cycle ends it.
+  if (_held && _held.i === i && !_held.latched && !_held.oneShot) slotEnd(i);
 }
 
 /** End this position's play, however it started — the gesture ends through
@@ -1071,6 +1096,12 @@ async function pinDown() {
   S._pinPressTag = ++_pinPress;
   const loops = UP.dropSeqFromCursor();
   if (loops.length) S._pinsDirty = true;
+  // A WALKER is the third thing the cursor can be doing (2026-09-18): under
+  // `mode: stroke` it is what reads, so the press takes it exactly as it takes
+  // a line — the walker freezes into the moving cloud it already is, same path,
+  // same phase. It keeps walking; the pin is what makes it survive the lift.
+  const walked = UP.pinWalkers();
+  if (walked.length) { UP.clearWalkersNow(); S._pinsDirty = true; }
   // Nothing in reach is NOT a no-op either: the press still pins a cloud at the
   // cursor — a GHOST PIN (Ek, 2026-08-28). Pin the place first, paint scratch
   // into it later, and it keeps sounding: a cloud stores a place and re-reads
@@ -1165,13 +1196,15 @@ S._onTriggerStrokeArmed = (strokeId, { loop = false } = {}) => {
       const before = S.commitSlots.slice();
       UP.createSeqFromStroke(strokeId);
       // Stamp the BAKED half (#240) onto the new slot: the looper commits
-      // the tile's dials as they stood when the stroke was drawn.
+      // the tile's dials as they stood when the stroke was drawn. Direction
+      // is stamped by createSeqFromStroke from the trigger's own `reverse`.
       for (let i = 0; i < S.commitSlots.length; i++) {
         const slot = S.commitSlots[i];
         if (slot && slot !== before[i]) {
           slot.speed  = S.triggerParams.speed ?? slot.speed;
           slot.grainParams.volume = S.triggerParams.volume ?? slot.grainParams.volume;
           slot.passes = S.triggerParams.passes | 0;
+          slot.pitch  = S.triggerParams.pitch ?? slot.pitch ?? 0;
           break;
         }
       }
@@ -1368,7 +1401,8 @@ function onKeyup(e) {
 // each verb means, per kind:
 //
 //            bang                momentary                 toggle
-//   tool     —                   plays while down          plays until pressed again
+//   tool     — (the dub: one     plays while down          plays until pressed again
+//              cycle, the one-shot)
 //   lens     —                   on while down             on / off
 //   pin      pin where you stand draws a path, down to up  opens the path, seals it
 //   unpin    unpins              —                         —
@@ -2010,18 +2044,37 @@ const PARAM_DEFS = {
   splatThrow:  { label: 'splat throw',  kind: 'fx', path: 'splatThrow',  min: 0, max: 0.2, step: 0.005, fmt: v => (+v).toFixed(3), def: 0.06, sec: 'experimental' },
   staffLo:     { label: 'staff lo', kind: 'fx', path: 'staffLo', min: 40, max: 1000, step: 5, fmt: v => Math.round(v) + 'Hz', def: 110, sec: 'experimental' },
   staffHi:     { label: 'staff hi', kind: 'fx', path: 'staffHi', min: 1000, max: 16000, step: 50, fmt: v => (v / 1000).toFixed(1) + 'k', def: 7040, sec: 'experimental' },
-  // loop/sample engine — what's left here is what gets BAKED IN when the
-  // line is drawn (#236, Ek): speed, how it slices, its level. "When I draw
-  // that line I'm not thinking about how [touch playback] works" — so
-  // everything about TOUCHING a loop (dwell, start, release, retrig, rearm)
-  // lives on the LENS, beside k/fill/order for grains. Speed, vol and passes
-  // ARE frozen per stroke: armTrigger snapshots them onto the trigger and the
-  // session file carries them, and NOTHING rewrites them afterwards — the
-  // grain filter is granular-only and writes to no material at all (#292).
-  // These rows write S.triggerParams, which sets FUTURE arms. Chop/sliceMin stay arm-time structural (they decide how the stroke
-  // is cut, once).
-  tspeed:   { label: 'speed',   kind: 'slider', el: 'trigSpeedSlider', sec: 'baked in' },
-  tvol:     { label: 'vol',     kind: 'slider', el: 'trigVolumeSlider', sec: 'baked in' },
+  // tape engine — what the tape IS, frozen when the stroke ends (#236, Ek):
+  // speed, direction, level. "When I draw that line I'm not thinking about
+  // how [touch playback] works" — so everything about TOUCHING a tape (dwell,
+  // start, release, retrig, rearm) lives on the LENS, beside k/fill/order for
+  // grains. Speed, reverse, vol and passes ARE frozen per stroke: armTrigger
+  // snapshots them onto the trigger and the piece file carries them, and
+  // NOTHING rewrites them afterwards — the grain filter is granular-only and
+  // writes to no material at all (#292). These rows write S.triggerParams,
+  // which sets FUTURE arms. The sections are named by EFFECT, as the grain
+  // sheet's are (2026-09-18; `baked in` said how a value is stored, not what
+  // it does): `tape` is the sound, `on end` is what happens when the stroke
+  // ends, `slicing` is how the take is cut, once. docs/TAPE-STUDY-2026-09.md.
+  tspeed:   { label: 'speed',   kind: 'slider', el: 'trigSpeedSlider', sec: 'tape' },
+  // Two dials, no switch (docs/TAPE-STUDY-2026-09.md § 3): speed is tape,
+  // pitch is a shift on top at constant length, computed offline by the phase
+  // vocoder because a baked value never needs real time. `step` quantises
+  // both dials — free, semitones, or octaves and fifths.
+  tpitch:   { label: 'pitch',   kind: 'tp', path: 'pitch', min: -PITCH_MAX_CENTS, max: PITCH_MAX_CENTS, step: 1, def: 0,
+              fmt: v => fmtPitch(v), q: v => quantPitch(v), sec: 'tape' },
+  tstep:    { label: 'step',    kind: 'tstep', sec: 'tape' },
+  // The dub tile's one dial (docs/TAPE-STUDY-2026-09.md § 4): Blooper's
+  // REPEATS. While a dub records, everything already in the loop steps down
+  // by this at every wrap; nothing fades in playback. Baked at the press.
+  decay:    { label: 'decay',   kind: 'tp', path: 'dubDecay', min: 0, max: 100, step: 1, def: 0,
+              fmt: v => Math.round(v) + '%', sec: 'dub' },
+  // The only backwards playback used to be the lens's `start: ends` turntable
+  // rule, a read-time accident standing in for a property of the tape; a
+  // pinned loop took its direction from the CLOUD's `path dir`. Now the tape
+  // has its own, and `ends` flips it (trigger.js _onEnter).
+  treverse: { label: 'reverse', kind: 'treverse', sec: 'tape' },
+  tvol:     { label: 'vol',     kind: 'slider', el: 'trigVolumeSlider', sec: 'tape' },
   tchop:    { label: 'chop',    kind: 'seg', seg: 'trigChopSeg', sec: 'slicing' },
   chopMs:   { label: 'chop ms', kind: 'slider', el: 'trigChopSlider', sec: 'slicing' },
   sliceMin: { label: 'min slice', kind: 'fx', path: 'sliceMinMs', min: 0, max: 500, step: 10,
@@ -2030,30 +2083,53 @@ const PARAM_DEFS = {
   // then deletes itself AND its paint. 0 = ∞ (a loop that stays). Baked at
   // record time — "a decision I make when I record the loop" (Ek).
   passes:   { label: 'passes',  kind: 'tp', path: 'passes', min: 0, max: 8, step: 1,
-              fmt: v => (+v > 0 ? Math.round(v) + '×' : '∞'), sec: 'baked in' },
+              fmt: v => (+v > 0 ? Math.round(v) + '×' : '∞'), sec: 'on end' },
   // The looper contract as a param (#244): 'loop' = end the stroke and it
   // loops immediately. Any loop tile — a custom one included —
   // becomes a looper by flipping this; line/slice pin 'arm' by identity.
-  onEnd:    { label: 'on end',  kind: 'onend', sec: 'baked in' },
-  // read-time loop params — LENS engine (how the cursor reads a loop it touches)
-  dwell:    { label: 'on dwell', kind: 'seg', seg: 'trigDwellSeg', sec: 'on tape' },
-  tstart:   { label: 'start',   kind: 'seg', seg: 'trigStartSeg', sec: 'on tape' },
-  release:  { label: 'release', kind: 'seg', seg: 'trigReleaseSeg', sec: 'on tape' },
-  retrig:   { label: 'retrig',  kind: 'seg', seg: 'trigRetrigSeg', sec: 'on tape' },
-  rearm:    { label: 'rearm',   kind: 'slider', el: 'trigRearmSlider', sec: 'on tape' },
+  onEnd:    { label: 'loop',    kind: 'onend', sec: 'on end' },
+  // Read-time params — the LENS engine: how the cursor reads a stroke it
+  // TOUCHES. One family for both readers (2026-09-18): a tape stroke fires its
+  // take, a grain stroke under `mode: stroke` launches a WALKER (js/walker.js),
+  // and dwell / start / release / retrig / rearm mean the same thing to each —
+  // once or loop, from the top or the touch or the end you arrived at, how it
+  // leaves, what a refire does, how soon it may refire. Hence `on strokes`,
+  // not `on tape`.
+  dwell:    { label: 'dwell',   kind: 'seg', seg: 'trigDwellSeg', sec: 'on strokes' },
+  tstart:   { label: 'start',   kind: 'seg', seg: 'trigStartSeg', sec: 'on strokes' },
+  release:  { label: 'release', kind: 'seg', seg: 'trigReleaseSeg', sec: 'on strokes' },
+  retrig:   { label: 'retrig',  kind: 'seg', seg: 'trigRetrigSeg', sec: 'on strokes' },
+  rearm:    { label: 'rearm',   kind: 'slider', el: 'trigRearmSlider', sec: 'on strokes' },
   // lens engine
   // `mode` (area | nearest) is a normal per-tile param (Ek: the sheet always
   // edits its own tile) — wide ships area and spot ships nearest via
   // FACTORY_PARAMS, and flipping it on a factory lens is a session edit.
-  mode:     { label: 'mode',    kind: 'seg', seg: 'snapToggleSeg', sec: 'lens' },
+  // THE LENS SHEET, REORGANISED (2026-09-18, Ek: "it's really hard to tell
+  // just from the params how things work together and what links to what or
+  // depends on what"). Three sections, named for the question each answers:
+  //
+  //   reach       reads · radius            the two that govern BOTH engines
+  //   on grains   mode · depth · k · order · fade · falloff
+  //   on strokes  dwell · start · release · retrig · rearm
+  //
+  // `mode` LEADS `on grains` because it is grains-only — the tape gate reads
+  // it in one place, to decide whether to build walk gates, and never to
+  // decide how a take is touched — and because it decides what the rest of
+  // that section means. `radius` stays shared: it is the grain reach AND the
+  // distance at which a stroke is touched (trigger.js `enterRad`). Every
+  // other row here is grains-only.
+  mode:     { label: 'mode',    kind: 'seg', seg: 'snapToggleSeg', sec: 'on grains' },
   // WHAT the cursor reads, beside HOW it reads (2026-09-07, Ek: "it should be
   // in a lens, reads grains, loops or both"). This is where the deleted
   // `triggers on|off` global belongs: per lens, saved with the tile, so a lens
   // that only fires tape is a tool you arm on `2` rather than a mute you have
   // to remember. The cap outranks it — capped, the cursor reads nothing.
-  reads:     { label: 'reads',    kind: 'reads', sec: 'lens' },
-  radius:    { label: 'radius',   kind: 'slider', el: 'radiusSlider', num: 'radiusVal', sec: 'lens' },
-  depth:     { label: 'depth',   kind: 'slider', el: 'recencySlider', read: 'depth', sec: 'lens' },
+  reads:     { label: 'reads',    kind: 'reads', sec: 'reach' },
+  radius:    { label: 'radius',   kind: 'slider', el: 'radiusSlider', num: 'radiusVal', sec: 'reach' },
+  // Recency is reach in TIME — only the N most recent takes are readable —
+  // and it filters the grain pools, never the tape gate. The eraser shares
+  // the row (one knob, two engines) and calls its section `reach` too.
+  depth:     { label: 'depth',   kind: 'slider', el: 'recencySlider', read: 'depth', sec: 'on grains' },
   // k, fill and order came HOME to the lens (#233): flow made density a
   // painted property of the material, so how many marks the cursor reads —
   // and in what order — is the lens's job. Aperture is deleted: it existed
@@ -2069,8 +2145,11 @@ const PARAM_DEFS = {
   // silently SHADOWED the granular envelope fade five entries up — one object,
   // one key — so every granular sheet rendered the radius-fade seg where the
   // envelope fade belonged.
-  rfade:     { label: 'fade',    kind: 'seg', seg: 'radiusFadeSeg', sec: 'fade' },
-  fadeCurve: { label: 'falloff', kind: 'fadecurve', el: 'radiusFadeCurveSlider', sec: 'fade' },
+  // The fade pair shapes the gain across the RADIUS, for grains only, and is
+  // dead in nearest mode (the bridge's `fadeOn`) — so it lives with the other
+  // grain rows and hides there, like every other dead row.
+  rfade:     { label: 'fade',    kind: 'seg', seg: 'radiusFadeSeg', sec: 'on grains' },
+  fadeCurve: { label: 'falloff', kind: 'fadecurve', el: 'radiusFadeCurveSlider', sec: 'on grains' },
   // `xfade` and `tether` used to sit here, as an "on pins" section of the LENS
   // sheet. They are pin parameters, so on 2026-08-30 they went back to being
   // only that: Settings → Pins, beside the Blend they shape. A lens reads the
@@ -2083,6 +2162,19 @@ const PARAM_DEFS = {
   // the whole take goes: erase a stroke by touching it anywhere. 'touch' is
   // the classic brush that takes only what it reaches.
   escope:   { label: 'erases',  kind: 'escope', sec: 'scrape' },
+};
+// What a section cannot say with its rows alone (2026-09-18). Two facts:
+// `radius` is the only row on the sheet that governs the tape engine too, and
+// the `on strokes` family reaches grains only under `mode: stroke`. Both are
+// read at render, because a note must never name a row the mode has hidden.
+const SEC_NOTE = {
+  'reach': () =>
+    S.lensMode === 'nearest'  ? 'what the cursor reads'
+  : S.lensReads === 'tape'    ? 'how close the cursor comes to touch a stroke'
+  : 'radius reaches for grains, and is how close the cursor comes to touch a stroke',
+  'on strokes': () => S.lensMode === 'stroke'
+    ? 'what a touch does — tape and grains alike'
+    : 'what a touch does — tape now; grains under mode: stroke',
 };
 const ENGINES = {
   granular: ['flow', 'headW', 'gEnd',
@@ -2104,19 +2196,23 @@ const ENGINES = {
              // lands share the next one (#283).
              'vol', 'pan', 'prob',
              'combAxis', 'combKeep', 'splatSpread', 'splatThrow', 'staffLo', 'staffHi'],
-  tape:     ['tspeed', 'tvol', 'onEnd', 'passes', 'tchop', 'chopMs', 'sliceMin'],
+  tape:     ['tspeed', 'tpitch', 'tstep', 'treverse', 'tvol', 'onEnd', 'passes', 'tchop', 'chopMs', 'sliceMin'],
   // The lens sheet reads as: geometry, then what touching GRAINS does, then
-  // what touching a LOOP does, then the edge fade (#236). Nothing about pins:
+  // what touching a STROKE does, then the edge fade (#236). Nothing about pins:
   // that is the whole of the 2026-08-30 split.
   // `fill` is NOT listed: it is folded into k's row (2026-09-07). k and fill
   // were one question wearing two controls — 'all' is k = infinity, and the
   // sheet drew a live-looking k slider beside it that was doing nothing.
-  lens:     ['mode', 'reads', 'radius', 'depth', 'k', 'korder',
-             'dwell', 'tstart', 'release', 'retrig', 'rearm',
-             'rfade', 'fadeCurve'],
+  lens:     ['reads', 'radius',
+             'mode', 'depth', 'k', 'korder', 'rfade', 'fadeCurve',
+             'dwell', 'tstart', 'release', 'retrig', 'rearm'],
   // The erase engine shares depth with the lens (one knob, two engines).
   erase:    ['depth', 'efrom', 'escope'],
 };
+// The dub is a tape tile whose master decides its length, speed and mix, so
+// it shows none of the tape sheet — only its own decay.
+const DUB_PIDS = ['decay'];
+function _sheetPids(id) { return id === 'overdub' ? DUB_PIDS : (ENGINES[engineOf(id)] ?? []); }
 function engineOf(id) {
   const cu = _tileCfg?.[id]?.custom;
   if (cu) return cu.engine;
@@ -2198,6 +2294,11 @@ function _migrateTileKeys(cfg) {
 }
 let _tileCfg = {};   // tileId → { params: {pid: value}, custom?: {label, engine} }
 try { _tileCfg = JSON.parse(localStorage.getItem(LS_TILES) || '{}') || {}; } catch (_) {}
+// One-shot (2026-09-18): the lens's `mode` was the seg's `off` / `on`; it is
+// `area` / `nearest` / `stroke` now. Read the old word, write the new, once.
+{ const M = { off: 'area', on: 'nearest' }; let moved = false;
+  for (const c of Object.values(_tileCfg)) { const m = c?.params?.mode; if (m in M) { c.params.mode = M[m]; moved = true; } }
+  if (moved) { try { localStorage.setItem(LS_TILES, JSON.stringify(_tileCfg)); } catch (_) {} } }
 if (_migrateTileKeys(_tileCfg) + _migratePids(_tileCfg, t => t?.params)) { _saveTileCfg(); }
 const FACTORY_PARAMS = {
   // The erasers differ ONLY in these two values — that is what makes them
@@ -2205,8 +2306,8 @@ const FACTORY_PARAMS = {
   all:    { depth: '0' },                      // 0 = no recency filter
   scrape: { depth: '1', efrom: 'top' },        // one layer, newest first
   bottom: { depth: '1', efrom: 'bottom' },     // one layer, oldest first
-  wide:   { mode: 'off' },         // area — snapToggleSeg's data-snap values
-  spot:   { mode: 'on' },          // nearest
+  wide:   { mode: 'area' },        // snapToggleSeg's data-mode values
+  spot:   { mode: 'nearest' },
   // The loop family's identity is what happens ON END (#244): line and slice
   // arm; the looper loops. Pinned here so switching tiles always restores it.
   line:   { onEnd: 'arm' },
@@ -2304,6 +2405,8 @@ function _readParam(pid) {
     case 'reads':    return S.lensReads ?? 'both';
     case 'fx': case 'tp': return String(_pStore(d)?.[d.path]);
     case 'onend':    return S.triggerParams.loopOnEnd ? 'loop' : 'arm';
+    case 'treverse': return S.triggerParams.reverse ? 'on' : 'off';
+    case 'tstep':    return S.triggerParams.step ?? 'free';
     case 'gend':     return _GEND_OF[S.traceMode] ?? 'scratch';
     case 'seg': {
       const seg = document.getElementById(d.seg);
@@ -2331,8 +2434,10 @@ function _applyParam(pid, v) {
     case 'efrom':    S.eraseOldest = v === 'bottom'; return;
     case 'escope':   S.eraseWholeStroke = v === 'stroke'; return;
     case 'reads':    S.lensReads = ['both', 'grains', 'tape'].includes(v) ? v : 'both'; return;
-    case 'fx': case 'tp': { const o = _pStore(d); if (o && isFinite(+v)) o[d.path] = +v; return; }
+    case 'fx': case 'tp': { const o = _pStore(d); if (o && isFinite(+v)) o[d.path] = d.q ? d.q(+v) : +v; return; }
     case 'onend':    S.triggerParams.loopOnEnd = v === 'loop'; return;
+    case 'treverse': S.triggerParams.reverse = v === 'on'; return;
+    case 'tstep':    S.triggerParams.step = TAPE_STEPS.includes(v) ? v : 'free'; return;
     case 'gend':     setGrainOnEnd(v); return;
     case 'seg': {
       const seg = document.getElementById(d.seg);
@@ -2383,7 +2488,7 @@ function applyTileParams(id) {
   if (eng === 'granular' && !_tileCfg[id]?.params) _adoptBlock(id);
   const persisted = _persists(id) ? (_tileCfg[id]?.params ?? {}) : {};
   const saved = { ...(FACTORY_PARAMS[id] ?? {}), ...persisted, ...(_sessionCfg[id] ?? {}) };
-  for (const pid of ENGINES[eng]) {
+  for (const pid of _sheetPids(id)) {
     if (pid in saved && !GLOBAL_PIDS.has(pid)) _applyParam(pid, saved[pid]);
   }
   // The panel handlers COALESCE their S writes (30–50 ms), and the caller
@@ -2411,7 +2516,7 @@ function captureTileParams(explicitId) {
   clearTimeout(_capTimer);
   _capTimer = setTimeout(() => {
     const params = {};
-    for (const pid of ENGINES[eng]) {
+    for (const pid of _sheetPids(id)) {
       if (GLOBAL_PIDS.has(pid)) continue;
       const v = _readParam(pid);
       if (v !== undefined) params[pid] = v;
@@ -2516,7 +2621,7 @@ export function refreshLensLive() {
   const sheet = document.getElementById('propRail');
   const kEl = sheet && sheet.querySelector('[data-klive]');
   if (!kEl) return;                              // not a lens sheet
-  const all  = !!S.grainKAllMode && !S.nearestMode;
+  const all  = !!S.grainKAllMode && S.lensMode !== 'nearest';
   const k    = S.grainOverrides.k ?? gp().k;
   const live = perf.kPool > 0;
   // Uncapped, the pair would be a lie — there is nothing to saturate against
@@ -2635,6 +2740,12 @@ function _rowFor(pid) {
     const kp = ['all', 'high', 'low'].map(v =>
       `<span class="${S.combKeep === v ? 'on' : ''}" data-combkeep="${v}">${v}</span>`).join('');
     return `<span class="opt"><i>keep</i><span class="seg">${kp}</span></span>`;
+  }
+  if (d.kind === 'tstep') {
+    const seg = [['free', 'speed and pitch move freely'], ['semi', 'snap both to semitones'],
+                 ['oct5', 'snap both to octaves and fifths']].map(([v, t]) =>
+      `<span class="${(S.triggerParams.step ?? 'free') === v ? 'on' : ''}" data-tstep="${v}" title="${t}">${v === 'oct5' ? 'oct+5th' : v}</span>`).join('');
+    return `<span class="opt"><i>step</i><span class="seg">${seg}</span></span>`;
   }
   if (d.kind === 'reads') {
     const seg = [['both', 'grains and tape'], ['grains', 'grains only — tape strokes do not fire'],
@@ -2965,23 +3076,32 @@ export function renderProps() {
   let cur = null;
   // The overdub brush has no dials of its own: its master decides the
   // length, the speed and the mix, and the take lands at 1× (§ 2 of the plan).
-  for (const pid of (id === 'overdub' ? [] : ENGINES[eng])) {
+  for (const pid of _sheetPids(id)) {
     const d = PARAM_DEFS[pid];
     if (!d) continue;
     // Nearest bypasses the radius and the recency filter outright (grain.js
     // hands the WHOLE sphere to the selection pass), and `fill: all` is a
-    // no-op there too — `const all = S.grainKAllMode && !S.nearestMode`. The
+    // no-op there too — `const all = S.grainKAllMode && S.lensMode !== 'nearest'`. The
     // hidden cabinet has always known this (#areaOnlyParams); the sheet did
     // not, so three of the lens page's six rows were dead in nearest mode and
     // none of them said so. That is most of why the page reads as confusing.
-    if (eng === 'lens' && S.nearestMode && (pid === 'radius' || pid === 'depth')) continue;
+    if (eng === 'lens' && S.lensMode === 'nearest'
+        && (pid === 'radius' || pid === 'depth' || pid === 'rfade' || pid === 'fadeCurve')) continue;
     // Same rule for what the lens READS: a lens reading only tape granulates
     // nothing, so k and order have no job; one reading only grains fires no
-    // tape, so the whole `on tape` family is inert. `radius` survives both —
+    // tape, so the `on strokes` family is inert unless a walker reads them.
+    // `radius` survives both —
     // the trigger gate's reach IS the cursor's search radius.
-    if (eng === 'lens' && S.lensReads === 'tape' && (pid === 'k' || pid === 'korder')) continue;
-    if (eng === 'lens' && S.lensReads === 'grains' && (d.sec === 'on tape')) continue;
-    if (!cur || cur.name !== (d.sec ?? '')) { cur = { name: d.sec ?? '', pids: [] }; sections.push(cur); }
+    // The two halves hide as one, each way round: a lens reading only tape
+    // granulates nothing, so the whole `on grains` section is inert; one
+    // reading only grains touches nothing — UNLESS the mode is `stroke`, where
+    // a grain stroke's walker answers to exactly those rows.
+    if (eng === 'lens' && S.lensReads === 'tape' && d.sec === 'on grains') continue;
+    if (eng === 'lens' && S.lensReads === 'grains' && S.lensMode !== 'stroke' && d.sec === 'on strokes') continue;
+    // The eraser borrows `depth` from the lens, so it would borrow the section
+    // name with it. Its reach is in time only, and `reach` is what that is.
+    const secName = (eng === 'erase' && d.sec === 'on grains') ? 'reach' : (d.sec ?? '');
+    if (!cur || cur.name !== secName) { cur = { name: secName, pids: [] }; sections.push(cur); }
     cur.pids.push(pid);
   }
   // A section can end up empty once its rows are hidden — drop it rather than
@@ -3037,7 +3157,7 @@ export function renderProps() {
   // are taken, so `taken / k` sits there and goes hot when they are equal.
   // Nothing needs a meter panel of its own.
   const kRow = () => {
-    const nearest = !!S.nearestMode;
+    const nearest = (S.lensMode === 'nearest');
     const all = !!S.grainKAllMode && !nearest;
     // The capsule is the question Ek wanted asked first — a number, or all —
     // and it leads the row rather than standing above it. In nearest mode it
@@ -3065,6 +3185,20 @@ export function renderProps() {
   // pick. `on end`'s `arm | loop` was the worst of them: `arm` named the
   // absence of the thing (Ek: "arm is confusing. it's more like loop on end?
   // yes or no"), so the row is now `loop on end` with a switch.
+  // THE MODE ROW SAYS WHAT IT DOES (2026-09-18). The dependencies on this
+  // sheet were only visible by inference — nearest turns the radius, depth and
+  // fade rows off, stroke changes what the cursor reads at all — so the answer
+  // sits under the control that causes it, at the moment of the decision.
+  const MODE_NOTE = {
+    area:    'every mark in reach',
+    nearest: 'the k closest, anywhere — radius, depth and fade are off',
+    stroke:  'touch a stroke and it plays itself, at its own pace',
+  };
+  const modeRow = () =>
+    `<div class="prow prow--seg"><span class="prow-n">${PARAM_DEFS.mode.label}</span>` +
+    `<div class="ds-chips">${_rowFor('mode')}</div></div>` +
+    `<div class="ds-sec-note">${MODE_NOTE[S.lensMode] ?? ''}</div>`;
+
   const swRow = (label, on, attrs, title) =>
     `<div class="prow prow--sw"><span class="prow-n">${label}</span>` +
     `<button type="button" class="ds-sw${on ? ' on' : ''}" role="switch"` +
@@ -3078,14 +3212,17 @@ export function renderProps() {
     if (pid === 'octave') return octaveRow();
     if (pid === 'gEnd')   return swRow('cloud on end', _GEND_OF[S.traceMode] === 'cloud', ' data-sw="gend"',
       'on — the stroke is pinned as a moving cloud on the path you drew, and keeps playing; off — it stays scratch, read only by the cursor');
-    if (pid === 'onEnd')  return swRow('loop on end', !!S.triggerParams.loopOnEnd, ' data-sw="onend"',
+    if (pid === 'onEnd')  return swRow('loop', !!S.triggerParams.loopOnEnd, ' data-sw="onend"',
       'on — the stroke loops when it ends; off — it is armed, and the cursor fires it');
+    if (pid === 'treverse') return swRow('reverse', !!S.triggerParams.reverse, ' data-sw="treverse"',
+      'on — the tape plays backwards, frozen when the stroke ends; the lens\'s start: ends flips it at the tail');
     if (pid === 'rfade')  return swRow('fade', !!S.radiusFadeEnabled, ' data-swproxy="radiusFadeSeg" data-swon="on" data-swoff="off"',
       'volume fades with distance from the cursor');
     if (pid === 'tchop')  return swRow('chop', !!S.triggerParams.chopOn, ' data-swproxy="trigChopSeg" data-swon="on" data-swoff="off"',
       'cut the next take at its onsets');
     if (eng === 'lens' && pid === 'k')      return kRow();
     if (eng === 'lens' && pid === 'radius') return radiusRow();
+    if (eng === 'lens' && pid === 'mode')   return modeRow();
     // Folded into its base parameter's row (#277).
     if (IS_VAR.has(pid) && VAR_OF[Object.keys(VAR_OF).find(k => VAR_OF[k] === pid)]) return '';
     if (PAIRED_IN.has(pid)) return '';                    // drawn by its partner
@@ -3161,6 +3298,10 @@ export function renderProps() {
       // session — it starts folded so the sections that ARE played sit above
       // the fold (#283). Session-scoped, not persisted: it is a disclosure,
       // not a preference.
+      // A section note only where the rows cannot say it themselves: that the
+      // radius governs both engines, and that the `on strokes` family reaches
+      // grains only in stroke mode.
+      const note = isLens ? SEC_NOTE[sc.name]?.() : null;
       const fold = sc.name === 'experimental';
       const shut = fold && !_expOpen;
       // WET leads the grain brush's DEPOSIT section (Ek, 2026-09-10; it was
@@ -3179,6 +3320,7 @@ export function renderProps() {
             `<span class="ds-fold-c">${shut ? '\u203a' : '\u2039'}</span>${sc.name}` +
             `<span class="ds-fold-n">${sc.pids.length}</span></button>`
           : `<div class="ds-sec-h">${sc.name}</div>`) +
+        (note ? `<div class="ds-sec-note">${note}</div>` : '') +
         `<div class="ds-sec-cells">${wetRow}${sc.pids.map(cell).join('')}</div></div>`;
     }).join('') +
     (_extrasFor(id) ? `<div class="ds-extras">${_extrasFor(id)}</div>` : '') +
@@ -3258,7 +3400,7 @@ function _knobVal(pid) {
 }
 function _knobSet(pid, raw) {
   const d = PARAM_DEFS[pid];
-  if (d.kind === 'fx' || d.kind === 'tp') { const o = _pStore(d); if (o) o[d.path] = raw; return; }
+  if (d.kind === 'fx' || d.kind === 'tp') { const o = _pStore(d); if (o) o[d.path] = d.q ? d.q(raw) : raw; return; }
   if (d.kind === 'flow')     { S.paintTicker = S.paintTicker || {}; S.paintTicker.intervalMs = Math.round(raw); return; }
   if (d.kind === 'head')     { S.headWidthDeg = Math.round(raw); return; }
   const el = document.getElementById(d.el);
@@ -3921,6 +4063,7 @@ function _wireOptions(box, capId) {
         if (btn) btn.click();
       } else if (sw.dataset.sw === 'glink') { toggleGrainLink(); return; }
       else if (sw.dataset.sw === 'onend')  { S.triggerParams.loopOnEnd = !S.triggerParams.loopOnEnd; }
+      else if (sw.dataset.sw === 'treverse') { S.triggerParams.reverse = !S.triggerParams.reverse; }
       else if (sw.dataset.sw === 'gend')   { setGrainOnEnd(_GEND_OF[S.traceMode] === 'cloud' ? 'scratch' : 'cloud'); }
       captureTileParams();
       renderOptions();
@@ -3932,6 +4075,16 @@ function _wireOptions(box, capId) {
       const btn = seg && [...seg.querySelectorAll('button')].find(b =>
         Object.values(b.dataset).includes(sp.dataset.val));
       if (btn) { btn.click(); renderOptions(); }
+    });
+  });
+  box.querySelectorAll('[data-tstep]').forEach(sp => {
+    sp.addEventListener('click', () => {
+      S.triggerParams.step = sp.dataset.tstep;
+      // Re-snap both dials to the new grid, so the sheet never shows a value off it.
+      S.triggerParams.pitch = quantPitch(S.triggerParams.pitch);
+      const sl = document.getElementById('trigSpeedSlider');
+      if (sl) { sl.value = quantSpeed(+sl.value); sl.dispatchEvent(new Event('input', { bubbles: true })); }
+      captureTileParams(); renderOptions();
     });
   });
   box.querySelectorAll('[data-reads]').forEach(sp => {

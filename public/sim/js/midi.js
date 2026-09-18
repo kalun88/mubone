@@ -1506,7 +1506,7 @@ function dispatchAction(id, midiVal) {
     // ── Search ──────────────────────────────────────────────────────────────
     case 'snap':         toggleNearestMode(); break;
     case 'k_all':
-      if (!S.nearestMode) { S.grainKAllMode = !S.grainKAllMode; updatePlaybackControls(); }
+      if (S.lensMode !== 'nearest') { S.grainKAllMode = !S.grainKAllMode; updatePlaybackControls(); }
       break;
     case 'k_seq':
       S.grainKSeqMode = !S.grainKSeqMode;

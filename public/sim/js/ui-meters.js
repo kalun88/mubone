@@ -322,7 +322,7 @@ export function initRadiusFade() {
   // Restore persisted state — also reflects nearestMode override
   const syncUI = () => {
     // When scope=nearest, fade is forced off visually (no radius to fade)
-    const effectiveOn = S.radiusFadeEnabled && !S.nearestMode;
+    const effectiveOn = S.radiusFadeEnabled && S.lensMode !== 'nearest';
     seg.querySelectorAll('.grain-seg-btn').forEach(b => {
       b.classList.toggle('active', (b.dataset.fade === 'on') === effectiveOn);
     });
@@ -342,7 +342,7 @@ export function initRadiusFade() {
     if (slider) slider.value = S.radiusFadeCurve;
     if (numBox) numBox.value = Math.round(S.radiusFadeCurve * 100) + '%';
     // Dim the whole section when lock overrides fade
-    seg.style.opacity = S.nearestMode ? '0.4' : '';
+    seg.style.opacity = S.lensMode === 'nearest' ? '0.4' : '';
   };
   syncUI();
   // Expose so toggleNearestMode / applyPresetObject can refresh the fade UI
