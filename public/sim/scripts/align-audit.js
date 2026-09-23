@@ -1934,6 +1934,66 @@ function collapses(label, items, key) {
     check(bt.howTops === 1 && bt.howRows.length >= 9 && bt.howRows.every(h => h <= 56), 'the drawn how-a-button-is-read table: one head line, every row under 56px', `rows ${bt.howRows.join(', ')}px`);
   }
 
+  // ── The settings kit at attribute depth (2026-09-24) ─────────────────────
+  // Three kit rules lost to `.settings-host .in-settings input[type=text]`
+  // (0,3,1) and shipped wrong: every settings numbox wore the field's border
+  // and 12px padding inside its 64px, so "250ms" clipped; the search's 36px
+  // left padding never landed and the glyph sat on the placeholder; and a
+  // borrowed slider inside its <span> slot sat at the range's intrinsic 129px
+  // beside page-owned ones at 222. Plus the four Camera + Display rows that
+  // were buttons saying "Toggle": a yes/no on a settings page is the toggle.
+  console.log('\n── settings kit at attribute depth ──');
+  const KD_PROBE = `(async () => {
+    const { S } = await import('./js/state.js');
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const wasOpen = !!document.querySelector('#settingsModal.open');
+    const w = el => el ? Math.round(el.getBoundingClientRect().width) : -1;
+    S._openSettings('tools'); await wait(600);
+    const nums = [...document.querySelectorAll('#settingsHost .grain-numbox')];
+    const clipped = nums.filter(n => n.scrollWidth > n.clientWidth).map(n => n.id);
+    const bordered = nums.filter(n => parseFloat(getComputedStyle(n).borderLeftWidth) > 0).map(n => n.id);
+    const sliders = [...document.querySelectorAll('#settingsHost .set-ctl--slider .grain-slider')].map(w);
+    S._openSettings('keys'); await wait(600);
+    const search = document.getElementById('mappingFilter');
+    const icon = document.querySelector('#settingsHost .set-search-icon');
+    const pad = search ? parseFloat(getComputedStyle(search).paddingLeft) : -1;
+    const iconRight = icon ? icon.getBoundingClientRect().right - search.getBoundingClientRect().left : -1;
+    S._openSettings('view'); await wait(600);
+    const verbs = [...document.querySelectorAll('#settingsHost .set-row .set-ctl .set-btn')]
+      .map(b => b.textContent.trim()).filter(t => /^(toggle|show \\/ hide|on \\/ off)$/i.test(t));
+    if (!wasOpen) document.querySelector('#settingsModal.open .close-btn, #settingsClose')?.click();
+    return { clipped, bordered, sliders, pad, iconRight, verbs };
+  })()`;
+  const kd = await evalInApp(KD_PROBE, 'kitdepth_' + Date.now().toString(36));
+  if (!kd || kd.unavailable) skipped('settings kit at attribute depth', 'pages did not open', 4);
+  else {
+    check(kd.clipped.length === 0 && kd.bordered.length === 0, 'every settings numbox is the kit\'s plain 64px readout, its text unclipped',
+      kd.clipped.length || kd.bordered.length ? `clipped: ${kd.clipped.join(', ') || '—'} · bordered: ${kd.bordered.join(', ') || '—'}` : 'none clipped, none bordered');
+    check(kd.sliders.length > 1 && new Set(kd.sliders).size === 1, 'borrowed and page-owned sliders on Tools share one width', `${kd.sliders.join('/')}px`);
+    check(kd.pad >= kd.iconRight + 4, 'the Keys filter\'s text starts clear of its glyph', `padding-left ${kd.pad}px, glyph ends at ${Math.round(kd.iconRight)}px`);
+    check(kd.verbs.length === 0, 'no settings row wears a button that says Toggle — a yes/no is the toggle', kd.verbs.join(', ') || 'none');
+  }
+  // ── Settings → Keys + MIDI: the filter box ───────────────────────────────
+  // The box's own rule was (0,3,0) and the kit's `input[type=text]` (0,3,1), so
+  // the field's 12px padding won and the glyph sat on the first letter (Ek,
+  // 2026-09-24). The invariant: the text starts to the RIGHT of the glyph.
+  console.log('\n── keys filter box ──');
+  const KF_PROBE = `(async () => {
+    const { S } = await import('./js/state.js');
+    const wasOpen = !!document.querySelector('#settingsModal.open');
+    S._openSettings('keys');
+    await new Promise(r => setTimeout(r, 600));
+    const i = document.getElementById('mappingFilter'), ic = document.querySelector('.set-search-icon');
+    if (!i || !ic) return { unavailable: true };
+    const cs = getComputedStyle(i), b = i.getBoundingClientRect(), ib = ic.getBoundingClientRect();
+    const textStart = b.left + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft);
+    if (!wasOpen) document.querySelector('#settingsModal.open .close-btn, #settingsClose')?.click();
+    return { gap: textStart - ib.right, iconIn: ib.left - b.left, h: b.height };
+  })()`;
+  const kf = await evalInApp(KF_PROBE, 'keysfilter_' + Date.now().toString(36));
+  if (!kf || kf.unavailable) skipped('keys filter box', 'page did not open', 1);
+  else check(kf.gap >= 4 && kf.iconIn >= 8, 'the keys filter\'s glyph sits clear of its text', `glyph ${kf.iconIn}px in, text ${kf.gap}px past it, box ${kf.h}px`);
+
   console.log('\n── spacing rhythm ──');
   {
     const lits = auditSpacingLiterals();

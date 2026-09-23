@@ -87,9 +87,9 @@
 // preset like the other two (#287).
 // ============================================================================
 
-import { S, perf, gp , HAND_TAP_MS } from './state.js';
+import { S, perf, gp , HAND_TAP_MS, FILTER_Q_FLAT, FILTER_Q_PEAK } from './state.js';
 import { setBrush } from './brush.js';
-import { resolveGrainParams, freezeVoicing } from './brush-voicing.js';
+import { resolveGrainParams, freezeVoicing, filterFromCorners } from './brush-voicing.js';
 import * as HIST from './history.js';
 import { fmtPitch, quantPitch, quantSpeed, PITCH_MAX_CENTS, TAPE_STEPS } from './tape-pitch.js';
 
@@ -2748,24 +2748,22 @@ export function render() {
   const sub = pid => pid === 'gdwell' || pid === 'gretrig';
   // THE LENS GREYS WHAT ITS MODE BYPASSES, as its sheet did (2026-09-22:
   // "it should just grey out the one's not available"). Nearest hands the
-  // whole sphere to the selection pass, so radius, depth, fill and the fade
-  // pair have nothing to act on; and `fill: all` is k = infinity, so k's own
-  // row goes ash under it. The rows stay in place — a tab that reshapes
+  // whole sphere to the selection pass, so radius, depth and the fade pair
+  // have nothing to act on. (k = 0 is `all` since 2026-09-24 — the `fill`
+  // switch that greyed k is gone.) The rows stay in place — a tab that reshapes
   // itself under a flip is the thing that made the old page feel like it was
   // collapsing.
   const nearest = S.lensMode === 'nearest';
-  const uncapped = !nearest && !!S.grainKAllMode;
+  const uncapped = (S.grainOverrides.k ?? gp().k) === 0;   // k = 0 is all
   const reads = S.lensReads ?? 'both';
   // Radius is the TAPE gate's too, so nearest only takes it off a cursor that
   // reads grains alone.
   const grainsOnlyNearest = nearest && reads === 'grains';
   const lensNA = pid =>
-    reads === 'tape' && ['mode', 'depth', 'fill', 'k', 'korder', 'rfade'].includes(pid)
+    reads === 'tape' && ['mode', 'depth', 'k', 'korder', 'rfade'].includes(pid)
       ? `scope is tape — a take fires when the cursor comes within the radius, and ${PARAM_DEFS[pid].perfLabel ?? PARAM_DEFS[pid].label} only shapes how grains are read`
-    : nearest && ['depth', 'fill', 'rfade'].includes(pid) || grainsOnlyNearest && pid === 'radius'
+    : nearest && ['depth', 'rfade'].includes(pid) || grainsOnlyNearest && pid === 'radius'
       ? `nearest reads the k closest anywhere, so ${PARAM_DEFS[pid].perfLabel ?? PARAM_DEFS[pid].label} has nothing to act on — switch mode to radius to use it`
-    : uncapped && pid === 'k'
-      ? 'all is on — every mark in reach fires, so there is no ceiling to set'
     : null;
   let perfHTML = (PERF_PIDS[eng] ?? []).map(pid => {
     let row = perfRow(pid); if (!row) return '';
@@ -3153,12 +3151,15 @@ const PARAM_DEFS = {
   pitch:    { label: 'pitch',   kind: 'slider', el: 'gcPitchShiftSlider', sec: 'pitch' },
   pitchJit: { label: 'pitch ±', kind: 'slider', el: 'gcPitchSlider', sec: 'pitch' },
   dir:      { label: 'direction', kind: 'seg', seg: 'gcDirSeg', sec: 'pitch' },
-  // granular — filter
-  hpf:      { label: 'hpf',     kind: 'slider', el: 'gcHpfSlider', sec: 'filter' },
-  lpf:      { label: 'lpf',     kind: 'slider', el: 'gcLpfSlider', sec: 'filter' },
-  hpq:      { label: 'hpf Q',   kind: 'slider', el: 'gcHpfQSlider', num: 'gcHpfQNum', sec: 'filter' },
-  lpq:      { label: 'lpf Q',   kind: 'slider', el: 'gcLpfQSlider', num: 'gcLpfQNum', sec: 'filter' },
-  fltJit:   { label: 'flt ±',   kind: 'slider', el: 'gcFilterJitterSlider', sec: 'filter' },
+  // granular — filter. ONE filter per grain (2026-09-23): a switch, a type,
+  // a cutoff, a resonance and a spread — Granulator's layout, Pigments',
+  // Emission Control's. The old hpf + lpf with a Q each was an EQ's layout
+  // and could not make a band-pass, which is the grain filter that matters.
+  flt:      { label: 'filter',  kind: 'seg', seg: 'gcFilterOnSeg', bool: ['on', 'off'], sec: 'filter' },
+  ftype:    { label: 'type',    kind: 'seg', seg: 'gcFilterTypeSeg', words: true, sec: 'filter' },
+  cutoff:   { label: 'cutoff',  kind: 'slider', el: 'gcCutoffSlider', sec: 'filter' },
+  res:      { label: 'res',     kind: 'slider', el: 'gcResSlider', num: 'gcResNum', sec: 'filter' },
+  fltJit:   { label: 'cutoff ±', kind: 'slider', el: 'gcFilterJitterSlider', sec: 'filter' },
   // granular — output
   pan:      { label: 'spread',  kind: 'slider', el: 'gcPanSlider', sec: 'output' },
   vol:      { label: 'vol',     kind: 'slider', el: 'gcVolSlider', sec: 'output' },
@@ -3278,21 +3279,22 @@ const PARAM_DEFS = {
   // Recency is reach in TIME — only the N most recent takes are readable —
   // and it filters the grain pools, never the tape gate. The eraser shares
   // the row (one knob, two engines) and calls its section `reach` too.
-  depth:     { label: 'depth',   kind: 'slider', el: 'recencySlider', read: 'depth', sec: 'on grains' },
+  // FOUR ANSWERS, ON A CAPSULE (Ek, 2026-09-24: "a multi select pill with just
+  // 1 2 3 then all"). It was a 1–16 slider read out in words; the cabinet seg
+  // `recencySeg` holds 1 · 2 · 3 · all, and a tile stores its data-depth —
+  // '0' is all, the values FACTORY_PARAMS already used.
+  depth:     { label: 'depth',   kind: 'seg', seg: 'recencySeg', words: true, sec: 'on grains' },
   // k, fill and order came HOME to the lens (#233): flow made density a
   // painted property of the material, so how many marks the cursor reads —
   // and in what order — is the lens's job. Aperture is deleted: it existed
   // only to cap k without touching the brush, and with k here it had no job.
   k:        { label: 'k',       kind: 'slider', el: 'searchKSlider', num: 'kBigNum', sec: 'on grains' },
-  // TWO YES/NOS WEARING CAPSULES (Ek, 2026-09-22 night: "i want it to be
-  // boolean when possible"). `fill` asks "cap it at k, or not" and `order`
-  // "in the order it was played, or not" — so on the tab they are the switches
-  // `all` and `step`, named for the thing that is on (the same rule retrig
-  // follows). The cabinet keeps its two-button segs; the switch writes through
-  // them (`data-swproxy`).
-  fill:     { label: 'fill',    perfLabel: 'all',  kind: 'seg', seg: 'kAllSeg', bool: ['on', 'off'], sec: 'on grains',
-              tips: ['every mark in reach fires — click to cap it at k',
-                     'the cursor reads the k nearest marks in reach — click to fire every mark in reach'] },
+  // A YES/NO WEARING A CAPSULE (Ek, 2026-09-22 night: "i want it to be
+  // boolean when possible"). `order` asks "in the order it was played, or not"
+  // — so on the tab it is the switch `step`, named for the thing that is on
+  // (the same rule retrig follows). The cabinet keeps its two-button seg; the
+  // switch writes through it (`data-swproxy`). (`fill` — "cap it at k, or
+  // not" — stood beside it until 2026-09-24; k = 0 is that answer now.)
   korder:   { label: 'order',   perfLabel: 'step', kind: 'seg', seg: 'kSeqSeg', bool: ['on', 'off'], sec: 'on grains',
               tips: ['marks play one at a time, in the order they were made — click for random',
                      'the next mark is picked at random from what is in reach — click to play them in order'] },
@@ -3391,7 +3393,7 @@ const ENGINES = {
              // arbitrary.
              'dur', 'period', 'glink', 'fade', 'curve', 'startJit',
              'durVar', 'perVar', 'pitch', 'octave', 'pitchJit', 'dir',
-             'hpf', 'lpf', 'hpq', 'lpq', 'fltJit',
+             'flt', 'ftype', 'cutoff', 'res', 'fltJit',
              // Output: level takes the row, then the two that shape how it
              // lands share the next one (#283).
              'vol', 'pan', 'prob'],
@@ -3418,11 +3420,10 @@ const ENGINES = {
   // WHAT ORDER (step), and how what survives LANDS (fade; its falloff is in
   // Settings → Tools). Radius alone leads because tape fires on touch at it
   // too (trigger.js `enterRad`), so scope `tape` greys the whole block below.
-  // `all` sits directly above k because it is k's off switch.
   // FADE IS GRAIN'S ONLY (Ek, 2026-09-23, after trying it on tape): a take
   // plays whole and its RELEASE says how it ends; a distance fade silenced
   // every take the moment the cursor let go, overriding play-to-end.
-  lens:     ['reads', 'radius', 'mode', 'depth', 'fill', 'k', 'korder',
+  lens:     ['reads', 'radius', 'mode', 'depth', 'k', 'korder',
              'rfade', 'fadeCurve'],
   // The erase engine shares depth with the lens (one knob, two engines).
   erase:    ['depth', 'efrom'],
@@ -3465,13 +3466,15 @@ const SHAPE_PIDS = {
   // The eye's aperture: what it reaches for, and how it chooses among what it
   // reaches. `radius` governs BOTH engines — it is also the trigger gate's own
   // reach — which is why it sits in `reach` and not in `on grains`.
-  lens:     ['reads', 'radius', 'mode', 'depth', 'k', 'fill', 'korder', 'rfade', 'fadeCurve'],
+  lens:     ['reads', 'radius', 'mode', 'depth', 'k', 'korder', 'rfade', 'fadeCurve'],
   erase:    ['depth', 'efrom'],
 };
 const VOICE_PIDS = {
-  granular: ['dur', 'period', 'glink', 'fade', 'curve', 'startJit', 'durVar', 'perVar',
+  // A SUB-ROW FOLLOWS ITS PARENT (Ek, 2026-09-23): taper is a property of
+  // the curve, res of the cutoff, step and octave of pitch — see SUB_OF.
+  granular: ['dur', 'period', 'glink', 'curve', 'fade', 'startJit', 'durVar', 'perVar',
              'pitch', 'octave', 'pitchJit', 'dir',
-             'hpf', 'lpf', 'hpq', 'lpq', 'fltJit',
+             'flt', 'ftype', 'cutoff', 'res', 'fltJit',
              'vol', 'pan', 'prob'],
   tape:     ['tspeed', 'tpitch', 'tstep', 'treverse', 'tvol'],
   lens:     [],   // the eye has no voice
@@ -3599,8 +3602,8 @@ function engineOf(id) {
 // "these values are muted", which is what dimming means in every DAW.
 
 // One-shot pid migrations: field→radius, sedge→rfade, scurve→fadeCurve
-// (2026-08-26), fq→hpq+lpq (2026-09-07). Read old key → write new → done;
-// no fallback.
+// (2026-08-26), fq→hpq+lpq (2026-09-07), hpf+lpf+hpq+lpq→flt+ftype+cutoff+res
+// (2026-09-23). Read old key → write new → done; no fallback.
 // `fade` is TWO params — granular envelope fade on brush tiles, radius fade
 // on lens tiles (a duplicate PARAM_DEFS key until 2026-08-28, when the lens
 // one became `rfade`) — so that rename applies on lens tiles only.
@@ -3619,6 +3622,18 @@ function _migratePids(bag, pick) {
     // 2026-09-07: one Q became two. A tile that stored the shared one gets it
     // on BOTH corners, which is exactly the filter it had.
     if ('fq' in m) { m.hpq = m.hpq ?? m.fq; m.lpq = m.lpq ?? m.fq; delete m.fq; dirty = true; }
+    // 2026-09-23: two corners became ONE filter. The stored values are slider
+    // POSITIONS (the two cutoffs log-mapped over 0–1000, the Qs raw), so they
+    // are turned into Hz first and the new cutoff back into a position; the
+    // rule for which corner survives is `filterFromCorners`.
+    if ('hpf' in m || 'lpf' in m || 'hpq' in m || 'lpq' in m) {
+      const hz  = pos => 20 * Math.pow(1000, (+pos || 0) / 1000);
+      const pos = f => Math.round(1000 * Math.log(Math.max(20, f) / 20) / Math.log(1000));
+      const f = filterFromCorners(hz(m.hpf ?? 0), hz(m.lpf ?? 1000), +m.hpq || 0.707, +m.lpq || 0.707);
+      m.flt = f.filterOn ? 'on' : 'off'; m.ftype = f.filterMode;
+      m.cutoff = pos(f.cutoff); m.res = Math.round(f.res * 100) / 100;
+      delete m.hpf; delete m.lpf; delete m.hpq; delete m.lpq; dirty = true;
+    }
   }
   return dirty;
 }
@@ -3688,6 +3703,9 @@ try { _tileCfg = JSON.parse(localStorage.getItem(LS_TILES) || '{}') || {}; } cat
 // The deleted tiles' blocks go with them — see `_DROPPED_TILES`.
 // `escope` became erase's MODE on 2026-09-22 — one shot, drop the stored pid.
 { let n = 0; for (const c of Object.values(_tileCfg)) if (c?.params && 'escope' in c.params) { delete c.params.escope; n++; }
+  if (n) _saveTileCfg(); }
+// Depth is 1 · 2 · 3 · all since 2026-09-24 — a stored deeper value lands on 3, one shot.
+{ let n = 0; for (const c of Object.values(_tileCfg)) if (c?.params && +c.params.depth > 3) { c.params.depth = '3'; n++; }
   if (n) _saveTileCfg(); }
 { let n = 0; for (const id of Object.keys(_DROPPED_TILES)) if (id in _tileCfg) { delete _tileCfg[id]; n++; }
   if (n) _saveTileCfg(); }
@@ -4048,9 +4066,8 @@ function _readParam(pid) {
       return attr ? b.dataset[attr] : undefined;
     }
     default: {
-      // depth reads recencyN 0 as 'all' via the slider max; store raw value
       const el = document.getElementById(d.el);
-      return el ? String(pid === 'depth' && S.recencyN === 0 ? 0 : el.value) : undefined;
+      return el ? String(el.value) : undefined;
     }
   }
 }
@@ -4101,14 +4118,6 @@ function _applyParam(pid, v) {
           num.dispatchEvent(new Event('change', { bubbles: true }));
           return;
         }
-      }
-      if (pid === 'depth') {
-        // depth 'all' (0) has no slider position, so the slider and state can
-        // diverge — apply unconditionally rather than trusting el.value.
-        if (String(v) === '0') { S.recencyN = 0; return; }
-        el.value = v;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        return;
       }
       if (String(el.value) !== String(v)) {
         el.value = v;
@@ -4277,15 +4286,15 @@ export function refreshLensLive() {
   const bar = document.getElementById('cursorPanel');
   const kEl = bar && bar.querySelector('[data-klive]');
   if (!kEl) return;
-  const all  = !!S.grainKAllMode && S.lensMode !== 'nearest';
   const k    = S.grainOverrides.k ?? gp().k;
+  const all  = k === 0;
   const live = perf.kPool > 0;
   // Uncapped, the pair would be a lie — there is nothing to saturate against
   // — so the row says the one true number and what it is.
   const txt  = !live ? '—' : `${perf.kPool} → ${perf.kCount}`;
   if (kEl.textContent !== txt) kEl.textContent = txt;
   kEl.title = all
-    ? 'grain marks in reach → firing — all is on, so every one fires'
+    ? 'grain marks in reach → firing — k is all, so every one fires'
     : `grain marks in reach → taken — lit when k (${k}) is what is limiting the cursor`;
   kEl.classList.toggle('hot', live && !all && perf.kCount >= k);
 }
@@ -4410,10 +4419,6 @@ const SEG_ICONS = {
   snapToggleSeg: {
     off: () => MODE_G.area,
     on:  () => MODE_G.nearest,
-  },
-  kAllSeg: {
-    off: () => '<circle cx="6" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="18" cy="12" r="1.9"/>',
-    on:  () => [5.5, 12, 18.5].flatMap(x => [5.5, 12, 18.5].map(y => `<circle cx="${x}" cy="${y}" r="1.8"/>`)).join(''),
   },
   kSeqSeg: {
     off: () => '<path d="M3 7h4l10 10h4M3 17h4l10-10h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M18.5 4.5L21 7l-2.5 2.5M18.5 14.5L21 17l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -4543,17 +4548,6 @@ function _segRowAuto(label, segId, omit, words) {
 
 const READS = {
   radius:  () => `${S.searchRadiusDeg}°`,
-  depth:  () => {
-    const n = S.recencyN;
-    if (!(n > 0)) return 'all strokes';
-    const s = n === 1 ? 'stroke' : 'strokes';
-    // A scrape reading from the bottom takes the OLDEST n — say so (Ek).
-    // The lens always reads newest-first, so only erase tiles flip the word.
-    // The unit STAYS (docs/VOCABULARY.md: "last 3 strokes", never a bare 3);
-    // the value column is sized for it — see --prow-val.
-    const id = sheetTileId();
-    return engineOf(id) === 'erase' && S.eraseOldest ? `first ${n} ${s}` : `last ${n} ${s}`;
-  },
   flow:   () => `${(S.paintTicker && S.paintTicker.intervalMs) ?? 50}ms`,
   fadeCurve: () => `${Math.round((S.radiusFadeCurve ?? 0.5) * 100)}%`,
   head:   () => (S.headWidthDeg > 0 ? `${S.headWidthDeg}°` : 'line'),
@@ -4742,9 +4736,31 @@ function toggleSheet(id, kind = 'tool') {
 // drawer sheet"); the drawer is the TOOL's — the block every placement of that
 // tool plays.
 
+// ── NEVER REBUILD THE SHEET UNDER A HELD POINTER (2026-09-24) ──────────────
+// The filter dot did not stick: a quarter second into the FIRST drag on a
+// tile, captureTileParams saw the tile go off-factory and called render(),
+// whose tail is renderProps() — the whole sheet re-rendered, the canvas under
+// the pointer was replaced by a fresh one (grab = false, no capture), and the
+// rest of the drag went to an element that had never seen the press. The row
+// tracks capture the pointer the same way and died the same way. Proved with
+// a real mouse over the bridge: `sameCanvas` false 500 ms after the down.
+// So a rebuild that arrives while the sheet holds a pointer WAITS for the
+// release — the values it would draw are the live ones the drag is writing,
+// so nothing is lost by drawing them a moment later.
+let _sheetHeld = false, _propsPending = false;
+function _sheetRelease(e) {
+  if (!_sheetHeld) return;
+  // Only the WINDOW's blur is a release edge. A capture listener on the
+  // window sees every element's blur too, and typing a value fires a
+  // synthetic one on the cabinet numbox (_paramTypeSet) — mid-drag.
+  if (e?.type === 'blur' && e.target !== window) return;
+  _sheetHeld = false;
+  if (_propsPending) { _propsPending = false; if (_propsOn) renderProps(); }
+}
 export function renderProps() {
   const sheet = document.getElementById('propRail');
   if (!sheet) return;
+  if (_sheetHeld) { _propsPending = true; return; }
   // ── Order matters here, and got it wrong twice (#275) ────────────────────
   // The FILTER first: it is a state that overrides whatever is selected, so it
   // has to be settled before the source guard — with the sampler last-tapped,
@@ -4891,7 +4907,13 @@ export function renderProps() {
   // (`cellOrNA` — a row in ash when the state cannot use it — went with the
   //  lens sheet, 2026-09-22 night; the greying lives on the lens TAB now and
   //  no other sheet has a row that goes dead.)
+  // Every row shape opens with `class="prow`, so one replacement indents any
+  // of them when the pid is a sub-row.
   const cell = pid => {
+    const h = cellRaw(pid);
+    return SUB_OF[pid] && h ? h.replace('class="prow', 'class="prow prow--sub') : h;
+  };
+  const cellRaw = pid => {
     if (pid === 'glink')  return swRow('link', _grainLink.on, ' data-sw="glink"',
       _grainLink.on ? `linked — period follows duration at ${_grainLink.ratio.toFixed(2)}\u00d7`
                     : 'free — duration and period move on their own');
@@ -4906,6 +4928,8 @@ export function renderProps() {
       'volume fades with distance from the cursor');
     if (pid === 'tchop')  return swRow('slice', !!S.triggerParams.sliceOn, ' data-swproxy="trigChopSeg" data-swon="on" data-swoff="off"',
       'on — the next take is cut into a trigger per ATTACK, measured against the room\'s own floor; off — it stays one take');
+    if (pid === 'flt')    return swRow('filter', _readParam('flt') === 'on', ' data-swproxy="gcFilterOnSeg" data-swon="on" data-swoff="off"',
+      'on — every grain goes through the filter drawn above; off — grains play unfiltered');
     // Folded into its base parameter's row (#277).
     if (IS_VAR.has(pid) && VAR_OF[Object.keys(VAR_OF).find(k => VAR_OF[k] === pid)]) return '';
     if (PAIRED_IN.has(pid)) return '';                    // drawn by its partner
@@ -4979,7 +5003,7 @@ export function renderProps() {
         // The old text caption under the canvas said the same four numbers the
         // rows now say, so it is gone.
         return `<div class="ds-sec"><div class="ds-sec-h">filter</div>` +
-          `<canvas id="engFilter" data-accent="${accent}" title="drag the edges for hpf / lpf · up and down for Q · double-click resets"></canvas>` +
+          `<canvas id="engFilter" data-accent="${accent}" title="drag across for the cutoff · up and down for the resonance · double-click resets"></canvas>` +
           `<div class="ds-sec-cells">${sc.pids.map(cell).join('')}</div></div>`;
       }
       // EVERY SECTION IS OPEN (Ek, 2026-09-22: "dont make experimental a
@@ -5153,6 +5177,14 @@ function _syncLink(pid, sheet) {
 }
 
 const VAR_OF = { dur: 'durVar', period: 'perVar', pitch: 'pitchJit' };
+// ── A SUB-ROW: a parameter OF another parameter (Ek, 2026-09-23) ──────────
+// "step is part of pitch … taper is part of curve, it should be under curve
+// firstly, then indented." The tab already had the shape — dwell and retrig
+// under walk (`mrow--sub`) — so the sheet wears the same one: the row sits
+// directly under its parent in VOICE_PIDS, its NAME steps in one step of the
+// scale and a step quieter, the control stays flush. Nothing here changes a
+// pid, a binding or a stored block; it is the sheet's reading order alone.
+const SUB_OF = { fade: 'curve', tstep: 'tpitch', octave: 'pitch', res: 'cutoff' };
 const IS_VAR = new Set(Object.values(VAR_OF));
 // The other way: a spread's base row, which is the row that DRAWS it.
 const OWNER_OF = Object.fromEntries(Object.entries(VAR_OF).map(([k, v]) => [v, k]));
@@ -5213,17 +5245,17 @@ function _knobFor(pid) {
       ` style="left:${l.toFixed(1)}%;width:${(r - l).toFixed(1)}%${vf > 0.001 ? '' : ';display:none'}"></i>`;
     spreadCell = `<input class="prow-s${vf > 0.001 ? '' : ' zero'}" data-pval="${vpid}"` +
       ` value="${vv.disp}" spellcheck="false" aria-label="${PARAM_DEFS[vpid].label}"` +
-      ` title="${PARAM_DEFS[vpid].label} — drag to set, type a value, double-click for none">`;
+      ` title="${PARAM_DEFS[vpid].label} — drag to set · click and type a value · double-click for none">`;
   }
   // A parameter sitting at a value that does nothing (no jitter, full
   // probability) is visual noise; dim it so the eye goes to what is set.
   const inert = def != null && Math.abs(raw - def) < (rg.step || 1e-9) / 2 && _NOOP_AT_DEFAULT.has(pid);
   return `<span class="prow-t${inert ? ' inert' : ''}" data-ptrack="${pid}"` +
-    ` title="drag to set${resetTip}${vpid ? ' · the ± spread is the cell at the end of the row' : ''}">` +
+    ` title="drag to set${resetTip}${vpid ? ' · drag the band\'s edge, or the ± cell at the end of the row, for the spread' : ''}">` +
     `<i class="prow-f" style="width:${(f * 100).toFixed(1)}%"></i>${band}${tick}` +
     `<i class="prow-h" style="left:${(f * 100).toFixed(1)}%"></i></span>` +
     `<input class="prow-v" data-pval="${pid}" value="${disp}" spellcheck="false"` +
-    ` aria-label="${d.label}" title="drag to set, or type a value and press Enter">` + spreadCell;
+    ` aria-label="${d.label}" title="drag to set · click and type a value, Enter to keep it · double-click to reset">` + spreadCell;
 }
 function _wireKnobs(sheet, capId) {
   // `capId` names the tile a knob captures into, as `_wireOptions` takes it —
@@ -5249,13 +5281,37 @@ function _wireKnobs(sheet, capId) {
     capture();
   };
 
+  // ── THE BAND'S EDGE SETS THE SPREAD (Ek, 2026-09-23) ─────────────────────
+  // "i want to be able to drag the jitter still" — and no modifier is free:
+  // shift is the fine drag, ⌥ the viz lock, and a modifier gesture is
+  // invisible besides. So the track is the two-thumb range every DAW draws —
+  // Bitwig's modulation ring, Sampler's zone edges, Max's rslider: grab the
+  // HANDLE and the value moves, grab the BAND'S EDGE and the spread widens or
+  // narrows, symmetric about the handle, the ± cell following. At zero spread
+  // the band has no edge, so a fixed zone just outside the handle always
+  // means "the edge": reach past the handle and pull outward and the band
+  // opens from nothing. The pointer says which it is over — `col-resize` on
+  // an edge, the track's own `ew-resize` elsewhere — the same cursor the
+  // sample slot's handles wear.
+  const EDGE_PX = 7, HANDLE_PX = 3, BAND_MAX = 0.45;   // BAND_MAX: _knobFor's 45 %
+  const edgeAt = (tr, pid, x) => {
+    const vpid = VAR_OF[pid]; if (!vpid) return null;
+    const vr = _knobRange(vpid); if (!vr) return null;
+    const r = tr.getBoundingClientRect(), rg = _knobRange(pid);
+    const hx = r.left + r.width * Math.max(0, Math.min(1, (_knobVal(pid).raw - rg.min) / (rg.max - rg.min || 1)));
+    const vf = Math.max(0, Math.min(1, (_knobVal(vpid).raw - vr.min) / (vr.max - vr.min || 1)));
+    const half = vf * BAND_MAX * r.width, d = Math.abs(x - hx);
+    if (d <= HANDLE_PX) return null;                   // the handle is the value
+    if (Math.abs(d - half) > EDGE_PX) return null;     // not on an edge
+    return { vpid, vr, hx, width: r.width };
+  };
   sheet.querySelectorAll('[data-ptrack]').forEach(tr => {
     const pid = tr.dataset.ptrack;
     const rg = _knobRange(pid); if (!rg) return;
     // Shift = fine drag. A track is ~170px for a full range, so a param with
     // a wide span moves in coarse jumps at 1:1; holding shift scales the
     // movement to a quarter of it, anchored where the shift-drag began (#272).
-    let fineFrom = null;
+    let fineFrom = null, edge = null;
     const fromX = e => {
       const r = tr.getBoundingClientRect();
       let f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
@@ -5265,12 +5321,30 @@ function _wireKnobs(sheet, capId) {
       } else fineFrom = null;
       apply(pid, rg.min + f * (rg.max - rg.min));
     };
+    // The spread from the pointer's distance to the handle, the inverse of the
+    // band _knobFor draws; shift is the same quarter-speed, anchored likewise.
+    const spreadFromX = e => {
+      let vf = Math.abs(e.clientX - edge.hx) / (BAND_MAX * edge.width);
+      if (e.shiftKey) {
+        if (fineFrom === null) fineFrom = { d: Math.abs(e.clientX - edge.hx), vf: (_knobVal(edge.vpid).raw - edge.vr.min) / (edge.vr.max - edge.vr.min || 1) };
+        vf = fineFrom.vf + ((Math.abs(e.clientX - edge.hx) - fineFrom.d) / (BAND_MAX * edge.width)) * 0.25;
+      } else fineFrom = null;
+      vf = Math.max(0, Math.min(1, vf));
+      apply(edge.vpid, edge.vr.min + vf * (edge.vr.max - edge.vr.min));
+    };
     tr.addEventListener('pointerdown', e => {
       if (e.detail > 1) return;              // let dblclick own the reset
       try { tr.setPointerCapture(e.pointerId); } catch (_) {}
-      e.preventDefault(); fromX(e);
+      e.preventDefault();
+      edge = edgeAt(tr, pid, e.clientX);
+      if (edge) spreadFromX(e); else fromX(e);
     });
-    tr.addEventListener('pointermove', e => { if (e.buttons) fromX(e); });
+    tr.addEventListener('pointermove', e => {
+      if (e.buttons) { if (edge) spreadFromX(e); else fromX(e); return; }
+      tr.style.cursor = edgeAt(tr, pid, e.clientX) ? 'col-resize' : '';
+    });
+    tr.addEventListener('pointerleave', () => { tr.style.cursor = ''; });
+    tr.addEventListener('pointerup', () => { edge = null; fineFrom = null; });
     tr.addEventListener('dblclick', e => {
       e.preventDefault(); e.stopPropagation();
       const def = _paramDefault(pid);
@@ -5283,24 +5357,49 @@ function _wireKnobs(sheet, capId) {
   // all of them, so one parse-and-clamp covers the lot. Units and suffixes in
   // the displayed value are stripped, so "120 ms" round-trips.
   // ── A number cell is a slider you can also type into ──────────────────
-  // Press and drag it to set the value; click without moving to put the caret
-  // in; double-click to reset. That is the number field of every DAW (Ableton,
+  // Press and drag it to set the value; click without moving to type over it;
+  // double-click to reset. That is the number field of every DAW (Ableton,
   // Logic) and of Photoshop's scrubby values, and it is how the ± SPREAD is
   // set since 2026-09-06 (Ek): the spread used to be ALT-drag on the track,
   // and ⌥ is the cursor lock (events.js), so the two fought over one key. The
   // gesture was invisible besides — this cell is on screen at the end of its
   // row, with a resize cursor, and the band follows as it moves.
+  //
+  // THE CLICK SELECTS THE NUMBER (2026-09-23, Ek). A click used to put a bare
+  // caret wherever the pointer landed, so typing a value meant finding the
+  // digits, selecting them by hand around the unit, and only then typing —
+  // "really finicky". Blender, Figma and Photoshop's scrubby fields all open
+  // the edit with the value selected so the next keystroke replaces it; here
+  // the selection is the DIGITS ONLY, so the unit stays on screen as the
+  // reminder of what is being typed ("120 ms" → type "80" → "80 ms"; the
+  // parser strips the unit either way). The sign and a kilo suffix go WITH
+  // the digits — "+42¢" is one number, and "2.5k" typed over as "500" must
+  // read 500 Hz, not 500k. A click on a cell ALREADY being edited places the
+  // caret, as it does everywhere else — the select-all is the way in, not a
+  // trap. It is done on `click`, not `pointerup`: the mouseup default action
+  // collapses a selection made before it.
   const SCRUB_PX = 200;                      // one full range per this much travel
+  const selectNumber = inp => {
+    const m = /[+-]?\d+(?:\.\d+)?k?/.exec(inp.value);
+    if (m) inp.setSelectionRange(m.index, m.index + m[0].length);
+    else inp.select();
+  };
   sheet.querySelectorAll('input[data-pval]').forEach(inp => {
     const pid = inp.dataset.pval;
     const rg = _knobRange(pid);
     if (!rg) return;
-    let from = null, moved = false;
+    let from = null, moved = false, wasEditing = false;
     inp.addEventListener('pointerdown', e => {
       if (e.button !== 0 || e.detail > 1) return;   // let dblclick own the reset
+      wasEditing = document.activeElement === inp;
       from = { x: e.clientX, raw: _knobVal(pid).raw };
       moved = false;
       try { inp.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    inp.addEventListener('click', e => {
+      if (e.detail > 1 || moved || wasEditing) return;
+      if (document.activeElement !== inp) inp.focus();
+      selectNumber(inp);
     });
     inp.addEventListener('pointermove', e => {
       if (!from || !e.buttons) return;
@@ -5499,17 +5598,25 @@ function _drawScope() {
 }
 S._drawEngineScope = () => { _drawScope(); _drawFilter(); };
 
-// ── The filter, drawn (#261) ───────────────────────────────────────────────
+// ── The filter, drawn (#261; ONE filter since 2026-09-23) ──────────────────
 // Sliders describe a shape you then have to imagine, so the shape IS the
-// control: drag the left edge for hpf, the right for lpf, and vertically for
-// the Q OF THE EDGE YOU GRABBED (2026-09-07 — one Q per filter). This is the one place the horizontal-track default is broken, because
-// here the curve is the parameter — everything else in the engine is genuinely
+// control: drag across for the cutoff, up and down for the resonance. This is
+// the one place the horizontal-track default is broken, because here the
+// curve is the parameter — everything else in the engine is genuinely
 // one-dimensional and a picture would add nothing. Jitter draws as a band
 // around the curve rather than a fourth control: it is a smear on the shape.
-// `q` is per EDGE since 2026-09-07 — dragging up on the high-pass corner
-// raises the peak THERE, which is the whole reason the two were split.
-const _FILT_PIDS = { hp: 'hpf', lp: 'lpf', hpq: 'hpq', lpq: 'lpq', jit: 'fltJit' };
+// THE CURVE IS THE REAL RESPONSE, not a sketch of one: the old drawing was a
+// Butterworth that drooped to 70 % at 20 Hz and 20 kHz while the engine
+// bypassed there, and a hand-made Q bump that left the canvas at Q ≈ 2 and
+// drew the same flat top for every Q above it. This evaluates the SVF's own
+// transfer function at the prewarped frequency, on a dB axis with a fixed
+// ceiling, so bypass draws flat, a peak reads true, and nothing can leave
+// the box. `_resQ` is the worklet's curve (`_computeSVF`) — the two must
+// agree, which is why both are written from FILTER_Q_FLAT / FILTER_Q_PEAK.
+const _FILT_PIDS = { cut: 'cutoff', res: 'res', jit: 'fltJit' };
 function _filtVal(k) { return _dispNum(_FILT_PIDS[k]); }
+const _resQ = r => FILTER_Q_FLAT * Math.pow(FILTER_Q_PEAK / FILTER_Q_FLAT, Math.max(0, Math.min(1, r)));
+const _FILT_DB_TOP = 24, _FILT_DB_BOT = -36;   // the axis; +20 dB is the loudest peak
 function _drawFilter() {
   const cv = document.getElementById('engFilter');
   if (!cv || !cv.clientWidth) return;
@@ -5522,34 +5629,56 @@ function _drawFilter() {
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
   c.clearRect(0, 0, w, h);
   const accent = cv.dataset.accent || '#cfa46b';
-  const hp = Math.max(20, _filtVal('hp')), lp = Math.max(hp * 1.1, _filtVal('lp'));
-  const hq = _filtVal('hpq'), lq = _filtVal('lpq'), jit = _filtVal('jit');
+  // THE GRAPH IS THE SHAPE, THE SWITCH IS THE SWITCH (Ek, 2026-09-24). Off
+  // used to draw flat — honest about what the grains hear, but dragging the
+  // dot along a flat line "doesn't work … stuck flat" while the rows moved.
+  // Serum and Ableton's filter displays keep drawing the set curve with the
+  // module off; the switch row says whether it is applied.
+  const mode = _readParam('ftype') ?? 'lp';
+  const fc   = Math.max(20, Math.min(20000, _filtVal('cut') || 1000));
+  const res  = _filtVal('res') / 100;            // the row shows a percent
+  const jit  = _filtVal('jit') / 100;            // ±octaves, as the worklet reads it
+  const sr   = S.audioCtx?.sampleRate ?? 48000;
   const LO = Math.log10(20), HI = Math.log10(20000);
   const X = f => ((Math.log10(f) - LO) / (HI - LO)) * w;
-  const resp = f => {
-    const a = 1 / Math.sqrt(1 + Math.pow(hp / f, 4));
-    const b = 1 / Math.sqrt(1 + Math.pow(f / lp, 4));
-    const peak = (fc, q) => Math.exp(-Math.pow(Math.log10(f / fc) * 6, 2)) * Math.max(0, q - 0.7) * 0.42;
-    return Math.max(0, Math.min(1.25, a * b + peak(hp, hq) + peak(lp, lq)));
+  // |H| of the trapezoidal SVF at f for a cutoff fcc: the analogue prototype
+  // at the prewarped frequency, which is exact for a bilinear filter.
+  const k = 1 / _resQ(res);
+  const mag = (f, fcc) => {
+    const g = Math.tan(Math.PI * Math.min(fcc, sr * 0.45) / sr);
+    const x = Math.tan(Math.PI * Math.min(f, sr * 0.499) / sr) / g;
+    const den = Math.hypot(1 - x * x, k * x);
+    return mode === 'lp' ? 1 / den : mode === 'bp' ? k * x / den : x * x / den;
   };
-  const Y = g => h - 9 - g * (h - 20);
+  const Y = m => {
+    const db = Math.max(_FILT_DB_BOT, Math.min(_FILT_DB_TOP, 20 * Math.log10(Math.max(1e-6, m))));
+    return 4 + (1 - (db - _FILT_DB_BOT) / (_FILT_DB_TOP - _FILT_DB_BOT)) * (h - 8);
+  };
   c.strokeStyle = 'rgba(255,255,255,0.06)';
   for (const f of [100, 1000, 10000]) { c.beginPath(); c.moveTo(X(f), 0); c.lineTo(X(f), h); c.stroke(); }
-  const path = fn => { c.beginPath(); for (let x = 0; x <= w; x += 2) {
-    const f = Math.pow(10, LO + (x / w) * (HI - LO)); const y = fn(f); x ? c.lineTo(x, y) : c.moveTo(x, y); } };
+  c.beginPath(); c.moveTo(0, Y(1)); c.lineTo(w, Y(1)); c.stroke();   // unity
+  const path = (fcc, back) => {
+    for (let i = 0; i <= w; i += 2) {
+      const x = back ? w - i : i;
+      const f = Math.pow(10, LO + (x / w) * (HI - LO));
+      const y = Y(mag(f, fcc));
+      (i === 0 && !back) ? c.moveTo(x, y) : c.lineTo(x, y);
+    }
+  };
   if (jit > 0) {
-    const sp = 1 + jit / 100;
-    path(f => Y(resp(f * sp))); c.lineTo(w, h); c.lineTo(0, h); c.closePath();
-    c.fillStyle = accent; c.globalAlpha = 0.1; c.fill(); c.globalAlpha = 1;
+    // The band is where the cutoff can land: the curve an octave-fraction up,
+    // back along the curve the same fraction down.
+    c.beginPath(); path(Math.min(20000, fc * Math.pow(2, jit)), false); path(Math.max(20, fc * Math.pow(2, -jit)), true);
+    c.closePath(); c.fillStyle = accent; c.globalAlpha = 0.1; c.fill(); c.globalAlpha = 1;
   }
-  path(f => Y(resp(f)));
+  c.beginPath(); path(fc, false);
   c.strokeStyle = accent; c.lineWidth = 1.5; c.stroke();
   c.lineTo(w, h); c.lineTo(0, h); c.closePath();
   c.fillStyle = accent; c.globalAlpha = 0.11; c.fill(); c.globalAlpha = 1;
-  for (const f of [hp, lp]) { c.beginPath(); c.arc(X(f), Y(resp(f)), 3.2, 0, 7); c.fillStyle = accent; c.fill(); }
-  // The four rows below the graph show the same four numbers, so grabbing an
-  // edge has to move them too — otherwise the drawing and the rows disagree
-  // and the rows are the ones you can type into (#283).
+  c.beginPath(); c.arc(X(fc), Y(mag(fc, fc)), 3.2, 0, 7); c.fillStyle = accent; c.fill();
+  // The rows below the graph show the same numbers, so grabbing the curve has
+  // to move them too — otherwise the drawing and the rows disagree and the
+  // rows are the ones you can type into (#283).
   const sheet = cv.closest('#propRail');
   if (sheet) for (const pid of Object.values(_FILT_PIDS)) _paintRow(sheet, pid);
 }
@@ -5557,39 +5686,35 @@ function _wireFilter(sheet) {
   const cv = sheet.querySelector('#engFilter');
   if (!cv) return;
   const LO = Math.log10(20), HI = Math.log10(20000);
-  let grab = null;
+  let grab = false;
   const freqAt = x => Math.pow(10, LO + (Math.max(0, Math.min(cv.clientWidth, x)) / cv.clientWidth) * (HI - LO));
   // Real units in, through the numbox — same reason as typing.
   const setP = (pid, v) => _paramTypeSet(pid, String(Math.round(v * 100) / 100));
   const move = e => {
     if (!grab) return;
     const r = cv.getBoundingClientRect();
-    const f = freqAt(e.clientX - r.left);
-    // The two edges cannot cross: an hpf above the lpf is a silent filter and
-    // reads as a broken control rather than an extreme setting.
-    if (grab === 'hp') setP(_FILT_PIDS.hp, Math.min(f, _filtVal('lp') * 0.8));
-    else               setP(_FILT_PIDS.lp, Math.max(f, _filtVal('hp') * 1.25));
+    setP(_FILT_PIDS.cut, freqAt(e.clientX - r.left));
+    // Resonance over the height, 0 at the floor to 100 % at the ceiling —
+    // the same 0–1 the row shows and the CC and OSC send.
     const fy = 1 - Math.max(0, Math.min(1, (e.clientY - r.top) / cv.clientHeight));
-    setP(grab === 'hp' ? _FILT_PIDS.hpq : _FILT_PIDS.lpq, 0.5 + fy * 7.5);   // Q 0.5 … 8 over the height
+    setP(_FILT_PIDS.res, Math.round(fy * 100));
     _drawFilter();
     captureTileParams();
   };
   cv.addEventListener('pointerdown', e => {
-    const r = cv.getBoundingClientRect();
-    const f = freqAt(e.clientX - r.left);
-    grab = Math.abs(Math.log10(f / Math.max(20, _filtVal('hp')))) <
-           Math.abs(Math.log10(f / Math.max(21, _filtVal('lp')))) ? 'hp' : 'lp';
+    grab = true;
     try { cv.setPointerCapture(e.pointerId); } catch (_) {}
     e.preventDefault(); move(e);
   });
   cv.addEventListener('pointermove', e => { if (e.buttons) move(e); });
-  cv.addEventListener('pointerup', () => { grab = null; });
+  cv.addEventListener('pointerup', () => { grab = false; });
   cv.addEventListener('dblclick', e => {
     e.preventDefault();
-    // Real-unit defaults: the element default is a slider POSITION, so it is
-    // set through _knobSet (position space), not through the numbox.
-    for (const k of ['hp', 'lp', 'q', 'jit']) {
-      const pid = _FILT_PIDS[k], def = _paramDefault(pid);
+    // The drawn three go back to their ticks; the switch and the type are
+    // rows of their own and keep what they say. The element default is a
+    // slider POSITION, so it is set through _knobSet (position space).
+    for (const pid of Object.values(_FILT_PIDS)) {
+      const def = _paramDefault(pid);
       if (def != null) _knobSet(pid, def);
     }
     _drawFilter(); captureTileParams();
@@ -5893,14 +6018,14 @@ function _syncLensTab() {
   if (!bar) return;
   // The greying is structure, not a class on a row: redraw when it changes.
   const nearest = S.lensMode === 'nearest';
-  const key = `${nearest ? 'n' : 'a'}${!nearest && S.grainKAllMode ? 'A' : 'k'}${S.lensReads ?? 'both'}`;
+  const key = `${nearest ? 'n' : 'a'}${(S.grainOverrides.k ?? gp().k) === 0 ? 'A' : 'k'}${S.lensReads ?? 'both'}`;
   if (bar.dataset.lensKey !== key) {
     // Set BEFORE render() so a render that re-enters here does not loop.
     bar.dataset.lensKey = key;
     render();
     return;
   }
-  for (const pid of ['radius', 'depth', 'k']) _paintRow(bar, pid);
+  for (const pid of ['radius', 'k']) _paintRow(bar, pid);
   // The segments proxy a cabinet seg, and the cabinet is what every writer
   // syncs — so the cabinet's `.active` is the eye's answer.
   bar.querySelectorAll('.opt .seg > [data-proxy]').forEach(sp => {
@@ -6614,10 +6739,33 @@ export function initTiles() {
 
   document.addEventListener('keydown', onKeydown, true);
   document.addEventListener('keyup', onKeyup, true);
+  // The sheet's held-pointer guard (see renderProps). Capture phase on the
+  // rail, so a control that stops propagation still counts; the release is
+  // read on the window, because a captured pointer's up lands on the
+  // capturing element and a blur may be the only edge that ever comes.
+  document.getElementById('propRail')?.addEventListener('pointerdown', e => { if (e.isPrimary !== false) _sheetHeld = true; }, true);
+  for (const t of ['pointerup', 'pointercancel', 'blur']) window.addEventListener(t, _sheetRelease, true);
   setInterval(_pollLiveBlock, 100);
   // The lit state, at a rate a press can be seen at (see refreshPlayingState).
   setInterval(refreshPlayingState, 33);
   setInterval(refreshLensLive, 200);
+  // THE REGISTRY IS THE SCREEN (2026-09-24): every switch, capsule and row on
+  // the rail is an ACTIONS row (midi.js), and these are the doors it reaches
+  // them by — the same setters the clicks use, so a key, a pad and a click
+  // leave the app in one state.
+  S._setAudition   = on => { S.auditionMode = !!on; render(); if (propsOpen()) renderProps(); };
+  S._setAutoPin    = setAutoPin;
+  S._setOverdub    = setOverdub;
+  S._setWalk       = on => { S.grainWalk = !!on; render(); if (propsOpen()) renderProps(); };
+  S._setEraseScope = on => { S.eraseWholeStroke = !!on; render(); if (propsOpen()) renderProps(); };
+  S._setLensReads  = v  => { S.lensReads = v; captureTileParams(LENS_ID); render(); };
+  S._toggleGrainLink = toggleGrainLink;
+  S._voicesOf      = voicesOf;
+  S._currentVoice  = currentVoice;
+  S._applyVoice    = applyVoice;
+  S._renderRail    = () => { render(); if (propsOpen()) renderProps(); };
+  S._setToolRail   = setPropsOpen;
+  S._toolRailOpen  = propsOpen;
   render();
 }
 

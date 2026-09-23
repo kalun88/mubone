@@ -80,7 +80,7 @@
     <div class="top-bar-left">
       <div class="top-bar-brand">
         <span class="top-bar-logo">mubone</span>
-        <span class="top-bar-version">5.6 alpha</span>
+        <span class="top-bar-version">5.7 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="mu-btn--bare top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -221,7 +221,7 @@
          wordmark's own colour without 9KB of path data in this file. -->
     <div class="tc-brand">
       <img class="tc-mark" src="logo/mark-light.svg" alt="" aria-hidden="true" width="18" height="18">
-      <b>mubone</b> <i>5.6</i>
+      <b>mubone</b> <i>5.7</i>
       <!-- The open piece, in the version's own engraved lettering. The unsaved
            mark is a DOT that is there or is not (js/piece.js) — nothing here is
            dimmed to mean anything. Empty and hidden until there is a piece. -->
@@ -660,10 +660,10 @@
 
             <!-- selection — applies in both nearest and area modes -->
             <span class="seq-section-label" style="margin-top:6px">selection</span>
-            <div class="grain-row" title="k — the CEILING on how many marks the cursor reads per onset&#10;in nearest mode: the k closest on the whole sphere&#10;in area mode: the k closest within the radius&#10;log scale, 1 to 1024 — park it high and watch the live count for saturation&#10;the [n] indicator shows total particles in the world">
+            <div class="grain-row" title="k — how many marks the cursor spreads its grains over&#10;0 = all: every mark in reach is in the pool&#10;in nearest mode: the k closest on the whole sphere&#10;in area mode: the k closest within the radius&#10;log scale, 1 to 100 — the [n] indicator shows total particles in the world">
               <span class="grain-label">k</span>
-              <input class="grain-slider" type="range" id="searchKSlider" min="0" max="1000" step="1" value="232">
-              <input type="text" class="grain-numbox" id="kBigNum" value="5">
+              <input class="grain-slider" type="range" id="searchKSlider" min="0" max="1000" step="1" value="0">
+              <input type="text" class="grain-numbox" id="kBigNum" value="all">
               <span class="grain-numbox" id="kWorldCount" style="width:auto;min-width:0;padding:0;opacity:0.45;pointer-events:none"></span>
             </div>
             <div class="grain-row" title="order — how the next grain is chosen from the candidate pool&#10;random: pick randomly from candidates&#10;step: cycle through candidates in recording order">
@@ -682,16 +682,17 @@
                 <input class="grain-slider" type="range" id="radiusSlider" min="1" max="180" step="1" value="10" data-default="15">
                 <input type="text" class="grain-numbox" id="radiusVal" value="10°">
               </div>
-              <div class="grain-row" title="recency — limit selection to the n most recent recording buffers&#10;lower = only recent recordings, higher = older buffers included&#10;max position = all (no filter) (double-click slider to reset to 3)">
-                <span class="grain-label">recency</span>
-                <input class="grain-slider" type="range" id="recencySlider" min="1" max="17" step="1" value="3" data-default="3">
-                <input type="text" class="grain-numbox" id="recencyVal" value="3">
-              </div>
-              <div class="grain-row" title="fill — fire all particles in the area, or cap at k&#10;k: cap to the k nearest within radius&#10;all: every particle in radius fires (ignores k)">
-                <span class="grain-label">fill</span>
-                <div class="grain-seg" id="kAllSeg">
-                  <button class="grain-seg-btn active" data-kall="off" title="k — cap selection to k nearest within radius">k</button>
-                  <button class="grain-seg-btn" data-kall="on" title="all — fire every particle in radius, no k cap">all</button>
+              <!-- depth — how many of the newest strokes the cursor (and the eraser)
+                   can reach. Four answers since 2026-09-24 (Ek: "a multi select pill
+                   with just 1 2 3 then all"); it was a 1–16 slider with all at the top.
+                   data-depth is what a tile stores: 0 = all, the value S.recencyN holds. -->
+              <div class="grain-row" title="depth — how many of the newest strokes under the cursor are readable&#10;1, 2 or 3 strokes, or all of them (no filter)">
+                <span class="grain-label">depth</span>
+                <div class="grain-seg" id="recencySeg">
+                  <button class="grain-seg-btn" data-depth="1" title="1 — the newest stroke only">1</button>
+                  <button class="grain-seg-btn" data-depth="2" title="2 — the two newest strokes">2</button>
+                  <button class="grain-seg-btn active" data-depth="3" title="3 — the three newest strokes">3</button>
+                  <button class="grain-seg-btn" data-depth="0" title="all — every stroke in reach">all</button>
                 </div>
               </div>
               <!-- fade + fade curve — moved here from the cursor panel (they
@@ -824,28 +825,34 @@
           <!-- filter: spectral shaping -->
           <div class="seq-section">
             <span class="seq-section-label">filter</span>
-            <div class="grain-row" title="hpf — highpass filter cutoff frequency&#10;20 Hz = off (bypass)&#10;log scale 20 Hz – 20 kHz">
-              <span class="grain-label">hpf</span>
-              <input class="grain-slider grain-slider--log" type="range" id="gcHpfSlider" min="0" max="1000" step="1" value="0">
-              <input type="text" class="grain-numbox" id="gcHpfNum" data-param="hpfFreq" value="20 Hz">
+            <!-- ONE filter per grain (2026-09-23): a switch, a type, a cutoff
+                 and a resonance — the layout every grain synth uses. The old
+                 hpf + lpf with a Q each was an EQ's layout, and could not make
+                 a band-pass at all. -->
+            <div class="grain-row" title="filter — the grain filter on or off">
+              <span class="grain-label">filter</span>
+              <div class="grain-seg" id="gcFilterOnSeg">
+                <button class="grain-seg-btn" data-flt="on" title="on — every grain goes through the filter">on</button>
+                <button class="grain-seg-btn active" data-flt="off" title="off — grains play unfiltered">off</button>
+              </div>
             </div>
-            <div class="grain-row" title="lpf — lowpass filter cutoff frequency&#10;20 kHz = off (bypass)&#10;log scale 20 Hz – 20 kHz">
-              <span class="grain-label">lpf</span>
-              <input class="grain-slider grain-slider--log" type="range" id="gcLpfSlider" min="0" max="1000" step="1" value="1000">
-              <input type="text" class="grain-numbox" id="gcLpfNum" data-param="lpfFreq" value="20.0k">
+            <div class="grain-row" title="type — low-pass, band-pass or high-pass">
+              <span class="grain-label">type</span>
+              <div class="grain-seg" id="gcFilterTypeSeg">
+                <button class="grain-seg-btn active" data-ftype="lp" title="low-pass — keeps what is below the cutoff">lp</button>
+                <button class="grain-seg-btn" data-ftype="bp" title="band-pass — keeps a band around the cutoff">bp</button>
+                <button class="grain-seg-btn" data-ftype="hp" title="high-pass — keeps what is above the cutoff">hp</button>
+              </div>
             </div>
-            <!-- One Q per filter (2026-09-07). It was one shared number, so a
-                 resonant low-pass could not be had without the same peak
-                 appearing at the high-pass corner. -->
-            <div class="grain-row" title="hpf Q — resonance at the HIGH-PASS corner&#10;0.707 = Butterworth (flat)&#10;higher = a peak there">
-              <span class="grain-label">hpf Q</span>
-              <input class="grain-slider" type="range" id="gcHpfQSlider" min="0.1" max="20" step="0.1" value="0.707">
-              <input type="text" class="grain-numbox" id="gcHpfQNum" data-param="hpfQ" value="0.71">
+            <div class="grain-row" title="cutoff — the filter's corner&#10;log scale 20 Hz – 20 kHz">
+              <span class="grain-label">cutoff</span>
+              <input class="grain-slider grain-slider--log" type="range" id="gcCutoffSlider" min="0" max="1000" step="1" value="566">
+              <input type="text" class="grain-numbox" id="gcCutoffNum" data-param="cutoff" value="1.0k">
             </div>
-            <div class="grain-row" title="lpf Q — resonance at the LOW-PASS corner&#10;0.707 = Butterworth (flat)&#10;higher = a peak there">
-              <span class="grain-label">lpf Q</span>
-              <input class="grain-slider" type="range" id="gcLpfQSlider" min="0.1" max="20" step="0.1" value="0.707">
-              <input type="text" class="grain-numbox" id="gcLpfQNum" data-param="lpfQ" value="0.71">
+            <div class="grain-row" title="res — resonance at the cutoff&#10;0% = flat (Butterworth)&#10;100% = a +20 dB peak, about to ring">
+              <span class="grain-label">res</span>
+              <input class="grain-slider" type="range" id="gcResSlider" min="0" max="1" step="0.01" value="0">
+              <input type="text" class="grain-numbox" id="gcResNum" data-param="res" value="0%">
             </div>
             <div class="grain-row" title="flt ± — per-grain filter cutoff randomisation&#10;0% = no jitter  100% = ±1 octave per grain">
               <span class="grain-label">flt ±</span>
@@ -1221,8 +1228,8 @@
               <div class="grain-row" title="dwell — what happens while the cursor STAYS on a trigger&#10;sweep past it and it fires either way; this is what stopping on it does&#10;once: nothing more — silent until you leave and return&#10;loop: keeps looping like a real looper for as long as you stay&#10;grain: the buffer opens up and granulates while you're on it — needs SCAN on to be heard&#10;switchable mid-set, and it reaches a trigger that's already ringing">
                 <span class="grain-label">dwell</span>
                 <div class="grain-seg" id="trigDwellSeg">
-                  <button class="grain-seg-btn active" data-dwell="oneshot">once</button>
-                  <button class="grain-seg-btn" data-dwell="loop">loop</button>
+                  <button class="grain-seg-btn" data-dwell="oneshot">once</button>
+                  <button class="grain-seg-btn active" data-dwell="loop">loop</button>
                   <button class="grain-seg-btn" data-dwell="grain">grain</button>
                 </div>
               </div>
@@ -1493,10 +1500,9 @@
       <div class="set-row-text">
         <span class="set-row-title">Drive The LED</span>
         <span class="set-row-desc">Only the sensor holding the cursor role animates; the others get one solid idle write.</span>
-        <span class="set-row-desc" id="ledStatusMeta"></span>
+        <span class="set-row-status" id="ledStatusMeta"></span>
       </div>
       <div class="set-ctl">
-        <span class="set-badge" id="ledMasterPill">Off</span>
         <input type="checkbox" class="set-toggle" id="ledMasterToggle">
       </div>
     </div>
@@ -1979,18 +1985,18 @@
   <div class="mu-dialog set-panel" id="setPanelTools">
     <div class="set-section">
       <div class="set-sec-title">Cursor</div>
-      <div class="set-sec-lede">How the cursor reads, past what the rail holds. Scope, radius and the grain selection are in its CURSOR section.</div>
+      <div class="set-sec-lede">How the cursor reads, past what the rail holds.</div>
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Falloff</span>
           <span class="set-row-desc">With fade on, how steeply grains fade toward the radius's edge. 0% is linear.</span>
         </div>
-        <div class="set-ctl set-ctl--slider"><span id="setFadeCurveSlot"></span></div>
+        <div class="set-ctl set-ctl--slider"><span class="set-slot" id="setFadeCurveSlot"></span></div>
       </div>
     </div>
     <div class="set-section">
       <div class="set-sec-title">Tape</div>
-      <div class="set-sec-lede">What a take does when the cursor arrives, and how it is cut. Autopin, overdub, dwell, retrig and slice are on the tape tab, where you can reach them while playing.</div>
+      <div class="set-sec-lede">What a take does when the cursor arrives, and how it is cut.</div>
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Start</span>
@@ -2008,7 +2014,7 @@
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Fade</span>
-          <span class="set-row-desc">How long the fade takes, with release set to fade.</span>
+          <span class="set-row-desc">How long a take's fade takes, with release set to fade.</span>
         </div>
         <div class="set-ctl set-ctl--slider">
           <input class="grain-slider" type="range" id="setTrigFadeSlider" min="0" max="2000" step="10" value="250">
@@ -2020,11 +2026,11 @@
           <span class="set-row-title">Rearm</span>
           <span class="set-row-desc">The least gap before the same take can fire again. Stops a hovering cursor retriggering it.</span>
         </div>
-        <div class="set-ctl set-ctl--slider"><span id="setTrigRearmSlot"></span></div>
+        <div class="set-ctl set-ctl--slider"><span class="set-slot" id="setTrigRearmSlot"></span></div>
       </div>
       <div class="set-row">
         <div class="set-row-text">
-          <span class="set-row-title">Min slice</span>
+          <span class="set-row-title">Min Slice</span>
           <span class="set-row-desc">With slice on, a segment shorter than this merges into the one before it.</span>
         </div>
         <div class="set-ctl set-ctl--slider">
@@ -2034,7 +2040,7 @@
       </div>
       <div class="set-row">
         <div class="set-row-text">
-          <span class="set-row-title">Dub decay</span>
+          <span class="set-row-title">Dub Decay</span>
           <span class="set-row-desc">With overdub on, how much the loop steps down each pass. 0 keeps every layer at full.</span>
         </div>
         <div class="set-ctl set-ctl--slider">
@@ -2045,7 +2051,7 @@
     </div>
     <div class="set-section">
       <div class="set-sec-title">Grain</div>
-      <div class="set-sec-lede">What a WALKING stroke does when the cursor arrives — its own set, not tape's. These read only while WALK ON TOUCH is on, on the grain tab; dwell and retrig are there beside it.</div>
+      <div class="set-sec-lede">What a walking stroke does when the cursor arrives, while walk on touch is on.</div>
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Start</span>
@@ -2074,7 +2080,7 @@
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Fade</span>
-          <span class="set-row-desc">How long the fade takes, with release set to fade.</span>
+          <span class="set-row-desc">How long a walker's fade takes, with release set to fade.</span>
         </div>
         <div class="set-ctl set-ctl--slider">
           <input class="grain-slider" type="range" id="setGrainFadeSlider" min="0" max="2000" step="10" value="250">
@@ -2094,10 +2100,10 @@
     </div>
     <div class="set-section">
       <div class="set-sec-title">Sampler</div>
-      <div class="set-sec-lede">Painting from a sound file instead of the mic. Parked for now: off, its tab leaves the tool rail and nothing can switch the brush to it.</div>
+      <div class="set-sec-lede">Painting from a sound file instead of the mic.</div>
       <div class="set-row">
         <div class="set-row-text">
-          <span class="set-row-title">Use the sampler</span>
+          <span class="set-row-title">Use The Sampler</span>
           <span class="set-row-desc">Show the sampler tab and let the brush ink from a file.</span>
         </div>
         <div class="set-ctl"><input type="checkbox" class="set-toggle" id="setSamplerOn"></div>
@@ -2130,7 +2136,7 @@
           <span class="set-row-desc">A second window mirroring the sphere, for the projector.</span>
         </div>
         <div class="set-ctl">
-          <button class="set-btn" data-proxy="projectorModeBtn">Open</button>
+          <input type="checkbox" class="set-toggle" id="setViewProjector" data-proxy="projectorModeBtn" aria-label="projector window">
         </div>
       </div>
       <div class="set-row">
@@ -2139,7 +2145,7 @@
           <span class="set-row-desc">This window, without the desktop around it.</span>
         </div>
         <div class="set-ctl">
-          <button class="set-btn" data-proxy="fullscreenBtn2">Toggle</button>
+          <input type="checkbox" class="set-toggle" id="setViewFullscreen" data-proxy="fullscreenBtn2" aria-label="fullscreen">
         </div>
       </div>
       <div class="set-row">
@@ -2149,7 +2155,7 @@
           <span class="set-row-status" id="setViewPerfStat">—</span>
         </div>
         <div class="set-ctl">
-          <button class="set-btn" data-proxy="perfMonBtn">Show / hide</button>
+          <input type="checkbox" class="set-toggle" id="setViewPerfMon" data-proxy="perfMonBtn" aria-label="performance monitor">
         </div>
       </div>
       <div class="set-row">
@@ -2158,7 +2164,7 @@
           <span class="set-row-desc">Tooltips appear the moment you hover instead of after a pause.</span>
         </div>
         <div class="set-ctl">
-          <button class="set-btn" data-proxy="learnModeBtn">Toggle</button>
+          <input type="checkbox" class="set-toggle" id="setViewLearn" data-proxy="learnModeBtn" aria-label="learn mode">
         </div>
       </div>
     </div>
@@ -2206,21 +2212,21 @@
           <span class="set-row-title">Long</span>
           <span class="set-row-desc">How long the button is down before long fires.</span>
         </div>
-        <div class="set-ctl"><input type="number" class="set-field" id="buttonsLong" min="100" max="2000" step="10"><span class="as-dim">ms</span></div>
+        <div class="set-ctl"><span class="set-field"><input type="number" id="buttonsLong" min="100" max="2000" step="10"><span class="set-field-unit">ms</span></span></div>
       </div>
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Extra Long</span>
           <span class="set-row-desc">How long the button is down before extra long fires. Kept past long.</span>
         </div>
-        <div class="set-ctl"><input type="number" class="set-field" id="buttonsXlong" min="100" max="5000" step="10"><span class="as-dim">ms</span></div>
+        <div class="set-ctl"><span class="set-field"><input type="number" id="buttonsXlong" min="100" max="5000" step="10"><span class="set-field-unit">ms</span></span></div>
       </div>
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Tap Window</span>
           <span class="set-row-desc">The gap after a release in which the next press counts as ×2 or ×3.</span>
         </div>
-        <div class="set-ctl"><input type="number" class="set-field" id="buttonsTap" min="30" max="2000" step="10"><span class="as-dim">ms</span></div>
+        <div class="set-ctl"><span class="set-field"><input type="number" id="buttonsTap" min="30" max="2000" step="10"><span class="set-field-unit">ms</span></span></div>
       </div>
       <div class="set-row">
         <div class="set-row-text">
@@ -2472,15 +2478,12 @@
            place, with no second kind of chrome on the page. -->
       <div class="set-row">
         <div class="set-row-text">
-          <span class="set-row-title">Handsfree Gate</span>
+          <span class="set-row-title">Armed</span>
           <span class="set-row-desc">Armed, the gate segments phrases into buffers as you tap-trace. Plain trace mode only.</span>
         </div>
         <div class="set-ctl">
           <span class="paint-key-badge">H</span>
-          <div class="grain-seg seg-pill" id="hfArmSeg">
-            <button class="grain-seg-btn active" data-hfarm="off">off</button>
-            <button class="grain-seg-btn" data-hfarm="on">armed</button>
-          </div>
+          <input type="checkbox" class="set-toggle" id="hfArmToggle" aria-label="arm the handsfree gate">
           <button type="button" class="as-btn set-btn--sm" id="hfTuneBtn" aria-expanded="false" aria-controls="hfTune">Tune…</button>
         </div>
       </div>
@@ -2753,10 +2756,7 @@
           <span class="set-row-status" id="vizPerfStat">—</span>
         </div>
         <div class="set-ctl">
-          <div class="grain-seg" id="vizPerfModeSeg">
-            <button class="grain-seg-btn" data-perf="on">On</button>
-            <button class="grain-seg-btn active" data-perf="off">Off</button>
-          </div>
+          <input type="checkbox" class="set-toggle" id="vizPerfModeToggle" aria-label="minimal rendering">
         </div>
       </div>
     </div>
@@ -3010,7 +3010,7 @@
       <!-- (visible in Electron only; off by default) -->
       <div class="set-row" id="asStereoMixdownRow" style="display:none">
         <div class="set-row-text">
-          <label class="set-row-title" for="asStereoMixdownChk" style="cursor:pointer">Stereo mixdown bus</label>
+          <label class="set-row-title" for="asStereoMixdownChk" style="cursor:pointer">Stereo Mixdown Bus</label>
           <span class="set-row-desc as-dim" id="asStereoMixdownNote">off — all channels are house</span>
         </div>
         <div class="set-ctl">

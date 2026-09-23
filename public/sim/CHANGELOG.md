@@ -7,6 +7,64 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.7 alpha — 2026-09-24
+
+**The action registry is the screen; one filter per grain; the readers stop when their marks go.**
+Two days on the grain sheet, the tape gate and the bindings, with two parallel worktrees merged in.
+
+### Added
+- **Every control on the rig has an action** — `ACTIONS` regrouped in screen order (palette · hand ·
+  tape · grain · erase · cursor · pins · chrome · settings · sampler), 111 rows. New: audition, both
+  autopins, overdub, tape and grain dwell and retrig, walk, rate, head, link, by stroke, erase from,
+  the cursor's scope, voice select / next / previous on both engines, the tape sheet's five rows, the
+  selected pin's mute, solo and fader, the two bus mutes and solos, both rails, settings, the camera
+  menu, the input fader. Every switch takes 1 / 0 to set and anything else to flip; every capsule a
+  string to set and a bang to cycle. Each has an OSC address; the README table lists them.
+- **One filter per grain**: a switch, a `lp · bp · hp` capsule, cutoff, res (0–1, Butterworth → Q 10)
+  and cutoff ±; the worklet runs one SVF per grain and the sheet draws its real transfer function on a
+  dB axis. `/grain/filter` `/filtertype` `/cutoff` `/res`; EXPORT_VERSION 15.
+- **Sub-rows on the sheets**; the band's edge drags a spread. A click on a number cell selects the digits.
+- **The dev bridge sends a real press**: `.mouse` takes mouseDown / mouseUp and a held move, so a drag
+  on a control is proved the way a hand does it.
+- **Invariants**: the sheet under a held pointer, wet paint under walk, a trigger back from undo, a
+  walker and an opened stroke losing their marks (lens and trigger suites); the settings kit at
+  attribute depth and the keys filter box (align).
+
+### Changed
+- **k is one slider, and zero is all** — no `fill` switch: position 0 is all in both modes and the
+  default; the ceiling is 100. `/search/k` 0 = all; the `grain_k` pot is linear.
+- **Depth is four answers on a capsule**: 1 · 2 · 3 · all, on the cursor and the eraser alike.
+- **Tape dwell's factory default is loop.**
+- **The filter graph draws the set shape with the switch off**; the switch says whether it is applied.
+- **Sweep clears the scratch layer, tape strokes included** — a tape stroke survives only through a pin.
+- **`trigger_chop` is `tape_slice`** at `/tape/slice`; `commit_selection` is the rail's three-way sort;
+  `cursor_lock` is the toggle ⌥ is; `grain_k` goes through the one writer. Bindings migrate.
+- **Settings: a yes/no is the toggle** — the four Camera + Display buttons that said "Toggle", Minimal
+  Rendering and the handsfree arm are switches; the kit's numbox, toggle and capsule rules stated at
+  attribute depth so the field rule no longer beats them. The Tools page's ledes are one line; the
+  twin Fade rows name a take and a walker.
+- **`/grain/filter 0` turns the filter off** — an explicit 0 on a switch address is a command, not a
+  release edge, for every switch.
+
+### Fixed
+- **The filter dot did not stick**: a quarter second into the first drag on a tile's sheet the sheet
+  was rebuilt under the pointer. It never is now; a rebuild waits for the release.
+- **Painting with walk on was silent until the lift** — the stroke being painted is the cursor's,
+  walk or not; a take being recorded is not.
+- **A looping take erased under the cursor and undone did not start again** until the cursor left and
+  came back — a trigger coming back starts outside its gate. A walker kept walking an erased stroke
+  (for ever under loop) and an opened stroke stayed open: material erased out from under a reader
+  stops the reader, whichever reader.
+- **A key learned at a down or a timer left its key down in the recogniser.**
+- **The keys filter's glyph sat on the placeholder's first letter.**
+
+### Removed
+- `palette_5..9`, `commit_drop` / `commit_draw` / `commit_release` (the pin pair's second door — the
+  positions' own verbs), `scan_toggle` and the `S` key (the lens tile's toggle on `c`), `k_all` /
+  `/search/fill`, the dead `grain_retrig` cc and `retriggerMs`, `/cursor/scan`, `/trigger/chop`.
+
+---
+
 ## 5.6 alpha — 2026-09-23
 
 **The cursor is its own section, read top down as a filter; a pin's in and out are one live pair;

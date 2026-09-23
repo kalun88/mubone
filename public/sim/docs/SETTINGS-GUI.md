@@ -139,7 +139,16 @@ kit rule written one level shallower, on any element that is a span, div, p, lab
 Only type is affected (`font-size`, `letter-spacing`, `text-transform`); height, colour and
 background are not in that sweep and still land.
 
-This has now been found twice. The badge and device families were fixed when the sensors page was
+**Found a third time, on the field rule (2026-09-24).** `.settings-host .in-settings input[type=text]` is
+(0,3,1) — an attribute counts as a class — so it beat every kit rule written as
+`.settings-host .in-settings .class` (0,2,2) on any input: the numbox wore the field's border and
+12px padding inside its 64px (so "250ms" clipped), the search never got the 36px that clears its
+glyph. Those two are now stated at the readout's own depth (`html body … input.grain-numbox`,
+`input.set-search`); `align-audit` "settings kit at attribute depth" holds them. A borrowed
+slider + numbox also sat in a `<span>` slot that sized to the range's intrinsic 129px — the slot is
+`.set-slot` (`display: contents`) so the two rows share one geometry.
+
+This has now been found twice before that. The badge and device families were fixed when the sensors page was
 built. The **meter** was missed and shipped wrong: its ruler and threshold caption rendered at 14
 instead of 11.5 and its channel label at 14 instead of 13.44, on all three meter pages, from the day
 it landed. It survived a round of measurement because the rules were read rather than the elements —

@@ -330,10 +330,29 @@ let _viewStatTick = null;
 // Two pages carry the same number, and for the same reason: it is the number
 // that tells you whether you need the control beside it.
 const _PERF_STAT_IDS = ['setViewPerfStat', 'vizPerfStat'];
+/** The Camera + Display switches READ the app (2026-09-24). Each one proxies
+ *  the real cabinet button on click, so the state is never owned here; it is
+ *  re-read on the page's tick because every one of them can also change from
+ *  elsewhere — ⇧F, P, the window's own fullscreen control, the projector popup
+ *  being closed by hand. Four buttons that said "Toggle" and "Show / hide"
+ *  stood here until then: a yes/no is the kit's toggle (SETTINGS-GUI § 3), and
+ *  a button whose label has to explain that it flips something is the sign. */
+function _syncViewSwitches() {
+  const set = (id, on) => { const el = document.getElementById(id); if (el && el.checked !== !!on) el.checked = !!on; };
+  set('setViewProjector',  S.projectorMode);
+  set('setViewFullscreen', document.body.classList.contains('electron-fullscreen'));
+  set('setViewPerfMon',    S.perfMonitorVisible);
+  // ui-learn.js is a classic script whose `S` is `window.S || {}` — and
+  // nothing sets window.S, so its `S.learnMode` write lands in a private
+  // object. Its button's class is the one place the state is visible.
+  set('setViewLearn',      document.getElementById('learnModeBtn')?.classList.contains('learn-active'));
+}
+
 function _viewStats(on) {
   if (_viewStatTick) { clearInterval(_viewStatTick); _viewStatTick = null; }
   if (!on) return;
   const paint = () => {
+    _syncViewSwitches();
     const ms = perf.frameMs || 0;
     const txt = ms > 0
       ? `${ms.toFixed(1)} ms per frame · ${Math.round(1000 / ms)} fps · ${perf.activeNodes || 0} grains`
@@ -511,4 +530,6 @@ export function initSettings() {
     if (settingsOpen()) closeSettings(); else openSettings();
   });
   S._openSettings = openSettings;
+  S._settingsOpen = settingsOpen;
+  S._setSettingsOpen = on => { if (on) openSettings(); else closeSettings(); };   // `settings` (midi.js)
 }

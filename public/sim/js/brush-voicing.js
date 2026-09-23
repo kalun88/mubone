@@ -42,7 +42,7 @@
 // session's own embedded patch.
 // ============================================================================
 
-import { S, gp } from './state.js';
+import { S, gp, FILTER_Q_FLAT, FILTER_Q_PEAK, FILTER_TYPE_OF } from './state.js';
 
 export const LIVE_VOICING = 0;   // reserved — follows the global params
 
@@ -59,6 +59,31 @@ const _CURVE_MAP = { hann: 0, tri: 1, rect: 2 };
  * hardest class of bug to chase in this app. cc-mirror-audit.js exists because
  * this project has already been bitten by exactly one duplicated control list.
  */
+/** The worklet's filter int from the UI's two fields: 0 when the switch is
+ *  off, else the mode's number. Overrides win over the base block, as every
+ *  other field does. */
+export function filterTypeOf(ov, base) {
+  if (!(ov.filterOn ?? base.filterOn ?? false)) return 0;
+  return FILTER_TYPE_OF[ov.filterMode ?? base.filterMode] ?? 1;
+}
+
+/** ONE filter from the two-corner block (v15, 2026-09-23). A low-pass alone
+ *  becomes `lp`, a high-pass alone `hp`; both set become a `bp` at the
+ *  geometric centre with the Q the band implies. Nothing set is off. The old
+ *  Q (0.1–20) lands on `res` through the same log curve the sheet uses. */
+export function filterFromCorners(hp, lp, hq, lq) {
+  const hpOn = hp > 22, lpOn = lp < 19500;
+  const resOf = q => Math.max(0, Math.min(1,
+    Math.log((q || FILTER_Q_FLAT) / FILTER_Q_FLAT) / Math.log(FILTER_Q_PEAK / FILTER_Q_FLAT)));
+  if (hpOn && lpOn) {
+    const fc = Math.sqrt(hp * lp);
+    return { filterOn: true, filterMode: 'bp', cutoff: fc, res: resOf(fc / Math.max(1, lp - hp)) };
+  }
+  if (lpOn) return { filterOn: true, filterMode: 'lp', cutoff: lp, res: resOf(lq) };
+  if (hpOn) return { filterOn: true, filterMode: 'hp', cutoff: hp, res: resOf(hq) };
+  return { filterOn: false, filterMode: 'lp', cutoff: 1000, res: 0 };
+}
+
 export function resolveGrainParams() {
   const ov   = S.grainOverrides;
   const base = gp();
@@ -78,15 +103,14 @@ export function resolveGrainParams() {
     probability:      S.grainProbability ?? 1.0,
     direction:        _DIR_MAP[S.grainDirection]   ?? 0,
     envShape:         _CURVE_MAP[S.grainCurveType] ?? 0,
-    hpfFreq:          ov.hpfFreq          ?? base.hpfFreq          ?? 20,
-    lpfFreq:          ov.lpfFreq          ?? base.lpfFreq          ?? 20000,
-    hpfQ:             ov.hpfQ             ?? base.hpfQ             ?? 0.707,
-    lpfQ:             ov.lpfQ             ?? base.lpfQ             ?? 0.707,
+    filterType:       filterTypeOf(ov, base),
+    cutoff:           ov.cutoff           ?? base.cutoff           ?? 1000,
+    res:              ov.res              ?? base.res              ?? 0,
     filterFreqJitter: ov.filterFreqJitter ?? base.filterFreqJitter ?? 0,
     panSpread:        ov.panSpread        ?? base.panSpread        ?? 0,
-    // k, kAllMode and kSeqMode are deliberately NOT here (#233, reversing
-    // #212's k half): how many marks the cursor reads, whether the count
-    // applies at all, and in what order, are LENS properties — live globals,
+    // k (0 = all) and kSeqMode are deliberately NOT here (#233, reversing
+    // #212's k half): how many marks the cursor reads, and in what order,
+    // are LENS properties — live globals,
     // never frozen into a stroke. A voicing freezes only the SOUND. The lens
     // sends order live to every cursor voice via the cursorVoices post.
   };
@@ -314,13 +338,21 @@ export function syncLiveVoicing() {
 /** One-shot key migrations for a stored grain block. Read old key → write new
  *  → delete old; never a fallback at read time, or the old name lives forever.
  *  v14 (2026-09-07): `filterQ` was one number for both corners and became
- *  `hpfQ` / `lpfQ` — a block that stored the shared one gets it on both, which
- *  is exactly the filter it had. */
+ *  `hpfQ` / `lpfQ`. v15 (2026-09-23): the two corners became ONE filter —
+ *  `filterType` / `cutoff` / `res` — through `filterFromCorners`. A block is
+ *  a frozen worklet block, so it carries the int, not the switch and mode. */
 export function migrateBlockKeys(p) {
-  if (p && typeof p === 'object' && p.filterQ != null) {
+  if (!p || typeof p !== 'object') return p;
+  if (p.filterQ != null) {
     p.hpfQ = p.hpfQ ?? p.filterQ;
     p.lpfQ = p.lpfQ ?? p.filterQ;
     delete p.filterQ;
+  }
+  if ('hpfFreq' in p || 'lpfFreq' in p || 'hpfQ' in p || 'lpfQ' in p) {
+    const f = filterFromCorners(+p.hpfFreq || 20, +p.lpfFreq || 20000, +p.hpfQ || 0.707, +p.lpfQ || 0.707);
+    p.filterType = f.filterOn ? FILTER_TYPE_OF[f.filterMode] : 0;
+    p.cutoff = f.cutoff; p.res = f.res;
+    delete p.hpfFreq; delete p.lpfFreq; delete p.hpfQ; delete p.lpfQ;
   }
   return p;
 }

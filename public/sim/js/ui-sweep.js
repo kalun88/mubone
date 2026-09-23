@@ -1,11 +1,14 @@
 // ============================================================================
 // UI — SWEEP
-// One-click removal of all particles not associated with active seeds
-// (stationary or moving) or loops (seqs).  Also cleans up orphaned live buffers.
+// Sweep clears the SCRATCH layer: every mark no pin holds — grain strokes
+// outside a pinned cloud's reach, and tape strokes no pinned loop owns (an
+// unpinned trigger is scratch, and goes with its marks). Also cleans up
+// orphaned live buffers.
 // ============================================================================
 
 import { S, MAX_COMMITS } from './state.js';
 import { angleBetweenSphere, releaseSeqNodes } from './grain.js';
+import { dropTriggersWhere } from './trigger.js';
 import { flushWorkletGrains, resyncWorkletBuffers } from './grain-worklet-bridge.js';
 
 // ── Sweep snapshot — allows one-level undo of sweep ──────────────────────────
@@ -61,8 +64,24 @@ export function applyMaterial(snap) {
     }
   }
   if (S.triggers) {
+    // A trigger COMING BACK starts outside (2026-09-24, Ek: erase a looping
+    // take under the cursor, undo, and "it should start looping since i'm
+    // dwelled on it but it doesn't start again till i … move away then go
+    // back on it"). The shell is the same object it was, and it left with
+    // `_inside` still true — the gate skips a trigger with no marks, so no
+    // exit edge was ever seen — and came back the same way, so the tick saw
+    // inside → inside and no enter edge. The same rule a walk gate is born
+    // under (trigger.js: "a gate starts OUTSIDE — the first touch is the
+    // enter edge"). Only the ones coming back: a trigger that stayed on the
+    // board through the action is sounding under the cursor and must not be
+    // re-entered, which would refire it.
+    const stayed = new Set(S.triggers);
     S.triggers.length = 0;
-    for (const t of snap.triggers) { t._builtAt = -1; S.triggers.push(t); }
+    for (const t of snap.triggers) {
+      t._builtAt = -1;
+      if (!stayed.has(t) && t.trigger) { t.trigger._inside = false; t.playing = false; }
+      S.triggers.push(t);
+    }
     S._syncTriggerUI?.();
   }
   resyncWorkletBuffers();
@@ -77,8 +96,10 @@ export function materialAction(kind, before, after) {
 }
 
 /**
- * Remove all particles not referenced by any active seed or loop.
- * Moving seeds keep particles within reach of any frame along their path.
+ * Remove all particles not held by a pin: a cloud keeps what is in its reach
+ * (a moving one, within reach of any frame along its path), a loop keeps its
+ * stroke and its layers' strokes. Everything else is scratch and goes,
+ * unpinned tape strokes included.
  * The removal is one action on the history stack, so undo restores it.
  * Returns { removed, kept } counts.
  */
@@ -114,32 +135,41 @@ export function sweep() {
     }
   }
 
-  // ── Loops: keep all particles belonging to active loops ────────
+  // ── Loops: keep the strokes a pinned loop holds — its own and each
+  // overdub layer's. A layer's marks are on the sphere as a tape stroke that
+  // was never armed (ui-presets.js, unpin arms them plain), so without this
+  // a sweep stripped the marks from under a layer that kept sounding.
+  const pinnedStrokes = new Set();
   for (let si = 0; si < MAX_COMMITS; si++) {
     const seq = S.commitSlots[si];
     if (!seq || seq.type !== 'loop') continue;
-    const seqStrokeId = seq.strokeId;
-    for (let pi = 0; pi < S.particles.length; pi++) {
-      const p = S.particles[pi];
-      if (p.strokeId === seqStrokeId) kept.add(p);
-    }
+    pinnedStrokes.add(seq.strokeId);
+    for (const ov of (seq.overdubs || [])) pinnedStrokes.add(ov.strokeId);
+  }
+  for (let pi = 0; pi < S.particles.length; pi++) {
+    const p = S.particles[pi];
+    if (pinnedStrokes.has(p.strokeId)) kept.add(p);
   }
 
-  // ── Triggers: keep their strokes ──────────────────────────────────────
-  // Sweep discards material nothing is using. A trigger stroke is in use — it
-  // is the percussion map — so it is kept for the same reason loop strokes are,
-  // and sweeping would otherwise silently delete a set's worth of placements.
-  for (const t of (S.triggers || [])) {
-    for (let pi = 0; pi < S.particles.length; pi++) {
-      if (S.particles[pi].strokeId === t.strokeId) kept.add(S.particles[pi]);
-    }
-  }
+  // An UNPINNED tape stroke is scratch, and sweep clears scratch (the manual:
+  // "a line fires when touched … sweep clears it"). Until 2026-09-24 every
+  // armed trigger kept its marks here, so with one pin on the board sweep
+  // took the grain strokes and left every tape stroke — Ek: "it only sweeps
+  // grains, no tape strokes". A pinned loop's trigger survives through its
+  // marks above; the rest go with theirs, below.
 
   // ── Filter particles ──────────────────────────────────────────────────
   const before = S.particles.length;
   S.particles = S.particles.filter(p => kept.has(p));
   S._particleVersion++;
   const removed = before - S.particles.length;
+
+  // ── Triggers: a shell whose marks just went goes with them, now ───────
+  // The gate would drop it on its next tick anyway (refreshTriggers); taking
+  // it here makes the sweep silent at once, as erase-all is, and puts the
+  // AFTER snapshot on the stack without the ghost.
+  const remainingStrokeIds = new Set(S.particles.map(p => p.strokeId));
+  dropTriggersWhere(t => !remainingStrokeIds.has(t.strokeId));
 
   // ── Clean up orphaned live recording buffers ──────────────────────────
   const usedLiveIdxs = new Set();
@@ -172,7 +202,6 @@ export function sweep() {
   }
 
   // ── Clean up stroke history ───────────────────────────────────────────
-  const remainingStrokeIds = new Set(S.particles.map(p => p.strokeId));
   S.strokeHistory = S.strokeHistory.filter(e => remainingStrokeIds.has(e.strokeId));
 
   if (removed > 0) history.push(materialAction('sweep', snapBefore, snapshotMaterial()));

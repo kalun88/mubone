@@ -21,7 +21,6 @@ import {
 import { resizeCanvas } from './renderer.js';
 import { loadAudioFile } from './ui-samples.js';
 
-import { setScanMuted } from './ui-meters.js';
 import { armTrigger } from './trigger.js';
 import { toggleRail } from './tiles.js';
 
@@ -752,12 +751,6 @@ export function setupEvents() {
     else if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.repeat) {
       e.preventDefault();
       undoLastStroke();
-    }
-
-    // S: toggle scan (cursor spotlight on/off)
-    if (e.key === 's' && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat) {
-      e.preventDefault();
-      setScanMuted(!S.scanMuted);
     }
 
     // M: system mute (master output)

@@ -132,7 +132,7 @@ The fourteen terms, in the recommended system. Anything not on this list should 
 | **stroke** | n. | One run of marks with one buffer. The only object on the sphere |
 | **pin** | v. / n. | Leave a stroke sounding off-cursor; the thing so left. Its kinds stay **cloud** and **loop** — pin is the category, not a third kind. **Unpin** returns it to scratch (superseded *hold*, 2026-08-27 — see § Pin) |
 | **reach** | n. | How far the cursor hears. One value, every tool |
-| **depth** | n. | How many of the newest strokes under the cursor are audible (took this row from *layers*, 2026-08-26; the readout counts strokes: "last 3 strokes") |
+| **depth** | n. | How many of the newest strokes under the cursor are audible (took this row from *layers*, 2026-08-26). Four answers on a capsule since 2026-09-24: 1 · 2 · 3 · all |
 | **tape** | n. | Material played WHOLE — a take, not fragments of one. The engine behind `line`, `slice`, `looper`, `overdub`; fired on entering the reach. Superseded *hit* and *trigger* (2026-09-07, Ek: "i hate hit, we should remove it from the vocab… it's more like a tape instrument") |
 | **source** | n. | Where the brush inks from — a live input channel or the **sampler** (the one input that is also a store); exactly one on. (Superseded *stamp*, 2026-08-28 — a sample is an input, not a material, so any brush can paint from it; BRUSH-MODEL § 1g) |
 | **mute** | v. | Silence. Replaces scan-off and triggers-off both |
@@ -208,7 +208,9 @@ Let's put a 'pin' in it."* So:
 
 *Depth* (how many strokes deep the lens sees — today's `recency`) is now on the lens sheet as
 **depth**, confirmed by Ek 2026-08-26 ("depth makes sense") — but its readout must say what the
-number counts: "last 3 strokes", never a bare "3" ("2 is nothing to me"). It has taken the
+number counts: "last 3 strokes", never a bare "3" ("2 is nothing to me"). *(Superseded 2026-09-24:
+depth is a capsule of four answers, 1 · 2 · 3 · all, and the pill IS the reading — there is no
+readout to word.)* It has taken the
 "how deep it hears" row from *layers* — and with § Pin retiring *layer* from the arrangement
 side too, the word is out of the vocabulary altogether.
 

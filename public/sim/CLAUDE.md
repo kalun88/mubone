@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for Cowork / Claude Code
 
-> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-23 (5.6 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
+> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-24 (5.7 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
 
 > **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative — no paragraph here per change. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`.
 
@@ -178,7 +178,7 @@ A module mature enough to always load is wired into `main.js`; otherwise it stay
 
 ## Versioning — releases are explicit, never automatic
 
-Current version: **5.6 alpha** (`5.6.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
+Current version: **5.7 alpha** (`5.7.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
 
 1. **`index.html`** — BOTH version strings: the `<span class="top-bar-version">` (cabinet, hidden) and the chrome brand `<b>mubone</b> <i>1.14</i>`, which is the one the player sees
 2. **`package.json`** line 3 — the `"version"` field (semver, e.g. `"1.10.0-alpha"`)

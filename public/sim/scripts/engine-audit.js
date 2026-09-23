@@ -63,7 +63,7 @@ const SNAP = `JSON.stringify({
    glink: S.grainLink,
   curve: S.grainCurveType, dir: S.grainDirection,
   r: S.searchRadiusDeg, n: S.recencyN, k: S.grainK,
-  kAll: S.grainKAllMode, kSeq: S.grainKSeqMode, near: S.lensMode === 'nearest',
+  kAll: (S.grainOverrides.k ?? S.grainParams.k) === 0, kSeq: S.grainKSeqMode, near: S.lensMode === 'nearest',
   prob: S.grainProbability, flow: S.paintTicker && S.paintTicker.intervalMs,
   head: S.headWidthDeg, headEdge: S.headEdge,
   fade: S.radiusFadeEnabled, fadeC: S.radiusFadeCurve,
@@ -316,18 +316,53 @@ async function run(rig) {
     out.bandGone = band();
     out.zeroClass = spread.classList.contains('zero');
 
-    // A click that does not move still puts the caret in.
-    ev(spread, 'pointerdown', r.left + 10); ev(spread, 'pointermove', r.left + 11); ev(spread, 'pointerup', r.left + 11);
-    spread.focus(); out.typeable = document.activeElement === spread; spread.blur();
+    // A click that does not move opens the edit with the DIGITS selected, the
+    // unit left standing, so the next keystroke replaces the value (Ek,
+    // 2026-09-23: a bare caret made typing a number "really finicky"). A
+    // second click on the cell being edited places the caret instead.
+    const click = (el, x) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: r.top + r.height / 2, button: 0, detail: 1 }));
+    ev(value, 'pointerdown', r.left + 10); ev(value, 'pointermove', r.left + 11); ev(value, 'pointerup', r.left + 11); click(value, r.left + 11);
+    out.typeable = document.activeElement === value;
+    out.selected = value.value.slice(value.selectionStart, value.selectionEnd);
+    out.shown = value.value;
+    value.setSelectionRange(0, 0);
+    ev(value, 'pointerdown', r.left + 10); ev(value, 'pointerup', r.left + 10); click(value, r.left + 10);
+    out.caretKept = value.selectionStart === 0 && value.selectionEnd === 0;
+    value.blur();
     await wait(150);
 
     // ⌥ on the track writes the VALUE, like any drag — never the spread.
+    // Pressed on the far side from the handle: just outside the handle is the
+    // band's EDGE since 2026-09-23, and that press would open the spread.
     const dv = raw('gcDurVarSlider'), val = raw('gcDurSlider');
     const tr = track.getBoundingClientRect();
-    track.dispatchEvent(new PointerEvent('pointerdown', { clientX: tr.left + tr.width * 0.8, clientY: tr.top + tr.height / 2, bubbles: true, buttons: 1, altKey: true, detail: 0, pointerId: 12 }));
+    const handleF = () => parseFloat(track.querySelector('.prow-h').style.left) / 100;
+    const farX = () => tr.left + tr.width * (handleF() < 0.5 ? 0.85 : 0.15);
+    track.dispatchEvent(new PointerEvent('pointerdown', { clientX: farX(), clientY: tr.top + tr.height / 2, bubbles: true, buttons: 1, altKey: true, detail: 0, pointerId: 12 }));
     await wait(240);
     out.altSpread = raw('gcDurVarSlider') - dv;
     out.altValue  = raw('gcDurSlider') !== val;
+    track.dispatchEvent(new PointerEvent('pointerup', { clientX: farX(), clientY: tr.top + tr.height / 2, bubbles: true, buttons: 0, pointerId: 12 }));
+    await wait(100);
+
+    // THE BAND'S EDGE SETS THE SPREAD (Ek, 2026-09-23): the two-thumb range
+    // every DAW draws. With the spread at zero the edge IS the zone just
+    // outside the handle; pull outward from there and the band opens, the
+    // value stays, the ± cell follows. Pull back in and it closes.
+    spread.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: r.left + 20, clientY: r.top + 5 }));
+    await wait(240);
+    const v2 = raw('gcDurSlider'), hx = tr.left + tr.width * handleF();
+    const dir = handleF() < 0.5 ? 1 : -1;
+    const tev = (type, x) => track.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: tr.top + tr.height / 2, bubbles: true, buttons: type === 'pointerup' ? 0 : 1, button: 0, detail: 0, pointerId: 14 }));
+    tev('pointerdown', hx + dir * 6); tev('pointermove', hx + dir * 40); await wait(150); tev('pointerup', hx + dir * 40);
+    await wait(240);
+    out.edgeSpread = raw('gcDurVarSlider');
+    out.edgeValueKept = raw('gcDurSlider') === v2;
+    out.edgeCell = spread.value;
+    out.edgeBand = band();
+    tev('pointerdown', hx + dir * 40); tev('pointermove', hx + dir * 4); await wait(150); tev('pointerup', hx + dir * 4);
+    await wait(240);
+    out.edgeClosed = raw('gcDurVarSlider');
 
     // And the value's own cell scrubs the same way.
     const val1 = raw('gcDurSlider'), vr = value.getBoundingClientRect();
@@ -347,10 +382,18 @@ async function run(rig) {
           spr.fine > 0 && Math.abs(spr.fine / spr.coarse - 0.25) < 0.05, `coarse ${spr.coarse}, fine ${spr.fine}`);
     check('double-clicking the cell clears the spread', spr.cleared === 0, String(spr.cleared));
     check('… and the band goes with it', spr.bandGone && !spr.bandGone.shown && spr.zeroClass === true, JSON.stringify(spr.bandGone));
-    check('a click that does not move still types', spr.typeable === true);
+    check('a click that does not move opens the edit', spr.typeable === true);
+    check('… with the digits selected and the unit left standing',
+          /^-?\d+(\.\d+)?$/.test(spr.selected) && spr.shown.trim().length > spr.selected.length,
+          `selected "${spr.selected}" of "${spr.shown}"`);
+    check('… and a click on the cell being edited places the caret', spr.caretKept === true);
     check('⌥ on the track is a plain drag: the value moves, the spread does not',
           spr.altSpread === 0 && spr.altValue === true, `spread ${spr.altSpread}, value moved ${spr.altValue}`);
     check('the value cell scrubs too', spr.valueScrubbed === true);
+    check('dragging the band\'s edge outward opens the spread, the value staying put',
+          spr.edgeSpread > 0 && spr.edgeValueKept === true, `spread ${spr.edgeSpread}, value kept ${spr.edgeValueKept}`);
+    check('… the ± cell and the band follow it', !spr.edgeCell?.startsWith('0') && spr.edgeBand?.shown && spr.edgeBand.w > 0, `cell "${spr.edgeCell}" band ${JSON.stringify(spr.edgeBand)}`);
+    check('… and pulling the edge back in closes it', spr.edgeClosed < spr.edgeSpread, `${spr.edgeSpread} → ${spr.edgeClosed}`);
   }
 
   console.log('\n§ C. the cabinet dependency');

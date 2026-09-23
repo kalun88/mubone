@@ -482,8 +482,9 @@ const _voSelBuf = [];            // the survivors — reused, no per-tick alloc
 let _voEligible = 0;
 function _selectPerVoicing(pool, k, trigFilter) {
   const trigRad = trigFilter ? S.searchRadiusDeg * Math.PI / 180 : 0;
-  // `trigFilter` IS "reading nearest": `all` is a radius answer, off there.
-  const all = S.grainKAllMode && !trigFilter;
+  // k = 0 is ALL — no cap, in both modes (2026-09-24; the `fill` switch it
+  // replaces was a radius answer, forced off under nearest).
+  const all = k === 0;
   // Nearest mode hands the WHOLE sphere to this pass, so the pinned-cloud skip
   // has to happen here too — _buildCandidatePoolRadius never sees those
   // particles. In radius mode the pool arrives already filtered and this costs
@@ -551,13 +552,24 @@ function _buildCandidatePoolRadius(particles, radiusRad, forCursor = false, only
   // An opened take is open to the CURSOR, never to a pinned cloud: a cloud is
   // grain material, and the take's own pin is its loop (Ek, 2026-09-23).
   const _open = forCursor && _openAny();
+  // WET PAINT IS THE CURSOR'S, WALK OR NOT (Ek, 2026-09-24: "when i have walk
+  // on with grain, and i'm painting with the grain tool, it should live
+  // granulate while i'm painting but it seems to be muted until i am not
+  // recording"). `onlyOpen` read nothing but opened strokes, and the stroke
+  // under the brush is never opened — a walk opens a FINISHED stroke on
+  // touch. So the stroke being painted counts as open while it is being
+  // painted: it sounds as it goes down, and walk keeps its meaning for every
+  // stroke the brush has left.
+  // A TAKE being recorded is not wet paint: tape is played whole, never
+  // granulated as it goes down, so its marks (`p.trig`) stay out.
+  const wet = forCursor && S.isPainting && S.isRecording && !S._recordingTrigger ? S.currentStrokeId : -1;
   // Default false: the seed path shares this builder, and a cloud must read the
   // material it claims. Only the cursor's call passes true.
   const pinned = forCursor && _cloudClaimN > 0;
   _recBufRec.clear();
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
-    const open = _open && S._openStrokes.has(p.strokeId);
+    const open = (_open && S._openStrokes.has(p.strokeId)) || p.strokeId === wet;
     if (p.trig && !open) continue;
     if (onlyOpen && !open) continue;
     if (p._ang >= radiusRad) continue;
@@ -573,7 +585,7 @@ function _buildCandidatePoolRadius(particles, radiusRad, forCursor = false, only
   _candidateBuf.length = 0;
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
-    const open = _open && S._openStrokes.has(p.strokeId);
+    const open = (_open && S._openStrokes.has(p.strokeId)) || p.strokeId === wet;
     if (p.trig && !open) continue;
     if (onlyOpen && !open) continue;
     if (p._ang >= radiusRad) continue;
@@ -850,7 +862,7 @@ function _scheduleWalkers(out) {
   let hasOv = false;
   for (const key in ov) if (ov[key] !== null && ov[key] !== undefined) { hasOv = true; break; }
   const cgp = hasOv ? Object.assign(Object.create(base), Object.fromEntries(Object.entries(ov).filter(([, v]) => v !== null && v !== undefined))) : base;
-  const k = cgp.k ?? 8, all = !!S.grainKAllMode;
+  const k = cgp.k ?? 0, all = k === 0;
   const radDeg = S.searchRadiusDeg, rad = radDeg * Math.PI / 180;
   for (const w of ws) {
     if (!(w.level > 0)) continue;
@@ -929,7 +941,6 @@ function _interpolateMovingSeed(seed) {
   out.grainParams       = frac < 0.5 ? a.grainParams : b.grainParams;
   out.searchRadiusDeg   = a.searchRadiusDeg + (b.searchRadiusDeg - a.searchRadiusDeg) * frac;
   out.nearestMode       = frac < 0.5 ? a.nearestMode : b.nearestMode;
-  out.kAllMode          = frac < 0.5 ? a.kAllMode : b.kAllMode;
   out.kSeqMode          = frac < 0.5 ? a.kSeqMode : b.kSeqMode;
   out.grainDirection    = frac < 0.5 ? a.grainDirection : b.grainDirection;
   out.grainCurveType    = frac < 0.5 ? a.grainCurveType : b.grainCurveType;
@@ -1410,7 +1421,7 @@ export function scheduleGrains() {
     }
     // For moving seeds, use frame's modes; for stationary, use seed's snapshot.
     const cNearestMode = isMoving ? frame.nearestMode : seed.nearestMode;
-    const cKAllMode    = isMoving ? frame.kAllMode    : seed.kAllMode;
+    const cKAllMode    = (cgp.k ?? 0) === 0;   // k = 0 is all, frozen with the cloud's k
     const cKSeqMode    = isMoving ? frame.kSeqMode    : seed.kSeqMode;
     const cSearchDeg   = isMoving ? frame.searchRadiusDeg : seed.searchRadiusDeg;
     const cFadeOn      = isMoving ? frame.radiusFadeEnabled : seed.radiusFadeEnabled;

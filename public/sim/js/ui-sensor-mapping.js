@@ -42,11 +42,11 @@ const OUTPUT_KINDS = [
 
 // Default destination hydration when user switches a row's kind.
 function _defaultDestForKind(kind) {
-  if (kind === 'grain')  return { kind: 'grain', param: 'hpfFreq' };
+  if (kind === 'grain')  return { kind: 'grain', param: 'cutoff' };
   if (kind === 'cursor') return { kind: 'cursor', param: 'elevation' };
   if (kind === 'midi')  return { kind: 'midi',  deviceId: '', channel: 1, cc: 20, bits: 7 };
   if (kind === 'osc')   return { kind: 'osc',   host: _defaultOscHost(), port: _defaultOscPort(), address: '/mubone/out' };
-  return { kind: 'grain', param: 'hpfFreq' };
+  return { kind: 'grain', param: 'cutoff' };
 }
 
 // ── One-way auto-arm ────────────────────────────────────────────────────────

@@ -442,3 +442,69 @@ test('a seventeenth is dropped, not folded onto another voice', () => {
   assert.equal(active.length, 16);
   assert.equal(new Set(active.map(v => v.candidates[0].offset)).size, 16, 'sixteen different sources');
 });
+
+// ── The grain filter (2026-09-23) ───────────────────────────────────────────
+// ONE state-variable filter per grain — a type, a cutoff, a resonance. A take
+// of two tones an octave-and-more either side of the cutoff is played through
+// one long grain; the power at each tone says which side the filter kept.
+// Measured through process(), because the filter lives in the render loop.
+
+function tonePower(samples, hz) {          // Goertzel, one bin
+  const w = 2 * Math.PI * hz / SR, c = 2 * Math.cos(w);
+  let s0 = 0, s1 = 0, s2 = 0;
+  for (const x of samples) { s0 = x + c * s1 - s2; s2 = s1; s1 = s0; }
+  return (s1 * s1 + s2 * s2 - c * s1 * s2) / (samples.length * samples.length);
+}
+
+function grainThrough(filter) {
+  const p = makeProc({ duration: 0.6, period: 10, volume: 1.0, envShape: 2, fadeRatio: 0.02, ...filter });
+  const n = addTake(p, 1.0, i => 0.4 * Math.sin(2 * Math.PI * 200 * i / SR) + 0.4 * Math.sin(2 * Math.PI * 6000 * i / SR));
+  assert.ok(fireOne(p, cand(0, 0, n)) >= 0, 'the grain fired');
+  const outBlock = new Float32Array(BLOCK);
+  const outputs = [[outBlock], [new Float32Array(BLOCK)]];
+  const inputs = [[new Float32Array(BLOCK)]];
+  const out = [];
+  for (let b = 0; b < Math.round(0.5 * SR / BLOCK); b++) { p.process(inputs, outputs); out.push(...outBlock); }
+  const mid = out.slice(Math.round(0.1 * SR), Math.round(0.4 * SR));   // steady state, inside the envelope
+  return { lo: tonePower(mid, 200), hi: tonePower(mid, 6000) };
+}
+
+test('with the filter off, both tones pass untouched', () => {
+  const { lo, hi } = grainThrough({ filterType: 0, cutoff: 1000, res: 0 });
+  assert.ok(lo > 0.03 && hi > 0.03, `lo ${lo.toFixed(4)} hi ${hi.toFixed(4)}`);
+  assert.ok(Math.abs(lo / hi - 1) < 0.1, 'and at the same level');
+});
+
+test('a low-pass keeps the tone below the cutoff and loses the one above', () => {
+  const { lo, hi } = grainThrough({ filterType: 1, cutoff: 1000, res: 0 });
+  assert.ok(lo > 0.03, `low tone kept: ${lo.toFixed(4)}`);
+  assert.ok(hi < lo / 100, `high tone gone: ${hi.toFixed(6)} against ${lo.toFixed(4)}`);
+});
+
+test('a high-pass does the opposite', () => {
+  const { lo, hi } = grainThrough({ filterType: 3, cutoff: 1000, res: 0 });
+  assert.ok(hi > 0.03, `high tone kept: ${hi.toFixed(4)}`);
+  assert.ok(lo < hi / 100, `low tone gone: ${lo.toFixed(6)} against ${hi.toFixed(4)}`);
+});
+
+test('a band-pass at one tone keeps it at unity and loses the other', () => {
+  const { lo, hi } = grainThrough({ filterType: 2, cutoff: 6000, res: 1 });
+  const { hi: ref } = grainThrough({ filterType: 0, cutoff: 6000, res: 0 });
+  assert.ok(Math.abs(hi / ref - 1) < 0.15, `the band is normalised: ${hi.toFixed(4)} against ${ref.toFixed(4)}`);
+  assert.ok(lo < hi / 100, `the far tone is gone: ${lo.toFixed(6)}`);
+});
+
+test('resonance raises the cutoff, and no more than the ceiling', () => {
+  const flat = grainThrough({ filterType: 1, cutoff: 6000, res: 0 });
+  const ring = grainThrough({ filterType: 1, cutoff: 6000, res: 1 });
+  const gainDb = 10 * Math.log10(ring.hi / flat.hi);
+  assert.ok(gainDb > 18 && gainDb < 26, `+${gainDb.toFixed(1)} dB at the cutoff (Q 0.707 → 10 is +23)`);
+});
+
+test('an audio-rate grain is not filtered at all', () => {
+  const p = makeProc({ duration: 0.003, filterType: 1, cutoff: 200, res: 0 });
+  const n = addTake(p, 0.1);
+  const i = fireOne(p, cand(0, 0, n));
+  assert.ok(i >= 0);
+  assert.equal(p._gFilterType[i], 0);
+});

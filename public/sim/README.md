@@ -137,18 +137,56 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/grain/durjitter` | `f` | Multiplicative duration jitter (0–1) |
 | `/grain/durvar` | `f` | Additive duration jitter, ms (0–500) |
 | `/grain/pervar` | `f` | Additive period jitter, ms (0–500) |
-| `/grain/retrigger` | `f` | Retrigger window, ms (0–500) |
 | `/grain/prob` | `f` | Fire probability (0–1) |
 | `/grain/pitchshift` | `f` | Pitch shift, cents (-2400 to +2400) |
 | `/grain/oct/down` `/oct/up` | *(bang)* | Step the pitch shift by ∓1200¢ (clamped at ±2400¢) |
 | `/grain/oct/reset` | *(bang)* | Return the pitch shift to 0¢ |
-| `/grain/hpf` | `f` | Per-grain HPF cutoff, Hz (20–20000) |
-| `/grain/lpf` | `f` | Per-grain LPF cutoff, Hz (20–20000) |
-| `/grain/hpfq` | `f` | Resonance at the HIGH-PASS corner (0.1–20; 0.707 = flat) |
-| `/grain/lpfq` | `f` | Resonance at the LOW-PASS corner (0.1–20; 0.707 = flat) |
-| `/grain/filterjitter` | `f` | Filter freq jitter fraction (0–1) |
+| `/grain/filter` | `i` / *(bang)* | The grain filter on (1) or off (0); a bang toggles |
+| `/grain/filtertype` | `s` / *(bang)* | `lp` · `bp` · `hp`; a bang cycles |
+| `/grain/cutoff` | `f` | Filter cutoff, Hz (20–20000) |
+| `/grain/res` | `f` | Resonance at the cutoff (0–1; 0 = flat, 1 = about to ring) |
+| `/grain/filterjitter` | `f` | Per-grain cutoff jitter (0–1 = ±1 octave) |
 | `/grain/dir` | *(bang)* | Cycle grain playback direction |
 | `/grain/curve` | *(bang)* | Cycle grain envelope curve |
+| `/grain/link` | `i` / *(bang)* | The sheet's link — duration and period move together (1 on, 0 off, bang toggles) |
+
+**Grain tab** — the MODE switches and the rows under walk (2026-09-24: every control on the screen has an address)
+
+| Address | Args | Description |
+|---|---|---|
+| `/audition` | `i` / *(bang)* | Audition — every setting live on paint; one flag for tape and grain (1 on, 0 off, bang toggles) |
+| `/grain/autopin` | `i` / *(bang)* | A grain stroke pins itself as a cloud on release |
+| `/grain/walk` | `i` / *(bang)* | A touch walks the stroke instead of reading what is in reach |
+| `/grain/dwell` | `s` / *(bang)* | Under walk: `oneshot` · `loop`; a bang toggles |
+| `/grain/retrig` | `s` / *(bang)* | Under walk: `cut` · `layer`; a bang toggles |
+| `/grain/flow` | `f` | Ms between deposited marks (10–200) |
+| `/grain/head` | `f` | Deposit width, degrees (0–30) |
+| `/grain/voice` | `i` / *(bang)* | Take a grain voice by its row number on the tab; 127 or a bang = next |
+| `/grain/voice/next` `/prev` | *(bang)* | The next / previous grain voice, wrapping |
+
+**Tape tab** — the MODE switches, the cursor behaviour rows, the voice sheet
+
+| Address | Args | Description |
+|---|---|---|
+| `/tape/autopin` | `i` / *(bang)* | A tape stroke pins itself as a loop on release |
+| `/tape/overdub` | `i` / *(bang)* | A take records into the nearest pinned loop as a layer |
+| `/tape/slice` | `i` / *(bang)* | Slice — a take is cut into separate triggers at each attack; affects the next take (was `/trigger/chop`) |
+| `/tape/dwell` | `s` / *(bang)* | `oneshot` · `loop` · `grain`; a bang cycles |
+| `/tape/retrig` | `s` / *(bang)* | `cut` · `layer`; a bang toggles |
+| `/tape/voice` | `i` / *(bang)* | Take a tape voice by its row number on the tab; 127 or a bang = next |
+| `/tape/voice/next` `/prev` | *(bang)* | The next / previous tape voice, wrapping |
+| `/tape/speed` | `f` | Varispeed (0.25–4); a sounding loop follows |
+| `/tape/pitch` | `f` | Pitch, cents (−2400 to +2400); lands at the next fire |
+| `/tape/step` | `s` / *(bang)* | `free` · `semi` · `oct5`; a bang cycles |
+| `/tape/reverse` | `i` / *(bang)* | The take plays backwards; lands at the next fire |
+| `/tape/volume` | `f` | The tape voice's level (0–1) |
+
+**Erase tab**
+
+| Address | Args | Description |
+|---|---|---|
+| `/erase/bystroke` | `i` / *(bang)* | The eraser takes whole strokes |
+| `/erase/from` | `s` / *(bang)* | `top` · `bottom` — which layer depth reaches first; a bang toggles |
 
 **Search**
 
@@ -156,26 +194,22 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 |---|---|---|
 | `/search/radius` | `f` | Search radius, degrees |
 | `/search/radius/inc` `/dec` | *(bang)* | Step radius up / down |
-| `/search/k` | `i` | Nearest-neighbor pool size |
-| `/search/recency` | `i` | Recency window, 0 = all, up to 16 |
-| `/search/scope` | *(bang)* | Toggle the lens between nearest and area (its third mode, `stroke`, is set on the sheet) |
-| `/search/fill` | *(bang)* | Toggle k-fill mode |
+| `/search/k` | `i` | Pool size — how many marks the cursor spreads over, 0 = all, up to 100 |
+| `/search/recency` | `i` | Depth: 1, 2 or 3 newest strokes, 0 = all |
+| `/search/scope` | *(bang)* | Toggle the cursor's mode between area and nearest |
+| `/cursor/reads` | `s` / *(bang)* | What the cursor reads — `both` · `grains` · `tape`; a bang cycles |
+| | | The cap is `/palette/1`, the lens tile's own toggle (`/cursor/scan` went on 2026-09-24) |
 | `/search/order` | *(bang)* | Toggle k ordering |
 
-**Trigger tool**
+**Pins** (clouds and loops — `/commit/*` is the wire name of the older rows; pin and unpin are `/palette/3` and `/palette/4`, the strip's own positions)
 
 | Address | Args | Description |
 |---|---|---|
-| `/trigger/chop` | `i` | Chop on/off (1 = on, 0 = off, bang = toggle) — affects the next take recorded |
-
-**Pins** (clouds and loops — `/commit/*` is the wire name; the keys are `=` pin and `-` unpin)
-
-| Address | Args | Description |
-|---|---|---|
-| `/commit/drop` | *(bang)* | Pin what the cursor is on — the `=` key: a tape stroke becomes a loop, nothing in reach pins a cloud at the cursor |
-| `/commit/draw` | `i` | Hold `=` (1 = down, 0 = up): while painting the loop grows to the release, otherwise a cloud path is drawn and pinned on release |
-| `/commit/release` | *(bang)* | Unpin the selected pin — nearest, farthest or oldest, Settings → Pins |
-| `/commit/clear` | *(bang)* | Clear all commits |
+| `/commit/clear` | *(bang)* | Unpin all |
+| `/pins/mute` | `i` / *(bang)* | Mute all — 1 mutes, 0 lets back, bang flips; per-pin mutes and solos survive |
+| `/pins/sel/mute` `/sel/solo` | `i` / *(bang)* | The selected pin's M and S — the track the sort puts first |
+| `/pins/sel/level` | `f` | The selected pin's fader position (0–1, unity at ⅔, +12 dB at 1); inert under follow |
+| `/pins/clouds/mute` `/clouds/solo` `/loops/mute` `/loops/solo` | `i` / *(bang)* | The two buses' M and S |
 | `/pins/follow` | *(bang)* / `s` | Follow: the faders follow the cursor. Bang toggles, `on` / `off` sets |
 | `/commit/xfade` | `f` | Snap/fade crossfade time (0–1) |
 | `/commit/attack` | `f` | Commit attack, s (0–10) |
@@ -184,7 +218,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/commit/loop_release` | *(bang)* | Cycle loop release mode |
 | `/commit/slots` | `i` | Slot count (1–16) |
 | `/commit/overflow` | *(bang)* | Cycle overflow behaviour |
-| `/commit/selection` | *(bang)* | Cycle selection mode |
+| `/commit/selection` | *(bang)* / `s` | The rail's sort, which is the selected pin: `nearest` · `farthest` · `oldest`; a bang cycles |
 | `/commit/dir` | *(bang)* | Cycle commit direction |
 
 **Camera & spatial**
@@ -192,20 +226,23 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | Address | Args | Description |
 |---|---|---|
 | `/spatial/mode` | *(bang)* | Legacy compound — flips both camera + panning between "sim" and "physical" presets |
-| `/spatial/lock` | `i` | Cursor lock hold — holds azimuth + elevation (1 = lock, 0 = release) |
+| `/spatial/lock` | `i` / *(bang)* | Cursor lock — holds azimuth + elevation together (1 lock, 0 release, bang toggles; ⌥ is the same toggle) |
+| `/camera` | `s` / *(bang)* | The camera menu — `steer` · `surface` · `sensor`; a bang cycles (sensor is refused with none connected) |
 
 **Palette** — the fixed strip: the lens (position 1), the hand's two tiles, then erase · pin · unpin (positions 2–4)
 
 | Address | Args | Description |
 |---|---|---|
-| `/palette/1` … `/palette/9` | *(bang)* or `i` | Fire palette position N — **and how it fires is the TILE's, not the message's**. A tile carries one verb, set in its drawer: a **momentary** tile takes `1` and `0` and plays between them; a **toggle** or a **bang** tile takes a bang, and an explicit `0` does nothing (it reads as a release edge). Positions, not tools: the performer lays the palette out by drag and the wire counts what is shown. The `/hold` and `/toggle` pair each position used to carry went with the three-verb position (2026-09-11) |
+| `/palette/1` … `/palette/4` | *(bang)* or `i` | Fire palette position N — **and how it fires is the TILE's, not the message's**. A tile carries one verb, set by right-click: a **momentary** tile takes `1` and `0` and plays between them; a **toggle** or a **bang** tile takes a bang, and an explicit `0` does nothing (it reads as a release edge). The strip is fixed: 1 lens · 2 erase · 3 pin · 4 unpin; `/palette/5` … `/9` went with the fixed strip (2026-09-24). The `/hold` and `/toggle` pair each position used to carry went with the three-verb position (2026-09-11) |
 | `/palette/wet` | `i` | Wet paint for the grain brush the drawer is open on (1 = wet, 0 = dry, bang = toggle) |
 
 **Cursor & transport**
 
 | Address | Args | Description |
 |---|---|---|
-| `/cursor/scan` | `i` | The cap — the cursor's ONE mute: capped, it reads nothing, granular and triggers alike (1 = reading, 0 = capped, bang = toggle). `/trigger/mute` was folded into this on 2026-09-07
+| `/rail/tools` `/rail/pins` | `i` / *(bang)* | Show or hide the tool rail / the pinned rail |
+| `/settings` | `i` / *(bang)* | Open or close Settings |
+| `/input/gain` | `f` | The footer's in fader, dB (−24 to +24) |
 | `/scan/fade` | `f` | The cap's fade time constant, ms |
 | `/cursor/tare` | *(bang)* | Zero the cursor — the sensor's heading in sensor mode; the camera back to the front in steer / surface |
 | `/cursor/az_source` `/el_source` | *(bang)* = cycle, `sensor`\|`locked`\|`mapped` = set | Who drives azimuth / elevation — the sensor, frozen at the held value, or a cursor mapping row |

@@ -99,7 +99,7 @@ gesture, no group to aim: a bang pins where you stand, a momentary or toggle pin
 | **`Tab`** | show or hide the **tool rail** — never the drawer (Ek, 2026-09-12). The `⋯` on a rail row is the drawer's only door; `~` is the same act as Tab. The tools pill's tooltip says so |
 | **`⇧Tab`** | show or hide the **pinned rail** on the right (Ek, 2026-09-12: "shift tab to open and close the pin"). The pinned pill's tooltip says so |
 | **`c` `e`, `↑`, `↓`** | **fire** a palette position (`palette_N`), in that tile's verb — a momentary plays while the key is down, a toggle runs until the same key again, a bang happens once. Factory: `c` lens *(toggle)* · `e` erase *(momentary)* · `↓` pin *(momentary — hold it and move, the path is the cloud; a hold under 200 ms pins where you stand)* · `↑` unpin. The two tools are the hand's, on the spacebar. **The key belongs to the position**, and since 2026-09-22 a position holds one tile for good — the strip is fixed, so nothing moves and no digit is ever freed. One play at a time: while a tool runs, the other tool keys are dead and its own key is what ends it |
-| **S** | the lens **off**, and on again — the cursor reads nothing: the cap (`scan_toggle`). **Not a mute** (2026-09-23): a take already fired plays to its release, a grain or a walker in flight finishes. `c` does the same, and opens the lens tab when the rail is up |
+| | **`S` went on 2026-09-24**: it was `scan_toggle`, the same cap `c` fires as the lens tile's toggle, and one control gets one row. `c` is the lens off and on — the cursor reads nothing under the cap. **Not a mute** (2026-09-23): a take already fired plays to its release, a grain or a walker in flight finishes |
 | | a position has **one row** on the keys page, in its tile's own words — `line · play (toggle)`, `pen · play (momentary)`, `lens · on / off`, `pin · pin here`. `palette_N_toggle` and `palette_N_hold` went with the three-verb position (2026-09-11); the verb lives on the tile now. **F was unbound on 2026-09-07**: it was a second key for one tool, from before the palette existed |
 | | every palette key is an explicit row on the keys page — relearn it there, or click the tile's legend row and press the new key |
 | | the keys page shows only BOUND actions by default — a learned key, a factory key nobody else took, a button, a MIDI assignment. **Show all** at the top reveals the rest, and the filter box searches whichever set is showing (2026-09-10) |
@@ -140,7 +140,7 @@ right edge of every row opens a second rail beside it** with that tool's whole e
 points the drawer without changing the hand; `Tab` never opens it) — one line per parameter, **type into any
 number**, **double-click any track to reset it** to the tick shown beneath it, and for a granular
 tool a window at the top showing one grain against the next one's onset. The filter is drawn: drag
-its edges for hpf and lpf, up and down for Q. An open drawer follows whatever you pick next. A lens
+across for the cutoff, up and down for the resonance. An open drawer follows whatever you pick next. A lens
 row installs the lens and nothing more, and every lens row carries the same ⋯ (on an
 uninstalled lens it installs first). Both rails float over the sphere and never resize it. `Esc` closes
 the properties rail, then the tool rail; **tools** in the chrome (and `~`) shows and hides them.
@@ -184,7 +184,7 @@ under the row are gone, and this is the one place a parameter lives.
 **The grain filter and the source are NOT palette candidates.** The lens IS one — it is on the
 strip at position 1 (`c`) and its tile turns the eye off and on: off is the **cap**, the cursor
 reads nothing, and the lens keeps its settings. **There is ONE lens** (2026-09-22 night): its
-settings are the lens TAB in the tool rail — reads, radius, mode (area · nearest), depth, k, fill,
+settings are the lens TAB in the tool rail — reads, radius, mode (area · nearest), depth, k (0 = all),
 order, fade, falloff — and `N` flips its mode from the keyboard. `wide` and `spot` were presets of
 it and are gone; `⇧K` still enters and leaves arrange. Grain tiles keep their sheet edits (a grain
 tile owns its whole block, 2026-09-03); the lens's and the eraser's are per session. The old toggle-7 tile retired into the
@@ -254,7 +254,7 @@ into two triggers**, and erasing all of it removes the trigger. The brush
 doubles as an editor. Pauses you played — rests, breaths, decays — are part of
 the material and never split anything; only erasing does.
 
-The **cap** — `S`, or turning the lens that is on off — silences hits as well
+The **cap** — `c`, turning the lens that is on off — silences hits as well
 as granulation: it is the cursor's one mute, and under it the cursor reads
 nothing on the scratch surface. (There is no cap TILE; the cap is no lens on.) The separate **triggers on/off** switch that stood beside it was
 deleted on 2026-09-07: hits play through the loop engine rather than the cursor

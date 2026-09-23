@@ -151,12 +151,13 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     this._grainStart      = 0;      // default buffer offset
     this._numChannels     = 1;      // output channel count
     this._eqGain          = 1.0;    // 1/√numChannels — equal-power spread for elevation bias
-    // Filter parameters (cursor)
-    this._hpfFreq         = 20;     // Hz — bypass at ≤22
-    this._lpfFreq         = 20000;  // Hz — bypass at ≥19500
-    this._hpfQ            = 0.707;  // Q at the HPF corner
-    this._lpfQ            = 0.707;  // Q at the LPF corner
-    this._filterFreqJitter = 0;     // per-grain cutoff randomization (0–1)
+    // Filter parameters (cursor). ONE filter per grain (2026-09-23): a
+    // state-variable filter with a type, a cutoff and a resonance, the way
+    // every grain synth does it. `filterType` 0 = off, 1 = lp, 2 = bp, 3 = hp.
+    this._filterType      = 0;
+    this._cutoff          = 1000;   // Hz
+    this._res             = 0;      // 0 = flat (Butterworth) … 1 = about to ring
+    this._filterFreqJitter = 0;     // per-grain cutoff randomization (0–1, octaves)
     this._durJitter       = 0;      // duration percentage jitter (0–1)
     this._startJitter     = 0;      // read-offset jitter in SECONDS (0 = off)
     this._fadeRatio       = 0.5;    // attack/release each as fraction of dur
@@ -638,10 +639,9 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       probability: 1.0,
       direction: 0,
       gain: 1.0,            // seedWeight × envGain (pre-computed on main thread)
-      hpfFreq: 20,
-      lpfFreq: 20000,
-      hpfQ: 0.707,
-      lpfQ: 0.707,
+      filterType: 0,
+      cutoff: 1000,
+      res: 0,
       filterFreqJitter: 0,
       panSpread: 0,         // spatial spread (0–1)
       kSeqMode: false,      // sequential candidate stepping
@@ -669,10 +669,9 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     if (p.fadeRatio != null)   v.fadeRatio = p.fadeRatio;
     if (p.fadeMode != null)    v.fadeMode = p.fadeMode;
     if (p.fadeMs != null)      v.fadeMs = p.fadeMs;
-    if (p.hpfFreq != null)     v.hpfFreq = p.hpfFreq;
-    if (p.lpfFreq != null)     v.lpfFreq = p.lpfFreq;
-    if (p.hpfQ != null)        v.hpfQ = p.hpfQ;
-    if (p.lpfQ != null)        v.lpfQ = p.lpfQ;
+    if (p.filterType != null)  v.filterType = p.filterType | 0;
+    if (p.cutoff != null)      v.cutoff = p.cutoff;
+    if (p.res != null)         v.res = p.res;
     if (p.filterFreqJitter != null) v.filterFreqJitter = p.filterFreqJitter;
     if (p.panSpread != null)   v.panSpread = p.panSpread;
     if (p.kSeqMode != null) {
@@ -706,14 +705,12 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       this._direction = p.direction;
     if (p.grainStart != null)
       this._grainStart = p.grainStart;
-    if (p.hpfFreq != null)
-      this._hpfFreq = p.hpfFreq;
-    if (p.lpfFreq != null)
-      this._lpfFreq = p.lpfFreq;
-    if (p.hpfQ != null)
-      this._hpfQ = p.hpfQ;
-    if (p.lpfQ != null)
-      this._lpfQ = p.lpfQ;
+    if (p.filterType != null)
+      this._filterType = p.filterType | 0;
+    if (p.cutoff != null)
+      this._cutoff = p.cutoff;
+    if (p.res != null)
+      this._res = p.res;
     if (p.filterFreqJitter != null)
       this._filterFreqJitter = p.filterFreqJitter;
     if (p.durJitter != null)
@@ -929,26 +926,17 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     this._gVbapWA     = new Float32Array(this._pool);
     this._gVbapWB     = new Float32Array(this._pool);
     this._gElBias     = new Float32Array(this._pool);   // elevation center-bias (0=equator, 1=pole)
-    // Per-grain biquad filter state (Direct Form II Transposed)
-    // Two cascaded sections: HPF then LPF. Each needs 5 coefficients + 2 state vars.
-    // Filter flags: bit 0 = HPF active, bit 1 = LPF active
-    this._gFilterFlags = new Uint8Array(this._pool);
-    // HPF coefficients: b0, b1, b2, a1, a2 (a0 normalized to 1)
-    this._gHpfB0 = new Float32Array(this._pool);
-    this._gHpfB1 = new Float32Array(this._pool);
-    this._gHpfB2 = new Float32Array(this._pool);
-    this._gHpfA1 = new Float32Array(this._pool);
-    this._gHpfA2 = new Float32Array(this._pool);
-    this._gHpfZ1 = new Float32Array(this._pool);  // state
-    this._gHpfZ2 = new Float32Array(this._pool);
-    // LPF coefficients + state
-    this._gLpfB0 = new Float32Array(this._pool);
-    this._gLpfB1 = new Float32Array(this._pool);
-    this._gLpfB2 = new Float32Array(this._pool);
-    this._gLpfA1 = new Float32Array(this._pool);
-    this._gLpfA2 = new Float32Array(this._pool);
-    this._gLpfZ1 = new Float32Array(this._pool);
-    this._gLpfZ2 = new Float32Array(this._pool);
+    // Per-grain state-variable filter (Simper's trapezoidal SVF): one
+    // section, four coefficients, two integrator states. Type 0 = off,
+    // 1 = lp, 2 = bp, 3 = hp — the output is picked per sample from the
+    // same three integrator terms, so a type costs nothing to switch.
+    this._gFilterType = new Uint8Array(this._pool);
+    this._gSvfA1  = new Float32Array(this._pool);
+    this._gSvfA2  = new Float32Array(this._pool);
+    this._gSvfA3  = new Float32Array(this._pool);
+    this._gSvfK   = new Float32Array(this._pool);   // damping = 1/Q
+    this._gSvfIc1 = new Float32Array(this._pool);   // integrator states
+    this._gSvfIc2 = new Float32Array(this._pool);
 
     // Source tag: 0 = cursor, 1 = seed (for selective flush on undo)
     this._gIsCursor = new Uint8Array(this._pool);
@@ -1045,34 +1033,21 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     this._gStartS.fill(0);
   }
 
-  // ── Biquad coefficient computation (cookbook formulas) ──────────────────
-  // Returns [b0, b1, b2, a1, a2] with a0 normalized to 1.
-  _computeHPF(freq, Q) {
-    const w0 = 2 * Math.PI * freq / this._sr;
-    const cosW0 = Math.cos(w0);
-    const alpha = Math.sin(w0) / (2 * Q);
-    const a0 = 1 + alpha;
-    return [
-      ((1 + cosW0) / 2) / a0,       // b0
-      (-(1 + cosW0)) / a0,           // b1
-      ((1 + cosW0) / 2) / a0,       // b2
-      (-2 * cosW0) / a0,             // a1
-      (1 - alpha) / a0,              // a2
-    ];
-  }
-
-  _computeLPF(freq, Q) {
-    const w0 = 2 * Math.PI * freq / this._sr;
-    const cosW0 = Math.cos(w0);
-    const alpha = Math.sin(w0) / (2 * Q);
-    const a0 = 1 + alpha;
-    return [
-      ((1 - cosW0) / 2) / a0,       // b0
-      (1 - cosW0) / a0,              // b1
-      ((1 - cosW0) / 2) / a0,       // b2
-      (-2 * cosW0) / a0,             // a1
-      (1 - alpha) / a0,              // a2
-    ];
+  // ── SVF coefficients (Andrew Simper, "Solving the continuous SVF
+  //    equations using trapezoidal integration", Cytomic 2013) ─────────────
+  // `res` 0–1 maps onto Q on a log scale from Butterworth (0.707, flat
+  // passband, no bump) to 10 (+20 dB at the cutoff, about to ring) — the same
+  // curve the sheet draws (tiles.js `_resQ`) and state.js names
+  // (FILTER_Q_FLAT / FILTER_Q_PEAK). The worklet cannot import, so the two
+  // numbers are repeated here on purpose.
+  _computeSVF(freq, res) {
+    const g = Math.tan(Math.PI * freq / this._sr);
+    const Q = 0.707 * Math.pow(10 / 0.707, Math.max(0, Math.min(1, res)));
+    const k = 1 / Q;
+    const a1 = 1 / (1 + g * (g + k));
+    const a2 = g * a1;
+    const a3 = g * a2;
+    return [a1, a2, a3, k];
   }
 
   // ── Fire a new grain ──────────────────────────────────────────────────
@@ -1101,10 +1076,9 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     } else {
       candCount = seed ? seed.candidateCount : this._candidateCount;
     }
-    const hpfFreq   = seed ? (seed.hpfFreq ?? 20)    : this._hpfFreq;
-    const lpfFreq   = seed ? (seed.lpfFreq ?? 20000)  : this._lpfFreq;
-    const hQ        = seed ? (seed.hpfQ ?? 0.707)     : this._hpfQ;
-    const lQ        = seed ? (seed.lpfQ ?? 0.707)     : this._lpfQ;
+    const fType     = seed ? (seed.filterType ?? 0)   : this._filterType;
+    const cutoff    = seed ? (seed.cutoff ?? 1000)    : this._cutoff;
+    const res       = seed ? (seed.res ?? 0)          : this._res;
     const fJitter   = seed ? (seed.filterFreqJitter ?? 0) : this._filterFreqJitter;
     const djitter   = seed ? (seed.durJitter ?? 0)     : this._durJitter;
     const sJitter   = seed ? (seed.startJitter ?? 0)   : this._startJitter;
@@ -1338,26 +1312,16 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     }
 
     // ── Per-grain filter setup ─────────────────────────────────────────
-    // Skip filtering for audio-rate grains (≤5ms) — too short to perceive
+    // Skip filtering for audio-rate grains (≤5ms) — too short to perceive.
+    // The jitter is in OCTAVES either side of the cutoff (1 = ±1 octave),
+    // drawn once per grain, which is what smears a cloud's colour.
     const audioRate = durSamples <= this._sr * 0.005;
-    const needsHPF = !audioRate && hpfFreq > 22;
-    const needsLPF = !audioRate && lpfFreq < 19500;
-    let filterFlags = 0;
-    if (needsHPF) {
-      filterFlags |= 1;
-      const jFreq = fJitter > 0 ? hpfFreq * Math.pow(2, (this._rand01() * 2 - 1) * fJitter) : hpfFreq;
-      const c = this._computeHPF(Math.min(jFreq, this._sr * 0.49), hQ);
-      this._gHpfB0[idx] = c[0]; this._gHpfB1[idx] = c[1]; this._gHpfB2[idx] = c[2];
-      this._gHpfA1[idx] = c[3]; this._gHpfA2[idx] = c[4];
-      this._gHpfZ1[idx] = 0; this._gHpfZ2[idx] = 0;
-    }
-    if (needsLPF) {
-      filterFlags |= 2;
-      const jFreq = fJitter > 0 ? lpfFreq * Math.pow(2, (this._rand01() * 2 - 1) * fJitter) : lpfFreq;
-      const c = this._computeLPF(Math.min(jFreq, this._sr * 0.49), lQ);
-      this._gLpfB0[idx] = c[0]; this._gLpfB1[idx] = c[1]; this._gLpfB2[idx] = c[2];
-      this._gLpfA1[idx] = c[3]; this._gLpfA2[idx] = c[4];
-      this._gLpfZ1[idx] = 0; this._gLpfZ2[idx] = 0;
+    const filterType = audioRate ? 0 : (fType | 0);
+    if (filterType) {
+      const jFreq = fJitter > 0 ? cutoff * Math.pow(2, (this._rand01() * 2 - 1) * fJitter) : cutoff;
+      const c = this._computeSVF(Math.max(10, Math.min(jFreq, this._sr * 0.45)), res);
+      this._gSvfA1[idx] = c[0]; this._gSvfA2[idx] = c[1]; this._gSvfA3[idx] = c[2]; this._gSvfK[idx] = c[3];
+      this._gSvfIc1[idx] = 0; this._gSvfIc2[idx] = 0;
     }
 
     // ── Write grain slot ────────────────────────────────────────────────
@@ -1390,7 +1354,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     this._gVbapWA[idx]     = vbapWA;
     this._gVbapWB[idx]     = vbapWB;
     this._gElBias[idx]     = elBias;
-    this._gFilterFlags[idx] = filterFlags;
+    this._gFilterType[idx] = filterType;
     this._activate(idx);
     this._activeCount++;
 
@@ -1613,19 +1577,24 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       const vol = this._gVolume[i];
       const shape = this._gEnvShape[i];
       const fr  = this._gFade[i];
-      const fFlags = this._gFilterFlags[i];
-      // Biquad coefficients and state in locals (Direct Form II Transposed).
-      const hb0 = this._gHpfB0[i], hb1 = this._gHpfB1[i], hb2 = this._gHpfB2[i], ha1 = this._gHpfA1[i], ha2 = this._gHpfA2[i];
-      let hz1 = this._gHpfZ1[i], hz2 = this._gHpfZ2[i];
-      const lb0 = this._gLpfB0[i], lb1 = this._gLpfB1[i], lb2 = this._gLpfB2[i], la1 = this._gLpfA1[i], la2 = this._gLpfA2[i];
-      let lz1 = this._gLpfZ1[i], lz2 = this._gLpfZ2[i];
-      const hpf = (fFlags & 1) !== 0, lpf = (fFlags & 2) !== 0;
+      // SVF coefficients and integrator states in locals. The band output is
+      // normalised (k·v1) so its peak sits at unity whatever the resonance —
+      // a cloud of band-passed grains must not get louder as it narrows. The
+      // low and high outputs keep their resonant bump: that IS the control.
+      const ft = this._gFilterType[i];
+      const fa1 = this._gSvfA1[i], fa2 = this._gSvfA2[i], fa3 = this._gSvfA3[i], fk = this._gSvfK[i];
+      let ic1 = this._gSvfIc1[i], ic2 = this._gSvfIc2[i];
 
       let k = 0, done = false, acc = 0;
       for (; k < n; k++) {
         let raw = isLiveChunked ? this._readLiveChunked(bufLen, pos) : this._readSample(buf, bufLen, pos);
-        if (hpf) { const x = raw, y = hb0 * x + hz1; hz1 = hb1 * x - ha1 * y + hz2; hz2 = hb2 * x - ha2 * y; raw = y; }
-        if (lpf) { const x = raw, y = lb0 * x + lz1; lz1 = lb1 * x - la1 * y + lz2; lz2 = lb2 * x - la2 * y; raw = y; }
+        if (ft) {
+          const v0 = raw, v3 = v0 - ic2;
+          const v1 = fa1 * ic1 + fa2 * v3;
+          const v2 = ic2 + fa2 * ic1 + fa3 * v3;
+          ic1 = 2 * v1 - ic1; ic2 = 2 * v2 - ic2;
+          raw = ft === 1 ? v2 : ft === 2 ? fk * v1 : v0 - fk * v1 - v2;
+        }
         const sample = raw * this._envelope(ph, shape, fr) * vol;
         scratch[k] = sample;
         acc += sample;
@@ -1636,8 +1605,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       }
       this._gReadPos[i] = pos;
       this._gPhase[i]   = ph;
-      this._gHpfZ1[i] = hz1; this._gHpfZ2[i] = hz2;
-      this._gLpfZ1[i] = lz1; this._gLpfZ2[i] = lz2;
+      this._gSvfIc1[i] = ic1; this._gSvfIc2[i] = ic2;
 
       // NaN guard, once per block: a NaN anywhere poisons the sum. Kill the
       // grain rather than the channel.

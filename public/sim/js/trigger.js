@@ -35,7 +35,7 @@
 import { S, COMMIT_COLORS } from './state.js';
 import { stampCartesian } from './grain.js';
 import { detectOnsets } from './onsets.js';
-import { startWalker, exitWalker, clearWalkers } from './walker.js';
+import { startWalker, exitWalker, clearWalkers, killWalkers } from './walker.js';
 
 // NO CEILING ON TRIGGERS (Ek, 2026-09-23: "there should be no limit"). There
 // was one — 32, and full meant REFUSED — put on when the gate was new as
@@ -367,12 +367,41 @@ function refreshTriggers() {
     if (claimed && claimed.has(t.strokeId)) continue;   // deferred, see above
     if (!rebuildTrigger(t)) {
       // Material erased out from under it — stop the audio and drop it.
-      stopTriggerAudio(t, 'fade');
-      trigs.splice(i, 1);
+      _dropTriggerAt(trigs, i);
       removed = true;
     }
   }
   if (removed) S._syncTriggerUI?.();
+}
+
+/** Take one trigger off the board: stop what it is sounding, and CLOSE IT
+ *  (2026-09-24): a stroke `dwell: grain` had opened stayed in `_openStrokes`
+ *  with no marks, so when an undo brought the take back it was open before
+ *  its pass had played — the grains heard OVER the pass, against the
+ *  2026-09-18 rule that they follow it. */
+function _dropTriggerAt(trigs, i) {
+  const t = trigs[i];
+  stopTriggerAudio(t, 'fade');
+  S._openStrokes.delete(t.strokeId);
+  trigs.splice(i, 1);
+}
+
+/** Drop every trigger `gone(t)` names — the same exit as material erased out
+ *  from under one (refreshTriggers), taken NOW rather than on the next gate
+ *  tick. Sweep uses it (2026-09-24): an unpinned tape stroke is scratch, and
+ *  sweep clears scratch, so its shell goes with its marks and falls silent at
+ *  once, as erase-all's do. Returns how many went. */
+export function dropTriggersWhere(gone) {
+  const trigs = S.triggers;
+  if (!trigs?.length) return 0;
+  let n = 0;
+  for (let i = trigs.length - 1; i >= 0; i--) {
+    if (!gone(trigs[i])) continue;
+    _dropTriggerAt(trigs, i);
+    n++;
+  }
+  if (n) S._syncTriggerUI?.();
+  return n;
 }
 
 // ── Arming ──────────────────────────────────────────────────────────────────
@@ -1033,7 +1062,13 @@ function refreshWalkGates() {
     counts.set(p.strokeId, (counts.get(p.strokeId) || 0) + 1);
   }
   let changed = false;
-  for (const sid of [..._walkGates.keys()]) if (!counts.has(sid)) { _walkGates.delete(sid); changed = true; }
+  for (const sid of [..._walkGates.keys()]) if (!counts.has(sid)) {
+    // The stroke's marks are gone: its gate goes, and so do the walkers on it
+    // (walker.js killWalkers) and its open state — as refreshTriggers does
+    // for a take. An undo gives the stroke a NEW gate, born outside, so the
+    // cursor still on it is the enter edge and a fresh walker starts.
+    _walkGates.delete(sid); killWalkers(sid); S._openStrokes.delete(sid); changed = true;
+  }
   for (const [sid, n] of counts) {
     let g = _walkGates.get(sid);
     if (g && g.particles.length === n) continue;

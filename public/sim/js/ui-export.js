@@ -20,7 +20,7 @@ import { savePiece, savePieceAs, openPiece, initPieceBridge } from './piece.js';
 
 // The setup file's version. v4 (2026-08-01) is the shape the reader still
 // expects: one flat key map plus a `_prefixed` bucket for generated names.
-const EXPORT_VERSION = 14;
+const EXPORT_VERSION = 15;   // v15 (2026-09-23): one grain filter — see brush-voicing.js migrateBlockKeys
 
 const SETUP_MAGIC = 'mubone-setup';
 

@@ -33,6 +33,20 @@ function _bangOrStr(values) {
   const v = values?.[0];
   return (typeof v === 'string' && v.length) ? v : 127;
 }
+/** A bang toggles; an explicit int sets (0 = off, anything else = on). The
+ *  release-edge guard below already drops a bare 0 on a bang address, so an
+ *  int 0 only arrives when the sender meant it. */
+function _bangOrInt(values) {
+  const v = values?.[0];
+  return typeof v === 'number' ? (v > 0 ? 127 : 0) : 'toggle';
+}
+/** The screen's switches (2026-09-24, midi.js `_onOff`): an int sets — 1 on,
+ *  0 off — and a bang flips. 1 rather than 127, because 127 is what a key or
+ *  a note sends and that means a flip. */
+function _bangOrOnOff(values) {
+  const v = values?.[0];
+  return typeof v === 'number' ? (v > 0 ? 1 : 0) : 'toggle';
+}
 
 // ── Release-edge guard ────────────────────────────────────────────────────────
 // Almost every trigger case below hardcodes 127 and throws the incoming value
@@ -55,9 +69,18 @@ function _bangOrStr(values) {
 // below read `values[0] ?? 127`, so 1 = on, 0 = off, bang = toggle. For those,
 // a zero is a command and not a release edge. They are exempt by address
 // rather than by `fmt`, because `fmt` is not a reliable discriminator: /search
-// /scope, /search/fill and /search/order also advertise 'int 0|1' but their
-// cases hardcode 127 and ignore the int.
-const _VALUED_TRIGGERS = new Set(['/cursor/scan', '/trigger/chop']);
+// /scope and /search/order also advertise 'int 0|1' but their cases hardcode
+// 127 and ignore the int.
+// Every SWITCH on the screen takes 1 / 0 the same way (2026-09-24, the
+// registry is the screen): `_bangOrInt` hands the int on and the case sets;
+// a bang flips. `/grain/filter` read the int before this list knew it, so
+// an explicit 0 there was dropped as a release edge and never turned it off.
+const _VALUED_TRIGGERS = new Set([
+  '/tape/slice', '/audition', '/tape/autopin', '/tape/overdub', '/tape/reverse',
+  '/grain/autopin', '/grain/walk', '/grain/link', '/grain/filter', '/erase/bystroke',
+  '/pins/sel/mute', '/pins/sel/solo', '/pins/clouds/mute', '/pins/clouds/solo', '/pins/loops/mute', '/pins/loops/solo',
+  '/rail/tools', '/rail/pins', '/settings', '/spatial/lock',
+]);
 
 // The one bang address with no ACTIONS row, so the registry can't classify it.
 // A compound toggle (camera mode + spatial panning in one message) that
@@ -390,36 +413,25 @@ export function handleOSC(rawAddress, values) {
       scheduleUISync();
       break;
 
-    case '/grain/retrigger':
-      S.grainOverrides.retriggerMs = clamp(values[0], 0, 500);
-      scheduleUISync();
-      break;
-
     case '/grain/curve':  S._dispatchAction?.('grain_curve', _bangOrStr(values)); break;
 
-    case '/grain/hpf':
+    // ONE filter per grain since 2026-09-23: a switch, a type, a cutoff and a
+    // resonance. `/grain/hpf` `/grain/lpf` `/grain/hpfq` `/grain/lpfq` are
+    // gone, not aliased — two corners cannot be undone to one.
+    case '/grain/filter':     S._dispatchAction?.('grain_filter', _bangOrInt(values)); break;
+    case '/grain/filtertype': S._dispatchAction?.('grain_filtertype', _bangOrStr(values)); break;
+    case '/grain/cutoff':
       // Incoming value in Hz (20–20000)
-      S.grainOverrides.hpfFreq     = clamp(values[0], 20, 20000);
+      S.grainOverrides.cutoff      = clamp(values[0], 20, 20000);
       scheduleUISync();
       break;
-    case '/grain/lpf':
-      // Incoming value in Hz (20–20000)
-      S.grainOverrides.lpfFreq     = clamp(values[0], 20, 20000);
-      scheduleUISync();
-      break;
-    // One Q per filter since 2026-09-07. `/grain/filterq` is gone rather than
-    // aliased to both — an address that moves two parameters cannot be undone
-    // to one of them, which is the whole reason they were split.
-    case '/grain/hpfq':
-      S.grainOverrides.hpfQ        = clamp(values[0], 0.1, 20);
-      scheduleUISync();
-      break;
-    case '/grain/lpfq':
-      S.grainOverrides.lpfQ        = clamp(values[0], 0.1, 20);
+    case '/grain/res':
+      // Incoming value 0–1: flat at 0, +20 dB at the cutoff at 1
+      S.grainOverrides.res         = clamp(values[0], 0, 1);
       scheduleUISync();
       break;
     case '/grain/filterjitter':
-      // Incoming value 0–1 (fraction)
+      // Incoming value 0–1 (±octaves per grain)
       S.grainOverrides.filterFreqJitter = clamp(values[0], 0, 1);
       scheduleUISync();
       break;
@@ -448,7 +460,6 @@ export function handleOSC(rawAddress, values) {
     // together. `/trigger/mute` was deleted with the second flag rather than
     // aliased here — one address per thing, or the table stops being the
     // namespace and becomes two names for one action.
-    case '/cursor/scan':    S._dispatchAction?.('scan_toggle', values[0] ?? 127); break;
     case '/cursor/tare':    S._dispatchAction?.('tare', 127);        break;
     // Bang cycles, string sets — same idiom as /commit/mode.
     case '/cursor/az_source': S._dispatchAction?.('az_source', _bangOrStr(values)); break;
@@ -497,12 +508,53 @@ export function handleOSC(rawAddress, values) {
 
     // ── Commit system (unified cloud + loop) ────────────────────────────────
     // Trigger/bang actions route through dispatchAction for consistent UI feedback.
-    // ── Trigger tool ──────────────────────────────────────────────────────
-    case '/trigger/chop':   S._dispatchAction?.('trigger_chop', values[0] ?? 127); break;
+    // ── The tabs, the foot, the pinned rail, the chrome (2026-09-24) ──────
+    // A switch: int sets, bang flips. A capsule: string sets, bang cycles.
+    case '/tape/slice':      S._dispatchAction?.('tape_slice', _bangOrOnOff(values)); break;
+    case '/audition':        S._dispatchAction?.('audition', _bangOrOnOff(values)); break;
+    case '/tape/autopin':    S._dispatchAction?.('tape_autopin', _bangOrOnOff(values)); break;
+    case '/tape/overdub':    S._dispatchAction?.('tape_overdub', _bangOrOnOff(values)); break;
+    case '/tape/dwell':      S._dispatchAction?.('tape_dwell', _bangOrStr(values)); break;
+    case '/tape/retrig':     S._dispatchAction?.('tape_retrig', _bangOrStr(values)); break;
+    case '/tape/step':       S._dispatchAction?.('tape_step', _bangOrStr(values)); break;
+    case '/tape/reverse':    S._dispatchAction?.('tape_reverse', _bangOrOnOff(values)); break;
+    case '/tape/voice':      S._dispatchAction?.('tape_voice', values.length ? Number(values[0]) : 127); break;
+    case '/tape/voice/next': S._dispatchAction?.('tape_voice_next', 127); break;
+    case '/tape/voice/prev': S._dispatchAction?.('tape_voice_prev', 127); break;
+    case '/tape/speed':
+      S.triggerParams.speed = clamp(values[0], 0.25, 4); S._syncTriggerUI?.(); S._renderRail?.(); break;
+    case '/tape/pitch':
+      S.triggerParams.pitch = Math.round(clamp(values[0], -2400, 2400)); S._syncTriggerUI?.(); S._renderRail?.(); break;
+    case '/tape/volume':
+      S.triggerParams.volume = clamp(values[0], 0, 1); S._syncTriggerUI?.(); S._renderRail?.(); break;
+    case '/grain/autopin':   S._dispatchAction?.('grain_autopin', _bangOrOnOff(values)); break;
+    case '/grain/walk':      S._dispatchAction?.('grain_walk', _bangOrOnOff(values)); break;
+    case '/grain/dwell':     S._dispatchAction?.('grain_dwell', _bangOrStr(values)); break;
+    case '/grain/retrig':    S._dispatchAction?.('grain_retrig', _bangOrStr(values)); break;
+    case '/grain/link':      S._dispatchAction?.('grain_link', _bangOrOnOff(values)); break;
+    case '/grain/flow':
+      S.paintTicker = S.paintTicker || {}; S.paintTicker.intervalMs = Math.round(clamp(values[0], 10, 200)); S._renderRail?.(); break;
+    case '/grain/head':
+      S.headWidthDeg = Math.round(clamp(values[0], 0, 30)); S._renderRail?.(); break;
+    case '/grain/voice':     S._dispatchAction?.('grain_voice', values.length ? Number(values[0]) : 127); break;
+    case '/grain/voice/next': S._dispatchAction?.('grain_voice_next', 127); break;
+    case '/grain/voice/prev': S._dispatchAction?.('grain_voice_prev', 127); break;
+    case '/erase/bystroke':  S._dispatchAction?.('erase_bystroke', _bangOrOnOff(values)); break;
+    case '/erase/from':      S._dispatchAction?.('erase_from', _bangOrStr(values)); break;
+    case '/cursor/reads':    S._dispatchAction?.('lens_reads', _bangOrStr(values)); break;
+    case '/pins/sel/mute':   S._dispatchAction?.('pin_mute', _bangOrOnOff(values)); break;
+    case '/pins/sel/solo':   S._dispatchAction?.('pin_solo', _bangOrOnOff(values)); break;
+    case '/pins/sel/level':  S._setSelectedPinLevel?.(clamp(values[0], 0, 1)); break;
+    case '/pins/clouds/mute': S._dispatchAction?.('bus_cloud_mute', _bangOrOnOff(values)); break;
+    case '/pins/clouds/solo': S._dispatchAction?.('bus_cloud_solo', _bangOrOnOff(values)); break;
+    case '/pins/loops/mute':  S._dispatchAction?.('bus_loop_mute', _bangOrOnOff(values)); break;
+    case '/pins/loops/solo':  S._dispatchAction?.('bus_loop_solo', _bangOrOnOff(values)); break;
+    case '/rail/tools':      S._dispatchAction?.('rail_tools', _bangOrOnOff(values)); break;
+    case '/rail/pins':       S._dispatchAction?.('rail_pins', _bangOrOnOff(values)); break;
+    case '/settings':        S._dispatchAction?.('settings', _bangOrOnOff(values)); break;
+    case '/camera':          S._dispatchAction?.('camera_mode', _bangOrStr(values)); break;
+    case '/input/gain':      S._setInputGainDb?.(clamp(values[0], -24, 24)); break;
 
-    case '/commit/drop':    S._dispatchAction?.('commit_drop', 127);    break;
-    case '/commit/draw':    S._dispatchAction?.('commit_draw', values[0] ? 127 : 0); break;
-    case '/commit/release': S._dispatchAction?.('commit_release', 127); break;
     case '/commit/clear':   S._dispatchAction?.('commit_clear', 127);   break;
     // ── The MIX pair ────────────────────────────────────────────────────────
     // Both were advertised in the ACTIONS table from the day the MIX group was
@@ -599,14 +651,9 @@ export function handleOSC(rawAddress, values) {
     case '/palette/2': S._dispatchAction?.('palette_2', values.length && !Number(values[0]) ? 0 : 127); break;
     case '/palette/3': S._dispatchAction?.('palette_3', values.length && !Number(values[0]) ? 0 : 127); break;
     case '/palette/4': S._dispatchAction?.('palette_4', values.length && !Number(values[0]) ? 0 : 127); break;
-    case '/palette/5': S._dispatchAction?.('palette_5', values.length && !Number(values[0]) ? 0 : 127); break;
-    case '/palette/6': S._dispatchAction?.('palette_6', values.length && !Number(values[0]) ? 0 : 127); break;
-    case '/palette/7': S._dispatchAction?.('palette_7', values.length && !Number(values[0]) ? 0 : 127); break;
-    case '/palette/8': S._dispatchAction?.('palette_8', values.length && !Number(values[0]) ? 0 : 127); break;
-    case '/palette/9': S._dispatchAction?.('palette_9', values.length && !Number(values[0]) ? 0 : 127); break;
 
     case '/spatial/lock':
-      S._dispatchAction?.('cursor_lock', values[0] ? 127 : 0);
+      S._dispatchAction?.('cursor_lock', _bangOrOnOff(values));
       break;
 
     // ── App ─────────────────────────────────────────────────────────────────
@@ -615,13 +662,12 @@ export function handleOSC(rawAddress, values) {
 
     // ── Search ───────────────────────────────────────────────────────────────
     case '/search/scope':   S._dispatchAction?.('snap', 127);      break;
-    case '/search/fill':    S._dispatchAction?.('k_all', 127);     break;
     case '/search/order':   S._dispatchAction?.('k_seq', 127);     break;
     case '/search/recency': {
       const raw = Math.round(values[0]);
-      const n = raw <= 0 ? 0 : Math.min(16, raw);   // 0 = all (no filter)
+      const n = raw <= 0 ? 0 : Math.min(3, raw);   // 0 = all (no filter); 1, 2 or 3 strokes (2026-09-24)
       if (typeof S.setRecency === 'function') S.setRecency(n);
-      else { S.recencyN = n; const el = document.getElementById('recencyVal'); if (el) el.value = n === 0 ? 'all' : n; }
+      else S.recencyN = n;
       break;
     }
     case '/search/radius':
@@ -631,9 +677,11 @@ export function handleOSC(rawAddress, values) {
     case '/search/radius/inc': S._dispatchAction?.('radius_inc', 127); break;
     case '/search/radius/dec': S._dispatchAction?.('radius_dec', 127); break;
     case '/search/k': {
-      const mx = Math.max(1, S.particles.length);
-      S.grainOverrides.k = Math.max(1, Math.min(mx, Math.round(values[0])));
-      S.syncGrainControlsUI?.();
+      // 0 = all (no cap); otherwise 1…K_MAX (2026-09-24). setSearchK clamps
+      // and places the slider; the fallback is for a message before setup.
+      const n = Math.round(values[0]);
+      if (typeof S.setSearchK === 'function') S.setSearchK(n);
+      else S.grainOverrides.k = n > 0 ? n : 0;
       break;
     }
 

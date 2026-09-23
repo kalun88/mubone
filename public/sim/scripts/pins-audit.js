@@ -552,7 +552,7 @@ async function run(rig) {
     const cur = SP.getCursorLonLat();
     const D = Math.PI / 180;
     const fr = (t, lon) => ({ t, lon, lat: cur.lat, grainParams: { ...S.grainParams }, searchRadiusDeg: 10,
-      nearestMode: false, kAllMode: 'all', kSeqMode: 'all', grainDirection: 'fwd', grainCurveType: 'sine',
+      nearestMode: false, kSeqMode: 'all', grainDirection: 'fwd', grainCurveType: 'sine',
       grainProbability: 1, radiusFadeEnabled: false, radiusFadeCurve: 0.5 });
 
     // 1. The REAL seal: a deferred path (the wash's road, and the held pin's)
@@ -778,10 +778,11 @@ async function run(rig) {
 
   // Pinned deliberately: a bump must be a decision, and this is the assertion
   // that makes someone come and look at whether the pins half still holds.
-  // v14 (2026-09-07): `filterQ` split into `hpfQ` / `lpfQ`. Looked: a pin's
-  // `grainParams` is a grain block like any other and goes through
-  // `migrateBlockKeys` on the way in, so a v13 file's shared Q arrives on both
-  // corners — the same filter it had. The pins half is unchanged.
+  // v14 (2026-09-07): `filterQ` split into `hpfQ` / `lpfQ`. v15 (2026-09-23):
+  // the two corners became ONE filter (`filterType` / `cutoff` / `res`).
+  // Looked both times: a pin's `grainParams` is a grain block like any other
+  // and goes through `migrateBlockKeys` on the way in, so an older file's
+  // corners arrive as the one filter they imply. The pins half is unchanged.
   check('the piece is v1', trip.version === 1, String(trip.version));
   check('the two groups are on the wire', trip.wireKeys === 'cloud,loop', String(trip.wireKeys));
   check('a muted group is written muted', trip.wireMuted === true, String(trip.wireMuted));
@@ -1139,7 +1140,6 @@ async function run(rig) {
     const PT = await import('./js/param-registry.js');
     S.voicings = []; S.voicingSeq = 0; S.particles.length = 0;
     S.lensMode = 'area'; S.searchRadiusDeg = 90; S.recencyN = 0;
-    const prevAll = S.grainKAllMode; S.grainKAllMode = false;
 
     // Two brushes = two TILES in the hand (see § H); the bank is gone.
     const hand = { id: 'A', label: 'A', wet: false };
@@ -1160,21 +1160,18 @@ async function run(rig) {
     S._particleVersion = (S._particleVersion || 0) + 1;
 
     const noK = !('k' in (BV.voicingById(voWide)?.params ?? {}))
-             && !('kAllMode' in (BV.voicingById(voWide)?.params ?? {}))
              && !('kSeqMode' in (BV.voicingById(voWide)?.params ?? {}));
 
     const total = (k, nearest) => G.__testCandidatePool(0, 0.005, { nearest, k }).length;
     const t8  = total(8, false);
     const t3  = total(3, false);
     const tn3 = total(3, true);
-    S.grainKAllMode = true;
-    const tAll = total(3, false);
-    S.grainKAllMode = false;
+    const tAll = total(0, false);   // k = 0 is all (2026-09-24)
 
     const regClean = !PT.PARAM_REGISTRY.some(r =>
-      r.key === 'k' || r.key === 'grainKAllMode' || r.key === 'grainKSeqMode');
+      r.key === 'k' || r.key === 'grainKSeqMode');
 
-    S.grainKAllMode = prevAll; S._handTile = savedHand;
+    S._handTile = savedHand;
     S.particles.length = 0; S.voicings = []; S.voicingSeq = 0;
     return { noK, t8, t3, tn3, tAll, regClean };
   });
@@ -1183,7 +1180,7 @@ async function run(rig) {
   check('one lens k caps the whole pool across voicings', kper.t8 === 8 && kper.t3 === 3,
     `k=8 → ${kper.t8}, k=3 → ${kper.t3}`);
   check('nearest mode uses the same lens k', kper.tn3 === 3, String(kper.tn3));
-  check("fill 'all' lifts the cap entirely", kper.tAll === 80, String(kper.tAll));
+  check("k 0 is all — no cap", kper.tAll === 80, String(kper.tAll));
   check('k, fill and order have left the patch vocabulary', kper.regClean === true);
 
   // ── J. A pinned cloud owns its material ───────────────────────────────────
@@ -1199,11 +1196,11 @@ async function run(rig) {
     const keepParts = S.particles.slice();
     const keepSlots = S.commitSlots.slice();
     const keepNear = S.lensMode, keepRec = S.recencyN;
-    const keepRad = S.searchRadiusDeg, keepAll = S.grainKAllMode;
+    const keepRad = S.searchRadiusDeg, keepK = S.grainOverrides.k;
     S.commitSlots = new Array(keepSlots.length).fill(null);
     S.particles.length = 0;
     S.lensMode = 'area'; S.recencyN = 0; S.searchRadiusDeg = 20;
-    S.grainKAllMode = true;          // fill:'all' — no k cap, so counts are exact
+    S.grainOverrides.k = 0;          // k 0 is all — no cap, so counts are exact
 
     // Two clusters ~68° apart: A under the cursor, B out of reach.
     const mk = (lon, lat) => { const p = { lon, lat, strokeId: 1, grainStart: 0,
@@ -1246,7 +1243,7 @@ async function run(rig) {
     for (const p of keepParts) S.particles.push(p);
     S.commitSlots = keepSlots;
     S.lensMode = keepNear; S.recencyN = keepRec;
-    S.searchRadiusDeg = keepRad; S.grainKAllMode = keepAll;
+    S.searchRadiusDeg = keepRad; S.grainOverrides.k = keepK;
     S._particleVersion = (S._particleVersion || 0) + 1;
     return { beforeRad, beforeNear, claims, pinnedRad, pinnedNear, otherRad, seedPool,
              mutedRad, trigRad, afterRad, afterNear };

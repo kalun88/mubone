@@ -212,12 +212,24 @@ function attachDevBridge(win, rootDir) {
         let payload;
         try {
           if (f.endsWith('.mouse')) {
-            const { x, y } = JSON.parse(fs.readFileSync(full, 'utf8'));
-            // Two moves: Chromium coalesces a move to where the pointer already
-            // is, and the second one is what forces the hover recompute.
-            win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(x), y: Math.round(y) });
-            win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(x), y: Math.round(y) + 1 });
-            payload = { ok: true, value: { x: Math.round(x), y: Math.round(y) + 1 } };
+            const { x, y, type, held } = JSON.parse(fs.readFileSync(full, 'utf8'));
+            const X = Math.round(x), Y = Math.round(y);
+            // A REAL press and release (2026-09-24): `type` mouseDown / mouseUp
+            // sends the button edge the OS would, so a drag on a control goes
+            // through pointer capture and the compat mouse events exactly as
+            // a hand's does — a dispatched PointerEvent never did. `held` on a
+            // move carries the button through (e.buttons = 1 in the page).
+            if (type === 'mouseDown' || type === 'mouseUp') {
+              win.webContents.sendInputEvent({ type, x: X, y: Y, button: 'left', clickCount: 1 });
+              payload = { ok: true, value: { x: X, y: Y, type } };
+            } else {
+              const modifiers = held ? ['leftButtonDown'] : [];
+              // Two moves: Chromium coalesces a move to where the pointer already
+              // is, and the second one is what forces the hover recompute.
+              win.webContents.sendInputEvent({ type: 'mouseMove', x: X, y: Y, modifiers });
+              win.webContents.sendInputEvent({ type: 'mouseMove', x: X, y: Y + 1, modifiers });
+              payload = { ok: true, value: { x: X, y: Y + 1 } };
+            }
           } else if (f.endsWith('.shot')) {
             const img = await win.webContents.capturePage();
             const png = path.join(outDir, `${id}.png`);

@@ -365,7 +365,9 @@ How to use this file: find the heading for the area you are about to touch and r
   units it displays** (the grain sliders are log-mapped), so typed values go through the paired
   numbox's own `fromDisplay` — never re-derive the mapping. The sound window and the drawn filter
   are `S._drawEngineScope()`. **A number cell is a slider you can also type into** (2026-09-06):
-  press and drag it to set, click without moving to put the caret in, double-click to reset, shift
+  press and drag it to set, click without moving to type (the DIGITS are selected, the unit
+  left standing, so the next keystroke replaces the value — Blender, Figma, Photoshop; a click on a
+  cell already being edited places the caret; 2026-09-23), double-click to reset, shift
   for the track's quarter-speed fine drag — the number field of Ableton, Logic and Photoshop. That
   is how the ± SPREAD is set. It used to be ⌥-drag on the track, and ⌥ is the cursor LOCK
   (`js/events.js`), so one key did two jobs; the modifier gesture was invisible besides, while the
@@ -373,6 +375,24 @@ How to use this file: find the heading for the area you are about to touch and r
   needed: the band is always in the DOM, hidden at zero, so a spread raised from nothing appears at
   once, and `_paintRow` on a spread repaints its BASE row — the row that draws the band and the
   cell's zero state. Covered by `engine-audit.js` § B2.
+  **The band's EDGE sets the spread too** (Ek, 2026-09-23: "i want to be able to drag the jitter
+  still, shift?"). No modifier is free — shift is the fine drag, ⌥ the lock — and no DAW puts a range
+  on one: a range is dragged by its edge, with nothing held (Bitwig's modulation ring, Sampler's zone
+  edges, Max's rslider, every two-thumb slider). So the track is that: the HANDLE moves the value,
+  the band's EDGE widens or narrows the spread about it, the ± cell following; shift is quarter-speed
+  on both. At zero spread there is no edge, so a fixed zone just outside the handle (3–10 px) always
+  means the edge — reach past the handle and pull outward and the band opens from nothing. The
+  pointer says which it is over (`col-resize` on an edge, the sample slot's handle cursor). The
+  band's half-width is `vf × 45 %` of the track (`_knobFor`), and the edge drag is its inverse.
+- **A sub-row is a parameter OF a parameter** (Ek, 2026-09-23: "step is part of pitch … taper is
+  part of curve, it should be under curve firstly, then indented") — `SUB_OF` in `js/tiles.js`:
+  taper → curve, step → pitch (tape), octave → pitch, res → cutoff. The row sits directly
+  under its parent in `VOICE_PIDS` and wears `prow--sub`: the NAME steps in one step of the scale
+  (`--sp-5`) and one step quieter (`--text-tertiary` against the sheet's `--text-secondary`); the
+  track, chips and number stay in their columns, so only the word moves — the tab's `mrow--sub`
+  (dwell and retrig under walk), on the sheet. Nothing about a pid, a binding, an OSC address or a
+  stored block changes; it is the sheet's reading order. A ± spread is NOT a sub-row — it is folded
+  into its base row as the band (#277).
 - **Two left rails** (`#toolRail` + `#propRail`, `body.props-open` / `.prail-open`, #258) —
   Ableton's browser and device view: the tool CATALOGUE as a list, and beside it the whole engine
   of whatever row is open. They **overlay** the stage, so neither ever resizes the sphere. A row
@@ -710,6 +730,19 @@ How to use this file: find the heading for the area you are about to touch and r
   (a one-shot has no length without a cycle) where the dub already flashes. Measured on the real
   path: two wraps at 50 % wore the master to 0.25 with its gain following, undo restored 1, redo
   restored 0.25.
+- **The registry is the screen** (2026-09-24, Ek: "the app is considered spec, what i see are generally
+  the things i want to be key bindable … go thru all the GUI available items and make sure they're on
+  the keys+midi"). `ACTIONS` in `js/midi.js` has one row per control on the rig screen, grouped by the
+  screen's own areas in screen order — palette · hand · tape · grain · erase · cursor · pins · chrome —
+  and named the way the screen names them; a value set once on a Settings page stays bindable under
+  `settings`. One control, one row: a second door onto the same state goes (`commit_drop` / `draw` /
+  `release` were `palette_3` and `palette_4`'s verbs; `scan_toggle` and the `S` key were `palette_1`'s
+  toggle; `palette_5..9` had no position; `grain_retrig` wrote a field nothing read). A rename carries
+  its bindings through `_RENAMED_IDS`; a retirement drops them through `_RETIRED_IDS`. Every switch
+  takes 1 / 0 to set and anything else to flip (`_onOff`, `/…` via `_bangOrOnOff`); every capsule
+  takes a string to set and a bang to cycle (`_strMode` + `_cycle`). The reach is through `S._set…`
+  doors that call the same setters the clicks do, so a key, a pad, an address and a click leave the app
+  in one state. `scripts/osc-audit.js` reads the table, so a row with no case is a finding there.
 - **The stroke WALKER is the lens's third mode** (2026-09-18, `js/walker.js`, the study § 7). The
   lens's `order: step` was sold as a line loop for the grain engine and could not be one: the
   candidate list is only what sits inside the CURSOR's circle, rebuilt every tick, played one per
@@ -734,6 +767,15 @@ How to use this file: find the heading for the area you are about to touch and r
   `on tape` family is `cursor behaviour` now, because dwell / start / release / retrig / rearm mean the
   same thing to a take and to a walker. Wet paint reaches a walker for free: the bridge buckets
   its pool by each mark's own voicing, as a cloud's.
+- **Wet paint is the cursor's, walk or not** (2026-09-24, Ek: "when i have walk on with grain, and i'm
+  painting with the grain tool, it should live granulate while i'm painting but it seems to be muted
+  until i am not recording"). Under walk the cursor reads only what a finished walk has opened, and the
+  stroke under the brush is never opened — a walk is launched by a TOUCH on a finished stroke. So the
+  stroke being painted counts as open for as long as it is being painted (`S.isPainting && S.isRecording`,
+  `S.currentStrokeId`, in `_buildCandidatePoolRadius`): it sounds as it goes down, exactly as it does
+  with walk off, and walk keeps its meaning for every stroke the brush has left. A take being recorded
+  is not wet paint — tape is played whole, never granulated as it goes down — so `_recordingTrigger`
+  keeps its marks out. `scripts/lens-audit.js` holds the three cases.
 - **The lens sheet is three sections, named for the question each answers** (2026-09-18, Ek: "the
   lens engine sheet is getting pretty confusing … it's really hard to tell just from the params how
   things work together and what links to what or depends on what"). `reach` (reads · radius) holds
@@ -812,7 +854,30 @@ How to use this file: find the heading for the area you are about to touch and r
   one-shot `migrateBlockKeys` (a stored shared Q lands on both corners — the same filter it had)
   and a `fq → hpq + lpq` pid migration for tile stores. `pins-audit`'s deliberately pinned version
   check was updated after looking, not around: a pin's `grainParams` is a grain block like any
-  other and goes through the same migration.
+  other and goes through the same migration. **Superseded 2026-09-23 by the one filter below.**
+
+- **One filter per grain** (2026-09-23, Ek: "i'm not confident it's a good filter, what do grain
+  filters normally look like and can it be simpler or more musical"). The two-corner layout — a
+  high-pass and a low-pass with a Q each — is an EQ's, not a grain synth's: Granulator, Pigments,
+  Quanta, Portal and Emission Control all put ONE filter on the grain, a type (`lp · bp · hp`), a
+  cutoff, a resonance and a per-grain spread, and the band-pass is the one that makes a pitched
+  cloud, which the old sheet could not make at all. The 09-07 Q split was treating a symptom of the
+  model. So the sheet is a `filter` SWITCH, a `type` capsule, `cutoff`, `res` and `cutoff ±`; the
+  engine is Simper's trapezoidal SVF, one section per grain where there were two biquads, the
+  three outputs picked per sample. `res` is 0–1 on a log curve from Butterworth (0.707) to Q 10
+  (`FILTER_Q_FLAT` / `FILTER_Q_PEAK` in state.js, repeated in the worklet because it cannot
+  import): the top of the track is "about to ring", not the +26 dB that Q 20 gave. The band output
+  is normalised so a cloud does not get louder as it narrows; low and high keep their bump, which
+  is the control. **The drawing is the real transfer function** on a dB axis (+24 to −36) — the
+  old one drooped to 70 % at 20 Hz / 20 kHz while the engine bypassed there, its Q was a hand-made
+  bump that left the canvas at Q ≈ 2, and its double-click reset still named a pid the Q split had
+  removed. Block keys `filterType` (0 off, 1 lp, 2 bp, 3 hp) `cutoff` `res`; UI state `filterOn`
+  `filterMode`; pids `flt ftype cutoff res fltJit`; OSC `/grain/filter` `/grain/filtertype`
+  `/grain/cutoff` `/grain/res`, the four corner addresses deleted, not aliased. `EXPORT_VERSION`
+  15, `migrateBlockKeys` and `_migratePids` through `filterFromCorners`: a low-pass alone becomes
+  `lp`, a high-pass alone `hp`, both set a `bp` at the geometric centre with the Q the band
+  implies, nothing set is off. Stored MIDI bindings on the four old action ids are not migrated;
+  they point at nothing and can be re-learned.
 
 - **Wet is a property, not a tool** (2026-09-07, Ek: "wet is more of a brush wide property i dont
   think i need a dedicated brush for it, but start the pen with the wet on by factory default").
@@ -1536,8 +1601,8 @@ trigger-audit's `section slice` at 92/92. Slice was checked FIRST in the chain, 
 had both, the newer one silently won and the older one's `chop ms` dial did nothing. The gap
 chopper, `triggerParams.chopOn`, `.chop` and the cabinet's gap row are deleted; what survives is
 **`triggerParams.sliceOn`, a performance switch on the tape tab** rather than a tool you pick up.
-The bindable action keeps its id `trigger_chop` — a binding already learned must not move because
-the thing under it was renamed. **`S.brushFx` is deleted with it**: the #218 field that said which
+The bindable action kept its id `trigger_chop` until 2026-09-24, when it became `tape_slice` at
+`/tape/slice` with a migration in `_RENAMED_IDS`, so a learned binding still lands on the switch. **`S.brushFx` is deleted with it**: the #218 field that said which
 experimental HEAD a tile carried emptied out over one day, its last value becoming a switch, and a
 field with no values is not a field.
 
@@ -2041,6 +2106,31 @@ PRESETS of one engine rather than three modes, and that was already right. `esco
 boolean shared by all three, drawn as a `touch | stroke` capsule, breaking two rulings at once (a
 true boolean is the SWITCH, 2026-09-07; one answer per instrument is MODE, 2026-09-22). It is
 `whole stroke`, erase's first and only MODE switch, and the presets are untouched.
+
+**Depth is four answers on a capsule** (Ek, 2026-09-24: "it should be a multi select pill with just
+1 2 3 then all"). It was a 1–16 slider with `all` past the top, read out in words ("last 3 strokes")
+because a bare number said nothing; the sixteen positions were never played — the erasers ship 1 and
+all, the cursor 3 — and a slider promises a continuum where there are four musical choices. So the
+cabinet control is a seg (`recencySeg`, `data-depth` 1 · 2 · 3 · 0), `depth` is a `seg` param on
+the cursor section and the erase sheet (one control, two engines, as before), a tile stores the
+data value ('0' is all, what `FACTORY_PARAMS` always wrote), `S.setRecency` clamps anything deeper
+to 3 and a stored deeper value lands on 3 once. The `/search/recency` address and the `recency_cc`
+pot keep their names; the pot's throw is quartered.
+
+**k is one slider, and zero is all** (Ek, 2026-09-24: "i don't know why all is its on toggle, it should
+be one slider, and if it's 0 it's all"). What k IS, read off the scheduler: every 10 ms the marks in
+reach (inside the radius, or the nearest anywhere) are cut to the k closest — the candidate pool —
+and the worklet fires ONE grain per period, picking one mark from that pool. So k is how many marks
+the cursor spreads its grains over, not how many sound at once (that is duration over period, capped
+by MAX GRAINS in Settings › Audio). k = 1 is the same mark over and over, all is the wash. The `fill`
+switch lifted the cap because 0 had no position on a 1–1024 scale; now position 0 IS all, the
+default (99 was only ever "all in practice"), in both modes — under nearest, all is the whole
+sphere. The ceiling drops to 100 (`K_MAX`): with all a position of its own the slider needs no
+headroom above what you might paint, and past ~100 the spread is indistinguishable from all at any
+playable period; the log scale keeps 1–10 fine. Gone with the switch: `grainKAllMode`, the `fill`
+row, `k_all` (`/search/fill`), the frames' and seeds' `kAllMode` (a cloud's k is in its frozen
+block). Nothing stored has to move: k and fill were the lens's, and the lens's block is session-only
+(a fresh boot reads the default). The `/search/k` address and the `grain_k` pot reach 0 the same way.
 
 **GLOBAL MODES: every instrument's standing answers in one list, above the tool creator** (Ek,
 2026-09-22: "maybe the modes should be taken out completely and put under lenses as GLOBAL MODES …

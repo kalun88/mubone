@@ -479,6 +479,8 @@ export function initTileLayout() {
   _proxyClick('tcClear', 'sessionEraseBtn');
   document.getElementById('tcPinned')?.addEventListener('click', () => setPinnedRail(!pinnedRailOn()));
   S._togglePinnedRail = () => setPinnedRail(!pinnedRailOn());   // ⇧Tab (tiles.js)
+  S._setPinnedRail    = on => setPinnedRail(!!on);               // `rail_pins` (midi.js)
+  S._pinnedRailOpen   = pinnedRailOn;
 
   // Chrome floats over nothing, but stray mousedowns must not start a trace.
   document.getElementById('tcBar')?.addEventListener('mousedown', e => e.stopPropagation());

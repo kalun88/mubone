@@ -107,9 +107,8 @@ async function run(rig) {
       });
 
       if (!candidates.length) {
-        // grain_k lands here on an empty sphere: its ceiling is the particle
-        // count, so with nothing painted every input maps to k=1 and there is no
-        // span to measure. Paint something first if you want it covered.
+        // A `maxFn` ceiling (none today — grain_k's was the particle count
+        // until 2026-09-24) can collapse the span to nothing on an empty sphere.
         out.push({
           id: a.id, fmt: a.fmt,
           status: a.range.maxFn ? 'NO SPAN (dynamic ceiling is currently ' + a.range.maxFn() + ')'

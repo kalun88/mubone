@@ -302,11 +302,6 @@ function _syncAll() {
   for (const id of _rows.keys()) _syncRow(id);
 
   const on = isXimuLedEnabled();
-  const pill = document.getElementById('ledMasterPill');
-  if (pill) {
-    pill.textContent = on ? 'On' : 'Off';
-    pill.className = 'set-badge' + (on ? ' set-badge--ok' : '');
-  }
   const toggle = document.getElementById('ledMasterToggle');
   if (toggle) toggle.checked = on;
 

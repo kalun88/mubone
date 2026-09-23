@@ -19,8 +19,20 @@ import * as history from './history.js';
 import { clearWalkers } from './walker.js';
 
 // ── Recency slider constants (module-level so both setupPresets & initGrainControls see them)
-const RECENCY_MIN = 1, RECENCY_MAX = 16;
-const RECENCY_SLIDER_ALL = RECENCY_MAX + 1;   // slider position for "all"
+// DEPTH IS FOUR ANSWERS (Ek, 2026-09-24: "a multi select pill with just 1 2 3
+// then all"): 1, 2 or 3 newest strokes, or all of them (S.recencyN 0). It was
+// a 1–16 slider with `all` past the top; the cabinet seg is `recencySeg`.
+const RECENCY_MIN = 1, RECENCY_MAX = 3;
+// THE k SLIDER'S MAP. Position 0 is ALL (k = 0, no cap — Ek, 2026-09-24: "one
+// slider, and if it's 0 it's all"); positions 1…1000 are log-mapped onto
+// 1…K_MAX, fine at 1–10. Module-level so the sync paths share the one curve.
+const _kFromSlider = sv => {
+  const p = Math.round(parseFloat(sv) || 0);
+  return p <= 0 ? 0 : Math.max(1, Math.min(K_MAX, Math.round(Math.pow(K_MAX, (p - 1) / 999))));
+};
+const _kToSlider = k =>
+  k <= 0 ? 0 : Math.round(1 + 999 * Math.log(Math.max(1, Math.min(K_MAX, k))) / Math.log(K_MAX));
+const _kLabel = k => (k <= 0 ? 'all' : String(k));
 
 // ── Shared time formatter (seconds → human-readable ms/s string) ─────────────
 export function fmtMs(v) {
@@ -73,22 +85,9 @@ export function setupPresets() {
     snapSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         S.lensMode = btn.dataset.mode || 'area';
-        // fill=all is incompatible with nearest — force it off
-        if (S.lensMode === 'nearest' && S.grainKAllMode) S.grainKAllMode = false;
         updatePlaybackControls();
         S._syncRadiusFadeUI?.();
         flashRadiusTooltip();
-      });
-    });
-  }
-
-  // Fill toggle — all / k (area mode only, hidden when nearest)
-  const kAllSeg = document.getElementById('kAllSeg');
-  if (kAllSeg) {
-    kAllSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        S.grainKAllMode = (btn.dataset.kall === 'on');
-        updatePlaybackControls();
       });
     });
   }
@@ -105,75 +104,49 @@ export function setupPresets() {
     });
   }
 
-  // ── Recency slider ────────────────────────────────────────────────────────
-  const recencyValEl    = document.getElementById('recencyVal');
-  const recencySliderEl = document.getElementById('recencySlider');
-  // RECENCY_MIN, RECENCY_MAX, RECENCY_SLIDER_ALL are module-level constants
+  // ── Depth seg — 1 · 2 · 3 · all ──────────────────────────────────────────
+  const recencySeg = document.getElementById('recencySeg');
+  const _syncRecencySeg = () => {
+    if (!recencySeg) return;
+    recencySeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+      b.classList.toggle('active', +b.dataset.depth === S.recencyN));
+  };
 
   // keep S.drawRecencyDial a no-op so renderer.js call is safe
   S.drawRecencyDial = function() {};
 
   S.setRecency = function(n) {
-    // 0 (or <=0) = "all" — no recency filter
-    if (n <= 0) {
-      S.recencyN = 0;
-      if (recencySliderEl) recencySliderEl.value = RECENCY_SLIDER_ALL;
-      if (recencyValEl)    recencyValEl.value    = 'all';
-    } else {
-      S.recencyN = Math.max(RECENCY_MIN, Math.min(RECENCY_MAX, n));
-      if (recencySliderEl) recencySliderEl.value = S.recencyN;
-      if (recencyValEl)    recencyValEl.value    = S.recencyN;
-    }
+    // 0 (or <=0) = "all" — no recency filter; anything deeper than 3 is 3.
+    S.recencyN = n <= 0 ? 0 : Math.max(RECENCY_MIN, Math.min(RECENCY_MAX, Math.round(n)));
+    _syncRecencySeg();
   };
+  S._syncRecencySeg = _syncRecencySeg;
 
-  if (recencySliderEl) {
-    recencySliderEl.value = S.recencyN === 0 ? RECENCY_SLIDER_ALL : S.recencyN;
-    let _recencyTimerId = null;
-    recencySliderEl.addEventListener('input', () => {
-      if (_recencyTimerId === null)
-        _recencyTimerId = setTimeout(() => {
-          _recencyTimerId = null;
-          const raw = parseInt(recencySliderEl.value);
-          S.setRecency(raw >= RECENCY_SLIDER_ALL ? 0 : raw);
-        }, 50);
+  if (recencySeg) {
+    recencySeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => S.setRecency(+btn.dataset.depth));
     });
   }
-
-  // editable recency numbox — parse on commit
-  if (recencyValEl) {
-    recencyValEl.value = S.recencyN === 0 ? 'all' : S.recencyN;
-    recencyValEl.addEventListener('focus', e => e.target.select());
-    recencyValEl.addEventListener('blur', () => {
-      const raw = recencyValEl.value.trim().toLowerCase();
-      if (raw === 'all' || raw === '0') { S.setRecency(0); return; }
-      const v = parseInt(raw);
-      if (!isNaN(v)) S.setRecency(v);
-      else recencyValEl.value = S.recencyN === 0 ? 'all' : S.recencyN;
-    });
-    recencyValEl.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { recencyValEl.blur(); }
-      if (e.key === 'Escape') { recencyValEl.value = S.recencyN === 0 ? 'all' : S.recencyN; recencyValEl.blur(); }
-    });
-    recencyValEl.style.cursor = 'text';
-  }
+  // A profile that stored a deeper value (the slider went to 16) lands on 3.
+  S.setRecency(S.recencyN);
 
   // ── k control in search params ────────────────────────────────────────────
-  // The slider is a POSITION (0–1000) log-mapped onto 1…K_MAX — see the note
-  // on K_MAX in state.js for why the scale is fixed. `setSearchK` takes the
-  // real k and is the ONE writer: every caller (presets, OSC, the sheet, the
-  // wheel) hands it a count, and it puts the slider where that count lives.
-  const _kFromSlider = sv =>
-    Math.max(1, Math.min(K_MAX, Math.round(Math.pow(K_MAX, parseFloat(sv) / 1000))));
-  const _kToSlider = k =>
-    Math.round(1000 * Math.log(Math.max(1, Math.min(K_MAX, k))) / Math.log(K_MAX));
+  // The slider is a POSITION (0–1000): 0 is ALL, the rest log-mapped onto
+  // 1…K_MAX (`_kFromSlider` above; the note on K_MAX in state.js says why the
+  // scale is fixed). `setSearchK` takes the real k and is the ONE writer: every
+  // caller (presets, OSC, the sheet, the wheel) hands it a count, and it puts
+  // the slider where that count lives.
   S.setSearchK = function(v) {
-    const k = Math.max(1, Math.min(K_MAX, Math.round(v)));
+    const n = Math.round(v);
+    const k = !(n > 0) ? 0 : Math.min(K_MAX, n);
     S.grainOverrides.k = k;
     const slider = document.getElementById('searchKSlider');
     if (slider) slider.value = _kToSlider(k);
     const bigNum = document.getElementById('kBigNum');
-    if (bigNum) bigNum.value = k;
+    if (bigNum) bigNum.value = _kLabel(k);
   };
+  // A profile that stored a k past the new ceiling lands on it.
+  if ((S.grainOverrides.k ?? gp().k) > K_MAX) S.setSearchK(K_MAX);
 
   const searchKSlider = document.getElementById('searchKSlider');
   if (searchKSlider) {
@@ -190,16 +163,21 @@ export function setupPresets() {
 
   const kBigNum = document.getElementById('kBigNum');
   if (kBigNum) {
-    kBigNum.value = S.grainOverrides.k ?? gp().k;
+    kBigNum.value = _kLabel(S.grainOverrides.k ?? gp().k);
     kBigNum.style.cursor = 'text';
     kBigNum.addEventListener('focus', e => e.target.select());
-    kBigNum.addEventListener('blur', () => {
-      const v = parseInt(kBigNum.value);
-      if (!isNaN(v)) S.setSearchK(v); else kBigNum.value = S.grainOverrides.k ?? gp().k;
-    });
+    // "all", "0" or a count; anything else puts the reading back.
+    const commitK = () => {
+      const raw = kBigNum.value.trim().toLowerCase();
+      if (raw === 'all' || raw === '0') { S.setSearchK(0); return; }
+      const v = parseInt(raw);
+      if (!isNaN(v)) S.setSearchK(v); else kBigNum.value = _kLabel(S.grainOverrides.k ?? gp().k);
+    };
+    kBigNum.addEventListener('blur', commitK);
+    kBigNum.addEventListener('change', commitK);
     kBigNum.addEventListener('keydown', e => {
       if (e.key === 'Enter') { kBigNum.blur(); }
-      if (e.key === 'Escape') { kBigNum.value = S.grainOverrides.k ?? gp().k; kBigNum.blur(); }
+      if (e.key === 'Escape') { kBigNum.value = _kLabel(S.grainOverrides.k ?? gp().k); kBigNum.blur(); }
     });
     kBigNum.addEventListener('wheel', e => {
       e.preventDefault();
@@ -333,8 +311,6 @@ export function setupPresets() {
 
 export function toggleNearestMode() {
   S.lensMode = S.lensMode === 'nearest' ? 'area' : 'nearest';
-  // k-all is incompatible with k-nearest — force it off
-  if (S.lensMode === 'nearest' && S.grainKAllMode) S.grainKAllMode = false;
   updatePlaybackControls();
   S._syncRadiusFadeUI?.();
   flashRadiusTooltip();
@@ -490,7 +466,6 @@ function _captureSeedFrame(startOverride) {
     grainParams:       mergedParams,
     searchRadiusDeg:   S.searchRadiusDeg,
     nearestMode:       S.lensMode === 'nearest',
-    kAllMode:          S.grainKAllMode,
     kSeqMode:          S.grainKSeqMode,
     grainDirection:    S.grainDirection,
     grainCurveType:    S.grainCurveType,
@@ -584,7 +559,6 @@ function _reserveCloud(lon, lat) {
     // tap is here; a held path is re-stamped at its END in finalizeSeedPlant.
     anchorLon: lon, anchorLat: lat,
     nearestMode: S.lensMode === 'nearest',
-    kAllMode: S.grainKAllMode,
     kSeqMode: S.grainKSeqMode,
     _lastFiredAt:  0,
     _nextPeriodMs: 0,
@@ -643,7 +617,7 @@ export function pinWalkers() {
     // geometry, so each frame takes the cloud's own snapshot beside it.
     const snap = {
       grainParams: slot.grainParams, searchRadiusDeg: slot.searchRadiusDeg,
-      nearestMode: false, kAllMode: slot.kAllMode ?? S.grainKAllMode,
+      nearestMode: false,
       kSeqMode: S.grainKSeqMode, grainDirection: S.grainDirection,
       grainCurveType: S.grainCurveType, grainProbability: S.grainProbability,
       radiusFadeEnabled: slot.radiusFadeEnabled, radiusFadeCurve: slot.radiusFadeCurve,
@@ -909,10 +883,10 @@ function _syncCommitUI() {
   // Also refresh slot-full state
   _syncSeqButtonStates();
 
-  // Grey out the handsfree arm pill when not in plain trace mode (#290 moved
+  // The handsfree arm switch is disabled outside plain trace mode (#290 moved
   // it into Settings → audio; `_syncHandsfreeUI` owns the rest of its state).
-  const hfSeg = document.getElementById('hfArmSeg');
-  if (hfSeg) hfSeg.classList.toggle('hf-unavailable', S.traceMode !== 'trace');
+  const hfToggle = document.getElementById('hfArmToggle');
+  if (hfToggle) hfToggle.disabled = S.traceMode !== 'trace' && !S.hfArmed;
 }
 S._syncCommitUI = _syncCommitUI;
 S._clearAllCommits = () => clearAllCommits();
@@ -2477,16 +2451,13 @@ export function applyPresetObject(preset) {
   // fallback chain (grainOverrides → grainParams).
 
   // Check which grain-engine keys are present in this preset
-  // retriggerMs is not in PARAM_REGISTRY
-  // but factory presets may define it — keep here so factory recall still works.
   // fadeMode/fadeMs sit here alongside fadeRatio so a preset fully determines
   // its envelope.  Without them, selecting a preset would apply its fadeRatio
   // while leaving the unit on whatever the last patch used — so a 'pct' preset
   // loaded in 'ms' mode would silently ignore the ratio it was authored with.
   const GRAIN_KEYS = ['duration', 'durJitter', 'startJitter', 'durVar',
     'fadeRatio', 'fadeMode', 'fadeMs', 'period',
-    'periodVar', 'pitchJitter', 'pitchShift', 'panSpread', 'volume', 'k',
-    'retriggerMs'];
+    'periodVar', 'pitchJitter', 'pitchShift', 'panSpread', 'volume', 'k'];
   const hasAnyGrainKey = GRAIN_KEYS.some(k => k in preset && preset[k] !== undefined && preset[k] !== null);
 
   if (hasAnyGrainKey) {
@@ -2518,10 +2489,8 @@ export function applyPresetObject(preset) {
   // in an old user patch is stripped on load rather than ignored here, so there
   // is one answer instead of a live key nothing reads.
   //
-  // `k` and `grainKAllMode` DO belong to the brush: how many marks sound at
-  // once is character, not geometry. wash at k=99 and vinyl at k=1 are
-  // different instruments.
-  if ('grainKAllMode' in preset && typeof preset.grainKAllMode === 'boolean') S.grainKAllMode = preset.grainKAllMode;
+  // `k` DOES belong to the brush: how many marks sound at once is character,
+  // not geometry. wash at k=0 (all) and vinyl at k=1 are different instruments.
   if ('grainKSeqMode' in preset && typeof preset.grainKSeqMode === 'boolean') S.grainKSeqMode = preset.grainKSeqMode;
   if ('k' in preset && typeof preset.k === 'number') {
     if (typeof S.setSearchK === 'function') S.setSearchK(preset.k);
@@ -2544,17 +2513,14 @@ export function updatePlaybackControls() {
       btn.classList.toggle('active', btn.dataset.mode === S.lensMode);
     });
   }
+  // Depth: a writer that set S.recencyN directly (a restore, a probe) still
+  // has to land on one of the four answers, and light it.
+  if (S.recencyN > RECENCY_MAX) S.recencyN = RECENCY_MAX;
+  S._syncRecencySeg?.();
   // Show/hide area-only params based on scope
   const areaOnly = document.getElementById('areaOnlyParams');
   if (areaOnly) areaOnly.style.display = S.lensMode === 'nearest' ? 'none' : '';
 
-  // Sync fill segmented toggle (all / k)
-  const kAllSeg = document.getElementById('kAllSeg');
-  if (kAllSeg) {
-    kAllSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
-      btn.classList.toggle('active', (btn.dataset.kall === 'on') === S.grainKAllMode);
-    });
-  }
   // Sync order segmented toggle (step / random)
   const kSeqSeg = document.getElementById('kSeqSeg');
   if (kSeqSeg) {
@@ -2562,12 +2528,6 @@ export function updatePlaybackControls() {
       btn.classList.toggle('active', (btn.dataset.kseq === 'on') === S.grainKSeqMode);
     });
   }
-  // Grey out k slider/numbox when fill=all is active (k is bypassed)
-  const skSlider = document.getElementById('searchKSlider');
-  const kNum = document.getElementById('kBigNum');
-  const kDisabled = S.grainKAllMode && S.lensMode !== 'nearest';
-  if (skSlider) skSlider.disabled = kDisabled;
-  if (kNum) kNum.style.opacity = kDisabled ? '0.4' : '';
   drawRadiusViz();
 }
 
@@ -2845,7 +2805,7 @@ export function initGrainControls() {
     // HPF/LPF use a log scale (20–20000 Hz) mapped to slider 0–1000.
     // Log formula: freq = 20 * (1000)^(sv/1000)  →  sv = 1000 * log(freq/20) / log(1000)
     {
-      sliderId: 'gcHpfSlider', numId: 'gcHpfNum', param: 'hpfFreq',
+      sliderId: 'gcCutoffSlider', numId: 'gcCutoffNum', param: 'cutoff',
       toDisplay: v => {
         if (v >= 1000) return (v / 1000).toFixed(1) + 'k';
         return Math.round(v) + ' Hz';
@@ -2861,34 +2821,11 @@ export function initGrainControls() {
       }
     },
     {
-      sliderId: 'gcLpfSlider', numId: 'gcLpfNum', param: 'lpfFreq',
-      toDisplay: v => {
-        if (v >= 1000) return (v / 1000).toFixed(1) + 'k';
-        return Math.round(v) + ' Hz';
-      },
-      sliderToInternal: sv => 20 * Math.pow(1000, parseFloat(sv) / 1000),
-      internalToSlider: v  => Math.round(1000 * Math.log(Math.max(20, v) / 20) / Math.log(1000)),
-      fromDisplay: str => {
-        const s = str.trim().toLowerCase().replace('hz', '').trim();
-        let v;
-        if (s.endsWith('k')) v = parseFloat(s.replace('k', '')) * 1000;
-        else v = parseFloat(s);
-        return isNaN(v) ? null : Math.max(20, Math.min(20000, v));
-      }
-    },
-    {
-      sliderId: 'gcHpfQSlider', numId: 'gcHpfQNum', param: 'hpfQ',
-      toDisplay: v => v.toFixed(2),
+      sliderId: 'gcResSlider', numId: 'gcResNum', param: 'res',
+      toDisplay: v => Math.round(v * 100) + '%',
       sliderToInternal: sv => parseFloat(sv),
       internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.1, Math.min(20, v)); }
-    },
-    {
-      sliderId: 'gcLpfQSlider', numId: 'gcLpfQNum', param: 'lpfQ',
-      toDisplay: v => v.toFixed(2),
-      sliderToInternal: sv => parseFloat(sv),
-      internalToSlider: v => v,
-      fromDisplay: str => { const v = parseFloat(str); return isNaN(v) ? null : Math.max(0.1, Math.min(20, v)); }
+      fromDisplay: str => { const v = parseFloat(str.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); }
     },
     {
       sliderId: 'gcFilterJitterSlider', numId: 'gcFilterJitterNum', param: 'filterFreqJitter',
@@ -3004,6 +2941,8 @@ export function initGrainControls() {
 
   const dirSeg   = document.getElementById('gcDirSeg');
   const curveSeg = document.getElementById('gcCurveSeg');
+  const fltOnSeg   = document.getElementById('gcFilterOnSeg');
+  const fltTypeSeg = document.getElementById('gcFilterTypeSeg');
 
   // setTimeout-throttle for grain slider input events.
   // Aggressive slider dragging fires 200+ input events/second. 100ms cap (~10fps)
@@ -3114,6 +3053,28 @@ export function initGrainControls() {
     });
   }
 
+  // The filter's switch and type write the OVERRIDE, as the sliders do — a
+  // tile captures them by pid through the seg, and the block builder reads
+  // `ov.filterOn ?? base.filterOn` like any other field.
+  if (fltOnSeg) {
+    fltOnSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        S.grainOverrides.filterOn = btn.dataset.flt === 'on';
+        fltOnSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+        _syncWorkletParams();
+      });
+    });
+  }
+  if (fltTypeSeg) {
+    fltTypeSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        S.grainOverrides.filterMode = btn.dataset.ftype;
+        fltTypeSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+        _syncWorkletParams();
+      });
+    });
+  }
+
   // ── Octave shortcut buttons ──────────────────────────────────────────────
   const octDownBtn  = document.getElementById('octDownBtn');
   const octResetBtn = document.getElementById('octResetBtn');
@@ -3144,6 +3105,10 @@ export function initGrainControls() {
     SLIDER_DEFS.forEach(syncSliderFromInternal);
     if (dirSeg)   dirSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.dir   === S.grainDirection));
     if (curveSeg) curveSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.curve === S.grainCurveType));
+    const fltOn = (S.grainOverrides.filterOn ?? gp().filterOn) ? 'on' : 'off';
+    const fltMode = S.grainOverrides.filterMode ?? gp().filterMode ?? 'lp';
+    if (fltOnSeg)   fltOnSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.flt === fltOn));
+    if (fltTypeSeg) fltTypeSeg.querySelectorAll('.grain-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.ftype === fltMode));
     const probDef = SLIDER_DEFS.find(d => d.param === 'probability');
     if (!probDef) {
       const probSlider = document.getElementById('gcProbSlider');
@@ -3153,13 +3118,10 @@ export function initGrainControls() {
     }
     const kVal = S.grainOverrides.k ?? gp().k;
     const skSlider = document.getElementById('searchKSlider');
-    if (skSlider) skSlider.value = kVal;
+    if (skSlider) skSlider.value = _kToSlider(kVal);
     const kNum = document.getElementById('kBigNum');
-    if (kNum) kNum.value = kVal;
-    const recValEl = document.getElementById('recencyVal');
-    if (recValEl) recValEl.value = S.recencyN === 0 ? 'all' : S.recencyN;
-    const recSlider = document.getElementById('recencySlider');
-    if (recSlider) recSlider.value = S.recencyN === 0 ? RECENCY_SLIDER_ALL : S.recencyN;
+    if (kNum) kNum.value = _kLabel(kVal);
+    S._syncRecencySeg?.();
     // Also sync the radius slider (morph writes to S.searchRadiusDeg directly)
     const radSlider = document.getElementById('radiusSlider');
     if (radSlider) radSlider.value = S.searchRadiusDeg;
@@ -3172,9 +3134,6 @@ export function initGrainControls() {
     const snapSeg = document.getElementById('snapToggleSeg');
     if (snapSeg) snapSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.mode === S.lensMode));
-    const kAllSeg = document.getElementById('kAllSeg');
-    if (kAllSeg) kAllSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
-      b.classList.toggle('active', (b.dataset.kall === 'on') === S.grainKAllMode));
     const kSeqSeg = document.getElementById('kSeqSeg');
     if (kSeqSeg) kSeqSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
       b.classList.toggle('active', (b.dataset.kseq === 'on') === S.grainKSeqMode));
@@ -3196,13 +3155,12 @@ export function initGrainControls() {
   const EXTRA_MORPH_SLIDERS = [
     { param: 'k',                sliderId: 'searchKSlider' },
     { param: 'searchRadiusDeg',  sliderId: 'radiusSlider' },
-    { param: 'recencyN',         sliderId: 'recencySlider' },
     { param: 'radiusFadeCurve',  sliderId: 'radiusFadeCurveSlider' },
   ];
   // Segment/toggle controls — use the segment container's parent .grain-row
   const EXTRA_MORPH_SEGS = [
     { param: 'lensMode',         segId: 'snapToggleSeg' },
-    { param: 'grainKAllMode',    segId: 'kAllSeg' },
+    { param: 'recencyN',         segId: 'recencySeg' },
     { param: 'grainKSeqMode',    segId: 'kSeqSeg' },
     { param: 'radiusFadeEnabled', segId: 'radiusFadeSeg' },
     { param: 'direction',        segId: 'gcDirSeg' },

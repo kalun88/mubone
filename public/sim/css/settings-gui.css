@@ -184,6 +184,9 @@ html body .settings-host .in-settings .set-ctl > .as-val { order: 99; }
   transform: translateX(18px); background: var(--text-highlight);
 }
 .settings-host .set-toggle:disabled { opacity: 0.5; cursor: default; }
+/* The handsfree gate is recording: what the switch is DOING, not a state you
+   pick, so it is a face on the on switch rather than a third position. */
+.settings-host .set-toggle.hf-recording:checked { background: var(--accent-danger); }
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 .settings-host .in-settings .set-btn,
@@ -289,12 +292,22 @@ html body .settings-host .in-settings .set-ctl > .as-val { order: 99; }
    both directions. Everything else in this file is one class past
    `.settings-host`. */
 html body .settings-host .in-settings .as-val,
-.settings-host .in-settings .grain-numbox{
-  /* min-width in style.css (4.5rem = 72px) beats flex-basis, so it is named. */
+html body .settings-host .in-settings input.grain-numbox{
+  /* min-width in style.css (4.5rem = 72px) beats flex-basis, so it is named.
+     The numbox is stated at the `.as-val` depth on purpose: the field rule
+     below is `input[type=text]` at (0,3,1), which beat the bare class's (0,2,2)
+     on every settings numbox — 36px tall, bordered, 12px of padding each side
+     — so a 64px readout had 38px for its text and "250ms" clipped to "250m"
+     (measured 2026-09-24). Same trap as § 5 of SETTINGS-GUI, on a new element. */
   flex: 0 0 64px; width: 64px; min-width: 64px; max-width: 64px; text-align: right;
+  height: auto; padding: 0;
   font-family: var(--font-sans); font-size: 14.5px; font-variant-numeric: tabular-nums;
   color: var(--text-primary); background: none; border: none;
 }
+/* A borrowed slider + numbox land inside a `.set-slot` span, which as a flex
+   item sized to the range's intrinsic 129px while a page-owned slider fills the
+   300px group. The slot dissolves so both rows share one geometry. */
+.settings-host .in-settings .set-slot { display: contents; }
 
 /* ── Field ──────────────────────────────────────────────────────────────── */
 .settings-host .in-settings input[type=text],
@@ -1277,13 +1290,17 @@ html body .settings-head .set-btn--danger:hover { background: var(--tint-danger-
   position: absolute; left: 12px; width: 16px; height: 16px;
   color: var(--text-dimmer); pointer-events: none;
 }
-.settings-host .in-settings .set-search {
+/* `input[type=text]` above is (0,3,1) and this was (0,3,0), so the field's
+   `padding: 0 12px` won and the glyph sat on the first letter (Ek, 2026-09-24:
+   "the search icon is colliding with the text"). The type is repeated here so
+   the box outranks the kit's field: 16px glyph at 12px, text from 36px. */
+.settings-host .in-settings input[type=text].set-search {
   width: 100%; height: 36px; padding: 0 32px 0 36px;
   background: var(--surface-0); border: 1px solid var(--border-soft);
   border-radius: var(--r-field); font-family: var(--font-sans);
-  font-size: var(--fs-set-body); color: var(--text-light);
+  color: var(--text-light);   /* type from the kit's field above, 14.5px */
 }
-.settings-host .in-settings .set-search:focus {
+.settings-host .in-settings input[type=text].set-search:focus {
   outline: none; border-color: var(--accent-action);
 }
 .settings-host .in-settings .set-search-clear {

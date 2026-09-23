@@ -87,20 +87,15 @@ export function initVizUI() {
   // for a projector in a lit room. The row is gone and the instrument boots
   // dark and stays dark; `S.darkMode` and the light half of every palette
   // went on 2026-09-18 — there is one canvas.
-  // ── Performance mode toggle (on / off) ─────────────────────────────────
-  const perfSeg = document.getElementById('vizPerfModeSeg');
-  if (perfSeg) {
-    const syncPerfButtons = () => {
-      perfSeg.querySelectorAll('[data-perf]').forEach(b =>
-        b.classList.toggle('active',
-          (b.dataset.perf === 'on') === S.perfMode));
-    };
-    perfSeg.querySelectorAll('[data-perf]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        S.perfMode = btn.dataset.perf === 'on';
-        syncPerfButtons();
-        console.log(`[perf] high-performance render mode ${S.perfMode ? 'ON' : 'OFF'}`);
-      });
+  // ── Minimal rendering (on / off) ───────────────────────────────────────
+  // A boolean, so the kit's toggle (SETTINGS-GUI § 3) — it was an On | Off
+  // capsule until 2026-09-24, the shape that means pick-one-of-N.
+  const perfToggle = document.getElementById('vizPerfModeToggle');
+  if (perfToggle) {
+    const syncPerfButtons = () => { perfToggle.checked = !!S.perfMode; };
+    perfToggle.addEventListener('change', () => {
+      S.perfMode = perfToggle.checked;
+      console.log(`[perf] high-performance render mode ${S.perfMode ? 'ON' : 'OFF'}`);
     });
     // Published so a RESTORED perfMode shows on the buttons at boot
     // (_loadVizCalibration calls it). ⇧P, which this line used to name, lost

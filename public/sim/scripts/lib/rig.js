@@ -131,10 +131,12 @@ function makeClient(dir, proc) {
 
     // A REAL pointer move, through the main process. :hover is hit-testing, so
     // a dispatched DOM event cannot produce or clear it; this can.
-    async mouse(x, y) {
+    // `opts.type` 'mouseDown' | 'mouseUp' sends the button edge instead;
+    // `opts.held` carries the left button through a move (a real drag).
+    async mouse(x, y, opts = {}) {
       const id  = `rigmouse${process.pid}_${++seq}`;
       const tmp = path.join(inDir, `${id}.tmp`);
-      fs.writeFileSync(tmp, JSON.stringify({ x, y }));
+      fs.writeFileSync(tmp, JSON.stringify({ x, y, ...opts }));
       fs.renameSync(tmp, path.join(inDir, `${id}.mouse`));
       const outF = path.join(outDir, `${id}.json`);
       const t0 = Date.now();

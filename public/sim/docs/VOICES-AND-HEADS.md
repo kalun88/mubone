@@ -37,7 +37,7 @@ once."* That is voice / keeps / head, already named.
 
 **`resolveGrainParams()`** (`js/brush-voicing.js`) — the ONE builder of a grain block. It returns
 `period duration volume pitchShift pitchJitter periodVar durVar durJitter startJitter fadeRatio
-fadeMode fadeMs probability direction envShape hpfFreq lpfFreq hpfQ lpfQ filterFreqJitter
+fadeMode fadeMs probability direction envShape filterType cutoff res filterFreqJitter
 panSpread`. **No `flow`, no `headW`, no `gEnd`.** The voice already exists as a function.
 
 **`S.brushFx`** (`js/state.js`, set at `tiles.js:781`) — `'spray' | 'match' | 'comb' | 'staff' |
@@ -47,7 +47,7 @@ panSpread`. **No `flow`, no `headW`, no `gEnd`.** The voice already exists as a 
 
 | engine | voice | head | keeps |
 |---|---|---|---|
-| **granular** (29 pids) | 20 — `dur period glink fade curve startJit durVar perVar` · `pitch octave pitchJit dir` · `hpf lpf hpq lpq fltJit` · `vol pan prob` | 8 — `flow headW` shared, plus each head's own two: `splatSpread splatThrow` · `combAxis combKeep` · `staffLo staffHi` | 1 — `gEnd` |
+| **granular** (29 pids) | 20 — `dur period glink fade curve startJit durVar perVar` · `pitch octave pitchJit dir` · `flt ftype cutoff res fltJit` · `vol pan prob` | 8 — `flow headW` shared, plus each head's own two: `splatSpread splatThrow` · `combAxis combKeep` · `staffLo staffHi` | 1 — `gEnd` |
 | **tape** (10 + `decay`) | 5 — `tspeed tpitch tstep treverse tvol` | 3 — `tchop chopMs sliceMin` | 3 — `onEnd passes`, and `decay` for dub |
 | **erase** (3) | — none; it makes no sound | 3 — `depth efrom escope` | — |
 

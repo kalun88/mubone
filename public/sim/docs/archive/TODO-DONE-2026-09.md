@@ -2,8 +2,57 @@
 
 > **Status: ARCHIVED** · done items moved out of `docs/TODO.md` on 2026-09-05, verbatim, so the open list stays short enough to read every session. Record only: entries describe the code the day they closed and may use superseded terminology. `git log` and `CHANGELOG.md` are the other two records.
 
+### Sep 24
+
+- [x] **The registry is the screen** (Ek, 2026-09-24) — `ACTIONS` regrouped in screen order (palette · hand ·
+  tape · grain · erase · cursor · pins · chrome · settings · sampler), 112 rows: 39 added for controls with no
+  action (audition, autopin, overdub, dwell, retrig, walk, voices, the tape sheet, rate/head/link, by stroke,
+  from, scope, the selected pin's M/S/fader, the buses, both rails, settings, camera, input), 11 dropped
+  (`palette_5..9`, the pin pair's second door, `scan_toggle` + the S key, the dead `grain_retrig`), `trigger_chop`
+  → `tape_slice`, `commit_selection` three-way, `grain_k` through `setSearchK`, `cursor_lock` a toggle. Doors in
+  `S._set…`; OSC cases + `_bangOrOnOff`; README table; `docs/RULINGS.md` "The registry is the screen".
+- [x] **Material erased out from under a reader stops the reader, whichever reader** (2026-09-24) —
+  a walker kept walking an erased stroke (silent, and under `dwell: loop` for ever, its gate gone with
+  the marks), and a stroke `dwell: grain` had opened stayed open, so an undo heard grains over the
+  take's first pass. `killWalkers` (`js/walker.js`) and `_openStrokes.delete` on the drop, in both
+  refreshes (`js/trigger.js`). Six invariants in `scripts/trigger-audit.js` § C.
+- [x] **A trigger coming back from undo starts outside its gate** (Ek, 2026-09-24) — erase a looping
+  take under the cursor, undo: the same shell came back with `_inside` still true (the gate skips a
+  trigger with no marks, so no exit edge), so no enter edge fired until the cursor left and returned.
+  `applyMaterial` (`js/ui-sweep.js`) resets `_inside` and `playing` on the triggers coming back, not on
+  those that stayed. Three invariants in `scripts/trigger-audit.js` § C.
+- [x] **Tape dwell's factory default is loop** (Ek, 2026-09-24) — `triggerParams.dwell` in `js/state.js`
+  and the active button in `index.html`; a rig that has saved settings keeps what it saved.
+- [x] **Wet paint is the cursor's, walk or not** (Ek, 2026-09-24) — under walk the cursor read only
+  opened strokes, and the stroke under the brush is never opened, so painting with walk on was silent
+  until the lift. The stroke being painted counts as open while it goes down (`js/grain.js`
+  `_buildCandidatePoolRadius`); a take being recorded stays out. Three invariants in `scripts/lens-audit.js`.
+- [x] **The filter graph draws the set shape with the switch off** (Ek, 2026-09-24) — off drew flat, so
+  dragging the dot moved the rows and not the curve ("stuck flat"). Serum and Ableton keep drawing the
+  curve with the module off; the switch row says whether it is applied. `_drawFilter` in `js/tiles.js`.
+- [x] **The filter dot did not stick; the sheet is never rebuilt under a held pointer** (Ek, 2026-09-24) —
+  a quarter second into the FIRST drag on a tile's sheet, `captureTileParams` saw the tile go
+  off-factory and `render()`'s tail rebuilt the sheet, replacing the canvas (and any row track)
+  under the pointer. `renderProps` now defers while `#propRail` holds a pointer (`js/tiles.js`);
+  the dev bridge sends real mouseDown / mouseUp / held moves (`scripts/dev-bridge.js`, `lib/rig.js`), which is how it was proved.
+
 ### Sep 23 — after 5.5
 
+- [x] **One filter per grain** (Ek, 2026-09-23) — the hpf + lpf with a Q each became a switch, a
+  `lp · bp · hp` capsule, cutoff, res (0–1, Butterworth → Q 10) and cutoff ±; the worklet runs one
+  SVF per grain, the sheet draws the real transfer function on a dB axis (the old one drooped at
+  the bypass edges, saturated at Q ≈ 2, and its reset named a dead pid). OSC `/grain/filter`
+  `/grain/filtertype` `/grain/cutoff` `/grain/res`; EXPORT_VERSION 15. `docs/RULINGS.md` "One filter per grain".
+- [x] **Sub-rows on the sheets; the band's edge drags the spread** (Ek, 2026-09-23) — `SUB_OF`
+  (`js/tiles.js`): taper under curve, step and octave under pitch, each Q under its filter, indented
+  `--sp-5` and a step quieter (`.prow--sub`, `css/style.css`), order in `VOICE_PIDS`. On a track the
+  handle moves the value and the band's edge the ± spread, no modifier, `col-resize` over an edge.
+  Both guarded in `engine-audit` § B2; the two rulings are under "The engine page" in `docs/RULINGS.md`.
+- [x] **A click on a number cell selects the digits** (Ek, 2026-09-23) — Ek: "i click it again to edit it
+  manually … it's really finicky cause it just shows cursor". `_wireKnobs` (`js/tiles.js`): a click that does
+  not scrub selects the number with its sign and kilo suffix, the unit left standing, so the next keystroke
+  replaces it (Blender, Figma, Photoshop); a click on a cell already being edited places the caret. Guarded in
+  `engine-audit` § B2; the ruling is the engine-page paragraph in `docs/RULINGS.md`.
 - [x] **Tape's release has a `stop`** (2026-09-23) — Ek: "one of the release options should just be stop
   immediately right". A third value on tape's capsule: play→end · stop · fade; stop is the 8 ms declick
   a refire on `cut` uses, so it is silent at once and never a click, and the Fade row applies to fade
@@ -3491,3 +3540,37 @@ it began; git dates the commits Sep 21. The day is the same work either way.)*
   fixed toolbar), trigger (slice via `sliceOn`, gap chop gone), pins (auditioned paint; live In/Out pinned
   in the timing checks), lens (clears pins it would be claimed by), osc (four-position strip), align (two
   stale checks, tabs are 32). `lib/rig.js` kills the process group — close() used to leak Electron.
+- [x] **Sweep clears unpinned tape strokes too** (2026-09-24, Ek: "it only sweeps grains, no tape strokes") —
+  `sweep()` (ui-sweep.js) kept every armed trigger's marks; now a tape stroke survives only through a pinned
+  loop (its own stroke and its overdub layers', which were being stripped from under a sounding layer). Shells
+  whose marks went are dropped at once via `dropTriggersWhere` (trigger.js), sharing refreshTriggers' exit, so
+  the sweep is silent immediately and the undo snapshot carries no ghost. `audit-for --run` green.
+- [x] **Settings: a yes/no is the toggle, and the kit stated at attribute depth** (2026-09-24, Ek: "buttons that
+  just say toggle … should be a toggle pill") — Camera + Display's four rows (projector, fullscreen, perf monitor,
+  learn) are switches read from the app each tick; minimal rendering and the handsfree arm too; the LED row lost its
+  redundant Off badge; the buttons page's ms sits inside the field; Title Case on six row titles. Three CSS traps
+  measured and fixed (numbox clipping, search glyph, borrowed slider width); four `align-audit` invariants added.
+- [x] **Tools page design check** (2026-09-24, Ek: "the sliders are not aligned … too long some of them like rearm") —
+  measured against the settings kit after cb7524b: every slider 222 from one left edge, readouts 64, groups ending at
+  1245, rows 15/15 on a hairline. What remained was copy: four ledes of up to 176 characters and two sentences, two of
+  them shouting in caps, cut to one line each; the twin Fade rows now name a take and a walker. Left for Ek's call: the
+  Tape · Grain twins as one two-column table, and the rig's spaceless readout units ("250ms") beside the kit's "30 min".
+- [x] **A key learned at a down or a timer left its key DOWN in the recogniser** (2026-09-24, Ek: "long hold of
+  the up button, or the 3x press … not working to unpin all") — `_learnKeySrc` (midi.js): the learn's keyup
+  dispatches the release on the source it stored, not on `_learnKeyEv`, which a ×3 / extra long / strip-cancel
+  had already nulled. The next press was swallowed and its up learned as a PRESS, stealing ↑ from unpin.
+  Reproduced and re-checked on a private instance (learn ×3 → play ×3 → unpin all fires). Reasoning in the commit.
+- [x] **The keys filter's glyph sat on the first letter** (2026-09-24, Ek) — `input[type=text].set-search`
+  (settings-gui.css): the box's rule was (0,3,0) under the kit's field at (0,3,1), so 12px padding beat its
+  36px and the glyph overlapped the text by 15px; measured 9px clear after. Type now comes from the kit's
+  field (14.5px) instead of a second size. `align-audit` gains "the keys filter's glyph sits clear of its text".
+- [x] **Depth is four answers on a capsule** (2026-09-24, Ek: "a multi select pill with just 1 2 3 then all") —
+  `recencySeg` (index.html) replaces the 1–16 slider and its numbox; `depth` is a `seg` param (tiles.js) on
+  the cursor section and the erase sheet, `S.setRecency` (ui-presets.js) clamps to 3 and lights the seg, a
+  stored deeper tile value lands on 3 once; `/search/recency` clamps, `recency_cc` quarters its throw. The
+  worded readout ("last 3 strokes") is gone with the slider — VOCABULARY marked, ruling in RULINGS.
+- [x] **k is one slider, zero is all, ceiling 100** (2026-09-24, Ek) — `K_MAX` 100 and `k` 0 by default
+  (state.js); `_kFromSlider` / `_kToSlider` at module level in ui-presets.js with position 0 = all; the
+  `fill` switch, `grainKAllMode`, `kAllSeg`, `k_all` / `/search/fill` and the frames' `kAllMode` deleted; the
+  scheduler, renderer, HUD, sheets and four audits read `k === 0`. Nothing stored moves — the lens block
+  is session-only. Ruling in RULINGS "k is one slider, and zero is all".

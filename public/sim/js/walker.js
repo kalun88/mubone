@@ -120,6 +120,17 @@ export function tickWalkers(dtMs, now = performance.now()) {
 /** Every walker, gone — leaving `stroke` mode, or a pin taking them. */
 export function clearWalkers() { S._walkers.length = 0; }
 
+/** The walkers on ONE stroke, gone — its marks were erased out from under
+ *  them (2026-09-24). A walker reads the marks near its path, so with none
+ *  left it walked on in silence: under `dwell: loop` for ever, since the
+ *  gate that would have sent the exit edge went with the marks, and an undo
+ *  brought it back sounding beside the fresh walker the new gate launched.
+ *  The same rule refreshTriggers applies to a take: material erased out
+ *  from under a reader stops the reader. */
+export function killWalkers(strokeId) {
+  for (const w of S._walkers) if (w.strokeId === strokeId) w._dead = true;
+}
+
 /** Where the walker is now: the path interpolated at its playhead, `rev`
  *  reading the clock backwards from the end. */
 function _position(w) {

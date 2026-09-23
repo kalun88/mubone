@@ -38,7 +38,7 @@ async function run(rig) {
     const D2R = Math.PI / 180;
     const o = {};
     // Probing writes what it reads: keep what the app had and put it back.
-    const KEEP = ['mouseInCanvas', 'eraseOldest', 'scanMuted', 'lensMode', 'lensReads', 'recencyN', 'grainKAllMode', 'grainKSeqMode', 'grainWalk',
+    const KEEP = ['mouseInCanvas', 'eraseOldest', 'scanMuted', 'lensMode', 'lensReads', 'recencyN', 'grainKSeqMode', 'grainWalk',
                   'searchRadiusDeg', 'radiusFadeEnabled', 'radiusFadeCurve', 'liveRecBuffers'];
     const kept = Object.fromEntries(KEEP.map(k => [k, S[k]]));
     const keptParts = S.particles.slice(), keptTrigs = S.triggers.slice(), keptDwell = S.triggerParams.dwell;
@@ -54,7 +54,7 @@ async function run(rig) {
       S.particles.length = 0; S.triggers.length = 0; S._openStrokes.clear();
       S.commitSlots = new Array(keptSlots.length).fill(null);
       S.scanMuted = false; S.lensMode = 'area'; S.lensReads = 'both'; S.recencyN = 0;
-      S.grainKAllMode = false; S.grainKSeqMode = false; S.grainWalk = false;
+      S.grainKSeqMode = false; S.grainWalk = false;
       S.searchRadiusDeg = 10; S.triggerParams.dwell = 'oneshot'; S.radiusFadeEnabled = false;
       S._particleVersion++;
     };
@@ -77,26 +77,25 @@ async function run(rig) {
     // ── radius ──
     reset();
     const a2 = paint({ lonDeg: 2 }), a5 = paint({ lonDeg: 5 }), a15 = paint({ lonDeg: 15 });
-    S.grainKAllMode = true;
-    o.radius = { got: ids(pool()), want: [a2, a5].sort() };
-    S.searchRadiusDeg = 20; o.radiusWide = { got: ids(pool()), want: [a2, a5, a15].sort() };
-    S.searchRadiusDeg = 0.1; o.radiusTiny = pool().length;
+    o.radius = { got: ids(pool({ k: 0 })), want: [a2, a5].sort() };
+    S.searchRadiusDeg = 20; o.radiusWide = { got: ids(pool({ k: 0 })), want: [a2, a5, a15].sort() };
+    S.searchRadiusDeg = 0.1; o.radiusTiny = pool({ k: 0 }).length;
 
     // ── depth ──
-    reset(); S.grainKAllMode = true;
+    reset();
     const d = [1, 2, 3, 4].map(i => paint({ lonDeg: i, buf: 0 }));
     // every stroke on its own buffer, as live takes are
     S.particles.forEach(p => { p.liveBufferIdx = p.strokeId - d[0]; });
-    S.recencyN = 2; o.depth2 = { got: ids(pool()), want: [d[2], d[3]].sort() };
-    S.recencyN = 1; o.depth1 = { got: ids(pool()), want: [d[3]] };
-    S.recencyN = 0; o.depthAll = ids(pool()).length;
+    S.recencyN = 2; o.depth2 = { got: ids(pool({ k: 0 })), want: [d[2], d[3]].sort() };
+    S.recencyN = 1; o.depth1 = { got: ids(pool({ k: 0 })), want: [d[3]] };
+    S.recencyN = 0; o.depthAll = ids(pool({ k: 0 })).length;
     // Depth is LOCAL: a newer stroke OUTSIDE the radius must not push these out.
     const far = paint({ lonDeg: 90 }); S.particles.filter(p => p.strokeId === far).forEach(p => { p.liveBufferIdx = 50; });
-    S.recencyN = 1; o.depthLocal = { got: ids(pool()), want: [d[3]] };
+    S.recencyN = 1; o.depthLocal = { got: ids(pool({ k: 0 })), want: [d[3]] };
     // Depth over ONE shared buffer (sampler material, three strokes from one file).
-    reset(); S.grainKAllMode = true;
+    reset();
     const sm = [1, 2, 3].map(i => paint({ lonDeg: i, source: 'sample', buf: 0 }));
-    S.recencyN = 1; o.depthSampler = { got: ids(pool()), strokes: sm.length };
+    S.recencyN = 1; o.depthSampler = { got: ids(pool({ k: 0 })), strokes: sm.length };
 
     // ── k and all ──
     reset();
@@ -105,16 +104,16 @@ async function run(rig) {
     const p8 = pool({ k: 8 }); const maxAng8 = Math.max(...p8.map(p => p._ang));
     const all30 = S.particles.filter(p => p._ang < 10 * D2R).map(p => p._ang).sort((a, b) => a - b);
     o.kNearestFirst = Math.abs(maxAng8 - all30[7]) < 1e-9;
-    S.grainKAllMode = true; o.all = { n: pool({ k: 8 }).length, elig: G.__testEligible() };
-    o.kBigger = (S.grainKAllMode = false, pool({ k: 99 }).length);
+    o.all = { n: pool({ k: 0 }).length, elig: G.__testEligible() };   // k = 0 is all
+    o.kBigger = pool({ k: 99 }).length;
 
     // ── nearest ──
     reset();
     paint({ lonDeg: 40, n: 10, spreadDeg: 2 });
     S.lensMode = 'nearest';
     o.nearest = { n: pool({ k: 5 }).length, farOk: pool({ k: 5 }).every(p => p._ang > 30 * D2R) };
-    S.grainKAllMode = true; o.nearestIgnoresAll = pool({ k: 5 }).length;
-    S.grainKAllMode = false; S.lensMode = 'area'; o.areaFar = pool({ k: 5 }).length;
+    o.nearestAll = pool({ k: 0 }).length;   // k = 0 under nearest: the whole sphere
+    S.lensMode = 'area'; o.areaFar = pool({ k: 5 }).length;
 
     // ── scope / dwell grain / trig material ──
     reset();
@@ -148,6 +147,25 @@ async function run(rig) {
     S.grainWalk = true; o.walkArea = pool().length;
     S.lensMode = 'nearest'; o.walkNearest = pool().length;
     S.grainWalk = false; o.noWalkNearest = pool().length;
+    // WET PAINT IS THE CURSOR'S, WALK OR NOT (2026-09-24): the stroke going
+    // down sounds while it goes down; a finished stroke waits for a touch to
+    // walk it; a take being recorded is not wet paint.
+    {
+      reset(); const dry = paint({ lonDeg: 1 });
+      const keptPaint = [S.isPainting, S.isRecording, S.currentStrokeId, S._recordingTrigger];
+      S.grainWalk = true; S.lensMode = 'area';
+      const wet = paint({ lonDeg: 1 });
+      S.isPainting = true; S.isRecording = true; S.currentStrokeId = wet; S._recordingTrigger = false;
+      const p1 = pool(); o.wetWalkSounds = p1.length > 0 && p1.every(p => p.strokeId === wet) && G.__testCursorSounds();
+      o.wetWalkDryOut = !p1.some(p => p.strokeId === dry);
+      S._recordingTrigger = true; for (const p of S.particles) if (p.strokeId === wet) p.trig = true;
+      o.wetTakeSilent = pool().length === 0;
+      S._recordingTrigger = false; for (const p of S.particles) if (p.strokeId === wet) delete p.trig;
+      S.isPainting = false; S.isRecording = false;
+      o.liftedWalkSilent = pool().length === 0;
+      [S.isPainting, S.isRecording, S.currentStrokeId, S._recordingTrigger] = keptPaint;
+      S.grainWalk = false;
+    }
 
     // ── cap ──
     reset(); paint({ lonDeg: 1 }); S.scanMuted = true; o.capSilent = !G.__testCursorSounds(); S.scanMuted = false;
@@ -228,7 +246,7 @@ async function run(rig) {
     const older = paint({ lonDeg: 1, n: 3, spreadDeg: 0.2, t0: 3.0 });   // painted first, later in the buffer
     const newer = paint({ lonDeg: 3, n: 3, spreadDeg: 0.2, t0: 0.5 });   // painted second, earlier in the buffer
     S.particles.forEach((p, i) => { p._globalIdx = i; });
-    S.grainKAllMode = true;
+    S.grainOverrides.k = 0;   // all
     // The first posts after a shared boot can land before this take is mapped
     // (a loaded rig, suites ahead of this one): the tables read back empty.
     // Post until they do not, then measure — the measurement is one post.
@@ -273,7 +291,7 @@ async function run(rig) {
   check('all: every mark, k ignored', out.all.n === 30 && out.all.elig === 30);
   check('k 99 > reach: takes all 30', out.kBigger === 30);
   check('nearest: k closest anywhere, radius ignored', out.nearest.n === 5 && out.nearest.farOk);
-  check('nearest: all is ignored (still k)', out.nearestIgnoresAll === 5);
+  check('nearest: k 0 is all — the whole sphere', out.nearestAll === 10, String(out.nearestAll));
   check('area: nothing when the marks are far', out.areaFar === 0);
   check('tape material is never grain material', eq(out.trigNeverGrain.got, out.trigNeverGrain.want));
   check('scope tape, nothing opened: empty and silent', out.tapeOnlyShut.n === 0 && !out.tapeOnlyShut.sounds);
@@ -289,6 +307,9 @@ async function run(rig) {
   check('walk: the cursor reads nothing of its own (area)', out.walkArea === 0);
   check('walk: …nor in nearest', out.walkNearest === 0);
   check('no walk, nearest: reads', out.noWalkNearest > 0);
+  check('walk: the stroke being painted sounds, and only it', out.wetWalkSounds && out.wetWalkDryOut);
+  check('walk: a take being recorded is not wet paint', out.wetTakeSilent);
+  check('walk: lifted, the cursor reads nothing of its own again', out.liftedWalkSilent);
   check('cap: silent', out.capSilent);
   check('uncapped: sounds', out.uncapSounds);
   check('fade off: every gain 1', out.fadeOff.length > 0 && out.fadeOff.every(g => g === 1));

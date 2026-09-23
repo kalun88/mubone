@@ -8,6 +8,17 @@
 
 ## Open — by date found
 
+### Sep 24
+
+- [ ] **A one-word tooltip when learn is off, carrying the shortcut** (Ek, 2026-09-24, for tomorrow) — every
+  control on the rig gets a simple tooltip: one word for what it is, plus the key or note learned onto it
+  (from the registry, `ACTIONS` in `js/midi.js`, now one row per control). The shortcut shows whether the
+  tooltip is the simple one or the long one the sheet rows carry today. Learn mode keeps its own legend.
+- [ ] **A better system for audition** (Ek, 2026-09-24) — the one `auditionMode` flag over both instruments,
+  drawn as a switch on the tape and grain tabs, is not the shape Ek wants; what replaces it is undecided.
+  Read `docs/RULINGS.md` "Properties of the tool, not modes on the hand" before proposing — the audition /
+  live modes were rejected once on the playing surface.
+
 ### Sep 23
 
 ### Sep 16

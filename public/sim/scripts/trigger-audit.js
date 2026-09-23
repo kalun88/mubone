@@ -272,6 +272,74 @@ async function run(rig) {
     step(0.10, 20);                         // still there — no second edge
     out.doesNotRepeat = t.playing === false;
 
+    // A TRIGGER COMING BACK STARTS OUTSIDE (2026-09-24, Ek: erase a looping
+    // take under the cursor, undo, "it should start looping since i'm dwelled
+    // on it"). The erased shell left with `_inside` true (the gate skips a
+    // trigger with no marks, so no exit edge) and came back the same object;
+    // applyMaterial resets the ones coming back, so the next tick is an enter.
+    {
+      const H = await import('./js/history.js');
+      const SW = await import('./js/ui-sweep.js');
+      const prevDwell = S.triggerParams.dwell;
+      S.triggerParams.dwell = 'loop';
+      step(0.10, 1000);                     // well past the rearm window
+      const before = SW.snapshotMaterial();
+      const removed = S.particles.filter(p => p.strokeId === sid);
+      S.particles = S.particles.filter(p => p.strokeId !== sid); S._particleVersion++;
+      S._onMarksErased?.(removed);
+      H.push(SW.materialAction('erase', before, SW.snapshotMaterial()));
+      step(0.10, 20); step(0.10, 20);
+      out.erasedGone = !S.triggers.includes(t);
+      H.undo();
+      out.undoneStartsOutside = t.trigger._inside === false && S.triggers.includes(t);
+      step(0.10, 20);
+      out.undoneRefires = t.playing === true && t.trigger._inside === true;
+      t.playing = false;
+      H.clear();
+      S.triggerParams.dwell = prevDwell;
+      // A stroke `dwell: grain` opened is CLOSED by its erase, so an undo
+      // plays the take first and opens it after, as the first time.
+      {
+        S.triggerParams.dwell = 'grain';
+        S._openStrokes.add(sid);
+        const before2 = SW.snapshotMaterial();
+        const rem2 = S.particles.filter(p => p.strokeId === sid);
+        S.particles = S.particles.filter(p => p.strokeId !== sid); S._particleVersion++;
+        S._onMarksErased?.(rem2);
+        H.push(SW.materialAction('erase', before2, SW.snapshotMaterial()));
+        step(0.10, 20); step(0.10, 20);
+        out.eraseClosesOpened = !S._openStrokes.has(sid);
+        H.undo(); step(0.10, 20);
+        out.undoneNotOpenYet = !S._openStrokes.has(sid) && t.playing === true;
+        t.playing = false; H.clear(); S._openStrokes.clear();
+        S.triggerParams.dwell = prevDwell;
+      }
+      // A WALKER whose stroke is erased dies with its gate (walker.js
+      // killWalkers): it read nothing and, under `dwell: loop`, never ended.
+      // Undo births a new gate outside, so the cursor on it launches afresh.
+      {
+        const keptWalk = S.grainWalk, keptGT = { ...S.grainTrigger };
+        S.grainWalk = true;
+        Object.assign(S.grainTrigger, { dwell: 'loop', retrig: 'cut', release: 'play-to-end', rearmMs: 120, hysteresis: 1.15 });
+        const wid = ++nextStroke;
+        for (let i = 0; i < 50; i++) { const f = (i / 49) * 2 - 1; const p = { lon: 0.3 + f * 0.05, lat: 0, strokeId: wid, source: 'live', liveBufferIdx: 0, grainStart: i * 0.05, grainDuration: 0.1 }; grain.stampCartesian(p); S.particles.push(p); }
+        S._particleVersion++;
+        step(1.5, 20); step(0.3, 20); step(0.3, 20);
+        const alive = () => S._walkers.filter(w => w.strokeId === wid && !w._dead).length;
+        out.walkerLaunched = alive() === 1;
+        step(0.3, 1000);
+        const before3 = SW.snapshotMaterial();
+        S.particles = S.particles.filter(p => p.strokeId !== wid); S._particleVersion++;
+        H.push(SW.materialAction('erase', before3, SW.snapshotMaterial()));
+        step(0.3, 20); step(0.3, 20);
+        out.walkerDiesWithMarks = alive() === 0;
+        H.undo(); step(0.3, 20); step(0.3, 20);
+        out.walkerRelaunched = alive() === 1;
+        H.clear(); S._walkers.length = 0; S.grainWalk = keptWalk; Object.assign(S.grainTrigger, keptGT);
+        S.particles = S.particles.filter(p => p.strokeId !== wid); S._particleVersion++;
+      }
+    }
+
     // The audition must ignore start:'touch'. On release the cursor sits at the
     // END of the stroke just painted, so honouring 'touch' would start at the
     // last particle and play one median spacing — which reads as not playing at
@@ -629,6 +697,14 @@ async function run(rig) {
   check('a freshly recorded trigger starts outside', r.startsOutside);
   check('...and plays once on release, where the cursor already is', r.firesOnRecord);
   check('...but does not repeat while the cursor stays on it', r.doesNotRepeat);
+  check('erased under the cursor, the trigger leaves the board', r.erasedGone);
+  check('undone, it comes back OUTSIDE its gate', r.undoneStartsOutside);
+  check('...and the cursor already on it is the enter edge: it fires', r.undoneRefires);
+  check('an erase closes the stroke dwell:grain had opened', r.eraseClosesOpened);
+  check('...so undo plays the take first and opens it after', r.undoneNotOpenYet);
+  check('walk: a touch launches one walker', r.walkerLaunched);
+  check('walk: the walker dies with its marks', r.walkerDiesWithMarks);
+  check('walk: undo births the gate outside, and the cursor on it launches afresh', r.walkerRelaunched);
   check('the audition plays from the top', r.auditionFromTop);
   check("audition ignores start:'touch' (cursor is at the stroke's end on release)",
     r.touchAuditionFired && r.touchAuditionFromTop,

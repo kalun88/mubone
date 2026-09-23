@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { S, DEBUG, GRAIN_SCHEDULER_INTERVAL_MS, AXIS_SOURCES, axisHeld } from './state.js';
+import { filterTypeOf } from './brush-voicing.js';
 import { scheduleGrains } from './grain.js';
 import { makeTake } from './take.js';
 import { setupEvents, setupDragDrop } from './events.js';
@@ -90,10 +91,9 @@ async function _startWorkletEngine(buf, opts = {}) {
     envShape:         opts.envShape         ?? CURVE_MAP[S.grainCurveType] ?? 0,
     probability:      opts.probability      ?? S.grainProbability ?? 1.0,
     direction:        opts.direction        ?? DIR_MAP[S.grainDirection] ?? 0,
-    hpfFreq:          opts.hpfFreq          ?? ov.hpfFreq          ?? base.hpfFreq          ?? 20,
-    lpfFreq:          opts.lpfFreq          ?? ov.lpfFreq          ?? base.lpfFreq          ?? 20000,
-    hpfQ:             opts.hpfQ             ?? ov.hpfQ             ?? base.hpfQ             ?? 0.707,
-    lpfQ:             opts.lpfQ             ?? ov.lpfQ             ?? base.lpfQ             ?? 0.707,
+    filterType:       opts.filterType       ?? filterTypeOf(ov, base),
+    cutoff:           opts.cutoff           ?? ov.cutoff           ?? base.cutoff           ?? 1000,
+    res:              opts.res              ?? ov.res              ?? base.res              ?? 0,
     filterFreqJitter: opts.filterFreqJitter ?? ov.filterFreqJitter ?? base.filterFreqJitter ?? 0,
     kSeqMode:         S.grainKSeqMode ?? false,
   }, {
@@ -458,13 +458,14 @@ function init() {
     const desc   = document.getElementById('resetSelectedDesc');
     const orph   = document.getElementById('resetOrphans');
     if (!allBtn || !selBtn || !cats) return;
-    // Sentence case, as the dialog runs prose (SETTINGS-GUI § 5); the hint is
-    // the row's one-sentence description.
+    // A row title is Title Case, every word (SETTINGS-GUI § 5, 2026-09-14);
+    // the hint is the row's one-sentence description and stays prose.
     const sentence = t => t.charAt(0).toUpperCase() + t.slice(1).replace(/\.?$/, '.');
+    const title = t => t.replace(/\b[a-z]/g, ch => ch.toUpperCase());
     cats.innerHTML = CATEGORIES.map(c => `
       <div class="set-row">
         <div class="set-row-text">
-          <span class="set-row-title">${c.label.charAt(0).toUpperCase() + c.label.slice(1)}</span>
+          <span class="set-row-title">${title(c.label)}</span>
           <span class="set-row-desc">${sentence(c.hint)}</span>
         </div>
         <div class="set-ctl"><input type="checkbox" class="set-toggle" data-cat="${c.id}" aria-label="reset ${c.label}"></div>

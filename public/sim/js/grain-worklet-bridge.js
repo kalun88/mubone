@@ -6,7 +6,7 @@
 // registration, VBAP LUT transfer and the feedback ring.
 // ============================================================================
 
-import { S, gp } from './state.js';
+import { S, gp, FILTER_TYPE_OF } from './state.js';
 import { dlog } from './diag.js';
 import { markGlow, packVBAPLookup } from './grain.js';
 import { voicingById } from './brush-voicing.js';
@@ -761,10 +761,11 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
     envShape:         CURVE_MAP[gp.curveType] ?? gp.envShape ?? 0,
     probability:      gp.probability ?? 1.0,
     direction:        DIR_MAP[gp.direction] ?? gp.direction ?? 0,
-    hpfFreq:          gp.hpfFreq ?? 20,
-    lpfFreq:          gp.lpfFreq ?? 20000,
-    hpfQ:             gp.hpfQ ?? 0.707,
-    lpfQ:             gp.lpfQ ?? 0.707,
+    // A frozen block carries the worklet's int; a UI-shaped one the switch
+    // and the mode (the same two forms `envShape` / `curveType` take above).
+    filterType:       gp.filterType ?? (gp.filterOn ? FILTER_TYPE_OF[gp.filterMode] ?? 1 : 0),
+    cutoff:           gp.cutoff ?? 1000,
+    res:              gp.res ?? 0,
     filterFreqJitter: gp.filterFreqJitter ?? 0,
     kSeqMode:         kSeqMode ?? false,
     panSpread:        gp.panSpread ?? 0,

@@ -99,7 +99,7 @@ export const KEYS = [
   { key: 'mubone_slots',             cat: 'ui', note: 'the palette\'s three slots, { loop, granular, erase } → tile id (2026-09-03 evening; folded mubone_belt and the mubone_brush_slot / mubone_erase_slot pair, migrated on first load)' },
   // ── the palette (2026-09-11) ──
   { key: 'mubone_recent_pieces',     cat: 'ui', note: 'the File > Open Recent list: up to 8 .mubone paths, most recent first (js/piece.js). Per-machine, like everything else here — the pieces themselves are files' },
-  { key: 'mubone_palette',           cat: 'ui', note: 'the palette: [{ id, verb }] in strip order, ≤ 9 (tiles.js LS_PALETTE) — position N is what `palette_N`, the key digit and the OSC address name' },
+  { key: 'mubone_palette',           cat: 'ui', note: 'the palette: [{ id, verb }] in strip order, the fixed four (tiles.js LS_PALETTE) — position N is what `palette_N`, the key digit and the OSC address name' },
   { key: 'mubone_palette_verbs',     cat: 'ui', guards: ['mubone_palette'],
     note: 'stamp: tiles.js derived each tile\'s verb from the pre-2026-09-11 per-verb bindings once; without it the derivation re-runs over the maps' },
   { key: 'mubone_palette_renumber',  cat: 'bindings', guards: ['mubone_key_map', 'mubone_button_map', 'mubone_midi_map'],

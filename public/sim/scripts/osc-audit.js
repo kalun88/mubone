@@ -228,7 +228,6 @@ const NOISE = /^camQ\.|^cursorQ\.|^gazeTrail\.|Until$|^perf\.|^fps/;
 // gets seeded.
 const NEEDS_STATE = new Map([
   ['/cursor/tare',      'needs a connected sensor'],
-  ['/commit/release',   'needs a commit to exist'],
   // THE STRIP IS A FIXED TOOLBAR OF FOUR POSITIONS (2026-09-22: cursor ·
   // erase · pin · unpin; the hand's two tiles are the spacebar's, not
   // positions) AND THE TABLE ADVERTISES NINE: every `palette_N` row exists
@@ -236,10 +235,15 @@ const NEEDS_STATE = new Map([
   // release on a clean rig — and 5 … 9 have nothing to fire. Rewritten at the
   // 5.6 release sweep from the seven-tile strip's list (7, 8, 9).
   ['/palette/4',        'the factory unpin tile — needs a commit to exist'],
-  ['/palette/5',        'position 5 is empty on the fixed strip of four'],
-  ['/palette/6',        'position 6 is empty on the fixed strip of four'],
-  ['/palette/7',        'position 7 is empty on the fixed strip of four'],
-  ['/palette/8',        'position 8 is empty on the fixed strip of four'],
+  // (/palette/5 … 9 left the table on 2026-09-24: the strip is four positions.)
+  // THE PINNED RAIL'S TRACK CONTROLS need a pin to act on (2026-09-24).
+  ['/pins/sel/mute',    'needs a pin to exist — the selected track\'s M'],
+  ['/pins/sel/solo',    'needs a pin to exist — the selected track\'s S'],
+  ['/pins/sel/level',   'needs a pin to exist — the selected track\'s fader'],
+  ['/pins/clouds/mute', 'needs a cloud pinned; an empty group has its mute pruned in the same call'],
+  ['/pins/clouds/solo', 'needs a cloud pinned; an empty group has its solo pruned in the same call'],
+  ['/pins/loops/mute',  'needs a loop pinned; an empty group has its mute pruned in the same call'],
+  ['/pins/loops/solo',  'needs a loop pinned; an empty group has its solo pruned in the same call'],
   // A RESET WITH NOTHING TO RESET. `pitch_oct_reset` sets the octave to 0 and
   // the octave IS 0 on fresh state, so on a clean profile it correctly moves
   // nothing. It passed some runs and failed others because the sweep's reload
@@ -248,7 +252,6 @@ const NEEDS_STATE = new Map([
   // non-deterministic on one line. Seed a non-zero octave before it and this
   // entry comes out.
   ['/grain/oct/reset',  'a reset with nothing to reset — the octave is 0 on fresh state'],
-  ['/palette/9',        'position 9 is empty on the fixed strip of four'],
   // launch() starts the rig muted; a hold from muted to muted, released to
   // the state at press time (muted), moves nothing. Proven on a rig.
   ['/mute/hold',        'the rig launches muted; the hold restores the muted state it found'],
@@ -384,8 +387,10 @@ const VALUES = {
   '/grain/dur': [123], '/grain/per': [77], '/grain/overlap': [2.5], '/grain/volume': [0.7],
   '/grain/pitch': [300], '/grain/pan': [55], '/grain/prob': [0.6], '/scan/fade': [400],
   '/grain/fade': [22], '/grain/durjitter': [0.4], '/grain/durvar': [111], '/grain/startjitter': [88],
-  '/grain/pervar': [66], '/grain/retrigger': [40], '/grain/hpf': [180], '/grain/lpf': [7000],
-  '/grain/hpfq': [3.3], '/grain/lpfq': [1.2], '/grain/filterjitter': [0.35], '/grain/pitchshift': [-700],
+  '/grain/pervar': [66], '/grain/cutoff': [1800],
+  '/tape/speed': [1.5], '/tape/pitch': [-700], '/tape/volume': [0.6], '/tape/voice': [2], '/grain/voice': [2],
+  '/grain/flow': [60], '/grain/head': [12], '/pins/sel/level': [0.5], '/input/gain': [-6],
+  '/grain/res': [0.4], '/grain/filterjitter': [0.35], '/grain/pitchshift': [-700],
   '/search/radius': [33], '/search/recency': [4], '/search/k': [3],
   '/commit/xfade': [0.4], '/commit/loop_fade_time': [640], '/commit/attack': [1.5],
   '/commit/release_time': [2.5], '/commit/volume': [0.6], '/commit/speed': [1.5], '/commit/slots': [7],

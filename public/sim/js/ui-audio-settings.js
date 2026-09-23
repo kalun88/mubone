@@ -2304,6 +2304,7 @@ export function initAudioSettings() {
     S._syncAudioPanelLevels?.();             // the footer's `in` mirror
     saveAllDefaults();
   };
+  S._setInputGainDb = _setSumLevel;   // `input_gain` (midi.js), the footer's in fader
   document.getElementById('asInputGain')?.addEventListener('input', e => _setSumLevel(parseFloat(e.target.value)));
   document.getElementById('asInputGain')?.addEventListener('dblclick', () => _setSumLevel(0));
   // The number is a control too (Ek, 2026-09-14): type and Enter, or
@@ -2440,18 +2441,17 @@ export function initAudioSettings() {
     // The arm control (#290). It used to be a button in the rig view's cursor
     // device — the one place nobody could reach once the rig stopped being a
     // screen — so it lives here now, beside the gate it arms. Arming is a
-    // boolean that STAYS, so it is a two-state pill that says which state it
-    // is in rather than a button whose meaning you have to remember (#267).
-    const hfArmSeg = document.getElementById('hfArmSeg');
-    if (hfArmSeg) {
-      hfArmSeg.addEventListener('click', e => {
-        const btn = e.target.closest('[data-hfarm]');
-        if (!btn) return;
-        const want = btn.dataset.hfarm === 'on';
-        if (want === !!S.hfArmed) return;          // picking the live segment does nothing
-        // Only plain trace mode can be armed; disarming is always allowed.
-        if (want && S.traceMode !== 'trace') return;
+    // boolean that STAYS, so it is the kit's toggle (#267 made it a two-state
+    // pill; 2026-09-24 the switch, which is what a yes/no is on a settings
+    // page). Disabled outside plain trace mode, since only that can be armed.
+    const hfArmToggle = document.getElementById('hfArmToggle');
+    if (hfArmToggle) {
+      hfArmToggle.addEventListener('change', () => {
+        const want = hfArmToggle.checked;
+        if (want === !!S.hfArmed) return;
+        if (want && S.traceMode !== 'trace') { hfArmToggle.checked = false; return; }
         if (want) armHandsfree(); else disarmHandsfree();
+        S._syncHandsfreeUI?.();
       });
     }
 
@@ -2474,16 +2474,13 @@ export function initAudioSettings() {
     S._syncHandsfreeUI = () => {
       const countEl = document.getElementById('hfCaptureCount');
       if (countEl) countEl.textContent = S.hfCaptureCount + (S.hfCaptureCount === 1 ? ' buffer' : ' buffers');
-      // Sync the arm pill. `hf-recording` stays a class rather than a third
-      // segment: recording is something the gate is DOING, not a state you can
-      // pick, and a capsule means pick-one-of-N (#267).
-      const armSeg = document.getElementById('hfArmSeg');
-      if (armSeg) {
-        armSeg.classList.toggle('hf-recording', !!S.hfRecording);
-        armSeg.classList.toggle('hf-unavailable', S.traceMode !== 'trace');
-        const want = S.hfArmed ? 'on' : 'off';
-        armSeg.querySelectorAll('[data-hfarm]').forEach(b =>
-          b.classList.toggle('active', b.dataset.hfarm === want));
+      // Sync the arm switch. `hf-recording` is a class, not a state you can
+      // pick: recording is something the gate is DOING (#267).
+      const armToggle = document.getElementById('hfArmToggle');
+      if (armToggle) {
+        armToggle.classList.toggle('hf-recording', !!S.hfRecording);
+        armToggle.disabled = S.traceMode !== 'trace' && !S.hfArmed;
+        armToggle.checked  = !!S.hfArmed;
       }
       // Sync trace indicator — show active state when toggled on
       const traceBtn = document.getElementById('paintIndicatorBtn');

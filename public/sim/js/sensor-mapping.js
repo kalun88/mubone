@@ -39,7 +39,7 @@ import { sendOSCExternal, isOSCOutAvailable } from './osc-out.js';
 //   output: {
 //     kind: 'grain' | 'midi' | 'osc',
 //     // grain:
-//     param?:    string         // e.g. 'hpfFreq' — mirrors legacy targetParam
+//     param?:    string         // e.g. 'cutoff' — mirrors legacy targetParam
 //     // midi:
 //     deviceId?: string         // from navigator.requestMIDIAccess().outputs
 //     channel?:  number         // 1–16 (user-facing)
@@ -83,10 +83,8 @@ export const MAPPABLE_CURSOR_AXES = [
 // Each entry describes a param that can be targeted by a mapping.
 // label: display name, min/max: valid range, default: bypass value, unit: display suffix.
 export const MAPPABLE_PARAMS = [
-  { key: 'hpfFreq',         label: 'HPF cutoff',     min: 20,    max: 20000, default: 20,    unit: 'Hz',  log: true },
-  { key: 'lpfFreq',         label: 'LPF cutoff',     min: 20,    max: 20000, default: 20000, unit: 'Hz',  log: true },
-  { key: 'hpfQ',            label: 'hpf Q',          min: 0.1,   max: 20,    default: 0.707, unit: '',    log: false },
-  { key: 'lpfQ',            label: 'lpf Q',          min: 0.1,   max: 20,    default: 0.707, unit: '',    log: false },
+  { key: 'cutoff',          label: 'filter cutoff',  min: 20,    max: 20000, default: 1000,  unit: 'Hz',  log: true },
+  { key: 'res',             label: 'resonance',      min: 0,     max: 1,     default: 0,     unit: '%',   log: false },
   { key: 'filterFreqJitter',label: 'filter jitter',  min: 0,     max: 1,     default: 0,     unit: '%',   log: false },
   { key: 'volume',          label: 'volume',          min: 0.001, max: 2.0,   default: 0.5,   unit: '',    log: false },
   { key: 'duration',        label: 'duration',        min: 0.002, max: 4.0,   default: 0.1,   unit: 's',   log: true },
@@ -179,9 +177,9 @@ function _getOutput(m) {
   return { kind: 'grain', param: m.targetParam };
 }
 
-/** Default output block for a freshly added row (grain / hpfFreq). */
+/** Default output block for a freshly added row (grain / cutoff). */
 function _defaultOutput() {
-  return { kind: 'grain', param: 'hpfFreq' };
+  return { kind: 'grain', param: 'cutoff' };
 }
 
 // Transient telemetry keys are stripped before persist so they don't bloat
@@ -209,7 +207,7 @@ export function addMapping(opts = {}) {
     // Legacy field — still populated for grain rows so other modules that read
     // `m.targetParam` directly keep working. Non-grain rows get ''.
     targetParam: opts.targetParam || (opts.output?.kind === 'grain' || !opts.output
-                   ? (opts.output?.param || 'hpfFreq')
+                   ? (opts.output?.param || 'cutoff')
                    : ''),
     outputMin:   opts.outputMin   ?? 20,
     outputMax:   opts.outputMax   ?? 2000,
@@ -218,7 +216,7 @@ export function addMapping(opts = {}) {
   };
   // Keep targetParam in sync with output.param for grain rows.
   if (m.output.kind === 'grain') {
-    m.targetParam = m.output.param || m.targetParam || 'hpfFreq';
+    m.targetParam = m.output.param || m.targetParam || 'cutoff';
     m.output.param = m.targetParam;
   }
   // Enforce one-row-per-destination
@@ -243,7 +241,7 @@ export function updateMapping(id, updates) {
   // Keep targetParam / output.param in sync for grain rows.
   if (merged.output?.kind === 'grain') {
     // Prefer an explicit update.targetParam, else update.output.param, else current.
-    const p = updates.targetParam || updates.output?.param || merged.targetParam || 'hpfFreq';
+    const p = updates.targetParam || updates.output?.param || merged.targetParam || 'cutoff';
     merged.targetParam = p;
     merged.output = { ...merged.output, param: p };
   } else if (merged.output && merged.output.kind !== 'grain') {
@@ -569,6 +567,7 @@ function _saveMappings() {
   } catch (_) { /* quota exceeded — silent */ }
 }
 
+const _FILTER_RENAMES = { hpfFreq: 'cutoff', lpfFreq: 'cutoff', hpfQ: 'res', lpfQ: 'res' };
 export function loadMappings() {
   try {
     const json = localStorage.getItem(STORAGE_KEY);
@@ -581,7 +580,14 @@ export function loadMappings() {
         // shape back. No risk of duplicating state across refactors.
         _mappings = arr.map(m => {
           if (!m.output || !m.output.kind) {
-            return { ...m, output: { kind: 'grain', param: m.targetParam } };
+            m = { ...m, output: { kind: 'grain', param: m.targetParam } };
+          }
+          // 2026-09-23: the two-corner filter became one. A row on either
+          // cutoff drives THE cutoff now, a row on either Q the resonance.
+          const re = _FILTER_RENAMES[m.output?.param];
+          if (re) {
+            m = { ...m, output: { ...m.output, param: re }, targetParam: re };
+            if (re === 'res') { m.outputMin = 0; m.outputMax = 1; }
           }
           return m;
         });

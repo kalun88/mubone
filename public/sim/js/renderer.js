@@ -1718,7 +1718,7 @@ export function drawParticles() {
   // two onsets, and at a long period it is not true only 60 % of the time.
   //
   // Reach lines: the search radius stops being an abstract circle and becomes
-  // visible reach. Also makes k / nearestMode / grainKAllMode self-evident —
+  // visible reach. Also makes k (0 = all) / nearestMode self-evident —
   // k-all looks like a burst of spokes.
   //
   // ONE LINE PER CANDIDATE, ONE RING PER GRAIN (Ek, 2026-09-02). The fan is
@@ -2729,7 +2729,7 @@ export function drawCursor() {
     : scanOff ? _hexA(_tok('--text-faint', '#5c564c'), 0.85)
     : _hue ? _hexA(_hue, 0.62) : _hexA(_tok('--text-tertiary', '#938d83'), 0.55);
 
-  const kAll = S.grainKAllMode;
+  const kAll = (S.grainOverrides.k ?? S.grainParams.k) === 0;   // k = 0 is all (2026-09-24)
 
   // Radius ring — the projected true circle (see _reachPath); the flat
   // screen circle stays as the fallback when the ring doesn't project.

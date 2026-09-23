@@ -15,6 +15,13 @@ export const GRID_SEGMENTS_LAT   = 9;   // every 20deg (halved for perf)
 export const AUTO_ROTATION_SPEED = 0.0001;
 export const ROTATION_SPEED      = 0.06;
 export const FOV_DEG             = 80;
+// The grain filter's resonance, 0–1, maps onto Q on a log curve between these
+// two: flat (Butterworth) at 0, +20 dB at the cutoff at 1. The worklet repeats
+// the numbers (it cannot import); tiles.js draws with them.
+export const FILTER_Q_FLAT = 0.707;
+export const FILTER_Q_PEAK = 10;
+export const FILTER_MODES  = ['lp', 'bp', 'hp'];
+export const FILTER_TYPE_OF = { lp: 1, bp: 2, hp: 3 };   // the worklet's ints; 0 = off
 // The sensor-mode CAMERA pitches with the cursor all the way to ±90 — the
 // crosshair stays vertically centred at every elevation (Ek, 2026-09-01: "i
 // expect it to be fixed in the center in sensor mode"). A 60°→74° soft-knee
@@ -62,11 +69,15 @@ export const SENSOR_CAM_TELEPORT_DEG  = 20;  // a pointing step this big between
 // set on a fixed scale is not a ceiling, and a slider whose max moves under
 // your hand breaks the engine page's rule that a slider's raw value is its
 // POSITION. So the scale is fixed and log-mapped: fine control down at 1–10
-// where one mark more is a musical difference, and headroom to park k above
-// anything you will paint — uncapped in practice, but still instrumented,
-// because the live count can only tell you it saturated if there is a number
-// to saturate against.
-export const K_MAX = 1024;
+// where one mark more is a musical difference.
+// ZERO IS ALL (Ek, 2026-09-24: "it should be one slider, and if it's 0 it's
+// all"). The `fill` switch that lifted the cap is gone: k = 0 is no cap, the
+// bottom of the slider, and the default. That took the headroom argument with
+// it — the ceiling no longer has to sit above anything you might paint, because
+// `all` is a position of its own — so the top is a musical number: past ~100
+// marks in the pool the spread is indistinguishable from all at any playable
+// period, and the log scale keeps 1–10 fine.
+export const K_MAX = 100;
 
 export const PARTICLE_BASE_SIZE  = 4;
 export const PARTICLE_MAX_SIZE   = 20;
@@ -415,9 +426,9 @@ export const ACC_DEFAULT_LO       = 0.33;   // schmitt lower threshold (normalis
 //   period > duration -> silence gap between grains (sparse/pulsed feel)
 //   period < duration -> grains overlap in time (dense/washy feel)
 export const DEFAULT_GRAIN = {
-  grainKAllMode: false,
   grainKSeqMode: false,
-  k:             99,
+  k:             0,        // 0 = all: every mark in reach is in the pool
+
   duration:      0.589,
   durJitter:     0,
   startJitter:   0,        // on-marker only — see grainOverrides.startJitter
@@ -434,15 +445,14 @@ export const DEFAULT_GRAIN = {
   volume:        0.85,
   direction:     'fwd',
   curveType:     'hann',
-  hpfFreq:       20,       // 20 Hz = off (below audible, bypass)
-  lpfFreq:       20000,    // 20 kHz = off (above audible, bypass)
-  // ONE Q PER FILTER (Ek, 2026-09-07: "the current Q for filter changes both
-  // the Q for the hpf and lpf, they should have their own right?"). It was one
-  // shared number, so a resonant low-pass could not be had without the same
-  // peak appearing at the high-pass corner. Butterworth (flat, no resonance)
-  // at both defaults.
-  hpfQ:          0.707,
-  lpfQ:          0.707,
+  // ONE FILTER PER GRAIN (2026-09-23): a type, a cutoff and a resonance, the
+  // way Granulator, Pigments and Emission Control do it — not a high-pass and
+  // a low-pass with a Q each, which is an EQ's layout. Off by default; the
+  // switch is the off, so the cutoff can sit somewhere useful.
+  filterOn:      false,
+  filterMode:    'lp',     // 'lp' | 'bp' | 'hp'
+  cutoff:        1000,     // Hz, 20–20000 log
+  res:           0,        // 0 = Butterworth (flat) … 1 = about to ring (Q 10)
   filterFreqJitter: 0,     // no per-grain cutoff randomisation
 };
 
@@ -632,7 +642,7 @@ export function perfTick() {
   const worldCount = S.particles.length;
   let kLabel, kPct;
   if (perf.kPool > 0) {
-    const effectiveAll = S.grainKAllMode && S.lensMode !== 'nearest';
+    const effectiveAll = kSetting === 0;
     if (effectiveAll) {
       kLabel = `${perf.kCount} all [${worldCount}]`;
       kPct = Math.min(100, perf.kCount * 2);
@@ -786,7 +796,6 @@ export const S = {
   // was made, and the glow says which ones can still move.
   auditionMode: false,
   grainWalk: false,
-  grainKAllMode: false, // when true: k limit is removed — all particles within radius fire
   grainKSeqMode: false, // when true: step through candidates sequentially by grainStart order
   radiusTooltipUntil: 0, // performance.now() -- show transient radius label until this time
 
@@ -812,7 +821,7 @@ export const S = {
 
   // ── Recency filter ─────────────────────────────────────────────────────
   // Only granulate the N most recently recorded buffers present in radius.
-  recencyN: 3,               // depth: how many most-recent STROKES the cursor reads (0 = all)
+  recencyN: 3,               // depth: how many most-recent STROKES the cursor reads — 1, 2, 3, or 0 = all
   drawRecencyDial: null,     // set during setup -- module-level so MIDI CC can call it
   setRecency:      null,     // same
   setSearchK:      null,     // set during setup -- module-level so applyPresetObject can call it
@@ -974,7 +983,7 @@ export const S = {
   triggerParams: {
     hysteresis: 1.15,          // exit radius = search radius × this — anti-chatter
     rearmMs:    120,           // minimum gap before the same trigger can refire
-    dwell:      'oneshot',     // 'oneshot' | 'loop' | 'grain' — what dwelling does
+    dwell:      'loop',        // 'oneshot' | 'loop' | 'grain' — what dwelling does; loop is the factory answer (Ek, 2026-09-24)
     start:      'top',         // 'top' | 'touch' | 'ends' — where playback begins
     retrig:     'cut',         // 'cut' | 'layer' — refire over a pass still sounding
     // SLICE splits a take into separate triggers at its ONSETS, at record
@@ -1244,12 +1253,11 @@ export const S = {
     pitchShift:  null,   // base pitch shift in cents (±2400 = ±2 octaves)
     panSpread:   null,
     volume:      null,
-    retriggerMs: null,   // minimum re-trigger time for seeder grains (ms)
-    hpfFreq:     null,   // highpass filter cutoff Hz (20 = off, max 20000)
-    lpfFreq:     null,   // lowpass filter cutoff Hz  (20000 = off, min 20)
-    hpfQ:        null,   // resonance at the HPF corner (0.1–20, default 0.707)
-    lpfQ:        null,   // resonance at the LPF corner (0.1–20, default 0.707)
-    filterFreqJitter: null, // per-grain cutoff randomisation (0–1, fraction of freq)
+    filterOn:    null,   // the filter switch
+    filterMode:  null,   // 'lp' | 'bp' | 'hp'
+    cutoff:      null,   // Hz (20–20000)
+    res:         null,   // 0–1, FILTER_Q_FLAT … FILTER_Q_PEAK on a log curve
+    filterFreqJitter: null, // per-grain cutoff randomisation (0–1 = ±1 octave)
   },
   grainProbability: 1.0,   // 0-1: probability each candidate grain fires per tick
   grainDirection:   'fwd', // 'fwd' | 'rev' | 'rnd'

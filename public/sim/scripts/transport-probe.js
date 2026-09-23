@@ -90,8 +90,8 @@ function stopFlood() { clearInterval(floodTimer); floodTimer = null; try { flood
         const { S } = await import('./js/state.js');
         if (cushion) S._setAudioCushion(cushion);
         const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); };
-        if (stress) { set('gcDurSlider', 1000); set('gcPeriodSlider', 0); S.grainKAllMode = true; }
-        if (calm)   { set('gcDurSlider', 772); set('gcPeriodSlider', 501); S.grainKAllMode = false; }
+        if (stress) { set('gcDurSlider', 1000); set('gcPeriodSlider', 0); S.grainOverrides.k = 0; }   // k 0 = all
+        if (calm)   { set('gcDurSlider', 772); set('gcPeriodSlider', 501); S.grainOverrides.k = 8; }
         await new Promise(r => setTimeout(r, 2500));   // settle after the change
       }, { cushion, stress, calm });
       const acc = { outDry: 0, outDropped: 0, inDry: 0, inSkipped: 0, inOverflow: 0, active: [], drift: [], depth: [], fill: [], kCount: 0, gaps10: 0, gaps20: 0, gapMax: 0, load: [], procMax: 0, chunkAllocs: 0, throttled: 0, steals: 0, loadShortMax: 0, hostHolders: new Set(), mainHolders: new Set() };

@@ -90,6 +90,14 @@ const UNITY_POS = 2 / 3;                               // the tick
 const FADER_K = Math.log(1 / FADER_MAX) / Math.log(UNITY_POS);
 const _levelOf = pos => FADER_MAX * Math.pow(Math.max(0, Math.min(1, pos)), FADER_K);
 const _posOf = level => Math.max(0, Math.min(1, Math.pow(Math.max(0, level) / FADER_MAX, 1 / FADER_K)));
+// `pin_level` (midi.js): a pot on the selected pin's fader, through the same
+// law and the same follow rule as a hand on the bar.
+S._setSelectedPinLevel = pos => {
+  if (S.commitPlayback === 'focus') return;
+  const i = S._selectedPinSlot?.(S._frameCursorLon ?? 0, S._frameCursorLat ?? 0) ?? -1;
+  const c = i >= 0 ? S.commitSlots[i] : null;
+  if (c) c.level = +_levelOf(pos).toFixed(3);
+};
 const SEL_ROOM = 8;          // room above row one for the frame's SELECTED label
 
 function _pinName(c) {
