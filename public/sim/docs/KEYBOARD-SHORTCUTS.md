@@ -24,15 +24,35 @@ You can switch between steer, surface, and sensor modes from the camera mode but
 is the authority). **The hand is one tool** — click it in the rail or on the strip and it is in
 hand; **the spacebar and a left-click on the sphere play it**, in one global verb (momentary by
 factory; right-click the hand tile to flip it), and the **hand tile** at the head of the strip shows it: its glyph, its shape the verb,
-the spacebar and the mouse as keycaps under it.
-Those two inputs are reserved — they can be learned onto nothing. **The palette is quick access**:
-a strip of up to nine positions, each with its own key, button or note, firing in the tile's own
-verb and never touching what is in hand. A fresh palette is **dots · line · loop · dub · scrape top · pin ·
-unpin** on **`1` long · `1` · `2` · `3` · `4` · `↓` · `↑`** — dots and line share the `1` key, line on
-its press and dots on its hold — and the hand ships holding **dots, momentary** (Ek, 2026-09-12,
-night). No lens is on the strip; wide is installed and stays so. It is BUILT BY DRAGGING a row in from the rail
-(Procreate): a dropped tile takes the next free digit; drag within the strip to move a tile and
-its key moves with it; drag one off to remove it and free its digit.
+its binding as ONE keycap under it — the key, and `click` beside it while that key is the spacebar.
+**The hand's key is learnable** (2026-09-22): click the keycap to relearn, right-click to clear.
+**The sphere's left click is a second spacebar** — it follows whatever `key:Space` is bound to, not
+the hand, so rebinding the hand to another key takes the click off it. **The palette is quick access**:
+four positions, each with its own key, button or note, firing in the tile's own verb and never
+touching what is in hand.
+
+**THE PALETTE IS A FIXED TOOLBAR** (Ek, 2026-09-22: "there's no more drag. it's like forscore or
+procreate or adobe edit"). The row is six tiles: the HAND's two sides, then four positions.
+
+| | tile | plays it | verb |
+|---|---|---|---|
+| hand | **tape** · its voice | spacebar **press** | — |
+| hand | **grain** · its voice | spacebar **hold** | — |
+| 1 | **lens** | `c` | toggle |
+| 2 | **erase** | `e` | momentary |
+| 3 | **pin** | `↓` | bang |
+| 4 | **unpin** | `↑` | bang |
+
+The first two tiles ARE the tape and grain tools — they are the hand's two sides, each naming its
+tool and the **voice** it wears, and the spacebar plays them. They are not positions and take no
+letter: a `t` and a `g` beside them would be a second key for the spacebar. What is yours per
+position is the **verb** (right-click) and the **binding**; what varies on a tile is what it wears
+— the two tools their voice, the lens tile its installed preset — not which tiles exist.
+
+It was composed by dragging a row in from the rail until 2026-09-22, up to nine positions, with a
+dropped tile taking the next free digit. That ended when tools collapsed to one per instrument:
+there were four tools for nine slots, and the rail stopped drawing rows to drag from, so the strip
+had quietly become unbuildable.
 
 **Nothing is armed** (Ek, 2026-09-11) — the hand is not arming: a tile fires in its own verb
 whatever is in hand, and the only mark the hand leaves on the strip is a one-hairline ring. A
@@ -75,12 +95,12 @@ gesture, no group to aim: a bang pins where you stand, a momentary or toggle pin
 
 | Key | Does |
 |-----|------|
-| **`space`** | **plays the tool in hand**, in the hand's verb — toggle: press starts, press again stops; momentary: while held. A left-click on the sphere is the same press. Reserved: cannot be learned (2026-09-12) |
+| **`space`** | **plays the tool in hand** at factory, in the hand's verb — toggle: press starts, press again stops; momentary: while held. A left-click on the sphere does whatever `space` does. **Learnable since 2026-09-22**, both ways: the hand's key can be changed, and `space` can be bound to anything else (which takes it off the hand). `A` is still reserved, for the bench |
 | **`Tab`** | show or hide the **tool rail** — never the drawer (Ek, 2026-09-12). The `⋯` on a rail row is the drawer's only door; `~` is the same act as Tab. The tools pill's tooltip says so |
 | **`⇧Tab`** | show or hide the **pinned rail** on the right (Ek, 2026-09-12: "shift tab to open and close the pin"). The pinned pill's tooltip says so |
-| **1 … 9, `↑`, `↓`** | **fire** a palette position (`palette_N`), in that tile's verb — a momentary plays while the key is down, a toggle runs until the same key again, a bang happens once. Factory: 1 long dots *(momentary)* · 1 line *(toggle)* · 2 loop *(toggle)* · 3 dub *(toggle)* · 4 scrape top *(momentary)* · `↓` pin · `↑` unpin. **The key belongs to the tile**: move the tile and the key moves with it; drop a new tile and it takes the next free digit. One play at a time — while a tool runs, the other tool keys are dead and its own key is what ends it |
-| **S** | the installed lens **off**, and on again — no lens on, the cursor reads nothing: the cap (`scan_toggle`). A lens tile tapped when on does the same |
-| | a position has **one row** on the keys page, in its tile's own words — `line · play (toggle)`, `pen · play (momentary)`, `wide · on / off`, `pin · pin here`. `palette_N_toggle` and `palette_N_hold` went with the three-verb position (2026-09-11); the verb lives on the tile now. **F was unbound on 2026-09-07**: it was a second key for one tool, from before the palette existed |
+| **`c` `e`, `↑`, `↓`** | **fire** a palette position (`palette_N`), in that tile's verb — a momentary plays while the key is down, a toggle runs until the same key again, a bang happens once. Factory: `c` lens *(toggle)* · `e` erase *(momentary)* · `↓` pin *(momentary — hold it and move, the path is the cloud; a hold under 200 ms pins where you stand)* · `↑` unpin. The two tools are the hand's, on the spacebar. **The key belongs to the position**, and since 2026-09-22 a position holds one tile for good — the strip is fixed, so nothing moves and no digit is ever freed. One play at a time: while a tool runs, the other tool keys are dead and its own key is what ends it |
+| **S** | the lens **off**, and on again — the cursor reads nothing: the cap (`scan_toggle`). **Not a mute** (2026-09-23): a take already fired plays to its release, a grain or a walker in flight finishes. `c` does the same, and opens the lens tab when the rail is up |
+| | a position has **one row** on the keys page, in its tile's own words — `line · play (toggle)`, `pen · play (momentary)`, `lens · on / off`, `pin · pin here`. `palette_N_toggle` and `palette_N_hold` went with the three-verb position (2026-09-11); the verb lives on the tile now. **F was unbound on 2026-09-07**: it was a second key for one tool, from before the palette existed |
 | | every palette key is an explicit row on the keys page — relearn it there, or click the tile's legend row and press the new key |
 | | the keys page shows only BOUND actions by default — a learned key, a factory key nobody else took, a button, a MIDI assignment. **Show all** at the top reveals the rest, and the filter box searches whichever set is showing (2026-09-10) |
 | | **the instrument's three buttons** send 1 on the down and 0 on the up. A momentary action takes the whole button; a toggle or bang action sits on a gesture — press (the down, never delayed) · tap (a bang on the up) · long press · extra long · ×2 · ×3 — bound in the Button column (Settings → Instrument buttons sets the windows and shows what each button does) |
@@ -90,8 +110,9 @@ gesture, no group to aim: a bang pins where you stand, a momentary or toggle pin
 | **paint + the pin tile's key** | the looper gesture: while painting a line, hold a momentary pin tile's key and the stroke-so-far loops immediately and keeps growing with the stroke; releasing it freezes it |
 | **Q W E · ⇧Q W E** | **free.** They addressed the named pin groups, which no longer exist |
 
-**The pin buttons** live in the pinned rail, at its foot under the mix — **pin**, **unpin**
-(played by their palette tiles' keys, `↓` / `↑` by factory) and **unpin all**. They are not tools:
+**The pin buttons.** **pin** and **unpin** are palette tiles (positions 3 and 4, `↓` / `↑` by
+factory) and nowhere else since 2026-09-22 night; **unpin all** is a row at the pinned rail's foot,
+with the mix pair. They are not tools:
 they cannot be in hand and `Tab` never lands on them; they act on what already exists. They carry no state: there is one pin gesture and
 nothing to aim it at, so the label is the verb.
 
@@ -99,7 +120,8 @@ nothing to aim it at, so the label is the verb.
 appearing only when it holds something, each with **M** (mute the group) and **S** (solo it, one
 at a time). A pin muted by hand stays muted when its group comes back. Every pin is a TRACK above
 them (2026-09-16): the bar is its fader, its number folds its own in / out open, its M and S are
-the same pair. Blend, tether, sort and width are the rail's mode bar; the rest — when full, what a
+the same pair. Follow, sort and curve are the rail's mode bar (follow is the switch that was `blend:
+all | focus`; tether went with it on 2026-09-22 — the radius never gates a pin); the rest — when full, what a
 new pin is born with — is **Settings → Pins**, reached from the ≡ in the rail's own header and from
 nowhere else; the lens reads the scratch layer and does not touch the pins.
 
@@ -142,7 +164,7 @@ tile flashes on the press.
 says where), drag a tile within the strip to move it, drag a tile off to remove it — nine is full,
 and the strip is exactly as wide as the list. Every tool may leave: the palette can hold nothing
 but lenses and pins. Nothing cycles under a tile and no palette click opens a drawer (the ⋯
-does); a click on a tool tile takes it in hand. The hand tile heads the row, three tiles wide like a spacebar. The list persists in
+does); a click on a tool tile takes it in hand. The lens tile leads the row (2026-09-22 night), then the hand's two tiles, three tiles wide like a spacebar. The list persists in
 `mubone_palette`. A **lens tile** is a state — tap it on, tap it off, and no lens on is the cap,
 where the cursor reads nothing; there is no cap tile. The ⋯ on its rail row is the lens's drawer.
 
@@ -159,17 +181,13 @@ engines scroll inside it. Hide it with the pill, the `esc ✕` in its head, or *
 another tool re-targets it without hiding it. **There is no perform quick view** — the strips
 under the row are gone, and this is the one place a parameter lives.
 
-**The grain filter and the source are NOT palette candidates.** A lens IS one — it goes on the
-strip and its tile turns it on and off — but the filter and the source are modes, not tools:
-they change what everything else means — so they keep their own dock at the right end of the row
-(`wide` · `spot` · `arrange` · `cap` · `grain filter`) and the source group at the left. No keys: a lens is installed by
-tapping and left on, like a camera. One is always installed; **cap** is the toggle that mutes
-reading (the lens stays mounted with its settings). **Selection is stored, not derived** (Ek,
-2026-08-26): the engine sheet always edits its own tile, so flipping `mode` inside wide runs
-nearest *as wide*, as a session edit — the highlight doesn't move. `N` still flips the flag (the
-installed lens carries it); `⇧K` still enters and leaves arrange, the one flag the tiles follow.
-Grain tiles keep their sheet edits (a grain tile owns its whole block, 2026-09-03); lens and
-eraser factory tiles' edits are per session, because their factory value is their identity. The old toggle-7 tile retired into the
+**The grain filter and the source are NOT palette candidates.** The lens IS one — it is on the
+strip at position 1 (`c`) and its tile turns the eye off and on: off is the **cap**, the cursor
+reads nothing, and the lens keeps its settings. **There is ONE lens** (2026-09-22 night): its
+settings are the lens TAB in the tool rail — reads, radius, mode (area · nearest), depth, k, fill,
+order, fade, falloff — and `N` flips its mode from the keyboard. `wide` and `spot` were presets of
+it and are gone; `⇧K` still enters and leaves arrange. Grain tiles keep their sheet edits (a grain
+tile owns its whole block, 2026-09-03); the lens's and the eraser's are per session. The old toggle-7 tile retired into the
 arrange lens.
 
 **Retired:** digits `1`–`0` no longer select patches and `Q`–`P` no longer paint samples (#214),

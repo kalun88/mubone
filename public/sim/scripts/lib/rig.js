@@ -244,10 +244,14 @@ function makeClient(dir, proc) {
 
     async close() {
       if (!proc) return;
-      try { proc.kill('SIGTERM'); } catch (_) {}
+      // The group (negative pid), then the wrapper itself as a fallback.
+      const kill = sig => { try { process.kill(-proc.pid, sig); } catch (_) { try { proc.kill(sig); } catch (_) {} } };
+      kill('SIGTERM');
       const t0 = Date.now();
       while (proc.exitCode === null && Date.now() - t0 < 5000) await sleep(100);
-      try { if (proc.exitCode === null) proc.kill('SIGKILL'); } catch (_) {}
+      if (proc.exitCode === null) kill('SIGKILL');
+      // Electron under the wrapper may outlive it by a beat; end the group for good.
+      await sleep(200); try { process.kill(-proc.pid, 'SIGKILL'); } catch (_) {}
     },
   };
 }
@@ -303,7 +307,12 @@ async function launch(opts = {}) {
     // suite never steals focus or switches the Space Ek is working on.
     env: { ...process.env, MUBONE_DEV_BRIDGE: '1', MUBONE_DEV_BRIDGE_DIR: dir, MUBONE_RIG_BACKGROUND: '1' },
     stdio: 'ignore',
-    detached: false,
+    // ITS OWN PROCESS GROUP, so close() can end the whole tree. `.bin/electron`
+    // is a node wrapper that spawns the real Electron; a SIGTERM to the wrapper
+    // alone left Electron running — the 5.6 release sweep found nineteen leaked
+    // `audit-osc` instances from osc-audit's recycling, and the twentieth
+    // launch timed out on the load.
+    detached: true,
   });
 
   const client = makeClient(dir, proc);

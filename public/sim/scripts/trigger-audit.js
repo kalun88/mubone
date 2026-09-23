@@ -98,8 +98,10 @@ async function run(rig) {
   // follows the search radius.
   check('triggerParams has all 16 fields',
     JSON.stringify(boot.params) === JSON.stringify(
-      ['chop', 'chopOn', 'dubDecay', 'dwell', 'hysteresis', 'loopOnEnd', 'passes', 'pitch',
-       'rearmMs', 'release', 'retrig', 'reverse', 'speed', 'start', 'step', 'volume']),
+      // `chop` / `chopOn` became `sliceOn` (2026-09-22, the slice switch);
+      // `releaseMs` joined the same night (the release fade's own length).
+      ['dubDecay', 'dwell', 'hysteresis', 'loopOnEnd', 'passes', 'pitch',
+       'rearmMs', 'release', 'releaseMs', 'retrig', 'reverse', 'sliceOn', 'speed', 'start', 'step', 'volume']),
     JSON.stringify(boot.params));
   check('no triggerDefaults — playback params are live, not baked in', boot.noDefaults);
   check('gate registered on S', boot.gate === 'function');
@@ -322,14 +324,14 @@ async function run(rig) {
     step(0.40, 10); step(0.15, 500);
     out.rearmReleases = t.playing === true;
 
-    // THE CAP is the on/off for hits as well as granulation (2026-09-07), and
-    // the gate keeps tracking while capped so uncapping doesn't bang whatever
-    // the cursor is on. A hit plays through the loop engine, not the cursor
-    // bus setScanMuted gates, so this proves the silencing is really wired
-    // rather than a side effect of the gain that never reached it.
+    // THE CAP IS NOT A MUTE (2026-09-23): a take already sounding plays on
+    // when the cap comes down, and the gate keeps tracking while capped so
+    // uncapping doesn't bang whatever the cursor is on — the ENTER edge alone
+    // is suppressed. (Until tonight the cap silenced every sounding trigger.)
     const M = await import('./js/ui-meters.js');
     M.setScanMuted(true);
-    out.muteSilences = t.playing === false;
+    out.muteKeepsPlaying = t.playing === true;
+    t.playing = false; t._startedAt = 0;      // the pass ends on its own; no 'ended' under a quiesced scheduler
     step(0.40, 1000); step(0.15, 1000);
     out.mutedDoesNotFire = t.playing === false;
     out.mutedStillTracks = t.trigger._inside === true;
@@ -427,11 +429,21 @@ async function run(rig) {
       // layer: the old source is left running and kept as a voice.
       S.triggerParams.retrig = 'layer';
       rt._sourceNode = mkSrc(); rt._gainNode = mkGain();
+      // …and its whole chain: own, mute and pin gains are the voice's too
+      // (2026-09-22 night — left on the trigger, the rebuild's releaseSeqNodes
+      // disconnected them and the old voice went silent: layer sounded as cut).
+      const own = { disconnect() {} }, mute = { disconnect() {} }, pin = { disconnect() {} };
+      rt._ownGain = own; rt._muteGain = mute; rt._pinGain = pin;
+      rt._startedAt = 1;                      // a started voice, so it carries a tail
       const layerSrc = rt._sourceNode;
       step(0.40, 2000); step(0.10, 2000);     // leave and refire
       out.layerKeepsOldRinging = layerSrc._stopped === false;
       out.layerStacksVoice     = (rt._voices?.length ?? 0) === 1;
       out.layerClearsCurrent   = rt._sourceNode === null;   // seq block builds a fresh one
+      out.layerTakesChain      = rt._ownGain === null && rt._muteGain === null && rt._pinGain === null
+                                 && [own, mute, pin].every(n => rt._voices?.[0]?.extras?.includes(n));
+      // …and its playhead: a tail record the renderer draws a square from (2026-09-23).
+      out.layerVoiceHasTail    = !!rt._voices?.[0]?.tail && rt._voices[0].tail.loopEnd === rt.loopEnd;
 
       // A detached voice ending must NOT clear `playing` on its replacement.
       rt._sourceNode = mkSrc();
@@ -511,58 +523,10 @@ async function run(rig) {
     step(0.40, 1000);
     out.eraseAllRemovesTrigger = S.triggers.length === 0;
 
-    // chop: the SAME phrasing, deliberately split at its silences. This is the
-    // gap test #192 removed as an always-on heuristic, back as an opt-in — so
-    // the pair of assertions below (chop off = one, chop on = four) is the whole
-    // point: identical material, and the performer's setting decides.
-    S.particles.length = 0;
-    S.triggers.length = 0;
-    {
-      const csid = ++nextStroke;
-      let tt = 0;
-      for (let i = 0; i < 60; i++) {
-        if (i > 0 && i % 15 === 0) tt += 1.0;      // four bursts, ~1 s apart
-        else if (i > 0) tt += 0.05;
-        const p = { lon: -0.05 + (i / 59) * 0.1, lat: 0, strokeId: csid,
-                    source: 'live', liveBufferIdx: 0, grainStart: tt, grainDuration: 2.0, trig: true };
-        grain.stampCartesian(p);
-        S.particles.push(p);
-      }
-      S._particleVersion++;
-      S.triggerParams.chop = 300;                  // shorter than the 1 s pauses
-      S.triggerParams.chopOn = true;
-      armTrigger(csid);
-      out.chopSplitsTake = S.triggers.length === 4;
-      out.chopCount = S.triggers.length;
-      // Each segment must be its own stroke, or one would re-collect the others'
-      // particles on the next rebuild and silently undo the chop.
-      out.chopDistinctStrokes = new Set(S.triggers.map(x => x.strokeId)).size === S.triggers.length;
-      // ...and each covers only its own burst, not the whole take.
-      out.chopRegionsShort = S.triggers.every(x => (x.loopEnd - x.loopStart) < 1.0);
-      // Stable: a rebuild must not re-split or re-merge them.
-      S._particleVersion++;
-      step(0.90, 3000);
-      out.chopStable = S.triggers.length === 4;
-      out.chopStableCount = S.triggers.length;
-      // The switch is what gates it — the threshold survives being turned off,
-      // which is the point of keeping them separate and bindable.
-      S._setChopOn(false);
-      out.chopSwitchOffKeepsValue = S.triggerParams.chop === 300 && S.triggerParams.chopOn === false;
-      S.particles.length = 0;
-      S.triggers.length = 0;
-      const osid = ++nextStroke;
-      let ot = 0;
-      for (let i = 0; i < 60; i++) {
-        if (i > 0 && i % 15 === 0) ot += 1.0; else if (i > 0) ot += 0.05;
-        const p = { lon: -0.05 + (i / 59) * 0.1, lat: 0, strokeId: osid,
-                    source: 'live', liveBufferIdx: 0, grainStart: ot, grainDuration: 2.0, trig: true };
-        grain.stampCartesian(p);
-        S.particles.push(p);
-      }
-      S._particleVersion++;
-      armTrigger(osid);
-      out.chopSwitchOffNoSplit = S.triggers.length === 1;
-    }
+    // (A GAP CHOP was tested here — `triggerParams.chop` / `chopOn`, a take cut
+    // at its silences. It became SLICE on 2026-09-22, cut at its ATTACKS against
+    // the room's floor (`sliceOn`), and the gap mechanism went; slice is proven
+    // in § slice below. Removed 2026-09-23, at the 5.6 release sweep.)
 
     // A take with PAUSES in it must stay ONE trigger. The paint ticker deposits
     // nothing while the input sits under the noise gate, so a 20 s phrase with
@@ -686,7 +650,7 @@ async function run(rig) {
   // never in a hit's path — which is exactly how hits went on sounding under
   // the cap for as long as they did.
   console.log('\n§ the cap silences hits too, not just granulation');
-  check('capping silences what is sounding', r.muteSilences);
+  check('the cap is not a mute: a sounding trigger plays on when it comes down', r.muteKeepsPlaying);
   check('a capped lens fires no hits', r.mutedDoesNotFire);
   check('the gate keeps tracking position while capped', r.mutedStillTracks);
   check('uncapping on top of a trigger does not bang it', r.unmuteDoesNotBang);
@@ -709,6 +673,8 @@ async function run(rig) {
   check('layer: the old pass is left ringing', r.layerKeepsOldRinging);
   check('layer: it is kept as a stacked voice', r.layerStacksVoice);
   check('layer: the trigger is left sourceless so a fresh voice is built', r.layerClearsCurrent);
+  check('layer: the old voice takes its own, mute and pin gains with it — the rebuild cannot cut it', r.layerTakesChain);
+  check('layer: the old voice carries a tail record, so the viz draws its playhead', r.layerVoiceHasTail);
   check('a detached voice ending does not clear playing on its replacement', r.staleEndIgnored);
   check('...but the current source ending does', r.currentEndClears);
   check('silencing a trigger stops its stacked voices too', r.stopClearsVoices);
@@ -724,15 +690,7 @@ async function run(rig) {
   check('erasing the tail trims the sample region', r.eraseTrimsRegion);
   check('partial erase keeps the trigger', r.eraseKeepsTrigger);
   check('erasing all of it removes the trigger', r.eraseAllRemovesTrigger);
-  console.log('\n§ chop — deliberate splitting at silences');
-  check('chop splits a four-burst take into four triggers', r.chopSplitsTake, `got ${r.chopCount}`);
-  check('...each its own stroke (so none re-collects the others)', r.chopDistinctStrokes);
-  check('...each covering only its own burst', r.chopRegionsShort);
-  check('...and stable across a rebuild', r.chopStable, `got ${r.chopStableCount}`);
-  check('the switch turns it off without losing the gap value', r.chopSwitchOffKeepsValue);
-  check('...and the same material then arms as one trigger', r.chopSwitchOffNoSplit);
-
-  check('with chop off, the same take arms as ONE trigger', r.pausedTakeArmsAsOne);
+  check('with slice off, a take with pauses arms as ONE trigger', r.pausedTakeArmsAsOne);
   check('...and stays one across rebuilds', r.pausedTakeStaysOne);
   check('...with the region spanning the pauses', r.pausedTakeSpansAll);
   check('erasing the middle splits one trigger into two',
@@ -777,14 +735,29 @@ async function run(rig) {
       return (performance.now() - t0) / iters;
     }
     const outc = {};
-    for (const n of [0, 1, 8, 32]) { fill(n, 200); time(200); outc[n] = +time(2000).toFixed(5); }
+    for (const n of [0, 1, 8, 32, 64, 256]) { fill(n, 200); time(200); outc[n] = +time(2000).toFixed(5); }
+    // NO CEILING (Ek, 2026-09-23: "there should be no limit"): 200 strokes of
+    // 3 marks, one at a time, all armed. (32, then a rolling 64, until tonight.)
+    S.particles.length = 0; S.triggers.length = 0;
+    const sids = [];
+    for (let i = 0; i < 200; i++) {
+      const sid = ++nextStroke; sids.push(sid);
+      for (let k = 0; k < 3; k++) { const p = { lon: (i / 200) * Math.PI * 2 + k * 0.02, lat: 0.3, strokeId: sid, source: 'live', liveBufferIdx: 0, grainStart: k * 0.01, grainDuration: 0.01, trig: true }; grain.stampCartesian(p); S.particles.push(p); }
+      S._particleVersion++;
+      armTrigger(sid);
+    }
+    const have = new Set(S.triggers.map(t => t.strokeId));
+    outc.pool = { n: S.triggers.length, allKept: sids.every(s => have.has(s)) };
     S.particles.length = 0;
     S.triggers.length = 0;
     return outc;
   });
 
-  for (const n of [0, 1, 8, 32]) console.log(`  ${String(n).padStart(2)} triggers × 200 particles: ${cost[n]} ms/tick`);
+  for (const n of [0, 1, 8, 32, 64, 256]) console.log(`  ${String(n).padStart(3)} triggers × 200 particles: ${cost[n]} ms/tick`);
   check('32 triggers cost under 1 ms per tick', cost[32] < 1.0, `${cost[32]} ms`);
+  check('256 triggers cost under 2 ms per tick — there is no ceiling, and this is why there need not be', cost[256] < 2.0, `${cost[256]} ms`);
+  check('no ceiling: 200 strokes armed, 200 gates, every one kept',
+    cost.pool && cost.pool.n === 200 && cost.pool.allKept, JSON.stringify(cost.pool));
   check('cost scales sub-linearly (cap is working)', cost[32] < cost[1] * 32 || cost[1] < 0.002,
     `1:${cost[1]} 32:${cost[32]}`);
   // ── § slice — onset segmentation (#219) ──────────────────────────────────
@@ -1138,10 +1111,12 @@ async function run(rig) {
         G.stampCartesian(p); S.particles.push(p);
       }
       S._particleVersion++;
-      const prevFx = S.brushFx;
-      S.brushFx = 'slice';
+      // SLICE IS A SWITCH since 2026-09-22 (`triggerParams.sliceOn`), not the
+      // `slice` tile this set `S.brushFx` for — a key nothing reads now.
+      const prevSlice = S.triggerParams.sliceOn;
+      S.triggerParams.sliceOn = true;
       T.armTrigger(sid);
-      S.brushFx = prevFx;
+      S.triggerParams.sliceOn = prevSlice;
       out.armN = S.triggers.length;
       out.armBounds = S.triggers.map(t => +t.loopStart.toFixed(2));
       // A slice ENDS at the next onset, less the lead: its region must stop
@@ -1179,10 +1154,10 @@ async function run(rig) {
           G.stampCartesian(p); S.particles.push(p);
         }
         S._particleVersion++;
-        const prevFx = S.brushFx;
-        S.brushFx = 'slice';
+        const prevSlice = S.triggerParams.sliceOn;
+        S.triggerParams.sliceOn = true;
         T.armTrigger(sid);
-        S.brushFx = prevFx;
+        S.triggerParams.sliceOn = prevSlice;
         const n = S.triggers.length;
         const bounds = S.triggers.map(t => +t.loopStart.toFixed(2));
         S.particles.length = 0; S.triggers = []; S.liveRecBuffers.length = 0;

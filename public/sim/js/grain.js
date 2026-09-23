@@ -218,9 +218,12 @@ const _seedDist    = new Float32Array(MAX_SEEDS);   // scratch for the pass: −
 S._pinWeights = _seedWeights;
 
 
-export function getBufferKey(p) {
-  return p.source === 'live' ? `live:${p.liveBufferIdx}` : `sample:${p.sampleIndex}`;
-}
+/** What DEPTH counts: the stroke (Ek, 2026-09-23: "depth should actually
+ *  count strokes — same as erase strokes"). It counted the BUFFER a mark inked
+ *  from, which agreed for live takes (one take, one buffer) and not for the
+ *  sampler, where every stroke inks from one file — so `last 1 stroke` kept all
+ *  of them. The cursor and the eraser both read this; the readout says strokes. */
+export function depthKey(p) { return p.strokeId ?? 0; }
 
 // Reusable candidate output buffer — avoids allocating a new array every tick.
 let _candidateBuf = [];
@@ -229,12 +232,12 @@ let _candidateBuf = [];
 // Reused across all _buildCandidatePool / _buildCandidatePoolRadius calls to
 // avoid creating new Map, Set, and sort-intermediate arrays on every tick.
 // At 4 seeds × 100 ticks/sec this eliminates ~400 Map+Set allocations/sec.
-const _recBufRec  = new Map();   // bufferKey → max strokeId
-const _recAllowed = new Set();   // allowed buffer keys after recency filter
+const _recBufRec  = new Map();   // depthKey (the stroke) → its strokeId, the recency rank
+const _recAllowed = new Set();   // the strokes depth lets through
 const _recSortBuf = [];          // reusable array for sorting entries by strokeId
 
 // Shared helper: build the _recAllowed set from _recBufRec.
-// Picks the recencyN most-recent buffer keys by strokeId.
+// Picks the recencyN most-recent strokes (depthKey).
 function _buildAllowedFromBufRec() {
   _recAllowed.clear();
   if (_recBufRec.size === 0 || S.recencyN <= 0) return false;
@@ -258,7 +261,7 @@ function _buildCandidatePool(sortedParticles, k, applyRecency, radiusRad) {
     for (let i = 0; i < sortedParticles.length; i++) {
       const p = sortedParticles[i];
       if (radiusRad !== undefined && p._ang >= radiusRad) continue; // local universe
-      const key = getBufferKey(p);
+      const key = depthKey(p);
       if ((_recBufRec.get(key) ?? -Infinity) < p.strokeId) _recBufRec.set(key, p.strokeId);
     }
     useAllowed = _buildAllowedFromBufRec();
@@ -266,7 +269,7 @@ function _buildCandidatePool(sortedParticles, k, applyRecency, radiusRad) {
   _candidateBuf.length = 0;
   for (let i = 0; i < sortedParticles.length && _candidateBuf.length < k; i++) {
     const p = sortedParticles[i];
-    if (useAllowed && !_recAllowed.has(getBufferKey(p))) continue;
+    if (useAllowed && !_recAllowed.has(depthKey(p))) continue;
     _candidateBuf.push(p);
   }
   return _candidateBuf;
@@ -411,10 +414,12 @@ function _buildCandidatePoolNearest(particles, k, applyRecency, radiusRad) {
     _recBufRec.clear();
     for (let i = 0; i < particles.length; i++) {
       const p = particles[i];
-      // ...unless the stroke has been OPENED — see _buildCandidatePoolRadius.
-      if (p.trig && !_isOpen(p)) continue;
+      // Tape material never — not even a take dwell opened: this builder feeds
+      // pinned clouds and walkers, never the cursor, and a cloud is grain
+      // material (2026-09-23; the take's pin is its loop).
+      if (p.trig) continue;
       if (radiusRad !== undefined && p._ang >= radiusRad) continue;
-      const key = getBufferKey(p);
+      const key = depthKey(p);
       if ((_recBufRec.get(key) ?? -Infinity) < p.strokeId) _recBufRec.set(key, p.strokeId);
     }
     useAllowed = _buildAllowedFromBufRec();
@@ -428,15 +433,10 @@ function _buildCandidatePoolNearest(particles, k, applyRecency, radiusRad) {
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
     const ang = p._ang;
-    // Nearest mode ignores the radius and takes the k closest on the whole
-    // sphere, so without this a trigger stroke would be granulated the moment
-    // it was the nearest thing to the cursor. Note the caveat that makes the
-    // radius-mode shortcut safe does NOT hold here — with no radius, a trig
-    // particle can be nowhere near the cursor — so under dwell:'grain' this
-    // deliberately still checks proximity before letting one through.
-    if (p.trig && (!_isOpen(p)
-                   || p._ang >= S.searchRadiusDeg * Math.PI / 180)) continue;
-    if (useAllowed && !_recAllowed.has(getBufferKey(p))) continue;
+    // Tape material never — see phase 0. (The cursor's nearest read, which
+    // does let an opened take through, is _selectPerVoicing.)
+    if (p.trig) continue;
+    if (useAllowed && !_recAllowed.has(depthKey(p))) continue;
     if (_kSelectBuf.length < k) {
       _kSelectBuf.push(p);
       if (ang > maxAng || _kSelectBuf.length === 1) {
@@ -479,10 +479,11 @@ const _voSelBuf = [];            // the survivors — reused, no per-tick alloc
  *                               radius to bound it, a trigger stroke would
  *                               otherwise granulate whenever it was closest.
  */
+let _voEligible = 0;
 function _selectPerVoicing(pool, k, trigFilter) {
   const trigRad = trigFilter ? S.searchRadiusDeg * Math.PI / 180 : 0;
-  const dwellGrain = S.triggerParams.dwell === 'grain';
-  const all = S.grainKAllMode && S.lensMode !== 'nearest';
+  // `trigFilter` IS "reading nearest": `all` is a radius answer, off there.
+  const all = S.grainKAllMode && !trigFilter;
   // Nearest mode hands the WHOLE sphere to this pass, so the pinned-cloud skip
   // has to happen here too — _buildCandidatePoolRadius never sees those
   // particles. In radius mode the pool arrives already filtered and this costs
@@ -491,11 +492,17 @@ function _selectPerVoicing(pool, k, trigFilter) {
   const pinned = _cloudClaimN > 0;
 
   _voSelBuf.length = 0;
+  _voEligible = 0;
   let maxAng = 0, maxIdx = 0;
   for (let i = 0; i < pool.length; i++) {
     const p = pool[i];
-    if (trigFilter && p.trig && (!dwellGrain || p._ang >= trigRad)) continue;
+    // A take's material reads only once dwell has OPENED it — played through
+    // with the cursor still on it — and, nearest having no radius, only inside
+    // the radius. (Was `dwell === 'grain'` alone: nearest granulated a take the
+    // moment the cursor arrived, over its own first pass.)
+    if (trigFilter && p.trig && (!_isOpen(p) || p._ang >= trigRad)) continue;
     if (pinned && _claimedByCloud(p)) continue;
+    _voEligible++;
 
     // fill:'all' means no cap — take everything the geometry gave us.
     if (all || _voSelBuf.length < k) {
@@ -519,7 +526,7 @@ function _selectPerVoicing(pool, k, trigFilter) {
 // Recency is ranked from the in-radius particles only (local universe),
 // so buffers recorded elsewhere do not affect which local buffers are audible.
 function _buildCandidatePoolRadius(particles, radiusRad, forCursor = false, onlyOpen = false) {
-  // Phase 1: build per-buffer recency from ONLY in-radius particles.
+  // Phase 1: build per-stroke recency from ONLY in-radius particles.
   // `p.trig` particles are normally excluded everywhere in this function: a
   // trigger-type buffer is not granular material. The performer chose which it
   // was before pressing record, and it does that one thing whenever the cursor
@@ -541,7 +548,9 @@ function _buildCandidatePoolRadius(particles, radiusRad, forCursor = false, only
   // there, only strokes a finished walk (or take) has opened — "after the
   // walker is done the cursor should granulate as per mode: area, until i move
   // away from it" (Ek).
-  const _open = _openAny();
+  // An opened take is open to the CURSOR, never to a pinned cloud: a cloud is
+  // grain material, and the take's own pin is its loop (Ek, 2026-09-23).
+  const _open = forCursor && _openAny();
   // Default false: the seed path shares this builder, and a cloud must read the
   // material it claims. Only the cursor's call passes true.
   const pinned = forCursor && _cloudClaimN > 0;
@@ -553,7 +562,10 @@ function _buildCandidatePoolRadius(particles, radiusRad, forCursor = false, only
     if (onlyOpen && !open) continue;
     if (p._ang >= radiusRad) continue;
     if (pinned && _claimedByCloud(p)) continue;
-    const key = getBufferKey(p);
+    // An opened stroke is the one the cursor is ON: depth never hides it, so
+    // it does not count toward depth either (phase 2 lets it through).
+    if (open) continue;
+    const key = depthKey(p);
     if ((_recBufRec.get(key) ?? -Infinity) < p.strokeId) _recBufRec.set(key, p.strokeId);
   }
   const useAllowed = S.recencyN > 0 ? _buildAllowedFromBufRec() : false;
@@ -566,7 +578,7 @@ function _buildCandidatePoolRadius(particles, radiusRad, forCursor = false, only
     if (onlyOpen && !open) continue;
     if (p._ang >= radiusRad) continue;
     if (pinned && _claimedByCloud(p)) continue;
-    if (useAllowed && !_recAllowed.has(getBufferKey(p))) continue;
+    if (useAllowed && !open && !_recAllowed.has(depthKey(p))) continue;
     _candidateBuf.push(p);
   }
   return _candidateBuf;
@@ -712,6 +724,27 @@ S._prepareTapePitch = seq => {
   if (region) stretchedRegion(seq, region, pr, !seq.trigger);
 };
 
+/** Is a LIVE take playing a region that no longer matches its own numbers, and
+ *  is the replacement ready to cut? Reverse and pitch are BAKED INTO the region
+ *  (a reversed copy, or one stretched by the ratio), so the only way to follow
+ *  them is to cut it again — and the stretch runs on a WORKER, so releasing the
+ *  moment the knob moves would leave the loop seam silent until it landed.
+ *  This starts the stretch and answers false until it is in hand; the caller
+ *  asks once per wrap, so the recut takes the first seam it is ready for.
+ *  Exported because it is the whole of the rule and the only way to check it
+ *  without a recorded take: the rig asks it directly. */
+export function _liveRecutReady(seq) {
+  const src = seq._sourceNode;
+  if (!seq._live || !src || src._stopped) return false;
+  const rev = seq.direction === -1;
+  const pr  = pitchRatio(seq.pitch);
+  if (src._rev === rev && src._pr === pr) return false;      // nothing moved
+  if (pr === 1) return true;                                  // a plain cut, no worker
+  S._prepareTapePitch?.(seq);                                 // start it if it has not
+  const c = seq._pitchBuf;
+  return !!(c && c.ratio === pr && !c.pending && c.buf);
+}
+
 const _LAYER_XFADE_S = 0.008;   // the swap seam while a take is still recording
 
 /** Start one overdub's layer against a master whose source is running. Each
@@ -798,8 +831,14 @@ let _schedTickCount = 0;  // for periodic dlog snapshot
 // A walker reads like a moving cloud whose centre is the stroke's path and
 // whose lens is the LIVE one: the cursor's radius, k, order and fade as they
 // stand this tick, the marks' own voicings underneath (the bridge buckets
-// the pool by `p._vo`, so a wet brush's knobs reach it). Area only — a walker
+// the pool by `p._vo`, so an auditioned mark's knobs reach it). Area only — a walker
 // is never `nearest`, that would read the whole sphere from a moving point.
+//
+// WHICH IS THE ONE COMBINATION TO KNOW ABOUT, now that walking is the grain
+// shape's and the aperture is still the lens's (2026-09-22): a walk under the
+// `spot` lens reads as AREA while it walks. Nothing is refused and nothing is
+// silently wrong — `nearest` has no meaning for a point that is moving along a
+// path, so the walk takes the only reading it can.
 function _scheduleWalkers(out) {
   const ws = S._walkers;
   if (!ws || !ws.length) return;
@@ -925,11 +964,37 @@ export function __testCandidatePool(cursorLon, cursorLat, { nearest = false, k =
   // it would still pass while guarding a path the cursor no longer takes —
   // nearest mode's trig filter now lives in _selectPerVoicing (#212).
   _refreshCloudClaims();   // the scheduler does this per tick; mirror it here
-  const geom = nearest
-    ? S.particles
-    : _buildCandidatePoolRadius(S.particles, S.searchRadiusDeg * Math.PI / 180, true);
-  const pool = _selectPerVoicing(geom, k, nearest);
+  const nearestRead = nearest && !S.grainWalk && S.lensReads !== 'tape';
+  const geom = _cursorGeometry(S.particles, S.searchRadiusDeg * Math.PI / 180, nearest);
+  const pool = _selectPerVoicing(geom, k, nearestRead);
   return pool.slice();   // the builders reuse one buffer; hand back a snapshot
+}
+/** Would the cursor's pool SOUND this tick — the scheduler's own test. */
+export function __testCursorSounds() { return _cursorSounds(); }
+/** How many marks passed every filter but k last pass (the counter's left). */
+export function __testEligible() { return _voEligible; }
+
+// THE CURSOR'S GEOMETRY — one function for the scheduler and its test seam, so
+// the seam cannot drift from the path the cursor takes (it had: walk's
+// `onlyOpen` never reached it).
+//
+// SCOPE TAPE still hears an OPENED take (Ek, 2026-09-23: "the dwell on grain
+// should override any cursor setting"). `dwell: grain` is a tape answer — play
+// the take, then granulate it — so a cursor scoped to tape reads exactly the
+// strokes that dwell opened, and nothing else, as a radius cursor would: mode
+// is a grain question, greyed there.
+function _cursorGeometry(particles, radiusRad, nearest) {
+  // WALKING: the cursor reads only a stroke a finished walk has opened, and
+  // reads it exactly as `area` would — radius, k, order, fade. In nearest too:
+  // nearest used to hand walk the whole sphere, so a walking cursor granulated
+  // on its own there.
+  const onlyOpen = S.grainWalk || S.lensReads === 'tape';
+  if (nearest && !onlyOpen) return particles;
+  return _buildCandidatePoolRadius(particles, radiusRad, true, onlyOpen);
+}
+/** Capped, or scoped to tape with nothing opened: the pool is drawn, not heard. */
+function _cursorSounds() {
+  return !S.scanMuted && !(S.lensReads === 'tape' && !_openAny());
 }
 
 export function scheduleGrains() {
@@ -1035,23 +1100,20 @@ export function scheduleGrains() {
     // owns how the cursor reads — k, order, fill, radius, nearest, recency —
     // and the brush owns the sound), so HOW MANY is applied afterwards with
     // the one live k. A lens change moves the fan for every stroke, dry or
-    // wet, and that is right; a brush knob never does. Nearest mode passes
+    // live, and that is right; a brush knob never does. Nearest mode passes
     // the whole sphere rather than pre-capping, since nearest ignores the
     // radius entirely.
-    if (S.lensMode === 'nearest') {
-      candidatePool = particles;
-    } else {
-      // `stroke`: the cursor reads only a stroke a finished walk has opened,
-      // and reads it exactly as `area` would — radius, k, order, fade.
-      candidatePool = _buildCandidatePoolRadius(particles, searchRadiusRad, true,
-                                                S.lensMode === 'stroke');
-    }
-    perf.kPool = candidatePool.length;
+    const nearestRead = S.lensMode === 'nearest' && !S.grainWalk && S.lensReads !== 'tape';
+    candidatePool = _cursorGeometry(particles, searchRadiusRad, S.lensMode === 'nearest');
 
     // The cap, per brush. Both former call sites collapse into this one pass —
     // radius mode's pre-select and nearest mode's k-selection were the same
     // keep-k-smallest loop with different inputs.
-    const _preSelectedPool = _selectPerVoicing(candidatePool, k, S.lensMode === 'nearest');
+    const _preSelectedPool = _selectPerVoicing(candidatePool, k, nearestRead);
+    // `in reach → taken`: what passed every filter but k, then what k kept.
+    // Not the geometry's length — in nearest that is the whole sphere, trig
+    // and cloud-owned marks included.
+    perf.kPool  = _voEligible;
     perf.kCount = _preSelectedPool.length;
 
     // ── Post candidates to worklet grain engine ─────────────────────────
@@ -1080,10 +1142,12 @@ export function scheduleGrains() {
       // that reads only tape takes the cursor's granulation out exactly as
       // the cap does — the SAME path, so the muted-scan glow simulation still
       // draws what the candidates would be and nothing downstream needs a
-      // second test.
-      // In `stroke` mode the cursor reads nothing on its own either — a touch
-      // launches a walker (below), and that is the whole of its reading.
-      if (S.scanMuted || S.lensReads === 'tape') {
+      // second test. Unless a stroke is OPEN: then the pool above is only
+      // what dwell opened, and it sounds (`_cursorSounds`).
+      // With the shape on `walk` the cursor reads nothing on its own either —
+      // a touch launches a walker (below), and that is the whole of its
+      // reading.
+      if (!_cursorSounds()) {
         S._postWorkletCandidates([], cursorLon, cursorLat);
         // Visual-only glow: simulate grain onsets from the candidate pool
         // so the renderer shows muted-scan particles in faint grey.
@@ -1173,8 +1237,8 @@ export function scheduleGrains() {
   // 2026-08-30 (Ek: "no weird filters to have to wrap our heads around"). They
   // had quietly taken over `commitPlayback`'s job while leaving it on screen, so
   // the fix was to give it back rather than to invent a third switch — the
-  // crossfade and tether rows underneath it in the same panel are its shape, and
-  // the lens is now purely the scratch layer's.
+  // crossfade row under it is its shape, and the lens is purely the scratch
+  // layer's. FOLLOW is the rail's word for `focus` since 2026-09-22 night.
   //
   // The law is RELATIVE TO THE NEAREST PIN (Ek, 2026-09-05: "when I'm
   // completely on top of the anchor I still hear a bit of the other pinned
@@ -1188,8 +1252,7 @@ export function scheduleGrains() {
   //     u_i   = 2·d0 / (d0 + d_i)        0 on the nearest, 1 when tied
   //     t_i   = clamp((u_i − (1 − k)) / k, 0, 1)      k = xfade (≥ 0.02)
   //     s_i   = t_i²·(3 − 2·t_i)                       smoothstep: flat at both ends
-  //     env_i = tether ? 1 : max(0, 1 − d_i/r)         the reach gate
-  //     w_i   = s_i·env_i / Σ
+  //     w_i   = s_i / Σ
   //
   // On a pin's anchor d0 = 0, so every other u is 0 and the nearest is alone,
   // at any xfade. Midway between two pins u = 1 and the mix is even. xfade is
@@ -1197,17 +1260,17 @@ export function scheduleGrains() {
   // the next, 0 % snaps at the midpoint. The smoothstep is what keeps "on the
   // anchor" honest at 100 %: a hand is never exactly on a point, and a linear
   // handover a degree off a pin 30° from the next would leak −24 dB of it;
-  // flat at t = 0 that is −38 dB, and the midpoint is still even. Tether off
-  // keeps the reach ring as
-  // the gate; the `(1 − d/r)` envelope only matters BETWEEN pins in reach (a
-  // lone pin normalises to 1 and cuts at the ring, as it always has — a
-  // cloud's own radius fade is the bridge's, not this). Normalising is what
-  // makes it a CROSSFADE rather than a fade: the mix always sums to one.
+  // flat at t = 0 that is −38 dB, and the midpoint is still even.
+  // NO REACH GATE (Ek, 2026-09-22 night: "if cursor-mixer is on there's really
+  // no radius so tether becomes confusing … act as if tether is on"). `tether`
+  // was a switch that, off, silenced a pin outside the LENS radius and shaped
+  // the ones inside by `(1 − d/r)`; the radius is the scratch layer's, and a
+  // pin is never gated by it now — what tether-on always did, with no switch.
+  // Normalising is what makes it a CROSSFADE rather than a fade: the mix
+  // always sums to one.
   _seedWeights.fill(0);
   const _pinFocus = S.commitPlayback === 'focus';
   if (_pinFocus) {
-    const r = Math.max(1e-4, S.searchRadiusDeg * Math.PI / 180);
-    const tether = !!S.commitTether;
     const k = Math.max(0.02, Math.min(1, S.commitXfade ?? 0.5));
     let nearest = -1, d0 = Infinity;
     for (let i = 0; i < MAX_SEEDS; i++) {
@@ -1226,7 +1289,6 @@ export function scheduleGrains() {
       // move"). This pass was the one reader that followed the cloud.
       if (!pinAnchorInto(slot, _anchor)) continue;
       const dist = angleBetweenSphere(_anchor[0], _anchor[1], cursorLon, cursorLat);
-      if (!tether && dist >= r) continue;             // outside the reach: silent
       _seedDist[i] = dist;
       if (dist < d0) { d0 = dist; nearest = i; }
     }
@@ -1237,9 +1299,7 @@ export function scheduleGrains() {
         if (d < 0) continue;
         const u = (d0 + d) > 0 ? 2 * d0 / (d0 + d) : 1;
         const t  = Math.min(1, Math.max(0, (u - (1 - k)) / k));
-        const sh = t * t * (3 - 2 * t);
-        const env = tether ? 1 : Math.max(0, 1 - d / r);
-        const w = sh * env;
+        const w = t * t * (3 - 2 * t);
         _seedWeights[i] = w;
         sum += w;
       }
@@ -1443,7 +1503,7 @@ export function scheduleGrains() {
     // seed's iteration overwrites this seed's pool before _postWorkletSeeds
     // can iterate it (all seeds would share the last seed's particles).
     // A cloud is a moving cursor (Ek, 2026-09-05): it reads each mark with
-    // the mark's own voicing — a wet brush's knobs reach the wash cloud's
+    // the mark's own voicing — an auditioned mark's knobs reach the wash cloud's
     // material, a dry stroke it crosses keeps its frozen sound. The bridge
     // buckets the pool by `p._vo` exactly as it does for the cursor and posts
     // one worklet voice per voicing. `grainParams` is what a mark with NO
@@ -1609,6 +1669,16 @@ export function scheduleGrains() {
       src.loopStart    = playLoopStart;
       src.loopEnd      = playLoopEnd;
       src.playbackRate.value = rate;
+      // THE PITCH THIS REGION WAS CUT AT. An auditioned take follows `speed`
+      // on a SOUNDING pass (trigger.js `_applyLiveParams`), and the rate is
+      // speed × ratio — so the live update needs the ratio the region already
+      // carries, not whatever the sheet says now. Reading the sheet instead
+      // would move the length as well as the rate, and a loop's seam with it.
+      src._pr = pr;
+      // …and WHICH WAY it was cut, for the same reason: a live take whose
+      // reverse or pitch moves needs its region cut again, and these two stamps
+      // are how the tick knows the one it is playing has gone stale.
+      src._rev = reverse;
       gain.gain.value  = _loopGain(seq);
 
       // The master's OWN gain, in front of the family node the layers share
@@ -1849,7 +1919,24 @@ export function scheduleGrains() {
         if (seq._wrapIdx === undefined) seq._wrapIdx = wrapIdx;
         else if (wrapIdx > seq._wrapIdx) {
           seq._wrapIdx = wrapIdx;
-          if (seq.trigger) S._ledTriggerFire?.();
+          if (seq.trigger) {
+            S._ledTriggerFire?.();
+            // THE SEAM IS WHERE A LIVE TAKE IS RE-CUT (Ek, 2026-09-22: "i
+            // expect as much as possible to work (in audition mode) immediately
+            // or on the next loop … i leave my cursor on the stroke and option
+            // lock the screen. so it never retriggers").
+            //
+            // Speed and level ride the running node (trigger.js
+            // `_applyLiveParams`). Reverse and pitch cannot: both are BAKED
+            // INTO the region the source plays — a reversed copy, or one
+            // stretched by the pitch ratio — so the only way to follow them is
+            // to cut it again. Dropping the nodes here lets the block above
+            // rebuild on the next tick, which puts the change at the loop seam
+            // rather than under the playhead. Under `dwell: loop` that was the
+            // difference between "at the next loop" and never, because a loop
+            // has no next fire to pick anything up at.
+            if (_liveRecutReady(seq)) releaseSeqNodes(seq);
+          }
           else {
             // Self-killing loop: each pass steps the gain down, and the pass
             // after the last releases the slot AND deletes its paint — the

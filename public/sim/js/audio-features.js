@@ -501,8 +501,10 @@ export function snapshotTimbre() {
 /**
  * Timbre now plus the loudness of the window since the last consumption, as
  * one { rms, centroid, zcr }. For callers that want a mark's worth of features
- * in one read (the concat brush). The paint ticker's live path takes the two
- * halves separately, a tick apart — see _settlePending there.
+ * in one read. Its one caller, the concat brush `match`, was deleted
+ * 2026-09-22; it is kept because a mark's worth of features in one read is the
+ * shape any future brush of that family wants. The paint ticker's live path
+ * takes the two halves separately, a tick apart — see _settlePending there.
  */
 export function snapshotInputFeatures() {
   const t = snapshotTimbre();
@@ -565,12 +567,12 @@ export function featuresFromBuffer(buffer, startSec) {
 
   // ── THE SAME TWO COLOUR AXES THE LIVE PATH USES (2026-09-13) ──────────────
   // This used to return rms, centroid and zcr only, so a mark painted from a
-  // loaded sample — or matched by the concat brush, which copies these — had
-  // no `tilt` and no `noise` at all. Both consumers then fell through to a
-  // DIFFERENT measure: the renderer to `normaliseCentroid(centroid)` and the
+  // loaded sample — or matched by the concat brush `match`, which copied these
+  // — had no `tilt` and no `noise` at all. Both consumers then fell through to
+  // a DIFFERENT measure: the renderer to `normaliseCentroid(centroid)` and the
   // LED to a bare 0. So a sampler stroke was hued by one rule on screen, by
-  // another in the hand, and by a third once perfMode re-bucketed it, and a
-  // concat mark came out a different colour from the live mark it copied.
+  // another in the hand, and by a third once perfMode re-bucketed it. (match
+  // was deleted 2026-09-22; the sampler half of this is still live.)
   // The spectrum is already computed above; these are two more passes over it.
   const splitBin = Math.max(2, Math.min(halfN - 1, Math.round(TILT_SPLIT_HZ / (sr / 2) * halfN)));
   let l1 = 0, l2 = 0, l3 = 0, h1 = 0, h2 = 0, h3 = 0, peakMag = 0;

@@ -5,9 +5,9 @@
 // stroke and a walker launches from the mark you touched: a reading cursor,
 // not a pin, that retraces the stroke's path at the pace it was painted and
 // plays whatever is in ITS reach with the lens's live radius, `k` and `order`,
-// through the marks' own voicings (a wet brush's knobs still reach it, since
+// through the marks' own voicings (an auditioned mark's knobs still reach it, since
 // the bridge reads each mark's voicing live). It plays once or loops while
-// you stay on the stroke — the lens's `on strokes` rows (dwell, start,
+// you stay on the stroke — the `cursor behaviour` rows (dwell, start,
 // release, retrig, rearm) mean for a walker what they mean for a tape
 // trigger — and it is gone when you lift off. Pin while it runs and it
 // becomes a pinned cloud (ui-presets.js pinWalkers).
@@ -34,7 +34,7 @@ S._walkers = [];
 
 /** Launch a walker from a grain-stroke gate `t` (a trigger shell with
  *  `walk: true`, its particles the stroke's marks in order). `nearestIdx` is
- *  the mark touched; `tp` the lens's live `on strokes` params. */
+ *  the mark touched; `tp` the live `cursor behaviour` params. */
 export function startWalker(t, nearestIdx, tp) {
   const ps = t.particles;
   if (!ps || ps.length < 2) return null;
@@ -74,11 +74,16 @@ export function startWalker(t, nearestIdx, tp) {
   return w;
 }
 
-/** The cursor left the stroke: the lens's `release` decides. A `once` walker
- *  plays out regardless, exactly as a one-shot trigger does. */
+/** The cursor left the stroke: grain's `release` decides, for EVERY walker
+ *  (Ek, 2026-09-22 night: "when i set release to fade-out in the settings for
+ *  grains, it doesn't fade, it still plays till end"). A `once` walker used
+ *  to be skipped here on a parity with tape's one-shot, which ignores the
+ *  exit — so with dwell on once, the default, the release row did nothing at
+ *  all. `play-to-end` IS what a once walker does anyway; `fade` now means
+ *  what it says whichever dwell is on: the cursor leaves, the walk fades. */
 export function exitWalker(t, tp) {
   for (const w of S._walkers) {
-    if (w.strokeId !== t.strokeId || w._detached || w._dead || w.once) continue;
+    if (w.strokeId !== t.strokeId || w._detached || w._dead) continue;
     if (tp.release === 'fade') { if (!w._fadeAt) w._fadeAt = performance.now(); }
     else w._ending = true;                                   // play-to-end: finish this pass
   }
@@ -88,7 +93,9 @@ export function exitWalker(t, tp) {
 export function tickWalkers(dtMs, now = performance.now()) {
   const ws = S._walkers;
   if (!ws.length) return;
-  const fadeMs = Math.max(5, S.loopFadeTimeMs || 15);
+  // Grain's own release fade (Settings → Tools › Grain › Fade), not the pins'
+  // unpin fade, which is 15 ms by default and reads as a stop.
+  const fadeMs = Math.max(5, S.grainTrigger?.releaseMs || 250);
   for (let i = ws.length - 1; i >= 0; i--) {
     const w = ws[i];
     if (w._dead) { ws.splice(i, 1); continue; }

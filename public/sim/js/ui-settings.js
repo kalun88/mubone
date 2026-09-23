@@ -61,6 +61,10 @@ import { S, perf } from './state.js';
 const ICON = {
   audio:    '<circle cx="8" cy="8" r="5.2"/>',
   pins:     '<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/>',
+  // The tool rail: the same panel as pins', with the rail on the LEFT — the
+  // chrome's own tools pill (#tcTools) drawn at the nav's 16 (Ek, 2026-09-23:
+  // "tools doesn't have a glyph in the nav bar for settings it should").
+  tools:    '<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6.5 3.5v9"/>',
   sensors:  '<path d="M8 2.4 13.6 8 8 13.6 2.4 8Z"/>',
   mapping:  '<circle cx="4.2" cy="4.6" r="1.7"/><circle cx="11.8" cy="11.4" r="1.7"/><path d="M5.6 5.9 10.4 10.1"/>',
   feedback: '<circle cx="8" cy="8" r="5.2"/><circle cx="8" cy="8" r="1.5"/>',
@@ -102,6 +106,10 @@ const SECTIONS = [
   // straight after Audio so the pair reads as one subject.
   { id: 'audioadv',  label: 'Advanced',      group: 'sound', panel: 'setPanelAudioAdv', under: 'audio' },
   { id: 'pins',      label: 'Pins',         group: 'sound',   node: 'commitPanel' },
+  // TOOLS (Ek, 2026-09-22). The rail is what you reach for mid-phrase; this is
+  // everything else a tool does. Under `sound` because a tool is how the
+  // instrument sounds, beside Pins, which is what it commits into.
+  { id: 'tools',     label: 'Tools',        group: 'sound',   panel: 'setPanelTools' },
   { id: 'sensors',   label: 'Sensors',      group: 'sensor',  modal: 'imuSetupModal', opener: 'imuSetupBtn', closer: 'imuSetupClose' },
   { id: 'mapping',   label: 'Mapping',      group: 'sensor',  modal: 'sensorMappingModal', opener: 'mappingBtn', closer: 'sensorMappingClose', action: 'sensorMappingAddBtn' },
   { id: 'feedback',  label: 'LED Feedback', group: 'sensor',  modal: 'ledModal', opener: 'ximuLedBtn', closer: 'ledClose', action: 'ledResetBtn' },
@@ -185,6 +193,42 @@ function _borrowCamera(on) {
   else if (!_return(seg)) _camHome.appendChild(seg);
 }
 
+/** THE TOOLS PAGE BORROWS THE CABINET'S TRIGGER CONTROLS (2026-09-22). Same
+ *  rule as the camera picker and the dialog bodies: the real control comes
+ *  here, keeps its id, its listener and its live state, and goes home when the
+ *  page is put away. Mirroring them would be a second source of truth for
+ *  values the gate reads every tick.
+ *
+ *  A SEG is moved whole. A NUMBER is moved as its slider and its numbox
+ *  together, because the pair IS the control — `settings-gui.css` lays them out
+ *  as one `.set-ctl--slider` and restyles both into the settings kit. */
+const _TOOL_BORROW = [
+  // The cursor's falloff (Ek, 2026-09-23): set once, so off the rail's cursor section.
+  ['radiusFadeCurveSlider', 'setFadeCurveSlot', 'radiusFadeCurveNum'],
+  ['trigStartSeg',     'setTrigStartSlot'],
+  ['trigReleaseSeg',   'setTrigReleaseSlot'],
+  ['trigRearmSlider',  'setTrigRearmSlot', 'trigRearmNum'],
+];
+// `min slice` and `dub decay` are NOT in that list: they never had a cabinet
+// control. They were drawn straight from state by the tape shape sheet, and
+// when that sheet went on 2026-09-22 they had no door at all — so this page
+// owns them outright, which is what "a setting with no nav item has no way in"
+// asks for. ui-trigger.js binds them beside the cabinet's own.
+
+function _borrowTools(on) {
+  for (const [id, slotId, numId] of _TOOL_BORROW) {
+    const slot = document.getElementById(slotId);
+    if (!slot) continue;
+    for (const nodeId of [id, numId]) {
+      if (!nodeId) continue;
+      const node = document.getElementById(nodeId);
+      if (!node) continue;
+      if (on) { _borrow(node, `tools: ${nodeId}`); slot.appendChild(node); }
+      else _return(node);
+    }
+  }
+}
+
 /** A page-level action (Speaker sweep) sits in the shell header, left of the
  *  ✕ — SETTINGS-GUI § 4. Borrowed, never copied, on the same terms as the
  *  dialog bodies and the camera picker: the real button keeps its id and its
@@ -264,7 +308,8 @@ function _restore() {
   // Before the body moves: the action's home is inside it.
   _returnAction();
   const host = document.getElementById('settingsHost');
-  if (_open === 'view') _borrowCamera(false);
+  if (_open === 'view')  _borrowCamera(false);
+  if (_open === 'tools') _borrowTools(false);
   if (_open === 'view' || _open === 'viz') _viewStats(false);
   const node = host?.firstElementChild;
   if (node) {
@@ -330,7 +375,8 @@ function show(id) {
   // A page that computes something on arrival says so here rather than polling
   // for its own visibility — diagnostics recomputes its readiness verdict.
   S._onSettingsPageShown?.(id);
-  if (id === 'view') _borrowCamera(true);
+  if (id === 'view')  _borrowCamera(true);
+  if (id === 'tools') _borrowTools(true);
   _viewStats(id === 'view' || id === 'viz');
   _borrowAction(sec);
 

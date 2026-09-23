@@ -10,12 +10,19 @@
   const STORAGE_KEY = 'mubone-learn-mode';
   const NORMAL_DELAY = 3000; // ms — long delay when Learn is off so tooltips don't interfere during performance
 
-  // Default ON — persists only when user explicitly turns it off
-  let learnMode = true;
+  // DEFAULT OFF (Ek, 2026-09-22: "on factory reload the help tool tips should be
+  // toggled off"). A fresh profile is a performance surface, not a lesson — and
+  // a factory reset is `localStorage.clear()`, so clearing the key IS the reset
+  // and this default is the only thing that decides what comes back.
+  //
+  // Off does not mean no tooltips: it means the LONG delay (NORMAL_DELAY), so
+  // they stay out of the way while you play and still answer if you rest on a
+  // control. Only an explicit ON persists.
+  let learnMode = false;
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === 'off') learnMode = false;
-  } catch (_) { /* localStorage unavailable (incognito etc) — stay on */ }
+    if (saved === 'on') learnMode = true;
+  } catch (_) { /* localStorage unavailable (incognito etc) — stay off */ }
 
   // ── Custom tooltip element ──────────────────────────────────────────────
   const tip = document.createElement('div');

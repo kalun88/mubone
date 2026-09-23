@@ -14,7 +14,7 @@ import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
 import { applySparsePreset, syncAllUI } from './param-registry.js';
 import { getMappings } from './sensor-mapping.js';
-import { pinAnchorInto } from './pins.js';
+import { pinAnchorInto, pinFadeOut } from './pins.js';
 import * as history from './history.js';
 import { clearWalkers } from './walker.js';
 
@@ -593,12 +593,8 @@ function _reserveCloud(lon, lat) {
     _envAttack:    S.commitAttack,     // the attack ramp NOW RUNNING (fadeIn at birth, again on unmute)
     _envRelease:   0,                // the release ramp now running (fadeOut, set when it starts)
     _envGainCurrent: S.commitAttack > 0 ? 0 : 1,
-    // THE PIN'S OWN TWO RAMPS (2026-09-16): born from the settings' defaults,
-    // then the pin's to keep and edit in the rail. Pin and unmute ride `fadeIn`,
-    // unpin and mute ride `fadeOut` — one pair for both verbs, both kinds
-    // (js/composer.js). Before this the pair was global and a mute was 20 ms.
-    fadeIn:  S.commitAttack,
-    fadeOut: S.commitRelease,
+    // In and Out are the settings', read live (pins.js pinFadeIn / pinFadeOut):
+    // pin and unmute ride In, unpin and mute ride Out, both kinds.
     mute: false, solo: false,        // the pin's own flags (pins.js)
     grainParams: {
       ...S.grainParams,
@@ -1418,11 +1414,6 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
     _createdAt:     performance.now() / 1000, // wallclock creation time (seconds)
     _startedAt:     0,              // audioContext.currentTime when started
     mute: false, solo: false,       // the pin's own flags (pins.js)
-    // The loop's own ramps (2026-09-16): the same In / Out every new pin is
-    // born with (Settings → Pins), the out never under the loop's declick —
-    // the 15 ms the release used to read globally. See the cloud's.
-    fadeIn:  S.commitAttack,
-    fadeOut: Math.max(S.commitRelease || 0, (S.loopFadeTimeMs || 15) / 1000),
     grainParams: {
       volume: S.commitLoopParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0
     }
@@ -1486,8 +1477,6 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     _regionBuf:     null,
     _createdAt:     performance.now() / 1000,
     _startedAt:     0,
-    fadeIn:  S.commitAttack,
-    fadeOut: Math.max(S.commitRelease || 0, (S.loopFadeTimeMs || 15) / 1000),
     grainParams: {
       volume: S.commitLoopParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0
     }
@@ -1611,9 +1600,8 @@ function _releaseSlotAt(targetSlot) {
   if (!slot) return;
   history.push(_unpinAction([slot]));
   if (slot.type === 'cloud') {
-    // Cloud: the pin's OWN fade out (2026-09-16); the global is the default
-    // a pin is born with, not what it leaves by.
-    const rel = slot.fadeOut ?? S.commitRelease ?? 0;
+    // Cloud: the pins' Out, live (pins.js pinFadeOut).
+    const rel = pinFadeOut(slot);
     // Uproot means DESTROY, from either state. A composer-held cloud carries
     // _composerHold, which tells the scheduler's release branch to hold at
     // silence instead of deleting — leave it set and this release would land
@@ -1627,7 +1615,7 @@ function _releaseSlotAt(targetSlot) {
     }
   } else {
     // Loop: stop audio — both fade and play-to-end defer slot removal to 'ended' event
-    _stopSeqAudio(slot, S.loopReleaseMode === 'play-to-end', slot.fadeOut ?? null);
+    _stopSeqAudio(slot, S.loopReleaseMode === 'play-to-end', pinFadeOut(slot));
   }
   // The group's flags go with its last pin — now, while this one is only
   // leaving, not when its slot is finally freed (pins.js pruneEmptyGroups).
@@ -1870,7 +1858,7 @@ export function clearAllCommits() {
     const slot = S.commitSlots[i];
     if (!slot) continue;
     if (slot.type === 'cloud') {
-      const rel = slot.fadeOut ?? S.commitRelease ?? 0;   // the pin's own (2026-09-16)
+      const rel = pinFadeOut(slot);
       if (rel > 0 && !slot._releasingAt) {
         slot._envRelease  = rel;
         slot._releasingAt = now;
@@ -1881,7 +1869,7 @@ export function clearAllCommits() {
       }
     } else {
       // Both fade and play-to-end defer slot removal to 'ended' event
-      _stopSeqAudio(slot, S.loopReleaseMode === 'play-to-end', slot.fadeOut ?? null);
+      _stopSeqAudio(slot, S.loopReleaseMode === 'play-to-end', pinFadeOut(slot));
       released = true;
     }
   }

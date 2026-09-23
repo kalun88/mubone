@@ -1,10 +1,12 @@
 // ============================================================================
-// UI — SETTINGS → PINS: what a new pin is born with
-// Wires the pins page's live rows — the cloud envelope (fade in / fade out),
+// UI — SETTINGS → PINS: how every pin comes and goes, and what a new one is born with
+// Wires the pins page's live rows — In / Out, which every pin reads LIVE
+// (pins.js pinFadeIn / pinFadeOut, 2026-09-23 — no longer stamped on a pin),
 // a moving cloud's path direction, the loop release mode and its fade — and
 // keeps them honest when OSC or MIDI writes the same values (`S._syncImprovUI`).
 // Blend, tether, crossfade and the selected pin LEFT this page on 2026-09-16 —
-// the pinned rail's mode bar is their door (js/ui-pins.js). The seed-mode /
+// the pinned rail's mode bar is their door (js/ui-pins.js) — and the crossfade
+// came BACK on 2026-09-23 (Ek): it is set once, not ridden. The seed-mode /
 // tether / crossfade rows, the plant / uproot / clear buttons, the selection
 // seg and the house / monitor sliders this module still wired had no markup
 // left; they went 2026-09-16 (the house volume and monitor → house send keep
@@ -72,10 +74,23 @@ export function initPinSettings() {
     });
   }
 
+  // ── Follow crossfade (Ek, 2026-09-23: back from the rail — set once) ──
+  const xfSlider = document.getElementById('commitXfadeSlider');
+  const xfNum    = document.getElementById('commitXfadeNum');
+  const syncXfade = () => {
+    const xf = Math.max(0, Math.min(1, S.commitXfade ?? 0.5));
+    if (xfSlider) xfSlider.value = String(xf);
+    if (xfNum) xfNum.value = Math.round(xf * 100) + '%';
+  };
+  xfSlider?.addEventListener('input', () => { S.commitXfade = parseFloat(xfSlider.value); syncXfade(); });
+  // Double-click resets to the default — kit-wide (GUI-BUILD-SHEET § 5).
+  xfSlider?.addEventListener('dblclick', () => { S.commitXfade = 0.5; syncXfade(); });
+
   // Initial state from what persisted.
   syncEnvelope();
   syncLoopMode();
+  syncXfade();
 
   // ── OSC / MIDI sync hook — an external write shows on the page ─────────
-  S._syncImprovUI = () => { syncEnvelope(); syncLoopMode(); };
+  S._syncImprovUI = () => { syncEnvelope(); syncLoopMode(); syncXfade(); };
 }

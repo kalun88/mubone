@@ -20,7 +20,7 @@ import { cursorLonLatNow } from './sphere.js';
 import { rand, stampCartesian } from './grain.js';
 import { getRecordingDuration } from './audio.js';
 import { voicingForCurrentBrushLive } from './brush-voicing.js';
-import { snapshotInputFeatures, featuresFromBuffer, readGateLoudness, snapshotTimbre, consumeWindowLoudness, recordedWindowLoudness, featuresToColor } from './audio-features.js';
+import { snapshotInputFeatures, featuresFromBuffer, snapshotTimbre, consumeWindowLoudness, recordedWindowLoudness, featuresToColor } from './audio-features.js';
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
@@ -137,225 +137,54 @@ export function headOffset(lon, lat, widthDeg, edge) {
   return { lon: lon + dLon, lat: Math.max(-1.55, Math.min(1.55, lat + dLat)) };
 }
 
-// ── The splatter brush (#218 experimental) ──────────────────────────────────
-// The one brush whose head is DYNAMIC — and that dynamism is its predetermined
-// contract, chosen like any other brush, not a mode over the pen. Two levers,
-// both from data already in hand at deposit time (no new sensor taps):
-//   speed — cursor velocity between deposits. A flick throws paint: scatter
-//           widens with speed AND marks are flung forward along the motion.
-//   voice — the mark's own rms (the mic is the pressure a body sensor lacks):
-//           playing louder loads the brush, widening the band.
-// Slow quiet painting converges on a thin line; a loud flick is a splash.
-// Constants below are rig-tunable; nothing here persists yet.
-const SPLAT_SPEED_W   = 0.10;  // ° of width per °/s of cursor speed
-const SPLAT_SPEED_MAX = 16;    // width cap from speed (°)
-const SPLAT_VOICE_W   = 40;    // ° of width per unit rms
-const SPLAT_VOICE_MAX = 10;    // width cap from voice (°)
-const SPLAT_THROW     = 0.06;  // forward fling: ° per °/s, capped below
-const SPLAT_THROW_MAX = 10;
+// (SPRAY WAS HERE, and it is gone — 2026-09-22, Ek: "removing spray, sunsetting
+//  it, it's too complicated to have dynamic spray, no paint apps like procreate
+//  do it. i need to remember this is not an app to do visual painting.")
+//
+//  It was a dynamic head: one 0…1 amount that widened the scatter with cursor
+//  speed and with the voice's own rms, and flung each mark forward along the
+//  motion. Two of those three were the old `splatter` brush's sliders, kept
+//  when the brush became a number earlier the same day.
+//
+//  What sank it is not that it worked badly — it is that it was answering a
+//  question from the wrong instrument. A painting app has no equivalent and
+//  the reason is the point: scattering paint is a LOOK, and here a mark's
+//  position is where its grain SOUNDS FROM. Width is spatial, so it is
+//  audible, and the question that has to come first is whether spreading the
+//  material wider is musical at all — not how to make the spread respond to
+//  the hand. Speed and loudness were being mapped to a quality nobody had yet
+//  decided the value of.
+//
+//  `S.headWidthDeg` and `S.headEdge` stay, and `headOffset` above is the whole
+//  head again: static, set on the sheet, the hand supplies only the path.
+//  Whether they earn their keep — and how wide is musical — is the open
+//  question this deletion clears the ground for.
 
-let _dh = { lon: 0, lat: 0, t: 0, has: false };
-
-export function resetDynamicHead() { _dh.has = false; }
-
-/** @param nowMs injectable for tests; defaults to the wall clock. */
-export function dynamicHeadOffset(lon, lat, rms, nowMs) {
-  const now = nowMs ?? performance.now();
-  let speedDegS = 0, dirLon = 0, dirLat = 0;
-  if (_dh.has) {
-    const dt = (now - _dh.t) / 1000;
-    if (dt > 0.005) {
-      const dLon = (lon - _dh.lon) * Math.cos(lat);
-      const dLat = lat - _dh.lat;
-      const dist = Math.hypot(dLon, dLat);
-      speedDegS = (dist / dt) * 180 / Math.PI;
-      if (dist > 1e-6) { dirLon = dLon / dist; dirLat = dLat / dist; }
-    }
-  }
-  _dh.lon = lon; _dh.lat = lat; _dh.t = now; _dh.has = true;
-
-  const W = 1 + Math.min(SPLAT_SPEED_MAX, speedDegS * (S.fx?.splatSpread ?? SPLAT_SPEED_W))
-              + Math.min(SPLAT_VOICE_MAX, (rms || 0) * SPLAT_VOICE_W);
-  const o = headOffset(lon, lat, W, 'soft');
-  // Forward fling — thrown paint lands ahead of the brush, not around it.
-  const throwDeg = Math.min(SPLAT_THROW_MAX, speedDegS * (S.fx?.splatThrow ?? SPLAT_THROW)) * Math.random();
-  const tr = throwDeg * Math.PI / 180;
-  return { lon: o.lon + dirLon * tr / Math.max(0.2, Math.cos(lat)),
-           lat: Math.max(-1.55, Math.min(1.55, o.lat + dirLat * tr)) };
-}
-
-// ── The concat brush (#218 experimental, CataRT-style) ──────────────────────
-// Paint with your own corpus, steered by your voice. Every mark on the sphere
-// already carries a descriptor frame (rms / centroid / zcr, stamped at its own
-// deposit); the concat brush matches the LIVE input's frame against that
-// corpus and deposits a mark pointing at the best-matching MOMENT of material
-// already played — by value, never by reference (the E9 lesson). Sing bright
-// over a dark region and the brush digs your bright moments out of the whole
-// sphere and lays them under the cursor. No voice → no target → no deposit
-// (the paint gate already encodes that rule). Runs at the 50 ms deposit tick,
-// never on the scheduler — a linear scan of the corpus is fine there.
-const CONCAT_W_RMS  = 1 / 0.25;   // descriptor-space normalisation
-const CONCAT_W_CENT = 1 / 6000;   // per HERTZ — see _centHz below
-const CONCAT_W_ZCR  = 1.0;
-
-// `centroid` IS A FRACTION OF NYQUIST, NOT HERTZ (2026-09-13). Both brushes
-// below were written against a centroid in Hz and never re-scaled, which is the
-// same unit bug docs/EXPERIMENTAL-BRUSHES.md writes up for `staff` — and staff
-// is the one that got fixed. Unconverted, the concat weight made the brightness
-// term 1.7e-4 at its largest against an rms term reaching 1, so the brush
-// advertised as "sing bright and it digs your bright moments out" was a
-// loudness nearest-neighbour with a zcr tiebreak; and the comb's sieve compared
+// `centroid` IS A FRACTION OF NYQUIST, NOT HERTZ (2026-09-13). The comb's sieve
+// was written against a centroid in Hz and never re-scaled, which is the same
+// unit bug docs/EXPERIMENTAL-BRUSHES.md writes up for `staff` — it compared
 // 0.02…0.4 against 2200, so `keep: high` accepted NOTHING and `keep: low`
 // accepted everything. The sort in combLayout is scale-free, so the brush
-// looked half-working, which is how it survived.
+// looked half-working, which is how it survived. (The concat brush `match` had
+// the same bug and the same fix; it was deleted 2026-09-22.)
 const _centHz = c => (c || 0) * ((S.audioCtx?.sampleRate ?? 48000) / 2);
 
-export function concatMatch(feat) {
-  if (!feat) return null;
-  let best = null, bd = Infinity;
-  for (let i = 0; i < S.particles.length; i++) {
-    const p = S.particles[i];
-    if (p.trig || p.rms === undefined) continue;         // playable corpus only
-    const dr = (p.rms - feat.rms) * CONCAT_W_RMS;
-    const dc = (_centHz(p.centroid) - _centHz(feat.centroid)) * CONCAT_W_CENT;
-    const dz = ((p.zcr ?? 0) - (feat.zcr ?? 0)) * CONCAT_W_ZCR;
-    const d = dr * dr + dc * dc + dz * dz;
-    if (d < bd) { bd = d; best = p; }
-  }
-  return best;
-}
-
-function _depositConcat(lon, lat) {
-  const feat = snapshotInputFeatures();
-  if (!feat) return null;
-  if (S.paintGateThreshold > 0 && feat.rms < S.paintGateThreshold && !S._recordingTrigger) return null;
-  const u = concatMatch(feat);
-  if (!u) return null;
-  // Values copied from the matched unit — its buffer, its moment, its frame.
-  return {
-    lon, lat,
-    strokeId:       S.currentStrokeId,
-    _vo:            S.currentVoicing ?? 0,
-    source:         u.source,
-    liveBufferIdx:  u.liveBufferIdx,
-    sampleIndex:    u.sampleIndex,
-    grainStart:     u.grainStart,
-    grainDuration:  u.grainDuration,
-    // BOTH COLOUR AXES COME WITH IT (2026-09-13). A concat mark points at a
-    // moment of material already played, so it has to LOOK like that moment —
-    // and without tilt and noise it fell through to a different measure and
-    // came out a different colour from the mark it matched.
-    rms: u.rms, centroid: u.centroid, zcr: u.zcr,
-    tilt: u.tilt, noise: u.noise,
-    color:          '#81c784',
-  };
-}
-
-// ── The comb brush (#218 experimental, CataRT-style layout) ─────────────────
-// The path stays; the phrase redistributes. Today a stroke's layout IS its
-// timeline — mark i sits where the cursor was at moment i. The comb breaks
-// that: the drawn polyline is kept as pure GEOMETRY, and the stroke's marks
-// are continuously re-sorted along it by an audio feature (bright at the
-// front, dark at the back — the axis is the brush's contract). While both
-// the hand and the voice are going, the stroke live-arranges itself; at
-// release it freezes like any material. Sweeping it later scrubs the phrase
-// by feature, not by time. The `keep` sieve drops non-qualifying material
-// entirely — filter and layout are the two halves Ek asked for.
-// Re-layout runs at the 50 ms deposit tick (sort + arc-walk over one
-// stroke's marks), never on the scheduler.
-const COMB_THRESH = { centroid: 2200, rms: 0.09, zcr: 0.3 };  // sieve splits, rig-tunable
-
-const _comb = { strokeId: -1, path: [], total: 0, marks: [] };
-
-export function resetComb() {
-  _comb.strokeId = -1; _comb.path.length = 0; _comb.total = 0; _comb.marks.length = 0;
-}
-
-export function combAccept(feat) {
-  if (S.combKeep === 'all' || !feat) return true;
-  const v = S.combAxis === 'centroid' ? _centHz(feat.centroid) : (feat[S.combAxis] ?? 0);
-  const t = COMB_THRESH[S.combAxis];
-  return S.combKeep === 'high' ? v >= t : v < t;
-}
-
-function _combPathAt(s) {
-  const P = _comb.path;
-  for (let i = 1; i < P.length; i++) {
-    if (P[i].cum >= s) {
-      const a = P[i - 1], b = P[i];
-      const f = (s - a.cum) / Math.max(1e-9, b.cum - a.cum);
-      return { lon: a.lon + (b.lon - a.lon) * f, lat: a.lat + (b.lat - a.lat) * f };
-    }
-  }
-  return P[P.length - 1];
-}
-
-export function combLayout() {
-  const ms = _comb.marks;
-  if (ms.length < 2 || _comb.path.length < 2 || _comb.total <= 0) return;
-  const axis = S.combAxis;
-  const sorted = ms.slice().sort((a, b) => (b[axis] ?? 0) - (a[axis] ?? 0));
-  for (let j = 0; j < sorted.length; j++) {
-    const pt = _combPathAt(_comb.total * j / (sorted.length - 1));
-    sorted[j].lon = pt.lon; sorted[j].lat = pt.lat;
-    stampCartesian(sorted[j]);
-  }
-}
-
-export function combDeposit(particle, c) {
-  // THE MARK'S OWN STROKE, NOT THE CURSOR'S. `stopPaintStroke` sets
-  // `S.currentStrokeId = -1` before it stops the recording, and stopping the
-  // recording settles the pending mark — so the LAST mark of every combed
-  // stroke arrived here with the live id already cleared, failed this test,
-  // and triggered a reset that threw away the whole stroke's path and marks.
-  // combLayout then returned immediately with one mark to lay out, leaving that
-  // last mark at its raw cursor position while every sibling had been sorted
-  // onto the path: a stray dot off the end of every combed stroke.
-  const sid = particle.strokeId ?? S.currentStrokeId;
-  if (_comb.strokeId !== sid) { resetComb(); _comb.strokeId = sid; }
-  const P = _comb.path;
-  const last = P[P.length - 1];
-  const gap = last
-    ? Math.hypot((c.lon - last.lon) * Math.cos(c.lat), c.lat - last.lat) : 0;
-  if (!last || gap > 0.004) {
-    P.push({ lon: c.lon, lat: c.lat, cum: last ? last.cum + gap : 0 });
-    _comb.total = P[P.length - 1].cum;
-  }
-  _comb.marks.push(particle);
-  combLayout();
-  S._particleVersion++;   // positions moved — spatial caches must rebuild
-}
-
-// ── staff (#218 experimental, round two) ────────────────────────────────────
-// The path supplies LONGITUDE ONLY; latitude comes from the feature, so
-// brightness notates itself vertically and the sphere becomes a spectrogram
-// you played. Comb's sibling — comb sorts along the line, staff displaces
-// perpendicular to it. Log-mapped over ~6 octaves of centroid.
-//
-// UNITS (fixed 2026-08-29, Ek: "staff doesn't work, I just see it deposit at
-// the bottom"). staffLat's endpoints are HERTZ, but `feat.centroid` is the
-// NORMALISED centroid audio-features.js publishes — mean bin over bin count,
-// i.e. a fraction of Nyquist, and never more than 1. Clamping that against
-// 110 Hz pinned every mark to the floor of the range, which is the bottom of
-// the sphere, for every sound. The conversion is one multiply and it has to
-// happen here rather than at the call site: `centroid` is normalised
-// everywhere else in the app (featuresToColor, the viz hue, the patch table),
-// and this is the only consumer that wants Hz.
-const STAFF_LO_HZ  = 110, STAFF_HI_HZ = 7040;   // 6 octaves → lat ±0.9
-
-export function staffLat(centroidNorm) {
-  const lo = S.fx?.staffLo ?? STAFF_LO_HZ, hi = S.fx?.staffHi ?? STAFF_HI_HZ;
-  const nyquist = (S.audioCtx?.sampleRate ?? 48000) / 2;
-  const hz = (centroidNorm || 0) * nyquist;
-  const c = Math.max(lo, Math.min(hi, hz || lo));
-  const f = Math.log2(c / lo) / Math.log2(hi / lo);
-  return (f * 2 - 1) * 0.9;
-}
+// THE COMB IS GONE (Ek, 2026-09-22): "let's sunset the sort by and remove the
+// index preset". It kept a stroke's drawn path as pure geometry and re-sorted
+// that stroke's marks ALONG it by an audio feature, live, so the line became a
+// sorted index of what you played rather than a timeline. `combLayout`,
+// `combDeposit`, `resetComb` and `S.combAxis` went together — the last of the
+// #218 heads to leave, and the reason `_centHz` above now has no caller but is
+// kept: it is the one place the app converts a normalised centroid to hertz,
+// and the unit bug it documents is the worked example the docs point at.
 
 // echo, chop and pour were cut on 2026-08-29 (Ek: "remove echo, remove chop
-// and pour"). git log --diff-filter=D finds them; the reasoning for each is in
-// docs/EXPERIMENTAL-BRUSHES.md, which now records why they went rather than
-// how they worked.
+// and pour"), match on 2026-09-22, and STAFF the same day ("remove staff low
+// and hi, and the staff setting") — it took latitude out of the hand's control
+// entirely, which is the one thing a general shape param cannot do quietly
+// behind every other shape. The deleted code is in the history; the reasoning
+// for each is in docs/EXPERIMENTAL-BRUSHES.md, which now records why they went
+// rather than how they worked.
 
 /** The live mark captured at the previous tick has its window's END now: it
  *  joins the settle queue with `toS`, the recording moment the next mark (or
@@ -409,12 +238,6 @@ function _materialise(pend, rms) {
   if (S.paintGateThreshold > 0 && rms < S.paintGateThreshold && !S._recordingTrigger) return false;
   particle.rms = rms;
   const feat = { rms, centroid: particle.centroid, zcr: particle.zcr };
-  if (!particle.trig) {
-    // The comb's sieve — non-qualifying material never lands at all.
-    if ((S.brushFx === 'comb') && !combAccept(feat)) return false;
-    // staff — the voice supplies the latitude, the hand only the longitude.
-    if (S.brushFx === 'staff') particle.lat = staffLat(particle.centroid);
-  }
   // The take remembers the span its KEPT marks cover, so a region built from
   // the BUTTON can tell an untouched stroke from one erase has trimmed. AFTER
   // every rejection, not before: the gate's return above honoured that and the
@@ -433,7 +256,6 @@ function _materialise(pend, rms) {
   stampCartesian(particle);
   S.particles.push(particle);
   S._particleVersion++;
-  if ((S.brushFx === 'comb') && !particle.trig) combDeposit(particle, pend.c);
   return true;
 }
 /** The recording's moment NOW — the clock while it records, the delivered end
@@ -451,27 +273,18 @@ function _depositParticle() {
   const c = _cursorLonLat();
   // A line is a PATH by contract (§ 1d — its marks are index, not onsets), so
   // the head never scatters a trigger stroke; the pen and a stamp both take it.
-  // The splatter brush substitutes its dynamic head for the static one.
-  let lon, lat;
-  if (S._recordingTrigger) {
-    ({ lon, lat } = c);
-  } else if ((S.brushFx === 'spray')) {
-    const feat0 = S.isRecording ? readGateLoudness() : null;
-    ({ lon, lat } = dynamicHeadOffset(c.lon, c.lat, feat0 ?? 0));
-  } else {
-    ({ lon, lat } = headOffset(c.lon, c.lat, S.headWidthDeg, S.headEdge));
-  }
+  // ONE HEAD PATH for every grain mark, and since spray went it is the static
+  // one: `headOffset` with the sheet's own width and edge. The per-deposit
+  // `readGateLoudness()` went with it — the voice term was its only reader
+  // here, and this runs on every grain mark.
+  const { lon, lat } = S._recordingTrigger
+    ? c : headOffset(c.lon, c.lat, S.headWidthDeg, S.headEdge);
   const gpr = gp();
   const durVariation = rand(-gpr.durJitter * 0.5, gpr.durJitter * 0.5);
 
   let particle = null;
 
-  if ((S.brushFx === 'match') && !S._recordingTrigger) {
-    // Concat takes the deposit whatever else is running — a recording may be
-    // rolling underneath (it keeps growing the corpus for later), but the
-    // marks this brush lays down point at MATCHED moments, not at now.
-    particle = _depositConcat(lon, lat);
-  } else if (S.isRecording && S.currentLiveBufferIdx >= 0) {
+  if (S.isRecording && S.currentLiveBufferIdx >= 0) {
     // Settle the mark captured last tick — its window ends now, at THIS mark's
     // moment — THEN capture this one, so the next window starts at this instant.
     const recTime = getRecordingDuration();
@@ -498,11 +311,11 @@ function _depositParticle() {
       // Colour is the audio at the mark's moment; size arrives at the next tick.
       centroid:       timbre?.centroid ?? 0,
       // The hue axis: share of energy above 800 Hz. Separates vowels ~4×
-      // better than centroid, which is kept for concat and the comb sieve.
+      // better than centroid, which is kept for the comb sieve.
       tilt:           timbre?.tilt ?? 0,
       zcr:            timbre?.zcr ?? 0,
       // The SECOND colour axis: flatness with the brightness trend removed.
-      // zcr stays for concat matching and the comb sieve, which want it.
+      // zcr stays for the comb sieve, which wants it.
       noise:          timbre?.noise ?? 0,
     };
     if (S._recordingTrigger) p.trig = true;
@@ -564,18 +377,13 @@ function _depositParticle() {
       // is hued by the same rule as a live one instead of by the legacy
       // centroid fallback (which the LED did not share).
       particle.tilt = feat.tilt; particle.noise = feat.noise;
-      // The fx sieves read the FILE's features where the live branch reads the
-      // mic — any brush paints from the sampler (#247 step 11). No paint gate
-      // and no gate lookback here: those are properties of a live signal.
-      if ((S.brushFx === 'comb') && !combAccept(feat)) particle = null;
-      if (particle && S.brushFx === 'staff') particle.lat = staffLat(feat.centroid);
     }
 
     // A tape stroke hears the sample "playing in" at 1× — the cursor
     // advances one tick of sample time per tick of real time, so the marks'
     // positions and features match the take the stroke materializes on
-    // release (sampler.js). Spray keeps the grain-period stride: its cursor
-    // is a grain-stream read head, not a playback head.
+    // release (sampler.js). A GRAIN stroke keeps the grain-period stride: its
+    // cursor is a grain-stream read head, not a playback head.
     const stride = S._recordingTrigger
       ? (S.paintTicker?.intervalMs ?? 50) / 1000
       : gpr.period * rand(0.8, 1.2);
@@ -594,8 +402,6 @@ function _depositParticle() {
     S._particleVersion++;
     // The comb re-arranges the stroke-so-far along the drawn path — after
     // the push, so the new mark takes part in its own layout.
-    if ((S.brushFx === 'comb') && !particle.trig &&
-        (particle.source === 'live' || particle.source === 'sample')) combDeposit(particle, c);
     return true;
   }
   return false;
@@ -618,11 +424,9 @@ function _tick() {
       _wasPainting = false;
       // The stroke's last mark: its window ends with the stroke.
       _settlePending(_recNow(), true);
-      // A new stroke must not compute its first velocity against the end of
-      // the previous one — a big reposition would read as a monster flick.
-      // The comb likewise freezes: its layout is final at release.
-      resetDynamicHead();
-      resetComb();
+      // (`resetDynamicHead()` was here until 2026-09-22. It cleared the
+      //  velocity estimate so a new stroke did not read the reposition from
+      //  the last one as a monster flick. The static head has no velocity.)
     }
     return;
   }

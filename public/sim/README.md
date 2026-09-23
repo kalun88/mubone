@@ -176,8 +176,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/commit/draw` | `i` | Hold `=` (1 = down, 0 = up): while painting the loop grows to the release, otherwise a cloud path is drawn and pinned on release |
 | `/commit/release` | *(bang)* | Unpin the selected pin — nearest, farthest or oldest, Settings → Pins |
 | `/commit/clear` | *(bang)* | Clear all commits |
-| `/commit/blend` | *(bang)* | Toggle blend mode |
-| `/commit/tether` | *(bang)* | Toggle tether mode |
+| `/pins/follow` | *(bang)* / `s` | Follow: the faders follow the cursor. Bang toggles, `on` / `off` sets |
 | `/commit/xfade` | `f` | Snap/fade crossfade time (0–1) |
 | `/commit/attack` | `f` | Commit attack, s (0–10) |
 | `/commit/release_time` | `f` | Commit release, s (0–10) |
@@ -195,7 +194,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/spatial/mode` | *(bang)* | Legacy compound — flips both camera + panning between "sim" and "physical" presets |
 | `/spatial/lock` | `i` | Cursor lock hold — holds azimuth + elevation (1 = lock, 0 = release) |
 
-**Palette** — the five tiles by position: cap · lens ‖ loop · grain · erase
+**Palette** — the fixed strip: the lens (position 1), the hand's two tiles, then erase · pin · unpin (positions 2–4)
 
 | Address | Args | Description |
 |---|---|---|
@@ -217,7 +216,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/dry/mute` | *(bang)* | Dry monitor mute toggle — off is the mute; unmuting returns to the mode it left, on or auto |
 | `/dry/mute/hold` | `i` | Momentary dry monitor mute (1 = off, 0 = restore the mode at the press) |
 | `/source/live` | *(bang)* | The brush inks from the live input channel |
-| `/source/sampler` | *(bang)* | The brush inks from the sampler's current sample |
+| `/source/sampler` | *(bang)* | The brush inks from the sampler's current sample — refused while the sampler is parked (Settings › Tools, off by default) |
 | `/sampler/sample` | `i` | Set the sampler's current sample (1–10 = slot, anything else = next loaded) |
 | `/sampler/record` | `i` | Capture live input into the next free sampler slot (1 = start, 0 = stop) |
 | `/sweep` | *(bang)* | Session sweep |

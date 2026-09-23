@@ -110,7 +110,7 @@ pinch. Palette: tile 4 inside bed 10.
 | **button** | `.mu-btn` **24** · `.mu-btn--lg` **38** (cabinet pill row) · `.mu-btn--bare` content-sized, no border/background/radius. **A 32px `.mu-btn` fails the audit by name** — 32 is legal, but only as `.tc-icon`, so the check is per-kind and so is this table |
 | **a box sized by its text** | `.mu-h-content` — the marker that says so. Every other control-shaped element must land on 18 / 24 / 32 / 38, and `align-audit` R6 carries **no exemption list**: a row opts out by wearing this class, never by being added to the audit. Use it only where the height really is the content (a two-line name), never to quiet a derived height — that is the thing the kit round deleted |
 | **icon button** | `.tc-icon` — 32px object, r4, glyph 13.33, no border, background or padding. *This is the precedent when you think you need a 32px button* |
-| **segmented** | 24 tall, container **and** buttons, no padding, r2, **selected segment neutral — never ember**. `.seg-pill` (r999, flat tinted fill, no border) is the chrome-density variant |
+| **segmented** | 24 tall, container **and** buttons, no padding, r2, **selected segment neutral — never ember**. `.seg-pill` (r999, flat tinted fill, no border) is the chrome-density variant: its BUTTONS are 24 and the group is 28, because the 2px that makes it a pill is not part of a segment. The tool editor's instrument tabs and the pins rail's sort are the same pill |
 | **status pill** | 18 tall, r999, no border, 6px dot + label. *For "is it true?" when you cannot set it here* |
 | **switch** | 32 × 18, knob 14, 2px inset. On: track in the engine hue, knob the page ground. Off: track `--border-soft`, knob `--text-tertiary`. Flat, no border |
 | **slider** | 2px track, 2px tick |
@@ -178,7 +178,7 @@ A cell that cannot be operated is never shaped like a control.
 | | |
 |---|---|
 | `--eng-source` `#4aa3e8` | azure — what the brush inks from. The only blue |
-| `--eng-lens` `#5fbf9a` | sea green — how the cursor reads |
+| `--eng-lens` `var(--text-light)` `#e4ddd0` | warm white — how the cursor reads. NOT a hue: every other `--eng-*` names material and the eye names none — it READS them (2026-09-21, "the eye is white") |
 | `--eng-tape` `#f2569e` | hot pink — recordings that play whole |
 | `--eng-grain` `#e8a030` | gold — grains from a buffer. **The one warm engine** |
 | `--eng-erase` `#be7ace` | orchid — material removed |

@@ -1761,7 +1761,6 @@ function _buildPayloads() {
     // Seed / loop playback setup — persisted as rig setup, not live performance
     seed: {
       commitPlayback:      S.commitPlayback ?? 'all',
-      commitTether:        S.commitTether ?? false,
       commitXfade:         S.commitXfade ?? 0.5,
       commitAttack:        S.commitAttack ?? 0,
       commitRelease:       S.commitRelease ?? 0,
@@ -1960,13 +1959,14 @@ function _loadSeedSettings() {
     // One-shot rename (2026-09-16): the keys said `seed*` after the fields
     // they persist had been `commit*` for weeks. Read the old name, write the
     // new, delete the old — once, on the next save.
-    const RENAMED = { seedMode: 'commitPlayback', seedTether: 'commitTether', seedXfade: 'commitXfade',
+    const RENAMED = { seedMode: 'commitPlayback', seedXfade: 'commitXfade',
                       seedAttack: 'commitAttack', seedRelease: 'commitRelease', seedLoopMode: 'commitCloudLoopMode' };
     let renamed = 0;
     for (const [old, now] of Object.entries(RENAMED)) if (old in d) { if (!(now in d)) d[now] = d[old]; delete d[old]; renamed++; }
+    // Tether is gone (2026-09-22 night): a stored value, under either name, is dropped.
+    for (const k of ['seedTether', 'commitTether']) if (k in d) { delete d[k]; renamed++; }
     if (renamed) { try { localStorage.setItem(LS_SEED_SETTINGS, JSON.stringify(d)); } catch (_) {} }
     if (typeof d.commitPlayback === 'string') S.commitPlayback = d.commitPlayback;
-    if (typeof d.commitTether === 'boolean')  S.commitTether   = d.commitTether;
     if (typeof d.commitXfade === 'number')    S.commitXfade    = d.commitXfade;
     if (typeof d.commitAttack === 'number')   S.commitAttack   = d.commitAttack;
     if (typeof d.commitRelease === 'number')  S.commitRelease  = d.commitRelease;
@@ -1987,9 +1987,9 @@ function _loadSeedSettings() {
       if (['oneshot', 'loop', 'grain'].includes(t.dwell)) td.dwell  = t.dwell;
       if (['top', 'touch', 'ends'].includes(t.start))    td.start   = t.start;
       if (['cut', 'layer'].includes(t.retrig))           td.retrig  = t.retrig;
-      if (typeof t.chop === 'number')       td.chop = Math.max(0, Math.min(2000, t.chop));
-      if (typeof t.chopOn === 'boolean')    td.chopOn = t.chopOn;
-      if (['play-to-end', 'fade'].includes(t.release))   td.release = t.release;
+      if (typeof t.chopOn === 'boolean')    td.sliceOn = t.chopOn;   // a setup file older than 2026-09-22 names it chopOn
+      if (['play-to-end', 'stop', 'fade'].includes(t.release)) td.release = t.release;
+      if (typeof t.releaseMs  === 'number') td.releaseMs  = Math.max(0, Math.min(5000, t.releaseMs));
     }
   } catch (e) {
     console.warn('[defaults] could not load seed settings:', e);

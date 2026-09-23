@@ -54,7 +54,7 @@ const MAX_CURSOR_VOICES = 16;
 // one SharedArrayBuffer the bridge owns. Each region: a 4-word header
 // [published half, count of half 0, count of half 1, generation], then two
 // halves of CT_ROWS rows × CT_WORDS words followed by a CT_ROWS permutation
-// (row order by offset, for step mode). The bridge writes the unpublished half
+// (row order as made, for step mode). The bridge writes the unpublished half
 // and flips; a fire reads the published half. Row words: bufIndex i32,
 // offset i32, length i32, azDeg f32, elBias f32, particleId i32, radiusFade f32.
 const CT_ROWS = 8192, CT_WORDS = 7, CT_HEADER = 4;
@@ -168,7 +168,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
 
     // ── Candidate list (from main thread spatial search) ──────────────────
     // Each entry: { bufIndex, offset, length, azDeg, particleId, radiusFade }
-    // Sorted by offset (grainStart) when kSeqMode is active.
+    // Sorted in the order made (stroke, then its clock) when kSeqMode is active.
     this._candidates = [];
     this._candidateCount = 0;
 
@@ -1133,7 +1133,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     let particleId = -1;
     let radiusFade = 1.0;
 
-    // k-seq mode: step through candidates sorted by grainStart (offset).
+    // k-seq mode: step through candidates in the order they were made (the bridge sorts).
     // Random mode: pick a random candidate from the pool.
     const kSeq = seed ? seed.kSeqMode : this._kSeqMode;
 
@@ -1152,7 +1152,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         ci = (this._rand01() * candCount) | 0;
       }
       if (tab >= 0 && ctI) {
-        // Step mode walks the permutation (rows by offset); random reads the row.
+        // Step mode walks the permutation (rows in the order made); random reads the row.
         const row = kSeq ? ctI[tabBase + CT_ROWS * CT_WORDS + ci] : ci;
         const w = tabBase + row * CT_WORDS;
         bufIndex    = ctI[w];
@@ -1198,7 +1198,7 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     // side needs its own clamp.
     //
     // Also deliberately applied in the worklet rather than the bridge: the
-    // bridge sorts candidates by offset for k-seq mode, and jittering before
+    // bridge sorts candidates for k-seq mode, and jittering before
     // that sort would scramble sequential playback order.
     //
     // A jittered read that lands OUTSIDE the audio that exists is DROPPED,

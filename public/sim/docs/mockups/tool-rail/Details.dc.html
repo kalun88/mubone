@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tool rail — four details</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0;background:#000;font-family:Urbanist,system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+.h{font-size:11.04px;letter-spacing:1.99px;text-transform:uppercase;color:#aba59d}
+.cap{font-size:10.24px;letter-spacing:.08em;text-transform:uppercase;color:#776f66;margin-bottom:6px}
+.card{width:294px;box-sizing:border-box;background:rgba(255,240,224,.05);border-radius:10px;padding-bottom:12px;position:relative}
+.card--panel{border-radius:0 0 10px 10px}
+.lbl{display:flex;align-items:center;box-sizing:border-box;padding:12px 12px 4px;font-size:11.04px;letter-spacing:1.99px;text-transform:uppercase;color:#857f76;line-height:13.5px}
+.lbl .t{flex-grow:0}
+.lbl .grow{flex-grow:1}
+.add{width:22.4px;height:24px;display:flex;align-items:center;justify-content:center;color:#938d83;border-radius:3px;margin-left:6px}
+.add.flush{margin-left:0}
+.add svg{width:12px;height:12px}
+.trow{position:relative;height:24px;box-sizing:border-box;padding:0 12px;display:flex;align-items:center;gap:8.8px;color:#776f66}
+.trow.on{background:rgba(255,240,224,.067);box-shadow:inset 0 1px 2px rgba(0,0,0,.45)}
+.trow .ico{width:16.8px;height:16.8px;flex-shrink:0}
+.trow .nm{flex-grow:1;font-size:14.08px;font-weight:500;color:#776f66}
+.trow.on .nm{color:#e4ddd0}
+.more{width:22.4px;height:24px;display:flex;align-items:center;justify-content:center;color:#938d83}
+.more svg{width:14px;height:14px}
+.mrow{height:30px;box-sizing:border-box;padding:3px 12px;display:flex;align-items:center}
+.mrow .l{flex-grow:1;font-size:14.08px;color:#aba59d}
+.sw{width:32px;height:18px;box-sizing:border-box;border-radius:999px;background:rgba(255,240,224,.13);padding:2px}
+.sw span{display:block;width:14px;height:14px;border-radius:999px;background:#938d83}
+.bare{padding-top:12px}
+.guide{position:absolute;top:0;bottom:0;width:0;border-left:1px dashed rgba(201,149,82,.55)}
+.tabs{display:flex;gap:1px;width:294px}
+.tab{height:32px;box-sizing:border-box;border-radius:10px 10px 0 0;display:flex;align-items:center;justify-content:center;color:#776f66;position:relative}
+.tab svg{width:16.8px;height:16.8px;flex-shrink:0}
+.tab .w{font-size:11.04px;letter-spacing:1.99px;text-transform:uppercase;white-space:nowrap}
+.tab--old{padding:0 6px 8px}
+.tab--old.on{background:rgba(255,240,224,.05);color:#e8a030}
+.tab--old.on::after{content:'';position:absolute;left:50%;transform:translateX(-50%);bottom:3px;width:40%;height:2px;border-radius:2px;background:#e8a030}
+.tab--new{background:rgba(255,240,224,.03);padding:0 6px}
+.tab--new.on{background:rgba(255,240,224,.05);color:#e8a030;gap:8px;padding:0 12px}
+.win{width:294px;height:96px;box-sizing:border-box;background:#0b0a09;position:relative;overflow:hidden;border-bottom:1px solid rgba(255,240,224,.055)}
+</style>
+</helmet>
+<div style="width: 760px; height: 700px; box-sizing: border-box; padding: 32px; background: #000; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px;">
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div class="h">1 · the + had three left edges</div>
+    <div>
+      <div class="cap">was — each + follows its own label's text</div>
+      <div class="card">
+        <div class="guide" style="left: 136.8px;"></div>
+        <div class="guide" style="left: 125.1px;"></div>
+        <div class="guide" style="left: 123.8px;"></div>
+        <div class="lbl"><span class="t">cursor presets</span><span class="add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span></div>
+        <div class="lbl"><span class="t">shape presets</span><span class="add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span></div>
+        <div class="lbl"><span class="t">voice presets</span><span class="add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span></div>
+      </div>
+    </div>
+    <div>
+      <div class="cap">built — one column, the drawer buttons'</div>
+      <div class="card">
+        <div class="guide" style="left: 259.6px;"></div>
+        <div class="lbl"><span class="t grow">cursor presets</span><span class="add flush"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span></div>
+        <div class="lbl"><span class="t grow">shape presets</span><span class="add flush"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span></div>
+        <div class="lbl"><span class="t grow">voice presets</span><span class="add flush"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span></div>
+        <div class="trow"><svg class="ico" viewBox="0 0 24 24" fill="#e8a030" aria-hidden="true"><circle cx="12" cy="12" r="4.2"></circle></svg><span class="nm">wash</span><span class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M14.5 5v14"></path></svg></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div class="h">2 · two headings that named one row</div>
+    <div>
+      <div class="cap">was — a card for one switch, a label for two</div>
+      <div class="card" style="margin-bottom: 12px;">
+        <div class="lbl"><span class="t">global modes</span></div>
+        <div class="mrow"><span class="l">audition</span><span class="sw"><span></span></span></div>
+      </div>
+      <div class="card card--panel">
+        <div class="lbl"><span class="t">mode</span></div>
+        <div class="mrow"><span class="l">autopin</span><span class="sw"><span></span></span></div>
+        <div class="mrow"><span class="l">walk on touch</span><span class="sw"><span></span></span></div>
+      </div>
+    </div>
+    <div>
+      <div class="cap">built — the switches lead; audition heads the list it governs</div>
+      <div class="card card--panel">
+        <div class="bare">
+          <div class="mrow"><span class="l">autopin</span><span class="sw"><span></span></span></div>
+          <div class="mrow"><span class="l">walk on touch</span><span class="sw"><span></span></span></div>
+        </div>
+        <div class="lbl"><span class="t grow">voice presets</span><span class="add flush"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span></div>
+        <div class="mrow"><span class="l">audition</span><span class="sw"><span></span></span></div>
+        <div class="trow on"><svg class="ico" viewBox="0 0 24 24" fill="#e8a030" aria-hidden="true"><circle cx="12" cy="12" r="4.2"></circle></svg><span class="nm">wash</span><span class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M14.5 5v14"></path></svg></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div class="h">3 · the bottom was a cut, not an end</div>
+    <div>
+      <div class="cap">was — 6 px of pad, no mark, the card never closes</div>
+      <div class="win">
+        <div class="card" style="position: absolute; left: 0; top: -34px; border-radius: 10px;">
+          <div class="lbl"><span class="t">shape presets</span></div>
+          <div class="trow"><svg class="ico" viewBox="0 0 24 24" fill="#e8a030" aria-hidden="true"><path d="M3 12h18" stroke="#e8a030" stroke-width="1.1" opacity=".5"></path><circle cx="6" cy="7" r="1.7"></circle><circle cx="11" cy="15.5" r="1.7"></circle><circle cx="16" cy="10" r="1.7"></circle><circle cx="20" cy="17" r="1.4"></circle></svg><span class="nm">staff</span><span class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M14.5 5v14"></path></svg></span></div>
+          <div class="trow" style="margin-top: 6px;"><svg class="ico" viewBox="0 0 24 24" fill="#e8a030" aria-hidden="true"><rect x="3" y="9" width="4.5" height="6" rx="1"></rect><rect x="8.8" y="7" width="2.8" height="10" rx="1"></rect><rect x="12.9" y="10" width="4" height="4.5" rx="1"></rect><rect x="18.2" y="8" width="2.6" height="8" rx="1"></rect></svg><span class="nm">match</span><span class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M14.5 5v14"></path></svg></span></div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="cap">built — a 2 px mark, and 12 px so the corner clears</div>
+      <div class="win">
+        <div class="card" style="position: absolute; left: 0; top: -34px; border-radius: 10px;">
+          <div class="lbl"><span class="t">shape presets</span></div>
+          <div class="trow"><svg class="ico" viewBox="0 0 24 24" fill="#e8a030" aria-hidden="true"><path d="M3 12h18" stroke="#e8a030" stroke-width="1.1" opacity=".5"></path><circle cx="6" cy="7" r="1.7"></circle><circle cx="11" cy="15.5" r="1.7"></circle><circle cx="16" cy="10" r="1.7"></circle><circle cx="20" cy="17" r="1.4"></circle></svg><span class="nm">staff</span><span class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M14.5 5v14"></path></svg></span></div>
+          <div class="trow" style="margin-top: 6px;"><svg class="ico" viewBox="0 0 24 24" fill="#e8a030" aria-hidden="true"><rect x="3" y="9" width="4.5" height="6" rx="1"></rect><rect x="8.8" y="7" width="2.8" height="10" rx="1"></rect><rect x="12.9" y="10" width="4" height="4.5" rx="1"></rect><rect x="18.2" y="8" width="2.6" height="8" rx="1"></rect></svg><span class="nm">match</span><span class="more"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M14.5 5v14"></path></svg></span></div>
+        </div>
+        <div style="position: absolute; right: 3px; top: 4px; width: 2px; height: 58px; background: #5c564c; border-radius: 2px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 14px;">
+    <div class="h">4 · one tab and three marks</div>
+    <div>
+      <div class="cap">was — bare glyphs, a hue rule, no name</div>
+      <div class="tabs">
+        <div class="tab tab--old" style="width: 72.8px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" stroke-width="1.6" stroke-linecap="round"></path></svg></div>
+        <div class="tab tab--old on" style="width: 72.8px;"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="4" r="2.1"></circle><circle cx="6.9" cy="12.7" r="2.1"></circle><circle cx="11.9" cy="18" r="2.1"></circle><circle cx="20" cy="20" r="2.1"></circle></svg></div>
+        <div class="tab tab--old" style="width: 72.8px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2" stroke-width="1.5"></rect><path d="M7 14.5l3-4 2.4 3 1.6-2L17 15" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+        <div class="tab tab--old" style="width: 72.8px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M20 19H9l-4.2-4.2a1.6 1.6 0 010-2.3l7.5-7.5a1.6 1.6 0 012.3 0l4.6 4.6a1.6 1.6 0 010 2.3L13 19" stroke-width="1.4" stroke-linejoin="round"></path></svg></div>
+      </div>
+      <div class="card card--panel" style="height: 44px;"></div>
+    </div>
+    <div>
+      <div class="cap">built — four tabs, the open one named, no rule</div>
+      <div class="tabs">
+        <div class="tab tab--new" style="width: 67px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" stroke-width="1.6" stroke-linecap="round"></path></svg></div>
+        <div class="tab tab--new on" style="width: 90.1px;"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="4" r="2.1"></circle><circle cx="6.9" cy="12.7" r="2.1"></circle><circle cx="11.9" cy="18" r="2.1"></circle><circle cx="20" cy="20" r="2.1"></circle></svg><span class="w">grain</span></div>
+        <div class="tab tab--new" style="width: 67px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2" stroke-width="1.5"></rect><path d="M7 14.5l3-4 2.4 3 1.6-2L17 15" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></div>
+        <div class="tab tab--new" style="width: 67px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><path d="M20 19H9l-4.2-4.2a1.6 1.6 0 010-2.3l7.5-7.5a1.6 1.6 0 012.3 0l4.6 4.6a1.6 1.6 0 010 2.3L13 19" stroke-width="1.4" stroke-linejoin="round"></path></svg></div>
+      </div>
+      <div class="card card--panel" style="height: 44px;"></div>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":760,"height":700}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

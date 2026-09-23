@@ -8,6 +8,19 @@
 > the hand tile at their head has none yet. Where this file and the code disagree, **the code
 > wins** — fix this file.
 >
+> **SUPERSEDED IN ONE RESPECT, 2026-09-22: THE STRIP IS A FIXED TOOLBAR.** Ek: "there's no more
+> drag. it's like forscore or procreate or adobe edit. the tile is the tool, the first tile is the
+> tape tool, the 2nd tile is the grain tool … lens tile is there after, then erase, then the pins
+> as they are." The row is SIX TILES: the hand's two sides — **tape** and **grain**, each naming
+> its tool and the voice it wears, played by the spacebar — then four fixed positions, **lens ·
+> erase · pin · unpin**, whose ids and order are the build's. Every sentence below about DRAGGING a tile onto the strip, moving it,
+> dropping it off, the next free digit, or nine positions describes what the palette was until
+> that evening. What is still exactly as written: one tile one verb, the verb by right-click, the
+> shapes, the legend, the bindings on `palette_N`. What varies now is what a tile WEARS — the two
+> tools their voice, the lens tile its preset — not which tiles exist. The reason it ended is in
+> RULINGS.md: one tool per instrument left four tools for nine slots, and the rail stopped drawing
+> the rows the strip was dragged from, so it had already become unbuildable.
+>
 > Supersedes, explicitly: the five-tile slot palette, the nine-position three-verb palette, and
 > `docs/KEYBOARD-SHORTCUTS.md` § "The tile screen" in its entirety. Those describe **arming**,
 > which is deleted — and the 2026-09-11 "there is no hand" ruling, which lasted one day.
@@ -36,15 +49,15 @@ The two models are **not** in conflict once each owns its inputs:
 
 | | what it is | how you choose it | what plays it | its verb |
 | --- | --- | --- | --- | --- |
-| **the hand** | ONE tool — a brush or an eraser | a **click** on its rail row or its strip tile | the **spacebar** and a **left-click on the sphere** — reserved, learnable onto nothing | one switch, `handVerb`, drawn as the hand tile's shape — it **comes with the tool** (2026-09-16): a strip tile hands over its own verb, a rail row its engine's (tape toggle, grain and erase momentary) |
-| **quick access** | the palette: up to nine positions, tools, lenses and the pin pair | drag it onto the strip | its **own key, button or note** — an explicit row that follows the tile | the tile's own (§ 3, § 4) |
+| **the hand** | ONE tool — a brush or an eraser | a **click** on its rail row or its strip tile | the **spacebar** at factory — learnable, one pill per hand tile — and a **left-click on the sphere**, which follows whatever the spacebar is bound to rather than the hand | one switch, `handVerb`, drawn as the hand tile's shape — it **comes with the tool** (2026-09-16): a strip tile hands over its own verb, a rail row its engine's (tape toggle, grain and erase momentary) |
+| **quick access** | the palette: up to nine positions, tools, lenses, the pin pair and the sampler | drag it onto the strip | its **own key, button or note** — an explicit row that follows the tile | the tile's own (§ 3, § 4) |
 
 A quick-access play never touches the hand, and the hand never touches the strip: pen can be in
 hand while `5` plays pen momentary from the strip, and that tile lights, not the hand tile. Both go
 through one gate — `_held`, what is PLAYING, one play at a time from either door — and the hand
 is a second variable beside it, `inHand`, persisted in `mubone_hand`.
 
-**The hand tile** (`#handKey`, `.tile--hand`): a TILE at the head of the row, THREE tiles wide
+**The hand tile** (`#handKey`, `.tile--hand`): a TILE after the lens at the head of the row (the lens leads since 2026-09-22 night), THREE tiles wide
 like a spacebar, at the row's own gap (Ek, night: "make the spacebar to the left of the tile
 group, tiles wide … 3 tiles wide in design, like a spacebar to look special"; it was a plate the
 row's width, under the bed and then across its head, for one evening, and the palette badge that
@@ -70,8 +83,10 @@ RAIL row (`.in-hand`: the ground lifted a step, a 2px left inset in the hue), so
 in the library; the quick-access tile of the same tool wears nothing — the hand tile shows the
 same glyph, and a ring there said it twice. The armed BOX is not back.
 
-**A click, by kind.** On a tool, rail or strip: in hand. On a lens: it is a choice, so the click
-installs it or turns it off, as its row always did. On a pin tile: an act with no span to hold,
+**A click, by kind.** On a tool, rail or strip: in hand. On a lens ROW in the rail: it is a choice,
+so the click installs it or turns it off. On the lens POSITION on the strip: that position is THE
+CURSOR (2026-09-22), not a named lens — it draws whichever lens the rail has on, and its click is
+the cap, on and off. On a pin tile: an act with no span to hold,
 so the click fires it in its verb, both edges at once. Nothing on the strip plays a TOOL from the
 mouse — that is the rule kept from the morning of 2026-09-12 ("clicking never activates any more").
 The `⋯` still opens the drawer and picks nothing; an open drawer follows the hand (Photoshop's
@@ -142,10 +157,29 @@ From `verbsOf`, which keeps its name and its job and loses its shape:
 
 | kind | allowed | default on drop |
 | --- | --- | --- |
-| brush, eraser (`kind: 'brush' \| 'edit'`) | momentary · toggle | **momentary** |
-| lens | momentary · toggle | **toggle** |
+| tape shape | momentary · toggle · **bang** | **toggle** |
+| grain shape | momentary · toggle | **momentary** |
+| eraser | momentary · toggle | **momentary** |
+| lens | momentary (a PEEK) · toggle | **toggle** |
 | `pin` | bang · momentary · toggle | **bang** |
 | `unpin` | bang | **bang** |
+| `sampler` | momentary · toggle | **momentary** |
+
+**The default verb is the MATERIAL'S** (Ek, 2026-09-22: "all tape should by default on load be a
+toggle verb, all grain should by default load as momentary … sampler by default should be momentary.
+scrape should be momentary. lens is a toggle on and off"). A take is a thing you start and leave
+running; a grain cloud is a thing you hold. It is the same rule the HAND has always followed, and
+until now it was stated only for the hand — `verbsOf` resolves the tile's own entry, then its
+ENGINE's, then its kind's, so every door into a verb reads it: the bench, a drop on the strip, a
+stored entry whose verb went missing. The bench's right-click flip is remembered **per instrument**,
+and not persisted: flipping tape must not follow you to grain, or "grain loads momentary" would last
+until the first right-click on a tape shape.
+
+**The sampler is an ACT, not a tool** (2026-09-22): no shape, no voice — it changes what the tools
+READ, the way a lens changes what the cursor sees. Hold it and this stroke comes off the file,
+toggle it and the next few do. No bang: the source is a STATE, and a bang that turned it on with no
+way back would be a trap. It wears the SOURCE hue rather than the pins' shared one, and it lights
+while the file is under the brush. `docs/RULINGS.md` has the round.
 
 The verb is set by a **right-click on the strip tile**, which cycles through the verbs its kind
 allows (2026-09-12; Ek: "it doesn't need to be on the master tile drawer sheet"). The drawer is
@@ -312,15 +346,15 @@ lists them):
 
 | § | holds |
 | --- | --- |
-| A | the factory seven on 1 … 5 · ↑ · ↓; nothing armed; the hand tile heads the row — first child, a tile's box on the tiles' line, 10px off the first quick-access tile, not a position, not draggable, no badge — shows the hand, draws the toggle shape, and wears the spacebar and mouse keycaps under it; the in-hand mark on the rail row alone |
+| A | the factory seven on 1 … 5 · ↑ · ↓; nothing armed; the hand tile heads the row — first child, a tile's box on the tiles' line, 10px off the first quick-access tile, not a position, not draggable, no badge — shows the hand, draws the toggle shape, and wears the spacebar and mouse keycaps under it; **no in-hand mark anywhere** since 2026-09-22 — the rail's gutter is the bench's half moon and the hand tile says its shape and voice in words |
 | C | Tab shows and hides the tool rail and never opens a drawer; the drawer follows the hand and a fire does not move it; a rail click and a strip click take a tool in hand; the ⋯ leaves the hand alone; a lens tile's click installs; a pin tile's click fires |
 | D | placing by drag; **a drop takes the next free digit; a move carries the key; a removal frees it**; nine is full; every tool may leave |
 | E | the keys are explicit rows; each fires in its tile's verb; one play at a time; no hand-back; unbound is a dash sticker |
-| F | the lens is a state, the cap is no lens on |
-| H | **the hand**: space and the sphere's click, toggle then momentary after the hand tile's right-click, its shape following; the hand tile is a spacebar; space unlearnable, a stored Space row dropped; a quick-access play stays the tile's verb, flipped by the strip's right-click, momentary refused under a TAP |
+| F | the lens is a state, the cap is no lens on — **so the position is the CURSOR** (2026-09-22): it draws the installed lens, toggle caps and uncaps, momentary is a PEEK (the cap while held, the eye back on release). A position that named one lens showed one value of the state instead of the state, and went dim the moment you installed another |
+| H | **the hand**: its own key and the sphere's click, toggle then momentary after the hand tile's right-click, its shape following; **ONE PILL per hand tile** (2026-09-22), the key with `click` beside it only while that key is the spacebar; **the hand's key is learnable** (`hand_press` / `hand_long` are ordinary rows seeded on Space, cleared to a `type: 'none'` tombstone so the seed cannot undo it) and **space is learnable onto anything else**, which steals it off the hand by the one-gesture-one-action rule; **the click is the SPACEBAR's twin, not the hand's** — derived from whatever holds `key:Space`; a quick-access play stays the tile's verb, flipped by the strip's right-click, momentary refused under a TAP |
 | I · J · K · L | the wash, the wet button, the `+`, keys and notes through the recogniser (a fire leaves the drawer where it was) |
 | M | shape is the verb, flipped by right-click |
-| N | **the sticker is the truth** (§ 11.5–11.6): one sticker per position of the one kind shown, a dash when unbound; source + gesture + delay; long/xlong a bar; a note bare; nowrap and flex-shrink 0; nothing wider than the tile; the hand tile's sticker draws the spacebar |
+| N | **the sticker is the truth** (§ 11.5–11.6): one sticker per position of the one kind shown, a dash when unbound; source + gesture + delay; long/xlong a bar; a note bare; nowrap and flex-shrink 0; nothing wider than the tile. **The hand's sticker draws the KEY CAP and the POINTER** (2026-09-22) — a wide rounded rectangle, 16×8, because the spacebar is the widest KEY and `␣` the character read as a bracket at that size; and a filled 10×10 cursor for the sphere's left button, which was the WORD `click`, the one source on the strip that was spelled instead of drawn. **The gesture is said ONCE after both**, not per source: they are one binding with two ways in, and the click can only ever be held the way the key is. **A POSITION bound to the spacebar draws the pointer too** — the click is the spacebar's twin wherever the spacebar goes, so a sticker that showed only the cap would lie about what fires that position. **LONG and XLONG differ by WEIGHT, not length** (2026-09-22): both 8px, 2px and 4px thick. Extra long was 14px, which grew the sticker sideways in the one place nothing may be wider than its tile, and beside a cap and a pointer the extra 6px read as a second mark |
 | O | **the sticker is the learn cell**: one kind at a time, the bed 71px whatever the kind; click relearns, right-click clears, Esc cancels, a chord is refused |
 | P | **hue is identity** (§ 11.2–11.3): every glyph its family's `--eng-*`, the pin tiles bone, nothing `--text-subtle`, rest `surface-1` |
 
@@ -335,7 +369,7 @@ nothing visible moved.
 | `js/midi.js` | the 9 palette actions with `type`/`fmt`/`tip` as getters over the verb; the factory-key seed and `S._paletteReordered` (rulings 8); `S._paletteLearn` and its three siblings (§ 6); space refused and dropped |
 | `js/mobile.js` | the touch is the hand's press |
 | `js/osc.js` | 9 addresses; `/palette/N` takes `1\|0` for a momentary tile and a bang otherwise |
-| `css/style.css` | § 23 the tiles, § 24 the hand: the hand tile, the rail's in-hand mark, the ledger rows and the caps |
+| `css/style.css` | § 23 the tiles, § 24 the hand: the hand tile, the ledger rows and the caps |
 | `index.html` | the three "on tiles" switches under the keys page's column titles |
 | `scripts/palette-audit.js` | § 9 |
 | `docs/KEYBOARD-SHORTCUTS.md` | § "The tile screen" |
@@ -371,7 +405,7 @@ Current tokens are three dusty warm mid-tones inside a 50° arc; these are six q
 | family | hex | note |
 | --- | --- | --- |
 | source | `#4aa3e8` | azure — the only blue |
-| lens | `#5fbf9a` | sea green, the sage lifted; still the "this is on" hue |
+| lens | `#e4ddd0` | warm white (`--text-light`); still the "this is on" hue. Sea green `#5fbf9a` until 2026-09-21 |
 | tape | `#f2569e` | hot pink — what line/slice/loop/dub already are in `TILE_DEFS` |
 | grain | `#e8a030` | gold — dots' own colour, unchanged |
 | erase | `#b07c8f` | mauve — tape's hue drained |
@@ -421,7 +455,24 @@ font-size: 11px;
 Corners: **wet top-left, pin top-right, binding bottom-left.** The gesture rides *inside* the
 sticker at 9.5px in `--leg-midi`; a plain press has no suffix (`GESTURE_LABEL.press` is `''`). The
 delay mark `···` (§ 7) still applies, after the gesture. The spacebar is the drawn 15 × 6 mark, not
-`␣`. The hand tile's own legend is two stickers — the spacebar mark and the word `click`.
+`␣`. The hand tile's own legend is two stickers — the spacebar mark and the word `click` — and
+**both hand tiles wear the same two**, the HOLD one adding the long bar after each (Ek, 2026-09-22:
+"if it's just the letter/icon it's press, then you have the word hold after … whatever convention we
+used should be the same for space bar"). A second, LONGER spacebar drew the held press for a day and
+came out again: the source-then-gesture reading is the vocabulary, and a glyph that says the gesture
+in its own width is a second vocabulary for the same fact.
+
+**The gesture suffix DISAMBIGUATES; it does not describe.** The spacebar carries TWO bindings — a
+tap and a hold — so the hold one must say which it is. The bench's `A` wore the bar unconditionally
+for an hour and said nothing by it (Ek: "why are the audition tiles now all A long? it should be A
+no?"), because at the time `A` carried one binding and there was nothing to tell apart. The answer
+was not "never" but "when it means something", and now it does: **the audition takes the BENCH'S
+VERB** (Ek, the same hour: "by default now, loops should be A, and grains should be A long"). A tap
+for a toggle, a hold for a momentary — the same two edges the spacebar gives the hand — so `A` is
+bare on a tape shape and wears the bar on a grain one, and a right-click on the bench moves the
+outline and the key together. The audition was always momentary before, on the reasoning that a
+listen is something you hold; but the bench shows the tool as it will be PLACED, and a tape take you
+cannot leave running is not that tool.
 
 **An unbound position still wears the sticker** (Ek, 2026-09-12, later: "when i right click to
 remove a binding from a palette tile, it should have a hyphen thru the sticker but it just

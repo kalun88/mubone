@@ -80,7 +80,7 @@
     <div class="top-bar-left">
       <div class="top-bar-brand">
         <span class="top-bar-logo">mubone</span>
-        <span class="top-bar-version">5.4 alpha</span>
+        <span class="top-bar-version">5.6 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="mu-btn--bare top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -154,7 +154,7 @@
          of right-hand pills never said. -->
     <div class="tc-side tc-side-l">
       <span class="tc-grp">
-        <button type="button" class="tc-icon tc-drawer" id="tcTools" aria-pressed="false" title="tools — Tab shows and hides the rail. Click a tool to take it in hand; the door at its row's edge opens its drawer; drag it onto the palette for a key of its own (Esc hides)">
+        <button type="button" class="tc-icon tc-drawer" id="tcTools" aria-pressed="false" title="tool editor — Tab shows and hides the rail. Click a shape or a voice and the tool it belongs to takes it: the spacebar's, or the eraser on the palette. The door at a row's edge opens its sheet; hold A to hear the tool the open tab is editing (Esc hides)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.75" width="18" height="14.5" rx="2.4"/><path d="M9.4 4.75v14.5"/></svg>
         </button>
       </span>
@@ -221,7 +221,7 @@
          wordmark's own colour without 9KB of path data in this file. -->
     <div class="tc-brand">
       <img class="tc-mark" src="logo/mark-light.svg" alt="" aria-hidden="true" width="18" height="18">
-      <b>mubone</b> <i>5.4</i>
+      <b>mubone</b> <i>5.6</i>
       <!-- The open piece, in the version's own engraved lettering. The unsaved
            mark is a DOT that is there or is not (js/piece.js) — nothing here is
            dimmed to mean anything. Empty and hidden until there is a piece. -->
@@ -365,8 +365,8 @@
          where each pin has its own track"): one TRACK per pin, and the track
          IS its fader — the bar's fill is the level, the material you drew sits
          inside it laid flat, and its number is the same one the sphere wears.
-         Above the tracks, the MODE BAR holds the four things you switch during a
-         set (blend · tether · sort · curve); below them the two BUSSES (clouds,
+         Above the tracks, the MODE BAR holds the three things you switch during a
+         set (follow · sort · curve); below them the two BUSSES (clouds,
          loops) and the pin acts. Rendering in js/ui-pins.js; behaviour stays in
          js/pins.js. The slot tracker that sat under the header went with it
          (Ek: "it was only to help track which was closest, which is now the top
@@ -396,52 +396,54 @@
           </button>
         </span>
       </div>
-      <!-- THE MODE BAR: the four pin settings you switch mid-set, each a second
-           door onto the same S field Settings → Pins holds (js/ui-pins.js
-           keeps both sides agreeing). Blend and sort are "which one?" —
-           segmented; tether is "do you want it?" — the switch, in the SENSOR
-           hue, because what it turns on is the body driving the faders. -->
+      <!-- THE MODE BAR: the three pin settings you switch mid-set, each a second
+           door onto the same S field (js/ui-pins.js keeps every door agreeing).
+           FOLLOW is "do you want it?" — the switch (Ek, 2026-09-22 night: "i
+           want it to be boolean when possible"): on, the faders follow the
+           cursor; off, every pin plays at full. It was `blend: all | focus`, a
+           which-one over a yes/no. Sort is a which-one and keeps the capsule.
+           TETHER IS GONE the same night: it only meant anything under follow,
+           and there it gated a pin by the LENS radius — "if cursor-mixer is on
+           there's really no radius so tether becomes confusing". A pin is never
+           gated by the radius now; the radius is the scratch layer's. -->
+      <!-- IN THE TOOL RAIL'S ROW MODEL (Ek, 2026-09-22 night: "the formatting of
+           how the text is aligned and else is not the same as the left rail
+           yet"). One setting per row, the same `.mrow` the lens tab draws: the
+           name at the left in the row's own type, the control flush right,
+           30 tall, no gap between rows. Blend and tether shared a line before
+           and the labels were eyebrows — a second row model for the same kind
+           of row. -->
       <div class="lyr-modes" id="lyrModes">
-        <div class="lyr-mrow">
-          <span class="lyr-eb">blend</span>
-          <span class="seg-pill" id="lyrBlend" role="group" aria-label="blend">
-            <button type="button" class="grain-seg-btn" data-v="all" title="all — every pin at equal weight">all</button>
-            <button type="button" class="grain-seg-btn" data-v="focus" title="focus — the faders follow the cursor">focus</button>
-          </span>
-          <span class="lyr-mrow-gap"></span>
-          <span class="lyr-eb lyr-eb--r">tether</span>
-          <button type="button" class="ds-sw lyr-sw" id="lyrTether" aria-pressed="false" style="--c:var(--accent-sensor)"
-                  title="tether — on, a pin keeps sounding wherever the cursor goes; off, only within its reach">
+        <div class="mrow">
+          <span class="mrow-l">follow</span>
+          <!-- The switch, in the SENSOR hue: what it turns on is the body driving
+               the faders. -->
+          <button type="button" class="ds-sw lyr-sw" id="lyrFollow" aria-pressed="false" style="--c:var(--accent-sensor)"
+                  title="follow — on, the faders follow the cursor: the nearest pin is loudest and the rest hand over by distance; off, every pin plays at full">
             <span class="mu-switch"><b></b></span>
           </button>
         </div>
-        <div class="lyr-mrow">
-          <span class="lyr-eb">sort</span>
-          <!-- Sort IS the selected pin (S.selectionMode): row one is what unpin takes. -->
-          <span class="seg-pill" id="lyrSort" role="group" aria-label="sort — the selected pin">
-            <button type="button" class="grain-seg-btn" data-v="nearest" title="nearest to the cursor first — and it is what unpin takes">near</button>
-            <button type="button" class="grain-seg-btn" data-v="farthest" title="farthest from the cursor first — unpin lets go of what is behind you">far</button>
-            <button type="button" class="grain-seg-btn" data-v="oldest" title="oldest first — the order you placed them; nothing moves while you play">old</button>
-          </span>
-          <span class="lyr-mrow-gap"></span>
-        </div>
-        <!-- Its own row: three words and a slider do not share 296px. -->
-        <div class="lyr-mrow lyr-mrow--xf">
-          <span class="lyr-eb">curve</span>
-          <span class="lyr-xf" title="the crossfader curve between two pins — 100% blends the whole way from one anchor to the next, 0% cuts at the midpoint (focus only)">
-            <input type="range" class="grain-slider" id="lyrXfade" min="0" max="1" step="0.01" value="0.5" aria-label="crossfader curve">
-            <span class="lyr-xf-v" id="lyrXfadeV">50%</span>
-          </span>
+        <div class="mrow">
+          <span class="mrow-l">sort</span>
+          <!-- Sort IS the selected pin (S.selectionMode): row one is what unpin takes.
+               The sheet's capsule (`.opt .seg`, 24), the one the lens tab's rows
+               wear — not the chrome's 28 `.seg-pill` (2026-09-22 night). -->
+          <span class="opt"><span class="seg" id="lyrSort" role="group" aria-label="sort — the selected pin">
+            <span data-v="nearest" title="nearest to the cursor first — and it is what unpin takes">near</span>
+            <span data-v="farthest" title="farthest from the cursor first — unpin lets go of what is behind you">far</span>
+            <span data-v="oldest" title="oldest first — the order you placed them; nothing moves while you play">old</span>
+          </span></span>
         </div>
       </div>
       <!-- The TRACKS. js/ui-pins.js builds one .lyr-trk per pin. -->
       <div class="lyr-list" id="lyrList"></div>
       <!-- The two BUSSES — the groups' M and S, with the members' mean level. -->
       <div class="lyr-bus" id="lyrBus"></div>
-      <!-- The pin ROWS live with the thing they act on (#267), in the tool
-           rail's own row model since 2026-09-12: glyph, name; a click fires, a
-           drag places the act on the palette. js/tiles.js renderPinChrome
-           fills this. At the FOOT since the mixer (2026-09-16), under the mix. -->
+      <!-- The act ROWS live with the thing they act on (#267), in the tool
+           rail's own row model since 2026-09-12: glyph, name; a click fires.
+           Only what the strip does not hold — unpin all, and the mix pair; pin
+           and unpin left for the fixed strip on 2026-09-22 night. js/tiles.js
+           renderPinChrome fills this. At the FOOT since the mixer (2026-09-16). -->
       <div class="lyr-actions" id="tcPins"></div>
     </aside>
 
@@ -469,12 +471,68 @@
            the tools pill, `~`, Tab and Esc close it. -->
       <div class="lyr-bar">
         <span class="lyr-title">Tools</span>
+        <span class="lyr-bar-r">
+          <!-- The rest of the tool parameters — start, release, fade, rearm,
+               min slice, dub decay — are on Settings → Tools; this is their
+               door, the same ≡ the pinned rail carries (Ek, 2026-09-23). -->
+          <button type="button" id="toolSettings" class="lyr-bar-set"
+                  title="tool settings — what a tool does between phrases: start, release, fade, rearm"
+                  aria-label="tool settings">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
+              <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>
+            </svg>
+          </button>
+        </span>
       </div>
       <div class="lyr-list">
-        <div class="srcbar" id="srcBar" role="list" aria-label="source"></div>
-        <div class="lensbar" id="lensBar" role="list" aria-label="lenses"></div>
+        <!-- (THE EYE stood here as its own card — CURSOR PRESETS, `#lensBar` —
+             until 2026-09-22 night. There is one lens and it is a TAB below,
+             its rows the cursor's settings; the tile on the strip is its on/off.) -->
+        <!-- GLOBAL MODES (Ek, 2026-09-22: "maybe the modes should be taken out
+             completely and put under lenses as GLOBAL MODES … then the tabbed
+             section is strictly a tool creator"). They are not part of BUILDING
+             a tool — they are standing decisions about how each instrument
+             behaves — so behind the tabs they conflated "what am I making" with
+             "how does this thing work", and you could not flip tape's autopin
+             without leaving the grain tab. All of them, always, in one list. -->
+        <div class="mode-sec" id="globalModes"></div>
+        <!-- (The TOOL EDITOR heading and its rule stood here until 2026-09-22.
+             The tabs below say what the section is — an instrument's name over
+             its own card — so the heading was a second label for the same
+             thing, and the rule under it a division the card already makes.) -->
+        <!-- THE TABS (Ek, 2026-09-22): "it's a TAPE instrument, and GRAIN
+             instrument and a SAMPLER" — the editor is scoped to one at a time,
+             and everything under them belongs to it. -->
+        <div class="instr-tabs" id="instrTabs" role="tablist" aria-label="instrument"></div>
+        <div class="tbx-instr" id="instrPanel">
+        <!-- ONE BED FOR THE WHOLE TOOL (Ek, 2026-09-22: "can the tool creator
+             share the same bed as the shape presets and voice presets"). Above
+             this card is the INSTRUMENT — the eye, the pill, its mode. Inside
+             it is the one thing you are making out of that instrument: what is
+             on the bench, the shapes you can put there, the voices. Three
+             captions, one ground. -->
+        <div class="tbx-band" id="creatorBand">
+        <!-- (THE BENCH stood here until 2026-09-22 — a tile of what you were
+             building, dragged onto the palette to place it. The editor writes
+             to the slot now, so choosing a preset IS the change and there was
+             nothing left to drag; Ek, "that kinda renders the bench useless".) -->
+        <!-- The sampler's own panel — it has no shapes and no voices, because it
+             is where material comes FROM. Shown on its tab alone. -->
+        <div class="srcbar" id="srcBar" role="list" aria-label="source" hidden></div>
+        <!-- SHAPE PRESETS · VOICE PRESETS, for whichever tab is on. -->
         <div class="tilebar" id="tileBar" role="list" aria-label="tools"></div>
+        </div><!-- /creatorBand -->
+        </div><!-- /instrPanel -->
       </div>
+      <!-- THE CURSOR (Ek, 2026-09-23): the rail's lower half, a fixed height
+           from its foot under its own bar — the TOOLS / PINNED header design,
+           a rule above and below at the rail's full width — and always shown.
+           It was a tab; the tools' tabs above now change height freely.
+           js/tiles.js render() fills #cursorPanel. -->
+      <section class="cur-sec" id="cursorSec" aria-label="cursor">
+        <div class="lyr-bar lyr-bar--sec"><span class="lyr-title">Cursor</span></div>
+        <div class="cur-body"><div class="tbx-instr" id="cursorPanel"></div></div>
+      </section>
     </aside>
 
     <!-- THE PROPERTIES RAIL (#258) — the device view: whatever the tool rail
@@ -592,12 +650,11 @@
 
           <div class="seq-section search-section--toggles">
             <!-- scope — highest-order decision: how does the cursor find particles? -->
-            <div class="grain-row" title="lens — how the cursor finds particles&#10;area: plays within a radius, filtered by recency&#10;nearest: always plays the k closest on the whole sphere">
+            <div class="grain-row" title="lens — how the cursor finds particles&#10;radius: plays within the radius, filtered by recency&#10;nearest: always plays the k closest on the whole sphere">
               <span class="grain-label">lens</span>
               <div class="grain-seg" id="snapToggleSeg">
-                <button class="grain-seg-btn active" data-mode="area" title="area — select particles within the search radius&#10;filtered by recency">area</button>
+                <button class="grain-seg-btn active" data-mode="area" title="radius — select particles within the search radius&#10;filtered by recency">radius</button>
                 <button class="grain-seg-btn" data-mode="nearest" title="nearest — fire the k closest particles on the whole sphere&#10;radius and recency are bypassed">nearest</button>
-                <button class="grain-seg-btn" data-mode="stroke" title="stroke — the cursor reads nothing on its own; touch a grain stroke and a walker plays it along its own path at its own pace, reading with this lens's radius, k and order">stroke</button>
               </div>
             </div>
 
@@ -999,8 +1056,8 @@
 
               <!-- WHAT THE RAIL DOES NOT HOLD (Ek, 2026-09-16: "any pin settings
                    that are now on the pin rail can be removed from the settings
-                   page since it's covered on the pin rail"). Count, blend,
-                   crossfade, tether and the selected pin (the rail's sort) all
+                   page since it's covered on the pin rail"). Count, follow,
+                   crossfade and the selected pin (the rail's sort) all
                    left; this page keeps the rule for a full pool and what a new
                    pin is born with. The two ramp sliders keep their ids —
                    osc.js and midi.js write to them. -->
@@ -1021,13 +1078,27 @@
                 </div>
               </div>
 
-              <div class="set-sec-title">A New Pin</div>
-              <div class="set-sec-lede">What a pin is born with. Each one keeps its own after, in the rail.</div>
+              <div class="set-sec-title">Follow</div>
+              <div class="set-sec-lede">With follow on in the rail, the faders follow the cursor: the nearest pin is loudest and the rest hand over by distance.</div>
+
+              <div class="set-row">
+                <div class="set-row-text">
+                  <span class="set-row-title">Crossfade</span>
+                  <span class="set-row-desc">How far one pin blends into the next. 100% blends all the way; 0% cuts at the midpoint.</span>
+                </div>
+                <div class="set-ctl set-ctl--slider">
+                  <input class="grain-slider" type="range" id="commitXfadeSlider" min="0" max="1" step="0.01" value="0.5">
+                  <input type="text" class="grain-numbox" id="commitXfadeNum" value="50%" readonly>
+                </div>
+              </div>
+
+              <div class="set-sec-title">Every Pin</div>
+              <div class="set-sec-lede">How pins come and go. Read at the moment it happens, so a change reaches every pin at once.</div>
 
               <div class="set-row">
                 <div class="set-row-text">
                   <span class="set-row-title">In</span>
-                  <span class="set-row-desc">How a new pin comes up — on pin, and on unmute.</span>
+                  <span class="set-row-desc">How a pin comes up — on pin, and on unmute.</span>
                 </div>
                 <div class="set-ctl set-ctl--slider">
                   <input class="grain-slider" type="range" id="seedAttackSlider" min="0" max="10" step="0.1" value="0">
@@ -1038,13 +1109,16 @@
               <div class="set-row">
                 <div class="set-row-text">
                   <span class="set-row-title">Out</span>
-                  <span class="set-row-desc">How a new pin leaves — on unpin, and on mute.</span>
+                  <span class="set-row-desc">How a pin leaves — on unpin, and on mute. A loop never under its declick.</span>
                 </div>
                 <div class="set-ctl set-ctl--slider">
                   <input class="grain-slider" type="range" id="seedReleaseSlider" min="0" max="10" step="0.1" value="0">
                   <input type="text" class="grain-numbox" id="seedReleaseNum" value="0.0s" readonly>
                 </div>
               </div>
+
+              <div class="set-sec-title">A New Pin</div>
+              <div class="set-sec-lede">What a pin is born with, and keeps.</div>
 
               <div class="set-row">
                 <div class="set-row-text">
@@ -1164,6 +1238,7 @@
                 <span class="grain-label">release</span>
                 <div class="grain-seg" id="trigReleaseSeg">
                   <button class="grain-seg-btn active" data-trelease="play-to-end">play→end</button>
+                  <button class="grain-seg-btn" data-trelease="stop">stop</button>
                   <button class="grain-seg-btn" data-trelease="fade">fade</button>
                 </div>
               </div>
@@ -1178,11 +1253,9 @@
                   <button class="grain-seg-btn" data-chopon="on">on</button>
                 </div>
               </div>
-              <div class="grain-row" id="trigChopGapRow" title="gap — how long a silence has to be to count as a break&#10;lower = more splits, higher = fewer&#10;pick it from the SHORTEST pause you want to split at: percussion with clear space 200–400ms, a sung phrase where breaths should split but note gaps shouldn't 400–600ms&#10;if it won't split where you expect, the gate threshold is the other dial — no gap exists unless the input drops under it">
-                <span class="grain-label">gap</span>
-                <input class="grain-slider" type="range" id="trigChopSlider" min="50" max="2000" step="10" value="300">
-                <input type="text" class="grain-numbox" id="trigChopNum" value="300ms" readonly>
-              </div>
+              <!-- The GAP row went with the gap chopper (2026-09-22). Slice
+                   measures each attack against the room's own floor, so there
+                   is no threshold left for a performer to dial. -->
               <div class="grain-row" title="retrigger — what happens when a trigger fires while its previous pass is still sounding&#10;cut: the old pass fades out and it restarts from the top&#10;layer: the old keeps ringing and the new one stacks on top, up to 8 voices&#10;a layered voice holds the position it was fired at, so hitting the same buffer at different bearings spreads the stack across the speakers">
                 <span class="grain-label">retrig</span>
                 <div class="grain-seg" id="trigRetrigSeg">
@@ -1892,6 +1965,145 @@
 <!-- Section bodies that have no modal of their own. Parked here; the shell
      moves them into #settingsHost exactly like a hosted modal dialog. -->
 <div id="settingsPanels" hidden>
+  <!-- TOOL SETTINGS (Ek, 2026-09-22): "anything i need access to while
+       performing should be there … a lot of stuff should actually just be a
+       setting in the settings module." This is the other half of that ruling —
+       what a tool does that you decide BETWEEN phrases rather than during one.
+       The rail holds the rest.
+
+       Row model is SETTINGS-GUI § 2: title + description left, control flush
+       right, one hairline per row. Every control is BORROWED from the rig
+       cabinet, never mirrored — the real one keeps its id, its listener and its
+       state, and `settings-gui.css` restyles `.grain-seg` and `.grain-numbox`
+       into the settings kit while they are here. -->
+  <div class="mu-dialog set-panel" id="setPanelTools">
+    <div class="set-section">
+      <div class="set-sec-title">Cursor</div>
+      <div class="set-sec-lede">How the cursor reads, past what the rail holds. Scope, radius and the grain selection are in its CURSOR section.</div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Falloff</span>
+          <span class="set-row-desc">With fade on, how steeply grains fade toward the radius's edge. 0% is linear.</span>
+        </div>
+        <div class="set-ctl set-ctl--slider"><span id="setFadeCurveSlot"></span></div>
+      </div>
+    </div>
+    <div class="set-section">
+      <div class="set-sec-title">Tape</div>
+      <div class="set-sec-lede">What a take does when the cursor arrives, and how it is cut. Autopin, overdub, dwell, retrig and slice are on the tape tab, where you can reach them while playing.</div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Start</span>
+          <span class="set-row-desc">Where a take begins when it fires: its top, the point you touched, or the end you arrive at.</span>
+        </div>
+        <div class="set-ctl"><span id="setTrigStartSlot"></span></div>
+      </div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Release</span>
+          <span class="set-row-desc">How a take stops when you leave it — play to the end of the pass, stop at once, or fade out.</span>
+        </div>
+        <div class="set-ctl"><span id="setTrigReleaseSlot"></span></div>
+      </div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Fade</span>
+          <span class="set-row-desc">How long the fade takes, with release set to fade.</span>
+        </div>
+        <div class="set-ctl set-ctl--slider">
+          <input class="grain-slider" type="range" id="setTrigFadeSlider" min="0" max="2000" step="10" value="250">
+          <input type="text" class="grain-numbox" id="setTrigFadeNum" value="250ms" readonly>
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Rearm</span>
+          <span class="set-row-desc">The least gap before the same take can fire again. Stops a hovering cursor retriggering it.</span>
+        </div>
+        <div class="set-ctl set-ctl--slider"><span id="setTrigRearmSlot"></span></div>
+      </div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Min slice</span>
+          <span class="set-row-desc">With slice on, a segment shorter than this merges into the one before it.</span>
+        </div>
+        <div class="set-ctl set-ctl--slider">
+          <input class="grain-slider" type="range" id="setSliceMinSlider" min="0" max="500" step="10" value="100">
+          <input type="text" class="grain-numbox" id="setSliceMinNum" value="100ms" readonly>
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Dub decay</span>
+          <span class="set-row-desc">With overdub on, how much the loop steps down each pass. 0 keeps every layer at full.</span>
+        </div>
+        <div class="set-ctl set-ctl--slider">
+          <input class="grain-slider" type="range" id="setDubDecaySlider" min="0" max="100" step="1" value="0">
+          <input type="text" class="grain-numbox" id="setDubDecayNum" value="0%" readonly>
+        </div>
+      </div>
+    </div>
+    <div class="set-section">
+      <div class="set-sec-title">Grain</div>
+      <div class="set-sec-lede">What a WALKING stroke does when the cursor arrives — its own set, not tape's. These read only while WALK ON TOUCH is on, on the grain tab; dwell and retrig are there beside it.</div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Start</span>
+          <span class="set-row-desc">Where a walker begins: the stroke's top, the point you touched, or the end you arrive at.</span>
+        </div>
+        <div class="set-ctl">
+          <div class="grain-seg" id="setGrainStartSeg">
+            <button type="button" class="grain-seg-btn" data-gset="start" data-val="top">top</button>
+            <button type="button" class="grain-seg-btn" data-gset="start" data-val="touch">touch</button>
+            <button type="button" class="grain-seg-btn" data-gset="start" data-val="ends">ends</button>
+          </div>
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Release</span>
+          <span class="set-row-desc">How a walker stops when you leave its stroke — play to the end of the pass, or fade out.</span>
+        </div>
+        <div class="set-ctl">
+          <div class="grain-seg" id="setGrainReleaseSeg">
+            <button type="button" class="grain-seg-btn" data-gset="release" data-val="play-to-end">play&rarr;end</button>
+            <button type="button" class="grain-seg-btn" data-gset="release" data-val="fade">fade</button>
+          </div>
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Fade</span>
+          <span class="set-row-desc">How long the fade takes, with release set to fade.</span>
+        </div>
+        <div class="set-ctl set-ctl--slider">
+          <input class="grain-slider" type="range" id="setGrainFadeSlider" min="0" max="2000" step="10" value="250">
+          <input type="text" class="grain-numbox" id="setGrainFadeNum" value="250ms" readonly>
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Rearm</span>
+          <span class="set-row-desc">The least gap before the same stroke can be walked again.</span>
+        </div>
+        <div class="set-ctl set-ctl--slider">
+          <input class="grain-slider" type="range" id="setGrainRearmSlider" min="0" max="1000" step="10" value="120">
+          <input type="text" class="grain-numbox" id="setGrainRearmNum" value="120ms" readonly>
+        </div>
+      </div>
+    </div>
+    <div class="set-section">
+      <div class="set-sec-title">Sampler</div>
+      <div class="set-sec-lede">Painting from a sound file instead of the mic. Parked for now: off, its tab leaves the tool rail and nothing can switch the brush to it.</div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Use the sampler</span>
+          <span class="set-row-desc">Show the sampler tab and let the brush ink from a file.</span>
+        </div>
+        <div class="set-ctl"><input type="checkbox" class="set-toggle" id="setSamplerOn"></div>
+      </div>
+    </div>
+  </div>
   <div class="mu-dialog set-panel" id="setPanelView">
     <!-- Row model (SETTINGS-GUI § 2). Every control here is a PROXY — the real
          button lives in the rig cabinet and keeps its id, its listener and its

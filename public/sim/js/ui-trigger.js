@@ -28,7 +28,6 @@ function _dim(el, active) {
 export function initTriggerUI() {
   const releaseRow = document.getElementById('trigReleaseRow');
   const chopSeg    = document.getElementById('trigChopSeg');
-  const chopGapRow = document.getElementById('trigChopGapRow');
   const hintEl     = document.getElementById('trigHint');
   const recBtn     = document.getElementById('trigRecordBtn');
 
@@ -45,17 +44,15 @@ export function initTriggerUI() {
     // state rather than left standing on a flag nobody writes.
     const on   = !S.scanMuted;
 
-    // Release governs how a LOOPING trigger stops; 'once' and 'grain' both play
-    // through, so it has nothing to say about them. Only dimmed within a live
-    // section — dimming a row inside a dimmed parent multiplies to 0.12, which
-    // reads as a rendering fault rather than as an inactive control.
-    _dim(releaseRow, td().dwell === 'loop');
+    // Release reads on every dwell since 2026-09-23 (`fade` fades a one-shot
+    // out on exit too), so the row is never dimmed.
+    _dim(releaseRow, true);
 
-    // Chop's switch and its threshold are separate so the value survives being
-    // toggled off — the gap row just dims rather than resetting.
+    // SLICE's switch. Its gap-threshold row went with the gap chopper on
+    // 2026-09-22 — onset detection measures against the room's own floor and
+    // has no threshold for a performer to dial.
     if (chopSeg) chopSeg.querySelectorAll('[data-chopon]').forEach(b =>
-      b.classList.toggle('active', (b.dataset.chopon === 'on') === !!td().chopOn));
-    _dim(chopGapRow, !!td().chopOn);
+      b.classList.toggle('active', (b.dataset.chopon === 'on') === !!td().sliceOn));
 
     // The hint carries the count — a separate number beside it would be the
     // same fact twice, in a panel that is mostly parameters already.
@@ -113,6 +110,67 @@ export function initTriggerUI() {
     });
   }
 
+  // THE TWO THAT LIVE ON THE SETTINGS PAGE (2026-09-22). `dub decay` is a
+  // triggerParam like the rest; `min slice` is in `S.fx`, so it takes its own
+  // three lines rather than bending `bindSlider` around a second store.
+  bindSlider('setDubDecaySlider', 'setDubDecayNum', 'dubDecay', v => Math.round(v) + '%');
+  {
+    const sl = document.getElementById('setSliceMinSlider');
+    const nb = document.getElementById('setSliceMinNum');
+    const fmt = v => (+v > 0 ? Math.round(v) + 'ms' : 'keep all');
+    if (sl) {
+      sl.value = S.fx?.sliceMinMs ?? 100;
+      if (nb) nb.value = fmt(sl.value);
+      sl.addEventListener('input', () => {
+        const v = parseFloat(sl.value);
+        if (S.fx) S.fx.sliceMinMs = v;
+        if (nb) nb.value = fmt(v);
+      });
+    }
+  }
+
+  // GRAIN'S ARRIVAL SET, on the settings page (2026-09-22). Its own store, so
+  // these write `S.grainTrigger` rather than `triggerParams` — that IS the
+  // split. No cabinet twin to proxy: grain never had one, because until walk on
+  // touch it had no gate.
+  {
+    const paint = () => document.querySelectorAll('#setPanelTools [data-gset]').forEach(b =>
+      b.classList.toggle('active', S.grainTrigger?.[b.dataset.gset] === b.dataset.val));
+    document.querySelectorAll('#setPanelTools [data-gset]').forEach(b =>
+      b.addEventListener('click', () => {
+        if (S.grainTrigger) S.grainTrigger[b.dataset.gset] = b.dataset.val;
+        paint();
+      }));
+    paint();
+    const sl = document.getElementById('setGrainRearmSlider');
+    const nb = document.getElementById('setGrainRearmNum');
+    if (sl) {
+      sl.value = S.grainTrigger?.rearmMs ?? 120;
+      if (nb) nb.value = Math.round(sl.value) + 'ms';
+      sl.addEventListener('input', () => {
+        const v = parseFloat(sl.value);
+        if (S.grainTrigger) S.grainTrigger.rearmMs = v;
+        if (nb) nb.value = Math.round(v) + 'ms';
+      });
+    }
+  }
+  // THE RELEASE FADE, one per instrument (2026-09-22 night). Both `fade`
+  // releases borrowed the pins' unpin fade — 15 ms, a cut — so a walker or a
+  // loop "just stopped" when the cursor left (Ek). Each arrival set holds its
+  // own `releaseMs` now, set here beside its Release capsule.
+  {
+    const fmt = v => (+v >= 1000 ? (v / 1000).toFixed(1) + 's' : Math.round(v) + 'ms');
+    const bindFade = (slId, nbId, store) => {
+      const sl = document.getElementById(slId), nb = document.getElementById(nbId);
+      const o = store(); if (!sl || !o) return;
+      sl.value = o.releaseMs ?? 250;
+      if (nb) nb.value = fmt(sl.value);
+      sl.addEventListener('input', () => { o.releaseMs = parseFloat(sl.value); if (nb) nb.value = fmt(sl.value); });
+    };
+    bindFade('setTrigFadeSlider',  'setTrigFadeNum',  () => S.triggerParams);
+    bindFade('setGrainFadeSlider', 'setGrainFadeNum', () => S.grainTrigger);
+  }
+
   function bindSeg(segId, dataKey, stateKey) {
     const seg = document.getElementById(segId);
     if (!seg) return;
@@ -130,7 +188,6 @@ export function initTriggerUI() {
   }
 
   bindSlider('trigRearmSlider',  'trigRearmNum',  'rearmMs',   v => Math.round(v) + 'ms');
-  bindSlider('trigChopSlider',   'trigChopNum',   'chop',      v => Math.round(v) + 'ms');
   bindSlider('trigVolumeSlider', 'trigVolumeNum', 'volume',    pct);
   bindSlider('trigSpeedSlider',  'trigSpeedNum',  'speed',     mul);
   bindSeg('trigDwellSeg',   'dwell',    'dwell');

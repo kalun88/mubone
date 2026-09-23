@@ -72,6 +72,8 @@ const CT_REGION = CT_HEADER + 2 * CT_HALF;
 let _ctSab = null, _ctI = null, _ctF = null;
 const _ctCount = new Int32Array(CT_REGIONS);      // rows written this tick, per region
 const _ctPerm  = new Uint32Array(CT_ROWS);        // scratch for the step-mode order
+// Each row's place in time, for step: stroke first, then its own clock.
+const _ctOrd   = new Float64Array(CT_REGIONS * CT_ROWS);
 let _ctTruncated = 0;                             // rows beyond CT_ROWS, dropped (diag)
 let _lastPostedSeeds = [];       // the seed voices of the last post, for the audits
 
@@ -193,7 +195,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       // actually sounding, not the main thread's independent random pick.
       // A particle glows for the duration of ITS grain, which is its stroke's
       // frozen voicing (brush-voicing.js) — not the live sheet's. It read the
-      // live duration until 2026-09-05 (Ek: "for a brush that is not wet,
+      // live duration until 2026-09-05 (Ek: "for a brush that is not live,
       // when I change the params the particles lighting up change"): turning
       // the knob changed how long a dry stroke lit, while its sound stayed.
       // A particle with no voicing (0) is the live params, as everywhere.
@@ -424,7 +426,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
   // mark with no voicing — so a different engine reading the same mark still
   // peaks on it. Dry voicings
   // never change, so their offsets are cached; voicing 0 follows the live
-  // params and is recomputed once per post; a WET voicing's params move with
+  // params and is recomputed once per post; a LIVE voicing's params move with
   // its brush's knobs, and brush-voicing.js says so through
   // `S._voicingChanged`, which drops that entry (0 drops them all). A session
   // import swaps the voicing set, which drops the cache.
@@ -449,7 +451,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
   // voicing of its own: a tape brush froze whatever grain block happened to be
   // live when the stroke was recorded, which nothing displays and no setting
   // owns. Under dwell `grain` the trigger opens to the cursor, and it reads
-  // with the LIVE grain block — the grain brush in the palette, wet or dry —
+  // with the LIVE grain block — the grain brush in the palette, live or dry —
   // so the sound of a dwelling trigger is the brush you can see (Ek,
   // 2026-09-06: a trigger is a view onto a stroke and owns nothing).
   const _voiceOf = p => (p.trig ? 0 : (p._vo ?? 0));
@@ -460,7 +462,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
   const _ctVoCount = new Map(), _ctVoMax = new Map(), _ctVoSlot = new Map();
   function _postCandidatesTable(pool, cursorLon, cursorLat) {
     if (!_workletNode) return;
-    S._syncWetVoicing?.();
+    S._syncLiveVoicing?.();
     const ctI = _ctI, ctF = _ctF;
     _ctCount.fill(0);
     _ctVoCount.clear(); _ctVoMax.clear(); _ctVoSlot.clear();
@@ -517,9 +519,15 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       ctF[w + 4] = sp.elBias;
       ctI[w + 5] = p._globalIdx ?? i;
       ctF[w + 6] = radiusFade;
+      // IN THE ORDER IT WAS MADE: the stroke, then the mark's place on the
+      // stroke's own clock (`takeT`, the path order a looping sample stroke
+      // keeps; its grainStart rewinds at each seam). Offset alone ordered
+      // marks by where they sit in the BUFFER, so a stroke painted second
+      // from earlier in a file stepped before the one painted first.
+      _ctOrd[region * CT_ROWS + c] = (p.strokeId | 0) * 1e6 + (p.takeT ?? p.grainStart ?? 0);
       _ctCount[region] = c + 1;
     }
-    // Step mode needs the rows in offset order: a permutation per region,
+    // Step mode needs the rows in the order they were made: a permutation per region,
     // sorted only when the lens asks for step (random reads the rows as is).
     const kSeq = !!S.grainKSeqMode;
     for (let r = 0; r < CT_REGIONS; r++) {
@@ -528,7 +536,8 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       if (kSeq && cnt > 1) {
         const perm = _ctPerm.subarray(0, cnt);
         for (let k = 0; k < cnt; k++) perm[k] = k;
-        perm.sort((a, b) => ctI[base + a * CT_WORDS + 1] - ctI[base + b * CT_WORDS + 1]);
+        const ob = r * CT_ROWS;
+        perm.sort((a, b) => _ctOrd[ob + a] - _ctOrd[ob + b]);
         ctI.set(perm, base + CT_ROWS * CT_WORDS);
       } else if (cnt > 0) {
         for (let k = 0; k < cnt; k++) ctI[base + CT_ROWS * CT_WORDS + k] = k;
@@ -560,7 +569,9 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       const base = hdr + CT_HEADER + half * CT_HALF;
       for (let k = 0; k < cnt; k++) {
         const w = base + k * CT_WORDS;
-        out.push({ region: r, bufIndex: _ctI[w], offset: _ctI[w + 1], length: _ctI[w + 2], azDeg: _ctF[w + 3], elBias: _ctF[w + 4], particleId: _ctI[w + 5], radiusFade: _ctF[w + 6] });
+        out.push({ region: r, bufIndex: _ctI[w], offset: _ctI[w + 1], length: _ctI[w + 2], azDeg: _ctF[w + 3], elBias: _ctF[w + 4], particleId: _ctI[w + 5], radiusFade: _ctF[w + 6],
+                   // Where this row falls in step order (the region's permutation).
+                   stepAt: Array.prototype.indexOf.call(_ctI.subarray(base + CT_ROWS * CT_WORDS, base + CT_ROWS * CT_WORDS + cnt), k) });
       }
     }
     return out;
@@ -570,11 +581,11 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
   // The message path: the pre-R3 post, kept whole for a page without SharedArrayBuffer.
   function _postCandidatesMsg(pool, cursorLon, cursorLat) {
     if (!_workletNode) return;
-    // Wet paint rides the tick: if the brush in the hand is wet, its voicing
+    // Auditioned paint rides the tick: if what is playing is live, its voicing
     // is brought up to the live block here, before its params are posted
     // below — so a pot, an OSC value or a sheet row moves every stroke that
     // brush painted within one tick. ~22 compares when nothing has moved.
-    S._syncWetVoicing?.();
+    S._syncLiveVoicing?.();
     // Always post — even an empty pool must clear stale worklet candidates
     if (!pool || pool.length === 0) {
       _workletNode.port.postMessage({ type: 'cursorVoices', list: [] });
@@ -600,7 +611,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       // step 3 and has not been through the import migration; 0 means
       // "follow the live params", which is the pre-step-3 behaviour. There is
       // no override any more: audition and the grain filter both forced every
-      // mark onto voicing 0 here, and both are gone (2026-09-03) — a wet
+      // mark onto voicing 0 here, and both are gone (2026-09-03) — a live
       // brush's strokes move because their own voicing's params move, above.
       // Resolved up here because the peak offset below is the playing
       // voice's, not the painting one's.
@@ -652,6 +663,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
         elBias: sp.elBias,
         particleId:  p._globalIdx ?? i,
         radiusFade,
+        ord: (p.strokeId | 0) * 1e6 + (p.takeT ?? p.grainStart ?? 0),   // step order — see _ctOrd
       };
       list.push(cand);
       let bucket = _voBuckets.get(vo);
@@ -662,8 +674,8 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       bucket.list.push(cand);
       if (p.strokeId > bucket.maxStroke) bucket.maxStroke = p.strokeId;
     }
-    // Sort by offset (grainStart) so k-seq mode steps through in buffer order
-    list.sort((a, b) => a.offset - b.offset);
+    // Sort by when each mark was made, so step walks them in that order (_ctOrd)
+    list.sort((a, b) => a.ord - b.ord);
     // Log when all candidates are filtered out (common root cause of silence)
     if (list.length === 0 && pool.length > 0) {
       dlog('worklet', `all ${pool.length} candidates filtered out`, {
@@ -696,7 +708,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
     const voices = [];
     for (const [vo, b] of buckets) {
       if (b.list.length === 0) continue;
-      b.list.sort((x, y) => x.offset - y.offset);
+      b.list.sort((x, y) => x.ord - y.ord);
       voices.push({ vo, params: S._voicingById?.(vo)?.params || null, candidates: b.list });
     }
     // Order (random | step) is the lens's, live — sent once per post and
@@ -712,8 +724,8 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
   // cursor — if I change the material under it, it should change"). So a
   // cloud reads each mark with the MARK's voicing, exactly as the cursor does
   // above: its pool is bucketed by `p._vo` and posted as one worklet voice per
-  // voicing, and a wet brush's knobs reach the wash cloud's material through
-  // its wet voicing while a dry stroke the cloud crosses keeps its frozen
+  // voicing, and a live brush's knobs reach the wash cloud's material through
+  // its live voicing while a dry stroke the cloud crosses keeps its frozen
   // sound. Before this the cloud played everything under it with the block it
   // was pinned with, which is what a mark with NO voicing (or a voicing this
   // session does not have) still plays with — `sd.grainParams`. The cloud's
@@ -759,11 +771,11 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
   });
   S._postWorkletSeeds = (seeds) => {
     if (!_workletNode) return;
-    // The cursor post syncs the hand's wet voicing before posting; the seed
-    // post does the same, so a wash cloud follows its wet brush's knobs even
+    // The cursor post syncs the hand's live voicing before posting; the seed
+    // post does the same, so a wash cloud follows its live brush's knobs even
     // while the cursor posts nothing (scan muted, nothing in reach). Cheap
     // when nothing has moved.
-    S._syncWetVoicing?.();
+    S._syncLiveVoicing?.();
     const sr = _sabSampleRate;
     const list = [];
     _sdSeen.clear();
@@ -821,6 +833,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
             bufIndex, offset: offsetSamples, length: bufLen,
             azDeg: sp.azDeg, elBias: sp.elBias,
             particleId: p._globalIdx ?? j, radiusFade: fade,
+            ord: (sid | 0) * 1e6 + (p.takeT ?? p.grainStart ?? 0),   // step order — see _ctOrd
           });
         }
       }
@@ -839,8 +852,8 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
           _sdVoiceOf.set(key, index);
         }
         _sdSeen.add(key);
-        // Sort by offset (grainStart) so k-seq mode steps through in buffer order
-        b.list.sort((x, y) => x.offset - y.offset);
+        // Sort by when each mark was made, so step walks them in that order (_ctOrd)
+        b.list.sort((x, y) => x.ord - y.ord);
         let gp = vo ? S._voicingById(vo).params : ownGP;
         if (sd.overrides) gp = Object.assign(Object.create(gp), sd.overrides);
         list.push({

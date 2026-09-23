@@ -480,8 +480,7 @@ export function handleOSC(rawAddress, values) {
       const v = clamp(values[0], 0, 1);
       S.monitorGainValue = v;
       if (S.monitorToHouseGain) {
-        const effectiveGain = S.scanMuted ? 0 : v;
-        S.monitorToHouseGain.gain.setTargetAtTime(effectiveGain, S.audioCtx.currentTime, 0.02);
+        S.monitorToHouseGain.gain.setTargetAtTime(v, S.audioCtx.currentTime, 0.02);   // the cap gates no bus
       }
       S._syncImprovUI?.();
       break;
@@ -516,10 +515,14 @@ export function handleOSC(rawAddress, values) {
     // BARE bang flips — that is what midi.js's `midiVal == null` branch is for,
     // so a pad that only ever sends 127 is still a toggle. Passing `?? null`
     // rather than `?? 127` is what keeps the flip reachable from OSC at all.
+    // THE HAND, on the wire like every other action (2026-09-22). Its two
+    // presses are `hand_press` and `hand_long` — the same pair the spacebar's
+    // reserved binding fires — so a pedal or a patch can play the hand without
+    // a keyboard. `/hand/long` carries its value: 1 holds, 0 lets go.
+    case '/hand/press':     S._dispatchAction?.('hand_press', 127); break;
+    case '/hand/long':      S._dispatchAction?.('hand_long', values.length ? (values[0] ? 127 : 0) : 127); break;
     case '/pins/mute':      S._dispatchAction?.('pins_mute', values.length ? (values[0] ? 127 : 0) : null); break;
-    case '/pins/unmuteall': S._dispatchAction?.('pins_unmute_all', 127); break;
-    case '/commit/blend':   S._dispatchAction?.('commit_blend', _bangOrStr(values));   break;
-    case '/commit/tether':  S._dispatchAction?.('commit_tether', 127);  break;
+    case '/pins/follow':    S._dispatchAction?.('pins_follow', _bangOrStr(values));    break;
     case '/commit/xfade':
       S.commitXfade = clamp(values[0], 0, 1);
       S._syncImprovUI?.();
@@ -601,7 +604,6 @@ export function handleOSC(rawAddress, values) {
     case '/palette/7': S._dispatchAction?.('palette_7', values.length && !Number(values[0]) ? 0 : 127); break;
     case '/palette/8': S._dispatchAction?.('palette_8', values.length && !Number(values[0]) ? 0 : 127); break;
     case '/palette/9': S._dispatchAction?.('palette_9', values.length && !Number(values[0]) ? 0 : 127); break;
-    case '/palette/wet': S._dispatchAction?.('wet_toggle', values[0] ?? 127); break;   // 0|1 sets, bang toggles
 
     case '/spatial/lock':
       S._dispatchAction?.('cursor_lock', values[0] ? 127 : 0);

@@ -88,10 +88,13 @@ export function purgeRetiredKeys() {
 
 export const KEYS = [
   // ── bindings ──
+  { key: 'mubone_sampler_on',        cat: 'ui', note: "the sampler's park switch, Settings › Tools (2026-09-23): '1' shows its tab and lets the brush ink from a file; absent or '0' — the factory — parks it (js/sampler.js)" },
   { key: 'mubone_pinned_rail',       cat: 'ui', note: 'whether the pinned rail is open (tile-layout.js LS_PINNED) — written since #291, unregistered until browser-audit ran on macOS 2026-09-05' },
   { key: 'mubone_tile_order',        cat: 'ui', note: 'tile row order; position is the key — see js/tiles.js' },
-  { key: 'mubone_tiles_gone',        cat: 'ui', note: 'factory tools and lenses the player DELETED (2026-09-10) — ids that tileDef / lensAll answer for as if they never existed; a reset of this category brings the originals back' },
-  { key: 'mubone_tiles',             cat: 'ui', note: 'per-tile engine presets + custom tile definitions (#224) — a tile is a preset of an engine. Since 2026-09-03 a GRAIN tile persists its edits here whether factory or custom and carries its whole block, and `wet` marks a brush whose knobs keep moving its strokes; other factory tiles keep session-only edits' },
+  { key: 'mubone_tiles_gone',        cat: 'ui', note: 'factory tools the player DELETED (2026-09-10) — ids that tileDef answers for as if they never existed; a reset of this category brings the originals back. Lens ids (`wide` · `spot`) are swept out on boot since 2026-09-22 night: there is one lens and it is not deletable' },
+  { key: 'mubone_tiles_presets',     cat: 'ui', note: "LEGACY (2026-09-22, one evening). It stamped a one-shot that handed `spray` and `index` their factory numbers; both tiles went with the shape-preset sunset the same night. `initTiles` removes the key on load — listed so a profile still carrying it does not read as unregistered" },
+  { key: 'mubone_tiles',             cat: 'ui', note: 'per-tile engine presets + custom tile definitions (#224) — a tile is a preset of an engine. Since 2026-09-03 a GRAIN tile persists its edits here whether factory or custom and carries its whole block, other factory tiles keep session-only edits. (`wet` was a per-tile flag here until 2026-09-22; liveness is decided by HOW paint was made now, and nothing about it is stored on a tile)' },
+  { key: 'mubone_voices',            cat: 'ui', note: "named voices per engine — a tool is a SHAPE and a VOICE (Ek, 2026-09-21), and this is the voice half: the block of VOICE_PIDS lifted out of the anonymous one a grain tile used to adopt on first use. `{ v: {id: {name, engine, params}}, sel: {engine: id} }`; `sel` is the one the rail marks. LEGACY: the store shipped for one day under this key, and tiles.js migrates it once INTO `mubone_sounds` (LS_VOICES), where the voices live — listed so a profile still carrying it does not read as unregistered" },
   { key: 'mubone_cycle_off',         cat: 'ui', note: 'tool and lens ids SKIPPED when a palette tile cycles (2026-09-03 evening) — the rail\'s cycle mark; stored as exclusions so new tools are in by default' },
   { key: 'mubone_slots',             cat: 'ui', note: 'the palette\'s three slots, { loop, granular, erase } → tile id (2026-09-03 evening; folded mubone_belt and the mubone_brush_slot / mubone_erase_slot pair, migrated on first load)' },
   // ── the palette (2026-09-11) ──
@@ -141,6 +144,9 @@ export const KEYS = [
   { key: 'mubone_fovDeg',               cat: 'ui' },
   { key: 'mubone-learn-mode',           cat: 'ui' },
   { key: 'mubone_build',                cat: 'ui', note: 'the service worker CACHE_VERSION the hosted demo last booted on (main.js _wipeOnNewBuild, 2026-09-12): a different one wipes the store and reloads — collaborators open every new build at factory. Electron and localhost never write it' },
+  { key: 'mubone_sounds',               cat: 'ui', note: 'the VOICES (tiles.js, 2026-09-21): a sound per engine, each its own block of voice pids — a living preset every unpinned stroke follows' },
+  { key: 'mubone_voice_seed',           cat: 'ui', note: 'one-shot stamp: the factory voices have been seeded from the engines\' factory blocks (tiles.js _seedVoices)' },
+  { key: 'mubone_voice_names',          cat: 'ui', note: 'the names the player gave voices, by id (tiles.js renameVoice)' },
   { key: 'mubone_hand',                 cat: 'ui', note: 'the tool IN HAND — what the spacebar and a left-click on the sphere play (tiles.js, 2026-09-12); a tool id' },
   { key: 'mubone_hand_verb',            cat: 'ui', note: 'the hand\'s verb, toggle | momentary — the hand tile\'s shape (2026-09-12). Factory: momentary (Ek, evening)' },
   { key: 'mubone_palette_digits',       cat: 'bindings', guards: ['mubone_key_map'], note: 'stamp: the factory strip was dealt once — the list into mubone_palette, the hand, the palette rows of the three maps (midi.js seedPaletteDigitsOnce, 2026-09-12)' },

@@ -1002,7 +1002,6 @@ let _colorBuf  = new Array(512);       // string colors can't go in a typed arra
 // Parallel to _colorBuf rather than an 8th stride field: the stride layout is
 // documented above and load-bearing, and a Uint8Array is cheaper to clear.
 let _mutedBuf  = new Uint8Array(512);
-let _wetBuf    = new Uint8Array(512);   // 1 = a wet mark of the brush in the hand — it will move
 // Sized against S.particles to decide when every other buffer must grow — it
 // is the capacity witness, not an ordering. Nothing reads its contents.
 let _sortIdx   = new Int32Array(512);
@@ -1090,8 +1089,7 @@ const GLOW_ALPHA = 0.917;
 // the same number of lines, spread evenly through the pool, so the fan keeps
 // its shape and its reach while alpha carries the density as it already did.
 const REACH_MAX = 128;
-// The no-wet-brushes answer, so the frame never allocates one to say nothing.
-const EMPTY_IDS = [];
+// The nothing-is-live answer, so the frame never allocates one to say nothing.
 
 // ── Depth ramp ──────────────────────────────────────────────────────────────
 // depth → 0..1 "how near", the input to every size and alpha ramp in the three
@@ -1159,7 +1157,6 @@ export function drawParticles() {
     _sortBuf   = new Float64Array(maxCount * STRIDE);
     _colorBuf  = new Array(maxCount);
     _mutedBuf  = new Uint8Array(maxCount);
-    _wetBuf    = new Uint8Array(maxCount);
     _sortIdx   = new Int32Array(maxCount);
     _matBuf    = new Uint8Array(maxCount);
     _strokeBuf = new Int32Array(maxCount);
@@ -1194,20 +1191,14 @@ export function drawParticles() {
   // Returns false in the normal case, which lets the loops below skip the
   // per-particle read entirely.
   const anyMuted = syncParticleMarks();
-  // THE WET VOICINGS — the marks that wear a ring below, because their sound
-  // can still move (brush-voicing.js, "Wet paint"). Read from the voicing
-  // TABLE, not from the hand (2026-09-14): wet is a property of the brush and
-  // lasts until the brush is dried, while `_handTile()` is null between
-  // presses — so keying the ring on the hand lit the marks only while that
-  // brush was actually painting, which is the opposite of what wet means.
-  // Read once per frame; usually zero or one wet brush exists.
-  const wetVos   = S._wetVoicingIds?.() ?? EMPTY_IDS;
-  const nWet     = wetVos.length;
-  const wetVo0   = nWet === 1 ? wetVos[0] : 0;
-  // Wet is granular-only (tiles.js `setWet` refuses the rest), so the ring is
-  // always the grain engine's hue — and unlike `S._handHue` it must not go
-  // null between presses.
-  const wetHue   = S._wetHue?.() ?? null;
+  // (The LIVE-VOICING ring left on 2026-09-22. It drew a second circle around
+  // every mark whose sound could still move, back when liveness was declared by
+  // the press and was therefore invisible — you could not tell auditioned paint
+  // from played paint by looking at the instrument. AUDITION is a global mode
+  // now, one switch at the top of the rail, so the sphere does not have to say
+  // it a second time: Ek, "no need to have the 'wet' extra border around any of
+  // the paint, i'll know when audition is on". The `live` FLAGS stay — they are
+  // what makes the params follow — and nothing draws them.)
 
   _glowCache.clear();
   const hasGlow = activeGrainMap.size > 0;
@@ -1296,9 +1287,6 @@ export function drawParticles() {
     _sortBuf[off + 6] = p.noise ?? p.zcr ?? 0;
     _colorBuf[count]  = p.color;
     _mutedBuf[count]  = anyMuted && p._composerMuted ? 1 : 0;
-    _wetBuf[count]    = nWet === 0 ? 0
-                      : nWet === 1 ? (p._vo === wetVo0 ? 1 : 0)
-                      : (wetVos.indexOf(p._vo) >= 0 ? 1 : 0);
     _matBuf[count]    = p.trig ? 1 : (p.source === 'sample' ? 2 : 0);
     _strokeBuf[count] = p.strokeId ?? -1;
     _origBuf[count]   = origIdx;
@@ -1424,16 +1412,6 @@ export function drawParticles() {
     } else {
       S.ctx.fillStyle = color;
       S.ctx.beginPath(); S.ctx.arc(sx, sy, size, 0, Math.PI * 2); S.ctx.fill();
-      // A WET mark wears a ring in the grain hue: these are the marks a
-      // brush's knobs can still move (brush-voicing.js, "Wet paint"). Every
-      // mark of every wet brush, held or not — the ring is the answer to
-      // "which paint is still wet", and paint does not dry because you put
-      // the brush down. One extra stroke per such mark.
-      if (_wetBuf[ii]) {
-        S.ctx.strokeStyle = wetHue || color;
-        S.ctx.lineWidth = 1;
-        S.ctx.beginPath(); S.ctx.arc(sx, sy, size + 2, 0, Math.PI * 2); S.ctx.stroke();
-      }
     }
   }
 
@@ -2029,12 +2007,15 @@ function drawTriggers() {
   const trigs = S.triggers;
   if (!trigs || trigs.length === 0) return;
 
-  // Capped, draw faintly and never show the proximity or firing states. The
-  // gate keeps tracking `_inside` under the cap (so uncapping doesn't bang
-  // whatever the cursor is on), and drawing that would promise a shot that
-  // isn't coming.
+  // Capped, never show the proximity state: the gate keeps tracking `_inside`
+  // under the cap (so uncapping doesn't bang whatever the cursor is on), and
+  // drawing that would promise a shot that isn't coming. But NOTHING IS
+  // PARKED (Ek, 2026-09-23: "i do hear the things in flight continue but so
+  // should the viz parts — glow map, playheads for loops"): the cap is not a
+  // mute, a sounding take is sounding, and its outline and playhead draw at
+  // full weight capped or not. `parkedAlpha` — 0.45 on everything while
+  // capped — went with the mute it described.
   const live = !S.scanMuted && S.lensReads !== 'grains';
-  const parkedAlpha = 0.45;   // multiplier applied to everything while capped
 
   // ── Armed-stroke outlines ────────────────────────────────────────────────
   // Which strokes are armed has to be visible without firing them. Drawn as
@@ -2062,7 +2043,7 @@ function drawTriggers() {
     // above; total worst case is bounded by MAX×48 points, same order as
     // the old shared budget.
     const stride = Math.max(1, Math.ceil(ps.length / 48));
-    S.ctx.globalAlpha = (live && t.trigger?._inside ? 0.5 : 0.22) * (live ? 1 : parkedAlpha);
+    S.ctx.globalAlpha = live && t.trigger?._inside ? 0.5 : 0.22;
     S.ctx.strokeStyle = t.color;
     S.ctx.beginPath();
     let started = false;
@@ -2116,34 +2097,27 @@ function drawTriggers() {
   // Trigger particles are never in activeGrainMap, so the glow the main
   // particle pass draws can't find them — the position has to come from the
   // trigger's own playheadIndex, exactly as the loop slots' indicator does.
-  for (let i = 0; i < trigs.length; i++) {
-    const t = trigs[i];
-    let php = null, phIdx = 0;
-    if (t.playing) {
-      phIdx = t.playheadIndex;
-      php = t.particles[phIdx];
-    } else if (t._tail && S.audioCtx) {
-      // A play-to-end tail: the source is detached and still sounding, and
-      // the scheduler no longer advances playheadIndex — compute the marker
-      // here from the tail record, the same maths the seq block uses.
-      const tl = t._tail;
-      const loopLen = tl.loopEnd - tl.loopStart;
-      if (loopLen > 0 && t.particles.length) {
-        const elapsed = (S.audioCtx.currentTime - tl.startedAt) * tl.speed;
-        const pos = elapsed % loopLen;
-        const bufTime = tl.direction === -1 ? tl.loopEnd - pos : tl.loopStart + pos;
-        let best = 0, bd = Infinity;
-        for (let pi = 0; pi < t.particles.length; pi++) {
-          const d = Math.abs(t.particles[pi].grainStart - bufTime);
-          if (d < bd) { bd = d; best = pi; }
-        }
-        php = t.particles[best]; phIdx = best;
-      }
+  // A detached voice — a play-to-end tail, or a voice cut loose by retrig:
+  // layer (2026-09-23) — is still sounding while the scheduler no longer
+  // advances playheadIndex for it: compute the marker here from its tail
+  // record, the same maths the seq block uses.
+  const tailMark = (t, tl) => {
+    const loopLen = tl.loopEnd - tl.loopStart;
+    if (!(loopLen > 0) || !t.particles.length) return null;
+    const elapsed = (S.audioCtx.currentTime - tl.startedAt) * tl.speed;
+    const pos = elapsed % loopLen;
+    const bufTime = tl.direction === -1 ? tl.loopEnd - pos : tl.loopStart + pos;
+    let best = 0, bd = Infinity;
+    for (let pi = 0; pi < t.particles.length; pi++) {
+      const d = Math.abs(t.particles[pi].grainStart - bufTime);
+      if (d < bd) { bd = d; best = pi; }
     }
-    if (!php) continue;
+    return t.particles[best];
+  };
+  const mark = php => {
     spherePointInto(php.lon, php.lat, _arcW);
     cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
-    if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _trigProj)) continue;
+    if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _trigProj)) return;
     // depthFactor, not the raw 2R formulas: with the camera pulled back every
     // depth on the sphere exceeds 2R, and the old fixed cull hid the playhead
     // EVERYWHERE — which is what "the indicator disappears" was, whatever the
@@ -2153,8 +2127,18 @@ function drawTriggers() {
     // sphere's far surface (depth ≈ offZ + R, df ≈ 0), and a bare ·df there
     // multiplied the marker to 0.001 alpha. Same lesson as the 2R cull above.
     const df = Math.max(0, depthFactor(rampDepth(_arcC[0], _arcC[1], _arcC[2], _trigProj[2])));
-    _drawPlayheadSquare(_trigProj[0], _trigProj[1], df,
-                        0.95 * (0.35 + 0.65 * df) * (live ? 1 : parkedAlpha));
+    _drawPlayheadSquare(_trigProj[0], _trigProj[1], df, 0.95 * (0.35 + 0.65 * df));
+  };
+  for (let i = 0; i < trigs.length; i++) {
+    const t = trigs[i];
+    // The CURRENT voice, from the scheduler's own index…
+    if (t.playing) { const php = t.particles[t.playheadIndex]; if (php) mark(php); }
+    // …the play-to-end tail…
+    else if (t._tail && S.audioCtx) { const php = tailMark(t, t._tail); if (php) mark(php); }
+    // …and every voice still ringing under retrig: layer — one square each,
+    // so a stack of three shows three playheads on the stroke.
+    if (t._voices?.length && S.audioCtx)
+      for (const v of t._voices) { if (v.tail && !v.src?._stopped) { const php = tailMark(t, v.tail); if (php) mark(php); } }
   }
 }
 

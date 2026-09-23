@@ -229,17 +229,17 @@ const NOISE = /^camQ\.|^cursorQ\.|^gazeTrail\.|Until$|^perf\.|^fps/;
 const NEEDS_STATE = new Map([
   ['/cursor/tare',      'needs a connected sensor'],
   ['/commit/release',   'needs a commit to exist'],
-  // The factory strip's unpin tile (2026-09-12: dots · line · loop · dub ·
-  // scrape · pin · unpin). Proven on a rig: /palette/6 pins, /palette/7 then
-  // releases it — with nothing pinned it has nothing to move.
-  ['/palette/7',        'the factory unpin tile — needs a commit to exist'],
-  // THE STRIP IS SEVEN TILES AND THE TABLE ADVERTISES NINE (2026-09-13). All
-  // nine `palette_N` rows exist because the POSITION is the binding — one row
-  // addresses whatever sits at N — but the factory list is pen · line · loop ·
-  // dub · scrape · pin · unpin, so 8 and 9 have nothing to fire and firing
-  // them is correctly a no-op. Listed, not tolerated: the day either position
-  // is filled by default the entry comes out, exactly like /palette/7's will.
-  ['/palette/8',        'position 8 is empty on the factory strip of seven'],
+  // THE STRIP IS A FIXED TOOLBAR OF FOUR POSITIONS (2026-09-22: cursor ·
+  // erase · pin · unpin; the hand's two tiles are the spacebar's, not
+  // positions) AND THE TABLE ADVERTISES NINE: every `palette_N` row exists
+  // because the POSITION is the binding. So /palette/4 is unpin — nothing to
+  // release on a clean rig — and 5 … 9 have nothing to fire. Rewritten at the
+  // 5.6 release sweep from the seven-tile strip's list (7, 8, 9).
+  ['/palette/4',        'the factory unpin tile — needs a commit to exist'],
+  ['/palette/5',        'position 5 is empty on the fixed strip of four'],
+  ['/palette/6',        'position 6 is empty on the fixed strip of four'],
+  ['/palette/7',        'position 7 is empty on the fixed strip of four'],
+  ['/palette/8',        'position 8 is empty on the fixed strip of four'],
   // A RESET WITH NOTHING TO RESET. `pitch_oct_reset` sets the octave to 0 and
   // the octave IS 0 on fresh state, so on a clean profile it correctly moves
   // nothing. It passed some runs and failed others because the sweep's reload
@@ -248,21 +248,15 @@ const NEEDS_STATE = new Map([
   // non-deterministic on one line. Seed a non-zero octave before it and this
   // entry comes out.
   ['/grain/oct/reset',  'a reset with nothing to reset — the octave is 0 on fresh state'],
-  ['/palette/9',        'position 9 is empty on the factory strip of seven'],
+  ['/palette/9',        'position 9 is empty on the fixed strip of four'],
   // launch() starts the rig muted; a hold from muted to muted, released to
   // the state at press time (muted), moves nothing. Proven on a rig.
   ['/mute/hold',        'the rig launches muted; the hold restores the muted state it found'],
   ['/dry/mute/hold',    'same shape as /mute/hold — a hold that restores the state it found'],
   ['/undo',             'needs something to undo; the rig launches with an empty stack'],
   ['/commit/clear',     'needs a commit to exist'],
-  // The MIX pair's second half (2026-09-15). `allOn()` clears every group and
-  // pin flag, so on a rig that launches with nothing muted there is nothing for
-  // it to clear and the snapshot cannot see it act. Proven live rather than
-  // assumed: with one pin muted by setAllMuted, firing S._pinsAllOn() takes
-  // isPinAudible false -> true. The address is not dead; the probe is blind to
-  // it from a clean start, the same way /undo and /commit/clear are.
-  ['/pins/unmuteall',   'needs something muted; the rig launches with nothing muted'],
-  // And its other half, quiet for a DIFFERENT reason worth stating: with no
+  // (`/pins/unmuteall` was listed here until 2026-09-23, when the act went.)
+  // The mute, quiet for a reason worth stating: with no
   // pins there is no group to mute. setAllMuted sets both group flags and then
   // calls applyMix(), whose pruneEmptyGroups clears the flag on any group
   // holding no pins — so on an empty rig the mute is undone inside the same
@@ -284,6 +278,12 @@ const NEEDS_STATE = new Map([
   ['/sampler/record',   'needs a live input to capture'],
   ['/redo',             'needs an undone stroke to reinstate (#246)'],
   ['/composer/allon',   'needs a commit to exist'],
+  // From a clean rig /spatial/mode goes to "physical" — sensor camera plus
+  // world-locked panning — and both halves are already where it would put
+  // them or refuse to move: world-locked is the boot default, and the camera
+  // will not go to SENSOR with no sensor connected (main.js applyCameraMode,
+  // 2026-09-12). The release 5.6 sweep flagged it.
+  ['/spatial/mode',     'no sensor on the rig, and panning boots world-locked already'],
 ]);
 
 // Expose the two modules the probes drive. Must be re-run after every reload —

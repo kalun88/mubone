@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The rail, as it would be</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0b0a09;font-family:'Urbanist','Inter','Helvetica Neue',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#e8a030}a:hover{color:#f2b95c}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer}
+.hrow{display:flex;align-items:center;gap:9px;width:100%;height:32px;padding:0 9px;box-sizing:border-box;border-radius:4px;background:rgba(255,240,224,0.030);border-left:2px solid transparent}
+.hrow:hover{background:rgba(255,240,224,0.065)}
+.hrow.on{background:rgba(255,240,224,0.085)}
+.hrow.on .nm{color:#e4ddd0}
+.vrow{display:flex;align-items:center;gap:9px;width:100%;height:30px;padding:0 9px;box-sizing:border-box;border-radius:3px;background:rgba(255,240,224,0.030);border-left:2px solid transparent}
+.vrow:hover{background:rgba(255,240,224,0.065)}
+.vrow.on{background:rgba(255,240,224,0.085)}
+.vrow.on .nm{color:#e4ddd0}
+.g{display:flex;width:20px;height:20px;flex-shrink:0}
+.nm{flex-grow:1;font-size:12.48px;color:#c5c0b9}
+.eyebrow{font-size:11.04px;letter-spacing:0.18em;text-transform:uppercase}
+.sub{font-size:10.24px;letter-spacing:0.14em;text-transform:uppercase;color:#857e74;padding:0 4px}
+.kseg{display:flex;padding:2px;border-radius:999px;background:rgba(255,240,224,0.050)}
+.kseg button{padding:4px 12px;border-radius:999px;font-size:11.04px;color:#857e74;line-height:1}
+.kseg button.on{color:#0b0a09;font-weight:600}
+</style>
+</helmet>
+<div style="width: 420px; height: 900px; box-sizing: border-box; padding: 24px 20px; display: flex; flex-direction: column; gap: 14px; background: #0b0a09;">
+
+  <div style="display: flex; flex-direction: column; gap: 3px;">
+    <div style="font-size: 15.68px; color: #e4ddd0; font-weight: 600;">The rail, as it would be</div>
+    <div style="font-size: 12.48px; color: #938d83;">Heads have glyphs. Voices have names. Click one of each.</div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 6px;">
+    <div style="display: flex; align-items: center; gap: 8px; padding: 0 4px;">
+      <span class="eyebrow" style="color: #f2569e;">tape</span>
+      <span style="flex-grow: 1; height: 1px; background: rgba(255,240,224,0.055);"></span>
+    </div>
+    <div class="sub">heads</div>
+    <div style="display: flex; flex-direction: column; gap: 3px;">
+      <button type="button" class="{{cTplain}}" onClick="{{pTplain}}">
+        <span class="g" style="color: #f2569e;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+        <span class="nm">plain</span>
+      </button>
+      <button type="button" class="{{cTchop}}" onClick="{{pTchop}}">
+        <span class="g" style="color: #f2569e;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><g transform="translate(0 -4.5)"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></g><g transform="translate(0 4.5)"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></g></svg></span>
+        <span class="nm">chop</span>
+      </button>
+    </div>
+    <div class="sub">voices</div>
+    <div style="display: flex; flex-direction: column; gap: 3px;">
+      <button type="button" class="{{cVtape}}" onClick="{{pVtape}}"><span class="nm">tape</span></button>
+      <button type="button" class="{{cVslow}}" onClick="{{pVslow}}"><span class="nm">slow swell</span></button>
+      <button type="button" class="{{cVrev}}" onClick="{{pVrev}}"><span class="nm">reverse</span></button>
+      <div style="display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; font-size: 11.04px; color: #857e74;">
+        <span style="font-size: 14px; line-height: 1;">+</span><span>new voice from the sheet</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 6px;">
+    <div style="display: flex; align-items: center; gap: 8px; padding: 0 4px;">
+      <span class="eyebrow" style="color: #be7ace;">erase</span>
+      <span style="flex-grow: 1; height: 1px; background: rgba(255,240,224,0.055);"></span>
+    </div>
+    <div class="sub">heads &#183; no voice, it makes no sound</div>
+    <div style="display: flex; flex-direction: column; gap: 3px;">
+      <button type="button" class="{{cEtop}}" onClick="{{pEtop}}">
+        <span class="g" style="color: #be7ace;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 19H9l-4.2-4.2a1.6 1.6 0 010-2.3l7.5-7.5a1.6 1.6 0 012.3 0l4.6 4.6a1.6 1.6 0 010 2.3L13 19" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></span>
+        <span class="nm">top</span>
+      </button>
+      <button type="button" class="{{cEbot}}" onClick="{{pEbot}}">
+        <span class="g" style="color: #be7ace;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 19H9l-4.2-4.2a1.6 1.6 0 010-2.3l7.5-7.5a1.6 1.6 0 012.3 0l4.6 4.6a1.6 1.6 0 010 2.3L13 19" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M5 21.4h15" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+        <span class="nm">bottom</span>
+      </button>
+      <button type="button" class="{{cEall}}" onClick="{{pEall}}">
+        <span class="g" style="color: #be7ace;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 19H9l-4.2-4.2a1.6 1.6 0 010-2.3l7.5-7.5a1.6 1.6 0 012.3 0l4.6 4.6a1.6 1.6 0 010 2.3L13 19" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="12" cy="12" r="10.4" fill="none" stroke="currentColor" stroke-width=".9" stroke-dasharray="2 2.6"/></svg></span>
+        <span class="nm">all</span>
+      </button>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 6px;">
+    <div style="display: flex; align-items: center; gap: 8px; padding: 0 4px;">
+      <span class="eyebrow" style="color: #e8a030;">grain</span>
+      <span style="flex-grow: 1; height: 1px; background: rgba(255,240,224,0.055);"></span>
+    </div>
+    <div class="sub">heads</div>
+    <div style="display: flex; flex-direction: column; gap: 3px;">
+      <button type="button" class="{{cGplain}}" onClick="{{pGplain}}">
+        <span class="g" style="color: #e8a030;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="5" cy="4" r="2.1"/><circle cx="6.9" cy="12.7" r="2.1"/><circle cx="11.9" cy="18" r="2.1"/><circle cx="20" cy="20" r="2.1"/></svg></span>
+        <span class="nm">plain</span>
+      </button>
+      <button type="button" class="{{cGscat}}" onClick="{{pGscat}}">
+        <span class="g" style="color: #e8a030;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="10" cy="12" r="3.2"/><circle cx="16" cy="8" r="1.6"/><circle cx="17.5" cy="13.5" r="1.1"/><circle cx="14.5" cy="17" r="1.3"/><circle cx="6" cy="7.5" r="1.2"/><circle cx="5.5" cy="16.5" r=".9"/><circle cx="20" cy="10.5" r=".7"/><circle cx="12" cy="5.5" r=".8"/></svg></span>
+        <span class="nm">scatter</span>
+      </button>
+      <button type="button" class="{{cGsort}}" onClick="{{pGsort}}">
+        <span class="g" style="color: #e8a030;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><rect x="3" y="6" width="3" height="12" rx="1"/><rect x="7.6" y="8" width="3" height="10" rx="1"/><rect x="12.2" y="10.5" width="3" height="7.5" rx="1"/><rect x="16.8" y="13" width="3" height="5" rx="1"/></svg></span>
+        <span class="nm">sort</span>
+      </button>
+      <button type="button" class="{{cGdisp}}" onClick="{{pGdisp}}">
+        <span class="g" style="color: #e8a030;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><path d="M3 12h18" stroke="currentColor" stroke-width="1.1" opacity=".5"/><circle cx="6" cy="7" r="1.7"/><circle cx="11" cy="15.5" r="1.7"/><circle cx="16" cy="10" r="1.7"/><circle cx="20" cy="17" r="1.4"/></svg></span>
+        <span class="nm">displace</span>
+      </button>
+      <button type="button" class="{{cGmatch}}" onClick="{{pGmatch}}">
+        <span class="g" style="color: #e8a030;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><rect x="3" y="9" width="4.5" height="6" rx="1"/><rect x="8.8" y="7" width="2.8" height="10" rx="1"/><rect x="12.9" y="10" width="4" height="4.5" rx="1"/><rect x="18.2" y="8" width="2.6" height="8" rx="1"/></svg></span>
+        <span class="nm">match</span>
+      </button>
+    </div>
+    <div class="sub">voices</div>
+    <div style="display: flex; flex-direction: column; gap: 3px;">
+      <button type="button" class="{{cVdots}}" onClick="{{pVdots}}"><span class="nm">dots</span></button>
+      <button type="button" class="{{cVwash}}" onClick="{{pVwash}}"><span class="nm">wash</span></button>
+      <button type="button" class="{{cVclick}}" onClick="{{pVclick}}"><span class="nm">click</span></button>
+      <button type="button" class="{{cVchoir}}" onClick="{{pVchoir}}"><span class="nm">choir</span></button>
+      <div style="display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; font-size: 11.04px; color: #857e74;">
+        <span style="font-size: 14px; line-height: 1;">+</span><span>new voice from the sheet</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+
+  <div style="display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border-radius: 12px; background: #121010; border: 1px solid rgba(255,240,224,0.080);">
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <span style="font-size: 10.24px; letter-spacing: 0.14em; text-transform: uppercase; color: #857e74;">in hand</span>
+      <span style="font-size: 13.5px; color: #e4ddd0; font-weight: 500;">{{handLabel}}</span>
+      <sc-if value="{{isLoop}}" hint-placeholder-val="{{true}}">
+        <span style="display: flex; width: 15px; height: 15px; color: {{hue}};"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8.5" r="5"/><path d="M12 13.5v7.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></span>
+      </sc-if>
+      <sc-if value="{{isJoin}}" hint-placeholder-val="{{true}}">
+        <span style="display: flex; width: 15px; height: 15px; color: {{hue}};"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8.5" r="4"/><circle cx="12" cy="8.5" r="7" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M12 15.5v5.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></span>
+      </sc-if>
+      <span style="flex-grow: 1;"></span>
+      <span style="font-size: 11.04px; color: #938d83;">{{engLabel}}</span>
+    </div>
+    <sc-if value="{{hasKeeps}}" hint-placeholder-val="{{true}}">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 10.24px; letter-spacing: 0.14em; text-transform: uppercase; color: #857e74;">on end</span>
+        <span class="kseg">
+          <button type="button" class="{{cKno}}" style="{{sKno}}" onClick="{{pKno}}">no</button>
+          <button type="button" class="{{cKloop}}" style="{{sKloop}}" onClick="{{pKloop}}">loop</button>
+          <button type="button" class="{{cKjoin}}" style="{{sKjoin}}" onClick="{{pKjoin}}">join</button>
+        </span>
+      </div>
+    </sc-if>
+    <sc-if value="{{noKeeps}}" hint-placeholder-val="{{true}}">
+      <div style="font-size: 11.04px; color: #776f66;">erase has no end &#8212; nothing is left to keep</div>
+    </sc-if>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":420,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { head: 'g:plain', voiceG: 'wash', voiceT: 'tape', keeps: 'loop' };
+  }
+  renderVals() {
+    var st = this.state;
+    var head = st.head;
+    var eng = head.charAt(0);
+    var pick = function (self, h) { return function () { self.setState({ head: h }); }; };
+    var pickV = function (self, k, v) {
+      return function () { var o = {}; o[k] = v; self.setState(o); };
+    };
+    var cH = function (h, base) { return head === h ? base + ' on' : base; };
+    var cV = function (k, v, base) { return st[k] === v ? base + ' on' : base; };
+    var headNames = {
+      't:plain': 'plain', 't:chop': 'chop',
+      'e:top': 'top', 'e:bottom': 'bottom', 'e:all': 'all',
+      'g:plain': 'plain', 'g:scatter': 'scatter', 'g:sort': 'sort',
+      'g:displace': 'displace', 'g:match': 'match'
+    };
+    var engNames = { t: 'tape', e: 'erase', g: 'grain' };
+    var voice = eng === 't' ? st.voiceT : eng === 'g' ? st.voiceG : null;
+    var hues = { t: '#f2569e', e: '#be7ace', g: '#e8a030' };
+    var hue = hues[eng];
+    var hasKeeps = eng !== 'e';
+    var keeps = hasKeeps ? st.keeps : 'no';
+    var pickK = function (self, v) { return function () { self.setState({ keeps: v }); }; };
+    var cK = function (v) { return keeps === v ? 'on' : ''; };
+    var sK = function (v) { return keeps === v ? 'background: ' + hue + ';' : ''; };
+    return {
+      hue: hue, hasKeeps: hasKeeps, noKeeps: !hasKeeps,
+      isLoop: hasKeeps && keeps === 'loop', isJoin: hasKeeps && keeps === 'join',
+      cKno: cK('no'), cKloop: cK('loop'), cKjoin: cK('join'),
+      sKno: sK('no'), sKloop: sK('loop'), sKjoin: sK('join'),
+      pKno: pickK(this, 'no'), pKloop: pickK(this, 'loop'), pKjoin: pickK(this, 'join'),
+      cTplain: cH('t:plain', 'hrow'), pTplain: pick(this, 't:plain'),
+      cTchop: cH('t:chop', 'hrow'), pTchop: pick(this, 't:chop'),
+      cEtop: cH('e:top', 'hrow'), pEtop: pick(this, 'e:top'),
+      cEbot: cH('e:bottom', 'hrow'), pEbot: pick(this, 'e:bottom'),
+      cEall: cH('e:all', 'hrow'), pEall: pick(this, 'e:all'),
+      cGplain: cH('g:plain', 'hrow'), pGplain: pick(this, 'g:plain'),
+      cGscat: cH('g:scatter', 'hrow'), pGscat: pick(this, 'g:scatter'),
+      cGsort: cH('g:sort', 'hrow'), pGsort: pick(this, 'g:sort'),
+      cGdisp: cH('g:displace', 'hrow'), pGdisp: pick(this, 'g:displace'),
+      cGmatch: cH('g:match', 'hrow'), pGmatch: pick(this, 'g:match'),
+      cVtape: cV('voiceT', 'tape', 'vrow'), pVtape: pickV(this, 'voiceT', 'tape'),
+      cVslow: cV('voiceT', 'slow swell', 'vrow'), pVslow: pickV(this, 'voiceT', 'slow swell'),
+      cVrev: cV('voiceT', 'reverse', 'vrow'), pVrev: pickV(this, 'voiceT', 'reverse'),
+      cVdots: cV('voiceG', 'dots', 'vrow'), pVdots: pickV(this, 'voiceG', 'dots'),
+      cVwash: cV('voiceG', 'wash', 'vrow'), pVwash: pickV(this, 'voiceG', 'wash'),
+      cVclick: cV('voiceG', 'click', 'vrow'), pVclick: pickV(this, 'voiceG', 'click'),
+      cVchoir: cV('voiceG', 'choir', 'vrow'), pVchoir: pickV(this, 'voiceG', 'choir'),
+      handLabel: voice ? headNames[head] + '  ·  ' + voice : headNames[head],
+      engLabel: engNames[eng]
+    };
+  }
+}
+</script>
+</body>
+</html>

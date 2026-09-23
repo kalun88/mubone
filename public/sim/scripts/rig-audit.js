@@ -41,6 +41,7 @@ const SUITES = [
   { name: 'cc mirrors',    mod: './cc-mirror-audit.js' },
   { name: 'trigger tool',  mod: './trigger-audit.js' },
   { name: 'engine pages',  mod: './engine-audit.js' },
+  { name: 'lens',          mod: './lens-audit.js' },
   { name: 'mark align',    mod: './mark-align-audit.js' },
   { name: 'palette',          mod: './palette-audit.js' },
   { name: 'colour',        mod: './colour-audit.js' },

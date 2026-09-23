@@ -1,0 +1,73 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "Details.dc.html": {
+      "h": 700,
+      "title": "Four details",
+      "w": 760,
+      "x": 800,
+      "y": 0
+    },
+    "Main.dc.html": {
+      "h": 730,
+      "title": "As built — what you pick, first",
+      "w": 320,
+      "x": 400,
+      "y": 0
+    },
+    "Today.dc.html": {
+      "h": 880,
+      "title": "Before — the grain tab",
+      "w": 320,
+      "x": 0,
+      "y": 0
+    }
+  },
+  "createdOnFiles": {
+    "at": "2026-09-22T12:00:00Z",
+    "v": 1
+  },
+  "designSystems": [],
+  "launch": {
+    "view": "canvas"
+  },
+  "notes": {
+    "n1": {
+      "fill": "orange",
+      "text": "Measured in the running app, 1440 x 872. The list is 695 tall and the grain tab's content was 828 — 133 px below the fold, and macOS draws no scrollbar at rest. match is half gone; VOICE PRESETS, its two voices and its + are not on screen at all.\n\nAbove them sit 150 px of CURSOR INTERACTION rows that grain greys out until WALK ON TOUCH is on. The rail spends its best space on what is off, and hides what you pick.",
+      "w": 320,
+      "x": 0,
+      "y": 920
+    },
+    "n2": {
+      "fill": "green",
+      "text": "Shipped 2026-09-22. Same rail, same 730 px.\n\nThe instrument's mode switches lead with no heading — the tab names the instrument one row above. Then SHAPE PRESETS, then VOICE PRESETS with AUDITION at its head, then CURSOR INTERACTION. GLOBAL MODES is gone: it was a card built to name one switch.\n\nEverything you reach for while playing is above the fold on every tab, and what the fold cuts is the block you set once. Grain went from 133 px hidden to 68; tape fits whole. The 2 px mark on the right is drawn by railScrollMark() — the platform paints no scrollbar here at all.",
+      "w": 320,
+      "x": 400,
+      "y": 770
+    },
+    "n3": {
+      "fill": "blue",
+      "text": "1 — the three + buttons sat at x 136.8 / 125.1 / 123.8 inside their cards, following each label's text. They land on one column now, the drawer buttons' (272.6 in the window).\n\n2 — GLOBAL MODES was a card for one switch and MODE a label for two. The switches lead the tab bare; audition heads the list it governs.\n\n3 — list padding was 16 / 12 / 6, so the last card's corner was cut by the frame. Now 12, and a mark that says there is more.\n\n4 — four 72.8 px glyphs on the rail's ground, and the instrument named nowhere. All four are drawn as tabs now, the open one says its name, and the hue rule under the glyph is gone — which is what let the glyph centre in its own 32 px box.\n\nThe headings stayed ash. The engine hue was tried on them and came back out the same evening: the tab already says the engine at full strength.",
+      "w": 760,
+      "x": 800,
+      "y": 740
+    },
+    "t1": {
+      "kind": "title1",
+      "maxW": 1560,
+      "text": "The tool rail",
+      "w": 240,
+      "x": 0,
+      "y": -300
+    }
+  },
+  "order": [
+    "Today.dc.html",
+    "Main.dc.html",
+    "Details.dc.html"
+  ],
+  "pages": [],
+  "title": "Tool rail"
+}

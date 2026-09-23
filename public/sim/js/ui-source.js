@@ -26,13 +26,9 @@ import { deleteSample, drawSlotWaveform, toggleSamplePreview } from './ui-sample
 // carried their own inline <svg> and their own sizes, which is why they read
 // as a different species of control.
 const SRC_G = {
-  input:   '<path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
   sampler: '<rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M7 14.5l3-4 2.4 3 1.6-2L17 15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 
-let _builtCount = -1;   // live channels the strip was last built for
-
-function _liveCount() { return S.inputAnalysers?.length || 1; }
 
 function _samplerLabel() {
   const s = S.samples[S.samplerIndex];
@@ -42,48 +38,58 @@ function _samplerLabel() {
   return (s.name || 'sample').replace(/\.[^.]+$/, '').slice(0, 24);
 }
 
-// Full rebuild — only on channel-count change (the meter cache is invalidated
-// with it). Selection and labels refresh in place via refreshSourceTiles().
+// Full rebuild. One row, so this is cheap; selection, the take's name and the
+// capture state refresh in place through refreshSourceTiles().
 export function renderSourceTiles() {
   const bar = document.getElementById('srcBar');
   if (!bar) return;
-  const n = _liveCount();
   const SRC_HUE = getComputedStyle(document.body).getPropertyValue('--eng-source').trim() || '#7fa9c4';
-  let html = '';
-  for (let i = 0; i < n; i++) {
-    // No meter in the row (#253): a live canvas among static glyphs made the
-    // source group read as a different kind of control, and it was a second
-    // read of analysers the bottom bar's input column already draws.
-    html += `<button class="trow trow--radio src-tile" data-src-ch="${i}" style="--c:${SRC_HUE};--eng:${SRC_HUE}"` +
-            ` title="source: input ${i + 1} — what the brush inks from">` +
-            `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${SRC_G.input}</svg>` +
-            `<span class="tile-nm">in ${i + 1}</span></button>`;
-  }
-  html += `<button class="trow trow--radio src-tile src-sampler" data-src="sampler" style="--c:${SRC_HUE};--eng:${SRC_HUE}"` +
-          ` title="source: the sampler — a file instead of the mic; any brush paints from the current take">` +
+  // THE MIC IS NOT A PRESET (Ek, 2026-09-22: "remove the in 1 mic since that's
+  // already a setting in the header the mic"). One `in N` row per live channel
+  // was this panel's whole left half, and it asked a question the chrome's own
+  // input control already owns — two doors onto one setting, and this one was
+  // filed under a tab about a FILE. So the panel is the SAMPLER's now, and the
+  // live input is simply what you get when the sampler is off.
+  //
+  // AND THE SAMPLER IS A TILE (Ek, 2026-09-22: "make the sampler a legit bench
+  // tile as well"), so this row obeys the rail's one rule: a click BENCHES it
+  // and opens its sheet, it does not perform it. Swapping the material the
+  // brush inks from is a PRESS — hold it for one stroke, toggle it for a few —
+  // and a press belongs under a key, which means the palette. `A` on the bench
+  // holds it while you are looking at the library.
+  //
+  // The half moon is the BENCH's, like every other row in this rail, and it is
+  // the ONLY mark: whether the file is under the brush right now is performance
+  // state, and it is read where performance lives — the palette tile lights,
+  // and this sheet's head says it in words. A second mark in this gutter is the
+  // in-hand line, deleted the same morning for the same reason.
+  const benched = !!S._benchIs?.('sampler');
+  const html = `<button class="trow trow--radio src-tile src-sampler${benched ? ' on' : ''}"` +
+          ` data-src="sampler" data-sel="radio"` +
+          ` style="--c:${SRC_HUE};--eng:${SRC_HUE}" aria-pressed="${benched}"` +
+          ` title="the sampler — paint from a file instead of the mic; any brush inks from the current take` +
+          ` · click to open its library · hold A to try it` +
+          ` · the input itself is chosen in the header">` +
           `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${SRC_G.sampler}</svg>` +
           `<span class="tile-nm src-sampler-lbl"></span></button>`;
-  bar.innerHTML = `<div class="tbx-grp"><span class="tbx-lbl" style="--eng:${SRC_HUE}">source</span>` +
+  bar.innerHTML = `<div class="tbx-grp"><span class="tbx-lbl" style="--eng:${SRC_HUE}">sampler</span>` +
                   `<div class="tbx-tiles">${html}</div></div>`;
-  _builtCount = n;
   refreshSourceTiles();
 }
 
-// In-place refresh: selection classes, sampler label/colour, capture state.
-// Cheap (class toggles + one text write) — safe on the chrome's 5 Hz tick,
-// where it also self-heals a channel-count change into a full rebuild.
+// In-place refresh: the switch, the take's name, the capture state. Cheap
+// (class toggles + one text write) — safe on the chrome's 5 Hz tick.
 export function refreshSourceTiles() {
+  // The park switch follows S whoever set it (Settings › Tools › Sampler).
+  const park = document.getElementById('setSamplerOn');
+  if (park) park.checked = !!S.samplerEnabled;
   const bar = document.getElementById('srcBar');
   if (!bar) return;
-  if (_liveCount() !== _builtCount) { renderSourceTiles(); return; }
-  const liveSel = S.sourceKind === 'live';
-  const selCh   = S.mainInputChannel ?? 0;
-  bar.querySelectorAll('[data-src-ch]').forEach(el => {
-    el.classList.toggle('on', liveSel && parseInt(el.dataset.srcCh, 10) === selCh);
-  });
   const smp = bar.querySelector('.src-sampler');
   if (smp) {
-    smp.classList.toggle('on', S.sourceKind === 'sampler');
+    const benched = !!S._benchIs?.('sampler');
+    smp.classList.toggle('on', benched);           // the bench's moon
+    smp.setAttribute('aria-pressed', String(benched));
     smp.classList.toggle('capturing', !!S.isSamplerCapturing);
     const lbl = smp.querySelector('.src-sampler-lbl');
     if (lbl) lbl.textContent = S.isSamplerCapturing ? '● rec' : _samplerLabel();
@@ -128,8 +134,15 @@ export function renderSamplerSheet() {
     // What it said is in the empty state and each row's title.
     // The rail is 352px at the common window: name + line + two pills is
     // all it holds, so the pills are short and the tooltips carry the rest.
-    `<div class="ds-head"><b style="color:#7abcbc">sampler</b>` +
-    `<span title="any brush paints from the current take while the sampler is the source">source</span>` +
+    // THE SOURCE HUE, from the token — not the teal this head was hardcoded to
+    // (Ek, 2026-09-22: "the sampler colour should be blue like in the first
+    // left rail"). The rail, the tab, the bench tile and the palette tile all
+    // read `--eng-source`; this was the one surface still speaking for itself.
+    `<div class="ds-head"><b style="color:var(--eng-source)">sampler</b>` +
+    // WHAT IS UNDER THE BRUSH, in words — the one line every engine page has,
+    // spent on the fact the rail row stopped claiming (2026-09-22).
+    `<span title="press the sampler tile — from the palette, or hold A while it is on the bench — to swap what the brush inks from">` +
+    `${S.sourceKind === 'sampler' ? 'under the brush' : 'the mic is live'}</span>` +
     `<button type="button" class="ds-editbtn ${S.isSamplerCapturing ? 'on' : ''}" id="srcRecBtn"` +
     ` title="${S.isSamplerCapturing ? 'stop recording' : 'record the input into a new take'}">` +
     `${S.isSamplerCapturing ? '\u25a0 stop' : '\u25cf rec'}</button>` +
@@ -248,34 +261,14 @@ export function initSourceTiles() {
   bar.addEventListener('mousedown', e => e.stopPropagation());
 
   bar.addEventListener('click', e => {
-    const ch  = e.target.closest('[data-src-ch]');
     const smp = e.target.closest('.src-sampler');
-    if (!ch && !smp) return;
-    const design = document.body.classList.contains('props-open');
-    if (S.isPainting || S.isRecording || S.isSamplerCapturing) {
-      S._samplerRefused?.('mid-stroke'); return;
-    }
-    if (smp) {
-      S._samplerSelectSource?.('sampler');
-      S._openProps?.('sampler', 'source');
-      renderSamplerSheet();
-    } else {
-      const i = parseInt(ch.dataset.srcCh, 10);
-      // The one owner of the channel-change path (rewires engine + meters).
-      const sel = document.getElementById('asInputChannel');
-      if (sel && sel.value !== String(i)) {
-        sel.value = String(i);
-        sel.dispatchEvent(new Event('change'));
-      }
-      S._samplerSelectSource?.('live');
-      // A live channel has no sheet of its own (see the note above), so
-      // whatever sheet was standing belongs to a tool you just navigated away
-      // from — leaving it up says the rail is showing something it is not
-      // (Ek, 2026-08-30: "in 1 should have no engine sheet out, it should
-      // close whatever sheet is out when i select in 1"). The tool RAIL stays,
-      // because that is the list you are picking from.
-      S._closeProps?.();
-    }
+    if (!smp) return;
+    // SELECTING IS NOT PERFORMING. The click benches the tile and opens the
+    // library; what is under the brush does not change, and nothing here can
+    // be refused mid-stroke because nothing here touches the engine.
+    S._setBench?.('sampler');
+    S._openProps?.('sampler', 'source');
+    renderSamplerSheet();
     refreshSourceTiles();
   });
 
@@ -287,6 +280,12 @@ export function initSourceTiles() {
     if (!document.body.classList.contains('props-open')) return;
     if (document.querySelector('#propRail .src-sheet')) renderSamplerSheet(); };
   S._refreshSourceTiles = refreshSourceTiles;
+  // Settings › Tools › Sampler — the park switch (sampler.js setSamplerEnabled).
+  const on = document.getElementById('setSamplerOn');
+  if (on) {
+    on.checked = !!S.samplerEnabled;
+    on.addEventListener('change', () => { S._setSamplerEnabled?.(on.checked); on.checked = !!S.samplerEnabled; });
+  }
   // Visible refusal: flash the strip.
   S._samplerRefused = () => {
     bar.classList.remove('flash'); void bar.offsetWidth; bar.classList.add('flash');

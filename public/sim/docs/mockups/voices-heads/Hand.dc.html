@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The hand and the strip</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0b0a09;font-family:'Urbanist','Inter','Helvetica Neue',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#e8a030}a:hover{color:#f2b95c}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer}
+.cell{display:flex;flex-direction:column;align-items:center;gap:6px}
+.tile{width:53px;height:53px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:1px solid rgba(255,240,224,0.170);background:rgba(255,240,224,0.030)}
+.vtag{font-size:9px;letter-spacing:0.06em;line-height:1;color:#aba59d}
+.cap{height:15px;min-width:17px;padding:0 4px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border-radius:3px;border:1px solid rgba(255,240,224,0.130);font-size:9.5px;color:#938d83}
+</style>
+</helmet>
+<div style="width: 1000px; height: 360px; box-sizing: border-box; padding: 26px 30px; display: flex; flex-direction: column; gap: 18px; background: #0b0a09;">
+
+  <div style="display: flex; flex-direction: column; gap: 3px;">
+    <div style="font-size: 15.68px; color: #e4ddd0; font-weight: 600;">The hand and the strip</div>
+    <div style="font-size: 12.48px; color: #938d83;">The palette does not move. Each position still fires one thing from one key &#8212; it just stops hiding what that thing is.</div>
+  </div>
+
+  <div style="display: flex; align-items: flex-start; gap: 11px; padding: 13px; border-radius: 12px; background: #121010; border: 1px solid rgba(255,240,224,0.080); width: fit-content;">
+
+    <div class="cell">
+      <div style="width: 181px; height: 53px; box-sizing: border-box; display: flex; align-items: center; gap: 10px; padding: 0 14px; border-radius: 10px; border: 1px solid rgba(255,240,224,0.240); background: rgba(255,240,224,0.065);">
+        <span style="display: flex; width: 22px; height: 22px; color: #e8a030;"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true"><circle cx="5" cy="4" r="2.1"/><circle cx="6.9" cy="12.7" r="2.1"/><circle cx="11.9" cy="18" r="2.1"/><circle cx="20" cy="20" r="2.1"/></svg></span>
+        <span style="display: flex; flex-direction: column; gap: 1px;">
+          <span style="font-size: 12.48px; color: #e4ddd0; line-height: 1.1;">plain</span>
+          <span style="font-size: 11.04px; color: #e8a030; line-height: 1.1;">wash</span>
+        </span>
+        <span style="flex-grow: 1;"></span>
+        <span style="display: flex; width: 15px; height: 15px; color: #e8a030;"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8.5" r="5"/><path d="M12 13.5v7.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></span>
+      </div>
+      <div style="display: flex; gap: 5px;">
+        <span class="cap" style="min-width: 74px;">space</span>
+        <span class="cap">click</span>
+      </div>
+    </div>
+
+    <div class="cell">
+      <div class="tile" style="border-radius: 10px;">
+        <span style="display: flex; width: 20px; height: 20px; color: #e8a030;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="5" cy="4" r="2.1"/><circle cx="6.9" cy="12.7" r="2.1"/><circle cx="11.9" cy="18" r="2.1"/><circle cx="20" cy="20" r="2.1"/></svg></span>
+        <span class="vtag">dots</span>
+      </div>
+      <span class="cap">1&#8202;&#8226;</span>
+    </div>
+
+    <div class="cell">
+      <div class="tile" style="border-radius: 24px 3px 24px 3px;">
+        <span style="display: flex; width: 20px; height: 20px; color: #f2569e;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+        <span class="vtag">tape</span>
+      </div>
+      <span class="cap">1</span>
+    </div>
+
+    <div class="cell">
+      <div class="tile" style="border-radius: 24px 3px 24px 3px;">
+        <span style="display: flex; width: 20px; height: 20px; color: #f2569e;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+        <span class="vtag">tape</span>
+        <span style="position: relative; top: -33px; left: 17px; display: flex; width: 11px; height: 11px; color: #f2569e; margin-bottom: -11px;"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8.5" r="5"/><path d="M12 13.5v7.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></span>
+      </div>
+      <span class="cap">2</span>
+    </div>
+
+    <div class="cell">
+      <div class="tile" style="border-radius: 24px 3px 24px 3px;">
+        <span style="display: flex; width: 20px; height: 20px; color: #f2569e;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+        <span class="vtag">slow</span>
+        <span style="position: relative; top: -33px; left: 17px; display: flex; width: 11px; height: 11px; color: #f2569e; margin-bottom: -11px;"><svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8.5" r="4"/><circle cx="12" cy="8.5" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 15.5v5.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></span>
+      </div>
+      <span class="cap">3</span>
+    </div>
+
+    <div class="cell">
+      <div class="tile" style="border-radius: 10px;">
+        <span style="display: flex; width: 20px; height: 20px; color: #be7ace;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 19H9l-4.2-4.2a1.6 1.6 0 010-2.3l7.5-7.5a1.6 1.6 0 012.3 0l4.6 4.6a1.6 1.6 0 010 2.3L13 19" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg></span>
+        <span class="vtag">top</span>
+      </div>
+      <span class="cap">4</span>
+    </div>
+
+    <div class="cell">
+      <div class="tile" style="border-radius: 999px;">
+        <span style="display: flex; width: 20px; height: 20px; color: #cfc7bc;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8.5" r="5"/><path d="M12 13.5v7.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></span>
+      </div>
+      <span class="cap">&#8595;</span>
+    </div>
+
+    <div class="cell">
+      <div class="tile" style="border-radius: 999px;">
+        <span style="display: flex; width: 20px; height: 20px; color: #cfc7bc;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="8.5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 12.7v8.3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M4.5 19.5l15-15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>
+      </div>
+      <span class="cap">&#8593;</span>
+    </div>
+
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 22px;">
+    <span style="font-size: 10.24px; letter-spacing: 0.14em; text-transform: uppercase; color: #857e74;">on end</span>
+    <span style="display: flex; align-items: center; gap: 7px; font-size: 11.04px; color: #aba59d;">
+      <span style="display: flex; width: 14px; height: 14px; color: #776f66;"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="12" cy="8.5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 12.7v8.3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></span>
+      <span>no &#8212; it stays as material</span>
+    </span>
+    <span style="display: flex; align-items: center; gap: 7px; font-size: 11.04px; color: #aba59d;">
+      <span style="display: flex; width: 14px; height: 14px; color: #e4ddd0;"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8.5" r="5"/><path d="M12 13.5v7.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></span>
+      <span>loop &#8212; it pins itself and sings</span>
+    </span>
+    <span style="display: flex; align-items: center; gap: 7px; font-size: 11.04px; color: #aba59d;">
+      <span style="display: flex; width: 14px; height: 14px; color: #e4ddd0;"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="12" cy="8.5" r="4"/><circle cx="12" cy="8.5" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 15.5v5.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg></span>
+      <span>join &#8212; it enters the nearest running loop</span>
+    </span>
+  </div>
+
+  <div style="display: flex; gap: 28px; font-size: 11.04px; color: #857e74; line-height: 1.6;">
+    <span>Shape is the verb. Hue is the engine. The glyph is the head, the word is the voice.</span>
+    <span style="color: #938d83;">Keeps is the fifth channel, and it is the one you cannot recover any other way &#8212; so the hand wears it too.</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1000,"height":360}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

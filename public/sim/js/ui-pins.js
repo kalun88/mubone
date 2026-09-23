@@ -17,8 +17,9 @@
 //     pin's slot colour until 2026-09-17, and Ek does not read it — "when i'm
 //     playing live i'm not keeping track of those colours".
 //   · the NUMBER is the identity — the same digit the sphere's anchor wears —
-//     in the ENGINE hue (gold = cloud, pink = loop). Pressing it folds the
-//     pin's own settings open: its two ramps, `fadeIn` / `fadeOut`.
+//     in the ENGINE hue (gold = cloud, pink = loop). The loop an overdub would
+//     join wears a ring round it, the O the tape tile's flag wears. A pin has
+//     no settings of its own: In and Out are Settings › Pins, live (pins.js).
 //   · the PLAYHEAD keeps running through a mute. That is what a DJ mute is
 //     (js/pins.js), and the bar is where you see it.
 //   · M and S are as before — every pin has the same two the bus has, and
@@ -32,11 +33,12 @@
 // same key `selectedPinSlot` uses, and row one wears the half moon. Under
 // `nearest` in focus the rail is a proximity meter: the loudest bar at the top.
 //
-// THE MODE BAR holds the four pin settings you switch mid-set — blend, tether,
-// sort, curve — each a second door onto the S field Settings → Pins already
-// holds (the slot count set the precedent, 2026-09-14). Both doors read the
-// same field; the rail polls it on its own tick so an OSC or settings-page
-// change lands here without a hook.
+// THE MODE BAR holds the two pin settings you switch mid-set — follow and sort
+// (the crossfade curve went to Settings → Pins, 2026-09-23) — each a second door onto an S field OSC and the keys also write (the
+// slot count set the precedent, 2026-09-14). The rail polls the field on its
+// own tick so an OSC or key change lands here without a hook. FOLLOW is
+// `S.commitPlayback === 'focus'`, drawn as the switch it is (2026-09-22 night);
+// tether left the same night — a pin is never gated by the radius.
 //
 // The GROUPS are the two BUSSES at the foot — clouds, loops — with their M and
 // S, and a fill that is their members' mean level (derived, no new state).
@@ -51,7 +53,7 @@
 //
 // Rendering only. All behaviour is js/pins.js. Two clocks: the LIST is rebuilt
 // on its own ~6 Hz timer when a change signature moves (a pin arriving, a flag,
-// a fold) — never per tick; the LEVELS, playheads and order are written by a
+// a flag) — never per tick; the LEVELS, playheads and order are written by a
 // requestAnimationFrame loop that runs only while the rail is open and touches
 // nothing but transforms and a few text nodes. The grain scheduler shares this
 // thread (docs/RULINGS.md "Render path"); nothing here allocates per frame.
@@ -62,19 +64,11 @@ import { GROUPS, toggleGroup, toggleSolo, pinsIn, togglePinMute, togglePinSolo,
          selectedPinSlot, applyMix, isPinLeaving, groupOf, isPinAudible, pinAnchorInto } from './pins.js';
 import { angleBetweenSphere } from './grain.js';
 
-// The overdub tool's own glyph (js/tiles.js G.overdub): THE MASTER IS MARKED
-// WITH THE TOOL'S OWN MARK (Ek, 2026-09-15) — the moon says "unpin takes this",
-// this says "a dub would join this", a different question about a different
-// pin, and a hue could not carry it on a track already in the tape hue.
-const OVD_G = '<path d="M12 4a8 8 0 1 1-7.1 4.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M12 8.5a3.5 3.5 0 1 1-3.1 1.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>';
-
 // The rail's vertical rhythm, in px, mirrored from style.css: the layout is
 // done by transform here, so the numbers the stylesheet draws are repeated
 // once, in one place.
 const BAR_H = 32;            // the track bar — the .tc-icon precedent (GUI-BUILD-SHEET § 4)
 const ROW_GAP = 6;           // --sp-3, between bars
-const FOLD_ROW = 24;         // one fold row — the kit's 24px control height
-const FOLD_PAD = 4;          // --sp-0 top + the fold's gap
 const SEL_INSET = 2;         // the selected frame sits this far outside row one (.lyr-sel)
 
 // THE FADER LAW (Ek, 2026-09-16: "i see the mixer as increasing or decreasing
@@ -102,18 +96,6 @@ function _pinName(c) {
   return (c.type === 'cloud' ? 'cloud ' : 'loop ') + (c.slotIndex + 1);
 }
 
-function _fmtS(v) {
-  v = +v || 0;
-  return v < 1 ? Math.round(v * 1000) + ' ms' : v.toFixed(1) + ' s';
-}
-/** "2.5", "2.5s", "250ms", "250 ms" → seconds. NaN when it is not a time. */
-function _parseS(t) {
-  const m = String(t).trim().toLowerCase().match(/^(-?\d*\.?\d+)\s*(ms|s)?$/);
-  if (!m) return NaN;
-  const n = parseFloat(m[1]);
-  return m[2] === 'ms' ? n / 1000 : n;
-}
-
 function _selected() {
   return selectedPinSlot(S._frameCursorLon ?? 0, S._frameCursorLat ?? 0);
 }
@@ -139,7 +121,7 @@ function _sig() {
   for (const c of S.commitSlots) {
     // An overdub counts as a letter: 'r' while its take records, 'B' once
     // sealed — the canvas is redrawn at both, so a layer lands where it is.
-    s += c ? `${c.slotIndex}${c.type[0]}${c.mute ? 'm' : ''}${c.solo ? 's' : ''}${(c.overdubs || []).map(o => o.buffer ? 'B' : 'r').join('')}${c._railOpen ? 'o' : ''}${isPinLeaving(c) ? 'x' : ''}|` : '.';
+    s += c ? `${c.slotIndex}${c.type[0]}${c.mute ? 'm' : ''}${c.solo ? 's' : ''}${(c.overdubs || []).map(o => o.buffer ? 'B' : 'r').join('')}${isPinLeaving(c) ? 'x' : ''}|` : '.';
   }
   return s;
 }
@@ -172,12 +154,26 @@ const _anch = [0, 0];
 // the buffer, the region and the width), redrawn only when the bar is
 // rebuilt or resized — nothing per frame. A cloud has no timeline and keeps
 // its scatter.
+/** The samples a buffer holds, whichever shape it is: a TAKE (`js/take.js`,
+ *  `{ data, sampleRate }`) or an AudioBuffer (a pinned loop's — ui-presets.js
+ *  buildLoopPayload cuts a crossfaded region with createBuffer; an overdub's
+ *  sealed take is one too). Ek, 2026-09-23: "for loops i dont see the actual
+ *  waveform … it's just a straight thin boring line" — since the take landed
+ *  (2026-09-17) this read `buf.data` alone, which an AudioBuffer has not, so
+ *  every loop drew the no-take fallback. */
+function _samplesOf(buf) {
+  if (!buf) return null;
+  if (buf.data) return buf.data;
+  if (typeof buf.getChannelData === 'function' && buf.numberOfChannels > 0) return buf.getChannelData(0);
+  return null;
+}
 function _peaks(host, buf, t0, span, cols) {
   const w = host._wave;
   if (w && w.buf === buf && w.t0 === t0 && w.span === span && w.cols === cols) return w.peaks;
   const peaks = new Float32Array(cols);
-  if (buf?.data && cols > 0) {
-    const d = buf.data, sr = buf.sampleRate;
+  const d = _samplesOf(buf);
+  if (d && cols > 0) {
+    const sr = buf.sampleRate;
     const s0 = Math.max(0, Math.floor(t0 * sr)), s1 = Math.min(d.length, Math.ceil((t0 + span) * sr));
     const step = (s1 - s0) / cols;
     for (let i = 0; i < cols; i++) {
@@ -249,7 +245,7 @@ function _drawMaterial(c, cv) {
       // The take's own envelope, one column per bar column — its length in
       // columns is its length in the cycle.
       const tcols = Math.max(1, Math.round(takeDur / cyc * cols));
-      const peaks = ov.buffer?.data ? _peaks(ov, ov.buffer, 0, takeDur, tcols) : null;
+      const peaks = _samplesOf(ov.buffer) ? _peaks(ov, ov.buffer, 0, takeDur, tcols) : null;
       ctx.globalAlpha = 0.5;
       for (let n = 0, t0 = 0; t0 < takeDur && n < 8; n++, t0 += cyc, L++) {
         const t1 = Math.min(takeDur, t0 + cyc), y = rowY(L);
@@ -273,7 +269,7 @@ function _drawMaterial(c, cv) {
     // The master's envelope over its layers.
     ctx.globalAlpha = 0.95;
     const buf = c.buffer ?? c.liveBuffer;
-    if (buf?.data) _envelope(ctx, _peaks(c, buf, t0, span, cols), 0, cols, x0, yM, ampM);
+    if (_samplesOf(buf)) _envelope(ctx, _peaks(c, buf, t0, span, cols), 0, cols, x0, yM, ampM);
     else { ctx.beginPath(); ctx.rect(x0, yM - 0.5, xs, 1); ctx.fill(); }
     ctx.globalAlpha = 1;
     return;
@@ -370,43 +366,27 @@ function _wireSlotMax() {
 
 let _modesShown = '';
 function syncModes() {
-  const blend = S.commitPlayback ?? 'all', tether = !!S.commitTether;
-  const sort = S.selectionMode ?? 'nearest', xf = Math.max(0, Math.min(1, S.commitXfade ?? 0.5));
-  const key = `${blend}${tether ? 't' : ''}${sort}${xf.toFixed(2)}`;
+  const follow = S.commitPlayback === 'focus';
+  const sort = S.selectionMode ?? 'nearest';
+  const key = `${follow ? 'f' : ''}${sort}`;
   if (key === _modesShown) return;
   _modesShown = key;
-  document.querySelectorAll('#lyrBlend [data-v]').forEach(b => b.classList.toggle('active', b.dataset.v === blend));
-  document.querySelectorAll('#lyrSort [data-v]').forEach(b => b.classList.toggle('active', b.dataset.v === sort));
-  const sw = document.getElementById('lyrTether');
-  if (sw) { sw.classList.toggle('on', tether); sw.setAttribute('aria-pressed', String(tether)); }
-  const sl = document.getElementById('lyrXfade');
-  if (sl && document.activeElement !== sl) sl.value = String(xf);
-  const v = document.getElementById('lyrXfadeV');
-  if (v) v.textContent = Math.round(xf * 100) + '%';
-  // The curve has no say outside focus: the WHOLE row steps down, label too
-  // (Ek, 2026-09-17: grey it out or hide it).
-  sl?.closest('.lyr-mrow')?.classList.toggle('off', blend !== 'focus');
+  const sw = document.getElementById('lyrFollow');
+  if (sw) { sw.classList.toggle('on', follow); sw.setAttribute('aria-pressed', String(follow)); }
+  // The tracks' titles say who holds the fader, so a follow flip rebuilds them.
+  if (_followShown !== follow) { _followShown = follow; S._pinsDirty = true; }
+  // `.on`: the sheet's capsule kit, since the rows became the tool rail's (2026-09-22 night).
+  document.querySelectorAll('#lyrSort [data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === sort));
 }
 
+let _followShown = null;
 function _wireModes() {
-  document.querySelectorAll('#lyrBlend [data-v]').forEach(b => b.addEventListener('click', () => {
-    S.commitPlayback = b.dataset.v; S._syncImprovUI?.(); syncModes();
-  }));
+  document.getElementById('lyrFollow')?.addEventListener('click', () => {
+    S.commitPlayback = S.commitPlayback === 'focus' ? 'all' : 'focus'; S._syncImprovUI?.(); syncModes();
+  });
   document.querySelectorAll('#lyrSort [data-v]').forEach(b => b.addEventListener('click', () => {
     S.selectionMode = b.dataset.v; S._syncImprovUI?.(); syncModes(); S._pinsDirty = true;
   }));
-  document.getElementById('lyrTether')?.addEventListener('click', () => {
-    S.commitTether = !S.commitTether; S._syncImprovUI?.(); syncModes();
-  });
-  const sl = document.getElementById('lyrXfade');
-  sl?.addEventListener('input', () => {
-    S.commitXfade = parseFloat(sl.value); S._syncImprovUI?.(); _modesShown = ''; syncModes();
-  });
-  // Double-click resets a slider to its default — kit-wide (GUI-BUILD-SHEET § 5).
-  // The slider is written HERE: syncModes leaves a focused slider alone so it
-  // never fights a drag, and a double-click leaves it focused — so the number
-  // reset and the knob stayed put (Ek, 2026-09-17).
-  sl?.addEventListener('dblclick', () => { S.commitXfade = 0.5; sl.value = '0.5'; S._syncImprovUI?.(); _modesShown = ''; syncModes(); });
 }
 
 // ── The tracks ──────────────────────────────────────────────────────────────
@@ -432,18 +412,13 @@ function _ordered() {
   return rows.map(r => r[1]);
 }
 
-function _foldH(c) {
-  if (!c._railOpen) return 0;
-  return FOLD_PAD + 2 * FOLD_ROW + 2;   // in, out — and the fold's gap between them
-}
-
 /** Place the rows. Transforms only; the list's min-height follows. */
 function _layout(force) {
   const box = document.getElementById('lyrList');
   if (!box) return;
   const rows = _ordered();
   const sel = _selected(), dub = _dubMaster();
-  const key = rows.map(c => c.slotIndex + (c._railOpen ? 'o' : '')).join(',') + `|${sel}|${dub}`;
+  const key = rows.map(c => c.slotIndex).join(',') + `|${sel}|${dub}`;
   if (!force && key === _lastOrder) return;
   _lastOrder = key;
   let y = 0;
@@ -453,33 +428,11 @@ function _layout(force) {
     el.style.transform = `translateY(${y}px)`;
     el.classList.toggle('sel', c.slotIndex === sel);
     el.classList.toggle('dub', c.slotIndex === dub);
-    const fh = _foldH(c);
-    const fold = el.querySelector('.lyr-fold');
-    if (fold) fold.style.height = fh + 'px';
-    y += BAR_H + fh + ROW_GAP;
+    y += BAR_H + ROW_GAP;
   }
-  // The frame holds row one, fold and all: it grows with the fold the same
-  // way the rows below move for it.
   const frame = box.querySelector('.lyr-sel');
-  if (frame) frame.style.height = (BAR_H + (rows[0] ? _foldH(rows[0]) : 0) + 2 * SEL_INSET) + 'px';
+  if (frame) frame.style.height = (BAR_H + 2 * SEL_INSET) + 'px';
   box.style.minHeight = rows.length ? (SEL_ROOM + y - ROW_GAP + 2 * ROW_GAP) + 'px' : '';
-}
-
-function _syncFold(c) {
-  const el = c._railEl; if (!el) return;
-  el.querySelectorAll('.lyr-frow').forEach(row => {
-    const k = row.dataset.k, sl = row.querySelector('.grain-slider'), nb = row.querySelector('.grain-numbox');
-    const v = +c[k] || 0;
-    if (sl && document.activeElement !== sl) sl.value = String(v);
-    if (nb && document.activeElement !== nb) nb.value = _fmtS(v);
-  });
-}
-
-function _foldRow(k, label, tip) {
-  return `<div class="lyr-frow" data-k="${k}" title="${tip}">` +
-    `<span class="lyr-eb">${label}</span>` +
-    `<input type="range" class="grain-slider" min="0" max="10" step="0.01" value="0" aria-label="${label}">` +
-    `<input type="text" class="grain-numbox" value="0 ms" aria-label="${label}, typeable"></div>`;
 }
 
 export function renderPinsRail(selected) {
@@ -504,37 +457,50 @@ export function renderPinsRail(selected) {
     if (!c) continue;
     const g = groupOf(c), nm = _pinName(c);
     const n = c.overdubs?.length | 0;
-    out += `<div class="lyr-trk${c._railOpen ? ' open' : ''}" style="--c:var(${g?.hue ?? '--eng-grain'})" data-slot="${c.slotIndex}">` +
-      `<div class="lyr-trk-bar" title="${nm} — drag to set its level">` +
-        `<div class="lyr-fill"></div>` +
-        `<div class="lyr-unity"></div>` +
-        `<button type="button" class="lyr-num" data-fold="${c.slotIndex}" title="${nm} · its own in and out">${c.slotIndex + 1}</button>` +
-        `<div class="lyr-mat"><canvas></canvas></div>` +
-        `<div class="lyr-ph" hidden></div>` +
-        (n ? `<span class="lyr-ovd" title="${n} overdub${n === 1 ? '' : 's'}">${'<i></i>'.repeat(n)}</span>` : '') +
-        `<svg class="lyr-dub" viewBox="0 0 24 24" aria-hidden="true">${OVD_G}</svg>` +
-        `<span class="lyr-db"></span>` +
-        `<div class="lyr-edge"></div>` +
+    // THE BOX IS THE FADER AND NOTHING ELSE (Ek, 2026-09-23: "the box for the
+    // track should be the fader (full) and wavelength … M S id and the loop
+    // select icon should be outside"). The number, M and S sat ON the fader
+    // and the dub glyph, coming and going as the dub target moved, squeezed
+    // the material by 1.4rem each time. Now the row is three columns —
+    // number, box, M S — and the box holds only what the fader is: its level,
+    // the material, the playhead. The dub target is a RING round its number
+    // (`.lyr-trk.dub`), so marking it moves nothing.
+    out += `<div class="lyr-trk" style="--c:var(${g?.hue ?? '--eng-grain'})" data-slot="${c.slotIndex}">` +
+      `<div class="lyr-trk-row">` +
+        `<span class="lyr-num" title="${nm}">${c.slotIndex + 1}</span>` +
+        `<div class="lyr-trk-bar" title="${S.commitPlayback === 'focus' ? `${nm} — follow is on: the cursor sets its level` : `${nm} — drag to set its level`}">` +
+          `<div class="lyr-fill"></div>` +
+          `<div class="lyr-unity"></div>` +
+          `<div class="lyr-mat"><canvas></canvas></div>` +
+          `<div class="lyr-ph" hidden></div>` +
+          (n ? `<span class="lyr-ovd" title="${n} overdub${n === 1 ? '' : 's'}">${'<i></i>'.repeat(n)}</span>` : '') +
+          `<span class="lyr-db"></span>` +
+          `<div class="lyr-edge"></div>` +
+        `</div>` +
         `<span class="lyr-ms">` +
           `<button type="button" class="lyrmute" data-pmute="${c.slotIndex}" aria-pressed="${!!c.mute}" title="${c.mute ? 'unmute' : 'mute'} ${nm} — the playhead keeps running">M</button>` +
           `<button type="button" class="lyrsolo" data-psolo="${c.slotIndex}" aria-pressed="${!!c.solo}" title="solo ${nm}">S</button>` +
         `</span>` +
       `</div>` +
-      `<div class="lyr-fold">` +
-        _foldRow('fadeIn', 'in', 'in — how this pin comes up: on pin, and on unmute') +
-        _foldRow('fadeOut', 'out', 'out — how this pin leaves: on unpin, and on mute') +
-      `</div>` +
     `</div>`;
   }
   box.innerHTML = out;
 
+  // A REBUILT ROW LANDS, IT DOES NOT SLIDE (Ek, 2026-09-23: "anytime i press
+  // mute or solo for pinned items the whole order jumps around even when the
+  // order hasn't changed"). Mute and solo are in `_sig`, so they rebuild the
+  // rows — fresh elements, each born at translateY(0) with the kit's
+  // transform transition on, so every one of them animated from the top of
+  // the list to its place. The order had not moved; the rows had. The first
+  // layout happens with the transition off, and the next frame hands it back
+  // so an order that really changes under the cursor still slides.
   for (const c of S.commitSlots) {
     if (!c) continue;
     const el = box.querySelector(`.lyr-trk[data-slot="${c.slotIndex}"]`);
     c._railEl = el;
     if (!el) continue;
+    el.style.transition = 'none';
     _wireTrack(c, el);
-    _syncFold(c);
   }
   // The canvases need their laid-out width; one frame later they have it.
   requestAnimationFrame(() => {
@@ -544,6 +510,9 @@ export function renderPinsRail(selected) {
     }
   });
   _layout(true);
+  // Commit the untransitioned positions before the transition comes back.
+  void box.offsetHeight;
+  requestAnimationFrame(() => { for (const c of S.commitSlots) if (c?._railEl) c._railEl.style.transition = ''; });
   renderBusses();
 }
 
@@ -553,7 +522,7 @@ function _wireTrack(c, el) {
   // per pin per rAF; the material's width is read on the 160 ms tick, never
   // in the frame, so a transform write is not followed by a forced layout.
   c._railRefs = {
-    fill: el.children[0].children[0],        // .lyr-trk-bar > .lyr-fill
+    fill: bar.querySelector('.lyr-fill'),
     edge: el.querySelector('.lyr-edge'),
     db:   el.querySelector('.lyr-db'),
     ph:   el.querySelector('.lyr-ph'),
@@ -562,19 +531,18 @@ function _wireTrack(c, el) {
   c._railMatW = c._railRefs.mat?.clientWidth || 0;
   el.querySelector('[data-pmute]')?.addEventListener('click', e => { e.stopPropagation(); togglePinMute(c); });
   el.querySelector('[data-psolo]')?.addEventListener('click', e => { e.stopPropagation(); togglePinSolo(c); });
-  el.querySelector('[data-fold]')?.addEventListener('click', e => {
-    e.stopPropagation();
-    // One fold open at a time — the rail is read at a glance.
-    for (const o of S.commitSlots) if (o && o !== c) o._railOpen = false;
-    c._railOpen = !c._railOpen;
-    S._pinsDirty = true;
-  });
 
-  // THE WHOLE BAR IS THE FADER. A press anywhere on it that is not a button
+  // THE WHOLE BAR IS THE FADER. A press anywhere on it
   // sets the level to where the finger is; a drag rides it. Writes the pin's
   // `level` (grain.js `_loopGain`) — its own number since 2026-09-16, 1 at
   // pin time, over the block's volume rather than into it: a loop's gain
   // node follows the product, a cloud's seed gain carries it.
+  // NOT UNDER FOLLOW (Ek, 2026-09-22 night: "if i'm on follow, the cursor
+  // distance controls the mixer so it should be disallowed right?"). The bar
+  // still shows level × weight moving, in the sensor hue; a hand on it would
+  // be a second hand on a fader the cursor holds. The level the hand set
+  // before is kept and comes back with follow off.
+  const handHolds = () => S.commitPlayback !== 'focus';
   let dragging = false;
   const setFromEvent = e => {
     const r = bar.getBoundingClientRect();
@@ -582,7 +550,7 @@ function _wireTrack(c, el) {
     c.level = +_levelOf(pos).toFixed(3);
   };
   bar.addEventListener('pointerdown', e => {
-    if (e.button !== 0 || e.target.closest('.lyr-num, .lyrmute, .lyrsolo')) return;
+    if (e.button !== 0 || !handHolds()) return;
     dragging = true; c._railTouched = true;
     bar.setPointerCapture?.(e.pointerId);
     setFromEvent(e);
@@ -594,28 +562,8 @@ function _wireTrack(c, el) {
   bar.addEventListener('pointercancel', end);
   // Double-click resets a fader to unity — the kit's rule for a slider.
   bar.addEventListener('dblclick', e => {
-    if (e.target.closest('.lyr-num, .lyrmute, .lyrsolo')) return;
+    if (!handHolds()) return;
     c.level = 1;
-  });
-
-  // The fold: in and out. The slider and the numbox are one value, typeable
-  // either way; double-click on the slider is the pins' default for a new pin.
-  el.querySelectorAll('.lyr-frow').forEach(row => {
-    const k = row.dataset.k, sl = row.querySelector('.grain-slider'), nb = row.querySelector('.grain-numbox');
-    const dflt = () => k === 'fadeIn' ? (S.commitAttack || 0)
-                     : (c.type === 'loop' ? Math.max(S.commitRelease || 0, (S.loopFadeTimeMs || 15) / 1000) : (S.commitRelease || 0));
-    sl?.addEventListener('input', () => { c[k] = +(+sl.value).toFixed(2); _syncFold(c); });
-    sl?.addEventListener('dblclick', () => { c[k] = dflt(); _syncFold(c); });
-    const commit = () => {
-      const v = _parseS(nb.value);
-      if (Number.isFinite(v)) c[k] = Math.max(0, Math.min(10, +v.toFixed(2)));
-      _syncFold(c);
-    };
-    nb?.addEventListener('blur', commit);
-    nb?.addEventListener('keydown', e => {
-      if (e.key === 'Enter') { commit(); nb.blur(); }
-      else if (e.key === 'Escape') { _syncFold(c); nb.blur(); }
-    });
   });
 }
 
@@ -628,9 +576,14 @@ function renderBusses() {
   for (const g of GROUPS) {
     const ps = pinsIn(g);
     if (!ps.length) { g._railEl = null; continue; }
-    out += `<div class="lyr-bus-row${g.solo ? ' soloed' : ''}" style="--c:var(${g.hue})" data-bus="${g.key}">` +
-      `<div class="lyr-fill"></div>` +
-      `<span class="lyr-bus-nm">${g.name}<b>${ps.length}</b></span>` +
+    // The track's three columns, so a bus's box stands under the tracks' boxes
+    // and its M S under theirs; it has no number, so that cell is empty.
+    out += `<div class="lyr-bus-line" style="--c:var(${g.hue})" data-bus="${g.key}">` +
+      `<span></span>` +
+      `<div class="lyr-bus-row${g.solo ? ' soloed' : ''}">` +
+        `<div class="lyr-fill"></div>` +
+        `<span class="lyr-bus-nm">${g.name}<b>${ps.length}</b></span>` +
+      `</div>` +
       `<span class="lyr-ms">` +
         `<button type="button" class="lyrmute" data-mute="${g.key}" aria-pressed="${!!g.muted}" title="${g.muted ? 'unmute' : 'mute'} every pinned ${g.name.slice(0, -1)}">M</button>` +
         `<button type="button" class="lyrsolo" data-solo="${g.key}" aria-pressed="${!!g.solo}" title="solo the ${g.name}">S</button>` +
@@ -639,6 +592,7 @@ function renderBusses() {
   box.innerHTML = out;
   for (const g of GROUPS) {
     g._railEl = box.querySelector(`[data-bus="${g.key}"]`);
+    g._railFill = g._railEl?.querySelector('.lyr-fill') ?? null;
     g._railEl?.querySelector('[data-mute]')?.addEventListener('click', e => { e.stopPropagation(); toggleGroup(g); });
     g._railEl?.querySelector('[data-solo]')?.addEventListener('click', e => { e.stopPropagation(); toggleSolo(g); });
   }
@@ -722,9 +676,9 @@ function _frame() {
     busSum[c.type] += lv; busN[c.type]++;
   }
   for (const g of GROUPS) {
-    const el = g._railEl; if (!el) continue;
+    const el = g._railFill; if (!el) continue;
     const n = busN[g.key];
-    el.children[0].style.transform = `scaleX(${n ? (busSum[g.key] / n).toFixed(3) : 0})`;
+    el.style.transform = `scaleX(${n ? (busSum[g.key] / n).toFixed(3) : 0})`;
   }
 }
 
@@ -744,6 +698,12 @@ export function initPinsRail() {
   // remember, which is the same rule the pin actions follow.
   document.getElementById('lyrSettings')?.addEventListener('click', () => {
     S._openSettings?.('pins');
+  });
+  // The tool rail's own door, the same ≡ (Ek, 2026-09-23: "the 3 line
+  // hamburger that exists in the pin rail should also exist in the tool rail
+  // to open up its settings page").
+  document.getElementById('toolSettings')?.addEventListener('click', () => {
+    S._openSettings?.('tools');
   });
   document.getElementById('tcRail')?.addEventListener('mousedown', e => e.stopPropagation());
 

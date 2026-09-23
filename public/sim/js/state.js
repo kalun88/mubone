@@ -229,6 +229,12 @@ export const SEED_COLORS = COMMIT_COLORS;
 // Shorter is treated as a stationary drop.
 export const COMMIT_DRAW_THRESHOLD_MS = 200;
 export const MOVING_SEED_THRESHOLD_MS = COMMIT_DRAW_THRESHOLD_MS; // legacy alias
+// THE HAND'S TAP (Ek, 2026-09-21): the spacebar plays the hand two ways, and the
+// press itself says which — a TAP latches it, a HOLD plays it while you hold. It
+// is deliberately the same number as the pin's draw threshold above: "did you
+// tap or hold" is one question, and two different answers to it in one
+// instrument is how a rig starts feeling arbitrary.
+export const HAND_TAP_MS = COMMIT_DRAW_THRESHOLD_MS;
 // ── Performance tuning ────────────────────────────────────────────────────────
 // These were set conservatively during early CPU-load testing. Adjust here if
 // you want to change system-wide behaviour without hunting through call sites.
@@ -754,13 +760,32 @@ export const S = {
   // first pass instead of after it.
   _openStrokes: new Set(),
 
-  // The lens's MODE (2026-09-18, docs/TAPE-STUDY-2026-09.md § 7): 'area' reads
-  // what is inside the radius, 'nearest' the k closest on the whole sphere,
-  // 'stroke' reads nothing on its own — touching a grain stroke launches a
-  // WALKER that plays it along its own path at its own pace (grain.js). It
-  // used to be the boolean `nearestMode`; a pinned cloud's snapshot keeps
-  // that boolean, since a cloud is area or nearest and never a walker.
+  // The lens's MODE — the APERTURE, and the whole of it (2026-09-18,
+  // docs/TAPE-STUDY-2026-09.md § 7): 'area' reads what is inside the radius,
+  // 'nearest' the k closest on the whole sphere. `stroke` was a third value
+  // here until 2026-09-22; whether a touch WALKS a grain stroke is the grain
+  // shape's `on touch` now (`grainWalk`, below), so this says only how a reader
+  // chooses among what is in its reach — the cursor's, and a walker's. It used
+  // to be the boolean `nearestMode`; a pinned cloud's snapshot keeps that
+  // boolean, since a cloud is area or nearest and never a walker.
   lensMode: 'area',
+  // ON TOUCH — the GRAIN SHAPE's answer (Ek, 2026-09-22: "whether the cursor
+  // when it touches a grain walks the stroke or if it just plays what's in
+  // cursor. by default it's cursor … i think it should be a grain shape
+  // param"). It was the lens's `mode: stroke` until then, which made it one
+  // answer for the eye rather than a property of the brush you are holding.
+  // `false` is the cursor: a touch reads what is in reach, as it always has.
+  // AUDITION — the whole instrument is live (Ek, 2026-09-22: "i think we should
+  // add a global mode that's audition. if it's on, that means all the settings
+  // are manipulated live"). Liveness was declared by the PRESS: paint made from
+  // the bench followed the knobs, paint made from the spacebar froze. That tied
+  // a property of the SESSION to a gesture, so you could only get live paint by
+  // playing the one key that is not the instrument. It is a standing answer
+  // instead — one switch above every tool, which is what GLOBAL MODES is for.
+  // Marks already painted keep what they are: a stroke is what it was when it
+  // was made, and the glow says which ones can still move.
+  auditionMode: false,
+  grainWalk: false,
   grainKAllMode: false, // when true: k limit is removed — all particles within radius fire
   grainKSeqMode: false, // when true: step through candidates sequentially by grainStart order
   radiusTooltipUntil: 0, // performance.now() -- show transient radius label until this time
@@ -787,7 +812,7 @@ export const S = {
 
   // ── Recency filter ─────────────────────────────────────────────────────
   // Only granulate the N most recently recorded buffers present in radius.
-  recencyN: 3,               // how many most-recent buffers to allow
+  recencyN: 3,               // depth: how many most-recent STROKES the cursor reads (0 = all)
   drawRecencyDial: null,     // set during setup -- module-level so MIDI CC can call it
   setRecency:      null,     // same
   setSearchK:      null,     // set during setup -- module-level so applyPresetObject can call it
@@ -826,33 +851,34 @@ export const S = {
   // physical (#210 needs no help here).
   headWidthDeg: 0,
   headEdge: 'soft',        // 'hard' | 'soft'
-  // The two experimental brush contracts (#218). Set by tile SELECTION —
-  // choosing the brush is the control; the character is predetermined:
-  // Which experimental deposit contract is active — ONE field, set on tile
-  // selection, because these are mutually exclusive characters of the chosen
-  // brush: 'none' | 'splatter' | 'match' | 'comb' | 'staff' | 'slice'.
-  // echo, chop and pour were cut 2026-08-29 (Ek) — see the tombstone in
-  // paint-ticker.js and docs/EXPERIMENTAL-BRUSHES.md.
-  brushFx: 'none',
+  // (`brushFx` lived here from #218 until 2026-09-22 — the one field that said
+  // which experimental HEAD a tile carried. It emptied out over that day: the
+  // grain heads became ordinary params, and its last value, `'slice'`, became
+  // `triggerParams.sliceOn`, a switch rather than a tool. A field with no values
+  // is not a field.)
   eraseOldest: false,      // scrape — erase from the bottom (oldest first)
   eraseWholeStroke: false, // scrape — 'erases: stroke' (#243): contact picks
                            // WHICH strokes, then every mark of them goes
 
-  // ── Experimental engine dials (#225) — graduated from module constants ────
+  // ── Engine dials (#225) — graduated from module constants ────────────────
   // Every value here was a const in paint-ticker.js; as state they appear in
   // the design view like any engine param, captured per tile like any other.
   fx: {
-    splatSpread: 0.10,     // splatter — ° of width per °/s of cursor speed
-    splatThrow:  0.06,     // splatter — forward fling, ° per °/s
-    staffLo:     110,      // staff — Hz at the bottom of the sphere
-    staffHi:     7040,     // staff — Hz at the top
+    // (SPRAY lived here for one day, 2026-09-22. A 0…1 amount that widened the
+    //  head with cursor speed and voice rms and threw each mark forward —
+    //  sunset the same evening: "it's too complicated to have dynamic spray,
+    //  no paint apps like procreate do it … this is not an app to do visual
+    //  painting." The static head, `headWidthDeg` + `headEdge`, is the whole
+    //  head again. See the note in paint-ticker.js.)
     sliceMinMs:  100,      // slice — cuts producing a segment shorter than
                            // this merge into the previous one (0 = keep all).
                            // Kills the ~100 ms double-onset artifacts without
                            // losing audio: the cut goes, not the material.
   },
-  combAxis: 'centroid',    // 'centroid' | 'rms' | 'zcr' — what sorts the comb
-  combKeep: 'all',         // 'all' | 'high' | 'low' — the comb's sieve
+  // (SORT BY lived here for one day, 2026-09-22 — a grain param that re-sorted a
+  //  stroke's marks along its own drawn path by an audio feature. Sunset with
+  //  the `index` tile the same evening: "let's sunset the sort by and remove the
+  //  index preset". A stroke keeps the order you played it in.)
 
   // ── Brush voicings (docs/archive/BRUSH-MODEL.md step 3) ──
   // A stroke freezes the brush that painted it. `voicings` is the interned
@@ -861,9 +887,9 @@ export const S = {
   // it as `_vo`. `currentVoicing` is set at recordStrokeStart and re-set per
   // deposit when a param moves MID-STROKE (paint-ticker.js _refreshVoicing),
   // so one strokeId can carry several voicings — the worklet buckets by
-  // particle, so a later sweep plays each section as it was painted. A WET
+  // particle, so a later sweep plays each section as it was painted. A LIVE
   // brush's strokes all point at the one voicing its knobs edit in place
-  // (brush-voicing.js, "Wet paint"). id 0 means "follow the live params",
+  // (brush-voicing.js, "Auditioned paint"). id 0 means "follow the live params",
   // which is what nothing paints as any more.
   voicings: [],
   voicingSeq: 0,
@@ -924,21 +950,41 @@ export const S = {
   // (S.searchRadiusDeg) — one cursor, one reach. Erase already works that way,
   // and a second radius meant the same physical gesture had two different sizes
   // depending on what it happened to touch.
+  // ── CURSOR INTERACTION IS PER INSTRUMENT (Ek, 2026-09-22) ───────────────
+  // "Make sure there's a separate cursor interaction setting for grain and
+  // loop." They were ONE set for a year, and it was defensible while only tape
+  // read them — a trigger is a tape take's gate. Then `walk on touch` gave
+  // grain a gate of its own: a walker retraces a stroke and answers the same
+  // five questions on arrival, through the SAME object, so setting how a tape
+  // take starts also set how a grain walker did.
+  //
+  // `triggerParams` below stays TAPE's, keys and all, because every stored
+  // file, every OSC address and every audit names it. This is grain's, and it
+  // holds only the arrival set — `hysteresis` is the GATE's geometry, shared by
+  // both because it is one cursor with one reach.
+  grainTrigger: {
+    dwell:   'oneshot',     // 'oneshot' | 'loop' — a walker has no 'grain'
+    start:   'top',         // 'top' | 'touch' | 'ends'
+    release: 'play-to-end', // 'play-to-end' | 'fade'
+    releaseMs: 250,         // how long `fade` takes (2026-09-22 night: it borrowed the
+                            // pins' 15 ms unpin fade, which is a cut — Ek: "it just stops")
+    retrig:  'cut',         // 'cut' | 'layer'
+    rearmMs: 120,
+  },
   triggerParams: {
     hysteresis: 1.15,          // exit radius = search radius × this — anti-chatter
     rearmMs:    120,           // minimum gap before the same trigger can refire
     dwell:      'oneshot',     // 'oneshot' | 'loop' | 'grain' — what dwelling does
     start:      'top',         // 'top' | 'touch' | 'ends' — where playback begins
     retrig:     'cut',         // 'cut' | 'layer' — refire over a pass still sounding
-    // Chop splits a take into separate triggers at its silences, at record
-    // time. The switch is kept separate from the threshold so toggling it off
-    // and back on doesn't lose the value you dialled in — and so the toggle can
-    // be a bindable action with nothing to remember.
-    chopOn:     false,         // the switch (bindable: trigger_chop)
-    chop:       300,           // ms of silence that counts as a break
-                               // The paint ticker's paint gate already leaves
-                               // the silences as gaps in the particles.
-    release:    'play-to-end', // 'play-to-end' | 'fade' — only used by dwell:'loop'
+    // SLICE splits a take into separate triggers at its ONSETS, at record
+    // time — `_sliceStroke` in trigger.js, onset detection on the audio. The
+    // GAP chopper it replaced (2026-08-25) and its `chop` threshold were sunset
+    // on 2026-09-22: it split where the paint gate had closed, so it inherited
+    // the gate's threshold and "only worked around 100 ms".
+    sliceOn:    false,         // the switch (bindable: trigger_chop, id kept)
+    release:    'play-to-end', // 'play-to-end' | 'stop' | 'fade' — what the cursor leaving does; stop is tape's alone
+    releaseMs:  250,           // how long `fade` takes — its own number, not the pins' unpin fade
     volume:     1.0,
     speed:      1.0,
     passes:     0,             // self-killing loops (#239): a looper slot plays
@@ -978,6 +1024,11 @@ export const S = {
   // 'sampler' (the sample instrument). Persistent, unlike the old
   // activeSampleIndex which doubled as transient per-stroke paint state.
   sourceKind: 'live',
+  // THE SAMPLER CAN BE SWITCHED OUT (Ek, 2026-09-23: "we won't use it and i'll
+  // spend time later to work on it" — parked, not sunset). Off: no sampler tab,
+  // and nothing can make it the source. Off by factory; Settings › Tools, stored
+  // in `mubone_sampler_on` (sampler.js).
+  samplerEnabled: false,
   // samplerIndex: the sampler's current sample. Sampler-internal, 0-based,
   // never -1 — the sampler always has a "current" slot, loaded or not.
   samplerIndex: 0,
@@ -1225,13 +1276,22 @@ export const S = {
   agitateThreshold: 80,          // deg/s — gyroMag above this pushes toward agitated
   smoothThreshold:  20,          // deg/s — gyroMag below this (with movement) pushes toward smooth
 
-  // ── Commit playback modes ──────────────────────────────────────────────
-  // 'all' = all commits play simultaneously (collage)
-  // 'focus' = distance-weighted blend toward closest commit(s)
+  // ── How the pins are mixed ───────────────────────────────────────────────
+  // 'all' = every pin plays at full weight
+  // 'focus' = FOLLOW on the rail (2026-09-22 night): distance-weighted toward
+  //           the nearest pin, the mix summing to one. Two values, drawn as a
+  //           switch. (`commitTether` — a radius gate under focus — left the
+  //           same night: a pin is never gated by the lens radius.)
   commitPlayback:  'all',    // 'all' | 'focus'
-  commitXfade:     0.5,      // 0.0 = hard snap (focus only), 1.0 = full crossfade (distance blend)
-  commitTether:    false,    // true = always plays closest commit(s) even if far away
-                              // false = gated by cursor radius — commits outside radius fade to silence
+  commitXfade:     0.5,      // 0.0 = hard snap (follow only), 1.0 = full crossfade (distance blend)
+  // ── MODE — per instrument, and mostly DERIVED (Ek, 2026-09-21 → 22) ──────
+  // `autopin` is NOT stored: it IS the engine's own end flag (grain's
+  // `traceMode`, tape's `loopOnEnd`), read through `_AUTOPIN` in tiles.js. The
+  // one real bit is this, and it is named for what it does rather than for the
+  // shape of the question: "instead of calling cycle, we just call it what it
+  // is, overdub on or off." On, a tape take joins the nearest pinned loop at
+  // the phase you played it; off, it runs on its own clock.
+  overdub:         false,
 
   // ── Monitor / House bus split (Phase 1 — Improv Mode) ─────────────────
   // monitorBus:  cursor grains route here (private monitoring, always on)

@@ -240,12 +240,15 @@ export function rebuildMainDryMeter() {
   renderMeters('mainDryMeters', 1, ['dry']);
 }
 
-// ── Scan toggle (cursor spotlight on/off) ────────────────────────────────
-// Mutes/unmutes cursor grains from the house/main output.
-// When scan is muted, the cursor spotlight is off — only seeds are heard.
-// - In stereo mode: zeros cursorMasterGain (monitorBus → masterGain path).
-// - In multi-ch mode: also zeros monitorToHouseGain (cursor → house send).
-//   Cursor remains audible on the dedicated monitor/headphone outputs.
+// ── The cap (the cursor reads nothing) ──────────────────────────────────
+// THE CAP IS NOT A MUTE (Ek, 2026-09-23: "when the cursor is muted, things
+// that are still in flight, like loops, long grains, anything should still
+// finish out. it's not a mute"). Capped, the cursor READS nothing: the
+// scheduler posts no new candidates (grain.js), the trigger gate takes no
+// ENTER edge (trigger.js) — and that is the whole of it. A grain already
+// sounding plays out, a take already fired plays to its release, a walker
+// finishes its pass. Until tonight this also zeroed the cursor bus (cutting
+// every grain in flight in 20 ms) and silenced every sounding trigger.
 // Exported so MIDI/OSC can call it programmatically.
 
 // Exposed on S so modules that would otherwise import ui-meters.js (and pull a
@@ -254,40 +257,18 @@ export function rebuildMainDryMeter() {
 export function setScanMuted(muted) {
   const changed = S.scanMuted !== muted;
   S.scanMuted = muted;
-  // THE CAP IS THE ONE MUTE (2026-09-07). The cursor reads nothing when it is
-  // on — granular and triggers alike. The gains below only gate the CURSOR bus,
-  // and a trigger plays through the tape engine instead, so silencing it
-  // is a separate call rather than a consequence; the trigger gate reads
-  // `S.scanMuted` directly from here on. See trigger.js for why there is no
-  // second flag any more.
-  if (changed && muted) S._silenceTriggers?.();
+  // The one flag. The trigger gate and the scheduler read it directly; there
+  // is no second mute and no gain to gate (see the note above).
   if (changed) S._syncTriggerUI?.();
   if (changed) window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'scan_toggle' } }));
-  const t = S.audioCtx?.currentTime ?? 0;
-  const ramp = S.scanFadeS ?? 0.02; // #14: configurable fade (τ), default 20ms
 
-  // Mute/unmute the monitorBus → masterGain path (affects stereo mode)
-  if (S.cursorMasterGain && S.audioCtx) {
-    S.cursorMasterGain.gain.setTargetAtTime(muted ? 0 : 1, t, ramp);
-  }
-
-  // Also mute/unmute the monitor → house send (affects multi-ch mode)
-  if (S.monitorToHouseGain && S.audioCtx) {
-    S.monitorToHouseGain.gain.setTargetAtTime(
-      muted ? 0 : S.monitorGainValue,
-      t, ramp
-    );
-  }
-
-  // Update button appearance — lit when scan is on, dim when muted
+  // Update button appearance — lit when scan is on, dim when capped
   const btn = document.getElementById('scanBtn');
   if (btn) btn.classList.toggle('active', !muted);
 
-  // Sync the improv panel mon→hse slider display when scan is off
-  // (the actual S.monitorGainValue is preserved so unmuting restores it)
+  // The mon→hse readout says the level; the cap no longer touches it.
   const monNum = document.getElementById('improvMonitorNum');
-  if (monNum && muted) monNum.value = '(muted)';
-  else if (monNum) monNum.value = Math.round(S.monitorGainValue * 100) + '%';
+  if (monNum) monNum.value = Math.round(S.monitorGainValue * 100) + '%';
 }
 
 export function initScanToggle() {

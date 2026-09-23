@@ -4040,7 +4040,9 @@ html.booting-reveal .main-layout {
      and an active segment that is a FLAT tinted fill rather than a lighter
      surface sitting on top. One definition, so the chrome, the footer, the
      settings pages and the engine params are the same control. */
-  .seg-pill, .tc-prail .opt .seg, .settings-host .in-settings .grain-seg {
+  .seg-pill,
+  .tc-prail .opt .seg, .tc-lrail .opt .seg, .tc-rail .opt .seg,
+  .settings-host .in-settings .grain-seg {
     display: inline-flex; align-items: center; gap: var(--seam);
     background: var(--surface-1); border: none;
     border-radius: 999px; padding: 2px; overflow: hidden;
@@ -4051,12 +4053,38 @@ html.booting-reveal .main-layout {
      rail and the engine sheet lost their pill for a round. The settings one is
      split out below. */
   .seg-pill .grain-seg-btn,
-  .tc-prail .opt .seg span {
+  .tc-prail .opt .seg span,
+  .tc-lrail .opt .seg span, .tc-rail .opt .seg span {
     border: none; background: none; border-radius: 999px;
     font-family: var(--font-sans); font-size: var(--fs-meta, 0.6rem);
     letter-spacing: 0.06em; text-transform: uppercase;
     color: var(--text-faint); padding: 0.16rem 0.55rem; cursor: pointer;
     transition: color 0.12s, background 0.12s;
+  }
+  /* A SEGMENT IS 24 TALL (Ek, 2026-09-22: "the pill toggles for the cursor
+     behaviours … don't press easily, it was also a problem before it moved").
+     Measured: each option was 28.6 x 19. The shared pill rule above sizes a
+     button from its CONTENT — fine for the chrome's text segments, which come
+     out at the kit's height on their own — but these hold a 15.2px glyph and
+     0.16rem of padding, so they landed five pixels under it. The build sheet's
+     pill variant is explicit: BUTTONS 24, group 28, "because the 2px that makes
+     it a pill is not part of a segment". Stated here rather than left to fall
+     out of a font size, which is what put it at 19.
+
+     AND THE CONTAINER GIVES UP ITS PADDING, which is the other half. A PILL is
+     buttons 24 inside a group of 28, and 28 does not fit here: `.tc-lrail .mrow`
+     is 30 with `--sp-1` either side, a 24px content box, and the 30 pitch is a
+     ruling of its own. So this is the kit's PLAIN segmented instead — "24 tall,
+     container AND buttons, no padding" — which is exactly 24 and fits. It keeps
+     the pill's radius; only the geometry changes. With padding the group clipped
+     its own 24px buttons back to 20 (`overflow: hidden`), taking the hit area
+     with it, so this is what makes the taller button real rather than drawn. */
+  .tc-prail .opt .seg,
+  .tc-lrail .opt .seg, .tc-rail .opt .seg { padding: 0; }
+  .tc-prail .opt .seg span,
+  .tc-lrail .opt .seg span, .tc-rail .opt .seg span {
+    height: 24px; box-sizing: border-box;
+    display: inline-flex; align-items: center; justify-content: center;
   }
   /* Settings scope only: r6 inner against the kit's r8 outer (SETTINGS-GUI § 3).
      Split out of the shared rule above so the chrome keeps its pill. */
@@ -4086,28 +4114,36 @@ html.booting-reveal .main-layout {
      is one (the engine pages set --c on the panel root), neutral elsewhere. */
   .seg-pill .grain-seg-btn.active,
   .tc-prail .opt .seg span.on,
+  .tc-lrail .opt .seg span.on
   .settings-host .in-settings .grain-seg .grain-seg-btn.active {
     background: var(--surface-4); color: var(--text-emphasis);
   }
-  .tc-prail .opt .seg span.on {
+  .tc-prail .opt .seg span.on,
+  .tc-lrail .opt .seg span.on, .tc-rail .opt .seg span.on {
     background: color-mix(in srgb, var(--c) 22%, transparent);
     color: color-mix(in srgb, var(--c) 70%, var(--text-bright));
   }
   .seg-pill .grain-seg-btn:hover,
-  .tc-prail .opt .seg span:hover { color: var(--text-secondary); }
+  .tc-prail .opt .seg span:hover,
+  .tc-lrail .opt .seg span:hover, .tc-rail .opt .seg span:hover { color: var(--text-secondary); }
   /* An ICON segment (2026-09-03): a glyph in place of the caps word where the
      glyph is the thing itself — link / unlink, the wide and spot lens marks
      for area / nearest, and so on (SEG_ICONS in tiles.js). Tighter than a
      word, and its name moves to the title. */
-  .tc-prail .opt .seg span.seg-ico { display: inline-flex; align-items: center; padding: 0.12rem 0.42rem; }
-  .tc-prail .opt .seg span.seg-ico svg { width: 0.95rem; height: 0.95rem; display: block; }
+  .tc-prail .opt .seg span.seg-ico,
+  .tc-lrail .opt .seg span.seg-ico, .tc-rail .opt .seg span.seg-ico { display: inline-flex; align-items: center; padding: 0.12rem 0.42rem; }
+  .tc-prail .opt .seg span.seg-ico svg,
+  .tc-lrail .opt .seg span.seg-ico svg, .tc-rail .opt .seg span.seg-ico svg { width: 0.95rem; height: 0.95rem; display: block; }
   /* ── Air around the chips (#282) ──────────────────────────────────────
      The shared definition is sized for the chrome and the footer, where the
      constraint is horizontal space. In the properties rail there is room, and
      a capsule packed to its text reads as cramped next to rows of open track.
      Scoped so the footer, which was compacted on purpose, keeps its size. */
-  .tc-prail .opt .seg, .tc-prail .seg-pill { padding: var(--sp-1); }
+  .tc-prail .opt .seg,
+  .tc-lrail .opt .seg, .tc-rail .opt .seg,
+  .tc-prail .seg-pill { padding: var(--sp-1); }
   .tc-prail .opt .seg span,
+  .tc-lrail .opt .seg span
   .tc-prail .seg-pill .grain-seg-btn { padding: 0.24rem 0.72rem; }
   /* Ducked auto-monitor: the setting is still auto, the sound is off. */
   .seg-pill.ducked .grain-seg-btn.active { opacity: 0.5; }
@@ -4250,16 +4286,19 @@ html.booting-reveal .main-layout {
   body.prail-open .tc-prail {
     display: flex; flex-direction: column;
     grid-column: 1; grid-row: 1; justify-self: start; align-self: stretch;
-    width: 15.5rem; min-height: 0; z-index: 4;
+    width: var(--lrail-w); min-height: 0; z-index: 4;
     background: var(--bg-app); border-right: 1px solid var(--border-faint);
     font-family: var(--font-sans);
   }
-  /* The tool rail was 13.5rem until 2026-09-10 (Ek: "widen the left rail a
-     bit, now with everything shown it's a bit too cramped" — every row wears
-     its three marks at rest now). 15.5rem is within 2px of the pinned rail,
-     so the two edges read as one frame. The properties rail starts where
-     the tool rail ends. */
-  body.prail-open .tc-prail { width: 15.5rem; margin-left: 15.5rem; overflow-y: auto; }
+  /* The editor is as wide as the thing it holds and no wider (Ek, 2026-09-22:
+     "make the bench one the same width as the spacebar and reduce the width of
+     the rail to match") — so its width is DERIVED from the hand tile rather
+     than stated beside it, and it follows the strip onto a narrow screen. It
+     went to 20rem for a day when the bench was a card with buttons in it, and
+     shrank when the buttons left. The properties rail starts where it ends. */
+  /* The DRAWER keeps its own 15.5rem: it is a sheet that opens over the stage,
+     not one of the two rails you work in. */
+  body.prail-open .tc-prail { width: 15.5rem; margin-left: var(--lrail-w); overflow-y: auto; }
   /* An ENGINE page was two columns of rows at 37rem, and at that width the
      drawer covered too much of the sphere (Ek, 2026-09-03: "maybe 3/5ths").
      It is ONE column at 22rem now — the #272 lesson still holds (30rem across
@@ -4268,7 +4307,22 @@ html.booting-reveal .main-layout {
      column at 22rem gives a track ~185px, wider than the two-column 170. The
      sampler's sheet is a list and keeps the narrow rail (#261). */
   body.prail-open.engine-page .tc-prail { width: 22rem; }
-  .tc-lrail .lyr-list { padding-bottom: 0.4rem; }
+  /* `--sp-3`, not 0.4rem: 6.4px was the one inset in this rail that is not a
+     step, and the sheet says snap rather than name a component token.
+     `--sp-5`, not `--sp-3` (2026-09-22, evening): 6px is less than the 12px the
+     last card carries as its own bottom padding, so on every tab the frame cut
+     the card before its corner closed — measured, the list overflowed by 13px
+     on tape with nothing in it, and 13 is that padding. The rail read as
+     running off the bottom of the window rather than ending. 12 matches the gap
+     between the cards; the top is `--sp-6` because a DIVISION sits above it. */
+  .tc-lrail .lyr-list { padding-bottom: var(--sp-5); }
+  /* AFTER THE `TOOLS` DIVIDER (Ek, 2026-09-22: "spacing is not enough above the
+     cursor presets bed after the tool line divider"). It was `--sp-3`, half of
+     what every other gap in this rail gets, so the first card sat closer to the
+     rule above it than the cards sit to each other. A DIVISION breaks harder
+     than a band gap, so both dividers take `--sp-6` and the bands keep
+     `--sp-5`: 16 around a rule, 12 between cards. */
+  .tc-lrail .lyr-list { padding-top: var(--sp-6); }
   /* A tool ROW — the rail's unit, where the palette's unit is a tile. */
   /* 24, the kit's button height (Ek ruled 2026-09-15: snap them all). It was
      27.9 — padding plus a line box, a number nobody chose — and the rail is the
@@ -4277,7 +4331,7 @@ html.booting-reveal .main-layout {
   .trow { display: flex; align-items: center; gap: 0.55rem; width: 100%;
     height: 24px; box-sizing: border-box;
     background: none; border: none; border-left: 2px solid transparent;
-    padding: 0 0.7rem; cursor: pointer; text-align: left;
+    padding: 0 var(--sp-5); cursor: pointer; text-align: left;
     color: var(--text-dim); font-family: var(--font-sans);
     font-size: var(--fs-control); }
   .trow svg { width: 1.05rem; height: 1.05rem; flex: none; color: var(--c, var(--eng)); }
@@ -4297,12 +4351,17 @@ html.booting-reveal .main-layout {
   .trow.playing { background: color-mix(in srgb, var(--c) 22%, var(--bg-app)); }
   .trow.open { background: var(--surface-2); color: var(--text-bright); }
   .trow.ghost .tile-nm { font-style: italic; }
+  /* A voice row: a dot and a word. The dot is smaller than a shape's glyph on
+     purpose — it is a bullet, not a gesture — and it sits in the same 1.05rem
+     box so the names line up with the shapes above them. */
+  .trow--voice svg { width: 0.62rem; height: 0.62rem; margin: 0 0.215rem; /* geometry: centres the dot in .trow's 1.05rem glyph box */ }
+
   .trow.dragging { opacity: 0.35; }
   .trow.over { box-shadow: inset 0 2px 0 var(--text-tertiary); }
-  /* The rail is a LIST. #srcBar / #lensBar / #tileBar still carry the strip's
+  /* The rail is a LIST. #srcBar / #tileBar still carry the strip's
      flex rules from when they were one horizontal shelf, so they are undone
      here rather than there — the rig view still renders the strip shape. */
-  .tc-lrail #srcBar, .tc-lrail #lensBar, .tc-lrail #tileBar,
+  .tc-lrail #srcBar, .tc-lrail #tileBar,
   .tc-lrail .tbx-grp, .tc-lrail .tbx-tiles,
   .tc-rail .tbx-grp, .tc-rail .tbx-tiles {   /* the pin group in the pinned rail (2026-09-12) */
     display: block; flex: none; overflow: visible; border: 0; margin: 0; padding: 0;
@@ -4321,8 +4380,57 @@ html.booting-reveal .main-layout {
   .tc-rail .trow--act.fired svg { color: var(--accent-action); }
   .tc-rail .trow--danger:hover { color: var(--accent-danger); background: var(--tint-danger-soft); }
   .tc-rail .trow--danger:hover svg { color: var(--accent-danger); }
-  .tc-lrail .tbx-grp:first-child .tbx-lbl { padding-top: 0.5rem; }
+  /* ── THE RAIL ON THE SCALE (Ek, 2026-09-22: "it's really tight around the
+     tile, use the design kit to fix all the spacing in the left rail") ──────
+     One horizontal inset everywhere — `--sp-5`, the same 12 as the gutter
+     outside the cards and the gap between them, so a caption, a row's glyph and
+     the bench tile all start on one edge and the air around a card is the same
+     on all four sides. It was `0.7rem` = 11.2px, which is not a step: the scale
+     is 2 · 3 · 4 · 6 · 8 · 12 · 16 · 24 · 32 and the build sheet says snap.
+
+     Vertically, inside a card: 12 above a caption's text, 4 below it, 12 under
+     the last thing before the card's edge. `:first-child` gave a group's first
+     caption 8 and every other 12, so `voice presets` sat lower than `shape
+     presets` in the same card; one value now.
+
+     THE CAPTION TAKES THE ROW'S 2px BORDER, transparent. A row carries one and
+     a caption did not, so matching their padding still left them 2px apart —
+     this aligns them by construction rather than by a number that has to be
+     kept in step by hand. */
+  .tc-lrail .tbx-lbl {
+    padding: var(--sp-5) var(--sp-5) var(--sp-2);
+    border-left: 2px solid transparent;
+  }
   .tc-prail .ds-body { column-width: auto; columns: 1; padding: 0 0 0.6rem; }
+  /* UNAVAILABLE, NOT ABSENT (2026-09-22). A row the current mode cannot use
+     STAYS where it is and goes ash: the page keeps its shape, every other row
+     keeps its place, and the value it still holds is visible rather than
+     implied. This is the one legitimate dim — the sheet's always-wrong is about
+     using dimness to encode a STATE you set (on against off), and `--text-faint`
+     is the token for "disabled marks only". The wrapper keeps its pointer so the
+     tooltip can say why; everything inside it is inert. */
+  /* Both rails: the cursor-interaction rows moved to the TOOL rail on
+     2026-09-22 and grey there for the same reason they greyed on the sheet. */
+  /* A DISABLED WORD IS STILL A WORD (2026-09-22, evening). `--text-faint` is
+     2.7:1 and its own token comment says "disabled marks only, never a word" —
+     but grain's five arrival rows are five words (dwell · start · release ·
+     retrig · rearm) and they were all wearing it, which is the build sheet's
+     always-wrong § 4 shipped five times in a column. The MARKS inside them keep
+     faint (`--c` drives the segment's chosen fill, and a mark is what the token
+     is for); the words step down to `--text-dim`, 4.0:1, the quietest text the
+     ramp allows to be READ. Against a live row's `--text-secondary` at 8.1:1
+     that is still half the contrast, so "unavailable, not absent" survives
+     intact — it just stops being unreadable. */
+  .tc-prail .ds-na, .tc-prail .ds-na *,
+  .tc-lrail .ds-na, .tc-lrail .ds-na * { color: var(--text-dim); --c: var(--text-faint); }
+  .tc-prail .ds-na > *, .tc-lrail .ds-na > * { pointer-events: none; }
+  /* A SWITCH in ash too (Ek, 2026-09-23: "the toggle should also be greyed
+     out if walk is off"). `.ds-na` reached the words and `--c`, and the kit's
+     switch paints from its own tokens — lit `--eng-pins`, resting
+     `--border-soft` — so a greyed row kept a live-looking switch beside an
+     ashed label. The two quietest steps the ramp allows, never opacity. */
+  .tc-lrail .ds-na .mrow-sw, .tc-lrail .ds-na .mrow-sw.on { background: var(--border-faint); }
+  .tc-lrail .ds-na .mrow-sw .mrow-knob { background: var(--text-faint); }
 
   /* ── The parameter row (#261) ──────────────────────────────────────────
      name · track · number, on one line. Rows line up, so a section reads as
@@ -4427,30 +4535,9 @@ html.booting-reveal .main-layout {
      set. It gets its own narrow column at the end — never the value column,
      which is the typeable one, and the dim mono of `.prow-note` is what says
      "this is a readout" without a caption. */
-  /* Both rows narrow their own numeric columns. `--prow-val` is sized for
-     `last 9 strokes` (70px) on the rows that need it; k is 1–4 digits and the
-     live pair is 5 characters, and at the shared width the k track measured
-     40px — unplayable. Measured after: 73px of track, which is inside the
-     precedent `.prow--duo` already sets (a 3.5rem floor). */
-  .prow--lensr, .prow--lensk { --prow-val: 2.7rem; --prow-live: 3rem; }
-  /* A number you WATCH, not one you set. `.prow-note`'s faint is right for the
-     link's held ratio, which you read once; these two are read while playing,
-     so they take the tertiary step up — still visibly not the editable value
-     beside them, which is `--text-bright`. */
-  .prow--lensr .prow-note, .prow--lensk .prow-note { color: var(--text-tertiary); }
-  .prow--lensr { grid-template-columns: var(--prow-lab) 1fr var(--prow-val) var(--prow-live); }
-  /* k's row leads with the k|all capsule — the question asked first (Ek) —
-     then the track, its number and the live pair. */
-  .prow--lensk { grid-template-columns: var(--prow-lab) auto minmax(2.5rem, 1fr) var(--prow-val) var(--prow-live); }
-  /* nearest: no capsule, because `all` is a no-op there (grain.js). */
-  .prow--lensk-near { grid-template-columns: var(--prow-lab) minmax(2.5rem, 1fr) var(--prow-val) var(--prow-live); }
-  /* uncapped: no track and no number, because there is no ceiling to draw. */
-  .prow--lensk-all { grid-template-columns: var(--prow-lab) auto minmax(0, 1fr); }
-  .prow--lensk .opt > i, .prow--lensr .opt > i { display: none; }
-  .prow--lensk .opt { gap: 0; }
   /* Saturated — the ceiling is what is limiting the cursor, which is the one
      thing k has to be able to say. The engine's own accent, never a new hue. */
-  .prow-note.hot { color: var(--eng-lens, var(--text-bright)); }
+  .prow-note.hot, .mrow-live.hot { color: var(--eng-lens, var(--text-bright)); }
   /* ── A boolean is a SWITCH on the engine sheet too (2026-09-07) ────────
      INSTRUMENT-GUI § 3 assigns the shape — "do you want it? set and forget"
      — and it had one instance, a grain brush's `wet`. `fade`, `chop`,
@@ -4498,6 +4585,81 @@ html.booting-reveal .main-layout {
     min-height: 1.85rem; padding: 0.1rem 0; }
   .prow--seg .ds-chips { min-width: 0; }
   .prow--seg .opt > i { display: none; }
+  /* Same rule in the TOOL rail: `.mrow-l` names a cursor-interaction row, in
+     MODE's type, so the pill's own caps word would be the name written twice —
+     and at a lighter weight than the rows above it (Ek, 2026-09-22: "match the
+     text with the ones under mode. it's too light"). */
+  .tc-lrail .mrow .opt > i, .tc-rail .mrow .opt > i { display: none; }
+  .tc-lrail .mrow .opt, .tc-rail .mrow .opt { flex: none; }
+  /* SENTENCE CASE IN THE CAPSULES (Ek, 2026-09-22 night: "all settings that use a
+     multichoice pill look like they're not all caps in the settings, they
+     shouldn't be in the pill section also"). The settings pages already set
+     their segments in sentence case (settings-gui.css); the rails and the
+     drawer inherited the chrome's uppercase from the shared `.seg-pill` rule.
+     One rule, the settings kit's own tracking, and a word in a capsule reads
+     as the same word it is on the row beside it. */
+  .tc-prail .opt .seg span, .tc-lrail .opt .seg span, .tc-rail .opt .seg span {
+    text-transform: none; letter-spacing: var(--ls-tight); }
+  /* AIR BETWEEN THE PILLS (Ek, 2026-09-22: "the pills are too tight betwen each
+     other"). MODE's rows are 24 with no gap and read as open because the SWITCH
+     is 18 inside them — 3 above, 3 below, so 6 between two switches. The pill
+     is 24 in a 24 row and had none at all. `--sp-1` either side gives it the
+     same 6, so the two sections share one rhythm rather than each having its
+     own. The row grows; the pill stays the kit's 24. */
+  /* ONE LINE PITCH DOWN THE RAIL — 30 (Ek, 2026-09-22: "let's space everything
+     out to match the cursor interaction line space … only if it's approved by
+     the design kit"). It is, and the kit is also what splits the fix in two.
+     A `.mrow` is a DIV: it can simply grow, so `--sp-1` either side takes it
+     from 24 to 30 and the switch or pill inside keeps its own kit height.
+     A `.trow` is a BUTTON, and R6 holds every button in the instrument to
+     18 / 24 / 32 / 38 — so the preset rows must NOT grow. They keep their 24
+     and the LIST spaces them instead: `--sp-3` between rows is the same 30
+     pitch, with nothing off the ladder.
+     The `.mrow` height is STATED rather than grown, because a row grown by its
+     padding is only as tall as what sits in it: a MODE row holds an 18 switch,
+     so 18 + 3 + 3 came back to the 24 it started at while a cursor row holding
+     a 24 pill went to 30. 30 is the kit's 24 plus the two steps, which is what
+     every row in this column now is. */
+  .tc-lrail .mrow { height: 30px; padding-top: var(--sp-1); padding-bottom: var(--sp-1); }
+  /* A SUB-ROW — dwell and retrig belong to WALK (Ek, 2026-09-22). The kit's
+     own subordination, ported from the settings rail's `.set-nav-item--sub`:
+     an indent plus a step quieter, and no mark. There the indent is 37px
+     because it clears the parent's icon; here the parent's label starts at the
+     row's left edge, so it is one step of the scale — `--sp-5`, 12px, the same
+     step the rail's cards are padded by. The label alone moves: the control
+     stays flush right, so the column of pills reads straight down and only the
+     WORDS step in, which is the whole point — the two rows are a sentence
+     under the switch above, not a second group.
+     A step quieter is `--text-tertiary` against the row's `--text-secondary`;
+     `.ds-na` is a different statement (nothing to act on) and overrides this
+     one while walk is off, which is correct — it is the stronger fact. */
+  .tc-lrail .mrow--sub .mrow-l { padding-left: var(--sp-5); color: var(--text-tertiary); }
+  /* …and `.ds-na` has to be SAID here, because specificity is not reading
+     order: the disabled rule is `.tc-lrail .ds-na *` at three, and the line
+     above is at three with a class more, so without this the sub label would
+     stay tertiary inside a greyed row while everything beside it went dim. */
+  .tc-lrail .ds-na .mrow--sub .mrow-l { color: var(--text-dim); }
+  .tc-lrail .tbx-tiles { display: flex; flex-direction: column; gap: var(--sp-3); }
+  /* The number is the row's own control, flush right like every other.
+     `.prow-v` is sized for the sheet's GRID — `width: max-content` with
+     `justify-self: end`, neither of which means anything in this flex row, so
+     it stretched to the rail's width and hung off the end. Sized here instead,
+     and 24 tall so its row is the same 30 as a pill's and the column stays
+     even. `.mrow-l` already grows, which is what puts this against the edge. */
+  .tc-lrail .mrow-num { flex: 0 0 auto; width: 3.5rem; height: 24px;
+    line-height: 24px; text-align: right; }
+  /* A readout in words — depth's `last 3 strokes` — at the sheet's own 70px
+     (`--prow-val` on the lens rows, 2026-09-07) rounded to the rem scale. */
+  .tc-lrail .mrow-num--words { width: 6rem; }
+  /* THE LENS TAB'S LIVE PAIR (2026-09-22 night): marks in reach beside radius,
+     taken / k beside k — the numbers the lens sheet carried since 2026-09-07,
+     on the rows that cause them. A number you WATCH, not one you set: the
+     tertiary step, visibly not the editable value beside it, and the same
+     mono the numbox uses so the two read as one column. Its width is stated
+     so a `—` and a `12/40` hold the numbox still. */
+  .tc-lrail .mrow-live { flex: 0 0 auto; min-width: 3rem; margin-right: var(--sp-3);
+    font-family: var(--font-mono, monospace); font-size: var(--fs-control);
+    color: var(--text-tertiary); text-align: right; white-space: nowrap; }
 
   /* ── The sound window ─────────────────────────────────────────────────── */
   .eng-scope { padding: 0.6rem 0.9rem 0.45rem; border-bottom: 1px solid var(--border-faint); }
@@ -4509,26 +4671,8 @@ html.booting-reveal .main-layout {
   /* ── The filter, drawn ────────────────────────────────────────────────── */
   #engFilter { display: block; width: 100%; height: 76px; cursor: crosshair; touch-action: none; }
   #engFilter { margin-bottom: 0.5rem; }
-  /* ── A folded section (#283) ───────────────────────────────────────────
-     Same eyebrow as every other section header, plus a chevron and a count,
-     so a shut section still says how much is behind it. */
-  /* A section's one quiet line, and the mode row's (2026-09-18). The sheet's
-     dependencies were only visible by inference; this is the same faint
-     `--fs-nano` the options bar's `.opt-none` uses, at the point of the
-     decision rather than in a tooltip. */
-  .ds-sec-note { font-size: var(--fs-nano); color: var(--text-faint);
-    margin: 0 0 var(--sp-3); line-height: 1.35; }
-  .ds-sec-cells > .ds-sec-note { margin: calc(-1 * var(--sp-1)) 0 var(--sp-3); }
-  .ds-sec-h--fold { display: flex; align-items: center; gap: 0.4rem; width: 100%;
-    background: none; border: none; border-bottom: 1px solid var(--border-faint);
-    padding: 0 0 0.3rem; margin-bottom: 0.5rem; cursor: pointer; text-align: left;
-    font: inherit; font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow);
-    text-transform: uppercase; color: var(--text-secondary); }
-  .ds-sec-h--fold:hover { color: var(--text-secondary); }
-  .ds-fold-c { font-size: var(--fs-body); line-height: 1; opacity: 0.7; }
-  .ds-fold-n { margin-left: auto; font-family: var(--font-mono, monospace);
-    letter-spacing: 0; opacity: 0.6; }
-  .ds-sec--shut .ds-sec-cells { display: none; }
+  /* (A folded `experimental` section lived here from #283 until 2026-09-22.
+     Every section on the sheet is open now — see renderProps.) */
   /* ── Your tool's own gesture, on the row (#284) ───────────────────────
      Double-click the name to rename (rows with `.trow--own` only). The
      row's hover-only `del` went 2026-09-10: Delete is a button in every
@@ -4546,13 +4690,21 @@ html.booting-reveal .main-layout {
     /* 20rem since the mixer (2026-09-16, Ek: "wider — ~320px"): a track carries
        the material, the fader and M / S on one line at a readable size. It is
        an overlay on the stage, so the sphere is untouched. */
-    width: 20rem; min-height: 0; z-index: 4;
+    width: var(--rail-w); min-height: 0; z-index: 4;
     flex-direction: column;
     background: var(--bg-app); border-left: 1px solid var(--border-faint);
     font-family: var(--font-sans);
   }
+  /* ONE HEADER HEIGHT FOR BOTH RAILS (Ek, 2026-09-22 night: "the tool title
+     bar in the tool rail and the pinned title rail dont seem like the same
+     height"). They were grown: 9.92 of padding round whatever the contents
+     made — a 14px word on the left (34), the kit's 24 button on the right (45)
+     — so the two titles sat on different lines across the stage. STATED now:
+     40 = the kit's 24 button + `--sp-4` either side, the same box whether the
+     bar holds a word or a button, and the title centres in it on both sides.
+     The 0.62rem was a number nobody chose. */
   .tc-rail .lyr-bar, .tc-lrail .lyr-bar { display: flex; align-items: center; justify-content: space-between;
-    gap: 0.5rem; padding: 0.62rem 0.75rem; border-bottom: 1px solid var(--border-faint); }
+    gap: 0.5rem; height: 40px; box-sizing: border-box; padding: 0 var(--sp-5); border-bottom: 1px solid var(--border-faint); }
   /* ── The eyebrow-caption layer sits where the tokens say (2026-09-13) ──
      Ek, after the six engine hues landed on the rails and tiles: "the new
      brighter colours on the rails and tiles are great but now everything
@@ -4564,11 +4716,15 @@ html.booting-reveal .main-layout {
      own comment in tokens.css reads "disabled marks only, never a word" —
      while the same file assigns `--text-secondary` (8.1:1) to "eyebrow
      captions, group labels". The CSS sat five steps below its own spec, and
-     `.ds-sec-h--fold` proved it: resting faint, hovering secondary. Faint
+     the folded section's own header proved it: resting faint, hovering
+     secondary (that header is gone; the contrast finding is not). Faint
      keeps every genuinely-off use — disabled buttons, ghosts, `.off` rows,
      an unbound sticker. */
   .tc-rail .lyr-title, .tc-lrail .lyr-title { font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase;
     color: var(--text-secondary); }
+  /* The title's glyph (2026-09-23), in the title's own colour, on its line. */
+  .tc-rail .lyr-title, .tc-lrail .lyr-title { display: inline-flex; align-items: center; gap: var(--sp-3); }
+  .lyr-title-g { width: 1rem; height: 1rem; flex: none; }
   .tc-rail .lyr-bar button, .tc-lrail .lyr-bar button { font-family: var(--font-sans); font-size: var(--fs-meta);
     letter-spacing: 0.09em; text-transform: uppercase; background: var(--surface-1);
     border: 1px solid var(--border-faint); color: var(--text-tertiary);
@@ -4614,25 +4770,29 @@ html.booting-reveal .main-layout {
      chrome-density segment; tether is "do you want it?" — the 32×18 switch,
      in the SENSOR hue because what it turns on is the body driving the faders
      (the same violet the fader edges wear while it does). */
-  .lyr-modes { display: flex; flex-direction: column; gap: var(--sp-3);
-    padding: var(--sp-3) var(--sp-5) var(--sp-4); border-bottom: 1px solid var(--border-faint); }
-  .lyr-mrow { display: grid; grid-template-columns: 2.5rem auto 1fr auto auto;
-    align-items: center; gap: var(--sp-4); min-height: 24px; }
-  .lyr-eb { font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow);
-    text-transform: uppercase; color: var(--text-secondary); }
-  .lyr-eb--r { text-align: right; }
-  .lyr-mrow-gap { min-width: 0; }
+  /* ON A BED, LIKE THE TOOL RAIL'S CARD (Ek, 2026-09-22 night: "look at the
+     pin rail, can you add the bed under the settings and make the design match
+     the left side rail"). The same object `#instrPanel` is across the stage:
+     one ground a step up from the rail (`--surface-1`), the hand's radius,
+     12 in from either rail edge and 12 of air on all four sides inside —
+     measured on the left: card 13→307 in a 1→319 rail, first row 12 under
+     the card's top, last row 12 over its bottom. The hairline that closed the
+     bar is gone: the card's edge is the division now, as it is on the left,
+     and `--sp-6` above it is the same 16 the left list puts under TOOLS. */
+  /* AND ITS ROWS ARE THE TOOL RAIL'S (Ek, the same night: "the formatting of
+     how the text is aligned and else is not the same as the left rail yet").
+     The card carries 12 top and bottom and NO side padding, and each `.mrow`
+     carries its own 12 — exactly how `#instrPanel` and the lens tab's rows are
+     built — so the label lands at card + 12 by the same rule on both rails.
+     The row is the lens tab's row: 30 tall, `--sp-1` either side of a 24 line,
+     the name in `.mrow-l` (sentence case, `--fs-control`, secondary), the
+     control flush right by the label's own flex-grow, no gap between rows. */
+  .lyr-modes { display: flex; flex-direction: column;
+    margin: var(--sp-6) var(--sp-5) var(--sp-5); padding: var(--sp-5) 0;
+    background: var(--surface-1); border-radius: var(--r-hand);
+    --c: var(--eng-pins); }   /* the capsules' lit tint — the pins' own hue, bone */
+  .tc-rail .mrow { height: 30px; padding-top: var(--sp-1); padding-bottom: var(--sp-1); }
   .lyr-sw { color: var(--text-dim); }
-  .lyr-mrow--xf { grid-template-columns: 2.5rem 1fr; }
-  .lyr-xf { display: flex; align-items: center; gap: var(--sp-3); }
-  .lyr-xf .grain-slider { flex: 1; }
-  .lyr-xf-v { font-size: var(--fs-nano); font-variant-numeric: tabular-nums;
-    color: var(--text-tertiary); width: 1.7rem; text-align: right; }
-  /* The curve has no say outside focus: the whole row steps down the ramp,
-     label included, as a settings row does under .set-row--off. */
-  .lyr-mrow--xf.off .lyr-eb { color: var(--text-faint); }
-  .lyr-mrow--xf.off .grain-slider { background: var(--border-faint); }
-  .lyr-mrow--xf.off .lyr-xf-v { color: var(--text-faint); }
 
   /* ── The tracks ───────────────────────────────────────────────────────
      Absolutely placed and moved by transform: the SORT reorders them (near /
@@ -4664,6 +4824,14 @@ html.booting-reveal .main-layout {
     font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase; color: var(--eng-pins); }
   .lyr-trk { position: absolute; left: var(--sp-5); right: var(--sp-5); top: calc(var(--sp-3) + 8px);
     transition: transform var(--m-state) var(--ease-snap); will-change: transform; }
+  /* THE ROW IS THREE COLUMNS (Ek, 2026-09-23): number · the box · M S. The
+     box is the fader and only the fader — level, material, playhead — so
+     nothing that comes and goes can squeeze the material; the dub target is
+     a ring round its NUMBER, not a mark in the row. The bus lines use the
+     same columns, so every box in the rail shares one left and one right edge. */
+  .lyr-trk-row, .lyr-bus-line { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+    align-items: center; column-gap: var(--sp-2); }
+  .lyr-trk-row { height: 32px; }
   .lyr-trk-bar { position: relative; height: 32px; border-radius: var(--r-1); overflow: hidden;
     background: var(--surface-0); cursor: ew-resize; }
   /* The fill is the LEVEL: the pin's hue at low alpha, scaled from the left.
@@ -4682,55 +4850,52 @@ html.booting-reveal .main-layout {
      focus. This is the one mark that says "focus is on", and it is on every
      track at once. */
   .lyr-trk.auto .lyr-edge { background: var(--accent-sensor); }
+  /* Under follow the cursor holds the fader, so the hand cannot (2026-09-22
+     night); the bar says so by not offering a grab. */
+  .lyr-trk.auto .lyr-trk-bar { cursor: default; }
   /* The NUMBER is the identity — the same digit the sphere's anchor mark
-     wears — in the engine hue: gold is a cloud, pink is a loop. Pressing it
-     folds the pin's own settings open under the bar. */
-  .lyr-num { position: absolute; left: 0; top: 0; width: 1.5rem; height: 32px;
-    display: grid; place-items: center; padding: 0; margin: 0; border: 0; background: none;
+     wears — in the engine hue: gold is a cloud, pink is a loop. A label, not a
+     button: a pin has no settings of its own (In / Out are Settings › Pins). */
+  .lyr-num { position: relative; width: 1.5rem; height: 32px;
+    display: grid; place-items: center;
     font-family: var(--font-sans); font-size: var(--fs-meta); font-weight: 600;
-    font-variant-numeric: tabular-nums; line-height: 1; color: var(--c); cursor: pointer; }
-  .lyr-num:hover { color: var(--text-light); }
+    font-variant-numeric: tabular-nums; line-height: 1; color: var(--c); }
+  /* THE O (Ek, 2026-09-23): the loop an overdub would join wears a white ring
+     round its number — the tape tile's overdub flag, the same O. */
+  .lyr-trk.dub .lyr-num::before { content: ''; position: absolute; left: 50%; top: 50%;
+    width: 20px; height: 20px; transform: translate(-50%, -50%); /* geometry: centred on the digit */
+    border: 1.5px solid var(--text-light); border-radius: 50%; box-sizing: border-box; pointer-events: none; }
   /* Over the line: the max was pulled below this slot, so the engine no longer
      services it. Its number outlined, not filled — the instrument's own way of
      saying a thing is not live (the old tracker cell did the same). */
   .lyr-trk.over .lyr-num { box-shadow: inset 0 0 0 1px var(--c); border-radius: var(--r-1); }
-  /* The strip ends short of the readout and the overdub marks, so a dot or
-     the dub glyph never lands on the material's tail. */
-  .lyr-mat { position: absolute; left: 1.625rem; right: 6.5rem; top: 0; height: 32px; pointer-events: none; }
-  .lyr-trk.dub .lyr-mat { right: 7.9rem; }
+  /* The material fills the box, edge to edge: the box is its timeline. */
+  .lyr-mat { position: absolute; inset: 0; pointer-events: none; }
   .lyr-mat canvas { display: block; width: 100%; height: 32px; }
   /* The playhead: where the loop (or the moving cloud) is. It keeps running
      through a mute — that is what a DJ mute is, and the bar shows it. */
-  .lyr-ph { position: absolute; top: 0; bottom: 0; width: 1px; left: 1.625rem;
+  .lyr-ph { position: absolute; top: 0; bottom: 0; width: 1px; left: 0;
     background: var(--c); will-change: transform; pointer-events: none; }
   .lyr-ph::before { content: ''; position: absolute; top: 0; left: -1px; width: 3px; height: 3px; background: inherit; }
   /* The readout prints only when the HAND set a level: eight tracks at 0 dB
      are eight bars of one length, not eight numbers to read. */
-  .lyr-db { position: absolute; right: 3rem; top: 0; height: 32px; display: flex; align-items: center;
+  /* Over the material now the material fills the box (2026-09-23), so it sits
+     on a chip of the rail's ground — not text laid across the waveform. */
+  .lyr-db { position: absolute; right: var(--sp-2); top: 50%; transform: translateY(-50%);
+    padding: 0 var(--sp-1); border-radius: var(--r-1); background: var(--bg-app);   /* opaque: --surface-0 is 3% and let the wave through */
     font-size: var(--fs-nano); font-variant-numeric: tabular-nums; color: var(--text-tertiary); pointer-events: none; }
+  .lyr-db:empty { display: none; }
   .lyr-trk.touched .lyr-db { color: var(--text-light); }
-  .lyr-ms { position: absolute; right: var(--sp-2); top: 7px; /* geometry: (32 − 18.4) / 2 */
-    display: flex; gap: var(--sp-1); }
+  .lyr-ms { display: flex; gap: var(--sp-1); }
   /* A dot per overdub (docs/archive/OVERDUB-PLAN.md § 2.5), and the tool's
      own glyph on the loop a dub would JOIN (Ek, 2026-09-15) — two different
      questions about two possibly-different pins, beside the readout. */
-  .lyr-ovd { position: absolute; right: 5.2rem; top: 13px; /* geometry */ display: flex; gap: var(--sp-1); pointer-events: none; }
+  .lyr-ovd { position: absolute; left: var(--sp-3); top: var(--sp-2); display: flex; gap: var(--sp-1); pointer-events: none; }
   .lyr-ovd i { width: 5px; height: 5px; border-radius: 50%; background: var(--c); display: block; }
-  .lyr-dub { display: none; position: absolute; right: 5.2rem; top: 7px; /* geometry */ width: 1.05rem; height: 1.05rem;
-    fill: none; stroke: var(--eng-tape); stroke-width: 1.7; pointer-events: none; }
-  .lyr-trk.dub .lyr-dub { display: block; }
-  .lyr-trk.dub .lyr-ovd { right: 6.6rem; }
   /* The selected pin wore the rail's half moon here until 2026-09-16; the
      frame above (.lyr-sel) is its one mark now. `.sel` stays on the row for
      anything that reads it. */
 
-  /* The FOLD — one pin's own settings, under its bar: in and out (its ramps,
-     which pin / unmute and unpin / mute ride). Height is set by ui-pins.js so
-     the rows below move by the same transform. */
-  .lyr-fold { padding: var(--sp-0) 0 0 1.625rem; display: flex; flex-direction: column; gap: var(--sp-0); overflow: hidden; }
-  .lyr-frow { display: grid; grid-template-columns: 2.1rem 1fr 2.8rem; align-items: center; gap: var(--sp-4); height: 24px; }
-  .lyr-frow .lyr-eb { font-size: var(--fs-nano); }
-  .lyr-frow .grain-numbox { width: 2.8rem; text-align: right; font-size: var(--fs-nano); }
 
   /* M and S — the same two on a track, on a bus, and on the mute tile. Pressed
      faces from the ramps (danger for a mute, ember for a solo): the raw reds
@@ -4760,7 +4925,6 @@ html.booting-reveal .main-layout {
   .lyr-bus-nm { position: absolute; left: var(--sp-4); top: 0; height: 24px; display: flex; align-items: center; gap: var(--sp-3);
     font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase; color: var(--c); }
   .lyr-bus-nm b { font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums; letter-spacing: 0; }
-  .lyr-bus-row .lyr-ms { top: 3px; /* geometry: (24 − 18.4) / 2 */ }
 
   /* The pin acts, at the foot since the mixer. The rails' FOOT (helper text)
      is gone (Ek, 2026-09-12, night). */
@@ -4786,7 +4950,7 @@ html.booting-reveal .main-layout {
      for one job. The toolbox is the CATALOGUE: a tool on the palette is still
      drawn here, so this strip always shows everything the app has. */
   body .srcbar,
-  body .lensbar { display: flex; flex: 0 0 auto; }  .src-tile.on .tile-nm { color: var(--text-bright); }
+  .src-tile.on .tile-nm { color: var(--text-bright); }
   .src-sampler .tile-nm { max-width: 100%; }
   .srcbar.flash,
   .tile.flash { animation: src-refuse 0.3s; }
@@ -4811,7 +4975,9 @@ html.booting-reveal .main-layout {
     white-space: nowrap; }
   .src-rn { width: 100%; background: var(--surface-1); border: none; border-radius: 3px;
     color: var(--text-bright); font: inherit; padding: 0.05rem 0.25rem; }
-  .src-rn:focus { outline: 1px solid var(--grid-teal, #7abcbc); }
+  /* The sampler's sheet answers to `--eng-source`, not to the settings pages'
+     teal: a surface wears its subject's hue (2026-09-22). */
+  .src-rn:focus { outline: 1px solid var(--eng-source); }
   .src-row-wavewrap { height: 30px; min-width: 60px;
     background: var(--bg-app); border-radius: 2px; overflow: hidden;
     position: relative; }
@@ -4827,7 +4993,7 @@ html.booting-reveal .main-layout {
     font-family: var(--font-sans); font-size: var(--fs-meta);
     padding: 0.16rem 0.5rem; }
   .src-row-play:hover { color: var(--text-bright); }
-  .src-row-play.playing { color: #7abcbc; border-color: #7abcbc; }
+  .src-row-play.playing { color: var(--eng-source); border-color: var(--eng-source); }
   /* Same affordance as a custom tool's (#284): quiet until the row is
      hovered, and three letters rather than a glyph that also means close. */
   .src-row-del { padding: 0.16rem 0.35rem; border-radius: 3px;
@@ -4952,13 +5118,22 @@ html.booting-reveal .main-layout {
        for everything under it. Every hue clears 5.8:1 against --bg-app at full. */
     color: var(--eng);
     padding: 0.15rem 0 0 0.34rem; }
-  /* The `+` on an engine's title (2026-09-10) — the ⋯'s box and hover, just
-     right of the word (Ek: "just to the right of the title"; it was flush
-     right for an hour); negative vertical margins keep it out of the
-     title's height, the marks' rule. Letter-spacing is the eyebrow's, which
-     would push a lone glyph off-centre. */
+  /* The `+` on an engine's title (2026-09-10) — the ⋯'s box and hover; negative
+     vertical margins keep it out of the title's height, the marks' rule.
+     Letter-spacing is the eyebrow's, which would push a lone glyph off-centre.
+
+     FLUSH RIGHT (Ek, 2026-09-22, evening). It sat just right of the word for
+     twelve days — "just to the right of the title", after a first hour flush
+     right — and that was the right answer when the rail had ONE of them. It has
+     three now (cursor · shape · voice presets), and measured they landed at x
+     136.8, 125.1 and 123.8 inside their cards, because each one follows the
+     length of its own label: three buttons doing one job on three edges, in a
+     column 294px wide. Flush right puts all three at 259.6 — the column the
+     drawer buttons on every row below already hold — so the `+` reads as the
+     list's own control rather than as punctuation after a word. `margin-left:
+     auto` is the whole mechanism; the label is already a flex box. */
   /* 24, the kit's height (ruled 2026-09-15). */
-  .tbx-add { display: flex; flex: none; margin-left: 0.35rem; margin-top: -0.3rem; margin-bottom: -0.3rem;
+  .tbx-add { display: flex; flex: none; margin-left: auto; margin-top: -0.3rem; margin-bottom: -0.3rem;
     height: 24px; box-sizing: border-box;
     width: 1.4rem; align-items: center; justify-content: center;
     border-radius: var(--r-2, 3px);
@@ -4966,14 +5141,266 @@ html.booting-reveal .main-layout {
   /* Drawn, so the box centres it (2026-09-16); 12px puts its ink at the
      title's cap height. */
   .tbx-add svg { width: 12px; height: 12px; display: block; }
+
   .tbx-add:hover { color: var(--text-bright); background: var(--surface-3); }
   .tbx-tiles { display: flex; gap: var(--seam); min-width: 0; }
+  /* A GROUP WITH NO LABEL STILL NEEDS THE LABEL'S AIR (2026-09-22, evening).
+     The instrument's two mode switches lead the card now and the MODE heading
+     is gone, so nothing was holding the first switch off the tab above it: a
+     label's own `padding-top` was the only thing making that gap and it left
+     with the label. Same 12px, stated where the label used to state it.
+     (A rule divided the picks from the set-once rows for an hour the same
+     evening and came out again — the labels' top padding and the plain fact
+     that a switch is not shaped like a preset row were already doing it.)
+
+     Scoped to `.tc-lrail` because the rule that zeroes every group's padding
+     is two classes deep, and one class loses to it — measured at 0px. */
+  .tc-lrail .tbx-grp--bare { padding-top: var(--sp-5); }
+  /* ── THE INSTRUMENT TABS (2026-09-22) ──────────────────────────────────
+     ONE row, icons only: each tab wears the thing's own glyph, so the row is
+     read by shape and hue like the rest of the instrument rather than by five
+     words in a column of eleven-pixel type. The row is the segmented element at
+     the kit's 24, r2, no padding on the container; the selected tab takes its
+     own engine hue, because hue is identity and a tab IS the engine. */
+  .instr-tabs { display: flex; padding: var(--sp-5) var(--sp-5) var(--sp-4); }
+  /* THE TABS ARE THE PINS RAIL'S PILL (2026-09-22). The markup is `.seg-pill`
+     > `.grain-seg-btn`, so everything about the shape, the ground and the
+     chosen state arrives from the kit; only two things are the tabs' own. */
+  /* THE EYE IS ITS OWN BAND (Ek, 2026-09-22: "give the lens special design
+     treatment"). It is not a tool and not an instrument, so it should read as
+     neither: its own ground in its own hue, held in a bounded band above the
+     tabs. FLAT — a tinted surface and a hairline, no shadow and no bloom, per
+     the build sheet's always-wrong § 7; the bench's plate is a raised object you
+     pick up, and the eye is not one.
+     The hue is `--eng-lens`, mixed down rather than a new colour (§ 8.3).
+
+     SPECIFICITY, stated because it bit: `.tc-lrail #lensBar` a few hundred lines
+     up resets border/margin/padding on these bars (they were horizontal shelves
+     once), and an ID beats any number of classes — so this carries the id too.
+     The row rule below carries `html body … .lyr-list` for the same reason. */
+  /* THE PANEL CARD (Ek, 2026-09-22: "i asked for this simple design, but for
+     the lenses"). A ground a step up from the rail and the hand's radius —
+     nothing else. The rows still bleed out of it to the rail's edge, so the
+     moons sit on the rail and the one glyph column holds; the card is a GROUND
+     BEHIND a group, not a box around it.
+
+     It arrived by accident two days after it was wanted: the `height: auto`
+     rule above lost its declaration block when a third selector was deleted,
+     its two survivors ran on into `html body .palette`, and the presets panel
+     came up wearing the hand's plate — gradient, shadow and a 9px backdrop
+     blur. Ek saw it and asked for it, so it is stated here instead, FLAT: no
+     gradient and no shadow (build sheet § 8.7), one token for the ground and
+     one for the radius (§ 8.8). */
+  /* ONE CARD PER REGION, never a card inside a card. The INSTRUMENT is one —
+     mode, its presets — and the things inside it are SECTIONS of that card,
+     told apart by their captions, not by grounds of their own. A box drawn
+     around boxes is the thing this replaced. (`#lensBar` was a card until
+     2026-09-22 night; the lens is a tab of the instrument card.) */
+  .tc-lrail #globalModes, .tc-lrail #instrPanel {
+    background: var(--surface-1);
+    border-radius: var(--r-hand);
+  }
+  /* ONE GAP BETWEEN BANDS, and it is the same `--sp-5` as the gutter either
+     side of them, so the air around a card is equal on all four edges. It was
+     16.9 · 12 · 8 · 0 — four values, none of them off the scale on purpose. */
+  .tc-lrail #globalModes { margin-bottom: var(--sp-5); }
+  /* THE RAIL HEADING (Ek, 2026-09-22: "tool creator should be big like the word
+     TOOLS and have the rail wide divider under"). It is the rail's own header
+     type — `.lyr-title`, the same object `TOOLS` is — over the same hairline
+     `.lyr-bar` carries, and it BLEEDS to the rail's edges so the rule runs the
+     full width rather than stopping at the 13→230 column. That is what makes it
+     read as a division of the rail instead of a caption inside it. */
+  .tc-lrail .tbx-rail-hd {
+    margin: var(--sp-6) calc(-1 * var(--sp-5)) var(--sp-6);
+    padding: var(--sp-4) var(--sp-5);
+    border-bottom: var(--seam) solid var(--border-faint);
+  }
+  /* THE PANEL IS THE TAB'S, and the outline says so: it carries the lit tab's
+     hue and starts directly under the pill, so the colour runs down from it.
+     The border sits on `--seam` OUTSIDE the 13→230 column — negative side
+     margins of exactly its own width — so the bands inside keep the one column
+     every other row in the rail is on. */
+  /* THE HUE EXTENDS FROM THE TAB — the one that is lit, at its width, not the
+     whole strip (Ek, 2026-09-22: "a big border around both the mode and tool
+     creator that extends from the selected tab in the colour of that type").
+     The pill sits ON the card's top edge and a 2px bar of the tab's own colour
+     bridges the two: `--tab-x` and `--tab-w` are written by `render`, which
+     knows which tab is lit and how wide it is. Flat — a bar, not a glow. */
+  .tc-lrail .instr-tabs { margin-bottom: 0; }
+  /* The strip and the card touch, and the card's TOP corners are square: the
+     tabs carry the rounding, and they span the full width so no square corner
+     is ever left showing. */
+  .tc-lrail #instrPanel { border-radius: 0 0 var(--r-hand) var(--r-hand); }
+  .tc-lrail #instrPanel #creatorBand { margin-bottom: 0; }
+  /* The card's own air: the first caption sits under the bar, the last row
+     off its bottom edge. */
+  .tc-lrail #instrPanel { padding-bottom: var(--sp-5); margin-bottom: var(--sp-5); }
+  /* THE CURSOR SECTION (Ek, 2026-09-23): the rail's lower half, pinned to its
+     foot at the height of its own rows, so the tools' list above takes the
+     rest and scrolls. Its bar is the rail header's, with the rule ABOVE as
+     well as below — a division of the rail at its full width. Its rows sit on
+     the instrument card's ground, fully rounded (no tab sits on it), with the
+     same air around them the list gives its card. */
+  .tc-lrail .cur-sec { flex: none; }
+  .tc-lrail .lyr-bar--sec { border-top: 1px solid var(--border-faint); }
+  .tc-lrail .cur-body { padding: var(--sp-6) var(--sp-5) var(--sp-5); }
+  .tc-lrail #cursorPanel { background: var(--surface-1); border-radius: var(--r-hand); padding-bottom: var(--sp-5); }
+  /* The pill carries no padding of its own: the card above it already ends with
+     `--sp-5`, and padding on top of that made 24 above the pill against 12
+     below it. Every gap in the stack is one margin now. */
+  .tc-lrail .instr-tabs { padding: 0; }
+  /* ONE BAND BOX: the caption's 8px at the top, --sp-2 at the bottom, so
+     nothing — a row's seated ground or the bench's plate — ever touches the
+     card's edge. With the 12 between bands that makes 16 of air under the last
+     row of one card and the first caption of the next, everywhere. */
+  .tc-lrail #globalModes { padding-bottom: var(--sp-5); }
+  /* `#creatorBand` is INSIDE the panel, which already ends with `--sp-5`; its
+     own inset made 24 under the last row against 12 everywhere else. */
+  .tc-lrail #creatorBand { padding-bottom: 0; }
+  /* THE ROWS BLEED, like every other row in this rail. Holding them inside the
+     band instead was tried and was wrong twice over: it put the lens glyphs
+     13px off the rail's single column, and the shape/voice cards below ALREADY
+     let their rows out to the rail edge — so containment made the lens the odd
+     one out at the same time as breaking the column. The moon is flush with the
+     RAIL, always; the band is a ground behind the rows, not a box around them. */
+  /* ── THE TABS ARE THE CARD'S TOP EDGE ─────────────────────────────────
+     Not a pill floating above a panel (Ek, 2026-09-22, with a reference): the
+     CHOSEN tab IS the card — same ground, square where they meet — so the two
+     read as ONE SHAPE, and the rest are marks on the rail. That is also why the
+     bar that used to bridge them is deleted: nothing needs bridging when they
+     are the same object. The hue appears twice and only twice — the chosen
+     tab's glyph, and a short rule under it. No filled chip: a tab that is a
+     block of colour shouts louder than the panel it names. */
+  .instr-tabs .seg-pill {
+    display: flex; width: 100%;
+    background: none; border-radius: 0; padding: 0; overflow: visible;
+  }
+  /* A GLYPH IS CENTRED BY A FLEX BOX, never by a line box (Ek, 2026-09-22: "the
+     icons for the tool tab in the tab editor is not centered at all"). The
+     button inherits `.grain-seg-btn`, which is text-shaped — uppercase, letter
+     spaced, sitting on a baseline — so a `display: block` svg inside it lands
+     wherever the line box leaves it, and `justify-content` on a non-flex box is
+     ignored outright. The footer's glyph segment states all three; this one
+     said one of them. */
+  /* EVERY TAB IS DRAWN AS A TAB (Ek, 2026-09-22, evening: "most tabs I can see
+     the other unopen tabs in a lighter colour so it's the full tab shown").
+     The closed three were bare glyphs on the rail's ground — the row read as
+     one tab and three marks beside it, which is why "which of these is a tab?"
+     kept being answered by the chosen one alone. They get the tab shape and a
+     ground of their own now: `--surface-0`, one step under the card's
+     `--surface-1`, so the row reads front-to-back — open tab at the card's
+     level, closed tabs behind it, rail ground behind them. The 1px `gap` on
+     the pill is what separates them, and it is the rail showing through. */
+  .instr-tabs .grain-seg-btn {
+    flex: 1 1 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    position: relative;
+    border-radius: var(--r-hand) var(--r-hand) 0 0;
+    background: var(--surface-0);
+    color: var(--text-dim);
+  }
+  .instr-tabs .grain-seg-btn:hover { color: var(--text-bright); background: var(--surface-2); }
+  /* The glyph is the tile's own 1.05rem, so a tab and a row read as the same
+     mark at the same size. `.seg-glyph`'s 20px is the FOOTER's density, and
+     this pill sits over a rail of 1.05rem rows. */
+  /* CENTRED, now that there is nothing under it to leave room for: the padding
+     was `0 --sp-3 --sp-4`, and that bottom 8px was the rule's clearance, not
+     spacing — it pushed every glyph 4px above the middle of its own 32px box. */
+  .instr-tabs .seg-glyph .grain-seg-btn { height: 32px; padding: 0 var(--sp-3); }
+  .instr-tabs .seg-glyph .grain-seg-btn svg { width: 1.05rem; height: 1.05rem; display: block; }
+  /* THE CHOSEN TAB CARRIES THE INSTRUMENT'S NAME (2026-09-22, evening), and it
+     is the ONE that does: four equal glyphs said which of four you had picked
+     and never which one it was. The named tab sizes to its content and the
+     other three share what is left, so the row still fills the card's width —
+     `flex: 0 1 auto` against their `1 1 0`. The word is the eyebrow, tracked
+     like every other label in the rail and in the tab's own hue, which it
+     already had from `--c`.
+
+     THE NAME'S OWN AIR (Ek, 2026-09-22, evening: "improve the spacing around
+     the tab title"). The word sat in the glyph-only padding — 6px either side
+     and 6px off the glyph — which is the spacing of a mark, not of a mark and a
+     word together. `--sp-4` between them so the glyph and the name read as one
+     object rather than two things touching, and `--sp-5` outside so the chosen
+     tab has a margin the plain glyphs do not need. */
+  .instr-tabs .grain-seg-btn.active { flex: 0 1 auto; gap: var(--sp-4); padding: 0 var(--sp-5); }
+  .itab-nm { font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow);
+    text-transform: uppercase; white-space: nowrap; }
+  /* THE CHOSEN TAB IS THE CARD: same ground, square at the bottom, so the seam
+     between them disappears. Its glyph takes the instrument's hue. */
+  .instr-tabs .grain-seg-btn.active {
+    background: var(--surface-1);
+    color: var(--c, var(--eng-none));
+  }
+  /* (A short hue rule sat under the chosen glyph until 2026-09-22, evening. It
+     was the one mark saying which tab you were in — and the tab says its NAME
+     now, in that same hue, so the rule was a third way of saying the same
+     thing after the ground and the colour. Removing it is also what let the
+     button centre its content: the 8px of bottom padding under the glyph
+     existed only to leave room for it.) */
+  /* The sampler's panel and the tools panel take turns, and `[hidden]` alone
+     cannot do it: `.tc-lrail #srcBar` sets an explicit `display: flex`, and an
+     explicit display beats the hidden attribute every time. Stated here, where
+     the rule that beat it lives. */
+  html body .tc-lrail #srcBar[hidden],
+  html body .tc-lrail #tileBar[hidden] { display: none !important; }
+
+
+  /* ── MODE (2026-09-21) ─────────────────────────────────────────────────
+     Two settings in the rail, above the lens. Row height is the rail's own 24,
+     and each control fills it or sits inside it at its kit size — the switch is
+     32 × 18 with a 14 knob and a 2px inset, the segmented pair is 24 tall with
+     no padding and r2, both exactly as the instrument kit states them.
+
+     No engine hue: mode is not an engine. The label takes --eng-none, which is
+     the app's own word for that. */
+  .mrows { display: flex; flex-direction: column; }
+  .mrow { height: 24px; box-sizing: border-box; display: flex; align-items: center;
+    gap: var(--sp-4); padding: 0 var(--sp-5); }
+  .mrow-l { flex-grow: 1; font-size: var(--fs-control); color: var(--text-secondary); }
+  /* The switch: 32 × 18, knob 14, 2px inset. Flat, no border — the kit's. */
+  .mrow-sw { flex: none; width: 32px; height: 18px; padding: var(--sp-0); box-sizing: border-box;
+    border: 0; border-radius: 999px; background: var(--border-soft); cursor: pointer;
+    display: flex; align-items: center; justify-content: flex-start;
+    transition: background var(--m-state) var(--ease-snap); }
+  .mrow-knob { width: 14px; height: 14px; border-radius: 999px; background: var(--text-tertiary);
+    transition: background var(--m-state) var(--ease-snap); }
+  .mrow-sw.on { background: var(--eng-pins); justify-content: flex-end; }
+  .mrow-sw.on .mrow-knob { background: var(--bg-app); }
+  /* The segmented pair: 24 tall, container and buttons, r2, selected segment
+     NEUTRAL — never ember. Chosen is not exceptional. */
+  .mrow-segs { flex: none; display: flex; height: 24px; border-radius: var(--r-2);
+    border: 1px solid var(--border-base); overflow: hidden; }
+  .mrow-seg { height: 100%; padding: 0 var(--sp-4); border: 0; background: none;
+    font-size: var(--fs-eyebrow); color: var(--text-dim); cursor: pointer;
+    transition: background var(--m-touch) var(--ease-out), color var(--m-touch) var(--ease-out); }
+  .mrow-seg:hover { color: var(--text-bright); }
+  .mrow-seg.on { color: var(--bg-app); background: var(--eng-pins); }
+
+  /* ── THE BENCH (2026-09-22) ────────────────────────────────────────────
+     ONE TILE, and it is the STRIP'S tile: the bed carries `.palette`, so the
+     hand tile inside it is drawn by the same rules, at the same width, with the
+     same glyph, name, ground and sticker corner. Nothing here restates any of
+     that — the only job left is to sit the bed in the rail.
+
+     The bed keeps the strip's own padding and radius, because a hand tile with
+     the strip's air around it IS what the strip shows. */
+  /* THE LINE BETWEEN THE INSTRUMENT AND THE TOOL (2026-09-22). Above it: the
+     pill and MODE, which are the instrument's. Below it: the bench, the shapes
+     and the voices, which are the tool's. The rule is on the SEPARATOR rather
+     than on the bench, so the heading sits under the line with its group. */
+  /* No rule on it: four bands with equal air between them do not need a line,
+     and the line was the only hairline left in the rail. */
+  .tc-lrail .tbx-sep { border-top: 0; }
+  /* (The BENCH BED's rules stood here until 2026-09-22 — the bed, its equal air
+     on three sides, and the grab cursors that said the tile could be dragged
+     onto the strip. All of it went with the bench.) */
+
   /* Box tiles are the same tool, quieter until you point at one. */
   .palette .tile { padding: 0.42rem 0.3rem 0.34rem; }
   /* NOTHING in the strip is dimmed (#257, Ek): a half-opacity control reads
      as muted — that is what dimming means in a DAW — and none of these are.
      A tile that is not current is simply not boxed. */
-  .srcbar .tile, .lensbar .tile { padding: 0.42rem 0.3rem 0.34rem; }
+  .srcbar .tile { padding: 0.42rem 0.3rem 0.34rem; }
 
   /* The `.tile.armed` box stood here — the one unambiguous mark for the one
      state that decided what space did. Both are gone (2026-09-11). */
@@ -4995,7 +5422,6 @@ html.booting-reveal .main-layout {
      Shared by the properties panel's discrete rows. The options BAR that
      named it is gone (#251); the vocabulary outlived it. */
   
-  .opt-none { font-size: var(--fs-nano); color: var(--text-faint); }
   .opt { display: flex; align-items: center; gap: 0.4rem; font-size: var(--fs-nano); color: var(--text-dim); }
   .opt > i { font-style: normal; }
   .opt > b { color: var(--text-secondary); font-weight: 500;
@@ -5028,21 +5454,22 @@ html.booting-reveal .main-layout {
     color: var(--text-faint); cursor: pointer; }
   .opt .seg span.on { background: var(--chrome-bg-raised, #262626); color: var(--text-light); }
 
-  .lensbar { display: flex; gap: var(--seam); }
 
   @media (max-width: 820px) {
     /* Nothing to re-place on a narrow screen any more (#259): the stage is
        one cell and every rail overlays it. They only have to get smaller —
        and the properties rail gives way first, since the tool list is the one
        you navigate with. */
-    body.props-open .tc-lrail { width: 11.5rem; }
-    body.prail-open .tc-prail { width: 12rem; margin-left: 11.5rem; }
+    /* The left rail is DERIVED from the hand tile now and shrinks with it, so it
+       states nothing here; only the properties rail, which has no tile to follow. */
+    body.prail-open .tc-prail { width: 12rem; margin-left: var(--lrail-w); }
     body.pinned-open .tc-rail { width: 16rem; }
 
     /* The palette keeps its precedence on a small screen — it is still the
        instrument — but ten squares at full size would overflow a 520px stage,
        and the glyph is now the whole tile, so it gives up the least. */
-    .palette { --pal-tile: 44px; }
+    /* (the narrow value for --pal-tile lives with the value itself, further down:
+       at equal specificity the LATER declaration wins, and this one is earlier) */
     .palette .tile .leg { font-size: 9.5px; }
     .palette .tile .leg-g, .palette .tile .leg-d { font-size: 8.5px; }
     .palette .tile svg { width: 1.55rem; height: 1.55rem; }
@@ -5158,8 +5585,6 @@ html.booting-reveal .main-layout {
   
   
   .ds-chips { display: flex; flex-direction: column; gap: 0.2rem; }
-  .ds-extras { padding: 0.4rem 0.9rem 0.8rem; border-top: 1px solid var(--border-faint);
-    display: flex; gap: 1rem; flex-wrap: wrap; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    THE 2026-08-29 DESIGN PASS (#293)
@@ -5489,10 +5914,31 @@ html body .tc-lrail .lyr-list {
   scrollbar-gutter: auto;
   min-height: 0;
 }
+/* …AND THE PLATFORM WILL NOT DRAW IT. These two rules are kept because they
+   cost nothing and are right wherever a classic scrollbar exists, but measured
+   in this Electron on macOS they paint NOTHING: `offsetWidth - clientWidth` is
+   0, so the scrollbar is an overlay and neither `::-webkit-scrollbar` nor
+   `scrollbar-width: thin` + `scrollbar-color` brings it back (both tried
+   through the dev bridge, both 0, both invisible in a cropped shot of the
+   rail's right edge at rest). `js/tiles.js` `railScrollMark()` draws the mark
+   the rail actually shows; the CSS for it is `.lyr-scroll`, below. */
 html body .tc-rail .lyr-list::-webkit-scrollbar,
 html body .tc-lrail .lyr-list::-webkit-scrollbar { width: 6px; }
-html body .tc-rail .lyr-list:not(:hover)::-webkit-scrollbar-thumb,
-html body .tc-lrail .lyr-list:not(:hover)::-webkit-scrollbar-thumb { background: transparent; }
+html body .tc-rail .lyr-list::-webkit-scrollbar-thumb,
+html body .tc-lrail .lyr-list::-webkit-scrollbar-thumb {
+  background: var(--text-faint); background-clip: padding-box;
+  border: 2px solid transparent; border-radius: var(--r-1);
+}
+
+/* THE RAIL'S OWN SCROLL MARK (2026-09-22). The reasoning is on
+   `railScrollMark()`; this is its two pixels. `position: relative` on the rail
+   is what the mark hangs from — checked first, against the running app: the
+   rail had zero absolutely-positioned descendants, so nothing moved. */
+html body .tc-lrail { position: relative; }
+.lyr-scroll { position: absolute; right: var(--sp-1); width: 2px; pointer-events: none; z-index: 2; }
+.lyr-scroll[hidden] { display: none; }
+.lyr-scroll > i { position: absolute; left: 0; width: 2px; display: block;
+  border-radius: var(--r-1); background: var(--text-faint); }
 
 /* The phantom scrollbar in the tool rail (Ek, 2026-08-29).
    `body .tilebar` carries `height: 100%`, which is correct for what it used to
@@ -5506,8 +5952,7 @@ html body .tc-lrail .lyr-list:not(:hover)::-webkit-scrollbar-thumb { background:
    still exists in the cabinet and nothing here has been on screen to check it
    against. */
 html body .tc-lrail .tilebar,
-html body .tc-lrail .srcbar,
-html body .tc-lrail .lensbar { height: auto; }
+html body .tc-lrail .srcbar { height: auto; }
 
 /* ═══ 8. THE PALETTE IS THE HAND ═════════════════════════════════════════════
    Everything else recedes. The palette is the one object actually touched
@@ -6009,10 +6454,28 @@ html body .settings-host .in-settings { align-content: start; }
    thing rather than as two unrelated widgets.
 
    Flush to the edge, in the row's own hue, replacing the line and occupying
-   its space — nothing reflows, and the label column stays where it was. */
+   its space — nothing reflows, and the label column stays where it was.
+
+   FLUSH WITH THE RAIL, not with the row (2026-09-22). See the bleed below. */
 
 /* The marks are absolutely placed against the row. */
 html body .tc-lrail .trow { position: relative; }
+
+/* THE MARK HANGS OUT; THE ROW DOES NOT. Flush still means flush with the RAIL
+   (Ek, 2026-09-22: "there's a space between the half moon and the left side of
+   the app"), but the ROW bled left to get it there, which put every tool row
+   12px out of step with its own card — starting 12 left of it and stopping 12
+   short of its right edge — and 12px out of step with MODE's rows, which did
+   not bleed. Measured: trow 1→218, mrow 13→230, card 13→230.
+
+   So the row fills its card and the MARK alone reaches the gutter: `--sp-5` for
+   the list's inset plus the row's own 2px border, which is where `left: -2px`
+   was already pointing. One box for both row kinds, and the mark still sits on
+   the rail's edge. */
+html body .tc-lrail .lyr-list .trow--radio.on::before,
+html body .tc-lrail .lyr-list .trow--multi::before {
+  left: calc(-2px - var(--sp-5));
+}
 
 /* One mark, not two: the left border stops colouring itself for any row that
    draws a mark. */
@@ -6029,7 +6492,10 @@ html body .trow--radio.on {
 }
 html body .trow--radio.on::before {
   content: '';
-  position: absolute; left: 0; top: 50%;
+  /* -2px, because the mark REPLACES the row's 2px left border and occupies its
+     space — that is what the rule above this block has always said, and `left:
+     0` is the padding edge, which is inside the border. */
+  position: absolute; left: -2px; top: 50%;
   width: 6px; height: 12px; margin-top: -6px;
   border-radius: 0 6px 6px 0;          /* flat at the edge, round into the row */
   background: var(--c, var(--accent-action));
@@ -6041,7 +6507,7 @@ html body .trow--radio.on::before {
    broken, which is the whole difference the old rail could not draw. */
 html body .trow--multi::before {
   content: '';
-  position: absolute; left: 0; top: 50%;
+  position: absolute; left: -2px; top: 50%;
   width: 6px; height: 12px; margin-top: -6px;
   border-radius: 0;                     /* the half of a 12px square */
   /* An OFF filter is a dim square, not an outlined one. The first version drew
@@ -6293,7 +6759,32 @@ html body .bottom-bar .sensor-group[hidden] { display: none !important; }
    pad 8 → 13; the tile itself is untouched at 53, so every sticker, ring and
    hairline measured against it still holds. The dock is 83px tall now, from
    71 — 13 pad + 1 border + 53 tile + 13 pad + 1 border. */
-html body .palette { --pal-tile: 53px; --pal-gap: 11px; --pal-pad: 13px;
+/* The palette's metrics live on the BODY, not on `.palette`, because the TOOL
+   EDITOR has to read them too (2026-09-22). The bench holds the hand tile, and
+   the hand tile is three tiles and two gaps — so if the strip's tile shrinks on
+   a narrow screen and the bench's does not, the two are different objects. They
+   are the same object; one set of numbers says so.
+
+   `--lrail-w` was that tile plus the editor's own gutters until 2026-09-22 —
+   243px, derived from a BENCH TILE that no longer exists. The bench went and
+   nothing was left sizing this rail, so it kept a width measured for an object
+   it no longer holds, and came up one line narrow beside the pin rail (Ek:
+   "make the tools rail as wide as the pin rail again"). ONE token states both
+   now — and it is the PINS rail's 20rem, the width Ek set on 2026-09-16
+   ("wider — ~320px"), NOT the drawer's 15.5rem. The tools rail and the pins
+   rail are the two you WORK in, one on each edge; the drawer is a sheet that
+   opens over the stage and keeps its own. Matching the drawer first is how
+   this came out 248 against the pins rail's 320. */
+html body { --rail-w: 20rem; --pal-tile: 53px; --pal-gap: 11px; --pal-pad: 13px;
+  --hand-tile-w: calc(3 * var(--pal-tile) + 2 * var(--pal-gap));
+  --lrail-w: var(--rail-w); }
+/* The narrow screen's tile, stated HERE rather than up in the layout media
+   block: `html body` in both places is the same specificity, so the later
+   declaration wins — and the layout block is earlier in this file. Keeping the
+   value and its breakpoint together is what makes that impossible to get wrong
+   twice (it was wrong once, 2026-09-22: the strip shrank and the bench did not). */
+@media (max-width: 820px) { html body { --pal-tile: 44px; } }
+html body .palette {
   align-items: center; flex-wrap: nowrap; gap: var(--pal-gap); padding: var(--pal-pad); border-radius: var(--r-card); }
 /* 71px: 8 pad + 1 border + 53 tile + 8 pad + 1 border (§ 11.4). The ledger's
    reserved lines under the tiles are gone; the binding is a sticker on the
@@ -6388,13 +6879,27 @@ html body .trow .tile-pin--fixed:hover { background: none; }
    right of the tile and the wet on the top left"): the wrapper lays nothing
    out; each sticker is placed on its own corner. */
 html body .palette .tile .tile-marks { display: contents; }
-html body .palette .tile .tile-marks .tile-wet, html body .palette .tile .tile-marks .tile-pin { position: absolute; top: -5px; z-index: 2;
+html body .palette .tile .tile-marks .tile-wet, html body .palette .tile .tile-marks .tile-pin,
+html body .palette .tile .tile-marks .tile-dub { position: absolute; top: -5px; z-index: 2;
   display: flex; align-items: center; justify-content: center;
   width: 1.15rem; height: 1.15rem; border-radius: 999px; background: var(--bg-app); color: var(--c);
   border: 1px solid var(--border-medium); box-sizing: border-box; }   /* the sticker's edge — the tile's own hairline */
 html body .palette .tile .tile-marks .tile-wet { left: -5px; right: auto; }
 html body .palette .tile .tile-marks .tile-pin { right: -5px; left: auto; }
-html body .palette .tile .tile-marks .tile-wet svg, html body .palette .tile .tile-marks .tile-pin svg { width: 0.75rem; height: 0.75rem; }
+html body .palette .tile .tile-marks .tile-wet svg, html body .palette .tile .tile-marks .tile-pin svg,
+html body .palette .tile .tile-marks .tile-dub svg { width: 0.75rem; height: 0.75rem; }
+/* TWO FLAGS, ONE CORNER (2026-09-22): autopin and overdub are both answers to
+   "what happens when you let go", so they share the top-right in a ROW rather
+   than fighting for the same five pixels. The row is what is positioned; the
+   stickers inside it go static and keep only their shape. Overdub sits to the
+   LEFT of the pin, in the order the stroke answers them: it joins a master
+   first, and it is pinned at the end. */
+html body .palette .tile .tile-marks .tile-flags { position: absolute; top: -5px; right: -5px; z-index: 2;
+  display: flex; align-items: center; gap: var(--sp-0); }
+html body .palette .tile .tile-marks .tile-flags .tile-pin,
+html body .palette .tile .tile-marks .tile-flags .tile-dub { position: static; right: auto; left: auto; top: auto; }
+/* The overdub flag is the white O (2026-09-23), not the engine hue. */
+html body .palette .tile .tile-marks .tile-dub svg { color: var(--text-light); }   /* the svg, which .palette .tile svg paints in the hue */
 /* The drop on a grain tile is a BUTTON (Ek, 2026-09-14: "the wet icon should
    be clickable in the palette tile … all grain tools should have the wet/dry
    toggle on the palette tile"), so every grain tile wears one — outlined dry,
@@ -6451,17 +6956,25 @@ html body .trow.open .trow-more { color: var(--c, var(--text-bright)); }
 /* THREE TILES WIDE, like a spacebar (Ek, night: "3 tiles wide in design, like
    a spacebar to look special"), at the row's own gap — no extra air: the
    width is the separator. Room for the name beside the glyph. */
-html body .palette .tile--hand { width: calc(3 * var(--pal-tile) + 2 * var(--pal-gap)); cursor: default;
+html body .palette .tile--hand { width: var(--hand-tile-w); cursor: default;
   display: flex; flex-direction: row; align-items: center; justify-content: center; gap: var(--sp-5); }
-html body .palette .tile--hand .tile-nm { display: inline; font-size: 12px; font-weight: 500; letter-spacing: var(--ls-uppercase);
-  text-transform: uppercase; color: var(--text-bright); }
+/* BOTH NAMES (Ek, 2026-09-22: "the tile should say the shape and the voice in
+   text"). Two lines, and the hierarchy is the model's: the SHAPE on top, the
+   tool's identity, in the uppercase the tile has always used; the VOICE under
+   it in the engine's hue, because hue is identity and the voice is the half no
+   other channel carries. A tool with no voice draws one line — the builder
+   omits the span rather than leaving an empty one. */
+html body .palette .tile--hand .tile-nm { display: flex; flex-direction: column;
+  align-items: flex-start; gap: var(--sp-0); min-width: 0; }
+html body .palette .tile--hand .tile-nm-shape { font-size: 12px; font-weight: 500;
+  letter-spacing: var(--ls-uppercase); text-transform: uppercase; color: var(--text-bright); }
+html body .palette .tile--hand .tile-nm-voice { font-size: var(--fs-eyebrow);
+  letter-spacing: var(--ls-wide); color: var(--c); }
 
 /* IN HAND, on the rail row: the row's ground lifted one step and a 2px left
    inset in the hue — how you find the tool in the library. The strip's tile
    wore a ring too until the hand became a tile of its own; the same glyph at
    the head of the row says it, so the ring said it twice. */
-html body .trow.in-hand { background: var(--surface-1); box-shadow: inset 2px 0 0 var(--c); }
-html body .trow.in-hand .tile-nm { color: var(--text-bright); }
 
 /* THE BINDING STICKER (PALETTE-GUI § 11.5–11.6, Ek 2026-09-12). The same
    device as wet and pin, bottom-left: a disc of the app ground with the
@@ -6493,9 +7006,18 @@ html body .palette .tile .tile-bind--none { color: var(--text-faint); border-col
 html body .palette .tile .tile-bind .leg { display: inline-flex; flex: none; white-space: nowrap; align-items: center; gap: var(--sp-2); }
 html body .palette .tile .tile-bind .leg-g { flex: none; white-space: nowrap; font-style: normal; font-size: 9.5px; text-transform: none; color: var(--leg-midi); }
 html body .palette .tile .tile-bind .leg-g--bar { display: inline-block; width: 8px; height: 2px; border-radius: 1px; background: var(--leg-midi); }
-html body .palette .tile .tile-bind .leg-g--xlong { width: 14px; }
+/* EXTRA LONG IS THICKER, NOT LONGER (Ek, 2026-09-22: "for the long line
+   instead of making it longer, make the line thicker"). It was 14px against
+   long's 8, which grew the sticker sideways in a pill whose whole constraint is
+   that nothing may be wider than the tile (§ N) — and beside a key cap and a
+   pointer the extra 6px read as a second mark rather than as more of the same
+   one. Same 8px length, twice the ink: the bar says HOW LONG by weight now, and
+   the pill's width no longer depends on which gesture is bound. */
+html body .palette .tile .tile-bind .leg-g--xlong { height: 4px; border-radius: 2px; }
 html body .palette .tile .tile-bind .leg-d { flex: none; white-space: nowrap; font-style: normal; font-size: 9.5px; color: var(--leg-delay); letter-spacing: -1.5px; }
-html body .palette .tile .tile-bind .leg-space { display: inline-block; flex: none; width: 15px; height: 6px; color: inherit; }
+html body .palette .tile .tile-bind .leg-space { display: inline-block; flex: none; width: 16px; height: 8px; color: inherit; }
+/* The pointer beside it — square, cap-height, the same ink. */
+html body .palette .tile .tile-bind .leg-click { display: inline-block; flex: none; width: 10px; height: 10px; color: inherit; }
 html body .palette .tile .tile-bind:hover { border-color: var(--text-bright); }
 html body .palette .tile .tile-bind.learning { color: var(--accent-action); border-color: var(--accent-action); animation: leg-learn 0.9s ease-in-out infinite; }
 @keyframes leg-learn { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }

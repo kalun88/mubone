@@ -187,10 +187,22 @@ height and buys a fixed rail height and explicit copy, which matters for a destr
 hit mid-set.
 
 **The pinned rail is a mixer since 2026-09-16** (`docs/RULINGS.md` "the track is its fader"): the
-pin rows above are the action rows at its foot (`.trow--act`); the pins themselves are TRACKS — a
-32px bar per pin whose fill is the level, the material drawn inside it, the number in the engine hue,
-M and S (the 18px pair) at the right, and every bar, every bus row and the mode bar's content box on
-one left and one right edge. `npm run audit:align` "the mixer" measures exactly that.
+action rows at its foot (`.trow--act`) are what the strip does not hold — unpin all and mute; pin
+and unpin left the rail on 2026-09-22 night, since the fixed strip holds both, and unmute all on
+2026-09-23 (mute is a toggle that keeps the per-pin flags; M and S clear one at a time) — and the pins themselves are TRACKS — a
+row per pin in three columns (2026-09-23): the number in the engine hue — ringed by the white O
+when it is the loop an overdub would join, the tape tile's overdub flag — then the 32px BOX, the
+fader and only the fader: its fill is the level, the material drawn edge to edge inside it, the
+playhead, the dB readout on a chip of the rail ground — then M and S (the 18px pair). Nothing that comes and
+goes sits in the box, so the material never changes width; the bus lines use the same columns, so
+every box shares one left and one right edge, and every row, bus line and the mode bar's CARD
+another. **The mode bar sits on a card since 2026-09-22 night** — the tool rail's
+own `#instrPanel` design: `--surface-1`, `--r-hand`, 12 in from either rail edge, 12 of air on all
+four sides inside, `--sp-6` under the bar — and its rows are the tool rail's `.mrow`: one setting
+per row (follow · sort; the curve went to Settings → Pins on 2026-09-23), 30 tall, the name in `.mrow-l` at card + 12, the control flush
+right, a yes/no the switch and a which-one the sheet's `.opt .seg` at 24 (not the chrome's 28
+`.seg-pill`), in sentence case like every capsule in the rails and the drawer. `npm run
+audit:align` "the mixer" measures exactly that.
 
 **The principle behind the right column: no fact appears twice in a row.** If the label says
 `pin Q` and the right column says `Q`, the row states one fact in two places and the column stops

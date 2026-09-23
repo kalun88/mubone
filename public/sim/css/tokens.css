@@ -182,7 +182,13 @@
     owns 25–40° (--accent-action, --leg-button), so grain is the one warm
     family. Pins are not an engine — bone is what engines commit into. */
     --eng-source: #4aa3e8;   /* azure       — the only blue: what the brush inks from */
-    --eng-lens:   #5fbf9a;   /* sea green   — how the cursor reads; still "this is on" */
+    /* THE EYE IS WHITE (Ek, 2026-09-22: "use white as the lens colour not this
+       green"). It reads the others rather than being one of them, so it takes
+       no hue at all — the app's own warm white, reused from --text-light rather
+       than stated again, because a pure white over a warm black reads blue (see
+       the note at the top of this file). It sits one step brighter than
+       --eng-pins' bone, which is the nearest thing to it. */
+    --eng-lens:   var(--text-light);   /* warm white — how the cursor READS */
     --eng-tape:   #f2569e;   /* hot pink    — recordings that play whole */
     --eng-grain:  #e8a030;   /* gold        — grains from a buffer; dots' own colour */
     --eng-erase:  #be7ace;   /* orchid      — material removed (Ek, 2026-09-13)    */

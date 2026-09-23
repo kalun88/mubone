@@ -203,7 +203,7 @@ export function ensureAudioContext() {
     // the house/main output.  In multi-ch mode the monitor speaker buses are
     // unaffected (cursor stays audible on headphones).
     const cursorMasterGain = S.audioCtx.createGain();
-    cursorMasterGain.gain.value = S.scanMuted ? 0 : 1;
+    cursorMasterGain.gain.value = 1;   // the cap gates no bus (2026-09-23): what sounds finishes
     S.cursorMasterGain = cursorMasterGain;
 
     // Wire: monitorBus → cursorMasterGain → masterGain (cursor audible unless muted)

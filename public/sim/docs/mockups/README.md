@@ -43,6 +43,26 @@ changing any of them.
 - **The `s-today` screenshot was stripped** from this copy (an 82 KB inline JPEG of the 1.13 window).
   That tab renders empty; nothing else is affected.
 
+## `voices-heads/`
+
+The canvas for `docs/VOICES-AND-HEADS.md` (2026-09-20). Five artboards: the rail today, the rail as
+it would be (**interactive** — pick a head, pick a voice, watch the hand), the sheet in its three
+sections, the hand and the strip, and the 53px tile drawn three ways. Tokens lifted from
+`css/tokens.css`; glyphs are the real ones from `js/tiles.js`.
+
+Live canvas: <https://claude.ai/artifact/8Z585vU8KuAqqGf3VyaMA3>
+
+## `tool-rail/`
+
+The left rail, measured and redrawn (2026-09-22), then updated to what shipped the same day. Three
+artboards: the rail **before**, as it rendered on the grain tab with the fold marked; the rail **as
+built**, picks above parameters with a scroll mark; and four details (the `+`'s three edges, the two
+headings that named one row each, the cut bottom edge, and the tabs). Every number in it was read
+off the running app through `.dev-bridge/`, not estimated. The rulings are in `docs/RULINGS.md`
+under "The rail's rhythm, and which rows may grow".
+
+Live canvas: <https://claude.ai/artifact/EPUAepg6M57ymE8Gyfkt9U>
+
 ## Provenance
 
 Built 2026-08-25 in a Cowork session, alongside `docs/archive/BRUSH-MODEL.md` and `docs/VOCABULARY.md`.

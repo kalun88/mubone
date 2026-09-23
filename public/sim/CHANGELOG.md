@@ -7,6 +7,135 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.6 alpha — 2026-09-23
+
+**The cursor is its own section, read top down as a filter; a pin's in and out are one live pair;
+the sampler is parked.** One day's round on how the cursor reads and how pins sound, with a new rig
+suite (`lens`) that drives every cursor setting through the scheduler's own code.
+
+### Added
+- **The CURSOR section** at the foot of the tool rail, always shown, under its own bar — the lens
+  left the tabs. The tools above (tape · grain · erase) scroll; the cursor section never moves.
+- **Glyphs on the rail titles**: TOOLS (tape's line over grain's dots), CURSOR (the reach rings),
+  PINNED (the pin).
+- **Settings › Tools › Cursor › Falloff** and **Settings › Pins › Follow › Crossfade** — both set
+  once, so they left the rails.
+- **Settings › Tools › Sampler › Use the sampler**, off by default: parked, not sunset — off, its tab
+  leaves the rail and nothing (key, pad, MIDI, `/source/sampler`, capture) can make it the source.
+- **`stop`** on tape's release — play→end · stop · fade; stop is the 8 ms declick.
+- **`scripts/lens-audit.js`** (rig suite `lens`): radius, depth, k / all, nearest, scope, dwell grain,
+  walk, the cap, fade, step, the eraser's depth, and the pin under dwell grain.
+
+### Changed
+- **The lens is called the cursor** everywhere a player reads it; `reads` is **scope**, its grains
+  and tape options wearing the engines' glyphs; mode's `area` reads **radius**.
+- **The cursor reads top down**: scope, radius, then a GRAIN SELECTION heading over mode, depth, all,
+  k, step, fade. Scope `tape` greys the grain block; nearest greys depth, all and fade (and radius
+  only when scope is grains). One counter, `in reach → taken`, on k.
+- **Depth counts strokes**, for the cursor and the eraser alike (it counted recordings, so every
+  sampler stroke — one file — stayed at depth 1).
+- **Step plays marks in the order they were made** (stroke, then its clock), not by their offset in
+  the buffer.
+- **`dwell: grain` beats scope**: a take it opened granulates under any scope and depth, and only
+  once it has played through — in nearest too.
+- **A pin's In / Out are Settings › Pins, read live** at the moment a pin comes or goes, for every
+  pin at once; nothing is stamped on a pin.
+- **Pin tracks**: the box is the fader and only the fader — level, material edge to edge, playhead,
+  the dB readout on a chip — with the number and M S outside it. The loop an overdub would join wears
+  a white O round its number.
+- **Overdub is an O**: a plain white ring, on the tape tile's flag and in the rail.
+- **The cap is not a mute**: capped, the cursor reads nothing new, but what is in flight — grains,
+  takes, walkers — plays out, and draws at full weight.
+
+### Fixed
+- A pin dropped on a take opened by `dwell: grain` made a loop AND a cloud of the take; it makes the
+  loop only, and a cloud is grain material only.
+- Nearest granulated a dwell-grain take the moment the cursor arrived, over its own first pass.
+- Nearest let a walking cursor granulate on its own.
+- `align-audit` had not run since 0f3ccd9 (a backtick in its rail probe threw before any check).
+
+### Removed
+- **Unmute all** — the row, the act, `pins_unmute_all` and `/pins/unmuteall`; the MIX mute is a
+  toggle that keeps per-pin M and S.
+- The per-pin in / out fold on the pinned rail, and the number as its button.
+- The cursor TAB, and the palette cursor tile's switching to it.
+- The tape fade tried for a day: a distance fade silenced every take as the cursor let go.
+
+---
+
+## 5.5 alpha — 2026-09-23
+
+**A tool is a shape and a voice; the rail is an editor; the lens is a tab; the palette is a
+toolbar.** Four days of one round (`docs/VOICES-AND-HEADS.md` was the plan; `docs/RULINGS.md` is
+what shipped). The instrument reads as tape, grain, erase, lens and sampler — one tool each, named
+for its instrument — and every parameter lives with the tool it works on: a standing answer on that
+tool's tab, a sound in its voice, the rest on Settings → Tools.
+
+### Added
+- **Voices**: a named, recallable SOUND per engine (`verbatim` and `undertow` on tape, `wash` and
+  `glitch` on grain), each a living preset every unpinned stroke follows; a `+` mints one from the
+  live block, a double-click names it. The hand holds a PAIR — its tool and the voice frozen at the
+  pick — and the two hand tiles say both names.
+- **The tool rail is an editor** with a tab per instrument — lens · tape · grain · erase · sampler —
+  whose card is that instrument's PERFORMANCE block: its mode switches (`autopin as loop` / `as
+  cloud`, `overdub`, `slice`, `walk`, `by stroke`), its rows, AUDITION last, then its voice presets.
+  Picking a preset writes the slot: what plays changes, nothing is dragged. A settings door (`≡`) on
+  the rail's header opens Settings → Tools.
+- **AUDITION is a mode**: on, every setting is live and what you paint keeps following the knobs;
+  off, a stroke freezes as played. Replaces the per-tool wet switch, the bench and the glow.
+- **The lens is a tab**, the whole cursor sheet as performance rows — reads, radius, mode, depth, k,
+  `all`, `step`, fade, falloff — greyed as the mode bypasses them, with the live reach and taken / k
+  numbers beside radius and k. The tab follows the eye on a 5 Hz tick: the wheel, N, K, a pot, an OSC
+  value all land on it.
+- **Settings → Tools**: what a tool does between phrases — start, release, its own FADE length,
+  rearm, min slice, dub decay — for tape and for grain's walker separately.
+- **Follow**, a switch on the pinned rail: on, the faders follow the cursor. `pins_follow` on
+  `/pins/follow` (a bang toggles, `on` / `off` sets).
+- **Slice**: a take cut at its attacks, measured against the room's own floor — a switch on the tape
+  tab, `min slice` on Settings.
+- **Grain's own arrival set** (`S.grainTrigger`): dwell, start, release, retrig and rearm for the
+  walker, separate from tape's.
+- **A layered voice shows its playhead**: under retrig off each ringing copy draws its own square.
+
+### Changed
+- **The palette is a fixed toolbar**: the lens, the hand's two tiles (tape · grain, wearing their
+  voice), then erase · pin · unpin on `c` `e` `↓` `↑`. Ids and order are the build's; only the verb per
+  position is yours (right-click). **The mouse selects, the binding plays**: a click opens the tile's
+  tab. Pin is a momentary by factory. No drag anywhere.
+- **One tool per instrument, named for it**: `line` → `tape`, `pen` → `granular`, `scrape` → `erase`;
+  stored palettes, blocks and bindings migrate once.
+- **The pinned rail's mode bar is a card** in the tool rail's own design — follow · sort · curve, one
+  setting per 30px row, the sheet's 24px capsule, sentence case — and the two rails' headers are one
+  stated height (40). Pin and unpin left the rail for the strip; unpin all and the mix pair stay.
+- **Every capsule in the rails and the drawer is sentence case**; a yes/no is a switch (`retrig`,
+  `all`, `step`, `fade`).
+- **Release reads on every dwell**, for tape and for the walker: `fade` fades a take out when the
+  cursor leaves, over its own Fade length (250 ms by default); `play-to-end` keeps the per-dwell rule.
+- **Retrig off LAYERS for real**: a detached voice takes its whole gain chain with it, so the rebuild
+  for the new voice no longer cuts the old one.
+- **No trigger ceiling**: every stroke arms (it was 32, and full meant refused — with slice on, eight
+  strokes filled it and every take after painted deaf). Measured: 256 gates cost 0.06 ms a tick.
+- **A pin is never gated by the lens radius** (tether deleted); under follow the hand cannot take a
+  fader, the cursor holds it.
+- **The phone's touch plays the hand again**, momentary, on the sphere and on the hand tile.
+- The cursor's spot / wide glyphs now name the mode's values (area · nearest); the seeded voice
+  names; the settings nav's Tools glyph; a rebuilt track row lands instead of sliding; a loop's
+  track draws its waveform again (the take object hid it).
+
+### Removed
+- Cursor presets (`wide`, `spot`, custom lenses) — one lens, its rows on its tab, no lens sheet.
+- Shape presets, the shape sheet, the bench, the wet switch, the glow, the drawer for a tool.
+- The tape shapes `loop`, `dub`, `slice`, `looper`; the grain heads `trail`, `match`, `staff`,
+  `spray`, `comb`; the eraser presets — each a mode switch or a row now.
+- `blend` (all / focus, now the follow switch), `tether`, the gap chopper, `MAX_TRIGGERS`, the pin
+  and unpin rows on the pinned rail, the tool and lens `+`.
+
+### Audits
+The release tier ran on this commit: rig (osc, cc mirrors, mark align, colour), the full OSC sweep,
+browser, phone, docs, sensor, 67 unit tests, wiring. Stale and named in the archive, not fixed:
+trigger-audit's nine slice checks (the gap chopper), engine-audit's pages (deleted tools, the shape
+sheet), palette-audit (the 2026-09-12 strip), two pins checks (wet).
+
 ## 5.4 alpha — 2026-09-18
 
 **The tape engine is brought up to the field's spec, and grain strokes can be played like tape.**

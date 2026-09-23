@@ -174,7 +174,7 @@ It doesn't, currently. Measured consequences, per action shape:
 |---|---|---|
 | **latching toggle** | `/erase/toggle`, `/trace/toggle` | starts then immediately stops — **looks broken, does nothing** |
 | **state toggle** | `/mute`, `/handsfree`, `/app/darkmode`, `/morph/sticky`, `/cursor/radiusfade` | flips twice — no net change |
-| **mode cycle** (`_bangOrStr`) | `/commit/mode`, `/grain/dir`, `/camera/mode`, `/commit/blend` (`/trace/mode` went 2026-09-05 — the grain sheet's `on end` row owns the flag) | **advances two modes, skipping one** |
+| **mode cycle** (`_bangOrStr`) | `/commit/mode`, `/grain/dir`, `/camera/mode`, `/pins/follow` (was `/commit/blend` until 2026-09-22; `/trace/mode` went 2026-09-05 — the grain sheet's `on end` row owns the flag) | **advances two modes, skipping one** |
 | **step** | `/search/radius/inc`, `/grain/oct/up` | **double step** — +4° instead of +2°, +2400¢ instead of +1200¢ |
 | **destructive** | `/undo`, `/sweep`, `/session/erase`, `/commit/drop` | **fires twice** — two strokes undone, not one |
 

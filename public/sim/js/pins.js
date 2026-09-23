@@ -79,6 +79,21 @@ export function pinsIn(g) {
  *  the selected-pin search skips it, and the rail's slot tracker draws its pip
  *  empty. One test, exported, since 2026-09-14 — there were two copies of it
  *  here and they disagreed about `_selfKilled`. */
+/** A PIN'S IN AND OUT ARE THE SETTINGS', LIVE (Ek, 2026-09-23: "the in and out
+ *  settings for the pin does not need to be per track … the default setting
+ *  is enough and it should not be baked in, i should adjust in out setting
+ *  anytime"). Settings › Pins › In / Out, read at the moment a pin comes up
+ *  (pin, unmute) or leaves (unpin, mute) — never stamped on the pin. They were
+ *  the pin's own `fadeIn` / `fadeOut` from 2026-09-16, born from these two and
+ *  edited per track in the rail's fold; a stored piece may still carry the
+ *  fields, and nothing reads them. A loop's out never drops under its declick
+ *  (`loopFadeTimeMs`), which is what the 15 ms release used to be. */
+export function pinFadeIn() { return Math.max(0, S.commitAttack || 0); }
+export function pinFadeOut(c) {
+  const r = Math.max(0, S.commitRelease || 0);
+  return c?.type === 'loop' ? Math.max(r, (S.loopFadeTimeMs || 15) / 1000) : r;
+}
+
 export function isPinLeaving(c) {
   if (!c) return false;
   // A cloud fading under a MUTE (`_composerHold`, composer.js) is going quiet,
@@ -191,21 +206,7 @@ export function setGroupSolo(g, solo) {
 
 export function toggleSolo(g) { setGroupSolo(g, !g?.solo); }
 
-// ── Everything back ─────────────────────────────────────────────────────────
-
-/** True when no flag is set anywhere — drives the `all on` affordance. */
-export function everythingOn() {
-  if (GROUPS.some(g => g.muted || g.solo)) return false;
-  for (const c of S.commitSlots) if (c && (c.mute || c.solo)) return false;
-  return true;
-}
-
-export function allOn() {
-  for (const g of GROUPS) { g.muted = false; g.solo = false; }
-  for (const c of S.commitSlots) if (c) { c.mute = false; c.solo = false; }
-  applyMix();
-}
-S._pinsAllOn = allOn;
+// ── Everything silenced ─────────────────────────────────────────────────────
 
 /** Is everything silenced? The toggle's state, and derived rather than stored —
  *  there is no fourth flag to keep in step with the three that exist.
@@ -231,10 +232,9 @@ export function allMuted() {
  *  of buttons). It sets the GROUP flags and NOTHING else, which is what makes it
  *  a true toggle: isPinAudible reads mute before solo, so a group mute silences
  *  the lot whatever the per-pin flags say, and letting go restores the mix
- *  exactly as the hand left it — every per-pin mute, every solo. That is the
- *  whole difference from `allOn`, which is still here and still clears
- *  everything: a toggle you can round-trip safely, and a hammer when you want
- *  the slate clean. */
+ *  exactly as the hand left it — every per-pin mute, every solo. (`allOn`, the
+ *  hammer that cleared every flag at once, went on 2026-09-23 — Ek: no use for
+ *  it beside a toggle that keeps the flags; M and S clear one at a time.) */
 export function setAllMuted(on) {
   for (const g of GROUPS) g.muted = !!on;
   applyMix();

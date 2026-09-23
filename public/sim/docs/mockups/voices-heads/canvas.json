@@ -1,0 +1,25 @@
+{
+  "v": 3,
+  "createdOnFiles": { "v": 1, "at": "2026-09-19T22:01:45Z" },
+  "title": "Voices and heads",
+  "launch": { "view": "canvas" },
+  "pages": [],
+  "boards": {
+    "Main.dc.html":  { "x": 500,  "y": 0,    "w": 420,  "h": 900, "title": "The rail, as it would be", "is_interactive": true },
+    "Today.dc.html": { "x": 0,    "y": 0,    "w": 420,  "h": 900, "title": "The rail today" },
+    "Sheet.dc.html": { "x": 1000, "y": 0,    "w": 420,  "h": 900, "title": "The sheet, in three sections" },
+    "Hand.dc.html":  { "x": 0,    "y": 1020, "w": 1000, "h": 360, "title": "The hand and the strip" },
+    "Tile.dc.html":  { "x": 0,    "y": 1500, "w": 1000, "h": 440, "title": "53px, three ways" }
+  },
+  "order": ["Main.dc.html", "Today.dc.html", "Sheet.dc.html", "Hand.dc.html", "Tile.dc.html"],
+  "notes": {
+    "title": { "x": 0, "y": -300, "w": 1420, "maxW": 1420, "text": "Voices and heads", "kind": "title1" },
+    "brief": { "x": 1520, "y": 0, "w": 340, "maxH": 300, "color": "gray",
+      "text": "A tool answers three questions and a tile name fuses all three: what it sounds like (voice), how it lands (head), whether it stays (keeps).\n\nHeads have glyphs. Voices have names. You can draw a gesture; you cannot draw a sound." },
+    "hint": { "x": 1520, "y": 340, "w": 340, "maxH": 180, "color": "blue",
+      "text": "The middle board is live - click into it. Pick a head, pick a voice, watch the hand at the bottom. Two clicks, one choice each, no drawer." },
+    "openq": { "x": 1520, "y": 560, "w": 340, "maxH": 360, "color": "orange",
+      "text": "Open, not decided:\n\n- 53px (bottom board): where the voice goes\n- keeps is three-way, not boolean\n- match is the one head that refuses to decompose - it decides which material a mark reads, not where it lands\n- voices live by nature? then a pot sweep moves every stroke painted with that voice" }
+  },
+  "designSystems": []
+}

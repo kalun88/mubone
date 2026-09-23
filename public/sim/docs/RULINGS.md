@@ -24,13 +24,15 @@ How to use this file: find the heading for the area you are about to touch and r
   engine never sees the law; the readout wears a `+` above unity; double-click is the tick. It used to write `grainParams.volume`, the one volume both kinds already had. The MATERIAL you drew sits inside the bar laid flat, in the pin's slot
   colour (the sphere's), each mark at the size its rms gives it there; a loop is marks on one line, a
   cloud loose dots — the shape says the kind, so the words and the bearing readout went. The NUMBER is
-  the engine hue, and folds the pin's own `fadeIn` / `fadeOut` open; **a mute rides those ramps** the
+  the engine hue, a label (it folded the pin's own `fadeIn` / `fadeOut` open until 2026-09-23, when Ek
+  ruled In / Out one live pair for every pin — Settings › Pins, `pins.js` `pinFadeIn` / `pinFadeOut`,
+  never stamped); the loop an overdub would join wears the white O round it. **A mute rides In / Out** the
   same as an unpin, so a pin set to leave over ten seconds leaves that way by either verb
   (`composer.js`), and the playhead runs on through it — the DJ mute made visible. **Sort IS
   `S.selectionMode`**: nearest / farthest / oldest, rows laid out by the key `selectedPinSlot` uses, so
   row one is always what unpin takes and the half moon never disagrees with the order; under nearest in
-  focus the rail is a proximity meter. The mode bar (blend · tether · sort · curve) is the door to the
-  four settings switched mid-set, each writing the S field it always had; the rail polls S on its tick,
+  focus the rail is a proximity meter. The mode bar (follow · sort; blend and tether until
+  2026-09-22 night; the crossfade curve went to Settings → Pins on 2026-09-23, set once, not ridden) is the door to the settings switched mid-set, each writing the S field it always had; the rail polls S on its tick,
   so OSC, MIDI and the settings page land in it without a hook. **Focus is said by the fader edge
   turning `--accent-sensor`** — "the body is driving it" is literally true — never by an ember segment.
   The two groups are the busses at the foot, their fill the members' mean level (derived, no new
@@ -317,7 +319,14 @@ How to use this file: find the heading for the area you are about to touch and r
   whatever the press did) makes the press the better binding anyway: it pins on the down, undelayed,
   the ×2 takes that pin back and unpins, and a momentary path holds. `BUTTON_DEFAULTS` says press; a
   stored map with button 3 tap on `palette_6` is moved to press once at load.
-- **The wash is the looper's move for the grain family**
+- **The wash is the looper's move for the grain family** — and since 2026-09-22 it is a MODE, not a
+  tool. Ek deleted the tile ("remove trail the preset"); everything below still holds except for
+  WHERE you turn it on. It is **`autopin`, the grain tab's MODE switch** — `_AUTOPIN.granular` is
+  `{ pid: 'gEnd', on: 'cloud', off: 'scratch' }`, so the switch reads and writes the very param the
+  sheet's `on end` row used to show, and that row left the sheet with the rest of the MODE pile
+  (`SWITCH_PIDS.granular = ['gEnd']`). One standing answer per instrument, not a property of the
+  shape in your hand. `FACTORY_SOUND` is empty with the tile (its one entry was the wash's reverb
+  block) and the mechanism is kept for the next tile that has to arrive sounding like itself.
   (`wash`, grain kind, Ek 2026-09-05, #334): its stroke is pinned at once as a MOVING CLOUD
   looping the path you drew, reading the marks you laid on it — a granular wash that stays. The
   contract is the grain sheet's **`on end` row** (`gEnd`: `scratch · cloud`, deposit section),
@@ -620,7 +629,7 @@ How to use this file: find the heading for the area you are about to touch and r
   touch to fire, `dwell: once` is a one-shot, and only `looper` loops on contact. Its own hue token
   had the honest definition all along — `--eng-loop: /* recordings that play */`. The rename is
   `ENGINES.tape`, `engineOf → 'tape'`, `SLOT_KINDS`, `DEFAULT_SLOTS`, the rail group, the lens's
-  touch section (`on tape` then, `on strokes` since the walker), `--eng-tape`, and the brush material — with a one-shot `mubone_slots` key migration and
+  touch section (`on tape` then, `cursor behaviour` since the walker), `--eng-tape`, and the brush material — with a one-shot `mubone_slots` key migration and
   no fallback. **`loop` still names the PIN KIND and only that** (`slot.type`, `commitMode`, the
   pins rail's `loops` group): a loop is what a tape take becomes once you pin it, which is exactly
   the distinction the old name blurred. **`hit` is out of the vocabulary** ("i hate hit, we should
@@ -639,7 +648,7 @@ How to use this file: find the heading for the area you are about to touch and r
   gate's edges while its geometry keeps running, so switching back does not bang whatever the
   cursor is resting on. **The cap outranks it**: capped, the cursor reads nothing whatever the lens
   says. And the page follows the same dead-row rule the rest of the lens sheet now does — reading
-  tape hides `k` and `order`, reading grains hides the whole `on strokes` family — unless the
+  tape hides `k` and `order`, reading grains hides the whole `cursor behaviour` family — unless the
   lens is in `stroke` mode, where a grain stroke's WALKER answers to exactly those rows.
 
 - **A boolean on an engine sheet is a SWITCH** (2026-09-07, Ek: "there's a bunch of on and off
@@ -707,7 +716,10 @@ How to use this file: find the heading for the area you are about to touch and r
   grain period — so it faked a loop for a short stroke under a still cursor and was a shuffle with
   a memory otherwise (Ek: "it's on the lens and it only works on the cursor, which is circular,
   and strokes are not always falling into the cursor circle"). `S.nearestMode` becomes
-  `S.lensMode`: `area · nearest · stroke`. Under `stroke` the cursor reads NOTHING on its own;
+  `S.nearestMode` became `S.lensMode`. **The walk moved off the lens on 2026-09-22** — see the entry
+  below; the lens is `area · nearest`, the aperture, and `S.grainWalk` is the grain shape's `on
+  touch`. What follows describes the walk itself, which did not change. While walking the cursor
+  reads NOTHING on its own;
   touching a grain stroke launches a walker, a reading cursor that retraces the stroke's own path
   at the pace it was painted — the marks' buffer times ARE its clock, so nothing new is recorded —
   and plays what is in ITS reach with the lens's live radius, `k` and `order`. **`order` still
@@ -719,7 +731,7 @@ How to use this file: find the heading for the area you are about to touch and r
   what it freezes into IS a moving cloud — same path, same phase — because that is what a walker
   already is. The gates live beside the tape triggers in `trigger.js` (same cap, nearest-segment,
   hysteresis and swept-crossing geometry, `walk: true`), built only in `stroke` mode; the lens's
-  `on tape` family is `on strokes` now, because dwell / start / release / retrig / rearm mean the
+  `on tape` family is `cursor behaviour` now, because dwell / start / release / retrig / rearm mean the
   same thing to a take and to a walker. Wet paint reaches a walker for free: the bridge buckets
   its pool by each mark's own voicing, as a cloud's.
 - **The lens sheet is three sections, named for the question each answers** (2026-09-18, Ek: "the
@@ -729,7 +741,7 @@ How to use this file: find the heading for the area you are about to touch and r
   which a stroke is touched (`enterRad`). `on grains` (mode · depth · k · order · fade · falloff)
   is everything grains-only, with **`mode` leading it**: the tape gate reads the mode in one place,
   to decide whether to build walk gates, and never to decide how a take is touched, so Ek's hunch
-  that it belonged with the grains was right. `on strokes` (dwell · start · release · retrig ·
+  that it belonged with the grains was right. `cursor behaviour` (dwell · start · release · retrig ·
   rearm) is what a touch does. It is NOT "and loops": a pinned loop is claimed and the cursor is
   forbidden to re-fire it (#241), so the lens never reads one.
   **Dependency is shown, not inferred.** Three devices, all already in the kit: every dead row
@@ -771,6 +783,7 @@ How to use this file: find the heading for the area you are about to touch and r
   paints scratch and adopts the live block exactly as the pen does, which is what makes that pair a
   pair, and `FACTORY_SOUND` carries one entry again — the wash is the only tile whose NAME is a
   sound rather than a gesture, so it is the only one that has to arrive sounding like itself.
+  (That entry went when the wash tile did, 2026-09-22; the table is empty and its two readers stand.)
   `wash: 'pencil'` was deleted from `_RENAMED_TILES` on the way back, for the same reason
   `spray: 'pen'` was: a live id on the LEFT of that map sends the tile you just made somewhere
   else. `splatter` became `spray`, and the stale `spray → pen` rename row was
@@ -911,8 +924,9 @@ How to use this file: find the heading for the area you are about to touch and r
   with tether on `r` is the whole sphere, so a pin 40° away kept a −19 dB residual ON the other
   pin's anchor at xfade 50 % — the law never asked where the cursor was *between* the pins. Now
   `d0` is the distance to the nearest pin, `u = 2·d0/(d0 + d)` is 0 on the nearest and 1 when
-  tied, the handover is a smoothstep over the last `xfade` of that span, and tether off keeps the
-  reach ring as the gate. On an anchor the nearest pin is alone at any width; midway the mix is
+  tied, the handover is a smoothstep over the last `xfade` of that span. (Tether off kept the
+  reach ring as a gate until 2026-09-22 night; there is no gate now — see the glossary's
+  "Tether — deleted".) On an anchor the nearest pin is alone at any width; midway the mix is
   even; xfade is the WIDTH of the handover (100 % the whole way from one anchor to the next, 0 %
   a snap at the midpoint); the smoothstep is what keeps "on the anchor" honest at 100 %, because a
   hand is never exactly on a point (a degree off a pin 30° from the next: −38 dB, not −24). Clouds
@@ -1255,6 +1269,539 @@ that page is already built from — so the legend became its own section, and mo
 Means", where a block about colour had no business sitting. The general form: **if a settings block
 has nothing to operate, it is not a row — it is a section, or it is a lede on one.**
 
+## AUDITION is a mode, and the editor writes the slot — the bench is gone
+
+**For anything touching `S.auditionMode`, `slotOf`, `setBench`/`benchShape`, or where a param
+lives:** the tool editor keeps no tool of its own. `setBench` used to say in as many words that it
+does NOT touch the hand, the palette or the spacebar — "that is the whole point of the rail being
+an editor" — and that is the sentence 2026-09-22 reversed (Ek: "when i'm in the tool
+creator/editor, i change the shape preset and voice preset and it should update what is being
+held"). Picking a preset IS the change, so there is nothing left to drag and nowhere else for the
+choice to sit. `slotOf(instr)` derives the subject: the hand's side for tape and grain, a palette
+POSITION for erase, the act for the sampler. `_benchBy` — a tool per instrument, saved to disk —
+was a THIRD place a tool could be, and keeping the three in step was the bench's whole cost. The
+bench tile, `placeBench` and the drag went with it; `A` and the audition survive, re-pointed.
+
+**LIVENESS IS A MODE, not a gesture.** Auditioned paint was declared by the PRESS — paint from the
+bench followed the knobs, paint from the spacebar froze — which tied a property of the SESSION to
+one key, and is why the bench had to exist to mean anything. `S.auditionMode` is one switch above
+every tool now, and it lands in ONE predicate: `S._handTile().live`, which the grain voicing's
+`live` flag, the stroke stamp in `recordStrokeStart`, a tape take's `_live`, and `syncLiveVoicing`
+all read. Marks already painted keep what they are, and nothing DRAWS liveness — the ring both
+halves wore was worth it only while the fact was invisible.
+
+**Both halves of auditioned paint were built and neither could fire**, for one reason: liveness was
+read from the HAND, which is null between presses. A tape take is armed from `whenSealed`, *after*
+the play has ended, so `_live` was false for every auditioned take ever made; the fact is stamped
+on the STROKE now (`recordStrokeStart`, the one place a stroke begins). `syncLiveVoicing` bailed
+unless the bench was sounding, so a knob moved after an audition reached nothing. Under audition a
+SOUNDING pass follows too: speed and level ride the running node, while reverse and pitch are baked
+into a region copy and are re-cut at the LOOP SEAM (`_liveRecutReady`, which waits for the pitch
+worker so the seam is never silent) — under `dwell: loop` there is no next fire to pick them up at.
+
+**Two questions place a param** (the test Ek stated on 2026-09-22): a VOICE is what audition moves;
+a SHAPE is the drawing and cannot move once made; anything that is neither — autopin, overdub, walk
+on touch, erase by stroke, and the five arrival rows — is one standing answer per INSTRUMENT and
+lives in its tab, as MODE or as CURSOR INTERACTION. Only `audition` is global. The arrival rows are
+`S.triggerParams` and are captured into no tile.
+
+## The row loads, the door opens — and a lens's sheet is the live eye
+
+**For anything touching the rail's rows or `toggleSheet`:** a row click LOADS (writes the slot); the
+door at its right edge OPENS the sheet. They were one act for a day, which threw a drawer over the
+stage at every glance at a preset. An open sheet still follows a row click, because a drawer showing
+the tool you just put down would be lying.
+
+**A LENS is the exception, and it is not a compromise.** *(History since 2026-09-22 night: the
+lens has no sheet and no list — its rows are its TAB. See "One lens".)* A lens's sheet IS the live eye — its rows
+are the cursor's own controls and there is no stored view of one to read — so opening it INSTALLS
+it. Without that the drawer named `spot` in its header and drew `wide`'s numbers underneath, and
+editing them moved wide. `setBench` had refused to apply a lens since the day it was written and
+said why in the code; nothing surfaced it while the only route to a lens's sheet was the row.
+
+**The shape sheet is gone, and a voice row points the sheet (2026-09-22 night).** Ek: "when i open
+up grains and press the voice presets it still shows the old shape sheet. i thought we sunsetted
+that." `SHAPE_SHARED`'s rows — rate and width, slice · min slice · dub decay, depth and from — are
+all on the instrument's tab or on Settings → Tools, so a tool's sheet was the tab's rows drawn a
+second time under a stale title; a tool and the lens now draw a HEAD only, saying where the rows
+went. The one sheet with rows is a VOICE's. So a tab points an open drawer at the voice its
+instrument is on, and a voice row's click points it too (the door still opens it) — the same rule
+a shape row had, "an open sheet follows the click". **And the tab's rows capture into their TOOL,
+named by `capId`** on both `_wireOptions` and `_wireKnobs`: with the sheet a voice's, an unnamed
+capture would land on the voice, whose block has no `rate`, and the tab's edit would be lost —
+measured before the fix as `mubone_tiles` staying at 50 while S read 33.
+
+**Two traps that cost real time here.** `propsOpen()` cannot see a shut drawer — `closeProps` drops
+the `prail-open` class and leaves `_propsOn` set — so ask the CLASS. And `toggleSheet`'s "already
+showing" test must be computed BEFORE anything installs, because `lensTap` writes `_propRow` itself.
+
+## The rail's rhythm, and which rows may grow
+
+**A CONTROL THE RAIL DRAWS MUST BE REPAINTED BY `render()` (Ek, 2026-09-22).** "The options for
+dwell retrig etc still dont click — when I hover it shows it's ready to click but I can't actually
+click to change it." **The click was landing the whole time.** Measured: one press moved
+`S.triggerParams.dwell` from `oneshot` to `loop` AND moved the cabinet's own segment to `loop` —
+and left the rail's pill lit on `oneshot`. A control whose state changes invisibly is worse than a
+dead one: the instrument had changed and the rail was still saying it had not.
+
+The cause is one word. `_wireOptions`' seg and switch handlers ended with `renderOptions()`, which
+is `if (_propsOn) renderProps()` — it repaints the DRAWER. These rows live in the RAIL now, which
+`render()` draws, and `render()` ends by calling `renderOptions()`, so calling the outer one keeps
+the drawer following. The switches that always worked (autopin, walk on touch) had their own
+handlers that already called `render()`, which is why the fault looked like it belonged to the
+segments.
+
+**The lesson for the next one of these: when a control "does not respond", check whether its STATE
+moved before assuming the input did not arrive.** Three separate measurements — hit-target size,
+what covers the point, and whether the panel re-renders under the press — were all spent on the
+input path before one probe read the state and found it had been changing all along.
+
+**A SEGMENT SAYS WORDS UNLESS ITS OPTIONS ARE SHAPES (Ek, 2026-09-22).** "That looks better, go
+back to words for dwell and retrig." Grain's arrival rows were built from a label table and read
+`once | loop`, `cut | layer`; tape's read the same options as glyphs, and side by side the words
+won. A glyph earns its place when the thing it names IS a shape — a gesture, a direction, an
+envelope — and `once` against `loop` is not: two short words, each of which had to be learned as a
+drawing before it could be read. `words: true` is opt-IN per param rather than a cut to `_segIcon`,
+because the icon table still serves `start`, whose three options genuinely are directions, and the
+lens's own segs.
+
+**A SEGMENT IN THE RAIL IS 24, AND ITS GROUP HAS NO PADDING (Ek, 2026-09-22).** "The pill toggles
+for the cursor behaviours … don't press easily, it was also a problem before it moved." Measured:
+each option was **28.6 × 19**, and worse, the group's 2px padding meant its `overflow: hidden`
+clipped those buttons back to ~20 — so the hit area was smaller than the button, which is why the
+press missed and why moving the rows changed nothing. The shared pill rule sizes a button from its
+CONTENT, which lands on the kit's height for the chrome's text segments and five pixels under it
+for these, which hold a 15.2px glyph. Now stated: **24 tall, and the container gives up its
+padding.** That is the kit's PLAIN segmented — "24 tall, container AND buttons, no padding" —
+rather than the pill, because a pill is buttons 24 inside a group of **28** and 28 does not fit:
+`.tc-lrail .mrow` is 30 with `--sp-1` either side, a 24px content box, and the 30 pitch is the
+ruling below. It keeps the pill's radius; only the geometry changes. **A hit target that a
+container clips is the bug, not the button's height** — the two had to change together.
+
+**For any spacing change in `#toolRail`:** every row is pitch **30**, and the kit decides how each
+kind gets there. A `.mrow` is a DIV and is stated at 30 — the kit's 24 plus `--sp-1` either side.
+A `.trow` is a BUTTON, and `align-audit` R6 holds every button in the instrument to 18 / 24 / 32 /
+38 (its probe reads `button,[role=button],.seg,…`), so a preset row at 30 fails by name: they keep
+24 and the LIST spaces them with `--sp-3`. **A row grown by padding alone is only as tall as what
+sits in it** — a MODE row holds an 18 switch, so 18 + 3 + 3 came back to the 24 it started at while
+a cursor row holding a 24 pill went to 30. That is why the height is stated, and it was found by
+measuring, not by looking.
+
+**What you PICK is above what you SET, and the fold takes the difference (Ek, 2026-09-22).** The
+instrument card's order was MODE · CURSOR INTERACTION · SHAPE PRESETS · VOICE PRESETS, which is the
+logic of building a tool and the opposite of playing one. Measured against the running app: the
+list is **695** tall and the grain tab's content was **828**, so 133px sat below a fold the rail
+drew nothing to mark — `match` cut in half, and VOICE PRESETS, both voices and its `+` not on
+screen at all — while **269 of the card's 450px** came before the first thing you pick, 150px of it
+CURSOR INTERACTION greyed out because grain does nothing with it until WALK ON TOUCH is on. The two
+hidden lists are the two that GROW by `+`, so it got worse by being used. Something must fall below
+the fold in a 695px column; the ORDER decides what. Now: the instrument's mode switches (no
+heading — the tab named the instrument one row above), then SHAPE PRESETS, then VOICE PRESETS with
+AUDITION at its head, then CURSOR INTERACTION. Grain went from 133px hidden to 68, and what is
+hidden is the block you set once. **The GLOBAL MODES card went with it** — a heading over one
+switch — and audition sits on the list it governs.
+
+**A rail that scrolls says so, and the platform will not say it (2026-09-22).** `::-webkit-scrollbar`
+at 6px with a hover-only thumb had been in the stylesheet for weeks and paints NOTHING here:
+`offsetWidth - clientWidth` is 0, so macOS overlay scrollbars win, and `scrollbar-width: thin` with
+`scrollbar-color` does not bring it back either (both measured through the dev bridge, both 0, both
+invisible in a cropped shot of the rail's right edge at rest). `js/tiles.js` `railScrollMark()`
+draws it instead — a 2px bar in `--text-faint` at the list's right edge, positioned from
+`scrollTop`, hidden when nothing overflows, updated from `render()` and the list's own scroll and
+never per frame. It is a MARK, not a control: the wheel already scrolls the list.
+
+**The tabs are four tabs, and the open one says its name (Ek, 2026-09-22).** Four 72.8px glyphs on
+the rail's ground said which of four was chosen and never which one that WAS, and the three closed
+ones read as marks beside a tab rather than as tabs. Each now carries the tab shape with
+`--surface-0` under it, one step below the card's `--surface-1`, so the row reads front-to-back;
+the open one adds its name in `--fs-eyebrow` in its own hue. The hue rule that used to sit under
+the chosen glyph is gone — the ground, the colour and now the word already said it — and removing
+it is what let the glyph centre in its own 32px box, since the 8px under it was that rule's
+clearance. **The section headings stay ASH**: the tab names the engine in the hue at full strength,
+and hueing four headings under it made structure look like identity (tried, reverted same day).
+
+**The two RAILS are one width** (`--rail-w`, 20rem): the tools rail and the PINS rail are the two
+you work in, one on each edge. The drawer (`.tc-prail`) keeps its own 15.5rem — it is a sheet that
+opens over the stage. Matching the drawer instead is how the tools rail came out 248 against the
+pins rail's 320. `--lrail-w` was derived from the BENCH TILE until the bench went, leaving a rail
+sized for an object it no longer held.
+
+**SPRAY IS SUNSET (Ek, 2026-09-22, evening) — and the entry below is the record of the day it was
+alive, not current behaviour.** "Removing spray, sunsetting it, it's too complicated to have dynamic
+spray, no paint apps like procreate do it. I need to remember this is not an app to do visual
+painting." What sank it is not that it worked badly. It was answering a question borrowed from the
+wrong instrument: a painting app has no dynamic spray, and the reason is the point — scattering
+paint is a LOOK, while here a mark's position is **where its grain sounds from**. Width is spatial,
+so it is audible, and the question that has to come first is Ek's: **does spreading the material
+wider affect musicality?** Until that is answered, mapping speed and rms onto the spread was tuning
+a quality nobody had decided the value of. `dynamicHeadOffset`, `resetDynamicHead`, the six
+`SPRAY_*` constants, `S.fx.spray` and the DEPOSIT row are deleted; `headOffset` with
+`S.headWidthDeg` and `S.headEdge` is the whole head again, static, and the per-deposit
+`readGateLoudness()` went with the voice term. `sort by` had already gone the same day. **The
+one-shot that fills a missing pid into old blocks is kept and a reverse one added** — a block is
+written back WHOLE, so a pid the sheet has dropped would outlive the param in every profile and
+every `.mubone` that quotes one. Width and edge are next, and are not to be touched until the
+musicality question is discussed.
+
+**A head is a SHAPE PARAM, and its off is its own zero (Ek, 2026-09-22).** "We need to have a way
+of thinking them as general shape params, not just designed for experimental." The #218 brushes
+were CONTRACTS — `S.brushFx`, one exclusive field set by which tile you picked, so the only way to
+spray was to hold the tile called spray. Now `spray` is an amount (0…100%) and `sort by` a selector
+(`none · bright · loud · noisy`) on EVERY grain shape's sheet, in DEPOSIT beside rate and width.
+Neither needs a switch: **a quantity that can be none does not need one**, which is why the answer
+to "we'll need a way to turn each on or off" is the zero of the slider and the first option of the
+selector. `SHAPE_OWN` is deleted with them — every grain shape shows the same sheet, the way every
+tape shape already did.
+
+Two things that had to be true and are, both measured: `dynamicHeadOffset` at `spray: 0` returns
+the plain static head **exactly** (0.0 difference over 40 samples, moving and still) — it is on the
+path of every grain mark now, so zero has to mean "as if this code were not here"; and a tile's
+block carries both pids, so picking spray gives 0.25 and picking dots gives 0 with nothing bleeding
+between them. A one-shot fills them into blocks minted before the pids existed — **a partial block
+silently inherits**, which is the trap in "a grain tile owns its WHOLE block".
+
+What went with the change: `keep` (it dropped material before it landed — a different job from
+arranging what did), and `staff` entirely, because a head that takes latitude out of the hand's
+control cannot sit quietly at its default behind every other shape.
+
+**`spray` and `index` survive as PRESETS**, each `dots` with one of the two dialled — and each
+states EVERY shape pid, not just the one that names it (Ek: "they should actually be set to the
+right params"). A preset that states one value and adopts the other three is three quarters
+whatever happened to be live when it was first armed. spray is 85% over a 6° head at 30 ms — a
+preset named for one number belongs near the top of that number's range, and the wide brush is
+already `width`; index is a LINE — no width, no spray — sorted NOISY, because the ordering is the
+point, a scattered band has nothing to order along, and zcr splits a voice from a breath more
+plainly than brightness splits two vowels, so the ordering is audible on the first sweep. **COMB became `index`** the same day: the id stays
+`comb`, the way `pen` stayed when it became dots and `wash` stayed when it became trail, because a
+label is what the player reads and an id is what a stored block, a palette slot and an OSC address
+are keyed on. `comb` named the TOOL that did the sorting and there is no such tool now; `index`
+names what the stroke BECOMES, and stays true whichever axis you sort by. `FACTORY_PARAMS` is only
+the floor under a persisted block, so a stamped one-shot (`mubone_tiles_presets`) hands these two
+their factory numbers once — stamped, because unstamped it would revert Ek's own tuning on every
+launch, which is the difference between a migration and a fallback.
+
+**The palette's lens position is THE CURSOR, not a lens (Ek, 2026-09-22).** "When I switch them in
+the tool rail, it doesn't switch the cursor tile on the palette, it just seems to turn off the one
+on the tile." It held one lens by id, so its `on` answered *is `wide` the installed lens* — install
+`spot` and the strip showed a dim `wide` and nothing at all said which eye was on. PALETTE-GUI § F
+already ruled what a lens tile is — **the lens is a state, the cap is no lens on** — and a tile
+showing one value of a state is not showing the state. So the position draws whatever
+`installedLens()` answers (glyph, name, `data-lens`, and the keys page's row with it), its TOGGLE
+caps and uncaps, and its MOMENTARY is a PEEK: `_lensPeek` drops the eye while the key is down and
+puts back what it found on release. `_lensMomentary` — hold a NAMED lens, restore the previous one
+— is deleted, because on a position that always shows the installed lens it held a lens against
+itself. The hand tile at the head of the row has always followed the hand this way; this is the
+eye's half of the same idea. `data-pal` keeps the STORED id, which is what the position IS for drag
+and removal. **Consequence, accepted:** two lens positions would draw the same tile — one is all a
+following slot can mean, and placing a second is not worth refusing until it happens.
+
+**The click is a SECOND SPACEBAR, not the hand's (Ek, 2026-09-22).** "Make spacebar and click one
+pill flag not two … when I key bind spacebar, click should automatically follow in the same way …
+click is not always on the hand, it follows what the spacebar does." Both inputs were RESERVED to
+the hand — four fixed rows outside every map, `key:Space` and `mouse:0` on `hand_press` /
+`hand_long` — and the hand drew them as two stickers, as if it held two bindings.
+
+Three changes, and they only work together. **The hand's key is an ordinary row**: seeded onto
+Space in `keyMappings`, learnable from its own pill (the sticker is the learn cell, § O) by action
+id rather than by position, because the hand tiles are not positions (§ A). **Space is not
+reserved** — `KeyA` still is, for the bench — so it can be learned onto anything, which takes it off
+the hand. **The reservation lived in THREE places and the last one was the only one the player could
+see**: `RESERVED_KEYS` (the load sweep), `BLOCKED_KEYS` (what a learn will not take), and an explicit
+`if (e.key === ' ')` branch in the learn listener that answered "the spacebar is the hand's … cannot
+be assigned". Clearing the first two changed nothing anyone could feel — a stored Space row could
+survive, but none could ever be MADE (Ek: "i can't seem to map spacebar to any of the key
+pills/flags"). When a rule is enforced in more than one layer, the one that TALKS to the player is
+the one to grep for first. **The mouse is derived**: `_gestureBindings` yields `mouse:0` for whatever holds
+`key:Space`, so the twin holds by construction with nothing to keep in sync.
+
+**Why 3 and 4 cannot ship apart:** the learn path already enforces *one gesture, one action — the
+same source+gesture on another row goes* — but it deletes from the three MAPS, and a reserved
+binding is in none of them. Unreserving Space while the hand's rows were still reserved would have
+left both bound and **fired twice**.
+
+Two consequences, both measured. The pill shows `click` only while the hand's key IS the spacebar,
+so rebinding the hand to `F` visibly drops the click from that tile — F fires the hand, space and
+the click fire nothing. And a cleared hand row is written as a **tombstone** (`type: 'none'`) rather
+than deleted, because the seed fills ABSENT rows on every load and a delete would hand the spacebar
+back on the next launch.
+
+**ONE CUTTER: slice, at the attacks (Ek, 2026-09-22).** "One is newer, the older method didn't
+work … the newer one was meant to replace the older one so we should sunset that and its params."
+Two cutters had been shipping side by side for a month. `_chopStroke` (2026-08-20) split a take
+where the PAINT GATE had closed, so its threshold was the gate's — its own replacement's commit
+says it "only worked around 100 ms", the unanticipatable-noise-floor problem. `_sliceStroke`
+(2026-08-25, #219) segments the AUDIO: `detectOnsets` in the dB domain against a 500 ms local
+median, floor-immune by construction, tuned against a 24-scenario matrix and guarded by
+trigger-audit's `section slice` at 92/92. Slice was checked FIRST in the chain, so whenever a take
+had both, the newer one silently won and the older one's `chop ms` dial did nothing. The gap
+chopper, `triggerParams.chopOn`, `.chop` and the cabinet's gap row are deleted; what survives is
+**`triggerParams.sliceOn`, a performance switch on the tape tab** rather than a tool you pick up.
+The bindable action keeps its id `trigger_chop` — a binding already learned must not move because
+the thing under it was renamed. **`S.brushFx` is deleted with it**: the #218 field that said which
+experimental HEAD a tile carried emptied out over one day, its last value becoming a switch, and a
+field with no values is not a field.
+
+## The rail is what you reach for MID-PHRASE
+
+**EACH HAND HAS ITS OWN VERB AGAIN, AND A STRIP CLICK OPENS A PAGE (Ek, 2026-09-22, night).**
+"The big hands should also be able to be right clickable to change the verb" and "clicking the tile
+in the palette rail now should open up left tool rail to its respective page."
+
+The first REVERSES the 2026-09-21 ruling "the hand has no verb — the press is the verb", and the
+reversal is not a change of mind: the premise expired the next day. That ruling was true of ONE
+tool played two ways, where a tap latched it and a hold played it while held, so a stored verb
+would have been a third answer to a question the gesture already answered. On 2026-09-22 the two
+sides became two TOOLS, each with its own tile, voice and engine — and tape wanting to latch while
+grain wants to be held is a property of the tool on the side, not of the gesture that reaches it.
+One fixed answer per side became the wrong number of answers the moment the sides could differ.
+**The recogniser still decides which SIDE a gesture reaches; the verb decides what that side then
+does** — the division was always there, it just had nothing to vary. Seeded with exactly what was
+hardcoded (press toggles, hold is momentary) and cycled by the same right-click and the same
+`verbsOf` table a position uses. **No bang on the hand**: `verbsOf('tape')` allows it for the dub's
+one-shot, but `_playDown` reads that off `palette[i].verb` and the hand's `i` is −1 with no entry,
+so a bang would silently be a momentary — filtered out rather than half-wired.
+
+The second is what a fixed strip makes possible. While the palette was composed, a click had to be
+about WHICH tools you had; now that the six are the build's, it can be about the one you are
+looking at — Procreate's rule, where the toolbar selects and the canvas plays. **Nothing left the
+performance**: every tile is still played by its own key and the hand by the spacebar, and those
+paths are untouched. A tool's page is its INSTRUMENT'S TAB, because one tool per instrument makes
+the tab the tool's own page and it brings the performance rows, the shape sheet and the voices with
+it. A lens has had no tab since that afternoon and its list sits above the tabs, so the lens tile
+opens the installed lens's sheet directly. The pin pair keep FIRING on a click — they are acts, not
+objects, with no page to open. And the click OPENS the rail as well as pointing it: a click that
+switched a tab behind a closed rail looks like nothing happening, which is the failure mode the
+dwell pills had already cost a day.
+
+**THE PALETTE IS A FIXED TOOLBAR, AND THE TOOL IS THE INSTRUMENT (Ek, 2026-09-22, evening).**
+"There's no more drag. It's like forscore or procreate or adobe edit. The tile is the tool, the
+first tile is the tape tool, the 2nd tile is the grain tool … lens tile is there after, then erase,
+then the pins as they are." The row is SIX TILES and only four of them are positions: the first two
+are the HAND's sides, **tape** and **grain**, each naming its tool and the voice it wears and played
+by the spacebar's press and hold. "The first tile is the tape tool" was describing those, which is
+worth writing down because the first build read it as a request for two new positions and drew each
+tool twice — once big with its voice, once as a bare `T` and `G` — caught on screen the same
+evening. The four positions are **lens · erase · pin · unpin**, ids and order the build's. What is still the player's per position is the VERB (right-click)
+and the BINDING; what varies is what a tile WEARS — the two tools their voice, the lens tile its
+installed preset — not which tiles exist.
+
+It ended because it had already ended. The strip was composed by dragging a row in from the rail,
+and when tools collapsed to one per instrument the rail stopped listing tools — the TABS became
+the list — so `tileHTML`'s `zone: 'box'` branch, the draggable rail row with the bench half moon,
+went unreachable: one caller, passing `palette`. There were four tools for nine slots and no way to
+put any of them anywhere. Deleting the drag is what made that visible instead of latent. Gone with
+it: `placeTile`, `moveEntry`, `removeAt`, `removeFromPalette`, the whole `dragstart`/`dragover`/
+`drop`/`dragend` block and its drop-index maths, `PALETTE_MAX`, `_entryFromStored`, and midi.js's
+`S._paletteReordered`, which carried every binding along when a tile moved — a position that cannot
+move needs no carrier.
+
+**The id is the tool's instrument, and it is the ENGINE's id.** `line`, `dots` and `scrape top`
+were SHAPE-PRESET names, each distinguishing itself from siblings now all deleted, while the tab
+above already said tape / grain / erase. So `line` → `tape`, `pen` → `granular`, `scrape` →
+`erase`, and `engineOf(id) === id` for all three: one string keys the tool, its engine, its hue,
+its sheet and its tab, and `ENGINES[toolId]` can never be right for two tools and wrong for the
+third. That is why grain's id is `granular` rather than `grain` — `granular` is the engine's id and
+GRAIN is what a person reads, the convention already in force. `engineOf` loses its `id === 'line'`
+special case; the drawer head loses a word, because `grain · grain shape` said the engine twice
+once the tool stopped being a preset.
+
+**Storage keeps only what is yours.** `mubone_palette` holds one verb per position; the ids are the
+code's, and storing them would only be a way for a profile to disagree with the build. Both earlier
+shapes migrate once — a stored `[{id,verb},…]` has each entry's verb carried to the slot its tool
+now occupies, so a verb set on the eraser is still on the eraser after it moved from 2 to 4. The
+key seed re-deals BY TILE on a stamp bump, which is what puts `c` on the lens's new position rather
+than leaving it on position 1; the letter names the tool (`t` `g` `c` `e`), extending the rule that
+already gave "`e` for erase beside `c` for cursor". `BUTTON_DEFAULTS` moves the pin pair from 3 · 4
+to 5 · 6 and stops moving, because the strip cannot be rearranged again.
+
+**And the hand is written back.** Its loader had always resolved a dead id through `_DROPPED_TILES`
+and `migrateTileId` and never saved the answer, so a hand stored as `line` was re-migrated on every
+boot — a persistent fallback wearing a migration's clothes, invisible until the rename made `line`
+dead.
+
+**THE RULING (Ek, 2026-09-22):** "Anything I need access to while performing should be there. I'm
+realizing a lot of stuff should actually just be a setting in the settings module." That is the
+test every row in the tool rail now has to pass, and it is the reason the rail can be read at a
+glance: it holds the controls you move while a phrase is going, and nothing else.
+
+**PERFORMANCE SETTINGS, per instrument**, one block under the tabs with no heading — the tab has
+already named the instrument:
+
+| | |
+|---|---|
+| **tape** | autopin as loop · overdub · slice · dwell · retrig |
+| **grain** | autopin as cloud · walk · ↳ dwell · ↳ retrig · rate · width |
+| **erase** | by stroke · depth · from |
+
+Measured after: every tab fits with **0 px** below the fold.
+
+**Each row names what it MAKES, and the rows that belong to one hang off it** (Ek, 2026-09-22,
+later). `autopin` alone said a stroke pins itself and left the reader to remember what it becomes,
+which is the whole difference between the engines — so it reads `autopin as loop` and `autopin as
+cloud`, from `_AUTOPIN[e].on`, the word the tooltip already ended on. `walk on touch` lost its
+`on touch`: every switch in the block acts when you play and none of the others says so. `slice`
+moved up between `overdub` and `dwell`, because the three switches are tape's standing answers —
+how a stroke ends, what it joins, whether it is cut — and the two pills are what happens when you
+TOUCH what those made; appended last, it sorted the block by shape instead of by question.
+
+**Subordination is an INDENT, not a glyph.** `dwell` and `retrig` belong to `walk`, and the kit
+already had the answer: the settings rail's `.set-nav-item--sub` (2026-09-14) indents a row to
+where its parent's LABEL begins and drops it one step quieter, with no mark of its own — "the icon
+belongs to the subject, and there is one subject". Ported rather than copied: out in the tool rail
+the parent's label starts at the row's own left edge, so there is no icon column to clear and the
+indent is one step of the scale (`--sp-5`). An arrow bullet would have been a second vocabulary for
+a relationship the kit already draws. **Greying is a different statement and both are drawn**:
+`.ds-na` says "nothing to act on" and goes when walk comes on; the indent says "belongs to walk"
+and never goes, because it stays true. That needed saying in CSS — the disabled rule is
+`.tc-lrail .ds-na *` at three classes and the sub rule is at three with one more, so without an
+explicit override the sub label stayed tertiary inside a greyed row. Measured: sub labels at x=37
+against x=25, `#938d83` with walk on and `#776f66` greyed with it off, against `#aba59d` for every
+unindented row.
+
+**SHAPE PRESETS ARE SUNSET, and the concept with them.** Each instrument has ONE shape, so the
+list was one meaningful entry plus variations better said as values — and each variation went to
+the kind of control it always was: `spray` is an AMOUNT (0 is no spray), `slice` is a SWITCH, and
+the three erasers were "a preset of depth + direction", which is two rows. `line`, `pen` (dots)
+and `scrape` are what is left. `slice`, `spray`, `comb`/`index`, `scrape bottom` and `scrape all`
+are deleted, and `_DROPPED_TILES` resolves each to the tool that absorbed it so a stored palette
+slot keeps its position and its learned key. **The hand reads that map too** — without it a hand
+holding `slice` fell through to null and BOTH sides collapsed onto the first tool in the order;
+measured, both came up holding `scrape top`.
+
+**`sort by` is deleted** with the `index` tile that was its preset ("let's sunset the sort by and
+remove the index preset"), and the comb engine with it — `combLayout`, `combDeposit`, `resetComb`,
+`S.combAxis`. A stroke keeps the order you played it in. `_centHz` is kept with no caller: it is
+the one place the app converts a normalised centroid to hertz, and the unit bug it documents is
+the worked example the docs point at.
+
+**SETTINGS → TOOLS is the other half of the ruling** (`setPanelTools`, under `sound` beside Pins):
+what a tool does that you decide BETWEEN phrases. Tape's start, release and rearm, min slice, and
+dub decay. Built to SETTINGS-GUI § 2 — title and description left, control flush right, one
+hairline per row — and measured: five rows, every control group ending at the same right edge.
+Its controls are **borrowed from the rig cabinet**, on the same terms as the camera picker: the
+real control comes over, keeps its id, its listener and its live state, and goes home on close
+(verified both ways). Mirroring them would be a second source of truth for values the gate reads
+every tick. **`min slice` and `dub decay` are the exception and are OWNED here** — they never had a
+cabinet control, they were drawn straight from state by the tape shape sheet, and when that sheet
+went they had no door at all.
+
+**CURSOR INTERACTION IS PER INSTRUMENT (Ek, 2026-09-22).** "Make sure there's a separate cursor
+interaction setting for grain and loop." They were ONE set, and that was defensible while only tape
+read them — a trigger is a tape take's gate, which is what the 2026-09-22 morning entry above found.
+Then `walk on touch` gave grain a gate of its own: a walker retraces a stroke and answers the same
+questions on arrival, through the SAME object, so how a tape take started also set how a grain
+walker did.
+
+`S.triggerParams` stays TAPE's — every stored file, OSC address and audit names it — and
+**`S.grainTrigger` is grain's**, holding only the arrival set. `hysteresis` is NOT in it: that is the
+GATE's geometry, and it is one cursor with one reach.
+
+The whole split is **`t.walk`**, in two places: `_onEnter` picks its set from it (which covers the
+rearm window as well as start and retrig), and `_onExit` hands `exitWalker` grain's. Everything in
+`grain.js` that reads `triggerParams.dwell` stays — those test for `'grain'`, the TAPE dwell option
+that opens a stroke for granulation, and a walker has no such option because a walker IS the stroke
+playing.
+
+Grain's five have **their own pids** (`gdwell` · `gstart` · `grelease` · `gretrig`, kind `gseg`,
+plus the page's own rearm slider), because the pid system is global and tape's proxy the cabinet's
+segments. Grain never had cabinet twins — until walk on touch it had no gate — so they carry their
+options in `PARAM_DEFS` and write `S.grainTrigger` directly. Proven by the one test that matters:
+moving grain's dwell to `loop` leaves tape's on `oneshot`, and moving grain's start to `ends` leaves
+tape's on `touch`.
+
+## The cap is not a mute
+
+**For anything touching `S.scanMuted`, `setScanMuted` or the trigger gate's edges (Ek, 2026-09-23):**
+"when the cursor is muted, things that are still in flight, like loops, long grains, anything should
+still finish out. it's not a mute." Capped, the cursor READS nothing — the scheduler posts no new
+candidates and the gate takes no ENTER edge — and that is the whole of it. A grain already sounding
+plays out, a take already fired plays to its release when the cursor leaves it (the EXIT edge acts
+capped too, or a looping take would loop until uncapped), a walker finishes its pass. Until then the
+cap also zeroed the cursor bus, cutting every grain in flight in 20 ms, and called
+`silenceTriggers` on the way down — the 2026-09-07 "the cap is the one mute" ruling, which this
+supersedes. The `c` tile does what `S` does, and opens the lens tab when the rail is up, as a tool's
+play opens its own.
+
+## One lens, and its tab is the whole cursor sheet
+
+**For anything touching the lens tile, the lens tab, `PERF_PIDS.lens` or `S.scanMuted`:** there
+is ONE lens (Ek, 2026-09-22 night: "it doesn't make sense anymore to have cursor presets and just
+all the params available as performance settings, as a tab in the tool rail"). `wide` and `spot`
+differed by one capsule — `mode`: area · nearest — so they were one lens with a setting
+pre-answered, which is the argument that sunset the shape presets the same evening; a custom lens
+was a saved sheet, which is what the rail no longer does for anything. So the lens is a TAB beside
+tape, grain, sampler and erase, and every row of `ENGINES.lens` is on it — reads, radius, mode,
+depth, k, fill, order, fade, falloff — with the sheet's greying (nearest bypasses radius, depth,
+fill and the fade pair; `fill: all` has no k) and the sheet's two live numbers beside radius and k.
+Nothing of it goes to Settings: the eye is what you steer with. The lens has NO SHEET — a drawer
+repeating its rows would be one number in two places — and a drawer pointed at it SHUTS (2026-09-23;
+for a day it drew a head saying where the rows went, which was still a drawer over the stage). The
+same for a tool: the only sheet is a voice's. **The tab FOLLOWS the eye** (Ek, the same night:
+"the lens tab needs to be the source of truth or at least reflect / match what the cursor is doing"):
+every row writes through the cabinet's own control, and `_syncLensTab` re-reads the cabinet and S on
+the layout's 5 Hz tick — the wheel over the sphere, `N`, `K`, a pot, an OSC value all land on it
+within a tick — and redraws the panel once when mode or fill moves the greying. A numbox being typed
+into is left alone. The one thing left to PLAY is on / off: the lens
+tile on the strip, `c` by factory, toggle (the cap) or momentary (a peek); `lensTap()` takes no id.
+The tab was tried once on 2026-09-22 morning and could not work, because the tabs then BUILT a tool
+you placed and there is no unheld moment for the eye; the editor writes the SLOT now, and the lens
+has exactly one slot, its strip position, like the eraser. The rulings below on cursor presets and
+on a lens's sheet installing it are history from that day; they describe a list that no longer
+exists. A profile's `wide` · `spot` deletions and custom lenses are swept once in `initTiles`.
+
+**The cursor is not a tab since 2026-09-23 (Ek):** it is the tool rail's lower half — `#cursorSec`, a
+CURSOR bar in the header design with a rule above and below, on the rail's foot at the height of its
+rows, always shown — and the three instrument tabs above take the rest and scroll. The palette's
+cursor tile and `c` no longer switch tabs; a click on the tile only opens the rail. Its rows capture
+into the lens tile (`LENS_ID`) whatever tab is open. **The 2026-09-23 round (Ek), which amends the above.** The player's word is **cursor**, not lens
+(the id, `S.lens*` and the hue keep `lens`), and `reads` is **scope**, its `grains` · `tape` wearing
+the engines' glyphs. The tab reads TOP DOWN AS A FILTER: scope, radius — the one reach tape shares —
+then a `GRAIN SELECTION` heading over mode (`area` reads `radius`), depth, all, k, step, fade; scope
+`tape` greys the block. One counter, `in reach → taken` on k. **Falloff is set once, so it went to
+Settings → Tools** (the cabinet slider, borrowed; it stays in `ENGINES.lens` for capture), and so
+did the pins' crossfade, to Settings → Pins. **Fade is grain's only**: tried on tape, a distance fade
+silenced every take as the cursor let go, overriding its RELEASE, which is what says how a take ends.
+**`dwell: grain` beats scope** — an opened take granulates under any scope and depth, and only once it
+has played through, in nearest too. **Its pin is the LOOP**: the press adds a cloud only for GRAIN material in
+the cursor's pool (`_cursorGranulating` skips trig marks), and no cloud — seed or walker — ever reads
+an opened take; `_openStrokes` opens it to the cursor alone. **Depth counts STROKES**, cursor and eraser alike (`depthKey`; it
+counted buffers, so every sampler stroke — one file — stayed at depth 1). **Step walks marks in the
+order they were made** (stroke, then `takeT`), not their offset in the buffer. `scripts/lens-audit.js`
+holds all of it.
+
+## A cursor preset carries the WHOLE cursor sheet — including its reach (HISTORY, 2026-09-22 morning)
+
+**Superseded the same night — see "One lens, and its tab is the whole cursor sheet" above.** Kept
+for the two bugs it found, which are still traps. The original:
+
+**For anything touching `GLOBAL_PIDS`, `applyTileParams`, or which rows a lens preset owns:**
+every row on the cursor sheet belongs to the preset whose sheet it is. There are no exceptions,
+which is why the exception mechanism itself is gone rather than emptied. From 2026-08-27 a set
+named `GLOBAL_PIDS` held exactly one pid — `radius` — on the ruling that reach is the cursor's
+and not any one lens's, so it was neither captured into a preset nor applied from one. Ek
+overturned it on 2026-09-22: *"if wide is 31, and i create a new preset narrow that's 5 degree
+radius, it should switch the radius when i switch the preset."* A preset that does not carry its
+own reach is a preset of four of the cursor's nine rows, which is not a preset of the cursor.
+`fill` was global too, by omission rather than by rule: it is DRAWN inside k's row, so it had
+been left out of `ENGINES.lens` — but that list is what a preset captures and applies, not what
+the sheet draws, so a pid drawn by a neighbour still belongs on it and `cell` returns `''` for it.
+
+Two bugs were hiding under the ruling, and neither was visible by reading. **A typed number never
+reached the instrument**: `_paramTypeSet` writes the value into the CABINET numbox and dispatched
+only `keydown` Enter, while every cabinet numbox commits on `change` (radiusVal) or on `blur`
+(kBigNum) — their Enter handler just calls `.blur()`, which does nothing on an element that was
+never focused, and the cabinet is in a `display:none` panel so it never is. It now dispatches all
+three. **And the radius applied by a preset was undone by the preset's own later rows**: the
+radius slider's `input` handler is throttled 50 ms, and `mode`, `fill`, `korder` and `rfade` are
+applied after `radius` and each call `updatePlaybackControls` → `drawRadiusViz`, which re-syncs
+the slider FROM `S.searchRadiusDeg` — still the old degrees, because the throttle has not fired.
+So the new reach was written, overwritten three times, and then the throttle re-applied the old
+one. `_applyParam` commits `radius` through its numbox instead, which is synchronous (applyRadius
+writes S, slider and numbox in one step), the same shape as the `depth` case beside it. **The
+general trap: a pid whose apply depends on a throttled read-back of its own element cannot be
+applied in a loop with pids that re-sync that element.** A trap on the slider's `value` setter
+caught the sequence in four lines of stack; no amount of reading the two modules would have.
+
 ## Brush, lens and voicing — what freezes, what is wet
 
 **For anything touching how the cursor voices material, or `js/brush-voicing.js`:** a stroke
@@ -1348,9 +1895,317 @@ Covered by `pins-audit.js` § H and § L and `engine-audit.js` § D.
 
 **The main process owns the menu and the guard, and asks the renderer everything** (`electron-main.js`, 2026-09-14). The File menu is the only menu mubone defines — New, Open, Open Recent, Save, Save As — with the rest left as Electron's roles so ⌘Q, services and the window list keep working; a double-clicked `.mubone` arrives on `open-file` and goes through the same door, held until the window exists on a cold start. None of it owns state: main cannot reach the module graph, so the document answers on `window.__mubonePiece` with three questions (state, save, run). The quit guard asks at the moment of the close rather than reading a flag pushed earlier, so the answer can never be one edit stale, and a Save that raises its own dialog and is cancelled cancels the quit too. The file IPC underneath is deliberately narrow — two native dialogs, a ranged read, a streamed write — and a write lands through a `<path>.part` renamed on close, because a piece can be hundreds of MB and a crash halfway through must leave the previous document intact rather than a truncated one.
 
+## A tool is a shape and a voice — the 2026-09-21 round
+
+**The pair, and why the words took three tries.** A tool answers two questions and a tile name used
+to fuse them: **what it sounds like** (VOICE) and **how it exists in the space** (SHAPE — where it
+lands, how it spreads, and what it does when the cursor arrives). Ek's own account of playing is
+where the split came from: one half is *"how it is drawn in the space and how it is seen by the
+cursor"*, the other *"sound processing"*. The names went head/voice → sound/space → shape/voice,
+and the middle one earned its day: *"it's sound in space. so space is all questions about how it
+exists in the space"* is what proved there is no THIRD category — the lens's five arrival rows are
+spatial, because arriving at a mark is a spatial event. `head` was wrong because a head only
+deposits and says nothing about being READ. **One word, two jobs, still open:** the palette draws a
+tile's VERB as its shape (`VERB_RADIUS`), so if shape is the half, the verb's rendering wants its
+own word — the OUTLINE.
+
+**A shape's sheet is its own, not its engine's.** Every tool of an engine used to draw all 29 of
+its rows, so `dots` showed comb's sort axis and staff's latitudes — rows that could never do
+anything for it. A sheet is now `SHAPE_SHARED[engine]` + `SHAPE_OWN[id]` + the arrival rows, and a
+VOICE has its own sheet behind its own `⋯`, holding `VOICE_PIDS` and nothing else. **Every tape
+shape shows the SAME sheet** (Ek): a take can be cut at its onsets whatever else it does, so
+slicing was never one shape's private property, and `decay` riding along is what made overdubbing
+a sheet setting rather than a shape with an empty one (`DUB_PIDS` is gone). An edit on a voice
+sheet captures into the VOICE — that is what makes it a living preset and not a snapshot.
+
+**Pinned is frozen, unpinned is live, and the jump is the gesture.** `wet` stops being a decision:
+paint is wet until you fix it, and PINNING is fixing it. An unpinned stroke references its voice,
+so a value moved on that voice's sheet moves every unpinned stroke made with it; the pin copies the
+values into the slot and that take keeps them for good. Unpinning hands the material back to the
+live voice, and it JUMPS if the voice has moved since — Ek: *"the unpinning jump is good and can be
+intentional"*, which is what gives the scanning half a sound gesture without a fourth control. A
+pin therefore stores both the copy it took and the id of the voice it came from. **Structure
+freezes at the pin; sound may stay live.**
+
+**MODE asks twice, before you play, for everything.** `autopin` (does a stroke pin itself when you
+let go) and `cycle` (`own` or `master` — whose clock a loop runs on) are pre-play settings, not
+per-tool flags: Ek reads them as *"is the record/paint mode, pinned or unpinned after i paint"*.
+`autopin` writes the two end flags that already do the work through `_AUTOPIN` rather than becoming
+a third truth; `cycle` cost one line, because the dub's whole press path hangs off
+`S._handIsOverdub`. So **no tool carries a pin icon**, `looper` and `dub` have nothing of their own
+left to say, and § 9.4's three-way (`no · loop · join`) dissolved — `join` was never the same kind
+of fact as the other two.
+
+**The press is the verb, and the latch must be real.** The hand has TWO tiles — a tap latches, a
+hold plays while held — and both are live at once, so `handVerb` is gone; a stored verb would be a
+third answer to a question the press already answers. A press STARTS as a momentary so the stroke
+begins on the down with no waiting, and the release decides: under `HAND_TAP_MS` (which is
+deliberately `COMMIT_DRAW_THRESHOLD_MS` — one number for "tap or hold" in the whole instrument) it
+is promoted. **The promotion must happen in the FUNNEL** (`gestureLatch`), not in `_held.latched`
+alone: `_held.latched` mirrors `S._gestureLatched()` everywhere, and a latch in the tile layer only
+left `gesturePress` answering the next press with *"a second wire while down — nothing"*, which
+shipped as a stroke nothing could stop. The same change armed `GESTURE_LONG_MS` for both press
+kinds, because a long press is a press that is still DOWN and holding is now the momentary one.
+
+**The hand is TWO tools, and the spacebar goes through the one recogniser** (Ek, 2026-09-22: "when
+i drag the tile in tool creator to the hand tile it fills in both of them, should just fill in the
+one" → "we already have the entire mechanism for different press types for everything except space
+bar, it should go thru the same determiner"). The two hand tiles were one tool drawn twice, which is
+why a drop on either filled both. Each holds its own now: `inHand` is `{ press, long }`, migrated
+one-shot off the single id so a player's hand is unchanged until they drop onto one of the two.
+
+I ARGUED IT COULD NOT BE DONE, and was wrong in a way worth recording. `handUp` decided tap-vs-hold
+RETROSPECTIVELY, by comparing the release against `HAND_TAP_MS`, so at the down edge the app did not
+yet know which tile you meant — and waiting to find out would cost 200 ms on every press, against
+the whole latency ruling. What I missed is that the recogniser already solves exactly this, and Ek
+designed it for exactly this case on 2026-09-10: a `press` binding fires on the DOWN with no
+latency, and when a `long` follows, `_abortPress` takes back everything the press wrote to history
+and throws away the take it started — *"it'll cancel the loop that just started as if it was never
+meant to be, then do cloud."* I reasoned from the spacebar's own code instead of the shared one; the
+spacebar was the app's only second determiner, and CLAUDE.md already said there is one recogniser.
+
+So the spacebar and the sphere's button are RESERVED BINDINGS — `hand_press` (trigger) and
+`hand_long` (hold) on `key:Space` and `mouse:0`. They are not in `keyMappings` (`RESERVED_KEYS`
+strips them on every load, so they can never be learned onto anything else) but `_gestureBindings`
+yields them, which is all `_bindingsOnSource` needs: events.js sees a bound source and hands both
+edges to `dispatchGesture`. No new plumbing, and the hand gets OSC for free — `/hand/press` and
+`/hand/long`, because every other action in that table has an address and the table's contract is
+the point.
+
+Two things the wiring turned up. `_ACTIVATES`, which decides whether an abort may throw a take away,
+matched `palette_[1-9]` only — so the hand's press was never aborted; it takes `hand_press` too. And
+`handDown` refused to start while a play was running, which it has to do for the one-at-a-time rule
+— but the long fires WHILE the press's play is still up, so it saw a busy hand, ended that play and
+returned, and the hold only ever stopped things. `S._handLong` lets go of the press's play first.
+
+**The eye is not a tool, so it has no bench and it does not live in the tabs** (Ek, 2026-09-22: "the
+lens actually is above the whole tool section and shouldnt have a bench. it should be in the left
+rail but always visible above the tabs"). The lens was a fifth tab for a day and the tab could not
+work, for a reason that is about the instrument rather than the UI: **tape, grain, erase and the
+sampler are assembled and then placed; the lens is always being worn.** There is no unheld moment
+for the eye — one is on unless you turn it off — so there is nothing to build toward, and choosing
+one IS using it.
+
+The symptom was exact and is what forced the question. Benching `spot` while `wide` was installed
+gave a sheet TITLED SPOT whose `mode` cell read `area` — wide's value, and the live one — because
+`renderProps` draws the live controls; anything changed there edited the eye you were actually
+looking through and was then captured into spot. The same bug `setBench` had for tools, which was
+fixed by applying the tile's block on selection. That fix cannot be applied here: for a tool nothing
+is in the hand between presses, so loading its block costs nothing until you press; for the eye
+there is no such moment.
+
+So: the lens section sits ABOVE the tabs, always visible, outside the editor. A click INSTALLS, and
+`lensTap` applies that lens's own block — which makes the sheet correct BY CONSTRUCTION rather than
+by a second mechanism. The moon means INSTALLED again, its meaning before the editor round, which is
+also what `.on` has always meant for a row that is a choice; clicking the lit one turns the eye off,
+which is the cap. No bench tile and no `A`: there is nothing to audition when you are already
+looking through it, and PEEKING through another lens mid-play is the palette's momentary verb
+(`_lensMomentary` puts the old eye back on release) — a live gesture, not an editor one. The lens
+keeps no MODE either, and correctly: `reads` is captured into each lens's block, so every lens
+remembers what it is allowed to see, which makes it per-preset rather than instrument-wide.
+
+**The panel card, and the accident that produced it** (Ek, 2026-09-22: "give the lens special design
+treatment like the new background you made for the shapes/voice" → "i asked for this simple design,
+but for the lenses"). The three rail panels — lenses, presets, sampler — sit on a ground one step up
+from the rail (`--surface-1`) with the hand's radius, and nothing else: flat, no gradient and no
+shadow (build sheet § 8.7), one token for the ground and one for the radius (§ 8.8). The rows still
+BLEED out of the card to the rail's edge, so the moons sit on the rail and the single glyph column
+holds — a card here is a GROUND BEHIND a group, not a box around it. Measured after: 0.00 spread on
+row x and glyph centre across every row in the rail.
+
+I had first given the lens a hued band of its own — `--eng-lens` at 7% with a matching hairline, and
+the one heading in the app taking a hue — which was the wrong answer to the right question and Ek
+said so plainly. **Worth recording is where the card came from**: it was a BUG I had written two
+commits earlier. `html body .tc-lrail .tilebar, .srcbar, .lensbar { height: auto; }` lost its
+declaration block when I deleted the third selector as dead, the two survivors ran on into
+`html body .palette` below, and the presets panel came up wearing the HAND's plate — gradient,
+shadow, 9px backdrop blur. Ek saw it, liked it, and asked for it on the lenses. The rule is closed
+again (the `height: auto` it carried is the fix for a permanent scrollbar over empty space, so
+losing it was a real regression), and the card is stated deliberately and flatly instead. A
+CSS rule that loses its body does not fail — it silently merges into the next one.
+
+**A shape whose whole identity is a MODE switch is not a shape** (2026-09-22). `loop` and `dub` are
+deleted. `loop` was `FACTORY_PARAMS.looper = { onEnd: 'loop' }` and nothing else, and `onEnd` is what
+AUTOPIN writes; `dub` was `handTileId() === 'overdub'` forcing `S._handIsOverdub`, which is what the
+OVERDUB switch says. Two doors onto one flag, and the worse kind — picking the shape moved the switch
+behind your back. What they did is not lost, it is asked once. `passes`, the looper's self-killing N,
+is a tape sheet row and belongs to any tape shape; the dub's BANG — one cycle of the master, then it
+lets go — moved onto TAPE's allowed verbs, where it means that whenever overdub is on. `line` and
+`slice` are what is left and both are real: slice AUTO-SLICES at onsets (`brushFx`, trigger.js
+`_sliceStroke`), behaviour no parameter can stand in for. The test this leaves behind: **if deleting
+the tile and setting the MODE switch gives you the same instrument, it was never a shape.**
+
+**The three erasers keep what is theirs; `erases` goes up** (2026-09-22). `depth` and `efrom` ARE each
+eraser's identity — newest layer, oldest layer, everything in reach — which is what makes them three
+PRESETS of one engine rather than three modes, and that was already right. `escope` was not: one
+boolean shared by all three, drawn as a `touch | stroke` capsule, breaking two rulings at once (a
+true boolean is the SWITCH, 2026-09-07; one answer per instrument is MODE, 2026-09-22). It is
+`whole stroke`, erase's first and only MODE switch, and the presets are untouched.
+
+**GLOBAL MODES: every instrument's standing answers in one list, above the tool creator** (Ek,
+2026-09-22: "maybe the modes should be taken out completely and put under lenses as GLOBAL MODES …
+then the tabbed section is strictly a tool creator"). The modes had been behind the instrument tabs,
+which conflated two questions that are not the same: WHAT AM I MAKING, and HOW DOES THIS INSTRUMENT
+BEHAVE. A mode is not part of building a tool — it is a standing decision — and behind a tab you
+could not flip tape's autopin without leaving the grain tab. All five now sit in one card beside the
+lenses: `autopin (loop)` · `autopin (cloud)` · `overdub` · `grain walker` · `whole stroke`. Erase's
+came with the rest, because leaving one mode behind would undo the point of the tabbed panel being
+strictly a creator.
+
+TWO THINGS THE FLAT LIST FORCED, and both are better than what they replaced. A ROW CARRIES ITS
+INSTRUMENT'S HUE — tape pink, grain gold, erase orchid — because one list holds four instruments'
+answers and colour is what says whose each row is; the switch was neutral when the tab above it
+supplied the context. And the WORD disambiguates only where it must: `autopin` is the only label
+that appears twice, so it is the only one qualified, by the value the switch actually writes. The
+caption went `MODE` → `TAPE MODES` → `GLOBAL MODES` in an afternoon, and the last is the only one
+that is true of the list as it now stands. `TOOL CREATOR` became a full-width rail heading over the
+tabs, so the tabs read as part of the creator rather than as the rail's top-level navigation.
+
+**The rail says whose each thing is: the instrument above the line, the tool below it** (Ek,
+2026-09-22: "since the mode is global for that tool, it should be design UX wise to show that"). The
+rail is **TOOLS**. Under that title: the five-tab pill, then MODE — both the INSTRUMENT's, and MODE
+sits with the pill because that is whose answers it holds. Then a hairline and the heading **TOOL
+CREATOR**, and everything under it belongs to the one thing you are making: the bench, the shape
+presets, the voice presets. MODE had been inside the panel with the presets, which put an
+instrument-wide switch in the same box as a per-preset row and made the two look like one kind of
+thing. A tab with no mode (erase, the lens, the sampler) collapses its box to nothing and the line
+rises — an empty heading is worse than no heading, which is the same rule MODE has always followed.
+
+**The left rail is the TOOL EDITOR, and selecting is not playing.** A click on a rail row lands on
+the BENCH — it does not reach the hand, the palette or the spacebar — and the sheet follows, so the
+editor shows what it is editing. The bench draws what you are building as the tile it will become,
+and `A` auditions it, always momentary, reserved the way the spacebar is (`RESERVED_KEYS` in
+midi.js). A position on the palette carries its VOICE, so two grain positions can be two different
+sounds, and `place` refuses without one — half a pair is not a tool. An eraser is not a special
+case: it has no voice to give, so nothing is missing.
+
+**Everything in the editor is editable, the LENS included, and the moon follows the bench**
+(2026-09-22). Two rows were left over from the rail's selector days. The lens row still *installed*
+on a click — it was how you changed your eye — and Ek's rule finished the job: *"i want everything
+in the tool editor to be editor mode right it's only when i drop it in the palette it becomes
+performable."* It benches now, the palette already knew how to hold a lens position, and holding `A`
+does the visual equivalent of an audition: it looks THROUGH the lens while you hold and puts the old
+eye back on release, through `_lensMomentary`, the same restore path the palette's momentary verb
+uses. The trap: a factory lens is not in `TILE_DEFS` — its own table, its own glyphs — so
+`tileById('spot')` is null and the bench, which resolved a tile, drew nothing; `benchSubject()`
+returns `{ id, label, glyph }` for either kind and `handTileInner` takes that, so the bench and the
+strip's hand still come out of ONE builder. The second leftover was the MARK. The half moon said
+"installed" on a lens row and nothing at all on a shape row, while `.open` — the drawer's mark, in a
+rail that has no drawer doors — quietly followed the last click; clicking a preset moved the bench
+and the moon stayed put (Ek: *"the half moon doesn't change and when i click it doesn't highlight
+correctly"*). Now every editor row is a radio and ONE moon marks each group — shape, lens, voice —
+the shape group's on the BENCH, and a tool being a pair means the shape's moon and the voice's moon
+together are what you are building. `.open` is gone from the rail entirely: selecting IS opening, so
+it could only say "chosen" a second time, more quietly, sometimes on a different row. What is LOST
+and worth knowing: the rail no longer shows which lens is actually installed — that is performance
+state, it lives on the palette tile, and the row's tooltip still says so. The rail's gutter then
+had to be cleared of its last competitor: the IN-HAND LINE, a 2px rule down a row's left edge since
+2026-09-12, sat 2px from the moon and answered a different question (Ek, seeing it beside the new
+mark: "scrape still uses the old line instead of half moon"). It is deleted from the rail and from
+the strip; the hand tile names its shape and its voice in words, which is where a performance fact
+belongs. And the moon is FLUSH with the rail now rather than with the row — `.lyr-list` had been
+insetting it 12px, which was never a regression, just never right for a mark whose whole job is to
+be read at the edge without looking.
+
+**The sampler tab is the sampler's, and the mic is not a preset** (2026-09-22). The tab opened onto
+the old source panel: one `in N` row per live channel, then the sampler. Ek: *"in the sampler tool
+editor it's no longer source … at the min remove the in 1 mic since that's already a setting in the
+header the mic."* The `in N` rows are gone — they were a second door onto a setting the chrome owns,
+filed under a tab about a FILE — and with them the per-channel glyph and the rebuild-on-channel-count
+path they existed for. WHICH MAKES THE SAMPLER A BOOLEAN: it was a radio when it was one of N
+sources and it is one switch now, wearing the half SQUARE, on for a file and off for the mic, and
+clicking it again is the way back that the `in N` rows used to be.
+
+**And then the sampler became a TILE** (Ek, same day: "make the sampler a legit bench tile as
+well") — the last thing in the rails you could not put under a key. It is an ACT, not a tool: it has
+no shape and no voice, it changes what the tools READ, the way a lens changes what the cursor sees.
+Two verbs, `toggle` and `momentary`, no bang — swapping the source is a STATE, and a bang that turned
+it on with no way back is the trap the `in N` rows used to cover. HOLD IT AND THIS STROKE COMES OFF
+THE FILE; toggle it and the next few do. Its state is DERIVED from `S.sourceKind` the way the mix
+mute is derived from the pins, so the tile agrees however it was changed — the row, an OSC address,
+a pad. It took the source hue into the palette with it, since the act tiles' shared hue is the pins'
+and the sampler is not in that group. The panel row then had to obey the rail's one rule, so it
+BENCHES and no longer performs, and the two doors onto the file are the palette tile and `A` on the
+bench. THE ROW WEARS ONE MARK, the bench's: whether the file is under the brush right now is
+performance state, read off the lit palette tile and off the sheet's head, which spends its one line
+on "under the brush" / "the mic is live". A second mark in that gutter is the in-hand line, deleted
+the same morning for the same reason. The sampler's glyph moved into `G` on the way — it had been
+copied in `SRC_G` and `INSTR_G`, "kept identical on purpose", which is two copies and a promise.
+
+**MODE stays autopin and overdub; the arrival family is CURSOR BEHAVIOUR and belongs on the sheet**
+(2026-09-22). Ek, on the sections the round had produced: *"since the modes autopin and overdub are
+part of the tool editor they are technically tool-specific. but now at least they're not buried into
+a preset … arguably we could probably also put some other things in mode."* What else might belong
+was worth measuring, and the measurement found something real: the five arrival rows — dwell · start
+· release · retrig · rearm — were drawn on ELEVEN shape sheets and there was only ever ONE of them.
+Setting `dwell` to loop on `line` read loop on `slice`, and on grain's `pen`. They went up into MODE
+for a day on the strength of that, and came back down the same day (*"those things you moved out
+actually they should be cursor behaviour inside the shape presets move them back in"*): BEING SHARED
+IS NOT THE SAME AS BEING A MODE. The sheet already groups them under their own `cursor behaviour`
+heading, which is where they read as what they are — how the cursor treats what it arrives at, not a
+question you answer once about the instrument. MODE is the two switches, and the fourth pile
+(`MODE_PIDS`) that carried them is gone with them; so is the rail's borrowed `.opt` capsule, which
+was a second home for a control that already had one.
+
+AND THEY ARE GRAIN'S TOO, which I got wrong for a day. I had claimed the family was tape's, on a
+grep of grain.js that found only `seq.trigger` readers, and took the rows off the grain sheets on
+that basis. The reader is the GATE: `trigger.js` `_onEnter` spends `tp.rearmMs` and then hands the
+same `tp` to `startWalker` for a grain stroke. Under the lens's `mode: stroke` a touch on a grain
+stroke launches a WALKER (`js/walker.js`) and these five rows are its whole behaviour — `start`
+decides where the walk begins and which way it runs, `dwell` whether it loops and whether it opens
+the stroke, `release` how it leaves, `retrig` cut against layer. walker.js's header says so in its
+first paragraph, and `SEC_NOTE['cursor behaviour']` says it on the sheet itself: *"what a touch does
+— tape now; grains under mode: stroke"*. Ek remembered the feature when the rows went missing. The
+lesson is cheap to state and was expensive here: a grep of one module is not a reader census, and
+the codebase had already written the answer down in the place I was editing. The rows are on every
+sheet but the eraser's, and the section's NOTE now renders on all of them rather than only the
+lens's — it is the line that says when a grain stroke answers to them. `reads` went back to the lens
+sheet the same way.
+
+**A PARAM LIVES WITH THE TOOL IT WORKS ON, and a MODE is that instrument's one answer for all of
+them** (Ek, 2026-09-22, stating it out loud after the walk had moved twice: "the ruling is that, as
+much as possible params should exist for the tool they work on. also those modes are global for
+those tools only"). Two rules, and between them they place anything. WHICH TOOL does this act on?
+That is the sheet it belongs to — which is what took the arrival family off the lens and onto tape
+and grain, and the walk off the lens and onto grain. IS THERE ONE ANSWER PER INSTRUMENT, or one per
+preset? One per instrument is MODE, a switch above the presets; one per preset is a row on the
+shape's own sheet. The walk took an hour to land because it passes the first test and the second:
+grain's, and asked once. `autopin`, `overdub` and `walk` are the three that have earned a switch.
+
+**The walk is the GRAIN's, not the eye's — and it is MODE** (2026-09-22). Ek, dialling it in: *"whether the
+cursor when it touches a grain walks the stroke or if it just plays what's in cursor. by default
+it's cursor … i think it should be a grain shape param."* It had been the lens's `mode: stroke`, the
+third cell of a capsule whose other two are the APERTURE — how a reader chooses among what is in its
+reach. That put one answer on the eye for a question about the brush you are holding, and it meant
+`wide` and `spot` could not be what they are (area and nearest) while a walk was on. Now `mode` is
+`area · nearest` and nothing else, and `S.grainWalk` decides whether a touch hands the stroke to a
+walker. It spent an hour as a per-SHAPE capsule (`on touch`, `cursor · walk`, in the grain sheet's
+`cursor behaviour` section) and is a MODE SWITCH now, `walk`, beside autopin: every grain preset was
+carrying an answer to a question the instrument asks once. A true boolean on this rail is the
+SWITCH, so it wears one rather than the capsule it had on the sheet, and the short-lived `gwalk` key
+is stripped from any block minted in that window — one shot, no fallback. Off by default, which is
+the cursor, which is what it always was.
+
+THE ONE COMBINATION TO KNOW: a walker is AREA-ONLY by a rule in grain.js ("never `nearest`, that
+would read the whole sphere from a moving point"), so a walk under the `spot` lens reads as area
+while it walks. Nothing is refused and nothing is silently wrong — `nearest` has no meaning for a
+point moving along a path — and it is said where it is decided rather than left to be discovered.
+
+AND IT FOUND A REAL BUG, which is why the first two attempts at "per shape" did not hold. `setBench`
+set the sheet's tile without APPLYING its block, so `renderProps` drew the live controls while
+`_pollLiveBlock` captured them back into the newly selected tile: `wash` held `cursor` in storage the
+whole time and the sheet was reading `pen`'s live value. `pickForSheet` states the rule in a comment
+— "a pick that did not apply would show the last tile's numbers and write them into this one" — and
+the bench had skipped it since the day it existed. It applies now, for TOOLS only: applying a lens's
+block would change what the cursor reads this instant, and selecting is not performing in this rail,
+so a benched lens's sheet still edits the live eye. That is the one place the editor is not yet
+honest, and it is named in the code rather than left to be found.
+
 ## Plans that shipped — the rulings they left behind
 
 The plans below are in `docs/archive/` (2026-09-05). Each shipped; what a session still needs from each is here. `BRUSH-MODEL.md` and `OVERDUB-PLAN.md` are covered by the palette, main-button and overdub entries above, and `TIMING-REFERENCE.md` by the constants block at the top of `js/state.js`.
+
+**There is no trigger ceiling (Ek, 2026-09-23: "there should be no limit").** Every stroke arms. There was a ceiling — `MAX_TRIGGERS` 32, and full meant REFUSED — put on when the gate was new as insurance for the scheduler's tick, and it bit: with slice on a take is several triggers, eight strokes filled it, and every take after that painted deaf (marks with the trigger flag and no gate) with nothing on screen saying so; the arm call's errors were swallowed too, and are warned now. Found in Ek's open window by reading the strokes: 33 with trigger marks and no trigger. It rolled (steal the oldest) for an hour, then went: measured, the insurance was never needed — the bounding-cap reject makes the gate's cost grow with how many strokes are NEAR the cursor, not how many exist (64 × 200 marks 0.015 ms a tick; trigger-audit keeps the 256 number under 2 ms as the standing proof).
 
 **The trigger tool** (`docs/archive/TRIGGER-TOOL-PLAN.md`, #180–#194). A trigger is a VIEW onto a stroke and owns nothing. The playback engine is the loop commit's single `AudioBufferSourceNode` with VBAP following the playhead; the one new thing is a GATE — `playing` becomes a function of cursor proximity. The type is chosen before recording and belongs to the buffer (hit material), never a global tool mode: the first two builds had one and were wrong, and parking, disarming, double-sounding and "does erase reach it" all stopped needing answers once the material stopped being copied out from under its owner. Hit test is any particle in the stroke; the reach is the cursor's own search radius (one gesture, one size); no slot bank; no disarm (erase is the delete, and erasing part of a stroke edits the sample); recording a trigger does not mute scan; dwell (one-shot / loop-while-held) is a live playback control that reaches a trigger already ringing. **A dwelling trigger reads with the LIVE grain block** (2026-09-06): under dwell `grain` the trigger opens to the cursor, and its marks are read with voicing 0 — the grain brush in the palette, wet or dry — never with the grain voicing its hit brush happened to freeze at recording time, which nothing displayed and no setting owned (`grain-worklet-bridge.js` `_voiceOf`; `trigger-audit.js` reads the tables back to prove it). The hot path compares dot products against cosines — 32 triggers × 200 particles cost 0.0018 ms of the 20 ms tick, and the bounding cap makes 32 cost 2.8× one. `_stopSeqAudio()` cannot be reused because both its paths null the slot on `ended`; `stopTriggerAudio()` detaches the nodes up front so the trigger stays armed while the old pass fades. Guarded by `scripts/trigger-audit.js`. Never played on the rig as of 2026-09-05 (TODO #180).
 
@@ -1402,7 +2257,9 @@ clauses across all nineteen cuts appeared anywhere in docs/ beforehand, so this 
 duplicate of what follows — for most of these rows the settings dialog was the only place the
 information existed.**
 
-**Blend.** All plays every pin at equal weight. Focus leans toward whichever is closest to the cursor.
+**Follow.** A switch (2026-09-22 night; it was `blend: all | focus`, a which-one over a yes/no — Ek: "i want it to be boolean when possible"). On, the faders follow the cursor: the nearest pin is loudest and the rest hand over by distance, the mix summing to one. Off, every pin plays at full. `S.commitPlayback` still holds `all | focus` underneath; `pins_follow` / `/pins/follow` is the wire.
+
+**Tether — deleted (2026-09-22 night).** It only meant anything under follow, and there it gated a pin by the LENS radius. Ek: "if cursor-mixer is on there's really no radius so tether becomes confusing … act as if tether is on." A pin is never gated by the radius now; the radius is the scratch layer's (the 2026-08-30 ruling, finished).
 
 **Curve.** The crossfader curve between two pins — the DJ mixer's word (Ek, 2026-09-17: "width" read as a size; it is whether the handover is gradual or sharp). 100% blends the whole way from one anchor to the next; 0% cuts at the midpoint. On an anchor, that pin is alone. Focus only; outside focus the row is greyed.
 

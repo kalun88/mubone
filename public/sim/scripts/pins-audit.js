@@ -94,7 +94,6 @@ async function run(rig) {
       anyMuted:  list.some(g => g.muted),
       anySolo:   list.some(g => g.solo),
       hookToggle: typeof S._toggleGroupOf,
-      hookAllOn:  typeof S._pinsAllOn,
       hasExport:  typeof P.exportGroups,
       hasRestore: typeof P.restoreGroups,
       // The v1 group model's whole surface, which must be gone rather than
@@ -119,7 +118,6 @@ async function run(rig) {
   check('nothing starts muted', boot.anyMuted === false);
   check('nothing starts soloed', boot.anySolo === false);
   check('S._toggleGroupOf registered', boot.hookToggle === 'function');
-  check('S._pinsAllOn registered', boot.hookAllOn === 'function');
   check('persistence seam is exported', boot.hasExport === 'function' && boot.hasRestore === 'function');
   check('the named-group state is gone from S', boot.noLayerState === true);
   check('so are its hooks', boot.noLayerHooks === true);
@@ -387,8 +385,12 @@ async function run(rig) {
     const P = await import('./js/pins.js');
     P.restoreGroups([]);
     S.commitSlots = new Array(S.commitSlotCount ?? 16).fill(null);
-    // A cloud with a LONG fade out: the mute must not ride it.
-    S.commitRelease = 5;
+    // With no Out, a muted cloud stops now. With one, the mute RIDES it — the
+    // ruling since 2026-09-16 (a mute leaves the way an unpin does), and since
+    // 2026-09-23 the Out is Settings › Pins read live, not a copy on the pin.
+    // (This check said "whatever its fade out says" until then, and passed
+    // only because its hand-made cloud carried no `fadeOut` of its own.)
+    S.commitRelease = 0;
     const cl = { type: 'cloud', slotIndex: 0, playing: true, lon: 0, lat: 0,
                  color: '#e8a030', grainParams: {}, grainOverrides: {}, _releasingAt: 0 };
     S.commitSlots[0] = cl;
@@ -396,16 +398,25 @@ async function run(rig) {
     const cloudNow = cl.playing === false && !(cl._releasingAt > 0) && cl._composerHold === true;
     P.setPinMuted(cl, false);
     const cloudBack = cl.playing === true && cl._composerHold === false;
+    S.commitRelease = 5;
+    P.setPinMuted(cl, true);
+    const cloudRides = cl._composerHold === true && cl._releasingAt > 0 && cl._envRelease === 5;
+    P.setPinMuted(cl, false);
     S.commitRelease = 0;
 
     // A loop with a live mute node: the ramp lands within the 20 ms ramp, not
     // at the end of a pass. Fake the node the way grain.js builds it.
     const actx = S.audioCtx;
-    if (!actx) return { cloudNow, cloudBack, noCtx: true };
+    if (!actx) return { cloudNow, cloudBack, cloudRides, noCtx: true };
     const mute = actx.createGain();
     // A node nobody renders never advances its automation: the ramp lands
     // only on a node in the graph. No input, so it is silent at the output.
     mute.connect(actx.destination);
+    // A loop's Out is the settings', read live, never under its declick
+    // (pins.js pinFadeOut): pin both, or a sweep suite ahead of this one that
+    // moved the loop fade decides how long the mute takes.
+    const keepLF = S.loopFadeTimeMs, keepAtk = S.commitAttack;
+    S.loopFadeTimeMs = 15; S.commitRelease = 0; S.commitAttack = 0;   // the unmute rides In, live (pins.js pinFadeIn)
     const lp = { type: 'loop', slotIndex: 1, playing: true, particles: [], speed: 1,
                  loopStart: 0, loopEnd: 4, _startedAt: actx.currentTime - 0.5,
                  color: '#4fc3f7', grainParams: { volume: 1 }, _muteGain: mute };
@@ -421,10 +432,12 @@ async function run(rig) {
     await new Promise(r => setTimeout(r, 80));
     const back = mute.gain.value > 0.95;
     try { mute.disconnect(); } catch (_) {}
+    S.loopFadeTimeMs = keepLF; S.commitAttack = keepAtk;
     S.commitSlots[1] = null; S.commitSlots[0] = null;
-    return { cloudNow, cloudBack, landed, flag, noWait, back, g, dt: actx.currentTime - t0 };
+    return { cloudNow, cloudBack, cloudRides, landed, flag, noWait, back, g, dt: actx.currentTime - t0 };
   });
-  check('a muted cloud stops now, whatever its fade out says', imm.cloudNow === true);
+  check('a muted cloud with no Out stops now', imm.cloudNow === true);
+  check('a muted cloud rides the pins\' Out, read live from Settings › Pins', imm.cloudRides === true);
   check('and comes back now', imm.cloudBack === true);
   if (imm.noCtx) {
     console.log('  skip  loop ramp — no audio context in the audit profile');
@@ -469,7 +482,7 @@ async function run(rig) {
       _envAttack: 0, _envRelease: 0, _envGainCurrent: 1, morphT: 0.5, morphVelocity: 0,
       frames: null, duration: 0, loopMode: 'pingpong', mute: false, solo: false };
     S.commitSlots[0] = loop; S.commitSlots[1] = cloud;
-    const was = { mode: S.commitPlayback, tether: S.commitTether, xf: S.commitXfade, r: S.searchRadiusDeg };
+    const was = { mode: S.commitPlayback, xf: S.commitXfade, r: S.searchRadiusDeg };
     const settle = async () => {
       for (let i = 0; i < 12; i++) { G.scheduleGrains(); await new Promise(r => setTimeout(r, 25)); }
     };
@@ -477,7 +490,7 @@ async function run(rig) {
     // crossfade width. Then the loop's anchor moves under the cursor: alone.
     const D = Math.PI / 180;
     loop.anchorLon = cur.lon - 3 * D; cloud.lon = cur.lon + 3 * D;
-    S.commitPlayback = 'focus'; S.commitTether = true; S.commitXfade = 1; S.searchRadiusDeg = 10;
+    S.commitPlayback = 'focus'; S.commitXfade = 1; S.searchRadiusDeg = 10;
     await settle();
     const shared = { w: S._pinWeights[0], g: loop._pinGain?.gain.value, src: !!loop._sourceNode };
     S.commitXfade = 0.5;
@@ -487,13 +500,15 @@ async function run(rig) {
     S.commitXfade = 1;
     await settle();
     const onA1 = { other: S._pinWeights[1] };
-    loop.anchorLon = cur.lon + 30 * D; S.commitTether = false;
+    // 30° off, well outside the 10° radius: the radius never gates a pin
+    // (2026-09-22 night, with tether), so the loop is still in the mix.
+    loop.anchorLon = cur.lon + 30 * D;
     await settle();
     const out = { w: S._pinWeights[0], g: loop._pinGain?.gain.value };
     S.commitPlayback = 'all';
     await settle();
     const flat = { w: S._pinWeights[0], g: loop._pinGain?.gain.value };
-    S.commitPlayback = was.mode; S.commitTether = was.tether; S.commitXfade = was.xf; S.searchRadiusDeg = was.r;
+    S.commitPlayback = was.mode; S.commitXfade = was.xf; S.searchRadiusDeg = was.r;
     S.commitSlots.fill(null);
     return { shared, onA, onA1, out, flat };
   });
@@ -515,9 +530,9 @@ async function run(rig) {
     // is asked for −26 dB, not for zero (it read 0.031 once, 2026-09-06). The
     // bug this guards is a partial MIX, 0.2 or 0.5, which is orders away.
     check('and at xfade 100 %', foc.onA1.other < 0.05, `other=${foc.onA1.other?.toFixed(3)}`);
-    check('out of reach with tether off, the loop is silent', near(foc.out.g, 0) && foc.out.w === 0,
+    check('30° outside the radius the loop is still in the mix — the radius never gates a pin', foc.out.w > 0 && foc.out.g > 0,
       `gain=${foc.out.g?.toFixed(3)} weight=${foc.out.w}`);
-    check('blend "all" puts it back to 1', near(foc.flat.g, 1), `gain=${foc.flat.g?.toFixed(3)}`);
+    check('follow off puts it back to 1', near(foc.flat.g, 1), `gain=${foc.flat.g?.toFixed(3)}`);
   }
 
   // AN ANCHOR IS WHERE THE GESTURE RELEASED (Ek, 2026-09-05: "an anchor is an
@@ -564,12 +579,12 @@ async function run(rig) {
       frames: null, duration: 0, loopMode: 'pingpong', mute: false, solo: false, anchorLon: cur.lon - 3 * D, anchorLat: cur.lat };
     S.commitSlots.fill(null); S.commitSlots[0] = sealed; S.commitSlots[1] = still;
     sealed._playheadMs = 1000; sealed.loopMode = 'forward';    // mid-path: ~45° east right now
-    const was = { mode: S.commitPlayback, tether: S.commitTether, xf: S.commitXfade, r: S.searchRadiusDeg };
-    S.commitPlayback = 'focus'; S.commitTether = true; S.commitXfade = 1; S.searchRadiusDeg = 10;
+    const was = { mode: S.commitPlayback, xf: S.commitXfade, r: S.searchRadiusDeg };
+    S.commitPlayback = 'focus'; S.commitXfade = 1; S.searchRadiusDeg = 10;
     for (let i = 0; i < 6; i++) { G.scheduleGrains(); await new Promise(r => setTimeout(r, 25)); }
     const w = [S._pinWeights[0], S._pinWeights[1]];
     const nowDeg = (sealed.lon - cur.lon) / D;                  // the scheduler moved it
-    S.commitPlayback = was.mode; S.commitTether = was.tether; S.commitXfade = was.xf; S.searchRadiusDeg = was.r;
+    S.commitPlayback = was.mode; S.commitXfade = was.xf; S.searchRadiusDeg = was.r;
     S.commitOverflow = wasOverflow;
     S.commitSlots.fill(null);
     return { sealedAnchorDeg, sealedMoving, accessorDeg, w, nowDeg };
@@ -698,10 +713,8 @@ async function run(rig) {
     S.commitSlots[3] = c3;
     P.applyMix();
     const bornSilent = C.isCommitOn(c3) === false && c3.mute !== true;
-    P.allOn();
-    const allOn = on() === '111' && C.isCommitOn(c3) && P.everythingOn();
     S.commitSlots.fill(null);
-    return { onlyC1, c1AndL1, muteWins, cleared, cloudsOnly, groupFlags, both, groupCleared, bornSilent, allOn };
+    return { onlyC1, c1AndL1, muteWins, cleared, cloudsOnly, groupFlags, both, groupCleared, bornSilent };
   });
 
   check('soloing one pin silences every other pin, both kinds', solo.onlyC1 === '100', solo.onlyC1);
@@ -713,7 +726,6 @@ async function run(rig) {
   check('soloing both groups is everything', solo.both === '111', solo.both);
   check('clearing the group solos restores everything', solo.groupCleared === '111', solo.groupCleared);
   check('a pin born under a solo is silent, with its own mute unset', solo.bornSilent === true);
-  check('all on clears every flag everywhere', solo.allOn === true);
 
   // ── E. Round trip ─────────────────────────────────────────────────────────
   console.log('\n§ E. v13 round trip — the arrangement survives export/import');
@@ -1285,18 +1297,19 @@ async function run(rig) {
     const savedHand = S._handTile, savedIsWet = S._tileIsWet, savedPitch = S.grainOverrides.pitchShift;
     const keepParts = S.particles.slice(), keepLive = S.liveRecBuffers.slice();
     const keepVo = S.voicings, keepSeq = S.voicingSeq;
-    const hand = { id: 'W', label: 'W', wet: true };
+    // `live` is the auditioned hand (brush-voicing.js "Auditioned paint"); it
+    // was `wet`, a per-tool flag, until 2026-09-22.
+    const hand = { id: 'W', label: 'W', live: true };
     S._handTile = () => hand;
-    S._tileIsWet = id => id === 'W' && hand.wet;
     S.voicings = []; S.voicingSeq = 0; S.particles.length = 0;
 
     // One wet brush, one dry brush, and a buffer the worklet knows.
     S.grainOverrides.pitchShift = 100;
     US.recordStrokeStart('live', 0); const w = S.currentVoicing;
-    hand.id = 'D'; hand.wet = false;
+    hand.id = 'D'; hand.live = false;
     S.grainOverrides.pitchShift = 200;
     US.recordStrokeStart('live', 0); const d = S.currentVoicing;
-    hand.id = 'W'; hand.wet = true;
+    hand.id = 'W'; hand.live = true;
     S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
     const idx = S.liveRecBuffers.length - 1;
     const mk = (n, vo, sid) => { const out = []; for (let i = 0; i < n; i++) out.push({ lon: 0.01 * i, lat: 0, strokeId: sid, source: 'live',
@@ -1580,137 +1593,57 @@ async function run(rig) {
   // session file carries `wet`, honoured only on a rig where the tile is
   // still wet. The knob is moved by writing the live override and calling the
   // sync the bridge runs per tick — the record path, not the rail.
-  console.log('\n§ L. wet paint — a wet brush\'s knobs move every stroke it painted');
+  console.log('\n§ L. auditioned paint — a live brush\'s knobs move every stroke it painted');
+  // WET became AUDITIONED PAINT on 2026-09-22 (brush-voicing.js): no per-tool
+  // flag, no dry verb, no ring, nothing on the wire — paint made while
+  // AUDITIONING is live, paint made by playing freezes. What stays is the
+  // mechanism these checks guard: one live voicing per tool, moved in place.
   const wet = await rig.evaluate(async () => {
     const { S } = await import('./js/state.js');
     const BV = await import('./js/brush-voicing.js');
     const US = await import('./js/ui-samples.js');
-    const X  = await import('./js/piece.js');
-    const savedHand = S._handTile, savedIsWet = S._tileIsWet, savedPitch = S.grainOverrides.pitchShift;
-    const hand = { id: 'W', label: 'W', wet: true };
+    const savedHand = S._handTile, savedPitch = S.grainOverrides.pitchShift;
+    const keepVo = S.voicings, keepSeq = S.voicingSeq, keepParts = S.particles.slice();
+    const hand = { id: 'W', label: 'W', live: true };
     S._handTile = () => hand;
-    S._tileIsWet = id => id === 'W' && hand.wet;
     const pitchOf = vo => BV.voicingById(vo)?.params.pitchShift;
-    const reset = () => { S.voicings = []; S.voicingSeq = 0; S.particles.length = 0; };
-    reset();
-    S.grainOverrides.pitchShift = 0;
-
-    US.recordStrokeStart('live', 0); const w1 = S.currentVoicing;
-    US.recordStrokeStart('live', 0); const w2 = S.currentVoicing;     // one voicing per wet brush
-    const wetFlag = BV.voicingById(w1)?.wet === true;
-    const p0 = pitchOf(w1);
-    S.grainOverrides.pitchShift = 700;
-    const synced = BV.syncWetVoicing();
-    const p1 = pitchOf(w1);
-
-    // A DRY brush painted beside it: the knob must not reach its strokes.
-    hand.id = 'D'; hand.wet = false;
-    US.recordStrokeStart('live', 0); const d1 = S.currentVoicing;
-    const dp0 = pitchOf(d1);
-    S.grainOverrides.pitchShift = 800;
-    const syncedDry = BV.syncWetVoicing();
-    const dp1 = pitchOf(d1), p1b = pitchOf(w1);
-    hand.id = 'W'; hand.wet = true;
-    S.grainOverrides.pitchShift = 900;
-    BV.syncWetVoicing();
-    const p2 = pitchOf(w1), dp2 = pitchOf(d1);
-
-    // Round trip: `wet` on the wire, honoured where the tile is wet, dried where it is not.
-    S.particles.push({ lon: 0, lat: 0, strokeId: 1, _vo: w1, source: 'live',
-                       liveBufferIdx: 0, grainStart: 0, grainDuration: 0.1, color: '#fff' });
-    const built   = X.__testBuildPiece();
-    const payload = JSON.parse(JSON.stringify(built.manifest));
-    const list = payload.live?.voicings?.list || [];
-    const wireWet = list.find(v => v.id === w1)?.wet === true;
-    const wireDry = !('wet' in (list.find(v => v.id === d1) || { wet: 1 }));
-    reset();
-    await X.__testApplyPiece(payload, built.audio);
-    const backWet = BV.voicingById(w1)?.wet === true && BV.voicingById(w1)?.tile === 'W';
-    S._tileIsWet = () => false;
-    reset();
-    await X.__testApplyPiece(payload, built.audio);
-    const backDried = BV.voicingById(w1)?.wet === false && pitchOf(w1) === p2;
-    S._tileIsWet = id => id === 'W' && hand.wet;
-
-    // Off dries where it sounds, and the next wet stroke is a NEW voicing.
-    reset();
-    S.grainOverrides.pitchShift = 100;
-    US.recordStrokeStart('live', 0); const w3 = S.currentVoicing;
-    const dried = BV.dryVoicing('W');
-    const driedFlag = BV.voicingById(w3)?.wet === false;
-    S.grainOverrides.pitchShift = 200;
-    const syncAfterDry = BV.syncWetVoicing();
-    const p3 = pitchOf(w3);
-    US.recordStrokeStart('live', 0); const w4 = S.currentVoicing;
-    const w4Wet = BV.voicingById(w4)?.wet === true;
-
-    S._handTile = savedHand; S._tileIsWet = savedIsWet; S.grainOverrides.pitchShift = savedPitch ?? null;
-    reset();
-    return { w1, w2, wetFlag, p0, synced, p1, d1, dp0, syncedDry, dp1, p1b, p2, dp2,
-             wireWet, wireDry, backWet, backDried, w3, dried, driedFlag, syncAfterDry, p3, w4, w4Wet };
-  });
-  check('a wet brush\'s strokes share one voicing', wet.w1 === wet.w2 && wet.wetFlag, `${wet.w1}/${wet.w2} wet=${wet.wetFlag}`);
-  check('its knob moves that voicing in place', wet.synced === wet.w1 && wet.p0 === 0 && wet.p1 === 700,
-    `sync→${wet.synced}, pitch ${wet.p0} → ${wet.p1}`);
-  check('a dry brush in the hand syncs nothing', wet.syncedDry === 0 && wet.dp1 === wet.dp0 && wet.p1b === 700,
-    `sync→${wet.syncedDry}, dry ${wet.dp0} → ${wet.dp1}, wet held at ${wet.p1b}`);
-  check('back in the wet brush, its strokes move and the dry ones stay', wet.p2 === 900 && wet.dp2 === wet.dp0,
-    `wet ${wet.p2}, dry ${wet.dp2}`);
-  check('`wet` rides the session file, and only when true', wet.wireWet && wet.wireDry);
-  check('imported onto a rig where the tile is wet, it stays wet', wet.backWet);
-  check('imported onto a rig where the tile is dry, it dries with its last sound', wet.backDried);
-  check('switching wet off dries the voicing where it sounds', wet.dried === 1 && wet.driedFlag && wet.syncAfterDry === 0 && wet.p3 === 100,
-    `dried ${wet.dried}, wet=${!wet.driedFlag}, sync→${wet.syncAfterDry}, pitch ${wet.p3}`);
-  check('the next wet stroke starts a new voicing', wet.w4 !== wet.w3 && wet.w4Wet, `${wet.w3} → ${wet.w4}`);
-
-  // ── L2. the ring is the PAINT's, not the hand's ───────────────────────────
-  // The regression this section exists for (Ek, 2026-09-14: "they only light
-  // up wet with the extra ring when i'm painting with that tool but i imagine
-  // that they should always look wet until i dry it"). The renderer keyed the
-  // ring on `S._handTile()`, which is null between presses — so the one
-  // question the ring answers, WHICH PAINT IS STILL WET, was answered only
-  // while that brush was actually painting. Counted by its ink and its line
-  // width, with the hand empty for every frame here.
-  console.log('\n§ L2. a wet mark wears its ring with nothing in the hand');
-  const wring = await rig.evaluate(async () => {
-    const { S } = await import('./js/state.js');
-    const R  = await import('./js/renderer.js');
-    const BV = await import('./js/brush-voicing.js');
-    const sleep = ms => new Promise(r => setTimeout(r, ms));
-    const ctx = S.ctx, realStroke = ctx.stroke.bind(ctx);
-    const ink = getComputedStyle(document.body).getPropertyValue('--eng-grain').trim().toLowerCase();
-    const count = () => { let n = 0;
-      ctx.stroke = (...a) => { const sc = String(ctx.strokeStyle).toLowerCase();
-        if (sc === ink && Math.abs(ctx.lineWidth - 1) < 0.01) n++;
-        return realStroke(...a); };
-      try { R.drawFrame(); } finally { ctx.stroke = realStroke; }
-      return n; };
-    const keepParts = S.particles.slice(), keepVos = S.voicings, keepSeq = S.voicingSeq;
-    const savedHand = S._handTile, savedIsWet = S._tileIsWet;
-    let wet = -1, dry = -1;
     try {
       S.voicings = []; S.voicingSeq = 0; S.particles.length = 0;
-      S._handTile = () => null;          // the brush is DOWN for every frame below
-      S._tileIsWet = id => id === 'W';
-      const vo = BV.voicingFor('W', 'W', true);
-      for (const [lon, lat] of [[0.2, 0.1], [-0.2, -0.1]])
-        S.particles.push({ lon, lat, _vo: vo, source: 'live', liveBufferIdx: 0,
-                           grainStart: 0, grainDuration: 0.1, rms: 0.5, color: '#ffffff' });
-      R.drawFrame(); await sleep(60);
-      wet = count();
-      BV.dryVoicing('W');                // dried: the same marks, no ring
-      R.drawFrame(); await sleep(60);
-      dry = count();
+      S.grainOverrides.pitchShift = 0;
+      US.recordStrokeStart('live', 0); const w1 = S.currentVoicing;
+      US.recordStrokeStart('live', 0); const w2 = S.currentVoicing;     // one voicing per live tool
+      const liveFlag = BV.voicingById(w1)?.live === true;
+      const p0 = pitchOf(w1);
+      S.grainOverrides.pitchShift = 700;
+      const synced = BV.syncLiveVoicing();
+      const p1 = pitchOf(w1);
+      // A PLAYED stroke beside it: the knob must not reach it.
+      hand.id = 'D'; hand.live = false;
+      US.recordStrokeStart('live', 0); const d1 = S.currentVoicing;
+      const dp0 = pitchOf(d1);
+      S.grainOverrides.pitchShift = 800;
+      const syncedDry = BV.syncLiveVoicing();
+      const dp1 = pitchOf(d1), p1b = pitchOf(w1);
+      hand.id = 'W'; hand.live = true;
+      S.grainOverrides.pitchShift = 900;
+      BV.syncLiveVoicing();
+      const p2 = pitchOf(w1), dp2 = pitchOf(d1);
+      return { w1, w2, liveFlag, p0, synced, p1, d1, dp0, syncedDry, dp1, p1b, p2, dp2 };
     } finally {
-      S._handTile = savedHand; S._tileIsWet = savedIsWet;
-      S.voicings = keepVos; S.voicingSeq = keepSeq;
+      S._handTile = savedHand; S.grainOverrides.pitchShift = savedPitch ?? null;
+      S.voicings = keepVo; S.voicingSeq = keepSeq;
       S.particles.length = 0; for (const p of keepParts) S.particles.push(p);
-      R.drawFrame(); await sleep(60);
     }
-    return { wet, dry, ink };
   });
-  check('both marks of a wet brush ring while the hand is empty', wring.wet === 2, JSON.stringify(wring));
-  check('drying them takes the ring off — the count discriminates', wring.dry === 0, JSON.stringify(wring));
+  check('an auditioned tool\'s strokes share one live voicing', wet.w1 === wet.w2 && wet.liveFlag, `${wet.w1}/${wet.w2} live=${wet.liveFlag}`);
+  check('its knob moves that voicing in place', wet.synced === wet.w1 && wet.p0 === 0 && wet.p1 === 700,
+    `sync→${wet.synced}, pitch ${wet.p0} → ${wet.p1}`);
+  check('a played tool in the hand syncs nothing', wet.syncedDry === 0 && wet.dp1 === wet.dp0 && wet.p1b === 700,
+    `sync→${wet.syncedDry}, played ${wet.dp0} → ${wet.dp1}, live held at ${wet.p1b}`);
+  check('back on the auditioned tool, its strokes move and the played ones stay', wet.p2 === 900 && wet.dp2 === wet.dp0,
+    `live ${wet.p2}, played ${wet.dp2}`);
+  // (§ L2, the wet RING with nothing in the hand, went with the ring on
+  // 2026-09-22: nothing draws liveness since AUDITION became a visible switch.)
 
   // ── M. The overdub brush ──────────────────────────────────────────────────
   console.log('\n§ M. the overdub brush — a take inside a pinned loop\'s cycle');

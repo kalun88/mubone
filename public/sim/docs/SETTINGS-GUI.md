@@ -38,6 +38,15 @@ canvases that happen to look alike.
 
 ## 2. The row model
 
+**A page may BORROW from the rig cabinet, and must give it back.** Tools does it for start,
+release and rearm; the camera picker does it for the mode segmented. The real control moves here,
+keeps its id, its listener and its live state, and returns on close — and `settings-gui.css`
+restyles `.grain-seg` and `.grain-numbox` into this kit while they are visiting, so a borrowed
+control wears the settings kit by construction. Mirroring is refused: a value the engine reads
+every tick cannot have two sources of truth. A control with NO cabinet home is owned by the page
+outright (Tools' `min slice` and `dub decay`) — that is the case where a settings row is the only
+door there is.
+
 **Title + description on the left, control flush right, one hairline above each row.** That is the
 whole layout. What it replaces: `grid-template-columns: 9rem minmax(0,1fr) 4rem` — a label column
 narrow enough to wrap two-word labels, a control column that stretched dropdowns into wide boxes,

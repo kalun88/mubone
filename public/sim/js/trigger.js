@@ -37,7 +37,15 @@ import { stampCartesian } from './grain.js';
 import { detectOnsets } from './onsets.js';
 import { startWalker, exitWalker, clearWalkers } from './walker.js';
 
-export const MAX_TRIGGERS = 32;
+// NO CEILING ON TRIGGERS (Ek, 2026-09-23: "there should be no limit"). There
+// was one — 32, and full meant REFUSED — put on when the gate was new as
+// insurance for the scheduler's tick, and it bit: with slice on a take is
+// several triggers, eight strokes filled it, and every take after that
+// painted deaf with nothing on screen saying so ("the old things still
+// trigger, it's just the new tape strokes"). Measured, the insurance was never
+// needed: the bounding-cap reject makes the gate's cost grow with how many
+// strokes are NEAR the cursor, not how many exist — 64 × 200 marks cost
+// 0.015 ms a tick (trigger-audit § cost). Every stroke arms.
 
 const DEG2RAD = Math.PI / 180;
 
@@ -398,50 +406,20 @@ function _assignSegmentIds(strokeId, runs) {
   return ids;
 }
 
-/**
- * Chop a freshly recorded take at its silences — `triggerParams.chop` in ms,
- * 0 = off. Returns the strokeIds the take became.
- *
- * The paint gate has already done the analysis: the paint ticker deposits
- * nothing while the input sits under `paintGateThreshold`, so **the gaps in a trigger
- * stroke already are the silences in the phrase**. Chopping needs no transient
- * detection, just a threshold on gaps that are sitting there in the data.
- *
- * This is deliberately the same gap test that #192 removed. As an always-on
- * heuristic guessing at erasure it was wrong and chopped a 20-second take into
- * eight. As an opt-in chop it is exactly the tool — the difference is that the
- * threshold is now a musical choice the performer makes, not a guess the code
- * makes on their behalf.
- *
- * Record time only. The erase-split (_clusterByRemoval) is the other reason a
- * trigger divides, and keeping the two on separate triggers — a deliberate act
- * vs. an edit — is what stops them fighting on every rebuild.
- */
-function _chopStroke(strokeId, gapS) {
-  const ps = S.particles.filter(p => p.strokeId === strokeId)
-                        .sort((a, b) => _ordT(a) - _ordT(b));
-  if (ps.length < 2) return [strokeId];
-
-  const runs = [];
-  let run = [ps[0]];
-  for (let i = 1; i < ps.length; i++) {
-    if (_ordT(ps[i]) - _ordT(ps[i - 1]) > gapS) { runs.push(run); run = []; }
-    run.push(ps[i]);
-  }
-  runs.push(run);
-  if (runs.length <= 1) return [strokeId];
-
-  // Every run gets its own id, including one-particle ones. Leaving a stray
-  // singleton on the original id would put it back in run 0's trigger, and
-  // since run 0 collects by strokeId that trigger's region would stretch across
-  // the whole take again — undoing the chop invisibly.
-  return _assignSegmentIds(strokeId, runs);
-}
+// THE GAP CHOPPER IS GONE (Ek, 2026-09-22: "one is newer, the older method
+// didn't work … the newer one was meant to replace the older one so we should
+// sunset that and its params"). `_chopStroke` split a take where the PAINT GATE
+// had closed, so its threshold was the gate's and it "only worked around 100 ms"
+// — the unanticipatable-noise-floor problem, stated in its own replacement's
+// commit on 2026-08-25. `_sliceStroke` below replaced it five days later by
+// segmenting the AUDIO instead, and both then shipped side by side for a month
+// with slice silently winning whenever a take had both. One cutter now.
+// `triggerParams.chopOn` and `.chop` went with it.
 
 /**
- * The slice tool's segmentation (#219) — onset detection on the AUDIO, not
- * gaps between marks. `_chopStroke` above splits where the paint gate closed,
- * which inherits the gate threshold and dies on an unanticipated noise floor;
+ * SLICE (#219) — onset detection on the AUDIO, not gaps between marks. The
+ * gap chopper it replaced split where the paint gate closed, which inherits the
+ * gate threshold and dies on an unanticipated noise floor;
  * `detectOnsets` (js/onsets.js) works in the dB domain against a local median,
  * so "an attack" is always measured relative to whatever the room is doing.
  * Boundaries land at the foot of each rise; particles are split into runs by
@@ -566,22 +544,25 @@ export function armTrigger(strokeId, { plain = false, loop = false } = {}) {
   if (S.triggers.some(t => t.strokeId === strokeId)) return null;   // already armed
 
   const tp = S.triggerParams;
-  const chopS = (tp.chopOn && tp.chop > 0) ? tp.chop / 1000 : 0;
+
   // The slice tool segments by onsets whatever the chop setting — that is its
   // whole contract; the old ms-gap chop stays for the plain line tool.
   // `plain` is an ORPHANED overdub becoming an ordinary line (Ek, 2026-09-04:
   // "all overdubs should become normal loops once unpinned"): one trigger,
   // whatever tool is in the hand, no audition, and the looper hook stays out
   // of it — the stroke is being handed back, not recorded.
-  const ids = plain                  ? [strokeId]
-            : S.brushFx === 'slice' ? _sliceStroke(strokeId)
-            : chopS > 0             ? _chopStroke(strokeId, chopS)
-            : [strokeId];
+  // Asked ONCE, of the stroke that was played — a slice or a chop arms several
+  // segments, whose own ids were never painted and have no history entry.
+  const auditioned = !!S._strokeAuditioned?.(strokeId);
+  // ONE CUTTER, ONE SWITCH. `S.brushFx === 'slice'` was the tile's contract;
+  // it is `triggerParams.sliceOn` now — a performance switch on the tape tab,
+  // because cutting a take at its attacks is something you decide while playing
+  // rather than a different tool you pick up.
+  const ids = plain || !tp.sliceOn ? [strokeId] : _sliceStroke(strokeId);
 
-  let first = null, full = false;
+  let first = null;
   for (const sid of ids) {
-    if (S.triggers.length >= MAX_TRIGGERS) { full = true; break; }
-    const t = _newTriggerShell(sid, /* audition */ !plain);
+    const t = _newTriggerShell(sid, /* audition */ !plain, auditioned);
     const end = _pendingEnds?.get(sid);
     if (end != null) t.endCap = end;   // a slice ends at the next onset
     // A one-particle segment has no span worth playing; skip rather than make a
@@ -592,7 +573,6 @@ export function armTrigger(strokeId, { plain = false, loop = false } = {}) {
   }
   _pendingEnds = null;
 
-  if (full) window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'full' } }));
   if (first) {
     S._syncTriggerUI?.();
     window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'commit' } }));
@@ -623,7 +603,7 @@ export function armTrigger(strokeId, { plain = false, loop = false } = {}) {
  * that is the END of the stroke just painted — one median spacing of audio,
  * which reads as not playing at all. Consumed on first fire.
  */
-function _newTriggerShell(strokeId, audition) {
+function _newTriggerShell(strokeId, audition, auditioned = false) {
   const d = S.triggerParams;
   return {
     // ── loop-slot shape: consumed by the seq playback block in grain.js ──
@@ -640,6 +620,21 @@ function _newTriggerShell(strokeId, audition) {
     // fire runs at: _onEnter rewrites `direction` on every fire, and the
     // lens's `start: ends` flips it at the tail, so the baked value needs a
     // field of its own that nothing rewrites.
+    // AUDITIONED TAKES ARE LIVE (Ek, 2026-09-22: "that includes loops now, if we
+    // audition a loop thing we should be able to change any parameter and it
+    // will affect all auditioned loops painted on the sphere"). `_live` is the
+    // same signal the grain side reads — `S._handTile().live`, true only while
+    // the bench is sounding — and `_applyLiveParams` below refreshes the baked
+    // half for these takes on every fire. NOTE the name: `_audition` already
+    // means something else in this file (fire once, right after recording), so
+    // this cannot borrow it.
+    // FROM THE STROKE, NOT FROM THE HAND (2026-09-22). This read
+    // `S._handTile()?.live`, which is the right question asked far too late: a
+    // take is armed from `whenSealed`, after the play has ended and the hand is
+    // null, so it was false for every auditioned take and this whole mechanism
+    // was dead. The fact is stamped on the stroke where it begins
+    // (ui-samples.js `recordStrokeStart`) and carried here.
+    _live:         !!auditioned,
     reverse:       !!d.reverse,
     direction:     d.reverse ? -1 : 1,
     pitch:         d.pitch ?? 0,      // cents, applied offline (js/tape-pitch.js)
@@ -815,15 +810,37 @@ function _disconnectAll(gain, extras) {
 function _detachVoice(t) {
   const src    = t._sourceNode;
   const gain   = t._gainNode;
-  const extras = t._extraNodes;
+  // THE WHOLE CHAIN GOES WITH THE VOICE (Ek, 2026-09-22 night: "when retrig
+  // is off the track should layer when i run the cursor over it, it still
+  // retrigs"). A source plays through src → own → gain → mute → pin → the
+  // speaker fan-out (grain.js), and this took src, gain and the fan-out but
+  // left `_ownGain`, `_muteGain` and `_pinGain` on the trigger — so the seq
+  // block's rebuild for the NEW voice ran releaseSeqNodes first, disconnected
+  // own and mute, and cut the old voice's path at the same instant. Layer
+  // sounded exactly like cut. Every node of the old chain is the voice's
+  // now, nulled on the trigger so the rebuild makes fresh ones, and the
+  // voice's own 'ended' disconnects them all.
+  const extras = [...(t._extraNodes || []), t._ownGain, t._muteGain, t._pinGain].filter(Boolean);
+  // ITS PLAYHEAD GOES WITH IT TOO (Ek, 2026-09-23: "sonically i hear the layer
+  // when retrig is off but i dont see the playheads on the viz"). The seq
+  // block advances `playheadIndex` for the CURRENT voice only, so a ringing
+  // voice had no marker — the same record a play-to-end tail keeps (`_tail`),
+  // stamped here so the renderer can compute its position on its own.
+  const tail = (src && !src._stopped && t._startedAt)
+    ? { startedAt: t._startedAt, speed: Math.abs(t.speed || 1),
+        loopStart: t.loopStart, loopEnd: t.loopEnd, direction: t.direction || 1 }
+    : null;
   t._sourceNode = null;
   t._gainNode   = null;
   t._extraNodes = null;
+  t._ownGain    = null;
+  t._muteGain   = null;
+  t._pinGain    = null;
   t._startedAt  = 0;
 
   if (!src || src._stopped) { _disconnectAll(gain, extras); return; }
 
-  const voice = { src, gain, extras };
+  const voice = { src, gain, extras, tail };
   if (!t._voices) t._voices = [];
   t._voices.push(voice);
   src.addEventListener('ended', () => {
@@ -900,16 +917,15 @@ export function ledTriggerFire() {
 }
 
 /**
- * Chop on/off — bindable as `trigger_chop`. Kept separate from the ms threshold
- * so flipping it never loses the value, and so the binding is a plain switch
- * with nothing to remember. Takes effect on the NEXT take recorded; chop is a
- * record-time act and does not retroactively divide what is already on the
- * sphere.
+ * SLICE on/off — bindable as `trigger_chop` (the action id is kept: a binding
+ * Ek has already learned must not move because the thing under it was renamed).
+ * Takes effect on the NEXT take recorded; cutting is a record-time act and does
+ * not retroactively divide what is already on the sphere.
  */
-export function setChopOn(on) {
+export function setSliceOn(on) {
   const next = !!on;
-  if (next === S.triggerParams.chopOn) return;
-  S.triggerParams.chopOn = next;
+  if (next === S.triggerParams.sliceOn) return;
+  S.triggerParams.sliceOn = next;
   S._syncTriggerUI?.();
 }
 
@@ -988,17 +1004,22 @@ function _pSeg2(px, py, pz, ax, ay, az, bx, by, bz) {
 }
 
 // ── The stroke gates (2026-09-18, js/walker.js) ─────────────────────────────
-// Under `mode: stroke` every GRAIN stroke gets a gate of its own: the same
-// shell and the same geometry as a tape trigger — bounding cap, nearest mark
-// or segment, hysteresis, the swept crossing — with `walk: true`, so the
-// enter edge launches a walker instead of a tape voice. Built only in stroke
-// mode, per stroke, and rebuilt when a stroke's mark count changes (paint,
-// erase, undo); gone the moment the mode leaves, walkers with them.
+// Under the grain shape's `on touch: walk` every GRAIN stroke gets a gate of
+// its own: the same shell and the same geometry as a tape trigger — bounding
+// cap, nearest mark or segment, hysteresis, the swept crossing — with
+// `walk: true`, so the enter edge launches a walker instead of a tape voice.
+// Built only while walking, per stroke, and rebuilt when a stroke's mark count
+// changes (paint, erase, undo); gone the moment the shape says cursor again,
+// walkers with them.
+//
+// It was the LENS's `mode: stroke` until 2026-09-22, which made it one answer
+// for the eye; it is the BRUSH's now (Ek: "i think it should be a grain shape
+// param"), so `S.grainWalk` is what this reads.
 const _walkGates = new Map();   // strokeId → shell
 let _walkList = null;           // the map's values, cached for the tick
 let _walkVer = -1;
 function refreshWalkGates() {
-  if (S.lensMode !== 'stroke') {
+  if (!S.grainWalk) {
     if (_walkGates.size) { _walkGates.clear(); _walkList = null; clearWalkers(); }
     _walkVer = -1;
     return;
@@ -1040,13 +1061,15 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
 
   // The CAP is the on/off, for hits exactly as for granulation. The geometry
   // still runs so `_inside` stays accurate — otherwise uncapping would fire
-  // whatever the cursor happened to be resting on. Only the edge *actions* are
-  // suppressed. It costs ~0.002 ms/tick at 32 triggers, which is not worth
-  // trading correctness for.
-  // Capped, or on a lens that reads grains only: no edge actions. The
-  // geometry still runs either way so `_inside` stays accurate — otherwise
-  // uncapping, or switching back to a lens that reads tape, would fire
-  // whatever the cursor happened to be resting on.
+  // whatever the cursor happened to be resting on. Only the ENTER edge is
+  // suppressed (2026-09-23; both edges until then): the cap is not a mute, so
+  // a take fired before the cap still plays to its release when the cursor
+  // leaves it, and a walker finishes its pass. It costs ~0.002 ms/tick at 32
+  // triggers, which is not worth trading correctness for.
+  // Capped, or on a lens that reads grains only: no ENTER. The geometry still
+  // runs either way so `_inside` stays accurate — otherwise uncapping, or
+  // switching back to a lens that reads tape, would fire whatever the cursor
+  // happened to be resting on.
   const live = !S.scanMuted && S.lensReads !== 'grains';
   // A stroke gate fires when the lens reads GRAINS: the mirror of the tape's.
   const liveW = !S.scanMuted && S.lensReads !== 'tape';
@@ -1143,7 +1166,7 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
     if (capDot < capGate) {
       if (tg._inside) {
         tg._inside = false;
-        if (liveL && !(_claimed && _claimed.has(t.strokeId))) _onExit(t);
+        if (!(_claimed && _claimed.has(t.strokeId))) _onExit(t);   // the exit acts capped too
       }
       continue;
     }
@@ -1188,7 +1211,7 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
       if (readable) _onEnter(t, bestIdx, nowMs);
     } else if (!insideNow && tg._inside) {
       tg._inside = false;
-      if (readable) _onExit(t);
+      if (!(_claimed && _claimed.has(t.strokeId))) _onExit(t);   // the exit acts capped too
     } else if (_gSubN > 0 && !insideNow && !tg._inside && readable) {
       // Swept crossing — the level gate saw nothing on either sample, but
       // the arc between them may have passed through the stroke. A crossing
@@ -1247,21 +1270,82 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
  * the lens's "on loops" family) is how the CURSOR reads material, so flipping
  * it to loop while a one-shot rings makes it loop. Speed and volume are the
  * BAKED half — _newTriggerShell stamped them from the loop tile's dials when
- * the stroke was drawn, and this function no longer touches them: moving the
- * speed dial changes the next recording, never what is already on the sphere.
- * (The same rule as a stroke freezing its voicing, #210.)
+ * the stroke was drawn, and moving the speed dial changes the next recording,
+ * never what is already on the sphere. (The same rule as a stroke freezing its
+ * voicing, #210.)
+ *
+ * UNLESS THE TAKE WAS AUDITIONED (2026-09-22): then there is no baked half, and
+ * the block below refreshes it from the live params on every fire. Auditioning
+ * is the one act that never freezes anything — see brush-voicing.js.
  */
+// (`S._liveTakeStrokes` lived here for a few hours on 2026-09-22, to ring an
+// auditioned loop the way a grain mark was ringed. Both rings are gone — see
+// renderer.js. `t._live` stays: it is what `_applyLiveParams` refreshes.)
+
 function _applyLiveParams(t, tp) {
+  // AN AUDITIONED TAKE HAS NO BAKED HALF. Everything a fire reads off the shell
+  // is refreshed from the live block first, so moving the tape sheet moves every
+  // auditioned loop on the sphere at once — the tape half of the same ruling the
+  // grain side gets from its live voicing.
+  //
+  // `pitch` is NOT here and cannot be: it is applied OFFLINE (js/tape-pitch.js
+  // stretches the region once through a Worker), so following it live would mean
+  // re-rendering the take on every knob move. Speed, direction and level are
+  // read at the fire, so they follow for free.
+  if (t._live) {
+    const d = S.triggerParams;
+    t.speed   = d.speed ?? 1.0;
+    t.reverse = !!d.reverse;
+    // `direction` AND `pitch`, not just `reverse` (2026-09-22). grain.js cuts
+    // the region from these two — `seq.direction === -1` for the reversed copy,
+    // `pitchRatio(seq.pitch)` for the stretched one — and neither was refreshed
+    // here. So a live take's reverse reached a field nothing cuts from, and its
+    // pitch reached nothing at all: exactly what Ek saw, "pitch doesn't work.
+    // reverse only works when i retrigger", because `_onEnter` rewrites
+    // `direction` on every fire and a retrigger was the only thing that did.
+    t.direction = d.reverse ? -1 : 1;
+    t.pitch     = d.pitch ?? 0;
+    if (t.grainParams) t.grainParams.volume = d.volume ?? 1.0;
+  }
   const src = t._sourceNode;
   if (!src || src._stopped) return;
 
   const wantLoop = tp.dwell === 'loop';   // 'grain' fires once and opens up
   if (src.loop !== wantLoop) src.loop = wantLoop;
+
+  // AND THE PASS THAT IS SOUNDING FOLLOWS (Ek, 2026-09-22: "i set the dwell to
+  // be on loop … the loop should auto update either live or at the next loop").
+  // Everything above refreshes the SHELL, which the next fire reads — and a
+  // take under `dwell: loop` has no next fire: one source node keeps going, so
+  // a knob moved while it played reached nothing at all until it was retriggered.
+  // Speed and level are the two that can move on a running node, so they do,
+  // ramped rather than stepped because a jump in either is a click.
+  //
+  // `reverse` and `pitch` cannot: both are baked into a REGION COPY when the
+  // source is built (grain.js — a reversed cut, or one stretched by the pitch
+  // ratio), so following them live would mean re-cutting the buffer under the
+  // playhead. They land at the next fire, as they always have.
+  if (t._live) {
+    const actx = S.audioCtx;
+    if (actx) {
+      const rate = Math.abs(t.speed || 1) * (src._pr ?? 1);
+      if (Math.abs(src.playbackRate.value - rate) > 1e-4)
+        src.playbackRate.setTargetAtTime(rate, actx.currentTime, 0.01);
+      const g = t._gainNode;
+      const vol = (t.grainParams?.volume ?? 1) * (t.level ?? 1);
+      if (g && Math.abs(g.gain.value - vol) > 1e-4)
+        g.gain.setTargetAtTime(vol, actx.currentTime, 0.01);
+    }
+  }
 }
 
 function _onEnter(t, nearestIdx, nowMs) {
   const tg = t.trigger;
-  const tp = S.triggerParams;
+  // WHOSE ARRIVAL RULES (2026-09-22). A walking grain stroke answers grain's,
+  // a tape take answers tape's. `t.walk` is the whole test — it is what the
+  // gate was built as — and it covers the rearm window below as well as the
+  // walker's own start, retrig and release.
+  const tp = t.walk ? S.grainTrigger : S.triggerParams;
   // Rearm window — suppress a refire that lands too soon after the last.
   if (nowMs - tp.rearmMs < tg._lastFireAt) return;
   tg._lastFireAt = nowMs;
@@ -1345,17 +1429,28 @@ function _onEnter(t, nearestIdx, nowMs) {
 function _onExit(t) {
   // Off the stroke: its material closes again, whichever reader opened it.
   if (t.strokeId > 0) S._openStrokes.delete(t.strokeId);
-  if (t.walk) { exitWalker(t, S.triggerParams); return; }
-  // One-shot deliberately does nothing on exit. A cursor sweeping past a
-  // triangle at performance speed should still get the whole triangle;
-  // truncating it would make the sample's length a function of how fast the
-  // turntable was moving, which is not what "trigger a sample" means.
-  //
-  // 'grain' is the same on this edge: its sample already played once, and the
-  // granulation it opened stops on its own — the particles simply fall out of
-  // the cursor's radius, which is the same thing that ended the dwell.
+  if (t.walk) { exitWalker(t, S.grainTrigger); return; }
+  // RELEASE READS ON EVERY DWELL (Ek, 2026-09-23: "testing the fade for tape,
+  // doesn't seem to work either" — it read under `loop` alone, so with the
+  // default dwell the row did nothing, the same gap the walker had). `fade`
+  // fades the take out over tape's own release fade when the cursor leaves,
+  // whatever the dwell. `play-to-end` keeps the old rule per dwell: a loop
+  // finishes the pass it is in; a one-shot plays out untouched — a cursor
+  // sweeping past a triangle at performance speed should still get the whole
+  // triangle, and truncating it would make the sample's length a function of
+  // how fast the turntable was moving. `grain` is the same on that edge: its
+  // sample played once, and the granulation it opened falls out of the radius
+  // by itself.
+  const rel = S.triggerParams.release;
+  if (rel === 'fade') { stopTriggerAudio(t, 'fade', (S.triggerParams.releaseMs ?? 250) / 1000); return; }
+  // STOP (Ek, 2026-09-23: "one of the release options should just be stop
+  // immediately"): the same 8 ms declick a refire on `cut` uses — silent at
+  // once, never a click. Tape only: a take is one long buffer that keeps
+  // playing on its own, while a walker with a stop is walk off with an extra
+  // step, so grain keeps its two.
+  if (rel === 'stop') { stopTriggerAudio(t, 'immediate', RETRIGGER_FADE_S); return; }
   if (S.triggerParams.dwell !== 'loop') return;
-  stopTriggerAudio(t, S.triggerParams.release);
+  stopTriggerAudio(t, 'play-to-end');
 }
 
 /** Called from the seq block's 'ended' handler when a one-shot finishes, so the
@@ -1398,6 +1493,6 @@ S._armTrigger           = armTrigger;
 S._refreshTriggers      = refreshTriggers;   // the scheduler's rebuild, callable by a harness under a quiesced scheduler
 S._clearAllTriggers     = clearAllTriggers;
 S._silenceTriggers      = silenceTriggers;
-S._setChopOn            = setChopOn;
+S._setChopOn            = setSliceOn;   // the action id is kept; the mechanism is slice
 S._ledTriggerFire       = ledTriggerFire;
 S._stopTriggerAudio     = stopTriggerAudio;

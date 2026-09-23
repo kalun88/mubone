@@ -166,7 +166,7 @@ word with the crosshair went. Code followed the same day (`ENGINES.lens`, `S.len
 
 | Term | Part of speech | Means |
 |---|---|---|
-| **lens** | n. | How the cursor reads material. One is always installed (wide · spot · arrange, extensible) |
+| **lens** | n. | How the cursor reads material. ONE, since 2026-09-22 night: its settings are the lens tab in the tool rail, its tile on the strip turns the eye off and on. (`wide` · `spot` were presets of it; `mode: area · nearest` is the row they differed by) |
 | **radius** | n. | How wide a circle the installed lens reads, in degrees. The term has now been *reach* → *zoom* (a day) → *field* (a day) → **radius** (Ek, 2026-08-26: "it's clear. it's the radius") — the camera metaphor lost this one to the plain geometric word, and the lesson is worth keeping: metaphor terms earn their place only where they explain something (*aperture*, *cap*), not where a literal word already does |
 | **cap** | n. | The lens's mute: it stays mounted with its settings, the cursor stops reading. Replaces *scan on/off* |
 | ~~**aperture**~~ | n. | RETIRED (#233, 2026-08-27, two days after it was coined). It was the lens's live density cap, min(brush k, aperture) — a workaround for k being frozen into the brush. When flow made density a painted property and **k moved to the lens**, the workaround had no job left, and \"two controls fighting over one outcome\" had been the confusion all along. The lens now owns **k**, **fill** (k \| all) and **order** (random \| step) directly |

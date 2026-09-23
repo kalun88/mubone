@@ -11,9 +11,10 @@
 // marks still cuts it (see Phase 0).
 //
 // Because recency is ranked from the in-radius subset only (local universe,
-// mirroring _buildCandidatePoolRadius), erasing the newest buffers under the
-// cursor reveals older buffers on the very next scheduler tick.  One hold is
-// ONE eraser pass: buffers hidden underneath at first sighting are protected
+// mirroring _buildCandidatePoolRadius), erasing the newest strokes under the
+// cursor reveals older strokes on the very next scheduler tick (depth counts
+// STROKES since 2026-09-23 — it was buffers).  One hold is
+// ONE eraser pass: strokes hidden underneath at first sighting are protected
 // for the rest of the stroke (_strokeFate), so the revealed layer stays
 // audible — release and press again to dig deeper into recording history.
 //
@@ -40,7 +41,7 @@
 
 import { S } from './state.js';
 import { cursorLonLatNow } from './sphere.js';
-import { getBufferKey, stampCartesian } from './grain.js';
+import { depthKey, stampCartesian } from './grain.js';
 import { snapshotMaterial, materialAction } from './ui-sweep.js';
 import * as history from './history.js';
 
@@ -54,8 +55,8 @@ let _strokeErased = 0;    // particles removed during the current stroke
 let _before = null;              // the material before the erase stroke
 
 // Reusable per-tick structures (mirrors the _recBufRec pattern in grain.js)
-const _bufRec  = new Map();   // bufferKey → max strokeId among touched particles
-const _allowed = new Set();   // bufferKeys the scan could hear this tick
+const _bufRec  = new Map();   // depthKey (the stroke) → its strokeId, among touched particles
+const _allowed = new Set();   // the strokes the scan could hear this tick (depth counts strokes)
 const _sortBuf = [];
 const _hit        = new Set();  // particles the brush touches this tick
 const _prevTrig   = new Map();  // strokeId → previous trig mark (segment pairing)
@@ -117,14 +118,14 @@ function _distSegSeg2(p1x, p1y, p1z, q1x, q1y, q1z,
 }
 
 // Per-stroke layer classification — this is what makes the reveal audible.
-// A buffer's fate is decided the FIRST tick it appears in radius during a
+// A stroke's fate is decided the FIRST tick it appears in radius during a
 // stroke: audible then (in the scan's local top-N) → target for the rest of
 // the stroke; hidden underneath → protected.  Without this, the per-tick
 // recency re-rank would dig through every layer while holding still (each
 // erased layer promotes the next one into the top-N ~30ms later) and the
 // whole cloud would vanish with nothing revealed.  One hold = one eraser
 // pass over what was audible; release and press again to dig deeper.
-const _strokeFate = new Map();  // bufferKey → true (erase) | false (protect)
+const _strokeFate = new Map();  // depthKey (the stroke) → true (erase) | false (protect)
 
 // ── Cursor position — the ONE rule (sphere.js cursorLonLatNow) ─────────────
 const _cursorLonLat = cursorLonLatNow;
@@ -275,18 +276,18 @@ function _eraseTick() {
   // identical semantics to _buildCandidatePoolRadius in grain.js).
   _bufRec.clear();
   for (const p of _hit) {
-    const key = getBufferKey(p);
+    const key = depthKey(p);
     if ((_bufRec.get(key) ?? -Infinity) < p.strokeId) _bufRec.set(key, p.strokeId);
   }
 
   // What can the scan hear right now?  Same rule as _buildCandidatePoolRadius:
-  // top recencyN buffers by strokeId among in-radius keys; recencyN = 0 means
-  // no recency cut — every in-radius buffer is audible.
+  // top recencyN strokes among in-radius ones; recencyN = 0 means
+  // no recency cut — every in-radius stroke is audible.
   _allowed.clear();
   if (S.recencyN > 0 && _bufRec.size > S.recencyN) {
     _sortBuf.length = 0;
     for (const entry of _bufRec) _sortBuf.push(entry);        // [key, strokeId]
-    // scrape top targets the NEWEST recencyN buffers (what the scan hears);
+    // scrape top targets the NEWEST recencyN strokes (what the scan hears);
     // scrape bottom (S.eraseOldest, set by its tile for the hold) inverts the
     // ranking and digs out the OLDEST first, leaving recent material standing.
     _sortBuf.sort((a, b) => S.eraseOldest ? a[1] - b[1] : b[1] - a[1]);
@@ -295,14 +296,14 @@ function _eraseTick() {
     for (const key of _bufRec.keys()) _allowed.add(key);
   }
 
-  // Classify buffers on first sighting this stroke: audible → target,
+  // Classify strokes on first sighting this stroke: audible → target,
   // hidden → protected.  Classification is sticky for the stroke, so layers
   // revealed by the erase stay revealed (see _strokeFate comment above).
   for (const key of _bufRec.keys()) {
     if (!_strokeFate.has(key)) _strokeFate.set(key, _allowed.has(key));
   }
 
-  // Phase 2: remove in-radius particles belonging to target buffers.
+  // Phase 2: remove in-radius particles belonging to target strokes.
   // `erases: stroke` (#243) widens the take AFTER the touch decides: the
   // brush's contact picks WHICH strokes (same radius, same recency fate),
   // then every mark of those strokes goes — erase a take by touching it
@@ -312,7 +313,7 @@ function _eraseTick() {
   if (S.eraseWholeStroke) {
     const sids = new Set();
     for (const p of _hit) {
-      if (_strokeFate.get(getBufferKey(p))) sids.add(p.strokeId);
+      if (_strokeFate.get(depthKey(p))) sids.add(p.strokeId);
     }
     if (sids.size === 0) return;
     next = parts.filter(p => {
@@ -323,7 +324,7 @@ function _eraseTick() {
   } else {
     next = parts.filter(p => {
       if (!_hit.has(p)) return true;                       // untouched — keep
-      if (!_strokeFate.get(getBufferKey(p))) return true;  // protected — keep
+      if (!_strokeFate.get(depthKey(p))) return true;  // protected — keep
       removedList.push(p);
       return false;
     });

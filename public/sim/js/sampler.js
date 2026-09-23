@@ -31,10 +31,33 @@ function _refuse(why) {
   S._samplerRefused?.(why);   // UI flash, wired by the source tiles
 }
 
+// ── Parked (Ek, 2026-09-23) ─────────────────────────────────────────────────
+// The sampler is switched OUT by factory: not sunset — it is kept whole for
+// the day it gets its own round — but with the switch off nothing reaches it.
+// The tab leaves the rail, and `selectSource` and capture refuse, so the
+// source_sampler / sampler_record actions, a key, a pad or OSC all meet the
+// same door.
+const LS_SAMPLER_ON = 'mubone_sampler_on';
+try { S.samplerEnabled = localStorage.getItem(LS_SAMPLER_ON) === '1'; } catch (_) {}
+if (!S.samplerEnabled) S.sourceKind = 'live';
+
+/** Settings › Tools › Sampler. Turning it off hands the brush back to the mic. */
+export function setSamplerEnabled(on) {
+  S.samplerEnabled = !!on;
+  try { localStorage.setItem(LS_SAMPLER_ON, on ? '1' : '0'); } catch (_) {}
+  if (!on) {
+    if (S.isSamplerCapturing) _finishCapture();
+    if (S.sourceKind === 'sampler') selectSource('live');
+  }
+  S._samplerAvailChanged?.();
+  S._renderSourceUI?.();
+}
+
 /** Which input the brush inks from. Refused mid-stroke — switching the source
  *  under a live recording would orphan the capture path's singletons. */
 export function selectSource(kind) {
   if (kind !== 'live' && kind !== 'sampler') return;
+  if (kind === 'sampler' && !S.samplerEnabled) { _refuse('sampler is off — Settings › Tools'); return; }
   if (S.sourceKind === kind) return;
   if (S.isPainting || S.isRecording || S.isSamplerCapturing) { _refuse('mid-stroke'); return; }
   S.sourceKind = kind;
@@ -348,6 +371,7 @@ export function loadTestSamples() {
 
 /** The sampler_record action (type 'hold'): press starts, release stops. */
 export function captureHold(pressed) {
+  if (pressed && !S.samplerEnabled) { _refuse('sampler is off'); return; }
   if (pressed) startSamplerCapture();
   else if (S.isSamplerCapturing) _finishCapture();
 }
@@ -355,12 +379,14 @@ export function captureHold(pressed) {
 /** The UI record button: one click starts, the next stops. */
 export function captureToggle() {
   if (S.isSamplerCapturing) _finishCapture();
+  else if (!S.samplerEnabled) _refuse('sampler is off');
   else startSamplerCapture();
 }
 
 // House pattern: dispatch (midi.js/osc.js) and the gesture path (brush.js)
 // reach us through S, not imports.
 S._samplerSelectSource = selectSource;
+S._setSamplerEnabled   = setSamplerEnabled;
 S._samplerSelectSample = selectSample;
 S._samplerTrace        = samplerTrace;
 S._samplerCaptureHold  = captureHold;

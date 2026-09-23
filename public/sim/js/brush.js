@@ -157,11 +157,15 @@ export function gesturePress(momentary = false) {
     if (_latched) _end();      // toggle: the second press stops
     return;                    // momentary: a second wire while down — nothing
   }
-  if (momentary) { _begin(false); return; }
-  _begin(true);
+  _begin(!momentary);
+  // THE LONG PRESS IS A PRESS THAT IS STILL DOWN, so the timer is armed for both
+  // kinds. It used to be armed only for a latched (toggle) press, because the
+  // hand's verb was a stored setting and a held spacebar counted as latched.
+  // Since 2026-09-21 the hand has no verb — holding IS the momentary press — so
+  // guarding on `_latched` made the eraser's long press unreachable either way.
   _longTimer = setTimeout(() => {
     _longTimer = null;
-    if (!_active || !_latched) return;
+    if (!_active) return;
     if (S._handKind?.() === 'edit') {
       _end();
       S._eraseAllProgress?.(0);
@@ -174,6 +178,22 @@ export function gesturePress(momentary = false) {
 export function gestureRelease() {
   _clearLong();
   if (_active && !_latched) _end();
+}
+
+/** PROMOTE the running gesture to a latched one — the hand's tap (Ek,
+ *  2026-09-21). Every hand press starts as a hold so the stroke begins on the
+ *  down with no waiting; a release inside HAND_TAP_MS promotes it instead of
+ *  ending it, and from then on it behaves exactly like a gesture that was
+ *  pressed as a toggle: the next press stops it.
+ *
+ *  Without this the latch lived only in tiles.js's `_held`, the funnel stayed
+ *  momentary, and `gesturePress` answered a second press with "a second wire
+ *  while down — nothing". That is the bug Ek hit: the click started a stroke
+ *  nothing could stop. */
+export function gestureLatch() {
+  if (!_active || _latched) return false;
+  _latched = true;
+  return true;
 }
 
 /** End the running gesture from outside, whichever mode started it. */
@@ -205,3 +225,4 @@ S._gestureEnd       = gestureEnd;
 S._gestureAbort     = gestureAbort;
 S._gestureActive    = gestureActive;
 S._gestureLatched   = gestureLatched;
+S._gestureLatch     = gestureLatch;

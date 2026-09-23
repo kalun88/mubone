@@ -42,6 +42,7 @@ The map `scripts/audit-for.js` applies. A path is tested against every row, and 
 | `js/tiles.js`, `js/brush.js`, `js/events.js`, `js/midi.js` (palette / key / hold paths) | `rig-audit.js palette` | the palette list, placing by drag, the drawer doors, the digits, both button modes |
 | `js/pins.js`, `js/ui-pins.js`, `js/composer.js`, `js/grain.js`, `js/ui-presets.js`, `js/ui-export.js`, `js/brush-voicing.js`, `js/renderer.js` | `rig-audit.js pins` | pin groups, the restore rule, cloud claims, wet paint, reach lines, session import |
 | `js/trigger.js`, `js/latency.js`, `js/audio.js`, `electron-main.js`, `electron-preload.js`, `audio-host.js`, `electron-loop-probe.js`, `js/worklets/quad-capture.worklet.js`, `js/worklets/input-meter.worklet.js` | `rig-audit.js trigger` | the proximity gate, "the button not the marks", the two audio hops and their cushion |
+| `js/grain.js`, `js/grain-worklet-bridge.js`, `js/trigger.js`, `js/ui-meters.js`, `js/worklets/grain-engine.worklet.js` | `rig-audit.js lens` | the cursor reads what its tab says: radius, depth, k / all, nearest, scope, dwell grain, walk, the cap, fade, step |
 | `js/paint-ticker.js`, `js/audio-features.js`, `js/grain-worklet-bridge.js`, `js/worklets/grain-engine.worklet.js` | `rig-audit.js "mark align"` | mark sizing from the audio after it, the peak offset the bridge posts |
 | `js/audio-features.js`, `js/ui-viz.js` | `rig-audit.js colour` | the room cannot decide a hue or a saturation, the axis can see the vowel space, the arc reaches every family, the bounds stay constants |
 | `js/param-registry.js`, `js/state.js` (`PARAM_DEFS`), `index.html` (cabinet ids), `js/ui-meters.js` | `rig-audit.js engine` | every engine row writes through a cabinet element; a deleted id kills a row silently |
@@ -57,7 +58,7 @@ The map `scripts/audit-for.js` applies. A path is tested against every row, and 
 
 ## 3. The scripts
 
-`rig-audit.js` runs the sweep harnesses (`verify-action-ranges.js`, `cc-mirror-audit.js`, `trigger-audit.js`, `engine-audit.js`, `mark-align-audit.js`, `palette-audit.js`, `colour-audit.js`, `pins-audit.js`) against a real Electron instance it launches itself; `ui-shots.js` does layout the same way. All sit on `lib/rig.js`, need no setup, and are described in § 4. `browser-audit.js` is the one harness still on playwright, because it asserts what happens when `electronBridge` is absent. `docs-audit.js` reads files only. `osc-audit.js` and `osc-probe.js` inspect a running rig's OSC traffic; `osc-audit.js` also runs on the rig but takes minutes, so it stays out of `rig-audit.js`. `live-loop-audit.js` is wall-clock bound (a loop has to wrap) and is run by hand when the live-loop worklet changes. `composer-audit.js` **no longer exists**: it was sunset and its loop-is-muted / cloud-is-stopped checks live in `pins-audit.js`. `screen-probe.mjs` and `probe-selftest.mjs` are the before/after screen diff. `deadweight-audit.js` is the read-only inventory of what may be dead — unimported modules, unread storage keys, unreachable actions, unreferenced ids and classes, stray files, docs the archive rule covers — run at every release and whenever a sunset pass is planned; it exits 0 always, because every row is a question for Ek, not a verdict. `audit-for.js` maps the diff to the suite to run; `worktree-setup.sh` makes a fresh worktree able to run them. `dev-bridge.js` is the transport behind `.dev-bridge/`, and `lib/rig.js` is its node-side client. `build-share.command`, `launch-stations.command` and `run-stations.sh` are launch helpers Ek runs by hand.
+`rig-audit.js` runs the sweep harnesses (`verify-action-ranges.js`, `cc-mirror-audit.js`, `trigger-audit.js`, `engine-audit.js`, `lens-audit.js`, `mark-align-audit.js`, `palette-audit.js`, `colour-audit.js`, `pins-audit.js`) against a real Electron instance it launches itself; `ui-shots.js` does layout the same way. All sit on `lib/rig.js`, need no setup, and are described in § 4. `browser-audit.js` is the one harness still on playwright, because it asserts what happens when `electronBridge` is absent. `docs-audit.js` reads files only. `osc-audit.js` and `osc-probe.js` inspect a running rig's OSC traffic; `osc-audit.js` also runs on the rig but takes minutes, so it stays out of `rig-audit.js`. `live-loop-audit.js` is wall-clock bound (a loop has to wrap) and is run by hand when the live-loop worklet changes. `composer-audit.js` **no longer exists**: it was sunset and its loop-is-muted / cloud-is-stopped checks live in `pins-audit.js`. `screen-probe.mjs` and `probe-selftest.mjs` are the before/after screen diff. `deadweight-audit.js` is the read-only inventory of what may be dead — unimported modules, unread storage keys, unreachable actions, unreferenced ids and classes, stray files, docs the archive rule covers — run at every release and whenever a sunset pass is planned; it exits 0 always, because every row is a question for Ek, not a verdict. `audit-for.js` maps the diff to the suite to run; `worktree-setup.sh` makes a fresh worktree able to run them. `dev-bridge.js` is the transport behind `.dev-bridge/`, and `lib/rig.js` is its node-side client. `build-share.command`, `launch-stations.command` and `run-stations.sh` are launch helpers Ek runs by hand.
 
 **One command for the fast seven:** `node scripts/rig-audit.js` — one app boot, exits non-zero on any failure. It launches its own instance on a fresh `audit-<pid>` profile and OSC port 7599, so it can't touch presets, calibration or a live station, and inherits nothing from the last run; `--attach` runs against an open window instead, which every suite will disturb. Take a suite name to run just one (`rig-audit.js trigger`).
 
@@ -68,6 +69,8 @@ The map `scripts/audit-for.js` applies. A path is tested against every row, and 
 **For anything touching a cc action's `range` or its `ccFn`:** run `node scripts/verify-action-ranges.js` (or `rig-audit.js`, which includes it). Every cc action declares the real-unit span its `ccFn` covers and the curve it applies; the accessory table does unit maths against that declaration, so a wrong `curve` flag is silent — the UI keeps showing plausible cents and Hz while the pot's throw is skewed. The script runs the actual `ccFn` at v = 0, 63.5, 127 and checks the half-throw reading, which is the only place lin and log disagree. Exits non-zero on mismatch.
 
 **For anything touching a setter that MIDI/OSC drives (`S._setX`, `setDryMonitorGain`, …):** run `node scripts/cc-mirror-audit.js` (or `rig-audit.js`, which includes it). Several controls exist twice — once in a settings modal, once mirrored into a main-UI device panel — and the mirror rides the modal element's `input` event. A setter that assigns `el.value` without dispatching `input` moves the modal copy and leaves the panel copy behind, which is invisible from the keyboard and only shows up when you drive the app from a controller. The script fires every cc action and diffs the whole DOM, so it catches the next one without anyone having to notice it on the rig. Extend the `MIRRORS` map when a control gets mirrored somewhere new.
+
+**For anything touching how the cursor reads** (`lens-audit.js`, 2026-09-23): every row of the cursor tab driven through the scheduler's own geometry (`_cursorGeometry`, which the `__testCandidatePool` seam now shares instead of mirroring) and the bridge's real candidate tables — radius, local depth, the nearest k, all, nearest, scope, a `dwell: grain` take opening only once played through (nearest included), walk, the cap, the fade's gain against distance, and step's order. The trap it exists for: step ordered by BUFFER offset and nearest opened a take on arrival, both silently, and the seam had drifted from the scheduler. Depth counts STROKES for the cursor and the eraser (2026-09-23; it counted buffers, so every sampler stroke — one file — stayed at depth 1): the two sampler checks hold that.
 
 **For anything touching the trigger tool:** run `node scripts/trigger-audit.js` (or `rig-audit.js`, which includes it). It exercises the proximity gate with injected cursor positions — enter/exit edges, the hysteresis band from both directions, the rearm window, and the bounding-cap early-out — then times the gate at 0/1/8/32 armed triggers. The hysteresis band is the case worth having a test for: the same distance must give a different answer depending on which side the cursor came from, and nothing else in the app behaves that way. The cost figure matters because the gate runs inside the 20 ms scheduler tick; treat a regression there as a real failure even though the assertion threshold is loose.
 
@@ -151,57 +154,16 @@ The suite records bursts at known times at two deposit rates and three brushes, 
 offset the bridge actually posts, and requires the mark that plays each burst to be the loudest
 near it.
 
-**For anything touching the palette, the tool rail's click, the drawer, or a tool hold:** run
-`node scripts/palette-audit.js` (or `rig-audit.js`, which includes it). **While iterating, run
-ONLY the sections the change touches** — `node scripts/palette-audit.js --only=A,D` (or
-`PALETTE_ONLY=A,D`) — ~11 s including the launch against minutes for the whole file (Ek,
-2026-09-11: "i need fast iteration"); the sections are independent, each starting from the
-factory palette and the lens on. The full file runs once before the commit. 173 checks
-(2026-09-12; the hand back and the palette as quick access — `docs/PALETTE-GUI.md` § 1) over the
-palette LIST: the factory seven on a fresh profile (it clears `mubone_palette` and reloads first)
-on `1` … `5`, `↑`, `↓`, one row with no beds, every tile draggable, the legends, NINE palette
-actions, the PLATE naming the hand at the bed's width in the toggle shape, the in-hand ring on one
-tile and one row — and **no tile or row wearing a box**, which is how ARMING stays deleted; § B and
-§ G are DELETED (the rail click is a pick, and there is no armed box to outrank the lit fill); § C
-the drawer and the click — `Tab` opens the IN-HAND tool's drawer and a fire does not move it, ⇧Tab
-the lens, a rail click and a strip click take a tool in hand (plays nothing, places nothing), the
-`⋯` points the drawer without touching the hand, a lens tile's click installs, a pin tile's fires;
-§ D drives the browser's own DragEvents — a row in at the caret **takes the next free digit**, a
-tile moved carries its verb AND its key, one dragged off frees the digit, the pin pair from its
-rail, EVERY tool able to leave, pin's three verbs on a second pin tile; § E the keys are explicit
-rows and FIRE by position in the tile's verb — a toggle outlives its key, a momentary ends on the
-up (without that edge it latched for ever), a bang pins once — one play at a time, no hand-back,
-the hand untouched, `sel` gone; § F the lens as a state; § H THE HAND — space and the sphere's
-click play the in-hand tool, toggle by factory and momentary after a right-click on the plate
-(the plate's computed radius read back), the plate itself a spacebar, space refused by a learn and
-a stored Space row dropped at load, and a quick-access play still the TILE's verb, flipped by the
-strip's right-click, momentary refused under a TAP by the model itself; §§ I–L unchanged in
-subject (§ L now asserts a fire LEAVES the drawer where it was).
-
-**§ M and § N are the two `docs/PALETTE-GUI.md` § 9 calls "new I" and "new J"** — both letters were
-already taken by the wash and the wet button. § M is SHAPE IS THE VERB: the computed `border-radius`
-per verb, and it FLIPS a tile's verb by the strip's right-click and reads the shape back off the
-strip, which is the only way to catch a deeper `html body .palette .tile` rule quietly winning. § N
-is THE LEGEND IS THE TRUTH: source + gesture + delay for every bound input, blank iff `press`, `···`
-iff a sibling `×2`/`×3` delays that tap (the button and note switches on for the read), and the
-spacebar drawn rather than typed on the PLATE — it caught the glyph rule sizing the stroke mark to
-30px square. **§ O is THE LEDGER** (2026-09-12): one legend row per kind the keys page's switches
-show, the bed measured 12px taller per row; a row's click arms that kind's learn on that position,
-the next key, button or note lands there, Esc or a second click cancels, right-click clears. Ek's
-rule 6 governs all three: force each state and read it back; an empty diff proves only that
-nothing visible moved.
-
-`factory()` in the helpers restores the KEY and BUTTON maps for the palette rows as well as the
-list: a removed tile takes its bindings with it (they belong to the tile), so rebuilding the strip
-by removeAt / placeTile alone would re-deal the digits and lose the factory buttons.
-
-Two notes for whoever runs it next. The pin-path checks in § D are guarded on the pool being able
-to take a pin at all — run beside `action ranges` and `cc mirrors` in one instance and the cc sweep
-leaves it in a state where nothing new lands, which is pollution rather than a failure. And § E is
-PACED with waits between plays: `startPaintStroke` is async and waits on the mic, so on a rig
-without one a stop dispatched in the same synchronous block can land before the start finishes and
-leave `S.isPainting` true — and a stuck `isPainting` turns the next PIN into a live hold, so § C's
-fire pair is paced too. That is a real race in the audio path, not in the palette.
+**For anything touching the palette, the tool rail's click, or a tile's verb:** run
+`node scripts/palette-audit.js` (or `rig-audit.js palette`). Rewritten 2026-09-23 at the 5.6
+release sweep for the FIXED TOOLBAR (`docs/PALETTE-GUI.md`): the suite before it (1515 lines, git
+history) proved nine draggable positions, wet buttons and the `+` on engine titles, all deleted
+2026-09-22, and had failed since. It checks the six tiles in the build's order (cursor · the hand's
+press and hold · erase · pin · unpin) with no drag; the keys `c` `e` `↓` `↑`; every tile's radius
+is its verb's (`VERB_RADIUS`); the mouse SELECTS — a tool opens its tab, the cursor opens the rail
+and leaves the tab, the pin fires nothing; right-click cycles a position's verb and a hand side's,
+stored one verb per position; the cursor's position caps and uncaps; `palette_N` per position and
+no `_toggle` / `_hold` rows. It restores what it moves.
 
 **Before trusting ANY before/after claim about the screen:** `node scripts/probe-selftest.mjs`
 must be green — all seven, including the across-a-reload assertion, which takes BOTH its snapshots

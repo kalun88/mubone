@@ -304,10 +304,16 @@ if (rail && vis(rail)) {
     nm:  n.querySelector('.tile-nm') && box(n.querySelector('.tile-nm')),
     kind: n.classList.contains('trow--multi') ? 'multi'
         : n.classList.contains('trow--radio') ? 'radio' : 'none',
-    // A TOOL row selects nothing since arming went (2026-09-11): a click on it
-    // points the drawer, and its key plays it. Only rows that carry a real
-    // choice — the lens, the source — speak the selection language.
-    selects: !n.dataset.tile }));
+    // EVERY ROW IN THIS RAIL IS A CHOICE since it became the tool editor
+    // (2026-09-22): a click puts the shape, the lens or the voice on the
+    // bench, and the half moon says which one you are building with. A tool
+    // row selected nothing between 2026-09-11 and then — arming was gone and
+    // the bench did not exist yet — which is why this used to exempt them.
+    selects: true,
+    // Which radio GROUP a row belongs to, for the one-moon-per-group check.
+    grp: n.dataset.voice ? 'voice' : n.dataset.lens ? 'lens' : n.dataset.tile ? 'shape' : 'other',
+    on: n.classList.contains('on'),
+    open: n.classList.contains('open') }));
 }
 
 if (!_railWasOpen) {
@@ -520,7 +526,10 @@ if (_stand) { _stand.remove(); _stand = null; }   // never leave the stand-in be
 document.getElementById('settingsClose')?.click();
 await sleep(600);
 const loanAfterClose = (S._settingsBorrowed ? S._settingsBorrowed() : []).map(b2 => b2.what + ' (' + b2.node + ')');
-return { pages, radius, tokens, ctl, contentBox, overlap, contain, tick, loanAfterNav, loanAfterClose };
+// EVERY NAV ITEM WEARS A GLYPH (2026-09-23): a page with no icon reads as a
+// stray line in a column of marked rows — Tools shipped that way for a day.
+const navNoIcon = [...document.querySelectorAll('.set-nav-item[data-sec]')].filter(b => !b.querySelector('svg')).map(b => b.dataset.sec);
+return { pages, radius, tokens, ctl, contentBox, overlap, contain, tick, loanAfterNav, loanAfterClose, navNoIcon };
 `;
 
 // ── The button size set is CLOSED ───────────────────────────────────────────
@@ -582,14 +591,14 @@ const prev = list ? list.innerHTML : null;
 const bus = document.getElementById('lyrBus');
 const prevBus = bus ? bus.innerHTML : null;
 if (list && !list.querySelector('.lyr-trk')) {
-  list.innerHTML = '<div class="lyr-trk" style="--c:var(--eng-tape)" data-slot="0">' +
-    '<div class="lyr-trk-bar"><div class="lyr-fill"></div><button type="button" class="lyr-num">1</button>' +
-    '<div class="lyr-mat"><canvas></canvas></div><div class="lyr-ph" hidden></div><span class="lyr-db"></span><div class="lyr-edge"></div>' +
+  list.innerHTML = '<div class="lyr-trk" style="--c:var(--eng-tape)" data-slot="0"><div class="lyr-trk-row">' +
+    '<span class="lyr-num">1</span>' +
+    '<div class="lyr-trk-bar"><div class="lyr-fill"></div><div class="lyr-mat"><canvas></canvas></div><div class="lyr-ph" hidden></div><span class="lyr-db"></span><div class="lyr-edge"></div></div>' +
     '<span class="lyr-ms"><button type="button" class="lyrmute">M</button><button type="button" class="lyrsolo">S</button></span></div>' +
-    '<div class="lyr-fold"></div></div>';
+    '</div>';
   if (bus && !bus.querySelector('.lyr-bus-row')) {
-    bus.innerHTML = '<div class="lyr-bus-row" style="--c:var(--eng-tape)"><div class="lyr-fill"></div>' +
-      '<span class="lyr-bus-nm">loops<b>1</b></span><span class="lyr-ms"><button type="button" class="lyrmute">M</button><button type="button" class="lyrsolo">S</button></span></div>';
+    bus.innerHTML = '<div class="lyr-bus-line" style="--c:var(--eng-tape)"><span></span><div class="lyr-bus-row"><div class="lyr-fill"></div>' +
+      '<span class="lyr-bus-nm">loops<b>1</b></span></div><span class="lyr-ms"><button type="button" class="lyrmute">M</button><button type="button" class="lyrsolo">S</button></span></div>';
   }
 }
 await new Promise(r => setTimeout(r, 200));
@@ -655,35 +664,66 @@ const barBtns = [...rail.querySelectorAll('.lyr-bar button')].map(b => {
 // a centre line, as do a track's number and its bar.
 const mid = el => { const r = el.getBoundingClientRect(); return px(r.y + r.height / 2); };
 const mix = (() => {
-  const bars = [...rail.querySelectorAll('.lyr-trk-bar')], buses = [...rail.querySelectorAll('.lyr-bus-row')];
+  // ROWS carry the outer edges (number · box · M S, 2026-09-23);
+  // BOXES carry the heights and must share their own column across tracks and busses.
+  const bars = [...rail.querySelectorAll('.lyr-trk-row')], buses = [...rail.querySelectorAll('.lyr-bus-line')];
+  const boxes = [...rail.querySelectorAll('.lyr-trk-bar')], busBoxes = [...rail.querySelectorAll('.lyr-bus-row')];
   const modes = rail.querySelector('.lyr-modes');
   if (!bars.length || !modes) return null;
   const cs = getComputedStyle(modes), mr = modes.getBoundingClientRect();
   const edge = b => { const r = b.getBoundingClientRect(); return [px(r.x), px(r.right), px(r.height)]; };
-  const ms = [...rail.querySelectorAll('.lyr-trk-bar .lyrmute, .lyr-trk-bar .lyrsolo, .lyr-bus-row .lyrmute, .lyr-bus-row .lyrsolo')]
-    .map(b => { const r = b.getBoundingClientRect(); const p = b.closest('.lyr-trk-bar, .lyr-bus-row').getBoundingClientRect();
+  const ms = [...rail.querySelectorAll('.lyr-trk-row .lyrmute, .lyr-trk-row .lyrsolo, .lyr-bus-line .lyrmute, .lyr-bus-line .lyrsolo')]
+    .map(b => { const r = b.getBoundingClientRect(); const p = b.closest('.lyr-trk-row, .lyr-bus-line').querySelector('.lyr-trk-bar, .lyr-bus-row').getBoundingClientRect();
                 return [px(r.height), px((r.y + r.height / 2) - (p.y + p.height / 2))]; });
   const cnt = rail.querySelector('.lyr-slots-n'), door = rail.querySelector('#lyrSettings');
-  const num = rail.querySelector('.lyr-trk-bar .lyr-num');
+  const num = rail.querySelector('.lyr-trk-row .lyr-num');
   return {
     n: bars.length, nb: buses.length,
-    modeL: px(mr.x + parseFloat(cs.paddingLeft)), modeR: px(mr.right - parseFloat(cs.paddingRight)),
+    // THE MODE BAR IS A CARD (2026-09-22 night): its OUTER edges are the tracks'
+    // column, and its rows sit --sp-5 inside — the same object as the tool
+    // rail's #instrPanel, measured there as card 13→307 in a 1→319 rail.
+    // (No backticks in here: this probe is a template literal.)
+    modeL: px(mr.x), modeR: px(mr.right),
+    modeInset: [px(parseFloat(cs.paddingLeft)), px(parseFloat(cs.paddingTop)), px(parseFloat(cs.paddingRight)), px(parseFloat(cs.paddingBottom))],
+    modeGround: cs.backgroundColor, modeRadius: cs.borderRadius,
+    leftCard: (() => { const c = document.getElementById('instrPanel'); if (!c) return null; const k = getComputedStyle(c);
+      return { ground: k.backgroundColor, radius: k.borderBottomLeftRadius }; })(),
     bars: bars.map(edge), buses: buses.map(edge), ms,
-    segs: [...rail.querySelectorAll('.lyr-modes .seg-pill')].map(e => px(e.getBoundingClientRect().height)),
-    // The chrome-density segment as it renders ELSEWHERE in the chrome — the
-    // rail's two must be the same control at the same size, whatever that is.
-    refSeg: (() => { const o = [...document.querySelectorAll('.seg-pill')].find(e => !rail.contains(e) && e.offsetHeight > 0); return o ? px(o.getBoundingClientRect().height) : null; })(),
+    boxes: boxes.map(edge), busBoxes: busBoxes.map(edge),
+    segs: [...rail.querySelectorAll('.lyr-modes .opt .seg')].map(e => px(e.getBoundingClientRect().height)),
+    // The SHEET's capsule as it renders on the tool rail (the lens tab's rows)
+    // — the pins card's two must be the same control at the same size,
+    // whatever that is (2026-09-22 night; they were the chrome's .seg-pill).
+    refSeg: (() => { const o = [...document.querySelectorAll('.tc-lrail .opt .seg')].find(e => e.offsetHeight > 0); return o ? px(o.getBoundingClientRect().height) : null; })(),
     swH: rail.querySelector('.lyr-modes .mu-switch') ? px(rail.querySelector('.lyr-modes .mu-switch').getBoundingClientRect().height) : null,
-    rowMids: [...rail.querySelectorAll('.lyr-mrow')].map(r => [...r.children].filter(c => c.offsetWidth > 0).map(mid)),
+    rowMids: [...rail.querySelectorAll('.lyr-modes .mrow')].map(r => [...r.children].filter(c => c.offsetWidth > 0).map(mid)),
+    // The rows are the tool rail's .mrow (2026-09-22 night): 30 tall, the
+    // name at card + 12 in the same type the lens tab's rows use.
+    rows: [...rail.querySelectorAll('.lyr-modes .mrow')].map(r => { const l = r.querySelector('.mrow-l'); const k = getComputedStyle(l);
+      return { h: px(r.getBoundingClientRect().height), lx: px(l.getBoundingClientRect().x), fs: k.fontSize, col: k.color, tt: k.textTransform }; }),
+    leftRow: (() => { const l = document.querySelector('#tileBar .mrow .mrow-l'); if (!l) return null; const k = getComputedStyle(l);
+      return { h: px(l.closest('.mrow').getBoundingClientRect().height), fs: k.fontSize, col: k.color, tt: k.textTransform }; })(),
     cntMid: cnt ? mid(cnt) : null, doorMid: door ? mid(door) : null,
-    numMid: num ? mid(num) : null, barMid: mid(bars[0]),
+    numMid: num ? mid(num) : null, barMid: mid(boxes[0] ?? bars[0]),
   };
 })();
 
 if (list && prev !== null) list.innerHTML = prev;
 if (bus && prevBus !== null) bus.innerHTML = prevBus;
 if (!wasOpen) document.body.classList.remove('pinned-open');
-return { lefts, rights, wrapped, clipped, barBtns, footLines, mix };
+// BOTH RAILS' HEADER BARS ARE ONE HEIGHT (2026-09-22 night): stated at 40,
+// whether the bar holds a word or the kit's button.
+const barH = ['#toolRail .lyr-bar', '#tcRail .lyr-bar'].map(s => { const e = document.querySelector(s); return e ? px(e.getBoundingClientRect().height) : null; });
+// THE CURSOR SECTION (2026-09-23): the tool rail's lower half, on its foot,
+// under a bar of the header's height with a rule above and below.
+const cur = (() => {
+  const sec = document.getElementById('cursorSec'), rail = document.getElementById('toolRail');
+  if (!sec || !rail || !rail.offsetWidth) return null;
+  const bar = sec.querySelector('.lyr-bar'), k = getComputedStyle(bar), rr = rail.getBoundingClientRect(), br = bar.getBoundingClientRect();
+  return { gap: px(rr.bottom - sec.getBoundingClientRect().bottom), h: px(br.height), top: k.borderTopWidth, bottom: k.borderBottomWidth,
+           l: px(br.left - rr.left - rail.clientLeft), w: px(br.width), rw: px(rail.clientWidth) };
+})();
+return { lefts, rights, wrapped, clipped, barBtns, footLines, mix, barH, cur };
 `;
 
 // ── The freeze wash ─────────────────────────────────────────────────────────
@@ -1195,9 +1235,34 @@ const sweep = () => {
                : kc.contains('mu-btn') ? 'btn'
                : kc.contains('tc-icon') ? 'icon'
                : kc.contains('set-pill') ? 'pill'
+               // A SEG GROUP IS NOT A CONTROL. The pill is the box its
+               // segments sit in, and the 2px that makes it a pill is not part
+               // of a segment's height -- so holding the group to the kit's 24
+               // is unsatisfiable by construction: 24 + 2 + 2 = 28, always.
+               // Its own rule is DERIVED rather than frozen: the group must be
+               // exactly its SEGMENTS plus its own padding, so it cannot grow a
+               // min-height or a stray line-height without being seen, and the
+               // segments themselves are held to the kit on their own row. The
+               // kit's 24 cannot be the group's number at BOTH densities --
+               // chrome is 24 per segment, the engine sheet's is tighter.
+               // (No backticks in here: this whole probe is a template literal.)
+               // Only the CHROME pill: the engine sheet's .opt .seg is a second
+               // density whose group is 24 with its spans clipped inside it,
+               // and that is a separate question from this one.
+               : (kc.contains('seg-pill') && el.querySelector('.grain-seg-btn')) ? 'seggroup'
+               // THE INSTRUMENT TABS ARE TABS (2026-09-22, "every tab is drawn as a
+               // tab"): a seg-pill's buttons in markup, a tab's shape and the
+               // kit's 32 icon height on screen — not a 24 segment.
+               : (kc.contains('grain-seg-btn') && el.closest('.instr-tabs')) ? 'icon'
                : (kc.contains('seg') || kc.contains('seg-pill') || kc.contains('grain-seg')
                   || kc.contains('grain-seg-btn')) ? 'seg' : 'any';
-    const want = box ? parseFloat(getComputedStyle(box.host).getPropertyValue(box.token)) : null;
+    const cs2 = kind === 'seggroup' ? getComputedStyle(el) : null;
+    const seg1 = cs2 ? el.querySelector('.grain-seg-btn') : null;
+    const segH = seg1 ? seg1.getBoundingClientRect().height : null;
+    const want = box ? parseFloat(getComputedStyle(box.host).getPropertyValue(box.token))
+               : (cs2 && segH) ? segH + parseFloat(cs2.paddingTop) + parseFloat(cs2.paddingBottom)
+                          + parseFloat(cs2.borderTopWidth) + parseFloat(cs2.borderBottomWidth)
+               : null;
     if (!seen.has(key)) seen.set(key, { h: Math.round(h * 10) / 10, kind: kind,
                                         want: want, token: box ? box.token : '' });
   }
@@ -1245,7 +1310,8 @@ function auditKitSizes(raw) {
     return { key: p[0], h: parseFloat(p[1]), kind: p[2] || 'any',
              want: p[3] === '' || p[3] === undefined ? null : parseFloat(p[3]), token: p[4] || '' };
   });
-  const legalFor = r => r.kind === 'box' ? (r.want == null ? [] : [Math.round(r.want)])
+  const legalFor = r => (r.kind === 'box' || r.kind === 'seggroup')
+                      ? (r.want == null ? [] : [Math.round(r.want)])
                       : (KIT_BY_KIND[r.kind] || KIT_HEIGHTS);
   const nearest = r => { const L = legalFor(r); return L.length
     ? L.reduce((a, b) => Math.abs(b - r.h) < Math.abs(a - r.h) ? b : a) : '?'; };
@@ -1258,7 +1324,8 @@ function auditKitSizes(raw) {
   // The agent's next move should be readable straight off the failure line.
   const isNew = off.filter(r => !R6_TAIL.has(r.key + '@' + r.h))
                    .map(r => `${r.key} is ${r.h}px — ${
-                     r.kind === 'box' ? `it fills a named box and must equal ${r.token} (${r.want}px)`
+                     r.kind === 'seggroup' ? `it is a seg GROUP and must be its segments plus its own padding (${r.want}px)`
+                     : r.kind === 'box' ? `it fills a named box and must equal ${r.token} (${r.want}px)`
                      : r.kind === 'any' ? 'no kit height matches'
                      : 'the kit says ' + legalFor(r).join('/') + ' for a ' + r.kind} · nearest ${nearest(r)}`);
   // A tail entry is keyed selector@height; it is REACHED when its element was
@@ -1381,18 +1448,38 @@ function collapses(label, items, key) {
     // line; they set the row's height once (33.3 vs 27.9) and every pick moved
     // the list under the cursor (Ek, 2026-09-03, #327).
     collapses('every rail row is one height',     d.rail.map(r => ({ t: r.t, v: r.row.h })), 'v');
-    collapses('every rail glyph starts at one x', d.rail.filter(r => r.svg).map(r => ({ t: r.t, v: r.svg.x })), 'v');
+    // THE GLYPH COLUMN IS READ AT ITS CENTRE, not at its left edge. A voice
+    // row's dot is 0.62rem inside the 1.05rem box every other row fills, with
+    // the margin that centres it stated in the same rule — so the left edges
+    // differ by 3.44px BY DESIGN and the centres are the thing that lines up.
+    // This read left edges and had been failing on the voice rows since they
+    // arrived; the code was right and the audit was measuring the wrong point.
+    collapses('every rail glyph centres on one x', d.rail.filter(r => r.svg).map(r => ({ t: r.t, v: +(r.svg.x + r.svg.w / 2).toFixed(2) })), 'v');
     collapses('every rail label starts at one x', d.rail.filter(r => r.nm).map(r => ({ t: r.t, v: r.nm.x })),  'v');
     // The selection model must be legible for every row that IS a choice: it
-    // is radio or multi, never bare. A tool row is not a choice any more —
-    // nothing is armed, so there is nothing for a mark to say — and it carried
-    // `trow--radio` until 2026-09-11 purely because one brush was in the hand
-    // at a time. It keeps `open`, which is the drawer's mark, not a selection.
+    // is radio or multi, never bare. In the TOOL EDITOR that is every row —
+    // shape, lens and voice all choose — so the exemption tool rows carried
+    // from 2026-09-11 is gone with the bench that replaced it.
     const rows  = d.rail.filter(r => r.selects);
     const bare  = rows.filter(r => r.kind === 'none').map(r => r.t);
-    const tools = d.rail.filter(r => !r.selects && r.kind !== 'none').map(r => r.t);
     check(bare.length === 0, 'every rail row that is a choice declares how it selects', bare.join(', ') || `all classed — ${rows.length} choice row(s)`);
-    check(tools.length === 0, 'a tool row claims no selection mark — nothing selects a tool', tools.join(', ') || 'none claim one');
+    // ONE MOON PER GROUP. The regression this catches is the one that shipped:
+    // a click moved the bench and the mark stayed where it was, so the rail
+    // showed a selection that was not the one you were editing. At MOST one,
+    // not exactly one — the bench can hold a lens while the shape group is on
+    // screen, and then nothing in that group is the answer.
+    const grps = ['shape', 'lens', 'voice'];
+    const many = grps.map(g => [g, d.rail.filter(r => r.grp === g && r.on)])
+                     .filter(([, r]) => r.length > 1)
+                     .map(([g, r]) => `${g}: ${r.map(x => x.t).join(' + ')}`);
+    const counts = grps.map(g => `${g} ${d.rail.filter(r => r.grp === g && r.on).length}/${d.rail.filter(r => r.grp === g).length}`).join(', ');
+    check(many.length === 0, 'at most one row wears the moon in each rail group', many.join(' · ') || counts);
+    // NO SECOND GROUND. `.open` was the drawer's mark, and the editor has no
+    // drawer doors — selecting IS opening — so a row wearing it would be
+    // saying "chosen" a second time, in a quieter voice, sometimes on a
+    // different row than the moon.
+    const opened = d.rail.filter(r => r.open).map(r => r.t);
+    check(opened.length === 0, 'no rail row wears the drawer mark — selecting is what opens the sheet', opened.join(', ') || 'clear');
   }
 
   console.log('\n── the palette legend ──');
@@ -1458,8 +1545,11 @@ function collapses(label, items, key) {
   // ── The settings type contract ────────────────────────────────────────────
   console.log('\n── settings pages ──');
   const s = await evalInApp(SETTINGS_PROBE, 'set_' + Date.now().toString(36));
-  if (s.unavailable) skipped('settings pages', 'the settings dialog would not open', 26);
+  if (s.unavailable) skipped('settings pages', 'the settings dialog would not open', 27);
   else {
+    check(Array.isArray(s.navNoIcon) && s.navNoIcon.length === 0,
+      'every settings nav item wears a glyph',
+      s.navNoIcon?.length ? `no icon: ${s.navNoIcon.join(', ')}` : 'all marked');
     // The reference used to be the `sensors` and `mapping` PAGES, whose sizes
     // were taken as the contract. That contract is retired: inside
     // #settingsModal the standard is docs/SETTINGS-GUI.md, and the ramp comes
@@ -1655,6 +1745,13 @@ function collapses(label, items, key) {
     check(bb.length < 2 || gaps.every(g => g >= 0 && g <= 12),
       'the rail header\'s buttons sit together, not spread across the bar',
       bb.length < 2 ? 'n/a' : `gaps ${gaps.join(', ')}px`);
+    if (rr.cur) check(Math.abs(rr.cur.gap) <= TOLERANCE && Math.abs(rr.cur.h - 40) <= TOLERANCE && rr.cur.top === '1px' && rr.cur.bottom === '1px'
+                      && Math.abs(rr.cur.l) <= TOLERANCE && Math.abs(rr.cur.w - rr.cur.rw) <= TOLERANCE,
+      'the CURSOR section sits on the tool rail\'s foot, its bar 40 with a rule above and below at the rail\'s full width',
+      JSON.stringify(rr.cur));
+    check(rr.barH && rr.barH.every(h => h != null && Math.abs(h - 40) <= TOLERANCE),
+      'both rails\' header bars are one stated height, 40',
+      `tool ${rr.barH?.[0]} · pinned ${rr.barH?.[1]}`);
 
     // ── The mixer ─────────────────────────────────────────────────────
     const mx = rr.mix;
@@ -1668,21 +1765,51 @@ function collapses(label, items, key) {
         'every track, every bus and the mode bar share one left and one right edge',
         `left spread ${lSpread}px · right spread ${rSpread}px` +
           (lSpread > TOLERANCE || rSpread > TOLERANCE ? ` · mode ${mx.modeL}–${mx.modeR} · bars ${mx.bars.map(e => e[0] + '–' + e[1]).join(', ')} · buses ${mx.buses.map(e => e[0] + '–' + e[1]).join(', ')}` : ''));
-      check(mx.bars.every(e => Math.abs(e[2] - 32) <= TOLERANCE) && mx.buses.every(e => Math.abs(e[2] - 24) <= TOLERANCE),
+      // The card: 12 of air on all four sides inside, and the tool rail's own
+      // ground and radius, so the two rails carry one card design.
+      // 12 top and bottom, NO side padding: each row carries its own 12, so the
+      // label lands at card + 12 by the tool rail's rule (style.css .lyr-modes).
+      // This asked for 12 on all four sides, which the card has never had.
+      check([0, 12, 0, 12].every((w, i) => Math.abs(mx.modeInset[i] - w) <= TOLERANCE),
+        'the mode bar\'s card keeps 12 of air top and bottom, its rows the 12 at the sides',
+        `inset ${mx.modeInset.join('/')}px`);
+      check(!!mx.leftCard && mx.modeGround === mx.leftCard.ground && mx.modeRadius === mx.leftCard.radius,
+        'the mode bar\'s card wears the tool rail card\'s ground and radius',
+        `ground ${mx.modeGround} vs ${mx.leftCard?.ground} · radius ${mx.modeRadius} vs ${mx.leftCard?.radius}`);
+      check(mx.boxes.every(e => Math.abs(e[2] - 32) <= TOLERANCE) && mx.busBoxes.every(e => Math.abs(e[2] - 24) <= TOLERANCE),
         'a track bar is 32 tall and a bus row 24',
-        `bars ${[...new Set(mx.bars.map(e => e[2]))].join('/')} · buses ${[...new Set(mx.buses.map(e => e[2]))].join('/') || 'none'}`);
+        `bars ${[...new Set(mx.boxes.map(e => e[2]))].join('/')} · buses ${[...new Set(mx.busBoxes.map(e => e[2]))].join('/') || 'none'}`);
+      // THE BOX IS THE FADER, and only that (2026-09-23): number, dub mark and
+      // M S sit outside it in their own columns, so every box — track or bus —
+      // has one left and one right edge, and nothing that comes and goes can
+      // move them.
+      const boxAll = [...mx.boxes, ...mx.busBoxes];
+      const bl = +(Math.max(...boxAll.map(e => e[0])) - Math.min(...boxAll.map(e => e[0]))).toFixed(2);
+      const br = +(Math.max(...boxAll.map(e => e[1])) - Math.min(...boxAll.map(e => e[1]))).toFixed(2);
+      check(bl <= TOLERANCE && br <= TOLERANCE,
+        'every fader box, track and bus, shares one left and one right edge',
+        `left spread ${bl}px · right spread ${br}px`);
       const msH = [...new Set(mx.ms.map(m => m[0]))], msOff = mx.ms.length ? Math.max(...mx.ms.map(m => Math.abs(m[1]))) : 0;
       check(mx.ms.length >= 2 && msH.every(h => Math.abs(h - 18.4) <= TOLERANCE) && msOff <= TOLERANCE,
-        'M and S are the 18px pair, centred on the bar they sit in',
+        'M and S are the 18px pair, centred on their row\'s bar',
         `n=${mx.ms.length} height ${msH.join('/')} · worst centre offset ${msOff}px`);
       const segRef = mx.refSeg ?? mx.segs[0];
-      check(mx.segs.length === 2 && mx.segs.every(h => Math.abs(h - segRef) <= TOLERANCE) && mx.swH != null && Math.abs(mx.swH - 18) <= TOLERANCE,
-        'the mode bar\'s two segments are the chrome\'s .seg-pill at its own height, and its switch is 18',
-        `segments ${mx.segs.join('/')} vs the chrome\'s ${mx.refSeg ?? 'n/a'} · switch ${mx.swH}`);
+      // ONE capsule since 2026-09-22 night (sort); blend became the follow switch.
+      check(mx.segs.length === 1 && mx.segs.every(h => Math.abs(h - segRef) <= TOLERANCE) && mx.swH != null && Math.abs(mx.swH - 18) <= TOLERANCE,
+        'the mode bar\'s capsule is the sheet\'s .opt .seg at the tool rail\'s own height, and its switch is 18',
+        `capsules ${mx.segs.join('/')} vs the tool rail\'s ${mx.refSeg ?? 'n/a (shut)'} · switch ${mx.swH}`);
       const rowSpread = Math.max(...mx.rowMids.map(m => m.length ? +(Math.max(...m) - Math.min(...m)).toFixed(2) : 0));
-      check(mx.rowMids.length === 3 && rowSpread <= TOLERANCE,
-        'each of the three mode-bar rows centres its label, its control and its readout on one line',
+      // TWO rows since 2026-09-23 (follow, sort): the crossfade curve went to Settings > Pins.
+      check(mx.rowMids.length === 2 && rowSpread <= TOLERANCE,
+        'each of the two mode-bar rows centres its label, its control and its readout on one line',
         `${mx.rowMids.length} rows · worst spread ${rowSpread}px`);
+      // One row model on both rails: the same height, the name at card + 12,
+      // in the same size, colour and case the lens tab's rows use. `leftRow`
+      // is null when the tool rail is shut; the height and inset still hold.
+      check(mx.rows.length === 2 && mx.rows.every(r => Math.abs(r.h - 30) <= TOLERANCE && Math.abs(r.lx - (mx.modeL + 12)) <= TOLERANCE)
+            && (!mx.leftRow || mx.rows.every(r => r.fs === mx.leftRow.fs && r.col === mx.leftRow.col && r.tt === mx.leftRow.tt)),
+        'the mode bar\'s rows are the tool rail\'s: 30 tall, the name at card + 12, in the lens tab\'s type',
+        `rows ${mx.rows.map(r => `${r.h}/${r.lx}/${r.fs}`).join(' ')} vs left ${mx.leftRow ? `${mx.leftRow.h}/${mx.leftRow.fs}/${mx.leftRow.col}` : 'shut'}`);
       check(mx.cntMid != null && mx.doorMid != null && Math.abs(mx.cntMid - mx.doorMid) <= TOLERANCE,
         'the header count and the settings door share a centre line',
         `count ${mx.cntMid} vs door ${mx.doorMid}`);
@@ -1740,11 +1867,10 @@ function collapses(label, items, key) {
       out.push({ sel, headH: head.getBoundingClientRect().height, kids });
     };
     await open('#toolRail [data-tile="pen"]', true);
-    await open('#toolRail [data-lens="wide"]', true);
+    // (the lens's sheet was opened here until 2026-09-22 night — it has none now)
     await open('#toolRail .src-sampler', false);
     // Put the rig back: source, lens, armed tool, and the drawer as found.
     if (srcWas !== 'sampler') S._samplerSelectSource?.(srcWas);
-    if (lensWas) { document.querySelector('#toolRail [data-lens="' + lensWas + '"]')?.click(); await wait(200); }
     if (armedWas) { document.querySelector('#toolRail [data-tile="' + armedWas + '"]')?.click(); await wait(200); }
     if (!sheetWas) T.closeProps?.();
     if (!wasOpen) T.setPropsOpen(false);
@@ -1760,59 +1886,9 @@ function collapses(label, items, key) {
   }
 
   const bs = await evalInApp(BUTTON_SIZE_PROBE, 'btnsize_' + Date.now().toString(36));
-  // ── The lens page's live columns (2026-09-07) ────────────────────────────
-  // k's row carries four things beside its name — the k|all capsule, the
-  // track, the typed number and the live pair — on a rail ~333px wide. At the
-  // shared column widths the track measured 40px, which is not a control. The
-  // invariant is the one the eye cannot check: the track keeps a floor, and
-  // neither readout is clipped. `.prow--duo` already sets the precedent floor
-  // at 3.5rem, so that is the number.
-  console.log('\n── the lens page\'s live columns ──');
-  const LENS_PROBE = `(async () => {
-    const T = await import('./js/tiles.js');
-    const { S } = await import('./js/state.js');
-    const wait = ms => new Promise(r => setTimeout(r, ms));
-    const wasOpen = T.propsOpen(), nearWas = S.lensMode, allWas = S.grainKAllMode;
-    if (!wasOpen) { T.setPropsOpen(true); await wait(300); }
-    const read = async (near, all) => {
-      S.lensMode = near ? 'nearest' : 'area'; S.grainKAllMode = all;
-      T.openProps('wide', 'lens'); T.renderProps(); await wait(120);
-      const k = document.querySelector('#propRail .prow--lensk');
-      if (!k) return null;
-      const px = el => el ? el.getBoundingClientRect().width : 0;
-      const note = k.querySelector('[data-klive]');
-      const rows = [...document.querySelectorAll('#propRail .prow')]
-        .map(p => Math.round(p.getBoundingClientRect().x));
-      return {
-        track: px(k.querySelector('.prow-t')),
-        hasNum: !!k.querySelector('.prow-v'),
-        hasCap: !!k.querySelector('.ds-chips'),
-        noteClipped: note ? note.scrollWidth > note.clientWidth + 1 : false,
-        noteTxt: note ? note.textContent : '',
-        radiusRow: !!document.querySelector('#propRail .prow--lensr'),
-        leftSpread: rows.length ? Math.max(...rows) - Math.min(...rows) : 0,
-      };
-    };
-    const out = { areaK: await read(false, false), areaAll: await read(false, true), near: await read(true, false) };
-    S.lensMode = nearWas; S.grainKAllMode = allWas;
-    T.renderProps();
-    if (!wasOpen) T.setPropsOpen(false);
-    return out;
-  })()`;
-  const lp = await evalInApp(LENS_PROBE, 'lensk_' + Date.now().toString(36));
-  if (!lp || !lp.areaK) skipped('the lens page\'s live columns', 'lens sheet did not open', 4);
-  else {
-    check(lp.areaK.track >= 56, 'k keeps a playable track beside its capsule and its two numbers',
-      `${Math.round(lp.areaK.track)}px — the floor is 56 (3.5rem), the width .prow--duo already sets`);
-    check(!lp.areaK.noteClipped && !lp.near.noteClipped, 'neither live readout is clipped by its column',
-      `area "${lp.areaK.noteTxt}", nearest "${lp.near.noteTxt}"`);
-    check(lp.areaAll.track === 0 && !lp.areaAll.hasNum, 'uncapped draws no ceiling to set',
-      `track ${Math.round(lp.areaAll.track)}px, number ${lp.areaAll.hasNum}`);
-    check(!lp.near.hasCap && !lp.near.radiusRow, 'nearest drops the rows it bypasses',
-      `capsule ${lp.near.hasCap}, radius row ${lp.near.radiusRow}`);
-    check(lp.areaK.leftSpread === 0, 'every row on the lens page starts its label at one x',
-      `spread ${lp.areaK.leftSpread}px`);
-  }
+  // (The lens page's live columns were checked here from 2026-09-07. The lens
+  // has had no sheet since 2026-09-23 — its rows are the tool rail's CURSOR
+  // section, measured with the rail above — so the section went with it.)
 
   console.log('\n── button size set ──');
   check((bs.bad || []).length === 0,

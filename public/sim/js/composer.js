@@ -15,12 +15,12 @@
 
 import { S } from './state.js';
 import { stampCartesian } from './grain.js';
-import { togglePinMute } from './pins.js';
+import { togglePinMute, pinFadeIn, pinFadeOut } from './pins.js';
 
 // The FLOOR of a mute ramp. Long enough not to click, short enough that the
 // gesture feels immediate. The 3 ms start declick is for a source opening
 // mid-waveform; a mute is a level change on running audio and wants more.
-// A pin's own `fadeIn` / `fadeOut` (ui-presets.js, the rail's fold) lengthen it:
+// The pins' In / Out (Settings › Pins, pins.js pinFadeIn / pinFadeOut) lengthen it:
 // since 2026-09-16 a mute rides the same ramp an unpin does, so a cloud set to
 // leave over 10 s leaves that way whether it is unpinned or muted (Ek: "if
 // there's an attack and release ramp so it can fade in slowly or exit slowly").
@@ -29,8 +29,8 @@ const MUTE_RAMP_S = 0.02;
 // ── Loop mute ───────────────────────────────────────────────────────────────
 
 /** Mute or unmute a loop slot without stopping it. The source keeps running
- *  (2026-09-05) and the mute node ramps — over the pin's own `fadeOut` on the
- *  way down and `fadeIn` on the way up, never under MUTE_RAMP_S. Waiting for
+ *  (2026-09-05) and the mute node ramps — over the pins' Out on the
+ *  way down and In on the way up, never under MUTE_RAMP_S. Waiting for
  *  the loop boundary is not a mute, it is a RELEASE — that lives in
  *  ui-presets.js `_stopSeqAudio` under `S.loopReleaseMode`, and until
  *  2026-09-05 the rail's mute borrowed it (`atBoundary`), which is why a muted
@@ -47,11 +47,11 @@ export function setLoopMuted(seq, muted) {
   if (!g || !actx) return true;
 
   const now = actx.currentTime;
-  const ramp = Math.max(MUTE_RAMP_S, (muted ? seq.fadeOut : seq.fadeIn) || 0);
+  const ramp = Math.max(MUTE_RAMP_S, muted ? pinFadeOut(seq) : pinFadeIn());
   g.gain.cancelScheduledValues(now);
   // Hold whatever the ramp had reached, or a cancel mid-ramp jumps. The ramp
   // is scaled by the distance left, so an unmute that lands mid-fade takes
-  // its share of `fadeIn` rather than the whole of it from wherever it was.
+  // its share of the In rather than the whole of it from wherever it was.
   const from = g.gain.value, to = muted ? 0 : 1;
   g.gain.setValueAtTime(from, now);
   g.gain.linearRampToValueAtTime(to, now + ramp * Math.abs(to - from));
@@ -76,10 +76,10 @@ export function setCloudPlaying(seed, playing) {
     seed.playing         = true;
     seed._composerHold   = false;
     seed._releasingAt    = 0;
-    // The unmute rides the pin's own `fadeIn` (2026-09-16), resumed from the
-    // level the mute left it at rather than from silence: the attack is t³
-    // (grain.js), so the time already "spent" is fadeIn·∛gain.
-    const fi = seed.fadeIn || 0;
+    // The unmute rides the pins' In (Settings › Pins, pins.js pinFadeIn),
+    // resumed from the level the mute left it at rather than from silence: the
+    // attack is t³ (grain.js), so the time already "spent" is fadeIn·∛gain.
+    const fi = pinFadeIn();
     const cur = Math.max(0, Math.min(1, seed._envGainCurrent ?? 0));
     seed._envAttack      = fi;
     seed._plantedAt      = fi > 0 ? nowS - fi * Math.cbrt(cur) : nowS;
@@ -89,12 +89,12 @@ export function setCloudPlaying(seed, playing) {
 
   if (seed.playing === false || seed._composerHold) return false;   // already off
   // `_composerHold` is what grain.js reads to keep the slot rather than delete
-  // it when the release lands. With a `fadeOut` the mute IS that release,
+  // it when the release lands. With an Out the mute IS that release,
   // started now; grain.js flips `playing` to false at its end. With none it
   // stops scheduling now — grains already in flight finish their own
   // envelopes, so there is no click.
   seed._composerHold = true;
-  const fo = seed.fadeOut || 0;
+  const fo = pinFadeOut(seed);
   if (fo > 0) {
     seed._envRelease  = fo;
     seed._releasingAt = nowS;
@@ -242,7 +242,7 @@ export function syncParticleMarks() {
 export function isCommitOn(c) {
   if (!c) return false;
   // A cloud under a mute HOLD is off from the moment the mute lands, even while
-  // its `fadeOut` is still running (2026-09-16) — so applyMix() sees an unmute
+  // its Out is still running (2026-09-16) — so applyMix() sees an unmute
   // as a change and turns the ramp round, instead of skipping it as "already
   // on" because `playing` is still true for the length of the fade.
   return c.type === 'loop' ? !c.composerMuted : (c.playing !== false && !c._composerHold);

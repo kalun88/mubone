@@ -71,14 +71,17 @@ const SNAP = `JSON.stringify({
   comb: S.combAxis, keep: S.combKeep, 
   reads: S.lensReads,
   onEnd: S.traceMode,
-  wet: window.__wet(),  /* the tile's, not S's — tiles.js _tileCfg; unwatched 2026-09-07 → 09-13, so the switch read inert on every grain brush */
 })`;
 
+// THE SHEETS ARE VOICES' (2026-09-22): one tool per instrument, and the only
+// sheet a tool has is its VOICE's — the rows of VOICE_PIDS, opened from a
+// voice row on the instrument's tab. The nine tool pages this listed (pen,
+// wash, spray, comb, line, slice, looper, scrape, all) went with the shape
+// presets; the tabs' own rows and the cursor section write through the same
+// cabinet, and are the lens and palette suites' to drive. Rewritten at the
+// 5.6 release sweep (2026-09-23), when all nine had read "not in the rail".
 const TARGETS = [
-  ['tile', 'pen'], ['tile', 'wash'], ['tile', 'spray'], ['tile', 'comb'],
-  ['tile', 'line'], ['tile', 'slice'], ['tile', 'looper'],
-  ['tile', 'scrape'], ['tile', 'all'],
-  ['lens', 'wide'], ['lens', 'spot'],
+  ['voice', 'wash'], ['voice', 'glitch'], ['voice', 'verbatim'], ['voice', 'undertow'],
 ];
 // The radius-fade row is inert wherever NEAREST is on — initRadiusFade forces
 // it off, because nearest has no radius to fade against. That is a live state,
@@ -99,10 +102,30 @@ async function run(rig) {
 
   await rig.evaluate(new Function(`return (async () => {
     const { S } = await import('./js/state.js');
-    const { isWet, selectedTile } = await import('./js/tiles.js');
+    const T = await import('./js/tiles.js');
     const wait = ms => new Promise(r => setTimeout(r, ms));
-    window.__wet = () => { const t = selectedTile(); return t ? isWet(t.id) : null; };
     window.__snap = () => ${SNAP};
+    // A voice's sheet: its instrument's tab, then the row's door. The row
+    // itself TAKES the voice (and applies its block); the door opens the sheet.
+    window.__openVoice = async (name, take) => {
+      for (const eng of ['granular', 'tape']) {
+        T.setInstrument(eng); T.render(); await wait(150);
+        const find = () => [...document.querySelectorAll('#toolRail [data-voice]')]
+          .find(r => (r.querySelector('.tile-nm') || {}).textContent?.trim() === name);
+        const row = find();
+        if (!row) continue;
+        if (take) { row.click(); await wait(420); }
+        // A tab switch already points the drawer at the voice its instrument
+        // is on, and the door TOGGLES — so a second press would shut it.
+        const head = document.querySelector('#propRail .ds-head b');
+        if (document.body.classList.contains('prail-open') && head && head.textContent.trim() === name) return true;
+        const again = find() || row;
+        (again.querySelector('[data-more]') || again).click(); await wait(420);
+        if (!document.body.classList.contains('prail-open')) { (find() || again).click(); await wait(320); }
+        return true;
+      }
+      return false;
+    };
     window.__near = () => (S.lensMode === 'nearest');
     await wait(700);
     document.getElementById('tcTools').click();
@@ -116,22 +139,7 @@ async function run(rig) {
   for (const [kind, id] of TARGETS) {
     const res = await rig.evaluate(new Function(`return (async () => {
       const wait = ms => new Promise(r => setTimeout(r, ms));
-      const sel = ${JSON.stringify(kind)} === 'tile'
-        ? '#toolRail [data-tile="${id}"]' : '#toolRail [data-lens="${id}"]';
-      const row = document.querySelector(sel);
-      if (!row) return { missing: true };
-      // THE ... IS THE DOOR (docs/PALETTE-GUI.md § 5.3, 2026-09-11): a rail
-      // row has no click behaviour at all any more, so row.click() moved
-      // nothing and this loop audited one tile's sheet nine times over —
-      // every tile after the first reported its whole engine inert. The ...
-      // handle is the one gesture that points the drawer without firing.
-      // (No backticks in this comment: it lives inside a template literal.)
-      row.querySelector('[data-more]')?.click();
-      await wait(420);
-      if (!document.body.classList.contains('prail-open')) {
-        document.querySelector(sel)?.querySelector('[data-more]')?.click();
-        await wait(300);
-      }
+      if (!(await window.__openVoice(${JSON.stringify(id)}))) return { missing: true };
       const pr = document.getElementById('propRail');
       // A FOLDED section's rows are zero-width, and a control you cannot land
       // on cannot be proved to work. The fold is a disclosure, not a dead
@@ -159,7 +167,11 @@ async function run(rig) {
         const tr = pr.querySelectorAll('[data-ptrack]')[ti];
         if (!tr) break;
         nT++;
-        const pid = tr.dataset.ptrack, rect = tr.getBoundingClientRect();
+        const pid = tr.dataset.ptrack;
+        let rect = tr.getBoundingClientRect();
+        // The drawer may still be opening when a new instrument's sheet lands:
+        // give it one beat before calling a track zero-width.
+        if (rect.width < 4) { await wait(350); rect = (pr.querySelectorAll('[data-ptrack]')[ti] || tr).getBoundingClientRect(); }
         if (rect.width < 4) { inert.push(pid + ' (zero width)'); continue; }
         const before = window.__snap();
         let moved = false;
@@ -235,7 +247,7 @@ async function run(rig) {
       return { nT, nS, inert, inertSeg };
     })()`));
 
-    if (res.missing) { check(`${id} — page opens`, false, 'tool not in the rail'); continue; }
+    if (res.missing) { check(`${id} — page opens`, false, 'voice not on its tab'); continue; }
     tracks += res.nT; segs += res.nS;
     const deadT = res.inert;
     const deadS = res.inertSeg;
@@ -247,7 +259,9 @@ async function run(rig) {
 
   console.log(`\n§ B. coverage`);
   check('every engine page rendered at least one control', tracks + segs > 0);
-  check(`${tracks} tracks and ${segs} choices exercised`, tracks >= 50 && segs >= 30,
+  // Four voice sheets since 2026-09-23 (two grain at 13 + 4, two tape at 3 + 2);
+  // the floor sits just under that, so a sheet that stops rendering rows fails.
+  check(`${tracks} tracks and ${segs} choices exercised`, tracks >= 30 && segs >= 11,
         `got ${tracks}/${segs} — a page may have stopped rendering rows`);
 
   // ── B2. the ± spread has a control of its own ────────────────────────────
@@ -262,14 +276,8 @@ async function run(rig) {
   const spr = await rig.evaluate(new Function(`return (async () => {
     const { S } = await import('./js/state.js');
     const wait = ms => new Promise(r => setTimeout(r, ms));
-    // The rail's own road, the one § A uses: the row's ⋯ opens its drawer.
-    const sel = '#toolRail [data-tile="pen"]';
-    document.querySelector(sel)?.querySelector('[data-more]')?.click();
-    await wait(420);
-    if (!document.body.classList.contains('prail-open')) {
-      document.querySelector(sel)?.querySelector('[data-more]')?.click();
-      await wait(400);
-    }
+    // The rail's own road, the one § A uses: a grain voice's sheet.
+    await window.__openVoice('wash');
     const pr = document.getElementById('propRail');
     for (const f of [...pr.querySelectorAll('[data-fold][aria-expanded="false"]')]) { f.click(); await wait(200); }
     const spread = pr.querySelector('[data-pval="durVar"]');
@@ -419,7 +427,7 @@ async function run(rig) {
   check('at the limit it says what to do, in a box with real size',
         /sweep/.test(budget.full.text) && budget.full.shown && budget.full.w > 0,
         JSON.stringify(budget.full));
-  console.log('\n§ D. a grain tile owns its whole block');
+  console.log('\n§ D. a voice owns its whole block');
   // "If I see that slider in that position, it's set" (Ek, 2026-09-03).
   // Factory grain tiles used to apply NOTHING to the sound on arming — pen's
   // sheet showed whatever the last tool left in the live block — and their
@@ -436,27 +444,31 @@ async function run(rig) {
     // "Arming" is gone; what this needs is the tile's block in the live
     // controls, which is what pointing the DRAWER at it does (tiles.js
     // pickTile applies the block — the sheet's tile owns it).
-    const arm = async id => { document.querySelector('#toolRail [data-tile="' + id + '"] [data-more]')?.click(); await wait(520); };
-    await arm('spray');
-    await arm('pen');
+    // TAKING a voice applies its block (tiles.js), which is what arming a tile
+    // did before voices; the edited one is on disk under LS_VOICES
+    // (tiles.js — the key is still mubone_sounds).
+    const arm = async name => { await window.__openVoice(name, true); await wait(300); };
+    await arm('glitch');
+    await arm('wash');
     const el = document.getElementById('gcPitchShiftSlider');
     const target = String(el.value) === String(el.min) ? el.max : el.min;
     el.value = target;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     await wait(700);                      // the 10 Hz poll + the 250 ms capture
     const sprayEdited = block();
-    await arm('spray');
+    await arm('glitch');
     const spray = block();
-    await arm('pen');
+    await arm('wash');
     const sprayAgain = block();
     let stored = null;
-    try { stored = JSON.parse(localStorage.getItem('mubone_tiles') || '{}').pen?.params?.pitch ?? null; } catch (_) {}
+    try { const v = JSON.parse(localStorage.getItem('mubone_sounds') || '{}').v || {};
+          stored = Object.values(v).find(x => x.name === 'wash')?.params?.pitch ?? null; } catch (_) {}
     return { moved: sprayEdited !== spray, remembered: sprayAgain === sprayEdited,
              stored: String(stored) === String(target), storedVal: stored, target };
   })()`));
-  check('arming another grain tile changes the sound block to that tile\'s', own.moved);
-  check('arming the edited tile brings its edit back', own.remembered);
-  check('a pot-path edit is on disk under the tile', own.stored, `stored ${own.storedVal}, wanted ${own.target}`);
+  check('taking another grain voice changes the sound block to that voice\'s', own.moved);
+  check('taking the edited voice brings its edit back', own.remembered);
+  check('a pot-path edit is on disk under the voice', own.stored, `stored ${own.storedVal}, wanted ${own.target}`);
 
   check('no renderer errors after exercise', rig.errors().length === 0, rig.errors().join(' | '));
 

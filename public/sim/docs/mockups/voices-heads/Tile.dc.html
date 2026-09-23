@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fifty-three pixels, three ways</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0b0a09;font-family:'Urbanist','Inter','Helvetica Neue',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#e8a030}a:hover{color:#f2b95c}
+.col{display:flex;flex-direction:column;gap:14px;width:288px}
+.opt{font-size:10.24px;letter-spacing:0.18em;text-transform:uppercase;color:#aba59d}
+.bed{display:flex;gap:11px;padding:13px;border-radius:12px;background:#121010;border:1px solid rgba(255,240,224,0.080);width:fit-content}
+.cell{display:flex;flex-direction:column;align-items:center;gap:6px}
+.tile{width:53px;height:53px;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:1px solid rgba(255,240,224,0.170);background:rgba(255,240,224,0.030);border-radius:10px;position:relative}
+.vtag{font-size:9px;letter-spacing:0.06em;line-height:1;color:#aba59d}
+.cap{height:15px;min-width:17px;padding:0 4px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border-radius:3px;border:1px solid rgba(255,240,224,0.130);font-size:9.5px;color:#938d83}
+.leg{height:15px;display:flex;align-items:center;justify-content:center;font-size:9.5px;color:#aba59d}
+.corner{position:absolute;top:3px;right:4px;font-size:8.5px;color:#776f66;line-height:1}
+.note{font-size:11.04px;color:#857e74;line-height:1.55}
+</style>
+</helmet>
+<div style="width: 1000px; height: 440px; box-sizing: border-box; padding: 26px 30px; display: flex; flex-direction: column; gap: 20px; background: #0b0a09;">
+
+  <div style="display: flex; flex-direction: column; gap: 3px;">
+    <div style="font-size: 15.68px; color: #e4ddd0; font-weight: 600;">Fifty-three pixels have to say &#8220;scatter, with the wash voice&#8221;</div>
+    <div style="font-size: 12.48px; color: #938d83;">The glyph is the head and the hue is the engine. The open question is where the voice goes.</div>
+  </div>
+
+  <div style="display: flex; gap: 40px;">
+
+    <div class="col">
+      <span class="opt">a &#8212; tag inside</span>
+      <div class="bed">
+        <div class="cell">
+          <div class="tile">
+            <span style="display: flex; width: 20px; height: 20px; color: #e8a030;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="10" cy="12" r="3.2"/><circle cx="16" cy="8" r="1.6"/><circle cx="17.5" cy="13.5" r="1.1"/><circle cx="14.5" cy="17" r="1.3"/><circle cx="6" cy="7.5" r="1.2"/><circle cx="5.5" cy="16.5" r=".9"/><circle cx="20" cy="10.5" r=".7"/><circle cx="12" cy="5.5" r=".8"/></svg></span>
+            <span class="vtag">wash</span>
+          </div>
+          <span class="cap">1</span>
+        </div>
+        <div class="cell">
+          <div class="tile">
+            <span style="display: flex; width: 20px; height: 20px; color: #e8a030;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="5" cy="4" r="2.1"/><circle cx="6.9" cy="12.7" r="2.1"/><circle cx="11.9" cy="18" r="2.1"/><circle cx="20" cy="20" r="2.1"/></svg></span>
+            <span class="vtag">click</span>
+          </div>
+          <span class="cap">2</span>
+        </div>
+        <div class="cell">
+          <div class="tile">
+            <span style="display: flex; width: 20px; height: 20px; color: #f2569e;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+            <span class="vtag">slow</span>
+          </div>
+          <span class="cap">3</span>
+        </div>
+      </div>
+      <span class="note">Everything in one cell, legend still the key. Costs the glyph two pixels and the voice four characters &#8212; &#8220;slow swell&#8221; cannot fit.</span>
+    </div>
+
+    <div class="col">
+      <span class="opt">b &#8212; voice in the legend</span>
+      <div class="bed">
+        <div class="cell">
+          <div class="tile">
+            <span style="display: flex; width: 26px; height: 26px; color: #e8a030;"><svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><circle cx="10" cy="12" r="3.2"/><circle cx="16" cy="8" r="1.6"/><circle cx="17.5" cy="13.5" r="1.1"/><circle cx="14.5" cy="17" r="1.3"/><circle cx="6" cy="7.5" r="1.2"/><circle cx="5.5" cy="16.5" r=".9"/><circle cx="20" cy="10.5" r=".7"/><circle cx="12" cy="5.5" r=".8"/></svg></span>
+            <span class="corner">1</span>
+          </div>
+          <span class="leg">wash</span>
+        </div>
+        <div class="cell">
+          <div class="tile">
+            <span style="display: flex; width: 26px; height: 26px; color: #e8a030;"><svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><circle cx="5" cy="4" r="2.1"/><circle cx="6.9" cy="12.7" r="2.1"/><circle cx="11.9" cy="18" r="2.1"/><circle cx="20" cy="20" r="2.1"/></svg></span>
+            <span class="corner">2</span>
+          </div>
+          <span class="leg">click</span>
+        </div>
+        <div class="cell">
+          <div class="tile">
+            <span style="display: flex; width: 26px; height: 26px; color: #f2569e;"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+            <span class="corner">3</span>
+          </div>
+          <span class="leg">slow swell</span>
+        </div>
+      </div>
+      <span class="note">The glyph gets the whole cell back and the voice gets a full word. Costs the legend row, which today is the binding &#8212; the key moves to a corner.</span>
+    </div>
+
+    <div class="col">
+      <span class="opt">c &#8212; you name the pair</span>
+      <div class="bed">
+        <div class="cell">
+          <div class="tile">
+            <span style="display: flex; width: 20px; height: 20px; color: #e8a030;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="10" cy="12" r="3.2"/><circle cx="16" cy="8" r="1.6"/><circle cx="17.5" cy="13.5" r="1.1"/><circle cx="14.5" cy="17" r="1.3"/><circle cx="6" cy="7.5" r="1.2"/><circle cx="5.5" cy="16.5" r=".9"/><circle cx="20" cy="10.5" r=".7"/><circle cx="12" cy="5.5" r=".8"/></svg></span>
+            <span class="vtag" style="color: #e4ddd0;">mist</span>
+          </div>
+          <span class="cap">1</span>
+        </div>
+        <div class="cell">
+          <div class="tile">
+            <span style="display: flex; width: 20px; height: 20px; color: #e8a030;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="5" cy="4" r="2.1"/><circle cx="6.9" cy="12.7" r="2.1"/><circle cx="11.9" cy="18" r="2.1"/><circle cx="20" cy="20" r="2.1"/></svg></span>
+            <span class="vtag" style="color: #e4ddd0;">tick</span>
+          </div>
+          <span class="cap">2</span>
+        </div>
+        <div class="cell">
+          <div class="tile">
+            <span style="display: flex; width: 20px; height: 20px; color: #f2569e;"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span>
+            <span class="vtag" style="color: #e4ddd0;">drag</span>
+          </div>
+          <span class="cap">3</span>
+        </div>
+      </div>
+      <span class="note">The tile reads like an instrument you built. Costs a naming step at every drop, and the strip stops saying which head it is holding.</span>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1000,"height":440}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

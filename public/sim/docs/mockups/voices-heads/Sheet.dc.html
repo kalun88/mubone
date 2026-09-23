@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The engine sheet</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0b0a09;font-family:'Urbanist','Inter','Helvetica Neue',Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#e8a030}a:hover{color:#f2b95c}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;text-align:left;cursor:pointer}
+.sec{font-size:10.24px;letter-spacing:0.18em;text-transform:uppercase;color:#aba59d}
+.prow{display:flex;align-items:center;gap:10px;height:28px}
+.plab{width:76px;flex-shrink:0;font-size:12.48px;color:#aba59d}
+.ptrk{flex-grow:1;height:4px;border-radius:2px;background:rgba(255,240,224,0.110);overflow:hidden}
+.pfil{height:100%;background:#e8a030;border-radius:2px}
+.pval{width:56px;flex-shrink:0;text-align:right;font-size:12.48px;color:#c5c0b9}
+</style>
+</helmet>
+<div style="width: 420px; height: 900px; box-sizing: border-box; padding: 24px 20px; display: flex; flex-direction: column; gap: 16px; background: #0b0a09;">
+
+  <div style="display: flex; flex-direction: column; gap: 3px;">
+    <div style="font-size: 15.68px; color: #e4ddd0; font-weight: 600;">The sheet, in three sections</div>
+    <div style="font-size: 12.48px; color: #938d83;">The same twenty-nine rows, sorted by which question they answer.</div>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 10px; padding: 11px 13px; border-radius: 12px; background: #121010; border: 1px solid rgba(255,240,224,0.080);">
+    <span style="display: flex; width: 20px; height: 20px; color: #e8a030;"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true"><circle cx="10" cy="12" r="3.2"/><circle cx="16" cy="8" r="1.6"/><circle cx="17.5" cy="13.5" r="1.1"/><circle cx="14.5" cy="17" r="1.3"/><circle cx="6" cy="7.5" r="1.2"/><circle cx="5.5" cy="16.5" r=".9"/><circle cx="20" cy="10.5" r=".7"/><circle cx="12" cy="5.5" r=".8"/></svg></span>
+    <span style="font-size: 13.5px; color: #e4ddd0; font-weight: 500;">scatter</span>
+    <span style="font-size: 12.48px; color: #776f66;">&#183;</span>
+    <span style="font-size: 13.5px; color: #e8a030; font-weight: 500;">wash</span>
+    <span style="flex-grow: 1;"></span>
+    <span style="font-size: 10.24px; letter-spacing: 0.14em; text-transform: uppercase; color: #857e74;">grain</span>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 6px;">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <span class="sec">sound &#8212; the voice</span>
+      <span style="flex-grow: 1; height: 1px; background: rgba(255,240,224,0.055);"></span>
+      <button type="button" style="display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 3px; background: rgba(255,240,224,0.065); font-size: 10.24px; letter-spacing: 0.1em; text-transform: uppercase; color: #c5c0b9;" aria-label="Save these values as a new voice">
+        <span style="font-size: 13px; line-height: 1;">+</span><span>new voice</span>
+      </button>
+    </div>
+    <div style="display: flex; flex-direction: column;">
+      <div class="prow"><span class="plab">duration</span><span class="ptrk"><span class="pfil" style="width: 62%;"></span></span><span class="pval">400 ms</span></div>
+      <div class="prow"><span class="plab">period</span><span class="ptrk"><span class="pfil" style="width: 22%;"></span></span><span class="pval">15 ms</span></div>
+      <div class="prow"><span class="plab">taper</span><span class="ptrk"><span class="pfil" style="width: 50%;"></span></span><span class="pval">50%</span></div>
+      <div class="prow"><span class="plab">offset &#177;</span><span class="ptrk"><span class="pfil" style="width: 58%;"></span></span><span class="pval">400 ms</span></div>
+      <div class="prow"><span class="plab">pitch</span><span class="ptrk"><span class="pfil" style="width: 50%;"></span></span><span class="pval">0</span></div>
+      <div class="prow"><span class="plab">lpf</span><span class="ptrk"><span class="pfil" style="width: 44%;"></span></span><span class="pval">6k</span></div>
+      <div class="prow"><span class="plab">spread</span><span class="ptrk"><span class="pfil" style="width: 90%;"></span></span><span class="pval">90%</span></div>
+      <div class="prow"><span class="plab">vol</span><span class="ptrk"><span class="pfil" style="width: 50%;"></span></span><span class="pval">0.5</span></div>
+      <div style="height: 22px; display: flex; align-items: center; font-size: 11.04px; color: #776f66;">&#8230; twelve more</div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 6px;">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <span class="sec">deposit &#8212; the head</span>
+      <span style="flex-grow: 1; height: 1px; background: rgba(255,240,224,0.055);"></span>
+    </div>
+    <div style="display: flex; flex-direction: column;">
+      <div class="prow"><span class="plab">rate</span><span class="ptrk"><span class="pfil" style="width: 40%;"></span></span><span class="pval">50/s</span></div>
+      <div class="prow"><span class="plab">width</span><span class="ptrk"><span class="pfil" style="width: 12%;"></span></span><span class="pval">2&#176;</span></div>
+      <div class="prow"><span class="plab">spread</span><span class="ptrk"><span class="pfil" style="width: 25%;"></span></span><span class="pval">0.10</span></div>
+      <div class="prow"><span class="plab">throw</span><span class="ptrk"><span class="pfil" style="width: 30%;"></span></span><span class="pval">0.06</span></div>
+    </div>
+    <div style="font-size: 11.04px; color: #857e74; line-height: 1.5;">Rate and width belong to every head. The last two are scatter&#8217;s own.</div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <span class="sec">on end &#8212; keeps</span>
+      <span style="flex-grow: 1; height: 1px; background: rgba(255,240,224,0.055);"></span>
+    </div>
+    <div style="display: flex; gap: 0; padding: 3px; border-radius: 999px; background: rgba(255,240,224,0.050); width: fit-content;">
+      <span style="padding: 6px 16px; border-radius: 999px; font-size: 12.48px; color: #776f66;">no</span>
+      <span style="padding: 6px 16px; border-radius: 999px; font-size: 12.48px; color: #0b0a09; background: #e8a030; font-weight: 600;">loop</span>
+      <span style="padding: 6px 16px; border-radius: 999px; font-size: 12.48px; color: #776f66;">join</span>
+    </div>
+    <div style="font-size: 11.04px; color: #857e74; line-height: 1.5;">no &#8212; it stays as material.&#160;&#160;loop &#8212; it pins itself and sings.&#160;&#160;join &#8212; it enters the nearest running loop.</div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+  <div style="font-size: 11.04px; color: #857e74; line-height: 1.6;">Open this sheet and the voice is live: every stroke you painted with <span style="color: #e8a030;">wash</span> follows these rows. Want one frozen? Duplicate the voice.</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":420,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -61,14 +61,12 @@ export function updateGestureMorph() {
   const morphTargets = [];
 
   if (S.commitPlayback === 'focus' && S.commitXfade > 0.001) {
-    const radiusGated = !S.commitTether;
-    const gateRadRad = radiusGated ? (S.searchRadiusDeg * Math.PI / 180) : Infinity;
+    // No radius gate (2026-09-22 night, with tether): every cloud is a target.
     const seedDists = [];
     for (let i = 0; i < S.commitSlotCount; i++) {
       const seed = S.commitSlots[i];
       if (!seed || seed.type !== 'cloud') continue;
       const dist = angleBetweenSphere(seed.lon, seed.lat, cursorLon, cursorLat);
-      if (radiusGated && dist > gateRadRad) continue;
       seedDists.push({ seed, dist });
     }
     if (seedDists.length === 0) return;

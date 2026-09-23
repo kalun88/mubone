@@ -46,11 +46,11 @@ const ACTIONS = [
   // ONE ROW PER POSITION (docs/PALETTE-GUI.md § 1). A POSITION is a button and
   // this is where it is bound, whatever sits there today — the performer
   // designs the palette first and maps to positions after (Ek). Every key on
-  // a position is an explicit row in the key map — seeded from the factory
-  // set once, the next free digit given on a drop — and it FOLLOWS ITS TILE
-  // when the strip is rearranged (S._paletteReordered, 2026-09-12). The
-  // SPACEBAR and the sphere's left-click are the HAND's (tiles.js) and are
-  // learnable onto nothing.
+  // a position is an explicit row in the key map, seeded from the factory set
+  // once. (It used to FOLLOW ITS TILE when the strip was rearranged; the strip
+  // has been a fixed toolbar since 2026-09-22, so a position holds one tile
+  // for good and there is nothing to follow.) The SPACEBAR and the sphere's
+  // left-click are the HAND's (tiles.js) and are learnable onto nothing.
   //
   // `type`, `fmt` and `tip` are GETTERS because the tile's VERB decides them
   // and the verb is set in the tile's drawer at any time: a momentary tile is
@@ -101,8 +101,6 @@ const ACTIONS = [
     get type() { return S._paletteType?.(9) ?? 'trigger'; },
     get fmt()  { return this.type === 'hold' ? 'int 0|1' : 'bang'; },
     get tip()  { return S._paletteTip?.(9) ?? 'position 9'; } },
-  { id: 'wet_toggle', label: 'wet paint (toggle)', key: '—', osc: '/palette/wet', fmt: 'int 0|1, bang=toggle', type: 'trigger',
-    tip: 'wet on/off for the brush in the hand — the switch in its sheet head. A wet brush\'s knobs keep moving every stroke it painted; off dries them where they sound' },
 
   // ── Source / sampler (#247 — the chain is source → brush → lens) ──────────
   // ── Recording ─────────────────────────────────────────────────────────────
@@ -143,8 +141,8 @@ const ACTIONS = [
     tip: 'erase everything — all particles, commits, and recordings' },
   // ── Search ─────────────────────────────────────────────────────────────────
   { id: null, group: 'lens' },
-  { id: 'snap',         label: 'lens mode · nearest / area (toggle)', key: 'N',                 osc: '/search/scope',   fmt: 'int 0|1',          type: 'trigger',
-    tip: 'the installed lens\'s mode — nearest: the k closest marks on the whole sphere / area: within the radius and depth' },
+  { id: 'snap',         label: 'cursor mode · nearest / radius (toggle)', key: 'N',                 osc: '/search/scope',   fmt: 'int 0|1',          type: 'trigger',
+    tip: 'the cursor\'s mode — nearest: the k closest marks on the whole sphere / radius: within the radius and depth' },
   { id: 'k_all',        label: 'fill · all / k (toggle)',              key: '—',                 osc: '/search/fill',    fmt: 'int 0|1',          type: 'trigger',
     tip: 'fill — all: fire every particle in radius / k: cap to k nearest (area mode only)' },
   { id: 'k_seq',        label: 'order · step / random (toggle)',       key: '—',                 osc: '/search/order',   fmt: 'int 0|1',          type: 'trigger',
@@ -273,8 +271,8 @@ const ACTIONS = [
 
   // ── Cursor / Scan (S) ─────────────────────────────────────────────────────
   { id: null, group: 'cursor' },
-  { id: 'scan_toggle',  label: 'lens off (toggle)',               key: 'S',                 osc: '/cursor/scan',       fmt: 'int 0|1',          type: 'trigger',
-    tip: 'no lens on: the cursor reads nothing (the cap). Again, the same lens is back on. S by default; a lens tile tapped when on does the same' },
+  { id: 'scan_toggle',  label: 'cursor off (toggle)',             key: 'S',                 osc: '/cursor/scan',       fmt: 'int 0|1',          type: 'trigger',
+    tip: 'cursor off: it reads nothing (the cap). Again, and it is back on. S by default; the cursor tile tapped when on does the same' },
   { id: 'tare',         label: 'zero',                   key: '`',                 osc: '/cursor/tare',       fmt: 'bang',             type: 'trigger',
     tip: 'zero the cursor — in sensor mode the current heading becomes the centre; in pull and point the camera goes back to the front. The footer\'s ZERO button' },
   { id: 'az_source',    label: 'azimuth source (cycle)',       key: '—',                 osc: '/cursor/az_source',  fmt: 'bang=cycle, str=set (sensor|locked|mapped)', type: 'trigger',
@@ -295,10 +293,19 @@ const ACTIONS = [
     tip: 'hold =: while painting the loop grows to the release; otherwise a cloud path is drawn — release to pin it' },
   { id: 'commit_release', label: 'unpin',               key: '−',                 osc: '/commit/release',  fmt: 'bang',             type: 'trigger',
     tip: 'unpin the selected pin, cloud or loop — nearest, farthest or oldest is Settings → Pins' },
+  // THE HAND IS TWO ACTIONS, one per press kind (Ek, 2026-09-22: "we already
+  // have the entire mechanism for different press types for everything except
+  // space bar, it should go thru the same determiner"). They are RESERVED — the
+  // spacebar and the sphere's click are theirs and cannot be learned onto
+  // anything else — but they are ordinary ACTIONS, read by the ordinary
+  // recogniser, so the press fires on the DOWN with no latency and a long that
+  // follows aborts what the press started (`_abortPress`) before firing.
+  { id: 'hand_press',      label: 'hand: press',     key: '␣', osc: '/hand/press', fmt: 'bang',   type: 'trigger',
+    tip: 'play the tool on the first hand tile — a press latches it, and the next press lets it go' },
+  { id: 'hand_long',       label: 'hand: long',      key: '␣ long', osc: '/hand/long', fmt: 'int 0|1', type: 'hold',
+    tip: 'play the tool on the second hand tile for as long as you hold. It takes back whatever the press had started' },
   { id: 'pins_mute',       label: 'mute pins',       key: '—', osc: '/pins/mute',      fmt: 'int 0|1', type: 'hold',
     tip: 'silence every pin, and let it back on the next press — your per-pin mutes and solos survive the round trip. 1 mutes, 0 lets back, no value flips it' },
-  { id: 'pins_unmute_all', label: 'unmute all pins', key: '—', osc: '/pins/unmuteall', fmt: 'bang', type: 'trigger',
-    tip: 'bring every pin back — clears every mute and solo, on the groups and on each pin' },
   { id: 'commit_clear', label: 'unpin all',                 key: '—',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
     tip: 'unpin every cloud and loop — the pinned rail\'s UNPIN ALL' },
   { id: 'commit_selection', label: 'selected pin · nearest / oldest (toggle)', key: '—',               osc: '/commit/selection', fmt: 'bang=toggle, str=set (nearest|oldest)',                 type: 'trigger',
@@ -328,10 +335,11 @@ const ACTIONS = [
     tip: 'fade-out duration for loops when released — 0ms instant, up to 2000ms',
     range: { min: 0, max: 2000, unit: 'ms', int: true },
     ccFn: v => { S.loopFadeTimeMs = Math.round((v / 127) * 2000); const sl = document.getElementById('loopFadeTimeSlider'); if (sl) sl.value = S.loopFadeTimeMs; const nb = document.getElementById('loopFadeTimeNum'); if (nb) nb.value = S.loopFadeTimeMs < 1000 ? S.loopFadeTimeMs + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; } },
-  { id: 'commit_blend', label: 'pin blend · all / focus (toggle)',         key: '—',                 osc: '/commit/blend',    fmt: 'bang=toggle, str=set (focus|all)',             type: 'trigger',
-    tip: 'all = equal weight, focus = distance-weighted blend toward closest' },
-  { id: 'commit_tether', label: 'pin tether (toggle)',            key: '—',                 osc: '/commit/tether',   fmt: 'int 0|1',          type: 'trigger',
-    tip: 'on = commit always plays regardless of cursor distance, off = radius-gated' },
+  // FOLLOW (2026-09-22 night) — `commit_blend`'s all / focus, drawn and named as
+  // the yes/no it is: on, the faders follow the cursor. `commit_tether` is
+  // retired with it: a pin is never gated by the lens radius.
+  { id: 'pins_follow',  label: 'pins follow the cursor (toggle)', key: '—',                osc: '/pins/follow',     fmt: 'bang=toggle, str=set (on|off)',                type: 'trigger',
+    tip: 'on = the nearest pin is loudest and the rest hand over by distance, off = every pin at full' },
   { id: 'commit_xfade', label: 'pin xfade',              key: '—',                 osc: '/commit/xfade',    type: 'cc',
     tip: '0 = hard snap to nearest commit, 1 = smooth distance-weighted crossfade',
     range: { min: 0, max: 1 },
@@ -451,9 +459,10 @@ let keyLearningId = null;
 const _RENAMED_IDS = {
   belt_2: 'palette_1', belt_3: 'palette_2', belt_4: 'palette_3', belt_5: 'palette_4',
   belt_3_hold: 'palette_2_hold', belt_4_hold: 'palette_3_hold', belt_5_hold: 'palette_4_hold',
-  erase_brush: 'palette_4_hold'
+  erase_brush: 'palette_4_hold',
+  commit_blend: 'pins_follow',   // 2026-09-22 night: blend all / focus became the follow switch
 };
-const _RETIRED_IDS = ['belt_1', 'erase_toggle', 'trace_trigger', 'commit_mode', 'commit_volume', 'commit_speed', 'perf', 'perfmode', 'darkmode', 'projector', 'camera_mode', 'spatial_panning'];
+const _RETIRED_IDS = ['belt_1', 'erase_toggle', 'trace_trigger', 'commit_mode', 'commit_volume', 'commit_speed', 'perf', 'perfmode', 'darkmode', 'projector', 'camera_mode', 'spatial_panning', 'commit_tether', 'pins_unmute_all'];
 function _migrateIds(map) {
   let n = 0;
   for (const [was, now] of Object.entries(_RENAMED_IDS)) {
@@ -545,8 +554,16 @@ function loadKeyMappings() {
     const saved = localStorage.getItem('mubone_key_map');
     if (saved) keyMappings = JSON.parse(saved);
     let dirty = _migrateIds(keyMappings);
-    // The spacebar is the hand's (2026-09-12): a row on it is not a binding.
-    for (const [id, km] of Object.entries(keyMappings)) if (km && km.type === 'key' && km.code === 'Space') { delete keyMappings[id]; dirty = true; }
+    // A IS THE BENCH'S and stays reserved (2026-09-21): a row on it is not a
+    // binding, and it is swept on every load so a stored one cannot outlive
+    // the reservation. THE SPACEBAR IS NOT RESERVED ANY MORE (Ek, 2026-09-22:
+    // "i should be able to now use spacebar as a keybind option"). It is an
+    // ordinary key that the HAND happens to hold at factory, learnable onto
+    // anything and stealable from the hand by the one-gesture-one-action rule
+    // below — which only works because the hand's rows live in this map now
+    // rather than in a reservation the steal cannot reach.
+    const RESERVED_KEYS = new Set(['KeyA']);
+    for (const [id, km] of Object.entries(keyMappings)) if (km && km.type === 'key' && RESERVED_KEYS.has(km.code)) { delete keyMappings[id]; dirty = true; }
     if (dirty) saveKeyMappings();
   } catch(e) { keyMappings = {}; }
 }
@@ -558,47 +575,92 @@ function loadKeyMappings() {
 // read it straight off the keyboard), so a tile dragged from 1 to 4 answered
 // to 4, and a key learned onto position 1 stayed with position 1. Now every
 // palette key is an explicit row in this map, seeded once from the factory
-// digits, and `S._paletteReordered` carries the three maps along with every
-// place, move and remove — so what a tile answers to is a property of the
-// tile on the strip. A tile that ARRIVES takes the next free digit (Ek,
-// 2026-09-12, afternoon: "the palette bar should auto assign based on the
+// digits. (A carrier moved every binding when a tile was placed, moved or
+// removed, and an arrival took the next free digit; both went with the drag on
+// 2026-09-22 — a fixed strip has no arrivals.) The reversal that got us here
+// (Ek, 2026-09-12, afternoon: "the palette bar should auto assign based on the
 // next number up that's available when a tool is dragged in" — reversing the
 // morning's "don't auto find a key"; the key then stays with the tile
 // wherever it is moved). `{ type: 'none' }` — a removed factory digit — has
 // nothing to remove any more and is dropped: an unbound row is just unbound.
 //
-// THE SPACEBAR IS THE HAND'S (tiles.js, 2026-09-12) and cannot be a binding:
-// the learn refuses it (BLOCKED_KEYS) and loadKeyMappings drops any stored
-// row on it — the morning's factory seed put it on line and pen.
+// THE SPACEBAR IS THE HAND'S AT FACTORY (2026-09-12) and is an ordinary
+// learnable key since 2026-09-22 — the hand holds it through a seeded row like
+// any other binding, and learning it elsewhere takes it off the hand.
 const _PALETTE_DIGITS_KEY = 'mubone_palette_digits';
-const _PALETTE_DIGITS_V   = '2026-09-12d';
+// Bumped for the FIXED STRIP (2026-09-22d). The re-deal below wipes every
+// `palette_N` row in all three maps and deals them again BY TILE, so a key
+// lands on whichever position holds its tool. `c` for the lens and `e` for
+// erase keep their positions; `t` and `g` were dealt for one build on 22c and
+// are withdrawn — the two tools are the HAND's sides, not palette positions,
+// and a letter for them would be a second key for the spacebar. `palette_5..9`
+// cease to exist and their rows go with the wipe.
+const _PALETTE_DIGITS_V   = '2026-09-22d';
 const _keyRow = (key, code, g = 'press') => ({ type: 'key', key, code, shift: false, ctrl: false, meta: false, g });
 function _digitRow(d) { return _keyRow(String(d), `Digit${d}`); }
-// THE FACTORY KEYS, by TILE, for the factory strip in tiles.js
-// DEFAULT_PALETTE (Ek, 2026-09-12): 1 … 5 for the wide lens, wash, overdub,
-// line and pen — the digits a drop would have given them, in order; ↑ unpins
-// and ↓ pins. Seeded onto whichever POSITION holds that tile, so a profile
-// with its own order still gets 4 on line; a tile the factory does not name,
-// or a second copy of one it does, takes the next free digit like a drop.
-// THE FACTORY STRIP (Ek, 2026-09-12, night) — tiles.js DEFAULT_PALETTE is the
-// same list; keep them in step. Dots and line SHARE the 1 key: line is its
-// press (a toggle, on the down edge, never delayed) and dots its long (a
-// momentary, both edges) — the button-1 rule on a key.
-const PALETTE_FACTORY_ORDER = ['pen', 'line', 'looper', 'overdub', 'scrape', 'pin', 'unpin'];
+// THE FACTORY STRIP (Ek, 2026-09-22) — tiles.js DEFAULT_PALETTE is the same
+// list; keep them in step. The two tools you PLAY left the strip for the HAND:
+// "the first spacebar hand is line default. the second spacebar hold is dots
+// default, next quick access, cursor wide keylearn to c, pin and unpin key down
+// and up respectively." Line and dots used to SHARE the 1 key by the button-1
+// rule — line its press, dots its long — which is exactly what the hand's two
+// tiles are, so the sharing is no longer a trick played with one digit: it is
+// the recogniser, on the spacebar, with a tool in each hand (HAND_FACTORY_KEYS).
+//
+// What is left on the strip is quick access, and each position is a thing you
+// reach for mid-phrase: the lens on `c`, then the two pin acts on the
+// arrows the hand can find without looking. Seeded onto whichever POSITION
+// holds that tile, so a profile with its own order still gets `c` on the
+// lens; a tile the factory does not name takes the next free digit like a drop.
+// 2026-09-22: the three tools took their instruments' names, ids and all —
+// `line` → `tape`, `pen` → `granular`, `scrape` → `erase`. Keep this list in
+// step with tiles.js DEFAULT_PALETTE; they had drifted once already.
+const PALETTE_FACTORY_ORDER = ['lens', 'erase', 'pin', 'unpin'];
 const PALETTE_FACTORY_ENTRIES = [
-  { id: 'pen', verb: 'momentary' }, { id: 'line', verb: 'toggle' }, { id: 'looper', verb: 'toggle' }, { id: 'overdub', verb: 'toggle' },
-  { id: 'scrape', verb: 'momentary' }, { id: 'pin', verb: 'bang' }, { id: 'unpin', verb: 'bang' },
+  { id: 'lens', verb: 'toggle' }, { id: 'erase', verb: 'momentary' },
+  { id: 'pin', verb: 'momentary' }, { id: 'unpin', verb: 'bang' },   // pin momentary by factory, 2026-09-23
 ];
 const PALETTE_FACTORY_KEYS = {
-  pen: _keyRow('1', 'Digit1', 'long'), line: _digitRow(1), looper: _digitRow(2), overdub: _digitRow(3), scrape: _digitRow(4),
+  // THE LETTER NAMES THE TOOL — `c` cursor, `e` erase, the arrows for the pin
+  // pair. The two TOOLS are not here: they are the hand's two sides, played by
+  // the spacebar's press and hold, and a `t`/`g` pair beside them would be a
+  // second key for the same thing.
+  // A LENS IS A LEGAL POSITION (verbsOf.lens: momentary | toggle, def toggle).
+  // Its toggle press is `lensTap`: `c` is the cap, no lens on, which is the
+  // one gesture that stops the cursor reading without leaving the phrase — and
+  // `c` again brings the eye back. ONE lens since 2026-09-22 night; `wide` was
+  // its id before.
+  lens: _keyRow('c', 'KeyC'),
+  erase: _keyRow('e', 'KeyE'),
   pin: _keyRow('↓', 'ArrowDown'), unpin: _keyRow('↑', 'ArrowUp')
 };
+// THE HAND'S TWO TOOLS AT FACTORY. Written whole, as tiles.js stores it since
+// 2026-09-22: tape on the press, grain on the hold — and since that evening
+// the ids ARE the instruments' names, so this list reads as what it means.
+const HAND_FACTORY = { press: 'tape', long: 'granular' };
 const _sameKey = (a, b) => a && b && a.type === 'key' && b.type === 'key' && a.code === b.code && !!a.shift === !!b.shift && !!a.ctrl === !!b.ctrl && !!a.meta === !!b.meta && (a.g || 'press') === (b.g || 'press');
 /** The lowest digit 1–9 no key row uses (unmodified, any gesture), or null. */
 function _freeDigit() {
   const used = new Set(Object.values(keyMappings).filter(m => m && m.type === 'key' && !m.shift && !m.ctrl && !m.meta).map(m => m.code));
   for (let d = 1; d <= 9; d++) if (!used.has(`Digit${d}`)) return d;
   return null;
+}
+/** THE HAND'S OWN TWO ROWS (2026-09-22). They were a reservation until today —
+ *  `hand_press` and `hand_long` on `key:Space`, outside every map — and they are
+ *  ordinary learnable rows now that happen to start on the spacebar.
+ *
+ *  NOT stamped, and deliberately not folded into `seedPaletteDigitsOnce`: that
+ *  one returns early once its version is on disk, so a profile that already has
+ *  the stamp — every profile that has run today — would never have seen these.
+ *  Filling only ABSENT rows is idempotent, so it can run on every load instead:
+ *  a learned key stays, and a row cleared on purpose stays cleared, because the
+ *  strip records a deliberate unbind as `type: 'none'` rather than by deleting
+ *  the row, and the hand reads a dash off it like any other position. */
+function seedHandKeysIfAbsent() {
+  let dirty = false;
+  for (const [id, km] of Object.entries(HAND_FACTORY_KEYS))
+    if (!(id in keyMappings)) { keyMappings[id] = { ...km }; dirty = true; }
+  if (dirty) saveKeyMappings();
 }
 function seedPaletteDigitsOnce() {
   let stamp = null;
@@ -612,8 +674,10 @@ function seedPaletteDigitsOnce() {
   // the palette (main.js: setupMappingModal first), so the strip boots new.
   try {
     localStorage.setItem('mubone_palette', JSON.stringify(PALETTE_FACTORY_ENTRIES));
-    localStorage.setItem('mubone_hand', 'pen');
-    localStorage.setItem('mubone_hand_verb', 'momentary');
+    localStorage.setItem('mubone_hand', JSON.stringify(HAND_FACTORY));
+    // `mubone_hand_verb` is not written any more and the stale key goes: the
+    // hand has had no verb since 2026-09-21 — the press IS the verb.
+    localStorage.removeItem('mubone_hand_verb');
   } catch (_) {}
   for (const map of [keyMappings, buttonMappings, midiMappings]) for (const k of Object.keys(map)) if (/^palette_[1-9]$/.test(k)) delete map[k];
   for (const [k, v] of Object.entries(BUTTON_DEFAULTS)) if (/^palette_[1-9]$/.test(k)) buttonMappings[k] = { ...v };
@@ -651,25 +715,13 @@ function seedPaletteDigitsOnce() {
   saveKeyMappings();
   try { localStorage.setItem(_PALETTE_DIGITS_KEY, _PALETTE_DIGITS_V); } catch (_) {}
 }
-/** The palette changed shape: `from[j]` is the OLD position of what now sits
- *  at position j, or -1 for a tile that just arrived. Every binding on
- *  `palette_N` follows its tile through all three maps; an arrival takes the
- *  lowest free digit. tiles.js calls this after every place, move and remove. */
-S._paletteReordered = (from) => {
-  const maps = [[keyMappings, saveKeyMappings], [buttonMappings, saveButtonMappings], [midiMappings, saveMidiMappings]];
-  for (const [map] of maps) {
-    const old = {};
-    for (let n = 1; n <= 9; n++) { old[n] = map[`palette_${n}`]; delete map[`palette_${n}`]; }
-    from.forEach((o, j) => { if (o >= 0 && old[o + 1]) map[`palette_${j + 1}`] = old[o + 1]; });
-  }
-  // An arrival takes the next free digit — after the moves, so a digit that
-  // just travelled with its tile is not counted free.
-  from.forEach((o, j) => {
-    if (o >= 0 || keyMappings[`palette_${j + 1}`]) return;
-    const d = _freeDigit(); if (d) keyMappings[`palette_${j + 1}`] = _digitRow(d);
-  });
-  for (const [, save] of maps) save();
-};
+// (`S._paletteReordered` was here until 2026-09-22. It carried every binding
+//  on `palette_N` along when a tile moved, and gave an arrival the lowest free
+//  digit. The strip is a fixed toolbar now — "there's no more drag" — so a
+//  position cannot change what it holds and a binding has nothing to follow.
+//  The bindings themselves are untouched: they are still on `palette_N`, and
+//  `PALETTE_FACTORY_KEYS` still seeds them onto the position holding the tile
+//  it names.)
 
 // ── LEARNING FROM THE TILE (Ek, 2026-09-12) ─────────────────────────────────
 // "we should be able to click that number and be in 'learning' mode waiting
@@ -678,17 +730,21 @@ S._paletteReordered = (from) => {
 // keys page's cells, brought to the tile: one arms the learn for its kind on
 // its position, and the page's own recogniser finishes it — nothing is a
 // second learn path. tiles.js reads `_paletteLearning` to draw the row.
-S._paletteLearn = (pos, kind) => {
-  const id = `palette_${pos + 1}`;
+/** LEARN BY ACTION ID (2026-09-22). `_paletteLearn` derived the id from a
+ *  POSITION, which is every learnable thing on the strip except the two at its
+ *  head: the hand's tiles are not positions (PALETTE-GUI § A) and their rows are
+ *  `hand_press` / `hand_long`. Same machinery, one argument earlier. */
+S._learnAction = (id, kind, what) => {
   if (!ACTIONS.some(a => a.id === id)) return false;
   keyLearningId = null; buttonLearningId = null; midiLearningId = null;
   _learnShortAs = 'press';
   if (kind === 'key') keyLearningId = id; else if (kind === 'button') buttonLearningId = id; else if (kind === 'midi') midiLearningId = id; else return false;
-  setMappingStatus(`press a ${kind === 'key' ? 'key' : kind === 'button' ? 'button on the instrument' : 'MIDI note'} to assign it to position ${pos + 1}… (Esc cancels)`);
+  setMappingStatus(`press a ${kind === 'key' ? 'key' : kind === 'button' ? 'button on the instrument' : 'MIDI note'} to assign it to ${what ?? id}… (Esc cancels)`);
   renderMappingTable();
   S._bindingsChanged?.();
   return true;
 };
+S._paletteLearn = (pos, kind) => S._learnAction(`palette_${pos + 1}`, kind, `position ${pos + 1}`);
 S._paletteLearning = () => keyLearningId ? { id: keyLearningId, kind: 'key' }
                          : buttonLearningId ? { id: buttonLearningId, kind: 'button' }
                          : midiLearningId ? { id: midiLearningId, kind: 'midi' } : null;
@@ -697,13 +753,23 @@ S._paletteLearnCancel = () => {
   setMappingStatus(''); renderMappingTable(); S._bindingsChanged?.();
 };
 /** Right-click on a legend row: that kind's binding on the position goes. */
-S._paletteUnbind = (pos, kind) => {
-  const id = `palette_${pos + 1}`;
-  if (kind === 'key') { delete keyMappings[id]; saveKeyMappings(); }
+/** UNBIND BY ACTION ID. Deleting the row is the right record for a POSITION —
+ *  nothing re-seeds it — but the hand's two rows ARE re-seeded when absent, so a
+ *  delete would hand the spacebar back on the next launch and a deliberate
+ *  clear would not survive a restart. They get a TOMBSTONE instead: `type:
+ *  'none'`, which every reader already treats as unbound (`_gestureBindings`
+ *  yields only `type === 'key'`, and `replaceable` counts it as the factory's to
+ *  replace). One shape of record per kind of row, and the difference is stated
+ *  where it is made rather than discovered later. */
+S._unbindAction = (id, kind) => {
+  const tomb = kind === 'key' && id in HAND_FACTORY_KEYS;
+  if (kind === 'key') { if (tomb) keyMappings[id] = { type: 'none' }; else delete keyMappings[id]; saveKeyMappings(); }
   else if (kind === 'button') { delete buttonMappings[id]; saveButtonMappings(); }
   else if (kind === 'midi') { delete midiMappings[id]; saveMidiMappings(); }
   renderMappingTable();
+  S._bindingsChanged?.();
 };
+S._paletteUnbind = (pos, kind) => S._unbindAction(`palette_${pos + 1}`, kind);
 
 function saveKeyMappings() {
   try { localStorage.setItem('mubone_key_map', JSON.stringify(keyMappings)); } catch(e) {}
@@ -779,7 +845,13 @@ const GESTURE_LABEL = { press: '', tap: 'tap', long: 'long', xlong: 'extra long'
 // and button 1 long plays DOTS at 1 (a momentary — long has both edges);
 // button 3 tap is PIN at 6, ×2 UNPIN at 7; unpin all stays the action.
 const BUTTON_DEFAULTS = {
-  palette_2:        { btn: 1, g: 'tap' },  palette_1:        { btn: 1, g: 'long' },
+  // BUTTON 1 IS THE HAND, and now says so. It reached the hand's two tools
+  // through palette positions 1 and 2 while line and dots lived there; they
+  // live in the hand, so the button binds the hand's own two actions and
+  // mirrors the spacebar exactly — `press` and `long`, the same two gestures
+  // `HAND_FACTORY_KEYS` seeds onto Space. `press` rather than `tap`
+  // for the same reason button 3 uses it: it fires undelayed.
+  hand_press:       { btn: 1, g: 'press' }, hand_long:       { btn: 1, g: 'long' },
   undo:             { btn: 2, g: 'tap' },  sweep:            { btn: 2, g: 'long' }, erase_all:    { btn: 2, g: 'xlong' },
   // Pin on button 3's PRESS, not its tap (Ek, 2026-09-12: "as i right click
   // thru pin it should have 3 states avail. right now it's just toggle and
@@ -788,7 +860,14 @@ const BUTTON_DEFAULTS = {
   // undelayed, holds a momentary path, and the ×2 beside it takes the press's
   // pin back before unpinning (the swallow is general) — so button 3 is still
   // pin · unpin · unpin all, ~125 ms sooner.
-  palette_6:        { btn: 3, g: 'press' }, palette_7:        { btn: 3, g: 'double' }, commit_clear: { btn: 3, g: 'triple' }
+  // pin · unpin · unpin all, named by the position they actually occupy. These
+  // are the strip's own numbers and moved whenever it did: 6 and 7 for a
+  // seven-tile strip, 2 and 3 when it became wide · pin · unpin, 3 and 4 once
+  // the eraser sat between them, and 5 and 6 now the strip is FIXED at tape ·
+  // grain · lens · erase · pin · unpin. They stop moving here — the strip
+  // cannot be rearranged any more. A wrong number is invisible: it fires the
+  // neighbour, or an empty position, and says nothing.
+  palette_3:        { btn: 3, g: 'press' }, palette_4:        { btn: 3, g: 'double' }, commit_clear: { btn: 3, g: 'triple' }
 };
 function loadButtonMappings() {
   try {
@@ -817,10 +896,30 @@ function sourceLabel(src) {
   const km = Object.values(keyMappings).find(m => m && m.type === 'key' && keySource(m) === src);
   return km ? `key ${keyMappingLabel({ ...km, g: undefined })}` : src.replace(/^key:/, 'key ');
 }
+// THE CLICK IS A SECOND SPACEBAR (Ek, 2026-09-22: "click is not always on the
+// hand, it follows what the spacebar does"). The sphere's left button used to be
+// RESERVED to the hand alongside `key:Space` — four fixed rows, nothing
+// learnable. Both halves of that are gone: the hand's key is an ordinary row in
+// `keyMappings` (seeded on Space, learnable, stealable), and the mouse is not
+// bound to the HAND at all. It is bound to whatever the SPACEBAR is bound to,
+// derived below, so the rule holds by construction and there is nothing to keep
+// in sync: bind the hand to F and the click stops playing it, because the click
+// never followed the hand — it follows the key.
+const SPACE_TWIN = 'mouse:0';
+/** The hand's factory keys — the spacebar, its press and its long. Seeded into
+ *  `keyMappings` on first load like the strip's digits, not reserved. */
+const HAND_FACTORY_KEYS = {
+  hand_press: { type: 'key', key: ' ', code: 'Space', shift: false, ctrl: false, meta: false, g: 'press' },
+  hand_long:  { type: 'key', key: ' ', code: 'Space', shift: false, ctrl: false, meta: false, g: 'long' },
+};
 /** Every gesture binding in the three maps: [actionId, source, gesture]. */
 function* _gestureBindings() {
   for (const [id, bm] of Object.entries(buttonMappings)) if (bm) yield [id, btnSource(bm.btn), bm.g || 'press'];
-  for (const [id, km] of Object.entries(keyMappings)) if (km && km.type === 'key') yield [id, keySource(km), km.g || 'press'];
+  for (const [id, km] of Object.entries(keyMappings)) if (km && km.type === 'key') {
+    yield [id, keySource(km), km.g || 'press'];
+    // …and the sphere's left button with it, whenever that key is the spacebar.
+    if (km.code === 'Space' && !km.shift && !km.ctrl && !km.meta) yield [id, SPACE_TWIN, km.g || 'press'];
+  }
   for (const [id, mm] of Object.entries(midiMappings)) if (mm && mm.type === 'note') yield [id, noteSource(mm), mm.g || 'press'];
 }
 function actionForGesture(src, g) {
@@ -875,7 +974,11 @@ function _bs(btn) { return _btn[btn] || (_btn[btn] = { down: false, downAt: 0, t
 // pressed loop under the running line, which is dead by the one-play rule;
 // the abort then threw away the LINE the press never touched, and the double
 // started it again. `pressStarted` is read off the engine around the fire.
-const _ACTIVATES = /^palette_[1-9]$/;
+// What an ABORT can throw away: an action that starts a gesture. The hand's
+// press is one — it was only palette positions until 2026-09-22, when the
+// spacebar joined the recogniser and a long after a press had to take back the
+// stroke the press had started, exactly as it does for a position.
+const _ACTIVATES = /^(palette_[1-9]|hand_press)$/;
 function _abortPress(st) {
   const id = st.pressAction; st.pressAction = null;
   const started = st.pressStarted; st.pressStarted = false;
@@ -1415,7 +1518,7 @@ function dispatchAction(id, midiVal) {
       // reported it on every run and nobody could tell it from #322.
       if (midiVal === 1)       S._setChopOn?.(true);
       else if (midiVal === 0)  S._setChopOn?.(false);
-      else                     S._setChopOn?.(!S.triggerParams.chopOn);
+      else                     S._setChopOn?.(!S.triggerParams.sliceOn);
       break;
 
     // ── Commit: unified drop/draw/release/clear ─────────────────────────────
@@ -1447,16 +1550,17 @@ function dispatchAction(id, midiVal) {
     // still there when the sound comes back.
     // Explicit 1/0 sets it, a bare bang flips it — so one OSC address and one
     // MIDI note both work, and a pad that only sends 127 is still a toggle.
+    // The hand's two presses. `hand_press` is a trigger — one edge, and tiles.js
+    // latches it the way a tap has always latched. `hand_long` is a hold, so it
+    // gets both edges and plays while you hold.
+    case 'hand_press': if (midiVal == null || midiVal > 0) S._handPress?.(); return;
+    case 'hand_long':  S._handLong?.(midiVal == null ? true : midiVal > 0); return;
     case 'pins_mute': {
       const want = midiVal == null ? !S._pinsAllMuted?.() : midiVal > 0;
       S._pinsSetAllMuted?.(want);
       S._pinsMuteLit?.(want);
       break;
     }
-    case 'pins_unmute_all':
-      S._pinsAllOn?.();
-      S._pinFlash?.('unmuteall');
-      break;
     case 'commit_selection': {
       S.selectionMode = _strMode(midiVal, ['nearest', 'oldest'], { closest: 'nearest' })
         ?? (S.selectionMode === 'nearest' ? 'oldest' : 'nearest');
@@ -1493,15 +1597,13 @@ function dispatchAction(id, midiVal) {
         b.classList.toggle('active', b.dataset.lrmode === S.loopReleaseMode));
       break;
     }
-    case 'commit_blend':
-      S.commitPlayback = _strMode(midiVal, ['focus', 'all'])
-        ?? (S.commitPlayback === 'focus' ? 'all' : 'focus');
+    case 'pins_follow': {
+      const m = _strMode(midiVal, ['on', 'off']);
+      const on = m ? m === 'on' : S.commitPlayback !== 'focus';
+      S.commitPlayback = on ? 'focus' : 'all';
       S._syncImprovUI?.();
       break;
-    case 'commit_tether':
-      S.commitTether = !S.commitTether;
-      S._syncImprovUI?.();
-      break;
+    }
 
     // ── Search ──────────────────────────────────────────────────────────────
     case 'snap':         toggleNearestMode(); break;
@@ -1548,10 +1650,6 @@ function dispatchAction(id, midiVal) {
     case 'palette_7': S._paletteFire?.(6, midiVal > 0); break;
     case 'palette_8': S._paletteFire?.(7, midiVal > 0); break;
     case 'palette_9': S._paletteFire?.(8, midiVal > 0); break;
-    case 'wet_toggle':
-      // Same convention as scan_toggle: OSC 0|1 sets, keys/GUI send 127 → toggle.
-      S._setWet?.(midiVal === 1 ? true : midiVal === 0 ? false : null);
-      break;
     case 'cursor_lock':
       // One owner. The body that used to sit here was a copy of events.js's and
       // had lost _syncSessionAltLock, the surface overlay and the entry-hint
@@ -2241,6 +2339,7 @@ export function setupMappingModal() {
   loadButtonMappings();
   renumberPaletteOnce();
   collapsePaletteVerbsOnce();
+  seedHandKeysIfAbsent();
   seedPaletteDigitsOnce();   // AFTER the two renumberings: they shift palette ids, and ran over the seed once (2026-09-12)
   loadButtonTiming();
 
@@ -2276,7 +2375,15 @@ export function setupMappingModal() {
   // ── Key learn: capture keydown while learning ────────────────────────────
   // Non-overridable keys that should not be captured
   // ' ' is the spacebar: the hand's, never a binding (tiles.js, 2026-09-12).
-  const BLOCKED_KEYS = new Set(['Escape', 'Tab', 'F5', 'F11', 'F12', ' ']);
+  // What a learn will not take. Escape CANCELS a learn and Tab shows the rail,
+  // so neither can ever be the key being learned; F5 / F11 / F12 are the
+  // browser's. The SPACEBAR left this set on 2026-09-22 (Ek: "i can't seem to
+  // map spacebar to any of the key pills/flags") — it was the other half of the
+  // reservation, and removing `Space` from RESERVED_KEYS without it meant a
+  // stored Space row could survive but none could ever be MADE. The auto-repeat
+  // guard below was written for the spacebar and is what makes holding it to
+  // learn a long press safe.
+  const BLOCKED_KEYS = new Set(['Escape', 'Tab', 'F5', 'F11', 'F12']);
 
   document.addEventListener('keydown', e => {
     if ((buttonLearningId !== null || midiLearningId !== null) && e.key === 'Escape') {
@@ -2296,12 +2403,14 @@ export function setupMappingModal() {
       return;
     }
 
-    if (e.key === ' ') {
-      // Swallowed, not passed on: the hand must not play while a learn is up.
-      e.preventDefault(); e.stopImmediatePropagation();
-      setMappingStatus('the spacebar is the hand\'s — it plays the tool in hand and cannot be assigned. Press another key…');
-      return;
-    }
+    // (The spacebar was REFUSED here until 2026-09-22 — "the spacebar is the
+    // hand's … cannot be assigned" — which was the third and last place the
+    // reservation lived, after RESERVED_KEYS and BLOCKED_KEYS, and the one that
+    // actually answered the player: Ek, "i can't seem to map spacebar to any of
+    // the key pills/flags". It is an ordinary key now. The branch's real
+    // worry — that the hand must not PLAY while a learn is up — is already
+    // handled for every key by the `preventDefault` + `stopImmediatePropagation`
+    // below, which is why this needed nothing in its place.)
     // A PALETTE KEY IS A PLAIN KEY (Ek, 2026-09-12: chords refused for
     // palette positions): nine positions and ten digits do not need ⌘, ctrl
     // or ⇧, and a chord on a performance tile is a mis-binding — its sticker

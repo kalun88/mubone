@@ -45,7 +45,7 @@ cursor is. Unpin takes whichever pin the **Settings → Pins** rule names — ne
 
 The pinned rail on the right (**⇧Tab**) is a mixer: one track per pin, the bar its fader (drag
 it), what you drew laid flat inside it, M and S at the right, and its own in / out under its
-number. The mode bar above holds blend, tether, sort and width; sort is the selected pin, so the
+number. The mode bar above holds follow, sort and curve; sort is the selected pin, so the
 top track is what unpin takes. Settings → Pins keeps what happens when the slots are full and what
 a new pin is born with.
 

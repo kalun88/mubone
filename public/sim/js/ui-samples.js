@@ -53,6 +53,18 @@ export async function loadAudioFile(file) {
 // stroke's marks, its recording, the loop or cloud the gesture pinned from it,
 // an overdub take's layer on its master and its trigger arming; redo brings
 // every one of those back, including the pin — one gesture, one action.
+/** Was the stroke that made this id painted while AUDITIONING? Read at arm
+ *  time, which is after the play has ended, so it cannot be asked of the hand.
+ *  The scan is over stroke history and runs once per take, never per frame. */
+export function strokeWasAuditioned(strokeId) {
+  if (!(strokeId > 0)) return false;
+  const h = S.strokeHistory;
+  for (let i = h.length - 1; i >= 0; i--) if (h[i]?.strokeId === strokeId) return !!h[i].auditioned;
+  return false;
+}
+// Through `S`, not an import: trigger.js reads this at arm time and importing
+// this module there would close a cycle (code style — UI wiring goes through S).
+S._strokeAuditioned = strokeWasAuditioned;
 export function recordStrokeStart(type, liveBufferIndex) {
   S.currentStrokeId = ++S.strokeIdCounter;
   // Freeze the brush here, at the ONE place a stroke begins. This is what makes
@@ -63,9 +75,18 @@ export function recordStrokeStart(type, liveBufferIndex) {
   // stroke — see brush-voicing.js. A WET brush's strokes share its one
   // voicing instead, which is what lets its knobs keep moving them.
   S.currentVoicing = S._voicingForCurrentBrush?.() ?? 0;
+  // WAS THIS STROKE AUDITIONED? Asked HERE, for the same reason the brush is
+  // frozen here: this is the one moment the fact is knowable. A tape take is
+  // armed from `whenSealed` (events.js), a few ms AFTER the play has ended, and
+  // `S._handTile()` is null between presses — so the shell's `_live` read false
+  // for every auditioned take and the tape half of auditioned paint could never
+  // fire (2026-09-22). The grain half already worked because its voicing is
+  // decided on this same line.
+  const auditioned = !!S._handTile?.()?.live;
   const entry = {
     strokeId:        S.currentStrokeId,
     type,
+    auditioned,
     liveBufferIndex: liveBufferIndex !== undefined ? liveBufferIndex : -1
   };
   S.strokeHistory.push(entry);
@@ -430,7 +451,9 @@ export function drawSlotWaveform(wc, buffer) {
   const step = Math.max(1, Math.floor(data.length / wc.width));
   const mid  = wc.height / 2;
   wctx.clearRect(0, 0, wc.width, wc.height);
-  wctx.strokeStyle = '#7abcbc';
+  // A canvas cannot inherit a custom property, so it reads it. One token, one
+  // hue: the sampler's blue here is the same one the rail's row wears.
+  wctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--eng-source').trim() || '#4aa3e8';
   wctx.lineWidth   = 1;
   wctx.beginPath();
   for (let i = 0; i < wc.width; i++) {

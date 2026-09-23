@@ -209,11 +209,13 @@ function _commitTraceStroke(strokeId) {
       try { ov = S._attachOverdub?.(strokeId, overdub.seq, overdub.ov); } catch (e) { console.warn('[overdub] attach failed:', e); }
       // The master went while the take ran: the stroke is an ordinary line
       // now, the same as an overdub whose master is unpinned.
-      if (!ov) { try { armTrigger(strokeId, { plain: true }); } catch (_) {} }
+      // Never swallowed (2026-09-23): a take that fails to arm paints deaf, and
+      // a silent catch is how that stayed invisible for a night.
+      if (!ov) { try { armTrigger(strokeId, { plain: true }); } catch (e) { console.warn('[trigger] arm failed:', e); } }
       return;
     }
     if (wasTrigger) {
-      try { armTrigger(strokeId, { loop: seed }); } catch (_) {}
+      try { armTrigger(strokeId, { loop: seed }); } catch (e) { console.warn('[trigger] arm failed:', e); }
     }
   });
 }

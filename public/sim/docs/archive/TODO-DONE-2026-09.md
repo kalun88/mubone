@@ -2,6 +2,305 @@
 
 > **Status: ARCHIVED** · done items moved out of `docs/TODO.md` on 2026-09-05, verbatim, so the open list stays short enough to read every session. Record only: entries describe the code the day they closed and may use superseded terminology. `git log` and `CHANGELOG.md` are the other two records.
 
+### Sep 23 — after 5.5
+
+- [x] **Tape's release has a `stop`** (2026-09-23) — Ek: "one of the release options should just be stop
+  immediately right". A third value on tape's capsule: play→end · stop · fade; stop is the 8 ms declick
+  a refire on `cut` uses, so it is silent at once and never a click, and the Fade row applies to fade
+  alone. Tape only — a walker with a stop is walk off with an extra step (Ek). Factory stays play→end.
+- [x] **The cap is not a mute; `c` opens the lens tab** (2026-09-23) — Ek: "things that are still in
+  flight, like loops, long grains, anything should still finish out. it's not a mute … when i toggle
+  the lens with C … the tab should open up if the tool rail is open". `setScanMuted` gates no bus and
+  silences no trigger; the gate's EXIT edge acts capped so a fired take still reaches its release;
+  the lens position switches the rail to its tab. trigger-audit's cap section asserts the new rule.
+- [x] **…and nothing is parked on the viz** (2026-09-23) — Ek: "i do hear the things in flight continue
+  but so should the viz parts (glow map, playheads for loops, etc)". The renderer multiplied every
+  trigger outline and playhead by 0.45 while capped; gone — a sounding take draws at full weight. The
+  glow already did: it is lit from the worklet's own onset feedback, ungated, and the cap's ghost
+  marks stay faint beside it. The proximity brightening still needs the cursor reading.
+- [x] **Unmute all is deleted** (2026-09-23) — Ek: "i dont think there's a use for the unmute all now
+  since mute in the mix pin rail is a toggle". It cleared every per-pin M and S at once, which the
+  toggle never touches; the row, the act, `pins_unmute_all` (retired in the maps), `/pins/unmuteall`
+  and `allOn()` go. pins-audit and osc-audit stop asserting it.
+
+### Sep 22 (night) — one lens, and its tab is the cursor
+
+- [x] **Cursor presets are sunset; the lens is a tab** (2026-09-22) — Ek: "it doesn't make sense
+  anymore to have cursor presets and just all the params available as performance settings, as a
+  tab in the tool rail." `wide` and `spot` differed by one capsule; every row of `ENGINES.lens` is on
+  the LENS tab now, greyed as the sheet greyed them, with the live pair beside radius and k. No lens
+  sheet, no `+`, no `#lensBar`; the strip tile is on / off and `lensTap()` takes no id. Measured: ten
+  rows at 30, one right edge, nothing clipped (depth's words got their own 6rem).
+- [x] **The lens leads, the sampler closes** (2026-09-22) — Ek: "make lens first item of the tab order,
+  and also on the palette rail, make sampler the last item on the tab". Tabs: lens · tape · grain ·
+  erase · sampler. The strip draws the lens tile before the hand; it is still position 1, `c` and
+  `palette_1` untouched. Measured: six tiles, every gap 11.
+- [x] **The lens tab follows the eye** (2026-09-22) — Ek: "when i scroll to change the radius i see it
+  change on the viz" and the tab did not. Every row already WROTE through the cabinet; nothing read it
+  back. `_syncLensTab` on the 5 Hz tick: numboxes via `_paintRow`, segments from the cabinet's
+  `.active`, reads / fade / falloff from S, and one `render()` when mode or fill moves the greying.
+  Driven from every other door on a private instance — wheel, N, K, order, k, depth, fade, falloff —
+  each landed on the tab within a tick; Enter and drag on the tab's own numboxes still write through.
+- [x] **The pins rail's mode bar sits on a card** (2026-09-22) — Ek: "add the bed under the settings and
+  make the design match the left side rail". `.lyr-modes` wears `#instrPanel`'s design: `--surface-1`,
+  `--r-hand`, 12 in from either rail edge, 12 of air inside, 16 under the bar, the closing hairline
+  gone. Measured both rails: card 13→307 in 1→319 and 1133→1428 in 1121→1440, labels at card + 12
+  on both. align-audit's mixer check now reads the card's outer edges, and two invariants were added.
+- [x] **…and its rows are the tool rail's** (2026-09-22) — Ek: "the formatting of how the text is
+  aligned and else is not the same as the left rail yet". One setting per `.mrow`, 30 tall, `.mrow-l`
+  at card + 12, control flush right; blend and sort wear the sheet's `.opt .seg` (24) instead of the
+  chrome's `.seg-pill` (28), lit with `.on`. Measured against the lens tab's rows: same height, label
+  x, size, colour and case; capsules 24 on both. align-audit reads the four rows and the sheet's kit.
+- [x] **The shape sheet is sunset; a voice row points the sheet** (2026-09-22) — Ek: "press the voice
+  presets it still shows the old shape sheet". A tool's sheet is a head now (its rows are its tab),
+  the drawer follows a tab to the instrument's voice and a voice row's click to that voice. Found
+  under it: the tab's numboxes captured into the SHEET's subject, so with a voice up a `rate` edit
+  never reached the tool's block — `_wireKnobs` takes `capId` like `_wireOptions`. Measured 50→33.
+- [x] **Follow is a switch, tether is gone, capsules in sentence case, `all` and `step` are switches**
+  (2026-09-22) — Ek: "i want it to be boolean when possible … if cursor-mixer is on there's really no
+  radius so tether becomes confusing … act as if tether is on." `blend: all | focus` is the FOLLOW
+  switch (`pins_follow`, `/pins/follow`; `commit_blend` migrates, `commit_tether` retires); the weight
+  law and the cloud morph lose their radius gate; the setup file drops the key. Every capsule in the
+  rails and the drawer is sentence case, the settings kit's tracking. On the lens tab `fill` and
+  `order` are the switches `all` and `step`, synced from the cabinet like fade. Driven from the tab,
+  a bang, an OSC string and the K / order keys on a private instance; pins-audit's tether check now
+  asserts a pin 30° outside the radius is still in the mix.
+- [x] **One header height for both rails** (2026-09-22) — Ek: "the tool title bar in the tool rail and
+  the pinned title rail dont seem like the same height". They were grown round their contents — 34
+  round a word, 45 round the kit's button, 9.92 of padding nobody chose. Stated at 40 (24 + `--sp-4`
+  either side). Measured after: both bars 70→110, both titles 83→96, the door 24 centred on the same
+  line, the first card at 126 on both sides. align-audit asserts the 40 on both.
+- [x] **Under follow the hand cannot take a fader** (2026-09-22) — Ek: "if i'm on follow, the cursor
+  distance controls the mixer so it should be disallowed right?" A press or a double-click on a track
+  bar is refused while `commitPlayback` is `focus`; the bar keeps showing level × weight in the sensor
+  hue, offers no grab cursor, and its tooltip says the cursor sets it. The level the hand set before
+  is kept and comes back with follow off. Probed on a synthetic pin: 0.035 / 1 / 0.035.
+- [x] **Pin and unpin left the pinned rail** (2026-09-22) — Ek: "remove the pin and unpin buttons from
+  the pinned rail since they're on the palette bar fixed now". The rail's foot keeps what the strip
+  does not hold: unpin all, and the mix pair; the row handler no longer pins on fall-through, and the
+  "drag it onto the palette" tooltip went with the drag. Probed: rows unpinall · mute · unmuteall,
+  strip lens · erase · pin · unpin.
+- [x] **A once walker fades on exit too** (2026-09-22) — Ek: "when i set release to fade-out in the
+  settings for grains, it doesn't fade, it still plays till end". `exitWalker` skipped `once` walkers
+  on a parity with tape's one-shot, so under the default dwell the release row did nothing. `fade`
+  now fades any walker when the cursor leaves its stroke; `play-to-end` is unchanged. Tape's
+  one-shot still ignores the exit, by its own ruling.
+- [x] **A release fade has its own length** (2026-09-22) — Ek: "with fade on, it just stops playing
+  when i move away from it". Both engines' `release: fade` borrowed the pins' unpin fade, 15 ms by
+  default — a cut. Each arrival set holds `releaseMs` (250 by default), a Fade row under each Release
+  on Settings → Tools, the walker and tape's exit read their own; the setup file carries tape's.
+  Probed: the rows bind (800 / 1.2s) and sit under their Release rows.
+- [x] **Layer sounded like cut: the detached voice lost its gain chain** (2026-09-23) — Ek: "when retrig
+  is off the track should layer when i run the cursor over it, it still retrigs". `_detachVoice` kept
+  src, gain and the speaker fan-out but left `_ownGain`, `_muteGain`, `_pinGain` on the trigger, and
+  the rebuild's `releaseSeqNodes` disconnected own and mute — the old voice's path, cut the instant
+  the new one was built. The voice takes the whole chain now. trigger-audit's retrig section is green
+  with a new invariant; its field list caught up with `sliceOn` and `releaseMs`. Its slice sections
+  fail on this branch (9 checks) — a stale suite written against the gap chopper, not this change.
+- [x] **No drawer for a tool or the lens, no audition on erase or lens, and the rail follows a play**
+  (2026-09-23) — Ek: "erase tab and lens tab dont need the audition toggle … nor does erase have a
+  drawer sheet to be opened, it still seems to open … same with the lens sheet … when i use a tool,
+  and the tool rail is open, it should show the tab of the tool". A drawer pointed at a tool or the
+  lens shuts instead of drawing a head; audition draws on tape and grain only; `_playDown` switches
+  the tab to the tool's while the rail is up, never opening it. Probed: audition lens/erase off,
+  tape/grain on; the drawer shuts on the erase and lens tabs and on the erase tile's click; the hand's
+  press → tape, its hold → grain, the erase position → erase; a shut rail stays shut.
+- [x] **A layered voice shows its playhead; a greyed switch looks greyed** (2026-09-23) — Ek: "sonically i
+  hear the layer when retrig is off but i dont see the playheads on the viz … the toggle should also
+  be greyed out if walk is off". A detached voice carries a tail record (the play-to-end `_tail`'s
+  shape) and the renderer draws one square per ringing voice from it; trigger-audit asserts the
+  record. `.ds-na` now reaches the kit's switch (track `--border-faint`, knob `--text-faint`) — it
+  greyed the words and left a lit switch. Measured: greyed track 0.055 vs live 0.13, knob faint vs tertiary.
+- [x] **A rebuilt track row lands, it does not slide** (2026-09-23) — Ek: "anytime i press mute or solo
+  for pinned items the whole order jumps around even when the order hasn't changed". Mute and solo are
+  in the rail's rebuild signature, and a fresh row is born at translateY(0) with the transform
+  transition on, so every row slid from the top to its place. The first layout runs with the
+  transition off and the next frame hands it back. Measured: rows land at 0 / 38 / 76 with the
+  computed transform already there, and hold after the transition returns.
+- [x] **A loop's track draws its waveform again** (2026-09-23) — Ek: "for loops i dont see the actual
+  waveform … it's just a straight thin boring line". Since the take landed (2026-09-17) `_peaks` read
+  `buf.data` alone; a pinned loop's buffer is an AudioBuffer (`createBuffer`, the crossfaded region)
+  and has none, so every loop drew the no-take flat line. `_samplesOf` reads a take or an
+  AudioBuffer's channel 0. Measured on a synthetic loop: 28 inked rows, column heights 0→28→4.
+- [x] **Pin is a momentary by factory** (2026-09-23) — Ek: "by default the pin factory default should be a
+  momentary … when it's on momentary, it should also draw it". The factory strip and `VERBS_OF.pin.def`
+  say momentary; a stored verb is kept (Ek's own is toggle). Momentary already drew: driven by a real
+  ↓ keydown / keyup on a private instance, held 600 ms while the cursor moved, with the hand idle and
+  with the hand playing, each pinned a moving cloud of 11 frames, exactly as toggle did. The one way a
+  momentary pins no path is a hold under 200 ms, which is a stationary pin by design.
+- [x] **Tape's release reads on every dwell** (2026-09-23) — Ek: "testing the fade for tape, doesn't
+  seem to work either". `_onExit` returned before the release under any dwell but `loop`, the same gap
+  the walker had. `fade` now fades a take out on exit whatever the dwell, over tape's own fade;
+  `play-to-end` keeps the per-dwell rule (a loop finishes its pass, a one-shot plays out). The release
+  row is no longer dimmed off `loop`.
+- [x] **Tools has its nav glyph** (2026-09-23) — Ek: "tools doesn't have a glyph in the nav bar for
+  settings it should". The chrome's own tools pill — the panel with the rail on the left, pins' mirror
+  — at the nav's 16. Measured: fourteen nav items, every one with a 16px icon on one x.
+- [x] **The trigger pool rolls** (2026-09-23) — Ek: "on the next tape paint, it no longer triggers as
+  expected … the old things still trigger, it's just the new tape strokes". Read in his open window:
+  32 triggers, then 33 strokes with trigger marks and no gate — `MAX_TRIGGERS` 32 was FULL and full
+  meant refused, silently (LED only, arm errors swallowed). 64 now, and a full pool steals its oldest.
+  trigger-audit: 70 strokes armed → 64 gates, first six gone, newest kept; 64 gates cost 0.015 ms/tick.
+- [x] **…and then no ceiling at all** (2026-09-23) — Ek: "there should be no limit". `MAX_TRIGGERS` is
+  gone with the roll; every stroke arms. trigger-audit: 200 strokes armed → 200 gates, and 256 gates
+  × 200 marks cost under 2 ms a tick, kept as the standing proof the ceiling was never needed.
+- [x] **The tool rail has its settings door** (2026-09-23) — Ek: "the 3 line hamburger that exists in
+  the pin rail should also exist in the tool rail to open up its settings page". The same `≡`, the
+  same `.lyr-bar-set`, opening Settings → Tools. Measured: 24 × 24 on both rails, both centred on the
+  titles' line (89.3), both 12 inside their bar; the click lands on the Tools page.
+- [x] **The release tier, run before the merge** (2026-09-23) — everything: rig, osc, browser, phone,
+  docs, sensor, unit, wiring, deadweight. Real and fixed: the PHONE's touch called `S._handDown`,
+  which the recogniser's spacebar had removed — the sphere played nothing and the hand tile latched
+  (momentary on the phone now, both doors); the voices' three keys were unregistered. Stale, left:
+  trigger's 9 slice checks (gap chopper), engine pages (deleted tools, the shape sheet), palette
+  (the 2026-09-12 seven-tile strip, drag, `handVerb`), pins J2/L (wet). Mark align's one failure
+  vanished alone: 70 ok. Green after: phone, browser, osc, mark align, docs, sensor, 67 unit, wiring.
+
+### Sep 22 (evening) — the strip becomes a toolbar, and the tools take their instruments' names
+
+- [x] **Spray is sunset, and the head is static again** — a dynamic head widening with cursor speed
+  and voice rms was answering a question borrowed from a painting app; here a mark's position is
+  where its grain SOUNDS FROM. `dynamicHeadOffset`, the six `SPRAY_*` constants, `S.fx.spray`, the
+  DEPOSIT row and a per-deposit `readGateLoudness()` all deleted. Whether a wider head is MUSICAL is
+  the open question this clears the ground for; `edge` stays `soft` and has no control at all.
+- [x] **The performance rows say what they make** — `autopin as loop` / `as cloud` from
+  `_AUTOPIN[e].on`, `walk` loses `on touch`, `slice` moves up beside the other two switches, and
+  `dwell` / `retrig` hang off walk by the settings kit's own subordination (indent + a step quieter,
+  no glyph). `deposit rate` / `deposit width` only on the rail, where no heading says it. Dwell is
+  counted not described — `1`, `∞`, the grain glyph. Retrig became a SWITCH: on IS cut.
+- [x] **The tool is the instrument, id and all** — `line` → `tape`, `pen` → `granular`, `scrape` →
+  `erase`, so `engineOf(id) === id` and one string keys the tool, its engine, its hue and its tab.
+  They had been wearing SHAPE-PRESET names distinguishing siblings that are all deleted. One-shot
+  through `_RENAMED_TILES`; the hand's loader now WRITES BACK, which it never had — a stored `line`
+  was re-migrated every boot, a persistent fallback wearing a migration's clothes.
+- [x] **The palette is a fixed toolbar** — the hand's two sides, then `lens · erase · pin · unpin`
+  on `c e ↓ ↑`. The drag was already dead: the rail stopped listing tools when tools collapsed to
+  one per instrument, so `tileHTML`'s `zone:'box'` branch was unreachable and the strip could not be
+  added to at all. −360 lines: the four mutators, the whole drag block, `PALETTE_MAX`,
+  `_entryFromStored`, `S._paletteReordered`. Storage keeps one verb per position.
+- [x] **The mouse selects, the binding plays** — a click opens that tile's page (a tool's is its
+  instrument's TAB), a right-click cycles its verb including on the HAND tiles, and a click on the
+  pin pair does nothing. The hand verb reverses 09-21's "the press is the verb": true of one tool
+  played two ways, not of two sides holding different tools. No `bang` on the hand — `_playDown`
+  reads it off `palette[i].verb` and the hand has no entry. Audition closes the performance block.
+
+### Sep 22 — the tool rail, measured
+
+- [x] **What you pick goes above what you set** — the instrument card was 60% parameters before the
+  first preset, and on grain VOICE PRESETS was entirely below a fold the rail never marked (695
+  tall, 828 of content). Mode switches lead with no heading, then shape, then voice with AUDITION
+  at its head, then cursor interaction. GLOBAL MODES deleted — a card naming one switch. 133px
+  hidden → 68, and what hides is the set-once block. RULINGS has it.
+- [x] **The rail draws its own scroll mark** — `railScrollMark()` in `tiles.js`. The webkit
+  scrollbar rules paint nothing here (overlay scrollbars; `offsetWidth - clientWidth` is 0, and
+  `scrollbar-width: thin` does not help — both measured, both 0). 2px, `--text-faint`, hidden when
+  nothing overflows.
+- [x] **The tabs are four tabs** — closed ones get `--surface-0` and the tab shape instead of being
+  bare glyphs; the open one carries its name in its hue; the hue rule under the glyph is gone,
+  which is what let the glyph centre in its 32px box. Headings stayed ash (hue tried, reverted).
+- [x] **Four smaller ones** — the three `+` buttons land on one column (272.6) instead of following
+  each label's text; list padding-bottom `--sp-3` → `--sp-5`, so the last card's corner clears the
+  frame; `.ds-na` words go `--text-faint` → `--text-dim` (2.7:1 on five words was always-wrong § 4,
+  the marks keep faint); `--eng-lens` corrected in three docs, which still said sea green.
+- [x] **The canvas** — `docs/mockups/tool-rail/`, three artboards, every number read off the running
+  app through `.dev-bridge/`.
+- [x] **trail and match deleted** (Ek). `trail` was the wash tile — id `wash`, the one grain preset
+  that arrived pre-dialled — and the BEHAVIOUR stays: `cloud on end` is a row on the grain sheet,
+  `S.traceMode` the flag under it. `FACTORY_SOUND` is empty with it, its two readers kept.
+  `match` took `concatMatch` / `_depositConcat` / `CONCAT_W_*` out of `paint-ticker.js`; `_centHz`
+  stayed, comb's sieve uses it. The grain VOICE named `wash` is a different object and is untouched.
+- [x] **The experimental section is not a fold** — `_expOpen`, the fold button and its four CSS
+  rules are gone (#283 reversed). A tool only ever shows its OWN experimental rows, which is two,
+  so the "long tail nobody opens" was never long.
+- [x] **The heads became general grain shape params** (Ek: "we need to have a way of thinking them
+  as general shape params not just designed for experimental"). `spray` is ONE amount 0–100% and
+  `sort by` a selector with `none` first — both in DEPOSIT on every grain sheet, both carrying
+  their own off, so neither needs a switch. `SHAPE_OWN` deleted; `S.brushFx` is down to
+  `'none' | 'slice'`. Measured: `dynamicHeadOffset` at spray 0 equals the plain head exactly (0.0
+  over 40 samples), and one selection per reload shows spray → 0.25, dots → 0, comb → centroid with
+  no bleed. `keep` and `staff` deleted; `spray` and `comb` stay as presets of `dots`.
+- [x] **The two presets are dialled, and comb is `index`** (Ek: "the presets spray and we should
+  rename comb to be something else they should actually be set to the right params"). Each states
+  every shape pid, not just the one that names it: spray is 85% over a 6° head at 30 ms, index is a
+  line sorted noisy (both re-dialled the same evening — the stamp is what let the new numbers reach
+  a profile that had already minted the old ones). The LABEL changed and the id did not — `pen`→dots and `wash`→trail set that
+  pattern, and an id is what a block, a palette slot and an OSC address are keyed on. A stamped
+  one-shot (`mubone_tiles_presets`, registered in storage-registry.js) hands the two their factory
+  numbers once, because FACTORY_PARAMS is only the floor under a persisted block.
+- [x] **One-shot: a block that predates a param gets it** — blocks minted before `spray` and
+  `sort by` existed would have left the spray preset not spraying, and a partial block silently
+  inherits the last tile's value. Filled from the tile's factory identity, else the state default.
+- [x] **One-shot: stale blocks pruned** — a `mubone_tiles` entry for a factory tile that no longer
+  exists is deleted at load. The palette and the rail order already dropped the ids themselves
+  (both go through `tileDef`); the block store was the one that kept anything.
+
+- [x] **The palette's lens position follows the eye** — it held `wide` by id, so switching cursor
+  presets in the rail only turned the strip's tile OFF. It draws `installedLens()` now; toggle caps
+  and uncaps, momentary became a PEEK (`_lensPeek`), and `_lensMomentary` went with the old meaning.
+  PALETTE-GUI § F said "the lens is a state" all along — the tile was showing one value of it.
+
+- [x] **The hand's binding is one pill, and it is learnable** — two stickers became one (the key,
+  with `click` beside it only while that key is the spacebar); `hand_press` / `hand_long` moved out
+  of `RESERVED_BINDINGS` into `keyMappings`, seeded on Space; `Space` left `RESERVED_KEYS`; and
+  `mouse:0` is derived from whatever holds `key:Space`, so the click is the spacebar's twin rather
+  than the hand's. `S._learnAction` / `S._unbindAction` generalise the palette's two by action id.
+  Verified: F onto the hand → F plays it, space and the click do not, and the pill drops `click`.
+- [x] **…and the learn actually takes the spacebar** — the reservation was in THREE places and the
+  first pass cleared two. The third was an explicit branch in the learn listener with its own
+  message, which is why nothing changed from the player's side. Verified: space learned onto
+  `palette_2` takes it off `hand_press`, and the sphere's click fires the POSITION with it.
+
+- [x] **Settings → Tools** — a new page for what a tool does between phrases: tape's start,
+  release and rearm (borrowed from the cabinet, returned on close), plus `min slice` and `dub
+  decay`, which the deleted shape sheet had been the only door to. Row model measured: five rows,
+  one right edge at 1284, no description over 92.
+
+### Sep 21 — the tool editor round
+
+*(Code comments from this round are dated 2026-09-22, following the dates already in the file when
+it began; git dates the commits Sep 21. The day is the same work either way.)*
+
+- [x] **A cursor preset carries its own reach** — `GLOBAL_PIDS` deleted, not emptied: `radius` and
+  `fill` follow the preset now, reversing the 2026-08-27 ruling. Two bugs under it: a typed number
+  never reached the instrument (`_paramTypeSet` fired only `keydown`, and every cabinet numbox
+  commits on `change` or `blur`), and a preset's radius was overwritten by the seg pids applied
+  after it, because the slider's handler is throttled 50 ms. RULINGS has both.
+- [x] **The sheets are controls, not writing** — `SEC_NOTE`, `_extrasFor` and `MODE_NOTE` deleted
+  with their CSS. Prose above a group moved every row beneath it when the mode changed; what it
+  said is in the tooltip on the row it is about.
+- [x] **The factory strip is quick access** — `wide · scrape · pin · unpin` on `c · e · ↓ · ↑`; the
+  two tools you play are in the HAND (`line` on the press, `dots` on the hold). Fixed two pieces of
+  drift on the way: the two factory lists disagreed (5 entries vs 6), and BUTTON_DEFAULTS put
+  button 3 on `palette_6`/`palette_7` — positions from a seven-tile strip — so its press fired
+  unpin and its double fired nothing.
+- [x] **The seeded voices are named, and there are four** — `verbatim` (tape) and `wash` (grain),
+  plus `undertow` (reverse, −1200¢) and `glitch`. The seed tops up BY NAME under a stamp, so a rig
+  that booted before can receive a factory voice added later; a name already present is left alone.
+- [x] **The hand holds a PAIR** — each side is `{id, voice}`, frozen at the pick. It played through
+  `HAND_POS` (−1), which the voice line read as "no voice", so the spacebar played whatever the
+  live block held and the tool creator's voice pick changed it. The tile's own label had the same
+  fault.
+- [x] **AUDITION is a global mode** — liveness stops being a gesture. One predicate
+  (`S._handTile().live`) feeds the grain voicing, the stroke stamp, a tape take's `_live` and
+  `syncLiveVoicing`. Both halves of auditioned paint had been built and NEITHER could fire: the
+  hand is null between presses, and a take is armed after the play ends. Under audition a sounding
+  pass follows too — speed and level live, reverse and pitch re-cut at the loop seam.
+- [x] **The editor writes the slot; the bench is gone** — picking a preset changes what plays (the
+  hand's side, or the eraser's palette position). `_benchBy` was a third place a tool could be.
+  Deleted with it: the bench tile, `placeBench`, the drag, the wet ring on every mark, and
+  `TOOL CREATOR` as a heading.
+- [x] **The row loads, the door opens** — separated again, and a LENS's door installs its lens,
+  because a lens's sheet IS the live eye: it had been naming `spot` while showing `wide`'s numbers.
+- [x] **The modes went home** — `audition` is the only global one; autopin, overdub, walk on touch
+  and erase-by-stroke sit in their instrument's tab, with the engine dropped from their names.
+- [x] **CURSOR INTERACTION is the tab's fourth section** — the five arrival rows left every shape
+  sheet (they are `S.triggerParams`, captured into no tile) and became icon pills in the engine
+  sheet's own `.opt .seg`. `dwell` drops `grain` on the grain tab only. Surfaced a pre-existing
+  bug: a slider whose numbox is a readonly DISPLAY could be dragged but never typed.
+- [x] **The rail is the PINS rail's width and one pitch** — `--rail-w` 20rem states both rails you
+  work in; the drawer keeps its own. Every row is pitch 30, and the kit decides how: a `.mrow` is a
+  div and is stated at 30, a `.trow` is a button held to 18/24/32/38 by R6, so the LIST spaces it.
+
 ### Sep 18
 
 - [x] **Audits are three-tier: fast per change, rig suites on request, everything at release** (Ek, 2026-09-18:
@@ -3060,3 +3359,131 @@
   the three new modules into `APP_SHELL`, and the user-facing docs: README's `/search/scope` row,
   QUICK-START's N key, and five new cheat-sheet items (tape speed/pitch/reverse, ends flipping,
   stroke mode, dwell grain, dub decay and its one-shot). Every audit green.
+- [x] **A tool is a SHAPE and a VOICE** (2026-09-21) — the round's vocabulary, third and final pass
+  (head/voice → sound/space → shape/voice, Ek's words each time). `SHAPE_PIDS` / `VOICE_PIDS` /
+  `SWITCH_PIDS` partition every engine and `_pileCheck` keeps them honest; the counts fell out as the
+  plan predicted (grain 8+20+1, tape 3+5+2, lens 13+0+0, erase 3+0+0), which is the evidence the
+  split was already in the code. RULINGS "A tool is a shape and a voice".
+- [x] **Voices are real, and the rail says the split** (2026-09-21) — `mubone_voices` (named block of
+  one engine's `VOICE_PIDS`, `sel` per engine), minted from the live block by a `+`, taken by a click,
+  renamed by the rail's own double-click. Sections became `tape shape · tape voice · grain shape ·
+  grain voice · erasers`, each in its engine's hue with its own `+`. A `default` voice per sounding
+  engine is seeded once on a fresh rig. Proven: mint at slider 200 and 750, take each back.
+- [x] **The params moved to where they live** (2026-09-21) — a shape's sheet is its own, not its
+  engine's (dots 8 rows, comb 10); every tape shape shows the same sheet, slicing and `decay`
+  included, which killed `DUB_PIDS` and made overdubbing a sheet setting; the lens's five arrival rows
+  moved onto the shape sheets, leaving it the eight that are about how you LOOK; a voice has a sheet
+  behind its own `⋯` and an edit there writes the voice. All four sheets read back from the app.
+- [x] **MODE, and no pin icon on any tool** (2026-09-21) — `autopin` (a switch) and `cycle`
+  (`own · master`) above the lens, asked once for everything. `autopin` drives the two end flags
+  through `_AUTOPIN`; `cycle` cost one line, `S._handIsOverdub`. Gone: the per-tool pin button, the
+  dub's fixed pin, the palette sticker, `isAutoPin`/`setAutoPin(id, on)`. Read back: row 24, switch
+  32×18, segmented 88×24, both engines' flags following the one switch. One render break shipped
+  and fixed same session (`pinOn` outlived its sticker).
+- [x] **TOOL EDITOR: the bench, `A`, and two hand tiles** (2026-09-21) — the rail is an editor, so
+  selecting lands on a BENCH and never touches the hand; the bench draws the tile it will become and
+  `place` needs a voice; `A` auditions it, reserved like the spacebar. The hand got TWO tiles — a tap
+  latches, a hold plays — `handVerb` retired, `HAND_TAP_MS` = the pin's own 200 ms. Two bugs found by
+  playing and fixed: the lit class was add-only, and the tap's latch never reached the funnel.
+- [x] **The editor is one instrument at a time** (2026-09-22) — Ek: "it's a TAPE instrument, and
+  GRAIN instrument and a SAMPLER". One row of icon tabs (the pins rail's own `.seg-pill`, measured
+  identical), three sections MODE · SHAPE PRESETS · VOICE PRESETS, nothing from another instrument
+  drawn: nineteen rows became six, by scope rather than by hiding. The rail is **TOOLS** now, with
+  MODE under the pill and a hairline + TOOL CREATOR over the bench — the instrument, then the tool.
+- [x] **The bench IS the hand tile, not a copy of it** (2026-09-22) — a `.palette` bed holding a real
+  `.tile--hand`, so the glyph size, the name's type, the ground and the width all arrive where the
+  strip gets them. `handTileInner` is the ONE builder. It says both names, wears the pin and overdub
+  flags when MODE is on, and is PLACED BY DRAG — onto a hand to replace it, onto the strip for a key.
+  Four attempts at "the same width" failed by eye; the fifth measured and was right.
+- [x] **Sunset WET; auditioned paint is live** (2026-09-22) — the per-tool switch is gone with its
+  glyph, its row, its action and its OSC address. The MECHANISM stays: one voicing owned by a tool,
+  shared by every stroke, edited in place — declared now by `S._handTile().live`, true only while the
+  bench sounds. Tape takes too: a take recorded while auditioning is `_live` and refreshes speed,
+  direction and level at every fire. Pitch cannot follow (offline render) and that is said out loud.
+- [x] **Everything in the editor is editor mode** (2026-09-22) — the lens row was the last one that
+  PERFORMED; it benches now, and `benchSubject()` resolves a tool or a lens for one builder (a factory
+  lens is not in `TILE_DEFS`). The SAMPLER became a tile too — an ACT, no shape and no voice, two
+  verbs, its state derived from `S.sourceKind` — so the `in N` rows left the panel entirely: the mic
+  is the chrome's setting, and one door per question.
+- [x] **One mark in the gutter, and it follows the bench** (2026-09-22) — every editor row is a radio,
+  ONE moon per group (shape · lens · voice), the shape group's marking the BENCH. Deleted with it:
+  `.open` from this rail (no drawer doors) and the IN-HAND LINE (a 2px rule 2px from the moon,
+  answering a different question). The moon is flush with the RAIL now, not the row — `.lyr-list` had
+  been insetting it 12px. Two new align invariants: one moon per group, no `.open`.
+- [x] **A bench per instrument, and one spacebar** (2026-09-22) — `mubone_bench` holds a map, migrated
+  one-shot; a tab you have never set opens on that instrument's first shape. The longer spacebar glyph
+  drawn the day before is deleted: a sticker reads SOURCE then GESTURE, and a glyph encoding the
+  gesture in its own width was a second vocabulary for one fact. `A` wears the bar only when the bench
+  is momentary — the suffix DISAMBIGUATES, it does not describe.
+- [x] **The default verb is the MATERIAL's** (2026-09-22) — tape toggle, grain momentary, erase
+  momentary, lens toggle, sampler momentary. `verbsOf` resolves tile → ENGINE → kind, so the bench, a
+  drop and a stored entry all read one answer; the rule had existed since `handVerbFor` and was stated
+  for the hand alone. The bench's right-click flip is per instrument and not persisted. **The AUDITION
+  takes it too**: a tap for a loop, a hold for a grain, through the same `_playDown`.
+- [x] **Cursor behaviour: out to MODE and back to the sheet** (2026-09-22) — the five arrival rows are
+  ONE value drawn on eleven sheets, so they went up into MODE for a day and came back: being SHARED is
+  not being a MODE, and the sheet's own `cursor behaviour` heading is where they read as what they
+  are. I claimed they were tape's on a grep of grain.js and Ek caught it — the reader is the GATE,
+  which hands the same `tp` to `startWalker`. **A grep of one module is not a reader census.**
+- [x] **The walk is grain's, and it is MODE** (2026-09-22) — `mode: stroke` left the lens, which is
+  `area · nearest` (the aperture) again; `S.grainWalk` is a MODE SWITCH beside autopin. It spent an
+  hour as a per-shape capsule, which is what produced the ruling: **a param lives with the tool it
+  works on, and MODE is that instrument's one answer for all of them** (CLAUDE.md, RULINGS). A walk
+  under `spot` reads as area — a walker is never nearest — and that is said where it is decided.
+- [x] **`setBench` never applied the selected tile's block** (2026-09-22) — found while proving a
+  per-shape param and it was the real bug: `renderProps` draws the LIVE controls and `_pollLiveBlock`
+  captures them back into `sheetTileId()`, so the sheet showed the previous shape's numbers and wrote
+  them into this one. `pickForSheet` states the rule in a comment; the bench had skipped it since the
+  day it existed. Applies for TOOLS only — a lens would change what the cursor reads this instant.
+- [x] **Four audits were the ones that were wrong** (2026-09-22) — the rail glyph check read LEFT
+  EDGES, so a voice's deliberately smaller centred dot failed it (centres now); R6 held a seg GROUP to
+  the kit's 24 the same as a segment, which is unsatisfiable at 24+2+2 (derived from its own segments
+  now); the pins mode-bar check had no visible `.seg-pill` reference and had been passing for free;
+  `palette-audit` asserted an in-hand mark that is deleted. `a-failing-audit-may-be-the-audit`, again.
+- [x] **The lens is called the cursor; `reads` is `scope`** (2026-09-23) — every word the player
+  reads (tab, tile, palette row, tooltips, midi labels, manual) says `cursor`; ids, `S.lens*`, the
+  `--lens` hue and the OSC stay `lens`. Scope's `grains` and `tape` wear the dots and line glyphs.
+  The tab reads scope, depth, k, step, mode, then radius, all, fade, falloff (`ENGINES.lens`).
+- [x] **The cursor tab reads top down, as a filter** (2026-09-23) — scope → mode → (radius · depth ·
+  all, indented under mode as area-only) → k → step → fade → falloff (indented, greyed when fade is
+  off). Each row narrows what the one above let through; `all` sits on k because it is k's off switch.
+- [x] **Scope tape greys everything below radius** (2026-09-23) — radius moved above mode: it is the
+  one reach both engines use (tape fires on touch at it, whatever the mode); mode and everything under
+  it is grains-only, so scope `tape` greys it. Nearest greys radius only when scope is grains.
+- [x] **Cursor tab: shared rows, then GRAIN; fade reaches tape; dwell grain beats scope** (2026-09-23)
+  — scope · radius · fade · falloff · mode, then a `GRAIN` heading over depth · all · k · step; mode's
+  `area` reads `radius`; one counter, `in reach → taken`, on k. Tape rides the fade by its distance to
+  the line over the EXIT radius (`t._cursorFade` on the trigger's pin-weight node). Scope `tape` now
+  granulates what `dwell: grain` opened, and depth never hides an opened stroke.
+- [x] **Fade is grain's only; falloff and crossfade go to Settings** (2026-09-23) — the tape fade came
+  out after Ek played it: a release silenced every take, overriding play-to-end. Cursor tab: scope,
+  radius, then GRAIN SELECTION (mode, depth, all, k, step, fade). Falloff → Settings › Tools › Cursor
+  (the cabinet slider, borrowed); the rail's crossfade curve → Settings › Pins › Follow.
+- [x] **The cursor tested row by row; step and nearest-dwell fixed** (2026-09-23) — `scripts/lens-audit.js`
+  (rig suite `lens`). Step now walks marks in the order made (stroke, then `takeT`), not buffer offset;
+  nearest no longer granulates a dwell-grain take on arrival, nor a walking cursor on its own; the counter's
+  `in reach` counts eligible marks, not the whole sphere. `_cursorGeometry` is shared by scheduler and seam.
+- [x] **Depth counts strokes, cursor and eraser** (2026-09-23, Ek) — `depthKey(p)` (grain.js) replaces
+  `getBufferKey` in the cursor's recency and erase.js's `_strokeFate`; sampler strokes, which share one file,
+  now count one each. Two `lens-audit` checks (cursor, eraser) proven to fail on the buffer key.
+- [x] **The sampler is parked, not sunset** (2026-09-23, Ek) — Settings › Tools › Sampler › `Use the sampler`,
+  off by factory (`S.samplerEnabled`, `mubone_sampler_on`). Off: no sampler tab (`_instruments()`),
+  `selectSource('sampler')` and capture refuse — every key, pad and OSC door meets it; switching off hands the
+  brush back to the mic. Probed in a private instance, both ways and across a reload.
+- [x] **A pin track's box is the fader, and only that** (2026-09-23, Ek) — number · box · dub cell · M S as
+  four grid columns (`.lyr-trk-row`, `.lyr-bus-line`), the material edge to edge; the dub glyph no longer
+  squeezes it. `align-audit` gains "every fader box shares one edge", and runs again: a backtick in its
+  rail probe (since 0f3ccd9) threw before any check. Its two stale mode-bar checks now count two rows.
+- [x] **A pin on an opened take is its loop, not a loop and a cloud** (2026-09-23, Ek) — `_cursorGranulating`
+  (tiles.js) asks for a non-trig mark; the open exception is the cursor's only (grain.js `forCursor`), so
+  seeds and walkers never read an opened take. Two `lens-audit` pin checks, both failing on the old code.
+- [x] **In / Out are one live pair; overdub is an O** (2026-09-23, Ek) — `pinFadeIn` / `pinFadeOut` (pins.js)
+  read Settings › Pins at the moment a pin comes or goes; no pin stores `fadeIn`/`fadeOut`, the rail's fold
+  and the number-as-button are gone. `G.overdub` is a plain ring, white on the tape tile, and circles the
+  dub target's number in the rail (the dub cell went). The dB readout sits on a chip over the material.
+- [x] **The cursor is the tool rail's foot, not a tab** (2026-09-23, Ek) — `#cursorSec` / `#cursorPanel`
+  (index.html), filled by render() with the lens rows, wired to capture into `LENS_ID`; the tabs are tape ·
+  grain · erase. The lens tile's press no longer switches tabs; `_syncLensTab` and the live counter read the
+  section. `align-audit` gains the section's invariant; with the tool rail open, 3 known failures remain.
+- [x] **The rail titles wear glyphs** (2026-09-23, Ek) — TOOLS a new `G.tools` (tape's line over grain's
+  dots), CURSOR the lens rings, PINNED the pin; `_titleGlyphs()` (tiles.js) draws the one copy of each.

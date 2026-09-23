@@ -138,8 +138,8 @@ settings dialog. It was 0/2/3/5/20 and the 20 fought every 2px control beside it
 `--accent-lock` `#7fa8ae`, `--accent-sensor` `#a793c0`, `--accent-sweep` `#9db87e`,
 `--accent-danger` `#cc6a55`, `--accent-warn` `#c99552`.
 
-**Engine hues** (`--eng-*`) are the colour language: source `#4aa3e8`, lens `#5fbf9a`, tape
-`#f2569e`, grain `#e8a030`, erase `#b07c8f`, pins `#cfc7bc`, none `#857f76`. **These are
+**Engine hues** (`--eng-*`) are the colour language: source `#4aa3e8`, lens `#e4ddd0`, tape
+`#f2569e`, grain `#e8a030`, erase `#be7ace`, pins `#cfc7bc`, none `#857f76`. **These are
 load-bearing.** The rail tile, the engine sheet and the cursor all read the same property, so the
 tile you pressed and the mark under your hand are the same colour *by construction*, not by two
 lists agreeing. They were re-cut brighter and more saturated on 2026-09-12 (§ 11 of
@@ -202,9 +202,16 @@ and its *shape* carries the rule:
   the rail's eyebrow sitting on its top-right corner the way a sticker sits on a tile's outline). What
   unpin takes is always row one, since the sort is the selection, and a radio mark nobody reads
   mid-show was not saying so (Ek: "sure we have the half moon dot but that's old"). Neutral, never
-  ember: chosen is not exceptional. **Tool rows wore it until 2026-09-11**
-  and do not any more: arming is gone, so nothing selects a tool — a click on one points the
-  DRAWER at it (`.open`, the raised ground) and its key plays it, and neither is a selection.
+  ember: chosen is not exceptional. **The rail's gutter holds ONE mark and it is this one**, flush
+  with the RAIL's edge and not the row's — the in-hand line (`inset 2px 0 0`, the hand's since
+  2026-09-12) was deleted on 2026-09-22 (Ek: "scrape still uses the old line instead of half moon"):
+  a line and a moon 2px apart, answering different questions, cannot both be read. The hand is
+  performance state and the hand tile names its shape and voice in words.
+  **Tool rows wear the moon again since 2026-09-22**, after a year of
+  not: arming went in 2026-09-11 and there was nothing to select, and then the rail became the TOOL
+  EDITOR and a click began putting the shape on the BENCH — which is a choice, one at a time, so it
+  takes the moon like every other. Three groups now carry one each (shape, lens, voice); a tool is a
+  pair, so the shape's moon and the voice's moon together are what you are building.
 - **half square** — additive. As many as you like. Off is the same solid block at 24%, not an
   outline: outlined, at 6px with the rail's edge as its fourth side, it read as a bracket rather
   than a shape. **Nothing in the lens dock wears it today** — the pin filters that did were sunset
@@ -212,9 +219,12 @@ and its *shape* carries the rule:
   rule is about the QUESTION a row answers, not about which rows currently exist.
 
 Round is the shape that cannot tile; square is the one that can. Every row that IS a choice must
-carry `trow--radio` or `trow--multi` — the audit fails on a bare one, and equally on a tool row
-claiming a mark it has no choice to report. The lit class is `.on`; it was `.armed` until
-2026-09-11, when the word left the vocabulary with the thing.
+carry `trow--radio` or `trow--multi` — the audit fails on a bare one, on a second moon in one group,
+and on any rail row still wearing `.open`. **`.open` is out of this rail** (2026-09-22): it was the
+drawer's mark, and an editor has no drawer doors — selecting a row IS opening its sheet — so the
+class could only ever say "chosen" a second time, in a quieter voice, sometimes on a different row
+than the moon. The lit class is `.on`; it was `.armed` until 2026-09-11, when the word left the
+vocabulary with the thing.
 
 **Settings pages have one type contract**, and its reference is `sensors` and `mapping`: body
 `--fs-page` (= `--fs-eyebrow`, 11.04), quiet text `--fs-hint` (= `--fs-nano`, 10.24), declared on
