@@ -53,6 +53,13 @@ suite (`lens`) that drives every cursor setting through the scheduler's own code
 - Nearest granulated a dwell-grain take the moment the cursor arrived, over its own first pass.
 - Nearest let a walking cursor granulate on its own.
 - `align-audit` had not run since 0f3ccd9 (a backtick in its rail probe threw before any check).
+- **Every rig suite green again.** `engine-audit` drives the four VOICE sheets (the nine tool pages
+  it opened were deleted 2026-09-22); `palette-audit` is rewritten for the fixed toolbar (the old
+  1515-line suite proved the draggable palette); `trigger-audit` drives slice through `sliceOn`
+  and drops the deleted gap chop; `pins-audit`'s wet paint is auditioned paint; `osc-audit`'s quiet
+  list is the four-position strip and `/spatial/mode` on a sensorless rig.
+- `lib/rig.js` leaked Electron: closing killed the `.bin/electron` wrapper and left the app running
+  (nineteen instances after one OSC sweep). It ends the whole process group now.
 
 ### Removed
 - **Unmute all** — the row, the act, `pins_unmute_all` and `/pins/unmuteall`; the MIX mute is a

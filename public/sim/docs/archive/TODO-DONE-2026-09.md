@@ -3487,3 +3487,7 @@ it began; git dates the commits Sep 21. The day is the same work either way.)*
   section. `align-audit` gains the section's invariant; with the tool rail open, 3 known failures remain.
 - [x] **The rail titles wear glyphs** (2026-09-23, Ek) — TOOLS a new `G.tools` (tape's line over grain's
   dots), CURSOR the lens rings, PINNED the pin; `_titleGlyphs()` (tiles.js) draws the one copy of each.
+- [x] **Release 5.6 — every audit green** (2026-09-23) — engine (voice sheets), palette (rewritten for the
+  fixed toolbar), trigger (slice via `sliceOn`, gap chop gone), pins (auditioned paint; live In/Out pinned
+  in the timing checks), lens (clears pins it would be claimed by), osc (four-position strip), align (two
+  stale checks, tabs are 32). `lib/rig.js` kills the process group — close() used to leak Electron.

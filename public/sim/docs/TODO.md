@@ -10,13 +10,6 @@
 
 ### Sep 23
 
-- [ ] **Three rig suites fail on a clean tree** (proved on c7a3f2b in a worktree, 2026-09-23): `engine-audit`
-  still opens pages for the tools deleted 2026-09-22 (`pen`, `wash`, `line`, `slice` … "tool not in the rail",
-  14); `trigger-audit` slice/chop (9, `got 1` — one trigger where four bursts should cut); `pins-audit` "the wet
-  brush's knob reaches the cloud's material" (1); `palette-audit` still expects the seven-tile strip of before
-  2026-09-22 (8); `align-audit` "the lens page's live columns" opens a lens sheet that no longer exists
-  (2026-09-23). Suite or code, each needs running alone first.
-
 ### Sep 16
 
 - [ ] **The long-set fault is MEMORY PRESSURE on the 8 GB laptop, not the audio thread** — three driven runs.
