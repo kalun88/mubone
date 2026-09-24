@@ -77,11 +77,11 @@ const ACTIONS = [
   // behaviour rows, the voice presets, then the voice sheet (2026-09-24, Ek:
   // "the app is considered spec, what i see are generally the things i want
   // to be key bindable"). `audition` is one flag for both instruments.
-  { id: 'audition',     label: 'audition (toggle)',         key: '—', osc: '/audition',      fmt: 'bang=toggle, int 0|1', type: 'trigger',
-    tip: 'every setting is live on paint — the switch above the tape and grain tabs. One flag for both' },
+  { id: 'audition',     label: 'audition (toggle)',         key: 'a', osc: '/audition',      fmt: 'bang=toggle, int 0|1', type: 'trigger',
+    tip: 'the cursor plays what it reads through the live tape and grain sheets instead of as baked — the switch in the CURSOR section. Nothing is rewritten' },
   { id: 'tape_autopin', label: 'autopin as loop (toggle)',  key: '—', osc: '/tape/autopin',  fmt: 'bang=toggle, int 0|1', type: 'trigger',
     tip: 'a tape stroke pins itself as a loop on release' },
-  { id: 'tape_overdub', label: 'overdub (toggle)',          key: '—', osc: '/tape/overdub',  fmt: 'bang=toggle, int 0|1', type: 'trigger',
+  { id: 'tape_overdub', label: 'overdub (toggle)',          key: 'o', osc: '/tape/overdub',  fmt: 'bang=toggle, int 0|1', type: 'trigger',
     tip: 'a take records into the nearest pinned loop as a layer; nothing pinned, the first take is the loop' },
   { id: 'tape_slice',   label: 'slice (toggle)',            key: '—', osc: '/tape/slice',    fmt: 'bang=toggle, int 0|1', type: 'trigger',
     tip: 'the tape tab\'s slice switch — on, a take is cut into separate triggers at each attack. Affects the NEXT take recorded' },
@@ -169,7 +169,7 @@ const ACTIONS = [
     tip: 'the sheet\'s link: duration and period move together, holding the overlap you have now' },
   { id: 'grain_curve',  label: 'envelope curve (cycle)',            key: '—',  osc: '/grain/curve',       fmt: 'bang=cycle, str=set (hann|tri|rect)',              type: 'trigger',
     tip: 'grain envelope shape — cycles hann → triangle → rectangular' },
-  { id: 'grain_fade',   label: 'fade',                      key: '—',  osc: '/grain/fade',        type: 'cc',
+  { id: 'grain_fade',   label: 'slope',                     key: '—',  osc: '/grain/fade',        type: 'cc',
     tip: 'attack + release each as % of grain duration — 0% instant on/off, 50% pure envelope',
     range: { min: 0, max: 50, unit: '%' },
     ccFn: v => { S.grainOverrides.fadeRatio = (v / 127) * 0.5; S.syncGrainControlsUI?.(); } },
@@ -258,9 +258,9 @@ const ACTIONS = [
   // is S.recencyN 0, a sentinel above the top rather than a number in the
   // range, so the action carries no `range`: a scaled pot would print 1–4 and
   // call the fourth step "4".
-  { id: 'recency_cc',   label: 'depth',                     key: '—',                 osc: '/search/recency', type: 'cc', fmt: 'int 1|2|3, 0 = all',
-    tip: 'how many of the newest strokes the cursor can reach — the throw in four: 1, 2, 3, then all. The foot\'s depth row, and erase\'s',
-    ccFn: v => { const n = [1, 2, 3, 0][Math.min(3, Math.floor((v / 128) * 4))]; if (typeof S.setRecency === 'function') S.setRecency(n); else S.recencyN = n; } },
+  { id: 'recency_cc',   label: 'depth',                     key: '—',                 osc: '/search/recency', type: 'cc', fmt: 'int 1–6, 0 = all',
+    tip: 'how many of the newest strokes the cursor can reach — the throw in sevenths: 1 to 6, then all. The foot\'s depth row, and erase\'s',
+    ccFn: v => { const n = [1, 2, 3, 4, 5, 6, 0][Math.min(6, Math.floor((v / 128) * 7))]; if (typeof S.setRecency === 'function') S.setRecency(n); else S.recencyN = n; } },
   // ZERO IS ALL (2026-09-24): the bottom of the throw is `all` (k = 0), the
   // rest 1…K_MAX, linear — a pot is read by its number, so it takes the plain
   // scale and leaves the log curve to the cabinet's handle, whose position is
@@ -290,7 +290,7 @@ const ACTIONS = [
       S.commitSlotCount = Math.max(1, Math.min(16, Math.round(1 + v * 15 / 127)));
       (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))();
     } },
-  { id: 'pins_follow',  label: 'follow (toggle)', key: '—',                osc: '/pins/follow',     fmt: 'bang=toggle, str=set (on|off)',                type: 'trigger',
+  { id: 'pins_follow',  label: 'follow (toggle)', key: 'f',                osc: '/pins/follow',     fmt: 'bang=toggle, str=set (on|off)',                type: 'trigger',
     tip: 'the pinned rail\'s follow switch — on: the nearest pin is loudest and the rest hand over by distance / off: every pin at its fader' },
   { id: 'commit_selection', label: 'sort · near / far / old (cycle)', key: '—',               osc: '/commit/selection', fmt: 'bang=cycle, str=set (nearest|farthest|oldest)',                 type: 'trigger',
     tip: 'the pinned rail\'s sort, which is also the SELECTED pin — what unpin takes and the rail marks: nearest the cursor, farthest, or the oldest' },
@@ -312,7 +312,7 @@ const ACTIONS = [
     tip: 'the loops bus M' },
   { id: 'bus_loop_solo',  label: 'loops · solo (toggle)',   key: '—', osc: '/pins/loops/solo',  fmt: 'bang=toggle, int 0|1', type: 'trigger',
     tip: 'the loops bus S' },
-  { id: 'commit_clear', label: 'unpin all',                 key: '—',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
+  { id: 'commit_clear', label: 'unpin all',                 key: '↑ extra long',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
     tip: 'unpin every cloud and loop — the pinned rail\'s unpin all row' },
   { id: 'pins_mute',       label: 'mute all (momentary)',       key: '—', osc: '/pins/mute',      fmt: 'int 0|1', type: 'hold',
     tip: 'silence every pin, and let it back on the next press — your per-pin mutes and solos survive the round trip. 1 mutes, 0 lets back, no value flips it' },
@@ -589,16 +589,11 @@ function loadKeyMappings() {
     const saved = localStorage.getItem('mubone_key_map');
     if (saved) keyMappings = JSON.parse(saved);
     let dirty = _migrateIds(keyMappings);
-    // A IS THE BENCH'S and stays reserved (2026-09-21): a row on it is not a
-    // binding, and it is swept on every load so a stored one cannot outlive
-    // the reservation. THE SPACEBAR IS NOT RESERVED ANY MORE (Ek, 2026-09-22:
-    // "i should be able to now use spacebar as a keybind option"). It is an
-    // ordinary key that the HAND happens to hold at factory, learnable onto
-    // anything and stealable from the hand by the one-gesture-one-action rule
-    // below — which only works because the hand's rows live in this map now
-    // rather than in a reservation the steal cannot reach.
-    const RESERVED_KEYS = new Set(['KeyA']);
-    for (const [id, km] of Object.entries(keyMappings)) if (km && km.type === 'key' && RESERVED_KEYS.has(km.code)) { delete keyMappings[id]; dirty = true; }
+    // NO KEY IS RESERVED (2026-09-24). The spacebar stopped being reserved on
+    // 2026-09-22 (Ek: "i should be able to now use spacebar as a keybind
+    // option") and `A` — the bench's, swept off every profile on load until
+    // today — is audition's factory key now, seeded below like the spacebar
+    // and learnable off and onto anything by the one-gesture-one-action rule.
     if (dirty) saveKeyMappings();
   } catch(e) { keyMappings = {}; }
 }
@@ -949,11 +944,38 @@ function sourceLabel(src) {
 // in sync: bind the hand to F and the click stops playing it, because the click
 // never followed the hand — it follows the key.
 const SPACE_TWIN = 'mouse:0';
-/** The hand's factory keys — the spacebar, its press and its long. Seeded into
- *  `keyMappings` on first load like the strip's digits, not reserved. */
+/** The factory keys that are not the strip's digits — the hand's spacebar
+ *  (press and long) and AUDITION's `A` (Ek, 2026-09-24: "make A the keybind
+ *  default for audition"; `A` was the bench play until then, reserved, and
+ *  the bench play is gone). Seeded into `keyMappings` when absent, like the
+ *  digits, not reserved: learnable off and onto anything. */
 const HAND_FACTORY_KEYS = {
   hand_press: { type: 'key', key: ' ', code: 'Space', shift: false, ctrl: false, meta: false, g: 'press' },
   hand_long:  { type: 'key', key: ' ', code: 'Space', shift: false, ctrl: false, meta: false, g: 'long' },
+  audition:   { type: 'key', key: 'a', code: 'KeyA',  shift: false, ctrl: false, meta: false, g: 'press' },
+  // O for OVERDUB (Ek, 2026-09-24) — the letter its tile flag already draws.
+  tape_overdub: { type: 'key', key: 'o', code: 'KeyO', shift: false, ctrl: false, meta: false, g: 'press' },
+  // F for FOLLOW, the pinned rail's switch (Ek, 2026-09-25).
+  pins_follow:  { type: 'key', key: 'f', code: 'KeyF', shift: false, ctrl: false, meta: false, g: 'press' },
+  // N and [ ] were HARDCODED in events.js until 2026-09-25 — a key nothing could
+  // move. Seeded here instead, they are bindings like the rest, and their rows
+  // wear a learnable sticker (Ek: "any gui that has a key binding shortcut by
+  // factory default should also have the same glyph design … and be learnable").
+  snap:         { type: 'key', key: 'n', code: 'KeyN',         shift: false, ctrl: false, meta: false, g: 'press' },
+  radius_dec:   { type: 'key', key: '[', code: 'BracketLeft',  shift: false, ctrl: false, meta: false, g: 'press' },
+  radius_inc:   { type: 'key', key: ']', code: 'BracketRight', shift: false, ctrl: false, meta: false, g: 'press' },
+  // …and the chrome's performance keys, the same way (Ek, 2026-09-25: "same with
+  // the chrome stuff too, undo, sweep, clear all, zero, lock, mute"). ` M ⌘Z
+  // were hardcoded in events.js. ⌥ (a bare modifier) and Backspace×3 (erase
+  // all's guarded triple, with its progress readout) stay hardcoded; their
+  // stickers show the factory key and a learn ADDS a binding beside it.
+  tare:         { type: 'key', key: '`', code: 'Backquote',    shift: false, ctrl: false, meta: false, g: 'press' },
+  mute:         { type: 'key', key: 'm', code: 'KeyM',         shift: false, ctrl: false, meta: false, g: 'press' },
+  undo:         { type: 'key', key: 'z', code: 'KeyZ',         shift: false, ctrl: false, meta: true,  g: 'press' },
+  // UNPIN ALL is ↑ held EXTRA LONG (Ek, 2026-09-25) — the unpin tile's own key,
+  // held past the extra-long window: a press unpins the selected pin, keeping
+  // it down clears the rest. Two gestures on one source, as the spacebar has.
+  commit_clear: { type: 'key', key: 'ArrowUp', code: 'ArrowUp', shift: false, ctrl: false, meta: false, g: 'xlong' },
 };
 /** Every gesture binding in the three maps: [actionId, source, gesture]. */
 function* _gestureBindings() {
@@ -1242,6 +1264,72 @@ function bindingsOf(actionId, factoryCode) {
   if (mm && mm.type === 'note') { const g = mm.g || 'press'; out.push({ kind: 'midi', label: String(mm.number), g, delayed: slow(noteSource(mm), g) }); }
   return out;
 }
+
+// ── THE SHORTCUT IN THE TOOLTIP (Ek, 2026-09-24: "a simple one word tooltip
+// when learn is off and include the shortcut for that, either the simple
+// version or not") ─────────────────────────────────────────────────────────
+// ui-learn.js asks, on hover, what is learned onto the control under the
+// pointer. The registry answers by mapping the ELEMENT to its action: an
+// explicit `data-action`, a palette position, a hand side, the rows' own
+// hooks (`data-audition`, `data-autopin`, the switch proxies), or a sheet
+// row's pid through PID_ACTION. Nothing here runs except on hover.
+const PID_ACTION = {
+  dur: 'grain_dur', durVar: 'grain_durvar', durJit: 'grain_durjit', period: 'grain_period', perVar: 'grain_pervar',
+  overlap: 'grain_overlap', glink: 'grain_link', curve: 'grain_curve', fade: 'grain_fade', startJit: 'grain_startjit',
+  pitch: 'grain_pitchshift', pitchJit: 'grain_pitch', dir: 'grain_dir', flt: 'grain_filter', ftype: 'grain_filtertype',
+  cutoff: 'grain_cutoff', res: 'grain_res', fltJit: 'grain_fltjit', vol: 'grain_vol', pan: 'grain_pan', prob: 'grain_prob',
+  flow: 'grain_flow', headW: 'grain_head', gEnd: 'grain_autopin',
+  tspeed: 'tape_speed', tpitch: 'tape_pitch', tstep: 'tape_step', treverse: 'tape_reverse', tvol: 'tape_vol',
+  tchop: 'tape_slice', onEnd: 'tape_autopin',
+  // A row can answer to several actions — radius is a pot AND two keys.
+  radius: ['radius_cc', 'radius_inc', 'radius_dec'], mode: 'snap', depth: 'recency_cc', k: 'grain_k', korder: 'k_seq',
+  rfade: 'radius_fade', reads: 'lens_reads',
+};
+const HOOK_ACTION = {
+  'data-audition': () => 'audition',
+  'data-autopin':  v  => v === 'tape' ? 'tape_autopin' : 'grain_autopin',
+  'data-overdub':  () => 'tape_overdub',
+  'data-gwalk':    () => 'grain_walk',
+  'data-escope':   () => 'erase_bystroke',
+  'data-gsw':      v  => ({ dwell: 'grain_dwell', retrig: 'grain_retrig' })[v] ?? null,
+  'data-swproxy':  v  => ({ trigChopSeg: 'tape_slice', radiusFadeSeg: 'radius_fade', trigDwellSeg: 'tape_dwell',
+                            trigRetrigSeg: 'tape_retrig', gcFilterOnSeg: 'grain_filter' })[v] ?? null,
+  'data-sw':       v  => ({ glink: 'grain_link', gend: 'grain_autopin', treverse: 'tape_reverse', onend: 'tape_autopin' })[v] ?? null,
+  'data-reads':    () => 'lens_reads',
+};
+function actionOfElement(el) {
+  if (!el) return null;
+  const a = el.closest('[data-action]'); if (a) return a.dataset.action;
+  const which = el.closest('[data-which]'); if (which) return 'hand_' + which.dataset.which;
+  const pos = el.closest('[data-pos]'); if (pos) return 'palette_' + ((+pos.dataset.pos) + 1);
+  for (const [attr, f] of Object.entries(HOOK_ACTION)) {
+    const h = el.closest(`[${attr}]`); if (!h) continue;
+    const id = f(h.getAttribute(attr)); if (id) return id;
+  }
+  const pidEl = el.closest('[data-pid], [data-ptrack], [data-pval], [data-pband]');
+  if (pidEl) {
+    const pid = pidEl.dataset.pid ?? pidEl.dataset.ptrack ?? pidEl.dataset.pval ?? pidEl.dataset.pband;
+    return PID_ACTION[pid] ?? null;
+  }
+  return null;
+}
+/** The learned inputs on an action, as words: `a`, `spacebar / click`,
+ *  `btn 3 long`, `note 60 ×2` — joined by ` · `; the factory key when nothing
+ *  is learned and it is documentation only (`⌘Z`). '' when there is none. */
+function shortcutOf(actionId) {
+  if (!actionId) return '';
+  if (Array.isArray(actionId)) return actionId.map(shortcutOf).filter(Boolean).join(' · ');
+  const a = ACTIONS.find(x => x.id === actionId);
+  const bs = bindingsOf(actionId);
+  const parts = bs.map(b =>
+    (b.kind === 'button' ? 'btn ' : b.kind === 'midi' ? 'note ' : '') + b.label +
+    (b.g && b.g !== 'press' && GESTURE_LABEL[b.g] ? ' ' + GESTURE_LABEL[b.g] : '') + (b.space ? ' / click' : ''));
+  // The factory KEY leads when no key is learned — `⌘Z` beside a button that
+  // also fires undo — and is left out only when a key has replaced it.
+  if (!bs.some(b => b.kind === 'key') && a?.key && a.key !== '—') parts.unshift(a.key);
+  return parts.join(' · ');
+}
+function shortcutOfElement(el) { return shortcutOf(actionOfElement(el)); }
 
 /** True when a factory key was learned onto some other action, so the
  *  factory binding it stood on is gone (tiles.js _keyRelearned's second half). */
@@ -2671,6 +2759,8 @@ export function setupMappingModal() {
   S._buttonTiming   = { get: () => ({ ...buttonTiming }), set: setButtonTiming, defaults: { ...BUTTON_TIMING_DEFAULT } };
   S._bindingsOf     = bindingsOf;                    // the palette's legend reads these two
   S._gestureLabel   = g => GESTURE_LABEL[g] ?? '';
+  S._actionForGesture = actionForGesture;           // events.js: a held [ or ] repeats its action
+  S._shortcutOf     = shortcutOfElement;             // the tooltip's second half (ui-learn.js)
   // Continuous radius setter for the canvas wheel (2026-08-28): the
   // radius_inc/dec actions step by SEARCH_RADIUS_STEP (2°), which is right
   // for a key or a pedal and wrong for a trackpad — the radius visibly

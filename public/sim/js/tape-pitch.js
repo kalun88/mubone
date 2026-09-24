@@ -70,13 +70,19 @@ function _ensureWorker() {
       _jobs.delete(id);
       if (!job) return;
       const { slot, region, ratio, circular } = job;
-      // Stale if the region was re-cut or the pitch changed while it ran.
-      const want = slot._pitchBuf;
-      if (!want || want.from !== region || want.ratio !== ratio || want.circular !== circular) return;
+      const c = slot._pitchBuf;
+      // Stale only if the REGION was re-cut under it. A ratio that has since
+      // moved on is still the freshest stretch in hand — it is kept as `done`
+      // and the seam may take it while the newer one runs (2026-09-24 night).
+      if (!c || c.from !== region || c.circular !== circular) return;
       const actx = ensureAudioContext();
       const buf = actx.createBuffer(1, out.length, region.sampleRate);
       buf.getChannelData(0).set(out);
-      want.buf = buf; want.pending = false;
+      c.done = { ratio, buf };
+      c.inflight = null;
+      // ONE JOB IN FLIGHT PER SLOT, LATEST WINS: the ratio wanted now, if it
+      // is not the one that just landed, goes next — and only now.
+      if (c.want !== ratio) _post(slot, c, c.want);
     };
     w.onerror = err => console.warn('[tape-pitch] worker:', err.message || err);
     _worker = w;
@@ -85,19 +91,57 @@ function _ensureWorker() {
   return _workerReady;
 }
 
+// ── ONE JOB IN FLIGHT PER SLOT, LATEST WINS (Ek, 2026-09-24 night) ──────────
+// "it seems even to wait for me to release my click if i'm dragging that
+// slider slowly." Every drag step posted a stretch, the worker took them in
+// order, and each result was thrown away as stale because the ratio had moved
+// on — so the take could not change until the WHOLE queue had drained after
+// the drag ended, and the last one landed. Now a slot carries one state:
+//
+//   slot._pitchBuf = { from, circular, want, inflight, done: { ratio, buf } }
+//
+// `want` is the ratio asked for last; `inflight` the id of the one job the
+// worker holds for this slot, if any; `done` the FRESHEST stretch that has
+// landed, whatever its ratio. A new ask while one is in flight only moves
+// `want`; when the job lands, `want` goes next if it differs. The seam takes
+// `done` whenever it is fresher than what is playing (grain.js
+// `_liveRecutReady` / `stretchFresh`), so a slow drag is heard one step behind
+// the pointer, loop by loop, instead of all at once after the release.
+function _state(slot, region, circular) {
+  const c = slot._pitchBuf;
+  if (c && c.from === region && c.circular === circular) return c;
+  // A re-cut region is a new one: the cache follows it, the old job's result
+  // will be dropped on arrival (see onmessage).
+  return (slot._pitchBuf = { from: region, circular, want: null, inflight: null, done: null });
+}
+function _post(slot, c, ratio) {
+  const id = _nextId++;
+  c.inflight = id; c.want = ratio;
+  const samples = new Float32Array(c.from.getChannelData(0));   // a copy: the buffer stays playable
+  _jobs.set(id, { slot, region: c.from, ratio, circular: c.circular });
+  _ensureWorker().then(w => { if (w && _jobs.has(id)) w.postMessage({ id, samples, ratio, circular: c.circular }, [samples.buffer]); });
+}
 /**
- * The stretched copy of `region` (an AudioBuffer, already cut and reversed)
- * for `ratio`, cached on the slot; null while the worker is still on it, and
- * the caller tries again next tick. Keyed on the region OBJECT: a re-cut
- * region (grain.js _regionCopy) is a new one, so the cache follows it.
+ * The freshest stretched copy of `region` (an AudioBuffer, already cut and
+ * reversed) in hand for this slot — at `ratio` if that has landed, else the
+ * latest that has (`stretchRatio` says which), else null while the first is
+ * still on the worker. Asks for `ratio` if it is not the one done or in
+ * flight. Keyed on the region OBJECT.
  */
 export function stretchedRegion(slot, region, ratio, circular) {
+  const c = _state(slot, region, circular);
+  if (c.done && c.done.ratio === ratio) { c.want = ratio; return c.done.buf; }
+  if (c.want !== ratio) { c.want = ratio; if (c.inflight == null) _post(slot, c, ratio); }
+  return c.done ? c.done.buf : null;
+}
+/** The ratio of the stretch `stretchedRegion` last handed out for `region`. */
+export function stretchRatio(slot, region) {
   const c = slot._pitchBuf;
-  if (c && c.from === region && c.ratio === ratio && c.circular === circular) return c.pending ? null : c.buf;
-  const id = _nextId++;
-  slot._pitchBuf = { from: region, ratio, circular, buf: null, pending: true };
-  const samples = new Float32Array(region.getChannelData(0));   // a copy: the buffer stays playable
-  _jobs.set(id, { slot, region, ratio, circular });
-  _ensureWorker().then(w => { if (w && _jobs.has(id)) w.postMessage({ id, samples, ratio, circular }, [samples.buffer]); });
-  return null;
+  return c && c.from === region && c.done ? c.done.ratio : null;
+}
+/** Is there a landed stretch of `region` at a ratio other than `playing`? —
+ *  the seam's question: something fresher than the node in hand. */
+export function stretchFresh(slot, region, playing) {
+  const c = slot._pitchBuf;
+  return !!(c && c.from === region && c.done && c.done.ratio !== playing);
 }

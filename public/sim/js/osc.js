@@ -665,7 +665,7 @@ export function handleOSC(rawAddress, values) {
     case '/search/order':   S._dispatchAction?.('k_seq', 127);     break;
     case '/search/recency': {
       const raw = Math.round(values[0]);
-      const n = raw <= 0 ? 0 : Math.min(3, raw);   // 0 = all (no filter); 1, 2 or 3 strokes (2026-09-24)
+      const n = raw <= 0 ? 0 : Math.min(6, raw);   // 0 = all (no filter); 1–6 strokes (2026-09-25)
       if (typeof S.setRecency === 'function') S.setRecency(n);
       else S.recencyN = n;
       break;

@@ -878,6 +878,91 @@ How to use this file: find the heading for the area you are about to touch and r
   `lp`, a high-pass alone `hp`, both set a `bp` at the geometric centre with the Q the band
   implies, nothing set is off. Stored MIDI bindings on the four old action ids are not migrated;
   they point at nothing and can be re-learned.
+  **The sheet since 2026-09-24** (Ek: "any way we can simplify the grain sheet?"): the filter's
+  SWITCH sits on the FILTER heading, at the right edge — the section is the thing being switched,
+  so the switch lives where the section is named, not on a row of its own; `cutoff ±` is the BAND
+  on the cutoff row (`VAR_OF`), the way `dur ±` and `per ±` are, and no longer a row; the PITCH
+  heading is gone (pitch · octave · direction are GRAIN rows after the timing rows); the caption
+  under the envelope drawing is gone (every number it said is a row below it); OUTPUT reads
+  `prob · vol · spread` — the gate, then how loud, then how wide; and no row dims at a do-nothing
+  default any more — `prob` at 100 % read as a lighter track, not a meaning, and the rule is never
+  dim to mean anything.
+  Later that day: `taper` is **`slope`**, and it has no track — it is the percent at the end of the
+  CURVE row (the shape, then how much of the grain that shape occupies), scrubbed, typed or
+  double-click reset through the same `.prow-v` cell every track row ends in. The pid stays `fade`.
+  **Off is shut**: while the switch is off the FILTER section is its heading and switch and nothing
+  else — no drawing, no rows — and the press opens it; `engine-audit` switches it on before walking
+  the rows. **Filter off is the preset default**: both grain seeds say `flt: 'off'` outright, and a
+  one-shot (`mubone_voice_filter`, 2026-09-24) switched off every stored grain voice — the 09-23
+  corner migration had turned a voice's filter on wherever a low-pass had been set at all, which made
+  the filter a default instead of a choice. Type, cutoff and res are kept; one press brings it back.
+
+- **A voice preset is a recall; the sheet is the engine's** (2026-09-24, Ek: "we imagine the presets
+  having their own sheets but in reality a preset changes the controls of an existing global set of
+  controls … make it more like an actual preset where pressing the preset just moves the sliders on
+  the main sheet"). Each instrument tab ends in a **VOICE** line — its `+` (save the sliders as a new
+  preset) and its DOOR, the one door that opens the engine's sheet, headed `GRAIN · voice` / `TAPE ·
+  voice` with no preset name and no `del`. The rows under it are PRESETS: a press RECALLS one onto the
+  live block (`applyVoice`); the row is a WORD alone — no dot, no half moon (Ek, that evening) —
+  and it is ON (a plain highlighted item — raised ground, bright text, no edge line) only while the live sliders ARE the
+  preset: move one off it and no row is on, Photoshop's rule for a modified preset (`_voiceEdited`,
+  string-compared on capture's own reads; `_refreshVoiceMarks` after every capture; `.edited` stays
+  on the row as the audit's hook); pressing it again puts the sliders back. The hand tile says the
+  same in a word: the preset's name while the sliders are on it, `custom` once they have moved off
+  (`_handVoiceWord`). **An edit never
+  writes into a preset** — Ableton's rule, reversing the voice half of "a tile is the preset" (the
+  sheet's edits captured into the voice from 2026-09-21 to 09-24, which is what made them read as
+  sheets). The edit is the ENGINE's and lives under its TOOL: `shapeSheetPids` is the whole block
+  (tab rows + voice pids), `_persists` covers tape as well as grain, both tools are applied at boot,
+  a recall is captured into the tool 120 ms after it lands, and the grain poll always captures into
+  the grain tool whatever the sheet shows. **The press plays the live block**: `_playDown` no longer
+  re-applies a voice, the hand stores `{id}` only (`handVoice` derives the engine's current preset
+  for the tile's word), and `_ensureHandVoices` / `_writeSlotVoice` / `benchVoice` are gone with the
+  per-side copy. One consequence Ek accepted: two hand sides on the SAME engine share one live block,
+  so they can no longer hold two different presets of it. **Delete is on the preset's row**, an `×`
+  at the edge the door left — and a FACTORY preset (`factory: true`, set by the seed and by a one-shot
+  on the seed's names, `mubone_voice_factory`) draws none and refuses in `deleteVoice`, so every
+  instrument always has its floor of presets; deleting the marked one
+  moves the mark to the first remaining WITHOUT recalling it — the voice keeps sounding as it is,
+  and the ring says so. `engine-audit` § A opens the two engine sheets through the VOICE line's door
+  and § D asserts recall · ring · tool-stored edit · revert.
+
+- **Audition is the cursor's** (2026-09-24, Ek, thinking it through: "the live block is like the guitar
+  effect pedal … it gets baked in whatever that sheet reads. Cursor monitor read is read only. Audition
+  should not change what's baked"). Three fixed points and one consequence. **The sheet is the pedal**:
+  whatever it reads — a hand, a pot, a sensor mapping, OSC, a preset recall — is what a grain mark
+  bakes at its deposit (`voicingForCurrentBrushLive`, so a knob ridden mid-stroke bakes a gradient,
+  mark by mark) and what a tape take freezes at its release. **The cursor is the monitor, read only**:
+  it plays baked values and never rewrites them. **Audition never changes what is baked.** So audition
+  can only be a property of the MONITOR: `S.auditionMode` now means the cursor plays what it reads
+  THROUGH the pedal — grain candidates post on voicing 0, the live block (`_voiceOf` in the bridge,
+  the cursor's two post paths only); a cursor-fired take reads the live tape sheet's speed, direction,
+  pitch and level in place of its baked ones (`_applyAudition`, the baked half kept on the shell and
+  restored the tick the switch goes off). **A pin made under audition keeps the sound you were hearing** (Ek, the same night): a tape pin freezes the
+  take's working numbers, which under audition are the live sheet's; a cloud pinned under audition carries ONE
+  voicing interned on the live block and every mark it reads is posted on it (`slot.voicing`, `sd.voicing`).
+  **Audition never reaches a pin** afterwards: a pinned cloud's seed
+  post reads the marks' own voicings, a stroke claimed by a pinned loop is skipped, and inside a
+  claim the cursor does not granulate anyway — so a moving cloud passing over auditioned marks plays
+  them baked and hands them back to the pedal when it moves on, with no rule added. The switch is ONE
+  row, in the CURSOR section after `radius`, for both instruments; the `audition` action, `/audition`
+  and its key point at it — **`A` at factory** (Ek, 2026-09-24 night), seeded like the hand's spacebar
+  and learnable, which retires the bench play `A` carried since 2026-09-21 (`auditionDown`, `BENCH_POS`,
+  `benchVerb`) and the last reserved key. **Turning it ON opens the drawer** (Ek, the same night, reversing the drawer's
+  never-opens-on-its-own rule for this one act): the voice sheet of the engine last played, tab and
+  drawer together, from whichever door; OFF leaves it open — the escape is manual (`setAudition`). **It wears headphones** — the monitor's own sign — twice and identically: a
+  sticker on the CURSOR tile (`G.audition`, `.tile-aud`, the pin's disc in the eye's white) and a band
+  with two cups over the top of the reticle, 6 px outside the arm tips, drawn in the tangent frame
+  (renderer.js `drawCursor`); both only while the switch is on. **The eye OFF is the eye struck through** (the same evening): the unpin glyph's slash on
+  the cursor tile while it is unlit and across the reticle when `scanMuted` — a sign, where an unlit
+  tile and an empty faint ring were a missing thing. **Gone with this: live material** — the shared live voicing per
+  auditioned tool, `syncLiveVoicing`, `freezeVoicing`, the stroke's `auditioned` stamp, a take's
+  `_live`, `S._handTile().live`, the audition switch on each engine tab, and the rule that a preset
+  could be swapped under a held play only while auditioning (it can always be now: a recall just
+  moves the pedal, and the rest of the stroke bakes the new sound). A file written before this marks
+  some voicings `live`; they come back frozen. What this gives up, and Ek said he does not want: a
+  passage that keeps following the knobs after it is painted. `pins-audit` § L asserts the cursor's
+  override and that `_vo` is untouched; § J2 that a knob moved after painting reaches no cloud.
 
 - **Wet is a property, not a tool** (2026-09-07, Ek: "wet is more of a brush wide property i dont
   think i need a dedicated brush for it, but start the pen with the wet on by factory default").
@@ -1335,6 +1420,10 @@ Means", where a block about colour had no business sitting. The general form: **
 has nothing to operate, it is not a row — it is a section, or it is a lede on one.**
 
 ## AUDITION is a mode, and the editor writes the slot — the bench is gone
+
+> **The audition half of this section is SUPERSEDED (2026-09-24)** by "Audition is the cursor's"
+> below: no paint is live any more, and the switch lives in the CURSOR section. The slot half —
+> the editor writes the slot, `slotOf`, `benchShape` — still stands.
 
 **For anything touching `S.auditionMode`, `slotOf`, `setBench`/`benchShape`, or where a param
 lives:** the tool editor keeps no tool of its own. `setBench` used to say in as many words that it
@@ -2356,3 +2445,84 @@ information existed.**
 **Selected Pin.** The pin unpin takes, marked in the rail: the one nearest the cursor, the one farthest from it, or the one pinned first.
 
 **Tap Window.** The gap after a release in which the next press counts as the ×2 or ×3, and how long a tap waits beside them.
+
+## The tooltip is one word and the shortcut; learn mode is the long text
+
+**2026-09-24, Ek: "a simple one word tooltip when learn is off and include the shortcut for that, either
+the simple version or not."** Every control on the rig keeps ONE long text, written `word — explanation`
+in its `title` (moved to `data-title` by `ui-learn.js` on load, which is what suppresses the native
+tooltip). What the tooltip SHOWS depends on the `? learn` button: off, the control's word and what is
+learned onto it — `undo · ⌘Z`, `audition · a`, `tape · spacebar / click` — after 500 ms, then at ONCE
+on the next control while the pointer keeps moving between them (a 400 ms skip-delay, the Figma / Linear /
+Radix timing; it was 3 s when the tip was a paragraph), drawn flat as the word and a keycap per input; on, the long text with the same shortcut under it, at once. The word comes
+from the control itself (`data-word`), else the label the control already shows on screen (a sheet or
+tab row's name, a tile's name), else the first clause of the long text — so the convention `word —
+explanation` is now load-bearing and a new control's title must open with its word. The shortcut is the
+REGISTRY's: `midi.js` resolves the element under the pointer to its action (`data-action` on the chrome,
+a palette position, a hand side, the rows' own hooks, a sheet row's `data-pid` through `PID_ACTION`) and
+reads its bindings the way the palette legend does, falling back to the action's factory key when it is
+documentation only. Nothing runs except on hover. Learn mode's own legend — the keycaps on the tiles —
+is unchanged. **A simple tip that would only repeat the screen is not shown** (the same night): learn off,
+no input learned, and the word already written at the control (its row label, its tile name, its own
+text) — nothing appears; a glyph-only control, or anything with a shortcut, still gets its tip.
+
+## Audition is a scratch voice, and off puts the real one back
+
+**2026-09-24, Ek: "when audition is on, instead of custom it should be an audition voice that is
+temporarily activated, and when i turn audition off, it goes back to what it was before."** Turning
+audition ON snapshots BOTH engines' voice — every voice pid off the sheets, tape's numbers straight off
+`S.triggerParams` (OSC, MIDI and the sensor mappings write there directly), and which preset each engine
+was on. While it is on the sheets are a scratch copy: presets can be tried on, anything moved, and
+nothing is saved — `captureTileParams` writes no tool store and `applyVoice` no preset mark, so a quit
+mid-audition wakes on the sound you had. The hand tile's word is `audition`. Turning it OFF restores the
+snapshot, sliders and marks (`setAudition`, `_snapVoices` / `_restoreVoices`, tiles.js). **To keep an
+audition sound: `+` saves it as a preset, or a pin freezes it** — both happen before the revert and
+survive it. So `custom` means one thing only: not auditioning, and the sheet has moved off its preset.
+Painting during audition bakes the audition sound, as painting always bakes the sheet; a sensor riding a
+param writes the scratch copy and is carried back with it.
+**It is a compare button** (the same night: "if i turn back audition will it remember the last audition
+params? so i can a b a b"): OFF keeps the scratch before restoring, and the next ON brings it back, so each
+press flips between the sound you had and the one you are trying (`_auditionScratch`, session only).
+
+## A cloud keeps the depth it was pinned at
+
+**2026-09-24, Ek: "save the depth number. if a pinned one is 3, i should be able to record new grain
+strokes under that pin and it'll auto update to just play the top 3."** A cloud already carried its
+radius, its area/nearest mode and its k from the pin; DEPTH was the one read it took live from the cursor
+section (left global with no reason written). It is pinned with the cloud now (`slot.recencyN`,
+ui-presets.js), read when the seed block builds that cloud's pool (`_depthFor`, grain.js — the builders
+read `_depthN()`, the cloud's depth while a cloud is built and the cursor's otherwise), and saved in the
+piece file. The NUMBER is frozen, not the strokes: a cloud at depth 3 always plays the newest three strokes
+under it, so new paint under a pinned cloud joins it and pushes the oldest out — the 2026-09-05 rule that a
+cloud is a moving cursor over living material still holds. A cloud from before today reads the cursor's
+depth, as it did. pins-audit § N2.
+
+**Two consequences, both kept on purpose** (Ek, the same night, after the edge-case review). **A stroke
+pushed below a cloud's depth goes SILENT** — the cloud claims its whole footprint from the cursor (the
+2026-08-30 claim is by radius, not by what the cloud plays), so strokes under it that it no longer plays
+are played by nothing: "that's the point musically … it's a musical choice." Do not narrow the claim to
+the cloud's own strokes. **New paint under a cloud pinned during audition plays in the audition sound** —
+the cloud's frozen voicing (`slot.voicing`) covers every mark it reads, including strokes painted after
+the pin. Do not scope it to the strokes present at the pin.
+
+**Depth is 1–6 and all** (2026-09-25, Ek: "increase depth pill in cursor up to 6, same with erase") — the
+four-answer capsule of 2026-09-24 widened; the pot is thrown in sevenths. **WHEN FULL is the pinned rail's**
+(the same day: "move the pin setting when full into the performance params of the pin rail") — a third
+row under follow and sort (`off · old · near`); Settings → Pins no longer shows it, and its seg stays in the
+markup, hidden, as the cabinet control OSC, MIDI and the registry write through.
+
+## A performance control with a factory key wears the palette's sticker
+
+**2026-09-25, Ek: "any gui that has a key binding shortcut by factory default should also have the same
+glyph design on the palette tile, and it should also be learnable, same function, press that flag/pill …
+same with the chrome stuff too, undo, sweep, clear all, zero, lock, mute. no need for tab and shift tab.
+it's just for performance ones."** The palette's `.tile-bind` pill (`rowBindHTML`, tiles.js) sits after a
+rail row's label — overdub, audition, radius (`[` `]`, two pills), mode (`N`), follow — and on the top-right
+corner of the chrome's performance buttons: undo, sweep, erase all, zero, lock, mute. It shows the legend
+kind's binding, a dash when there is none, `…` while learning; click learns, right-click clears (`S._learnAction`
+/ `S._unbindAction`), the palette's own two gestures. Slots are `[data-binds]` filled on every render
+(`_fillRowBinds`). **To be learnable a factory key has to be a binding**: N, `[ ]`, `⌘Z`, M and `` ` `` moved
+from events.js's hardcoded keydown into `HAND_FACTORY_KEYS` (midi.js), so a key moved off them is gone; a held
+`[`/`]` still repeats (events.js hands OS repeats to the radius actions). ⌥ (a bare modifier) and Backspace×3
+(erase all's guarded triple with its progress readout) stay hardcoded — their stickers show the factory key and
+a learn adds a binding beside it. Tab and ⇧Tab are navigation, not performance, and carry none.

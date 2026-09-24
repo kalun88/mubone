@@ -73,15 +73,15 @@ const SNAP = `JSON.stringify({
   onEnd: S.traceMode,
 })`;
 
-// THE SHEETS ARE VOICES' (2026-09-22): one tool per instrument, and the only
-// sheet a tool has is its VOICE's — the rows of VOICE_PIDS, opened from a
-// voice row on the instrument's tab. The nine tool pages this listed (pen,
-// wash, spray, comb, line, slice, looper, scrape, all) went with the shape
-// presets; the tabs' own rows and the cursor section write through the same
-// cabinet, and are the lens and palette suites' to drive. Rewritten at the
-// 5.6 release sweep (2026-09-23), when all nine had read "not in the rail".
+// THE SHEET IS THE ENGINE'S VOICE (2026-09-24): one sheet per instrument — the
+// rows of VOICE_PIDS, the live block — opened from the door on the VOICE line
+// of the instrument's tab. The presets listed under that line RECALL onto it
+// and have no sheet of their own (they had one each from 2026-09-22 to 09-24,
+// and before that nine tool pages went with the shape presets). The tabs' own
+// rows and the cursor section write through the same cabinet, and are the
+// lens and palette suites' to drive.
 const TARGETS = [
-  ['voice', 'wash'], ['voice', 'glitch'], ['voice', 'verbatim'], ['voice', 'undertow'],
+  ['engine', 'granular'], ['engine', 'tape'],
 ];
 // The radius-fade row is inert wherever NEAREST is on — initRadiusFade forces
 // it off, because nearest has no radius to fade against. That is a live state,
@@ -105,23 +105,25 @@ async function run(rig) {
     const T = await import('./js/tiles.js');
     const wait = ms => new Promise(r => setTimeout(r, ms));
     window.__snap = () => ${SNAP};
-    // A voice's sheet: its instrument's tab, then the row's door. The row
-    // itself TAKES the voice (and applies its block); the door opens the sheet.
-    window.__openVoice = async (name, take) => {
+    // An engine's sheet: its instrument's tab, then the VOICE line's door.
+    // The door TOGGLES, so it is pressed only when the drawer is not already
+    // showing this engine.
+    window.__openSheet = async eng => {
+      T.setInstrument(eng); T.render(); await wait(150);
+      const door = document.querySelector('#toolRail [data-more][data-sheet="' + eng + '"]');
+      if (!door) return false;
+      if (document.body.classList.contains('prail-open') && door.classList.contains('open')) return true;
+      door.click(); await wait(420);
+      return document.body.classList.contains('prail-open');
+    };
+    // TAKE a preset by name: its row's click recalls it onto the live block.
+    window.__takeVoice = async name => {
       for (const eng of ['granular', 'tape']) {
         T.setInstrument(eng); T.render(); await wait(150);
-        const find = () => [...document.querySelectorAll('#toolRail [data-voice]')]
+        const row = [...document.querySelectorAll('#toolRail [data-voice]')]
           .find(r => (r.querySelector('.tile-nm') || {}).textContent?.trim() === name);
-        const row = find();
         if (!row) continue;
-        if (take) { row.click(); await wait(420); }
-        // A tab switch already points the drawer at the voice its instrument
-        // is on, and the door TOGGLES — so a second press would shut it.
-        const head = document.querySelector('#propRail .ds-head b');
-        if (document.body.classList.contains('prail-open') && head && head.textContent.trim() === name) return true;
-        const again = find() || row;
-        (again.querySelector('[data-more]') || again).click(); await wait(420);
-        if (!document.body.classList.contains('prail-open')) { (find() || again).click(); await wait(320); }
+        row.click(); await wait(420);
         return true;
       }
       return false;
@@ -139,7 +141,7 @@ async function run(rig) {
   for (const [kind, id] of TARGETS) {
     const res = await rig.evaluate(new Function(`return (async () => {
       const wait = ms => new Promise(r => setTimeout(r, ms));
-      if (!(await window.__openVoice(${JSON.stringify(id)}))) return { missing: true };
+      if (!(await window.__openSheet(${JSON.stringify(id)}))) return { missing: true };
       const pr = document.getElementById('propRail');
       // A FOLDED section's rows are zero-width, and a control you cannot land
       // on cannot be proved to work. The fold is a disclosure, not a dead
@@ -148,6 +150,11 @@ async function run(rig) {
       for (const f of [...pr.querySelectorAll('[data-fold][aria-expanded="false"]')]) {
         f.click(); await wait(220);
       }
+      // The FILTER section is shut while its switch is off (2026-09-24) and
+      // its rows are not in the DOM at all. Switch it on so cutoff, res and
+      // type are walked; the switch loop below still exercises it both ways.
+      const shut = pr.querySelector('.ds-sec--shut .ds-sw');
+      if (shut) { shut.click(); await wait(220); }
       const inert = [], inertSeg = [];
       let nT = 0, nS = 0;
 
@@ -221,9 +228,11 @@ async function run(rig) {
       // twice: the state must move BOTH ways, which a segment could not be
       // asked (clicking the option already on is a no-op) and which is the
       // real question for a toggle.
-      const sws = [...pr.querySelectorAll('.prow--sw')];
+      // A switch is a row's (.prow--sw) or a heading's (.ds-sec-h--sw: the
+      // filter's, since 2026-09-24) — both wear .ds-sw.
+      const sws = [...pr.querySelectorAll('.prow--sw, .ds-sec-h--sw')];
       for (const row of sws) {
-        const name = (row.querySelector('.prow-n') || {}).textContent || '?';
+        const name = (row.querySelector('.prow-n, span') || {}).textContent || '?';
         const btn = row.querySelector('.ds-sw');
         if (!btn) continue;
         nS++;
@@ -235,7 +244,7 @@ async function run(rig) {
         // it goes nowhere — the wet switch has neither data-sw nor
         // data-swproxy, so the lookup below fell through to the dead node.
         const key = Object.keys(btn.dataset)[0];
-        const live = (key && pr.querySelector('.prow--sw [data-' + key.toLowerCase() + '="' + btn.dataset[key] + '"]')) || btn;
+        const live = (key && pr.querySelector('.prow--sw [data-' + key.toLowerCase() + '="' + btn.dataset[key] + '"], .ds-sec-h--sw [data-' + key.toLowerCase() + '="' + btn.dataset[key] + '"]')) || btn;
         live.click(); await wait(120);
         const c = window.__snap();
         // The same exemption the segment loop has: under NEAREST the fade
@@ -247,7 +256,7 @@ async function run(rig) {
       return { nT, nS, inert, inertSeg };
     })()`));
 
-    if (res.missing) { check(`${id} — page opens`, false, 'voice not on its tab'); continue; }
+    if (res.missing) { check(`${id} — page opens`, false, 'no door on its VOICE line'); continue; }
     tracks += res.nT; segs += res.nS;
     const deadT = res.inert;
     const deadS = res.inertSeg;
@@ -259,9 +268,11 @@ async function run(rig) {
 
   console.log(`\n§ B. coverage`);
   check('every engine page rendered at least one control', tracks + segs > 0);
-  // Four voice sheets since 2026-09-23 (two grain at 13 + 4, two tape at 3 + 2);
-  // the floor sits just under that, so a sheet that stops rendering rows fails.
-  check(`${tracks} tracks and ${segs} choices exercised`, tracks >= 30 && segs >= 11,
+  // Two engine sheets since 2026-09-24: grain 9 tracks + 6 choices (four
+  // capsules, the link and filter switches; cutoff ± is a band and slope a
+  // bare number since that day), tape 3 + 2. The floor sits just under that,
+  // so a sheet that stops rendering rows fails.
+  check(`${tracks} tracks and ${segs} choices exercised`, tracks >= 11 && segs >= 7,
         `got ${tracks}/${segs} — a page may have stopped rendering rows`);
 
   // ── B2. the ± spread has a control of its own ────────────────────────────
@@ -276,8 +287,8 @@ async function run(rig) {
   const spr = await rig.evaluate(new Function(`return (async () => {
     const { S } = await import('./js/state.js');
     const wait = ms => new Promise(r => setTimeout(r, ms));
-    // The rail's own road, the one § A uses: a grain voice's sheet.
-    await window.__openVoice('wash');
+    // The rail's own road, the one § A uses: the grain engine's sheet.
+    await window.__openSheet('granular');
     const pr = document.getElementById('propRail');
     for (const f of [...pr.querySelectorAll('[data-fold][aria-expanded="false"]')]) { f.click(); await wait(200); }
     const spread = pr.querySelector('[data-pval="durVar"]');
@@ -470,48 +481,53 @@ async function run(rig) {
   check('at the limit it says what to do, in a box with real size',
         /sweep/.test(budget.full.text) && budget.full.shown && budget.full.w > 0,
         JSON.stringify(budget.full));
-  console.log('\n§ D. a voice owns its whole block');
-  // "If I see that slider in that position, it's set" (Ek, 2026-09-03).
-  // Factory grain tiles used to apply NOTHING to the sound on arming — pen's
-  // sheet showed whatever the last tool left in the live block — and their
-  // edits died on reload. Now every grain tile carries a full block: edit
-  // pen, arm spray and the block must change to spray's; arm pen
-  // and the edit must be back; and it must be on disk. The edit is made by
-  // writing the CABINET element the way a pot would reach it, not through a
-  // sheet row, because the sheet's rows always captured — the pot path is the
-  // one that never did.
+  console.log('\n§ D. a preset is a recall, the engine keeps the edit');
+  // Ek, 2026-09-24: "pressing the preset just moves the sliders on the main
+  // sheet" — real presets, Ableton's rule. Taking a preset moves the live
+  // block; an edit afterwards is the ENGINE's (stored under its tool in
+  // mubone_tiles), the preset stays as saved and its row wears the ring;
+  // taking it again puts the sliders back. The edit is made by writing the
+  // CABINET element the way a pot would reach it, not through a sheet row —
+  // the pot path is the one that has to be captured by the poll.
   const own = await rig.evaluate(new Function(`return (async () => {
     const wait = ms => new Promise(r => setTimeout(r, ms));
     const BV = await import('./js/brush-voicing.js');
     const block = () => JSON.stringify(BV.resolveGrainParams());
-    // "Arming" is gone; what this needs is the tile's block in the live
-    // controls, which is what pointing the DRAWER at it does (tiles.js
-    // pickTile applies the block — the sheet's tile owns it).
-    // TAKING a voice applies its block (tiles.js), which is what arming a tile
-    // did before voices; the edited one is on disk under LS_VOICES
-    // (tiles.js — the key is still mubone_sounds).
-    const arm = async name => { await window.__openVoice(name, true); await wait(300); };
-    await arm('glitch');
-    await arm('wash');
+    const take = async name => { await window.__takeVoice(name); await wait(300); };
+    const washRow = () => [...document.querySelectorAll('#toolRail [data-voice]')]
+      .find(r => (r.querySelector('.tile-nm') || {}).textContent?.trim() === 'wash');
+    const storedWash = () => { try { const v = JSON.parse(localStorage.getItem('mubone_sounds') || '{}').v || {};
+      return Object.values(v).find(x => x.name === 'wash')?.params?.pitch ?? null; } catch (_) { return null; } };
+    const storedTool = () => { try { return JSON.parse(localStorage.getItem('mubone_tiles') || '{}').granular?.params?.pitch ?? null; } catch (_) { return null; } };
+    await take('glitch');
+    const glitch = block();
+    await take('wash');
+    const wash = block();
+    const washStoredBefore = storedWash();
+    const ringBefore = !!washRow()?.classList.contains('edited');
     const el = document.getElementById('gcPitchShiftSlider');
     const target = String(el.value) === String(el.min) ? el.max : el.min;
     el.value = target;
     el.dispatchEvent(new Event('input', { bubbles: true }));
     await wait(700);                      // the 10 Hz poll + the 250 ms capture
-    const sprayEdited = block();
-    await arm('glitch');
-    const spray = block();
-    await arm('wash');
-    const sprayAgain = block();
-    let stored = null;
-    try { const v = JSON.parse(localStorage.getItem('mubone_sounds') || '{}').v || {};
-          stored = Object.values(v).find(x => x.name === 'wash')?.params?.pitch ?? null; } catch (_) {}
-    return { moved: sprayEdited !== spray, remembered: sprayAgain === sprayEdited,
-             stored: String(stored) === String(target), storedVal: stored, target };
+    const edited = block();
+    const ringAfter = !!washRow()?.classList.contains('edited');
+    const washStoredAfter = storedWash();
+    const toolStored = storedTool();
+    await take('wash');
+    const back = block();
+    const ringBack = !!washRow()?.classList.contains('edited');
+    return { moved: wash !== glitch, changed: edited !== wash, ringBefore, ringAfter, ringBack,
+             presetKept: String(washStoredAfter) === String(washStoredBefore),
+             toolHasEdit: String(toolStored) === String(target), toolStored, target,
+             reverted: back === wash };
   })()`));
-  check('taking another grain voice changes the sound block to that voice\'s', own.moved);
-  check('taking the edited voice brings its edit back', own.remembered);
-  check('a pot-path edit is on disk under the voice', own.stored, `stored ${own.storedVal}, wanted ${own.target}`);
+  check('taking another preset moves the live block', own.moved);
+  check('a pot edit moves the live block and leaves the preset as saved', own.changed && own.presetKept);
+  check('the edited preset\'s row wears the ring, and only then', !own.ringBefore && own.ringAfter && !own.ringBack,
+        JSON.stringify({ before: own.ringBefore, after: own.ringAfter, back: own.ringBack }));
+  check('the engine keeps the edit on disk under its tool', own.toolHasEdit, `stored ${own.toolStored}, wanted ${own.target}`);
+  check('taking the preset again puts the sliders back', own.reverted);
 
   check('no renderer errors after exercise', rig.errors().length === 0, rig.errors().join(' | '));
 

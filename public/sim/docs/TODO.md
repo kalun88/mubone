@@ -10,15 +10,6 @@
 
 ### Sep 24
 
-- [ ] **A one-word tooltip when learn is off, carrying the shortcut** (Ek, 2026-09-24, for tomorrow) — every
-  control on the rig gets a simple tooltip: one word for what it is, plus the key or note learned onto it
-  (from the registry, `ACTIONS` in `js/midi.js`, now one row per control). The shortcut shows whether the
-  tooltip is the simple one or the long one the sheet rows carry today. Learn mode keeps its own legend.
-- [ ] **A better system for audition** (Ek, 2026-09-24) — the one `auditionMode` flag over both instruments,
-  drawn as a switch on the tape and grain tabs, is not the shape Ek wants; what replaces it is undecided.
-  Read `docs/RULINGS.md` "Properties of the tool, not modes on the hand" before proposing — the audition /
-  live modes were rejected once on the playing surface.
-
 ### Sep 23
 
 ### Sep 16
@@ -67,19 +58,6 @@
   function — is the fix, and it is the shape the overdub format already uses for its layers ("a file cannot carry
   a layer that disagrees with its master"). The risk is that the re-derivation must reproduce the crossfade
   exactly, or a reopened loop wraps differently than the one that was saved.
-
-- [ ] **#352 Wet (and pin-on-end) may belong to the cursor, not to each tool** — Ek, 2026-09-14, thinking aloud while
-  the wet ring was fixed: "it's honestly a bit non performative and confusing. right now it's treated as a property
-  or flag of a tool. which seems overkill to have each tool carry its own flag. arguably the same with pin on end
-  behaviour. in reality i'm not gonna keep track of each tool's wet or not. it's kinda more a cursor behaviour or
-  global one. it's more like, are the paintbrushes i use wet." **Not a decision — the per-tool flag stays for now**
-  ("i think i'll stick with this wet implementation for now"), and the drop became a button on every grain tile the
-  same day so the flag is at least flippable from the surface you play from. What to weigh if it is revisited: a
-  global wet would be ONE switch above the tools (the shape memory says a performance control is boolean and its
-  third state goes to a settings page), it would make `isWet(tile)` a cursor read and `dryVoicing` a sweep over every
-  wet voicing at once, and it would cost the thing the per-tool flag buys — a wet brush and a dry brush side by side
-  on the strip, which is what `docs/RULINGS.md` "wet paint" argues wet is FOR. Auto-pin has the same shape and should
-  move with it or not at all. See the wet-ring fix (2026-09-14) for why the visible half kept going wrong.
 
 ### Sep 13
 

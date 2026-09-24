@@ -2557,28 +2557,43 @@
     color: var(--accent-lock);
     background: rgba(122,188,188,0.12);
   }
+  /* THE TOOLTIP (redesigned 2026-09-24, Ek: "can the design of the tooltip be
+     better?"). A menu item, not a note: one line, the word in the bright
+     text, its inputs as keycaps in the tiles' own shape. Flat, per the brief —
+     the app ground with the kit's hairline, no blur, no glow, no teal tint
+     borrowed from the lock accent. It fades in over --m-touch, the hover
+     timing, and never animates layout. Learn on widens it to the long text
+     with the keycaps under it. */
   .learn-tooltip {
     position: fixed;
     z-index: 9999;
     pointer-events: none;
+    display: flex; align-items: center; gap: var(--sp-3);
     max-width: 280px;
-    padding: 0.45rem 0.65rem;
-    font-size: var(--fs-xs);
-    line-height: 1.45;
-    color: var(--text-light);
-    background: rgba(10, 12, 14, 0.88);
-    border: 1px solid rgba(122,188,188,0.18);
+    padding: var(--sp-2) var(--sp-3);
+    font-family: var(--font-sans);
+    font-size: var(--fs-meta);
+    line-height: 1.35;
+    white-space: nowrap;
+    color: var(--text-bright);
+    background: var(--bg-app);
+    border: 1px solid var(--border-medium);
     border-radius: var(--r-3);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-    white-space: pre-line;
     opacity: 0;
-    transition: opacity var(--trans-quick) ease-out;
+    transform: translateY(-2px);
+    transition: opacity var(--m-touch) var(--ease-out), transform var(--m-touch) var(--ease-out);
   }
-  .learn-tooltip.visible {
-    opacity: 1;
+  .learn-tooltip.visible { opacity: 1; transform: none; }
+  .learn-tooltip .lt-keys { display: inline-flex; gap: var(--sp-1); }
+  .learn-tooltip kbd {
+    font-family: var(--font-sans); font-size: var(--fs-nano); line-height: 1;
+    padding: 2px var(--sp-2); border-radius: var(--r-2, 3px);
+    color: var(--text-secondary); background: var(--surface-2);
+    border: 1px solid var(--border-faint);
   }
+  .learn-tooltip--long { flex-direction: column; align-items: flex-start; gap: var(--sp-2);
+    white-space: normal; padding: var(--sp-3); }
+  .learn-tooltip--long .lt-text { color: var(--text-secondary); }
 
   /* ── Sample slots (in bottom panel sample instrument) ───────────────────── */
   .sample-slot {
@@ -4284,6 +4299,14 @@ html.booting-reveal .main-layout {
      column at 22rem gives a track ~185px, wider than the two-column 170. The
      sampler's sheet is a list and keeps the narrow rail (#261). */
   body.prail-open.engine-page .tc-prail { width: 22rem; }
+  /* THE ENGINE SHEET ENDS WHERE ITS CONTENT ENDS (Ek, 2026-09-24: "can the
+     height of the sheet not be full height, it should go from top to the
+     bottom of the content so i can see what's beneath it"). The frame starts
+     at the top and stops under the last row, closed by a bottom rule; only
+     when the rows are taller than the stage does it take the full height and
+     scroll, as before. The tool rail beside it is a rail and stays full. */
+  body.prail-open.engine-page .tc-prail { align-self: start; max-height: 100%;
+    border-bottom: 1px solid var(--border-faint); }
   /* `--sp-3`, not 0.4rem: 6.4px was the one inset in this rail that is not a
      step, and the sheet says snap rather than name a component token.
      `--sp-5`, not `--sp-3` (2026-09-22, evening): 6px is less than the 12px the
@@ -4328,11 +4351,16 @@ html.booting-reveal .main-layout {
   .trow.playing { background: color-mix(in srgb, var(--c) 22%, var(--bg-app)); }
   .trow.open { background: var(--surface-2); color: var(--text-bright); }
   .trow.ghost .tile-nm { font-style: italic; }
-  /* A voice row: a dot and a word. The dot is smaller than a shape's glyph on
-     purpose — it is a bullet, not a gesture — and it sits in the same 1.05rem
-     box so the names line up with the shapes above them. */
-  .trow--voice svg { width: 0.62rem; height: 0.62rem; margin: 0 0.215rem; /* geometry: centres the dot in .trow's 1.05rem glyph box */ }
 
+  /* A PRESET row is a word alone (2026-09-24 evening; the dot and the half
+     moon are gone). Its 2px left border is the ON mark and sits in the
+     gutter, so the word steps back by it to share the left edge of the labels
+     above it — measured 27 against 25 before this line. */
+  .trow--voice { padding-left: calc(var(--sp-5) - 2px); }
+  /* ON is a plain highlighted item, as every list does it (Ek, 2026-09-24:
+     "no need for the left edge line … just a normal highlighted item like all
+     gui"): the row's ground raised, the word bright, no mark at the edge. */
+  .trow--voice.on { border-left-color: transparent; background: var(--surface-2); color: var(--text-bright); }
   .trow.dragging { opacity: 0.35; }
   .trow.over { box-shadow: inset 0 2px 0 var(--text-tertiary); }
   /* The rail is a LIST. #srcBar / #tileBar still carry the strip's
@@ -4478,9 +4506,6 @@ html.booting-reveal .main-layout {
   .prow-s:focus, .prow-v:focus { cursor: text; }
   .prow-s:hover { border-bottom-color: var(--border-faint); }
   .prow-s:focus { outline: none; border-bottom-color: var(--c); color: var(--text-bright); opacity: 1; }
-  /* A row sitting at a value that does nothing recedes. */
-  .prow-t.inert .prow-f { opacity: 0.4; }
-  .prow-t.inert .prow-h { opacity: 0.5; }
   /* A paired row gives the ± its own narrow column. */
   .prow--var { grid-template-columns: var(--prow-lab) 1fr var(--prow-val) var(--prow-var); }
   /* ── Full-width rows (#278) ────────────────────────────────────────────
@@ -4561,6 +4586,10 @@ html.booting-reveal .main-layout {
   .prow--seg { grid-template-columns: var(--prow-lab) 1fr; height: auto;
     min-height: 1.85rem; padding: 0.1rem 0; }
   .prow--seg .ds-chips { min-width: 0; }
+  /* A chip row that ends in a number (curve's slope, 2026-09-24) takes the
+     value column every track row has, so the number sits on the same right
+     edge as the numbers above and below it. */
+  .prow--seg:has(> .prow-v) { grid-template-columns: var(--prow-lab) 1fr var(--prow-val); }
   .prow--seg .opt > i { display: none; }
   /* Same rule in the TOOL rail: `.mrow-l` names a cursor-interaction row, in
      MODE's type, so the pill's own caps word would be the name written twice —
@@ -4647,9 +4676,6 @@ html.booting-reveal .main-layout {
   /* ── The sound window ─────────────────────────────────────────────────── */
   .eng-scope { padding: 0.6rem 0.9rem 0.45rem; border-bottom: 1px solid var(--border-faint); }
   .eng-scope canvas { display: block; width: 100%; height: 68px; }
-  .eng-scope-cap { display: flex; justify-content: space-between; margin-top: 0.28rem;
-    font-family: var(--font-mono, monospace); font-size: var(--fs-nano); letter-spacing: 0.09em;
-    text-transform: uppercase; color: var(--text-secondary); }
 
   /* ── The filter, drawn ────────────────────────────────────────────────── */
   #engFilter { display: block; width: 100%; height: 76px; cursor: crosshair; touch-action: none; }
@@ -5127,6 +5153,17 @@ html.booting-reveal .main-layout {
 
   .tbx-add:hover { color: var(--text-bright); background: var(--surface-3); }
   .tbx-tiles { display: flex; gap: var(--seam); min-width: 0; }
+  /* THE VOICE LINE'S DOOR (2026-09-24) sits after the `+`, the kit's 24px box;
+     lit in the engine hue while its sheet is up. */
+  .tbx-lbl .trow-more { margin-left: 0.1rem; margin-top: -0.3rem; margin-bottom: -0.3rem; }
+  .tbx-lbl .trow-more.open { color: var(--c, var(--text-bright)); }
+  /* A PRESET'S DELETE, at the edge its door left: the same box, red on hover.
+     A factory preset draws none (2026-09-24). */
+  .trow-del { display: flex; flex: none; margin-left: auto; width: 1.4rem; height: 24px;
+    align-items: center; justify-content: center; border-radius: var(--r-2, 3px);
+    color: var(--text-tertiary); cursor: pointer; }
+  .trow-del svg { width: 0.85rem; height: 0.85rem; }
+  .trow-del:hover { color: var(--status-error); background: var(--tint-danger-soft); }
   /* A GROUP WITH NO LABEL STILL NEEDS THE LABEL'S AIR (2026-09-22, evening).
      The instrument's two mode switches lead the card now and the MODE heading
      is gone, so nothing was holding the first switch off the tab above it: a
@@ -5564,6 +5601,9 @@ html.booting-reveal .main-layout {
   .ds-sec-h { font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase;
     color: var(--text-secondary); padding-bottom: 0.3rem; border-bottom: 1px solid var(--border-faint);
     margin-bottom: 0.5rem; }
+  /* A section that IS a thing you switch on (the filter) wears its switch on
+     the heading, at the right edge, the heading's own rule under both. */
+  .ds-sec-h--sw { display: flex; justify-content: space-between; align-items: center; }
   .ds-sec-cells { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; align-items: flex-start; }
   
   
@@ -6880,9 +6920,21 @@ html body .palette .tile .tile-marks .tile-dub svg { width: 0.75rem; height: 0.7
 html body .palette .tile .tile-marks .tile-flags { position: absolute; top: -5px; right: -5px; z-index: 2;
   display: flex; align-items: center; gap: var(--sp-0); }
 html body .palette .tile .tile-marks .tile-flags .tile-pin,
-html body .palette .tile .tile-marks .tile-flags .tile-dub { position: static; right: auto; left: auto; top: auto; }
-/* The overdub flag is the white O (2026-09-23), not the engine hue. */
-html body .palette .tile .tile-marks .tile-dub svg { color: var(--text-light); }   /* the svg, which .palette .tile svg paints in the hue */
+html body .palette .tile .tile-marks .tile-flags .tile-dub,
+html body .palette .tile .tile-marks .tile-flags .tile-aud { position: static; right: auto; left: auto; top: auto; }
+/* AUDITION on the cursor tile (2026-09-24): the same sticker disc as the pin,
+   the headphones in the eye's white; the reticle wears the same shape. */
+html body .palette .tile .tile-marks .tile-aud { display: flex; align-items: center; justify-content: center;
+  width: 1.15rem; height: 1.15rem; border-radius: 999px; background: var(--bg-app); color: var(--c);
+  border: 1px solid var(--border-medium); box-sizing: border-box; }
+html body .palette .tile .tile-marks .tile-aud svg { width: 0.75rem; height: 0.75rem; }
+/* THE EYE OFF (2026-09-24): the cursor tile's glyph is struck through — the
+   unpin slash — while the tile is not lit. On, the slash is not drawn. */
+html body .palette .tile--lens .lens-slash { display: none; }
+html body .palette .tile--lens:not(.on) .lens-slash { display: block; }
+/* The overdub flag wears the TAPE hue like the tile's other flags (Ek,
+   2026-09-25: "should also be pink like the other tape flags"); it was a white
+   O from 2026-09-23. `.palette .tile svg` already paints it in --c. */
 /* The drop on a grain tile is a BUTTON (Ek, 2026-09-14: "the wet icon should
    be clickable in the palette tile … all grain tools should have the wet/dry
    toggle on the palette tile"), so every grain tile wears one — outlined dry,
@@ -7005,3 +7057,32 @@ html body .palette .tile .tile-bind:hover { border-color: var(--text-bright); }
 html body .palette .tile .tile-bind.learning { color: var(--accent-action); border-color: var(--accent-action); animation: leg-learn 0.9s ease-in-out infinite; }
 @keyframes leg-learn { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { html body .palette .tile .tile-bind.learning { animation: none; } }
+
+/* ── THE STICKER OFF THE PALETTE (2026-09-25) ────────────────────────────────
+   Ek: "any gui that has a key binding shortcut by factory default should also
+   have the same glyph design on the palette tile, and be learnable". The
+   palette's `.tile-bind` pill, on a rail row after its label and on the
+   chrome's performance buttons at their corner — the same 18px pill, app
+   ground, the kit's hairline, key text in the bright tone. */
+.row-binds { display: inline-flex; flex: none; gap: var(--sp-1); }
+.mrow-l:has(+ .row-binds) { flex-grow: 0; }
+.mrow .row-binds { margin-right: auto; }
+.row-binds .tile-bind { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+  height: 18px; min-width: 18px; padding: 0 var(--sp-3); box-sizing: border-box; border-radius: 999px;
+  background: var(--bg-app); border: 1px solid var(--border-medium);
+  font: inherit; font-size: 11px; font-weight: 400; line-height: 1; letter-spacing: 0; text-transform: uppercase;
+  color: var(--text-bright); cursor: pointer; white-space: nowrap; }
+.row-binds .tile-bind--button { color: var(--leg-button); }
+.row-binds .tile-bind--midi   { color: var(--leg-midi); text-transform: none; }
+.row-binds .tile-bind--none   { color: var(--text-faint); border-color: var(--border-faint); }
+.row-binds .tile-bind.learning { border-color: var(--text-bright); }
+.row-binds .tile-bind:hover { border-color: var(--text-tertiary); }
+/* On a chrome button: a sticker on the TOP-right corner, over the edge — the
+   footer's buttons carry their word underneath, and a bottom sticker sat on it.
+   The pill is the palette's, a step smaller so it reads as the button's flag. */
+#tcUndo, #tcSweep, #tcClear, #tcZeroHeading, #tcCursorLock, #tcMute { position: relative; }
+.chrome-binds { position: absolute; right: -8px; top: -7px; z-index: 2; }
+.chrome-binds .tile-bind { height: 16px; min-width: 16px; padding: 0 var(--sp-2); font-size: 10px; }
+/* On a rail action row (unpin all), the sticker follows the name as on a .mrow. */
+.trow .tile-nm:has(+ .row-binds) { flex: none; }
+.trow .row-binds { margin-right: auto; }

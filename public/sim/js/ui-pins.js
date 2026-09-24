@@ -376,7 +376,8 @@ let _modesShown = '';
 function syncModes() {
   const follow = S.commitPlayback === 'focus';
   const sort = S.selectionMode ?? 'nearest';
-  const key = `${follow ? 'f' : ''}${sort}`;
+  const full = S.commitOverflow ?? 'off';
+  const key = `${follow ? 'f' : ''}${sort}|${full}`;
   if (key === _modesShown) return;
   _modesShown = key;
   const sw = document.getElementById('lyrFollow');
@@ -385,6 +386,7 @@ function syncModes() {
   if (_followShown !== follow) { _followShown = follow; S._pinsDirty = true; }
   // `.on`: the sheet's capsule kit, since the rows became the tool rail's (2026-09-22 night).
   document.querySelectorAll('#lyrSort [data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === sort));
+  document.querySelectorAll('#lyrFull [data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === full));
 }
 
 let _followShown = null;
@@ -394,6 +396,12 @@ function _wireModes() {
   });
   document.querySelectorAll('#lyrSort [data-v]').forEach(b => b.addEventListener('click', () => {
     S.selectionMode = b.dataset.v; S._syncImprovUI?.(); syncModes(); S._pinsDirty = true;
+  }));
+  // WHEN FULL — through the cabinet seg, so its own handler (ui-meters.js)
+  // stays the one writer of S.commitOverflow.
+  document.querySelectorAll('#lyrFull [data-v]').forEach(b => b.addEventListener('click', () => {
+    document.querySelector(`#commitOverflowSeg [data-overflow="${b.dataset.v}"]`)?.click();
+    syncModes();
   }));
 }
 

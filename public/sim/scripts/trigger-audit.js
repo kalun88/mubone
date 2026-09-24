@@ -282,6 +282,11 @@ async function run(rig) {
       const SW = await import('./js/ui-sweep.js');
       const prevDwell = S.triggerParams.dwell;
       S.triggerParams.dwell = 'loop';
+      // DWELL TURNING TO `loop` UNDER A RESTING CURSOR IS AN ENTER (2026-09-24):
+      // this step fires the take. Let it, put it down, and step past the rearm
+      // window again, so the undo below is measured on its own.
+      step(0.10, 1000);
+      t.playing = false;
       step(0.10, 1000);                     // well past the rearm window
       const before = SW.snapshotMaterial();
       const removed = S.particles.filter(p => p.strokeId === sid);
@@ -295,12 +300,26 @@ async function run(rig) {
       step(0.10, 20);
       out.undoneRefires = t.playing === true && t.trigger._inside === true;
       t.playing = false;
+      // REDO takes it away again — the take stops with its marks — and a
+      // second undo brings it back under the resting cursor a second time,
+      // which is the same enter as the first (2026-09-24).
+      step(0.10, 1000);
+      H.redo(); step(0.10, 20); step(0.10, 20);
+      out.redoneGone = !S.triggers.includes(t) && t.playing === false;
+      H.undo(); step(0.10, 1000);
+      out.reUndoneFires = t.playing === true && S.triggers.includes(t);
+      t.playing = false;
       H.clear();
       S.triggerParams.dwell = prevDwell;
       // A stroke `dwell: grain` opened is CLOSED by its erase, so an undo
       // plays the take first and opens it after, as the first time.
       {
         S.triggerParams.dwell = 'grain';
+        // Past the rearm window first: the undo above fired this take 40 ms
+        // ago, and a refire inside `rearmMs` is refused by design — the check
+        // below is about the OPEN state, not the rearm (it read false for
+        // that reason alone, 2026-09-24).
+        step(0.10, 1000);
         S._openStrokes.add(sid);
         const before2 = SW.snapshotMaterial();
         const rem2 = S.particles.filter(p => p.strokeId === sid);
@@ -408,6 +427,31 @@ async function run(rig) {
     out.unmuteDoesNotBang = t.playing === false;
     step(0.40, 1000); step(0.15, 1000);
     out.firesAfterUnmute = t.playing === true;
+    // A LOOPING TAKE IS THE EXCEPTION (Ek, 2026-09-24): under dwell: loop the
+    // loop IS the cursor resting on the stroke, so the eye shutting over it is
+    // its exit (the tape's release rule — `stop` here) and the eye opening is
+    // its enter. The gate tracks liveL's edges per trigger (trigger.js).
+    {
+      const pd = S.triggerParams.dwell, prl = S.triggerParams.release;
+      S.triggerParams.dwell = 'loop'; S.triggerParams.release = 'stop';
+      t.playing = false; t._startedAt = 0;
+      step(0.40, 1000); step(0.15, 1000);         // enter → plays
+      out.loopBeforeMute = t.playing === true;
+      M.setScanMuted(true); step(0.15, 200);       // the eye shuts on the stroke
+      out.loopMuteStops = t.playing === false;
+      M.setScanMuted(false); step(0.15, 400);      // …and opens again
+      out.loopUnmuteStarts = t.playing === true;
+      // SCOPE is the same edge (2026-09-24): a lens that stops reading tape
+      // is the eye shutting over a take, and one that reads it again is the
+      // eye opening — `liveL` folds both.
+      const prevReads = S.lensReads;
+      S.lensReads = 'grains'; step(0.15, 200);
+      out.loopScopeOffStops = t.playing === false;
+      S.lensReads = 'both'; step(0.15, 400);
+      out.loopScopeOnStarts = t.playing === true;
+      S.lensReads = prevReads;
+      S.triggerParams.dwell = pd; S.triggerParams.release = prl;
+    }
 
     // ── D2. Read-time vs baked (#236/#240) ───────────────────────────────
     // The lens's "on loops" family (dwell, start, retrig, rearm, hysteresis)
@@ -700,6 +744,8 @@ async function run(rig) {
   check('erased under the cursor, the trigger leaves the board', r.erasedGone);
   check('undone, it comes back OUTSIDE its gate', r.undoneStartsOutside);
   check('...and the cursor already on it is the enter edge: it fires', r.undoneRefires);
+  check('redo takes it away again, and the take with it', r.redoneGone);
+  check('...and a second undo is the same enter: it fires again', r.reUndoneFires);
   check('an erase closes the stroke dwell:grain had opened', r.eraseClosesOpened);
   check('...so undo plays the take first and opens it after', r.undoneNotOpenYet);
   check('walk: a touch launches one walker', r.walkerLaunched);
@@ -731,6 +777,11 @@ async function run(rig) {
   check('the gate keeps tracking position while capped', r.mutedStillTracks);
   check('uncapping on top of a trigger does not bang it', r.unmuteDoesNotBang);
   check('fires normally after uncapping once re-entered', r.firesAfterUnmute);
+  check('a looping take stops when the eye shuts over it', r.loopBeforeMute && r.loopMuteStops,
+        `before ${r.loopBeforeMute} stopped ${r.loopMuteStops}`);
+  check('…and starts again when the eye opens over it', r.loopUnmuteStarts);
+  check('scope leaving tape stops a looping take under the cursor', r.loopScopeOffStops);
+  check('…and scope reading tape again starts it', r.loopScopeOnStarts);
 
   console.log('\n§ read-time vs baked (#236/#240)');
   check('the on-loops family is never copied into a trigger', r.noBakedSettings);

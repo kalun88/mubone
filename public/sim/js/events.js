@@ -674,6 +674,13 @@ export function setupEvents() {
     // is matched by CODE, so modifiers changing under a held key still
     // release it. `_downKeySrc` is what is down right now.
     const typingIntoField = _focusedOnFormField() && _producesText(e);
+    // A HELD [ or ] still sweeps the radius (2026-09-25): they were hardcoded
+    // with the OS key repeat; as bindings the recogniser sees one down edge, so
+    // the repeats are handed to the action straight.
+    if (e.repeat && !typingIntoField && S._keySourceOf && S._actionForGesture) {
+      const id = S._actionForGesture(S._keySourceOf(e), 'press');
+      if (id === 'radius_inc' || id === 'radius_dec') { e.preventDefault(); S._dispatchAction?.(id, 127); return; }
+    }
     if (S._keySourceOf && S._dispatchGesture && !e.repeat && !typingIntoField) {
       const src = S._keySourceOf(e);
       if (S._sourceBound?.(src)) {
@@ -727,37 +734,16 @@ export function setupEvents() {
     // (p / ⇧P — the perf monitor and high-perf render — and ⇧F, the projector,
     // lost their keys 2026-09-09: all three are set on their settings pages.)
 
-    // N: toggle snap/nearest mode
-    if (e.key === 'n' || e.key === 'N') {
-      e.preventDefault();
-      toggleNearestMode();
-    }
-
-    // [ ] adjust search radius
-    if (e.key === '[' || e.key === ']') {
-      e.preventDefault();
-      if (e.key === '[') S.searchRadiusDeg = Math.max(SEARCH_RADIUS_MIN, S.searchRadiusDeg - SEARCH_RADIUS_STEP);
-      if (e.key === ']') S.searchRadiusDeg = Math.min(SEARCH_RADIUS_MAX, S.searchRadiusDeg + SEARCH_RADIUS_STEP);
-      updatePlaybackControls();
-      flashRadiusTooltip();
-    }
+    // (N, [ ], ⌘Z, M and ` were hardcoded here until 2026-09-25. They are
+    //  seeded bindings now — midi.js HAND_FACTORY_KEYS — learnable from the
+    //  sticker on their row or button, and a key moved off them is gone.)
 
     // Shift+Cmd/Ctrl+Z: redo — checked first; shifted the key reads 'Z'
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'z' || e.key === 'Z') && !e.repeat) {
       e.preventDefault();
       redoLastStroke();
     }
-    // Cmd/Ctrl+Z: undo last stroke
-    else if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.repeat) {
-      e.preventDefault();
-      undoLastStroke();
-    }
 
-    // M: system mute (master output)
-    if ((e.key === 'm' || e.key === 'M') && !e.metaKey && !e.ctrlKey && !e.repeat) {
-      e.preventDefault();
-      S._setMuted?.(!S.isMuted);
-    }
 
     // H: toggle handsfree recording
     if ((e.key === 'h' || e.key === 'H') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
@@ -773,11 +759,6 @@ export function setupEvents() {
 
     // `-` used to sweep here; tiles.js takes `-` for unpin in the capture
     // phase and stops it, so that handler was dead (#327). Sweep is the pill.
-    // Backtick: zero the cursor
-    if (e.key === '`' && !e.metaKey && !e.ctrlKey && !e.repeat) {
-      e.preventDefault();
-      S._tareCursor?.();
-    }
 
     // Tilde (⇧`): the tool rail, shown or hidden — the tools pill's key. The
     // shifted key rather than the bare one because ` is tare, and tare is

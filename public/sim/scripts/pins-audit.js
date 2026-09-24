@@ -882,6 +882,110 @@ async function run(rig) {
   // and holding undo walks back to the top of the show. Through the real
   // paths: the main button paints, plantSeed taps, dropSeqFromCursor drops,
   // releaseCommit unpins, the erase brush erases, clearAllCommits clears.
+  console.log('\n§ N2. a cloud keeps the depth it was pinned at, and new paint under it takes the top');
+  // Ek, 2026-09-24: "save the depth number. if a pinned one is 3, i should be
+  // able to record new grain strokes under that pin and it'll auto update to
+  // just play the top 3."
+  const dep = await rig.evaluate(async () => {
+    const { S } = await import('./js/state.js');
+    const G = await import('./js/grain.js');
+    const UP = await import('./js/ui-presets.js');
+    const keep = { parts: S.particles, slots: S.commitSlots.slice(), rec: S.recencyN, r: S.searchRadiusDeg };
+    S.commitSlots = new Array(S.commitSlotCount ?? 16).fill(null); S.particles = []; S.searchRadiusDeg = 20;
+    const strokes = sids => new Set(G.__testSeedPool(0).map(p => p.strokeId)).size + ':' + [...new Set(G.__testSeedPool(0).map(p => p.strokeId))].sort((a, b) => a - b).join(',');
+    let sid = 1000;
+    const paint = () => { const s = ++sid; for (let k = 0; k < 4; k++) S.particles.push({ lon: 0.002 * k, lat: 0, strokeId: s, source: 'live', liveBufferIdx: 0, grainStart: 0.1 * k, grainDuration: 0.1, color: '#fff' }); S._particleVersion++; return s; };
+    try {
+      for (let i = 0; i < 5; i++) paint();                 // five strokes: 1001–1005
+      S.recencyN = 3;
+      S.commitSlots[0] = { type: 'cloud', slotIndex: 0, lon: 0, lat: 0, searchRadiusDeg: 20, recencyN: S.recencyN, grainParams: {}, grainOverrides: {} };
+      const pinned = strokes();
+      S.recencyN = 0;                                      // the cursor goes to ALL
+      const cursorMoved = strokes();
+      paint(); paint();                                    // new paint under the pin: 1006, 1007
+      const afterPaint = strokes();
+      return { pinned, cursorMoved, afterPaint, stored: S.commitSlots[0].recencyN };
+    } finally {
+      S.particles = keep.parts; S.commitSlots = keep.slots; S.recencyN = keep.rec; S.searchRadiusDeg = keep.r;
+    }
+  });
+  check('a cloud pinned at depth 3 plays the newest three strokes', dep.pinned === '3:1003,1004,1005', JSON.stringify(dep));
+  check('…and the cursor\'s depth no longer reaches it', dep.cursorMoved === '3:1003,1004,1005', JSON.stringify(dep));
+  check('…and new paint under it takes the top three', dep.afterPaint === '3:1005,1006,1007', JSON.stringify(dep));
+
+  console.log('\n§ O2. a pin continues a sounding take\'s phase, reversed too, and an undo hands it back');
+  // Ek, 2026-09-24: "if it's loop and i pin it should just continue looping,
+  // not suddenly jump" / after the undo "the stroke doesn't play until i move
+  // the cursor away and back". A REVERSED take, so the direction rides the
+  // handover as well as the clock.
+  const ho = await rig.evaluate(async () => {
+    const T = await import('./js/take.js');
+    const { S } = await import('./js/state.js');
+    const H = await import('./js/history.js');
+    const UP = await import('./js/ui-presets.js');
+    const US = await import('./js/ui-samples.js');
+    const TR = await import('./js/trigger.js');
+    const G = await import('./js/grain.js');
+    const SP = await import('./js/sphere.js');
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const tick = async (n = 3) => { for (let i = 0; i < n; i++) { G.scheduleGrains(); await sleep(25); } };
+    const W = S.canvas.width, Hh = S.canvas.height;
+    const keep = { parts: S.particles, slots: S.commitSlots.slice(), hist: S.strokeHistory, trigs: S.triggers, mode: S.traceMode,
+                   r: S.searchRadiusDeg, muted: S.scanMuted, reads: S.lensReads, dwell: S.triggerParams.dwell, rev: S.triggerParams.reverse };
+    S.commitSlots = new Array(S.commitSlotCount ?? 16).fill(null); S.particles = []; S.strokeHistory = []; S.triggers = []; H.clear();
+    S.traceMode = 'trace'; S.scanMuted = false; S.lensReads = 'both'; S.searchRadiusDeg = 10;
+    S.triggerParams.dwell = 'loop'; S.triggerParams.reverse = true;
+    S.mouseInCanvas = true; S.mousePixelX = W * 0.45; S.mousePixelY = Hh * 0.5; await sleep(80);
+    const cur = SP.screenToLonLat(S.mousePixelX, S.mousePixelY);
+    const actx = S.audioCtx;
+    const out = {};
+    try {
+      const buf = T.makeTake(new Float32Array(actx.sampleRate * 2), actx.sampleRate);
+      S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
+      const idx = S.liveRecBuffers.length - 1;
+      US.recordStrokeStart('live', idx);
+      const sid = S.currentStrokeId;
+      for (let k = 0; k < 8; k++) S.particles.push({ lon: cur.lon + k * 0.6 * Math.PI / 180, lat: cur.lat, strokeId: sid, source: 'live',
+        liveBufferIdx: idx, grainStart: 0.1 * k, grainDuration: 0.1, color: '#fff', trig: true, _vo: S.currentVoicing });
+      S._particleVersion++; S.currentStrokeId = -1;
+      // Armed as a RECORDED take is (not `plain`, which primes the gate inside
+      // so an import never fires on its own): the release plays it once from
+      // the top, and under dwell: loop it keeps looping under the cursor.
+      const t = TR.armTrigger(sid);
+      await tick(8);
+      out.sounding = !!(t && t.playing && t._sourceNode && !t._sourceNode._stopped && t._startedAt > 0);
+      out.reversed = t?.reverse === true;
+      const clock = t?._startedAt;
+      UP.dropSeqFromCursor(); await tick();
+      const loop = S.commitSlots.find(c => c && c.type === 'loop');
+      out.pinned = !!loop;
+      out.pinTookClock = !!loop && loop._phaseAnchor === clock && loop.startOffset === 0;
+      out.pinKeptDirection = loop?.direction === -1;
+      out.pinKeptSpeed = !!loop && loop.speed === t.speed;
+      await tick(6);
+      out.loopBuilt = !!loop?._sourceNode;
+      out.takeStopped = t.playing === false;
+      const loopClock = loop?._startedAt;
+      US.undoLastStroke();                      // the pin lifts — the loop's clock goes to the take
+      out.undoHandedBack = t._phaseAnchor === loopClock && t._phaseApplied === false;
+      await tick(6);
+      out.takeResumed = t.playing === true && t.trigger?._inside === true;
+      out.slotsAfterUndo = S.commitSlots.filter(Boolean).length;
+    } finally {
+      UP.clearAllCommits(); TR.dropTriggersWhere?.(() => true);
+      S.particles = keep.parts; S.commitSlots = keep.slots; S.strokeHistory = keep.hist; S.triggers = keep.trigs; H.clear();
+      S.traceMode = keep.mode; S.searchRadiusDeg = keep.r; S.scanMuted = keep.muted; S.lensReads = keep.reads;
+      S.triggerParams.dwell = keep.dwell; S.triggerParams.reverse = keep.rev; S.mouseInCanvas = false;
+    }
+    return out;
+  });
+  check('a reversed take loops under the resting cursor', ho.sounding && ho.reversed, JSON.stringify(ho));
+  check('the pin takes the take\'s clock, at offset 0', ho.pinned && ho.pinTookClock, JSON.stringify(ho));
+  check('…and its direction and speed', ho.pinKeptDirection && ho.pinKeptSpeed, JSON.stringify(ho));
+  check('the loop builds and the take stops', ho.loopBuilt && ho.takeStopped, JSON.stringify(ho));
+  check('undo hands the loop\'s clock back to the take', ho.undoHandedBack, JSON.stringify(ho));
+  check('…and the take resumes under the resting cursor', ho.takeResumed && ho.slotsAfterUndo === 0, JSON.stringify(ho));
+
   console.log('\n§ O. undo — the last user action, of any kind');
   const und = await rig.evaluate(async () => {
     const T = await import('./js/take.js');
@@ -1273,10 +1377,11 @@ async function run(rig) {
   // ── J2. A cloud is a moving cursor — it reads a mark with the MARK's voicing
   // Ek, 2026-09-05: "the pin is just a moving cursor — if I change the material
   // under it, it should change." Before this a cloud played everything under it
-  // with the block it was pinned with, so a wet brush's knobs never reached the
-  // wash cloud's material. Tested at the seed POST: the bridge's bucketing is
-  // the whole change, and what the worklet receives is what it plays.
-  console.log('\n§ J2. a cloud reads a mark with the mark\'s voicing — a wet brush reaches its wash');
+  // with the block it was pinned with. Tested at the seed POST: the bridge's
+  // bucketing is the whole change, and what the worklet receives is what it
+  // plays. Since 2026-09-24 no voicing is live, so a knob moved after painting
+  // reaches NO mark — the second post must read exactly as the first.
+  console.log('\n§ J2. a cloud reads a mark with the mark\'s voicing — and a knob moved later reaches none');
   const cv = await rig.evaluate(async () => {
     const T = await import('./js/take.js');
     const { S } = await import('./js/state.js');
@@ -1294,19 +1399,18 @@ async function run(rig) {
     const savedHand = S._handTile, savedIsWet = S._tileIsWet, savedPitch = S.grainOverrides.pitchShift;
     const keepParts = S.particles.slice(), keepLive = S.liveRecBuffers.slice();
     const keepVo = S.voicings, keepSeq = S.voicingSeq;
-    // `live` is the auditioned hand (brush-voicing.js "Auditioned paint"); it
-    // was `wet`, a per-tool flag, until 2026-09-22.
-    const hand = { id: 'W', label: 'W', live: true };
+    // Two tools, W and D, so two voicings; nothing is live (2026-09-24).
+    const hand = { id: 'W', label: 'W' };
     S._handTile = () => hand;
     S.voicings = []; S.voicingSeq = 0; S.particles.length = 0;
 
-    // One wet brush, one dry brush, and a buffer the worklet knows.
+    // Two brushes, and a buffer the worklet knows.
     S.grainOverrides.pitchShift = 100;
     US.recordStrokeStart('live', 0); const w = S.currentVoicing;
-    hand.id = 'D'; hand.live = false;
+    hand.id = 'D';
     S.grainOverrides.pitchShift = 200;
     US.recordStrokeStart('live', 0); const d = S.currentVoicing;
-    hand.id = 'W'; hand.live = true;
+    hand.id = 'W';
     S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
     const idx = S.liveRecBuffers.length - 1;
     const mk = (n, vo, sid) => { const out = []; for (let i = 0; i < n; i++) out.push({ lon: 0.01 * i, lat: 0, strokeId: sid, source: 'live',
@@ -1317,15 +1421,17 @@ async function run(rig) {
     const post = (seeds) => { S._postWorkletSeeds(seeds); return WB.getWorkletDiag().seeds.map(v => ({ index: v.index, slot: v.slot, vo: v.vo, n: v.candidates.length, pitch: v.params.pitchShift })); };
     const byVo = (list, slot, vo) => list.find(v => v.slot === slot && v.vo === vo);
 
-    S.grainOverrides.pitchShift = 100;       // the wet brush's knob, back in the hand
+    S.grainOverrides.pitchShift = 100;
     const one = post([seed(0)]);
-    // The wet knob moves: only the wet voice follows.
+    // A knob moves after the paint: no voice follows.
     S.grainOverrides.pitchShift = 700;
     const two = post([seed(0)]);
     // A second cloud over the same material has voices of its own.
     const three = post([seed(0), seed(1)]);
     // The morph lands on top of whichever block plays.
     const four = post([seed(0, { overrides: { pitchShift: 900 } })]);
+    // A cloud pinned under AUDITION carries ONE voicing for every mark (2026-09-24).
+    const frozen = post([seed(0, { voicing: w })]);
     // Voices come back when a cloud goes.
     const none = post([]);
     const again = post([seed(1)]);
@@ -1334,7 +1440,7 @@ async function run(rig) {
     S.particles.length = 0; for (const p of keepParts) S.particles.push(p);
     S.liveRecBuffers = keepLive; S.voicings = keepVo; S.voicingSeq = keepSeq;
     post([]);
-    return { w, d, one, two, three, four, none, again,
+    return { w, d, one, two, three, four, frozen, none, again,
              oneW: byVo(one, 0, w), oneD: byVo(one, 0, d), oneO: byVo(one, 0, 0),
              twoW: byVo(two, 0, w), twoD: byVo(two, 0, d), twoO: byVo(two, 0, 0),
              threeW0: byVo(three, 0, w), threeW1: byVo(three, 1, w),
@@ -1349,9 +1455,9 @@ async function run(rig) {
     check('a voiced mark plays with ITS voicing, an unvoiced one with the cloud\'s own block',
       cv.oneW?.pitch === 100 && cv.oneD?.pitch === 200 && cv.oneO?.pitch === 300,
       `wet ${cv.oneW?.pitch} dry ${cv.oneD?.pitch} own ${cv.oneO?.pitch}`);
-    check('the wet brush\'s knob reaches the cloud\'s material, and only its own strokes',
-      cv.twoW?.pitch === 700 && cv.twoD?.pitch === 200 && cv.twoO?.pitch === 300,
-      `wet ${cv.twoW?.pitch} dry ${cv.twoD?.pitch} own ${cv.twoO?.pitch}`);
+    check('a knob moved after the paint reaches no mark — every voice keeps its block',
+      cv.twoW?.pitch === 100 && cv.twoD?.pitch === 200 && cv.twoO?.pitch === 300,
+      `W ${cv.twoW?.pitch} D ${cv.twoD?.pitch} own ${cv.twoO?.pitch}`);
     check('a voice keeps its worklet index between ticks — its onset clock runs on',
       cv.oneW && cv.twoW && cv.oneW.index === cv.twoW.index && cv.oneD.index === cv.twoD.index && cv.oneO.index === cv.twoO.index,
       `${JSON.stringify(cv.one)} → ${JSON.stringify(cv.two)}`);
@@ -1361,6 +1467,9 @@ async function run(rig) {
       JSON.stringify(cv.three));
     check('the cloud\'s morph lands on top of whichever block plays',
       cv.fourW?.pitch === 900 && cv.fourO?.pitch === 900, `wet ${cv.fourW?.pitch} own ${cv.fourO?.pitch}`);
+    check('a cloud pinned under audition posts every mark on its one frozen voicing',
+      cv.frozen.length === 1 && cv.frozen[0].vo === cv.w && cv.frozen[0].n === 12 && cv.frozen[0].pitch === 100,
+      JSON.stringify(cv.frozen));
     check('an empty post clears every voice, and a cloud that returns gets voices again',
       cv.none.length === 0 && cv.again.length === 3, `${cv.none.length} then ${cv.again.length}`);
   }
@@ -1590,58 +1699,59 @@ async function run(rig) {
   // session file carries `wet`, honoured only on a rig where the tile is
   // still wet. The knob is moved by writing the live override and calling the
   // sync the bridge runs per tick — the record path, not the rail.
-  console.log('\n§ L. auditioned paint — a live brush\'s knobs move every stroke it painted');
-  // WET became AUDITIONED PAINT on 2026-09-22 (brush-voicing.js): no per-tool
-  // flag, no dry verb, no ring, nothing on the wire — paint made while
-  // AUDITIONING is live, paint made by playing freezes. What stays is the
-  // mechanism these checks guard: one live voicing per tool, moved in place.
-  const wet = await rig.evaluate(async () => {
+  console.log('\n§ L. audition is the cursor\'s — it hears the pedal, the marks keep their block');
+  // Ek, 2026-09-24: "the sheet is the guitar pedal, it gets baked in. The
+  // cursor is the monitor, read only. Audition should not change what's
+  // baked." With `S.auditionMode` on, every candidate the CURSOR posts lands
+  // on voicing 0 (the live block) — region 0 of the shared table — whatever
+  // `_vo` the mark carries; off, each mark is posted on its own voicing. The
+  // marks' `_vo` never changes, and a pinned cloud's seed post (§ J2) never
+  // reads the switch. Auditioned PAINT (2026-09-22) is gone: no voicing is live.
+  const aud = await rig.evaluate(async () => {
     const { S } = await import('./js/state.js');
     const BV = await import('./js/brush-voicing.js');
     const US = await import('./js/ui-samples.js');
-    const savedHand = S._handTile, savedPitch = S.grainOverrides.pitchShift;
-    const keepVo = S.voicings, keepSeq = S.voicingSeq, keepParts = S.particles.slice();
-    const hand = { id: 'W', label: 'W', live: true };
+    if (!S._postWorkletCandidates || !S._readBackCandidates) return { noWorklet: true };
+    const savedHand = S._handTile, savedPitch = S.grainOverrides.pitchShift, savedAud = S.auditionMode;
+    const keepVo = S.voicings, keepSeq = S.voicingSeq, keepParts = S.particles.slice(), keepLive = S.liveRecBuffers.slice();
+    const hand = { id: 'W', label: 'W' };
     S._handTile = () => hand;
-    const pitchOf = vo => BV.voicingById(vo)?.params.pitchShift;
     try {
       S.voicings = []; S.voicingSeq = 0; S.particles.length = 0;
-      S.grainOverrides.pitchShift = 0;
-      US.recordStrokeStart('live', 0); const w1 = S.currentVoicing;
-      US.recordStrokeStart('live', 0); const w2 = S.currentVoicing;     // one voicing per live tool
-      const liveFlag = BV.voicingById(w1)?.live === true;
-      const p0 = pitchOf(w1);
-      S.grainOverrides.pitchShift = 700;
-      const synced = BV.syncLiveVoicing();
-      const p1 = pitchOf(w1);
-      // A PLAYED stroke beside it: the knob must not reach it.
-      hand.id = 'D'; hand.live = false;
-      US.recordStrokeStart('live', 0); const d1 = S.currentVoicing;
-      const dp0 = pitchOf(d1);
-      S.grainOverrides.pitchShift = 800;
-      const syncedDry = BV.syncLiveVoicing();
-      const dp1 = pitchOf(d1), p1b = pitchOf(w1);
-      hand.id = 'W'; hand.live = true;
-      S.grainOverrides.pitchShift = 900;
-      BV.syncLiveVoicing();
-      const p2 = pitchOf(w1), dp2 = pitchOf(d1);
-      return { w1, w2, liveFlag, p0, synced, p1, d1, dp0, syncedDry, dp1, p1b, p2, dp2 };
+      S.grainOverrides.pitchShift = 100;
+      US.recordStrokeStart('live', 0); const w = S.currentVoicing;
+      const liveFlag = BV.voicingById(w)?.live;
+      const buf = S.liveRecBuffers[0]?.buffer || S.liveRecBuffers[0]?.liveBuffer;
+      if (!buf) return { noBuffer: true };
+      const mk = (n, vo, sid) => { const out = []; for (let i = 0; i < n; i++) out.push({ lon: 0.01 * i, lat: 0, strokeId: sid, source: 'live',
+        liveBufferIdx: 0, grainStart: 0.1 + 0.05 * i, grainDuration: 0.1, color: '#fff', _vo: vo }); return out; };
+      const pool = [...mk(5, w, 1), ...mk(3, 0, 2)];
+      const regions = () => { const rows = S._readBackCandidates() || []; const by = {}; for (const r of rows) by[r.region] = (by[r.region] || 0) + 1; return by; };
+      S.auditionMode = false; S._postWorkletCandidates(pool, 0, 0); const off = regions();
+      S.auditionMode = true;  S._postWorkletCandidates(pool, 0, 0); const on = regions();
+      const voKept = pool.every((p, i) => p._vo === (i < 5 ? w : 0));
+      S.auditionMode = false; S._postWorkletCandidates(pool, 0, 0); const back = regions();
+      S._postWorkletCandidates([], 0, 0);
+      return { w, liveFlag, off, on, back, voKept, tableless: !S._readBackCandidates().length && !off[0] && !off[1] };
     } finally {
-      S._handTile = savedHand; S.grainOverrides.pitchShift = savedPitch ?? null;
+      S._handTile = savedHand; S.grainOverrides.pitchShift = savedPitch ?? null; S.auditionMode = savedAud;
       S.voicings = keepVo; S.voicingSeq = keepSeq;
       S.particles.length = 0; for (const p of keepParts) S.particles.push(p);
+      S.liveRecBuffers = keepLive;
     }
   });
-  check('an auditioned tool\'s strokes share one live voicing', wet.w1 === wet.w2 && wet.liveFlag, `${wet.w1}/${wet.w2} live=${wet.liveFlag}`);
-  check('its knob moves that voicing in place', wet.synced === wet.w1 && wet.p0 === 0 && wet.p1 === 700,
-    `sync→${wet.synced}, pitch ${wet.p0} → ${wet.p1}`);
-  check('a played tool in the hand syncs nothing', wet.syncedDry === 0 && wet.dp1 === wet.dp0 && wet.p1b === 700,
-    `sync→${wet.syncedDry}, played ${wet.dp0} → ${wet.dp1}, live held at ${wet.p1b}`);
-  check('back on the auditioned tool, its strokes move and the played ones stay', wet.p2 === 900 && wet.dp2 === wet.dp0,
-    `live ${wet.p2}, played ${wet.dp2}`);
-  // (§ L2, the wet RING with nothing in the hand, went with the ring on
-  // 2026-09-22: nothing draws liveness since AUDITION became a visible switch.)
-
+  if (aud.noWorklet || aud.noBuffer) {
+    check('the worklet is running with a buffer to post against', false, JSON.stringify(aud));
+  } else {
+    check('no voicing is live any more', aud.liveFlag === undefined, `live=${aud.liveFlag}`);
+    const offTotal = Object.values(aud.off).reduce((a, b) => a + b, 0);
+    check('audition OFF — a voiced mark posts on its own voicing, an unvoiced one on the live block',
+      offTotal === 8 && aud.off[0] === 3 && Object.keys(aud.off).length === 2, JSON.stringify(aud.off));
+    check('audition ON — every candidate the cursor posts lands on the live block',
+      aud.on[0] === 8 && Object.keys(aud.on).length === 1, JSON.stringify(aud.on));
+    check('… and the marks keep their own voicing — nothing is rewritten', aud.voKept);
+    check('audition OFF again — the marks play as baked', JSON.stringify(aud.back) === JSON.stringify(aud.off), JSON.stringify(aud.back));
+  }
   // ── M. The overdub brush ──────────────────────────────────────────────────
   console.log('\n§ M. the overdub brush — a take inside a pinned loop\'s cycle');
   const od = await rig.evaluate(async () => {

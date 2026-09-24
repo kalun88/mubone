@@ -454,7 +454,13 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
   // with the LIVE grain block — the grain brush in the palette, live or dry —
   // so the sound of a dwelling trigger is the brush you can see (Ek,
   // 2026-09-06: a trigger is a view onto a stroke and owns nothing).
-  const _voiceOf = p => (p.trig ? 0 : (p._vo ?? 0));
+  // AUDITION IS THE CURSOR'S (Ek, 2026-09-24): with the switch on, every
+  // candidate the CURSOR posts lands on voicing 0 — the live block, the pedal
+  // — instead of the mark's own baked block. Nothing is written: the mark
+  // keeps `_vo`, and the moment the switch goes off it plays as baked again.
+  // Only here, on the cursor's two post paths; a pinned cloud's seed post
+  // (`_postWorkletSeeds`) reads the marks' own voicings whatever the switch.
+  const _voiceOf = p => ((p.trig || S.auditionMode) ? 0 : (p._vo ?? 0));
 
   // The table path (R3). Two passes over the pool: the first counts marks and
   // the newest stroke per voicing, so the voice cap keeps the most RECENT
@@ -462,7 +468,6 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
   const _ctVoCount = new Map(), _ctVoMax = new Map(), _ctVoSlot = new Map();
   function _postCandidatesTable(pool, cursorLon, cursorLat) {
     if (!_workletNode) return;
-    S._syncLiveVoicing?.();
     const ctI = _ctI, ctF = _ctF;
     _ctCount.fill(0);
     _ctVoCount.clear(); _ctVoMax.clear(); _ctVoSlot.clear();
@@ -585,7 +590,6 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
     // is brought up to the live block here, before its params are posted
     // below — so a pot, an OSC value or a sheet row moves every stroke that
     // brush painted within one tick. ~22 compares when nothing has moved.
-    S._syncLiveVoicing?.();
     // Always post — even an empty pool must clear stale worklet candidates
     if (!pool || pool.length === 0) {
       _workletNode.port.postMessage({ type: 'cursorVoices', list: [] });
@@ -609,10 +613,8 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
 
       // Bucket by voicing. `_vo` is absent only on material that predates
       // step 3 and has not been through the import migration; 0 means
-      // "follow the live params", which is the pre-step-3 behaviour. There is
-      // no override any more: audition and the grain filter both forced every
-      // mark onto voicing 0 here, and both are gone (2026-09-03) — a live
-      // brush's strokes move because their own voicing's params move, above.
+      // "follow the live params". The ONE override is AUDITION (2026-09-24),
+      // inside `_voiceOf`: the cursor hears the pedal, the marks keep their block.
       // Resolved up here because the peak offset below is the playing
       // voice's, not the painting one's.
       const vo = _voiceOf(p);
@@ -776,7 +778,6 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
     // post does the same, so a wash cloud follows its live brush's knobs even
     // while the cursor posts nothing (scan muted, nothing in reach). Cheap
     // when nothing has moved.
-    S._syncLiveVoicing?.();
     const sr = _sabSampleRate;
     const list = [];
     _sdSeen.clear();
@@ -802,7 +803,10 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       if (pool) {
         for (let j = 0; j < pool.length; j++) {
           const p = pool[j];
-          let vo = p._vo ?? 0;
+          // A cloud pinned under AUDITION carries one voicing for every mark it
+          // reads (ui-presets.js, 2026-09-24): the sound the cursor was
+          // hearing, frozen. Otherwise a mark plays with its own.
+          let vo = sd.voicing ?? (p._vo ?? 0);
           if (vo && !S._voicingById?.(vo)) vo = 0;
           const peakOff = vo ? _peakOffsetFor(vo) : ownPeakOff;
           let audioBuf = null;

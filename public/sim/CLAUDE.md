@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for Cowork / Claude Code
 
-> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-24 (5.7 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
+> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-25 (5.8 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
 
 > **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative — no paragraph here per change. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`.
 
@@ -151,7 +151,7 @@ words — read that entry before touching the area, and put a new ruling there, 
 - **A piece is the music, the rig is an export** (`js/piece.js`; `.mubone` is a zip of manifest + float32 audio, `js/mubone-file.js`): ⌘S · ⇧⌘S · ⌘O, a File menu, a quit guard, no autosave.
 - **One settings door** (`#settingsModal`, `js/ui-settings.js`): a section's body is the REAL modal's `.mu-dialog` moved in and moved back on close — never a copy, and anything borrowed must be returned. A setting with no nav item has no way in.
 - **The engine page** (`renderProps`): one line per parameter, every number typeable, double-click resets to the tick. A `slider` param's raw value is its POSITION (the grain sliders are log-mapped) — typed values go through the numbox's `fromDisplay`, never a re-derived one.
-- **Two left rails** (`#toolRail`, `#propRail`) overlay the stage, never resizing the sphere. The left is TOOLS — a tab per instrument, its card the PERFORMANCE block (switches, rows, **AUDITION last**), then voice presets — over **CURSOR**, the rail's foot, always shown. No tool rows: one tool per instrument, so the TABS are the list. **A param lives with the TOOL it works on**; a standing answer lives in ITS tab. Rows are pitch 30.
+- **Two left rails** (`#toolRail`, `#propRail`) overlay the stage, never resizing the sphere. The left is TOOLS — a tab per instrument, its card the PERFORMANCE block (switches, rows), then VOICE + presets — over **CURSOR**, the rail's foot, always shown, **AUDITION** in it. No tool rows: one tool per instrument, so the TABS are the list. **A param lives with the TOOL it works on**; a standing answer lives in ITS tab. Rows are pitch 30.
 - **The loop follows the button, and the machine knows its latency** (`js/latency.js`): press and release stamped on the audio clock, `S.latency` estimated or measured by loopback, one cushion (`S.audioCushionMs`, 10 ms) for both MessagePort hops — **the GUI thread is not in the audio path**. `docs/RULINGS.md` "the two IPC hops are bounded".
 - **A pinned cloud owns its material** (`grain.js` `_refreshCloudClaims`): the cursor never granulates inside one; the claim is by PINNING, not sounding; `forCursor` keeps the cloud's own playback out of the skip; nearest mode needs its own. **The reach line is one per CANDIDATE** (`S._cursorPool`), the ring one per grain.
 - **Pin groups are derived** (`groupOf(c)` is `c.type`) and **so is audibility** (`js/pins.js` `isPinAudible`: every pin has `mute` and `solo`, nothing stores on/off; `applyMix()` makes the engine agree). **The selected pin** (`selectedPinSlot`) is what unpin takes and the rail marks. **The pinned rail is a MIXER** (`js/ui-pins.js`, 2026-09-16): one track per pin, the track IS its fader (`c.level`, a stage over the block's `volume`, never written into it), and **sort IS `S.selectionMode`** so row one is what unpin takes. The rest — the mode bar, what Settings → Pins keeps — is `docs/RULINGS.md` "The pinned rail is a mixer".
@@ -178,7 +178,7 @@ A module mature enough to always load is wired into `main.js`; otherwise it stay
 
 ## Versioning — releases are explicit, never automatic
 
-Current version: **5.7 alpha** (`5.7.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
+Current version: **5.8 alpha** (`5.8.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
 
 1. **`index.html`** — BOTH version strings: the `<span class="top-bar-version">` (cabinet, hidden) and the chrome brand `<b>mubone</b> <i>1.14</i>`, which is the one the player sees
 2. **`package.json`** line 3 — the `"version"` field (semver, e.g. `"1.10.0-alpha"`)

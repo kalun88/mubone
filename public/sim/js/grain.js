@@ -6,7 +6,7 @@ import { dlog } from './diag.js';
 import { pinAnchorInto, isPinLeaving } from './pins.js';
 import { isCommitOn } from './composer.js';
 import { voicingById } from './brush-voicing.js';
-import { pitchRatio, stretchedRegion } from './tape-pitch.js';
+import { pitchRatio, stretchedRegion, stretchRatio, stretchFresh } from './tape-pitch.js';
 import { tickWalkers } from './walker.js';
 const _anchor = [0, 0];   // scratch for pinAnchorInto on the tick
 
@@ -235,17 +235,23 @@ let _candidateBuf = [];
 const _recBufRec  = new Map();   // depthKey (the stroke) → its strokeId, the recency rank
 const _recAllowed = new Set();   // the strokes depth lets through
 const _recSortBuf = [];          // reusable array for sorting entries by strokeId
+// THE DEPTH THE POOL IS BUILT AT. The cursor's (`S.recencyN`) unless a pinned
+// cloud is being read, which carries the depth it was pinned at (Ek,
+// 2026-09-24: "save the depth number … record new grain strokes under that pin
+// and it'll auto update to just play the top 3"). Set around a cloud's build.
+let _depthFor = null;
+const _depthN = () => _depthFor ?? S.recencyN;
 
 // Shared helper: build the _recAllowed set from _recBufRec.
 // Picks the recencyN most-recent strokes (depthKey).
 function _buildAllowedFromBufRec() {
   _recAllowed.clear();
-  if (_recBufRec.size === 0 || S.recencyN <= 0) return false;
+  if (_recBufRec.size === 0 || _depthN() <= 0) return false;
   // Reuse sort buffer: copy entries, sort, pick top N
   _recSortBuf.length = 0;
   for (const entry of _recBufRec) _recSortBuf.push(entry); // [key, strokeId]
   _recSortBuf.sort((a, b) => b[1] - a[1]);
-  const n = Math.min(S.recencyN, _recSortBuf.length);
+  const n = Math.min(_depthN(), _recSortBuf.length);
   for (let i = 0; i < n; i++) _recAllowed.add(_recSortBuf[i][0]);
   return true;
 }
@@ -256,7 +262,7 @@ function _buildAllowedFromBufRec() {
 // that recording new buffers elsewhere never silences old buffers inside the cone.
 function _buildCandidatePool(sortedParticles, k, applyRecency, radiusRad) {
   let useAllowed = false;
-  if (applyRecency && S.recencyN > 0) {
+  if (applyRecency && _depthN() > 0) {
     _recBufRec.clear();
     for (let i = 0; i < sortedParticles.length; i++) {
       const p = sortedParticles[i];
@@ -401,16 +407,19 @@ export function __testSeedPool(slotIndex = 0) {
     p._ang = _angleFromCached(p, rx, ry, rz);
   }
   const rad = degs * Math.PI / 180;
-  const pool = seed.nearestMode
-    ? _buildCandidatePoolNearest(S.particles, S.particles.length, true, rad)
-    : _buildCandidatePoolRadius(S.particles, rad);   // NO forCursor — the seed path
-  return pool.slice();
+  _depthFor = seed.recencyN ?? null;           // the cloud's own depth, as the seed block reads it
+  try {
+    const pool = seed.nearestMode
+      ? _buildCandidatePoolNearest(S.particles, S.particles.length, true, rad)
+      : _buildCandidatePoolRadius(S.particles, rad);   // NO forCursor — the seed path
+    return pool.slice();
+  } finally { _depthFor = null; }
 }
 
 function _buildCandidatePoolNearest(particles, k, applyRecency, radiusRad) {
   // Phase 0: build recency allow-set from in-radius particles (same as before)
   let useAllowed = false;
-  if (applyRecency && S.recencyN > 0) {
+  if (applyRecency && _depthN() > 0) {
     _recBufRec.clear();
     for (let i = 0; i < particles.length; i++) {
       const p = particles[i];
@@ -580,7 +589,7 @@ function _buildCandidatePoolRadius(particles, radiusRad, forCursor = false, only
     const key = depthKey(p);
     if ((_recBufRec.get(key) ?? -Infinity) < p.strokeId) _recBufRec.set(key, p.strokeId);
   }
-  const useAllowed = S.recencyN > 0 ? _buildAllowedFromBufRec() : false;
+  const useAllowed = _depthN() > 0 ? _buildAllowedFromBufRec() : false;
   // Phase 2: collect in-radius particles that pass local recency.
   _candidateBuf.length = 0;
   for (let i = 0; i < particles.length; i++) {
@@ -736,25 +745,38 @@ S._prepareTapePitch = seq => {
   if (region) stretchedRegion(seq, region, pr, !seq.trigger);
 };
 
-/** Is a LIVE take playing a region that no longer matches its own numbers, and
+/** Is a take playing a region that no longer matches its own numbers, and
  *  is the replacement ready to cut? Reverse and pitch are BAKED INTO the region
  *  (a reversed copy, or one stretched by the ratio), so the only way to follow
  *  them is to cut it again — and the stretch runs on a WORKER, so releasing the
  *  moment the knob moves would leave the loop seam silent until it landed.
  *  This starts the stretch and answers false until it is in hand; the caller
  *  asks once per wrap, so the recut takes the first seam it is ready for.
+ *  NOT gated on liveness any more (2026-09-24 evening): a take's numbers move
+ *  only under AUDITION (trigger.js `_applyAudition`, both ways — onto the
+ *  live sheet and back to the baked half), so "the node no longer matches the
+ *  shell" is the whole test. It was gated on `_live`, which nothing sets now,
+ *  and an auditioned loop's pitch and reverse never landed (Ek: "pitch in the
+ *  tape sheet doesn't work in audition mode").
  *  Exported because it is the whole of the rule and the only way to check it
  *  without a recorded take: the rig asks it directly. */
 export function _liveRecutReady(seq) {
   const src = seq._sourceNode;
-  if (!seq._live || !src || src._stopped) return false;
+  if (!src || src._stopped) return false;
   const rev = seq.direction === -1;
   const pr  = pitchRatio(seq.pitch);
   if (src._rev === rev && src._pr === pr) return false;      // nothing moved
   if (pr === 1) return true;                                  // a plain cut, no worker
-  S._prepareTapePitch?.(seq);                                 // start it if it has not
-  const c = seq._pitchBuf;
-  return !!(c && c.ratio === pr && !c.pending && c.buf);
+  S._prepareTapePitch?.(seq);                                 // ask, if it has not — and refresh the cut
+  // Anything landed that is FRESHER than the node in hand — a different
+  // ratio (a drag's intermediate step included), OR the same ratio of a
+  // different CUT. The second is reverse under a pitch (Ek, 2026-09-24:
+  // "reverse doesn't work in audition when pitch is not 0"): flipping it
+  // re-cuts the region backwards, the stretch of the new cut lands at the
+  // SAME ratio the node already plays, and a ratio-only test called that
+  // "nothing fresher" for ever. The node records the cut it was built from.
+  const cut = seq._regionBuf?.buf;
+  return stretchFresh(seq, cut, src._pr) || (src._cut !== cut && stretchRatio(seq, cut) != null);
 }
 
 const _LAYER_XFADE_S = 0.008;   // the swap seam while a take is still recording
@@ -1489,6 +1511,10 @@ export function scheduleGrains() {
     // local recency ranking — same fix as cursor path.
     const seedRadiusRad = cSearchDeg * Math.PI / 180;
     let pool;
+    // The cloud's OWN depth, pinned with it; a cloud from before 2026-09-24
+    // has none and reads the cursor's, as it always did.
+    _depthFor = seed.recencyN ?? null;
+    try {
     if (cNearestMode) {
       // O(N) k-selection instead of O(N log N) sort of the global array.
       // The old code sorted S.particles for EACH seed — 16 seeds × sort(500)
@@ -1504,6 +1530,7 @@ export function scheduleGrains() {
         pool = _buildCandidatePoolNearest(pool, cgp.k, false, undefined);
       }
     }
+    } finally { _depthFor = null; }
 
     if (!pool.length) continue;
 
@@ -1525,6 +1552,7 @@ export function scheduleGrains() {
       gain: _seedWeights[i] * seedEnvGain * (seed.level ?? 1),   // × the pin's fader
       grainParams: cgp,
       overrides: hasOverrides ? cgo : null,
+      voicing: seed.voicing ?? null,     // a cloud pinned under audition: one frozen voicing for every mark
       kSeqMode: cKSeqMode,
       // Radius fade is resolved live in the bridge from the per-slot angle
       // cache, so a moving cloud fades against where it is now rather than
@@ -1657,18 +1685,26 @@ export function scheduleGrains() {
       // why everything below that reads `seq.speed` against the ORIGINAL
       // region — the playhead, the overdub fold, the tail — needs no change.
       const pr = pitchRatio(seq.pitch);
+      // The ratio the region PLAYED is cut at — the target, or the freshest
+      // stretch in hand while the target is still on the worker (a drag's
+      // intermediate step, 2026-09-24 night). Rate and `_pr` follow it, so
+      // the stretch and the rate still cancel in time whichever one plays.
+      let prUsed = pr;
       if (reverse || buffer.data || pr !== 1) {
         let region = _regionCopy(seq, buffer, reverse, actx);
         if (!region) continue;
+        seq._cutPlayed = region;          // the pre-stretch cut this node is built from
         if (pr !== 1) {
-          region = stretchedRegion(seq, region, pr, !seq.trigger);
-          if (!region) continue;   // the worker is on it — next tick
+          const cut = region;
+          region = stretchedRegion(seq, cut, pr, !seq.trigger);
+          if (!region) continue;   // the worker is on the first one — next tick
+          prUsed = stretchRatio(seq, cut) ?? pr;
         }
         playBuffer    = region;
         playLoopStart = 0;
         playLoopEnd   = region.duration;
       }
-      const rate = Math.abs(seq.speed || 1) * pr;   // buffer seconds per wall second
+      const rate = Math.abs(seq.speed || 1) * prUsed;   // buffer seconds per wall second
 
       const src  = actx.createBufferSource();
       const gain = actx.createGain();
@@ -1685,7 +1721,9 @@ export function scheduleGrains() {
       // speed × ratio — so the live update needs the ratio the region already
       // carries, not whatever the sheet says now. Reading the sheet instead
       // would move the length as well as the rate, and a loop's seam with it.
-      src._pr = pr;
+      src._pr = prUsed;
+      src._cut = seq._cutPlayed ?? null;   // …and from WHICH cut, for the recut test above
+      seq._cutPlayed = null;
       // …and WHICH WAY it was cut, for the same reason: a live take whose
       // reverse or pitch moves needs its region cut again, and these two stamps
       // are how the tick knows the one it is playing has gone stale.
@@ -1938,7 +1976,7 @@ export function scheduleGrains() {
             // lock the screen. so it never retriggers").
             //
             // Speed and level ride the running node (trigger.js
-            // `_applyLiveParams`). Reverse and pitch cannot: both are BAKED
+            // `_applyAudition`). Reverse and pitch cannot: both are BAKED
             // INTO the region the source plays — a reversed copy, or one
             // stretched by the pitch ratio — so the only way to follow them is
             // to cut it again. Dropping the nodes here lets the block above

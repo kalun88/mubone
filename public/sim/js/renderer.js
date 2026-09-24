@@ -2942,6 +2942,56 @@ export function drawCursor() {
   _retMoveTo(mx, my, 0,  armGap);  _retLineTo(mx, my, 0,  armGap + armLen);
   S.ctx.stroke();
 
+  // ─── THE EYE OFF: the reticle struck through (Ek, 2026-09-24) ────────────
+  // `scanMuted` used to show only as an empty ring in --text-faint, which is
+  // a missing thing rather than a sign. The cursor tile wears the unpin
+  // glyph's slash while it is unlit; the reticle wears the same one — corner
+  // to corner across the arm extent, through the centre, reticle white at the
+  // tip ring's weight. IN SCREEN SPACE, not the tangent frame (Ek, 2026-09-24
+  // night: "should be the same direction" as the tile's): a slash is chiral,
+  // and the tangent frame mirrors x wherever the projection does, so drawn
+  // through `_ret` it read "\" here and "/" there. The tile's rises to the
+  // right; so does this, everywhere on the sphere.
+  if (scanOff) {
+    const L = armGap + armLen;
+    S.ctx.strokeStyle = `rgba(${_rtic},0.85)`;
+    S.ctx.lineWidth = 2;
+    S.ctx.lineCap = 'round';
+    S.ctx.beginPath();
+    S.ctx.moveTo(mx - L, my + L); S.ctx.lineTo(mx + L, my - L);
+    S.ctx.stroke();
+  }
+  // ─── AUDITION: the cursor wears headphones (Ek, 2026-09-24) ─────────────
+  // The cursor is the monitor, and while the switch is on it plays what it
+  // reads through the live sheets — cueing, not committing — so it wears the
+  // monitor's own sign: a band over the top of the reticle, a cup at each
+  // end, the same glyph the cursor tile's sticker draws (tiles.js G.audition).
+  // Reticle white, the tip ring's weight, drawn in the tangent frame like
+  // every other part of the reticle so it foreshortens with it. Just outside
+  // the arm tips (armGap + armLen = 20): one geometry, no overlap.
+  if (S.auditionMode) {
+    const bandR = armGap + armLen + 6, cupR = 3.2;
+    const a0 = Math.PI * 1.2, a1 = Math.PI * 1.8;        // 10 o'clock → 2 o'clock, over the top
+    S.ctx.strokeStyle = `rgba(${_rtic},0.85)`;
+    S.ctx.lineWidth = 2;
+    S.ctx.lineCap = 'round';
+    S.ctx.beginPath();
+    const N = 14;
+    for (let i = 0; i <= N; i++) {
+      const a = a0 + (a1 - a0) * (i / N);
+      const dx = Math.cos(a) * bandR, dy = Math.sin(a) * bandR;
+      if (i === 0) _retMoveTo(mx, my, dx, dy); else _retLineTo(mx, my, dx, dy);
+    }
+    S.ctx.stroke();
+    S.ctx.fillStyle = `rgba(${_rtic},0.85)`;
+    for (const a of [a0, a1]) {
+      const dx = Math.cos(a) * bandR, dy = Math.sin(a) * bandR + cupR;   // the cup hangs from the band's end
+      const px = mx + _ret.m00 * dx + _ret.m01 * dy, py = my + _ret.m10 * dx + _ret.m11 * dy;
+      S.ctx.beginPath();
+      S.ctx.ellipse(px, py, cupR * _ret.k1, cupR * 1.35, _ret.rot, 0, Math.PI * 2);
+      S.ctx.fill();
+    }
+  }
   S.ctx.restore();
 }
 

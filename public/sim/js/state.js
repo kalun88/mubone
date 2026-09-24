@@ -913,7 +913,7 @@ export const S = {
   // ── The pin lenses (2026-08-29) ────────────────────────────────────────
   commitSlots: new Array(MAX_COMMITS).fill(null),
   commitSlotCount:    8,        // active limit (1–16), adjustable during session
-  commitOverflow:     'off',    // 'off' | 'oldest' | 'nearest'
+  commitOverflow:     'oldest', // 'off' | 'oldest' | 'nearest' — oldest makes room by default (Ek, 2026-09-25)
   // What a finished grain stroke BECOMES: 'trace' scratch, 'trace+cloud' a
   // moving cloud on its own path (the wash brush). Driven by the grain sheet's
   // `on end` row (tiles.js) — the A key, /trace/mode and the cabinet button

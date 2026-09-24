@@ -1,14 +1,35 @@
 // ── Custom tooltips with learning-mode toggle ─────────────────────────────
 // Always uses styled tooltips (suppresses native browser title tooltips).
-// Normal mode: 400ms hover delay.  Learn mode: instant (0ms).
+// Learn OFF: ONE WORD and the shortcut, after a short delay. Learn ON: the
+// long text the control carries, the shortcut under it, instantly (Ek,
+// 2026-09-24: "a simple one word tooltip when learn is off and include the
+// shortcut for that, either the simple version or not"). The word is the
+// control's own label where it has one on screen, else the first clause of
+// its long text; the shortcut is the registry's (midi.js S._shortcutOf).
 // Toggle via the "? learn" button in the top bar.
 
 (function () {
   'use strict';
 
-  const S = window.S || {};
+  // THE REAL S, by dynamic import: nothing sets `window.S`, so `window.S || {}`
+  // was a private object and every read of it was empty (found 2026-09-24,
+  // when the shortcut never arrived). A classic script may `import()`.
+  // Relative to THIS script's URL, as a classic script's import() is — so
+  // `./state.js`, not `./js/state.js` (which resolved to js/js/ and failed
+  // silently on the first try).
+  let S = {};
+  import('./state.js').then(m => { S = m.S; S.learnMode = learnMode; }).catch(e => console.warn('[learn] state import failed:', e?.message || e));
   const STORAGE_KEY = 'mubone-learn-mode';
-  const NORMAL_DELAY = 3000; // ms — long delay when Learn is off so tooltips don't interfere during performance
+  // THE INDUSTRY TIMING (Ek, 2026-09-24: "it should be faster"). A first tip
+  // after 500 ms of rest — the band Figma, Linear and Radix's default sit in,
+  // long enough that a pointer passing over the chrome shows nothing — and
+  // once one is up, the next control shows at ONCE for as long as the pointer
+  // keeps moving between controls (the "skip delay": leave them for more than
+  // WARM_MS and the next first tip waits again). macOS menus and every
+  // toolbar in a DAW behave this way.
+  const NORMAL_DELAY = 500; // ms — the first tip's delay when Learn is off
+  const WARM_MS = 400;      // ms — after a tip hides, the next shows instantly
+  let warmUntil = 0;
 
   // DEFAULT OFF (Ek, 2026-09-22: "on factory reload the help tool tips should be
   // toggled off"). A fresh profile is a performance surface, not a lesson — and
@@ -67,12 +88,64 @@
   });
   obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title'] });
 
+  // The one word: `data-word` if the control says so; else the label on the
+  // control it belongs to (a sheet or tab row's name, a tile's name); else
+  // the first clause of the long text — the rig writes `word — explanation`.
+  function wordFor(el, long) {
+    if (el.dataset.word) return el.dataset.word;
+    const row = el.closest('.prow, .mrow');
+    const lab = row?.querySelector('.prow-n, .mrow-l')?.textContent?.trim();
+    if (lab) return lab;
+    const tile = el.matches('.tile, .trow') ? el : null;
+    // The shape's own span first: the hand tile's `.tile-nm` holds the shape
+    // AND the preset (`tapeverbatim` as one string).
+    const nm = (tile?.querySelector('.tile-nm-shape') ?? tile?.querySelector('.tile-nm'))?.textContent?.trim();
+    if (nm) return nm;
+    let w = long.split(' — ')[0];
+    if (w.includes(' · ')) w = w.split(' · ')[0];
+    return w.replace(/\s*\([^)]*\)\s*$/, '').trim() || long;
+  }
+  // Is the word already on screen at the control? A row's own label, a
+  // tile's name, a button's text — then the simple tip would only repeat it.
+  function wordShown(el, word) {
+    const row = el.closest('.prow, .mrow');
+    const lab = row?.querySelector('.prow-n, .mrow-l')?.textContent?.trim();
+    if (lab && lab === word) return true;
+    const own = (el.matches('.tile, .trow') ? el : el.closest('.tile, .trow'))?.textContent ?? el.textContent ?? '';
+    return own.toLowerCase().includes(word.toLowerCase());
+  }
   function show(el) {
-    const text = el.getAttribute('data-title');
-    if (!text) return;
+    const long = el.getAttribute('data-title');
+    if (!long) return;
+    const keys = S._shortcutOf?.(el)
+      // A control outside the registry says its key in its title's last
+      // parenthesis — `system mute (M)` — so that is the fallback.
+      || (long.match(/\(([^()]{1,14})\)\s*$/)?.[1] ?? '');
+    // NOTHING TO SAY (Ek, 2026-09-24: "if the shorter tooltip is obvious from
+    // the text in the GUI it's not needed, unless there's a shortcut"): learn
+    // off, no input learned, and the word already written at the control.
+    if (!learnMode && !keys && wordShown(el, wordFor(el, long))) return;
+    // THE DESIGN (2026-09-24): the word, then each input as a KEYCAP — the
+    // shape the tiles' own legend draws — so the tip reads like a menu item
+    // with its shortcut. Learn on: the long text above, the keycaps under it.
+    tip.textContent = '';
+    tip.classList.toggle('learn-tooltip--long', learnMode);
+    const head = document.createElement('span');
+    head.className = 'lt-text';
+    head.textContent = learnMode ? long : wordFor(el, long);
+    tip.appendChild(head);
+    if (keys) {
+      const row = document.createElement('span');
+      row.className = 'lt-keys';
+      for (const k of keys.split(' · ')) {
+        const kb = document.createElement('kbd');
+        kb.textContent = k;
+        row.appendChild(kb);
+      }
+      tip.appendChild(row);
+    }
 
     currentTarget = el;
-    tip.textContent = text;
     tip.classList.add('visible');
 
     // Position near the element
@@ -97,6 +170,7 @@
   function hide() {
     clearTimeout(hoverTimer);
     hoverTimer = null;
+    if (tip.classList.contains('visible')) warmUntil = performance.now() + WARM_MS;
     tip.classList.remove('visible');
     currentTarget = null;
   }
@@ -109,7 +183,7 @@
 
     hide(); // clear any pending
 
-    const delay = learnMode ? 0 : NORMAL_DELAY;
+    const delay = (learnMode || performance.now() < warmUntil) ? 0 : NORMAL_DELAY;
     if (delay === 0) {
       show(el);
     } else {

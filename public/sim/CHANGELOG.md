@@ -7,6 +7,55 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.8 alpha — 2026-09-25
+
+**Presets are recalls, audition is the cursor's A/B, and every performance key is on the screen.**
+
+### Added
+- **Audition is a scratch voice and a compare button**: one switch in the CURSOR section (and `A`). On,
+  the cursor plays what it reads through the live tape and grain sheets — nothing painted is rewritten —
+  and the sheets are a scratch copy that is never saved; off, the real voice comes back; on again, the
+  scratch returns, so each press flips A and B. Keep a sound with `+` or a pin. Turning it on opens the
+  voice sheet of the engine last played. The reticle and the cursor tile wear headphones.
+- **A pin keeps what you heard**: a loop pin carries the take's own speed, level, pitch and direction; a
+  cloud pinned under audition freezes that sound; a cloud keeps the DEPTH it was pinned at, so new paint
+  under it takes the top N. A pin continues a sounding take's phase, and unpin or undo hands it back.
+- **Key stickers on the performance controls**: overdub, audition, radius `[ ]`, mode `N`, follow, unpin
+  all, and the chrome's undo, sweep, erase all, zero, lock and mute wear the palette's learnable pill —
+  click to learn, right-click to clear. N, `[ ]`, ⌘Z, M and `` ` `` are bindings now, not hardcoded.
+- **Factory keys**: `A` audition, `O` overdub, `F` follow, `↑` extra long unpin all.
+- **Tooltips**: one word and the shortcut as keycaps with learn off (500 ms, then instant between
+  controls), the long text with learn on; nothing when the screen already says it.
+- **The cursor off is struck through** on its tile and its reticle.
+
+### Changed
+- **Voice presets are recalls onto ONE sheet per engine**: the tab's VOICE line opens the sheet (headed
+  `GRAIN · voice`); a preset row is a plain word, highlighted while the sliders are on it; the hand tile
+  says the preset or `custom`. An edit never writes into a preset; factory presets cannot be deleted or
+  renamed; the press plays the live block.
+- **The grain sheet**: no pitch heading, no caption under the envelope, the filter's switch on its title
+  and the section shut while off (off is the preset default), `cutoff ±` as the cutoff row's band, taper
+  renamed `slope` as the percent on the curve row, output `prob · vol · spread`, no dimmed rows. The
+  engine sheet ends where its content ends.
+- **Depth is 1–6 and all.** **When full** lives in the pinned rail and defaults to `old`.
+- **The eye and dwell edges under a resting cursor**: muting over a looping take stops it, unmuting
+  starts it, dwell turning to loop starts it, and scope does the same.
+- **The overdub flag is tape pink; the lock reads LOCK.**
+
+### Fixed
+- **Tape under audition**: pitch lands at the next loop seam (one stretch job per take, latest wins, the
+  seam takes the freshest), reverse under a non-zero pitch recuts, speed changes keep the loop counter
+  continuous, pitch and speed together snap back when audition goes off.
+- **A pinned loop kept the cabinet's 1× speed** instead of the take's.
+- **The tooltip script read a private state object**; it imports the real one.
+- **trigger-audit's undo check** was reading inside the rearm window; it steps past it.
+
+### Removed
+- **Live material**: auditioned paint's shared voicing, `syncLiveVoicing`, `freezeVoicing`, the stroke's
+  audition stamp, a take's `_live`; the bench play on `A`; the last reserved key.
+
+---
+
 ## 5.7 alpha — 2026-09-24
 
 **The action registry is the screen; one filter per grain; the readers stop when their marks go.**

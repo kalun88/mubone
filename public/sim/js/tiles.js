@@ -89,7 +89,7 @@
 
 import { S, perf, gp , HAND_TAP_MS, FILTER_Q_FLAT, FILTER_Q_PEAK } from './state.js';
 import { setBrush } from './brush.js';
-import { resolveGrainParams, freezeVoicing, filterFromCorners } from './brush-voicing.js';
+import { resolveGrainParams, filterFromCorners } from './brush-voicing.js';
 import * as HIST from './history.js';
 import { fmtPitch, quantPitch, quantSpeed, PITCH_MAX_CENTS, TAPE_STEPS } from './tape-pitch.js';
 
@@ -131,6 +131,12 @@ const G = {
   // the tape tile, and the same ring circles the number of the loop a dub
   // would join in the pinned rail (css .lyr-trk.dub .lyr-num).
   overdub: '<circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/>',
+  // AUDITION (Ek, 2026-09-24): headphones — the monitor's own sign, what every
+  // DAW draws for "cue this without committing it". It flags the CURSOR tile
+  // while the switch is on, and the reticle on the sphere wears the same band
+  // and cups (renderer.js drawCursor), so the two are one picture.
+  audition: '<path d="M5 15.5v-3.5a7 7 0 0 1 14 0v3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' +
+            '<rect x="3.2" y="13" width="4.2" height="6.6" rx="1.6"/><rect x="16.6" y="13" width="4.2" height="6.6" rx="1.6"/>',
   // TOOLS (Ek, 2026-09-23: "make a glyph for the tools title"): the two
   // instruments you play, drawn as the marks they already wear — tape's line
   // over grain's dots — so the rail's name is read the way its tabs are.
@@ -140,7 +146,8 @@ const G = {
 
   // A VOICE has no gesture to draw, so its row wears the quietest mark there
   // is: one dot in the engine hue. The name is what you read.
-  voice: '<circle cx="12" cy="12" r="4.2"/>',
+  // (`voice`, the dot, and `voiceEdited`, its ring, went 2026-09-24 evening:
+  //  a preset row is a word alone.)
   // The sampler's frame. It lived in ui-source.js's `SRC_G` and in `INSTR_G`,
   // "kept identical on purpose" — which is two copies with a promise. It is a
   // TILE now, so it is here, and the tab and the row read it from here.
@@ -689,10 +696,10 @@ const HAND_POS = -1;          // `_held.i` while the hand plays — no position
 // The left rail is an EDITOR, so selecting a shape or a voice in it must not
 // reach the palette: "selecting the thing shouldn't load it into the spacebar
 // glyph in the palette bar. we should build the glyph/tile in the left rail."
-// So a selection lands on the BENCH, and the bench has its own key — A, for
-// audition, reserved the way the spacebar is — so you can hear what you are
-// building without placing it. The spacebar stays the palette's, always.
-const BENCH_POS = -2;         // `_held.i` while the bench auditions
+// So a selection lands on the BENCH. (It had its own key, `A`, to hear what
+// you were building without placing it, 2026-09-21 to 09-24; the editor
+// writes the slot since 09-22, so the spacebar plays what you select, and `A`
+// is AUDITION's key now.) The spacebar stays the palette's, always.
 const LS_BENCH = 'mubone_bench';
 // ── THE EDITOR SHOWS ONE INSTRUMENT (Ek, 2026-09-22) ──────────────────────
 // "i'm trying too hard to make global settings work for the whole rail. when
@@ -738,12 +745,13 @@ export function setInstrument(id) {
   // click obeys. Without this you arrive on tape still reading a lens's page.
   const b = benchShape();
   if (b) {
-    // A tool has no sheet of its own any more; its VOICE has. So the sheet
-    // follows the tab to the voice the instrument is on, and only an
-    // instrument without voices (erase, the lens, the sampler) points at the
+    // A tool has no sheet of its own any more; its ENGINE's VOICE has — one
+    // sheet per instrument, the live block, which the presets under it recall
+    // (2026-09-24). So the sheet follows the tab to that engine, and only an
+    // instrument without a voice (erase, the lens, the sampler) points at the
     // tool itself, whose sheet is a head saying where its rows are.
-    const v = currentVoice(engineOf(b));
-    if (v) { _optSel = { kind: 'voice', id: v }; _propRow = v; }
+    const eng = engineOf(b);
+    if (VOICE_PIDS[eng]?.length) { _optSel = { kind: 'engine', id: eng }; _propRow = eng; }
     else {
       _optSel = { kind: _selKind(b), id: b }; _propRow = b;
       // NO DRAWER on a tab with nothing to draw in one (Ek, 2026-09-23: erase
@@ -803,22 +811,16 @@ let inHand = { press: null, long: null };
 const _side = which => (which === 'long' ? 'long' : 'press');
 /** The tool one of the hand's two presses holds. */
 function handTool(which) { return inHand[_side(which)]?.id ?? null; }
-/** The voice that side was picked with — the other half of its pair. */
-function handVoice(which) { return inHand[_side(which)]?.voice ?? null; }
-/** Fill a side whose voice is missing, from the engine it is on. Two moments
- *  need it: a hand loaded from a store written before the hand had a voice at
- *  all, and a fresh rig, whose voices are seeded on the first render — after
- *  the hand is loaded. Called from both, and it only ever fills a blank. */
-function _ensureHandVoices() {
-  let n = 0;
-  for (const k of ['press', 'long']) {
-    const h = inHand[k];
-    if (!h?.id || h.voice) continue;
-    const want = currentVoice(engineOf(h.id));
-    if (want) { h.voice = want; n++; }
-  }
-  if (n) _saveHand();
-  return n;
+/** The preset that side's engine is on — for the hand tile's word. A PRESET
+ *  IS A RECALL (Ek, 2026-09-24): the side no longer freezes a voice at the
+ *  pick, because there is nothing to freeze — the press plays the engine's
+ *  live block, and the preset only says where the sliders were last set
+ *  from. (`_ensureHandVoices` and `_writeSlotVoice`, which kept a per-side
+ *  copy in step, went with the copy.) */
+function handVoice(which) {
+  const id = inHand[_side(which)]?.id;
+  const eng = id ? engineOf(id) : null;
+  return eng ? currentVoice(eng) : null;
 }
 // ── EACH HAND HAS ITS OWN VERB AGAIN (Ek, 2026-09-22) ─────────────────────
 // "The big hands should also be able to be right clickable to change the verb."
@@ -879,8 +881,7 @@ export function heldDebug() { return _held ? { i: _held.i, id: _held.id, latched
 export function pickHand(id, which = 'press') {
   const t = tileById(id);
   if (!t || t.ghost || !isToolTile(id)) return false;
-  // The PAIR is taken here, at the pick, and not read again at the press.
-  inHand[_side(which)] = { id, voice: currentVoice(engineOf(id)) };
+  inHand[_side(which)] = { id };
   _saveHand();
   // The verb no longer comes with the tool, because the hand has no verb: both
   // ways of pressing are live at once (see handTileHTML).
@@ -976,26 +977,6 @@ function _writeSlot(id) {
   if (handTool(side) === id) return true;
   return pickHand(id, side);
 }
-/** Put a VOICE into its engine's slot — the other half of the same pair. The
- *  hand froze its voice at the pick (see `inHand`), so choosing a voice in the
- *  editor has to write it there, or the hand would keep the one it was taken
- *  with and the editor would be lying about what the spacebar plays. */
-function _writeSlotVoice(engine, vid) {
-  if (!engine || !vid) return false;
-  if (engine === 'erase') return false;            // the eraser has no voice
-  const side = handSideFor(engine);
-  const h = inHand[side];
-  if (!h?.id || engineOf(h.id) !== engine || h.voice === vid) return false;
-  h.voice = vid;
-  _saveHand();
-  return true;
-}
-/** The verb the bench will place with — yours if you have cycled it, else the
- *  tool's own default. */
-export function benchVerb() {
-  const id = benchShape(); if (!id) return null;
-  return defaultVerb(id) ?? handVerbFor(id);
-}
 /** WHAT THE BENCH IS SHOWING — a tool or a lens, drawn the same way. A factory
  *  lens lives in its own table with its own glyphs, so the bench asks for a
  *  subject rather than for a tile and nothing downstream has to know which. */
@@ -1003,10 +984,6 @@ export function benchVerb() {
 // right-click that cycled it, 2026-09-22. The verb a tool is placed with is its
 // engine's default now — nothing places by hand — and `benchVerb` below keeps
 // answering the one question left: whether A is a tap or a hold.)
-export function benchVoice() {
-  const eng = engineOf(benchShape());
-  return eng ? currentVoice(eng) : null;
-}
 /** Put a shape on the bench. It does NOT touch the hand, the palette or the
  *  spacebar — that is the whole point of the rail being an editor. The sheet
  *  follows, because the designer shows what is selected. */
@@ -1054,7 +1031,6 @@ export function handVerbFor(id) {
 // it would latch on for ever. A toggle and a bang ignore the release, which
 // `_paletteFire` handles, so this only has to deliver it.
 let _downHandKey = false; // the spacebar is down
-let _downAuditionKey = false; // A is down — the bench is sounding
 let _downHandMouse = false; // the sphere's left button is down
 
 /** The toolbox shows EVERY tile, always (Ek, 2026-08-28) — it is the
@@ -1201,9 +1177,8 @@ let _held = null;   // { i, id, latched } while a tool is held, from any source
 
 function slotDown(i, momentary = true) { _playDown(i, idAt(i), momentary); }
 /** A play from either door: a strip POSITION (`i` ≥ 0, its tile) or the HAND
- *  (`i` = HAND_POS, the tool in hand). `voice` is the pair's other half when
- *  the caller holds it — the hand does; a position's is read off its entry. */
-function _playDown(i, id, momentary, voice = undefined) {
+ *  (`i` = HAND_POS, the tool in hand). */
+function _playDown(i, id, momentary) {
   const t = isToolTile(id) ? tileById(id) : null;
   if (!t) return;
   if (_held) { if (_held.latched && _held.i === i) slotEnd(i); return; }
@@ -1218,6 +1193,8 @@ function _playDown(i, id, momentary, voice = undefined) {
     momentary = true;
   }
   _held = { i, id, latched: false };
+  // The engine last PLAYED — what AUDITION opens the drawer on (setAudition).
+  { const pe = engineOf(id); if (pe === 'tape' || pe === 'granular') _lastPlayedEng = pe; }
   // A tile is a preset, and the press is what applies it — nothing did
   // between presses, because nothing was in the hand. Under a grain filter it
   // changes the hand, not the glass (#292).
@@ -1227,17 +1204,10 @@ function _playDown(i, id, momentary, voice = undefined) {
   // rail is up — a play never opens it — and only when the tab is not already
   // the tool's, because setInstrument redraws the rail.
   if (propsOpen()) { const instr = instrOf(id); if (instr && instr !== _instr) setInstrument(instr); }
-  // THE PAIR: the shape's own params, then the VOICE the position carries — the
-  // bench's while auditioning, the palette entry's while playing. Last write
-  // wins, and the voice must win: the tile is the shape now, not the whole
-  // block. A position with no voice plays whatever its engine is set to.
-  // THE HAND'S VOICE IS ITS OWN (2026-09-22). `HAND_POS` is -1, so this line
-  // read null for the hand and it played the live block — see `inHand`. The
-  // caller passes the side's frozen voice; every other door is unchanged.
-  const _vid = voice !== undefined ? voice
-    : i === BENCH_POS ? benchVoice()
-    : (i >= 0 ? palette[i]?.voice : null);
-  if (_vid) _applyVoiceParams(_vid);
+  // NO VOICE IS RE-APPLIED HERE (2026-09-24). A press plays the engine's LIVE
+  // block — the sliders as they stand. A preset moved them when it was taken
+  // and has no further say; re-applying it here would undo every edit made
+  // since, which is exactly what a preset must not do.
   // THE HUE THE MARKS ARE PAINTED IN, for as long as this play runs. The
   // playing tile's engine, not the hand's: a palette key can fire a position
   // without the hand ever holding it (2026-09-13). state.js livePaintColor().
@@ -1311,7 +1281,7 @@ function handDown(which = 'press', momentary = false) {
   if (!id || !tileById(id)) return;
   // A second press ends a latched play — the tap's own off switch.
   if (_held) { if (_held.latched && _held.i === HAND_POS) slotEnd(HAND_POS); return; }
-  _playDown(HAND_POS, id, momentary, handVoice(which));
+  _playDown(HAND_POS, id, momentary);
 }
 function handUp() { slotUp(HAND_POS); }
 
@@ -1360,56 +1330,14 @@ S._handUp   = handUp;
 // been calling nothing since; phone-audit caught it at release (2026-09-23).
 S._handDown = (momentary = true) => handDown('press', momentary);
 
-// ── AUDITION — the bench's own key ─────────────────────────────────────────
-// THE AUDITION TAKES THE BENCH'S VERB (Ek, 2026-09-22: "by default now, loops
-// should be A, and grains should be A long"). It was always momentary, on the
-// reasoning that a listen is something you hold — but the bench is showing you
-// the tool as it will be PLACED, and a tape take you cannot leave running is
-// not that tool. So A is the verb the tile is wearing: a tap for a toggle, a
-// hold for a momentary, the same two edges the spacebar gives the hand. It
-// still plays through the one-at-a-time gate, so it can never run beside a real
-// stroke, and a right-click on the bench changes both the outline and the key.
-// No lens branch: `A` never holds the eye (2026-09-22). Peeking is the
-// PALETTE's momentary verb on the cursor position — `_lensPeek`,
-// which drops the eye while the key is down and puts it back on release — and
-// that is a live gesture rather than an editor one.
-let _auditionAct = null;    // { id, was } while A holds an act tile
-function auditionDown() {
-  const id = benchShape();
-  if (!id) return;
-  // AN ACT IS TRIED, not heard: A holds it for as long as you hold, and the up
-  // edge puts back what was there. The sampler is the only one that reaches the
-  // bench, and holding it is exactly what its momentary verb does.
-  if (isActTile(id)) {
-    if (benchVerb() !== 'momentary') { if (id === 'sampler') _samplerSet(!samplerOn(), null); return; }
-    if (_auditionAct) return;
-    _auditionAct = { id, was: samplerOn() };
-    if (id === 'sampler') _samplerSet(true, null);
-    return;
-  }
-  if (!tileById(id)) return;
-  if (_held) { if (_held.latched && _held.i === BENCH_POS) slotEnd(BENCH_POS); return; }
-  _playDown(BENCH_POS, id, benchVerb() === 'momentary');
-}
-function auditionUp() {
-  if (_auditionAct) {
-    const a = _auditionAct; _auditionAct = null;
-    if (a.id === 'sampler') _samplerSet(a.was, null);
-    return;
-  }
-  slotUp(BENCH_POS);
-}
+// (The bench's own key — `A` playing the tab's tool through `_playDown(BENCH_POS)`,
+//  in the tool's verb, an act held for as long as you held — went 2026-09-24.
+//  AUDITION is the cursor's switch now and `A` is its factory key (midi.js);
+//  with no live paint there is nothing a bench play did that the spacebar does not.)
 // The sampler's row lives in ui-source.js and has to obey the editor's rule —
 // a click BENCHES — without importing this module back.
 S._setBench  = setBench;
 S._benchIs   = id => benchShape() === id;
-// WHAT THE BENCH IS BUILDING. `syncLiveVoicing` needs it: between presses the
-// hand is null, and the block on the sliders is the BENCH tool's, because
-// benching applies it. Without this, a knob moved after an audition ended
-// reached nothing (brush-voicing.js).
-S._benchTileId = () => benchShape();
-S._auditionDown = auditionDown;
-S._auditionUp   = auditionUp;
 
 // ── Installing a lens ──────────────────────────────────────────────────────
 // Writes go through the real controls (setComposerMode, toggleNearestMode,
@@ -1796,18 +1724,9 @@ function onKeydown(e) {
   // every other key goes through. This file gets `S._handPress` / `S._handLong`
   // back out of it. The bespoke down/up pair that lived here was the app's only
   // second determiner.
-  // A IS THE BENCH'S, the way the spacebar is the hand's (Ek, 2026-09-21: "a
-  // special A (for audition) that is reserved for testing things being built").
-  // Reserved means reserved: it is swallowed here, midi.js refuses to learn it
-  // and drops a stored binding on it, so nothing else can ever take it. No
-  // modifier — ⌘A and the rest belong to whatever owns them.
-  if (e.code === 'KeyA' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
-    e.preventDefault(); e.stopPropagation();
-    if (_downAuditionKey) return;
-    _downAuditionKey = true;
-    auditionDown();
-    return;
-  }
+  // (`A` was swallowed here as the bench's audition play, 2026-09-21 to
+  //  09-24. It is AUDITION's factory key now — a binding like any other,
+  //  seeded in midi.js — and the bench play is gone with auditioned paint.)
   // `=` and `-` no longer pin and unpin (Ek, 2026-09-12, night: "palette is
   // whole truth"): the pin tiles' own keys are the only ones, read off the
   // strip. They were hard-wired here from 2026-09-10, unshown once the pin
@@ -1936,6 +1855,50 @@ function handLegend(actionId) {
   return `<span class="tile-binds"><kbd class="tile-bind tile-bind--${kind}${lrn ? ' learning' : ''}${none ? ' tile-bind--none' : ''}"` +
     ` data-learn-kind="${kind}" data-learn-action="${actionId}" title="${esc(tip)}">${inner}</kbd></span>`;
 }
+/** THE ROW'S STICKER (Ek, 2026-09-25: "any gui that has a key binding shortcut
+ *  by factory default should also have the same glyph design on the palette
+ *  tile, and it should also be learnable — press that flag/pill"). The hand's
+ *  pill (`handLegend`) for any action, on a rail row or a chrome button, filled
+ *  in by `_fillRowBinds`: the legend kind's binding; for keys with nothing
+ *  learned, the FACTORY key an action still reads by hand (⌥, Backspace×3); a
+ *  dash when there is neither; `…` while learning. Click relearns, right-click
+ *  clears — the palette's own cell. */
+function rowBindHTML(actionId) {
+  const kind = legendKind();
+  const binds = (S._bindingsOf?.(actionId) ?? []).filter(b => b.kind === kind);
+  const learning = S._paletteLearning?.() ?? null;
+  const lrn = !!learning && learning.id === actionId && learning.kind === kind;
+  const a = S._actions?.find(x => x.id === actionId);
+  const label = a?.label?.replace(/\s*\(.*\)\s*$/, '') ?? actionId;
+  const factory = kind === 'key' && !binds.length && a?.key && a.key !== '—' && _HAND_KEYED.has(actionId)
+    ? a.key.replace(/^Backspace/, '⌫') : null;
+  const none = !lrn && !binds.length && !factory;
+  const what = factory ?? binds.map(b => b.label + (b.g && b.g !== 'press' ? ' ' + (S._gestureLabel?.(b.g) ?? b.g) : '')).join(', ');
+  const tip = lrn ? `press the ${_KIND_WORD[kind]} for ${label} — press, hold, ×2 … · Esc or click again cancels`
+            : none ? `no ${_KIND_WORD[kind]} on ${label} — click to learn one`
+            : `${label}: ${what} — click to ${factory ? 'learn another' : 'relearn'}${factory ? '' : ' · right-click to clear'}`;
+  const inner = lrn ? '…' : none ? '<span class="leg-none">–</span>'
+    : factory ? `<span class="leg leg--key">${esc(factory)}</span>`
+    : binds.map(b => `<span class="leg leg--${b.kind}">${_shortLabel(b)}${_gestureHTML(b.g)}</span>`).join('');
+  return `<kbd class="tile-bind tile-bind--${kind}${lrn ? ' learning' : ''}${none ? ' tile-bind--none' : ''}"` +
+    ` data-learn-kind="${kind}" data-learn-action="${actionId}" data-row-learn="${esc(label)}" title="${esc(tip)}">${inner}</kbd>`;
+}
+// The actions whose factory key is read BY HAND in events.js rather than seeded
+// as a binding, so the sticker shows it until a learn adds one.
+const _HAND_KEYED = new Set(['cursor_lock', 'erase_all']);
+/** Fill every `[data-binds="id,id"]` slot on screen with its stickers — rail
+ *  rows drawn by render(), the pinned rail's rows and the chrome's buttons. */
+function _fillRowBinds() {
+  document.querySelectorAll('[data-binds]').forEach(el => {
+    const html = el.dataset.binds.split(',').map(rowBindHTML).join('');
+    if (el.innerHTML !== html) el.innerHTML = html;
+  });
+}
+S._fillRowBinds = _fillRowBinds;
+/** Put a sticker slot after a row's label (the first `</span>`). */
+const _withBinds = (html, ids) => html ? html.replace('</span>', `</span><span class="row-binds" data-binds="${ids}"></span>`) : html;
+// Which tab rows answer to a factory key, by pid.
+const _PID_BINDS = { mode: 'snap', radius: 'radius_dec,radius_inc' };
 function paletteLegend(n) {
   const binds = S._bindingsOf?.(`palette_${n}`) ?? [];
   const kind = legendKind();
@@ -1968,7 +1931,8 @@ function paletteLegend(n) {
   };
 }
 function onKeyup(e) {
-  if (_downAuditionKey && e.code === 'KeyA') { _downAuditionKey = false; auditionUp(); }
+  // (The bench's `A` release lived here until 2026-09-24; nothing is read on
+  //  key-up now — every learned key's edges go through the recogniser.)
 }
 
 // ── FIRING A POSITION — the one door (docs/PALETTE-GUI.md § 1) ──────────────
@@ -2182,6 +2146,18 @@ function legendKind() { return S._legendKind?.() ?? 'key'; }
 // MADE now, not by a tool's setting, so there is nothing for a tool to declare.
 function tileStickers(id) {
   const eng = engineOf(id);
+  // THE CURSOR TILE WEARS THE HEADPHONES while audition is on (Ek, 2026-09-24:
+  // "the flag on the palette bar for the cursor tile … consistent with the
+  // cursor design for audition"). It is the eye's flag alone — audition is how
+  // the cursor reads — and it is a mark, not a switch: the switch is the row
+  // in the CURSOR section. White, as the eye is.
+  if (eng === 'lens') {
+    return S.auditionMode
+      ? `<span class="tile-marks"><span class="tile-flags"><span class="tile-aud" data-word="audition" title="audition is on — the cursor` +
+        ` plays what it reads through the live tape and grain sheets; nothing is rewritten · the switch is in the CURSOR section">` +
+        `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.audition}</svg></span></span></span>`
+      : '';
+  }
   // The wet drop is gone with the toggle (Ek, 2026-09-22: "let's sunset the term
   // wet and the concept"). Whether paint can still move is decided by HOW it was
   // made — auditioned, or played — so a tool has nothing to declare about it,
@@ -2193,14 +2169,14 @@ function tileStickers(id) {
   // you are about to play: the mode says WHAT happens, the tile says it is
   // going to happen to THIS.
   const pin = autoPinOn(eng)
-    ? `<span class="tile-pin" title="autopin is on for ${GRP_LABEL_G[eng] ?? eng} — this stroke pins itself` +
+    ? `<span class="tile-pin" data-word="autopin" title="autopin is on for ${GRP_LABEL_G[eng] ?? eng} — this stroke pins itself` +
       ` when you let go · the switch is MODE, in the tool editor">` +
       `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.pin}</svg></span>`
     : '';
   // OVERDUB, the same way (Ek, 2026-09-22). Tape's alone, because only a take
-  // has a master to join — and it wears the O (G.overdub), in white.
+  // has a master to join — and it wears the O (G.overdub), in the tape hue like the pin (2026-09-25).
   const dub = eng === 'tape' && overdubOn()
-    ? `<span class="tile-dub" title="overdub is on — this take joins the nearest pinned loop, at the phase` +
+    ? `<span class="tile-dub" data-word="overdub" title="overdub is on — this take joins the nearest pinned loop, at the phase` +
       ` you played it · the switch is MODE, in the tool editor">` +
       `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.overdub}</svg></span>`
     : '';
@@ -2260,8 +2236,14 @@ function handTileHTML(ENGINE_HUE) {
     // is the half of the bug you could SEE: the tile at the head of the strip
     // renaming itself while you built something else. The play path had the
     // same fault underneath (see `inHand`); both read the frozen pair now.
+    // THE TILE SAYS WHAT THE SOUND IS CALLED (Ek, 2026-09-24: "the tile needs
+    // to properly reflect the preset or no preset"): the preset's name while
+    // the live block IS that preset, and `custom` once a slider has moved off
+    // it — Adobe's and Apple's word for a preset you have edited, and not
+    // "live", which was sunset as a term on 2026-09-22. `_handVoiceWord`
+    // answers, and `_refreshVoiceMarks` rewrites the line after every capture.
     const vid = handVoice(which);
-    const vname = vid ? voiceName(vid) : null;
+    const vname = _handVoiceWord(vid);
     // The same first clause as a quick-access tile's, in the same order, so the
     // two read as one sentence about one kind of thing.
     // The GESTURE that reaches this side is fixed — a press, or a hold past the
@@ -2280,7 +2262,7 @@ function handTileHTML(ENGINE_HUE) {
       ` · right-click for the other verb · click to open its page` +
       ` · the two sides hold their OWN tool: pick a shape in the tool editor to change this one`;
     return `<button type="button" class="tile tile--hand${lit ? ' playing' : ''}" id="${id}"` +
-      ` style="--c:${c};--eng:${c};--pal-r:${VERB_RADIUS[verb]}" data-hand="${t.id}" data-verb="${verb}" data-which="${which}"` +
+      ` style="--c:${c};--eng:${c};--pal-r:${VERB_RADIUS[verb]}" data-hand="${t.id}" data-verb="${verb}" data-which="${which}" data-eng="${engineOf(t.id) ?? ''}"` +
       ` title="${esc(title)}">` +
       handTileInner({ id: t.id, label: t.label, glyph: G[t.g] }, vname) +
       handLegend(which === 'press' ? 'hand_press' : 'hand_long') + `</button>`;
@@ -2440,8 +2422,14 @@ export function render() {
       const c = ENGINE_HUE.lens, on = !S.scanMuted;
       return `<button type="button" class="tile tile--lens${on ? ' on' : ''}" style="--c:${c};--eng:${c};${SHAPE(verb)}"` +
         ` data-lens="${id}" data-pal="${id}"${pos} aria-pressed="${on}" title="${lensTileTitle('cursor', verb)}">` +
-        `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${LENS_G}</svg>` +
-        `<span class="tile-nm">cursor</span>${LEG(n)}</button>`;
+        // THE EYE OFF IS THE EYE STRUCK THROUGH (Ek, 2026-09-24: the lit /
+        // unlit tile "is not obvious enough"): the unpin glyph's own slash,
+        // always in the markup and shown by CSS while the tile is not `.on`,
+        // so `refreshLensStates` (a class sync at 5 Hz) moves it too. The
+        // reticle wears the same slash (renderer.js drawCursor).
+        `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${LENS_G}` +
+        `<path class="lens-slash" d="M4.5 19.5l15-15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>` +
+        `<span class="tile-nm">cursor</span>${tileStickers(id)}${LEG(n)}</button>`;   // the audition sticker, when on
     }
     const a = ACT_TILES[id];
     // An act tile's hue is its own when it names one: the pins share theirs
@@ -2478,20 +2466,36 @@ export function render() {
   for (const id of boxIds()) byEng[engineOf(id)]?.push(id);
   // Source · lens · PAINT (tape, grain) · erase — the order Ek asked for, and
   // the order the chain actually runs in.
-  // A VOICE row: a dot and a word, because you cannot draw a sound. It is a
-  // CHOICE, one per instrument at a time, so it takes the half moon like a
-  // lens row — and no door, because selecting it in the editor IS editing it.
+  // A PRESET row (Ek, 2026-09-24: "pressing the preset just moves the sliders
+  // on the main sheet"): a WORD, nothing else — no dot, no half moon (Ek, the
+  // same evening: "we can remove the half moon dot design now, and i don't
+  // think we need the bullet dot"). The row is ON — the rail's left edge in
+  // the hue, bright text — while the live sliders ARE this preset; move one
+  // off it and no row is on (Photoshop's presets: a modified brush selects
+  // nothing), and pressing the preset puts them back. `.edited` stays on the
+  // row as the hook the audit reads. No door — the door is the VOICE line's,
+  // one per instrument, because there is one sheet and the presets only move it. The
+  // delete is on the row, at the edge the door left (Ek: "the delete should
+  // go on the specific preset's line in the tab"). A FACTORY preset has no
+  // × at all (Ek, 2026-09-24: "don't allow the deleting of factory presets"):
+  // the seeded ones are the instrument's floor, so every engine always has a
+  // preset and nothing here needs a "last one stays" state.
   const voiceRow = (vid, engine, hue) => {
-    // The voice's own half moon: which voice this instrument is set to. It is
-    // a SECOND radio group beside the shapes, not a competitor — a tool is a
-    // pair, so one mark in each group is the pair you are building.
     const on = currentVoice(engine) === vid;
-    return `<button type="button" class="trow trow--voice trow--radio trow--own${on ? ' on' : ''}"` +
-      ` data-sel="radio" style="--c:${hue};--eng:${hue}" data-voice="${vid}" aria-pressed="${on}"` +
-      ` title="${esc(voiceName(vid))} \u00b7 ${GRP_LABEL_G[engine] ?? engine} voice \u00b7 click to take it and open its sheet` +
-      ` \u00b7 double-click to rename">` +
-      `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.voice}</svg>` +
-      `<span class="tile-nm">${esc(voiceName(vid))}</span>${MORE}</button>`;
+    const edited = on && _voiceEdited(vid);
+    const factory = !!_voices[vid]?.factory;
+    const nm = esc(voiceName(vid));
+    const eng = GRP_LABEL_G[engine] ?? engine;
+    return `<button type="button" class="trow trow--voice trow--own${on && !edited ? ' on' : ''}${edited ? ' edited' : ''}"` +
+      ` style="--c:${hue};--eng:${hue}" data-voice="${vid}" aria-pressed="${on && !edited}"` +
+      ` title="${nm} \u00b7 ${factory ? 'factory ' : ''}${eng} preset \u00b7 click to set the ${eng} voice to it` +
+      `${edited ? ' \u00b7 the voice has moved off it — click to go back' : ''}${factory ? '' : ' \u00b7 double-click to rename'}">` +
+      `<span class="tile-nm">${nm}</span>` +
+      (factory ? '' :
+      `<span class="trow-del" data-delvoice="${vid}" role="button" tabindex="-1"` +
+      ` title="delete this preset — the voice keeps sounding as it is">` +
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">` +
+      `<path d="M7 7l10 10M17 7L7 17"/></svg></span>`) + `</button>`;
   };
 
   // ── THE EDITOR PANEL: one instrument, three sections ───────────────────
@@ -2517,13 +2521,24 @@ export function render() {
   // What ONE of a section is called, for the `+`'s tooltip. A table rather than
   // `t.replace(' presets','')`, which said "new lenses" the moment a section was
   // named in the plural instead of as `<noun> presets`.
-  const SEC_NOUN = { 'shape presets': 'shape', 'voice presets': 'voice' };
-  const secLbl = (t, engine, add) =>
+  const SEC_NOUN = { 'shape presets': 'shape', 'voice': 'preset' };
+  // `extra` follows the `+`: the VOICE line carries its engine's door there
+  // (2026-09-24) — the sheet is the instrument's, so its door is on the line
+  // that names it, not on each preset that moves it.
+  const secLbl = (t, engine, add, extra = '') =>
     `<span class="tbx-lbl" style="--eng:var(--eng-none)">${t}` +
     (add ? `<span class="tbx-add" data-${add}="${engine}" role="button" tabindex="-1"` +
       ` title="new ${SEC_NOUN[t] ?? t.toLowerCase()} — from what is on the sliders now">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">` +
-      `<path d="M12 5v14M5 12h14"/></svg></span>` : '') + `</span>`;
+      `<path d="M12 5v14M5 12h14"/></svg></span>` : '') + extra + `</span>`;
+  // The VOICE line's door: the drawer glyph, `data-sheet` naming the engine,
+  // lit in the engine hue while that sheet is up.
+  const voiceDoor = (engine, hue) =>
+    `<span class="trow-more${document.body.classList.contains('prail-open') && _propRow === engine ? ' open' : ''}"` +
+    ` data-more data-sheet="${engine}" role="button" tabindex="-1" style="--c:${hue}" data-word="voice"` +
+    ` title="the ${GRP_LABEL_G[engine] ?? engine} voice — every number of what it sounds like; opens beside the rail">` +
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">` +
+    `<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M14.5 5v14"/></svg></span>`;
 
   // MODE — only what this instrument actually has. The eraser and the lens have
   // none, and an empty heading is worse than no heading.
@@ -2555,27 +2570,10 @@ export function render() {
   // what plays — so the tab is exactly where an instrument's settings live, and
   // the five go back to the one they belong to.
   //
-  // AUDITION is not one instrument's answer — it changes what every one of them
-  // does with what you paint — and it has moved twice looking for a home. A card
-  // of its own above the tabs, GLOBAL MODES, was a heading built to name a
-  // single row. Under the VOICE PRESETS title was better but still wrong: it
-  // read as a property of THAT LIST, and it governs every setting you touch,
-  // not just a voice.
+  // (AUDITION left this block on 2026-09-24 for the CURSOR section: it is how
+  //  the cursor reads, not what an instrument does with paint — see render()'s
+  //  cursor panel.)
   //
-  // IT IS THE LAST ROW OF THE PERFORMANCE BLOCK (Ek, 2026-09-22: "move audition
-  // outside of the voice presets, last item in the performance settings"). That
-  // is where it belongs by the block's own test — a control you reach for
-  // mid-phrase — and last because it is the widest in scope: the rows above it
-  // are this instrument's, and it is every instrument's. It keeps the ash hue
-  // for the same reason, so nothing about it claims an engine.
-  let modeHTML = '';
-  {
-    const au = !!S.auditionMode;
-    modeHTML += swRow('audition', au, 'data-audition', au
-      ? 'ON — every setting is live: what you paint keeps following the knobs. Click to fix new paint where it sounds'
-      : 'OFF — what you paint freezes as you played it. Click to make every setting live, so moving a number moves the marks you already made',
-      ENGINE_HUE.none);
-  }
   // The instrument's own, for the tab that is open. Named WITHOUT the engine —
   // `tape autopin` was right in one list of five engines and is a stammer under
   // the tape tab, which has already said which instrument this is.
@@ -2596,9 +2594,9 @@ export function render() {
   }
   if (_instr === 'tape') {
     const od = overdubOn();
-    instrModeHTML += swRow('overdub', od, 'data-overdub', od
+    instrModeHTML += _withBinds(swRow('overdub', od, 'data-overdub', od
       ? 'a take joins the nearest pinned loop, at the phase you played it — click for its own clock'
-      : 'a take runs on its own clock — click to join the nearest pinned loop', ENGINE_HUE.tape);
+      : 'a take runs on its own clock — click to join the nearest pinned loop', ENGINE_HUE.tape), 'tape_overdub');
     // SLICE SITS WITH THE OTHER TWO (Ek, 2026-09-22: "move slice between
     // overdub and dwell"). It was appended after the arrival rows because it
     // arrived last, which put a SWITCH below two pills and broke the block in
@@ -2663,7 +2661,15 @@ export function render() {
   // switch, the erasers were depth and direction, and `spray` was an amount
   // until it was sunset the same evening. What the presets held is distributed
   // — the live half to these rows, the rest to the settings page.
+  // Every tab row names its pid (`data-pid`), so the tooltip can find the
+  // row's actions and their keys (midi.js PID_ACTION, 2026-09-24: "nearest
+  // has a shortcut, N, but it doesn't show").
   const perfRow = (pid, e = eng) => {
+    let h = _perfRowRaw(pid, e);
+    if (h && _PID_BINDS[pid]) h = _withBinds(h, _PID_BINDS[pid]);
+    return h ? h.replace(/class="mrow\b/, `data-pid="${pid}" class="mrow`) : h;
+  };
+  const _perfRowRaw = (pid, e = eng) => {
     const d = PARAM_DEFS[pid]; if (!d) return '';
     // The rail's word where the param carries one — see `perfLabel`.
     const lbl = d.perfLabel ?? d.label;
@@ -2820,11 +2826,13 @@ export function render() {
   // AUDITION ONLY WHERE THERE IS PAINT TO AUDITION (Ek, 2026-09-23: "erase tab
   // and lens tab dont need the audition toggle"): it is what tape and grain do
   // with what you paint, and the eraser and the eye paint nothing.
-  const perf = instrModeHTML + perfHTML + (eng === 'tape' || eng === 'granular' ? modeHTML : '');
+  const perf = instrModeHTML + perfHTML;
   const panelHTML =
     (perf ? `<div class="tbx-grp tbx-grp--bare" data-grp="perf" data-half="perf">` + perf + `</div>` : '') +
     (vIds ? `<div class="tbx-grp" data-grp="${eng}" data-half="voice">` +
-      secLbl('voice presets', eng, 'addvoice') +
+      // THE VOICE LINE (Ek, 2026-09-24): the instrument's sound, one sheet,
+      // its door here. What is listed under it are PRESETS of it.
+      secLbl('voice', eng, 'addvoice', voiceDoor(eng, hue)) +
       (vIds.length ? `<div class="tbx-tiles">${vIds.map(v => voiceRow(v, eng, hue)).join('')}</div>` : '') +
       `</div>` : '');
 
@@ -2850,13 +2858,23 @@ export function render() {
   // what they capture into is the lens tile, whatever tab is open above.
   const curBox = document.getElementById('cursorPanel');
   if (curBox) {
+    // AUDITION IS THE CURSOR'S (Ek, 2026-09-24): the switch sits here, after
+    // the reach, because it says how the cursor READS — as baked, or through
+    // the live sheet — for both instruments, and the cursor is the monitor.
+    // It rewrites nothing. It was the last row of each engine's performance
+    // block from 2026-09-22, when it made new paint follow the knobs.
+    const au = !!S.auditionMode;
+    const auRow = _withBinds(swRow('audition', au, 'data-audition', au
+      ? 'ON — the cursor plays what it reads through the live tape and grain sheets, so a preset or a knob is heard on what is already there. Nothing is rewritten; pins play as baked. Click to hear the sphere as baked'
+      : 'OFF — the cursor plays what it reads as baked. Click to hear it through the live sheets instead: audition a preset or a knob on what is already there, without repainting',
+      ENGINE_HUE.none), 'audition');
     const curHTML = (PERF_PIDS.lens ?? []).map(pid => {
       const row = perfRow(pid, 'lens'); if (!row) return '';
       // THE GRAIN BLOCK wears the heading VOICE PRESETS wears (Ek, 2026-09-23):
       // what follows answers only for grains, and the heading says so once.
       const head = pid === 'mode' ? secLbl('grain selection', 'lens') : '';
       const na = lensNA(pid);
-      return head + (na ? `<div class="ds-na" title="${esc(na)}">${row}</div>` : row);
+      return head + (na ? `<div class="ds-na" title="${esc(na)}">${row}</div>` : row) + (pid === 'radius' ? auRow : '');
     }).join('');
     curBox.innerHTML = `<div class="tbx-grp tbx-grp--bare" data-grp="perf" data-half="perf">${curHTML}</div>`;
     curBox.style.setProperty('--eng', ENGINE_HUE.lens ?? ENGINE_HUE.none);
@@ -2905,6 +2923,7 @@ export function render() {
   }
 
   renderOptions();
+  _fillRowBinds();          // the stickers on rows and chrome buttons (2026-09-25)
   // After the rail has been laid out, not during: the mark measures.
   requestAnimationFrame(railScrollMark);
 }
@@ -2996,7 +3015,9 @@ export function renderPinChrome() {
     return `<button type="button" class="trow trow--act${a.danger ? ' trow--danger' : ''}" style="--c:var(--eng-pins);--eng:var(--eng-pins)" data-pin="${id}" data-act="${a.action}"` +
       ` title="${a.tip} · click to do it">` +
       `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G[a.g]}</svg>` +
-      `<span class="tile-nm">${a.label}</span></button>`; };
+      `<span class="tile-nm">${a.label}</span>` +
+      // A performance action with a factory key wears its sticker (2026-09-25).
+      (a.action === 'commit_clear' ? `<span class="row-binds" data-binds="commit_clear"></span>` : '') + `</button>`; };
   wrap.innerHTML =
     `<div class="tbx-grp" data-grp="pin"><span class="tbx-lbl" style="--eng:var(--eng-pins)">pin</span>` +
     `<div class="tbx-tiles">${row('unpinall')}</div></div>` +
@@ -3128,17 +3149,19 @@ const PARAM_DEFS = {
   period:   { label: 'period',  kind: 'slider', el: 'gcPeriodSlider', sec: 'grain' },
   overlap:  { label: 'overlap', kind: 'slider', el: 'gcOverlapSlider', sec: 'grain' },
   curve:    { label: 'curve',   kind: 'seg', seg: 'gcCurveSeg', sec: 'grain' },
-  // TAPER, not fade (#277): this is the fraction of the grain spent ramping —
-  // the Tukey window's α — and "fade" is spoken for by the LEVEL fades
-  // elsewhere (the lens's radius fade, loop fades). The pid stays `fade` so
-  // every binding, OSC address and stored patch is untouched.
-  fade:     { label: 'taper',   kind: 'slider', el: 'gcFadeSlider', sec: 'grain' },
+  // SLOPE (Ek, 2026-09-24; `taper` from #277 until then), not fade: this is
+  // the fraction of the grain spent ramping — the Tukey window's α — and
+  // "fade" is spoken for by the LEVEL fades elsewhere (the lens's radius
+  // fade, loop fades). The pid stays `fade` so every binding, OSC address and
+  // stored patch is untouched. It has NO TRACK: it is the number at the end
+  // of the CURVE row — a property of the shape, typed or scrubbed there.
+  fade:     { label: 'slope',   kind: 'slider', el: 'gcFadeSlider', sec: 'grain' },
   durVar:   { label: 'dur ±',   kind: 'slider', el: 'gcDurVarSlider', sec: 'grain' },
   perVar:   { label: 'per ±',   kind: 'slider', el: 'gcPeriodVarSlider', sec: 'grain' },
   // Two rows that are their own controls, not parameters (#280). They live in
   // PARAM_DEFS so they take a place in the engine's order like anything else.
   glink:    { label: 'link',    kind: 'glink',  sec: 'grain' },
-  octave:   { label: 'octave',  kind: 'octave', sec: 'pitch' },
+  octave:   { label: 'octave',  kind: 'octave', sec: 'grain' },
   // Read-OFFSET randomness, not a start time: markers land on a fixed clock,
   // so without this a grain can only begin exactly on one. It widens each
   // grain's reach into the audio between markers.
@@ -3147,10 +3170,13 @@ const PARAM_DEFS = {
   // Probability is a gate on the OUTPUT, not a property of the grain: it
   // decides whether a scheduled grain sounds at all (#283).
   prob:     { label: 'prob',    kind: 'slider', el: 'gcProbSlider', sec: 'output' },
-  // granular — pitch
-  pitch:    { label: 'pitch',   kind: 'slider', el: 'gcPitchShiftSlider', sec: 'pitch' },
-  pitchJit: { label: 'pitch ±', kind: 'slider', el: 'gcPitchSlider', sec: 'pitch' },
-  dir:      { label: 'direction', kind: 'seg', seg: 'gcDirSeg', sec: 'pitch' },
+  // granular — pitch. NO HEADING OF ITS OWN (Ek, 2026-09-24: "remove the
+  // pitch heading"): pitch, its octave and the read direction are three rows
+  // under GRAIN, after the timing rows, so the sheet's second column is one
+  // block rather than a heading over three lines.
+  pitch:    { label: 'pitch',   kind: 'slider', el: 'gcPitchShiftSlider', sec: 'grain' },
+  pitchJit: { label: 'pitch ±', kind: 'slider', el: 'gcPitchSlider', sec: 'grain' },
+  dir:      { label: 'direction', kind: 'seg', seg: 'gcDirSeg', sec: 'grain' },
   // granular — filter. ONE filter per grain (2026-09-23): a switch, a type,
   // a cutoff, a resonance and a spread — Granulator's layout, Pigments',
   // Emission Control's. The old hpf + lpf with a Q each was an EQ's layout
@@ -3159,6 +3185,8 @@ const PARAM_DEFS = {
   ftype:    { label: 'type',    kind: 'seg', seg: 'gcFilterTypeSeg', words: true, sec: 'filter' },
   cutoff:   { label: 'cutoff',  kind: 'slider', el: 'gcCutoffSlider', sec: 'filter' },
   res:      { label: 'res',     kind: 'slider', el: 'gcResSlider', num: 'gcResNum', sec: 'filter' },
+  // Per-grain cutoff randomisation (0–1 octave either side). Drawn as the
+  // BAND on the cutoff row, as dur ± and per ± are (VAR_OF), not a row.
   fltJit:   { label: 'cutoff ±', kind: 'slider', el: 'gcFilterJitterSlider', sec: 'filter' },
   // granular — output
   pan:      { label: 'spread',  kind: 'slider', el: 'gcPanSlider', sec: 'output' },
@@ -3281,7 +3309,7 @@ const PARAM_DEFS = {
   // the row (one knob, two engines) and calls its section `reach` too.
   // FOUR ANSWERS, ON A CAPSULE (Ek, 2026-09-24: "a multi select pill with just
   // 1 2 3 then all"). It was a 1–16 slider read out in words; the cabinet seg
-  // `recencySeg` holds 1 · 2 · 3 · all, and a tile stores its data-depth —
+  // `recencySeg` holds 1 … 6 · all (6 since 2026-09-25), and a tile stores its data-depth —
   // '0' is all, the values FACTORY_PARAMS already used.
   depth:     { label: 'depth',   kind: 'seg', seg: 'recencySeg', words: true, sec: 'on grains' },
   // k, fill and order came HOME to the lens (#233): flow made density a
@@ -3382,9 +3410,9 @@ const ENGINES = {
   granular: ['flow', 'headW', 'gEnd',
              // duration and period lead and take a full row each — they are
              // the two that decide what granular sounds like, and their ±
-             // bands need the width to be readable (#278). `fade`(taper)
-             // shares a row with `curve`: one is the shape, the other is how
-             // much of the grain that shape occupies.
+             // bands need the width to be readable (#278). `fade` (slope) is
+             // the number at the end of `curve`'s row: one is the shape, the
+             // other is how much of the grain that shape occupies.
              // `overlap` left as a slider (#279): it is grain ÷ period, so it is
              // a READOUT, and the scope already draws it. What was useful about
              // it is now the LINK — see _grainLink. `durJit` left too: it is
@@ -3394,9 +3422,9 @@ const ENGINES = {
              'dur', 'period', 'glink', 'fade', 'curve', 'startJit',
              'durVar', 'perVar', 'pitch', 'octave', 'pitchJit', 'dir',
              'flt', 'ftype', 'cutoff', 'res', 'fltJit',
-             // Output: level takes the row, then the two that shape how it
-             // lands share the next one (#283).
-             'vol', 'pan', 'prob'],
+             // Output: the gate first — whether a grain sounds at all — then
+             // how loud, then how wide (Ek, 2026-09-24: "prob, vol, spread").
+             'prob', 'vol', 'pan'],
   tape:     ['tspeed', 'tpitch', 'tstep', 'treverse', 'tvol', 'onEnd', 'passes', 'tchop', 'sliceMin',
              'decay'],
   // The lens sheet reads as: geometry, then what touching GRAINS does, then
@@ -3475,7 +3503,7 @@ const VOICE_PIDS = {
   granular: ['dur', 'period', 'glink', 'curve', 'fade', 'startJit', 'durVar', 'perVar',
              'pitch', 'octave', 'pitchJit', 'dir',
              'flt', 'ftype', 'cutoff', 'res', 'fltJit',
-             'vol', 'pan', 'prob'],
+             'prob', 'vol', 'pan'],
   tape:     ['tspeed', 'tpitch', 'tstep', 'treverse', 'tvol'],
   lens:     [],   // the eye has no voice
   erase:    [],   // nor does the eraser
@@ -3571,14 +3599,14 @@ const SHAPE_SHARED = {
 function shapeSheetPids(id) {
   const eng = engineOf(id);
   if (!eng || eng === 'lens') return ENGINES[eng] ?? [];
-  return [...(SHAPE_SHARED[eng] ?? [])];   // arrival rows are the INSTRUMENT's
+  // THE TOOL'S BLOCK IS ITS WHOLE BLOCK (2026-09-24): the tab's rows AND the
+  // voice pids. The tool is what persists the live block across a reload
+  // (`mubone_tiles`); the presets are recalls onto it, not its store.
+  return [...(SHAPE_SHARED[eng] ?? []), ...(VOICE_PIDS[eng] ?? [])];   // arrival rows are the INSTRUMENT's
 }
-/** The rows one drawer draws. A VOICE shows its engine's voice pids and
- *  nothing else — that is the whole of what a voice is. */
-function _sheetPids(id) {
-  if (isVoiceId(id)) return VOICE_PIDS[_voices[id].engine] ?? [];
-  return shapeSheetPids(id);
-}
+/** What a tile captures and applies: its engine's whole block. (A voice id
+ *  no longer reaches here — the sheet is the ENGINE's since 2026-09-24.) */
+function _sheetPids(id) { return shapeSheetPids(id); }
 function engineOf(id) {
   // A voice is an object of one engine too, so its sheet, hue and accent all
   // resolve through the same call every other surface uses.
@@ -3768,7 +3796,9 @@ const FACTORY_SOUND = {};
 // that when this was briefly every tile).
 let _sessionCfg = {};   // factory non-grain tileId → { pid: value }, until reload
 /** Does this tile keep its edits on disk — a custom tile, or any grain tile? */
-function _persists(id) { return !!_tileCfg[id]?.custom || engineOf(id) === 'granular'; }
+// Tape too since 2026-09-24: its tool holds the live tape voice the way the
+// grain tool holds the grain block, so a reload comes back where it was left.
+function _persists(id) { const e = engineOf(id); return !!_tileCfg[id]?.custom || e === 'granular' || e === 'tape'; }
 
 /** Has this tile been dialled since the app started? (Ek, 2026-08-29: "we
  *  should have a dot or some indicator on the tool when we move the params
@@ -3859,7 +3889,11 @@ const VOICE_SEED = {
     { name: 'undertow', sound: { treverse: 'on', tpitch: '-1200' } },
   ],
   granular: [
-    { name: 'wash' },
+    // FILTER OFF, said outright (Ek, 2026-09-24: "by default the presets
+    // should have filter off") — the engine's default already is, but a seed
+    // that takes "the block as the rig boots" inherits whatever a rig was
+    // left on, and this one is not left to inheritance.
+    { name: 'wash', sound: { flt: 'off' } },
     // Short and hard-edged (a 10% fade is almost a square window, which is the
     // click), the read point thrown a long way from the mark, and duration and
     // period both wobbling — so no two grains are the same length or land on
@@ -3867,7 +3901,7 @@ const VOICE_SEED = {
     // that never fire.
     { name: 'glitch', sound: { dur: '22ms', period: '11ms', fade: '10%',
                                startJit: '900ms', durVar: '16ms', perVar: '20ms',
-                               pan: '40%', prob: '70%' } },
+                               pan: '40%', prob: '70%', flt: 'off' } },
   ],
 };
 // BY NAME, NOT ALL-OR-NOTHING (2026-09-22). The seed used to be one boolean:
@@ -3903,7 +3937,8 @@ function _seedVoices() {
         }
       }
       const id = 'v' + Date.now().toString(36) + (_voiceSeq++).toString(36);
-      _voices[id] = { name: spec.name, engine: eng, params: spec.sound ? capture(eng) : { ...base } };
+      // `factory`: seeded here, and so never deletable (2026-09-24).
+      _voices[id] = { name: spec.name, engine: eng, factory: true, params: spec.sound ? capture(eng) : { ...base } };
       // The FIRST of each engine is the one the rig starts on — and only if
       // nothing is selected, so a top-up never moves a rig off its own choice.
       if (!_voiceSel[eng]) _voiceSel[eng] = id;
@@ -3911,9 +3946,6 @@ function _seedVoices() {
     }
   }
   _saveVoices();
-  // The hand is loaded before this runs on a fresh rig, so its sides have no
-  // voice yet; now that the engines have one, they take it.
-  _ensureHandVoices();
   try { localStorage.setItem(LS_VOICE_SEED, VOICE_SEED_STAMP); } catch (_) {}
 }
 // One shot, for a rig seeded before the names existed: a voice STILL called
@@ -3931,6 +3963,40 @@ const LS_VOICE_NAMES = 'mubone_voice_names';
     }
     if (n) _saveVoices();
     try { localStorage.setItem(LS_VOICE_NAMES, '2026-09-22'); } catch (_) {}
+  }
+}
+// One shot (Ek, 2026-09-24: "by default the presets should have filter off"):
+// every stored GRAIN voice has its filter switched off. The 09-23 corner
+// migration turned a voice's filter ON wherever a low-pass had been set at all,
+// which made the filter a default rather than a choice. Type, cutoff and
+// resonance are kept — the switch is one press to bring a voice's filter back.
+const LS_VOICE_FILTER = 'mubone_voice_filter';
+{
+  let done = null;
+  try { done = localStorage.getItem(LS_VOICE_FILTER); } catch (_) {}
+  if (done !== '2026-09-24') {
+    let n = 0;
+    for (const v of Object.values(_voices)) {
+      if (v?.engine === 'granular' && v.params && v.params.flt !== 'off') { v.params.flt = 'off'; n++; }
+    }
+    if (n) _saveVoices();
+    try { localStorage.setItem(LS_VOICE_FILTER, '2026-09-24'); } catch (_) {}
+  }
+}
+// One shot (2026-09-24): a preset seeded before the flag existed is a factory
+// preset by its NAME — the seed's own names, on the seed's own engines.
+const LS_VOICE_FACTORY = 'mubone_voice_factory';
+{
+  let done = null;
+  try { done = localStorage.getItem(LS_VOICE_FACTORY); } catch (_) {}
+  if (done !== '2026-09-24') {
+    let n = 0;
+    for (const v of Object.values(_voices)) {
+      if (!v || v.factory) continue;
+      if ((VOICE_SEED[v.engine] ?? []).some(spec => spec.name === v.name)) { v.factory = true; n++; }
+    }
+    if (n) _saveVoices();
+    try { localStorage.setItem(LS_VOICE_FACTORY, '2026-09-24'); } catch (_) {}
   }
 }
 S._seedVoices = _seedVoices;
@@ -3988,11 +4054,131 @@ function _applyVoiceParams(id) {
   }
   return true;
 }
+/** Has the engine's live block moved off this preset? String compare on the
+ *  same reads capture stores, so a recall reads equal and any edit reads
+ *  different. ~20 reads, at render. */
+function _voiceEdited(vid) {
+  const v = _voices[vid]; if (!v) return false;
+  for (const pid of VOICE_PIDS[v.engine] ?? []) {
+    if (!(pid in v.params)) continue;
+    const live = _readParam(pid);
+    if (live !== undefined && String(live) !== String(v.params[pid])) return true;
+  }
+  return false;
+}
+/** The word the hand tile writes under the tool: the preset's name while
+ *  the live block is that preset, `custom` once it has moved off it, nothing
+ *  when the engine has no preset at all. */
+function _handVoiceWord(vid) {
+  if (S.auditionMode) return 'audition';          // the scratch voice, while it is on
+  if (!vid) return null;
+  return _voiceEdited(vid) ? 'custom' : voiceName(vid);
+}
+// ── AUDITION opens the drawer (Ek, 2026-09-24 night) ─────────────────────
+// "audition should open the drawer automatically, and it stays open even if
+// I turn off audition so it's a manual escape." Every door — the cursor row,
+// the A key, a pedal, `/audition` — comes through here. ON opens the voice
+// sheet of the engine last PLAYED (the tab you are on if nothing has played
+// yet, the press hand's engine failing that), tab and drawer together; OFF
+// leaves the drawer where it is.
+let _lastPlayedEng = null;
+// THE AUDITION VOICE (Ek, 2026-09-24: "when audition is on, instead of custom
+// it should be an audition voice that is temporarily activated, and when i
+// turn audition off, it goes back to what it was before"). ON takes a snapshot
+// of BOTH engines' voice — every voice pid, and which preset each was on — and
+// the sheets become a scratch copy: anything goes, presets can be tried on,
+// nothing is saved (captureTileParams). OFF puts the snapshot back, sliders and
+// preset marks. To KEEP an audition sound: `+` saves it as a preset, or a pin
+// freezes it; both happen before the revert and survive it. `custom` therefore
+// only ever means "not auditioning, and the sheet has moved off its preset".
+let _auditionSnap = null;
+// A/B (Ek, 2026-09-24: "if i turn back audition will it remember the last
+// audition params? so i can a b a b"). OFF keeps the scratch voice before it
+// restores the real one, and the next ON puts the scratch back — so audition
+// is a compare button: each press flips between the sound you had and the
+// one you are trying. Session only: a relaunch starts the scratch from the
+// real sound again.
+let _auditionScratch = null;
+function _snapVoices() {
+  const snap = {};
+  for (const eng of ['tape', 'granular']) {
+    const params = {};
+    for (const pid of VOICE_PIDS[eng] ?? []) { const v = _readParam(pid); if (v !== undefined) params[pid] = v; }
+    snap[eng] = { params, sel: _voiceSel[eng] ?? null };
+  }
+  // Tape's numbers straight from state as well: OSC, MIDI and the sensor
+  // mappings write `S.triggerParams` directly and only then sync the sliders,
+  // so the sliders alone can miss what the pedal is really set to.
+  const tp = S.triggerParams;
+  snap.tapeState = { speed: tp.speed, pitch: tp.pitch, step: tp.step, reverse: tp.reverse, volume: tp.volume };
+  return snap;
+}
+function _restoreVoices(snap, save = true) {
+  _pollQuietUntil = performance.now() + 400;      // a restore is not an edit
+  for (const eng of ['tape', 'granular']) {
+    const e = snap?.[eng]; if (!e) continue;
+    for (const [pid, v] of Object.entries(e.params)) _applyParam(pid, v);
+    if (e.sel && _voices[e.sel]) _voiceSel[eng] = e.sel; else delete _voiceSel[eng];
+  }
+  if (snap?.tapeState) { Object.assign(S.triggerParams, snap.tapeState); S._syncTriggerUI?.(); }
+  if (save) _saveVoices();          // the scratch's marks are never saved
+}
+function setAudition(on) {
+  on = !!on;
+  const was = S.auditionMode;
+  if (on && !was) {
+    _auditionSnap = _snapVoices();
+    if (_auditionScratch) _restoreVoices(_auditionScratch, false);   // B again
+  }
+  S.auditionMode = on;
+  if (!on && was && _auditionSnap) {
+    _auditionScratch = _snapVoices();                                 // remember B
+    _restoreVoices(_auditionSnap);
+    _auditionSnap = null;
+    render();
+    // The panel handlers coalesce their writes; redraw once they have landed.
+    setTimeout(() => { if (propsOpen()) renderProps(); _refreshVoiceMarks(); S._drawEngineScope?.(); }, 90);
+    return;
+  }
+  if (on && !was) {
+    const eng = _lastPlayedEng
+      ?? ((_instr === 'tape' || _instr === 'granular') ? _instr : null)
+      ?? engineOf(handTool('press'))
+      ?? 'granular';
+    if (VOICE_PIDS[eng]?.length) { setInstrument(eng); openProps(eng, 'engine'); return; }
+  }
+  render(); if (propsOpen()) renderProps();
+}
+/** Repaint the last-recalled preset row's ON, and the hand tiles' word, from
+ *  live state without a render: capture's debounce calls it after every edit.
+ *  The row is on only while the live block IS the preset. */
+function _refreshVoiceMarks() {
+  document.querySelectorAll('#toolRail [data-voice]').forEach(row => {
+    const vid = row.dataset.voice, v = _voices[vid];
+    if (!v || currentVoice(v.engine) !== vid) return;
+    const edited = _voiceEdited(vid);
+    row.classList.toggle('edited', edited);
+    row.classList.toggle('on', !edited);
+    row.setAttribute('aria-pressed', String(!edited));
+  });
+  document.querySelectorAll('#paletteDock .tile--hand[data-eng]').forEach(tile => {
+    const eng = tile.dataset.eng; if (!eng) return;
+    const word = _handVoiceWord(currentVoice(eng)) ?? '';
+    const el = tile.querySelector('.tile-nm-voice');
+    if (el && el.textContent !== word) el.textContent = word;
+  });
+}
 export function applyVoice(id) {
   const v = _voices[id]; if (!v) return false;
   _applyVoiceParams(id);
   _voiceSel[v.engine] = id;
-  _saveVoices();
+  // Not saved while auditioning: the pick is the scratch voice's, and the
+  // revert puts the real one back (setAudition). A quit mid-audition must not
+  // wake up marked on a preset the sliders are not on.
+  if (!S.auditionMode) _saveVoices();
+  // The recall lands in the TOOL's block too, so a reload comes back on it:
+  // the poll is quiet during a recall (by design), so nothing else would.
+  setTimeout(() => captureTileParams(v.engine), 120);
   // AND THE RAIL REDRAWS. `_voiceSel` is what marks the chosen voice row, and
   // the hand tile names the voice its side holds — both are `render`'s, and
   // this only scheduled `renderProps`, which is the SHEET. It never showed
@@ -4010,6 +4196,7 @@ export function applyVoice(id) {
 
 export function renameVoice(id, label) {
   const v = _voices[id]; if (!v) return false;
+  if (v.factory) return false;                     // a factory preset keeps its name (Ek, 2026-09-24)
   const name = String(label).trim().slice(0, 24);
   if (!name || name === v.name) return false;
   v.name = name; _saveVoices();
@@ -4022,9 +4209,13 @@ export function renameVoice(id, label) {
  *  deleting a voice removes the NAME, never what you can hear. */
 export function deleteVoice(id) {
   if (!_voices[id]) return false;
+  if (_voices[id].factory) return false;           // a factory preset stays (Ek, 2026-09-24)
   const eng = _voices[id].engine;
+  if (voicesOf(eng).length <= 1) return false;     // the last one stays
   delete _voices[id];
-  if (_voiceSel[eng] === id) delete _voiceSel[eng];
+  // The mark moves to the first remaining preset WITHOUT recalling it — the
+  // voice keeps sounding as it is, and the row shows the ring if it differs.
+  if (_voiceSel[eng] === id) _voiceSel[eng] = voicesOf(eng)[0];
   _saveVoices();
   render();
   return true;
@@ -4182,13 +4373,15 @@ function captureTileParams(explicitId) {
       const v = _readParam(pid);
       if (v !== undefined) params[pid] = v;
     }
-    // A voice sheet's edits belong to the VOICE. This is what makes a voice a
-    // living preset rather than a snapshot: move a number here and every
-    // unpinned stroke made with it follows, while every pinned one keeps the
-    // copy it took at the pin.
-    if (isVoiceId(id)) { _voices[id].params = { ..._voices[id].params, ...params }; _saveVoices(); }
-    else if (_persists(id)) { _tileCfg[id] = { ...(_tileCfg[id] ?? {}), params }; _saveTileCfg(); }
+    // Never into a preset (2026-09-24): an edit is the ENGINE's, stored under
+    // its TOOL. The preset it was last set from stays as saved, and its row
+    // shows the ring until it is pressed again.
+    // NOTHING IS SAVED WHILE AUDITIONING (2026-09-24): the sheet is a scratch
+    // copy then, and a quit mid-audition must come back to the sound you had.
+    if (S.auditionMode) { _refreshVoiceMarks(); return; }
+    if (_persists(id)) { _tileCfg[id] = { ...(_tileCfg[id] ?? {}), params }; _saveTileCfg(); }
     else _sessionCfg[id] = params;
+    _refreshVoiceMarks();
     // The off-factory dot is decided at render time, and a capture is the
     // one moment a tile can become off-factory — so the rail has to be told.
     // Only on the transition, because this fires on every knob that lands
@@ -4268,8 +4461,10 @@ function _pollLiveBlock() {
   // page belongs to the tile that page is for, and between presses there is
   // no hand at all. They were the same tile while the sheet followed the
   // armed tool.
-  const id = sheetTileId();
-  if (engineOf(id) === 'granular') captureTileParams(id);
+  // Into the GRAIN TOOL, whatever the sheet shows (2026-09-24): the tool is
+  // the live block's store, and a pot moving the grain engine is an edit of
+  // it whether or not its sheet is up.
+  captureTileParams('granular');
 }
 
 /** The cursor section's live number, repainted at 5 Hz while the rail is up.
@@ -4802,10 +4997,11 @@ export function renderProps() {
     _propRow = null;
     return;
   }
-  // A voice is not a tile, so it brings its own label and takes its engine's
-  // hue — the sheet head then draws it like any other subject.
-  const meta = _optSel.kind === 'voice'
-    ? { id, label: voiceName(id), c: null }
+  // THE SHEET IS THE ENGINE'S VOICE (Ek, 2026-09-24: "a preset changes the
+  // controls of an existing global set of controls … make it more like an
+  // actual preset"). It is headed by the instrument, not by a preset's name.
+  const meta = _optSel.kind === 'engine'
+    ? { id, label: GRP_LABEL_G[id] ?? id, c: null }
     : tileById(id);
   const eng = engineOf(id);
   if (!eng) {
@@ -4829,7 +5025,7 @@ export function renderProps() {
   let cur = null;
   // The overdub brush has no dials of its own: its master decides the
   // length, the speed and the mix, and the take lands at 1× (§ 2 of the plan).
-  for (const pid of _sheetPids(id)) {
+  for (const pid of (_optSel.kind === 'engine' ? VOICE_PIDS[eng] ?? [] : _sheetPids(id))) {
     const d = PARAM_DEFS[pid];
     if (!d) continue;
     // (The lens's greying — nearest bypasses radius, depth and the fade pair;
@@ -4854,7 +5050,7 @@ export function renderProps() {
   // a slider through three named options is a lie about the data.
   // Full-width rows: the two parameters that decide what granular sounds
   // like, and which carry a ± band that needs the width to be readable.
-  const WIDE = new Set(['dur', 'period', 'pitch', 'vol']);
+  const WIDE = new Set(['dur', 'period', 'pitch', 'cutoff', 'vol']);
   // Rows that share a line: the shape of the grain window and how much of the
   // grain that shape occupies are one idea, so they read as one line.
   // Curve had been folded onto taper's line (#278); it is back on its own
@@ -4898,11 +5094,20 @@ export function renderProps() {
   // pick. `on end`'s `arm | loop` was the worst of them: `arm` named the
   // absence of the thing (Ek: "arm is confusing. it's more like loop on end?
   // yes or no"), so the row is now `loop on end` with a switch.
-  const swRow = (label, on, attrs, title) =>
-    `<div class="prow prow--sw"><span class="prow-n">${label}</span>` +
+  const swBtn = (on, attrs, title) =>
     `<button type="button" class="ds-sw${on ? ' on' : ''}" role="switch"` +
     ` aria-checked="${on}"${attrs}${title ? ` title="${title}"` : ''}>` +
-    `<i class="mu-switch"><b></b></i></button></div>`;
+    `<i class="mu-switch"><b></b></i></button>`;
+  const swRow = (label, on, attrs, title) =>
+    `<div class="prow prow--sw"><span class="prow-n">${label}</span>${swBtn(on, attrs, title)}</div>`;
+  // THE FILTER'S SWITCH IS ON ITS HEADING (Ek, 2026-09-24: "the filter toggle
+  // should be on the filter title like a section on off"). The whole section
+  // is the thing the switch turns on, so the switch sits where the section is
+  // named — the same `data-swproxy` write-through as a row's switch.
+  const filterHead = () =>
+    `<div class="ds-sec-h ds-sec-h--sw"><span>filter</span>` +
+    swBtn(_readParam('flt') === 'on', ' data-swproxy="gcFilterOnSeg" data-swon="on" data-swoff="off"',
+      'on — every grain goes through the filter drawn below; off — grains play unfiltered') + `</div>`;
 
   // (`cellOrNA` — a row in ash when the state cannot use it — went with the
   //  lens sheet, 2026-09-22 night; the greying lives on the lens TAB now and
@@ -4928,8 +5133,8 @@ export function renderProps() {
       'volume fades with distance from the cursor');
     if (pid === 'tchop')  return swRow('slice', !!S.triggerParams.sliceOn, ' data-swproxy="trigChopSeg" data-swon="on" data-swoff="off"',
       'on — the next take is cut into a trigger per ATTACK, measured against the room\'s own floor; off — it stays one take');
-    if (pid === 'flt')    return swRow('filter', _readParam('flt') === 'on', ' data-swproxy="gcFilterOnSeg" data-swon="on" data-swoff="off"',
-      'on — every grain goes through the filter drawn above; off — grains play unfiltered');
+    if (pid === 'flt')    return '';                     // on the FILTER heading — filterHead()
+    if (pid === 'fade')   return '';                     // the number on the CURVE row — see below
     // Folded into its base parameter's row (#277).
     if (IS_VAR.has(pid) && VAR_OF[Object.keys(VAR_OF).find(k => VAR_OF[k] === pid)]) return '';
     if (PAIRED_IN.has(pid)) return '';                    // drawn by its partner
@@ -4944,14 +5149,24 @@ export function renderProps() {
       const cls = 'prow' + (VAR_OF[pid] ? ' prow--var' : '') +
                   (WIDE.has(pid) ? ' prow--wide' : '') + (mateRow ? ' prow--duo' : '') +
                   (tail ? ' prow--tail' : '');
-      return `<div class="${cls}"><span class="prow-n">${d.label}</span>${kn}` +
+      return `<div class="${cls}" data-pid="${pid}"><span class="prow-n">${d.label}</span>${kn}` +
         (mateRow ? `<span class="prow-n prow-n--mate">${PARAM_DEFS[mate].label}</span>` +
                    `<div class="ds-chips">${mateRow}</div>` : '') + tail + `</div>`;
     }
     const row = _rowFor(pid);
     if (!row) return '';
-    return `<div class="prow prow--seg"><span class="prow-n">${d.label}</span>` +
-      `<div class="ds-chips">${row}</div></div>`;
+    // THE CURVE ROW ENDS IN ITS SLOPE (Ek, 2026-09-24: "move it on the same
+    // line as curve, remove the slider … we just need the percent on the
+    // right side"). The shape is the choice, the slope is how much of the
+    // grain that shape occupies — one line. The number is the same `.prow-v`
+    // cell every track ends in, so it scrubs, types and double-click resets
+    // through the one wiring; it simply has no track in front of it.
+    const tail = pid === 'curve' && _knobRange('fade')
+      ? `<input class="prow-v" data-pval="fade" value="${_knobVal('fade').disp}" spellcheck="false"` +
+        ` aria-label="slope" data-word="slope" title="slope — how much of the grain ramps · drag to set · click and type a value · double-click to reset">`
+      : '';
+    return `<div class="prow prow--seg" data-pid="${pid}"><span class="prow-n">${d.label}</span>` +
+      `<div class="ds-chips">${row}</div>${tail}</div>`;
   };
 
   // (A grain brush's head carried its WET switch from 2026-09-03 — the one
@@ -4965,13 +5180,8 @@ export function renderProps() {
   // THE ONLY SHEET IS A VOICE'S (2026-09-22 night), so `del` deletes the
   // voice. The one refusal: the last voice of an engine stays, so the
   // instrument always has a sound; the word says so rather than vanishing.
-  const lastOne = _optSel.kind === 'voice' ? voicesOf(eng).length <= 1 : false;
-  // A bare red word beside the esc ✕ (Ek, 2026-09-10: "just a simple del red
-  // text beside the esc is fine"). It was the settings Clear-all button for
-  // an hour, then a second row for it; both were more than the head could
-  // carry beside its name. One row again.
-  const delBtn = `<button type="button" class="ds-del" data-deltile${lastOne ? ' disabled' : ''}` +
-    ` title="${lastOne ? 'the last voice of its instrument stays — a tool always has a sound' : 'delete this voice'}">del</button>`;
+  // (The head's `del` went 2026-09-24 with the preset's name: the sheet is
+  //  the instrument's, and a preset is deleted on its own row in the tab.)
   sheet.innerHTML =
     `<div class="ds-head"><b style="color:${accent}">${meta.label}</b>` +
     // What the subject IS, not just which engine it belongs to: a shape says
@@ -4983,7 +5193,7 @@ export function renderProps() {
     // named for its instrument now, so the engine was being said twice in one
     // row: `grain · grain shape`. A voice still names its engine, because a
     // voice's title is its own name and carries no engine at all.
-    `<span>${(GRP_LABEL_G[eng] ?? eng) + ' voice'}</span>${delBtn}` +
+    `<span>voice</span>` +
     `<button type="button" class="ds-close" title="hide properties (Esc)"><kbd>esc</kbd>✕</button></div>` +
     // The drawer is WIDE and SHORT where the page flip was tall, so the
     // sections column-pack instead of stacking (#249): granular's six
@@ -4991,18 +5201,23 @@ export function renderProps() {
     // than the page it replaced. .ds-body carries the columns.
     // The granular engine's FILTER section is a drawing, not four rows.
     (isGrainEng
-      ? `<div class="eng-scope"><canvas id="engScope" data-accent="${accent}"></canvas>` +
-        `<div class="eng-scope-cap"><span id="engScopeL"></span><span id="engScopeR"></span></div></div>`
+      ? `<div class="eng-scope"><canvas id="engScope" data-accent="${accent}"></canvas></div>`
       : '') +
     `<div class="ds-body">` +
     sections.map(sc => {
       if (isGrainEng && sc.name === 'filter') {
+        // OFF IS COLLAPSED (Ek, 2026-09-24: "when the filter is off, also
+        // collapse the section"): the heading and its switch are the whole
+        // section until the switch is on. The switch's click reaches
+        // `render()`, which redraws the drawer, so the section opens and
+        // shuts on the press with nothing else to wire.
+        if (_readParam('flt') !== 'on') return `<div class="ds-sec ds-sec--shut">${filterHead()}</div>`;
         // The drawing answers "what shape is this"; the rows answer "what
         // exactly, and let me type it". Both, not either — the graph is the
         // fastest way to grab an edge and the worst way to set 4.2k (#283).
         // The old text caption under the canvas said the same four numbers the
         // rows now say, so it is gone.
-        return `<div class="ds-sec"><div class="ds-sec-h">filter</div>` +
+        return `<div class="ds-sec">${filterHead()}` +
           `<canvas id="engFilter" data-accent="${accent}" title="drag across for the cutoff · up and down for the resonance · double-click resets"></canvas>` +
           `<div class="ds-sec-cells">${sc.pids.map(cell).join('')}</div></div>`;
       }
@@ -5049,14 +5264,6 @@ export function renderProps() {
     // swallow them or naming a tile arms a different one mid-word.
     nameIn.addEventListener('keydown', e => e.stopPropagation());
   }
-  sheet.querySelector('[data-deltile]')?.addEventListener('click', () => {
-    if (_optSel.kind !== 'voice' || !deleteVoice(id)) return;
-    // The sheet was the deleted voice's: point it at the one the engine is on
-    // now, or shut it — a drawer titled with a name nothing owns is a lie.
-    const next = currentVoice(eng) ?? voicesOf(eng)[0];
-    if (next) { _optSel = { kind: 'voice', id: next }; _propRow = next; renderProps(); }
-    else closeProps();
-  });
   sheet.querySelector('.ds-close')?.addEventListener('click', () => setPropsOpen(false));
   _wireOptions(sheet);
   _wireKnobs(sheet);
@@ -5176,7 +5383,9 @@ function _syncLink(pid, sheet) {
   }, 80);
 }
 
-const VAR_OF = { dur: 'durVar', period: 'perVar', pitch: 'pitchJit' };
+// `cutoff ±` joined 2026-09-24 (Ek: "use the same method of randomisation
+// like in dur and per where it's the same slider") — one row, its band.
+const VAR_OF = { dur: 'durVar', period: 'perVar', pitch: 'pitchJit', cutoff: 'fltJit' };
 // ── A SUB-ROW: a parameter OF another parameter (Ek, 2026-09-23) ──────────
 // "step is part of pitch … taper is part of curve, it should be under curve
 // firstly, then indented." The tab already had the shape — dwell and retrig
@@ -5184,12 +5393,10 @@ const VAR_OF = { dur: 'durVar', period: 'perVar', pitch: 'pitchJit' };
 // directly under its parent in VOICE_PIDS, its NAME steps in one step of the
 // scale and a step quieter, the control stays flush. Nothing here changes a
 // pid, a binding or a stored block; it is the sheet's reading order alone.
-const SUB_OF = { fade: 'curve', tstep: 'tpitch', octave: 'pitch', res: 'cutoff' };
+const SUB_OF = { tstep: 'tpitch', octave: 'pitch', res: 'cutoff' };
 const IS_VAR = new Set(Object.values(VAR_OF));
 // The other way: a spread's base row, which is the row that DRAWS it.
 const OWNER_OF = Object.fromEntries(Object.entries(VAR_OF).map(([k, v]) => [v, k]));
-// Params whose default IS "do nothing" — dimmed when they sit there.
-const _NOOP_AT_DEFAULT = new Set(['startJit', 'durJit', 'prob', 'fltJit', 'perVar', 'durVar', 'pitchJit']);
 
 /** A parameter's DEFAULT, for the tick under its track and for the
  *  double-click reset (#261). For a `slider` this is free and exact:
@@ -5244,13 +5451,13 @@ function _knobFor(pid) {
     band = `<i class="prow-band" data-pband="${vpid}"` +
       ` style="left:${l.toFixed(1)}%;width:${(r - l).toFixed(1)}%${vf > 0.001 ? '' : ';display:none'}"></i>`;
     spreadCell = `<input class="prow-s${vf > 0.001 ? '' : ' zero'}" data-pval="${vpid}"` +
-      ` value="${vv.disp}" spellcheck="false" aria-label="${PARAM_DEFS[vpid].label}"` +
+      ` value="${vv.disp}" spellcheck="false" aria-label="${PARAM_DEFS[vpid].label}" data-word="${PARAM_DEFS[vpid].label}"` +
       ` title="${PARAM_DEFS[vpid].label} — drag to set · click and type a value · double-click for none">`;
   }
-  // A parameter sitting at a value that does nothing (no jitter, full
-  // probability) is visual noise; dim it so the eye goes to what is set.
-  const inert = def != null && Math.abs(raw - def) < (rg.step || 1e-9) / 2 && _NOOP_AT_DEFAULT.has(pid);
-  return `<span class="prow-t${inert ? ' inert' : ''}" data-ptrack="${pid}"` +
+  // (A row at a do-nothing default — full probability, no jitter — used to
+  //  draw at 40 % opacity. Gone 2026-09-24: it read as a lighter track, not
+  //  as a meaning, and the rule is never dim to mean anything.)
+  return `<span class="prow-t" data-ptrack="${pid}"` +
     ` title="drag to set${resetTip}${vpid ? ' · drag the band\'s edge, or the ± cell at the end of the row, for the spread' : ''}">` +
     `<i class="prow-f" style="width:${(f * 100).toFixed(1)}%"></i>${band}${tick}` +
     `<i class="prow-h" style="left:${(f * 100).toFixed(1)}%"></i></span>` +
@@ -5583,18 +5790,9 @@ function _drawScope() {
     c.globalAlpha = alpha * 0.13; c.fillStyle = accent; c.fill(); c.globalAlpha = 1;
   }
 
-  const L = document.getElementById('engScopeL'), R = document.getElementById('engScopeR');
-  const ms = v => v >= 1 ? Math.round(v) + ' ms' : v.toFixed(2) + ' ms';
-  // Name the row, not the concept: the slider says `duration`, so the caption
-  // that reports it says duration too (#281).
-  if (L) L.textContent = `duration ${ms(liveDur * 1000)} · taper ${ms(liveFade * 1000)}`;
-  if (R) {
-    const ovl = livePeriod > 0 ? liveDur / livePeriod : 0;
-    const win = viewSec >= 1 ? viewSec.toFixed(viewSec % 1 ? 1 : 0) + ' s' : Math.round(viewSec * 1000) + ' ms';
-    R.textContent = `${ms(livePeriod * 1000)} apart · ` +
-      (ovl >= 1 ? ovl.toFixed(1) + '\u00d7 overlap' : 'gaps between grains') +
-      `  ·  window ${win}` + (broken ? ' · gap not to scale' : '');
-  }
+  // (The caption under the drawing — duration · taper | period apart ·
+  //  overlap · window — went 2026-09-24 (Ek: "no need to have the text
+  //  readout, any of it"): every number it said is a row directly below.)
 }
 S._drawEngineScope = () => { _drawScope(); _drawFilter(); };
 
@@ -6125,8 +6323,6 @@ function deleteTile(id) {
   const custom = !!_tileCfg[id]?.custom;
   if (!custom && !TILE_DEFS[id]) return false;
   if (slotKind(id) && kindAll(slotKind(id)).length <= 1) return false;
-  // A brush that disappears dries its strokes where they sound.
-  freezeVoicing(id);
   if (custom) { delete _tileCfg[id]; _saveTileCfg(); }
   else { _gone.add(id); _saveGone(); }
   order = order.filter(t => t !== id);
@@ -6142,8 +6338,8 @@ function deleteTile(id) {
     // The replacement takes the fallback's OWN engine's voice, not the deleted
     // tool's — a tape voice on a grain tool would be half a pair of the wrong
     // kind. `_ensureHandVoices` fills it the same way a pick would.
-    if (handTool('press') === id) inHand.press = { id: fb, voice: currentVoice(engineOf(fb)) };
-    if (handTool('long')  === id) inHand.long  = { id: fb, voice: currentVoice(engineOf(fb)) };
+    if (handTool('press') === id) inHand.press = { id: fb };
+    if (handTool('long')  === id) inHand.long  = { id: fb };
     _saveHand();
   }
   // (A deleted tile used to leave the palette here. It cannot be on one: the
@@ -6320,13 +6516,12 @@ export function initTiles() {
       if (!v) return null;
       const raw = typeof v === 'string' ? v : v.id;
       const id = ok(_DROPPED_TILES[raw] ?? migrateTileId(raw));
-      return id ? { id, voice: (typeof v === 'object' && v.voice) || null } : null;
+      return id ? { id } : null;   // a stored `voice` is dropped: the preset is the engine's now
     };
     inHand = stored ? { press: side(stored.press), long: side(stored.long) }
                     : { press: side(h), long: side(h) };
-    if (!inHand.press && first) inHand.press = { id: first, voice: null };
+    if (!inHand.press && first) inHand.press = { id: first };
     if (!inHand.long)  inHand.long  = inHand.press ? { ...inHand.press } : null;
-    _ensureHandVoices();
     // …AND WRITE IT BACK, once (2026-09-22). `side()` resolves a dead id every
     // boot and nothing ever saved the answer, so a hand stored as `line` was
     // re-migrated on every single load — a persistent fallback wearing a
@@ -6344,7 +6539,10 @@ export function initTiles() {
   // tool's own — found 2026-09-12 night, when wash's drawer read "scratch"
   // with cloud on end baked into its block. (From 2026-09-11 to then nothing
   // was applied at boot, because there was no hand to apply.)
-  if (handTool('press')) applyTileParams(handTool('press'));
+  // BOTH ENGINES' TOOLS (2026-09-24): each holds its engine's live block, the
+  // voice included, so a reload comes back where it was left whichever tool
+  // the hand holds.
+  for (const id of ['tape', 'granular']) if (tileById(id)) applyTileParams(id);
 
   // ── A RAIL CLICK TAKES THE TOOL IN HAND (Ek, 2026-09-12) ─────────────────
   // "you pick the tool with the mouse i.e. click it, then you should use it.
@@ -6502,7 +6700,6 @@ export function initTiles() {
   // A window blur is a release edge for both wires: a key-up or mouse-up
   // that never arrives must not leave a momentary hand stuck down.
   window.addEventListener('blur', () => {
-    if (_downAuditionKey) { _downAuditionKey = false; auditionUp(); }
     if (_downHandMouse) { _downHandMouse = false; S._dispatchGesture?.('mouse:0', false); }
   });
 
@@ -6587,8 +6784,7 @@ export function initTiles() {
   // other rail handler matches them.
   const onModeClick = e => {
     if (e.target.closest('[data-audition]')) {
-      e.preventDefault(); S.auditionMode = !S.auditionMode;
-      render(); if (propsOpen()) renderProps(); return;
+      e.preventDefault(); setAudition(!S.auditionMode); return;
     }
     const a = e.target.closest('[data-autopin]');
     if (a) { e.preventDefault(); setAutoPin(a.dataset.autopin, !autoPinOn(a.dataset.autopin)); return; }
@@ -6621,9 +6817,12 @@ export function initTiles() {
   toolRail?.addEventListener('click', e => {
     const d = e.target.closest('[data-more]'); if (!d) return;
     e.preventDefault(); e.stopPropagation();
-    const row = d.closest('[data-tile], [data-voice]'); if (!row) return;
-    const id = row.dataset.tile ?? row.dataset.voice;
-    const kind = row.dataset.voice ? 'voice' : 'tool';
+    // The VOICE line's door opens its engine's sheet (2026-09-24); a preset
+    // row has no door any more.
+    if (d.dataset.sheet) { toggleSheet(d.dataset.sheet, 'engine'); return; }
+    const row = d.closest('[data-tile]'); if (!row) return;
+    const id = row.dataset.tile;
+    const kind = 'tool';
     // `toggleSheet` is this door's own function — written for it, and keyed on
     // `_propRow`: the door with another page up brings THIS page, and only a
     // second press on the page it is already showing shuts it. (Not
@@ -6653,18 +6852,22 @@ export function initTiles() {
     render();
     setTimeout(() => _openRename(id), 0);
   }, true);
-  // Taking a voice: the row's click writes its params onto the live block.
-  // It waits out a play — recalling a sound under a running stroke is not what
-  // the press meant, and the stroke has already frozen the sound it is using.
-  //
-  // UNLESS YOU ARE AUDITIONING, where that second reason is exactly false: the
-  // stroke has frozen nothing, it follows the knobs, and swapping the voice
-  // under a held play is the whole point of the mode. Latching A on a tape tool
-  // and then finding the voice rows dead is the case this covers.
+  // Taking a preset: the row's click writes its params onto the live block —
+  // under a held play too (2026-09-24). A recall only moves the pedal, and a
+  // grain stroke bakes mark by mark, so the rest of the stroke bakes the new
+  // sound the way a ridden knob would. (It waited out a play, audition
+  // excepted, while auditioned paint followed the knobs; no paint does now.)
+  // DELETE, on the preset's own row (Ek, 2026-09-24). Before the row's click,
+  // which would recall the preset it is about to remove.
+  toolRail?.addEventListener('click', e => {
+    const d = e.target.closest('[data-delvoice]'); if (!d) return;
+    e.preventDefault(); e.stopPropagation();
+    if (_held) return;
+    deleteVoice(d.dataset.delvoice);
+  }, true);
   toolRail?.addEventListener('click', e => {
     const row = e.target.closest('[data-voice]'); if (!row) return;
     e.preventDefault(); e.stopPropagation();
-    if (_held && !S.auditionMode) return;
     const vid = row.dataset.voice;
     // The door opens the voice's own sheet — every number of what it sounds
     // like, and nothing about how it lands. Anywhere else on the row takes it.
@@ -6674,12 +6877,11 @@ export function initTiles() {
     // (Ek, 2026-09-22: "i change the shape preset and voice preset and it
     // should update what is being held".) The hand froze its voice at the pick,
     // so without this the editor would say one thing and the spacebar another.
-    _writeSlotVoice(_voices[vid]?.engine, vid);
-    // AN OPEN SHEET FOLLOWS THE CLICK, as it follows a shape row (`setBench`):
-    // a drawer showing one voice while another sounds would be lying. The
-    // door still OPENS it; the row only points it (Ek, 2026-09-22 night: the
-    // drawer stayed on the old shape sheet while the voice changed).
-    _optSel = { kind: 'voice', id: vid }; _propRow = vid;
+    // The sheet is the ENGINE's (2026-09-24), so the row only points the drawer
+    // at that engine; the door on the VOICE line opens it. A press RECALLS the
+    // preset — pressing the one already marked puts the sliders back on it.
+    const veng = _voices[vid]?.engine;
+    if (veng) { _optSel = { kind: 'engine', id: veng }; _propRow = veng; }
     applyVoice(vid);
   }, true);
   // ── Double-click to rename, detected from CLICKS, not `dblclick` (#285) ──
@@ -6712,6 +6914,7 @@ export function initTiles() {
     // so the editor opens on whichever row holds the id.
     const row = document.querySelector(`#toolRail [data-tile="${id}"], #toolRail [data-lens="${id}"], #toolRail [data-voice="${id}"]`);
     if (!row || row.querySelector('.trow-rn')) return;
+    if (_voices[id]?.factory) return;              // a factory preset keeps its name (Ek, 2026-09-24)
     const nm = row.querySelector('.tile-nm'); if (!nm) return;
     const inp = document.createElement('input');
     inp.type = 'text'; inp.className = 'trow-rn'; inp.value = nm.textContent; inp.maxLength = 24;
@@ -6753,7 +6956,7 @@ export function initTiles() {
   // the rail is an ACTIONS row (midi.js), and these are the doors it reaches
   // them by — the same setters the clicks use, so a key, a pad and a click
   // leave the app in one state.
-  S._setAudition   = on => { S.auditionMode = !!on; render(); if (propsOpen()) renderProps(); };
+  S._setAudition   = setAudition;
   S._setAutoPin    = setAutoPin;
   S._setOverdub    = setOverdub;
   S._setWalk       = on => { S.grainWalk = !!on; render(); if (propsOpen()) renderProps(); };
@@ -6781,12 +6984,9 @@ export function initTiles() {
 // The old per-tool `wet` toggle is gone; the press declares it now.
 S._handTile   = () => {
   const id = handTileId();
-  // ONE PREDICATE, and everything downstream follows it: the grain voicing's
-  // `live` flag, the stroke stamp in `recordStrokeStart`, a tape take's
-  // `_live`, the renderer's glow and `syncLiveVoicing`. AUDITION mode makes it
-  // true whatever door is playing — that is the whole of the global switch.
-  return id ? { id, label: tileDef(id)?.label ?? id,
-                live: !!S.auditionMode || (!!_held && _held.i === BENCH_POS) } : null;
+  // No `live` any more (2026-09-24): nothing painted is live. AUDITION is the
+  // cursor's switch — brush-voicing.js "Audition is the cursor's".
+  return id ? { id, label: tileDef(id)?.label ?? id } : null;
 };
 S._setGrainOnEnd = setGrainOnEnd;
 // (`S._liveHue` is gone with the glow it coloured, 2026-09-22.)
@@ -6821,4 +7021,22 @@ S._handIsOverdub = () => !!S.overdub;
 // The keys page saved a binding: the palette's key legend reads the bindings
 // at render, so a repaint is the whole update.
 S._bindingsChanged = () => render();
+// A STICKER IS A LEARN CELL WHEREVER IT IS (2026-09-25): click arms a learn for
+// its action in the legend's kind, right-click clears it — the palette's two
+// gestures, on any row or chrome button that wears one. Capture phase, so the
+// button or row under it never sees the click.
+document.addEventListener('click', e => {
+  const k = e.target.closest('.row-binds .tile-bind[data-learn-action]'); if (!k) return;
+  e.preventDefault(); e.stopPropagation();
+  const id = k.dataset.learnAction, kind = k.dataset.learnKind;
+  const cur = S._paletteLearning?.();
+  if (cur && cur.id === id && cur.kind === kind) S._paletteLearnCancel?.();
+  else S._learnAction?.(id, kind, k.dataset.rowLearn || id);
+}, true);
+document.addEventListener('contextmenu', e => {
+  const k = e.target.closest('.row-binds .tile-bind[data-learn-action]'); if (!k) return;
+  e.preventDefault(); e.stopPropagation();
+  if (!_HAND_KEYED.has(k.dataset.learnAction) || (S._bindingsOf?.(k.dataset.learnAction) ?? []).some(b => b.kind === k.dataset.learnKind))
+    S._unbindAction?.(k.dataset.learnAction, k.dataset.learnKind);
+}, true);
 S._migrateTileId = migrateTileId;   // a session file's voicings name tiles by id (brush-voicing.js)

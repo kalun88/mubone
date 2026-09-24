@@ -8,7 +8,7 @@ import {
   SEED_COLORS, MAX_SEEDS, COMMIT_DRAW_THRESHOLD_MS, MOVING_SEED_THRESHOLD_MS,
   gp, minGrainDurS, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, K_MAX
 } from './state.js';
-import { resolveGrainParams } from './brush-voicing.js';
+import { resolveGrainParams, voicingFor } from './brush-voicing.js';
 import { angleBetweenSphere, findNearestSeedSlot, nearestLoopPin, masterPhaseWall, startOverdubLayer, swapOverdubLayer, stopOverdubLayers, releaseSeqNodes } from './grain.js';
 import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js';
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
@@ -22,7 +22,7 @@ import { clearWalkers } from './walker.js';
 // DEPTH IS FOUR ANSWERS (Ek, 2026-09-24: "a multi select pill with just 1 2 3
 // then all"): 1, 2 or 3 newest strokes, or all of them (S.recencyN 0). It was
 // a 1–16 slider with `all` past the top; the cabinet seg is `recencySeg`.
-const RECENCY_MIN = 1, RECENCY_MAX = 3;
+const RECENCY_MIN = 1, RECENCY_MAX = 6;   // 1–6 and all since 2026-09-25 (Ek: "increase depth up to 6")
 // THE k SLIDER'S MAP. Position 0 is ALL (k = 0, no cap — Ek, 2026-09-24: "one
 // slider, and if it's 0 it's all"); positions 1…1000 are log-mapped onto
 // 1…K_MAX, fine at 1–10. Module-level so the sync paths share the one curve.
@@ -116,7 +116,7 @@ export function setupPresets() {
   S.drawRecencyDial = function() {};
 
   S.setRecency = function(n) {
-    // 0 (or <=0) = "all" — no recency filter; anything deeper than 3 is 3.
+    // 0 (or <=0) = "all" — no recency filter; anything deeper than 6 is 6.
     S.recencyN = n <= 0 ? 0 : Math.max(RECENCY_MIN, Math.min(RECENCY_MAX, Math.round(n)));
     _syncRecencySeg();
   };
@@ -127,7 +127,7 @@ export function setupPresets() {
       btn.addEventListener('click', () => S.setRecency(+btn.dataset.depth));
     });
   }
-  // A profile that stored a deeper value (the slider went to 16) lands on 3.
+  // A profile that stored a deeper value (the slider went to 16) lands on 6.
   S.setRecency(S.recencyN);
 
   // ── k control in search params ────────────────────────────────────────────
@@ -341,10 +341,26 @@ export function getCursorPos() {
 /** Take a slot out now: nodes released, no fade. `_gen` moves so a fade
  *  handler still pending on its old source cannot null the slot again after
  *  a restore. */
+/** THE LOOP HANDS ITS PHASE BACK TO THE TAKE (Ek, 2026-09-24 night: after an
+ *  undo "the stroke doesn't play until i move the cursor away and back").
+ *  The claim lifts with the slot; if the cursor is still on the stroke the
+ *  gate refires it on that edge (trigger.js), and this anchor starts the
+ *  pass where the loop was — the same clock handover the pin made, in
+ *  reverse. A CLOCK, not a position, so it stays right across a release
+ *  fade: the loop keeps running while it fades and the anchor accounts for
+ *  it. One-shot: `_phaseApplied` closes it at the first start, and the gate
+ *  clears it if the cursor is not there to take it. Called while the node
+ *  is still sounding — an undo (removePinSlot) and an unpin (_releaseSlotAt,
+ *  before its fade) both are. */
+function _handPhaseToTake(slot) {
+  if (!(slot?.type === 'loop' && slot.strokeId > 0 && slot._sourceNode && !slot._sourceNode._stopped && slot._startedAt)) return;
+  const t = S.triggers?.find(x => x.strokeId === slot.strokeId);
+  if (t) { t._phaseAnchor = slot._startedAt; t._phaseApplied = false; }
+}
 export function removePinSlot(slot) {
   const idx = S.commitSlots.indexOf(slot);
   if (idx < 0) return false;
-  if (slot.type === 'loop') releaseSeqNodes(slot);
+  if (slot.type === 'loop') { _handPhaseToTake(slot); releaseSeqNodes(slot); }
   slot._gen = (slot._gen | 0) + 1;
   S.commitSlots[idx] = null;
   S._pinsDirty = true;
@@ -371,6 +387,15 @@ export function restorePinSlot(slot, at = -1) {
     slot._fadingOut = false; slot._playingToEnd = false; slot._selfKilled = false;
     slot._startedAt = 0;
     slot.playing = true;
+    // A REDONE PIN CONTINUES THE TAKE TOO (2026-09-24 night): if the cursor
+    // has the take sounding again, the loop picks up its clock, as the first
+    // pin did — the same handover, the other way round from removePinSlot.
+    if (slot.strokeId > 0) {
+      const t = S.triggers?.find(x => x.strokeId === slot.strokeId);
+      if (t && t.playing && t._sourceNode && !t._sourceNode._stopped && t._startedAt) {
+        slot._phaseAnchor = t._startedAt; slot._phaseApplied = false; slot.startOffset = 0;
+      }
+    }
     if (slot.overdubs) for (const ov of slot.overdubs) { ov._src = null; ov._gain = null; }
   } else if (slot.type === 'cloud') {
     slot._releasingAt = 0; slot._composerHold = false; slot._envRelease = 0;
@@ -555,6 +580,14 @@ function _reserveCloud(lon, lat) {
   S.commitSlots[slotIndex] = {
     type: 'cloud',
     slotIndex, lon, lat, color, searchRadiusDeg: S.searchRadiusDeg,
+    // PINNED UNDER AUDITION, THE CLOUD KEEPS THE SOUND YOU WERE HEARING (Ek,
+    // 2026-09-24 night: "if i like what i'm hearing i can pin that sound —
+    // it shouldn't flip back to the baked-in sound"). The cursor was playing
+    // every mark through the live block; the cloud plays them all through
+    // ONE frozen copy of it — a voicing interned on the block as it stands,
+    // which every mark under the cloud is posted on (grain-worklet-bridge.js
+    // `_postWorkletSeeds`). Off audition, null: each mark keeps its own.
+    voicing: S.auditionMode ? voicingFor('granular', 'audition') : null,
     // The anchor: where the pin gesture releases (pins.js pinAnchorInto). A
     // tap is here; a held path is re-stamped at its END in finalizeSeedPlant.
     anchorLon: lon, anchorLat: lat,
@@ -582,7 +615,11 @@ function _reserveCloud(lon, lat) {
     morphVelocity: 0,
     radiusFadeEnabled: S.radiusFadeEnabled,
     radiusFadeCurve:   S.radiusFadeCurve,
-    // NOTE: recencyN is intentionally NOT captured per-seed — it stays global
+    // DEPTH IS PINNED WITH THE CLOUD (Ek, 2026-09-24), as radius, mode and k
+    // are: a cloud at depth 3 plays the newest three strokes under it, and new
+    // paint under it pushes the oldest out — the cursor's depth no longer
+    // reaches it. (It was left global until today, with no reason written.)
+    recencyN: S.recencyN,
     // Moving seed fields (null = stationary, populated on finalize if held long enough)
     frames:   null,
     duration: 0,
@@ -1357,10 +1394,19 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
   // downbeat was that late. A fresh take carries its release on the clock;
   // the seq start path begins the first pass as far in as the release is
   // behind (grain.js). A pin dropped onto old material keeps its anchor.
+  const _trig = S.triggers?.find(x => x.strokeId === strokeId);
   const _tk = S.particles.find(p => p.strokeId === strokeId && p.source === 'live');
   const _takeSlot = _tk ? S.liveRecBuffers[_tk.liveBufferIdx] : null;
-  const _phaseAnchor = (!anchorParticle && _takeSlot?.releaseAt != null && S.audioCtx &&
-                        (S.audioCtx.currentTime - _takeSlot.releaseAt) < 1.0) ? _takeSlot.releaseAt : null;
+  // A TAKE THE CURSOR IS PLAYING KEEPS ITS PHASE INTO THE PIN (Ek, 2026-09-24
+  // night: "if it's looping and i pin it should just continue looping, not
+  // suddenly jump"). The trigger's clock is `_startedAt`, and the loop's start
+  // path reads `_phaseAnchor` the same way — (now − anchor) · rate mod length
+  // — so handing the trigger's clock over starts the pin exactly where the
+  // take is. The claim stops the take's node a tick later (trigger.js).
+  const _live = !!(_trig && _trig.playing && _trig._sourceNode && !_trig._sourceNode._stopped && _trig._startedAt);
+  const _phaseAnchor = _live ? _trig._startedAt
+    : (!anchorParticle && _takeSlot?.releaseAt != null && S.audioCtx &&
+       (S.audioCtx.currentTime - _takeSlot.releaseAt) < 1.0) ? _takeSlot.releaseAt : null;
   S.commitSlots[slotIndex] = {
     type: 'loop',
     slotIndex,
@@ -1371,13 +1417,17 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
     loopStart:      payload.loopStart,
     loopEnd:        payload.loopEnd,
     playheadIndex:  payload.startIdx,
-    startOffset:    anchorParticle ? payload.particles[payload.startIdx].grainStart : 0,
-    // The tape's own baked `reverse` (the trigger it was armed as, or the
-    // tile's dial for a stroke never armed) — never the cloud's `path dir`,
-    // which decided this until 2026-09-18 from a sheet no tape tile shows.
-    direction:      (S.triggers?.find(x => x.strokeId === strokeId)?.reverse ?? S.triggerParams.reverse) ? -1 : 1,
-    pitch:          S.triggers?.find(x => x.strokeId === strokeId)?.pitch ?? S.triggerParams.pitch ?? 0,
-    speed:          S.commitLoopParams.speed ?? 1.0,
+    startOffset:    _live ? 0 : (anchorParticle ? payload.particles[payload.startIdx].grainStart : 0),
+    // THE TAKE'S OWN BAKED NUMBERS, all four (Ek, 2026-09-24 night: a fast take
+    // pinned "sounds like one of the params slowed down" — speed and level came
+    // from `commitLoopParams`, the cabinet's loop dials, while direction and
+    // pitch came from the take; the pin is where a take freezes, and it
+    // freezes what it was playing). `reverse` from the trigger it was armed
+    // as — never the cloud's `path dir`, which decided this until 2026-09-18.
+    // A stroke never armed falls back to the tape sheet, then the loop dials.
+    direction:      (_trig?.reverse ?? S.triggerParams.reverse) ? -1 : 1,
+    pitch:          _trig?.pitch ?? S.triggerParams.pitch ?? 0,
+    speed:          _trig?.speed ?? S.triggerParams.speed ?? S.commitLoopParams.speed ?? 1.0,
     playing:        true,
     color,
     anchorLon:      payload.anchorLon,  // position used for distance/nearest calcs
@@ -1389,7 +1439,7 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
     _startedAt:     0,              // audioContext.currentTime when started
     mute: false, solo: false,       // the pin's own flags (pins.js)
     grainParams: {
-      volume: S.commitLoopParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0
+      volume: _trig?.grainParams?.volume ?? S.triggerParams.volume ?? S.commitLoopParams.volume ?? 1.0
     }
   };
   // Born under a solo or a group mute, it is silent from its first tick.
@@ -1441,7 +1491,7 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     startOffset:    anchorParticle ? Math.max(0, anchorParticle.grainStart - sourceSeq.loopStart) : 0,
     direction:      sourceSeq.direction ?? 1,   // the same tape, the same way round
     pitch:          sourceSeq.pitch ?? 0,
-    speed:          S.commitLoopParams.speed ?? 1.0,
+    speed:          sourceSeq.speed ?? S.commitLoopParams.speed ?? 1.0,   // …and at the same speed (2026-09-24)
     playing:        true,
     color,
     anchorLon:      aLon,                     // drop point — used for distance calcs
@@ -1452,7 +1502,7 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
     _createdAt:     performance.now() / 1000,
     _startedAt:     0,
     grainParams: {
-      volume: S.commitLoopParams.volume ?? S.grainOverrides.volume ?? S.grainParams.volume ?? 1.0
+      volume: sourceSeq.grainParams?.volume ?? S.commitLoopParams.volume ?? 1.0   // the same level too (2026-09-24)
     }
   };
   S._applyPinMix?.();
@@ -1588,7 +1638,10 @@ function _releaseSlotAt(targetSlot) {
       slot._releasingAt = performance.now() / 1000;
     }
   } else {
-    // Loop: stop audio — both fade and play-to-end defer slot removal to 'ended' event
+    // Loop: hand the clock to the take FIRST — before the fade, while the node
+    // is still the clock — then stop the audio; both fade and play-to-end
+    // defer the slot's removal to the 'ended' event.
+    _handPhaseToTake(slot);
     _stopSeqAudio(slot, S.loopReleaseMode === 'play-to-end', pinFadeOut(slot));
   }
   // The group's flags go with its last pin — now, while this one is only

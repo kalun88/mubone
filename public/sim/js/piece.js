@@ -187,6 +187,10 @@ function buildManifest(audio, { particleWitness = false } = {}) {
           frames:            slot.frames,
           duration:          slot.duration,
           loopMode:          slot.loopMode,
+          // A cloud pinned under AUDITION carries the one voicing every mark
+          // under it plays (2026-09-24); the id is in `live.voicings`.
+          voicing:           slot.voicing ?? null,
+          recencyN:          slot.recencyN,
         };
       }
       if (slot.type === 'loop') {
@@ -453,6 +457,8 @@ async function applyManifest(data, audio) {
         frames:            c.frames,
         duration:          c.duration ?? 0,
         loopMode:          c.loopMode ?? 'pingpong',
+        voicing:           c.voicing ?? null,
+        recencyN:          c.recencyN,
         _playheadMs:       0,
         _pingForward:      true,
       };

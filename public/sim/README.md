@@ -154,7 +154,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 
 | Address | Args | Description |
 |---|---|---|
-| `/audition` | `i` / *(bang)* | Audition — every setting live on paint; one flag for tape and grain (1 on, 0 off, bang toggles) |
+| `/audition` | `i` / *(bang)* | Audition — the cursor plays what it reads through the live tape and grain sheets instead of as baked; nothing is rewritten (1 on, 0 off, bang toggles) |
 | `/grain/autopin` | `i` / *(bang)* | A grain stroke pins itself as a cloud on release |
 | `/grain/walk` | `i` / *(bang)* | A touch walks the stroke instead of reading what is in reach |
 | `/grain/dwell` | `s` / *(bang)* | Under walk: `oneshot` · `loop`; a bang toggles |
@@ -195,7 +195,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/search/radius` | `f` | Search radius, degrees |
 | `/search/radius/inc` `/dec` | *(bang)* | Step radius up / down |
 | `/search/k` | `i` | Pool size — how many marks the cursor spreads over, 0 = all, up to 100 |
-| `/search/recency` | `i` | Depth: 1, 2 or 3 newest strokes, 0 = all |
+| `/search/recency` | `i` | Depth: 1–6 newest strokes, 0 = all |
 | `/search/scope` | *(bang)* | Toggle the cursor's mode between area and nearest |
 | `/cursor/reads` | `s` / *(bang)* | What the cursor reads — `both` · `grains` · `tape`; a bang cycles |
 | | | The cap is `/palette/1`, the lens tile's own toggle (`/cursor/scan` went on 2026-09-24) |

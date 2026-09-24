@@ -580,9 +580,6 @@ export function armTrigger(strokeId, { plain = false, loop = false } = {}) {
   // "all overdubs should become normal loops once unpinned"): one trigger,
   // whatever tool is in the hand, no audition, and the looper hook stays out
   // of it — the stroke is being handed back, not recorded.
-  // Asked ONCE, of the stroke that was played — a slice or a chop arms several
-  // segments, whose own ids were never painted and have no history entry.
-  const auditioned = !!S._strokeAuditioned?.(strokeId);
   // ONE CUTTER, ONE SWITCH. `S.brushFx === 'slice'` was the tile's contract;
   // it is `triggerParams.sliceOn` now — a performance switch on the tape tab,
   // because cutting a take at its attacks is something you decide while playing
@@ -591,7 +588,7 @@ export function armTrigger(strokeId, { plain = false, loop = false } = {}) {
 
   let first = null;
   for (const sid of ids) {
-    const t = _newTriggerShell(sid, /* audition */ !plain, auditioned);
+    const t = _newTriggerShell(sid, /* audition */ !plain);
     const end = _pendingEnds?.get(sid);
     if (end != null) t.endCap = end;   // a slice ends at the next onset
     // A one-particle segment has no span worth playing; skip rather than make a
@@ -632,7 +629,7 @@ export function armTrigger(strokeId, { plain = false, loop = false } = {}) {
  * that is the END of the stroke just painted — one median spacing of audio,
  * which reads as not playing at all. Consumed on first fire.
  */
-function _newTriggerShell(strokeId, audition, auditioned = false) {
+function _newTriggerShell(strokeId, audition) {
   const d = S.triggerParams;
   return {
     // ── loop-slot shape: consumed by the seq playback block in grain.js ──
@@ -649,21 +646,8 @@ function _newTriggerShell(strokeId, audition, auditioned = false) {
     // fire runs at: _onEnter rewrites `direction` on every fire, and the
     // lens's `start: ends` flips it at the tail, so the baked value needs a
     // field of its own that nothing rewrites.
-    // AUDITIONED TAKES ARE LIVE (Ek, 2026-09-22: "that includes loops now, if we
-    // audition a loop thing we should be able to change any parameter and it
-    // will affect all auditioned loops painted on the sphere"). `_live` is the
-    // same signal the grain side reads — `S._handTile().live`, true only while
-    // the bench is sounding — and `_applyLiveParams` below refreshes the baked
-    // half for these takes on every fire. NOTE the name: `_audition` already
-    // means something else in this file (fire once, right after recording), so
-    // this cannot borrow it.
-    // FROM THE STROKE, NOT FROM THE HAND (2026-09-22). This read
-    // `S._handTile()?.live`, which is the right question asked far too late: a
-    // take is armed from `whenSealed`, after the play has ended and the hand is
-    // null, so it was false for every auditioned take and this whole mechanism
-    // was dead. The fact is stamped on the stroke where it begins
-    // (ui-samples.js `recordStrokeStart`) and carried here.
-    _live:         !!auditioned,
+    // (`_live` — an auditioned take whose baked half followed the sheet — went
+    //  2026-09-24. No take is live; AUDITION is the cursor's, `_applyAudition`.)
     reverse:       !!d.reverse,
     direction:     d.reverse ? -1 : 1,
     pitch:         d.pitch ?? 0,      // cents, applied offline (js/tape-pitch.js)
@@ -1181,7 +1165,38 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
     const tg = t.trigger;
     if (!tg || !t.particles.length) continue;
 
-    _applyLiveParams(t, tp);
+    _applyAudition(t, tp, _claimed);
+    // The claim's EDGES. Released — a pin lifted or undone — is the one the
+    // gate has to act on itself: the cursor may be sitting on the stroke, and
+    // an enter it will never see again (2026-09-24 night, below).
+    const _isClaimed = !!(_claimed && _claimed.has(t.strokeId));
+    const _released  = !!t._claimedWas && !_isClaimed;
+    t._claimedWas = _isClaimed;
+    // …and the EYE's edges, for a LOOPING take only (Ek, 2026-09-24 night:
+    // cursor mute and unmute over a dwell:loop take "doesn't start or stop the
+    // loop as expected"). `liveL` is the cursor reading this list at all — the
+    // eye on, and scope not excluding it — and it gated only the ENTER: a take
+    // already playing kept playing under a muted cursor, and unmuting over it
+    // found `_inside` already true, so nothing fired. Under `dwell: loop` the
+    // loop IS the cursor resting on the stroke, so the eye shutting is its
+    // exit and the eye opening its enter. Under the other dwells the 09-23
+    // ruling stands — THE CAP IS NOT A MUTE: a one-shot already sounding plays
+    // on, and uncapping on top of a stroke does not bang it.
+    // A walker's dwell is grain's (`S.grainTrigger`), a take's is tape's.
+    const _dwellNow = t.walk ? S.grainTrigger?.dwell : tp.dwell;
+    const _eyeEdges = _dwellNow === 'loop';
+    const _wasLive  = t._liveWas === undefined ? liveL : t._liveWas;
+    const _wentDead = _eyeEdges && _wasLive && !liveL;
+    const _wentLive = _eyeEdges && !_wasLive && liveL;
+    t._liveWas = liveL;
+    // …and DWELL's edge into `loop` (2026-09-24 night, the same review): a
+    // cursor resting on a silent stroke when dwell becomes `loop` is resting
+    // on something that should now be looping — the enter it would get by
+    // arriving. Out of `loop` needs nothing: `_applyAudition` opens the
+    // running node's loop flag, and the pass ends on its own.
+    const _wasDwell = t._dwellWas === undefined ? _dwellNow : t._dwellWas;
+    const _dwellToLoop = _wasDwell !== 'loop' && _dwellNow === 'loop' && !t.playing;
+    t._dwellWas = _dwellNow;
 
     // A claim landing on a SOUNDING trigger stops it (2026-08-28): the loop
     // is now that stroke's voice, and with enter/exit actions suppressed
@@ -1203,6 +1218,7 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
         tg._inside = false;
         if (!(_claimed && _claimed.has(t.strokeId))) _onExit(t);   // the exit acts capped too
       }
+      if (_released) t._phaseAnchor = null;   // nobody here to take the loop's phase
       continue;
     }
 
@@ -1240,10 +1256,25 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
     //    exactly what a turntable held near a bearing does.
     const insideNow = bestD2 < (tg._inside ? chordExit2 : chordEnter2);
     const readable = liveL && !(_claimed && _claimed.has(t.strokeId));
+    if (_released && !(insideNow && tg._inside && liveL)) t._phaseAnchor = null;   // a handed-over phase nobody takes
 
     if (insideNow && !tg._inside) {
       tg._inside = true;
       if (readable) _onEnter(t, bestIdx, nowMs);
+    } else if (insideNow && tg._inside && (_released || _wentLive || _dwellToLoop) && readable) {
+      // THE CLAIM LIFTED, OR THE EYE OPENED, UNDER A CURSOR ALREADY ON THE
+      // STROKE (Ek, 2026-09-24 night): `_inside` never dropped while the loop
+      // owned the stroke or the eye was shut, so there was no enter edge to
+      // fire on and the take sat silent until the cursor left and came back.
+      // The release, or the unmute, IS the edge. With a loop's clock handed
+      // over (`_phaseAnchor`, ui-presets.js removePinSlot) the pass starts
+      // where the loop was, not from the top.
+      _onEnter(t, bestIdx, nowMs);
+    } else if (insideNow && tg._inside && _wentDead && !_isClaimed) {
+      // THE EYE SHUT under a cursor on the stroke: the exit it will not get
+      // by geometry — the take stops by the tape's release rule, as if the
+      // cursor had left.
+      _onExit(t);
     } else if (!insideNow && tg._inside) {
       tg._inside = false;
       if (!(_claimed && _claimed.has(t.strokeId))) _onExit(t);   // the exit acts capped too
@@ -1313,54 +1344,83 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
  * the block below refreshes it from the live params on every fire. Auditioning
  * is the one act that never freezes anything — see brush-voicing.js.
  */
-// (`S._liveTakeStrokes` lived here for a few hours on 2026-09-22, to ring an
-// auditioned loop the way a grain mark was ringed. Both rings are gone — see
-// renderer.js. `t._live` stays: it is what `_applyLiveParams` refreshes.)
-
-function _applyLiveParams(t, tp) {
-  // AN AUDITIONED TAKE HAS NO BAKED HALF. Everything a fire reads off the shell
-  // is refreshed from the live block first, so moving the tape sheet moves every
-  // auditioned loop on the sphere at once — the tape half of the same ruling the
-  // grain side gets from its live voicing.
-  //
-  // `pitch` is NOT here and cannot be: it is applied OFFLINE (js/tape-pitch.js
-  // stretches the region once through a Worker), so following it live would mean
-  // re-rendering the take on every knob move. Speed, direction and level are
-  // read at the fire, so they follow for free.
-  if (t._live) {
-    const d = S.triggerParams;
-    t.speed   = d.speed ?? 1.0;
-    t.reverse = !!d.reverse;
-    // `direction` AND `pitch`, not just `reverse` (2026-09-22). grain.js cuts
-    // the region from these two — `seq.direction === -1` for the reversed copy,
-    // `pitchRatio(seq.pitch)` for the stretched one — and neither was refreshed
-    // here. So a live take's reverse reached a field nothing cuts from, and its
-    // pitch reached nothing at all: exactly what Ek saw, "pitch doesn't work.
-    // reverse only works when i retrigger", because `_onEnter` rewrites
-    // `direction` on every fire and a retrigger was the only thing that did.
-    t.direction = d.reverse ? -1 : 1;
-    t.pitch     = d.pitch ?? 0;
-    if (t.grainParams) t.grainParams.volume = d.volume ?? 1.0;
+// ── AUDITION IS THE CURSOR'S (Ek, 2026-09-24) ──────────────────────────────
+// A take's speed, direction, pitch and level are BAKED at the arm and never
+// rewritten. With `S.auditionMode` on, a take the CURSOR fires plays with the
+// live tape sheet's values instead — the pedal heard on what is already there
+// — and the moment the switch goes off it plays as baked again. The baked
+// half is kept on the shell (`_baked`, taken the first time this runs, which
+// is before any override), and the working fields everything reads are set
+// from one side or the other each tick. A stroke CLAIMED by a pinned loop is
+// never overridden: audition does not reach a pin.
+//
+// Speed and level ramp on the pass that is sounding — ramped rather than
+// stepped because a jump in either is a click. `pitch` and `reverse` cannot:
+// both are baked into the REGION COPY the source plays (a reversed cut, or
+// one stretched offline by js/tape-pitch.js through a Worker), so they land
+// at the next fire — and, for a pass under `dwell: loop`, at the next loop
+// seam once the stretched copy is in hand (grain.js `_liveRecutReady`).
+function _applyAudition(t, tp, claimed) {
+  const b = t._baked || (t._baked = { speed: t.speed, reverse: t.reverse, pitch: t.pitch,
+                                       volume: t.grainParams?.volume ?? 1 });
+  const live = !!S.auditionMode && !(claimed && claimed.has(t.strokeId));
+  const d = live ? S.triggerParams : b;
+  const speed = d.speed ?? 1.0, reverse = !!d.reverse, pitch = d.pitch ?? 0, volume = d.volume ?? 1.0;
+  if (t.speed !== speed) {
+    // KEEP THE PLAYHEAD CONTINUOUS ACROSS THE SPEED CHANGE (Ek, 2026-09-24
+    // night: audition off "takes a few times looping before it reverts back
+    // … only when both speed and pitch are different"). Every playhead read —
+    // the marker, the tail, and the loop-WRAP counter that decides when a
+    // pitch or reverse recut may happen (grain.js) — is
+    // `(now − _startedAt) · |speed| mod loopLen`, with the speed as it is NOW.
+    // Change the speed and that product jumps: faster, and the wrap index
+    // leaps ahead (a fake seam, an instant mid-pass recut — which is why
+    // switching audition ON with a faster speed felt immediate); slower, and
+    // it falls BEHIND the count already reached, so no wrap is seen until
+    // wall time catches up — several loops for a 4× drop — and the pitch
+    // recut back to baked waited exactly that long. Re-anchor `_startedAt`
+    // so the buffer-seconds already run are expressed at the new speed, the
+    // same move `_regionChanged` makes when the region moves under a pass.
+    const src0 = t._sourceNode, actx0 = S.audioCtx;
+    if (src0 && !src0._stopped && t._startedAt && actx0) {
+      const now = actx0.currentTime;
+      const ran = (now - t._startedAt) * Math.abs(t.speed || 1);
+      t._startedAt = now - ran / Math.abs(speed || 1);
+    }
+    t.speed = speed;
   }
+  // `direction` follows `reverse` only when reverse itself moves: the lens's
+  // `start: ends` flips direction at the tail, and a per-tick rewrite would
+  // undo it mid-pass.
+  if (t.reverse !== reverse) {
+    t.reverse = reverse; t.direction = reverse ? -1 : 1;
+    // A reversed CUT under a pitch needs its own stretch: start it now, as a
+    // pitch move does, so the seam finds it ready (2026-09-24).
+    if (pitch) S._prepareTapePitch?.(t);
+  }
+  if (t.pitch !== pitch) {
+    t.pitch = pitch;
+    // START THE STRETCH NOW, not at the seam (Ek, 2026-09-24 night: "the pitch
+    // shift for tape when on audition seems to take a few loop rounds to work,
+    // sometimes not"). The recut happens at the loop seam and needs the
+    // stretched copy in hand, but the copy was only ASKED for at a seam
+    // (grain.js `_liveRecutReady`) — so the earliest it could land was the
+    // second seam after the knob moved, and a knob still moving at the first
+    // pushed it further. Asking here, the moment the number changes, means
+    // the worker runs during the pass and the first seam usually takes it.
+    // Cached on the region and the ratio, so a knob that settles costs one job.
+    S._prepareTapePitch?.(t);
+  }
+  if (t.grainParams && t.grainParams.volume !== volume) t.grainParams.volume = volume;
   const src = t._sourceNode;
-  if (!src || src._stopped) return;
-
+  if (!src || src._stopped) { t._wasLive = live; return; }
   const wantLoop = tp.dwell === 'loop';   // 'grain' fires once and opens up
   if (src.loop !== wantLoop) src.loop = wantLoop;
-
   // AND THE PASS THAT IS SOUNDING FOLLOWS (Ek, 2026-09-22: "i set the dwell to
   // be on loop … the loop should auto update either live or at the next loop").
-  // Everything above refreshes the SHELL, which the next fire reads — and a
-  // take under `dwell: loop` has no next fire: one source node keeps going, so
-  // a knob moved while it played reached nothing at all until it was retriggered.
-  // Speed and level are the two that can move on a running node, so they do,
-  // ramped rather than stepped because a jump in either is a click.
-  //
-  // `reverse` and `pitch` cannot: both are baked into a REGION COPY when the
-  // source is built (grain.js — a reversed cut, or one stretched by the pitch
-  // ratio), so following them live would mean re-cutting the buffer under the
-  // playhead. They land at the next fire, as they always have.
-  if (t._live) {
+  // While auditioning, and on the tick the switch goes off, so a running pass
+  // returns to its baked speed and level too.
+  if (live || t._wasLive) {
     const actx = S.audioCtx;
     if (actx) {
       const rate = Math.abs(t.speed || 1) * (src._pr ?? 1);
@@ -1372,8 +1432,8 @@ function _applyLiveParams(t, tp) {
         g.gain.setTargetAtTime(vol, actx.currentTime, 0.01);
     }
   }
+  t._wasLive = live;
 }
-
 function _onEnter(t, nearestIdx, nowMs) {
   const tg = t.trigger;
   // WHOSE ARRIVAL RULES (2026-09-22). A walking grain stroke answers grain's,

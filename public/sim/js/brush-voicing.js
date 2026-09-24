@@ -15,10 +15,12 @@
 // moving under you. The cost is that the grain panel shows the SELECTED brush
 // rather than what the cursor is currently hearing — see the TODO item.
 //
-// AUDITIONED paint is the one exception, and the PRESS declares it (2026-09-22,
-// see "Auditioned paint" below): a tool being AUDITIONED owns ONE voicing, every stroke
-// it paints points at it, and the brush's knobs keep moving those strokes for
-// for as long as it exists. Paint made by PLAYING is frozen at the stroke.
+// NO EXCEPTION ANY MORE (2026-09-24). Live material — one shared voicing per
+// auditioned tool, moved by the knobs — is gone. AUDITION is the CURSOR's:
+// with `S.auditionMode` on, the cursor plays whatever it reads through the
+// live block (voicing 0) instead of each mark's own, and nothing is
+// rewritten (grain-worklet-bridge.js `_voiceOf`, trigger.js `_applyAudition`).
+// Every mark on the sphere is baked, always.
 //
 // ── What a voicing is ───────────────────────────────────────────────────────
 //
@@ -119,7 +121,6 @@ export function resolveGrainParams() {
 // The field order above is fixed, so JSON.stringify of the block is a stable
 // intern key. Built once per STROKE — never per particle and never per tick.
 function _key(tile, params) { return tile + ' ' + JSON.stringify(params); }
-function _liveKey(tile) { return 'live ' + tile; }
 // ── Where a grain is loudest (Ek, 2026-09-02) ───────────────────────────────
 // A live mark is a POINT in the take — its colour and size describe that
 // instant — and the grain it fires starts THIS far before it, so the point
@@ -190,40 +191,27 @@ export function voicingById(id) {
 
 /**
  * The voicing a stroke starts on, for the brush in the hand. Called at STROKE
- * START. Dry: interned on tile + the live block, created if this exact block
- * has not been painted with before. Live: the ONE voicing this tile owns, its
- * params brought up to the live block, created on its first auditioned stroke.
+ * START and per deposit: interned on tile + the live block, created if this
+ * exact block has not been painted with before.
  */
-export function voicingFor(tile, label, live = false) {
+export function voicingFor(tile, label) {
   ensureVoicings();
   const params = resolveGrainParams();
   tile = tile || '?';
-  if (live) {
-    const own = S.voicings.find(v => v.live && v.tile === tile);
-    if (own) {
-      for (const k of Object.keys(params)) own.params[k] = params[k];
-      S._voicingChanged?.(own.id);
-      return own.id;
-    }
-    S.voicingSeq = (S.voicingSeq || LIVE_VOICING) + 1;
-    S.voicings.push({ id: S.voicingSeq, key: _liveKey(tile), tile, label: label || tile, params, live: true });
-    return S.voicingSeq;
-  }
   const key = _key(tile, params);
-  const hit = S.voicings.find(v => !v.live && v.key === key);
+  const hit = S.voicings.find(v => v.key === key);
   if (hit) return hit.id;
-
   S.voicingSeq = (S.voicingSeq || LIVE_VOICING) + 1;
-  S.voicings.push({ id: S.voicingSeq, key, tile, label: label || tile, params, live: false });
+  S.voicings.push({ id: S.voicingSeq, key, tile, label: label || tile, params });
   return S.voicingSeq;
 }
 
-/** The tool that is playing, as tiles.js publishes it: `{ id, label, live }` —
- *  the position that is PLAYING, and null between presses (2026-09-11). Every
+/** The tool that is playing, as tiles.js publishes it: `{ id, label }` — the
+ *  position that is PLAYING, and null between presses (2026-09-11). Every
  *  caller here asks during a stroke, so the fallback is for the edge where
  *  tiles.js has not loaded yet. */
 function _hand() {
-  return S._handTile?.() ?? { id: S.brushKey ?? 'grain', label: '', live: false };
+  return S._handTile?.() ?? { id: S.brushKey ?? 'grain', label: '' };
 }
 
 // ── Re-freezing WHILE the stroke is being painted (Ek, 2026-08-29) ─────────
@@ -240,8 +228,7 @@ function _hand() {
 // change pays for a stringify and a table lookup. Twenty-two numeric compares
 // and no allocation is nothing at deposit rate; an unchanged stroke costs
 // almost exactly what it cost before.
-const _scratch = {};
-let _liveKeys = null, _lastVo = 0, _lastTile = null, _lastLive = false, _lastSeen = null;
+let _liveKeys = null, _lastVo = 0, _lastTile = null, _lastSeen = null;
 
 export function resolveGrainParamsInto(out) {
   const src = resolveGrainParams();
@@ -256,7 +243,7 @@ export function resolveGrainParamsInto(out) {
 export function voicingForCurrentBrushLive() {
   const h  = _hand();
   const p  = resolveGrainParams();
-  if (_lastSeen && h.id === _lastTile && !!h.live === _lastLive) {
+  if (_lastSeen && h.id === _lastTile) {
     let same = true;
     for (const k of _liveKeys) if (p[k] !== _lastSeen[k]) { same = false; break; }
     if (same) return _lastVo;
@@ -264,77 +251,28 @@ export function voicingForCurrentBrushLive() {
   if (!_liveKeys) _liveKeys = Object.keys(p);
   _lastSeen = _lastSeen || {};
   for (const k of _liveKeys) _lastSeen[k] = p[k];
-  _lastTile = h.id; _lastLive = !!h.live;
-  _lastVo = voicingFor(h.id, h.label ?? '', !!h.live);
+  _lastTile = h.id;
+  _lastVo = voicingFor(h.id, h.label ?? '');
   return _lastVo;
 }
 
 /** Stamp the current brush's voicing onto a stroke. Returns the id. */
 export function voicingForCurrentBrush() {
   const h = _hand();
-  return voicingFor(h.id, h.label ?? '', !!h.live);
+  return voicingFor(h.id, h.label ?? '');
 }
 
-// ── AUDITIONED PAINT (Ek, 2026-09-22; was "wet paint", 2026-09-03) ─────────
-// The rule was a per-tool toggle — a brush you had marked owned one voicing,
-// and every stroke it painted shared it, so moving a knob moved all of them.
-// The toggle is gone and the mechanism stays, because the mechanism was always
-// the good part. What declares it now is HOW THE PAINT WAS MADE:
-//
-//     Anything placed while AUDITIONING is live, by definition. Anything placed
-//     by PLAYING freezes at the stroke, and the pin is where it freezes.
-//
-// That is Ek's ruling of 2026-09-22 — "anything placed on the world with
-// audition tile should by definition be always live … let's sunset the term live
-// and the concept" — and it is the same model the pin already states: paint is
-// live until you fix it, and auditioning is the one act that never fixes it.
-// The bench is where you are BUILDING a tool, so its marks have to follow the
-// numbers you are building with; the moment you play the tool for real, from
-// the spacebar or a key, what you paint is what you heard.
-//
-// It covers TAPE as well as grain (Ek, same ruling): audition a loop, move any
-// parameter, and every auditioned loop on the sphere moves with it.
-//
-// Nothing is heard "through" anything: the live voicing's params ARE the live
-// block, and the marks read it where they sound. Nothing DRAWS liveness since
-// 2026-09-22: it was worth a ring while it was declared by a gesture and so
-// invisible, and it stopped being worth one the moment AUDITION became a switch
-// you can see at the top of the rail.
-
-/** Bring the playing tool's LIVE voicing up to the live block. Called from the
- *  scheduler-side candidate post every 20 ms, so a pot, an OSC value or a
- *  sheet row moves the strokes within a tick; allocation-free, ~22 compares
- *  when nothing has moved. Returns the voicing id it changed, or 0. */
-export function syncLiveVoicing() {
-  // LIVENESS IS THE VOICING'S, NOT THE HAND'S. This asked the hand, which is
-  // null between presses, so a knob moved AFTER the audition ended reached
-  // nothing and the marks sounded exactly as they had (Ek, 2026-09-22:
-  // "none of the stuff changes when i retrigger an audition line. same with
-  // audition-based grains").
-  //
-  // Which tile's live voicing follows the block depends on what owns the block:
-  //   auditioning        — the bench's tool owns it, and that is `h.id`
-  //   a position playing — that tool owns it, so nothing here may move
-  //   nothing playing    — the BENCH owns it, because benching applies it
-  const h = S._handTile?.();
-  const tile = h ? (h.live ? h.id : null) : S._benchTileId?.();
-  if (!tile) return 0;
-  const v = S.voicings?.find(x => x.live && x.tile === tile);
-  if (!v) return 0;
-  resolveGrainParamsInto(_scratch);
-  let same = true;
-  for (const k of _liveKeys) if (_scratch[k] !== v.params[k]) { same = false; break; }
-  if (same) return 0;
-  for (const k of _liveKeys) v.params[k] = _scratch[k];
-  S._voicingChanged?.(v.id);
-  return v.id;
-}
-
-// (`liveVoicingIds` is gone, 2026-09-22 — the renderer's ring was its only
-// caller, and the ring went with it. Liveness is still a property of the
-// voicing and still makes its params follow; it is just not drawn, because
-// AUDITION is a mode you can see in the rail.)
-
+// ── AUDITION IS THE CURSOR'S (Ek, 2026-09-24) ──────────────────────────────
+// "The sheet is the guitar pedal: whatever it reads gets baked in. The cursor
+// is the monitor, read only. Audition should not change what's baked." So
+// there is no live material: the auditioned-paint mechanism (2026-09-03 as
+// wet paint, 2026-09-22 as audition) — one shared voicing per tool, moved in
+// place by `syncLiveVoicing` every 20 ms, `freezeVoicing` at the pin — is
+// gone. With `S.auditionMode` on, the CURSOR posts every candidate on
+// voicing 0, the live block, and hears the pedal on whatever it reads; a
+// pinned cloud's own playback is untouched, and so is every mark.
+// (`voicingForCurrentBrushLive` above is still the per-deposit stamp: riding
+// a knob while painting bakes a gradient along the stroke, mark by mark.)
 /** One-shot key migrations for a stored grain block. Read old key → write new
  *  → delete old; never a fallback at read time, or the old name lives forever.
  *  v14 (2026-09-07): `filterQ` was one number for both corners and became
@@ -357,21 +295,6 @@ export function migrateBlockKeys(p) {
   return p;
 }
 
-/** FREEZE a tool's auditioned strokes where they sound: its live voicing
- *  becomes an ordinary frozen block. Nothing calls this from a button any more
- *  — the toggle is gone — and it is kept because the PIN is a freeze and will
- *  want it: a pin press or a session import can end a voicing's
- *  liveness without touching what it sounds like. Returns how many froze. */
-export function freezeVoicing(tile) {
-  let n = 0;
-  for (const v of ensureVoicings()) {
-    if (!v.live || v.tile !== tile) continue;
-    v.live = false; v.key = _key(tile, v.params); n++;
-  }
-  if (n) { S._voicingChanged?.(0); _lastSeen = null; }
-  return n;
-}
-
 // ── Persistence (session file, EXPORT_VERSION 8) ─────────────────────────────
 // Same shape of contract as layers (§ E10 of the export audit): music, not rig,
 // so session-only. Unlike layers this has no ordering hazard — nothing assigns
@@ -379,9 +302,7 @@ export function freezeVoicing(tile) {
 // live params until the table arrives. Restored early anyway, alongside them.
 
 export function exportVoicings() {
-  // `live` written only when true, like `trig` on a particle.
-  return { list: ensureVoicings().map(v => ({ id: v.id, tile: v.tile, label: v.label, params: v.params,
-                                             ...(v.live ? { live: true } : {}) })),
+  return { list: ensureVoicings().map(v => ({ id: v.id, tile: v.tile, label: v.label, params: v.params })),
            seq: S.voicingSeq ?? LIVE_VOICING };
 }
 
@@ -406,17 +327,14 @@ export function restoreVoicings(spec) {
     // A renamed tile (tiles.js _RENAMED_TILES) keeps its voicings under its new name.
     const named = typeof v.tile === 'string' ? v.tile : (typeof v.brushKey === 'string' ? v.brushKey : '?');
     const tile = S._migrateTileId ? S._migrateTileId(named) : named;
-    // Liveness no longer depends on a tool's state — no tool has one (the wet
-    // toggle went, 2026-09-22). A voicing that was live when the file was
-    // written comes back live, one per tile; the second one freezes, with the
-    // sound the file gave it.
-    const live = !!v.live && !list.some(x => x.live && x.tile === tile);
+    // A file written before 2026-09-24 may mark a voicing `live`; it comes
+    // back frozen with the sound the file gave it — nothing is live now.
     // Re-intern on the stored params so dedup keeps working after import:
     // painting again with the same brush and the same knobs must land on the
     // restored voicing rather than minting a duplicate beside it.
     const params = migrateBlockKeys({ ...resolveGrainParams(), ...v.params });
     list.push({ id, tile, label: typeof v.label === 'string' ? v.label : tile,
-                params, live, key: live ? _liveKey(tile) : _key(tile, params) });
+                params, key: _key(tile, params) });
   }
   _lastSeen = null;
   S.voicings = list;
@@ -453,6 +371,5 @@ export function voicingFromLegacyPatch(patch, label) {
 
 S._voicingForCurrentBrush = voicingForCurrentBrush;
 S._voicingById            = voicingById;
-S._syncLiveVoicing        = syncLiveVoicing;
 S._peakOffsetForVoicing   = peakOffsetForVoicing;
 S._grainPeakOffsetS       = grainPeakOffsetS;

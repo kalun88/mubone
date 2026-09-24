@@ -3574,3 +3574,150 @@ it began; git dates the commits Sep 21. The day is the same work either way.)*
   `fill` switch, `grainKAllMode`, `kAllSeg`, `k_all` / `/search/fill` and the frames' `kAllMode` deleted; the
   scheduler, renderer, HUD, sheets and four audits read `k === 0`. Nothing stored moves — the lens block
   is session-only. Ruling in RULINGS "k is one slider, and zero is all".
+- [x] **The grain sheet, simplified** (2026-09-24, Ek: "any way we can simplify the grain sheet?") — the
+  PITCH heading is gone (pitch · octave · direction are GRAIN rows); the caption under the envelope drawing
+  is gone; the filter's switch is on the FILTER heading (`filterHead`, `.ds-sec-h--sw`, the same
+  `data-swproxy` write-through; `engine-audit` finds it there); `cutoff ±` is the band on the cutoff row
+  (`VAR_OF`); OUTPUT is `prob · vol · spread`; `_NOOP_AT_DEFAULT` dimming deleted (prob read lighter). Measured
+  on a private instance: switch and heading text share a centre (541.0 / 540.95), toggle drives the seg both ways.
+- [x] **Slope on the curve row** (2026-09-24, Ek: "taper should be called slope … just the percent on the
+  right side of the curve param line") — `fade`'s label is `slope` (tiles.js, midi.js), its row is gone and its
+  `.prow-v` cell ends the CURVE row; `.prow--seg:has(> .prow-v)` gives that row the value column; `engine-audit`'s
+  track floor 30 → 26. Measured: the percent's right edge is the sheet's (656.6), typed 30 % lands at 0.3, double-click resets.
+- [x] **Filter off is shut, and the default** (2026-09-24, Ek: "when the filter is off, also collapse the section, by
+  default the presets should have filter off") — the FILTER section renders heading + switch only while off
+  (`.ds-sec--shut`, tiles.js), the press reopens it through `render()`; both grain seeds carry `flt: 'off'`; a
+  one-shot (`mubone_voice_filter`) sets `flt: 'off'` on every stored grain voice, keeping type/cutoff/res;
+  `engine-audit` opens the shut section before walking rows. Measured: shut 43.8 px, open 218.2 px, seg follows both ways.
+- [x] **Voice presets are recalls, one sheet per engine** (2026-09-24, Ek: "pressing the preset just moves the
+  sliders on the main sheet") — the tab's VOICE line carries `+` and the engine's door; the sheet is headed
+  `GRAIN · voice`, no name, no del; preset rows recall (`applyVoice`), wear a RING when the live block has moved
+  off them, and carry their own `×` (disabled on the last); an edit is stored under the TOOL (`shapeSheetPids` =
+  whole block, `_persists` + tape, both tools applied at boot), never in a preset; the press plays the live block
+  (`_playDown` re-applies nothing, hand stores `{id}`). `engine-audit` § A/§ D rewritten, 33 ok. Ruling in RULINGS.
+- [x] **The engine sheet is content-height** (2026-09-24, Ek: "it should go from top to the bottom of the content
+  so i can see what's beneath it") — `body.prail-open.engine-page .tc-prail` is `align-self: start; max-height: 100%`
+  with a bottom rule (style.css); taller than the stage it still scrolls. Measured: grain 602.8 px, tape 248.4 px
+  against a 729.2 px stage, scrollHeight = clientHeight on both.
+- [x] **Factory presets cannot be deleted** (2026-09-24, Ek: "don't allow the deleting of factory presets (remove the x)")
+  — the seed writes `factory: true`, a one-shot (`mubone_voice_factory`) flags stored presets by the seed's names,
+  `voiceRow` draws no × for them and `deleteVoice` refuses; the "last one stays" mark is gone with the case. Probed:
+  wash · glitch draw no ×, a `+` preset draws one and deletes; all four seeds flagged on a fresh profile.
+- [x] **Preset rows are words alone** (2026-09-24, Ek: "remove the half moon dot design … we don't need the bullet
+  dot") — `trow--radio` and the dot svg are off voice rows (`G.voice` / `G.voiceEdited` gone); ON means the live
+  sliders ARE the preset, an edit turns every row off, `.edited` stays as the audit hook; `.trow--voice` steps back
+  2px so the word shares the labels' left edge (measured 25 = 25); ON is a plain raised ground, no edge line (Ek).
+- [x] **Factory presets keep their names** (2026-09-24, Ek) — `_openRename` and `renameVoice` refuse a `factory` voice,
+  its row's title drops "double-click to rename". Probed: double-click on wash opens nothing, the API returns false,
+  a `+` preset still opens its name field.
+- [x] **Audition is the cursor's** (2026-09-24, Ek: "the sheet is the guitar pedal … the cursor is the monitor, read
+  only … audition should not change what's baked") — `S.auditionMode` = the cursor plays what it reads through the
+  live block: `_voiceOf` posts voicing 0 on the cursor paths (bridge), `_applyAudition` reads the live tape sheet for a
+  cursor-fired take with the baked half kept on the shell (trigger.js); never a pin. The switch moved to the CURSOR
+  section; live material (`syncLiveVoicing`, `freezeVoicing`, `auditioned` stamp, `_live`, `handTile.live`) deleted.
+  `pins-audit` § L rewritten, § J2 inverted; TODO "A better system for audition" closed. Ruling in RULINGS.
+- [x] **Auditioned loop follows pitch and reverse at the seam** (2026-09-24, Ek: "pitch in the tape sheet doesn't
+  work in audition mode") — `_liveRecutReady` (grain.js) was gated on `_live`, which nothing sets since audition
+  became the cursor's; it now recuts whenever the node no longer matches the shell, which only `_applyAudition`
+  moves, both ways. Speed and level still ramp on the running node; pitch and reverse land at the next fire or seam.
+- [x] **The hand tile says the preset or `custom`** (2026-09-24, Ek: "the tile needs to properly reflect the preset or
+  no preset") — `_handVoiceWord`: the preset's name while the live block is that preset, `custom` once it has moved off
+  it (Adobe's and Apple's word; not "live"); `_refreshVoiceMarks` rewrites the tiles' line after every capture, the
+  hand tile carries `data-eng`. Probed: wash → custom on a typed edit, wash again when the pot returns to 0, glitch on recall.
+- [x] **Audition wears headphones** (2026-09-24, Ek: "a special cursor design for audition when it's on, and also the
+  flag on the palette bar for the cursor tile") — `G.audition` (tiles.js): a band and two cups; the CURSOR tile wears it
+  as a sticker (`.tile-aud`, the pin's disc, the eye's white) while `S.auditionMode` is on, and the reticle draws the
+  same band over its top with a cup at each end, 6 px outside the arm tips, in the tangent frame (renderer.js
+  drawCursor). Measured: sticker 18.4 px at the tile's top-right, −4/−4 like the pin's.
+- [x] **An auditioned loop's pitch lands at the first seam** (2026-09-24, Ek: "takes a few loop rounds to work,
+  sometimes not") — `_applyAudition` calls `S._prepareTapePitch` the moment the pitch number moves, so the worker
+  stretches during the pass instead of being asked at a seam; the recut still takes the seam (grain.js). Not rig-probed.
+- [x] **A is audition's key** (2026-09-24, Ek: "make A the keybind default for audition") — seeded into `mubone_key_map`
+  when absent beside the hand's spacebar (`HAND_FACTORY_KEYS`, midi.js), the action's factory key is `a`; the bench
+  play `A` carried (`auditionDown`/`Up`, `BENCH_POS`, `benchVerb`, `_downAuditionKey`, the KeyA swallow) and the last
+  reserved key are gone. Probed on a fresh profile: seeded, one tap on → row lit and sticker on, a second tap off.
+- [x] **The wrap counter survives a speed change** (2026-09-24, Ek: audition off "takes a few times looping before it
+  reverts back … only when both speed and pitch are different") — `_applyAudition` re-anchors `t._startedAt` when the
+  speed moves on a running pass, so `(now − _startedAt)·|speed|` is continuous and the loop seam is seen on time;
+  before, a speed drop pushed the wrap index behind the count already reached and the pitch recut waited it out.
+- [x] **The eye off is struck through** (2026-09-24, Ek: the lit / unlit cursor tile "is not obvious enough … like when
+  the speaker is muted it's an actual x icon") — the unpin glyph's slash: on the cursor tile (`.lens-slash`, shown by CSS
+  while not `.on`, so the 5 Hz class sync moves it) and across the reticle, corner to corner through the centre, when
+  `scanMuted` (renderer.js). Probed: slash hidden on, shown off, class-synced without a render.
+- [x] **One stretch in flight per slot, the seam takes the freshest** (2026-09-24, Ek: the pitch slider under audition
+  "seems even to wait for me to release my click if i'm dragging slowly") — tape-pitch.js: a slot's state is
+  `{ want, inflight, done }`; a new ratio while one runs only moves `want`, the landed result is kept as `done`
+  whatever its ratio, and `want` goes next. `_liveRecutReady` asks `stretchFresh` (anything landed fresher than the
+  node), the builder plays the freshest and stamps `_pr` with its ratio (`stretchRatio`). Not rig-probed.
+- [x] **Audition opens the drawer** (2026-09-24, Ek: "audition should open the drawer automatically, and it stays open
+  even if i turn off audition so it's a manual escape") — `setAudition` (tiles.js) is every door's setter (row, A,
+  action, OSC): ON opens the voice sheet of the engine last played (`_lastPlayedEng`, stamped in `_playDown`; the
+  open tab, then the press hand, failing that), tab and drawer together; OFF leaves it. Probed from the A key.
+- [x] **The mute slash rises to the right on both** (2026-09-24, Ek: "should be the same direction") — the reticle's
+  slash is drawn in screen space, not the tangent frame: a slash is chiral and the frame mirrors x where the projection
+  does, so it read "\" at the probe's cursor while the tile's is "/". Screen space makes it "/" everywhere.
+- [x] **A loop pin carries the take's speed and level** (2026-09-24, Ek: a fast take pinned "sounds like one of the
+  params slowed down") — `speed` and `volume` came from `commitLoopParams`, the cabinet's loop dials, while direction and
+  pitch came from the take (ui-presets.js, both mints); all four are the take's now, the tape sheet then the dials as
+  fallbacks for a stroke never armed. Under audition the pin freezes what you hear, as the ruling says.
+- [x] **A pin under audition keeps the sound you were hearing** (2026-09-24, Ek: "if i like what i'm hearing i can pin
+  that sound, it shouldn't flip back to the baked-in sound") — a cloud pinned while `S.auditionMode` carries `voicing`, one
+  copy of the live block interned by `voicingFor('granular','audition')`; the seed post carries it and the bridge posts
+  every mark under the cloud on it (`sd.voicing`). Tape already froze the take's working numbers, live under audition.
+  pins-audit § J2 gains the frozen-voicing check.
+- [x] **A pin continues the take's phase, and an unpin hands it back** (2026-09-24, Ek: pinning a looping take "restarts
+  … it should just continue"; after undo "the stroke doesn't play until i move the cursor away and back") — the loop
+  mint takes `_phaseAnchor = trigger._startedAt` when the take is sounding (ui-presets.js); `removePinSlot` hands the
+  loop's `_startedAt` back to the trigger as a one-shot anchor; the gate treats a claim's release under a resting cursor
+  as the enter edge and refires (`_claimedWas` / `_released`, trigger.js), clearing the anchor if nobody is there.
+- [x] **Muting the eye over a LOOPING take is its exit, unmuting its enter** (2026-09-24, Ek: "when i cursor mute it
+  doesn't start or stop the loop") — the gate tracks `liveL`'s edges per trigger (`_liveWas`, trigger.js) under
+  `dwell: loop` only: shut over the stroke → `_onExit` (the tape's release rule), opened over it → `_onEnter`. The
+  09-23 cap-is-not-a-mute rule stands for the other dwells; trigger-audit gains the two loop checks.
+- [x] **The other resting-cursor edges** (2026-09-24, Ek: "check any other cases like this with cursor on off and playback
+  and undo") — the eye's edges cover grain WALKERS under grain dwell:loop too (`S.grainTrigger.dwell`); DWELL turning
+  to `loop` under a resting cursor is an enter (`_dwellWas`); a REDONE loop pin picks up the take's clock like the first
+  pin (`restorePinSlot`); trigger-audit's long-failing "undo plays the take first" check was reading inside the rearm
+  window and now steps past it first — the behaviour was right.
+- [x] **Pins carry the audition voicing through the piece file, and the edges are audited** (2026-09-24, Ek: "pins should
+  be saved. take care of adding to the audits") — pins were already in the manifest (`commits`); a cloud's `voicing` now
+  rides with it both ways (piece.js). trigger-audit: scope leaving/returning to tape stops/starts a looping take, redo of
+  an erase takes the take away and a second undo fires it again; pins-audit § O2: a reversed take pinned mid-pass hands
+  its clock, direction and speed to the loop, and undo hands the loop's clock back and resumes the take.
+- [x] **#352 closed by the audition ruling** (2026-09-24) — "wet" is gone and what it asked for is the cursor's: AUDITION
+  is one switch in the CURSOR section (the cursor plays what it reads through the live sheets, nothing is rewritten), and
+  pin-on-end is a MODE per instrument (`autopin`). Nothing per tool carries either. `docs/RULINGS.md` "Audition is the cursor's".
+- [x] **One-word tooltips with the shortcut** (2026-09-24, Ek's item for today) — learn OFF: the control's word and its
+  learned input after 900 ms; learn ON: the long text with the input under it, instantly (`ui-learn.js` `wordFor`,
+  `show`). The registry resolves an element to its action and its bindings (`actionOfElement` / `shortcutOf`, midi.js:
+  `data-action` on the chrome, positions, hand sides, the rows' hooks, `data-pid` on sheet rows). Learn's legend unchanged.
+- [x] **The tooltip's timing and face** (2026-09-24, Ek: "what's the industry standard … it should be faster … can the
+  design be better?") — 500 ms first delay with a 400 ms skip-delay window (ui-learn.js `warmUntil`); drawn flat as the
+  word plus one keycap per input, app ground and the kit hairline, no blur or teal border, fading over --m-touch (style.css).
+- [x] **Reverse under a pitch follows audition** (2026-09-24, Ek: "reverse doesn't work in audition mode … when pitch is
+  not 0") — the seam recut compared only the stretch RATIO; a reverse flip re-cuts the region at the same ratio, so it
+  never looked fresher. The node records its cut (`src._cut`, grain.js) and a new cut's landed stretch recuts it; the
+  stretch starts the moment reverse flips (`_applyAudition`). trigger-audit 135 ok.
+- [x] **The simple tip says only what the screen does not** (2026-09-24, Ek: "if the shorter tooltip is obvious from the
+  text in the GUI it's not needed, unless there's a shortcut … nearest has N … radius has shortcuts") — learn off, a tip
+  with no input whose word is already written at the control is not shown (`wordShown`, ui-learn.js); tab rows carry
+  `data-pid` (tiles.js `perfRow`) and a pid can map to several actions (radius → pot, ↑, ↓; midi.js). Probed.
+- [x] **O is overdub's key** (2026-09-24, Ek) — seeded into `mubone_key_map` when absent beside A and the spacebar (`HAND_FACTORY_KEYS`, midi.js), the action's factory key `o`. Probed on a fresh profile: seeded, tap on, tap off.
+- [x] **Audition is a scratch voice** (2026-09-24, Ek) — ON snapshots both engines' voice pids, tape's `triggerParams` and
+  each preset mark; nothing is saved while on; OFF restores all of it (tiles.js `setAudition`, `_snapVoices`,
+  `_restoreVoices`). The hand tile says `audition`. Keep a sound with `+` or a pin. Probed: glitch + pitch 700 + tape 3×
+  under audition, `+` kept, off → wash, pitch 0, tape 1×, the store never touched. engine-audit 33 ok.
+- [x] **Audition is an A/B** (2026-09-24, Ek) — OFF keeps the scratch voice (`_auditionScratch`), the next ON restores it; session only. Probed through five flips: pitch 0/700 and tape 1×/3× alternate, the store stays at 0.
+- [x] **A cloud keeps its pinned depth** (2026-09-24, Ek) — `recencyN` on the cloud at the pin (ui-presets.js), read by the seed block's pool build (`_depthFor` / `_depthN()`, grain.js), saved in the piece (piece.js). New paint under the cloud takes the top N. pins-audit § N2: 209 ok.
+- [x] **Pinned-depth edge review** (2026-09-24) — walker pins, moving clouds, undo, depth `all`, old pieces, tape strokes, opened strokes, erase all verified fine; two behaviours kept by Ek's call and written into RULINGS: pushed-out strokes go silent, new paint under an audition-pinned cloud takes its audition voice.
+- [x] **The overdub flag is tape pink** (2026-09-25, Ek) — the white override on `.tile-dub svg` removed (style.css); it takes the tile's `--c` like the pin. Read back: both #f2569e.
+- [x] **Depth to 6; when-full in the pinned rail** (2026-09-25, Ek) — depth is 1–6 · all on the cursor and erase tabs
+  (`recencySeg`, `RECENCY_MAX` 6, `/search/recency` clamp, `recency_cc` in sevenths, README). WHEN FULL is a row of the
+  pinned rail's performance block (`#lyrFull`, ui-pins.js), driving the cabinet `#commitOverflowSeg`, whose Settings row
+  is hidden. Probed: depth 5 sets, the row follows the action, fits both rails.
+- [x] **F is follow's key; when-full defaults to old** (2026-09-25, Ek) — `pins_follow` seeded on F beside A and O (`HAND_FACTORY_KEYS`, midi.js); `S.commitOverflow` 'oldest' and the cabinet seg's active button to match. Probed on a fresh profile: F toggles follow both ways, rail and cabinet read old.
+- [x] **Key stickers on performance rows and chrome** (2026-09-25, Ek) — `rowBindHTML` / `_fillRowBinds` (tiles.js) on
+  overdub, audition, radius, mode, follow and the chrome's undo, sweep, erase all, zero, lock, mute; click learns,
+  right-click clears. N, [ ], ⌘Z, M, ` seeded as bindings and removed from events.js; held brackets still repeat.
+  Probed: every sticker's text, N / ] / held [ / M work as bindings, a learn onto audition moves it off A. engine-audit ok.
+- [x] **Unpin all is ↑ extra long; the lock says LOCK** (2026-09-25, Ek) — `commit_clear` seeded on ArrowUp `xlong` (midi.js), its pinned-rail row wears the sticker; the lock button's word is `lock` now that ⌥ is its sticker. Probed: ↑ press unpins one, held past 3 s clears the rest.
