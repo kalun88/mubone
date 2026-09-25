@@ -71,12 +71,6 @@ contextBridge.exposeInMainWorld('electronBridge', {
   sendOSC: (address, values = []) =>
     ipcRenderer.send('osc-send', address, values),
 
-  // Renderer → Main: send outbound real OSC binary to an arbitrary host:port
-  // (js/osc-out.js, for the sensor mapping rows). Distinct from sendOSC above
-  // which targets the local relay in JSON format.
-  sendOSCExternal: (host, port, address, values = []) =>
-    ipcRenderer.send('osc-send-external', host, port, address, values),
-
   // Toggle fullscreen (setFullScreen in electron-main.js). Returns the new
   // state so the renderer can update immediately.
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),

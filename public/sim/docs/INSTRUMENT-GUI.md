@@ -186,10 +186,10 @@ two layout models, and the inline one is the one that broke. Stacking the action
 height and buys a fixed rail height and explicit copy, which matters for a destructive action you
 hit mid-set.
 
-**The pinned rail is a mixer since 2026-09-16** (`docs/RULINGS.md` "the track is its fader"): the
-action rows at its foot (`.trow--act`) are what the strip does not hold — unpin all and mute; pin
-and unpin left the rail on 2026-09-22 night, since the fixed strip holds both, and unmute all on
-2026-09-23 (mute is a toggle that keeps the per-pin flags; M and S clear one at a time) — and the pins themselves are TRACKS — a
+**The pinned rail is a mixer since 2026-09-16** (`docs/RULINGS.md` "the track is its fader").
+Since 2026-09-25 there are no action rows at its foot. **Unpin all** is a row of the top block with a
+24 `.mu-btn` danger button flush right. The mix mute is **ALL**, a third bus under clouds and loops:
+their mean level, and M with no S. The pins themselves are TRACKS — a
 row per pin in three columns (2026-09-23): the number in the engine hue — ringed by the white O
 when it is the loop an overdub would join, the tape tile's overdub flag — then the 32px BOX, the
 fader and only the fader: its fill is the level, the material drawn edge to edge inside it, the

@@ -65,8 +65,10 @@ const ICON = {
   // chrome's own tools pill (#tcTools) drawn at the nav's 16 (Ek, 2026-09-23:
   // "tools doesn't have a glyph in the nav bar for settings it should").
   tools:    '<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M6.5 3.5v9"/>',
-  sensors:  '<path d="M8 2.4 13.6 8 8 13.6 2.4 8Z"/>',
-  mapping:  '<circle cx="4.2" cy="4.6" r="1.7"/><circle cx="11.8" cy="11.4" r="1.7"/><path d="M5.6 5.9 10.4 10.1"/>',
+  // The chrome's own sensor glyph (#tcSensor), its 24 box drawn at the nav's
+  // 16 (Ek, 2026-09-25: "the sensor logo should be the same as the sensor
+  // logo in the chrome"). It was a diamond — a second picture of one thing.
+  sensors:  '<circle cx="8" cy="8" r="1.5"/><path d="M5.2 5.2a3.93 3.93 0 0 0 0 5.6M10.8 5.2a3.93 3.93 0 0 1 0 5.6"/><path d="M3.33 3.33a6.6 6.6 0 0 0 0 9.33M12.67 3.33a6.6 6.6 0 0 1 0 9.33"/>',
   feedback: '<circle cx="8" cy="8" r="5.2"/><circle cx="8" cy="8" r="1.5"/>',
   viz:      '<rect x="2.5" y="2.5" width="11" height="11" rx="1.6"/><circle cx="8" cy="8" r="2.6"/>',
   view:     '<rect x="2" y="3.5" width="12" height="9" rx="2"/><path d="M2 6.6h12"/>',
@@ -111,7 +113,6 @@ const SECTIONS = [
   // instrument sounds, beside Pins, which is what it commits into.
   { id: 'tools',     label: 'Tools',        group: 'sound',   panel: 'setPanelTools' },
   { id: 'sensors',   label: 'Sensors',      group: 'sensor',  modal: 'imuSetupModal', opener: 'imuSetupBtn', closer: 'imuSetupClose' },
-  { id: 'mapping',   label: 'Mapping',      group: 'sensor',  modal: 'sensorMappingModal', opener: 'mappingBtn', closer: 'sensorMappingClose', action: 'sensorMappingAddBtn' },
   { id: 'feedback',  label: 'LED Feedback', group: 'sensor',  modal: 'ledModal', opener: 'ximuLedBtn', closer: 'ledClose', action: 'ledResetBtn' },
   { id: 'viz',       label: 'Visuals',      group: 'view',    modal: 'vizModal', opener: 'vizSettingsBtn', closer: 'vizModalClose' },
   { id: 'view',      label: 'Camera + Display', group: 'view', panel: 'setPanelView' },
@@ -340,7 +341,6 @@ const _PERF_STAT_IDS = ['setViewPerfStat', 'vizPerfStat'];
 function _syncViewSwitches() {
   const set = (id, on) => { const el = document.getElementById(id); if (el && el.checked !== !!on) el.checked = !!on; };
   set('setViewProjector',  S.projectorMode);
-  set('setViewFullscreen', document.body.classList.contains('electron-fullscreen'));
   set('setViewPerfMon',    S.perfMonitorVisible);
   // ui-learn.js is a classic script whose `S` is `window.S || {}` — and
   // nothing sets window.S, so its `S.learnMode` write lands in a private
@@ -353,9 +353,11 @@ function _viewStats(on) {
   if (!on) return;
   const paint = () => {
     _syncViewSwitches();
-    const ms = perf.frameMs || 0;
+    // The draw's COST, not the rAF interval (which reads 60 fps whatever the
+    // frame took, and is what this said until 2026-09-25).
+    const ms = perf.drawMs || 0;
     const txt = ms > 0
-      ? `${ms.toFixed(1)} ms per frame · ${Math.round(1000 / ms)} fps · ${perf.activeNodes || 0} grains`
+      ? `${ms.toFixed(1)} ms to draw a frame (of 33) · ${perf.activeNodes || 0} grains · ${S.particles?.length ?? 0} marks`
       : '—';
     for (const id of _PERF_STAT_IDS) {
       const el = document.getElementById(id);
@@ -478,7 +480,7 @@ export function initSettings() {
     + `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">`
     + `<path d="M2.5 3.5h4A1.5 1.5 0 0 1 8 5v8a1.2 1.2 0 0 0-1.2-1.2H2.5Z"/>`
     + `<path d="M13.5 3.5h-4A1.5 1.5 0 0 0 8 5v8a1.2 1.2 0 0 1 1.2-1.2h4.3Z"/></svg>`
-    + `<span>Cheat sheet</span><i class="set-nav-ext" aria-hidden="true">\u2197</i></a>`;
+    + `<span>Cheat Sheet</span><i class="set-nav-ext" aria-hidden="true">\u2197</i></a>`;
   nav.innerHTML = html;
   nav.addEventListener('click', e => {
     const b = e.target.closest('[data-sec]');

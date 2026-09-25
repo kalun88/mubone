@@ -92,7 +92,6 @@ Open the **audio settings** modal to configure:
 | Sample rate | yes | yes | 44100 / 48000 / 96000 Hz — applies immediately on change |
 | Buffer size | yes | yes | 128 / 256 / 512 / 1024 frames |
 | Speaker sweep | yes | yes | White noise through each output channel in sequence |
-| Handsfree mode | yes | yes | Auto-recording via input gate with attack/hold/release envelope |
 
 ---
 
@@ -120,7 +119,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 
 | Address | Args | Description |
 |---|---|---|
-| `/sensor/{name}/quaternion` | `f f f f` | Sensor quaternion `[qx, qy, qz, qw]` — slot registers on first receipt, role (cursor / frame / gesture) assigned in the sensor-mapping UI |
+| `/sensor/{name}/quaternion` | `f f f f` | Sensor quaternion `[qx, qy, qz, qw]` — slot registers on first receipt, role (cursor / frame / gesture) assigned on the Sensors page |
 | `/sensor/{name}/inertial` | `f f f f f f` | Sensor gyro + accel `[gx, gy, gz, ax, ay, az]` |
 
 **Grain parameters** — all write to `S.grainOverrides`; scheduler picks up next tick
@@ -134,7 +133,6 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/grain/pitch` | `f` | Pitch jitter, cents (0–700) |
 | `/grain/pan` | `f` | Pan spread, percent (0–100) |
 | `/grain/fade` | `f` | Attack + release envelope, percent (0–50) |
-| `/grain/durjitter` | `f` | Multiplicative duration jitter (0–1) |
 | `/grain/durvar` | `f` | Additive duration jitter, ms (0–500) |
 | `/grain/pervar` | `f` | Additive period jitter, ms (0–500) |
 | `/grain/prob` | `f` | Fire probability (0–1) |
@@ -196,10 +194,10 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/search/radius/inc` `/dec` | *(bang)* | Step radius up / down |
 | `/search/k` | `i` | Pool size — how many marks the cursor spreads over, 0 = all, up to 100 |
 | `/search/recency` | `i` | Depth: 1–6 newest strokes, 0 = all |
-| `/search/scope` | *(bang)* | Toggle the cursor's mode between area and nearest |
+| `/search/mode` | *(bang)* / `i` | The cursor's mode — a bang toggles area ↔ nearest; 1 sets nearest, 0 area |
 | `/cursor/reads` | `s` / *(bang)* | What the cursor reads — `both` · `grains` · `tape`; a bang cycles |
 | | | The cap is `/palette/1`, the lens tile's own toggle (`/cursor/scan` went on 2026-09-24) |
-| `/search/order` | *(bang)* | Toggle k ordering |
+| `/search/order` | *(bang)* / `i` | Step order — a bang toggles, 1 / 0 sets |
 
 **Pins** (clouds and loops — `/commit/*` is the wire name of the older rows; pin and unpin are `/palette/3` and `/palette/4`, the strip's own positions)
 
@@ -214,8 +212,6 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/commit/xfade` | `f` | Snap/fade crossfade time (0–1) |
 | `/commit/attack` | `f` | Commit attack, s (0–10) |
 | `/commit/release_time` | `f` | Commit release, s (0–10) |
-| `/commit/loop_fade_time` | `f` | Loop fade time, ms (0–2000) |
-| `/commit/loop_release` | *(bang)* | Cycle loop release mode |
 | `/commit/slots` | `i` | Slot count (1–16) |
 | `/commit/overflow` | *(bang)* | Cycle overflow behaviour |
 | `/commit/selection` | *(bang)* / `s` | The rail's sort, which is the selected pin: `nearest` · `farthest` · `oldest`; a bang cycles |
@@ -245,10 +241,11 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/input/gain` | `f` | The footer's in fader, dB (−24 to +24) |
 | `/scan/fade` | `f` | The cap's fade time constant, ms |
 | `/cursor/tare` | *(bang)* | Zero the cursor — the sensor's heading in sensor mode; the camera back to the front in steer / surface |
-| `/cursor/az_source` `/el_source` | *(bang)* = cycle, `sensor`\|`locked`\|`mapped` = set | Who drives azimuth / elevation — the sensor, frozen at the held value, or a cursor mapping row |
-| `/cursor/radiusfade` | *(bang)* | Toggle radius fade |
+| `/cursor/az_source` `/el_source` | *(bang)* = cycle, `sensor`\|`locked`\|`mapped` = set | Who drives azimuth / elevation — the sensor, frozen at the held value, or its position row (`mapped`) |
+| `/cursor/azimuth` `/cursor/elevation` | `f` | Degrees for an axis set to `mapped` (−180–180, −90–90). A value does not arm the axis by itself |
+| `/cursor/radiusfade` | *(bang)* / `i` | Radius fade — a bang toggles, 1 / 0 sets |
 | `/cursor/radiusfadecurve` | `f` | Radius fade curve (0–1) |
-| `/mute` | *(bang)* | Master mute toggle |
+| `/mute` | *(bang)* / `i` | Master mute — a bang toggles, 1 mutes, 0 unmutes |
 | `/mute/hold` | `i` | Momentary mute (1 = mute, 0 = restore the pre-press state) |
 | `/dry/mute` | *(bang)* | Dry monitor mute toggle — off is the mute; unmuting returns to the mode it left, on or auto |
 | `/dry/mute/hold` | `i` | Momentary dry monitor mute (1 = off, 0 = restore the mode at the press) |
@@ -259,7 +256,6 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/sweep` | *(bang)* | Session sweep |
 | `/undo` | *(bang)* | Undo the last action — a stroke, a pin, an unpin, an erase |
 | `/redo` | *(bang)* | Redo the last undone action |
-| `/handsfree` | *(bang)* | Toggle handsfree mode |
 | `/session/erase` | *(bang)* | Erase all |
 
 **Audio levels**
@@ -271,14 +267,13 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/house/volume` | `f` | Seed bus master (0–2) |
 | `/mixdown/cursor` | `f` | Headphone mixdown cursor gain (0–1) |
 | `/mixdown/house` | `f` | Headphone mixdown house gain (0–1) |
-| `/dry/gain` | `f` | Spatialized live-input gain in house mix (0–2) |
-| `/gate/threshold` | `f` | Paint gate threshold, 0–1. Gates whether particles are PAINTED — it does not attenuate audio. Compared against `max(rms, 0.7·peak)`, not plain RMS |
+| `/dry/gain` | `f` | Spatialized live-input gain in the house mix, dB (-60 to +18) |
+| `/paint/gate` | `f` | Paint gate threshold, 0–1. Gates whether particles are PAINTED — it does not attenuate audio. Compared against `max(rms, 0.7·peak)`, not plain RMS |
 
 **Mapping module — external inputs**
 
 | Address | Args | Description |
 |---|---|---|
-| `/mapping1` `/mapping2` `/mapping3` | `f` | Generic OSC inputs that appear as axes in the mapping modal — any peer can drive these |
 
 > Source of truth: the dispatch `switch` in `js/osc.js`. If an address isn't in there, it isn't handled — no `/seed/*`, no `/grain/duration`, no `/grain/radius`, no `/space/cursor`, no `/space/*`.
 
@@ -336,7 +331,6 @@ js/
   onsets.js             — noise-floor-adaptive onset detection, for the slice tool
   latency.js            — the time between a sound and its sample, and back
   sampler.js            — the sample instrument, an INPUT rather than a brush
-  live-loop.js          — main-thread handle for the live-loop worklet
 
   grain.js              — grain scheduling, spatial search, candidate posting
   grain-worklet-bridge.js — main-thread ↔ worklet communication layer
@@ -363,14 +357,13 @@ js/
   renderer.js           — canvas animation loop, particle/pin/cursor drawing
   events.js             — mouse, keyboard, drag-drop handlers
   diag.js               — rolling diagnostic event log (dlog)
-  handsfree.js          — auto-recording gate engine
   mobile.js             — the hosted demo in a phone's browser: gyro, touch, hidden chrome
 
   tiles.js              — the palette and the toolbox; a tile is the preset
   tile-layout.js        — the one screen: chrome, sphere, rails, palette, footer
 
   sensor-registry.js    — sensor slot registry (cursor, frame, gesture roles)
-  sensor-mapping.js     — sensor → parameter mapping engine
+  sensor-bindings.js    — a sensor axis bound onto a cc row of the action table, like a knob
   imu-setup.js          — direct x-imu3 connection (WiFi/USB)
   ximu-settings.js      — the x-imu3's own device settings
   ximu-led-feedback.js  — x-imu3 onboard LED feedback
@@ -380,9 +373,7 @@ js/
   accessory-registry.js — the x-IMU3-SA-A8's 8 analogue channels → the ACTIONS table
 
   osc.js                — OSC message dispatch (inbound)
-  osc-out.js            — OSC message dispatch (outbound)
   midi.js               — MIDI input, CC mapping, and the ONE action table
-  midi-out.js           — MIDI output
   status-publisher.js   — status broadcast channel for secondary windows
 
   ui-settings.js        — the one settings door (#settingsModal)
@@ -401,7 +392,6 @@ js/
   ui-export.js          — the RIG as one JSON file: setup export/import
   ui-diagnostics.js     — measurements you run, and verdicts you read
   ui-imu-setup.js       — x-imu3 connection UI
-  ui-sensor-mapping.js  — sensor mapping UI (axis map, calibration)
   ui-led-map.js         — the x-IMU3 LED mapping modal
   ui-sygaldry.js        — the sygaldry instrument's panel
 

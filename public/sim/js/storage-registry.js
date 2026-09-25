@@ -25,8 +25,7 @@
 export const CATEGORIES = [
   { id: 'bindings',  label: 'key / MIDI / OSC bindings', hint: 'custom key map, MIDI learn, OSC stream config' },
   { id: 'accessory', label: 'accessory',               hint: 'A8 channel config + x-IMU3 LED map' },
-  { id: 'mapping',   label: 'mapping modules',         hint: 'sensor mappings' },
-  { id: 'audio',     label: 'audio settings',          hint: 'devices, gains, gate, handsfree, speaker layout, seeds' },
+  { id: 'audio',     label: 'audio settings',          hint: 'devices, gains, gate, speaker layout, seeds' },
   { id: 'sensor',    label: 'sensor config',           hint: 'roles, axis maps, mount and heading calibration' },
   { id: 'ui',        label: 'UI + layout',             hint: 'scale, theme, FOV, panel order + collapse, viz calibration' },
   { id: 'debug',     label: 'debug flags',             hint: 'OSC trace' },
@@ -72,6 +71,16 @@ export const RETIRED_KEYS = [
   'mubone_projector_layout', 'mubone_projector_layout_v2', 'mubone_panel_order', 'mubone_tile_layout',
   'muboneSygaldryAddress', 'muboneSygaldrySsid',
   'mubone_sensor_cal_v',
+  // Settings → Mapping (2026-09-25): its rows, its OSC defaults, its selection.
+  // Sensors bind onto the Keys + MIDI table's rows instead.
+  'mubone_sensorMappings', 'mubone_mappingTransportGlobal', 'mubone_settings_mapping',
+  // Swept by hand in tiles.js until 2026-09-25, the one mechanism being this
+  // list: the palette's pre-strip slots and cycle list (mubone_slots,
+  // mubone_cycle_off, and the belt / brush / erase keys they folded), the
+  // spray-and-index stamp, the bench's stored tool, and the two settings
+  // arming took with it (tool keys fire, the main button's mode).
+  'mubone_slots', 'mubone_cycle_off', 'mubone_belt', 'mubone_brush_slot', 'mubone_erase_slot',
+  'mubone_tiles_presets', 'mubone_bench', 'mubone_palette_trigger', 'mubone_gesture_momentary',
 ];
 // Prefixes retired the same way — the per-device collapse state of the rig
 // view (`mubone_panel_<id>`, #291).
@@ -92,11 +101,8 @@ export const KEYS = [
   { key: 'mubone_pinned_rail',       cat: 'ui', note: 'whether the pinned rail is open (tile-layout.js LS_PINNED) — written since #291, unregistered until browser-audit ran on macOS 2026-09-05' },
   { key: 'mubone_tile_order',        cat: 'ui', note: 'tile row order; position is the key — see js/tiles.js' },
   { key: 'mubone_tiles_gone',        cat: 'ui', note: 'factory tools the player DELETED (2026-09-10) — ids that tileDef answers for as if they never existed; a reset of this category brings the originals back. Lens ids (`wide` · `spot`) are swept out on boot since 2026-09-22 night: there is one lens and it is not deletable' },
-  { key: 'mubone_tiles_presets',     cat: 'ui', note: "LEGACY (2026-09-22, one evening). It stamped a one-shot that handed `spray` and `index` their factory numbers; both tiles went with the shape-preset sunset the same night. `initTiles` removes the key on load — listed so a profile still carrying it does not read as unregistered" },
   { key: 'mubone_tiles',             cat: 'ui', note: 'per-tile engine presets + custom tile definitions (#224) — a tile is a preset of an engine. Since 2026-09-03 a GRAIN tile persists its edits here whether factory or custom and carries its whole block, other factory tiles keep session-only edits. (`wet` was a per-tile flag here until 2026-09-22; liveness is decided by HOW paint was made now, and nothing about it is stored on a tile)' },
   { key: 'mubone_voices',            cat: 'ui', note: "named voices per engine — a tool is a SHAPE and a VOICE (Ek, 2026-09-21), and this is the voice half: the block of VOICE_PIDS lifted out of the anonymous one a grain tile used to adopt on first use. `{ v: {id: {name, engine, params}}, sel: {engine: id} }`; `sel` is the one the rail marks. LEGACY: the store shipped for one day under this key, and tiles.js migrates it once INTO `mubone_sounds` (LS_VOICES), where the voices live — listed so a profile still carrying it does not read as unregistered" },
-  { key: 'mubone_cycle_off',         cat: 'ui', note: 'tool and lens ids SKIPPED when a palette tile cycles (2026-09-03 evening) — the rail\'s cycle mark; stored as exclusions so new tools are in by default' },
-  { key: 'mubone_slots',             cat: 'ui', note: 'the palette\'s three slots, { loop, granular, erase } → tile id (2026-09-03 evening; folded mubone_belt and the mubone_brush_slot / mubone_erase_slot pair, migrated on first load)' },
   // ── the palette (2026-09-11) ──
   { key: 'mubone_recent_pieces',     cat: 'ui', note: 'the File > Open Recent list: up to 8 .mubone paths, most recent first (js/piece.js). Per-machine, like everything else here — the pieces themselves are files' },
   { key: 'mubone_palette',           cat: 'ui', note: 'the palette: [{ id, verb }] in strip order, the fixed four (tiles.js LS_PALETTE) — position N is what `palette_N`, the key digit and the OSC address name' },
@@ -109,6 +115,7 @@ export const KEYS = [
   { key: 'mubone_key_map',           cat: 'bindings' },
   { key: 'mubone_button_map',        cat: 'bindings', note: 'the instrument\'s buttons: action → { btn, g }' },
   { key: 'mubone_button_timing',     cat: 'bindings', note: 'long-press and tap window, ms' },
+  { key: 'mubone_sensor_bindings',   cat: 'bindings', note: 'the Keys + MIDI table\'s sensor column (sensor-bindings.js)' },
   { key: 'mubone_midi_map',          cat: 'bindings' },
   { key: 'mubone_latency_cal',       cat: 'audio', note: 'the loopback measurements (2026-09-04), keyed input device × output device × rate → { deviceS, measuredS, modelS, at }: the DEVICES\' own share — measured minus what the app added — so the buffer and the cushion can move without measuring again; js/latency.js. The first day\'s total-keyed entries are dropped on load' },
   { key: 'mubone_midi_input',        cat: 'bindings', note: 'last selected MIDI input port' },
@@ -119,8 +126,6 @@ export const KEYS = [
   { key: 'mubone-ximu-led-map',      cat: 'accessory' },
 
   // ── mapping ──
-  { key: 'mubone_sensorMappings',          cat: 'mapping' },
-  { key: 'mubone_mappingTransportGlobal',  cat: 'mapping' },
 
   // ── audio ──
   { key: 'mubone_audio_defaults',         cat: 'audio' },
@@ -146,7 +151,11 @@ export const KEYS = [
   { key: 'mubone_build',                cat: 'ui', note: 'the service worker CACHE_VERSION the hosted demo last booted on (main.js _wipeOnNewBuild, 2026-09-12): a different one wipes the store and reloads — collaborators open every new build at factory. Electron and localhost never write it' },
   { key: 'mubone_sounds',               cat: 'ui', note: 'the VOICES (tiles.js, 2026-09-21): a sound per engine, each its own block of voice pids — a living preset every unpinned stroke follows' },
   { key: 'mubone_voice_seed',           cat: 'ui', note: 'one-shot stamp: the factory voices have been seeded from the engines\' factory blocks (tiles.js _seedVoices)' },
-  { key: 'mubone_voice_names',          cat: 'ui', note: 'the names the player gave voices, by id (tiles.js renameVoice)' },
+  { key: 'mubone_voice_names',          cat: 'ui', guards: ['mubone_sounds'], note: 'one-shot stamp: a voice still called `default` took its engine\'s factory name (tiles.js, 2026-09-22)' },
+  { key: 'mubone_voice_filter',         cat: 'ui', guards: ['mubone_sounds'], note: 'one-shot stamp: every stored grain voice had its filter switched off (tiles.js, 2026-09-24)' },
+  { key: 'mubone_voice_factory',        cat: 'ui', guards: ['mubone_sounds'], note: 'one-shot stamp: presets seeded before the flag existed were marked factory by name (tiles.js, 2026-09-24)' },
+  { key: 'mubone_instrument',           cat: 'ui', note: 'which instrument tab the tool rail is on — tape, grain, erase, sampler (tiles.js LS_INSTR)' },
+  { key: 'mubone_keys_show_all',        cat: 'ui', note: 'the keys page\'s Show all switch (midi.js)' },
   { key: 'mubone_hand',                 cat: 'ui', note: 'the tool IN HAND — what the spacebar and a left-click on the sphere play (tiles.js, 2026-09-12); a tool id' },
   { key: 'mubone_hand_verb',            cat: 'ui', note: 'the hand\'s verb, toggle | momentary — the hand tile\'s shape (2026-09-12). Factory: momentary (Ek, evening)' },
   { key: 'mubone_palette_digits',       cat: 'bindings', guards: ['mubone_key_map'], note: 'stamp: the factory strip was dealt once — the list into mubone_palette, the hand, the palette rows of the three maps (midi.js seedPaletteDigitsOnce, 2026-09-12)' },

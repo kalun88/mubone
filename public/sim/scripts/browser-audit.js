@@ -119,7 +119,7 @@ const HOSTED = 'demo.localhost', HOSTED_RESET = 'reset.localhost';
 // The modals index.html must carry, by id — named rather than counted for the
 // reason the comment at the boot check gives. Shared with the reset check,
 // which counted to 11 while the list had 7 (2026-09-05).
-const MODALS = ['audioSettingsModal', 'vizModal', 'imuSetupModal', 'sensorMappingModal', 'ledModal', 'mappingModal', 'settingsModal'];
+const MODALS = ['audioSettingsModal', 'vizModal', 'imuSetupModal', 'ledModal', 'mappingModal', 'settingsModal'];
 const PANELS = ['audio', 'commit', 'erase', 'grain', 'play', 'search', 'session', 'trigger'];
 
 // ── 2. Load + degradation, at a given origin ───────────────────────────────
@@ -426,7 +426,6 @@ async function auditReset(browser) {
     'mubone-ximu-led-map':     '{"led":1}',      // accessory
     'mubone_tile_order':       '["pen"]',      // ui
     'mubone-sensor-prefs':     '{"x":1}',        // sensor
-    'mubone_sensorMappings':   '[{"id":"map_1"}]', // mapping
   };
   await page.evaluate(d => { for (const [k, v] of Object.entries(d)) localStorage.setItem(k, v); }, DIRT);
 
@@ -439,7 +438,7 @@ async function auditReset(browser) {
     disabled: document.getElementById('resetSelectedBtn').disabled,
     allHint:  document.querySelector('#resetAllBtn')?.closest('.set-row')?.querySelector('.set-row-desc')?.textContent?.replace(/\s+/g, ' ').trim() ?? '',
   }));
-  check(dialog.cats.length >= 7 && dialog.hasAll,
+  check(dialog.cats.length >= 6 && dialog.hasAll,
     'the page renders a row per category plus Reset all', dialog.cats.join(', '));
   check(dialog.disabled === true, 'Reset selected is disabled until a toggle is on');
   check(/offline cache/i.test(dialog.allHint),
@@ -464,8 +463,7 @@ async function auditReset(browser) {
   check(partial['mubone-accessory-a8'] === null && partial['mubone-ximu-led-map'] === null,
     'partial reset cleared the accessory category');
   check(partial['mubone_tile_order'] === DIRT['mubone_tile_order'] &&
-        partial['mubone-sensor-prefs'] === DIRT['mubone-sensor-prefs'] &&
-        partial['mubone_sensorMappings'] === DIRT['mubone_sensorMappings'],
+        partial['mubone-sensor-prefs'] === DIRT['mubone-sensor-prefs'],
     'partial reset left every other category alone',
     Object.entries(partial).filter(([, v]) => v === null).map(([k]) => k).join(', '));
 

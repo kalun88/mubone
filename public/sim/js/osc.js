@@ -16,6 +16,7 @@
 // running the browser falls back to mouse/gyro.
 // ============================================================================
 
+import { quantPitch, quantSpeed } from './tape-pitch.js';
 import { S, DEBUG, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, GATE_METER_MAX } from './state.js';
 import { getOrCreateSlot } from './sensor-registry.js';
 import {
@@ -23,7 +24,6 @@ import {
 } from './imu-setup.js';
 import { updateGestureMorph } from './seed-morph.js';
 import { setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
-import { setMappingInput } from './sensor-mapping.js';
 
 // #105: multi-option controls accept either a bang (cycle to next mode) or a
 // string argument (set that mode directly, e.g. `/camera/mode sensor`).
@@ -32,13 +32,6 @@ import { setMappingInput } from './sensor-mapping.js';
 function _bangOrStr(values) {
   const v = values?.[0];
   return (typeof v === 'string' && v.length) ? v : 127;
-}
-/** A bang toggles; an explicit int sets (0 = off, anything else = on). The
- *  release-edge guard below already drops a bare 0 on a bang address, so an
- *  int 0 only arrives when the sender meant it. */
-function _bangOrInt(values) {
-  const v = values?.[0];
-  return typeof v === 'number' ? (v > 0 ? 127 : 0) : 'toggle';
 }
 /** The screen's switches (2026-09-24, midi.js `_onOff`): an int sets — 1 on,
  *  0 off — and a bang flips. 1 rather than 127, because 127 is what a key or
@@ -61,18 +54,16 @@ function _bangOrOnOff(values) {
 // The trigger/hold/cc split is read from the shared ACTIONS registry
 // (`S._actions`) rather than a list kept here — a parallel table would drift
 // the first time an address is added.  Addresses the registry doesn't know
-// (/scan/fade, /mapping1-3, /monitor/volume, /house/volume,
+// (/scan/fade, /monitor/volume, /house/volume,
 // /spatial/mode) fall through unguarded, which is exactly today's behaviour:
 // this can only ever suppress a message it can prove is a release edge.
 
 // Two registry 'trigger' actions genuinely decode the payload — their cases
 // below read `values[0] ?? 127`, so 1 = on, 0 = off, bang = toggle. For those,
 // a zero is a command and not a release edge. They are exempt by address
-// rather than by `fmt`, because `fmt` is not a reliable discriminator: /search
-// /scope and /search/order also advertise 'int 0|1' but their cases hardcode
-// 127 and ignore the int.
+// rather than by `fmt`, because `fmt` is not a reliable discriminator.
 // Every SWITCH on the screen takes 1 / 0 the same way (2026-09-24, the
-// registry is the screen): `_bangOrInt` hands the int on and the case sets;
+// registry is the screen): `_bangOrOnOff` hands the int on and the case sets;
 // a bang flips. `/grain/filter` read the int before this list knew it, so
 // an explicit 0 there was dropped as a release edge and never turned it off.
 const _VALUED_TRIGGERS = new Set([
@@ -80,6 +71,7 @@ const _VALUED_TRIGGERS = new Set([
   '/grain/autopin', '/grain/walk', '/grain/link', '/grain/filter', '/erase/bystroke',
   '/pins/sel/mute', '/pins/sel/solo', '/pins/clouds/mute', '/pins/clouds/solo', '/pins/loops/mute', '/pins/loops/solo',
   '/rail/tools', '/rail/pins', '/settings', '/spatial/lock',
+  '/mute', '/search/mode', '/search/order', '/cursor/radiusfade', '/pins/mute',
 ]);
 
 // The one bang address with no ACTIONS row, so the registry can't classify it.
@@ -94,7 +86,7 @@ const _EXTRA_TRIGGERS = new Set(['/spatial/mode']);
 // are the value addresses that have no ACTIONS row at all, so nothing else can
 // tell us their shape.
 const _EXTRA_VALUE_ADDRS = new Set([
-  '/scan/fade', '/mapping1', '/mapping2', '/mapping3',
+  '/scan/fade',
   '/monitor/volume', '/house/volume', '/cursor/radiusfadecurve',
 ]);
 
@@ -390,11 +382,6 @@ export function handleOSC(rawAddress, values) {
       scheduleUISync();
       break;
 
-    case '/grain/durjitter':
-      S.grainOverrides.durJitter   = clamp(values[0], 0, 1);
-      scheduleUISync();
-      break;
-
     case '/grain/durvar':
       // Incoming value in ms (0–500) → convert to seconds internally
       S.grainOverrides.durVar      = clamp(values[0], 0, 500) / 1000;
@@ -418,7 +405,7 @@ export function handleOSC(rawAddress, values) {
     // ONE filter per grain since 2026-09-23: a switch, a type, a cutoff and a
     // resonance. `/grain/hpf` `/grain/lpf` `/grain/hpfq` `/grain/lpfq` are
     // gone, not aliased — two corners cannot be undone to one.
-    case '/grain/filter':     S._dispatchAction?.('grain_filter', _bangOrInt(values)); break;
+    case '/grain/filter':     S._dispatchAction?.('grain_filter', _bangOrOnOff(values)); break;
     case '/grain/filtertype': S._dispatchAction?.('grain_filtertype', _bangOrStr(values)); break;
     case '/grain/cutoff':
       // Incoming value in Hz (20–20000)
@@ -450,7 +437,7 @@ export function handleOSC(rawAddress, values) {
 
     // ── Transport & cursor controls ────────────────────────────────────────
     // Trigger/bang actions route through dispatchAction for consistent UI feedback.
-    case '/mute':           S._dispatchAction?.('mute', 127);        break;
+    case '/mute':           S._dispatchAction?.('mute', _bangOrOnOff(values)); break;
     // Momentary counterpart — 1 = mute, 0 = restore the pre-press state.
     case '/mute/hold':      S._dispatchAction?.('mute_hold', values[0] ? 127 : 0); break;
     // The dry monitor's mute: off is the mute, unmuting returns to on or auto.
@@ -464,18 +451,14 @@ export function handleOSC(rawAddress, values) {
     // Bang cycles, string sets — same idiom as /commit/mode.
     case '/cursor/az_source': S._dispatchAction?.('az_source', _bangOrStr(values)); break;
     case '/cursor/el_source': S._dispatchAction?.('el_source', _bangOrStr(values)); break;
+    // Degrees, for an axis set to map (`/cursor/az_source mapped`). A value
+    // does not arm the axis on its own: a stray sender must not grab the cursor.
+    case '/cursor/azimuth':   S.cursorOverrides.azimuth   = clamp(values[0], -180, 180); break;
+    case '/cursor/elevation': S.cursorOverrides.elevation = clamp(values[0],  -90,  90); break;
 
     // Sensor mapping toggles (1-indexed from Max → 0-indexed internally)
 
-    // Generic external mapping inputs — any peer (joycon GUI, Max patch, etc.)
-    // can emit a float on these addresses and the value shows up as an
-    // additional axis in the mapping modal. No fixed target — the user picks
-    // a grain param in the modal. Value is stored raw; curve + input range
-    // in the mapping evaluate it the same as any other axis.
-    case '/mapping1': setMappingInput('mapping1', values[0]); break;
-    case '/mapping2': setMappingInput('mapping2', values[0]); break;
-    case '/mapping3': setMappingInput('mapping3', values[0]); break;
-    case '/cursor/radiusfade': S._dispatchAction?.('radius_fade', 127); break;
+    case '/cursor/radiusfade': S._dispatchAction?.('radius_fade', _bangOrOnOff(values)); break;
 
     case '/cursor/radiusfadecurve': {
       const v = clamp(values[0], 0, 1);
@@ -522,9 +505,9 @@ export function handleOSC(rawAddress, values) {
     case '/tape/voice/next': S._dispatchAction?.('tape_voice_next', 127); break;
     case '/tape/voice/prev': S._dispatchAction?.('tape_voice_prev', 127); break;
     case '/tape/speed':
-      S.triggerParams.speed = clamp(values[0], 0.25, 4); S._syncTriggerUI?.(); S._renderRail?.(); break;
+      S.triggerParams.speed = quantSpeed(clamp(values[0], 0.25, 4)); S._syncTriggerUI?.(); S._renderRail?.(); break;
     case '/tape/pitch':
-      S.triggerParams.pitch = Math.round(clamp(values[0], -2400, 2400)); S._syncTriggerUI?.(); S._renderRail?.(); break;
+      S.triggerParams.pitch = quantPitch(Math.round(clamp(values[0], -2400, 2400))); S._syncTriggerUI?.(); S._renderRail?.(); break;
     case '/tape/volume':
       S.triggerParams.volume = clamp(values[0], 0, 1); S._syncTriggerUI?.(); S._renderRail?.(); break;
     case '/grain/autopin':   S._dispatchAction?.('grain_autopin', _bangOrOnOff(values)); break;
@@ -571,18 +554,13 @@ export function handleOSC(rawAddress, values) {
     // presses are `hand_press` and `hand_long` — the same pair the spacebar's
     // reserved binding fires — so a pedal or a patch can play the hand without
     // a keyboard. `/hand/long` carries its value: 1 holds, 0 lets go.
-    case '/hand/press':     S._dispatchAction?.('hand_press', 127); break;
+    case '/hand/press':     S._dispatchAction?.('hand_press', values.length ? (values[0] ? 127 : 0) : 127); break;   // a 0 is the release of a momentary press side
     case '/hand/long':      S._dispatchAction?.('hand_long', values.length ? (values[0] ? 127 : 0) : 127); break;
-    case '/pins/mute':      S._dispatchAction?.('pins_mute', values.length ? (values[0] ? 127 : 0) : null); break;
+    case '/pins/mute':      S._dispatchAction?.('pins_mute', _bangOrOnOff(values)); break;
     case '/pins/follow':    S._dispatchAction?.('pins_follow', _bangOrStr(values));    break;
     case '/commit/xfade':
       S.commitXfade = clamp(values[0], 0, 1);
       S._syncImprovUI?.();
-      break;
-    case '/commit/loop_fade_time':
-      S.loopFadeTimeMs = clamp(values[0], 0, 2000);
-      { const sl = document.getElementById('loopFadeTimeSlider'); if (sl) sl.value = S.loopFadeTimeMs;
-        const nb = document.getElementById('loopFadeTimeNum');    if (nb) nb.value = S.loopFadeTimeMs < 1000 ? Math.round(S.loopFadeTimeMs) + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; }
       break;
     case '/commit/attack':
       S.commitAttack = clamp(values[0], 0, 10);
@@ -594,14 +572,12 @@ export function handleOSC(rawAddress, values) {
       { const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.commitRelease;
         const nb = document.getElementById('seedReleaseNum');    if (nb) nb.value = S.commitRelease < 1 ? (S.commitRelease * 1000).toFixed(0) + 'ms' : S.commitRelease.toFixed(1) + 's'; }
       break;
-    case '/commit/slots':
-      S.commitSlotCount = Math.max(1, Math.min(16, Math.round(values[0])));
-      (S.updateSeedBanksUI || S._syncCommitUI || (() => {}))();
+    case '/commit/slots':   // through the action, so the two paths cannot drift
+      S._dispatchAction?.('commit_slots', (clamp(values[0], 1, 16) - 1) * 127 / 15);
       break;
     case '/commit/overflow':  S._dispatchAction?.('commit_overflow', _bangOrStr(values));  break;
     case '/commit/selection': S._dispatchAction?.('commit_selection', _bangOrStr(values)); break;
     case '/commit/dir':       S._dispatchAction?.('commit_dir', _bangOrStr(values));      break;
-    case '/commit/loop_release': S._dispatchAction?.('loop_release_mode', _bangOrStr(values)); break;
 
     case '/undo':         S._dispatchAction?.('undo', 127);       break;
     case '/redo':         S._dispatchAction?.('redo', 127);       break;
@@ -657,12 +633,11 @@ export function handleOSC(rawAddress, values) {
       break;
 
     // ── App ─────────────────────────────────────────────────────────────────
-    case '/handsfree':      S._dispatchAction?.('handsfree', 127);  break;
     case '/session/erase':  S._dispatchAction?.('erase_all', 127); break;
 
     // ── Search ───────────────────────────────────────────────────────────────
-    case '/search/scope':   S._dispatchAction?.('snap', 127);      break;
-    case '/search/order':   S._dispatchAction?.('k_seq', 127);     break;
+    case '/search/mode':    S._dispatchAction?.('snap', _bangOrOnOff(values));  break;
+    case '/search/order':   S._dispatchAction?.('k_seq', _bangOrOnOff(values)); break;
     case '/search/recency': {
       const raw = Math.round(values[0]);
       const n = raw <= 0 ? 0 : Math.min(6, raw);   // 0 = all (no filter); 1–6 strokes (2026-09-25)
@@ -705,15 +680,19 @@ export function handleOSC(rawAddress, values) {
     case '/master/volume':
       S._setOutputGainDb?.(clamp(values[0], -60, 18));
       break;
-    // /gate/threshold f — the gate's loudness metric, max(rms, 0.7*peak), 0 to 1.
-    // Not plain RMS: see gateLoudness() in audio-features.js.
-    case '/gate/threshold':
+    // /paint/gate f — the paint gate's threshold on its loudness metric,
+    // max(rms, 0.7*peak). Not plain RMS: see gateLoudness() in audio-features.js.
+    // It was /gate/threshold until 2026-09-25 (renamed with the action, no alias).
+    case '/paint/gate':
       S._setPaintGateThreshold?.(clamp(values[0], 0, GATE_METER_MAX));
       break;
-    // /dry/gain f — spatialized live-input gain in the house mix (0 to 2; 1 = unity)
-    case '/dry/gain':
-      S._setDryMonitorGain?.(clamp(values[0], 0, 2));
+    // /dry/gain f — spatialized live-input gain in the house mix, dB (−60 to +18),
+    // the unit both of its sliders read
+    case '/dry/gain': {
+      const db = clamp(values[0], -60, 18);
+      S._setDryMonitorGain?.(db <= -60 ? 0 : Math.pow(10, db / 20));
       break;
+    }
 
     default: {
       DEBUG && console.log(`[osc] unhandled: ${address}`, values);

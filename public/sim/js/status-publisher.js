@@ -10,8 +10,7 @@
 // (joycon reload, relay restart, etc.) lights up correctly.
 //
 // What's on the wire (tailored to the joycon feedback consumer):
-//   /status/trace          — a stroke is being painted, hands-free OFF
-//   /status/trace/hf       — a stroke is being painted, hands-free ON
+//   /status/trace          — a stroke is being painted
 //   /status/slots/filled   — integer 0..MAX_COMMITS: raw count of occupied
 //                            commit slots. The consumer does all the gauge
 //                            math (N-LED fill, near-full, full), so this
@@ -39,9 +38,7 @@ function _slotsFilled() {
 // ── The wire contract — each entry is one /status/<x> address on the wire ──
 const WATCH = [
   { addr: '/status/trace',        get: () =>
-      ((S.paintLatched || S.isPainting) && !S.hfArmed) ? 1 : 0 },
-  { addr: '/status/trace/hf',     get: () =>
-      ((S.paintLatched || S.isPainting) &&  S.hfArmed) ? 1 : 0 },
+      S.isPainting ? 1 : 0 },   // not paintLatched — a toggled erase sets it too
   { addr: '/status/slots/filled', get: () => _slotsFilled() },
   { addr: '/status/slots/max',    get: () => Math.max(1, Math.min(16, S.commitSlotCount | 0)) },
 ];

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tool rail — D, plain bold titles</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0b0a09;font-family:Urbanist,sans-serif}
+.card{background:#161311;border-radius:10px;padding:8px 0 10px;display:flex;flex-direction:column}
+.row{height:30px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-size:14px;color:#cec9c2}
+.lbl{display:flex;align-items:center;gap:8px}
+.key{width:18px;height:18px;border:1px solid rgba(255,240,224,0.24);border-radius:9px;font-size:10px;display:flex;align-items:center;justify-content:center;color:#e4ddd0}
+.sw{width:30px;height:18px;border-radius:9px;background:rgba(255,240,224,0.14);position:relative}
+.sw b{position:absolute;left:3px;top:3px;width:12px;height:12px;border-radius:6px;background:#9d978e}
+.sw.on{background:#cec9c2}.sw.on b{left:15px;background:#0b0a09}
+.seg{display:flex;align-items:center;background:rgba(255,240,224,0.05);border-radius:999px;height:24px}
+.seg span{padding:0 9px;height:24px;display:flex;align-items:center;border-radius:999px;font-size:12.5px;color:#776f66}
+.seg .sel{background:rgba(255,240,224,0.11);color:#e4ddd0}
+.tabs{display:flex;height:44px;margin:0 0 6px;background:rgba(255,240,224,0.03);border-radius:10px 10px 0 0}
+.tab{flex:1;display:flex;align-items:center;justify-content:center;gap:8px;font-size:12px;letter-spacing:.14em;color:#776f66}
+.tab.on{background:#161311;color:#f2569e;border-radius:10px 10px 0 0}
+.val{font-size:13px;color:#cec9c2}
+.pr{height:42px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid rgba(255,240,224,0.055);font-size:15px;font-weight:600;color:#b8b2aa}
+.pr .sum{margin-left:auto;font-size:12.5px;font-weight:400;color:#6a6259}
+.pr.on{background:rgba(255,240,224,0.065);color:#faf7f4}.pr.on .sum{color:#aba59d}
+.menu{width:28px;height:28px;border-radius:5px;background:rgba(255,240,224,0.05);display:flex;align-items:center;justify-content:center}
+</style>
+</helmet>
+<div style="width: 320px; height: 880px; box-sizing: border-box; background: #0b0a09; display: flex; flex-direction: column; color: #cec9c2;">
+<div style="height: 48px; display: flex; align-items: center; gap: 10px; padding: 0 14px 0 18px; border-bottom: 1px solid rgba(255,240,224,0.08);"><svg width="16" height="16" viewBox="0 0 16 16" fill="#cec9c2"><circle cx="3" cy="4" r="1.3"/><circle cx="7" cy="7" r="1.3"/><circle cx="11" cy="11" r="1.3"/><circle cx="12" cy="4" r="1.3"/></svg><span style="flex-grow: 1; font-size: 15px; font-weight: 600; color: #e4ddd0;">Tools</span><span class="menu"><svg width="12" height="12" viewBox="0 0 12 12" stroke="#9d978e" stroke-width="1.2"><path d="M2 3h8M2 6h8M2 9h8"/></svg></span></div>
+<div style="padding: 16px 12px 0;">
+<div class="card" style="padding-top: 0px;">
+<div class="tabs">
+<div class="tab on"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#f2569e" stroke-width="1.5" stroke-linecap="round"><path d="M2 10c2-5 4-5 6 0s4 5 6 0"/></svg>TAPE</div>
+<div class="tab"><svg width="16" height="16" viewBox="0 0 16 16" fill="#857e74"><circle cx="4" cy="4" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12" cy="11" r="1.3"/></svg></div>
+<div class="tab"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#857e74" stroke-width="1.4"><path d="M8 2.5 13.5 8 8 13.5 2.5 8Z"/></svg></div>
+</div>
+<div class="row"><span>autopin as loop</span><span class="sw"><b></b></span></div>
+<div class="row"><span class="lbl">overdub<span class="key">O</span></span><span class="sw"><b></b></span></div>
+<div class="row"><span>slice</span><span class="sw"><b></b></span></div>
+<div class="row"><span>dwell</span><span class="seg"><span>1</span><span class="sel" style="color: #f2569e; background: rgba(242,86,158,0.22);">∞</span><span>⁘</span></span></div>
+<div class="row"><span>retrig</span><span class="sw on"><b></b></span></div>
+<div style="margin-top: 10px; border-top: 1px solid rgba(255,240,224,0.07); height: 38px; display: flex; align-items: center; gap: 14px; padding: 4px 14px 0 16px;"><span style="flex-grow: 1; font-size: 13.5px; font-weight: 600; color: #e4ddd0;">Voice</span><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#938d83" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#938d83" stroke-width="1.4"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="M9 3v10"/></svg></div>
+<div class="pr on"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#f2569e" stroke-width="1.5" stroke-linecap="round"><path d="M2 10c2-5 4-5 6 0s4 5 6 0"/></svg>verbatim<span class="sum">1× · 0 st</span></div>
+<div class="pr"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#6a6259" stroke-width="1.5" stroke-linecap="round"><path d="M2 10c2-5 4-5 6 0s4 5 6 0"/></svg>undertow<span class="sum">reverse · 1× · −12 st</span></div>
+</div>
+</div>
+<div style="height: 48px; margin-top: 16px; display: flex; align-items: center; gap: 10px; padding: 0 18px; border-top: 1px solid rgba(255,240,224,0.08); border-bottom: 1px solid rgba(255,240,224,0.08);"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#cec9c2" stroke-width="1.5"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="1.8"/></svg><span style="font-size: 15px; font-weight: 600; color: #e4ddd0;">Cursor</span></div>
+<div style="padding: 16px 12px 0;">
+<div class="card">
+<div class="row"><span>scope</span><span class="seg"><span class="sel">both</span><span>⁘</span><span>~</span></span></div>
+<div class="row"><span class="lbl">radius<span class="key">[</span><span class="key">]</span></span><span class="val">10°</span></div>
+<div class="row"><span class="lbl">audition<span class="key">A</span></span><span class="sw"><b></b></span></div>
+<div style="margin-top: 10px; border-top: 1px solid rgba(255,240,224,0.07); height: 38px; display: flex; align-items: center; padding: 4px 16px 0;"><span style="font-size: 13.5px; font-weight: 600; color: #e4ddd0;">Grain selection</span></div>
+<div class="row"><span class="lbl">mode<span class="key">N</span></span><span class="seg"><span class="sel">radius</span><span>nearest</span></span></div>
+<div class="row"><span>depth</span><span class="seg"><span>1</span><span>2</span><span class="sel">3</span><span>4</span><span>5</span><span>6</span><span>all</span></span></div>
+<div class="row"><span>k</span><span class="val">all</span></div>
+<div class="row"><span>step</span><span class="sw"><b></b></span></div>
+<div class="row"><span>fade</span><span class="sw"><b></b></span></div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":320,"height":880}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

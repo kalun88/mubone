@@ -7,6 +7,110 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.10 alpha — 2026-09-25
+
+**Sensors bind like knobs, the Keys + MIDI table and LED page tell the truth again, and the rails were redesigned.**
+
+### Fixed
+- A tape take started by a gesture that ended while the mic was being asked for no longer keeps recording
+  with nothing to stop it.
+- The dry level slider no longer moves itself, and reaches its top third (+6 to +18 dB).
+- A key or MIDI note on the grain filter turns it off as well as on.
+- Presets are no longer hidden behind the cursor section on a laptop-height window.
+
+### Added
+- **A sensor on any continuous row of Keys + MIDI**: pick a sensor by name (any on the rig, not only the
+  cursor's), an axis — elevation, roll, azimuth (marked as drifting with the magnetometer off) — the input
+  range in degrees and the output window and curve; **Learn** takes the axis you move most with the range
+  you swept. The cell sits in a row's Keyboard · Button columns, which a continuous row never uses.
+- **AZ · position and EL · position**: the cursor's two axes as rows a sensor, a MIDI knob or OSC
+  (`/cursor/azimuth`, `/cursor/elevation`) can drive; binding one sets that axis to map. Roll onto
+  elevation is the lazy-susan setup.
+- **Master mute frames the stage**: an amber border and "muted — M unmutes", click-through, the sphere at
+  full brightness.
+- **Performance monitor rows that measure today's engine**: grains against the real pool, the audio
+  thread's load, what drawing a frame costs, memory (takes + heap), and the transport's own faults.
+- **Preset rows with weight**: 42px, the instrument's glyph, the name, and the preset's own few numbers
+  (tape: reverse · speed · pitch; grain: duration · period).
+
+### Changed
+- **The rails**: Tools · Cursor · Pinned are large bold words; Voice and Grain selection are cards of their
+  own under the tape/grain and cursor cards; the tool rail scrolls as one, so presets are never hidden
+  behind the cursor section. "Selected" in the rails' type.
+- **Switches from OSC set, keys flip**: filter, area/nearest mode, step, fade, system mute and the pins' ALL
+  mute take 1 / 0 over OSC and flip on a key or bang. The ALL mute is a toggle (a learned key no longer lets
+  the pins back on release).
+- **OSC renames, no aliases**: `/search/scope` → `/search/mode`; `/gate/threshold` → `/paint/gate`
+  (the `noise_gate` action is `paint_gate`; a stored binding moves over once). `/dry/gain` takes dB.
+- **Dry level** is dB end to end, to +18 dB.
+- **Tape speed and pitch** from a knob, OSC or a sensor snap to the tape's step; changes from any binding
+  are saved into the tool.
+- **The hand's press row follows its verb** — set to momentary it ends on release; its label names the
+  tool (`hand: press · tape`).
+- **LED Feedback**: titled for both devices and names the one it drives; recording / pin / unpin rows; a
+  toggled erase lights erase; one pin flash per pin (loops included); the mubone instrument blinks on
+  connect.
+- **Keys + MIDI wording** matches the rail (offset ±, cutoff ±, spread…); `when full` joined the pins
+  group; cloud in / out are pin in / out; the sampler group says it is off unless Settings › Tools.
+- **Instrument Buttons** names the mubone instrument's three buttons and its monitor shows buttons only.
+- **Settings**: Cheat Sheet; the Sensors nav wears the chrome's sensor glyph; Minimal Rendering says when
+  it pays (past ~30,000 marks, measured).
+- **A piece** keeps each cloud's scope and pin order.
+- **Grain rate** (`grain_flow`) runs 10 → 200 ms, as its range says; the camera cycle skips sensor when
+  none is live.
+
+### Removed
+- **The handsfree gate** — its settings, the H key, `/handsfree`, its LED states and `/status/trace/hf`.
+- **Settings → Mapping** — its page, `/mapping1–3`, the external OSC/MIDI outputs and their Electron
+  socket; sensors bind on Keys + MIDI instead.
+- **Actions**: `grain_durjit` (`/grain/durjitter`), `loop_release_mode` and `loop_fade_time`
+  (`/commit/loop_release`, `/commit/loop_fade_time`) — autopin replaced them.
+- **The Fullscreen row** in Settings (it was the OS's fullscreen).
+- Nine legacy storage keys swept by hand at every load; they are retired keys now.
+
+---
+
+## 5.9 alpha — 2026-09-25
+
+**A pin during a tape take is an overdub, every pinned cloud is a zone, and the pins' mixer has a master.**
+
+### Added
+- **Overdub inside one take**: a pin while you record a tape take closes the phrase so far into the main
+  loop and keeps recording as an overdub on it; each further pin keeps that layer and starts the next. The
+  recorder is never stopped — the cut loses no audio. Every piece is an ordinary stroke and overdub: layers
+  fold to the loop's length, undo takes them back one at a time, unpinning gives back ordinary lines.
+- **A layer pin shows at the press**: a pin mark labelled loop·layer where you pressed, and the layer's dot
+  on the rail at once — hollow while it records, filled once kept.
+- **Every pinned cloud is a zone**: a tape stroke that touches any part of a cloud's radius pins itself as a
+  loop at the touch point, as a cursor standing there would. A pin keeps the cursor's scope and mute: a
+  tape-scoped cloud catches lines and plays no grain, a grain-scoped one catches none, a muted one pins
+  what it catches muted.
+- **ALL**, the pins' master bus under clouds and loops: their mean level and an M (no S) that silences every
+  pin and gives the mix back as you left it.
+- **Clouds draw their reach lines**, like the cursor, in their own colour.
+
+### Changed
+- **The two hands' keys**: a hand's own key stops it, the other hand's key switches to its tool. On one key,
+  a hold after a press that switched off grain means off.
+- **A nearest cloud owns the marks it reads**, and each pin takes its own — the cursor and later pins skip
+  them — so undoing a pin is heard.
+- **The eraser's depth counts grain only**, like the cursor's; any tape it touches is erased.
+- **Unpin all** is a button row in the pinned rail's block; the MIX title and its mute row are gone.
+- **The chrome buttons lose their key stickers** — the tooltip names the shortcut.
+
+### Fixed
+- **⌘Z undoes on every press** — macOS drops the Z keyup while ⌘ is held, so only the first ⌘Z worked.
+- A toggled grain hand lit the tape tile, reset to momentary on every launch, and on its own key never
+  turned off.
+- In nearest, every pin also pinned a loop of the closest take anywhere on the sphere.
+- A fast flick across a tape line threw in the trigger gate and cost the scheduler a tick.
+- Sticker gesture bars (long, extra long) were invisible off the palette.
+
+### Removed
+- The growing loop (`js/live-loop.js`, its worklet and its audit) — the overdub cut replaces it.
+
+---
+
 ## 5.8 alpha — 2026-09-25
 
 **Presets are recalls, audition is the cursor's A/B, and every performance key is on the screen.**

@@ -145,75 +145,6 @@ function sendOSCUplink(address, values) {
   _oscOutSock.send(frame, 0, frame.length, OSC_OUT_PORT, '127.0.0.1');
 }
 
-// ── OSC UDP external (renderer → main → UDP → arbitrary peer) ────────────────
-// Separate from the uplink above: real OSC 1.0 binary sent to a user-configured
-// host:port. Driven by the sensor mapping rows (js/sensor-mapping.js through
-// js/osc-out.js). Each unique host:port destination gets its own dgram socket, reused
-// across messages.
-//
-// Encoding: OSC 1.0 binary — null-terminated address string, null-terminated
-// type tag string (starts with ','), then big-endian args. All three sections
-// padded to 4-byte boundaries. Numbers are sent as 32-bit floats (f), strings
-// as OSC strings (s). Int support can be added later if needed.
-
-const _oscExtSocks = new Map();   // 'host:port' → dgram socket
-
-function _padTo4(n) { return (n + 3) & ~3; }
-
-function _encodeOSCString(s) {
-  const raw = Buffer.from(s + '\0', 'utf8');
-  const padLen = _padTo4(raw.length);
-  if (padLen === raw.length) return raw;
-  const padded = Buffer.alloc(padLen);
-  raw.copy(padded);
-  return padded;
-}
-
-function _encodeOSC(address, values) {
-  const addrBuf = _encodeOSCString(address);
-  let tags = ',';
-  const argBufs = [];
-  for (const v of values) {
-    if (typeof v === 'number' && Number.isFinite(v)) {
-      tags += 'f';
-      const b = Buffer.alloc(4);
-      b.writeFloatBE(v, 0);
-      argBufs.push(b);
-    } else if (typeof v === 'string') {
-      tags += 's';
-      argBufs.push(_encodeOSCString(v));
-    }
-    // other types silently skipped
-  }
-  const tagsBuf = _encodeOSCString(tags);
-  return Buffer.concat([addrBuf, tagsBuf, ...argBufs]);
-}
-
-function _getOrCreateExtSock(host, port) {
-  const key = `${host}:${port}`;
-  let sock = _oscExtSocks.get(key);
-  if (sock) return sock;
-  sock = dgram.createSocket('udp4');
-  sock.on('error', (err) => {
-    console.warn(`[OSC-ext ${key}] UDP error: ${err.message}`);
-  });
-  _oscExtSocks.set(key, sock);
-  return sock;
-}
-
-function sendOSCExternal(host, port, address, values) {
-  if (typeof host !== 'string' || !host) return;
-  if (!Number.isInteger(port) || port <= 0 || port > 65535) return;
-  if (typeof address !== 'string' || !address.startsWith('/')) return;
-  try {
-    const sock = _getOrCreateExtSock(host, port);
-    const frame = _encodeOSC(address, Array.isArray(values) ? values : []);
-    sock.send(frame, 0, frame.length, port, host);
-  } catch (e) {
-    console.warn('[OSC-ext] send failed:', e);
-  }
-}
-
 function parseOSC(buf) {
   try {
     let i = 0;
@@ -734,13 +665,6 @@ function setupIPC() {
   // renderer should never await a confirmation.
   ipcMain.on('osc-send', (_e, address, values) => {
     sendOSCUplink(address, values);
-  });
-
-  // Renderer → main: outbound real OSC binary to an arbitrary external peer
-  // (the sensor mapping rows, js/osc-out.js). Distinct from 'osc-send' above,
-  // which targets the internal relay in JSON format for joycon-GUI feedback.
-  ipcMain.on('osc-send-external', (_e, host, port, address, values) => {
-    sendOSCExternal(host, port, address, values);
   });
 
   // The two audio ports (2026-09-06). The preload makes a MessageChannel per

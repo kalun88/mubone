@@ -10,13 +10,13 @@ import {
   perf, perfTick, gp, minGrainDurS, axisHeld,
   SENSOR_CAM_SWING_DEG_S, SENSOR_CAM_OVERSHOOT_DEG, SENSOR_CAM_TELEPORT_DEG
 } from './state.js';
+import { tickSensorBindings } from './sensor-bindings.js';
 import { project, projectInto, updateProjectionCache, cursorLonLatNow, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto, camOffsetZ } from './sphere.js';
 import { syncParticleMarks } from './composer.js';
 import { pinAnchorInto } from './pins.js';
 const _anchorR = [0, 0];
 import { activeGrainMap, GLOW_MIN_MS, stampCartesian, refreshCloudClaims, isCloudClaimed, masterPhaseWall, overdubHeads } from './grain.js';
 import { claimedStrokeIds } from './trigger.js';
-import { tickMappings } from './sensor-mapping.js';
 import { rebuildLiveBuffer } from './audio.js';
 import { normalise, normaliseCentroid, featuresToColor, tickPeakHold, CQ_HUE, CQ_SAT } from './audio-features.js';
 
@@ -198,6 +198,39 @@ function _drawAnchorMark(x, y, color, alpha, label, paused) {
   S.ctx.restore();
 }
 
+/** A PINNED CLOUD'S REACH LINES (Ek, 2026-09-25: "when i drop a cloud with
+ *  nearest on … i dont see the lines … coming from the nearest pin"). The
+ *  cursor's fan (drawParticles) drew only for the cursor, so a cloud in nearest
+ *  — reading marks that can sit anywhere — showed no sign of what it played:
+ *  the glow was there, unattributed. The same fan from the cloud, one line per
+ *  mark in the pool it posted this tick (grain.js `seed._reach`), in the
+ *  cloud's colour, one path, the cursor's ceiling and stride. */
+const _cloudReachP = [0, 0, 0];
+function _drawCloudReach(seed, proj, envG) {
+  const pool = seed._reach;
+  if (!pool?.length || performance.now() - (seed._reachAt || 0) > 120) return;
+  const stride = pool.length > REACH_MAX ? Math.ceil(pool.length / REACH_MAX) : 1;
+  let n = 0;
+  S.ctx.beginPath();
+  for (let i = 0; i < pool.length; i += stride) {
+    const p = pool[i];
+    spherePointInto(p.lon, p.lat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _cloudReachP)) continue;
+    S.ctx.moveTo(proj.sx, proj.sy);
+    S.ctx.lineTo(_cloudReachP[0], _cloudReachP[1]);
+    n++;
+  }
+  if (!n) return;
+  const dens = Math.min(1, (n * stride) / 64);
+  S.ctx.save();
+  S.ctx.strokeStyle = seed.color;
+  S.ctx.lineWidth   = 1;
+  S.ctx.globalAlpha = 0.5 * (1 - 0.5 * dens) * envG;
+  S.ctx.stroke();
+  S.ctx.restore();
+}
+
 /** The WALKERS (js/walker.js): a reading cursor retracing a grain stroke, so
  *  it is drawn like the moving cloud it is about to become if pinned — a
  *  dashed reach ring at its head and the path it walks. Not a pin: it wears no
@@ -330,6 +363,7 @@ export function drawSeeds() {
       }
       S.ctx.setLineDash([]);
       S.ctx.restore();
+      _drawCloudReach(seed, proj, envG);
       // The pin gesture still held: the cloud reads here, but its anchor does
       // not exist yet — no mark until the release (Ek, 2026-09-05).
       const recording = i === S._commitRecordingSlot;
@@ -1898,9 +1932,37 @@ export function drawParticles() {
     const a = (seq.playing ? 0.9 : 0.4) * (0.35 + 0.65 * df);
     _drawAnchorMark(proj.sx, proj.sy, seq.color, a, si + 1, !seq.playing);
     if (si === selLoop) _drawFocusBracket(proj.sx, proj.sy, FOCUS_R, a * 0.85, FOCUS_INK());
+    _drawLayerMarks(seq, si);
   }
 
   drawTriggers();
+}
+
+/** EACH LAYER DROPS A PIN MARK WHERE IT WAS PRESSED (Ek, 2026-09-25: "i see the
+ *  extra lines but no pin drop so i'm unsure"). The loop's own mark, in its
+ *  colour, labelled loop·layer — `3·2` is loop 3's second layer — at the spot
+ *  the cursor was on the press (`ov.at`, stamped by ui-presets.js). A layer
+ *  still recording is drawn from the press itself, before it has a layer to
+ *  hold, so the mark lands the instant the pin does. */
+function _drawLayerMarks(seq, si) {
+  const ovs = seq.overdubs || [];
+  const t = S._overdubTake;
+  const pressed = t && t.seq === seq && !t.ov && S.isRecording ? t : null;
+  const n = ovs.length + (pressed ? 1 : 0);
+  for (let k = 0; k < n; k++) {
+    const at = k < ovs.length ? ovs[k].at : pressed.at;
+    if (!at) continue;
+    // A layer that begins at the loop's own pin (the first after a pin's cut:
+    // the loop ends where it starts) is already marked — the loop's mark says it.
+    if (Math.abs(at.lon - (seq.anchorLon ?? NaN)) < 0.005 && Math.abs(at.lat - (seq.anchorLat ?? NaN)) < 0.005) continue;
+    spherePointInto(at.lon, at.lat, _arcW);
+    cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+    const proj = project(_arcC[0], _arcC[1], _arcC[2]);
+    if (!proj) continue;
+    const df = Math.max(0, depthFactor(rampDepth(_arcC[0], _arcC[1], _arcC[2], proj.depth)));
+    const a = (seq.playing ? 0.9 : 0.4) * (0.35 + 0.65 * df);
+    _drawAnchorMark(proj.sx, proj.sy, seq.color, a, `${si + 1}·${k + 1}`, false);
+  }
 }
 
 // ── Armed triggers ──────────────────────────────────────────────────────────
@@ -2895,27 +2957,9 @@ export function drawCursor() {
 
   const tipR = 5, armLen = 12, armGap = tipR + 3;
 
-  // Handsfree + toggle-trace active in plain trace mode — green reticle indicator
-  const _toggleTraceOn = S.paintLatched && S.hfArmed && S.traceMode === 'trace';
-
-  // Outer ring — HANDS OFF first, then recording, then painting (Ek,
-  // 2026-09-14). The ring is where "the instrument is playing itself" belongs,
-  // in --accent-sensor, whose own note is "the body is driving it" — which is
-  // what hands-free latched is. Two things were wrong before and neither was
-  // the hue. It sat BELOW `painting` in this chain, and latched means painting,
-  // so the green ring only ever rendered while latched and NOT painting — it
-  // was absent exactly when it had something to say. And its other half was a
-  // pip drawn over the centre dot at the dot's own radius, so it hid what you
-  // were inking from (see the dot, above).
-  //
-  // On the ring, every combination now shows BOTH facts at once: recording
-  // hands-free is a violet ring around the 2.4x mic dot; painting hands-free is
-  // a violet ring around the material's colour. The ring says whose hands, the
-  // dot says what material — one object each.
+  // Outer ring — recording, then painting; the dot says what material.
   const _rtic = '255,255,255';
-  S.ctx.strokeStyle = _toggleTraceOn
-    ? _hexA(_tok('--accent-sensor', '#a793c0'), 0.95)
-    : recording ? _hexA(_tok('--mic-live-border', '#d25e3e'), 0.95)
+  S.ctx.strokeStyle = recording ? _hexA(_tok('--mic-live-border', '#d25e3e'), 0.95)
     : painting ? `rgba(${_rtic},0.95)`
     : `rgba(${_rtic},0.7)`;
   S.ctx.lineWidth   = 2;
@@ -3145,15 +3189,17 @@ export function animate() {
     }
   }
 
+  // ── Sensor bindings (the Keys + MIDI table's sensor column) ──────────────
+  // Before the cursor is resolved below, so a row driving a cursor axis lands
+  // in this frame rather than the next.
+  tickSensorBindings();
+
   // ── Sensor (x-imu3) override ───────────────────────────────────────────────
   // Always uses the absolute path via getSensorCamQ() → applyAxisMapQuat().
   // applyAxisMapQuat already has a pole-safe forward-vector path for when
   // roll is muted — no need for a second delta-tracking layer here.
   if (S.cameraMode === 'sensor' && typeof S._getSensorCamQ === 'function') {
     const sq = S._getSensorCamQ();
-    // Stashed so the post-tickMappings pass can re-derive without re-reading
-    // the sensor — see the re-apply below.
-    S._rawCamQ = sq;
     if (sq) {
       // Single-IMU: the sensor drives the CURSOR, and the camera is derived —
       // identical to camQ below the pitch clamp (reticle at centre, as ever),
@@ -3202,26 +3248,6 @@ export function animate() {
     ? S._getCameraQ()
     : null;
 
-  // ── Sensor → grain-param mappings ──────────────────────────────────────
-  // Evaluate after camera/cursor quaternion updates so axis values are fresh.
-  // Writes mapped values to S.grainOverrides; grain scheduler reads on next tick.
-  tickMappings();
-
-  // ── Cursor-destination mappings ────────────────────────────────────────
-  // tickMappings() has to run after the camera block (mapping inputs must be
-  // fresh), but a 'cursor' row writes back INTO the cursor — so re-derive here
-  // from the stashed raw quaternion. Without this a mapped axis would always
-  // show the previous frame's value, a fixed 33ms behind every other output.
-  // Only runs while an axis is actually 'mapped'.
-  if (S.azSource === 'mapped' || S.elSource === 'mapped') {
-    if (S._rawCursorQ)   S.cursorQ = applyAxisSources(S._rawCursorQ);
-    else if (S._rawCamQ) {
-      const pq = applyAxisSources(S._rawCamQ);
-      S.cursorQ = pq;
-      S.camQ = cameraFromPointing(pq);
-    }
-  }
-
   // Particle deposits are handled by paint-ticker.js (200Hz setInterval),
   // independent of the render loop and input source.
 
@@ -3242,7 +3268,11 @@ export function animate() {
     perf.frameSkips++;
   } else {
     animate._skippedLast = false;
+    const _d0 = performance.now();
     try { drawFrame(); } catch (e) { console.error('drawFrame error:', e); }
+    // What the frame COST, smoothed — the perf monitor's draw row. frameMs is
+    // the rAF interval, which reads 16.7 at 60 Hz whatever the draw took.
+    perf.drawMs += 0.15 * ((performance.now() - _d0) - perf.drawMs);
     // ── Mirror blit + HUD sync to projector popup ────────────────────────
     // Canvas already renders at popup resolution, so this is a 1:1 copy.
     if (S.projectorCtx && S.projectorPopup && !S.projectorPopup.closed) {
@@ -3268,7 +3298,7 @@ export function animate() {
 // ── Axis-source substitution ────────────────────────────────────────────────
 // Reduces a sensor quaternion to POINTING — yaw and pitch through the axis
 // locks, and nothing else. Single owner of the rule, shared by the camera
-// path, the detethered cursor path, the post-mapping re-apply and main.js's
+// path, the detethered cursor path and main.js's
 // 400 Hz arrival path.
 //
 // Roll is not resolved, muted, or frozen here — it is STRIPPED, always

@@ -5,7 +5,8 @@
 // are." The recogniser and the map live in midi.js; this page is where they
 // are READ: what each of the three buttons does on each gesture, the two
 // windows, and a live line showing the last gesture the instrument sent, so
-// a binding can be checked without opening the keys page.
+// a binding can be checked without opening the keys page. The buttons are the
+// mubone instrument's three (sygaldry.js → S._dispatchButton); an x-imu3 has none.
 import { S } from './state.js';
 
 const GESTURES = ['press', 'tap', 'long', 'xlong', 'double', 'triple'];
@@ -164,7 +165,10 @@ export function initButtonsPage() {
     requestAnimationFrame(() => { rafQueued = false; if (dirty && _visible()) { paint(); dirty = false; } });
   };
   window.addEventListener('button-gesture', e => {
-    const { srcLabel, g, down, label } = e.detail;
+    const { btn, srcLabel, g, down, label } = e.detail;
+    // The recogniser reports every source it reads — keys and MIDI notes too,
+    // the spacebar on every press. This page is the instrument's buttons.
+    if (btn == null) return;
     // One line per gesture: a press shows both edges (the take's start and
     // end are the point of it); the others show the edge they fire on.
     if (!down && g !== 'press') return;
@@ -176,11 +180,8 @@ export function initButtonsPage() {
     if (_visible()) schedule();
   });
   document.getElementById('buttonsMonClear')?.addEventListener('click', () => { ring.length = 0; paint(); });
-  const prevS = S._onSettingsSection;
-  S._onSettingsSection = (id) => { prevS?.(id); if (id === 'buttons') paint(); };
-
   const prev = S._onSettingsSection;
-  S._onSettingsSection = (id) => { prev?.(id); if (id === 'buttons') { renderButtonsTable(); paintTiming(); } };
+  S._onSettingsSection = (id) => { prev?.(id); if (id === 'buttons') { paint(); renderButtonsTable(); paintTiming(); } };
   const prevB = S._bindingsChanged;
   S._bindingsChanged = () => { prevB?.(); if (_visible()) renderButtonsTable(); };
 }

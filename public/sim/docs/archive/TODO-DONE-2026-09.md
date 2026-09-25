@@ -3721,3 +3721,108 @@ it began; git dates the commits Sep 21. The day is the same work either way.)*
   right-click clears. N, [ ], ⌘Z, M, ` seeded as bindings and removed from events.js; held brackets still repeat.
   Probed: every sticker's text, N / ] / held [ / M work as bindings, a learn onto audition moves it off A. engine-audit ok.
 - [x] **Unpin all is ↑ extra long; the lock says LOCK** (2026-09-25, Ek) — `commit_clear` seeded on ArrowUp `xlong` (midi.js), its pinned-rail row wears the sticker; the lock button's word is `lock` now that ⌥ is its sticker. Probed: ↑ press unpins one, held past 3 s clears the rest.
+- [x] **A toggled grain hand lights its own tile and keeps its verb** (2026-09-25, Ek) — the hand tiles lit by `_held.latched`,
+  so a long side on toggle lit TAPE; `_held.side` (set in `handDown`) says which side plays. The boot reader and `pickHand`
+  also dropped the side's `verb`, resetting it to momentary every launch. Probed: hold → grain lit and latched through the
+  release, tap stops it, tap plays tape; the verb survives a reload.
+- [x] **A toggled grain hand on its own key turns off** (2026-09-25, Ek) — `_handLong` ended the running play and started
+  the long side again, so Q (a plain press on `hand_long`) could never stop it; its own latch is now its off switch.
+  Probed: Q on / off / on, space stops it, Q from a tape play switches to grain, Q again stops.
+- [x] **The hands' keys: own stops, other switches** (2026-09-25, Ek) — `_handPress` / `_handLong` (tiles.js) share one rule;
+  a spacebar hold after a press that switched off grain is off, via `S._handPressAbort` (midi.js `_abortPress` hands
+  `hand_press` over, no history discard, so a closed loop survives the long). RULINGS entry. Probed Space+Q toggles and
+  Space press+long toggle: every switch and stop, lit tile right, undo count never dropped; bindings restored.
+- [x] **A pinned cloud is a frozen cursor** (2026-09-25, Ek) — a tape stroke touching any cloud's radius pins itself
+  at the touch point (`pinStrokeInZones`, `lineTouchIndex` factored out of the gate); a press pins the cursor's
+  scope (`reads`) and mute; a tape-scoped cloud reads and claims no grain. pins-audit § Z. Probed on the dev app
+  (13 cases, all as ruled); the rig suites (pins lens palette trigger) were NOT run.
+- [x] **The eraser's depth counts grain only** (2026-09-25, Ek) — `erase.js` ranks grain strokes for depth; a touched
+  take is always a target (`_tapeKeys`). lens-audit gains the check. Probed on a private instance: 2 grain + a take
+  at depth 1 erases the take and the newest grain, keeps the older; grain-only and depth-all unchanged.
+- [x] **A pin during a tape take is an overdub inside the stroke** (2026-09-25, Ek) — `splitLiveRecording` (audio.js)
+  cuts the take gaplessly, `pinSplitTake` (events.js) seeds the main loop and records on as a pending overdub,
+  bound by the looper hook; the growing loop (`live-loop.js`, its worklet and audit) deleted. Probed on a private
+  instance: join 0 samples, loop = press→pin, layers phased 0 then at their pin, undo one layer at a time,
+  unpin → three lines, stop inside the cut window and a double press both clean.
+- [x] **A layer pin shows the moment it is pressed** (2026-09-25, Ek: "i see the extra lines but no pin drop") — each
+  dub take stamps `at` (its press point); renderer `_drawLayerMarks` draws the loop's mark there labelled `loop·layer`
+  (not the one that starts at the loop's own pin), the rail adds a hollow dot from the press, filled once kept.
+  attachOverdub now takes the take's own record (it read the NEXT layer's after a cut). Probed + shot on a private instance.
+- [x] **The row stickers draw the gesture** (2026-09-25, Ek: unpin all's ↑ showed no bold line) — the `.leg-g` bar rules
+  were scoped to `.palette .tile`; `.row-binds` / `.chrome-binds` get them (style.css). Measured on a private instance:
+  unpin all's xlong bar 8×4 in the palette's ink.
+- [x] **The chrome buttons lose their key stickers** (2026-09-25, Ek) — undo, sweep, erase all, zero, lock, mute; the
+  hover tooltip names the shortcut (mute gains `data-action` so it does). Probed: all six tooltips list their key.
+- [x] **ALL bus; unpin all in the block** (2026-09-25, Ek) — the MIX mute is the ALL bus's M (ui-pins.js, no S), unpin
+  all a `.mu-btn` row under when full; `#tcPins` and its rows gone; pins-audit's mute check reads ALL's M. Measured on a
+  private instance: ALL's M under the busses' M, the button's edge on when-full's, a hand mute survives ALL on/off.
+- [x] **Nearest pins; the cloud's reach lines; a gate crash** (2026-09-25, Ek) — `_nearestTrigParticle` gated by the radius in
+  every mode (nearest pinned a loop of the closest take anywhere with every cloud); clouds draw their own reach fan
+  (`seed._reach`, `_drawCloudReach`); `ps` restored in the trigger gate's swept crossing (lost in the zone refactor —
+  a fast flick over a line threw and aborted the scheduler tick). Probed on private instances.
+- [x] **A nearest cloud owns the marks it reads** (2026-09-25, Ek) — `_nearClaim` (grain.js) holds each nearest cloud's
+  pool by identity; silent ones rebuilt at 10 Hz. Probed: k 4 cloud → the cursor's pool is the next 4, no overlap,
+  muted too; unpinned, the cursor has them back.
+- [x] **Each nearest pin takes its own marks** (2026-09-25, Ek) — a nearest cloud skips what clouds pinned before it own
+  (`_readableBy`, ordered by `_pinSeq`). Probed: three nearest pins at k 20 read 60 distinct marks, the cursor the next
+  20; each undo leaves the rest disjoint.
+- [x] **⌘Z undoes every press** (2026-09-25, Ek: "can't undo the 3rd nearest-pin") — macOS sends no keyup for Z while ⌘ is
+  held, so the recogniser kept ⌘Z's source down and swallowed every later press. events.js: ⌘'s own keyup releases
+  every ⌘-chord, and a fresh (non-repeat) down on a still-down key closes the old press first. Found with a key probe
+  in the dev app; probed: ⌘ held, Z ×3 undoes three pins.
+- [x] **The old handsfree gate is gone** (2026-09-25, Ek: "just remove the old handsfree thing") — `js/handsfree.js`,
+  Settings → Audio, advanced's Handsfree Gate section, the `H` key, the `handsfree` action and `/handsfree`, the `hf*`
+  state and persisted fields, the violet reticle ring, the HUD label, `/status/trace/hf`, the two `trace_hf*` LED rows.
+  It only segmented a hand-started grain take and clipped every attack. `handsfree` joins `_RETIRED_IDS`. Booted clean.
+- [x] **Settings → Mapping is gone** (2026-09-25, Ek: "i dont use any of it so can be removed wholesale") —
+  `sensor-mapping.js`, `ui-sensor-mapping.js`, `midi-out.js`, `osc-out.js`, the page and its button, `/mapping1–3`,
+  Electron's external-OSC sender, the `param-mapped` highlight, the `mapping` reset category (keys retired). Also
+  closes the `targetParam`-twice item. Its grain rows fought frozen marks and the tool's own block; sensors bind
+  onto the Keys + MIDI rows next. The cursor's `mapped` axis state stays, fed by nothing until then.
+- [x] **A sensor binds onto the Keys + MIDI table** (2026-09-25, Ek) — `js/sensor-bindings.js`: any sensor's
+  elevation / roll / azimuth drives a cc row through its ccFn and the scale stage; the cell spans a cc row's
+  Key + Button columns (a sixth column crushed Action to 94px). New cc rows `cursor_az` / `cursor_el` (+ OSC)
+  drive a mapped axis and arm it on binding. Probed on a private instance: cutoff follows elevation, EL follows
+  roll, Action back to 256px. Ruling: RULINGS "A sensor is a knob on the one table".
+- [x] **Master mute covers the stage** (2026-09-25, Ek) — `#muteOverlay` (events.js `_syncMuteOverlay`, style.css):
+  the lock overlay's wash and type in a 3px ember frame, "muted" + the bound key, click-through. Probed: shows on
+  mute, clears on unmute, the canvas still takes the click, and under ⌥ lock its words sit at the top, undimmed.
+  RULINGS "The stage says muted".
+- [x] **Keys + MIDI and LED: twelve behaviour fixes** (2026-09-25, from a four-part audit) — dry level in dB end to
+  end; `grain_filter`, `snap`, `k_seq`, `radius_fade`, `mute`, `pins_mute` set on an OSC int and flip on a key;
+  `pins_mute` a toggle; hand press follows its verb; tape speed/pitch snap to step; every tool's sheet captured
+  when a binding moves it (`_pollSheets`); `grain_flow` ascending; camera cycle skips sensor with none live;
+  `grain_durjit` deleted; LED trace = isPainting, one pin flash per pin, the instrument blinks on connect.
+- [x] **Keys + MIDI and LED: words, moved controls, renames, dead code** (2026-09-25, Ek) — labels match the rail;
+  tips point where controls live now (when full is on the rail, pin in/out, sampler off unless Settings › Tools);
+  `loop_release_mode` / `loop_fade_time` deleted (autopin replaced them); `noise_gate` → `paint_gate` on `/paint/gate`
+  (bindings migrate once); the LED page is "LED Feedback", names its device, pin / unpin / recording rows;
+  `uprootNearestSeed`, `clearAllSeeds` gone; no Mapping or Max left in the page text.
+- [x] **Settings pass, round one** (2026-09-25, Ek) — mute overlay has no wash (frame + words); "Cheat Sheet"; the
+  nav's sensor glyph is the chrome's; the Fullscreen row is gone (it was the OS's own fullscreen); the perf monitor
+  reads grains of the real pool, audio-thread load, draw COST, memory (takes + heap) and transport faults; Minimal
+  Rendering measured (no gain at 10k marks, 11.8 → 6.7 ms draw and drift p95 12.5 → 9 at 30–40k) and re-described.
+- [x] **Instrument Buttons checked against today's app** (2026-09-25) — driven on a private instance: button 1
+  toggles and holds the hand, 3 pins / ×2 unpins, the table and monitor agree. Fixed: the page names the mubone
+  instrument's three buttons; its monitor shows buttons only (it logged every key); the hand rows name their tool
+  (`hand: press · tape`); a palette verb that repeats its name reads once (`unpin`, not `unpin · unpin`).
+- [x] **Rail: ruled section labels, weighted preset rows** (2026-09-25, Ek, from the rails canvas — A's labels, B's
+  list) — `secLbl` is sentence case, semibold, with a hairline to the edge (Voice, Grain selection); a preset row is
+  42px with the instrument glyph (hue when on), the name at 600 and its few numbers flush right (`_voiceSummary`:
+  tape reverse · speed · pitch, grain duration · period via `S._sliderDisplay`). Canvas in docs/mockups/rails/.
+- [x] **Rail titles and sections, the canvas's F** (2026-09-25, Ek) — Tools / Cursor / Pinned are 20px bold words
+  without glyph or rule; Voice and Grain selection are cards of their own under the instrument's and the cursor's
+  (`#voicePanel`, the cursor panel split in render()), headed 40px over a hairline. RULINGS "The rail's titles are
+  large words". Canvas round 2 in docs/mockups/rails/.
+- [x] **Reset, export/import and Save checked against today's app** (2026-09-25) — the storage registry now knows
+  every key the app writes (instrument tab, keys Show all, three voice stamps) and the hand-swept legacy keys are
+  RETIRED_KEYS (purged at boot); a piece saves each cloud's `reads` and pin order (`pinSeq`), so a tape-scoped cloud
+  reopens tape-scoped and nearest-cloud ownership survives; piece.js lost two raw NUL bytes that made it "binary".
+- [x] **Rail small items** (2026-09-25) — the tool rail scrolls as one (list grows to fill, Tools bar sticky, the
+  scroll mark follows the rail), so the presets are no longer hidden behind the pinned cursor section at laptop
+  height; the pinned rail's "Selected" label is sentence case and its bar lost the hairline (titles now level to
+  the pixel); a New piece restarts the pin order (applyManifest's counter).
+- [x] **5.10 release run: fixes the suites found** (2026-09-25) — a gesture ended while the mic was asked for no
+  longer leaves a tape take running (events.js startTriggerRecord, found by pins-audit Z2); the audits caught up with
+  the day: lens-audit's depth case sets depth 1, verify-action-ranges knows input/dry gain store linear, osc-audit
+  reads a computed label, align-audit's rail invariants are F's (52 bars, no rules, the mode bar's four rows).

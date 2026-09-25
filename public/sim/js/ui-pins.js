@@ -61,7 +61,8 @@
 
 import { S } from './state.js';
 import { GROUPS, toggleGroup, toggleSolo, pinsIn, togglePinMute, togglePinSolo,
-         selectedPinSlot, applyMix, isPinLeaving, groupOf, isPinAudible, pinAnchorInto } from './pins.js';
+         selectedPinSlot, applyMix, isPinLeaving, groupOf, isPinAudible, pinAnchorInto,
+         allMuted, setAllMuted } from './pins.js';
 import { angleBetweenSphere } from './grain.js';
 
 // The rail's vertical rhythm, in px, mirrored from style.css: the layout is
@@ -123,13 +124,21 @@ function _slotSig() {
   for (const c of S.commitSlots) s += c ? `${c.slotIndex}${c.type[0]}|` : '.';
   return s;
 }
+/** A dub pressed onto this loop whose layer does not exist yet — it is made at
+ *  the first wrap (ui-presets.js refreshLiveOverdub), up to a loop later. */
+function _pressedLayer(c) {
+  const t = S._overdubTake;
+  return !!(t && t.seq === c && !t.ov && S.isRecording);
+}
 function _sig() {
   let s = `${S.commitSlotCount}#`;
   for (const g of GROUPS) s += `${g.key}${g.muted ? 'm' : ''}${g.solo ? 's' : ''}|`;
   for (const c of S.commitSlots) {
     // An overdub counts as a letter: 'r' while its take records, 'B' once
     // sealed — the canvas is redrawn at both, so a layer lands where it is.
-    s += c ? `${c.slotIndex}${c.type[0]}${c.mute ? 'm' : ''}${c.solo ? 's' : ''}${(c.overdubs || []).map(o => o.buffer ? 'B' : 'r').join('')}${isPinLeaving(c) ? 'x' : ''}|` : '.';
+    // A layer pressed but not yet folded (nothing heard of it yet) is 'p': its
+    // dot shows from the press.
+    s += c ? `${c.slotIndex}${c.type[0]}${c.mute ? 'm' : ''}${c.solo ? 's' : ''}${(c.overdubs || []).map(o => o.buffer ? 'B' : 'r').join('')}${_pressedLayer(c) ? 'p' : ''}${isPinLeaving(c) ? 'x' : ''}|` : '.';
   }
   return s;
 }
@@ -472,7 +481,11 @@ export function renderPinsRail(selected) {
   for (const c of S.commitSlots) {
     if (!c) continue;
     const g = groupOf(c), nm = _pinName(c);
-    const n = c.overdubs?.length | 0;
+    // THE LAYER SHOWS FROM ITS PRESS (Ek, 2026-09-25: "i see the extra lines
+    // but no pin drop so i'm unsure"): a hollow dot while it records — pressed
+    // or folded — filled once it is kept.
+    const dots = (c.overdubs || []).map(o => o.buffer ? '<i></i>' : '<i class="rec"></i>').join('') + (_pressedLayer(c) ? '<i class="rec"></i>' : '');
+    const n = (c.overdubs?.length | 0) + (_pressedLayer(c) ? 1 : 0);
     // THE BOX IS THE FADER AND NOTHING ELSE (Ek, 2026-09-23: "the box for the
     // track should be the fader (full) and wavelength … M S id and the loop
     // select icon should be outside"). The number, M and S sat ON the fader
@@ -489,7 +502,7 @@ export function renderPinsRail(selected) {
           `<div class="lyr-unity"></div>` +
           `<div class="lyr-mat"><canvas></canvas></div>` +
           `<div class="lyr-ph" hidden></div>` +
-          (n ? `<span class="lyr-ovd" title="${n} overdub${n === 1 ? '' : 's'}">${'<i></i>'.repeat(n)}</span>` : '') +
+          (n ? `<span class="lyr-ovd" title="${n} overdub${n === 1 ? '' : 's'}">${dots}</span>` : '') +
           `<span class="lyr-db"></span>` +
           `<div class="lyr-edge"></div>` +
         `</div>` +
@@ -585,6 +598,7 @@ function _wireTrack(c, el) {
 
 // ── The busses ──────────────────────────────────────────────────────────────
 
+let _allFill = null;   // the ALL bus's level bar, written by _frame
 function renderBusses() {
   const box = document.getElementById('lyrBus');
   if (!box) return;
@@ -605,7 +619,30 @@ function renderBusses() {
         `<button type="button" class="lyrsolo" data-solo="${g.key}" aria-pressed="${!!g.solo}" title="solo the ${g.name}">S</button>` +
       `</span></div>`;
   }
+  // ALL — THE MASTER OF EVERY PIN (Ek, 2026-09-25: "maybe there should be a 3rd
+  // row that's the master for the pinned items below the loop and cloud bus …
+  // that button won't need solo"). It is the MIX mute that sat at the rail's
+  // foot, moved to where a mixer keeps its master: the same toggle (pins.js
+  // setAllMuted — the group flags, never the tracks', so every per-pin M and S
+  // is as the hand left it when it lets go), its light derived (allMuted).
+  // Under the busses, the members' mean level, M and no S.
+  const all = S.commitSlots.filter(c => c && !isPinLeaving(c)).length;
+  if (all) {
+    const on = allMuted();
+    out += `<div class="lyr-bus-line lyr-bus-line--all" style="--c:var(--eng-pins)" data-bus="all">` +
+      `<span></span>` +
+      `<div class="lyr-bus-row">` +
+        `<div class="lyr-fill"></div>` +
+        `<span class="lyr-bus-nm">all<b>${all}</b></span>` +
+      `</div>` +
+      `<span class="lyr-ms">` +
+        `<button type="button" class="lyrmute" data-mute="all" aria-pressed="${on}" title="${on ? 'unmute every pin — the mix comes back as you left it' : 'mute every pin — your mutes and solos are kept'}">M</button>` +
+        `<span class="lyrsolo lyr-ms-none" aria-hidden="true"></span>` +
+      `</span></div>`;
+  }
   box.innerHTML = out;
+  _allFill = box.querySelector('[data-bus="all"] .lyr-fill');
+  box.querySelector('[data-mute="all"]')?.addEventListener('click', e => { e.stopPropagation(); setAllMuted(!allMuted()); });
   for (const g of GROUPS) {
     g._railEl = box.querySelector(`[data-bus="${g.key}"]`);
     g._railFill = g._railEl?.querySelector('.lyr-fill') ?? null;
@@ -695,6 +732,10 @@ function _frame() {
     const el = g._railFill; if (!el) continue;
     const n = busN[g.key];
     el.style.transform = `scaleX(${n ? (busSum[g.key] / n).toFixed(3) : 0})`;
+  }
+  if (_allFill) {
+    const n = busN.cloud + busN.loop;
+    _allFill.style.transform = `scaleX(${n ? ((busSum.cloud + busSum.loop) / n).toFixed(3) : 0})`;
   }
 }
 

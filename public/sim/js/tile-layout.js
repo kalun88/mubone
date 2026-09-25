@@ -88,9 +88,9 @@ function _initAxisCycles() {
   // Two states on the CLICK, three in the state (Ek, 2026-09-01: "on off
   // mapped, i think that's too complicated. mapping is another thing which we
   // have built for, in the mapping settings page"). So held ↔ free here, and
-  // 'mapped' is arrived at only by targeting a cursor axis in Settings →
-  // Mapping, which arms it. Clicking a mapped axis frees it, which is the
-  // manual disarm _armCursorAxis deliberately leaves to a human.
+  // 'mapped' is arrived at only by binding something onto the axis's position
+  // row in Keys + MIDI, which arms it (sensor-bindings.js armCursorAxisFor).
+  // Clicking a mapped axis frees it — the disarm the binding leaves to a human.
   for (const [btnId, key] of Object.entries(AXIS_CYCLE)) {
     document.getElementById(btnId)?.addEventListener('click', () => {
       S._setAxisSource?.(key, axisHeld(S[key]) ? 'sensor' : 'locked');

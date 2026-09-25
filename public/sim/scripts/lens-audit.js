@@ -194,6 +194,31 @@ async function run(rig) {
       S.recencyN = 1; S.searchRadiusDeg = 5; S.eraseOldest = false;
       E.startEraseStroke(); await new Promise(r => setTimeout(r, 200)); E.stopEraseStroke();
       o.eraseDepth = { left: ids(S.particles), want: [es[0], es[1]].sort() };
+      // …and depth counts GRAIN only (2026-09-25): a take painted on top is
+      // not the newest layer — it is erased beside the newest grain stroke,
+      // and the older grain stays.
+      // reset() puts depth back to ALL; this case is about depth 1 (2026-09-25:
+      // it never set it, so the eraser took every stroke and the check failed
+      // on a correct eraser).
+      reset(); S.recencyN = 1; S.searchRadiusDeg = 5; S.eraseOldest = false;
+      const gs = [0, 1].map(i => {
+        const id = ++sid;
+        for (let j = 0; j < 4; j++) {
+          const p = { lon: cur.lon + j * 0.2 * D2R, lat: cur.lat, strokeId: id, source: 'sample', sampleIndex: 0,
+                      grainStart: 0.1 * (i * 4 + j), grainDuration: 0.1 };
+          G.stampCartesian(p); S.particles.push(p);
+        }
+        return id;
+      });
+      const tape = ++sid;
+      for (let j = 0; j < 4; j++) {
+        const p = { lon: cur.lon + j * 0.2 * D2R, lat: cur.lat, strokeId: tape, source: 'sample', sampleIndex: 0, trig: true,
+                    grainStart: 0.1 * j, grainDuration: 0.1 };
+        G.stampCartesian(p); S.particles.push(p);
+      }
+      S._particleVersion++;
+      E.startEraseStroke(); await new Promise(r => setTimeout(r, 200)); E.stopEraseStroke();
+      o.eraseDepthTape = { left: ids(S.particles), want: [gs[0]] };
     }
 
     // ── the pin under dwell: grain takes the LOOP, not a cloud of the take ──
@@ -284,6 +309,7 @@ async function run(rig) {
   check('depth is local — a newer stroke outside the radius does not count', eq(out.depthLocal.got, out.depthLocal.want));
   check('depth over one sampler file counts strokes', out.depthSampler.got.length === 1, `got ${out.depthSampler.got.length} of ${out.depthSampler.strokes}`);
   check('erase, depth 1 over one sampler file: takes only the newest stroke', eq(out.eraseDepth.left, out.eraseDepth.want), JSON.stringify(out.eraseDepth));
+  check('erase depth counts grain only: a take on top goes WITH the newest grain stroke', eq(out.eraseDepthTape.left, out.eraseDepthTape.want), JSON.stringify(out.eraseDepthTape));
   check('pin on an opened take (dwell: grain): the loop only, no cloud', JSON.stringify(out.pinOpenTake.kinds) === '["loop"]', JSON.stringify(out.pinOpenTake));
   check('pin on an opened take AND grain material: a loop and a cloud, the cloud without the take', JSON.stringify(out.pinTakeAndGrains.kinds) === '["cloud","loop"]' && !out.pinTakeAndGrains.cloudTrig, JSON.stringify(out.pinTakeAndGrains));
   check('k 8 of 30 in reach', out.k8.n === 8 && out.k8.elig === 30, JSON.stringify(out.k8));

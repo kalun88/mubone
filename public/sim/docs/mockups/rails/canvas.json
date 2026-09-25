@@ -1,0 +1,24 @@
+{
+  "v": 3,
+  "attachments": {},
+  "boards": {
+    "A-Ruled.dc.html": { "h": 800, "is_interactive": true, "title": "A · Ruled label, preset tiles", "w": 320, "x": 400, "y": 0 },
+    "B-Rows.dc.html": { "h": 800, "is_interactive": true, "title": "B · Section band, preset rows", "w": 320, "x": 800, "y": 0 },
+    "C-Capsule.dc.html": { "h": 800, "is_interactive": true, "title": "C · Engine-tinted label, preset capsule", "w": 320, "x": 1200, "y": 0 },
+    "Main.dc.html": { "h": 800, "is_interactive": true, "title": "Today", "w": 320, "x": 0, "y": 0 },
+    "Now.dc.html": { "h": 880, "title": "Now · as built (A's labels, B's presets)", "w": 320, "x": 0, "y": 1260 },
+    "D-Plain.dc.html": { "h": 880, "title": "D · Plain bold titles, divider sections", "w": 320, "x": 400, "y": 1260 },
+    "E-Wells.dc.html": { "h": 880, "title": "E · Sections as inset wells", "w": 320, "x": 800, "y": 1260 },
+    "F-Cards.dc.html": { "h": 880, "title": "F · Large rail titles, a card per section", "w": 320, "x": 1200, "y": 1260 }
+  },
+  "createdOnFiles": { "at": "2026-09-25T16:50:00Z", "v": 1 },
+  "designSystems": [],
+  "launch": { "view": "canvas" },
+  "notes": {
+    "title": { "kind": "title1", "maxW": 1520, "text": "Tool rail — subtitles and presets", "w": 240, "x": 0, "y": -260 },
+    "round2": { "kind": "title1", "maxW": 1520, "text": "Round 2 — rail titles and section titles", "x": 0, "y": 1000 }
+  },
+  "order": ["Main.dc.html", "A-Ruled.dc.html", "B-Rows.dc.html", "C-Capsule.dc.html", "Now.dc.html", "D-Plain.dc.html", "E-Wells.dc.html", "F-Cards.dc.html"],
+  "pages": [],
+  "title": "Rails — subtitles and presets"
+}

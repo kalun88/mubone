@@ -303,7 +303,10 @@ if (rail && vis(rail)) {
     svg: n.querySelector('svg') && box(n.querySelector('svg')),
     nm:  n.querySelector('.tile-nm') && box(n.querySelector('.tile-nm')),
     kind: n.classList.contains('trow--multi') ? 'multi'
-        : n.classList.contains('trow--radio') ? 'radio' : 'none',
+        : n.classList.contains('trow--radio') ? 'radio'
+        // A PRESET row is a plain highlighted item (Ek, 2026-09-24: "just a
+        // normal highlighted item like all gui"), and says so with aria-pressed.
+        : n.hasAttribute('aria-pressed') ? 'pressed' : 'none',
     // EVERY ROW IN THIS RAIL IS A CHOICE since it became the tool editor
     // (2026-09-22): a click puts the shape, the lens or the voice on the
     // bench, and the half moon says which one you are building with. A tool
@@ -606,10 +609,13 @@ const px = v => Math.round(v * 100) / 100;
 const lefts = [], rights = [], wrapped = [], clipped = [];
 // The pin rows are TOOL ROWS (.trow, 2026-09-12): one label x across the pin
 // and mix groups. A track is not a row with a label — it is a bar (below).
-for (const row of rail.querySelectorAll('.trow')) {
-  const nm = row.querySelector('.tile-nm');
-  const rt = nm;
-  const tag = (row.dataset.pin || (nm ? nm.textContent.trim() : 'row')).slice(0, 14);
+// Since 2026-09-25 the rail's rows are the MODE BAR's (.mrow): the pin act rows
+// went (unpin all is a row of the block), so a label x and a right edge are read
+// from those — the label, and the control that ends the row.
+for (const row of rail.querySelectorAll('.lyr-modes .mrow')) {
+  const nm = row.querySelector('.mrow-l');
+  const rt = row.lastElementChild;
+  const tag = (nm ? nm.textContent.trim() : 'row').slice(0, 14);
   if (nm) lefts.push([tag, px(nm.getBoundingClientRect().x)]);
   if (rt) rights.push([tag, px(rt.getBoundingClientRect().right)]);
 }
@@ -711,8 +717,8 @@ const mix = (() => {
 if (list && prev !== null) list.innerHTML = prev;
 if (bus && prevBus !== null) bus.innerHTML = prevBus;
 if (!wasOpen) document.body.classList.remove('pinned-open');
-// BOTH RAILS' HEADER BARS ARE ONE HEIGHT (2026-09-22 night): stated at 40,
-// whether the bar holds a word or the kit's button.
+// BOTH RAILS' HEADER BARS ARE ONE HEIGHT (2026-09-22 night): stated — 52 since
+// the rails canvas's F (2026-09-25), whether the bar holds a word or a button.
 const barH = ['#toolRail .lyr-bar', '#tcRail .lyr-bar'].map(s => { const e = document.querySelector(s); return e ? px(e.getBoundingClientRect().height) : null; });
 // THE CURSOR SECTION (2026-09-23): the tool rail's lower half, on its foot,
 // under a bar of the header's height with a rule above and below.
@@ -1223,7 +1229,9 @@ const sweep = () => {
     const kc = el.classList;
     // Box-filler first: it outranks every class-based kind.
     const box = (kc.contains('bb-ax') || kc.contains('bb-mute')) && el.closest('.bottom-bar')
-      ? { token: '--footer-row', host: el.closest('.bottom-bar') } : null;
+      ? { token: '--footer-row', host: el.closest('.bottom-bar') }
+      // A preset row fills the rail's --row-preset (2026-09-25, the rails canvas).
+      : kc.contains('trow--voice') ? { token: '--row-preset', host: el } : null;
     const kind = box ? 'box'
                // A box that STATES it is sized by its text. Its own kind, not
                // folded into 'bare': --bare is a SHAPE (a button with no box),
@@ -1745,12 +1753,16 @@ function collapses(label, items, key) {
     check(bb.length < 2 || gaps.every(g => g >= 0 && g <= 12),
       'the rail header\'s buttons sit together, not spread across the bar',
       bb.length < 2 ? 'n/a' : `gaps ${gaps.join(', ')}px`);
-    if (rr.cur) check(Math.abs(rr.cur.gap) <= TOLERANCE && Math.abs(rr.cur.h - 40) <= TOLERANCE && rr.cur.top === '1px' && rr.cur.bottom === '1px'
+    // THE RAILS CANVAS'S F (2026-09-25): the title is a large word on a 52 bar
+    // with NO rule — the size divides the rail. The section still sits on the
+    // foot when there is room; the rail scrolls as one when there is not.
+    if (rr.cur) check(rr.cur.gap <= TOLERANCE && Math.abs(rr.cur.h - 52) <= TOLERANCE && rr.cur.top === '0px' && rr.cur.bottom === '0px'
                       && Math.abs(rr.cur.l) <= TOLERANCE && Math.abs(rr.cur.w - rr.cur.rw) <= TOLERANCE,
-      'the CURSOR section sits on the tool rail\'s foot, its bar 40 with a rule above and below at the rail\'s full width',
+      'the CURSOR section sits on the tool rail\'s foot (or below it, scrolling), its bar 52 with no rule, at the rail\'s full width',
       JSON.stringify(rr.cur));
-    check(rr.barH && rr.barH.every(h => h != null && Math.abs(h - 40) <= TOLERANCE),
-      'both rails\' header bars are one stated height, 40',
+    // A shut rail reads 0: it is not measured, and the open one still is.
+    check(rr.barH && rr.barH.some(h => h > 0) && rr.barH.every(h => h === 0 || (h != null && Math.abs(h - 52) <= TOLERANCE)),
+      'both rails\' header bars are one stated height, 52',
       `tool ${rr.barH?.[0]} · pinned ${rr.barH?.[1]}`);
 
     // ── The mixer ─────────────────────────────────────────────────────
@@ -1794,19 +1806,21 @@ function collapses(label, items, key) {
         'M and S are the 18px pair, centred on their row\'s bar',
         `n=${mx.ms.length} height ${msH.join('/')} · worst centre offset ${msOff}px`);
       const segRef = mx.refSeg ?? mx.segs[0];
-      // ONE capsule since 2026-09-22 night (sort); blend became the follow switch.
-      check(mx.segs.length === 1 && mx.segs.every(h => Math.abs(h - segRef) <= TOLERANCE) && mx.swH != null && Math.abs(mx.swH - 18) <= TOLERANCE,
+      // TWO capsules since 2026-09-25 — sort, and when full (moved up from
+      // Settings → Pins); blend became the follow switch.
+      check(mx.segs.length === 2 && mx.segs.every(h => Math.abs(h - segRef) <= TOLERANCE) && mx.swH != null && Math.abs(mx.swH - 18) <= TOLERANCE,
         'the mode bar\'s capsule is the sheet\'s .opt .seg at the tool rail\'s own height, and its switch is 18',
         `capsules ${mx.segs.join('/')} vs the tool rail\'s ${mx.refSeg ?? 'n/a (shut)'} · switch ${mx.swH}`);
       const rowSpread = Math.max(...mx.rowMids.map(m => m.length ? +(Math.max(...m) - Math.min(...m)).toFixed(2) : 0));
-      // TWO rows since 2026-09-23 (follow, sort): the crossfade curve went to Settings > Pins.
-      check(mx.rowMids.length === 2 && rowSpread <= TOLERANCE,
-        'each of the two mode-bar rows centres its label, its control and its readout on one line',
+      // FOUR rows since 2026-09-25: follow, sort, when full, unpin all (the act
+      // row became a row of the block).
+      check(mx.rowMids.length === 4 && rowSpread <= TOLERANCE,
+        'each of the four mode-bar rows centres its label, its control and its readout on one line',
         `${mx.rowMids.length} rows · worst spread ${rowSpread}px`);
       // One row model on both rails: the same height, the name at card + 12,
       // in the same size, colour and case the lens tab's rows use. `leftRow`
       // is null when the tool rail is shut; the height and inset still hold.
-      check(mx.rows.length === 2 && mx.rows.every(r => Math.abs(r.h - 30) <= TOLERANCE && Math.abs(r.lx - (mx.modeL + 12)) <= TOLERANCE)
+      check(mx.rows.length === 4 && mx.rows.every(r => Math.abs(r.h - 30) <= TOLERANCE && Math.abs(r.lx - (mx.modeL + 12)) <= TOLERANCE)
             && (!mx.leftRow || mx.rows.every(r => r.fs === mx.leftRow.fs && r.col === mx.leftRow.col && r.tt === mx.leftRow.tt)),
         'the mode bar\'s rows are the tool rail\'s: 30 tall, the name at card + 12, in the lens tab\'s type',
         `rows ${mx.rows.map(r => `${r.h}/${r.lx}/${r.fs}`).join(' ')} vs left ${mx.leftRow ? `${mx.leftRow.h}/${mx.leftRow.fs}/${mx.leftRow.col}` : 'shut'}`);

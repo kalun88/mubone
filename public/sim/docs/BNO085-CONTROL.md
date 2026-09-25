@@ -133,13 +133,13 @@ Unimplemented commands: Errors (0x01), Counter get/clear (0x02), Initialize (0x0
 
 ### 5.1 Prerequisite: the app cannot currently send an int
 
-`electron-main.js:_encodeOSC` encodes **every** finite number as `,f`, with an explicit "int support can be added later" comment. The sygaldry binding compares type strings exactly, so `/BNO085/enable_calibration 3.0` is parsed, matched against `,i`, and dropped without a word. Bangs already work: `values: []` produces a lone `,` which is what a `bng` endpoint expects. So step one is an int path through `sendOSCExternal` — otherwise the two most useful controls fail silently.
+*(History: that encoder was deleted with the sensor-mapping rows 2026-09-25; the control path is `js/sygaldry.js`.)* `electron-main.js:_encodeOSC` encoded **every** finite number as `,f`, with an explicit "int support can be added later" comment. The sygaldry binding compares type strings exactly, so `/BNO085/enable_calibration 3.0` is parsed, matched against `,i`, and dropped without a word. Bangs already work: `values: []` produces a lone `,` which is what a `bng` endpoint expects. So step one is an int path through `sendOSCExternal` — otherwise the two most useful controls fail silently.
 
 ### 5.2 Transport
 
 | Path | Works where | Cost |
 |---|---|---|
-| **Electron UDP** to the Pico's IP `:49170` via `sendOSCExternal` | Electron only | lowest — the socket, throttle and dedupe already exist in `js/osc-out.js`; mirrors how x-imu3 WiFi is driven |
+| **Electron UDP** to the Pico's IP `:49170` via `sendOSCExternal` | Electron only | low — the socket and encoder existed for the sensor-mapping rows (`js/osc-out.js`, `sendOSCExternal`) and were deleted with them 2026-09-25; git history has them |
 | **Direct WebSocket OSC** from the renderer to the Pico `:80` | Electron (page is `file://`, so `ws://` is allowed); **not** the hosted build or `https://localhost:4443`, where mixed-content blocking kills `ws://` and the Pico cannot serve `wss://` | medium — binary OSC framing in JS, but it is a direct bidirectional channel to the sensor with nothing in between |
 | **Node proxy**, the `proxy.js` / port-8081 pattern already used for x-imu3 WiFi discovery | everywhere, including hosted | highest — another process to run |
 | SLIP OSC over USB CDC | tethered | already the debug channel; not a performance path |

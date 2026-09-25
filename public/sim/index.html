@@ -80,7 +80,7 @@
     <div class="top-bar-left">
       <div class="top-bar-brand">
         <span class="top-bar-logo">mubone</span>
-        <span class="top-bar-version">5.8 alpha</span>
+        <span class="top-bar-version">5.10 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="mu-btn--bare top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -128,7 +128,7 @@
           </svg>
           keys / midi / osc
         </button>
-        <button id="perfMonBtn" class="mu-btn--bare top-bar-btn" title="performance monitor (P) — audio nodes, frame time, memory">
+        <button id="perfMonBtn" class="mu-btn--bare top-bar-btn" title="performance monitor (P) — grains, audio load, draw cost, memory">
           <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" width="13" height="13">
             <polyline points="1,12 4,7 7,10 10,4 13,8 15,5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -174,16 +174,16 @@
            it was a near-twin of the roll axis glyph in the footer. It is a
            broom: the one picture that is the word. -->
       <span class="tc-grp">
-        <button type="button" class="tc-icon" id="tcUndo" data-action="undo" title="undo — the last gesture: a stroke, a pin, an unpin, an erase, a sweep (⌘Z)"><span class="row-binds chrome-binds" data-binds="undo"></span>
+        <button type="button" class="tc-icon" id="tcUndo" data-action="undo" title="undo — the last gesture: a stroke, a pin, an unpin, an erase, a sweep (⌘Z)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 5 10l4-4"/><path d="M5 10h9a5 5 0 0 1 0 10h-3"/></svg>
         </button>
         <button type="button" class="tc-icon tc-dis" id="tcRedo" data-action="redo" title="redo — bring back the last undone gesture (⇧⌘Z)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 4-4-4-4"/><path d="M19 10h-9a5 5 0 0 0 0 10h3"/></svg>
         </button>
-        <button type="button" class="tc-icon" id="tcSweep" data-action="sweep" title="sweep — clear SCRATCH: everything unpinned goes, pins keep their material and keep sounding. Undo window 30s"><span class="row-binds chrome-binds" data-binds="sweep"></span>
+        <button type="button" class="tc-icon" id="tcSweep" data-action="sweep" title="sweep — clear SCRATCH: everything unpinned goes, pins keep their material and keep sounding. Undo window 30s">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.4v5.2"/><path d="M7.6 8.6h8.8l1.3 8.2a1.2 1.2 0 0 1-1.19 1.4H7.49a1.2 1.2 0 0 1-1.19-1.4z"/><path d="M10.3 8.6 9.7 18.2M13.7 8.6l.6 9.6"/></svg>
         </button>
-        <button type="button" class="tc-icon tc-danger" id="tcClear" data-action="erase_all" title="erase all — every particle, buffer and stroke, pinned or not (⌫×3)"><span class="row-binds chrome-binds" data-binds="erase_all"></span>
+        <button type="button" class="tc-icon tc-danger" id="tcClear" data-action="erase_all" title="erase all — every particle, buffer and stroke, pinned or not (⌫×3)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6.5h16M9.5 6.5V4.5h5v2"/><path d="M6.5 6.5 7.6 20h8.8l1.1-13.5"/></svg>
         </button>
         <!-- THE RECORDING BUDGET, beside the remedy. It fills as the live
@@ -221,7 +221,7 @@
          wordmark's own colour without 9KB of path data in this file. -->
     <div class="tc-brand">
       <img class="tc-mark" src="logo/mark-light.svg" alt="" aria-hidden="true" width="18" height="18">
-      <b>mubone</b> <i>5.8</i>
+      <b>mubone</b> <i>5.10</i>
       <!-- The open piece, in the version's own engraved lettering. The unsaved
            mark is a DOT that is there or is not (js/piece.js) — nothing here is
            dimmed to mean anything. Empty and hidden until there is a piece. -->
@@ -278,7 +278,7 @@
              drawer icon"). It used to trail the history cluster on the left,
              where a cog among four stroke actions read as a fifth thing you
              do to a stroke; the right is where you open things. -->
-        <button type="button" class="tc-icon" id="tcSettings" data-action="settings" title="settings — audio, sensors, mapping, visuals, export (Esc closes)">
+        <button type="button" class="tc-icon" id="tcSettings" data-action="settings" title="settings — audio, pins, sensors, keys, visuals, export (Esc closes)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </button>
       </span>
@@ -303,7 +303,6 @@
         <div class="hud-left">
           <button id="fullscreenBtn" title="fullscreen">⛶</button>
           <div id="coordinates">--,--</div>
-          <div id="hfHudLabel" class="hf-hud-label" style="display:none">handsfree</div>
           <div id="altLockIndicator" style="display:none;color:#f0c060">alt: locked</div>
         </div>
         <div class="hud-center">
@@ -317,15 +316,31 @@
 
       <div id="perfMonitor" style="display:none">
         <div class="pm-head">perf <span class="pm-key">P</span></div>
-        <div class="pm-row">
-          <span class="pm-label">nodes</span>
+        <!-- (2026-09-25) Every row reads the thing it names today: grains
+             against the pool Settings → Audio, advanced sets (it assumed 256
+             against a 512 default), the AUDIO THREAD's own load, what drawing
+             a frame COSTS (it showed the rAF interval, 16.7 at 60 Hz whatever
+             the draw took), and memory — the long-set fault on the 8 GB laptop
+             (docs/TODO.md). -->
+        <div class="pm-row" title="grains alive in the worklet, of the pool (Settings → Audio, advanced → Max grains). The throttle starts thinning at 90%">
+          <span class="pm-label">grains</span>
           <span class="pm-track"><span class="pm-fill" id="pmNodesBar"></span></span>
-          <span class="pm-num" id="pmNodesVal">0/200</span>
+          <span class="pm-num" id="pmNodesVal">0 / 512</span>
         </div>
-        <div class="pm-row">
-          <span class="pm-label">frame</span>
+        <div class="pm-row" title="the audio thread's own load, of its block budget. Past 70% the worklet thins grain onsets; at 95% it skips them all">
+          <span class="pm-label">audio</span>
+          <span class="pm-track"><span class="pm-fill" id="pmLoadBar"></span></span>
+          <span class="pm-num" id="pmLoadVal">—</span>
+        </div>
+        <div class="pm-row" title="what drawing one frame costs the main thread, of the 33 ms a 30 fps frame has — the thread the grain scheduler shares. Minimal Rendering (Settings → Visuals) lowers it">
+          <span class="pm-label">draw</span>
           <span class="pm-track"><span class="pm-fill" id="pmFrameBar"></span></span>
           <span class="pm-num" id="pmFrameVal">0ms</span>
+        </div>
+        <div class="pm-row" title="audio held — every take on the sphere, float32 — and the renderer's JS heap. The 8 GB laptop starts paging near 1 GB">
+          <span class="pm-label">mem</span>
+          <span class="pm-track"><span class="pm-fill" id="pmMemBar"></span></span>
+          <span class="pm-num" id="pmMemVal">—</span>
         </div>
         <div class="pm-row pm-row-clickable" id="pmSchedRow" title="click to reset peak">
           <span class="pm-label">sched</span>
@@ -346,7 +361,7 @@
           <span class="pm-track"><span class="pm-fill" id="pmRecBar"></span></span>
           <span class="pm-num" id="pmRecVal">0s</span>
         </div>
-        <div class="pm-row" title="drop — ms between marker deposits while painting.&#10;&#10;ALSO SETS ONSET PRECISION. A marker is sized by the audio between it and the next one, so this bounds how far a line&#39;s onset can sit from the marker that shows it:&#10;   50ms → within 50ms&#10;   10ms → within 10ms&#10;&#10;Cost is particles: 10ms deposits 100/sec while sound is present (silence deposits none). Past ~15k particles the renderer becomes the limit — turn on Minimal Rendering (Settings → Visuals).&#10;&#10;For percussion: 10ms. For sustained material: 50ms.&#10;click number to edit">
+        <div class="pm-row" title="drop — ms between marker deposits while painting.&#10;&#10;ALSO SETS ONSET PRECISION. A marker is sized by the audio between it and the next one, so this bounds how far a line&#39;s onset can sit from the marker that shows it:&#10;   50ms → within 50ms&#10;   10ms → within 10ms&#10;&#10;Cost is particles: 10ms deposits 100/sec while sound is present (silence deposits none). Past ~30k particles drawing starts to cost the scheduler — turn on Minimal Rendering (Settings → Visuals).&#10;&#10;For percussion: 10ms. For sustained material: 50ms.&#10;click number to edit">
           <span class="pm-label">drop</span>
           <span class="pm-track" style="visibility:hidden"></span>
           <input type="text" class="pm-num pm-num-edit" id="pmDropVal" value="50ms">
@@ -445,17 +460,22 @@
             <span data-v="nearest" title="nearest — the pin nearest the cursor makes room">near</span>
           </span></span>
         </div>
+        <!-- UNPIN ALL, a row of the block (Ek, 2026-09-25: "make unpin all a button
+             in that top section of the pin rail, like a param row but a button").
+             The name and its sticker at the left, the button flush right where a
+             row keeps its control — a rectangle, because it is an action. It was
+             a row of its own at the rail's foot, under a PIN title. -->
+        <div class="mrow">
+          <span class="mrow-l">unpin all</span><span class="row-binds" data-binds="commit_clear"></span>
+          <button type="button" class="mu-btn mu-btn--danger lyr-unpin" id="lyrUnpinAll" data-pin="unpinall"
+                  title="unpin all — release every pin, clouds and loops"></button>
+        </div>
       </div>
       <!-- The TRACKS. js/ui-pins.js builds one .lyr-trk per pin. -->
       <div class="lyr-list" id="lyrList"></div>
-      <!-- The two BUSSES — the groups' M and S, with the members' mean level. -->
+      <!-- The BUSSES — the groups' M and S, with the members' mean level, and
+           under them ALL, the master of every pin: M only (ui-pins.js). -->
       <div class="lyr-bus" id="lyrBus"></div>
-      <!-- The act ROWS live with the thing they act on (#267), in the tool
-           rail's own row model since 2026-09-12: glyph, name; a click fires.
-           Only what the strip does not hold — unpin all, and the mix pair; pin
-           and unpin left for the fixed strip on 2026-09-22 night. js/tiles.js
-           renderPinChrome fills this. At the FOOT since the mixer (2026-09-16). -->
-      <div class="lyr-actions" id="tcPins"></div>
     </aside>
 
     <!-- The PALETTE (#250) — floats over the lower stage, centred: up to nine
@@ -534,6 +554,9 @@
         <div class="tilebar" id="tileBar" role="list" aria-label="tools"></div>
         </div><!-- /creatorBand -->
         </div><!-- /instrPanel -->
+        <!-- THE VOICE, its own card under the instrument's (Ek, 2026-09-25 — the
+             rails canvas, F): the preset list and its line, filled by render(). -->
+        <div class="tbx-instr rail-card" id="voicePanel" hidden></div>
       </div>
       <!-- THE CURSOR (Ek, 2026-09-23): the rail's lower half, a fixed height
            from its foot under its own bar — the TOOLS / PINNED header design,
@@ -627,7 +650,7 @@
                stays on as a hidden value carrier (exactly what the modal does
                with its own asPaintGateSlider) so the MIDI/OSC mirror pair and
                scripts/cc-mirror-audit.js keep working. -->
-          <div class="grain-row" title="paint gate — this gates PAINTING, not audio: below the threshold no particles are deposited and, with handsfree armed, the buffer is split. Nothing is attenuated. The bar is the same loudness the gate tests — max(rms, 0.7×peak), so a percussive onset reads at its true height rather than its average. Drag the meter to set the threshold; below is gated (red), above is open (teal). The scale is curved so the noise floor gets most of the meter. (double-click to reset)">
+          <div class="grain-row" title="paint gate — this gates PAINTING, not audio: below the threshold no particles are deposited. Nothing is attenuated. The bar is the same loudness the gate tests — max(rms, 0.7×peak), so a percussive onset reads at its true height rather than its average. Drag the meter to set the threshold; below is gated (red), above is open (teal). The scale is curved so the noise floor gets most of the meter. (double-click to reset)">
             <span class="grain-label">gate</span>
             <canvas id="apGateMeter" class="as-gate-meter ap-gate-meter" width="400" height="28" data-default="0.002"></canvas>
             <input type="text" class="grain-numbox" id="apPaintGateNum" value="0.002" readonly>
@@ -900,7 +923,7 @@
 
           <!-- Trace indicator — reflects isPainting state, not a UI toggle -->
           <div class="seq-section">
-            <div id="paintIndicatorBtn" class="mu-btn mu-btn--lg paint-indicator-btn" title="trace — lit while a palette position is playing. Toggle or momentary is the binding's, on the keys page&#10;when handsfree is armed, a toggle-started play lets the gate segment phrases">
+            <div id="paintIndicatorBtn" class="mu-btn mu-btn--lg paint-indicator-btn" title="trace — lit while a palette position is playing. Toggle or momentary is the binding's, on the keys page">
               <!-- Paintbrush icon -->
               <svg class="play-mute-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M3 17.5C3 17.5 4.5 16 7 16c1.5 0 2.5 1 4 1s3-1.5 4.5-2.5L20 9l-5-5-5.5 5.5C8.5 10.5 7 12 7 13.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -938,7 +961,7 @@
           <div class="seq-section seq-section--collapsible" data-collapse-key="cursorAllParams">
             <span class="seq-section-label seq-section-toggle">params</span>
             <div class="seq-section-body">
-              <div class="grain-row" title="who drives azimuth&#10;sensor = free running, lock = frozen horizontal position, map = driven by a cursor mapping row">
+              <div class="grain-row" title="who drives azimuth&#10;sensor = free running, lock = frozen horizontal position, map = driven by the AZ · position row">
                 <span class="grain-label">azimuth</span>
                 <!-- Glyphs, not words (2026-08-29): these three live in the
                      footer, read at a glance from behind an instrument, and
@@ -946,21 +969,21 @@
                      six words for two questions. The title on each carries
                      the sentence. -->
                 <div class="grain-seg seg-pill seg-glyph" id="azSourceSeg">
-                  <button class="grain-seg-btn active" data-val="sensor" title="sensor — free running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2.2"/><path d="M7.8 7.8a5.9 5.9 0 0 0 0 8.4M16.2 7.8a5.9 5.9 0 0 1 0 8.4"/><path d="M5 5a9.9 9.9 0 0 0 0 14M19 5a9.9 9.9 0 0 1 0 14"/></svg></button><button class="grain-seg-btn" data-val="locked" title="lock — frozen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.2 10.5V7.8a3.8 3.8 0 0 1 7.6 0v2.7"/></svg></button><button class="grain-seg-btn" data-val="mapped" title="map — driven by a cursor mapping row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h3.5L17 17h4M3 17h3.5L17 7h4"/><path d="M18.5 4.5 21 7l-2.5 2.5M18.5 14.5 21 17l-2.5 2.5"/></svg></button>
+                  <button class="grain-seg-btn active" data-val="sensor" title="sensor — free running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2.2"/><path d="M7.8 7.8a5.9 5.9 0 0 0 0 8.4M16.2 7.8a5.9 5.9 0 0 1 0 8.4"/><path d="M5 5a9.9 9.9 0 0 0 0 14M19 5a9.9 9.9 0 0 1 0 14"/></svg></button><button class="grain-seg-btn" data-val="locked" title="lock — frozen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.2 10.5V7.8a3.8 3.8 0 0 1 7.6 0v2.7"/></svg></button><button class="grain-seg-btn" data-val="mapped" title="map — driven by its position row (Keys + MIDI)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h3.5L17 17h4M3 17h3.5L17 7h4"/><path d="M18.5 4.5 21 7l-2.5 2.5M18.5 14.5 21 17l-2.5 2.5"/></svg></button>
                 </div>
               </div>
-              <div class="grain-row" title="who drives elevation&#10;sensor = free running, lock = frozen vertical position, map = driven by a cursor mapping row">
+              <div class="grain-row" title="who drives elevation&#10;sensor = free running, lock = frozen vertical position, map = driven by the EL · position row">
                 <span class="grain-label">elevation</span>
                 <div class="grain-seg seg-pill seg-glyph" id="elSourceSeg">
-                  <button class="grain-seg-btn active" data-val="sensor" title="sensor — free running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2.2"/><path d="M7.8 7.8a5.9 5.9 0 0 0 0 8.4M16.2 7.8a5.9 5.9 0 0 1 0 8.4"/><path d="M5 5a9.9 9.9 0 0 0 0 14M19 5a9.9 9.9 0 0 1 0 14"/></svg></button><button class="grain-seg-btn" data-val="locked" title="lock — frozen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.2 10.5V7.8a3.8 3.8 0 0 1 7.6 0v2.7"/></svg></button><button class="grain-seg-btn" data-val="mapped" title="map — driven by a cursor mapping row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h3.5L17 17h4M3 17h3.5L17 7h4"/><path d="M18.5 4.5 21 7l-2.5 2.5M18.5 14.5 21 17l-2.5 2.5"/></svg></button>
+                  <button class="grain-seg-btn active" data-val="sensor" title="sensor — free running"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2.2"/><path d="M7.8 7.8a5.9 5.9 0 0 0 0 8.4M16.2 7.8a5.9 5.9 0 0 1 0 8.4"/><path d="M5 5a9.9 9.9 0 0 0 0 14M19 5a9.9 9.9 0 0 1 0 14"/></svg></button><button class="grain-seg-btn" data-val="locked" title="lock — frozen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8.2 10.5V7.8a3.8 3.8 0 0 1 7.6 0v2.7"/></svg></button><button class="grain-seg-btn" data-val="mapped" title="map — driven by its position row (Keys + MIDI)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h3.5L17 17h4M3 17h3.5L17 7h4"/><path d="M18.5 4.5 21 7l-2.5 2.5M18.5 14.5 21 17l-2.5 2.5"/></svg></button>
                 </div>
               </div>
               <!-- The roll ROW is gone (2026-09-01, Ek: "the roll icon and
                    roll lock function in the footer, we can remove that. since
                    roll never reaches the sphere/viz. if we want to use roll
                    it's still available in mapping"). S.rollSource and _gateRoll
-                   went with it: mapping rows read the sensor's roll live, and a
-                   row you don't want is disabled in Settings → Mapping. -->
+                   went with it: a sensor binding reads the sensor's roll live
+                   (Keys + MIDI, sensor-bindings.js). -->
             </div>
           </div>
 
@@ -1411,7 +1434,7 @@
          control on this screen you hit without reading it, and a capsule asks
          to be read before it can be used. No border for the same reason the
          chrome's history icons have none. -->
-    <button type="button" class="bb-mute" id="tcMute" data-word="mute" aria-pressed="false" title="mute — the system output (M)"><span class="row-binds chrome-binds" data-binds="mute"></span>
+    <button type="button" class="bb-mute" id="tcMute" data-action="mute" data-word="mute" aria-pressed="false" title="mute — the system output (M)">
       <svg class="bb-mute-live" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5.5 6.5 9.5H3v5h3.5L11 18.5z"/><path d="M15 9.6a3.4 3.4 0 0 1 0 4.8M17.6 7a7 7 0 0 1 0 10"/></svg>
       <svg class="bb-mute-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5.5 6.5 9.5H3v5h3.5L11 18.5z"/><path d="M16 9.5 21.5 15M21.5 9.5 16 15"/></svg>
       <i>mute</i>
@@ -1428,9 +1451,8 @@
 
          The CLICK is a boolean: held or free (Ek, 2026-09-01 — "on off mapped,
          i think that's too complicated"). Mapping is not a third thing you
-         reach for here; it is set by targeting a cursor axis in Settings →
-         Mapping, which arms it (_armCursorAxis in ui-sensor-mapping.js), and
-         clicking here is how you disarm it. So the STATE still has three
+         reach for here; it is set by binding something onto the cursor axis,
+         which arms it, and clicking here is how you disarm it. So the STATE still has three
          values and the button still has three faces:
            free  — solid, quiet
            mute  — solid with a slash, amber (the mute colour, as system mute)
@@ -1441,8 +1463,8 @@
          (plus handing the pointer back in steer and surface). A bracket tying
          it to AZ and EL was rejected on sight, and the RO button that used to
          sit beside it was removed 2026-09-01 (roll never reaches the sphere;
-         mapping rows read the sensor's roll live and are toggled per-row in
-         Settings → Mapping). The row is three plain buttons.
+         a binding can still read the sensor's roll). The row is three plain
+         buttons.
 
          #tcZeroHeading is the ` key with a face — the software heading zero,
          aimed at whichever sensor holds the cursor role (S._tareCursor). It is
@@ -1455,10 +1477,10 @@
          The segments stay in the cabinet as the canonical elements MIDI and
          OSC drive; both are synced by syncAxisSourceUI. -->
     <div class="bottom-bar-cursor">
-      <button type="button" class="bb-ax" id="tcZeroHeading" data-action="tare" title="zero heading (`) — face the audience and zero. Yaw only, about true vertical; it cannot disturb the mounting calibration"><span class="row-binds chrome-binds" data-binds="tare"></span><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 5.2 14 12l-2 6.8L10 12z"/></svg><i>zero</i></button>
-      <button type="button" class="bb-ax bb-ax-both" id="tcCursorLock" data-action="cursor_lock" title="cursor lock (⌥) — locks azimuth and elevation together. In steer and surface modes it also hands the pointer back so you can use the UI"><span class="row-binds chrome-binds" data-binds="cursor_lock"></span><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 6.85-.95"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 7 0v3.6"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><i>lock</i></button>
-      <button type="button" class="bb-ax" id="tcAzCycle" data-action="az_source" data-axis="azSource" title="azimuth — click to lock or free. ⌥ locks it with elevation. Set &quot;mapped&quot; by targeting cursor azimuth in Settings → Mapping"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/><path d="M4.5 19.5 19.5 4.5"/></svg><svg class="ax-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-dasharray="3 2.6"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/></svg><i>az</i></button>
-      <button type="button" class="bb-ax" id="tcElCycle" data-action="el_source" data-axis="elSource" title="elevation — click to lock or free. ⌥ locks it with azimuth. Set &quot;mapped&quot; by targeting cursor elevation in Settings → Mapping"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/><path d="M4.5 19.5 19.5 4.5"/></svg><svg class="ax-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-dasharray="3 2.6"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/></svg><i>el</i></button>
+      <button type="button" class="bb-ax" id="tcZeroHeading" data-action="tare" title="zero heading (`) — face the audience and zero. Yaw only, about true vertical; it cannot disturb the mounting calibration"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 5.2 14 12l-2 6.8L10 12z"/></svg><i>zero</i></button>
+      <button type="button" class="bb-ax bb-ax-both" id="tcCursorLock" data-action="cursor_lock" title="cursor lock (⌥) — locks azimuth and elevation together. In steer and surface modes it also hands the pointer back so you can use the UI"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 6.85-.95"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 7 0v3.6"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><i>lock</i></button>
+      <button type="button" class="bb-ax" id="tcAzCycle" data-action="az_source" data-axis="azSource" title="azimuth — click to lock or free. ⌥ locks it with elevation. It maps when something is bound to AZ · position in Keys + MIDI"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/><path d="M4.5 19.5 19.5 4.5"/></svg><svg class="ax-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-dasharray="3 2.6"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/></svg><i>az</i></button>
+      <button type="button" class="bb-ax" id="tcElCycle" data-action="el_source" data-axis="elSource" title="elevation — click to lock or free. ⌥ locks it with azimuth. It maps when something is bound to EL · position in Keys + MIDI"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/><path d="M4.5 19.5 19.5 4.5"/></svg><svg class="ax-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-dasharray="3 2.6"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/></svg><i>el</i></button>
     </div>
     <!-- The sensor block is HIDDEN, not deleted (Ek, 2026-08-30: "remove the
          footer info SENSOR (state) since we have it as a pill up top"). The
@@ -1478,8 +1500,7 @@
       <span class="sensor-group-status" id="sensorGroupStatus"></span>
       <span class="sensor-switch-btns" id="sensorSwitchBtns"></span>
       <button id="imuSetupBtn" class="mu-btn--bare top-bar-btn" title="sensor setup — the x-IMU3 over WiFi or USB, other OSC sensors, the mount calibration and zero heading">⚙ sensors</button>
-      <button id="ximuLedBtn" class="mu-btn--bare top-bar-btn" title="x-IMU3 LED feedback — off. click to open the mapping table.">○ feedback</button>
-      <button id="mappingBtn" class="mu-btn--bare top-bar-btn" title="sensor mapping — map IMU axes to grain parameters">⇆ mapping</button>
+      <button id="ximuLedBtn" class="mu-btn--bare top-bar-btn" title="LED feedback — off. click to open it.">○ feedback</button>
     </div>
     </div>
   </div>
@@ -1496,7 +1517,7 @@
 <!-- ── Accessory modal (x-IMU3 serial accessory) ───────────────────────────── -->
 
 
-<!-- ── x-IMU3 LED mapping modal ────────────────────────────────────────────── -->
+<!-- ── LED feedback modal (the x-imu3 and the mubone instrument) ─────────── -->
 <div id="ledModal" class="mu-overlay">
   <!-- THE ROW MODEL (docs/SETTINGS-GUI.md § 2), and two tables rather than one:
        a state and an event do not share a column meaning, so the fifth column
@@ -1504,7 +1525,7 @@
        keeps every id and hook. -->
   <div class="led-dialog mu-dialog">
     <h2>
-      x-imu3 led mapping
+      LED Feedback
       <button class="close-btn" id="ledClose">✕</button>
     </h2>
 
@@ -1546,20 +1567,21 @@
       <p class="set-sec-lede">Read once. Nothing here changes as you work.</p>
       <div class="mapping-legend">
         <p><strong>Patterns.</strong> <code>solid</code> holds a colour. <code>slow</code> (1.5 Hz) and
-        <code>fast</code> (5 Hz) blink, <code>pulse</code> breathes through eight steps, and
-        <code>flash</code> is the 90 ms blip events use. An event's count is how many times its
-        pattern repeats.</p>
+        <code>fast</code> (5 Hz) blink, <code>pulse</code> breathes through eight steps,
+        <code>flash</code> is the 90 ms blip events use, and <code>strike</code> is a shorter,
+        percussive one — the tape line's. An event's count is how many times its pattern repeats.</p>
         <p><strong>⇄ timbre.</strong> The interleaves alternate the row's colour with the live scan
-        timbre instead of with black, so the LED carries two facts at once — muted on white/fast
+        timbre instead of with black, so the LED carries two facts at once — mute's slow ⇄ timbre
         says the output is dead <em>and</em> what you would be hearing. The plain <code>timbre</code>
         pattern is offered on <code>scan</code> alone: it paints the colour the visualiser gives the
         particles the cursor would fire from now, and falls back to idle when nothing is in radius.</p>
-        <p><strong>Rate.</strong> Messages per second to the sensor while the row runs. The x-imu3 has
-        no device-side blink, so every edge is a message from here, sharing the radio with inbound
-        data over Wi-Fi. If raw readings start looking glitchy, this column is the first place to look.</p>
+        <p><strong>Rate.</strong> Messages per second to the sensor while the row runs. Neither the
+        x-imu3 nor the mubone instrument blinks on its own, so every edge is a message from here,
+        sharing the radio with inbound data over Wi-Fi. If raw readings start looking glitchy, this
+        column is the first place to look.</p>
         <p><strong>Disabling.</strong> A disabled state falls back to idle rather than to the
-        firmware's own colour. Disabling <code>idle</code> itself releases the override and hands the
-        LED back to the firmware.</p>
+        firmware's own colour. Disabling <code>idle</code> itself releases the override: an x-imu3
+        goes back to its firmware's colour, and the mubone instrument, which has none, goes dark.</p>
       </div>
     </div>
   </div>
@@ -1594,7 +1616,7 @@
       <span class="set-count" id="mappingFilterCount"></span>
       <!-- Bound rows only by default (Ek, 2026-09-10): a hundred rows, a dozen
            in use. The switch reveals the rest; a row being learned never hides. -->
-      <label class="set-toolbar-toggle" title="off: only actions with a key, button or MIDI binding · on: every action"><span>Show all</span><input type="checkbox" class="set-toggle" id="mappingShowAll"></label>
+      <label class="set-toolbar-toggle" title="off: only actions with a key, button, MIDI or sensor binding · on: every action"><span>Show all</span><input type="checkbox" class="set-toggle" id="mappingShowAll"></label>
       <span class="set-toolbar-hint" id="mappingStatus">Click a cell to learn · right-click to clear</span>
     </div>
 
@@ -1620,7 +1642,7 @@
       </div>
       <div class="set-table set-table--keys">
         <div class="set-table-head set-table-row">
-          <span>Action</span><span>Keyboard</span><span>Button</span><span>MIDI</span><span>Scale</span>
+          <span>Action</span><span>Keyboard · Sensor</span><span>Button</span><span>MIDI</span><span>Scale</span>
         </div>
         <div id="mappingTableBody"></div>
       </div>
@@ -1643,7 +1665,7 @@
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">OSC Input</span>
-          <span class="set-row-desc">Any OSC sender reaches this station — from Max, <code>[udpsend 127.0.0.1 <span class="js-osc-port">7500</span>]</code>.</span>
+          <span class="set-row-desc">Any OSC sender reaches this station, on UDP <code>127.0.0.1:<span class="js-osc-port">7500</span></code>.</span>
           <span class="set-row-status"><span id="oscStationInline">solo</span></span>
         </div>
         <div class="set-ctl">
@@ -1902,55 +1924,6 @@
       </div>
 </template>
 
-<div id="sensorMappingModal" class="mu-overlay">
-  <div class="sensor-mapping-dialog mu-dialog">
-    <!-- The page action the settings header borrows (#255): it keeps its id and
-         its listener, and it comes home here when the page is put away. -->
-    <h2>Mapping
-      <button id="sensorMappingAddBtn" class="set-btn set-btn--primary">Add mapping</button>
-      <button class="close-btn" id="sensorMappingClose">✕</button>
-    </h2>
-
-    <!-- ── 1. TRANSPORTS ───────────────────────────────────────
-         Two rows, built by _buildTransports(). MIDI carries the browser
-         permission prompt and OSC the defaults new rows inherit; neither has
-         anywhere else to live now the banner is gone. -->
-    <div class="set-section" id="mappingTransports"></div>
-
-    <!-- ── 2. MAPPINGS ────────────────────────────────────────
-         One sentence per mapping. Fourteen dropdowns on one line is not a row
-         anyone can read; "roll → grain density" is. -->
-    <div class="set-section">
-      <div class="set-sec-title">Mappings</div>
-      <div class="set-sec-lede">Each one reads an axis and drives one destination. Select a row to edit its chain.</div>
-      <div class="set-devices">
-        <div class="set-devices-head">
-          <span id="sensorMappingCount">0 mappings · 0 active</span>
-          <button id="sensorMappingClearBtn" class="set-btn set-btn--sm set-btn--danger">Clear all</button>
-        </div>
-        <div id="sensorMappingRows"></div>
-      </div>
-    </div>
-
-    <!-- ── 3. THE SELECTED MAPPING ────────────────────────────────
-         Six rows in the order the signal takes them — that order IS the
-         documentation. Rendered by _renderSelected(). -->
-    <div class="set-section" id="sensorMappingSelected" hidden></div>
-
-    <!-- ── 4. REFERENCE ───────────────────────────────────────
-         What the flow diagram above the list used to say, as prose that can be
-         read once and left. -->
-    <div class="set-section">
-      <div class="set-sec-title">Reference</div>
-      <div class="set-sec-lede">Read once. Nothing here changes as you work.</div>
-      <div class="mapping-legend">
-        <p><b>The chain.</b> Read the axis, fold it if <code>|x|</code> is on, clamp into the input range, bend by the curve, scale into the output range, write the destination. Each row above is one of those steps, in that order.</p>
-        <p><b>Two mappings, one destination.</b> The last one written wins, per frame. There is no summing — if two rows fight, disable one.</p>
-        <p><b>MIDI and OSC.</b> Both send only on change, at the sensor’s own rate. OSC needs the desktop app; in the browser the row stays but its destination reads <i>electron only</i>.</p>
-      </div>
-    </div>
-  </div>
-</div>
 
 <!-- ── Staging modal (exp: posture-snapshot engine) ───────────────────────── -->
 
@@ -2153,19 +2126,15 @@
           <input type="checkbox" class="set-toggle" id="setViewProjector" data-proxy="projectorModeBtn" aria-label="projector window">
         </div>
       </div>
-      <div class="set-row">
-        <div class="set-row-text">
-          <span class="set-row-title">Fullscreen</span>
-          <span class="set-row-desc">This window, without the desktop around it.</span>
-        </div>
-        <div class="set-ctl">
-          <input type="checkbox" class="set-toggle" id="setViewFullscreen" data-proxy="fullscreenBtn2" aria-label="fullscreen">
-        </div>
-      </div>
+      <!-- (Fullscreen was a row here until 2026-09-25. In Electron it called the
+           same win.setFullScreen as the green button and ⌃⌘F, so it was the OS's
+           own control twice (Ek: "what's the point of that toggle if i can full
+           screen using OSx"). Entering fullscreen either way still hides the
+           footer — body.electron-fullscreen. -->
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Performance Monitor</span>
-          <span class="set-row-desc">An overlay reading audio nodes, frame time and memory.</span>
+          <span class="set-row-desc">An overlay: grains, audio-thread load, scheduler, draw cost, memory and faults.</span>
           <span class="set-row-status" id="setViewPerfStat">—</span>
         </div>
         <div class="set-ctl">
@@ -2199,13 +2168,13 @@
   <div class="mu-dialog set-panel" id="setPanelButtons">
     <div class="set-section">
       <h3 class="set-sec-title">What Each Button Does</h3>
-      <p class="set-sec-lede">Bound on Keys + MIDI, in the Button column: click a cell, then press, long-press, extra-long-press, double- or triple-tap the button; ⇧-click the cell to learn a tap, the up edge. Right-click clears.</p>
+      <p class="set-sec-lede">The mubone instrument's three buttons. Bound on Keys + MIDI, in the Button column: click a cell, then press, long-press, extra-long-press, double- or triple-tap the button; ⇧-click the cell to learn a tap, the up edge. Right-click clears.</p>
       <div class="set-table set-table--buttons" id="buttonsTable"></div>
     </div>
 
     <div class="set-section">
       <h3 class="set-sec-title">Live Monitor</h3>
-      <p class="set-sec-lede">Every gesture while this page is open — the button, what the recogniser read, and the action it landed on. Free when the page is closed: nothing is drawn.</p>
+      <p class="set-sec-lede">Every button gesture while this page is open — the button, what the recogniser read, and the action it landed on. Free when the page is closed: nothing is drawn.</p>
       <!-- A header stating a count with one action, over streaming rows, is a
            DEVICE LIST (the keys page's monitor is the precedent). -->
       <div class="set-devices">
@@ -2360,8 +2329,7 @@
        table for advanced audio i'm game for that"). The audio page opened on
        Sample rate · Buffer size · Max grains before it said which mic — seven
        rows of engine tuning between you and the two questions you open the
-       page to answer. Those seven live here now, with the handsfree gate's
-       nine, and Audio is Input then Output: eleven rows, both devices at the
+       page to answer. Those seven live here now, and Audio is Input then Output: eleven rows, both devices at the
        top. Nothing is rewired — every control keeps its id and its listener,
        which is why this is a move and not a rebuild. -->
   <div class="mu-dialog set-panel" id="setPanelAudioAdv">
@@ -2481,118 +2449,6 @@
       </div>
     </div>
 
-    <div class="set-section">
-      <h3 class="set-sec-title">Handsfree Gate</h3>
-      <div class="set-sec-lede">Arming, and the eight numbers that decide where it cuts. Its meter is the paint gate on the Audio page.</div>
-<!-- ── Handsfree gate ─────────────────────────────────────────────────
-           Arm and its tuning, together (#290). The arm toggle used to live in
-           the rig view's cursor device, which is the one thing about it nobody
-           could find once the rig view stopped being a screen. The tuning is a
-           disclosure now rather than a collapsible: the same rows, revealed in
-           place, with no second kind of chrome on the page. -->
-      <div class="set-row">
-        <div class="set-row-text">
-          <span class="set-row-title">Armed</span>
-          <span class="set-row-desc">Armed, the gate segments phrases into buffers as you tap-trace. Plain trace mode only.</span>
-        </div>
-        <div class="set-ctl">
-          <span class="paint-key-badge">H</span>
-          <input type="checkbox" class="set-toggle" id="hfArmToggle" aria-label="arm the handsfree gate">
-          <button type="button" class="as-btn set-btn--sm" id="hfTuneBtn" aria-expanded="false" aria-controls="hfTune">Tune…</button>
-        </div>
-      </div>
-      <div id="hfTune" hidden>
-        <div class="set-row">
-          <div class="set-row-text">
-            <span class="set-row-title">Captured</span>
-            <span class="set-row-desc">Buffers the gate has taken this session.</span>
-          </div>
-          <div class="set-ctl"><span class="as-dim" id="hfCaptureCount">0 buffers</span></div>
-        </div>
-        <div class="set-row">
-          <div class="set-row-text">
-            <span class="set-row-title">Hold</span>
-            <span class="set-row-desc">How long the gate stays open after the signal drops below the paint gate.</span>
-          </div>
-          <div class="set-ctl set-ctl--slider">
-            <input type="range" id="hfHoldSlider" class="as-slider"
-                   min="100" max="2000" step="50" value="500">
-            <span class="as-val" id="hfHoldVal">500 ms</span>
-          </div>
-        </div>
-        <div class="set-row">
-          <div class="set-row-text">
-            <span class="set-row-title">Release</span>
-            <span class="set-row-desc">How quickly the gate fades closed once hold expires.</span>
-          </div>
-          <div class="set-ctl set-ctl--slider">
-            <input type="range" id="hfReleaseSlider" class="as-slider"
-                   min="50" max="1000" step="25" value="200">
-            <span class="as-val" id="hfReleaseVal">200 ms</span>
-          </div>
-        </div>
-        <div class="set-row">
-          <div class="set-row-text">
-            <span class="set-row-title">Margin</span>
-            <span class="set-row-desc">Input must exceed output by this much before the gate opens; 0 dB is off.</span>
-          </div>
-          <div class="set-ctl set-ctl--slider">
-            <input type="range" id="hfMarginSlider" class="as-slider"
-                   min="0" max="18" step="1" value="0">
-            <span class="as-val" id="hfMarginVal">0 dB</span>
-          </div>
-        </div>
-        <div class="set-row">
-          <div class="set-row-text">
-            <span class="set-row-title">Sidechain High-pass</span>
-            <span class="set-row-desc">Keeps low rumble out of the gate's detection; the recording is untouched.</span>
-          </div>
-          <div class="set-ctl set-ctl--slider">
-            <div id="hfHpfSeg" class="grain-seg">
-              <button class="grain-seg-btn" data-hpf="off">off</button>
-              <button class="grain-seg-btn active" data-hpf="on">on</button>
-            </div>
-            <input type="range" id="hfHpfSlider" class="as-slider"
-                   min="40" max="500" step="10" value="120">
-            <span class="as-val" id="hfHpfVal">120 Hz</span>
-          </div>
-        </div>
-        <div class="set-row">
-          <div class="set-row-text">
-            <span class="set-row-title">Minimum Buffer</span>
-            <span class="set-row-desc">Reject anything shorter than this, so gate chatter cannot leave tiny fragments behind.</span>
-          </div>
-          <div class="set-ctl set-ctl--slider">
-            <input type="range" id="hfMinBufSlider" class="as-slider"
-                   min="50" max="1000" step="25" value="150">
-            <span class="as-val" id="hfMinBufVal">150 ms</span>
-          </div>
-        </div>
-        <div class="set-row">
-          <div class="set-row-text">
-            <span class="set-row-title">Maximum Buffer</span>
-            <span class="set-row-desc">Close the gate on its own after this long, so a gate that stays open cannot record forever.</span>
-          </div>
-          <div class="set-ctl set-ctl--slider">
-            <input type="range" id="hfMaxBufSlider" class="as-slider"
-                   min="5" max="120" step="5" value="30">
-            <span class="as-val" id="hfMaxBufVal">30 s</span>
-          </div>
-        </div>
-        <div class="set-row">
-          <div class="set-row-text">
-            <span class="set-row-title">Feedback Detect</span>
-            <span class="set-row-desc">Watches for sustained rising RMS and closes the gate. Tuned to leave normal playing alone.</span>
-          </div>
-          <div class="set-ctl">
-            <div id="hfFeedbackSeg" class="grain-seg">
-              <button class="grain-seg-btn" data-fb="off">off</button>
-              <button class="grain-seg-btn active" data-fb="on">on</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- RESET IS ITS OWN PAGE (Ek, 2026-09-14: "move the reset settings to its
@@ -2766,7 +2622,7 @@
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Minimal Rendering</span>
-          <span class="set-row-desc">Draws the least it can and still play: no glow, no trails, no depth sorting. Audio first.</span>
+          <span class="set-row-desc">Plain dots and pin anchors — no glow, trails or reach lines. Worth it past ~30,000 marks.</span>
           <span class="set-row-status" id="vizPerfStat">—</span>
         </div>
         <div class="set-ctl">

@@ -621,6 +621,7 @@ function _acceptBundle(data) {
   }
   S.recordingRaw.set(samples, S.recordingWritePos);
   S.recordingWritePos += frames;
+  if (_split && S.recordingWritePos >= _split.splitN) _finishSplit();
 }
 
 // ── Sealing waits for the recorder's last bundle (2026-09-02) ───────────────
@@ -644,8 +645,14 @@ const _sealWaiters = [];
 export function whenSealed(fn) {
   // A take held open past its release (stopLiveRecordingHeld) is not sealed
   // yet either: what is built from it must wait for the hold and the seal.
-  if (_sealPending || _holdTimer) _sealWaiters.push(fn);
+  if (_sealPending || _holdTimer || _split) _sealWaiters.push(fn);
   else fn();
+}
+function _runSealWaiters() {
+  const waiters = _sealWaiters.splice(0);
+  for (const fn of waiters) {
+    try { fn(); } catch (e) { console.warn('[audio] whenSealed callback failed:', e); }
+  }
 }
 
 // Sends 'stop', keeps accepting bundles until the worklet's `done`, then
@@ -673,10 +680,7 @@ function _captureStop(onSealed) {
       try { node.disconnect(); } catch(_) {}
     }
     onSealed(_buildTake());
-    const waiters = _sealWaiters.splice(0);
-    for (const fn of waiters) {
-      try { fn(); } catch (e) { console.warn('[audio] whenSealed callback failed:', e); }
-    }
+    _runSealWaiters();
   };
   _sealPending = { finish };
   if (!node) { finish(); return; }
@@ -688,15 +692,13 @@ function _captureStop(onSealed) {
   timer = setTimeout(finish, 50);
 }
 
-function _buildTake() {
-  const totalLength = S.recordingWritePos;
+function _buildTake(channelData = S.recordingRaw.subarray(0, S.recordingWritePos)) {
+  const totalLength = channelData.length;
 
   // Minimum kept length: 80 ms. Shorter than this is an accidental graze.
   // (The 200 ms touchend delay means intentional taps always exceed this.)
   const MIN_REC_SAMPLES = Math.floor(S.recordingSampleRate * 0.08);
   if (totalLength < MIN_REC_SAMPLES) return null;
-
-  const channelData = S.recordingRaw.subarray(0, totalLength);
 
   // Declick the buffer edges. This is DESTRUCTIVE — it is written into the
   // samples, so whatever it removes is gone for every later use of this take.
@@ -798,9 +800,145 @@ export function stopLiveRecordingHeld(holdS = 0) {
   _holdTimer = setTimeout(() => { _holdTimer = null; stopLiveRecording(); }, holdS * 1000);
 }
 
+/** A sealed take lands in its slot: the buffer, the region from the button,
+ *  the marks clamped into it, its colours, the worklet told. `false` when the
+ *  take was under the floor and the slot was removed (the index is shifted out
+ *  of every reference). Shared by the stop and the split. */
+function _sealSlot(bufIdx, audioBuffer) {
+  if (!audioBuffer) {
+    // Too short — remove the placeholder slot
+    if (bufIdx >= 0 && bufIdx < S.liveRecBuffers.length) {
+      S.liveRecBuffers.splice(bufIdx, 1);
+      // Fix particle references
+      S.particles.forEach(p => {
+        if (p.liveBufferIdx === bufIdx) p.liveBufferIdx = -1;
+        else if (p.liveBufferIdx > bufIdx) p.liveBufferIdx--;
+      });
+      // A SPLIT has the take it continues into after this one.
+      if (S.currentLiveBufferIdx > bufIdx) S.currentLiveBufferIdx--;
+      for (const h of S.strokeHistory) if (h.liveBufferIndex > bufIdx) h.liveBufferIndex--;
+    }
+    return false;
+  }
+
+  // Seal the live buffer slot
+  const slot = S.liveRecBuffers[bufIdx];
+  const dur = audioBuffer.duration;
+  if (slot) {
+    slot.buffer      = audioBuffer;
+    slot.liveBuffer  = null;   // the provisional view is the NEXT take's from here
+    slot.grainCursor = 0;
+    // The region from the BUTTON (2026-09-04): the press is heard `inS`
+    // into the take and the recorder held `inS` past the release, so the
+    // material between the two presses is [inS, end]. Loops and line
+    // triggers read this over the marks (buildLoopPayload, _applyCluster).
+    if (slot.releaseAt != null) slot.edges = { startS: Math.min(slot.inS || 0, dur), endS: dur };
+    if (slot.markSpan) { slot.markSpan[0] = Math.min(slot.markSpan[0], dur); slot.markSpan[1] = Math.min(slot.markSpan[1], Math.max(0, dur - 0.01)); }
+  }
+
+  // Clamp any particles that were painted beyond the final duration
+  S.particles.forEach(p => {
+    if (p.liveBufferIdx === bufIdx) {
+      if (p.grainStart > dur) p.grainStart = Math.max(0, dur - 0.01);
+      if (p.grainStart + p.grainDuration > dur) p.grainDuration = dur - p.grainStart;
+    }
+  });
+
+  // THE TAKE'S COLOURS ARE DECIDED NOW, against the whole of it — see
+  // settleTakeTimbre. Until the seal the hold could only compare a mark with
+  // what had already been played, which is wrong at the start of a take.
+  settleTakeTimbre(bufIdx);
+
+  // Notify listeners that a recording was completed.
+  // Hot-swap path: _onRecordingComplete adds finalized buffer to running worklet
+  // and handles provisional buffer cleanup with deferred drain.
+  // Cold-start path: _onRecordingComplete starts the worklet fresh.
+  S._onRecordingComplete?.(audioBuffer, bufIdx);
+  return true;
+}
+
+// ── SPLITTING A TAKE IN TWO, with nothing lost at the join (Ek, 2026-09-25) ──
+// A pin during a tape take cuts it: the part before becomes the main loop (or
+// a layer), and the SAME recording goes on as the next layer — an overdub
+// inside one stroke. The recorder is never stopped. The cut is a sample index
+// in the raw pool: the release instant `pinAt`, held by the input latency the
+// way a release is (stopLiveRecordingHeld), so the sound made at the pin is the
+// last sample of the first part and the first of the second. Nothing is known
+// past the recorder's write head, so the cut waits for it (~one bundle plus the
+// latency) and happens in `_acceptBundle`; until then the pool still holds both
+// parts, and `S.recordingRawOffset` tells a reader where the second one starts.
+let _split = null;   // { slot, splitN, timer } while the cut waits for the recorder
+
+/** Cut the running take at the pin. The NEW take's `startedAt` (what an
+ *  overdub phases by) is `pinAt + originS` — by default the recorder's own
+ *  clock at its first sample, `pinAt + holdS`, as any take's is; the caller
+ *  knows whether the next part is heard against a loop yet. Returns
+ *  `{ oldIdx, newIdx, pinAt }`, or null when there is nothing to cut. */
+export function splitLiveRecording(holdS = 0, originS = null) {
+  if (!S.isRecording || !S.recordingRaw) return null;
+  const actx = S.audioCtx;
+  const oldIdx = S.currentLiveBufferIdx;
+  const slot = S.liveRecBuffers[oldIdx];
+  if (!actx || !slot) return null;
+  const pinAt = actx.currentTime;
+  const hold  = Math.max(0, holdS || 0);
+  const splitS = pinAt + hold - (slot.startedAt ?? pinAt);
+  // Under a quarter second is not a phrase — nothing to loop. (A double press
+  // lands here: the second is refused, the first cut stands.)
+  if (!(splitS >= 0.25)) return null;
+  if (_split) _finishSplit(true);                      // the last cut, still waiting: settle it first
+  // The first part's release, exactly as a release stamps it.
+  slot.releaseAt = pinAt; slot.inS = hold;
+  const splitN = Math.round(splitS * S.recordingSampleRate);
+  // The next part is a take of its own from here: its slot, its clock. Marks
+  // painted from now on are in its time (paint-ticker reads recordingStartTime).
+  S.liveRecBuffers.push({ buffer: null, grainCursor: 0, startedAt: pinAt + (originS ?? hold) });
+  const newIdx = S.liveRecBuffers.length - 1;
+  S.currentLiveBufferIdx = newIdx;
+  S.recordingStartTime += splitS * 1000;
+  S.recordingRawOffset = splitN;
+  _split = { slot, splitN, timer: setTimeout(() => _finishSplit(true), hold * 1000 + 250) };
+  if (S.recordingWritePos >= splitN) _finishSplit();
+  return { oldIdx, newIdx, pinAt };
+}
+
+/** The cut itself: the first part is copied out and sealed into its slot, the
+ *  second slides to the head of the pool and keeps recording. `force` cuts
+ *  with what has arrived (a stop, or the recorder late past the fallback). */
+function _finishSplit(force = false) {
+  const sp = _split;
+  if (!sp || (!force && S.recordingWritePos < sp.splitN)) return;
+  _split = null;
+  clearTimeout(sp.timer);
+  S.recordingRawOffset = 0;
+  const n = Math.min(sp.splitN, S.recordingWritePos);
+  const first = S.recordingRaw.slice(0, n);
+  S.recordingRaw.copyWithin(0, n, S.recordingWritePos);
+  S.recordingWritePos -= n;
+  S.liveBufferSampleCount = 0;
+  // Cut short (forced before the recorder caught up): the second part starts
+  // that much earlier than its clock says — move the clock, not the audio.
+  const shortS = (sp.splitN - n) / S.recordingSampleRate;
+  if (shortS > 0) {
+    const cur = S.liveRecBuffers[S.currentLiveBufferIdx];
+    if (cur && typeof cur.startedAt === 'number') cur.startedAt -= shortS;
+    S.recordingStartTime -= shortS * 1000;
+    for (const p of S.particles) if (p.liveBufferIdx === S.currentLiveBufferIdx) p.grainStart += shortS;
+  }
+  const idx = S.liveRecBuffers.indexOf(sp.slot);
+  if (idx >= 0) _sealSlot(idx, _buildTake(first));
+  // The seal's hot-swap stopped the worklet's provisional take; the recording
+  // goes on, so it starts again for the second part.
+  if (S.isRecording) S._beginProvisionalRecording?.();
+  _runSealWaiters();
+}
+
 export function stopLiveRecording() {
   if (!S.isRecording) return;
   if (_holdTimer) { clearTimeout(_holdTimer); _holdTimer = null; }
+  // A split still waiting on the recorder is cut now, with what has arrived:
+  // the take being stopped is the part AFTER it.
+  if (_split) _finishSplit(true);
   S.isRecording = false;
   dlog('audio', 'recording stopped', { writePos: S.recordingWritePos, nodes: S._grainSourceCount });
   _dryMonitorRecordEnd();
@@ -813,57 +951,7 @@ export function stopLiveRecording() {
   // stopped. The slot index is read at seal time, not here: undo/redo
   // renumber it when they splice liveRecBuffers (ui-samples.js).
   _captureStop((audioBuffer) => {
-    const bufIdx = S.currentLiveBufferIdx;
-    if (!audioBuffer) {
-      // Too short — remove the placeholder slot
-      if (bufIdx >= 0 && bufIdx < S.liveRecBuffers.length) {
-        S.liveRecBuffers.splice(bufIdx, 1);
-        // Fix particle references
-        S.particles.forEach(p => {
-          if (p.liveBufferIdx === bufIdx) p.liveBufferIdx = -1;
-          else if (p.liveBufferIdx > bufIdx) p.liveBufferIdx--;
-        });
-      }
-      S.currentLiveBufferIdx = -1;
-      S.recordingRaw = null;
-      S.updateLiveRecUI?.();
-      return;
-    }
-
-    // Seal the live buffer slot
-    const slot = S.liveRecBuffers[bufIdx];
-    const dur = audioBuffer.duration;
-    if (slot) {
-      slot.buffer      = audioBuffer;
-      slot.liveBuffer  = null;   // the provisional view is the NEXT take's from here
-      slot.grainCursor = 0;
-      // The region from the BUTTON (2026-09-04): the press is heard `inS`
-      // into the take and the recorder held `inS` past the release, so the
-      // material between the two presses is [inS, end]. Loops and line
-      // triggers read this over the marks (buildLoopPayload, _applyCluster).
-      if (slot.releaseAt != null) slot.edges = { startS: Math.min(slot.inS || 0, dur), endS: dur };
-      if (slot.markSpan) { slot.markSpan[0] = Math.min(slot.markSpan[0], dur); slot.markSpan[1] = Math.min(slot.markSpan[1], Math.max(0, dur - 0.01)); }
-    }
-
-    // Clamp any particles that were painted beyond the final duration
-    S.particles.forEach(p => {
-      if (p.liveBufferIdx === bufIdx) {
-        if (p.grainStart > dur) p.grainStart = Math.max(0, dur - 0.01);
-        if (p.grainStart + p.grainDuration > dur) p.grainDuration = dur - p.grainStart;
-      }
-    });
-
-    // THE TAKE'S COLOURS ARE DECIDED NOW, against the whole of it — see
-    // settleTakeTimbre. Until the seal the hold could only compare a mark with
-    // what had already been played, which is wrong at the start of a take.
-    settleTakeTimbre(bufIdx);
-
-    // Notify listeners that a recording was completed.
-    // Hot-swap path: _onRecordingComplete adds finalized buffer to running worklet
-    // and handles provisional buffer cleanup with deferred drain.
-    // Cold-start path: _onRecordingComplete starts the worklet fresh.
-    S._onRecordingComplete?.(audioBuffer, bufIdx);
-
+    _sealSlot(S.currentLiveBufferIdx, audioBuffer);
     S.recordingRaw         = null;   // gate for late worklet messages; pool retained
     S.recordingWritePos    = 0;
     S.liveBufferSampleCount = 0;
@@ -1530,8 +1618,14 @@ export function updateDryMonitorPanning() {
 }
 
 // ── Dry monitor gain control ─────────────────────────────────────────────────
+// The state is LINEAR (the gain node is); both sliders that show it are dB,
+// −60 to +18. This wrote the linear value into the dB slider and a % into its
+// dB readout, so dragging that slider rewrote its own position — and clamped
+// at 2 (+6 dB), the top third of both sliders dead (found 2026-09-25).
+const DRY_MAX_LIN = Math.pow(10, 18 / 20);
+const _dryDb = v => 20 * Math.log10(Math.max(v, 1e-3));
 export function setDryMonitorGain(v) {
-  v = Math.max(0, Math.min(2, v));
+  v = Math.max(0, Math.min(DRY_MAX_LIN, v));
   S.dryMonitorGainValue = v;
   const t = S.audioCtx?.currentTime ?? 0;
   if (S.dryGainNode) {
@@ -1540,10 +1634,11 @@ export function setDryMonitorGain(v) {
     );
   }
   // Sync UI elements
+  const db = _dryDb(v);
   const slider = document.getElementById('dryMonitorGainSlider');
-  if (slider) slider.value = v;
+  if (slider && document.activeElement !== slider) slider.value = String(db);
   const num = document.getElementById('dryMonitorGainNum');
-  if (num) num.textContent = Math.round(v * 100) + '%';
+  if (num) num.textContent = (db >= 0 ? '+' : '−') + Math.abs(db).toFixed(1) + ' dB';
   // Assigning slider.value fires no `input` event, so the main-UI audio
   // panel's mirror listener never runs — push it explicitly.
   S._syncAudioPanelLevels?.();
@@ -1759,6 +1854,7 @@ export function rebuildLiveBuffer() {
   // candidates (minimises frontier latency).
   // Throttled to LIVE_REBUILD_INTERVAL_MS — a subarray is a view, no copy.
   if (!S.isRecording || S.recordingWritePos === 0) return;
+  if (S.recordingRawOffset > 0) return;   // mid-split: the pool's head is the part before the pin
   if (S.recordingWritePos === S.liveBufferSampleCount) return;
 
   const now = performance.now();

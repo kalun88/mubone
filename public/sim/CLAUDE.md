@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for Cowork / Claude Code
 
-> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-25 (5.8 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
+> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-25 (5.10 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
 
 > **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative — no paragraph here per change. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`.
 
@@ -178,7 +178,7 @@ A module mature enough to always load is wired into `main.js`; otherwise it stay
 
 ## Versioning — releases are explicit, never automatic
 
-Current version: **5.8 alpha** (`5.8.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
+Current version: **5.10 alpha** (`5.10.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
 
 1. **`index.html`** — BOTH version strings: the `<span class="top-bar-version">` (cabinet, hidden) and the chrome brand `<b>mubone</b> <i>1.14</i>`, which is the one the player sees
 2. **`package.json`** line 3 — the `"version"` field (semver, e.g. `"1.10.0-alpha"`)
@@ -251,7 +251,7 @@ Bump the minor for feature work or meaningful fixes (1.10 → 1.11), the patch f
 
 **The app is drivable from here.** `npm run electron:dev` arms the dev bridge (`scripts/dev-bridge.js`): write JS to `.dev-bridge/in/<id>.js` and the renderer evaluates it, `in/<id>.shot` returns a PNG of the window, and every renderer console line, load failure and crash lands in `.dev-bridge/console.log`. `scripts/lib/rig.js` is the node-side client — `launch()` starts a private instance (own profile, own OSC port, muted), `attach()` talks to the open one, `evaluate(fn)` mirrors playwright's `page.evaluate`. Plain `npm run electron` loads none of it. `location.href = location.pathname + '?debug'` turns on verbose logging without a restart. A live app is a **concurrent writer** — `js/grain.js` drives the trigger gates from the 10 ms scheduler — so anything driving the engine with synthetic timestamps calls `rig.quiesce()` first.
 
-**Audits are three-tier (Ek, 2026-09-18). Read `docs/AUDITS.md` § 1–2 before running one.** Per change: only the fast, file-only checks — `node scripts/audit-for.js --run` (docs, sensor maths, unit tests, osc wiring; under a second). The rig suites, align, browser, phone and live-loop boot the app and take minutes: **never unasked** — `audit-for` lists them as *on request*, and they run when the change is about what they measure and Ek says so (`--run --slow`). At release (Ek says "release" / "ship" / "bump"): everything. Say what ran and what did not. Every launch is a fresh profile, deleted on close; a second concurrent session sets `MUBONE_RIG_PORT` so the two do not share port 7599.
+**Audits are three-tier (Ek, 2026-09-18). Read `docs/AUDITS.md` § 1–2 before running one.** Per change: only the fast, file-only checks — `node scripts/audit-for.js --run` (docs, sensor maths, unit tests, osc wiring; under a second). The rig suites, align, browser and phone boot the app and take minutes: **never unasked** — `audit-for` lists them as *on request*, and they run when the change is about what they measure and Ek says so (`--run --slow`). At release (Ek says "release" / "ship" / "bump"): everything. Say what ran and what did not. Every launch is a fresh profile, deleted on close; a second concurrent session sets `MUBONE_RIG_PORT` so the two do not share port 7599.
 
 **Before any before/after claim about the screen** `node scripts/probe-selftest.mjs` must be green (`docs/AUDITS.md` says why); CSS work runs `npm run audit:align` and `node scripts/ui-shots.js`.
 

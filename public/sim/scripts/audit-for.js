@@ -76,7 +76,7 @@ const MAP = [
   [/^js\/osc\.js$/,
     'AUDIT_ONLY=wiring node scripts/osc-audit.js',
     'static cross-check of ACTIONS against the dispatch switch — instant; the full sweep is release-only'],
-  [/^js\/(sensor-registry|imu-setup|sensor-mapping|ximu-settings)\.js$/,
+  [/^js\/(sensor-registry|imu-setup|ximu-settings)\.js$/,
     'npm run audit:sensor',
     'calibration maths, pure, under a second'],
   // index.html IS routed — to rig-audit engine, which checks that every engine
@@ -93,9 +93,6 @@ const MAP = [
   [/^js\/[^/]+\.test\.mjs$|^js\/sygaldry[^/]*\.js$|^js\/worklets\/grain-engine/,
     'npm test',
     'the node unit tests — sub-second, no app'],
-  [/^js\/live-loop\.js$|^js\/worklets\/live-loop/,
-    'node scripts/live-loop-audit.js',
-    'real-time: a loop has to wrap, ~15 s of playback; not in rig-audit'],
   [/^js\/main\.js$|^sw\.js$/,
     'node scripts/browser-audit.js',
     'browser mode itself changed — otherwise this one is release-only'],

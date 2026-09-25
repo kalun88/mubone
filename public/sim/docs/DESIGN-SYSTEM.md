@@ -174,7 +174,6 @@ Note also that the three rail rules were never on one setting, which is why "mov
 `--ls-uppercase`" was the wrong shape of question: only `.lyr-empty` is on it. `.lyr-bar button`
 carries a **0.09em literal** — no token equals 0.09em (`--ls-wider` is 0.06, `--ls-uppercase` 0.10),
 so tokenising it would change the rendered value and it is left alone deliberately.
-`.lyr-actions .tc-btn` uses `--ls-wider`.
 
 ## 5. The grids and contracts
 

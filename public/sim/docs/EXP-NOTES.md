@@ -76,8 +76,9 @@ sensor-registry.js (raw quat + gyro via /sensor/{name}/{type})
 ```
 
 ### Integration
-- Sits between sensor-registry.js and sensor-mapping.js
-- sensor-mapping.js can read from S.gesture instead of (or in addition to) raw axis values
+- Sits between sensor-registry.js and whatever reads sensors into params (sensor-mapping.js
+  was that reader until it was deleted 2026-09-25)
+- that reader can read from S.gesture instead of (or in addition to) raw axis values
 - Does NOT replace existing axis mapping — layers on top as an alternative mapping mode
 
 ---

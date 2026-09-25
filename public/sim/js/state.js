@@ -102,9 +102,10 @@ export const GESTURE_LONG_MS = 8000;
 //
 //   'sensor' — the cursor-role sensor's own yaw/pitch, free running
 //   'locked' — frozen at the value held when the source was last set
-//   'mapped' — driven by a sensor-mapping row targeting cursor azimuth/elevation
+//   'mapped' — driven by S.cursorOverrides, which the `cursor_az` / `cursor_el`
+//              cc rows write (a sensor, MIDI or OSC bound to them)
 //
-// An axis set to 'mapped' with no mapping row feeding it HOLDS its last value
+// An axis set to 'mapped' with nothing feeding it HOLDS its last value
 // (i.e. behaves as 'locked') rather than snapping back to sensor control.
 // Silently resuming sensor motion mid-performance because a row got disabled is
 // the worse failure — see CURSOR_SOURCE in docs/TODO.md.
@@ -359,7 +360,7 @@ export const GATE_METER_PEAK_FALL_MS = 650;  // then falls, deliberately slower 
 // ── Paint gate meter scale ──────────────────────────────────────────
 // The gate meter's axis. Everything that reads or writes a position on that
 // meter shares it — the RMS bar, the peak tick, the threshold marker, the mouse
-// drag, and the noise_gate cc action — so a pot's throw matches what's drawn.
+// drag, and the paint_gate cc action — so a pot's throw matches what's drawn.
 //
 //   rms = GATE_METER_MAX · frac^GATE_METER_GAMMA
 //
@@ -380,7 +381,7 @@ export const GATE_METER_PEAK_FALL_MS = 650;  // then falls, deliberately slower 
 //
 // γ is re-derived to keep the working region where it was: 0.004 sits at
 // 0.004^(1/6) = 40% of the travel, the same 40% it had at 0.06/γ3, and the
-// noise_gate cc still spends 51 of its 128 steps below it. Landmarks:
+// paint_gate cc still spends 51 of its 128 steps below it. Landmarks:
 //   room noise ~0.001 → 32%   ·  threshold 0.002 → 36%
 //   playing    ~0.1   → 68%   ·  full scale 1.0  → 100%
 export const GATE_METER_MAX   = 1.0;    // full scale — the metric's own ceiling
@@ -470,6 +471,7 @@ export const gp = () => S.grainParams;
 
 export const perf = {
   frameMs:        0,    // last frame duration ms
+  drawMs:         0,    // what drawFrame() costs the main thread, smoothed (renderer.js)
   frameMsMax:     0,    // rolling max (resets every 2s)
   frameMsMaxAt:   0,
   schedulerDrift: 0,    // how late scheduleGrains fired vs GRAIN_SCHEDULER_INTERVAL_MS target
@@ -537,10 +539,11 @@ export function perfTick() {
   const frameBad = perf.frameMs > frameTarget * 1.25;
   const hwBufMs  = (S.audioCtx?.baseLatency ?? 0) * 1000;
   const schedBad = perf.schedulerDrift > GRAIN_SCHEDULER_INTERVAL_MS * 0.60 + hwBufMs * 0.90;
-  const nodesBad = perf.activeNodes > 256 * 0.90;  // worklet pool = 256 slots
+  const pool     = S.maxGrains || 512;               // the worklet's pool (Settings → Audio, advanced)
+  const nodesBad = perf.activeNodes > pool * 0.90;
 
   if (barEl) {
-    const pct = Math.min(100, (perf.activeNodes / 256) * 100);  // worklet pool = 256
+    const pct = Math.min(100, (perf.activeNodes / pool) * 100);
     barEl.style.width = `${pct}%`;
     barEl.style.backgroundColor = pct > 85 ? '#e06060' : pct > 55 ? '#e8a030' : '#7abcbc';
   }
@@ -590,23 +593,37 @@ export function perfTick() {
   const hwBufMsDisp = (S.audioCtx?.baseLatency ?? 0) * 1000;
   const schedMax    = GRAIN_SCHEDULER_INTERVAL_MS * 2 + hwBufMsDisp;
 
-  // grains: worklet pool is 256 slots. Show active grain count vs pool size.
-  // Warn at 55% (141), crit at 85% (218) — pressure throttle kicks in at 75% (192).
-  const WORKLET_POOL = 256;
+  // grains: alive in the worklet, of its pool (S.maxGrains — it read a fixed
+  // 256 against a 512 default). The pool's own backstop thins at 90%. `pool`
+  // is the load indicator's, above.
   setBar('pmNodesBar', 'pmNodesVal',
-    (perf.activeNodes / WORKLET_POOL) * 100,
-    `${perf.activeNodes} / ${WORKLET_POOL}`,
-    55, 85);
+    (perf.activeNodes / pool) * 100,
+    `${perf.activeNodes} / ${pool}`,
+    60, 90);
 
-  // frame: 60fps = 16.7ms baseline. Bar spans 16–50ms (0% = 16ms, 100% = 50ms).
-  // Warn at 33ms (dropping to ~30fps), crit at 50ms (~20fps).
-  const frameBaseline = 1000 / 60;
-  const frameCap      = 50;
+  // audio: the worklet's own load over its last feedback window, of the
+  // block budget. The throttle's two thresholds are the bar's: thinning from
+  // 70%, everything skipped at 95% (grain-engine.worklet.js LOAD_SOFT/HARD).
+  const wd = S._lastWorkletDiag;
+  if (wd?.loadPct != null) setBar('pmLoadBar', 'pmLoadVal', wd.loadPct,
+    `${wd.loadPct}%${wd.throttled ? ' thin' : ''}`, 70, 95);
+
+  // draw: what one frame costs the main thread, against the 33 ms a 30 fps
+  // frame has. It is the scheduler's thread too, so the warning comes early.
+  const budget = 1000 / RENDER_TARGET_FPS;
   setBar('pmFrameBar', 'pmFrameVal',
-    Math.max(0, (perf.frameMs - frameBaseline) / (frameCap - frameBaseline)) * 100,
-    `${perf.frameMs.toFixed(1)}ms`,
-    (33 - frameBaseline) / (frameCap - frameBaseline) * 100,
-    (50 - frameBaseline) / (frameCap - frameBaseline) * 100);
+    (perf.drawMs / budget) * 100,
+    `${perf.drawMs.toFixed(1)} / ${budget.toFixed(0)}ms`,
+    35, 60);
+
+  // mem: the audio held (every take, float32, once — js/take.js) and the JS
+  // heap, against the ~1 GB where the 8 GB laptop was measured paging.
+  const takesMB = (perf.recTotalSec || 0) * (S.audioCtx?.sampleRate || 48000) * 4 / 1048576;
+  const heapMB  = (performance.memory?.usedJSHeapSize || 0) / 1048576;
+  setBar('pmMemBar', 'pmMemVal',
+    ((takesMB + heapMB) / 1024) * 100,
+    `${Math.round(takesMB)} + ${Math.round(heapMB)} MB`,
+    60, 85);
 
   // sched drift: bar shows rolling average, peak marker shows highest spike
   const schedAvgPct = (perf.schedulerAvg / Math.max(schedMax, 1)) * 100;
@@ -676,15 +693,29 @@ export function perfTick() {
   if (infoEl) {
     const srHz = S.audioCtx?.sampleRate;
     const srStr = srHz ? `${(srHz / 1000).toFixed(1)}kHz` : '—';
-    const blMs  = S.audioCtx?.baseLatency != null
-      ? `${(S.audioCtx.baseLatency * 1000).toFixed(1)}ms` : '—';
-    infoEl.textContent = `${srStr}  ·  buf ${blMs}`;
+    // Electron runs the device through the audio host, so the buffer is the
+    // chosen frame count and the cushion the app's own (js/latency.js); the
+    // browser has only the context's base latency to report.
+    const elec = !!window.electronBridge?.isElectron;
+    const buf  = elec ? `buf ${S.preferredBufferSize ?? '—'}  ·  cushion ${S.audioCushionMs ?? '—'}ms`
+      : `buf ${S.audioCtx?.baseLatency != null ? (S.audioCtx.baseLatency * 1000).toFixed(1) + 'ms' : '—'}`;
+    infoEl.textContent = `${srStr}  ·  ${buf}`;
   }
 
   const warnEl = document.getElementById('pmUnderruns');
   if (warnEl) {
+    // FAULTS the ear would hear. In Electron the transport counts them itself
+    // — a dry output queue is a hole played, a dropped block a skip, an input
+    // skip a gap in the take — and the context's clock-lag guess means little
+    // there; the browser keeps the guess, having nothing better.
     const parts = [];
-    if (perf.underruns > 0)  parts.push(`⚠ ${perf.underruns} underrun${perf.underruns > 1 ? 's' : ''}`);
+    const td = S.transportDiag;
+    if (window.electronBridge?.isElectron && td) {
+      if (td.outDry)     parts.push(`⚠ ${td.outDry} hole${td.outDry > 1 ? 's' : ''}`);
+      if (td.outDropped) parts.push(`⚠ ${td.outDropped} dropped`);
+      if (td.inSkipped)  parts.push(`⚠ ${td.inSkipped} in-skip`);
+    } else if (perf.underruns > 0) parts.push(`⚠ ${perf.underruns} underrun${perf.underruns > 1 ? 's' : ''}`);
+    if (wd?.steals) parts.push(`⚠ ${wd.steals} stolen`);
     if (perf.frameSkips > 0) parts.push(`⏭ ${perf.frameSkips} skip${perf.frameSkips > 1 ? 's' : ''}`);
     warnEl.textContent   = parts.join('  ');
     warnEl.style.display = parts.length > 0 ? 'block' : 'none';
@@ -723,14 +754,10 @@ export const S = {
   azSource:           'sensor',  // who drives cursor azimuth   — see AXIS_SOURCES
   elSource:           'sensor',  // who drives cursor elevation — see AXIS_SOURCES
   // (rollSource is gone, 2026-09-01. Roll is DATA: the camera takes none —
-  // applyAxisSources strips a sensor quat to yaw+pitch structurally — and the
-  // mapping rows read the sensor's roll live via getCursorEuler. The RO footer
-  // button and _gateRoll went with it; disable a mapping row in Settings →
-  // Mapping when roll should stop driving something.)
-  // Degrees written by sensor-mapping rows whose output kind is 'cursor'.
-  // null = no row is feeding that axis, so a 'mapped' axis holds instead.
-  // Same shape and lifetime as S.grainOverrides.
-  cursorOverrides:    { azimuth: null, elevation: null, roll: null },
+  // applyAxisSources strips a sensor quat to yaw+pitch structurally.)
+  // Degrees for a 'mapped' axis. null = nothing is feeding that axis, so a
+  // 'mapped' axis holds instead.
+  cursorOverrides:    { azimuth: null, elevation: null },
   _axisLockFrozenNx:  null,   // snapshot of surface nx when az is held
   _axisLockFrozenNy:  null,   // snapshot of surface ny when el is held
   _axisLockFrozenYaw:   null, // snapshot of sensor yaw when az is held
@@ -740,8 +767,7 @@ export const S = {
   // the camera at all — applyAxisSources composes yaw·pitch only — and a
   // snapshot for a channel that no longer exists is exactly the kind of
   // leftover the next session mistakes for a mechanism.)
-  _rawCamQ:             null, // pre-substitution sensor quats, kept so a cursor
-  _rawCursorQ:          null, // mapping can be re-applied after tickMappings()
+  _rawCursorQ:          null, // the cursor-role quat while a frame sensor holds the view (two-sensor mode)
   altFrozenMousePixelX: 0,
   altFrozenMousePixelY: 0,
 
@@ -1092,6 +1118,8 @@ export const S = {
   maxGrains: 512,
   recordingRaw:       null,
   recordingWritePos:  0,
+  recordingRawOffset: 0,
+  _pinSeqCounter:     0,     // the order clouds were pinned in — grain.js _readableBy: an earlier pin's marks are its own     // while a split waits for the recorder: where the second take starts in the pool (audio.js)
   recordingStartTime: 0,
   liveBufferSampleCount: 0,
   recordingSampleRate: 0,
@@ -1184,25 +1212,9 @@ export const S = {
   hudScale:      1.0,
   fovDeg:        80,        // field of view (degrees) — match to projector throw for room-anchored use
 
-  // ── Handsfree recording ────────────────────────────────────────────────
-  // Pedal-armed auto-record: paint gate segments buffers within toggle-trace.
-  // Tap trace on → gate listens → each phrase becomes a separate buffer.
-  hfArmed:          false,   // true = handsfree armed (gate segmentation active in toggle-trace)
-  hfRecording:      false,   // true = handsfree gate has opened a buffer capture
-  hfGateOpen:       false,   // current gate state (after envelope processing)
+  // ── The running gesture ────────────────────────────────────────────────
   paintLatched:     false,   // true = the running gesture was started by a TOGGLE press and
                              // ends on the next press (brush.js gesturePress); never in momentary
-  hfHoldMs:         500,     // hold time (ms) — gate stays open through pauses shorter than this
-  hfReleaseMs:      200,     // release time (ms) — smooth gate close after hold expires
-  hfAttackMs:       3,       // attack time (ms) — how fast gate opens
-  hfMarginDb:       0,       // output-referenced threshold margin (dB above output RMS) — 0 = off
-  hfHpfFreq:        120,     // high-pass filter frequency (Hz) for gate sidechain
-  hfHpfEnabled:     true,    // enable HPF on gate sidechain
-  hfMinBufferMs:    150,     // reject gate opens shorter than this (ms)
-  hfMaxBufferSec:   30,      // auto-close after this many seconds
-  hfFeedbackDetect: true,    // enable rising-RMS feedback trend detection
-  hfCompEnabled:    false,   // optional pre-gate compressor (off by default)
-  hfCaptureCount:   0,       // number of buffers auto-captured this session
 
   // ── Audio ──────────────────────────────────────────────────────────────
   audioCtx:   null,
@@ -1378,9 +1390,9 @@ export const S = {
   // feedback.
   dryMonitorMode:     'off',
   dryMonitorEnabled:  false,  // effective on/off of the dry spatial layer
-  dryMonitorGainValue: 0.5,   // LINEAR 0–2, the gain node's own unit. Both dry
-                              // sliders read dB (ui-meters.js _dbOfLin): 0.5 is −6.0 dB,
-                              // the same level Master Volume shows, and 2.0 is +6.0.
+  dryMonitorGainValue: 0.5,   // LINEAR, the gain node's own unit, up to +18 dB (7.94).
+                              // Both dry sliders read dB (ui-meters.js _dbOfLin): 0.5 is
+                              // −6.0 dB, the same level Master Volume shows.
   dryGainNode:         null,  // GainNode — dry level control
   dryAnalyser:         null,  // AnalyserNode — dry level meter tap
   dryVBAPGains:        null,  // [GainNode, ...] — one per speaker bus (Electron multi-ch)

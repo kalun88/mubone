@@ -57,6 +57,7 @@ let _before = null;              // the material before the erase stroke
 // Reusable per-tick structures (mirrors the _recBufRec pattern in grain.js)
 const _bufRec  = new Map();   // depthKey (the stroke) → its strokeId, among touched particles
 const _allowed = new Set();   // the strokes the scan could hear this tick (depth counts strokes)
+const _tapeKeys = new Set();  // touched TAPE strokes — never ranked by depth, always targets
 const _sortBuf = [];
 const _hit        = new Set();  // particles the brush touches this tick
 const _prevTrig   = new Map();  // strokeId → previous trig mark (segment pairing)
@@ -274,9 +275,16 @@ function _eraseTick() {
 
   // Phase 1: rank recency from ONLY the touched particles (local universe —
   // identical semantics to _buildCandidatePoolRadius in grain.js).
+  // DEPTH COUNTS GRAIN ONLY, as the cursor's does (Ek, 2026-09-25). A tape
+  // stroke is not a layer the cursor ranks — it fires whole whatever the depth
+  // — so it is not ranked here either, and a touched take is always a target.
+  // Until today a line painted over grain was the newest stroke under the
+  // brush, and at depth 1 it was the only thing erased.
   _bufRec.clear();
+  _tapeKeys.clear();
   for (const p of _hit) {
     const key = depthKey(p);
+    if (p.trig) { _tapeKeys.add(key); continue; }
     if ((_bufRec.get(key) ?? -Infinity) < p.strokeId) _bufRec.set(key, p.strokeId);
   }
 
@@ -302,6 +310,7 @@ function _eraseTick() {
   for (const key of _bufRec.keys()) {
     if (!_strokeFate.has(key)) _strokeFate.set(key, _allowed.has(key));
   }
+  for (const key of _tapeKeys) _strokeFate.set(key, true);
 
   // Phase 2: remove in-radius particles belonging to target strokes.
   // `erases: stroke` (#243) widens the take AFTER the touch decides: the

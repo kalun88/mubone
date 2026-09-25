@@ -51,6 +51,11 @@ const STORAGE_INVERSE = {
   grain_pitch: s => 1200 * Math.log2(s + 1),
   // _setOutputGainDb stores linear gain; range is declared in dB
   master_vol:  s => 20 * Math.log10(Math.max(s, 1e-9)),
+  // the same: both store the gain node's LINEAR value, their ranges are dB
+  // (dry_gain since 2026-09-25; input_gain always was, and failed here)
+  input_gain:  s => 20 * Math.log10(Math.max(s, 1e-9)),
+  // dry_gain's bottom is SILENCE (0), which the sliders read as −60 — the floor
+  dry_gain:    s => Math.max(-60, 20 * Math.log10(Math.max(s, 1e-9))),
 };
 
 // Actions where full throw is legitimately not range.max. Checked at half

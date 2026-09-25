@@ -11,7 +11,6 @@ import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMoni
 import { renderMeters, tickMeters, rebuildMainOutputMeters,
          renderSetMeters, setMeterSources, clearSetMeters,
          startSetMeters, stopSetMeters, initSetGateMeter } from './ui-meters.js';
-import { armHandsfree, disarmHandsfree, updateHPFFreq } from './handsfree.js';
 import { cursorLonLatNow, spherePointInto, cameraRotateInto } from './sphere.js';
 
 // ── RtAudio input meter worklet (Electron only) ───────────────────────────────
@@ -1697,9 +1696,9 @@ const LS_VIZ_CAL        = 'mubone_viz_calibration';
 
 // The one field list. Both saveAllDefaults() and the auto-save dirty check
 // consume this — that is the whole point. They used to be two hand-written
-// lists and had drifted: the nine handsfree fields and `recLimitSeconds` were
-// written by the save but absent from the dirty check, so changing only a
-// handsfree setting or the recording limit never marked state dirty and was
+// lists and had drifted: nine gate fields and `recLimitSeconds` were
+// written by the save but absent from the dirty check, so changing only one
+// of them never marked state dirty and was
 // never persisted until some unrelated setting changed. Meanwhile `fovDeg` sat
 // in the dirty check but was written by ui-viz.js under `mubone_fovDeg`, so it
 // was watched here for nothing. Add a field to one of these objects and both
@@ -1729,17 +1728,6 @@ function _buildPayloads() {
 
       // Paint gate
       paintGateThreshold:    S.paintGateThreshold,
-
-      // Handsfree
-      hfHoldMs:         S.hfHoldMs,
-      hfReleaseMs:      S.hfReleaseMs,
-      hfMarginDb:       S.hfMarginDb,
-      hfHpfFreq:        S.hfHpfFreq,
-      hfHpfEnabled:     S.hfHpfEnabled,
-      hfMinBufferMs:    S.hfMinBufferMs,
-      hfMaxBufferSec:   S.hfMaxBufferSec,
-      hfFeedbackDetect: S.hfFeedbackDetect,
-      hfCompEnabled:    S.hfCompEnabled,
 
       // Spatial panning
       spatialPanning:   S.spatialPanning,
@@ -1818,7 +1806,7 @@ export function saveAllDefaults() {
 //
 // Hashes _buildPayloads() — the same object the save writes — so a field can no
 // longer be saved-but-unwatched. Don't reintroduce a separate snapshot builder
-// here; that split is exactly how the handsfree fields stopped persisting.
+// here; that split is exactly how nine fields once stopped persisting.
 let _lastSavedJson = '';
 
 function _checkAndSave() {
@@ -1906,17 +1894,6 @@ export function loadAudioDefaults() {
     // write the new one — no persistent fallback.
     if (typeof d.paintGateThreshold === 'number')   S.paintGateThreshold = d.paintGateThreshold;
     else if (typeof d.vizNoiseFloor === 'number')   S.paintGateThreshold = d.vizNoiseFloor;
-
-    // Handsfree
-    if (typeof d.hfHoldMs         === 'number')  S.hfHoldMs         = d.hfHoldMs;
-    if (typeof d.hfReleaseMs      === 'number')  S.hfReleaseMs      = d.hfReleaseMs;
-    if (typeof d.hfMarginDb       === 'number')  S.hfMarginDb       = d.hfMarginDb;
-    if (typeof d.hfHpfFreq        === 'number')  S.hfHpfFreq        = d.hfHpfFreq;
-    if (typeof d.hfHpfEnabled     === 'boolean') S.hfHpfEnabled     = d.hfHpfEnabled;
-    if (typeof d.hfMinBufferMs    === 'number')  S.hfMinBufferMs    = d.hfMinBufferMs;
-    if (typeof d.hfMaxBufferSec   === 'number')  S.hfMaxBufferSec   = d.hfMaxBufferSec;
-    if (typeof d.hfFeedbackDetect === 'boolean') S.hfFeedbackDetect = d.hfFeedbackDetect;
-    if (typeof d.hfCompEnabled    === 'boolean') S.hfCompEnabled    = d.hfCompEnabled;
 
     // Spatial panning. (FOV, dark mode and viz calibration used to be read
     // here — they moved to ui-viz.js / mubone_viz_calibration.)
@@ -2333,167 +2310,6 @@ export function initAudioSettings() {
     gateSlider.addEventListener('input', () => {
       S.paintGateThreshold = parseFloat(gateSlider.value);
     });
-  }
-
-  // ── Handsfree gate tuning controls ────────────────────────────────────────
-  // Arm toggle is in the main UI cursor panel — only tuning sliders here.
-  {
-    // Hold slider
-    const holdSlider = document.getElementById('hfHoldSlider');
-    const holdVal    = document.getElementById('hfHoldVal');
-    if (holdSlider) {
-      holdSlider.value = S.hfHoldMs;
-      if (holdVal) holdVal.textContent = S.hfHoldMs + ' ms';
-      holdSlider.addEventListener('input', () => {
-        S.hfHoldMs = parseInt(holdSlider.value);
-        if (holdVal) holdVal.textContent = S.hfHoldMs + ' ms';
-      });
-    }
-
-    // Release slider
-    const relSlider = document.getElementById('hfReleaseSlider');
-    const relVal    = document.getElementById('hfReleaseVal');
-    if (relSlider) {
-      relSlider.value = S.hfReleaseMs;
-      if (relVal) relVal.textContent = S.hfReleaseMs + ' ms';
-      relSlider.addEventListener('input', () => {
-        S.hfReleaseMs = parseInt(relSlider.value);
-        if (relVal) relVal.textContent = S.hfReleaseMs + ' ms';
-      });
-    }
-
-    // Margin slider (dB above output RMS)
-    const marginSlider = document.getElementById('hfMarginSlider');
-    const marginVal    = document.getElementById('hfMarginVal');
-    if (marginSlider) {
-      const _fmtMargin = v => v === 0 ? 'off' : '+' + v + ' dB';
-      marginSlider.value = S.hfMarginDb;
-      if (marginVal) marginVal.textContent = _fmtMargin(S.hfMarginDb);
-      marginSlider.addEventListener('input', () => {
-        S.hfMarginDb = parseInt(marginSlider.value);
-        if (marginVal) marginVal.textContent = _fmtMargin(S.hfMarginDb);
-      });
-    }
-
-    // HPF toggle + freq slider
-    const hpfSeg = document.getElementById('hfHpfSeg');
-    if (hpfSeg) {
-      const syncHpf = () => hpfSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active', (b.dataset.hpf === 'on') === S.hfHpfEnabled));
-      syncHpf();
-      hpfSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          S.hfHpfEnabled = btn.dataset.hpf === 'on';
-          syncHpf();
-        });
-      });
-    }
-    const hpfSlider = document.getElementById('hfHpfSlider');
-    const hpfVal    = document.getElementById('hfHpfVal');
-    if (hpfSlider) {
-      hpfSlider.value = S.hfHpfFreq;
-      if (hpfVal) hpfVal.textContent = S.hfHpfFreq + ' Hz';
-      hpfSlider.addEventListener('input', () => {
-        S.hfHpfFreq = parseInt(hpfSlider.value);
-        if (hpfVal) hpfVal.textContent = S.hfHpfFreq + ' Hz';
-        updateHPFFreq();
-      });
-    }
-
-    // Min buffer slider
-    const minSlider = document.getElementById('hfMinBufSlider');
-    const minVal    = document.getElementById('hfMinBufVal');
-    if (minSlider) {
-      minSlider.value = S.hfMinBufferMs;
-      if (minVal) minVal.textContent = S.hfMinBufferMs + ' ms';
-      minSlider.addEventListener('input', () => {
-        S.hfMinBufferMs = parseInt(minSlider.value);
-        if (minVal) minVal.textContent = S.hfMinBufferMs + ' ms';
-      });
-    }
-
-    // Max buffer slider
-    const maxSlider = document.getElementById('hfMaxBufSlider');
-    const maxVal    = document.getElementById('hfMaxBufVal');
-    if (maxSlider) {
-      maxSlider.value = S.hfMaxBufferSec;
-      if (maxVal) maxVal.textContent = S.hfMaxBufferSec + ' s';
-      maxSlider.addEventListener('input', () => {
-        S.hfMaxBufferSec = parseInt(maxSlider.value);
-        if (maxVal) maxVal.textContent = S.hfMaxBufferSec + ' s';
-      });
-    }
-
-    // Feedback detection toggle
-    const fbSeg = document.getElementById('hfFeedbackSeg');
-    if (fbSeg) {
-      const syncFb = () => fbSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
-        b.classList.toggle('active', (b.dataset.fb === 'on') === S.hfFeedbackDetect));
-      syncFb();
-      fbSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          S.hfFeedbackDetect = btn.dataset.fb === 'on';
-          syncFb();
-        });
-      });
-    }
-
-    // The arm control (#290). It used to be a button in the rig view's cursor
-    // device — the one place nobody could reach once the rig stopped being a
-    // screen — so it lives here now, beside the gate it arms. Arming is a
-    // boolean that STAYS, so it is the kit's toggle (#267 made it a two-state
-    // pill; 2026-09-24 the switch, which is what a yes/no is on a settings
-    // page). Disabled outside plain trace mode, since only that can be armed.
-    const hfArmToggle = document.getElementById('hfArmToggle');
-    if (hfArmToggle) {
-      hfArmToggle.addEventListener('change', () => {
-        const want = hfArmToggle.checked;
-        if (want === !!S.hfArmed) return;
-        if (want && S.traceMode !== 'trace') { hfArmToggle.checked = false; return; }
-        if (want) armHandsfree(); else disarmHandsfree();
-        S._syncHandsfreeUI?.();
-      });
-    }
-
-    // The tuning rows are a disclosure, not a collapsible (#293): the same
-    // eight rows, revealed in place under the row that asks for them. No
-    // triangle and no second kind of chrome — a settings page has one row
-    // model, and a group that opens is still made of rows.
-    const hfTuneBtn = document.getElementById('hfTuneBtn');
-    const hfTune    = document.getElementById('hfTune');
-    if (hfTuneBtn && hfTune) {
-      hfTuneBtn.addEventListener('click', () => {
-        const open = hfTune.hidden;
-        hfTune.hidden = !open;
-        hfTuneBtn.setAttribute('aria-expanded', String(open));
-        hfTuneBtn.textContent = open ? 'Done' : 'Tune…';
-      });
-    }
-
-    // Sync callback — updates capture count, main UI button, and HUD label
-    S._syncHandsfreeUI = () => {
-      const countEl = document.getElementById('hfCaptureCount');
-      if (countEl) countEl.textContent = S.hfCaptureCount + (S.hfCaptureCount === 1 ? ' buffer' : ' buffers');
-      // Sync the arm switch. `hf-recording` is a class, not a state you can
-      // pick: recording is something the gate is DOING (#267).
-      const armToggle = document.getElementById('hfArmToggle');
-      if (armToggle) {
-        armToggle.classList.toggle('hf-recording', !!S.hfRecording);
-        armToggle.disabled = S.traceMode !== 'trace' && !S.hfArmed;
-        armToggle.checked  = !!S.hfArmed;
-      }
-      // Sync trace indicator — show active state when toggled on
-      const traceBtn = document.getElementById('paintIndicatorBtn');
-      if (traceBtn) {
-        traceBtn.classList.toggle('painting', S.paintLatched);
-        traceBtn.classList.toggle('trace-toggled', S.paintLatched);
-      }
-      // HUD label — show "handsfree" next to coordinates when armed
-      const hudLabel = document.getElementById('hfHudLabel');
-      if (hudLabel) {
-        hudLabel.style.display = S.hfArmed ? '' : 'none';
-      }
-    };
   }
 
   // Output gain — writes to S.masterBus (master chain) and headphone downmix node

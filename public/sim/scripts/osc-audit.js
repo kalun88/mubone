@@ -98,7 +98,9 @@ function parseActions() {
   // Only ACTIONS rows carry a label; midi.js also opens `{ id: '…', verb }`
   // lines for the factory strip (PALETTE_FACTORY_ENTRIES, 2026-09-12), which
   // read as actions with no dispatch case until this filter.
-  return rows.filter(r => /\blabel:/.test(r.text.split('\n')[0])).map(r => ({
+  // A row may state its label or compute it (`get label()` — the hand rows name
+  // their side's tool, 2026-09-25).
+  return rows.filter(r => /\blabel\s*(:|\(\))/.test(r.text.split('\n')[0])).map(r => ({
     id:   r.id,
     line: r.line,
     osc:  (/osc:\s*'([^']+)'/.exec(r.text) || [])[1] || null,
@@ -272,9 +274,6 @@ const NEEDS_STATE = new Map([
   // and reaches localStorage on a 10 Hz poll, so the S snapshot cannot see it;
   // palette-audit § G is where wet is actually proven.
   ['/palette/wet',      'wet is tiles.js state (_tileCfg), not on S — proven by palette-audit'],
-  ['/mapping1',         'needs a configured mapping row'],
-  ['/mapping2',         'needs a configured mapping row'],
-  ['/mapping3',         'needs a configured mapping row'],
   ['/source/sampler',   'select-only; painting from it needs a loaded sample'],
   ['/source/live',      'the boot default — selecting it again moves nothing'],
   ['/sampler/sample',   'needs a loaded sample'],
@@ -386,18 +385,17 @@ async function seedMaterial(rig) {
 const VALUES = {
   '/grain/dur': [123], '/grain/per': [77], '/grain/overlap': [2.5], '/grain/volume': [0.7],
   '/grain/pitch': [300], '/grain/pan': [55], '/grain/prob': [0.6], '/scan/fade': [400],
-  '/grain/fade': [22], '/grain/durjitter': [0.4], '/grain/durvar': [111], '/grain/startjitter': [88],
+  '/grain/fade': [22], '/grain/durvar': [111], '/grain/startjitter': [88],
   '/grain/pervar': [66], '/grain/cutoff': [1800],
   '/tape/speed': [1.5], '/tape/pitch': [-700], '/tape/volume': [0.6], '/tape/voice': [2], '/grain/voice': [2],
   '/grain/flow': [60], '/grain/head': [12], '/pins/sel/level': [0.5], '/input/gain': [-6],
   '/grain/res': [0.4], '/grain/filterjitter': [0.35], '/grain/pitchshift': [-700],
   '/search/radius': [33], '/search/recency': [4], '/search/k': [3],
-  '/commit/xfade': [0.4], '/commit/loop_fade_time': [640], '/commit/attack': [1.5],
+  '/commit/xfade': [0.4], '/commit/attack': [1.5],
   '/commit/release_time': [2.5], '/commit/volume': [0.6], '/commit/speed': [1.5], '/commit/slots': [7],
   '/monitor/volume': [0.5], '/house/volume': [1.4], '/mixdown/cursor': [0.6], '/mixdown/house': [0.4],
-  '/master/volume': [-12], '/gate/threshold': [0.02], '/dry/gain': [0.8],
-  '/cursor/radiusfadecurve': [0.7],
-  '/mapping1': [0.5], '/mapping2': [0.5], '/mapping3': [0.5],
+  '/master/volume': [-12], '/paint/gate': [0.02], '/dry/gain': [-6],
+  '/cursor/radiusfadecurve': [0.7], '/cursor/azimuth': [30], '/cursor/elevation': [20],
 };
 
 function plan() {

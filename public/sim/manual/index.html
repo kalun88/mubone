@@ -254,7 +254,7 @@
       <div class="item" data-t="unpin top track selected frame sort near far old"><h3>Unpin takes the top track</h3><p>The <strong>selected</strong> frame holds it, and the frame is always there — empty, it says so. <strong>sort</strong> says which is on top — nearest to the cursor, farthest, or oldest. <em>old</em> holds still while you play.</p></div>
       <div class="item" data-t="follow focus violet faders move curve"><h3>Follow</h3><p><strong>follow</strong> on: the faders follow the cursor — nearest loudest, the rest handing over by distance — and their edges turn violet to say so. Off, every pin plays at full. <strong>curve</strong> is how gradual the handover is.</p></div>
       <div class="item" data-t="number fold in out ramps fade"><h3>Press a number for its in / out</h3><p>Each pin's own ramps. <em>in</em>: pin and unmute. <em>out</em>: unpin and mute. Ten seconds on both and a cloud swells and dies slowly every time.</p></div>
-      <div class="item" data-t="busses clouds loops mute all acts"><h3>Under the tracks</h3><p><span class="hue" style="background: var(--grain);"></span>clouds and <span class="hue" style="background: var(--tape);"></span>loops, each with its own M and S. Then unpin all and mute. Pin and unpin are on the palette, on their own keys; a track's own M and S clear one at a time.</p></div>
+      <div class="item" data-t="busses clouds loops mute all acts"><h3>Under the tracks</h3><p><span class="hue" style="background: var(--grain);"></span>clouds and <span class="hue" style="background: var(--tape);"></span>loops, each with its own M and S, and under them <b>all</b>, the master: its M silences every pin and lets them back exactly as you left them. Unpin all is a button at the top, under when full. Pin and unpin are on the palette, on their own keys; a track's own M and S clear one at a time.</p></div>
       <div class="item" data-t="3 / 8 count slots full type"><h3>3 / 8</h3><p>Held, of how many can be. Type the second number. What happens when they're all taken is on Settings → Pins.</p></div>
     </div>
   </section>
@@ -289,12 +289,11 @@
       <div data-t="undo redo"><span><kbd>⌘Z</kbd> · <kbd>⇧⌘Z</kbd></span><span>undo · redo — a gesture at a time, to the top of the show</span></div>
       <div data-t="erase all backspace delete three"><span><kbd>⌫</kbd> ×3</span><span>erase all</span></div>
       <div data-t="mute M system"><span><kbd>M</kbd></span><span>mute everything</span></div>
-      <div data-t="handsfree H gate phrases"><span><kbd>H</kbd></span><span>handsfree — the gate cuts your phrases for you</span></div>
       <div data-t="save open new piece command"><span><kbd>⌘S</kbd> · <kbd>⌘O</kbd> · <kbd>⌘N</kbd></span><span>save · open · new piece</span></div>
       <div data-t="escape close drawer rail"><span><kbd>esc</kbd></span><span>close the drawer, then the rail, then the window</span></div>
       <div data-t="double-click slider reset default"><span>double-click a slider</span><span>back to its default</span></div>
       <div data-t="shift scroll view span zoom"><span><kbd>⇧</kbd> + scroll</span><span>how much sphere the window shows</span></div>
-      <div data-t="looper gesture hold pin key painting grows"><span>paint + hold <span class="it bang pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span></span><span>the stroke loops now and keeps growing until you let go</span></div>
+      <div data-t="looper gesture pin key tape take overdub layer"><span>tape take + <span class="it bang pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span></span><span>the phrase so far loops; you keep recording as an overdub on it — pin again for the next layer</span></div>
     </div>
     <p style="font-size: 13px; color: var(--t-tertiary);">Any of these can be moved in Settings → Keys + MIDI: click a cell, press the new key.</p>
   </section>

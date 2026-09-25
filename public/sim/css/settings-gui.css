@@ -184,9 +184,6 @@ html body .settings-host .in-settings .set-ctl > .as-val { order: 99; }
   transform: translateX(18px); background: var(--text-highlight);
 }
 .settings-host .set-toggle:disabled { opacity: 0.5; cursor: default; }
-/* The handsfree gate is recording: what the switch is DOING, not a state you
-   pick, so it is a face on the on switch rather than a third position. */
-.settings-host .set-toggle.hf-recording:checked { background: var(--accent-danger); }
 
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 .settings-host .in-settings .set-btn,
@@ -528,8 +525,8 @@ html body .settings-head .set-btn {
 html body .settings-head .as-btn:hover { background: var(--surface-1); color: var(--text-light); }
 .settings-host .in-settings .as-page-actions:empty { display: none; }
 
-/* 6. A disclosure is a plain row set revealed in place — the audio page's
-      handsfree tuning and the sensors page's command log both rely on it. */
+/* 6. A disclosure is a plain row set revealed in place — the sensors page's
+      command log relies on it. */
 .settings-host .in-settings [hidden] { display: none; }
 
 /* 7. The wide dropdown, under the class the pages actually carry. */
@@ -1102,14 +1099,13 @@ html body .settings-head .as-btn:hover { background: var(--surface-1); color: va
    its own. These three target a bare `span`, which the default names directly,
    so inheritance from the parent's rule is not enough and the size has to be
    stated on the child. Measured: deleting them put the meter's dB ruler back to
-   14 (15 elements on the audio page), and dropped a device-list header and the
-   mapping sentence from 15.04 to 14.
+   14 (15 elements on the audio page), and dropped a device-list header from
+   15.04 to 14.
 
    Nothing here is a specificity restatement any more — style.css § 24 is gone
    and so are the five rules that existed to out-rank it. */
 .settings-host .set-meter-scale > span { font-size: var(--fs-set-tick); }
 .settings-host .set-devices-head > span { font-size: var(--fs-set-row); }
-.settings-host .map-sentence > span { font-size: var(--fs-set-row); }
 
 /* Two rules the meter needs from its hosts, kept after the patch so its own
    position still decides everything it states. */
@@ -1147,11 +1143,8 @@ html body .settings-head .as-btn:hover { background: var(--surface-1); color: va
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   THE MAPPING PAGE (2026-08-30, round six)
-   Master–detail, for the reason the sensors page took it: _buildRow() put
-   fourteen controls on one line, and no table row survives that. The list is
-   one sentence per mapping; the six rows below it are the chain, in the order
-   the signal takes it.
+   FIELDS (2026-08-30, round six — built for the mapping page, which went
+   2026-09-25; the keys page's scale menu and the instrument block use them)
    ══════════════════════════════════════════════════════════════════════════ */
 
 /* A suffixed field — the unit belongs to the NUMBER, not to the row. `° 0 – 90`
@@ -1198,77 +1191,18 @@ html body .settings-head .set-btn--danger:hover { background: var(--tint-danger-
    keyed on the sensors page's own data attribute. */
 .settings-host .set-device[data-id] { cursor: pointer; }
 .settings-host .set-device[data-id]:hover { background: var(--surface-0); }
-/* A disabled mapping still reads, it just does not run. 0.55 is the spec'd
-   step; --idle's 0.62 is the sensors page's "not connected yet", a different
-   fact. */
-.settings-host .set-device--off { opacity: 0.55; }
-/* The sentence IS the row. Axis and destination carry the page's brightest
-   text; the arrow is punctuation and recedes; a MIDI channel is a qualifier. */
-.settings-host .in-settings .map-sentence {
-  font-size: var(--fs-set-row); color: var(--text-light);
-}
-/* The live pair sits where a device id sits — right, tabular, before the badge. */
-.settings-host .in-settings .map-live {
-  margin-left: auto; font-size: var(--fs-set-sub); color: var(--text-dim);
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-.settings-host .in-settings .set-device .map-live + .set-badge { margin-left: 12px; }
 /* `.set-table-sub` carries line-height 1.15 so an LED event row clears the
    table's 56px ceiling. A device list has no such ceiling, and inheriting that
-   number put the mapping list 1.05px off the sensors list beside it — two lists
-   of the same element, on adjacent pages, at different heights. */
+   number put a device list 1.05px off the sensors list — two lists of the same
+   element at different heights. */
 .settings-host .in-settings .set-device .set-table-sub { line-height: normal; }
-/* The selected mapping's heading carries its live pair as a badge, and Delete
-   is pushed to the right edge the rows below it end on. */
-.settings-host .in-settings .map-detail-head { margin-bottom: 10px; }
-.settings-host .in-settings .map-detail-head > .set-btn { margin-left: auto; }
-
-/* The range bar, rebuilt as the meter element (SETTINGS-GUI § 3). The track is
-   the axis's own reachable travel — which FOLDS with |x|, so a 0…180 selection
-   on a folded axis fills the bar rather than sitting in its right-hand half —
-   the lit band is the selected span, and the peak tick is the live reading. */
-/* The class is reused deliberately (the spec: "that is .mapping-range-bar,
-   rebuilt as the meter element"). Its old 48×6-strip rule in style.css used to
-   fight this one — the block reported 6px tall while its ruler, track and note
-   painted 87px down over the Curve row — and was deleted with the rest of the
-   old row's CSS in round seven, so only the spacing is stated here now. */
-.settings-host .in-settings .mapping-range-bar { margin: 10px 0 0; }
-.settings-host .in-settings .mapping-range-bar .set-meter-band {
-  background: color-mix(in srgb, var(--accent-action) 30%, transparent);
-}
-.settings-host .in-settings .mapping-range-bar .set-meter-peak { opacity: 1; }
-.settings-host .in-settings .mapping-range-note {
-  margin: 6px 0 0 68px; font-size: var(--fs-set-sub); color: var(--text-dim);
-  max-width: 66ch;
-}
-/* The range bar is a second LINE of the input-range row, not a row of its own:
-   one border pair, and the bar runs the full content width under both the
-   label and the fields. */
-.settings-host .in-settings .set-row.map-row--range { flex-wrap: wrap; }
-.settings-host .in-settings .mapping-range-bar { flex: 0 0 100%; }
-/* A third dropdown width. The kit closes at 190 / 260 because those are the two
-   COLUMNS pages are built on; 120 is not a column, it is the output kind — one
-   word, and putting it at 190 makes the destination beside it look like the
-   subordinate control. Noted in SETTINGS-GUI § 3. */
+/* A third dropdown width, the paired prefix (SETTINGS-GUI § 3): a one-word
+   selector governing the control to its right. Kept as a kit role; its only
+   user, the mapping page's output kind, went 2026-09-25. */
 .settings-host .in-settings .set-select--narrow { width: 120px; }
 /* An IP address is not a number and does not fit the 96 box. */
 .settings-host .in-settings .set-field--host { width: 140px; }
 .settings-host .in-settings .set-field--host > input { text-align: left; }
-/* Transport status: a 6px pip beside that mapping's live readout, latched the
-   way the clip pip is — a send that failed once is a fact about the row, and a
-   dot that has already gone back to grey by the time you look up is not a
-   diagnostic. Clears on the next successful send. */
-.settings-host .in-settings .map-tx {
-  flex: 0 0 6px; width: 6px; height: 6px; margin-left: 10px;
-  border-radius: 50%; background: var(--surface-4);
-}
-.settings-host .in-settings .map-tx--ok   { background: var(--status-ok); }
-.settings-host .in-settings .map-tx--warn { background: var(--status-warn); }
-.settings-host .in-settings .map-tx--err  { background: var(--status-error); }
-/* In the list the live pair takes the auto margin, so the pip rides beside it
-   rather than pushing it off the right edge. */
-.settings-host .in-settings .set-device .map-tx { margin-left: 8px; }
-
 /* ══════════════════════════════════════════════════════════════════════════
    THE KEYS + MIDI PAGE (2026-08-30, round eight)
    Ten columns became four. The cut IS the design: `osc` and `data` describe the
@@ -1360,7 +1294,12 @@ html body .settings-host .in-settings .set-count {
    three (2026-09-09), the same cell as Key at the same width. 84px held a key
    name; a key WITH its gesture (2026-09-11) is `spacebar extra long`, and at
    84 the cell cut it after the first word (Ek, 2026-09-12); at 132 it still lost
-   the last letters — measured 141px of text in a 130px box. 150 clears it. */
+   the last letters — measured 141px of text in a 130px box. 150 clears it.
+   SENSOR HAS NO COLUMN (2026-09-25, Ek). A sixth one took Action from 256px to
+   94 at the page's 928 cap and put 109 of 112 rows past 60px. Key and Button
+   are impossible on a cc row and Sensor is impossible on any other, so on a cc
+   row the sensor cell spans those two (`bind-cell--span`), and the head reads
+   `Keyboard · Sensor`. */
 .settings-host .in-settings .set-table--keys { --set-cols: 1fr 150px 150px 128px 128px; }
 .settings-host .in-settings .set-table--keys .set-table-row { padding: 7px 0; }
 /* A group heading spans the grid rather than sitting in the first column. */
@@ -1400,6 +1339,7 @@ html body .settings-host .in-settings .set-count {
    cases in ACTIONS, and a state the table cannot produce is invented. */
 .settings-host .in-settings .bind-blank { display: block; }
 .settings-host .in-settings .bind-cell { position: relative; }
+.settings-host .in-settings .bind-cell--span { grid-column: span 2; }
 
 /* The scale menu: the kit's menu carrying three fields instead of items. */
 .settings-host .in-settings .scale-menu { padding: 10px; min-width: 210px; left: auto; right: 0; }
@@ -1414,6 +1354,15 @@ html body .settings-host .in-settings .set-count {
   flex: 1 1 auto; font-size: var(--fs-set-hint); color: var(--text-muted);
 }
 .settings-host .in-settings .scale-menu-row > .set-field { flex: 0 0 96px; width: 96px; }
+/* The sensor menu is the scale menu with a sensor and an axis above it: two
+   standard dropdowns, so it is as wide as they are, and it is never scrolled —
+   the kit menu's 280px cap would hide the γ row under the fold. */
+.settings-host .in-settings .sensor-menu { min-width: 300px; max-height: none; }
+.settings-host .in-settings .sensor-menu-select { flex: 0 0 190px; width: 190px; }
+.settings-host .in-settings .sensor-menu-reading {
+  font-size: var(--fs-set-hint); color: var(--text-dim); font-variant-numeric: tabular-nums;
+}
+.settings-host .in-settings .sensor-menu-acts { justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 /* Two device lists, side by side. */
 .settings-host .in-settings .mon-cols {

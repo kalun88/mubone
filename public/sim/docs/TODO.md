@@ -8,6 +8,38 @@
 
 ## Open — by date found
 
+### Sep 25
+
+- [ ] **pins-audit Z2's first layer lands off the loop's top under a loaded run** (found at the 5.10 release). In a
+  fresh instance Z2 passes whole (phase 0, join error 0.0002 samples); after the rest of the pins suite the first
+  layer's phase0 reads 0.25–0.94 s, a different value each run. The master's `_startedAt` is the time its source
+  STARTED, which a busy main thread delays past the pin, while the layer is phased from the pin — so the layer
+  sits late by the start delay. Also true at 5.9 (the suite then failed earlier, on a take left running — fixed in
+  5.10). The fix is anchoring the seeded master's clock at the pin (start it with the offset it has missed).
+- [ ] **Sweeping a grain param while painting gives almost every mark its own voicing** (found 2026-09-25 in
+  the mapping review). `paint-ticker.js` `_refreshVoicing` re-interns before every deposit, and a continuous
+  source (a MIDI pot, now a sensor binding) changes the block every tick, so one stroke interns a voicing per
+  mark. `S.voicings` grows without bound and is persisted; the cursor plays at most 16 voicings
+  (`MAX_CURSOR_VOICES`) and within one stroke the survivors are arbitrary, so the rest go silent and the kept
+  ones each run their own clock (density ×N). Wants a step or a rate limit on re-interning, in brush-voicing.js.
+- [ ] **A new hands-free — PAUSED, research only** (Ek, 2026-09-25: "not convinced about all this"). The old gate
+  is removed (`24758c0`). Ek's constraints: sensors can be worn anywhere, there are several, foot pedals exist, keep
+  it simple, **no sound as input**, and only the MOST CERTAIN signals; heading drifts, elevation does not.
+  Notes from the discussion, none agreed:
+  - **Pedals are the certain one** and already work: `hand_press` / `hand_long` are learnable rows (midi.js).
+  - **A learned pose** as a button: the gravity direction in the sensor's own frame, taught by holding the pose.
+    Heading-free (no drift), mount-free, any sensor, covers roll and "look down" without Euler angles (roll is
+    undefined near vertical and depends on the mount). Blind to turns about vertical, by construction. Certainty
+    from hysteresis (enter ~20°, leave ~35°) and a ~150 ms dwell; best on a sensor not steering the cursor.
+  - **An always-on input ring** (+ cursor-path history; 60 s mono ≈ 11.5 MB): pre-roll so a take starts where its
+    trigger BEGAN (pays back dwell and pedal latency), and a "keep what I just played" action.
+  - Considered and set aside: onset/silence gates, timbre commands, azimuth zones (drift), nod/shake, repetition-
+    detected loops. Open: how the pedals connect (MIDI, accessory, sensor button).
+- [ ] **A pinned zone as an action trigger** (Ek, 2026-09-25: "using pinned zones as action triggers — like this
+  pinned area will automatically turn all painting off"). A cloud is a frozen cursor (RULINGS); the next step is
+  a zone that fires an ACTION from the one table when the cursor, or paint, enters it. Handsfree playing. Also
+  open: whether a zone should LOOK like just its radius (Ek raised it; left for after the behaviour).
+
 ### Sep 24
 
 ### Sep 23
@@ -31,9 +63,6 @@
   references), so an erased take costs its full float32 until a sweep. The worklet drops its reference on erase,
   so the main thread is free to compress and drop the SAB, re-inflating into a new one on undo. The cheaper
   first move may be a bound on how much erased audio undo keeps.
-- [ ] **`sensor-mapping.js` stores a row's param twice** (`targetParam` and `output.param`, with sync code in
-  add / update and a load-time "legacy row" migration) — the one small redundancy of the 2026-09-16 pass not
-  taken, because the rows are persisted (`mubone_sensorMappings`) and want a one-shot migration of their own.
 - [ ] **PARAM_DEFS keys and cabinet ids still say `seed*` / `seq*`** (`param-registry.js` `key:` strings,
   `seedAttackSlider`, `seedLoopModeSeg`, `commitOverflowSeg`'s siblings) — the S fields and the persisted
   seed-settings keys were renamed 2026-09-16; these are the identifiers the engine page and `engine-audit`'s

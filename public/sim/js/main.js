@@ -35,7 +35,6 @@ import { initSourceTiles } from './ui-source.js';   // the source tiles (#247)
 import { initSettings, openSettings } from './ui-settings.js';   // the one settings door (#255)
 import { initTileLayout } from './tile-layout.js';
 import { initExportImport } from './ui-export.js';
-import { initMappingUI } from './ui-sensor-mapping.js';
 import { initIMUSetupUI } from './ui-imu-setup.js';
 import { initSygaldryUI } from './ui-sygaldry.js';
 import { initDiagnostics } from './ui-diagnostics.js';
@@ -199,20 +198,21 @@ function init() {
     const _isElectron = !!window.electronBridge?.isElectron;
     const el = document.getElementById('oscPortDisplay');
     if (el) el.textContent = _isElectron ? `udp ${_oscPort ?? 7500}` : 'ws 8080';
-    // Fill the Max setup help text: literal port in the [udpsend] example…
+    // Fill the OSC Input row's port (it named Max's [udpsend] until 2026-09-25;
+    // any sender will do, so it names none)…
     for (const s of document.querySelectorAll('.js-osc-port')) {
       s.textContent = String(_oscPort ?? 7500);
     }
     // …and which station this window is.
     // Browser mode has no UDP listener at all — OSC arrives over the WebSocket
-    // bridge (Max's bridge.js or proxy.js) on 8080, so quoting a UDP port here
-    // sends people to configure a [udpsend] that nothing is listening on.
+    // bridge (proxy.js) on 8080, so quoting a UDP port here would send people
+    // to a socket nothing is listening on.
     const st = document.getElementById('oscStationInline');
     if (st) {
       // Reworded 2026-09-14 when this moved out of the description and into the
       // row's status line: it used to complete "This station is …", so alone it
       // read as a fragment. The other two values already stood on their own.
-      // It still has to OUTRANK the description's [udpsend] line, which is the
+      // It still has to OUTRANK the description's UDP line, which is the
       // Electron path — prose is the general case, the live value is this build.
       st.textContent = !_isElectron
         ? 'browser — OSC arrives on ws://localhost:8080, not UDP'
@@ -316,7 +316,6 @@ function init() {
     slider.dispatchEvent(new Event('change', { bubbles: true }));
   });
 
-  initMappingUI();
   initIMUSetupUI();
   initSygaldryUI();
   initDiagnostics();
@@ -1024,8 +1023,7 @@ function init() {
     elSource: { segId: 'elSourceSeg', frozen: ['_axisLockFrozenNy', '_axisLockFrozenPitch'] },
     // (rollSource left this table 2026-09-01 with the RO button and _gateRoll:
     // the camera takes no roll, so the only reader was the mapping-input gate,
-    // and Ek retired that too — mapping rows read roll live and are toggled
-    // per-row in Settings → Mapping.)
+    // and Ek retired that too — a sensor binding reads roll live.)
   };
 
   function syncAxisSourceUI(stateKey) {
@@ -1053,7 +1051,7 @@ function init() {
     // than set anywhere — see cursorLocked() below. Every route that changes an
     // axis already comes through this function (footer, cabinet segments, the
     // patch table's PARAM_REGISTRY setter and therefore preset load, MIDI, OSC,
-    // and the mapping page's auto-arm), which is what makes one line enough.
+    // and a binding landing on a cursor-axis row), which is what makes one line enough.
     S._applyCursorLockPointer?.(cursorLocked());
   }
 
@@ -1071,10 +1069,9 @@ function init() {
   function cursorLocked() { return axisHeld(S.azSource) && axisHeld(S.elSource); }
 
   // What ⌥ put down, ⌥ picks back up. Releasing to 'sensor' unconditionally
-  // would silently disarm a row the mapping page armed — a dropdown must not
-  // put the cursor back under sensor control mid-performance, the same rule
-  // _armCursorAxis states in ui-sensor-mapping.js — so the previous value is
-  // stashed and handed back.
+  // would silently disarm a 'mapped' axis — nothing may put the cursor back
+  // under sensor control mid-performance — so the previous value is stashed
+  // and handed back.
   function setCursorLock(on) {
     if (on) {
       if (!cursorLocked()) S._cursorLockPrev = { azSource: S.azSource, elSource: S.elSource };

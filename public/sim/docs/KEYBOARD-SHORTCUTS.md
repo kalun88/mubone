@@ -116,8 +116,8 @@ gesture, no group to aim: a bang pins where you stand, a momentary or toggle pin
 | **Q W E · ⇧Q W E** | **free.** They addressed the named pin groups, which no longer exist |
 
 **The pin buttons.** **pin** and **unpin** are palette tiles (positions 3 and 4, `↓` / `↑` by
-factory) and nowhere else since 2026-09-22 night; **unpin all** is a row at the pinned rail's foot,
-with the mix pair. They are not tools:
+factory) and nowhere else since 2026-09-22 night; **unpin all** is a button row in the pinned
+rail's top block, under *when full* (2026-09-25). They are not tools:
 they cannot be in hand and `Tab` never lands on them; they act on what already exists. They carry no state: there is one pin gesture and
 nothing to aim it at, so the label is the verb.
 
@@ -230,7 +230,8 @@ keys until 2026-09-11; with nothing armed there was no tool for them to name, so
 2026-09-12: pinning is two TILES on the palette and the keys those tiles hold, factory
 `↓` pin and `↑` unpin (§ the palette, above). What a pin IS is decided by the cursor, not
 by a mode — `pinDown` / `pinUp` in `js/tiles.js` — so there is nothing for a kind key to
-cycle: a tape stroke being painted grows the loop to the release, a stroke in reach becomes
+cycle: a pin during a tape take cuts it — the part before is the main loop, the rest an
+overdub on it, each further pin a new layer (`pinSplitTake`, `js/events.js`) — a stroke in reach becomes
 a loop, and nothing in reach pins a ghost cloud at the cursor. Unpin takes the pin
 **Settings → Pins** names (nearest by default), never a nearest-only search of its own.
 
@@ -326,7 +327,6 @@ recording; the recording only supplies the material and where it sits.
 | **S** | The cap — the lens's mute, on or off |
 | **M** | System mute (latching) |
 | **N** | The installed lens's mode: nearest / area |
-| **H** | Arm / disarm handsfree recording *(the pill is Settings → audio → handsfree gate)* |
 | **[ / ]** | Decrease / increase search radius |
 | **⌥ Option** | Cursor lock — hold azimuth + elevation (in steer/surface, also releases the pointer) |
 

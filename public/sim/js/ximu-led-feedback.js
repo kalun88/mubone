@@ -14,8 +14,8 @@
 // Two row kinds:
 //
 //   STATES  — held baselines. Exactly one is active at a time on the cursor
-//             device, resolved by _currentStateId() from trace / hands-free /
-//             gate flags. Non-cursor x-IMU3s always sit at solid idle.
+//             device, resolved by _currentStateId() from the trace / erase /
+//             mute / scan flags. Non-cursor x-IMU3s always sit at solid idle.
 //
 //   EVENTS  — transient sequences fired by a `mubone-led` CustomEvent, then
 //             the baseline resumes. An event interrupts a running baseline
@@ -234,16 +234,16 @@ export const LED_STATES = [
   { id: 'mute',         label: 'system muted',
     tip: 'master output muted. Beats scan (it explains the silence) but loses to recording and erasing — you already know you muted it, whereas the take is the thing you need confirmed.' },
   { id: 'erase',        label: 'erasing',              tip: 'erase brush is down (held or latched). Destructive, so it outranks mute.' },
-  { id: 'trace',        label: 'trace armed',          tip: 'manual trace — every moment is recording. Outranks mute so tracking into a muted rig still shows the take is running.' },
-  { id: 'trace_hf',     label: 'hands-free armed',     tip: 'hands-free trace armed, segmentation gate still closed' },
-  { id: 'trace_hf_rec', label: 'hands-free recording', tip: 'hands-free trace, gate open — capturing audio right now' },
+  { id: 'trace',        label: 'recording',            tip: 'a take is running — tape, grain, an overdub or a sampler capture. Outranks mute so tracking into a muted rig still shows the take is running.' },
 ];
 
 export const LED_EVENTS = [
-  { id: 'commit',    label: 'commit / plant seed' },
-  { id: 'release',   label: 'release / pick up'   },
-  { id: 'undo',      label: 'undo'                },
-  { id: 'full',      label: 'slots full (rejected)', tip: 'commit refused because every slot is taken and overflow is off' },
+  // The ids are the saved map's keys, so they keep their old words; the
+  // labels say what happens today (2026-09-25).
+  { id: 'commit',    label: 'pin',                  tip: 'a pin is made — a loop, a cloud or a playhead. One press that pins several things flashes once' },
+  { id: 'release',   label: 'unpin'               },
+  { id: 'undo',      label: 'undo / redo'         },
+  { id: 'full',      label: 'pins full (refused)',  tip: 'a pin refused because every slot is taken and when full is off' },
   { id: 'identify',  label: 'identify / connect',    tip: 'the blink on connect and on cursor role-switch — this one fires on the named device, not necessarily the cursor' },
   // Not `mute` — that's the state row for *being* muted. This is the toggle.
   { id: 'mute_toggle', label: 'mute toggled on/off' },
@@ -256,8 +256,8 @@ export const LED_EVENTS = [
   // Priority: a trigger launching is the performer's primary action feedback,
   // so it cancels an in-flight sequence rather than being dropped as busy. A
   // turntable sweeping past three triggers would otherwise show only the first.
-  { id: 'trigger',   label: 'trigger fired', priority: true,
-    tip: 'a trigger buffer launched. Interrupts any other event sequence — with several triggers on the sphere this fires far more often than a commit, and it is the one you most need to see.' },
+  { id: 'trigger',   label: 'tape line plays', priority: true,
+    tip: 'the cursor fired a tape line. Interrupts any other event sequence — with several lines on the sphere this fires far more often than a pin, and it is the one you most need to see.' },
 ];
 
 export const LED_ROW_KIND = new Map([
@@ -281,8 +281,6 @@ const DEFAULTS = {
   // fast — they share a colour, so tempo is what separates them.
   mute:         { colour: '#FFFFFF', pattern: 'slow_timbre', count: 1, enabled: true },
   trace:        { colour: '#CC1A1A', pattern: 'pulse', count: 1, enabled: true },
-  trace_hf:     { colour: '#A04000', pattern: 'solid', count: 1, enabled: true },
-  trace_hf_rec: { colour: '#CC1A1A', pattern: 'solid', count: 1, enabled: true },
 
   commit:    { colour: '#9DE38B', pattern: 'flash', count: 1, enabled: true },
   release:   { colour: '#9DE38B', pattern: 'flash', count: 2, enabled: true },
@@ -310,8 +308,6 @@ let _enabled     = false;
 let _map         = {};
 let _cursorSn    = null;
 let _traceArmed  = false;
-let _traceHf     = false;
-let _hfRecording = false;
 let _eraseHeld   = false;
 let _muted       = false;
 let _pollTimer   = null;
@@ -583,7 +579,7 @@ function _clearColour(dev) {
 // Precedence, highest first. The rule: what you are *doing* outranks the
 // conditions you are doing it under.
 //
-//   actions      trace / hands-free / erase   — you are mid-gesture
+//   actions      trace / erase                — you are mid-gesture
 //   conditions   mute                         — the rig is in a mode
 //   readouts     scan                         — what happens to be under you
 //
@@ -596,8 +592,6 @@ function _clearColour(dev) {
 // letting it mask "the output is dead" would hide the thing that explains the
 // silence. Add new action states above `mute`, new conditions below it.
 function _currentStateId() {
-  if (_traceArmed && _traceHf && _hfRecording) return 'trace_hf_rec';
-  if (_traceArmed && _traceHf)                 return 'trace_hf';
   if (_traceArmed)                             return 'trace';
   if (_eraseHeld)                              return 'erase';
   if (_muted)                                  return 'mute';
@@ -775,11 +769,29 @@ function _onLedEvent(e) {
 }
 
 // ── Cursor tracking ────────────────────────────────────────────────────────
+// A mubone instrument's `identify` (2026-09-25). An x-IMU3 fires its blink
+// from imu-setup.js's connect paths; the instrument connects through
+// sygaldry.js, which never did, so the row said "on connect" and the primary
+// sensor never blinked. Fired the first time an instrument with an LED is
+// seen feeding, and again after it has been gone.
+const _sygSeen = new Set();
+function _identifyNewInstruments(devices) {
+  const feeding = new Set(devices.filter(d => d.feeding).map(d => d.sn));
+  for (const sn of [..._sygSeen]) if (!feeding.has(sn)) _sygSeen.delete(sn);
+  for (const dev of _allLedDevices()) {
+    if (!_isSygaldryDev(dev) || !feeding.has(dev.sn) || _sygSeen.has(dev.sn)) continue;
+    _sygSeen.add(dev.sn);
+    _runEvent('identify', dev.sn, null);
+  }
+}
+
 function _onSensorStatus(detail) {
   const devices = detail?.devices || [];
   const cursor  = devices.find(d => d.role === 'cursor' && d.feeding);
   const prevSn  = _cursorSn;
   _cursorSn = cursor?.sn || null;
+  // After the arm below, so a first connect both arms feedback and blinks.
+  queueMicrotask(() => _identifyNewInstruments(devices));
 
   // A cursor sensor just arrived (including at boot, where the restored
   // registry fires this once) — arm feedback. A sensor with a dark LED reads
@@ -804,9 +816,11 @@ function _onSensorStatus(detail) {
 // but scan-vs-idle now *depends* on the grain count, so it has to be sampled
 // every tick regardless of which row is active. One timer, one source of truth.
 function _pollTraceState() {
-  const armed     = !!(S.paintLatched || S.isPainting);
-  const hf        = armed && !!S.hfArmed;
-  const recording = hf && !!S.hfRecording;
+  // isPainting, not paintLatched: the latch is set for EVERY toggle-started
+  // gesture, the eraser's too, so a toggled erase read as a take and lit
+  // `trace` over `erase` (2026-09-25). Every take — grain, tape, overdub,
+  // sampler — sets isPainting.
+  const armed     = !!S.isPainting;
   // Covers both the held brush and the latching toggle — erase.js sets
   // S.eraseHeld for both, and clears it if the input drops mid-hold.
   const erasing   = !!S.eraseHeld;
@@ -834,8 +848,7 @@ function _pollTraceState() {
   }
 
   const scan    = _scanActive;
-  const changed = armed    !== _traceArmed || hf    !== _traceHf
-               || recording!== _hfRecording || scan !== _lastScan
+  const changed = armed    !== _traceArmed || scan  !== _lastScan
                || erasing  !== _eraseHeld   || muted!== _muted;
 
   // Commit the flags before resolving, so _currentStateId() and _applyBaseline()
@@ -843,8 +856,6 @@ function _pollTraceState() {
   // reading a raw flag instead of the resolved state is what let the timbre
   // repaint paint over the trace colour.
   _traceArmed  = armed;
-  _traceHf     = hf;
-  _hfRecording = recording;
   _eraseHeld   = erasing;
   _muted       = muted;
   _lastScan    = scan;
@@ -949,6 +960,13 @@ async function _previewState(cfg) {
 // Is there a cursor device with an LED to talk to? The modal greys out its test
 // buttons when there isn't, rather than silently doing nothing.
 export function hasCursorDevice() { return !!_findCursorDev(); }
+/** What the page's status line names: the device it is driving, and which
+ *  kind — the page drives the mubone instrument as well as an x-imu3. */
+export function cursorDeviceLabel() {
+  const d = _findCursorDev();
+  if (!d) return null;
+  return _isSygaldryDev(d) ? `${d.sn.slice(4)} (mubone instrument)` : `${d.name || d.sn} (x-imu3)`;
+}
 
 // ── Live introspection (the modal's activity readout) ──────────────────────
 // The defaults deliberately reproduce the pre-1.11 hardcoded palette, which

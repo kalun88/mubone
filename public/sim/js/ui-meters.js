@@ -9,7 +9,6 @@ import {
   GATE_METER_PEAK_HOLD_MS, GATE_METER_PEAK_FALL_MS
 } from './state.js';
 import { dropSeqFromCursor, releaseCommit, updateCommitBanksUI } from './ui-presets.js';
-import { tickHandsfree } from './handsfree.js';
 import { readGateLoudness } from './audio-features.js';
 import { updateDryMonitorPanning, setDryMonitorGain, setDryMonitorMode, isDryMonitorDucked } from './audio.js';
 
@@ -766,7 +765,7 @@ const _gateMeters = [];
 // Position along the meter (0–1) ⇄ RMS.  The axis is a power curve, not linear:
 // see GATE_METER_GAMMA in state.js for why.  Every consumer of a meter position
 // goes through this pair — bar, peak tick, threshold marker, mouse drag, and
-// the noise_gate cc action, which imports gateFracToRms from here.  If the cc
+// the paint_gate cc action, which imports gateFracToRms from here.  If the cc
 // and the draw ever stop sharing it, the pot stops agreeing with the picture.
 
 export function gateFracToRms(frac) {
@@ -1132,7 +1131,6 @@ export function tickMainMeters() {
   if (S.dryAnalyser) tickMeters([S.dryAnalyser], 'mainDryMeters');
   updateDryMonitorPanning();
   updateGateLight();
-  tickHandsfree();
 }
 
 // ════════════════════════════════════════════════════════════════════════════

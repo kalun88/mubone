@@ -45,7 +45,6 @@ Feature-by-feature, the 1.10/1.11 work is browser-capable:
 | Sensor over WiFi | works **locally** via `node proxy.js` (ws 8081 control + ws 8080 data) |
 | MIDI | works — Web MIDI, secure context |
 | Multichannel / VBAP >2ch | Electron only — browser is stereo, by design |
-| External OSC out (`osc-out.js`) | Electron only — already reports `unavailable` to the UI |
 | Native fullscreen | browser uses the Fullscreen API instead — fine |
 
 ---

@@ -16,7 +16,7 @@ import {
   LED_STATES, LED_EVENTS, LED_PATTERNS, LED_PALETTE,
   getLedMap, setLedEntry, resetLedMap, patternRate, patternsFor,
   isXimuLedEnabled, setXimuLedEnabled, onLedEnabledChange,
-  hasCursorDevice, testLedEntry,
+  hasCursorDevice, cursorDeviceLabel, testLedEntry,
   getActiveStateId, getLastEvent, currentTimbreColour, timbreStatus,
 } from './ximu-led-feedback.js';
 
@@ -42,20 +42,18 @@ const WHEN = {
   scan:         'The cursor is granulating.',
   mute:         'The master output is muted.',
   erase:        'The erase brush is down.',
-  trace:        'Manual trace is armed.',
-  trace_hf:     'Armed, with the gate still closed.',
-  trace_hf_rec: 'The gate is open — capturing now.',
-  commit:       'A seed is planted.',
-  release:      'A hold is picked up.',
-  undo:         'An undo lands.',
-  full:         'A commit is refused — slots full.',
+  trace:        'A take is recording.',
+  commit:       'A pin is made.',
+  release:      'A pin is let go.',
+  undo:         'An undo or a redo lands.',
+  full:         'A pin is refused — slots full.',
   identify:     'On connect, and on a role switch.',
   mute_toggle:  'Mute is switched on or off.',
   tare:         'The cursor is tared.',
   sweep:        'A sweep runs.',
   erase_all:    'Everything is erased.',
   scan_toggle:  'Scan is switched on or off.',
-  trigger:      'A trigger buffer launches.',
+  trigger:      'The cursor fires a tape line.',
 };
 
 // Is this page on screen? It has two hosts and only one of them is the modal:
@@ -316,7 +314,7 @@ function _syncAll() {
   const status = document.getElementById('ledStatusMeta');
   if (status) {
     status.textContent = !on ? 'Enable to take over the LED.'
-      : hasCursorDevice() ? 'Driving the cursor device.'
+      : hasCursorDevice() ? `Driving ${cursorDeviceLabel()}, the cursor sensor.`
       : 'No cursor device with an LED — nothing to drive.';
   }
 }
@@ -395,8 +393,8 @@ function _refreshBtnUI() {
   btn.classList.toggle('active', on);
   btn.textContent = on ? '● feedback' : '○ feedback';
   btn.title = on
-    ? 'x-IMU3 LED feedback — on. click to open the mapping table.'
-    : 'x-IMU3 LED feedback — off. click to open the mapping table.';
+    ? 'LED feedback — on. click to open it.'
+    : 'LED feedback — off. click to open it.';
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────

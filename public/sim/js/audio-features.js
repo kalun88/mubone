@@ -21,7 +21,7 @@ const _freqBuf = new Uint8Array(128);
 // This node exists purely so the window is longer than the sampling interval:
 // 2048 samples = 42.7ms > 33.3ms, so consecutive reads overlap and no audio
 // goes unwatched.  It is deliberately NOT a change to S.inputAnalyser, which is
-// shared — handsfree.js sizes its buffer to 256 to match it, and a short array
+// shared — its readers size their buffers to 256 to match it, and a short array
 // read against a large fftSize does not return the window you would expect.
 //
 // Spectral centroid and ZCR stay on the shared 256 analyser: they only feed
@@ -183,8 +183,11 @@ const _WIN_SUB = 1536;   // ~32 ms at 48 kHz — the frame the fold read in
 export function recordedWindowLoudness(fromS, toS, force = false) {
   const raw = S.recordingRaw, sr = S.recordingSampleRate;
   if (!raw || !(sr > 0)) return null;
-  const a = Math.max(0, Math.floor(fromS * sr));
-  let b = Math.floor(toS * sr);
+  // Mid-split the pool still holds the part before the pin ahead of this
+  // take (audio.js splitLiveRecording) — its moments start that far in.
+  const off = S.recordingRawOffset | 0;
+  const a = off + Math.max(0, Math.floor(fromS * sr));
+  let b = off + Math.floor(toS * sr);
   if (b > S.recordingWritePos) { if (!force) return null; b = S.recordingWritePos; }
   if (b <= a) return null;
   let peak = 0, maxRms = 0;

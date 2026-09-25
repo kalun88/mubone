@@ -39,9 +39,10 @@ mubone is a browser-based spatial granular synthesizer. You play into a mic, you
 Pinning is how you build layers: a pin keeps playing on its own while you paint the next thing.
 
 **↓ pins and ↑ unpins** — the last two tiles on the palette, and the two keys next to them.
-What a pin IS follows the cursor, not a mode: painting a tape stroke grows the loop until you
-let go, a stroke already in reach becomes a loop, and nothing in reach pins a cloud where the
-cursor is. Unpin takes whichever pin the **Settings → Pins** rule names — nearest by default.
+What a pin IS follows the cursor, not a mode: a pin while you record a tape take closes the
+phrase so far into a loop and keeps recording as an overdub on it (each further pin starts the
+next layer), a stroke already in reach becomes a loop, and nothing in reach pins a cloud where
+the cursor is. Unpin takes whichever pin the **Settings → Pins** rule names — nearest by default.
 
 The pinned rail on the right (**⇧Tab**) is a mixer: one track per pin, the bar its fader (drag
 it), what you drew laid flat inside it, M and S at the right, and its own in / out under its
@@ -87,27 +88,14 @@ Append these to the URL as query params:
 
 Checked once at startup. Example: `mubone.org/sim?debug`. The legacy `?exp` flag was removed — what it gated either always loads now or is reachable from the DevTools console via `await import('./js/<module>.js')`. The gesture, snapshot and staging modules it also gated were sunset in August 2026 and are git history.
 
-## Sensor Mapping Module
+## Driving a param with a sensor
 
-The mapping module lets you wire IMU orientation axes directly to grain parameters for real-time gestural control.
-
-**Open it** via the **⇆ mapping** button in the top bar. A modal shows all active mappings as rows.
-
-**Each mapping row** contains: an enable/disable toggle, an axis selector (Roll / Elevation / Azimuth), input range in degrees, a live raw readout, a target parameter selector, output range, curve type (linear / log / exp), curve exponent, a mini curve preview, and a live output readout.
-
-**Mappable parameters**: filter cutoff, resonance (one filter per grain since 2026-09-23), filter jitter, volume, duration, duration jitter, period, pitch shift, pitch jitter, pan spread, and fade ratio.
-
-**Input axes**: Roll (±90°), Elevation (±90°), Azimuth (±180°) — read from the IMU with the "cursor" role.
-
-**Adding a mapping**: click "+ add mapping" at the bottom. The module auto-picks the next unmapped parameter. Set your input range (the active window of sensor motion), output range (the parameter value extremes), and curve shape. The live readouts update at ~30fps so you can tune while moving.
-
-**One mapping per parameter** — only one axis can drive a given parameter at a time.
-
-**Curves**: linear is 1:1, log rises fast then flattens, exp starts slow then rises fast. The exponent numbox fine-tunes the shape (0.1–10).
-
-**Persistence**: mappings save to localStorage globally (not per-preset). They survive reloads.
-
-**Remote toggle**: none — the `mapping_toggle_1`–`4` actions and `/mapping/toggle/N` addresses were deleted 2026-09-05, never having been bound; a mapping is switched on its row.
+Settings → **Keys + MIDI**. Every continuous row (cutoff, tape speed, radius, volumes…) has a cell under
+**Keyboard · Sensor**: click it and pick the sensor, the axis (elevation, roll, azimuth — azimuth drifts with
+the magnetometer off), the input range in degrees, and optionally the output window and γ. **Learn** takes
+whichever axis you move most, with the range you swept. Right-click the cell to clear it. **EL · position**
+and **AZ · position** drive the cursor itself — binding one sets that axis to map; the footer's EL / AZ
+button frees it.
 
 ## Keyboard Shortcut Cheatsheet
 
@@ -135,7 +123,6 @@ The mapping module lets you wire IMU orientation axes directly to grain paramete
 | **S** | Toggle scan (cursor → house bus) |
 | **M** | System mute |
 | **N** | The installed lens's mode: nearest / area (the third, `stroke`, is set on the lens sheet) |
-| **H** | Toggle handsfree recording |
 | **[ / ]** | Decrease / increase search radius |
 | **Alt** | Lock sphere position (freeze camera, release pointer) |
 

@@ -8,10 +8,9 @@ import {
   DEBUG, AXIS_SOURCES, axisHeld,
   GATE_METER_MAX, GATE_METER_GAMMA, LEVEL_FADER_GAMMA
 } from './state.js';
-import { TAPE_STEPS, PITCH_MAX_CENTS } from './tape-pitch.js';
+import { TAPE_STEPS, PITCH_MAX_CENTS, quantPitch, quantSpeed } from './tape-pitch.js';
 import { GROUPS, togglePinMute, togglePinSolo, setPinMuted, setPinSolo, setGroupMuted, setGroupSolo, applyMix } from './pins.js';
 import { resolveGrainParams } from './brush-voicing.js';
-import { toggleHandsfree } from './handsfree.js';
 import { undoLastStroke, redoLastStroke } from './ui-samples.js';
 import {
   toggleNearestMode, clearAllCommits,
@@ -26,6 +25,11 @@ import {
   fmtRange, scaleControl, clampGamma, toNorm, fromNorm, clampReal, fmtNumber,
   rangeMin, rangeMax, baseGamma
 } from './scale.js';
+import {
+  SENSOR_AXES, getSensorBinding, setSensorBinding, clearSensorBinding, clearAllSensorBindings,
+  armCursorAxisFor, sensorNames, cursorSensorName, readSensorAxis, inputFraction,
+  startSensorLearn, stopSensorLearn, sensorLearnResult,
+} from './sensor-bindings.js';
 
 // Each action definition: { id, label, key, osc, type, ccFn?, range? }
 // id: null entries are section headers (group: 'label')
@@ -39,7 +43,7 @@ import {
 //
 // range: { min, max, unit?, int?, curve?, maxFn? } — the real-unit span the
 // ccFn covers across MIDI 0–127, and the curve it already applies internally.
-// Consumed by the accessory table so a pot's limits can be set in cents and Hz
+// Consumed by the scale menus (a MIDI or sensor binding) so a pot's limits can be set in cents and Hz
 // rather than percentages.  See scale.js for the full contract.
 const ACTIONS = [
 
@@ -68,10 +72,20 @@ const ACTIONS = [
   // anything else — but they are ordinary ACTIONS, read by the ordinary
   // recogniser, so the press fires on the DOWN with no latency and a long that
   // follows aborts what the press started (`_abortPress`) before firing.
-  { id: 'hand_press',      label: 'hand: press',     key: '␣', osc: '/hand/press', fmt: 'bang',   type: 'trigger',
-    tip: 'play the tool on the first hand tile — a press latches it, and the next press lets it go' },
-  { id: 'hand_long',       label: 'hand: long',      key: '␣ long', osc: '/hand/long', fmt: 'int 0|1', type: 'hold',
-    tip: 'play the tool on the second hand tile for as long as you hold. It takes back whatever the press had started' },
+  // A hand side's TYPE follows its verb (2026-09-25), as a palette position's
+  // does: the press side was always `trigger`, so set to momentary it never
+  // got the release that ends a momentary play, and stuck on.
+  // The label names the side's tool, so a button or key table says what it plays.
+  { id: 'hand_press', get label() { const t = S._handToolOf?.('press'); return t ? `hand: press · ${t}` : 'hand: press'; }, key: '␣', osc: '/hand/press',
+    get type() { return S._handVerb?.('press') === 'momentary' ? 'hold' : 'trigger'; },
+    get fmt()  { return this.type === 'hold' ? 'int 0|1' : 'bang'; },
+    get tip()  { return this.type === 'hold'
+      ? 'play the tool on the first hand tile for as long as you hold'
+      : 'play the tool on the first hand tile — a press latches it, and the next press lets it go'; } },
+  { id: 'hand_long', get label() { const t = S._handToolOf?.('long'); return t ? `hand: long · ${t}` : 'hand: long'; }, key: '␣ long', osc: '/hand/long', fmt: 'int 0|1', type: 'hold',
+    get tip()  { return (S._handVerb?.('long') === 'toggle'
+      ? 'play the tool on the second hand tile — a long press latches it, and the next one lets it go'
+      : 'play the tool on the second hand tile for as long as you hold') + '. It takes back whatever the press had started'; } },
   { id: null, group: 'tape' },
   // ── TAPE — the tab as it reads top to bottom: MODE switches, the cursor
   // behaviour rows, the voice presets, then the voice sheet (2026-09-24, Ek:
@@ -101,11 +115,12 @@ const ACTIONS = [
   { id: 'tape_speed',   label: 'speed',                     key: '—', osc: '/tape/speed',    type: 'cc',
     tip: 'varispeed — 0.25× to 4×, the sheet\'s speed row; a sounding loop follows it',
     range: { min: 0.25, max: 4, unit: '×', curve: 'log' },
-    ccFn: v => { S.triggerParams.speed = Math.round(0.25 * Math.pow(16, v / 127) * 100) / 100; S._syncTriggerUI?.(); S._renderRail?.(); } },
+    // Snapped to the tape's `step`, as the rail's dial is (2026-09-25).
+    ccFn: v => { S.triggerParams.speed = quantSpeed(Math.round(0.25 * Math.pow(16, v / 127) * 100) / 100); S._syncTriggerUI?.(); S._renderRail?.(); } },
   { id: 'tape_pitch',   label: 'pitch',                     key: '—', osc: '/tape/pitch',    type: 'cc',
     tip: 'pitch in cents, ±2400 — lands at the next fire (it is baked into the cut)',
     range: { min: -PITCH_MAX_CENTS, max: PITCH_MAX_CENTS, unit: '¢', int: true },
-    ccFn: v => { S.triggerParams.pitch = Math.round((v / 127) * 2 * PITCH_MAX_CENTS - PITCH_MAX_CENTS); S._syncTriggerUI?.(); S._renderRail?.(); } },
+    ccFn: v => { S.triggerParams.pitch = quantPitch(Math.round((v / 127) * 2 * PITCH_MAX_CENTS - PITCH_MAX_CENTS)); S._syncTriggerUI?.(); S._renderRail?.(); } },
   { id: 'tape_step',    label: 'step (cycle)',              key: '—', osc: '/tape/step',     fmt: 'bang=cycle, str=set (free|semi|oct5)', type: 'trigger',
     tip: 'what pitch snaps to — free, semitones, or octaves and fifths. Cycles free → semi → oct5' },
   { id: 'tape_reverse', label: 'reverse (toggle)',          key: '—', osc: '/tape/reverse',  fmt: 'bang=toggle, int 0|1', type: 'trigger',
@@ -125,9 +140,11 @@ const ACTIONS = [
   { id: 'grain_retrig', label: 'retrig · cut / layer (toggle)', key: '—', osc: '/grain/retrig', fmt: 'bang=toggle, str=set (cut|layer)', type: 'trigger',
     tip: 'under walk: a touch over a walker still running — cut restarts it, layer lets it finish' },
   { id: 'grain_flow',   label: 'rate',                      key: '—', osc: '/grain/flow',    type: 'cc',
-    tip: 'the tab\'s rate row — ms between deposited marks, 10 (dense) to 200 (sparse); up is denser',
+    tip: 'the tab\'s rate row — ms between deposited marks, 10 (dense) to 200 (sparse), the row\'s own direction',
+    // Ascending, as the range says. It ran 200 → 10 against a 10 → 200 range,
+    // so the scale menu's min and max landed on each other's values.
     range: { min: 10, max: 200, unit: 'ms', int: true },
-    ccFn: v => { S.paintTicker = S.paintTicker || {}; S.paintTicker.intervalMs = Math.round(200 - (v / 127) * 190); S._renderRail?.(); } },
+    ccFn: v => { S.paintTicker = S.paintTicker || {}; S.paintTicker.intervalMs = Math.round(10 + (v / 127) * 190); S._renderRail?.(); } },
   { id: 'grain_head',   label: 'head',                      key: '—', osc: '/grain/head',    type: 'cc',
     tip: 'the tab\'s head row — the deposit width in degrees, 0–30',
     range: { min: 0, max: 30, unit: '°', int: true },
@@ -149,10 +166,6 @@ const ACTIONS = [
     tip: 'additive duration randomness per grain',
     range: { min: 0, max: 500, unit: 'ms' },
     ccFn: v => { S.grainOverrides.durVar = (v / 127) * 0.5; S.syncGrainControlsUI?.(); } },
-  { id: 'grain_durjit', label: 'dur jitter',                key: '—',  osc: '/grain/durjitter',   type: 'cc',
-    tip: 'multiplicative duration randomness — also driven by the sensor mapping system',
-    range: { min: 0, max: 1 },
-    ccFn: v => { S.grainOverrides.durJitter = v / 127; S.syncGrainControlsUI?.(); } },
   { id: 'grain_period', label: 'period',                    key: '—',  osc: '/grain/per',         type: 'cc',
     tip: 'time between grain onsets — log scale, 1ms to 4s',
     range: { min: 1, max: 4000, unit: 'ms', curve: 'log' },
@@ -167,18 +180,18 @@ const ACTIONS = [
     ccFn: v => { S.grainOverrides.periodVar = (v / 127) * 0.5; S.syncGrainControlsUI?.(); } },
   { id: 'grain_link',   label: 'link (toggle)',             key: '—', osc: '/grain/link',    fmt: 'bang=toggle, int 0|1', type: 'trigger',
     tip: 'the sheet\'s link: duration and period move together, holding the overlap you have now' },
-  { id: 'grain_curve',  label: 'envelope curve (cycle)',            key: '—',  osc: '/grain/curve',       fmt: 'bang=cycle, str=set (hann|tri|rect)',              type: 'trigger',
+  { id: 'grain_curve',  label: 'curve (cycle)',            key: '—',  osc: '/grain/curve',       fmt: 'bang=cycle, str=set (hann|tri|rect)',              type: 'trigger',
     tip: 'grain envelope shape — cycles hann → triangle → rectangular' },
   { id: 'grain_fade',   label: 'slope',                     key: '—',  osc: '/grain/fade',        type: 'cc',
     tip: 'attack + release each as % of grain duration — 0% instant on/off, 50% pure envelope',
     range: { min: 0, max: 50, unit: '%' },
     ccFn: v => { S.grainOverrides.fadeRatio = (v / 127) * 0.5; S.syncGrainControlsUI?.(); } },
-  { id: 'grain_startjit', label: 'start ±',                 key: '—',  osc: '/grain/startjitter', type: 'cc',
+  { id: 'grain_startjit', label: 'offset ±',                 key: '—',  osc: '/grain/startjitter', type: 'cc',
     tip: 'per-grain read-offset randomness — lets grains begin between markers instead of only on one',
     range: { min: 0, max: 500, unit: 'ms' },
     ccFn: v => { S.grainOverrides.startJitter = (v / 127) * 0.5; S.syncGrainControlsUI?.(); } },
-  // pitchShift is stored in CENTS everywhere (slider, sensor mapping, worklet).
-  { id: 'grain_pitchshift', label: 'pitch shift',           key: '—',  osc: '/grain/pitchshift',  type: 'cc',
+  // pitchShift is stored in CENTS everywhere (the slider, the worklet).
+  { id: 'grain_pitchshift', label: 'pitch',           key: '—',  osc: '/grain/pitchshift',  type: 'cc',
     tip: 'base pitch offset in cents — ±2400 (2 octaves)',
     range: { min: -2400, max: 2400, unit: '¢', int: true },
     ccFn: v => { S.grainOverrides.pitchShift = Math.round(((v / 127) * 4800) - 2400); S.syncGrainControlsUI?.(); } },
@@ -188,14 +201,14 @@ const ACTIONS = [
   // wants is a discrete jump. Reset is its own action for the same reason
   // (returning to 0 mid-phrase is a gesture, not a value).
   { id: 'pitch_oct_down',  label: 'pitch −1 octave',          key: '—',  osc: '/grain/oct/down',  fmt: 'bang',  type: 'trigger',
-    tip: 'drop the base pitch shift by 1200¢ — same button as −oct in the grain panel, clamped at −2400¢' },
+    tip: 'drop the grain pitch by an octave (1200¢) — the sheet\'s octave row one step down, clamped at −2400¢' },
   { id: 'pitch_oct_reset', label: 'pitch reset to 0',         key: '—',  osc: '/grain/oct/reset', fmt: 'bang',  type: 'trigger',
-    tip: 'return the base pitch shift to 0¢ — same button as 0 in the grain panel' },
+    tip: 'the grain pitch back to 0¢ — the sheet\'s octave row at 0' },
   { id: 'pitch_oct_up',    label: 'pitch +1 octave',          key: '—',  osc: '/grain/oct/up',    fmt: 'bang',  type: 'trigger',
-    tip: 'raise the base pitch shift by 1200¢ — same button as +oct in the grain panel, clamped at +2400¢' },
+    tip: 'raise the grain pitch by an octave (1200¢) — the sheet\'s octave row one step up, clamped at +2400¢' },
   // Range is in cents (what you read); the ccFn converts to the ratio the
   // worklet wants. Linear in cents, which is why curve is left at the default.
-  { id: 'grain_pitch',  label: 'pitch jitter',              key: '—',  osc: '/grain/pitch',       type: 'cc',
+  { id: 'grain_pitch',  label: 'pitch ±',              key: '—',  osc: '/grain/pitch',       type: 'cc',
     tip: 'random pitch spread per grain in cents',
     range: { min: 0, max: 700, unit: '¢' },
     ccFn: v => { S.grainOverrides.pitchJitter = Math.pow(2, (v / 127) * 700 / 1200) - 1; S.syncGrainControlsUI?.(); } },
@@ -213,7 +226,7 @@ const ACTIONS = [
     tip: 'resonance at the cutoff — 0% = flat, 100% = about to ring',
     range: { min: 0, max: 1 },
     ccFn: v => { S.grainOverrides.res = v / 127; S.syncGrainControlsUI?.(); } },
-  { id: 'grain_fltjit',  label: 'filter jitter',            key: '—',  osc: '/grain/filterjitter', type: 'cc',
+  { id: 'grain_fltjit',  label: 'cutoff ±',            key: '—',  osc: '/grain/filterjitter', type: 'cc',
     tip: 'per-grain cutoff randomisation — 0% = static, 100% = ±1 octave',
     range: { min: 0, max: 1 },
     ccFn: v => { S.grainOverrides.filterFreqJitter = v / 127; S.syncGrainControlsUI?.(); } },
@@ -223,7 +236,7 @@ const ACTIONS = [
     tip: 'grain volume — 1.0 = unity/input parity, max 2.0. the throw is curved toward the top, where a level actually sits',
     range: { min: 0, max: 2, curve: 'pow', gamma: LEVEL_FADER_GAMMA },
     ccFn: v => { S.grainOverrides.volume = Math.pow(v / 127, LEVEL_FADER_GAMMA) * 2; S.syncGrainControlsUI?.(); } },
-  { id: 'grain_pan',    label: 'pan spread',                key: '—',  osc: '/grain/pan',         type: 'cc',
+  { id: 'grain_pan',    label: 'spread',                key: '—',  osc: '/grain/pan',         type: 'cc',
     tip: 'stereo spread — 0% mono, 100% full stereo',
     range: { min: 0, max: 100, unit: '%' },
     ccFn: v => { S.grainOverrides.panSpread = v / 127; S.syncGrainControlsUI?.(); } },
@@ -236,7 +249,7 @@ const ACTIONS = [
   { id: 'erase_bystroke', label: 'by stroke (toggle)',      key: '—', osc: '/erase/bystroke', fmt: 'bang=toggle, int 0|1', type: 'trigger',
     tip: 'the eraser takes whole strokes instead of the marks under it' },
   { id: 'erase_from',   label: 'from · top / bottom (toggle)', key: '—', osc: '/erase/from', fmt: 'bang=toggle, str=set (top|bottom)', type: 'trigger',
-    tip: 'which layer the eraser reaches first under depth — the newest (top) or the oldest (bottom)' },
+    tip: 'which grain layer the eraser reaches first under depth — the newest (top) or the oldest (bottom). A touched tape line is always taken' },
   { id: null, group: 'cursor' },
   // ── CURSOR — the foot of the tool rail, its rows in order, then the
   // footer's cursor buttons.
@@ -249,15 +262,12 @@ const ACTIONS = [
     tip: 'increase search radius by 2°' },
   { id: 'radius_dec',   label: 'radius ↓',                  key: 'scroll ↓ / [',      osc: '/search/radius/dec', fmt: 'bang',          type: 'trigger',
     tip: 'decrease search radius by 2°' },
-  { id: 'snap',         label: 'mode · area / nearest (toggle)', key: 'N',                 osc: '/search/scope',   fmt: 'int 0|1',          type: 'trigger',
+  { id: 'snap',         label: 'mode · area / nearest (toggle)', key: 'N',                 osc: '/search/mode',    fmt: 'bang=toggle, int 0|1 (1 = nearest)',          type: 'trigger',
     tip: 'the cursor\'s mode — area: within the radius and depth / nearest: the k closest marks on the whole sphere. The foot\'s mode row, and N' },
-  // 0 = "all" is a sentinel sitting ABOVE 16, not part of the numeric range, so
-  // it stays out of `range` — a scaled pot spans 1–16 and can't reach it. Bind
-  // a button to it if you want "all" on a controller.
-  // FOUR ANSWERS (2026-09-24): the throw is quartered — 1 · 2 · 3 · all. `all`
-  // is S.recencyN 0, a sentinel above the top rather than a number in the
-  // range, so the action carries no `range`: a scaled pot would print 1–4 and
-  // call the fourth step "4".
+  // SEVEN ANSWERS: the throw in sevenths, 1 to 6 and then all. `all` is
+  // S.recencyN 0, a sentinel above the top rather than a number in the range,
+  // so the action carries no `range`: a scaled pot would print 1–7 and call
+  // the last step "7".
   { id: 'recency_cc',   label: 'depth',                     key: '—',                 osc: '/search/recency', type: 'cc', fmt: 'int 1–6, 0 = all',
     tip: 'how many of the newest strokes the cursor can reach — the throw in sevenths: 1 to 6, then all. The foot\'s depth row, and erase\'s',
     ccFn: v => { const n = [1, 2, 3, 4, 5, 6, 0][Math.min(6, Math.floor((v / 128) * 7))]; if (typeof S.setRecency === 'function') S.setRecency(n); else S.recencyN = n; } },
@@ -270,18 +280,30 @@ const ACTIONS = [
     range: { min: 0, max: K_MAX, int: true },
     tip: 'how many marks the cursor spreads its grains over — 0 = all, then 1 to 100',
     ccFn: v => { const k = v <= 0 ? 0 : Math.round(1 + Math.min(1, (v - 1) / 126) * (K_MAX - 1)); if (typeof S.setSearchK === 'function') S.setSearchK(k); else S.grainOverrides.k = k; } },
-  { id: 'k_seq',        label: 'step (toggle)',       key: '—',                 osc: '/search/order',   fmt: 'int 0|1',          type: 'trigger',
+  { id: 'k_seq',        label: 'step (toggle)',       key: '—',                 osc: '/search/order',   fmt: 'bang=toggle, int 0|1',          type: 'trigger',
     tip: 'the foot\'s step switch — on: candidates in recording order, one at a time / off: random' },
-  { id: 'radius_fade',  label: 'fade (toggle)',        key: '—',                 osc: '/cursor/radiusfade', fmt: 'int 0|1',          type: 'trigger',
+  { id: 'radius_fade',  label: 'fade (toggle)',        key: '—',                 osc: '/cursor/radiusfade', fmt: 'bang=toggle, int 0|1',          type: 'trigger',
     tip: 'the foot\'s fade switch — grains attenuate by distance from the cursor\'s centre' },
   { id: 'tare',         label: 'zero heading',                   key: '`',                 osc: '/cursor/tare',       fmt: 'bang',             type: 'trigger',
-    tip: 'zero the cursor — in sensor mode the current heading becomes the centre; in pull and point the camera goes back to the front. The footer\'s ZERO button' },
+    tip: 'zero the cursor — in sensor mode the current heading becomes the centre; in steer and surface the camera goes back to the front. The footer\'s ZERO button' },
   { id: 'cursor_lock',      label: 'cursor lock (toggle)',         key: '⌥',         osc: '/spatial/lock',     fmt: 'bang=toggle, int 0|1', type: 'trigger',
     tip: 'the footer\'s lock, and ⌥: holds azimuth and elevation together — the same state the AZ and EL buttons write. In steer and surface it also hands the pointer back so the UI is clickable. A toggle, as the key is; 1 / 0 sets it' },
-  { id: 'az_source',    label: 'AZ · held / free (toggle)',       key: '—',                 osc: '/cursor/az_source',  fmt: 'bang=cycle, str=set (sensor|locked|mapped)', type: 'trigger',
-    tip: 'the footer\'s AZ button: a bang toggles held ↔ free; a string sets sensor (free), locked (held) or mapped (a cursor mapping row)' },
-  { id: 'el_source',    label: 'EL · held / free (toggle)',     key: '—',                 osc: '/cursor/el_source',  fmt: 'bang=cycle, str=set (sensor|locked|mapped)', type: 'trigger',
-    tip: 'the footer\'s EL button: a bang toggles held ↔ free; a string sets sensor (free), locked (held) or mapped (a cursor mapping row)' },
+  { id: 'az_source',    label: 'AZ · held / free (toggle)',       key: '—',                 osc: '/cursor/az_source',  fmt: 'bang=toggle, str=set (sensor|locked|mapped)', type: 'trigger',
+    tip: 'the footer\'s AZ button: a bang toggles held ↔ free; a string sets sensor (free), locked (held) or mapped (driven by its position row)' },
+  { id: 'el_source',    label: 'EL · held / free (toggle)',     key: '—',                 osc: '/cursor/el_source',  fmt: 'bang=toggle, str=set (sensor|locked|mapped)', type: 'trigger',
+    tip: 'the footer\'s EL button: a bang toggles held ↔ free; a string sets sensor (free), locked (held) or mapped (driven by its position row)' },
+  // The cursor's two axes as positions (2026-09-25). They drive an axis set to
+  // map; binding a sensor or a MIDI control here sets it to map (sensor-
+  // bindings.js armCursorAxisFor), and the footer's button frees it again. The
+  // lazy-susan piece is `EL · position` bound to the instrument's roll.
+  { id: 'cursor_az',    label: 'AZ · position',   key: '—', osc: '/cursor/azimuth',   type: 'cc',
+    tip: 'where a mapped azimuth points, −180° to 180°. Binding this row sets AZ to map; the AZ button frees it',
+    range: { min: -180, max: 180, unit: '°' },
+    ccFn: v => { S.cursorOverrides.azimuth = -180 + (v / 127) * 360; } },
+  { id: 'cursor_el',    label: 'EL · position',   key: '—', osc: '/cursor/elevation', type: 'cc',
+    tip: 'where a mapped elevation points, −90° to 90°. Binding this row sets EL to map; the EL button frees it',
+    range: { min: -90, max: 90, unit: '°' },
+    ccFn: v => { S.cursorOverrides.elevation = -90 + (v / 127) * 180; } },
   { id: null, group: 'pins' },
   { id: 'commit_slots', label: 'max pins',         key: '—',                 osc: '/commit/slots',    type: 'cc',
     tip: 'the pinned rail\'s max — how many pins can be held (1–16)',
@@ -294,13 +316,15 @@ const ACTIONS = [
     tip: 'the pinned rail\'s follow switch — on: the nearest pin is loudest and the rest hand over by distance / off: every pin at its fader' },
   { id: 'commit_selection', label: 'sort · near / far / old (cycle)', key: '—',               osc: '/commit/selection', fmt: 'bang=cycle, str=set (nearest|farthest|oldest)',                 type: 'trigger',
     tip: 'the pinned rail\'s sort, which is also the SELECTED pin — what unpin takes and the rail marks: nearest the cursor, farthest, or the oldest' },
+  { id: 'commit_overflow', label: 'when full · off / old / near (cycle)', key: '—', osc: '/commit/overflow', fmt: 'bang=cycle, str=set (off|oldest|nearest)', type: 'trigger',
+    tip: 'the pinned rail\'s when full — with every slot taken, a new pin is refused (off), or the oldest or the nearest pin makes room' },
   // ── PINS — the pinned rail: the mode bar, the selected track's three
-  // controls, the two buses, the foot.
+  // controls, the three busses (clouds, loops, ALL), unpin all.
   { id: 'pin_mute',     label: 'selected pin · mute (toggle)', key: '—', osc: '/pins/sel/mute', fmt: 'bang=toggle, int 0|1', type: 'trigger',
     tip: 'the M on the selected pin\'s track — the one the sort puts first' },
   { id: 'pin_solo',     label: 'selected pin · solo (toggle)', key: '—', osc: '/pins/sel/solo', fmt: 'bang=toggle, int 0|1', type: 'trigger',
     tip: 'the S on the selected pin\'s track' },
-  { id: 'pin_level',    label: 'selected pin · fader',      key: '—', osc: '/pins/sel/level', type: 'cc',
+  { id: 'pin_level',    label: 'selected pin · fader',      key: '—', osc: '/pins/sel/level', fmt: 'float 0–1 (the fader\'s position; unity at 0.667)', type: 'cc',
     tip: 'the selected pin\'s fader — the rail\'s law, unity two thirds up, +12 dB at the top. Inert under follow, as the fader is',
     range: { min: 0, max: 4, curve: 'pow', gamma: Math.log(4) / Math.log(1.5) },
     ccFn: v => { S._setSelectedPinLevel?.(v / 127); } },
@@ -312,10 +336,12 @@ const ACTIONS = [
     tip: 'the loops bus M' },
   { id: 'bus_loop_solo',  label: 'loops · solo (toggle)',   key: '—', osc: '/pins/loops/solo',  fmt: 'bang=toggle, int 0|1', type: 'trigger',
     tip: 'the loops bus S' },
+  // ALL's M (RULINGS "ALL is the pins' master bus"): a toggle, as the rail's
+  // is. It was `hold`, so a learned key let every pin back on its release.
+  { id: 'pins_mute',      label: 'all · mute (toggle)',     key: '—', osc: '/pins/mute',        fmt: 'bang=toggle, int 0|1', type: 'trigger',
+    tip: 'the ALL bus M — silence every pin; your per-pin mutes and solos survive the round trip' },
   { id: 'commit_clear', label: 'unpin all',                 key: '↑ extra long',                 osc: '/commit/clear',    fmt: 'bang',             type: 'trigger',
     tip: 'unpin every cloud and loop — the pinned rail\'s unpin all row' },
-  { id: 'pins_mute',       label: 'mute all (momentary)',       key: '—', osc: '/pins/mute',      fmt: 'int 0|1', type: 'hold',
-    tip: 'silence every pin, and let it back on the next press — your per-pin mutes and solos survive the round trip. 1 mutes, 0 lets back, no value flips it' },
   { id: null, group: 'chrome' },
   // ── CHROME — the bar and the footer, left to right.
   { id: 'rail_tools',   label: 'tool rail (toggle)',        key: 'Tab', osc: '/rail/tools',   fmt: 'bang=toggle, int 0|1', type: 'trigger',
@@ -327,18 +353,18 @@ const ACTIONS = [
   { id: 'camera_mode',  label: 'camera (cycle)',            key: '—', osc: '/camera',        fmt: 'bang=cycle, str=set (steer|surface|sensor)', type: 'trigger',
     tip: 'the camera menu — steer, surface, or sensor (refused with no sensor connected). Cycles steer → surface → sensor' },
   { id: 'undo',         label: 'undo',          key: 'right click / ⌘Z',  osc: '/undo',              fmt: 'bang',             type: 'trigger',
-    tip: 'remove the most recently painted stroke from the sphere' },
+    tip: 'take back the last thing done — a stroke with everything it made, a pin, an unpin, an erase, a sweep' },
   { id: 'redo',         label: 'redo',        key: '⇧⌘Z',               osc: '/redo',              fmt: 'bang',             type: 'trigger',
     tip: 'bring back the last thing undone — a stroke with everything it made, an erase, a pin. A new action forks history: what was undone stays undone' },
   { id: 'sweep',        label: 'sweep the scratch', key: '—',             osc: '/sweep',             fmt: 'bang',             type: 'trigger',
-    tip: 'everything unpinned goes; pinned clouds and loops keep sounding. The chrome\'s sweep pill' },
+    tip: 'everything unpinned goes; pinned clouds and loops keep sounding. The bar\'s sweep button' },
   { id: 'erase_all',    label: 'erase all',       key: 'Backspace×3',       osc: '/session/erase',     fmt: 'bang',             type: 'trigger',
-    tip: 'the chrome\'s clear pill: everything goes — marks, pins and recordings' },
+    tip: 'the bar\'s erase all button: everything goes — marks, pins and recordings' },
   { id: 'dry_mute',     label: 'dry · off / on (toggle)', key: '—',                 osc: '/dry/mute',          fmt: 'bang',             type: 'trigger',
-    tip: 'the footer\'s dry switch: muted is off; unmuting returns to the mode it was in — on, or auto' },
+    tip: 'the dry monitor off, and back to the mode it was in — on, or auto. The footer\'s DRY button cycles all three' },
   { id: 'dry_mute_hold', label: 'dry off (momentary)', key: '—',              osc: '/dry/mute/hold',     fmt: 'int 0|1',          type: 'hold',
     tip: '1 mutes the dry monitor, 0 restores the mode it was in at the press' },
-  { id: 'mute',         label: 'system mute (toggle)',      key: 'M',                 osc: '/mute',              fmt: 'int 0|1',          type: 'trigger',
+  { id: 'mute',         label: 'system mute (toggle)',      key: 'M',                 osc: '/mute',              fmt: 'bang=toggle, int 0|1',          type: 'trigger',
     tip: 'silence all audio output — each press flips it. The momentary one is below' },
   { id: 'mute_hold',    label: 'system mute (momentary)',        key: '—',                 osc: '/mute/hold',         fmt: 'int 0|1',          type: 'hold',
     tip: 'momentary mute — silent while held, restores the PREVIOUS state on release, so a tap over an already-muted system leaves it muted' },
@@ -347,36 +373,28 @@ const ACTIONS = [
     range: { min: -24, max: 24, unit: 'dB' },
     ccFn: v => { S._setInputGainDb?.(-24 + (v / 127) * 48); } },
   { id: 'dry_gain',    label: 'dry level',           key: '—',                 osc: '/dry/gain',       type: 'cc',
-    tip: 'spatialized live input level in the house mix (0 = silent, 2 = +6dB)',
-    range: { min: 0, max: 2 },
-    ccFn: v => { S._setDryMonitorGain?.(v / 127 * 2); } },
+    tip: 'the footer\'s dry vol — the spatialized live input in the house mix, −60 to +18 dB, curved toward the top like master',
+    range: { min: -60, max: 18, unit: 'dB', curve: 'pow', gamma: LEVEL_FADER_GAMMA },
+    ccFn: v => { const db = -60 + Math.pow(v / 127, LEVEL_FADER_GAMMA) * 78; S._setDryMonitorGain?.(db <= -60 ? 0 : Math.pow(10, db / 20)); } },
   // dB is already a log scale, so linear IN dB used to be the whole story — but
   // that spends half the throw under −20 dB. The curve is applied to the throw,
   // not to the dB, so the range stays declared in dB and carries the exponent.
   // See LEVEL_FADER_GAMMA in state.js.
   { id: 'master_vol',   label: 'master',             key: '—',                 osc: '/master/volume',  type: 'cc',
-    tip: 'master output gain — the master vol slider in audio settings (-60 to +18 dB). the throw is curved toward the top, where a level actually sits',
+    tip: 'master output gain — the footer\'s master and the audio settings slider (−60 to +18 dB). the throw is curved toward the top, where a level actually sits',
     range: { min: -60, max: 18, unit: 'dB', curve: 'pow', gamma: LEVEL_FADER_GAMMA },
     ccFn: v => { S._setOutputGainDb?.(-60 + Math.pow(v / 127, LEVEL_FADER_GAMMA) * 78); } },
   { id: null, group: 'settings' },
-  { id: 'commit_overflow', label: 'when full (cycle)', key: '—',                osc: '/commit/overflow', fmt: 'bang=cycle, str=set (off|oldest|nearest)',                   type: 'trigger',
-    tip: 'Settings → Pins, when full: off → oldest → nearest' },
   { id: 'commit_dir',   label: 'cloud path (cycle)',       key: '—',                 osc: '/commit/dir',      fmt: 'bang=cycle, str=set (pingpong|forward|rev)',                 type: 'trigger',
     tip: 'Settings → Pins, path: how a moving cloud runs its path — cycles pingpong → forward → rev' },
-  { id: 'commit_attack', label: 'cloud in',             key: '—',                 osc: '/commit/attack',   type: 'cc',
-    tip: 'Settings → Pins, in: cloud fade-in time — 0s instant, up to 10s swell',
+  { id: 'commit_attack', label: 'pin in',               key: '—',                 osc: '/commit/attack',   type: 'cc',
+    tip: 'Settings → Pins, in: how a pin comes up, on pin and on unmute — 0s instant, up to 10s swell',
     range: { min: 0, max: 10, unit: 's' },
     ccFn: v => { S.commitAttack = (v / 127) * 10; const sl = document.getElementById('seedAttackSlider'); if (sl) sl.value = S.commitAttack; const nb = document.getElementById('seedAttackNum'); if (nb) nb.value = S.commitAttack < 1 ? (S.commitAttack * 1000).toFixed(0) + 'ms' : S.commitAttack.toFixed(1) + 's'; } },
-  { id: 'commit_release_time', label: 'cloud out',     key: '—',               osc: '/commit/release_time', type: 'cc',
-    tip: 'Settings → Pins, out: cloud fade-out time — 0s instant, up to 10s fade',
+  { id: 'commit_release_time', label: 'pin out',       key: '—',               osc: '/commit/release_time', type: 'cc',
+    tip: 'Settings → Pins, out: how a pin leaves, on unpin and on mute — 0s instant, up to 10s fade',
     range: { min: 0, max: 10, unit: 's' },
     ccFn: v => { S.commitRelease = (v / 127) * 10; const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.commitRelease; const nb = document.getElementById('seedReleaseNum'); if (nb) nb.value = S.commitRelease < 1 ? (S.commitRelease * 1000).toFixed(0) + 'ms' : S.commitRelease.toFixed(1) + 's'; } },
-  { id: 'loop_release_mode', label: 'loop at end · fade / play-to-end (toggle)',   key: '—',                 osc: '/commit/loop_release', fmt: 'bang=toggle, str=set (fade|play-to-end)',                 type: 'trigger',
-    tip: 'Settings → Pins, at end: fade = fade out over time, play-to-end = the loop finishes its pass then stops' },
-  { id: 'loop_fade_time', label: 'loop fade',    key: '—',                 osc: '/commit/loop_fade_time', type: 'cc',
-    tip: 'Settings → Pins: fade-out duration for loops when released — 0ms instant, up to 2000ms',
-    range: { min: 0, max: 2000, unit: 'ms', int: true },
-    ccFn: v => { S.loopFadeTimeMs = Math.round((v / 127) * 2000); const sl = document.getElementById('loopFadeTimeSlider'); if (sl) sl.value = S.loopFadeTimeMs; const nb = document.getElementById('loopFadeTimeNum'); if (nb) nb.value = S.loopFadeTimeMs < 1000 ? S.loopFadeTimeMs + 'ms' : (S.loopFadeTimeMs / 1000).toFixed(1) + 's'; } },
   { id: 'commit_xfade', label: 'crossfade',              key: '—',                 osc: '/commit/xfade',    type: 'cc',
     tip: 'Settings → Pins, crossfade under follow: 0 = hard snap to the nearest pin, 1 = smooth distance-weighted',
     range: { min: 0, max: 1 },
@@ -397,17 +415,13 @@ const ACTIONS = [
   // in the bottom few percent of the span, which a linear throw gives 8 of 128
   // steps.  gateFracToRms is the meter's own axis, so the pot and the drawn
   // threshold move together — see GATE_METER_GAMMA in state.js.
-  // id and osc path deliberately keep the old names through the rename: the id
-  // is the key Ek's saved midi/key bindings are stored under, and the osc path
-  // is wired into Max patches. Renaming either would silently orphan them for a
-  // cosmetic gain. The label is what anyone actually reads.
-  { id: 'noise_gate',   label: 'paint gate threshold',      key: '—',                 osc: '/gate/threshold', type: 'cc',
+  { id: 'paint_gate',   label: 'paint gate threshold',      key: '—',                 osc: '/paint/gate',     type: 'cc',
     tip: 'paint gate threshold — below this, no particle is deposited, so that moment is not granulatable or triggerable. it does NOT attenuate audio. the throw is curved toward zero, where the noise floor lives',
     range: { min: 0, max: GATE_METER_MAX, unit: 'RMS', curve: 'pow', gamma: GATE_METER_GAMMA },
     ccFn: v => { S._setPaintGateThreshold?.(gateFracToRms(v / 127)); } },
-  { id: 'handsfree',   label: 'handsfree (toggle)',          key: 'H',                 osc: '/handsfree',         fmt: 'bang',             type: 'trigger',
-    tip: 'toggle handsfree arm — when on, toggle-trace segments buffers at the paint gate threshold, with its own envelope' },
-  { id: null, group: 'sampler' },
+  // The sampler is parked (2026-09-23): these do nothing until Settings ›
+  // Tools › Sampler is on, and the group says so.
+  { id: null, group: 'sampler — off unless Settings › Tools' },
   { id: 'source_live',    label: 'source: live input',      key: '—',                 osc: '/source/live',    fmt: 'bang',             type: 'trigger',
     tip: 'the brush inks from the live input channel (see audio settings for which)' },
   { id: 'source_sampler', label: 'source: sampler',         key: '—',                 osc: '/source/sampler', fmt: 'bang',             type: 'trigger',
@@ -415,7 +429,7 @@ const ACTIONS = [
   { id: 'sampler_sample', label: 'sampler: select sample',  key: '—',                 osc: '/sampler/sample', fmt: 'int 1..10 = slot, 127 = next loaded', type: 'trigger',
     tip: 'set the sampler’s current sample — explicit slot number, or cycle the loaded ones' },
   { id: 'sampler_record', label: 'sampler: record (momentary)',  key: '—',                 osc: '/sampler/record', fmt: 'int 0|1',          type: 'hold',
-    tip: 'capture the live input into the next free sampler slot — refused while a paint stroke is recording' },
+    tip: 'capture the live input into the next free sampler slot — refused while a take is recording' },
 ];
 
 // Derive the format column for every cc action from its range, so the modal and
@@ -477,6 +491,7 @@ let keyLearningId = null;
 // folded into the erase slot's hold) ran the day it landed and is gone —
 // a stored `belt_1` now means the cap tap, not the old brush-slot hold.
 const _RENAMED_IDS = {
+  noise_gate: 'paint_gate',   // 2026-09-25, with its address (/gate/threshold → /paint/gate)
   belt_2: 'palette_1', belt_3: 'palette_2', belt_4: 'palette_3', belt_5: 'palette_4',
   belt_3_hold: 'palette_2_hold', belt_4_hold: 'palette_3_hold', belt_5_hold: 'palette_4_hold',
   erase_brush: 'palette_4_hold',
@@ -493,7 +508,11 @@ const _RENAMED_IDS = {
 // longer retired; `grain_retrig` was a cc onto a field nothing read, and the
 // id now names the grain tab's cut / layer switch, so its old bindings go.
 // `k_all` went with the fill switch (k is one slider, and zero is all).
-const _RETIRED_IDS = ['belt_1', 'erase_toggle', 'k_all', 'trace_trigger', 'commit_mode', 'commit_volume', 'commit_speed', 'perf', 'perfmode', 'darkmode', 'projector', 'spatial_panning', 'commit_tether', 'pins_unmute_all',
+// `handsfree` went with its gate (2026-09-25; a new hands-free is being designed).
+// `grain_durjit` wrote a param no sheet shows any more (2026-09-25): unseen and
+// unresettable. `loop_release_mode` / `loop_fade_time` went the same day: the
+// tape tab's autopin switch replaced what a loop does at its end (Ek).
+const _RETIRED_IDS = ['grain_durjit', 'loop_release_mode', 'loop_fade_time', 'handsfree', 'belt_1', 'erase_toggle', 'k_all', 'trace_trigger', 'commit_mode', 'commit_volume', 'commit_speed', 'perf', 'perfmode', 'darkmode', 'projector', 'spatial_panning', 'commit_tether', 'pins_unmute_all',
   'palette_5', 'palette_6', 'palette_7', 'palette_8', 'palette_9'];
 function _migrateIds(map) {
   let n = 0;
@@ -1046,6 +1065,9 @@ function _bs(btn) { return _btn[btn] || (_btn[btn] = { down: false, downAt: 0, t
 const _ACTIVATES = /^(palette_[1-9]|hand_press)$/;
 function _abortPress(st) {
   const id = st.pressAction; st.pressAction = null;
+  // The hand's press knows what it started and what it ended (tiles.js
+  // `_handPressAbort`): a press that switched tools must keep the loop it closed.
+  if (id === 'hand_press') { st.pressStarted = false; st.pressMark = null; S._handPressAbort?.(); return; }
   const started = st.pressStarted; st.pressStarted = false;
   if (st.pressMark != null) { S._historyDiscardSince?.(st.pressMark); st.pressMark = null; }
   if (id && _ACTIVATES.test(id) && started) S._gestureAbort?.();
@@ -1274,7 +1296,7 @@ function bindingsOf(actionId, factoryCode) {
 // hooks (`data-audition`, `data-autopin`, the switch proxies), or a sheet
 // row's pid through PID_ACTION. Nothing here runs except on hover.
 const PID_ACTION = {
-  dur: 'grain_dur', durVar: 'grain_durvar', durJit: 'grain_durjit', period: 'grain_period', perVar: 'grain_pervar',
+  dur: 'grain_dur', durVar: 'grain_durvar', period: 'grain_period', perVar: 'grain_pervar',
   overlap: 'grain_overlap', glink: 'grain_link', curve: 'grain_curve', fade: 'grain_fade', startJit: 'grain_startjit',
   pitch: 'grain_pitchshift', pitchJit: 'grain_pitch', dir: 'grain_dir', flt: 'grain_filter', ftype: 'grain_filtertype',
   cutoff: 'grain_cutoff', res: 'grain_res', fltJit: 'grain_fltjit', vol: 'grain_vol', pan: 'grain_pan', prob: 'grain_prob',
@@ -1436,7 +1458,7 @@ function scaleEditable(action, mapping) {
 
 // ── MIDI input enable (per instance profile) ────────────────────────────────
 // Multi-station: every instance sees every CoreMIDI device, so a shared pedal
-// (FCB-1010 → Max) would also fire directly in all instances with mappings.
+// (an FCB-1010 through an OSC bridge) would also fire directly in every instance.
 // Stations driven by OSC turn MIDI input OFF here.  Default ON — solo
 // behaviour unchanged.  Persisted per profile: 'mubone_midi_input'.
 let midiInputEnabled = (() => {
@@ -1514,6 +1536,7 @@ function handleMidiMessage(event) {
   if (midiLearningId !== null) {
     midiMappings[midiLearningId] = { type: 'cc', channel, number: num };
     saveMidiMappings();
+    armCursorAxisFor(midiLearningId);
     const action = ACTIONS.find(a => a.id === midiLearningId);
     setMappingStatus(`mapped "${actionLabel(action)}" → CC ${num} ch${channel}`);
     midiLearningId = null;
@@ -1598,10 +1621,13 @@ function _pickVoice(engine, midiVal) {
 
 function dispatchAction(id, midiVal) {
   switch(id) {
-    case 'mute':
-      if (S._setMuted) S._setMuted(!S.isMuted);
-      else S.isMuted = !S.isMuted;
+    case 'mute': {
+      // A key or a note flips; the OSC int sets (1 muted, 0 not) — it said
+      // `int 0|1` and flipped on both (2026-09-25).
+      const on = _onOff(midiVal, S.isMuted);
+      if (S._setMuted) S._setMuted(on); else S.isMuted = on;
       break;
+    }
     // The dry monitor's mute is a MODE change — off is the mute, and unmuting
     // returns to the mode it left (on or auto), never blindly to on. The
     // setting is never persisted (state.js), so neither is what it left.
@@ -1656,9 +1682,6 @@ function dispatchAction(id, midiVal) {
       if (S._sessionSweep) S._sessionSweep();
       else sweep();
       break;
-    case 'handsfree':
-      toggleHandsfree();
-      break;
 
     // ── View ─────────────────────────────────────────────────────────────────
     // `recpaint` and `trace_toggle` were handled here — the main button as a
@@ -1683,6 +1706,9 @@ function dispatchAction(id, midiVal) {
       S._syncTriggerUI?.(); S._renderRail?.(); break;
     case 'tape_step':
       S.triggerParams.step = _strMode(midiVal, TAPE_STEPS) ?? _cycle(TAPE_STEPS, S.triggerParams.step);
+      // Both dials re-snap to the new grid, as the rail's step click does.
+      S.triggerParams.pitch = quantPitch(S.triggerParams.pitch);
+      S.triggerParams.speed = quantSpeed(S.triggerParams.speed);
       S._syncTriggerUI?.(); S._renderRail?.(); break;
     case 'tape_reverse':
       S.triggerParams.reverse = _onOff(midiVal, S.triggerParams.reverse);
@@ -1718,9 +1744,13 @@ function dispatchAction(id, midiVal) {
     case 'rail_tools':   S._setToolRail?.(_onOff(midiVal, !!S._toolRailOpen?.())); break;
     case 'rail_pins':    S._setPinnedRail?.(_onOff(midiVal, !!S._pinnedRailOpen?.())); break;
     case 'settings':     S._setSettingsOpen?.(_onOff(midiVal, !!S._settingsOpen?.())); break;
-    case 'camera_mode':
-      S._setCameraMode?.(_strMode(midiVal, ['steer', 'surface', 'sensor']) ?? _cycle(['steer', 'surface', 'sensor'], S.cameraMode));
+    case 'camera_mode': {
+      // A bang cycles only through the modes that can be entered: with no
+      // sensor live the pill refuses `sensor`, so the cycle stuck on surface.
+      const modes = S._sensorLive?.() ? ['steer', 'surface', 'sensor'] : ['steer', 'surface'];
+      S._setCameraMode?.(_strMode(midiVal, ['steer', 'surface', 'sensor']) ?? _cycle(modes, S.cameraMode));
       break;
+    }
     case 'commit_clear':
       clearAllCommits();
       _flash(document.getElementById('commitClearBtn'));
@@ -1734,14 +1764,11 @@ function dispatchAction(id, midiVal) {
     // The hand's two presses. `hand_press` is a trigger — one edge, and tiles.js
     // latches it the way a tap has always latched. `hand_long` is a hold, so it
     // gets both edges and plays while you hold.
-    case 'hand_press': if (midiVal == null || midiVal > 0) S._handPress?.(); return;
+    case 'hand_press': if (midiVal == null || midiVal > 0) S._handPress?.(); else S._handUp?.('press'); return;
     case 'hand_long':  S._handLong?.(midiVal == null ? true : midiVal > 0); return;
-    case 'pins_mute': {
-      const want = midiVal == null ? !S._pinsAllMuted?.() : midiVal > 0;
-      S._pinsSetAllMuted?.(want);
-      S._pinsMuteLit?.(want);
+    case 'pins_mute':
+      S._pinsSetAllMuted?.(_onOff(midiVal, !!S._pinsAllMuted?.()));
       break;
-    }
     case 'commit_selection': {
       // Three, as the rail's sort bar has (2026-09-24): near → far → old.
       S.selectionMode = _strMode(midiVal, ['nearest', 'farthest', 'oldest'], { closest: 'nearest', near: 'nearest', far: 'farthest', old: 'oldest' })
@@ -1770,15 +1797,6 @@ function dispatchAction(id, midiVal) {
         b.classList.toggle('active', b.dataset.loopmode === S.commitCloudLoopMode));
       break;
     }
-    case 'loop_release_mode': {
-      S.loopReleaseMode = _strMode(midiVal, ['fade', 'play-to-end'],
-        { play_to_end: 'play-to-end', playtoend: 'play-to-end', end: 'play-to-end' })
-        ?? (S.loopReleaseMode === 'fade' ? 'play-to-end' : 'fade');
-      const lrSeg = document.getElementById('loopReleaseModeSeg');
-      if (lrSeg) lrSeg.querySelectorAll('[data-lrmode]').forEach(b =>
-        b.classList.toggle('active', b.dataset.lrmode === S.loopReleaseMode));
-      break;
-    }
     case 'pins_follow': {
       const m = _strMode(midiVal, ['on', 'off']);
       const on = m ? m === 'on' : S.commitPlayback !== 'focus';
@@ -1788,14 +1806,18 @@ function dispatchAction(id, midiVal) {
     }
 
     // ── Search ──────────────────────────────────────────────────────────────
-    case 'snap':         toggleNearestMode(); break;
+    // The three lens switches set on an OSC int and flip on a key or a note,
+    // as every screen switch does (_onOff). All three flipped on 0 as well.
+    case 'snap':
+      if (_onOff(midiVal, S.lensMode === 'nearest') !== (S.lensMode === 'nearest')) toggleNearestMode();
+      break;
     case 'k_seq':
-      S.grainKSeqMode = !S.grainKSeqMode;
+      S.grainKSeqMode = _onOff(midiVal, S.grainKSeqMode);
       updatePlaybackControls();
       S._updateWorkletParams?.({ kSeqMode: S.grainKSeqMode });
       break;
     case 'radius_fade':
-      S.radiusFadeEnabled = !S.radiusFadeEnabled;
+      S.radiusFadeEnabled = _onOff(midiVal, S.radiusFadeEnabled);
       S._syncRadiusFadeUI?.();
       break;
     case 'grain_dir': {
@@ -1807,9 +1829,10 @@ function dispatchAction(id, midiVal) {
       break;
     }
     case 'grain_filter': {
-      // 'toggle' from a bang, 127 / 0 from an explicit int (osc.js _bangOrInt)
-      // or a MIDI note-on; the switch writes the override the sheet reads.
-      const on = midiVal === 'toggle' ? !(S.grainOverrides.filterOn ?? gp().filterOn) : midiVal > 0;
+      // The switch writes the override the sheet reads.
+      // A key or a note sends 127 and means a flip — `> 0` read it as ON, so a
+      // key could switch the filter on and never off (2026-09-25).
+      const on = _onOff(midiVal, !!(S.grainOverrides.filterOn ?? gp().filterOn));
       S.grainOverrides.filterOn = on;
       S.syncGrainControlsUI?.();
       S._updateWorkletParams?.(resolveGrainParams());
@@ -1854,14 +1877,14 @@ function dispatchAction(id, midiVal) {
     case 'el_source': {
       if (midiVal === 0) break; // act on press only, ignore release
       // Same bang-cycles / string-sets idiom as trace_mode: a pedal cycles,
-      // Max can address a state directly.  Frozen-snapshot clearing and the
+      // an OSC sender can address a state directly.  Frozen-snapshot clearing and the
       // DOM sync both live in setAxisSource() (main.js) — one owner.
       const stateKey = id === 'az_source' ? 'azSource' : 'elSource';
       const set = _strMode(midiVal, AXIS_SOURCES, { free: 'sensor', lock: 'locked', map: 'mapped' });
       // A bang toggles HELD ↔ FREE, the same two states the footer button has
       // (2026-09-01) — a pedal that steps a foot into 'mapped' mid-set is the
       // same trap the three-state button was. The explicit string sets keep all
-      // three, so Max can still address 'mapped' directly.
+      // three, so an OSC sender can still address `mapped` directly.
       S._setAxisSource?.(stateKey, set ?? (axisHeld(S[stateKey]) ? 'sensor' : 'locked'));
       break;
     }
@@ -2133,8 +2156,8 @@ function setupIOMonitor() {
 }
 
 // ── Scale cells for one mapping row ─────────────────────────────────────────
-// The min / max / γ trio, mirroring the accessory table (ui-accessory.js) so the
-// two places you shape a controller look and behave the same.  min and max are
+// The min / max / γ trio (scale.js), the same for a MIDI binding's scale menu
+// and a sensor binding's.  min and max are
 // typed in the DESTINATION's own units (dB, Hz, cents) and stored normalised; γ
 // is the response exponent.  Rows with nothing to shape still get three cells,
 // dimmed and disabled, so the columns stay aligned down ~100 rows.
@@ -2263,6 +2286,152 @@ function _openScale(cell, btn, action, mapping, redraw) {
   (bounded ? minBox : curveBox).select();
 }
 
+// ── The sensor menu ─────────────────────────────────────────────────────────
+// Everything a sensor binding is, behind the cell that names it: which sensor,
+// which axis, the input range in degrees, the fold, then the same output window
+// and γ as the scale menu. The reading is live while the menu is open, which is
+// what makes the input range settable by moving. Learn follows every axis of
+// every sensor and takes the one that swept widest, with the range it swept.
+function _sensorLabel(b) {
+  const ax = SENSOR_AXES.find(a => a.id === b.axis);
+  return `${b.sensor || 'no sensor'} · ${(ax?.label ?? b.axis).toLowerCase()}${b.fold ? ' |x|' : ''}`;
+}
+
+function _openSensor(cell, btn, action) {
+  _closeScaleMenu();
+  const b = getSensorBinding(action.id);
+  if (!b) return;
+  const range = action.range;
+  const base  = baseGamma(range);
+  const menu  = _el('div', 'set-menu scale-menu sensor-menu');
+
+  const row = (labelText, ctl) => {
+    const r = _el('div', 'scale-menu-row');
+    r.appendChild(_el('span', null, labelText));
+    r.appendChild(ctl);
+    menu.appendChild(r);
+    return r;
+  };
+  const select = (opts, value, onChange) => {
+    const sel = document.createElement('select');
+    sel.className = 'set-select sensor-menu-select';
+    for (const [v, text] of opts) {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = text; sel.appendChild(o);
+    }
+    sel.value = value;
+    sel.addEventListener('change', () => onChange(sel.value));
+    return sel;
+  };
+  const field = (value, onCommit) => {
+    const wrap = _el('span', 'set-field');
+    const input = document.createElement('input');
+    input.type = 'text'; input.value = value;
+    wrap.appendChild(input);
+    const commit = () => { const v = parseFloat(String(input.value).replace(/[^\d.+-]/g, '')); if (Number.isFinite(v)) onCommit(v); sync(); };
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  { e.preventDefault(); input.blur(); }
+      if (e.key === 'Escape') { sync(); input.blur(); }
+    });
+    return { wrap, input };
+  };
+  const set = patch => { setSensorBinding(action.id, patch); sync(); };
+
+  // A sensor that has gone quiet stays in the list under its own name, so a
+  // binding made on it is never silently re-pointed.
+  const names = sensorNames();
+  if (b.sensor && !names.includes(b.sensor)) names.push(b.sensor);
+  const sensorSel = select(names.length ? names.map(n => [n, sensorNames().includes(n) ? n : `${n} (not sending)`]) : [['', 'no sensor sending']],
+                           b.sensor, v => set({ sensor: v }));
+  row('Sensor', sensorSel);
+  const axisSel = select(SENSOR_AXES.map(a => [a.id, a.note ? `${a.label} (drifts)` : a.label]), b.axis, v => set({ axis: v }));
+  axisSel.title = 'elevation and roll are measured against gravity and hold; azimuth is heading and drifts with the magnetometer off';
+  row('Axis', axisSel);
+  const from = field('', v => set({ inLo: v }));
+  const to   = field('', v => set({ inHi: v }));
+  from.input.title = to.input.title = 'the input range in degrees — From > To reverses the throw';
+  row('From (°)', from.wrap);
+  row('To (°)', to.wrap);
+  const fold = document.createElement('input');
+  fold.type = 'checkbox'; fold.className = 'set-toggle';
+  fold.title = 'read the axis as |x|: how far from zero, either way';
+  fold.addEventListener('change', () => set({ fold: fold.checked }));
+  row('Fold |x|', fold);
+  const reading = _el('span', 'sensor-menu-reading');
+  row('Now', reading);
+
+  let lo = null, hi = null;
+  if (range) {
+    const unit = range.unit ? ` (${range.unit})` : '';
+    lo = field('', v => set({ outLo: toNorm(range, clampReal(range, v)) }));
+    hi = field('', v => set({ outHi: toNorm(range, clampReal(range, v)) }));
+    lo.input.title = hi.input.title = 'where the two ends of the input range land on this destination';
+    row(`min${unit}`, lo.wrap);
+    row(`max${unit}`, hi.wrap);
+  }
+  const gamma = field('', v => set({ curve: clampGamma(v / base) }));
+  gamma.input.title = `response exponent — 1 linear, above 1 gives fine control at the bottom. this destination starts at ${fmtNumber(base)}`;
+  row('γ', gamma.wrap);
+
+  const acts = _el('div', 'scale-menu-row sensor-menu-acts');
+  const learn = _el('button', 'set-btn set-btn--sm', 'Learn');
+  learn.title = 'move the sensor through the range you want, then press Done — the axis that moved most is taken, with the range it swept';
+  learn.addEventListener('click', () => {
+    if (learn.dataset.on) {
+      const r = sensorLearnResult();
+      stopSensorLearn();
+      delete learn.dataset.on; learn.textContent = 'Learn';
+      if (r && r.span >= 10) {
+        const c = v => Math.round(Math.max(-180, Math.min(180, v)));
+        set({ sensor: r.sensor, axis: r.axis, inLo: c(r.lo), inHi: c(r.hi), fold: false });
+        sensorSel.value = r.sensor; axisSel.value = r.axis;
+        setMappingStatus(`“${actionLabel(action)}” ← ${_sensorLabel(getSensorBinding(action.id))}`);
+      } else setMappingStatus('Nothing moved far enough — move the sensor through at least 10° and press Done');
+    } else {
+      startSensorLearn();
+      learn.dataset.on = '1'; learn.textContent = 'Done';
+      setMappingStatus(`Move the sensor through the range that should drive “${actionLabel(action)}”, then press Done…`);
+    }
+  });
+  const remove = _el('button', 'set-btn set-btn--sm set-btn--danger', 'Remove');
+  remove.addEventListener('click', () => { stopSensorLearn(); clearSensorBinding(action.id); _closeScaleMenu(); renderMappingTable(); });
+  acts.appendChild(learn); acts.appendChild(remove);
+  menu.appendChild(acts);
+
+  function sync() {
+    const cur = getSensorBinding(action.id);
+    if (!cur) return;
+    from.input.value = fmtNumber(cur.inLo);
+    to.input.value   = fmtNumber(cur.inHi);
+    fold.checked     = !!cur.fold;
+    if (range) {
+      lo.input.value = fmtNumber(fromNorm(range, cur.outLo ?? 0), !!range.int);
+      hi.input.value = fmtNumber(fromNorm(range, cur.outHi ?? 1), !!range.int);
+    }
+    gamma.input.value = fmtNumber((cur.curve ?? 1) * base);
+    btn.textContent = _sensorLabel(cur);
+  }
+  gamma.input.addEventListener('dblclick', () => {
+    set({ curve: undefined, outLo: undefined, outHi: undefined });
+  });
+
+  // The live reading, while the menu is on the page.
+  const tick = () => {
+    if (!menu.isConnected) { stopSensorLearn(); return; }
+    const cur = getSensorBinding(action.id);
+    const v = cur ? readSensorAxis(cur.sensor, cur.axis, cur.fold) : null;
+    const t = cur ? inputFraction(cur, v) : null;
+    reading.textContent = v == null ? 'not sending' : `${fmtNumber(v)}° · ${Math.round(t * 100)}%`;
+    requestAnimationFrame(tick);
+  };
+
+  sync();
+  cell.appendChild(menu);
+  _openScaleMenu = menu;
+  requestAnimationFrame(tick);
+}
+
 /** An action's label as it reads TODAY: a palette row says what sits at its
  *  position (tiles.js `S._paletteRow`), everything else is its static label. */
 function actionLabel(action) { return action ? (action.row?.()?.label ?? action.label) : ''; }
@@ -2304,6 +2473,7 @@ function renderMappingTable() {
     const midiMap        = midiMappings[action.id];
     const keyMap         = keyMappings[action.id];
     const btnMap         = buttonMappings[action.id];
+    const sensorMap      = action.type === 'cc' ? getSensorBinding(action.id) : null;
     const isMidiLearning = midiLearningId   === action.id;
     const isKeyLearning  = keyLearningId    === action.id;
     const isBtnLearning  = buttonLearningId === action.id;
@@ -2320,7 +2490,7 @@ function renderMappingTable() {
     // performer designs the palette's bindings, so every verb of every
     // position is on it (Ek, 2026-09-11: "all tools should have a activate
     // (toggle) and activate (momentary)" — the bound-only view hid them).
-    row.dataset.bound = (live || keyMap || btnMap || midiMap || factoryKeyLive
+    row.dataset.bound = (live || keyMap || btnMap || midiMap || sensorMap || factoryKeyLive
       || isMidiLearning || isKeyLearning || isBtnLearning) ? '1' : '0';
 
     // Everything the filter box searches — built from the same values the cells
@@ -2335,6 +2505,7 @@ function renderMappingTable() {
       btnMap  ? `button ${buttonMappingLabel(btnMap)}` : '',
       midiMap ? `${midiMap.type} ${midiMap.number} ch${midiMap.channel}` : 'unassigned',
       isScaled(midiMap) ? 'scaled curved' : '',
+      sensorMap ? `sensor ${_sensorLabel(sensorMap)}` : '',
       action.osc || '', action.fmt || '',
     ].join(' ').toLowerCase();
 
@@ -2372,6 +2543,43 @@ function renderMappingTable() {
     if (sub) nameCell.appendChild(_el('span', 'set-table-sub', sub));
     row.appendChild(nameCell);
 
+    if (action.type === 'cc') {
+      // ── Sensor — a cc row's Key and Button, spanned ──────────────────────
+      // A sensor axis is a knob (sensor-bindings.js), so only a row with travel
+      // takes one — and a row with travel can never take a key or a button, so
+      // the sensor sits in their two columns rather than a sixth of its own
+      // (the head reads `Keyboard · Sensor`; settings-gui.css says why).
+      const sensorCell = _el('div', 'bind-cell bind-cell--span');
+      if (na) sensorCell.appendChild(_el('span', 'bind-blank'));
+      else {
+        const sn = _bindBtn(sensorMap ? _sensorLabel(sensorMap) : '—', {
+          empty: !sensorMap,
+          title: sensorMap ? `${_sensorLabel(sensorMap)} — click to shape · right-click to clear`
+                           : 'click to drive this with a sensor axis',
+        });
+        sn.addEventListener('click', e => {
+          e.stopPropagation();
+          if (_openScaleMenu && sensorCell.contains(_openScaleMenu)) { _closeScaleMenu(); return; }
+          if (!getSensorBinding(action.id)) {
+            // A new binding starts on the sensor that holds the cursor, reading
+            // elevation across ±45° — the common case, and a live one at once.
+            setSensorBinding(action.id, { sensor: cursorSensorName() ?? sensorNames()[0] ?? '', axis: 'elevation', inLo: -45, inHi: 45, fold: false });
+            sn.classList.remove('bind-btn--empty');
+            sn.textContent = _sensorLabel(getSensorBinding(action.id));
+            sn.closest('.set-table-row').dataset.bound = '1';
+          }
+          _openSensor(sensorCell, sn, action);
+        });
+        sn.addEventListener('contextmenu', e => {
+          e.preventDefault();
+          if (!getSensorBinding(action.id)) return;
+          clearSensorBinding(action.id);
+          renderMappingTable();
+        });
+        sensorCell.appendChild(sn);
+      }
+      row.appendChild(sensorCell);
+    } else {
     // ── Key ────────────────────────────────────────────────────────────────
     const canKeyLearn = !na && (action.type === 'trigger' || action.type === 'hold' || action.type === 'toggle');
     const keyCell = _el('div', 'bind-cell');
@@ -2466,6 +2674,7 @@ function renderMappingTable() {
       btnCell.appendChild(_el('span', 'bind-blank'));
     }
     row.appendChild(btnCell);
+    }
 
     // ── MIDI ───────────────────────────────────────────────────────────────
     const midiCell = _el('div', 'bind-cell');
@@ -2516,6 +2725,7 @@ function renderMappingTable() {
     }
     row.appendChild(scaleCell);
 
+
     body.appendChild(row);
   }
 
@@ -2553,7 +2763,7 @@ export function setupMappingModal() {
   // key overrides, MIDI assignments, and the instrument's buttons back to
   // their factory plays. Right-click a cell to clear one.
   document.getElementById('keysClearAll')?.addEventListener('click', () => {
-    if (!window.confirm('Clear all bindings?\n\nEvery key override and MIDI assignment goes; the instrument\'s buttons go back to the three plays. Right-click a cell to clear just one.')) return;
+    if (!window.confirm('Clear all bindings?\n\nEvery key override, MIDI assignment and sensor goes; the instrument\'s buttons go back to the three plays. Right-click a cell to clear just one.')) return;
     // Cleared IN PLACE: events.js and tiles.js hold `S._keyMappings`, the
     // same object — a fresh `{}` here left them reading the old map, so the
     // factory digits stayed dead until a reload (found 2026-09-06).
@@ -2561,6 +2771,7 @@ export function setupMappingModal() {
     for (const k of Object.keys(midiMappings)) delete midiMappings[k]; saveMidiMappings();
     for (const k of Object.keys(buttonMappings)) delete buttonMappings[k];
     Object.assign(buttonMappings, BUTTON_DEFAULTS); saveButtonMappings();
+    clearAllSensorBindings();
     renderMappingTable();
     setMappingStatus('All key overrides and MIDI assignments cleared; the buttons are back to the factory set');
   });

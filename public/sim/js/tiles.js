@@ -700,7 +700,6 @@ const HAND_POS = -1;          // `_held.i` while the hand plays — no position
 // you were building without placing it, 2026-09-21 to 09-24; the editor
 // writes the slot since 09-22, so the spacebar plays what you select, and `A`
 // is AUDITION's key now.) The spacebar stays the palette's, always.
-const LS_BENCH = 'mubone_bench';
 // ── THE EDITOR SHOWS ONE INSTRUMENT (Ek, 2026-09-22) ──────────────────────
 // "i'm trying too hard to make global settings work for the whole rail. when
 // really it's a TAPE instrument, and GRAIN instrument and a SAMPLER." So the
@@ -786,9 +785,7 @@ function _selKind(id) { return isActTile(id) ? 'act' : isLensTile(id) ? 'lens' :
 // follow you to grain, or the "grain loads momentary" rule would last exactly
 // until the first right-click on a tape shape. Not persisted — it is what you
 // flipped this session, and the default is what you get on load.
-// The bench's stored tool goes with it — one shot, so a rig does not carry a
-// key nothing reads.
-try { localStorage.removeItem(LS_BENCH); } catch (_) {}
+// (The bench's stored tool, `mubone_bench`, is a retired key — storage-registry.js.)
 // THE HAND IS TWO TOOLS, one per press kind (Ek, 2026-09-22: "when i drag the
 // tile in tool creator to the hand tile it fills in both of them, should just
 // fill in the one"). `press` is the first tile — the one a tap latches — and
@@ -881,10 +878,11 @@ export function heldDebug() { return _held ? { i: _held.i, id: _held.id, latched
 export function pickHand(id, which = 'press') {
   const t = tileById(id);
   if (!t || t.ghost || !isToolTile(id)) return false;
-  inHand[_side(which)] = { id };
+  // The verb is the SIDE's, not the tool's, so it stays through a pick;
+  // `handVerb` falls back to the default when the new tool does not allow it.
+  const verb = inHand[_side(which)]?.verb;
+  inHand[_side(which)] = verb ? { id, verb } : { id };
   _saveHand();
-  // The verb no longer comes with the tool, because the hand has no verb: both
-  // ways of pressing are live at once (see handTileHTML).
   pickTile(id);
   return true;
 }
@@ -1263,7 +1261,7 @@ function _releaseHeld() {
 }
 
 // The funnel's edge, both ways. A play whose gesture ended elsewhere — the
-// trace mode changed under it, handsfree disarmed, the eraser's long press
+// trace mode changed under it, the eraser's long press
 // erased all — empties the hand here rather than staying lit.
 S._gestureChanged = () => {
   if (_held && !S._gestureActive?.()) _releaseHeld();
@@ -1282,8 +1280,17 @@ function handDown(which = 'press', momentary = false) {
   // A second press ends a latched play — the tap's own off switch.
   if (_held) { if (_held.latched && _held.i === HAND_POS) slotEnd(HAND_POS); return; }
   _playDown(HAND_POS, id, momentary);
+  // WHICH SIDE is playing, stated. The tiles lit by `latched` until each side
+  // got its own verb (2026-09-22): a toggle on the long side latched, so a
+  // held grain lit the TAPE tile (Ek, 2026-09-25).
+  if (_held && _held.i === HAND_POS) { _held.side = _side(which); _lightHeld(); }
 }
-function handUp() { slotUp(HAND_POS); }
+/** The up edge. With a side named, only that side's play lets go — a long
+ *  key coming up must not end the press side's momentary it switched to. */
+function handUp(which) {
+  if (which && _held && _held.i === HAND_POS && _held.side !== _side(which)) return;
+  slotUp(HAND_POS);
+}
 
 // THE RECOGNISER DECIDES, not this file (2026-09-22). `handUp` used to compare
 // the release against `HAND_TAP_MS` and promote a short press to a latch — a
@@ -1302,28 +1309,63 @@ function handUp() { slotUp(HAND_POS); }
 // …AND THE SIDE'S VERB DECIDES WHAT IT DOES WITH THAT (2026-09-22). `momentary`
 // is passed straight to `_playDown`; `toggle` latches, and `slotUp` already
 // refuses to end a latched play, so a release needs no special case either way.
+// THE TWO HANDS' KEYS, ONE RULE (Ek, 2026-09-25: "it's not consistent if how /
+// if it cuts the other off"): a side's own key STOPS its own play; the OTHER
+// side's key SWITCHES — the running play ends, keeping what it made, and this
+// side's tool starts. Before, a press stopped whatever was latched and a long
+// always switched, so Q-grain was cut off by the spacebar but tape was
+// switched away from by Q.
+//
+// ONE HOLD ON ONE KEY is the spacebar's press and then its long. When the press
+// SWITCHED away from the long side, the long that follows in the same hold
+// means "off": the recogniser calls `_handPressAbort` exactly then, the take
+// the press started is thrown away, and the long starts nothing.
+let _pressPlay = null;     // the play this press started, for its abort
+let _pressStopped = null;  // the side this press ended
+let _longIsOff = false;    // set by the abort, read by the long in the same tick
 S._handPress = () => {
-  // A press while something is latched is its off switch, whichever side
-  // latched it.
-  if (_held && _held.latched && _held.i === HAND_POS) { slotEnd(HAND_POS); return; }
+  _pressPlay = null; _pressStopped = null;
+  if (_held && _held.i === HAND_POS) {
+    const side = _held.side;
+    if (side !== 'long') { if (_held.latched) { slotEnd(HAND_POS); _pressStopped = 'press'; } return; }
+    slotEnd(HAND_POS); _pressStopped = 'long';   // the other side: switch
+    if (_held) return;                           // it would not let go
+  }
   const mom = handVerb('press') === 'momentary';
   handDown('press', mom);
   // The recogniser says whether the GESTURE latched; a momentary verb overrides
   // it, because the question the verb answers is the later one.
   if (!mom && _held && _held.i === HAND_POS) { _held.latched = !!S._gestureLatched?.(); refreshPlayingState(); }
+  if (_held && _held.i === HAND_POS) _pressPlay = _held;
+};
+/** midi.js `_abortPress` for `hand_press`: a long, ×2 or ×3 on the same key
+ *  has fired this hold. What the press STARTED is thrown away; what it ended
+ *  stays ended and keeps its pins — the history discard a palette press gets
+ *  would have taken back a loop the press had just closed. */
+S._handPressAbort = () => {
+  const play = _pressPlay; _pressPlay = null;
+  _longIsOff = _pressStopped === 'long'; _pressStopped = null;
+  queueMicrotask(() => { _longIsOff = false; });   // only the gesture firing now may read it
+  if (!play || _held !== play) return;
+  S._gestureAbort?.();
+  slotEnd(HAND_POS);                               // the take is gone; let go of the play
 };
 S._handLong = down => {
-  if (!down) { handUp(); return; }
-  // The press's play is still running when the long fires — `_abortPress` has
-  // thrown its TAKE away, and this lets go of the play itself. Without it
-  // `handDown` saw a hand already busy, ended that play and returned, and the
-  // long tool never started: a hold that only stopped things.
-  if (_held && _held.i === HAND_POS) slotEnd(HAND_POS);
+  if (!down) { handUp('long'); return; }
+  if (_longIsOff) { _longIsOff = false; return; }
+  if (_held && _held.i === HAND_POS) {
+    // Its own latch: off. (A momentary of its own cannot be down twice.)
+    if (_held.side === 'long') { if (_held.latched) slotEnd(HAND_POS); return; }
+    slotEnd(HAND_POS);                             // the other side: switch
+    if (_held) return;
+  }
   const tog = handVerb('long') === 'toggle';
   handDown('long', !tog);
   if (tog && _held && _held.i === HAND_POS) { _held.latched = true; refreshPlayingState(); }
 };
 S._handUp   = handUp;
+S._handVerb = handVerb;   // midi.js: the hand rows' type follows their side's verb
+S._handToolOf = which => { const id = handTool(which); return id ? (tileDef(id)?.label ?? id) : null; };   // …and their label names the tool
 // THE PHONE'S TOUCH (js/mobile.js): a finger on the sphere plays the hand for
 // as long as it is down — no recogniser, no latch. `S._handDown` went missing
 // when the spacebar moved onto the recogniser (2026-09-22) and the phone had
@@ -1403,13 +1445,12 @@ function _lightHeld() {
   document.querySelector(`#paletteDock .tile[data-pos="${_held.i}"]`)?.classList.add('playing');
   document.querySelector(`#toolRail [data-tile="${_held.id}"]`)?.classList.add('playing');
   if (_held.i === HAND_POS) {
-    // BOTH, every time: a press starts as a hold and becomes a tap when it is
-    // released early, so the tile that was lit a moment ago has to be put out.
-    // An add-only sync left both hand tiles lit after every tap — seen the first
-    // time this ran in the app.
-    const litId = _held.latched ? 'handKey' : 'handKeyHold';
-    document.getElementById(litId)?.classList.add('playing');
-    document.getElementById(_held.latched ? 'handKeyHold' : 'handKey')?.classList.remove('playing');
+    // BOTH, every time: a long takes over from the press it swallowed, so the
+    // tile that was lit a moment ago has to be put out. An add-only sync left
+    // both hand tiles lit after every tap — seen the first time this ran.
+    const long = _held.side === 'long';
+    document.getElementById(long ? 'handKeyHold' : 'handKey')?.classList.add('playing');
+    document.getElementById(long ? 'handKey' : 'handKeyHold')?.classList.remove('playing');
   }
   // The bench sounds through its own position, so its button lights like the
   // hand tile does — otherwise an audition runs with nothing on screen saying so.
@@ -1436,82 +1477,22 @@ const lensTileTitle = (label, verb) => `${label} · ${verb === 'momentary' ? 'on
 // then tagged with the pressed layer's id, which is all "filing into a
 // layer" means (#207).
 //
-// ── 1+Q: the growing loop ──────────────────────────────────────────────────
-// Pressing a layer key WHILE PAINTING A LINE is the looper-pedal gesture
-// (BRUSH-MODEL § 3c v3b): the stroke-so-far starts looping immediately and
-// keeps growing with the stroke. The #209 worklet carries the DSP (the wrap
-// rule, the seam crossfade — see its header); this wiring adds the two ends:
-//   press — the main-thread recording [0, now) is PRELOADED into the worklet
-//           so the loop covers the stroke from its start (§ 1c), and the
-//           worklet records on from live input;
-//   close — releasing Q freezes growth at the stroke-so-far; the stroke
-//           ending (digit up) HANDS the hold OVER to a normal loop slot
-//           built from the finalized buffer, tagged with the layer, while
-//           the worklet fades out. If Q closed early, the slot's loopEnd is
-//           trimmed to the close point — that wrap lands before the baked
-//           seam crossfade, a small click accepted until buildLoopPayload
-//           learns regions (noted in TODO #216).
-// The armed trigger the stroke also becomes is not a doubling bug: the
-// stroke stays scratch (touch it and it fires), the hold sounds on its own.
-
-let _liveHold = null;   // { ll, strokeId, closedAt } while a pin hold runs
-
-async function _startLiveHold() {
-  const { createLiveLoop } = await import('./live-loop.js');
-  const ll = await createLiveLoop({ minLoopS: 0.5, xfadeS: 0.030 });
-  // Snapshot the stroke-so-far. Copy — recordingRaw is the reusable pool and
-  // the transfer to the worklet must never detach it.
-  const n = S.recordingWritePos | 0;
-  if (n > 0 && S.recordingRaw) ll.preload(new Float32Array(S.recordingRaw.subarray(0, n)));
-  ll.record();
-  ll.loop();
-  _liveHold = { ll, strokeId: S.currentStrokeId, closedAt: null };
-  // The stroke can end from the digit key, but also from a pad, a pedal or
-  // OSC — a position is one act with many bindings. Watch for the end rather
-  // than assuming which gesture delivers it.
-  const watch = setInterval(() => {
-    if (!_liveHold || _liveHold.ll !== ll) { clearInterval(watch); return; }
-    if (!S.isPainting) { clearInterval(watch); _finishLiveHold(); }
-  }, 120);
-}
-
-/** The stroke ended — build the real slot and retire the worklet. Runs a
- *  beat later so stopLiveRecording has finalized the buffer that
- *  createSeqFromStroke reads. */
-function _finishLiveHold() {
-  const h = _liveHold;
-  _liveHold = null;
-  if (!h) return;
-  setTimeout(async () => {
-    try {
-      const UP = await import('./ui-presets.js');
-      const before = S.commitSlots.slice();
-      UP.createSeqFromStroke(h.strokeId);
-      for (let i = 0; i < S.commitSlots.length; i++) {
-        if (S.commitSlots[i] && S.commitSlots[i] !== before[i]) {
-          const slot = S.commitSlots[i];
-          if (h.closedAt != null && h.closedAt > 0.05 && h.closedAt < slot.loopEnd) {
-            slot.loopEnd = h.closedAt;
-          }
-          S._pinsDirty = true;
-          break;
-        }
-      }
-    } finally {
-      // The slot opens with its own declick ramp; overlap the worklet's 3 ms
-      // fade under it rather than gapping.
-      h.ll.stop();
-      setTimeout(() => h.ll.dispose(), 150);
-    }
-  }, 60);
-}
+// ── A PIN DURING A TAPE TAKE IS AN OVERDUB INSIDE THE STROKE (2026-09-25) ──
+// It was the growing loop until today (the `1`+`Q` looper-pedal gesture of
+// BRUSH-MODEL § 3c v3b, js/live-loop.js): the take-so-far looped in a worklet
+// of its own, with no track and no pin until the stroke ended, and a second
+// press fell through to the ordinary pin and pinned the half-recorded take —
+// one phrase, several copies of it, the first not undoable. Now the press CUTS
+// the take (events.js pinSplitTake): the part before is the main loop, the rest
+// an overdub on it, and each further press starts the next layer. Ek: "it
+// should essentially be the same thing [as overdub], a shortcut".
 
 async function pinDown() {
   const UP = await import('./ui-presets.js');
 
-  // Painting a line right now: the growing loop.
-  if (S.isPainting && S._recordingTrigger && !_liveHold) {
-    await _startLiveHold();
+  // Recording a tape take right now: the pin cuts it into a loop and a layer.
+  if (S.isPainting && S._recordingTrigger) {
+    if (S._pinSplitTake?.()) S._pinsDirty = true;
     return;
   }
 
@@ -1579,18 +1560,6 @@ function _sealPinPress() {
 }
 
 async function pinUp() {
-  // The pin key released first — growth freezes at the stroke-so-far. The
-  // whole stroke keeps recording; the handover happens when the stroke ends.
-  if (_liveHold) {
-    if (S.isPainting) {
-      const { getRecordingDuration } = await import('./audio.js');
-      _liveHold.closedAt = getRecordingDuration();
-      _liveHold.ll.close();
-    } else {
-      _finishLiveHold();
-    }
-    return;
-  }
   if (!S._pinPlantPending) { _sealPinPress(); return; }
   S._pinPlantPending = false;
   const UP = await import('./ui-presets.js');
@@ -1615,18 +1584,25 @@ async function unpinSelected() {
 // looper tile playing, the stroke that just armed also becomes a loop slot
 // at once: record, and it repeats. It is a loop, so it joins the loops group
 // by being one — there is nothing to file. The 60 ms beat matches
-// _finishLiveHold: stopLiveRecording must finalize the buffer
+// the seal: stopLiveRecording must finalize the buffer
 // createSeqFromStroke reads. The armed trigger is not a doubling bug — the
 // stroke stays scratch (touch it and it fires), the loop sounds on its own;
 // the same rule as the pin hold.
 // `loop` is the overdub brush SEEDING (Ek, 2026-09-06): with nothing pinned
 // its first take is the main loop — this hook pins it, whatever the tile's
 // own `on end` says — and the next press overdubs onto it.
-S._onTriggerStrokeArmed = (strokeId, { loop = false } = {}) => {
-  if (!S.triggerParams.loopOnEnd && !loop) return;   // the contract, not the tile id (#244)
+// …AND EVERY PINNED CLOUD IS A ZONE (Ek, 2026-09-25): a frozen cursor that
+// pins whatever line touches it (ui-presets.js pinStrokeInZones). On the same
+// beat, after tape's own autopin, so a stroke both pin makes the zone's a
+// second playhead at the touch point — what a cursor standing there would do.
+S._onTriggerStrokeArmed = (strokeId, { loop = false, trigs = [] } = {}) => {
+  const auto = S.triggerParams.loopOnEnd || loop;    // the contract, not the tile id (#244)
+  const zoned = S.commitSlots.some(c => c && c.type === 'cloud');
+  if (!auto && !zoned) return;
   setTimeout(async () => {
     try {
       const UP = await import('./ui-presets.js');
+      if (!auto) { UP.pinStrokeInZones(trigs); return; }
       // The loop starting IS the playback you hear on release — the trigger
       // audition doubling it for one pass reads as a glitch, so it goes.
       const TR = await import('./trigger.js');
@@ -1644,9 +1620,13 @@ S._onTriggerStrokeArmed = (strokeId, { loop = false } = {}) => {
           slot.grainParams.volume = S.triggerParams.volume ?? slot.grainParams.volume;
           slot.passes = S.triggerParams.passes | 0;
           slot.pitch  = S.triggerParams.pitch ?? slot.pitch ?? 0;
+          // A pin's cut (events.js pinSplitTake): the take still recording is
+          // this loop's overdub from here.
+          if (loop) UP.bindPendingOverdub(strokeId, slot);
           break;
         }
       }
+      UP.pinStrokeInZones(trigs);
       S._pinsDirty = true;
     } catch (e) { console.warn('[looper] commit failed:', e); }
   }, 60);
@@ -2086,13 +2066,14 @@ function verbWord(id, verb) {
 S._paletteRow = (n) => {
   const e = palAt(n - 1);
   const k = e && paletteKind(e.id);
-  if (!k) return { pos: n, name: 'empty', verb: '', glyph: null, hue: null, label: 'empty', enabled: false, hidden: false, why: `nothing is at position ${n} — drag a tile there` };
+  if (!k) return { pos: n, name: 'empty', verb: '', glyph: null, hue: null, label: 'empty', enabled: false, hidden: false, why: `nothing is at position ${n}` };
   const { id, verb } = e;
   const name = k === 'tool' ? tileDef(id).label : k === 'lens' ? 'cursor' : ACT_TILES[id].label;
   const glyph = k === 'tool' ? G[tileDef(id).g] : k === 'lens' ? LENS_G : G[ACT_TILES[id].g];
   const hue = k === 'act' ? null : (_engineHueTable()[engineOf(id)] ?? null);
   const w = verbWord(id, verb) ?? '';
-  return { pos: n, name, verb: w, glyph, hue, label: w ? `${name} · ${w}` : name, enabled: true, hidden: false, why: '' };
+  // A verb that repeats the name says nothing twice: `unpin · unpin` is `unpin`.
+  return { pos: n, name, verb: w, glyph, hue, label: w && w !== name ? `${name} · ${w}` : name, enabled: true, hidden: false, why: '' };
 };
 /** The ACTIONS row's `type` for position n, which its verb decides: a
  *  momentary tile is a `hold` and takes both edges, everything else is a
@@ -2103,18 +2084,15 @@ S._paletteType = (n) => verbAt(n - 1) === 'momentary' ? 'hold' : 'trigger';
 /** The keys page's hover for position n — what the wire sends and what it does. */
 S._paletteTip = (n) => {
   const e = palAt(n - 1);
-  if (!e) return `nothing is at position ${n} — drag a tile onto the palette`;
+  if (!e) return `nothing is at position ${n}`;
   const w = verbWord(e.id, e.verb) ?? e.verb;
   return e.verb === 'momentary'
     ? `${w} — 1 starts it, 0 stops it. Position ${n}, whatever sits there`
     : `${w} — a bang. Position ${n}, whatever sits there`;
 };
 
-// "Tool keys fire" and the Main button's toggle/momentary switch were two
-// settings here until 2026-09-09; both became bindings on the keys page, and
-// the main button itself went on 2026-09-11 with arming. Their stored keys go
-// on first load.
-try { localStorage.removeItem('mubone_palette_trigger'); localStorage.removeItem('mubone_gesture_momentary'); } catch (_) {}
+// ("Tool keys fire" and the Main button's toggle/momentary switch were two
+// settings here until 2026-09-09; their keys are retired — storage-registry.js.)
 
 /** ONE binding kind on the strip at a time (PALETTE-GUI § 11.4): the keys
  *  page's segmented row chooses key · button · note; key is the factory. */
@@ -2272,8 +2250,8 @@ function handTileHTML(ENGINE_HUE) {
   // on the strip reads (Ek, 2026-09-22: "if it's just the letter/icon it's
   // press, then you have the word hold after"). The marks are no longer passed
   // in: the binding is the truth and the tile reads it, so a rebind shows.
-  return one('press', handVerb('press'), 'handKey',     held && _held.latched) +
-         one('long',  handVerb('long'),  'handKeyHold', held && !_held.latched);
+  return one('press', handVerb('press'), 'handKey',     held && _held.side !== 'long') +
+         one('long',  handVerb('long'),  'handKeyHold', held && _held.side === 'long');
 }
 
 // ── Render ──────────────────────────────────────────────────────────────────
@@ -2480,17 +2458,26 @@ export function render() {
   // × at all (Ek, 2026-09-24: "don't allow the deleting of factory presets"):
   // the seeded ones are the instrument's floor, so every engine always has a
   // preset and nothing here needs a "last one stays" state.
+  // PRESETS CARRY WEIGHT (Ek, 2026-09-25, from the rails canvas — option B's
+  // list): a 42px row, the instrument's glyph (lit in its hue while the row
+  // is on), the name at the rail's largest row size, and on the right a few
+  // numbers of what the preset DOES, so two presets are told apart before
+  // either is pressed.
   const voiceRow = (vid, engine, hue) => {
     const on = currentVoice(engine) === vid;
     const edited = on && _voiceEdited(vid);
     const factory = !!_voices[vid]?.factory;
     const nm = esc(voiceName(vid));
     const eng = GRP_LABEL_G[engine] ?? engine;
+    const sum = esc(_voiceSummary(vid));
+    const g = INSTR_G[engine] ?? G[tileDef(engine)?.g] ?? '';
     return `<button type="button" class="trow trow--voice trow--own${on && !edited ? ' on' : ''}${edited ? ' edited' : ''}"` +
       ` style="--c:${hue};--eng:${hue}" data-voice="${vid}" aria-pressed="${on && !edited}"` +
-      ` title="${nm} \u00b7 ${factory ? 'factory ' : ''}${eng} preset \u00b7 click to set the ${eng} voice to it` +
+      ` title="${nm} \u00b7 ${factory ? 'factory ' : ''}${eng} preset${sum ? ` (${esc(_voiceSummaryKey(engine))}: ${sum})` : ''} \u00b7 click to set the ${eng} voice to it` +
       `${edited ? ' \u00b7 the voice has moved off it — click to go back' : ''}${factory ? '' : ' \u00b7 double-click to rename'}">` +
+      `<svg class="trow-g" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${g}</svg>` +
       `<span class="tile-nm">${nm}</span>` +
+      (sum ? `<span class="trow-sum">${sum}</span>` : '') +
       (factory ? '' :
       `<span class="trow-del" data-delvoice="${vid}" role="button" tabindex="-1"` +
       ` title="delete this preset — the voice keeps sounding as it is">` +
@@ -2525,8 +2512,11 @@ export function render() {
   // `extra` follows the `+`: the VOICE line carries its engine's door there
   // (2026-09-24) — the sheet is the instrument's, so its door is on the line
   // that names it, not on each preset that moves it.
+  // A CARD'S HEAD (Ek, 2026-09-25 — the rails canvas, F): a section is its own
+  // card and this is the top of it — sentence case, semibold, over a hairline,
+  // with the `+` and the door flush right.
   const secLbl = (t, engine, add, extra = '') =>
-    `<span class="tbx-lbl" style="--eng:var(--eng-none)">${t}` +
+    `<span class="tbx-lbl tbx-lbl--sec" style="--eng:var(--eng-none)"><span class="tbx-lbl-t">${t.charAt(0).toUpperCase() + t.slice(1)}</span>` +
     (add ? `<span class="tbx-add" data-${add}="${engine}" role="button" tabindex="-1"` +
       ` title="new ${SEC_NOUN[t] ?? t.toLowerCase()} — from what is on the sliders now">` +
       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">` +
@@ -2828,15 +2818,21 @@ export function render() {
   // with what you paint, and the eraser and the eye paint nothing.
   const perf = instrModeHTML + perfHTML;
   const panelHTML =
-    (perf ? `<div class="tbx-grp tbx-grp--bare" data-grp="perf" data-half="perf">` + perf + `</div>` : '') +
-    (vIds ? `<div class="tbx-grp" data-grp="${eng}" data-half="voice">` +
+    (perf ? `<div class="tbx-grp tbx-grp--bare" data-grp="perf" data-half="perf">` + perf + `</div>` : '');
+  // THE VOICE IS ITS OWN CARD (Ek, 2026-09-25 — the rails canvas, F: "more
+  // balanced … everything else is too squished"). Under the instrument's card,
+  // titled in its head; the rail's click wiring is on #toolRail, so the rows
+  // work wherever they are drawn.
+  const voiceHTML = vIds ? `<div class="tbx-grp" data-grp="${eng}" data-half="voice">` +
       // THE VOICE LINE (Ek, 2026-09-24): the instrument's sound, one sheet,
       // its door here. What is listed under it are PRESETS of it.
       secLbl('voice', eng, 'addvoice', voiceDoor(eng, hue)) +
       (vIds.length ? `<div class="tbx-tiles">${vIds.map(v => voiceRow(v, eng, hue)).join('')}</div>` : '') +
-      `</div>` : '');
+      `</div>` : '';
 
   bar.innerHTML = panelHTML;
+  const voiceBox = document.getElementById('voicePanel');
+  if (voiceBox) { voiceBox.innerHTML = voiceHTML; voiceBox.hidden = !voiceHTML; }
   // THE DRAWER'S OWN WIRING, pointed at the panel: the cursor rows write through
   // the real cabinet controls exactly as they did on the sheet. No `capId` —
   // these five are `S.triggerParams`, the instrument's, and no tile captures
@@ -2872,11 +2868,13 @@ export function render() {
       const row = perfRow(pid, 'lens'); if (!row) return '';
       // THE GRAIN BLOCK wears the heading VOICE PRESETS wears (Ek, 2026-09-23):
       // what follows answers only for grains, and the heading says so once.
-      const head = pid === 'mode' ? secLbl('grain selection', 'lens') : '';
+      // Since 2026-09-25 (the rails canvas, F) it is its OWN CARD, headed: the
+      // first card closes here and the grain selection's opens.
+      const head = pid === 'mode' ? `</div><div class="rail-card">` + secLbl('grain selection', 'lens') : '';
       const na = lensNA(pid);
       return head + (na ? `<div class="ds-na" title="${esc(na)}">${row}</div>` : row) + (pid === 'radius' ? auRow : '');
     }).join('');
-    curBox.innerHTML = `<div class="tbx-grp tbx-grp--bare" data-grp="perf" data-half="perf">${curHTML}</div>`;
+    curBox.innerHTML = `<div class="tbx-grp tbx-grp--bare" data-grp="perf" data-half="perf"><div class="rail-card">${curHTML}</div></div>`;
     curBox.style.setProperty('--eng', ENGINE_HUE.lens ?? ENGINE_HUE.none);
     _wireOptions(curBox, () => LENS_ID);
     _wireKnobs(curBox, () => LENS_ID);
@@ -2950,10 +2948,15 @@ export function render() {
  *  `render()` and on the list's own scroll; nothing per-frame, because this
  *  thread belongs to the grain scheduler.
  */
+// THE RAIL SCROLLS AS ONE (2026-09-25). The tools list scrolled on its own
+// above a cursor section pinned to the foot, so on a laptop-height window the
+// voice presets sat below the fold behind the cursor. Now the list grows to
+// fill and the RAIL scrolls when the two do not fit: with room, the cursor
+// still sits on the foot; without, you scroll to it and nothing is hidden
+// behind it. The Tools bar stays put (sticky). The mark follows the rail.
 function railScrollMark() {
   const rail = document.getElementById('toolRail');
-  const list = rail?.querySelector('.lyr-list');
-  if (!list) return;
+  if (!rail) return;
   let mark = rail.querySelector('.lyr-scroll');
   if (!mark) {
     mark = document.createElement('div');
@@ -2961,69 +2964,32 @@ function railScrollMark() {
     mark.setAttribute('aria-hidden', 'true');
     mark.appendChild(document.createElement('i'));
     rail.appendChild(mark);
-    list.addEventListener('scroll', railScrollMark, { passive: true });
+    rail.addEventListener('scroll', railScrollMark, { passive: true });
     window.addEventListener('resize', railScrollMark);
   }
-  const over = list.scrollHeight - list.clientHeight;
+  const over = rail.scrollHeight - rail.clientHeight;
   if (over <= 1) { mark.hidden = true; return; }
   mark.hidden = false;
-  const railTop = rail.getBoundingClientRect().top;
-  const box = list.getBoundingClientRect();
-  mark.style.top = `${box.top - railTop}px`;
-  mark.style.height = `${box.height}px`;
+  // Under the sticky bar, over the rest of the visible rail — offset by the
+  // scroll, because the mark is a child of the thing that scrolls.
+  const bar = rail.querySelector(':scope > .lyr-bar')?.offsetHeight ?? 0;
+  const vis = rail.clientHeight - bar;
+  mark.style.top = `${rail.scrollTop + bar}px`;
+  mark.style.height = `${vis}px`;
   // A floor on the thumb, or a long list draws a mark too short to see.
-  const h = Math.max(24, box.height * (list.clientHeight / list.scrollHeight));
+  const h = Math.max(24, vis * (rail.clientHeight / rail.scrollHeight));
   const thumb = mark.firstElementChild;
   thumb.style.height = `${h}px`;
-  thumb.style.transform = `translateY(${(list.scrollTop / over) * (box.height - h)}px)`;
+  thumb.style.transform = `translateY(${(rail.scrollTop / over) * (vis - h)}px)`;
 }
 
-/** The pin actions as ROWS, not chips. The rail has one row model — mark or
- *  label left, keycap or affordance flush right — and the pinned list below
- *  already used it; this cluster was the only thing on this column still laid
- *  out as a wrapping chip group, which is why it fought the rail's width and
- *  why `unpin all` kept being proposed for abbreviation. Stacking costs two
- *  rows of height and buys a fixed rail height and explicit copy.
- *  These carry NO state now the groups are gone (2026-08-30) — the label is
- *  the verb, and the dot is the rail's own mark rather than a group's colour. */
+/** UNPIN ALL's button in the pinned rail's block (2026-09-25) — its glyph, the
+ *  one the act row wore. The rows at the rail's foot are gone: unpin all moved
+ *  up into the block, and the MIX mute became the ALL bus's M (ui-pins.js). */
 export function renderPinChrome() {
-  const wrap = document.getElementById('tcPins');
-  if (!wrap) return;
-  // THE PIN GROUP, in the tool rail's own row model (Ek, 2026-09-12, night:
-  // "a section of the same design as the left rail, but on the right rail,
-  // it's for the pin and unpin tools, and unpin all … consistent with being
-  // able to drag those tools from the right rail into and out of the
-  // palette bar"): a group title, then one .trow per act — glyph, name, and
-  // the key that does the same thing as a cap at the right edge, where a
-  // tool row keeps its drawer button (an act has no drawer). A click FIRES
-  // (an act has no span to hold); a drag places it on the palette. The
-  // glyph is the chrome's grey, not an engine hue: a pin holds any engine's
-  // material. Unpin all is named in full — beside two pin rows "all" could
-  // read as "pin all" (#267) — and turns brick on approach, as every
-  // destructive control does.
-  // No key cap on the row (Ek, night: "remove the keyboard shortcut glyphs
-  // from the pin rows since we see them in the palette, which right now are
-  // mismatched"): the palette tile's legend is where a key is read, and the
-  // fixed = / − caps disagreed with whatever digit the drop had dealt.
-  // PIN AND UNPIN LEFT THE RAIL (Ek, 2026-09-22 night: "remove the pin and
-  // unpin buttons from the pinned rail since they're on the palette bar fixed
-  // now"). The strip is a fixed toolbar with both at positions 3 and 4, so
-  // the rows were a second door onto the same two acts, and the drag that
-  // once justified them ("drag it onto the palette") is gone. What the strip
-  // does NOT hold stays: unpin all, and the mix pair.
-  const row = (id) => { const a = ACT_TILES[id];
-    return `<button type="button" class="trow trow--act${a.danger ? ' trow--danger' : ''}" style="--c:var(--eng-pins);--eng:var(--eng-pins)" data-pin="${id}" data-act="${a.action}"` +
-      ` title="${a.tip} · click to do it">` +
-      `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G[a.g]}</svg>` +
-      `<span class="tile-nm">${a.label}</span>` +
-      // A performance action with a factory key wears its sticker (2026-09-25).
-      (a.action === 'commit_clear' ? `<span class="row-binds" data-binds="commit_clear"></span>` : '') + `</button>`; };
-  wrap.innerHTML =
-    `<div class="tbx-grp" data-grp="pin"><span class="tbx-lbl" style="--eng:var(--eng-pins)">pin</span>` +
-    `<div class="tbx-tiles">${row('unpinall')}</div></div>` +
-    // MIX is its own group: these move what you HEAR and release nothing.
-    `<div class="tbx-grp" data-grp="mix"><span class="tbx-lbl" style="--eng:var(--eng-pins)">mix</span>` +
-    `<div class="tbx-tiles">${row('mute')}</div></div>`;
+  const b = document.getElementById('lyrUnpinAll');
+  const html = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G[ACT_TILES.unpinall.g]}</svg>`;
+  if (b && b.innerHTML !== html) b.innerHTML = html;
 }
 
 /** The pressed look for the pin pair — they have no `playing` state (nothing
@@ -3054,7 +3020,7 @@ function _pinEls(kind, pos) {
   const act = { pin: 'commit_drop', unpin: 'commit_release', unpinall: 'commit_clear',
                 mute: 'pins_mute',
                 sampler: 'source_sampler' }[kind];
-  const rail = document.querySelector(`#tcPins [data-pin="${kind}"]`);
+  const rail = document.querySelector(`#lyrModes [data-pin="${kind}"]`);
   const tiles = pos == null
     ? (act ? [...document.querySelectorAll(`#paletteDock [data-act="${act}"]`)] : [])
     : [...document.querySelectorAll(`#paletteDock .tile[data-pos="${pos}"]`)];
@@ -3079,12 +3045,9 @@ function _pinLit(kind, on, pos) {
   for (const el of _pinEls(kind, pos)) el.classList.toggle('fired', !!on);
 }
 S._pinFlash = _pinFlash;
-// The direct road — a key, a pad, an OSC address bound to `pins_mute` — comes
-// through here so the tile agrees with the engine whichever way it was changed.
-S._pinsMuteLit = (on) => { _pinLit('mute', !!on); };
 // The pin ACTION is the `=` key (Ek, 2026-09-10: "the pin binding is old, it
 // only pins clouds. it should pin the same as the = button"): what the cursor
-// is on decides — a tape stroke becomes a loop, painting grows the loop,
+// is on decides — a tape stroke becomes a loop, a take being recorded is cut into a loop and a layer,
 // nothing in reach is a ghost cloud. midi.js's commit_drop / commit_draw go
 // through here rather than the old commitMode branch. Sequenced, because both
 // halves import lazily and a quick momentary must not release before it lands.
@@ -4007,6 +3970,29 @@ export function voicesOf(engine) {
   return Object.keys(_voices).filter(id => _voices[id]?.engine === engine);
 }
 export function voiceName(id) { return _voices[id]?.name ?? ''; }
+/** A preset's few numbers, for its rail row: tape is how it plays the take —
+ *  reversed or not, speed, pitch in semitones; grain is its grain — duration
+ *  and period. Read from the STORED block through the numbox's own display
+ *  (S._sliderDisplay), never a second copy of the log curves. */
+function _voiceSummary(vid) {
+  const v = _voices[vid]; if (!v?.params) return '';
+  const p = v.params;
+  if (v.engine === 'tape') {
+    const sp = +p.tspeed, ct = +p.tpitch;
+    const st = Number.isFinite(ct) ? Math.round(ct / 10) / 10 : 0;
+    return [p.treverse === 'on' ? 'reverse' : null,
+            Number.isFinite(sp) ? `${+sp.toFixed(2)}\u00d7` : null,
+            `${st > 0 ? '+' : st < 0 ? '\u2212' : ''}${Math.abs(st)} st`].filter(Boolean).join(' \u00b7 ');
+  }
+  if (v.engine === 'granular') {
+    // The numbox shows two decimals for editing; a summary rounds (22.07ms → 22ms).
+    const tidy = t => t && String(t).replace(/(\d+(?:\.\d+)?)\s*ms/, (_, n) => `${+n >= 10 ? Math.round(+n) : (+n).toFixed(1)}ms`);
+    const d = tidy(S._sliderDisplay?.('gcDurSlider', p.dur)), per = tidy(S._sliderDisplay?.('gcPeriodSlider', p.period));
+    return d && per ? `${d} \u00b7 ${per}` : '';
+  }
+  return '';
+}
+function _voiceSummaryKey(engine) { return engine === 'tape' ? 'direction, speed, pitch' : 'duration, period'; }
 export function isVoiceId(id) { return !!_voices[id]; }
 /** The voice this engine is on, or null. */
 export function currentVoice(engine) {
@@ -4356,8 +4342,10 @@ function applyTileParams(id) {
  *  Procreate's rule: the brush remembers. Debounced; ~25 cheap reads.
  *  `explicitId` lets a surface name its own capture target (the lens dock
  *  captures into the installed lens, whatever the optbar shows). */
-let _capTimer = null;
-
+// One debounce PER TILE: a single shared timer let a capture into one tool
+// cancel a pending capture into another (the live-block poll can edit tape
+// and grain in the same tick).
+const _capTimers = {};
 
 function captureTileParams(explicitId) {
   const id = typeof explicitId === 'string' ? explicitId : sheetTileId();
@@ -4366,8 +4354,8 @@ function captureTileParams(explicitId) {
   // sweeping a param, which never touches a control this capture would see.
   const eng = engineOf(id);
   if (!eng) return;
-  clearTimeout(_capTimer);
-  _capTimer = setTimeout(() => {
+  clearTimeout(_capTimers[id]);
+  _capTimers[id] = setTimeout(() => {
     const params = {};
     for (const pid of _sheetPids(id)) {
       const v = _readParam(pid);
@@ -4450,7 +4438,23 @@ function _birthFactoryBlocks() {
 // it. `_pollQuietUntil` covers the window right after applyTileParams writes
 // a tile's own values back into the live block: that is not an edit.
 let _pollLast = null, _pollQuietUntil = 0;
+// THE REST OF EACH TOOL'S SHEET (2026-09-25). The grain block below is only
+// the SOUND half of the grain sheet; the tape sheet, and grain's rate and
+// width, were never compared, so a pot, OSC or a sensor moving tape speed was
+// never saved into the tape tool and a reload or a voice recall put it back.
+// Each tool's sheet is read as the capture would read it, and a change is an
+// edit of that tool.
+const _sheetSig = { tape: null, granular: null };
+function _pollSheets(quiet) {
+  for (const id of ['tape', 'granular']) {
+    const sig = _sheetPids(id).map(_readParam).join('|');
+    const was = _sheetSig[id];
+    _sheetSig[id] = sig;
+    if (!quiet && was != null && sig !== was) captureTileParams(id);
+  }
+}
 function _pollLiveBlock() {
+  _pollSheets(performance.now() < _pollQuietUntil);
   const p = resolveGrainParams();
   if (performance.now() < _pollQuietUntil || !_pollLast) { _pollLast = p; return; }
   let same = true;
@@ -6362,22 +6366,10 @@ function deleteTile(id) {
 
 // ── Init ────────────────────────────────────────────────────────────────────
 
-/** THE RAIL TITLES WEAR THEIR GLYPHS (Ek, 2026-09-23): TOOLS its own mark,
- *  CURSOR the lens's reach rings — the same mark the cursor tile wears —
- *  PINNED the pin. Drawn from here so each is the one copy of its mark. */
-function _titleGlyphs() {
-  const put = (sel, g) => {
-    const t = document.querySelector(sel);
-    if (!t || t.querySelector('.lyr-title-g')) return;
-    t.insertAdjacentHTML('afterbegin', `<svg class="lyr-title-g" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${g}</svg>`);
-  };
-  put('#toolRail > .lyr-bar .lyr-title', G.tools);
-  put('#cursorSec .lyr-title', LENS_G);
-  put('#tcRail > .lyr-bar .lyr-title', G.pin);
-}
+// (The rail titles wore glyphs from 2026-09-23 — `_titleGlyphs` — until the
+// rails canvas's F, 2026-09-25: a large word alone, Tools · Cursor · Pinned.)
 
 export function initTiles() {
-  _titleGlyphs();
   const bar = document.getElementById('tileBar');
   if (!bar) return;
   _birthFactoryBlocks();
@@ -6477,14 +6469,9 @@ export function initTiles() {
   // (The 2026-09-03 three-slot one-shot went with the composable strip: it
   //  rebuilt an ORDER, and there is no order to rebuild.)
   _loadPalette();
-  try {
-    // `mubone_tiles_presets` joins the swept keys (2026-09-22): it stamped a
-    // one-shot that handed `spray` and `index` their factory numbers, and both
-    // tiles went with the shape-preset sunset hours later. Swept rather than
-    // left standing, so a key nothing writes cannot outlive what it stamped.
-    for (const k of ['mubone_slots', 'mubone_cycle_off', 'mubone_belt', 'mubone_brush_slot',
-                     'mubone_erase_slot', 'mubone_tiles_presets']) localStorage.removeItem(k);
-  } catch (_) {}
+  // (The slot, belt, cycle and tiles-presets keys this used to sweep are
+  // retired keys now — storage-registry.js purges them at boot, the one
+  // mechanism for a key nothing reads.)
   _sanitizePalette(); _savePalette();
   try { localStorage.setItem(LS_PALETTE_VERBS, PALETTE_VERBS_V); } catch (_) {}
   // What the DRAWER opens on, before the first render, which reads it. It was
@@ -6516,7 +6503,10 @@ export function initTiles() {
       if (!v) return null;
       const raw = typeof v === 'string' ? v : v.id;
       const id = ok(_DROPPED_TILES[raw] ?? migrateTileId(raw));
-      return id ? { id } : null;   // a stored `voice` is dropped: the preset is the engine's now
+      // A stored `voice` is dropped: the preset is the engine's now. The VERB
+      // stays — it is the side's (setHandVerb), and dropping it here reset a
+      // toggled grain hand to momentary on every launch (2026-09-25).
+      return id ? (typeof v === 'object' && v.verb ? { id, verb: v.verb } : { id }) : null;
     };
     inHand = stored ? { press: side(stored.press), long: side(stored.long) }
                     : { press: side(h), long: side(h) };
@@ -6703,34 +6693,17 @@ export function initTiles() {
     if (_downHandMouse) { _downHandMouse = false; S._dispatchGesture?.('mouse:0', false); }
   });
 
-  // The act rows are not tools, so they get their own handler. (Pin and unpin
-  // left the rail on 2026-09-22 night for the fixed strip; what is left is
-  // unpin all and the mix pair, so nothing here pins any more.)
-  const onPinClick = e => {
-    const b = e.target.closest('[data-pin]');
-    if (!b) return;
-    const kind = b.dataset.pin;
-    // A SUSTAINED CONTROL LIGHTS; ONLY A BANG FLASHES (2026-09-15). `_pinFlash`
-    // fired here unconditionally, before the routing below, and it ends with a
-    // 180 ms timeout that removes `.fired` from the very elements `_pinLit` had
-    // just lit — so mute engaged and then went dark, and on the release press
-    // `_pinLit(false)` beat the timeout and no flash showed at all. That is the
-    // reported "it only flashes every two clicks": press 1 a flash and silence
-    // the light does not admit to, press 2 nothing at all. The palette path six
-    // hundred lines up already states the rule and already obeys it, which is
-    // why the tile worked and the row did not. So flash the bangs only.
-    if (kind !== 'mute') _pinFlash(kind);
-    if (kind === 'unpinall') { document.getElementById('commitClearBtn')?.click(); return; }
-    // A click on the rail row is the toggle too — it is the same control, so it
-    // reads and writes the same derived state the tile does.
-    if (kind === 'mute') { S._pinsSetAllMuted?.(!muteOn()); _pinLit('mute', muteOn()); }
-  };
+  // UNPIN ALL's button in the pinned rail's block: a bang, so it flashes, and it
+  // goes through the cabinet button every other door uses.
+  document.getElementById('lyrUnpinAll')?.addEventListener('click', () => {
+    _pinFlash('unpinall');
+    document.getElementById('commitClearBtn')?.click();
+  });
   // The palette floats OVER the canvas, whose mousedown starts a trace. The dock
   // is pointer-transparent so the gaps still paint; a tile must swallow its
   // own press so clicking one never lays a mark under it.
   const paletteDock = document.getElementById('paletteDock');
   const toolRail = document.getElementById('toolRail');
-  document.getElementById('tcPins')?.addEventListener('click', onPinClick);
   // Both rails float OVER the canvas, whose mousedown starts a trace, so
   // every press inside them is swallowed — not just presses on a control.
   for (const el of [toolRail, document.getElementById('propRail')]) {

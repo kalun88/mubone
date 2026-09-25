@@ -601,11 +601,12 @@ export function armTrigger(strokeId, { plain = false, loop = false } = {}) {
 
   if (first) {
     S._syncTriggerUI?.();
-    window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'commit' } }));
     // The looper tile listens here (#237) — a stroke that just armed can also
     // become a loop slot at once. Fired on the arm edge, whatever gesture
     // ended the stroke.
-    if (!plain) S._onTriggerStrokeArmed?.(strokeId, { loop });
+    // `trigs` is every gate this arm made — one per slice — for the pinned
+    // zones, which pin a slice the way the cursor would: the one it is on.
+    if (!plain) S._onTriggerStrokeArmed?.(strokeId, { loop, trigs: S.triggers.filter(t => ids.includes(t.strokeId)) });
   }
   return first;
 }
@@ -1016,6 +1017,49 @@ function _pSeg2(px, py, pz, ax, ay, az, bx, by, bz) {
   return dx * dx + dy * dy + dz * dz;
 }
 
+// The distance from a point to a stroke's LINE — its marks and the drawn
+// segments between path-adjacent ones — as chord², with the nearest mark left in
+// `_nlIdx`. The gate's own measure, shared with the pinned zones below so a
+// frozen cursor and the live one agree on what "on the line" means.
+let _nlIdx = 0;
+function _nearestOnLine(ps, rx, ry, rz, segGapS) {
+  let bestD2 = Infinity, bestIdx = 0;
+  let segPrev = null, prevPd2 = Infinity;
+  for (let pi = 0; pi < ps.length; pi++) {
+    const p = ps[pi];
+    const dxp = p._cx - rx, dyp = p._cy - ry, dzp = p._cz - rz;
+    const pd2 = dxp * dxp + dyp * dyp + dzp * dzp;
+    if (pd2 < bestD2) { bestD2 = pd2; bestIdx = pi; }
+    if (segPrev && !segPrev._gapAfter &&
+        _ordT(p) - _ordT(segPrev) <= segGapS) {
+      const sdx = p._cx - segPrev._cx, sdy = p._cy - segPrev._cy, sdz = p._cz - segPrev._cz;
+      if (sdx * sdx + sdy * sdy + sdz * sdz < 0.36) {   // cap ≈ 35°
+        const d2 = _pSeg2(rx, ry, rz, segPrev._cx, segPrev._cy, segPrev._cz,
+                          p._cx, p._cy, p._cz);
+        if (d2 < bestD2) { bestD2 = d2; bestIdx = pd2 <= prevPd2 ? pi : pi - 1; }
+      }
+    }
+    segPrev = p; prevPd2 = pd2;
+  }
+  _nlIdx = bestIdx;
+  return bestD2;
+}
+
+/** A PINNED ZONE IS A FROZEN CURSOR (Ek, 2026-09-25): does this trigger's line
+ *  touch the circle of `radDeg` round (lon, lat), and at which mark? The index
+ *  of the mark the cursor would anchor on if it stood there, or -1. Any part of
+ *  the line counts — a stroke painted from outside that grazes the zone is in. */
+export function lineTouchIndex(t, lon, lat, radDeg) {
+  const ps = t?.particles;
+  if (!ps?.length) return -1;
+  for (const p of ps) if (p._cx === undefined) stampCartesian(p);
+  const cl = Math.cos(lat);
+  const segGapS = Math.max(0.25, 4 * ((S.paintTicker?.intervalMs ?? 50) / 1000));
+  const d2 = _nearestOnLine(ps, cl * Math.sin(lon), Math.sin(lat), cl * Math.cos(lon), segGapS);
+  const chord2 = Math.pow(2 * Math.sin(radDeg * DEG2RAD / 2), 2);
+  return d2 < chord2 ? _nlIdx : -1;
+}
+
 // ── The stroke gates (2026-09-18, js/walker.js) ─────────────────────────────
 // Under the grain shape's `on touch: walk` every GRAIN stroke gets a gate of
 // its own: the same shell and the same geometry as a tape trigger — bounding
@@ -1229,25 +1273,9 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
     //    marks read as outside and the line "sometimes didn't fire". A pair
     //    carries a segment under the ribbon's own bridge threshold, never
     //    across an erase hole (`_gapAfter`).
-    let bestD2 = Infinity, bestIdx = 0;
-    const ps = t.particles;
-    let segPrev = null, prevPd2 = Infinity;
-    for (let pi = 0; pi < ps.length; pi++) {
-      const p = ps[pi];
-      const dxp = p._cx - rx, dyp = p._cy - ry, dzp = p._cz - rz;
-      const pd2 = dxp * dxp + dyp * dyp + dzp * dzp;
-      if (pd2 < bestD2) { bestD2 = pd2; bestIdx = pi; }
-      if (segPrev && !segPrev._gapAfter &&
-          _ordT(p) - _ordT(segPrev) <= segGapS) {
-        const sdx = p._cx - segPrev._cx, sdy = p._cy - segPrev._cy, sdz = p._cz - segPrev._cz;
-        if (sdx * sdx + sdy * sdy + sdz * sdz < 0.36) {   // cap ≈ 35°
-          const d2 = _pSeg2(rx, ry, rz, segPrev._cx, segPrev._cy, segPrev._cz,
-                            p._cx, p._cy, p._cz);
-          if (d2 < bestD2) { bestD2 = d2; bestIdx = pd2 <= prevPd2 ? pi : pi - 1; }
-        }
-      }
-      segPrev = p; prevPd2 = pd2;
-    }
+    const ps = t.particles;   // the swept crossing below reads it too
+    const bestD2 = _nearestOnLine(ps, rx, ry, rz, segGapS);
+    const bestIdx = _nlIdx;
     t._nearestIdx = bestIdx;
     t._nearestDot = 1 - bestD2 / 2;   // chord² → dot, for anything reading it
 

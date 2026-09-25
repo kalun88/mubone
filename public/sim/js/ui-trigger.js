@@ -54,6 +54,17 @@ export function initTriggerUI() {
     if (chopSeg) chopSeg.querySelectorAll('[data-chopon]').forEach(b =>
       b.classList.toggle('active', (b.dataset.chopon === 'on') === !!td().sliceOn));
 
+    // The two dials follow the STATE. A pot, OSC or a sensor writes
+    // S.triggerParams and calls this; the sliders were only ever written by
+    // their own drag, so the rail (which reads them) and the tape tool's
+    // capture both kept the old value (2026-09-25).
+    for (const [slId, nbId, key, fmt] of [['trigSpeedSlider', 'trigSpeedNum', 'speed', mul], ['trigVolumeSlider', 'trigVolumeNum', 'volume', pct]]) {
+      const sl = document.getElementById(slId), nb = document.getElementById(nbId);
+      const v = td()[key];
+      if (sl && document.activeElement !== sl && Number.isFinite(v)) sl.value = v;
+      if (nb && Number.isFinite(v)) nb.value = fmt(v);
+    }
+
     // The hint carries the count — a separate number beside it would be the
     // same fact twice, in a panel that is mostly parameters already.
     // Count only — the record button above already says how to make one, and

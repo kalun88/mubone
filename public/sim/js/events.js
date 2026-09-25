@@ -8,14 +8,12 @@ import {
   MASTER_DEFAULT_GAIN, MAX_SAMPLES,
 } from './state.js';
 import { ensureAudioContext } from './audio.js';
-import { requestMicAccess, startLiveRecording, stopLiveRecording, stopLiveRecordingHeld, whenSealed } from './audio.js';
+import { requestMicAccess, startLiveRecording, stopLiveRecording, stopLiveRecordingHeld, splitLiveRecording, whenSealed } from './audio.js';
 import * as history from './history.js';
-import { toggleHandsfree } from './handsfree.js';
 import { screenToLonLat } from './sphere.js';
 import { recordStrokeStart, undoLastStroke, redoLastStroke } from './ui-samples.js';
 import {
   toggleNearestMode, plantSeed, startSeedPlant, startSeedPath, finalizeSeedPlant,
-  uprootNearestSeed,
   updatePlaybackControls, flashRadiusTooltip,
 } from './ui-presets.js';
 import { resizeCanvas } from './renderer.js';
@@ -205,7 +203,7 @@ function _commitTraceStroke(strokeId) {
   whenSealed(() => {
     if (overdub) {
       let ov = null;
-      try { ov = S._attachOverdub?.(strokeId, overdub.seq, overdub.ov); } catch (e) { console.warn('[overdub] attach failed:', e); }
+      try { ov = S._attachOverdub?.(strokeId, overdub.seq, overdub.ov, overdub); } catch (e) { console.warn('[overdub] attach failed:', e); }
       // The master went while the take ran: the stroke is an ordinary line
       // now, the same as an overdub whose master is unpinned.
       // Never swallowed (2026-09-23): a take that fails to arm paints deaf, and
@@ -235,8 +233,17 @@ function _commitTraceStroke(strokeId) {
 async function startTriggerRecord() {
   if (S.isPainting) return;
   ensureAudioContext();
-  const gotMic = S.micPermissionGranted ? true : await requestMicAccess();
+  // A gesture that ends while the mic is being asked for must not leave a take
+  // running (2026-09-25, found by pins-audit Z2): the stop arrived first, found
+  // nothing recording, and the start then began a take nothing would ever end.
+  // startPaintStroke has always checked this; a start with no gesture behind
+  // it (the record button, a test) is not held to it.
+  const byGesture = !!S._gestureActive?.();
+  const hasInput = S.micPermissionGranted ||
+                   (window.electronBridge?.isElectron && window._rtAudioInputListening);
+  const gotMic = hasInput ? true : await requestMicAccess();
   if (!gotMic) return;
+  if (byGesture && !S._gestureActive?.()) return;   // released during the prompt
   // Scan is deliberately left alone — see _commitTraceStroke.
   S._recordingTrigger = true;
   startLiveRecording();
@@ -262,8 +269,53 @@ function stopTriggerRecord() {
   _updateLiveRecUI();
   S._syncTriggerRecUI?.();
 }
+/**
+ * THE PIN DURING A TAPE TAKE IS AN OVERDUB INSIDE THE STROKE (Ek, 2026-09-25:
+ * "it should essentially be the same thing, a shortcut if you will, to make
+ * overdubs within one tape stroke"). The take is CUT at the pin, never stopped
+ * (audio.js splitLiveRecording): the part before ends exactly as a release
+ * ends it — through `_commitTraceStroke` — and the recording goes on as a new
+ * stroke that is an overdub take.
+ *
+ *   a plain take   — the part before SEEDS the main loop (the overdub brush's
+ *                    first press, `_overdubSeed`); the rest is a layer on it,
+ *                    pending until that loop is pinned (ui-presets.js
+ *                    pendingOverdub / bindPendingOverdub).
+ *   an overdub     — the layer so far joins its master; the next one starts
+ *                    on the same master (continueOverdub).
+ *
+ * So every piece is an ordinary stroke and an ordinary dub: undo takes them
+ * back one at a time, unpinning hands each back as a line, the heads and the
+ * rail's dots are the overdub's own. Returns false when there is no tape take
+ * to cut (or under a quarter second of it).
+ */
+function pinSplitTake() {
+  if (!S._recordingTrigger || !S.isPainting || !S.isRecording || !(S.currentStrokeId > 0)) return false;
+  const dub = S._overdubTake;
+  // The first part's last mark settles on its own stroke, in its own time.
+  S._settlePaintPending?.();
+  // The layer after a SEED is phased so its first sample is the loop's top:
+  // the phrase goes on past the pin, and nobody was listening to a loop yet.
+  // Its `startedAt` is stamped a round trip late because attachOverdub pulls
+  // every take's phase back by one (a dub sung against what was heard).
+  const originS = dub ? null : (S.latency?.roundTripS || 0);
+  const oldSid = S.currentStrokeId;
+  const cut = splitLiveRecording(S.latency?.inS || 0, originS);
+  if (!cut) return false;
+  if (!dub) S._overdubSeed = true;
+  _commitTraceStroke(oldSid);                  // clears the take flags below
+  S._recordingTrigger = true;                  // …and the take goes on
+  recordStrokeStart('live', cut.newIdx);
+  S._overdubTake = dub ? S._continueOverdub?.(dub) : S._pendingOverdub?.(oldSid);
+  S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
+  S._liveInk = null;
+  S._syncTriggerRecUI?.();
+  return true;
+}
+
 S._startTriggerRecord = startTriggerRecord;
 S._stopTriggerRecord  = stopTriggerRecord;
+S._pinSplitTake       = pinSplitTake;
 
 /**
  * A live-source grain stroke — what a position press starts when its tile is
@@ -271,18 +323,10 @@ S._stopTriggerRecord  = stopTriggerRecord;
  * screen and the `recpaint` action each used to carry their own copy, and
  * they disagreed about the mic (space painted without one, the mouse asked
  * and gave up) and about the tap-latch window.
- *
- * Under handsfree (armed, plain trace mode, a TOGGLE-started gesture) the
- * stroke is not recorded here at all: the gate in handsfree.js opens and
- * closes the takes between this start and its stop.
  */
 async function startPaintStroke() {
   if (S.isPainting) return;
   ensureAudioContext();
-  if (S.hfArmed && S.paintLatched && S.traceMode === 'trace' && !S._recordingTrigger) {
-    _updateLiveRecUI(); S._syncHandsfreeUI?.();
-    return;
-  }
   const hasInput = S.micPermissionGranted ||
                    (window.electronBridge?.isElectron && window._rtAudioInputListening);
   const gotMic = hasInput ? true : await requestMicAccess();
@@ -298,21 +342,6 @@ async function startPaintStroke() {
 }
 
 function stopPaintStroke() {
-  // A handsfree take mid-capture is finalised, and counted.
-  if (S.hfRecording) {
-    const wasPainting = S.isPainting;
-    S.isPainting      = false;
-    S.currentStrokeId = -1;
-    if (S.isRecording) stopLiveRecording();
-    S.hfRecording = false;
-    S.hfGateOpen  = false;
-    if (wasPainting) {
-      S.hfCaptureCount++;
-      S.liveColorIndex = (S.liveColorIndex + 1) % LIVE_PAINT_COLORS.length;
-      S._liveInk = null;   // the next stroke inks itself from its own first mark
-    }
-    S._syncHandsfreeUI?.();
-  }
   if (S.isPainting || S.isRecording) {
     S.isPainting = false;
     // Finalize the recording BEFORE the commit so the commit sees
@@ -334,7 +363,6 @@ function stopPaintStroke() {
     S._syncTriggerRecUI?.();
   }
   _updateLiveRecUI();
-  S._syncHandsfreeUI?.();
 }
 S._startPaintStroke = startPaintStroke;
 S._stopPaintStroke  = stopPaintStroke;
@@ -423,9 +451,8 @@ export function setupEvents() {
   // pointer back so the UI is clickable, and freeze the cursor where it was.
   //
   // Sensor mode is excluded, and that gate is load-bearing rather than tidy.
-  // S.altLocked is read by grain.js:693, renderer.js:2154/2170 and
-  // sensor-mapping.js:354 to switch the cursor from the camera-driven
-  // getCursorLonLat() to a FROZEN MOUSE PIXEL. With a sensor driving a tethered
+  // S.altLocked is read by grain.js:693 and renderer.js:2154/2170 to switch the
+  // cursor from the camera-driven getCursorLonLat() to a FROZEN MOUSE PIXEL. With a sensor driving a tethered
   // cursor (S.cursorQ === null) letting it go true teleports the cursor to
   // wherever the mouse was last seen. Ek's own reading of the mode is the same
   // one: "in sensor mode, az and el lock — cursor does nothing, it's already
@@ -486,6 +513,10 @@ export function setupEvents() {
       : `<span class="surface-overlay-main">click to re-enter point mode</span>` +
         `<span class="surface-overlay-hint">tip: use ${altKey} to free the cursor without leaving point mode</span>`;
     wrapper.appendChild(_surfaceOverlay);
+    // The mute overlay stays on top: it lets clicks through to this one, and
+    // under this one's wash its frame and words read half-lit.
+    const mute = document.getElementById('muteOverlay');
+    if (mute) wrapper.appendChild(mute);
     _surfaceOverlay.addEventListener('click', () => {
       // Clicking is equivalent to pressing ⌥ again when cursor-locked, so route
       // through the same unlock — and that now means the AXES, not just the
@@ -685,6 +716,11 @@ export function setupEvents() {
       const src = S._keySourceOf(e);
       if (S._sourceBound?.(src)) {
         e.preventDefault();
+        // A fresh (non-repeat) down on a key we think is still down: its up was
+        // lost — ⌘Z ⌘Z ⌘Z with ⌘ held never sends the Z ups on macOS. Close
+        // the old press first, so this one is a press and not a swallowed repeat.
+        const stale = _downKeySrc.get(e.code);
+        if (stale) { _downKeySrc.delete(e.code); S._dispatchGesture(stale, false); }
         _downKeySrc.set(e.code, src);
         S._dispatchGesture(src, true);
         return;
@@ -744,13 +780,6 @@ export function setupEvents() {
       redoLastStroke();
     }
 
-
-    // H: toggle handsfree recording
-    if ((e.key === 'h' || e.key === 'H') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.repeat) {
-      e.preventDefault();
-      toggleHandsfree();
-    }
-
     // F was the ERASER's key here until 2026-09-03, when it moved to tiles.js
     // as a palette hold; it is UNBOUND now (Ek, 2026-09-07: "F should be
     // unbounded as a key for erase. We have the palette tiles now"). An
@@ -788,6 +817,20 @@ export function setupEvents() {
   });
 
   document.addEventListener('keyup', e => {
+    // ⌘ UP RELEASES EVERY ⌘-CHORD (Ek, 2026-09-25: "i'm trying to undo the 3rd
+    // nearest-pin and it's not working"). macOS sends NO keyup for a key let go
+    // while ⌘ is held, so ⌘Z's source stayed DOWN in the recogniser after the
+    // first undo, and every later ⌘Z was swallowed as a repeat of a press that
+    // never ended (`down === st.down`) — undo worked once per ⌘ hold, then not
+    // again until some other key happened to release it. The ⌘ key's own up is
+    // the one edge macOS does deliver, so it closes them all.
+    if (e.key === 'Meta') {
+      for (const [code, src] of _downKeySrc) {
+        if (!src.includes('+meta')) continue;
+        _downKeySrc.delete(code);
+        S._dispatchGesture?.(src, false);
+      }
+    }
     // Alt key-up is intentionally ignored — lock is a toggle, not momentary
     if (e.code === 'AltLeft' || e.code === 'AltRight') return;
 
@@ -969,7 +1012,6 @@ export function setupEvents() {
   .hud-center{flex:0 0 auto;text-align:center}
   .vm-patch-info{color:#999;font-weight:600;font-size:calc(1.2rem * var(--hud-scale,1));white-space:nowrap;letter-spacing:0.03em}
   #popCoords{white-space:pre;font-variant-numeric:tabular-nums}
-  .hf-hud-label{color:#50b850;font-size:calc(0.72rem * var(--hud-scale,1));letter-spacing:0.04em;margin-left:calc(6px * var(--hud-scale,1));opacity:0.85}
   .vm-commit-dots{display:flex;align-items:center;gap:calc(3px * var(--hud-scale,1))}
   .vm-commit-dot{width:calc(7px * var(--hud-scale,1));height:calc(7px * var(--hud-scale,1));border-radius:50%;flex-shrink:0}
   .alt-lock{color:#f0c060}
@@ -979,7 +1021,6 @@ export function setupEvents() {
 <div class="hud" id="popHud">
   <div class="hud-left">
     <span id="popCoords">--,--</span>
-    <span id="popHfLabel" class="hf-hud-label" style="display:none">handsfree</span>
     <span id="popAltLock" class="alt-lock" style="display:none">alt: locked</span>
   </div>
   <div class="hud-center">
@@ -1015,7 +1056,6 @@ export function setupEvents() {
     const _popHud = {
       root:      pop.document.getElementById('popHud'),
       coords:    pop.document.getElementById('popCoords'),
-      hfLabel:   pop.document.getElementById('popHfLabel'),
       altLock:   pop.document.getElementById('popAltLock'),
       patchInfo: pop.document.getElementById('popPatchInfo'),
       dots:      pop.document.getElementById('popDots'),
@@ -1037,15 +1077,12 @@ export function setupEvents() {
       }
       const src = {
         coords:    document.getElementById('coordinates'),
-        hfLabel:   document.getElementById('hfHudLabel'),
         altLock:   document.getElementById('altLockIndicator'),
         dots:      document.getElementById('vmCommitDots'),
         buffers:   document.getElementById('vmBuffers'),
       };
       if (src.coords && _popHud.coords)
         _popHud.coords.textContent = src.coords.textContent;
-      if (src.hfLabel && _popHud.hfLabel)
-        _popHud.hfLabel.style.display = src.hfLabel.style.display;
       if (src.altLock && _popHud.altLock)
         _popHud.altLock.style.display = src.altLock.style.display;
       if (src.dots && _popHud.dots)
@@ -1098,7 +1135,34 @@ export function setupEvents() {
       if (span) span.textContent = S.isMuted ? 'unmute' : 'mute';
     }
     S._syncSessionMute?.();
+    _syncMuteOverlay();
     if (ledChanged) window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'mute_toggle' } }));
+  }
+
+  // THE STAGE SAYS MUTED (Ek, 2026-09-25: "when the option key to lock is on
+  // there's a transparent layover. i think we need something that intense for
+  // master mute"). The footer's amber glyph is 20px in a corner; a silent rig
+  // mid-set has to be unmissable from where you stand. Same wash and type as
+  // the lock overlay, framed in the mute's own amber — but it lets every click
+  // through, because painting into a muted rig is a real workflow (the LED map
+  // says the same) and the sphere's click is the hand.
+  function _syncMuteOverlay() {
+    const host = _canvasHost();
+    let el = document.getElementById('muteOverlay');
+    if (!S.isMuted) { el?.remove(); return; }
+    if (!host) return;
+    if (!el || el.parentElement !== host) {
+      el?.remove();
+      el = document.createElement('div');
+      el.id = 'muteOverlay';
+      el.innerHTML = '<span class="surface-overlay-main">muted</span><span class="surface-overlay-hint"></span>';
+      host.appendChild(el);
+    }
+    // Whatever mute is bound to today, not the factory M.
+    let key = S._shortcutOf?.(document.getElementById('tcMute'));
+    if (key && key.length === 1) key = key.toUpperCase();   // a keycap, as the palette draws it
+    el.querySelector('.surface-overlay-hint').textContent =
+      key ? `the system output is off — ${key} unmutes` : 'the system output is off';
   }
   if (muteBtn) muteBtn.addEventListener('click', () => setMuted(!S.isMuted));
   // Expose for osc.js so /mute also ramps the audio gain and updates the button

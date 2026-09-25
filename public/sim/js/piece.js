@@ -191,6 +191,13 @@ function buildManifest(audio, { particleWitness = false } = {}) {
           // under it plays (2026-09-24); the id is in `live.voicings`.
           voicing:           slot.voicing ?? null,
           recencyN:          slot.recencyN,
+          // What the cloud reads (both · grains · tape — the cursor's scope,
+          // pinned with it) and its place in the pinning order, which decides
+          // which nearest cloud owns a mark two could read (grain.js
+          // _readableBy). Neither travelled until 2026-09-25: a tape-scoped
+          // cloud reopened reading grain too, and the owners tied at 0.
+          reads:             slot.reads ?? 'both',
+          pinSeq:            slot._pinSeq ?? 0,
         };
       }
       if (slot.type === 'loop') {
@@ -412,6 +419,9 @@ async function applyManifest(data, audio) {
   // The two groups' flags go in before the slots, so a restored `muted` flag is
   // in place before the pins it applies to appear.
   restoreGroups(data.live?.pinGroups);
+  // New pins continue the order the file's pins were made in — and a New
+  // piece (an empty manifest) starts it again at 0.
+  S._pinSeqCounter = Math.max(0, ...(data.commits || []).map(c => c?.pinSeq || 0));
 
   for (let i = 0; i < MAX_COMMITS; i++) {
     const c = data.commits?.[i];
@@ -459,6 +469,8 @@ async function applyManifest(data, audio) {
         loopMode:          c.loopMode ?? 'pingpong',
         voicing:           c.voicing ?? null,
         recencyN:          c.recencyN,
+        reads:             c.reads ?? 'both',
+        _pinSeq:           c.pinSeq ?? 0,
         _playheadMs:       0,
         _pingForward:      true,
       };
@@ -824,7 +836,7 @@ export function syncDocChrome() {
   // the chrome is hidden in fullscreen.
   // Only when it changed: the poll is 2 Hz for the whole session, and main
   // set the title, the edited dot and the proxy icon on every tick.
-  const sig = `${S.doc.name || ''} ${S.doc.path || ''} ${dirty ? 1 : 0}`;
+  const sig = `${S.doc.name || ''}\u0000${S.doc.path || ''}\u0000${dirty ? 1 : 0}`;
   if (sig === _docChromeSent) return;
   _docChromeSent = sig;
   window.electronBridge?.docSetState?.({

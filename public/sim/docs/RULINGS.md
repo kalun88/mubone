@@ -1299,7 +1299,9 @@ painting, so the green ring only ever rendered while latched and not painting, a
 it had something to say. Hands-free is now the RING, in `--accent-sensor` ("the body is driving
 it"), and it outranks everything. Every combination shows both facts at once: recording hands-free
 is a violet ring around a mic-red 2.4x dot; painting hands-free is a violet ring around the
-material's colour. One object each — the ring is whose hands, the dot is what material.
+material's colour. One object each — the ring is whose hands, the dot is what material. (The
+hands-free gate was removed 2026-09-25, so the ring has no violet case today. A new hands-free
+that drives the instrument should take the violet ring back.)
 
 **Canvas labels are Urbanist (Ek, 2026-09-14).** All four named `"Roboto Mono", monospace`, which
 is not loaded — `css/fonts/` holds Inter and Urbanist and nothing else — so they rendered in
@@ -2421,7 +2423,7 @@ The plans below are in `docs/archive/` (2026-09-05). Each shipped; what a sessio
 
 **A tap beside a ×2 waits the window (Ek, 2026-09-10, evening).** "for button 3 i want one press to be drop pin, two press to be pickup pin, 3 press to be pick up all. but right now it always does drop pin, then when i try ×2 it drops then picks up." The morning's rule had the tap fire at the up edge and ×2 replace only the second press, so the first press's tap always fired first. Now, on a button with a ×2 or ×3 bound, the tap is DEFERRED to the end of the tap window (`st.tapDeferred`): one press is the tap, two the ×2, three the ×3, exactly one fires, and the tap costs the window (120 ms). **The window runs from the UP edge**: it is the gap after a press in which the next press counts, because the gap is what a hand controls — from the down, 120 ms would have asked for a second down within 120 ms of the first. The press keeps its ruling — the down edge is never delayed, a press stacks on every gesture of its button — so a take button is unchanged. Button 3 ships tap · ×2 · ×3 = pin here · unpin · unpin all; long and extra long there are free. The Instrument buttons page's "What shares a button" row says so.
 
-**The pin action is the `=` key (Ek, 2026-09-10, evening).** "the pin binding is old i think, it only pins clouds. it should pin the same as the = button which pins whatever the cursor is on." `commit_drop` chose by `S.commitMode` (cloud → plant a seed, else drop a loop) — the pre-brush-model rule, where the mode setting said what a pin was. The `=` key (`tiles.js` `pinDown` / `pinUp`, #238) decides by what the cursor is ON: painting a tape stroke grows the loop to the release, a stroke in reach becomes a loop, nothing in reach pins a ghost cloud at the cursor. Both action forms go through it now — `commit_drop` is `S._pinTap`, `commit_draw` is `S._pinHold(on)` — sequenced so a quick momentary cannot release before its down has landed. The old loop-arm branch of `commit_draw` (a live take recorded straight into a loop) went with it: the tape brush is that take.
+**The pin action is the `=` key (Ek, 2026-09-10, evening).** "the pin binding is old i think, it only pins clouds. it should pin the same as the = button which pins whatever the cursor is on." `commit_drop` chose by `S.commitMode` (cloud → plant a seed, else drop a loop) — the pre-brush-model rule, where the mode setting said what a pin was. The `=` key (`tiles.js` `pinDown` / `pinUp`, #238) decides by what the cursor is ON: painting a tape stroke grows the loop to the release (superseded 2026-09-25: the pin CUTS the take — see "A pin during a tape take is an overdub inside the stroke"), a stroke in reach becomes a loop, nothing in reach pins a ghost cloud at the cursor. Both action forms go through it now — `commit_drop` is `S._pinTap`, `commit_draw` is `S._pinHold(on)` — sequenced so a quick momentary cannot release before its down has landed. The old loop-arm branch of `commit_draw` (a live take recorded straight into a loop) went with it: the tape brush is that take.
 
 **A press's neighbour swallows the take the press started (Ek, 2026-09-10, evening).** "set loop (toggle) using button 1 press. on the same button i want grain (momentary) to be button 1 long. so when button 1 long activates it'll cancel the loop that just started as if it was never meant to be, then do cloud." The press cannot wait — the down edge is the take's start — so exclusivity with a long is impossible; what is possible is the abort. When long, extra long, ×2 or ×3 fires on a button whose press fired an ACTIVATE this sequence (`palette_N_toggle` / `_hold`, `trace_toggle`, `recpaint`), the recogniser calls `S._gestureAbort()` before the neighbour fires: brush.js ends the gesture with the stroke id stamped in `S._abortStrokeId`, and `_commitTraceStroke` (events.js) discards the stroke once it has sealed — `history.discard()`, the stroke's own undo run and the action gone for good, never redoable, nothing armed — waiting for the seal so the recorder's last bundle cannot land in a freed slot. Only activates are aborted: a press that pinned or undid is a fact, and its neighbour is bound to what follows it (button 3's press · ×2 · ×3 = pin · unpin · unpin all nets to a cancel by its own actions). Proven: a take started on button 1's press is thrown away at 300 ms and the grain momentary runs and is kept; a plain toggle take on the same button is kept and armed.
 
@@ -2526,3 +2528,140 @@ from events.js's hardcoded keydown into `HAND_FACTORY_KEYS` (midi.js), so a key 
 `[`/`]` still repeats (events.js hands OS repeats to the radius actions). ⌥ (a bare modifier) and Backspace×3
 (erase all's guarded triple with its progress readout) stay hardcoded — their stickers show the factory key and
 a learn adds a binding beside it. Tab and ⇧Tab are navigation, not performance, and carry none.
+**The chrome's stickers came off the same day** (Ek: "we can remove all the key glyphs for the chrome items
+since it's obvious when i hover to see the tool tip"). Undo, sweep, erase all, zero, lock and mute carry no
+pill. Their tooltip names the shortcut (`S._shortcutOf` via `data-action`, which mute now has too), and
+Settings → Keys learns it. The stickers stay on the rail rows, where the word beside the pill needs no hover.
+
+## A hand's own key stops it; the other hand's key switches
+
+**2026-09-25, Ek: "when i have one hand activated, and i press the other hand's key bind, it's not
+consistent if how / if it cuts the other off."** A press stopped whatever was latched and a long always
+switched, so which key you reached for decided the rule. Now there is one rule (tiles.js `S._handPress` /
+`S._handLong`): **a side's own key stops its own play; the other side's key switches**. The running play ends
+and keeps what it made, and this side's tool starts. The lit tile is `_held.side`, never `latched`. **One hold
+on the spacebar** is a press followed by a long. When the press switched away from the long side, the long in
+that same hold means OFF, so holding the spacebar stops a toggled grain. midi.js `_abortPress` hands a
+`hand_press` to `S._handPressAbort`, which throws away only the take the press STARTED. The history discard a
+palette press gets would have taken back a loop the press had just closed. A key's up edge lets go of its own
+side only (`handUp(which)`).
+
+## A pinned cloud is a frozen cursor — it pins the lines that touch it
+
+**2026-09-25, Ek: "i basically for mental sake just want it to be essentially another cursor so the rules is
+whatever the cursor would do if it was there, but autopinning."** **Every** cloud pin is a zone, not only a
+pin dropped with nothing in reach. When a tape stroke arms and **any part** of its line touches a cloud's
+radius, the cloud pins that line as a pin press would with the cursor standing at the cloud's centre
+(`pinStrokeInZones`, ui-presets.js, from `S._onTriggerStrokeArmed`). "Touches" is the trigger gate's own
+line measure (`lineTouchIndex`, trigger.js), not "starts inside". The loop is anchored on the mark nearest
+the centre, which is the touch point, and has a track of its own. If the stroke is already looping, the
+zone adds another playhead instead. So with tape autopin on, a stroke through a zone has both loops (Ek:
+keep both). The cloud goes on reading grain beside it. **The cursor's scope and mute are pinned with it**
+(Ek, the same day). A press stores `reads = S.lensReads` on the cloud and `mute = S.scanMuted` on each
+pin it makes. A cloud scoped to `tape` reads no grain and claims none (`_refreshCloudClaims` skips it).
+A cloud scoped to `grains` catches no tape, and a press scoped to grains pins no line. A muted zone pins
+what it catches muted, so a muted zone with scope `both` is a silent area. A cloud no press made (a wash
+autopin) is `both` and sounding. A playhead is anchored at its MARK, not the cursor
+(`addPlayheadFromExisting`). Overdub layers are not strokes, so a zone never catches them.
+
+## The eraser's depth counts grain only, as the cursor's does
+
+**2026-09-25, Ek: "eraser depth count only grain like cursor and if it's on a loop it erases all."** The erase
+tab's depth ranked every stroke under the brush, tape included. So a take painted over grain was the newest
+layer, and at depth 1 it was the only thing erased, while the cursor at depth 1 was playing the grain under
+it. Now `erase.js` ranks only grain strokes. A touched tape stroke is always a target, whatever the depth,
+just as the cursor fires every line it is on. `erases: touch` / `stroke` still decides how much of a
+target goes.
+
+## A pin during a tape take is an overdub inside the stroke
+
+**2026-09-25, Ek: "it should essentially be the same thing [as overdub], a shortcut if you will, to make
+overdubs within one tape stroke."** It was the growing loop (BRUSH-MODEL § 3c, `js/live-loop.js`, deleted).
+That was a worklet loop with no track and no pin until the stroke ended. A second press fell through to the
+ordinary pin and pinned the half-recorded take, so one phrase gave several copies, and the first was not
+undoable. Now the pin **cuts** the take without stopping the recorder (`splitLiveRecording`, audio.js). The
+cut is a sample index in the raw pool: the pin's instant, held by the input latency as a release is. It
+waits for the write head, and the probe measured 0 samples lost at the join. The part before ends through
+`_commitTraceStroke` exactly as a release would. On a plain take it **seeds the main loop** (the overdub
+brush's first press). The rest records on as a new stroke that is an overdub take. It starts *pending* on
+the loop's stroke and is bound when the looper hook pins it (`pendingOverdub` / `bindPendingOverdub`). It
+is phased so its first sample is the loop's top: `startedAt` is stamped a round trip late, because
+`attachOverdub` pulls every dub back by one. **Each further pin** keeps the layer so far and starts the
+next on the same master (`continueOverdub`). Every piece is an ordinary stroke and an ordinary dub, so
+all of this is the overdub's own: the loop length is set by the first pin; a layer is one loop long and a
+long one folds; undo takes layers back one at a time and then the loop; unpinning hands each back as a
+line; the heads and the rail's dots are the dub's. A press under a quarter second after the last cut is
+refused (a double press is one pin).
+
+## ALL is the pins' master bus; unpin all is a button in the block
+
+**2026-09-25, Ek: "maybe there should be a 3rd row that's the master for the pinned items below the loop
+and cloud bus. and add the mute button there instead of the mix title and mute button. that button won't
+need solo … then can you make unpin all a button in that top section of the pin rail, like a param row
+but a button."** The MIX mute at the rail's foot was a mixer's master, drawn as an act row, so it read as
+an extra thing beside the per-track and per-bus mutes it sits over. It is now **ALL**, a third bus under
+clouds and loops (`renderBusses`, ui-pins.js). ALL shows the members' mean level and has an M and no S;
+its S column stays empty so the M stands under the busses' M. It is the same toggle as before
+(`setAllMuted`: the group flags only, so every per-pin M and S is as the hand left it when it lets go),
+and its light is derived (`allMuted`). **Unpin all** left the foot for the block's last row: the name and
+its sticker at the left, and flush right the kit's 24 `.mu-btn` in the danger face with the act's glyph.
+A rectangle, because it is an action. With both gone the foot holds nothing, and `#tcPins` went.
+
+## A nearest cloud owns the marks it reads
+
+**2026-09-25, Ek: "the nearest cloud should own the marks and cursor skips them like radius cloud."** A cloud's
+claim was always a PLACE: every mark inside its pinned radius. That is right for a radius cloud and meant nothing
+for a nearest one, which reads the k closest marks wherever they are. So the cursor and the cloud played the same
+marks at once. A nearest cloud now claims **those marks, by identity** (`_nearClaim`, grain.js): the pool it posted
+last tick (`seed._reach`, also what its reach lines draw). A cloud that is not sounding (muted, held, or in its
+attack floor) claims the pool it would read, rebuilt at most every 100 ms at the top of the scheduler's tick
+(`_silentNearestPool`). The claim is by pinning, not by sounding, as before. It follows that a nearest cloud at
+**k = all** owns every grain mark, and the cursor hears none until it is unpinned. That is what "owns what it
+reads" means when it reads everything.
+**Each pin takes its own marks** (the same day: three nearest pins at k = 100 read the same marks, so undoing
+the newest changed nothing you could hear or see). A nearest cloud also skips the marks owned by every cloud
+pinned BEFORE it, whether that is a radius cloud's area or a nearest cloud's pool (`_readableBy`). The order is
+the pin's own stamp (`_pinSeq`, set once in `_reserveCloud` and kept through undo), never the slot index. A
+later pin with nothing left to take is silent. Radius clouds still share their overlap with each other.
+
+## A sensor is a knob on the one table
+
+**2026-09-25, Ek: "i dont use any of it so can be removed wholesale … the use case is usually mapping a grain
+param to an axis, normally altitude. or mapping roll so that if i flip the sensor roll-wise, then it actually
+controlls altitude."** Settings → Mapping was a second mapping system with its own param list, and its grain
+rows fought three later rulings: marks freeze their voicing (a row changed nothing the cursor plays), the tool
+owns its block (`_pollLiveBlock` captured the sensor into it), and continuous control goes through ONE table.
+It is gone. A sensor axis now binds onto a cc row of the Keys + MIDI table exactly as a MIDI CC does — the
+same ccFn, the same scale stage (`scale.js`), and every destination a knob reaches (`js/sensor-bindings.js`).
+A binding names a SENSOR by slot name, not a role, so any sensor on the rig can drive a row, and reads the
+slot's calibrated `zeroEuler`: elevation and roll hold, azimuth is heading and drifts with the magnetometer
+off. The cursor's axes are two cc rows, `AZ · position` and `EL · position` (`/cursor/azimuth`,
+`/cursor/elevation`); a sensor or MIDI binding landing on one sets that axis to map, removing it leaves the
+axis holding, and the footer's button frees it. **The sensor has no column** (Ek chose): a cc row can never
+take a key or a button, so its sensor cell spans those two columns under the head `Keyboard · Sensor` — a
+sixth column took Action from 256px to 94 at the page's 928px cap. The menu behind the cell is the sensor,
+axis, input range in degrees, the `|x|` fold, a live reading, the output window and γ, and Learn: every axis
+of every sensor is followed (unwrapped across ±180) and the widest sweep is taken with the range it swept.
+
+## The stage says muted
+
+**2026-09-25, Ek: "when the option key to lock is on there's a transparent layover. i think we need something
+that intense for master mute."** The footer's amber glyph was the only sign, 20px in a corner. A muted output
+now frames the stage 3px in the muted glyph's own `--accent-action` with the lock overlay's type — "muted"
+and whatever mute is bound to today (`#muteOverlay`, events.js `_syncMuteOverlay`). **No wash** (the same day:
+"too dark, I still want to be able to play the viz"): the marks stay at full strength. It is
+**click-through**: painting into a muted rig is a real workflow and the sphere's click is the hand, so it
+blocks nothing, and the rails and palette sit above it as they do the lock's. Under a lock overlay its words
+move to the top, and it is kept last in the host so the lock's wash never dims it.
+
+## The rail's titles are large words, and a section is its own card
+
+**2026-09-25, Ek, from the rails design canvas (`docs/mockups/rails/`, option F): "F seems more balanced i like
+the spacing everything else is too squished."** The rail titles — Tools, Cursor, Pinned — are a 20px bold word in
+the one true white, sentence case, with no glyph, sitting on the bottom of a 52px bar with no hairline; the size is
+what divides the rail. A SECTION inside a region is its own card, beside the region's card and never inside it:
+Voice under the instrument's card, Grain selection under the cursor's, 8px between the two, each headed by a 40px
+line — sentence case, semibold, over a hairline, the `+` and the door flush right. That reverses "one card per
+region, sections told apart by their captions" for these two. The preset rows are option B's (42px, the glyph,
+the name, the preset's own few numbers), built the same day.
+

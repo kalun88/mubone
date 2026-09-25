@@ -710,6 +710,28 @@
     letter-spacing: var(--ls-tight);
   }
 
+  /* The master mute's overlay (events.js _syncMuteOverlay): the lock's type,
+     framed in the muted glyph's amber, and click-through — the sphere stays
+     playable while the output is off. NO WASH (Ek, 2026-09-25: "too dark, I
+     still want to be able to play the viz"): the frame and the word carry it,
+     and the marks stay at full strength. Under a lock overlay its words move
+     to the top, so the two messages never sit on each other. */
+  #muteOverlay {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    box-shadow: inset 0 0 0 3px var(--accent-action);
+    pointer-events: none;
+    user-select: none;
+  }
+  #muteOverlay .surface-overlay-main { color: var(--accent-action); }
+  :has(> #surfaceLockOverlay) > #muteOverlay { justify-content: flex-start; padding-top: 4.5rem; }
+
   /* The surface-mode entry banner (#surfaceEntryHint) is gone (Ek, 2026-09-12):
      the lock overlay is the one message about the pointer. */
 
@@ -738,13 +760,6 @@
     flex: 0 0 auto;
     text-align: center;
   }  #coordinates { white-space: pre; font-variant-numeric: tabular-nums; }
-  .hf-hud-label {
-    color: #50b850;
-    font-size: calc(0.72rem * var(--hud-scale, 1));
-    letter-spacing: var(--ls-wide);
-    margin-left: calc(6px * var(--hud-scale, 1));
-    opacity: 0.85;
-  }
   /* ── Commit dots — minimalist slot indicator in HUD ────────────────────── */
   .vm-commit-dots {
     display: flex;
@@ -1492,25 +1507,6 @@
     text-underline-offset: 2px;
   }
   .grain-label-toggle:hover { color: var(--text-primary); }
-  /* Sensor mapping active — violet indicators (IMU-driven override) */
-  .grain-row.param-mapped .grain-slider::-webkit-slider-thumb {
-    background: var(--accent-sensor);
-  }
-  .grain-row.param-mapped .grain-slider::-moz-range-thumb {
-    background: var(--accent-sensor);
-  }
-  .grain-row.param-mapped .grain-slider::-webkit-slider-runnable-track {
-    background: var(--tint-sensor-soft);
-  }
-  .grain-row.param-mapped .grain-slider::-moz-range-track {
-    background: var(--tint-sensor-soft);
-  }
-  .grain-row.param-mapped .grain-numbox {
-    color: var(--accent-sensor);
-  }
-  .grain-row.param-mapped .grain-label {
-    color: var(--accent-sensor);
-  }
 
   /* Octave shortcut buttons */
   /* Matches .grain-seg-btn — consistent pill treatment with the other
@@ -1899,11 +1895,6 @@
     flex: 1;
     min-width: 0;
   }
-
-  /* ── Handsfree arm switch (#290) — Settings → audio, beside its gate ──
-     Armed is the switch's own on; unavailable is the kit's disabled face; the
-     one class left is recording, something the gate is doing to you, and it
-     lives in settings-gui.css beside the toggle. */
 
   /* ── Scan button — white-ish when on, orange when off ── */
   #scanBtn .play-mute-icon--on  { display: none; }
@@ -2587,7 +2578,7 @@
   .learn-tooltip .lt-keys { display: inline-flex; gap: var(--sp-1); }
   .learn-tooltip kbd {
     font-family: var(--font-sans); font-size: var(--fs-nano); line-height: 1;
-    padding: 2px var(--sp-2); border-radius: var(--r-2, 3px);
+    padding: var(--sp-0) var(--sp-2); border-radius: var(--r-2, 3px);
     color: var(--text-secondary); background: var(--surface-2);
     border: 1px solid var(--border-faint);
   }
@@ -2763,8 +2754,7 @@
      measured min-content at the designed tier is 1096, which 1100 clears by
      four pixels and a 95vw floor does not clear at all at the 1161px tier edge
      (95vw is 1103 there, and that margin vanished the moment anything was added
-     to a cell). calc(100vw - 2rem) matches .sensor-mapping-dialog and leaves
-     ~30px. Re-measure if a column is ever added — see scripts/ui-shots.js. */
+     to a cell). calc(100vw - 2rem) leaves ~30px. Re-measure if a column is ever added — see scripts/ui-shots.js. */
   .mapping-dialog { width: min(1140px, calc(100vw - 2rem)); }
   /* Held no text but still reserved a line inside the pinned header — a
      permanent empty band between the filter and the first row. */
@@ -3278,12 +3268,6 @@
   min-width: 100px;
 }
 
-/* ── Sensor mapping modal ──────────────────────────────────────────────── */
-.sensor-mapping-dialog { width: min(1120px, calc(100vw - 2rem)); }
-
-/* ── Tx status indicator ──────────────────────────────────────────────── */
-
-/* ── Test-send button ─────────────────────────────────────────────────── */
 
 /* ══════════════════════════════════════════════════════════════════════════
    STAGING MODAL (experimental Change B — posture snapshot engine)
@@ -4361,6 +4345,24 @@ html.booting-reveal .main-layout {
      "no need for the left edge line … just a normal highlighted item like all
      gui"): the row's ground raised, the word bright, no mark at the edge. */
   .trow--voice.on { border-left-color: transparent; background: var(--surface-2); color: var(--text-bright); }
+  /* PRESETS CARRY WEIGHT (Ek, 2026-09-25 — the rails canvas, option B). 42, not
+     the rail's 30: a preset is a thing you pick, not a setting you read, and
+     the row carries three facts — the instrument's glyph, the name at 600, and
+     the preset's own few numbers flush right. Hairlines between, the list's own
+     rule. The glyph is ash until the row is on, then the engine's hue. */
+  /* The row's height is a named box (`--row-preset`), stated once — the way the
+     footer's buttons fill --footer-row — so the kit audit reads the token. */
+  .tc-lrail { --row-preset: 42px; }
+  .trow--voice { height: var(--row-preset); gap: var(--sp-5); font-size: var(--fs-md); font-weight: 600;
+    color: var(--text-hover); border-bottom: 1px solid var(--border-faint); }
+  .trow--voice .trow-g { width: 16px; height: 16px; color: var(--text-dimmer); }
+  .trow--voice.on .trow-g { color: var(--c); }
+  .trow--voice.on .tile-nm { color: var(--text-highlight); }
+  .trow--voice .trow-sum { flex: none; margin-left: auto; font-size: var(--fs-body); font-weight: 400;
+    color: var(--text-dimmer); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .trow--voice.on .trow-sum { color: var(--text-secondary); }
+  .trow--voice .trow-del { margin-left: 0; }
+  .trow--voice .trow-sum + .trow-del { margin-left: calc(-1 * var(--sp-2)); }
   .trow.dragging { opacity: 0.35; }
   .trow.over { box-shadow: inset 0 2px 0 var(--text-tertiary); }
   /* The rail is a LIST. #srcBar / #tileBar still carry the strip's
@@ -4376,7 +4378,6 @@ html.booting-reveal .main-layout {
   .tc-lrail .tbx-lbl, .tc-rail .tbx-lbl { display: flex; align-items: center; padding: 0.75rem 0.7rem 0.25rem; }
   /* Air under the pin group (Ek, night: "spacing under the pin tools section
      is tight"): the last row was on the section's hairline. */
-  .tc-rail #tcPins .tbx-tiles { padding-bottom: 0.6rem; }
   /* THE PIN ROWS in the pinned rail (Ek, 2026-09-12, night): the tool rail's
      row, an act's grey glyph (a pin holds any engine's material), the key as
      the legend's own cap at the right edge, brick on approach for unpin all. */
@@ -4714,6 +4715,7 @@ html.booting-reveal .main-layout {
      The 0.62rem was a number nobody chose. */
   .tc-rail .lyr-bar, .tc-lrail .lyr-bar { display: flex; align-items: center; justify-content: space-between;
     gap: 0.5rem; height: 40px; box-sizing: border-box; padding: 0 var(--sp-5); border-bottom: 1px solid var(--border-faint); }
+  .tc-rail .lyr-bar, .tc-lrail .lyr-bar { height: 52px; align-items: flex-end; padding-bottom: var(--sp-4); border-bottom: none; }
   /* ── The eyebrow-caption layer sits where the tokens say (2026-09-13) ──
      Ek, after the six engine hues landed on the rails and tiles: "the new
      brighter colours on the rails and tiles are great but now everything
@@ -4729,17 +4731,25 @@ html.booting-reveal .main-layout {
      secondary (that header is gone; the contrast finding is not). Faint
      keeps every genuinely-off use — disabled buttons, ghosts, `.off` rows,
      an unbound sticker. */
-  .tc-rail .lyr-title, .tc-lrail .lyr-title { font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase;
-    color: var(--text-secondary); }
-  /* The title's glyph (2026-09-23), in the title's own colour, on its line. */
-  .tc-rail .lyr-title, .tc-lrail .lyr-title { display: inline-flex; align-items: center; gap: var(--sp-3); }
-  .lyr-title-g { width: 1rem; height: 1rem; flex: none; }
+  /* THE RAIL TITLE IS A LARGE WORD (Ek, 2026-09-25 — the rails canvas, F:
+     "more balanced, i like the spacing"): Tools · Cursor · Pinned at 20px bold
+     in the one true white, sentence case, no glyph, sitting on the bottom of a
+     52px bar with no hairline — the size divides the rail, so the rule went.
+     It was the 11px eyebrow with a glyph and a rule above and below. */
+  .tc-rail .lyr-title, .tc-lrail .lyr-title { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em;
+    text-transform: none; color: var(--text-highlight); display: inline-flex; align-items: center; }
   .tc-rail .lyr-bar button, .tc-lrail .lyr-bar button { font-family: var(--font-sans); font-size: var(--fs-meta);
     letter-spacing: 0.09em; text-transform: uppercase; background: var(--surface-1);
     border: 1px solid var(--border-faint); color: var(--text-tertiary);
     border-radius: 3px; padding: 0.16rem 0.5rem; cursor: pointer; }
   .tc-rail .lyr-bar button:hover, .tc-lrail .lyr-bar button:hover { color: var(--text-light); border-color: var(--border-soft); }
   .tc-rail .lyr-list, .tc-lrail .lyr-list { flex: 1; overflow-y: auto; min-height: 0; }
+  /* THE TOOL RAIL SCROLLS AS ONE (2026-09-25, tiles.js railScrollMark): the
+     list grows to fill and keeps its content height, so with room the cursor
+     sits on the foot and without it the rail scrolls, the Tools bar held. */
+  body.props-open .tc-lrail { overflow-y: auto; }
+  .tc-lrail .lyr-list { flex: 1 0 auto; overflow: visible; }
+  .tc-lrail > .lyr-bar { position: sticky; top: 0; z-index: 3; background: var(--bg-app); flex: none; }
   /* The pin actions sit under the rail's header, above what they act on —
      as TOOL ROWS (.trow, renderPinChrome) since 2026-09-12: the old .lyr-act
      row model (dot, eyebrow label, keycap) is gone with the keycaps. The
@@ -4828,9 +4838,12 @@ html.booting-reveal .main-layout {
   .lyr-sel { position: absolute; left: calc(var(--sp-5) - 2px); right: calc(var(--sp-5) - 2px);
     top: calc(var(--sp-3) + 8px - 2px); height: 36px; /* geometry: 32 + 2 × 2 */
     border: 1px solid var(--eng-pins); border-radius: var(--r-3); pointer-events: none; }
-  .lyr-sel::after { content: 'selected'; position: absolute; right: var(--sp-3); top: -7px; /* geometry: half the eyebrow's line above the border */
-    padding: 0 var(--sp-1); line-height: 12px; background: var(--bg-app);
-    font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase; color: var(--eng-pins); }
+  /* The label speaks the rail's new type (2026-09-25, the rails canvas F): the
+     card heads' sentence case and weight at the small size, not the spaced
+     capitals the rails have left behind. */
+  .lyr-sel::after { content: 'Selected'; position: absolute; right: var(--sp-3); top: -8px; /* geometry: half the label's line above the border */
+    padding: 0 var(--sp-2); line-height: 14px; background: var(--bg-app);
+    font-size: var(--fs-body); font-weight: 600; letter-spacing: normal; text-transform: none; color: var(--eng-pins); }
   .lyr-trk { position: absolute; left: var(--sp-5); right: var(--sp-5); top: calc(var(--sp-3) + 8px);
     transition: transform var(--m-state) var(--ease-snap); will-change: transform; }
   /* THE ROW IS THREE COLUMNS (Ek, 2026-09-23): number · the box · M S. The
@@ -4901,6 +4914,8 @@ html.booting-reveal .main-layout {
      questions about two possibly-different pins, beside the readout. */
   .lyr-ovd { position: absolute; left: var(--sp-3); top: var(--sp-2); display: flex; gap: var(--sp-1); pointer-events: none; }
   .lyr-ovd i { width: 5px; height: 5px; border-radius: 50%; background: var(--c); display: block; }
+  /* still recording: the same dot, hollow — filled once the layer is kept */
+  .lyr-ovd i.rec { background: transparent; box-shadow: inset 0 0 0 1px var(--c); }
   /* The selected pin wore the rail's half moon here until 2026-09-16; the
      frame above (.lyr-sel) is its one mark now. `.sel` stays on the row for
      anything that reads it. */
@@ -4931,13 +4946,20 @@ html.booting-reveal .main-layout {
   .lyr-bus-row { position: relative; height: 24px; border-radius: var(--r-1); overflow: hidden; background: var(--surface-0); }
   .lyr-bus-row .lyr-fill { opacity: 0.14; }
   .lyr-bus-row.soloed { box-shadow: inset 2px 0 0 var(--accent-action); }
+  /* ALL has no solo: the S column keeps its width, empty, so ALL's M stands
+     under the busses' M. */
+  .lyr-ms-none { visibility: hidden; }
+  /* UNPIN ALL in the block: the kit's 24 button, content-sized, the danger face,
+     its glyph at the icon button's size. */
+  .lyr-modes .lyr-unpin { flex: none; width: auto; padding: 0 var(--sp-4); }
+  .lyr-modes .lyr-unpin svg { width: 13.33px; height: 13.33px; }
+  .lyr-modes .lyr-unpin.fired { color: var(--accent-action); border-color: var(--accent-action); }
   .lyr-bus-nm { position: absolute; left: var(--sp-4); top: 0; height: 24px; display: flex; align-items: center; gap: var(--sp-3);
     font-size: var(--fs-eyebrow); letter-spacing: var(--ls-eyebrow); text-transform: uppercase; color: var(--c); }
   .lyr-bus-nm b { font-weight: 500; color: var(--text-muted); font-variant-numeric: tabular-nums; letter-spacing: 0; }
 
   /* The pin acts, at the foot since the mixer. The rails' FOOT (helper text)
      is gone (Ek, 2026-09-12, night). */
-  .lyr-actions { border-top: 1px solid var(--border-faint); }
   /* Inside the selected frame when there is nothing to hold: the track's own
      box, the words centred in it. */
   .lyr-empty { position: absolute; left: var(--sp-5); right: var(--sp-5); top: calc(var(--sp-3) + 8px);
@@ -5156,6 +5178,25 @@ html.booting-reveal .main-layout {
   /* THE VOICE LINE'S DOOR (2026-09-24) sits after the `+`, the kit's 24px box;
      lit in the engine hue while its sheet is up. */
   .tbx-lbl .trow-more { margin-left: 0.1rem; margin-top: -0.3rem; margin-bottom: -0.3rem; }
+  /* THE RULED LABEL (Ek, 2026-09-25 — the rails canvas, option A): a section
+     title in the rail's cards — Voice, Grain selection — is sentence case at
+     the body size, semibold, and a hairline runs from it to the right edge;
+     the `+` and the door sit at the rule's end. The engine titles keep the
+     eyebrow. */
+  /* A CARD'S HEAD (the rails canvas, F): each section is its own card and
+     this is its top — 40 tall, sentence case, semibold, light, over a
+     hairline; the `+` and the door flush right. */
+  .tc-lrail .tbx-lbl--sec { height: 40px; box-sizing: border-box; padding: 0 var(--sp-5); margin-bottom: var(--sp-2);
+    font-size: var(--fs-control); font-weight: 600; letter-spacing: normal; text-transform: none;
+    color: var(--text-light); gap: var(--sp-4); border-bottom: 1px solid var(--border-faint); }
+  .tbx-lbl--sec .tbx-lbl-t { flex: 1 1 auto; }
+  .tbx-lbl--sec .tbx-add { margin-left: 0; }
+  /* THE CARDS (F): the instrument's, then the voice's under it; the cursor's,
+     then the grain selection's. 8 between the two halves of a region, 12 after. */
+  .tc-lrail .rail-card { background: var(--surface-1); border-radius: var(--r-hand); padding-bottom: var(--sp-5); }
+  .tc-lrail .rail-card + .rail-card { margin-top: var(--sp-4); }
+  .tc-lrail #voicePanel { margin-bottom: var(--sp-5); padding-bottom: var(--sp-3); }
+  .tc-lrail #voicePanel .trow--voice:last-child { border-bottom: none; }
   .tbx-lbl .trow-more.open { color: var(--c, var(--text-bright)); }
   /* A PRESET'S DELETE, at the edge its door left: the same box, red on hover.
      A factory preset draws none (2026-09-24). */
@@ -5211,7 +5252,10 @@ html.booting-reveal .main-layout {
      blur. Ek saw it and asked for it, so it is stated here instead, FLAT: no
      gradient and no shadow (build sheet § 8.7), one token for the ground and
      one for the radius (§ 8.8). */
-  /* ONE CARD PER REGION, never a card inside a card. The INSTRUMENT is one —
+  /* (2026-09-25, the rails canvas, F: a SECTION is now a card of its own —
+     Voice under the instrument's card, Grain selection under the cursor's —
+     side by side, never nested. What follows is the older reading.)
+     ONE CARD PER REGION, never a card inside a card. The INSTRUMENT is one —
      mode, its presets — and the things inside it are SECTIONS of that card,
      told apart by their captions, not by grounds of their own. A box drawn
      around boxes is the thing this replaced. (`#lensBar` was a card until
@@ -5254,7 +5298,7 @@ html.booting-reveal .main-layout {
   .tc-lrail #instrPanel #creatorBand { margin-bottom: 0; }
   /* The card's own air: the first caption sits under the bar, the last row
      off its bottom edge. */
-  .tc-lrail #instrPanel { padding-bottom: var(--sp-5); margin-bottom: var(--sp-5); }
+  .tc-lrail #instrPanel { padding-bottom: var(--sp-5); margin-bottom: var(--sp-4); }
   /* THE CURSOR SECTION (Ek, 2026-09-23): the rail's lower half, pinned to its
      foot at the height of its own rows, so the tools' list above takes the
      rest and scrolls. Its bar is the rail header's, with the rule ABOVE as
@@ -5262,9 +5306,14 @@ html.booting-reveal .main-layout {
      the instrument card's ground, fully rounded (no tab sits on it), with the
      same air around them the list gives its card. */
   .tc-lrail .cur-sec { flex: none; }
-  .tc-lrail .lyr-bar--sec { border-top: 1px solid var(--border-faint); }
+  .tc-lrail .lyr-bar--sec { border-top: none; }
   .tc-lrail .cur-body { padding: var(--sp-6) var(--sp-5) var(--sp-5); }
-  .tc-lrail #cursorPanel { background: var(--surface-1); border-radius: var(--r-hand); padding-bottom: var(--sp-5); }
+  /* The cursor's two cards are drawn inside it (render()), so it is a plain box. */
+  .tc-lrail #cursorPanel { background: none; }
+  .tc-lrail #cursorPanel > .tbx-grp--bare { padding-top: 0; }
+  /* A card's head is its first line, so a card that opens on one carries no
+     top inset of its own. */
+  .tc-lrail .rail-card:has(> .tbx-lbl--sec:first-child) { padding-top: 0; }
   /* The pill carries no padding of its own: the card above it already ends with
      `--sp-5`, and padding on top of that made 24 above the pill against 12
      below it. Every gap in the stack is one margin now. */
@@ -5890,7 +5939,8 @@ html body .tc-prail {
   background: var(--bg-app);
   border-left: 1px solid var(--border-faint);
 }
-html body .tc-rail .lyr-bar { border-bottom: 1px solid var(--border-faint); }
+/* (The pinned rail's bar had a hairline under it here; the rail titles lost
+   theirs to the large word on 2026-09-25 — the rails canvas, F.) */
 /* Both rails' header buttons share ONE height, declared rather than inherited
    from whatever line box their contents happen to make. That is what lets the
    pinned rail's settings door (an icon) sit flush beside `all on` (text): an
@@ -5958,7 +6008,7 @@ html body .tc-lrail .lyr-list::-webkit-scrollbar-thumb {
    is what the mark hangs from — checked first, against the running app: the
    rail had zero absolutely-positioned descendants, so nothing moved. */
 html body .tc-lrail { position: relative; }
-.lyr-scroll { position: absolute; right: var(--sp-1); width: 2px; pointer-events: none; z-index: 2; }
+.lyr-scroll { position: absolute; right: var(--sp-1); width: 2px; pointer-events: none; z-index: 4; }
 .lyr-scroll[hidden] { display: none; }
 .lyr-scroll > i { position: absolute; left: 0; width: 2px; display: block;
   border-radius: var(--r-1); background: var(--text-faint); }
@@ -7077,12 +7127,17 @@ html body .palette .tile .tile-bind.learning { color: var(--accent-action); bord
 .row-binds .tile-bind--none   { color: var(--text-faint); border-color: var(--border-faint); }
 .row-binds .tile-bind.learning { border-color: var(--text-bright); }
 .row-binds .tile-bind:hover { border-color: var(--text-tertiary); }
-/* On a chrome button: a sticker on the TOP-right corner, over the edge — the
-   footer's buttons carry their word underneath, and a bottom sticker sat on it.
-   The pill is the palette's, a step smaller so it reads as the button's flag. */
-#tcUndo, #tcSweep, #tcClear, #tcZeroHeading, #tcCursorLock, #tcMute { position: relative; }
-.chrome-binds { position: absolute; right: -8px; top: -7px; z-index: 2; }
-.chrome-binds .tile-bind { height: 16px; min-width: 16px; padding: 0 var(--sp-2); font-size: 10px; }
+/* The GESTURE inside it, as on the palette's pill: a word for tap · ×2 · ×3,
+   the BAR for long, the thicker bar for extra long. These rules were scoped to
+   `.palette .tile`, so off the palette the bar was an empty element — unpin
+   all's ↑ held extra long read as a plain ↑ press (Ek, 2026-09-25). */
+.row-binds .tile-bind .leg { display: inline-flex; flex: none; align-items: center; gap: var(--sp-2); }
+.row-binds .tile-bind .leg-g { flex: none; font-style: normal; font-size: 9.5px; text-transform: none; color: var(--leg-midi); }
+.row-binds .tile-bind .leg-g--bar { display: inline-block; width: 8px; height: 2px; border-radius: 1px; background: var(--leg-midi); }
+.row-binds .tile-bind .leg-g--xlong { height: 4px; border-radius: 2px; }
+/* (The chrome's buttons wore one too, on their top-right corner, 2026-09-25 —
+   gone the same day, Ek: "it's obvious when i hover to see the tool tip". The
+   tooltip carries the shortcut; Settings → Keys learns it.) */
 /* On a rail action row (unpin all), the sticker follows the name as on a .mrow. */
 .trow .tile-nm:has(+ .row-binds) { flex: none; }
 .trow .row-binds { margin-right: auto; }

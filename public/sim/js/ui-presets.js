@@ -13,10 +13,10 @@ import { angleBetweenSphere, findNearestSeedSlot, nearestLoopPin, masterPhaseWal
 import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js';
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
 import { applySparsePreset, syncAllUI } from './param-registry.js';
-import { getMappings } from './sensor-mapping.js';
 import { pinAnchorInto, pinFadeOut } from './pins.js';
 import * as history from './history.js';
 import { clearWalkers } from './walker.js';
+import { lineTouchIndex } from './trigger.js';
 
 // ── Recency slider constants (module-level so both setupPresets & initGrainControls see them)
 // DEPTH IS FOUR ANSWERS (Ek, 2026-09-24: "a multi select pill with just 1 2 3
@@ -596,13 +596,16 @@ function _reserveCloud(lon, lat) {
     _lastFiredAt:  0,
     _nextPeriodMs: 0,
     _plantedAt:    performance.now() / 1000,
+    // The pin's place in the order clouds take marks in (grain.js
+    // _readableBy) — stamped once, kept through undo and redo.
+    _pinSeq:       (S._pinSeqCounter = (S._pinSeqCounter || 0) + 1),
     _releasingAt:  0,
     _envAttack:    S.commitAttack,     // the attack ramp NOW RUNNING (fadeIn at birth, again on unmute)
     _envRelease:   0,                // the release ramp now running (fadeOut, set when it starts)
     _envGainCurrent: S.commitAttack > 0 ? 0 : 1,
     // In and Out are the settings', read live (pins.js pinFadeIn / pinFadeOut):
     // pin and unmute ride In, unpin and mute ride Out, both kinds.
-    mute: false, solo: false,        // the pin's own flags (pins.js)
+    mute: S._pinPressTag != null && !!S.scanMuted, solo: false,   // the pin's own flags (pins.js); a muted cursor pins muted
     grainParams: {
       ...S.grainParams,
       ...Object.fromEntries(Object.entries(S.grainOverrides).filter(([, v]) => v !== null)),
@@ -620,6 +623,12 @@ function _reserveCloud(lon, lat) {
     // paint under it pushes the oldest out — the cursor's depth no longer
     // reaches it. (It was left global until today, with no reason written.)
     recencyN: S.recencyN,
+    // THE CURSOR'S SCOPE AND MUTE ARE PINNED WITH IT (Ek, 2026-09-25) — a cloud
+    // is a frozen cursor. `reads` is the lens's scope: `tape` reads and claims no
+    // grain, `grains` catches no tape (pinStrokeInZones). A press pins them as
+    // the cursor stands, the mute onto the pin's own M; a cloud no press made (a
+    // wash autopinning its stroke) is the cursor unscoped and sounding.
+    reads: S._pinPressTag != null ? S.lensReads : 'both',
     // Moving seed fields (null = stationary, populated on finalize if held long enough)
     frames:   null,
     duration: 0,
@@ -629,9 +638,23 @@ function _reserveCloud(lon, lat) {
   };
   S._applyPinMix?.();
   (S.updateSeedBanksUI || updateSeedBanksUI)();
-  // Signal the commit for LED feedback on the cursor x-IMU3 (1 yellow blink).
-  window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'commit' } }));
+  _flashPin();
   return slotIndex;
+}
+
+// THE PIN FLASH, once per pin (2026-09-25). The LED's `commit` row fired from
+// trigger.js on every tape take that ARMED — so a plain take flashed "pinned",
+// and an unpinned overdub handed back as a line flashed it after the unpin's
+// own flash — while a loop pin, the commonest pin there is, never flashed. Now
+// every pin flashes where it is made: a cloud, a loop, a playhead. One PRESS
+// that makes a loop and a cloud (tiles.js pinDown) is one flash — the press's
+// tag is remembered — and a pin no press made (autopin) flashes on its own.
+let _pinLedTag;
+function _flashPin() {
+  const tag = S._pinPressTag;
+  if (tag != null && tag === _pinLedTag) return;
+  _pinLedTag = tag;
+  window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'commit' } }));
 }
 
 /** The pin press takes every running WALKER too (2026-09-18): a walker is a
@@ -769,55 +792,6 @@ export function finalizeSeedPlant() {
   (S.updateSeedBanksUI || updateSeedBanksUI)();
 }
 
-export function uprootNearestSeed() {
-  const { lon, lat } = getCursorPos();
-  // Skip seeds already fading out so rapid uproot hits the next live seed
-  const nearestSlot = findNearestSeedSlot(lon, lat, { skipReleasing: true });
-  if (nearestSlot === -1) return;
-  const seed = S.commitSlots[nearestSlot];
-  if (!seed) return;
-  history.push(_unpinAction([seed]));
-  // Use the current release time (performance gesture), not a stored value
-  const rel = S.commitRelease || 0;
-  seed._composerHold = false;   // uproot destroys — see releaseCommit()
-  if (rel <= 0) {
-    // Instant removal
-    S.commitSlots[nearestSlot] = null;
-  } else {
-    // Stamp the current release duration onto the seed and start the ramp
-    seed._envRelease  = rel;
-    seed._releasingAt = performance.now() / 1000;
-  }
-  (S.updateSeedBanksUI || updateSeedBanksUI)();
-
-  // Signal the release for LED feedback on the cursor x-IMU3 (2 yellow blinks).
-  window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'release' } }));
-}
-
-export function clearAllSeeds() {
-  const now = performance.now() / 1000;
-  // Use the current release time for all cloud-type commits being cleared
-  const rel = S.commitRelease || 0;
-  let released = false;
-  const gone = S.commitSlots.filter(c => c && c.type === 'cloud');
-  if (gone.length) history.push(_unpinAction(gone));
-  for (let i = 0; i < MAX_COMMITS; i++) {
-    const seed = S.commitSlots[i];
-    if (!seed || seed.type !== 'cloud') continue;
-    seed._composerHold = false;   // clear-all destroys — see releaseCommit()
-    if (rel > 0 && !seed._releasingAt) {
-      seed._envRelease  = rel;
-      seed._releasingAt = now;
-      released = true;
-    } else if (rel <= 0) {
-      S.commitSlots[i] = null;
-      released = true;
-    }
-  }
-  (S.updateSeedBanksUI || updateSeedBanksUI)();
-  if (released) window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'release' } }));
-}
-
 // ── Sequence (loop) system ──────────────────────────────────────────────────────
 
 /**
@@ -919,11 +893,6 @@ function _syncCommitUI() {
 
   // Also refresh slot-full state
   _syncSeqButtonStates();
-
-  // The handsfree arm switch is disabled outside plain trace mode (#290 moved
-  // it into Settings → audio; `_syncHandsfreeUI` owns the rest of its state).
-  const hfToggle = document.getElementById('hfArmToggle');
-  if (hfToggle) hfToggle.disabled = S.traceMode !== 'trace' && !S.hfArmed;
 }
 S._syncCommitUI = _syncCommitUI;
 S._clearAllCommits = () => clearAllCommits();
@@ -1139,6 +1108,7 @@ export function beginOverdub() {
   seq._ovdWrap = undefined;            // the wrap counter starts with the take
   S._overdubTake = {
     seq, ov: null,                     // `ov` is the provisional layer once the first wrap has passed
+    at: { lon, lat },                  // where the press was — the layer's pin mark (renderer.js)
     // Baked at the press (docs/TAPE-STUDY-2026-09.md § 4): the decay this dub
     // wears the family by at every wrap while it records — Blooper's REPEATS —
     // and whether it is a ONE-SHOT (the bang verb: exactly one cycle). What the
@@ -1149,8 +1119,45 @@ export function beginOverdub() {
   };
   return true;
 }
+/** THE PIN'S OVERDUB (Ek, 2026-09-25: "a shortcut to make overdubs within one
+ *  tape stroke"). A pin during a tape take cuts it (events.js pinSplitTake):
+ *  the part before becomes the main loop, and the rest of the take is an
+ *  overdub on it. That loop does not exist yet — it is pinned once the first
+ *  part seals — so the take starts PENDING on the stroke that will become its
+ *  master, and the looper hook binds it (bindPendingOverdub). A take that
+ *  outlives no master (the pool full) ends as a plain line, as a dub whose
+ *  master went does. */
+export function pendingOverdub(masterStrokeId) {
+  const { lon, lat } = getCursorPos();
+  return {
+    seq: null, masterStrokeId, ov: null, at: { lon, lat },
+    decay: Math.max(0, Math.min(1, (S.triggerParams.dubDecay || 0) / 100)),
+    oneShot: false, wearBefore: null,
+  };
+}
+/** The main loop from a pin's cut has been pinned: the take recording on is
+ *  its overdub from here. */
+export function bindPendingOverdub(strokeId, seq) {
+  const t = S._overdubTake;
+  if (!t || t.seq || t.masterStrokeId !== strokeId || !seq) return false;
+  t.seq = seq;
+  t.wearBefore = _wearsOf(seq);
+  seq._ovdWrap = undefined;            // the wrap counter starts with the layer
+  return true;
+}
+/** A pin during an overdub take: this layer is done, the next one starts on
+ *  the same master with the same dub settings. */
+export function continueOverdub(prev) {
+  if (!prev?.seq) return prev ? pendingOverdub(prev.masterStrokeId) : null;
+  prev.seq._ovdWrap = undefined;
+  const { lon, lat } = getCursorPos();
+  return { seq: prev.seq, ov: null, at: { lon, lat }, decay: prev.decay, oneShot: false, wearBefore: _wearsOf(prev.seq) };
+}
+
 /** Is there a pinned loop for a dub to join at the cursor? The bang verb
  *  asks before it presses — a one-shot with no cycle has no length. */
+S._pendingOverdub  = pendingOverdub;
+S._continueOverdub = continueOverdub;
 S._loopPinNear = () => { const { lon, lat } = getCursorPos(); return nearestLoopPin(lon, lat) >= 0; };
 
 /** The family's wear, member by member — the master and each layer. */
@@ -1228,6 +1235,7 @@ function _foldOntoCycle(seq, samples, sr, phase0, decay = 0, oneShot = false) {
 export function refreshLiveOverdub() {
   const t = S._overdubTake;
   if (!t?.seq || !S.isRecording || !S.recordingRaw || !(S.recordingWritePos > 0)) return null;
+  if (S.recordingRawOffset > 0) return null;   // mid-split: the pool's head is still the part before the pin
   const seq = t.seq;
   if (S.commitSlots.indexOf(seq) < 0) return null;
   const slot = S.liveRecBuffers[S.currentLiveBufferIdx];
@@ -1243,7 +1251,7 @@ export function refreshLiveOverdub() {
   // playheads to appear for those portions").
   const foldedS = S.recordingWritePos / S.recordingSampleRate;
   if (!t.ov) {
-    t.ov = { strokeId: S.currentStrokeId, phase0, buffer: null, layer, live: true, foldedS, _src: null, _gain: null,
+    t.ov = { strokeId: S.currentStrokeId, phase0, buffer: null, layer, live: true, foldedS, _src: null, _gain: null, at: t.at,
              wear: 1, decay: t.decay, oneShot: t.oneShot, wearBefore: t.wearBefore };
     (seq.overdubs ||= []).push(t.ov);
     if (seq._sourceNode && !seq._sourceNode._stopped) startOverdubLayer(seq, t.ov, actx, { fadeIn: 0.008 });
@@ -1260,7 +1268,7 @@ S._overdubLiveWrap = refreshLiveOverdub;
 /** The stroke's end (events.js _commitTraceStroke, after the take seals):
  *  the take joins its master as a layer, phased by where the master was
  *  when the take's first sample landed. */
-export function attachOverdub(strokeId, seq, provisional = null) {
+export function attachOverdub(strokeId, seq, provisional = null, take = null) {
   if (!(strokeId > 0) || !seq) return null;
   const entry = S.strokeHistory.find(h => h.strokeId === strokeId);
   const slot  = entry && entry.liveBufferIndex >= 0 ? S.liveRecBuffers[entry.liveBufferIndex] : null;
@@ -1279,7 +1287,10 @@ export function attachOverdub(strokeId, seq, provisional = null) {
   const phase0 = masterPhaseWall(seq, (slot.startedAt ?? 0) - (S.latency?.roundTripS || 0));
   // The dub's baked half rides the provisional layer (a take that wrapped) or
   // the press record (one that did not — no wraps, so no wear to speak of).
-  const t = S._overdubTake?.seq === seq ? S._overdubTake : null;
+  // The take's own press record, handed through by the commit — by the seal a
+  // pin's cut has already put the NEXT layer's take in S._overdubTake, on the
+  // same master, and reading that gave this layer the next one's pin mark.
+  const t = take ?? (S._overdubTake?.seq === seq ? S._overdubTake : null);
   const decay   = provisional?.decay   ?? t?.decay   ?? 0;
   const oneShot = provisional?.oneShot ?? t?.oneShot ?? false;
   const wearBefore = provisional?.wearBefore ?? t?.wearBefore ?? null;
@@ -1292,7 +1303,7 @@ export function attachOverdub(strokeId, seq, provisional = null) {
     ov.strokeId = strokeId; ov.phase0 = phase0; ov.buffer = slot.buffer; ov.live = false; delete ov.foldedS;
     swapOverdubLayer(seq, ov, layer, actx);
   } else {
-    ov = { strokeId, phase0, buffer: slot.buffer, layer, _src: null, _gain: null, wear: 1, decay, oneShot, wearBefore };
+    ov = { strokeId, phase0, buffer: slot.buffer, layer, _src: null, _gain: null, wear: 1, decay, oneShot, wearBefore, at: t?.at ?? null };
     (seq.overdubs ||= []).push(ov);
     if (seq._sourceNode && !seq._sourceNode._stopped) startOverdubLayer(seq, ov, actx);
   }
@@ -1446,6 +1457,7 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
   S._applyPinMix?.();
   S._prepareTapePitch?.(S.commitSlots[slotIndex]);
   _syncSeqButtonStates();
+  _flashPin();
 }
 
 /**
@@ -1454,7 +1466,9 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
  * starts playing from the anchor particle's position in the loop.
  */
 function addPlayheadFromExisting(sourceSeq, anchorParticle) {
-  const { lon: aLon, lat: aLat } = getCursorPos();
+  // At the MARK it starts on, as a new loop is (payload.anchorLon): a pinned
+  // zone's playhead belongs at its touch point, not wherever the cursor is.
+  const { lon: aLon, lat: aLat } = anchorParticle ?? getCursorPos();
   const slotIndex = _findSeqSlot(aLon, aLat);
   if (slotIndex === -1) {
     // All slots full, overflow off — signal the rejected attempt.
@@ -1508,6 +1522,7 @@ function addPlayheadFromExisting(sourceSeq, anchorParticle) {
   S._applyPinMix?.();
   S._prepareTapePitch?.(S.commitSlots[slotIndex]);
   _syncSeqButtonStates();
+  _flashPin();
 }
 
 /**
@@ -1607,8 +1622,7 @@ export function removeSeqByStrokeId(strokeId) {
 /**
  * Release the SELECTED pin — nearest to the cursor or the oldest, by
  * `S.selectionMode` (pins.js selectedPinSlot, which is also what the rail
- * marks, so the hand sees what ⌘D is about to take). Replaces
- * uprootNearestSeed() and pickupSeqRemove().
+ * marks, so the hand sees what ⌘D is about to take).
  * Clouds get a release envelope; loops leave by `S.loopReleaseMode`.
  */
 export function releaseCommit() {
@@ -1651,10 +1665,8 @@ function _releaseSlotAt(targetSlot) {
   S._syncCommitUI?.();
   (S.updateSeedBanksUI || updateSeedBanksUI)();
 
-  // Signal the release for LED feedback on the cursor x-IMU3 (2 green blinks).
-  // releaseCommit() is the unified pickup path used by the keyboard shortcut,
-  // MIDI, and UI buttons — uprootNearestSeed() only fires for the legacy seed
-  // path, so without this dispatch picking up a cloud/loop showed no blink.
+  // The LED's unpin flash. releaseCommit() is the one unpin path — the key,
+  // MIDI, OSC and the rail all come through it.
   window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'release' } }));
 }
 
@@ -2077,7 +2089,14 @@ function _nearestTrigParticle() {
     const p = S.particles[i];
     if (!p.trig || p.strokeId == null || p.strokeId < 0) continue;
     const ang = angleBetweenSphere(p.lon, p.lat, lon, lat);
-    if ((S.lensMode === 'nearest' || ang < searchRad) && ang < nearestAng) {
+    // THE RADIUS IS THE TAPE GATE IN EVERY MODE. `nearest` reads the k closest
+    // GRAIN marks anywhere; a line still fires only inside the radius
+    // (trigger.js), so the pin takes only a line the cursor could fire. This
+    // accepted any line on the sphere under nearest, so every cloud pinned in
+    // nearest also pinned a loop of whichever take was closest, however far
+    // (Ek, 2026-09-25: "something wrong with the undo … after i pinned with
+    // nearest" — each undo took back a loop nobody had meant to make).
+    if (ang < searchRad && ang < nearestAng) {
       nearestAng = ang;
       nearest = p;
     }
@@ -2121,6 +2140,8 @@ function _loopOnStroke(strokeId) {
  *  Returns the slots it made, `[]` when nothing was in reach — the caller
  *  decides what that means (tiles.js pinDown: a ghost cloud). */
 export function dropSeqFromCursor() {
+  // A cursor scoped to GRAINS plays no line, so it pins none (2026-09-25).
+  if (S.lensReads === 'grains') return [];
   const targets = [];
   for (const t of (S.triggers || [])) {
     if (!t?.trigger?._inside || !t.particles?.length || t.strokeId == null || t.strokeId < 0) continue;
@@ -2133,6 +2154,13 @@ export function dropSeqFromCursor() {
     targets.push({ strokeId: p.strokeId, anchor: p });
   }
 
+  return _pinTargets(targets, !!S.scanMuted);
+}
+
+/** Pin each `{ strokeId, anchor }` as the cursor's press would: a new loop, or
+ *  another playhead on the loop already playing that stroke. `muted` — the
+ *  cursor (or the zone) was muted — births them muted. One undo for the lot. */
+function _pinTargets(targets, muted) {
   const made = [];
   _thisPress.clear();
   try {
@@ -2152,8 +2180,44 @@ export function dropSeqFromCursor() {
   } finally {
     _thisPress.clear();
   }
+  if (muted && made.length) { for (const m of made) m.slot.mute = true; S._applyPinMix?.(); }
   if (made.length) history.push(_pinsAction(made));
   return made.map(m => m.slot);
+}
+
+/** THE PINNED ZONES CATCH A TAPE STROKE (Ek, 2026-09-25: "i basically for
+ *  mental sake just want it to be essentially another cursor so the rules is
+ *  whatever the cursor would do if it was there, but autopinning"). Every cloud
+ *  pin is a frozen cursor. When a take arms, each cloud whose scope reads tape
+ *  and whose radius any part of the line touches pins that line exactly as a
+ *  pin press would with the cursor standing there: anchored on the mark nearest
+ *  its centre, another playhead if the stroke is already looping (tape's own
+ *  autopin, or a second zone), born muted when the zone is muted. The cloud
+ *  goes on reading grain beside it — clouds and loops never share a mark.
+ *  `trigs` are the gates the arm just made. Returns the slots it pinned. */
+export function pinStrokeInZones(trigs) {
+  if (!trigs?.length) return [];
+  const zones = [];
+  for (let i = 0; i < Math.min(S.commitSlots.length, S.commitSlotCount); i++) {
+    const c = S.commitSlots[i];
+    if (!c || c.type !== 'cloud' || (c.reads ?? 'both') === 'grains') continue;
+    if (c._releasingAt > 0 && !c._composerHold) continue;   // being unpinned (a muted one holds)
+    zones.push(c);
+  }
+  const made = [];
+  for (const z of zones) {
+    const f = z._currentFrame;                               // a moving cloud catches where it is now
+    const lon = f ? f.lon : z.lon, lat = f ? f.lat : z.lat;
+    const deg = (f ? f.searchRadiusDeg : z.searchRadiusDeg) ?? S.searchRadiusDeg;
+    const targets = [];
+    for (const t of trigs) {
+      const idx = lineTouchIndex(t, lon, lat, deg);
+      if (idx >= 0) targets.push({ strokeId: t.strokeId, anchor: t.particles[idx] });
+    }
+    if (targets.length) made.push(..._pinTargets(targets, !!z.mute));
+  }
+  if (made.length) S._pinsDirty = true;
+  return made;
 }
 
 /**
@@ -3010,6 +3074,14 @@ export function initGrainControls() {
     _pendingSliderUpdates.clear();
   }
 
+  // A stored raw position read as the numbox would show it — the rail's preset
+  // rows summarise a preset's own block, which is not on the sliders.
+  S._sliderDisplay = (sliderId, raw) => {
+    const d = SLIDER_DEFS.find(x => x.sliderId === sliderId);
+    if (!d || raw === undefined || raw === null || raw === '') return null;
+    try { return d.toDisplay(d.sliderToInternal(String(raw))); } catch (_) { return null; }
+  };
+
   SLIDER_DEFS.forEach(def => {
     const slider = document.getElementById(def.sliderId);
     const numbox = document.getElementById(def.numId);
@@ -3220,48 +3292,4 @@ export function initGrainControls() {
     { param: 'curveType',        segId: 'gcCurveSeg' },
   ];
 
-  // ── Sensor mapping visual indicator ──────────────────────────────────────
-  // When an IMU sensor mapping is enabled for a param, toggle .param-mapped
-  // on each affected grain-row so the slider/label turn violet.
-  // Driven by S._syncMappingHighlights(), called from sensor-mapping.js
-  // whenever mappings are added, removed, or toggled.
-
-  /** Build a Set of param keys with at least one enabled mapping.
-   *  Only grain-kind rows count — MIDI/OSC rows don't drive grain params and
-   *  shouldn't violet-highlight a slider that isn't actually being modulated. */
-  function _activeMappedParams() {
-    const mappings = getMappings();
-    const active = new Set();
-    for (let i = 0; i < mappings.length; i++) {
-      const m = mappings[i];
-      if (!m.enabled) continue;
-      const kind = m.output?.kind || 'grain';
-      if (kind !== 'grain') continue;
-      const param = m.output?.param || m.targetParam;
-      if (param) active.add(param);
-    }
-    return active;
-  }
-
-  S._syncMappingHighlights = function() {
-    const mapped = _activeMappedParams();
-    SLIDER_DEFS.forEach(def => {
-      const slider = document.getElementById(def.sliderId);
-      if (!slider) return;
-      const row = slider.closest('.grain-row');
-      if (!row) return;
-      row.classList.toggle('param-mapped', mapped.has(def.param));
-    });
-    // Also mark non-SLIDER_DEF slider controls (k, radius, recency, fade curve)
-    EXTRA_MORPH_SLIDERS.forEach(def => {
-      const el = document.getElementById(def.sliderId);
-      if (!el) return;
-      const row = el.closest('.grain-row');
-      if (!row) return;
-      row.classList.toggle('param-mapped', mapped.has(def.param));
-    });
-  };
-
-  // Initial sync — pick up any persisted mappings from localStorage
-  S._syncMappingHighlights();
 }

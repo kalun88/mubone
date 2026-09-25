@@ -275,7 +275,7 @@ export function cursorLonLatNow() {
 // with the sphere centre at (0, 0, D), so the algebra below is that one solve.
 //
 // CONTRACT: always returns a usable {lon, lat}, never null. There are 13 call
-// sites across audio, erase, grain, paint-ticker, seed-morph, sensor-mapping,
+// sites across audio, erase, grain, paint-ticker, seed-morph,
 // presets and the renderer, every one of which assumes a value. Once the camera
 // is outside the sphere a mouse ray can miss it entirely, and the honest-looking
 // answer — return null and let painting stop — would mean auditing all 13 for a

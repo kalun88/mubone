@@ -173,7 +173,7 @@ It doesn't, currently. Measured consequences, per action shape:
 | Shape | Example | Effect of a `[toggle]` (1 then 0) |
 |---|---|---|
 | **latching toggle** | `/erase/toggle`, `/trace/toggle` | starts then immediately stops — **looks broken, does nothing** |
-| **state toggle** | `/mute`, `/handsfree`, `/app/darkmode`, `/morph/sticky`, `/cursor/radiusfade` | flips twice — no net change |
+| **state toggle** | `/mute`, `/app/darkmode`, `/morph/sticky`, `/cursor/radiusfade` | flips twice — no net change |
 | **mode cycle** (`_bangOrStr`) | `/commit/mode`, `/grain/dir`, `/camera/mode`, `/pins/follow` (was `/commit/blend` until 2026-09-22; `/trace/mode` went 2026-09-05 — the grain sheet's `on end` row owns the flag) | **advances two modes, skipping one** |
 | **step** | `/search/radius/inc`, `/grain/oct/up` | **double step** — +4° instead of +2°, +2400¢ instead of +1200¢ |
 | **destructive** | `/undo`, `/sweep`, `/session/erase`, `/commit/drop` | **fires twice** — two strokes undone, not one |
@@ -321,7 +321,7 @@ entirely:
 
 ```
 /erase/hold  /erase/toggle  /app/projector  /scan/fade
-/grain/startjitter  /morph/radial  /mapping1  /mapping2  /mapping3
+/grain/startjitter  /morph/radial  (and /mapping1–3, deleted 2026-09-25)
 ```
 
 (`/grain/oct/up`, `/search/radius/dec`, `/cursor/el_source`, `/paint/2`–`10`

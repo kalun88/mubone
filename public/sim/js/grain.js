@@ -328,33 +328,132 @@ const _kSelectBuf = [];
 // over every particle inside the 10 ms tick.
 const _cloudClaims = [];
 let   _cloudClaimN = 0;
+// A NEAREST CLOUD OWNS THE MARKS IT READS (Ek, 2026-09-25: "the nearest cloud
+// should own the marks and cursor skips them like radius cloud"). Its reach is
+// not a place — it reads the k closest marks anywhere — so its claim is those
+// marks, by identity: the pool it posted last tick (`seed._reach`), or for a
+// cloud that is not sounding (muted, held, in its attack floor) the pool it
+// WOULD read, rebuilt at most every 100 ms (the claim is by pinning, not by
+// sounding, as a radius cloud's is).
+const _nearClaim = new Set();
+let   _claimsOn = false;   // any claim at all — the one test a caller hoists
 
-function _refreshCloudClaims() {
+// EACH PIN TAKES ITS OWN MARKS (Ek, 2026-09-25: three nearest pins with a large
+// k read the same marks, so undoing the newest changed nothing you could hear
+// or see). A nearest cloud skips the marks owned by every cloud pinned BEFORE
+// it — a radius cloud's area, a nearest cloud's pool — exactly as the cursor
+// skips them all. Order is the pin's own stamp (`_pinSeq`, ui-presets.js
+// _reserveCloud), never the slot index: slots are reused and evicted.
+const _ownNear = [];        // [{ seq, set }] — the nearest clouds' pools, oldest first
+let   _ownNearN = 0;
+const _nearClouds = [];     // scratch: this refresh's nearest clouds
+
+function _refreshCloudClaims(compute = false) {
   _cloudClaimN = 0;
+  _ownNearN = 0;
+  _nearClaim.clear();
+  _claimsOn = false;
   const slots = S.commitSlots;
   if (!slots) return;
   const lim = Math.min(slots.length, S.commitSlotCount ?? slots.length);
+  _nearClouds.length = 0;
   for (let i = 0; i < lim; i++) {
     const c = slots[i];
     if (!c || c.type !== 'cloud') continue;
+    // A cloud scoped to TAPE reads no grain, so it takes none from the cursor
+    // (2026-09-25: a pinned zone is a frozen cursor, scope and all).
+    if (c.reads === 'tape') continue;
     const f = c._currentFrame;
+    if (f ? f.nearestMode : c.nearestMode) { _nearClouds.push(c); continue; }
     const lon = f ? f.lon : c.lon, lat = f ? f.lat : c.lat;
     if (lon == null || lat == null) continue;
     const degs = (f ? f.searchRadiusDeg : c.searchRadiusDeg) ?? S.searchRadiusDeg ?? 10;
     const cl = Math.cos(lat);
     let e = _cloudClaims[_cloudClaimN];
-    if (!e) e = _cloudClaims[_cloudClaimN] = { x: 0, y: 0, z: 0, cosR: 0 };
+    if (!e) e = _cloudClaims[_cloudClaimN] = { x: 0, y: 0, z: 0, cosR: 0, seq: 0 };
     e.x = cl * Math.sin(lon);
     e.y = Math.sin(lat);
     e.z = cl * Math.cos(lon);
     e.cosR = Math.cos(degs * Math.PI / 180);
+    e.seq = c._pinSeq || 0;
     _cloudClaimN++;
   }
+  // The nearest clouds, oldest first, so a silent one rebuilt here already
+  // sees what the clouds before it own.
+  if (_nearClouds.length > 1) _nearClouds.sort((a, b) => (a._pinSeq || 0) - (b._pinSeq || 0));
+  for (const c of _nearClouds) {
+    const fresh = c._reach && performance.now() - (c._reachAt || 0) < 60;
+    const pool = fresh ? c._reach : (compute ? _silentNearestPool(c) : c._claimPool);
+    const set = c._ownSet || (c._ownSet = new Set());
+    set.clear();
+    if (pool) for (let j = 0; j < pool.length; j++) { set.add(pool[j]); _nearClaim.add(pool[j]); }
+    let o = _ownNear[_ownNearN];
+    if (!o) o = _ownNear[_ownNearN] = { seq: 0, set: null };
+    o.seq = c._pinSeq || 0; o.set = set;
+    _ownNearN++;
+  }
+  _claimsOn = _cloudClaimN > 0 || _nearClaim.size > 0;
+}
+
+/** Is `p` owned by a cloud pinned before the one stamped `seq`? */
+function _ownedEarlier(seq, p) {
+  for (let i = 0; i < _cloudClaimN; i++) {
+    const c = _cloudClaims[i];
+    if (c.seq < seq && p._cx * c.x + p._cy * c.y + p._cz * c.z >= c.cosR) return true;
+  }
+  for (let i = 0; i < _ownNearN; i++) {
+    const o = _ownNear[i];
+    if (o.seq < seq && o.set.has(p)) return true;
+  }
+  return false;
+}
+/** The marks a nearest cloud may read: all of them, less what earlier pins own. */
+function _readableBy(seq, parts) {
+  let any = false;
+  for (let i = 0; i < _cloudClaimN; i++) if (_cloudClaims[i].seq < seq) { any = true; break; }
+  if (!any) for (let i = 0; i < _ownNearN; i++) if (_ownNear[i].seq < seq) { any = true; break; }
+  if (!any) return parts;
+  const out = [];
+  for (const p of parts) {
+    if (p._cx === undefined) stampCartesian(p);
+    if (!_ownedEarlier(seq, p)) out.push(p);
+  }
+  return out;
+}
+
+/** The pool a nearest cloud that is not sounding would read — the seed block's
+ *  own builder, as __testSeedPool calls it. Stamps `_ang` from the cloud, so it
+ *  runs only at the top of the scheduler's tick (`compute`), before the cursor
+ *  restores its own angles; the renderer's refresh reads the cached answer. */
+function _silentNearestPool(c) {
+  const now = performance.now();
+  if (c._claimPool && now - (c._claimAt || 0) < 100) return c._claimPool;
+  const f = c._currentFrame;
+  const lon = f ? f.lon : c.lon, lat = f ? f.lat : c.lat;
+  if (lon == null || lat == null) return null;
+  const cosLat = Math.cos(lat);
+  const rx = cosLat * Math.sin(lon), ry = Math.sin(lat), rz = cosLat * Math.cos(lon);
+  const parts = S.particles;
+  for (const p of parts) {
+    if (p._cx === undefined) stampCartesian(p);
+    p._ang = _angleFromCached(p, rx, ry, rz);
+  }
+  const gp0 = f ? f.grainParams : c.grainParams;
+  const k = c.grainOverrides?.k ?? gp0?.k ?? 0;
+  const rad = ((f ? f.searchRadiusDeg : c.searchRadiusDeg) ?? S.searchRadiusDeg ?? 10) * Math.PI / 180;
+  _depthFor = c.recencyN ?? null;
+  try {
+    const src = _readableBy(c._pinSeq || 0, parts);
+    c._claimPool = _buildCandidatePoolNearest(src, k === 0 ? src.length : k, true, rad).slice();
+  } finally { _depthFor = null; }
+  c._claimAt = now;
+  return c._claimPool;
 }
 
 /** Is this particle inside a pinned cloud? Hoist `_cloudClaimN` at the call
  *  site so the common case (no cloud pinned) costs one integer test. */
 function _claimedByCloud(p) {
+  if (_nearClaim.size && _nearClaim.has(p)) return true;
   if (p._cx === undefined) stampCartesian(p);
   for (let i = 0; i < _cloudClaimN; i++) {
     const c = _cloudClaims[i];
@@ -377,13 +476,13 @@ function _claimedByCloud(p) {
  * drive it without coordinating.
  */
 export function refreshCloudClaims() { _refreshCloudClaims(); }
-export function isCloudClaimed(p) { return _cloudClaimN > 0 && _claimedByCloud(p); }
+export function isCloudClaimed(p) { return _claimsOn && _claimedByCloud(p); }
 
 /** Test seam for scripts/pins-audit.js § J — the scheduler is the only other
  *  caller, and it refreshes on its own tick. Not used by the app. */
 export function __testCloudClaims() {
   _refreshCloudClaims();
-  return { n: _cloudClaimN, claimed: S.particles.filter(p => _claimedByCloud(p)).length };
+  return { n: _cloudClaimN + (_nearClaim.size ? 1 : 0), claimed: S.particles.filter(p => _claimedByCloud(p)).length };
 }
 
 /**
@@ -499,7 +598,7 @@ function _selectPerVoicing(pool, k, trigFilter) {
   // particles. In radius mode the pool arrives already filtered and this costs
   // one integer test per candidate. No `forCursor` flag needed: unlike the
   // radius builder, this pass has exactly one caller and it is the cursor.
-  const pinned = _cloudClaimN > 0;
+  const pinned = _claimsOn;
 
   _voSelBuf.length = 0;
   _voEligible = 0;
@@ -574,7 +673,7 @@ function _buildCandidatePoolRadius(particles, radiusRad, forCursor = false, only
   const wet = forCursor && S.isPainting && S.isRecording && !S._recordingTrigger ? S.currentStrokeId : -1;
   // Default false: the seed path shares this builder, and a cloud must read the
   // material it claims. Only the cursor's call passes true.
-  const pinned = forCursor && _cloudClaimN > 0;
+  const pinned = forCursor && _claimsOn;
   _recBufRec.clear();
   for (let i = 0; i < particles.length; i++) {
     const p = particles[i];
@@ -1076,7 +1175,7 @@ export function scheduleGrains() {
     // below. Cheap enough to do unconditionally (a walk of ≤16 slots) and it
     // must not be skipped by the angle cache, because a cloud can move or be
     // unpinned while the cursor sits perfectly still.
-    _refreshCloudClaims();
+    _refreshCloudClaims(true);
 
     // Pre-compute candidate pool once per scheduler tick (shared by all onsets in window).
     // Dirty-flag: skip the trig loop when the cursor position and particle set
@@ -1412,6 +1511,8 @@ export function scheduleGrains() {
     seed._envGainCurrent = seedEnvGain;
     // Skip grain scheduling if envelope is silent or no particles to play
     if (seedEnvGain < 0.001 || !S.particles.length) continue;
+    // Scoped to tape: a zone that catches lines and plays no grain of its own.
+    if (seed.reads === 'tape') continue;
 
     // Reusable effective params object — avoids per-grain allocation
     if (!seed._effectiveParams) seed._effectiveParams = {};
@@ -1519,9 +1620,11 @@ export function scheduleGrains() {
       // O(N) k-selection instead of O(N log N) sort of the global array.
       // The old code sorted S.particles for EACH seed — 16 seeds × sort(500)
       // = 72,000 comparisons/tick.  k-selection does a single linear pass.
+      // Less what the clouds pinned before this one own (_readableBy).
+      const src = _readableBy(seed._pinSeq || 0, cParts);
       pool = cKAllMode
-        ? _buildCandidatePoolNearest(cParts, cParts.length, true, seedRadiusRad)
-        : _buildCandidatePoolNearest(cParts, cgp.k, true, seedRadiusRad);
+        ? _buildCandidatePoolNearest(src, src.length, true, seedRadiusRad)
+        : _buildCandidatePoolNearest(src, cgp.k, true, seedRadiusRad);
     } else {
       pool = _buildCandidatePoolRadius(cParts, seedRadiusRad);
       if (!cKAllMode && pool.length > cgp.k) {
@@ -1546,9 +1649,13 @@ export function scheduleGrains() {
     // buckets the pool by `p._vo` exactly as it does for the cursor and posts
     // one worklet voice per voicing. `grainParams` is what a mark with NO
     // voicing plays with — the block the cloud was pinned with, as before.
+    // What the cloud reads THIS tick, for its reach lines (renderer.js
+    // drawSeeds) — the cursor's `_cursorPool`, per cloud.
+    const reach = pool.slice();
+    seed._reach = reach; seed._reachAt = now;
     _workletSeedData.push({
       slotIndex: i,
-      pool: pool.slice(),
+      pool: reach,
       gain: _seedWeights[i] * seedEnvGain * (seed.level ?? 1),   // × the pin's fader
       grainParams: cgp,
       overrides: hasOverrides ? cgo : null,

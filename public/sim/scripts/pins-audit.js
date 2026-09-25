@@ -324,13 +324,15 @@ async function run(rig) {
                     color: '#e8a030', grainParams: {}, grainOverrides: {} };
       S.commitSlots = [pin];
       S._pinsDirty = true; await sleep(350);
-      const row = document.querySelector('#tcPins [data-pin="mute"]');
-      if (!row) return { row: false };
+      // The MIX mute is the ALL bus's M since 2026-09-25; the bus is redrawn
+      // when the flags change, so the button is found afresh every press.
+      const allM = () => document.querySelector('#lyrBus [data-bus="all"] [data-mute="all"]');
+      if (!allM()) return { row: false };
       const seen = [];
       for (let i = 0; i < 4; i++) {
-        row.click();
-        await sleep(260);                     // PAST the 180 ms flash timeout
-        seen.push({ lit: row.classList.contains('fired'), muted: P.allMuted(),
+        allM().click();
+        await sleep(260);                     // past the rail's redraw
+        seen.push({ lit: allM()?.getAttribute('aria-pressed') === 'true', muted: P.allMuted(),
                     audible: P.isPinAudible(pin) });
       }
       return { row: true, seen };
@@ -341,12 +343,12 @@ async function run(rig) {
     }
   });
 
-  check('the rail has a mute row', railLight.row === true);
+  check('the rail has an ALL bus with its M', railLight.row === true);
   if (railLight.row) {
     const s4 = railLight.seen;
-    check('the rail row HOLDS its light past the flash window',
+    check('ALL\'s M holds its light while it mutes',
       s4[0].lit === true && s4[2].lit === true,
-      s4.map(x => x.lit).join(',') + ' — a flash is dark again by 260 ms');
+      s4.map(x => x.lit).join(','));
     check('the rail row alternates, so every click engages',
       s4[0].muted === true && s4[1].muted === false && s4[2].muted === true && s4[3].muted === false,
       s4.map(x => x.muted).join(','));
@@ -2261,6 +2263,192 @@ async function run(rig) {
   check('… and under `nearest` it is row one — sort is the selected pin',
         marks.n === 3 && marks.first === marks.want, JSON.stringify(marks));
   check('every track is numbered by its slot', marks.digits === true, JSON.stringify(marks));
+
+  console.log('\n§ Z. a pinned cloud is a frozen cursor — it pins the lines that touch it');
+  const zn = JSON.parse(await rig.evaluate(async () => {
+    const T = await import('./js/take.js');
+    const { S } = await import('./js/state.js');
+    const H = await import('./js/history.js');
+    const UP = await import('./js/ui-presets.js');
+    const US = await import('./js/ui-samples.js');
+    const TR = await import('./js/trigger.js');
+    const G = await import('./js/grain.js');
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const W = S.canvas.width, Hh = S.canvas.height;
+    const keep = { parts: S.particles, slots: S.commitSlots.slice(), hist: S.strokeHistory, trigs: S.triggers, mode: S.traceMode,
+      r: S.searchRadiusDeg, muted: S.scanMuted, reads: S.lensReads, auto: S.triggerParams.loopOnEnd, live: S.liveRecBuffers.slice(), mic: S.mouseInCanvas, mx: S.mousePixelX, my: S.mousePixelY };
+    const D = Math.PI / 180;
+    const out = {};
+    const reset = () => { UP.clearAllCommits(); TR.dropTriggersWhere?.(() => true); S.commitSlots = new Array(S.commitSlotCount ?? 16).fill(null); S.particles = []; S.strokeHistory = []; S.triggers = []; };
+    const zoneAt = async (reads, muted) => {
+      S.lensReads = reads; S.scanMuted = muted;
+      S.mouseInCanvas = true; S.mousePixelX = W * 0.5; S.mousePixelY = Hh * 0.5; await sleep(80);
+      await S._pinTap(); await sleep(120);
+      S.lensReads = 'both'; S.scanMuted = false;
+      S.mousePixelX = W * 0.05; S.mousePixelY = Hh * 0.05; await sleep(80);
+      return S.commitSlots.find(c => c && c.type === 'cloud');
+    };
+    // From outside the zone, grazing its top edge: lat 9° above the centre (radius 10°).
+    const paint = async (z, startDeg) => {
+      const buf = T.makeTake(new Float32Array(S.audioCtx.sampleRate * 2), S.audioCtx.sampleRate);
+      S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
+      const idx = S.liveRecBuffers.length - 1;
+      US.recordStrokeStart('live', idx);
+      const sid = S.currentStrokeId;
+      for (let k = 0; k < 8; k++) S.particles.push({ lon: z.lon + (startDeg + k * 1.5) * D, lat: z.lat + 9 * D, strokeId: sid, source: 'live',
+        liveBufferIdx: idx, grainStart: 0.1 * k, grainDuration: 0.1, color: '#fff', trig: true, _vo: S.currentVoicing });
+      S._particleVersion++; S.currentStrokeId = -1;
+      TR.armTrigger(sid); await sleep(250);
+      return sid;
+    };
+    const loopsOf = sid => S.commitSlots.filter(c => c && c.type === 'loop' && c.strokeId === sid);
+    try {
+      S.traceMode = 'trace'; S.searchRadiusDeg = 10; S.triggerParams.loopOnEnd = false;
+      for (const [name, reads, muted, start, auto] of [
+        ['both grazes', 'both', false, -12, false], ['misses', 'both', false, 15, false], ['grains scope', 'grains', false, -12, false],
+        ['tape scope', 'tape', false, -12, false], ['muted zone', 'both', true, -12, false], ['with autopin', 'both', false, -12, true]]) {
+        reset(); H.clear();
+        const z = await zoneAt(reads, muted);
+        S.triggerParams.loopOnEnd = auto;
+        const sid = await paint(z, start);
+        S.triggerParams.loopOnEnd = false;
+        const ls = loopsOf(sid);
+        out[name] = { zone: [z?.reads, z?.mute], loops: ls.length, muted: ls.map(l => !!l.mute),
+          anchorDeg: ls.map(l => +(G.angleBetweenSphere(l.anchorLon, l.anchorLat, z.lon, z.lat) / D).toFixed(1)), cloudStill: !!S.commitSlots.find(c => c && c.type === 'cloud'), undo: H.canUndo?.() };
+      }
+    } finally {
+      reset(); H.clear();
+      S.particles = keep.parts; S.commitSlots = keep.slots; S.strokeHistory = keep.hist; S.triggers = keep.trigs; S.traceMode = keep.mode;
+      S.searchRadiusDeg = keep.r; S.scanMuted = keep.muted; S.lensReads = keep.reads; S.triggerParams.loopOnEnd = keep.auto;
+      S.liveRecBuffers = keep.live; S.mouseInCanvas = keep.mic; S.mousePixelX = keep.mx; S.mousePixelY = keep.my;
+    }
+    return JSON.stringify(out);
+  }));
+  check('a stroke painted from outside that grazes the zone is pinned at the touch point',
+        zn['both grazes'].loops === 1 && zn['both grazes'].anchorDeg[0] < 10 && zn['both grazes'].cloudStill, JSON.stringify(zn['both grazes']));
+  check('…and one that misses is not', zn.misses.loops === 0, JSON.stringify(zn.misses));
+  check('a zone scoped to grains catches no tape; scoped to tape it does',
+        zn['grains scope'].loops === 0 && zn['tape scope'].loops === 1, JSON.stringify([zn['grains scope'], zn['tape scope']]));
+  check('a muted zone pins it muted', zn['muted zone'].loops === 1 && zn['muted zone'].muted[0] === true, JSON.stringify(zn['muted zone']));
+  check('with tape autopin on, the zone adds a second playhead at its touch point',
+        zn['with autopin'].loops === 2 && zn['with autopin'].anchorDeg.every(a => a < 10), JSON.stringify(zn['with autopin']));
+  const zs = JSON.parse(await rig.evaluate(async () => {
+    const T = await import('./js/take.js');
+    const { S } = await import('./js/state.js');
+    const H = await import('./js/history.js');
+    const UP = await import('./js/ui-presets.js');
+    const US = await import('./js/ui-samples.js');
+    const TR = await import('./js/trigger.js');
+    const G = await import('./js/grain.js');
+    const SP = await import('./js/sphere.js');
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const W = S.canvas.width, Hh = S.canvas.height;
+    const keep = { parts: S.particles, slots: S.commitSlots.slice(), hist: S.strokeHistory, trigs: S.triggers, mode: S.traceMode,
+      r: S.searchRadiusDeg, muted: S.scanMuted, reads: S.lensReads, live: S.liveRecBuffers.slice(), mic: S.mouseInCanvas, mx: S.mousePixelX, my: S.mousePixelY };
+    const D = Math.PI / 180, out = {};
+    const reset = () => { UP.clearAllCommits(); TR.dropTriggersWhere?.(() => true); S.commitSlots = new Array(S.commitSlotCount ?? 16).fill(null); S.particles = []; S.strokeHistory = []; S.triggers = []; H.clear(); };
+    const stroke = (c, trig) => {
+      const buf = T.makeTake(new Float32Array(S.audioCtx.sampleRate * 2), S.audioCtx.sampleRate);
+      S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
+      const idx = S.liveRecBuffers.length - 1;
+      US.recordStrokeStart('live', idx);
+      const sid = S.currentStrokeId;
+      for (let k = 0; k < 6; k++) S.particles.push({ lon: c.lon + (k - 2.5) * D, lat: c.lat, strokeId: sid, source: 'live',
+        liveBufferIdx: idx, grainStart: 0.1 * k, grainDuration: 0.1, color: '#fff', trig, _vo: S.currentVoicing });
+      S._particleVersion++; S.currentStrokeId = -1;
+      return sid;
+    };
+    try {
+      S.traceMode = 'trace'; S.searchRadiusDeg = 10; S.triggerParams.loopOnEnd = false;
+      S.mouseInCanvas = true; S.mousePixelX = W * 0.5; S.mousePixelY = Hh * 0.5; await sleep(80);
+      const c = SP.screenToLonLat(W * 0.5, Hh * 0.5);
+      // 1. A tape-scoped zone over grain claims none of it; a both-scoped one does.
+      for (const reads of ['tape', 'both']) {
+        reset(); stroke(c, false);
+        S.lensReads = reads; await S._pinTap(); await sleep(150); S.lensReads = 'both';
+        const z = S.commitSlots.find(x => x && x.type === 'cloud');
+        out['claim ' + reads] = { zone: z?.reads, cursorPool: G.__testCandidatePool(c.lon, c.lat).length };
+      }
+      // 2. Scope grains over a line: no loop.   3. Muted over a line: a muted loop.
+      for (const [name, reads, muted] of [['grains over line', 'grains', false], ['muted over line', 'both', true], ['plain over line', 'both', false]]) {
+        reset(); const sid = stroke(c, true); TR.armTrigger(sid, { plain: true }); await sleep(120);
+        S.lensReads = reads; S.scanMuted = muted; await S._pinTap(); await sleep(150); S.lensReads = 'both'; S.scanMuted = false;
+        const loops = S.commitSlots.filter(x => x && x.type === 'loop');
+        const clouds = S.commitSlots.filter(x => x && x.type === 'cloud');
+        out[name] = { loops: loops.length, loopMuted: loops.map(l => !!l.mute), clouds: clouds.map(x => [x.reads, x.mute]) };
+      }
+    } finally {
+      reset();
+      S.particles = keep.parts; S.commitSlots = keep.slots; S.strokeHistory = keep.hist; S.triggers = keep.trigs; S.traceMode = keep.mode;
+      S.searchRadiusDeg = keep.r; S.scanMuted = keep.muted; S.lensReads = keep.reads;
+      S.liveRecBuffers = keep.live; S.mouseInCanvas = keep.mic; S.mousePixelX = keep.mx; S.mousePixelY = keep.my;
+    }
+    return JSON.stringify(out);
+  }));
+  check('a tape-scoped cloud claims no grain from the cursor; a both-scoped one does',
+        zs['claim tape'].cursorPool > 0 && zs['claim both'].cursorPool === 0, JSON.stringify([zs['claim tape'], zs['claim both']]));
+  check('a press scoped to grains pins no line, only the cloud',
+        zs['grains over line'].loops === 0 && zs['grains over line'].clouds[0]?.[0] === 'grains', JSON.stringify(zs['grains over line']));
+  check('a press with the cursor muted pins muted; unmuted, sounding',
+        zs['muted over line'].loopMuted[0] === true && zs['plain over line'].loopMuted[0] === false, JSON.stringify([zs['muted over line'], zs['plain over line']]));
+
+  console.log('\n§ Z2. a pin during a tape take cuts it into a loop and an overdub, gaplessly');
+  const sp = await rig.evaluate(async () => {
+    const { S } = await import('./js/state.js');
+    const A = await import('./js/audio.js');
+    const UP = await import('./js/ui-presets.js');
+    const H = await import('./js/history.js');
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const actx = A.ensureAudioContext(); if (actx.state !== 'running') await actx.resume();
+    const sr = actx.sampleRate, F = 40;   // 40 Hz: a whole number of samples per period at 48 k
+    if (!S.inputGainNode) S.inputGainNode = actx.createGain();
+    if (!S.inputAnalyser) { S.inputAnalyser = actx.createAnalyser(); S.inputAnalyser.fftSize = 256; S.inputGainNode.connect(S.inputAnalyser); }
+    const osc = actx.createOscillator(); osc.frequency.value = F; const og = actx.createGain(); og.gain.value = 0.3;
+    osc.connect(og); og.connect(S.inputGainNode); osc.start();
+    window._rtAudioInputListening = true;
+    const keepLat = S.latency; S.latency = { inS: 0.012, outS: 0.018, roundTripS: 0.03, source: 'measured', detail: 'test' };
+    S.mouseInCanvas = true; S.mousePixelX = S.canvas.width * 0.5; S.mousePixelY = S.canvas.height * 0.5;
+    UP.clearAllCommits(); await sleep(100);
+    const o = {};
+    try {
+      await S._startTriggerRecord(); const s0 = S.currentStrokeId, i0 = S.currentLiveBufferIdx;
+      await sleep(1000); await S._pinTap(); const s1 = S.currentStrokeId;
+      o.pin1 = { rec: S.isRecording && S.isPainting && S._recordingTrigger, newStroke: s1 !== s0 };
+      await sleep(500);
+      const m = S.commitSlots.find(c => c && c.type === 'loop' && c.strokeId === s0);
+      o.master = { pinned: !!m, len: m ? +(m.loopEnd - m.loopStart).toFixed(2) : null, bound: S._overdubTake?.seq === m };
+      await sleep(1100); await S._pinTap(); const s2 = S.currentStrokeId;
+      await sleep(600); S._stopTriggerRecord();
+      await new Promise(res => A.whenSealed(res)); await sleep(200);
+      // The join: the sine's phase either side of the cut, in one frame.
+      const d0 = S.liveRecBuffers[i0]?.buffer?.data;
+      const d1 = S.liveRecBuffers[S.strokeHistory.find(h => h.strokeId === s1)?.liveBufferIndex]?.buffer?.data;
+      const fit = (d, from, n) => { let s = 0, c = 0; for (let i = 0; i < n; i++) { const w = 2 * Math.PI * F * (from + i) / sr; s += d[from + i] * Math.sin(w); c += d[from + i] * Math.cos(w); } return Math.atan2(c, s); };
+      if (d0 && d1) {
+        const N0 = d0.length, W = 2400;
+        let err = fit(d1, W, W) - (fit(d0, N0 - 2 * W, W) + 2 * Math.PI * F * N0 / sr);
+        err = Math.atan2(Math.sin(err), Math.cos(err));
+        o.joinErr = Math.abs(err / (2 * Math.PI * F) * sr);
+      }
+      o.layers = (m?.overdubs || []).map(v => ({ sid: v.strokeId, phase0: +v.phase0.toFixed(3) }));
+      o.want = [s1, s2];
+      H.undo(); await sleep(150); o.undo1 = (m?.overdubs || []).map(v => v.strokeId);
+      H.redo(); await sleep(150);
+      UP.releaseCommit(); await sleep(1500);
+      o.lines = [s0, s1, s2].map(s => (S.triggers || []).some(t => t.strokeId === s));
+    } finally {
+      osc.stop(); S.latency = keepLat; UP.clearAllCommits();
+    }
+    return o;
+  });
+  check('the pin cuts the take and it records on as a new stroke', sp.pin1?.rec && sp.pin1?.newStroke, JSON.stringify(sp.pin1));
+  check('…the part before is the main loop, press to pin, and the rest is its overdub',
+        sp.master?.pinned && Math.abs(sp.master.len - 1) < 0.05 && sp.master.bound, JSON.stringify(sp.master));
+  check('nothing is lost at the join (under 2 samples)', sp.joinErr != null && sp.joinErr < 2, String(sp.joinErr));
+  check('one layer per pin, the first on the loop\'s top',
+        JSON.stringify(sp.layers?.map(l => l.sid)) === JSON.stringify(sp.want) && sp.layers?.[0]?.phase0 < 0.01, JSON.stringify(sp.layers));
+  check('undo takes back the last layer', JSON.stringify(sp.undo1) === JSON.stringify([sp.want[0]]), JSON.stringify(sp.undo1));
+  check('unpinned, the loop and both layers are ordinary lines', sp.lines?.every(Boolean), JSON.stringify(sp.lines));
 
   check('no renderer errors after exercise', rig.errors().length === 0, rig.errors().join(' | '));
 

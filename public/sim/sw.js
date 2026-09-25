@@ -18,7 +18,7 @@
 // visitors still get the full app from cache.
 // ============================================================================
 
-const CACHE_VERSION = 'mubone-5.8.0-alpha';
+const CACHE_VERSION = 'mubone-5.10.0-alpha';
 
 // Extensions served network-first. Everything else (fonts, images, audio) is
 // cache-first — those are content-addressed by name and rarely change.
@@ -85,8 +85,8 @@ const APP_SHELL = [
   './js/seed-morph.js',
   './js/midi.js',
   './js/osc.js',
+  './js/sensor-bindings.js',
   './js/mobile.js',
-  './js/handsfree.js',
   './js/diag.js',
   './js/paint-ticker.js',
   './js/ui-learn.js',
@@ -95,10 +95,6 @@ const APP_SHELL = [
   './js/ui-presets.js',
   './js/ui-meters.js',
   './js/ui-audio-settings.js',
-  './js/sensor-mapping.js',
-  './js/ui-sensor-mapping.js',
-  './js/midi-out.js',
-  './js/osc-out.js',
   './js/ui-sweep.js',
   './js/ui-pin-settings.js',
   './js/ui-trigger.js',
@@ -110,8 +106,6 @@ const APP_SHELL = [
   './js/accessory-registry.js',
   './js/erase.js',
   './js/status-publisher.js',
-  './js/live-loop.js',
-  './js/worklets/live-loop.worklet.js',
   './js/worklets/recording-capture.worklet.js',
   './js/worklets/quad-capture.worklet.js',
   './js/worklets/input-meter.worklet.js',

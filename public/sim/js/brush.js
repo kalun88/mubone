@@ -88,8 +88,7 @@ export function currentMaterial() { return currentBrush()?.material || 'grain'; 
 // a held key or note cannot strand it: a momentary-started gesture always
 // ends on its release, and a toggle-started one always ends on the next
 // press. A press while a momentary gesture is down (a second wire) is
-// ignored. Ending from outside — handsfree disarming, the trace mode
-// changing, the window losing focus — is `gestureEnd()`.
+// ignored. Ending from outside — the trace mode changing, the window losing focus — is `gestureEnd()`.
 
 
 let _active    = false;   // a gesture is running
@@ -133,8 +132,6 @@ function _clearLong() { if (_longTimer) { clearTimeout(_longTimer); _longTimer =
 
 function _begin(latched) {
   _active = true; _latched = latched;
-  // paintLatched BEFORE the tool starts: startPaintStroke hands a latched
-  // stroke to the handsfree gate on it.
   S.paintLatched = latched;
   if (!_toolDown()) {           // the tool refused (an overdub with no master)
     _active = false; _latched = false; S.paintLatched = false;
