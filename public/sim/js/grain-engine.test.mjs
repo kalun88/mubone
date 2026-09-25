@@ -351,12 +351,12 @@ test('the feedback posts a typed copy of the grain ids', () => {
 // ── The candidate tables (R3, 2026-09-06) ───────────────────────────────────
 // The bridge writes rows into a shared table; the worklet reads a candidate by
 // row at fire time. These build a table by hand with the same layout.
-const CT_ROWS = 8192, CT_WORDS = 7, CT_HEADER = 4, CT_HALF = CT_ROWS * CT_WORDS + CT_ROWS, CT_REGION = CT_HEADER + 2 * CT_HALF;
+const CT_ROWS = 8192, CT_WORDS = 8, CT_HEADER = 4, CT_HALF = CT_ROWS * CT_WORDS + CT_ROWS, CT_REGION = CT_HEADER + 2 * CT_HALF;
 function makeTables() { return new SharedArrayBuffer(9 * CT_REGION * 4); }
 function writeRegion(sab, region, rows, { half = 0, perm = null } = {}) {
   const I = new Int32Array(sab), F = new Float32Array(sab);
   const hdr = region * CT_REGION, base = hdr + CT_HEADER + half * CT_HALF;
-  rows.forEach((r, k) => { const w = base + k * CT_WORDS; I[w] = r.bufIndex; I[w+1] = r.offset; I[w+2] = r.length; F[w+3] = r.azDeg ?? 0; F[w+4] = r.elBias ?? 0; I[w+5] = r.particleId ?? k; F[w+6] = r.radiusFade ?? 1; });
+  rows.forEach((r, k) => { const w = base + k * CT_WORDS; I[w] = r.bufIndex; I[w+1] = r.offset; I[w+2] = r.length; F[w+3] = r.azDeg ?? 0; F[w+4] = r.elBias ?? 0; I[w+5] = r.particleId ?? k; F[w+6] = r.radiusFade ?? 1; I[w+7] = r.ov ?? 0; });
   const p = perm || rows.map((_, k) => k);
   for (let k = 0; k < p.length; k++) I[base + CT_ROWS * CT_WORDS + k] = p[k];
   I[hdr + 1 + half] = rows.length; I[hdr] = half; I[hdr + 3]++;
@@ -374,7 +374,7 @@ test('the live voice fires from region 0 of the tables', () => {
   const sab = makeTables();
   writeRegion(sab, 0, [{ bufIndex: 0, offset: 12345, length: n }]);
   p._handleMessage({ type: 'cursorTables', sab });
-  p._handleMessage({ type: 'cursorVoicesTab', voices: [], liveActive: true, kSeqMode: false });
+  p._handleMessage({ type: 'cursorVoicesTab', voices: [], liveActive: true, lensStep: false });
   const i = fireNew(p);
   assert.ok(i >= 0, 'a grain fired');
   assert.equal(p._gBufOffset[i], 12345, 'from the row, not from a message');
@@ -386,9 +386,9 @@ test('a voice slot fires from its region, and step mode walks the permutation', 
   const sab = makeTables();
   writeRegion(sab, 2, [{ bufIndex: 0, offset: 30000, length: n }, { bufIndex: 0, offset: 10000, length: n }, { bufIndex: 0, offset: 20000, length: n }], { perm: [1, 2, 0] });
   p._handleMessage({ type: 'cursorTables', sab });
-  p._handleMessage({ type: 'cursorVoicesTab', voices: [{ slot: 2, vo: 7, params: { period: 0.01, duration: 0.2, volume: 1 } }], liveActive: false, kSeqMode: true });
+  p._handleMessage({ type: 'cursorVoicesTab', voices: [{ slot: 2, vo: 7, params: { period: 0.01, duration: 0.2, volume: 1 } }], liveActive: false, lensStep: true });
   const v = p._cursorVoices[1];
-  assert.equal(v.active, true); assert.equal(v.tabRegion, 2); assert.equal(v.kSeqMode, true);
+  assert.equal(v.active, true); assert.equal(v.tabRegion, 2); assert.equal(v.lensStep, true);
   const offs = [0, 1, 2].map(() => p._gBufOffset[fireNew(p, v)]);
   assert.deepEqual(offs, [10000, 20000, 30000], 'ascending by offset, through the permutation');
 });
@@ -399,7 +399,7 @@ test('the published half is the one read: a write to the other half is invisible
   const sab = makeTables();
   writeRegion(sab, 0, [{ bufIndex: 0, offset: 111, length: n }], { half: 0 });
   p._handleMessage({ type: 'cursorTables', sab });
-  p._handleMessage({ type: 'cursorVoicesTab', voices: [], liveActive: true, kSeqMode: false });
+  p._handleMessage({ type: 'cursorVoicesTab', voices: [], liveActive: true, lensStep: false });
   const I = new Int32Array(sab);
   const base1 = CT_HEADER + CT_HALF; I[base1] = 0; I[base1 + 1] = 222; I[base1 + 2] = n; I[2] = 1;   // half 1 written, half 0 still published
   assert.equal(p._gBufOffset[fireNew(p)], 111);
@@ -412,6 +412,53 @@ test('without tables, the message path still fires as before', () => {
   const n = addTake(p, 1.0);
   const i = fireOne(p, cand(0, 4321, n));
   assert.equal(p._gBufOffset[i], 4321);
+});
+
+// ── Mark overrides (2026-09-25) ─────────────────────────────────────────────
+// A knob ridden while a stroke was painted rides on the marks it moved, not on
+// a new voice: one voice, one clock, and each grain plays its own mark's value.
+
+test('a mark override reaches its own grain and no other', () => {
+  const p = makeProc({ duration: 0.2 });
+  const n = addTake(p, 2.0);
+  const sab = makeTables();
+  writeRegion(sab, 1, [{ bufIndex: 0, offset: 1000, length: n }, { bufIndex: 0, offset: 2000, length: n, ov: 5 }]);
+  p._handleMessage({ type: 'cursorTables', sab });
+  p._handleMessage({ type: 'markOverride', id: 5, params: { pitchShift: 1200, duration: 0.05 } });
+  p._handleMessage({ type: 'cursorVoicesTab', voices: [{ slot: 1, vo: 3, params: { period: 0.01, duration: 0.2, volume: 1, pitchShift: 0 } }], liveActive: false, lensStep: true });
+  const v = p._cursorVoices[0];
+  const a = fireNew(p, v), b = fireNew(p, v);
+  assert.equal(p._gBufOffset[a], 1000); assert.equal(p._gBufOffset[b], 2000);
+  assert.equal(p._gReadRate[a], 1, 'the plain mark plays the voice');
+  assert.equal(p._gReadRate[b], 2, 'the overridden mark plays an octave up');
+  assert.ok(Math.abs(1 / p._gPhaseInc[b] - 0.05 * SR) < 2, 'and its own duration');
+  assert.ok(Math.abs(1 / p._gPhaseInc[a] - 0.2 * SR) < 2);
+});
+
+test('a mark that moved the period sets the next onset on the one clock', () => {
+  const p = makeProc({ duration: 0.05 });
+  const n = addTake(p, 2.0);
+  const sab = makeTables();
+  writeRegion(sab, 1, [{ bufIndex: 0, offset: 1000, length: n, ov: 9 }]);
+  p._handleMessage({ type: 'cursorTables', sab });
+  p._handleMessage({ type: 'markOverride', id: 9, params: { period: 0.002 } });
+  p._handleMessage({ type: 'cursorVoicesTab', voices: [{ slot: 1, vo: 3, params: { period: 0.05, duration: 0.05, volume: 1 } }], liveActive: false, lensStep: false });
+  p._firePeriod = 0;
+  fireNew(p, p._cursorVoices[0]);
+  assert.equal(p._firePeriod, Math.round(0.002 * SR), 'the mark\'s period, not the voice\'s');
+  p._handleMessage({ type: 'markOverridesReset' });
+  fireNew(p, p._cursorVoices[0]);
+  assert.equal(p._firePeriod, 0, 'after a reset the id is unknown and the voice rules');
+});
+
+test('the message path carries the override on the candidate', () => {
+  const p = makeProc({ duration: 0.2 });
+  const n = addTake(p, 1.0);
+  p._handleMessage({ type: 'markOverride', id: 2, params: { direction: 1 } });
+  p._handleMessage({ type: 'cursorVoices', list: [{ vo: 4, params: { period: 0.05, duration: 0.05, volume: 1 },
+    candidates: [{ bufIndex: 0, offset: 4000, length: n, azDeg: 0, elBias: 0, particleId: 0, radiusFade: 1, ov: 2 }] }], lensStep: false });
+  const i = fireNew(p, p._cursorVoices[0]);
+  assert.ok(p._gReadRate[i] < 0, 'reversed by its mark');
 });
 
 // ── Voice slots (P4, 2026-09-06) ────────────────────────────────────────────
@@ -427,7 +474,7 @@ test('sixteen distinct voicings all get a voice', () => {
   const list = [];
   for (let v = 1; v <= 16; v++) list.push({ vo: v, params: { period: 0.05, duration: 0.05, volume: 0.5 },
     candidates: [{ bufIndex: 0, offset: v * 100, length: n, azDeg: 0, elBias: 0, particleId: v, radiusFade: 1 }] });
-  p._handleMessage({ type: 'cursorVoices', list, kSeqMode: false });
+  p._handleMessage({ type: 'cursorVoices', list, lensStep: false });
   assert.equal(p._cursorVoices.filter(v => v.active).length, 16);
 });
 
@@ -437,7 +484,7 @@ test('a seventeenth is dropped, not folded onto another voice', () => {
   const list = [];
   for (let v = 1; v <= 20; v++) list.push({ vo: v, params: { period: 0.05, duration: 0.05, volume: 0.5 },
     candidates: [{ bufIndex: 0, offset: v * 100, length: n, azDeg: 0, elBias: 0, particleId: v, radiusFade: 1 }] });
-  p._handleMessage({ type: 'cursorVoices', list, kSeqMode: false });
+  p._handleMessage({ type: 'cursorVoices', list, lensStep: false });
   const active = p._cursorVoices.filter(v => v.active);
   assert.equal(active.length, 16);
   assert.equal(new Set(active.map(v => v.candidates[0].offset)).size, 16, 'sixteen different sources');

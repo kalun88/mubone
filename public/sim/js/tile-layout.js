@@ -283,7 +283,12 @@ function tick() {
       if (src && camBtn.dataset.shown !== on) {
         camBtn.innerHTML = src.outerHTML;
         camBtn.dataset.shown = on || '';
-        camBtn.title = camMenu.querySelector(`[data-cam="${on}"]`)?.dataset.word
+        // What the mode DOES, from the cabinet button's own title — `camera —
+        // pull` named the mode and said nothing about it (tooltip review).
+        const real = document.querySelector(`#cameraModeSeg [data-mode="${on}"]`);
+        const full = real?.dataset.title ?? real?.title;
+        camBtn.title = full ? `camera · ${full} · click to choose another`
+          : camMenu.querySelector(`[data-cam="${on}"]`)?.dataset.word
           ? `camera — ${camMenu.querySelector(`[data-cam="${on}"]`).dataset.word}` : 'camera';
       }
       for (const row of camMenu.querySelectorAll('[data-cam]')) {

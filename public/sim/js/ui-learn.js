@@ -6,7 +6,7 @@
 // shortcut for that, either the simple version or not"). The word is the
 // control's own label where it has one on screen, else the first clause of
 // its long text; the shortcut is the registry's (midi.js S._shortcutOf).
-// Toggle via the "? learn" button in the top bar.
+// Toggle via the ? in the chrome, left of the cog (#tcLearn), or Settings.
 
 (function () {
   'use strict';
@@ -19,7 +19,12 @@
   // silently on the first try).
   let S = {};
   import('./state.js').then(m => { S = m.S; S.learnMode = learnMode; }).catch(e => console.warn('[learn] state import failed:', e?.message || e));
-  const STORAGE_KEY = 'mubone-learn-mode';
+  // A new key (2026-09-25): learn became ON by default, and every profile
+  // had stored `off` under the old one — setLearnMode wrote it at every boot —
+  // so reading it would have kept the old default forever. It is dropped here
+  // once and listed in RETIRED_KEYS.
+  const STORAGE_KEY = 'mubone_learn';
+  try { localStorage.removeItem('mubone-learn-mode'); } catch (_) {}
   // THE INDUSTRY TIMING (Ek, 2026-09-24: "it should be faster"). A first tip
   // after 500 ms of rest — the band Figma, Linear and Radix's default sit in,
   // long enough that a pointer passing over the chrome shows nothing — and
@@ -31,19 +36,18 @@
   const WARM_MS = 400;      // ms — after a tip hides, the next shows instantly
   let warmUntil = 0;
 
-  // DEFAULT OFF (Ek, 2026-09-22: "on factory reload the help tool tips should be
-  // toggled off"). A fresh profile is a performance surface, not a lesson — and
-  // a factory reset is `localStorage.clear()`, so clearing the key IS the reset
-  // and this default is the only thing that decides what comes back.
+  // DEFAULT ON (Ek, 2026-09-25: "by default have it on", reversing 2026-09-22's
+  // default off, now that every parameter says what it is). A factory reset is
+  // `localStorage.clear()`, so clearing the key IS the reset and this default
+  // decides what comes back. Only an explicit OFF persists as off.
   //
-  // Off does not mean no tooltips: it means the LONG delay (NORMAL_DELAY), so
-  // they stay out of the way while you play and still answer if you rest on a
-  // control. Only an explicit ON persists.
-  let learnMode = false;
+  // Off does not mean no tooltips: it means the one-word tip after the delay
+  // (NORMAL_DELAY), out of the way while you play.
+  let learnMode = true;
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === 'on') learnMode = true;
-  } catch (_) { /* localStorage unavailable (incognito etc) — stay off */ }
+    if (saved === 'off') learnMode = false;
+  } catch (_) { /* localStorage unavailable (incognito etc) — stay on */ }
 
   // ── Custom tooltip element ──────────────────────────────────────────────
   const tip = document.createElement('div');
@@ -204,11 +208,20 @@
   // ── Toggle ─────────────────────────────────────────────────────────────
   const btn = document.getElementById('learnModeBtn');
   if (!btn) return;
+  // THE ? IN THE CHROME (Ek, 2026-09-25: "a question mark glyph to toggle off
+  // and on learn mode … make sure it's lit up accordingly"), left of the cog.
+  // `#learnModeBtn` stays the state's home in the cabinet — Settings → Camera
+  // + Display's switch proxies it — and the chrome button clicks through.
+  const chromeBtn = document.getElementById('tcLearn');
 
   function setLearnMode(on) {
     learnMode = on;
     S.learnMode = on;
     btn.classList.toggle('learn-active', on);
+    if (chromeBtn) {
+      chromeBtn.classList.toggle('on', on);
+      chromeBtn.setAttribute('aria-pressed', String(on));
+    }
     if (!on) hide();
     try { localStorage.setItem(STORAGE_KEY, on ? 'on' : 'off'); } catch (_) {}
   }
@@ -217,6 +230,7 @@
   setLearnMode(learnMode);
 
   btn.addEventListener('click', () => setLearnMode(!learnMode));
+  chromeBtn?.addEventListener('click', () => btn.click());
 
   // Expose for other modules
 })();

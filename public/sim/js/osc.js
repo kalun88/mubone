@@ -67,11 +67,11 @@ function _bangOrOnOff(values) {
 // a bang flips. `/grain/filter` read the int before this list knew it, so
 // an explicit 0 there was dropped as a release edge and never turned it off.
 const _VALUED_TRIGGERS = new Set([
-  '/tape/slice', '/audition', '/tape/autopin', '/tape/overdub', '/tape/reverse',
+  '/tape/slice', '/audition', '/autopin', '/tape/autopin', '/tape/overdub', '/tape/reverse',
   '/grain/autopin', '/grain/walk', '/grain/link', '/grain/filter', '/erase/bystroke',
   '/pins/sel/mute', '/pins/sel/solo', '/pins/clouds/mute', '/pins/clouds/solo', '/pins/loops/mute', '/pins/loops/solo',
   '/rail/tools', '/rail/pins', '/settings', '/spatial/lock',
-  '/mute', '/search/mode', '/search/order', '/cursor/radiusfade', '/pins/mute',
+  '/mute', '/search/mode', '/search/step', '/cursor/radiusfade', '/pins/mute',
 ]);
 
 // The one bang address with no ACTIONS row, so the registry can't classify it.
@@ -495,6 +495,7 @@ export function handleOSC(rawAddress, values) {
     // A switch: int sets, bang flips. A capsule: string sets, bang cycles.
     case '/tape/slice':      S._dispatchAction?.('tape_slice', _bangOrOnOff(values)); break;
     case '/audition':        S._dispatchAction?.('audition', _bangOrOnOff(values)); break;
+    case '/autopin':         S._dispatchAction?.('autopin', _bangOrOnOff(values)); break;
     case '/tape/autopin':    S._dispatchAction?.('tape_autopin', _bangOrOnOff(values)); break;
     case '/tape/overdub':    S._dispatchAction?.('tape_overdub', _bangOrOnOff(values)); break;
     case '/tape/dwell':      S._dispatchAction?.('tape_dwell', _bangOrStr(values)); break;
@@ -564,13 +565,13 @@ export function handleOSC(rawAddress, values) {
       break;
     case '/commit/attack':
       S.commitAttack = clamp(values[0], 0, 10);
-      { const sl = document.getElementById('seedAttackSlider');  if (sl) sl.value = S.commitAttack;
-        const nb = document.getElementById('seedAttackNum');     if (nb) nb.value = S.commitAttack < 1 ? (S.commitAttack * 1000).toFixed(0) + 'ms' : S.commitAttack.toFixed(1) + 's'; }
+      { const sl = document.getElementById('cloudFadeInSlider');  if (sl) sl.value = S.commitAttack;
+        const nb = document.getElementById('cloudFadeInNum');     if (nb) nb.value = S.commitAttack < 1 ? (S.commitAttack * 1000).toFixed(0) + 'ms' : S.commitAttack.toFixed(1) + 's'; }
       break;
     case '/commit/release_time':
       S.commitRelease = clamp(values[0], 0, 10);
-      { const sl = document.getElementById('seedReleaseSlider'); if (sl) sl.value = S.commitRelease;
-        const nb = document.getElementById('seedReleaseNum');    if (nb) nb.value = S.commitRelease < 1 ? (S.commitRelease * 1000).toFixed(0) + 'ms' : S.commitRelease.toFixed(1) + 's'; }
+      { const sl = document.getElementById('cloudFadeOutSlider'); if (sl) sl.value = S.commitRelease;
+        const nb = document.getElementById('cloudFadeOutNum');    if (nb) nb.value = S.commitRelease < 1 ? (S.commitRelease * 1000).toFixed(0) + 'ms' : S.commitRelease.toFixed(1) + 's'; }
       break;
     case '/commit/slots':   // through the action, so the two paths cannot drift
       S._dispatchAction?.('commit_slots', (clamp(values[0], 1, 16) - 1) * 127 / 15);
@@ -637,7 +638,7 @@ export function handleOSC(rawAddress, values) {
 
     // ── Search ───────────────────────────────────────────────────────────────
     case '/search/mode':    S._dispatchAction?.('snap', _bangOrOnOff(values));  break;
-    case '/search/order':   S._dispatchAction?.('k_seq', _bangOrOnOff(values)); break;
+    case '/search/step':   S._dispatchAction?.('lens_step', _bangOrOnOff(values)); break;
     case '/search/recency': {
       const raw = Math.round(values[0]);
       const n = raw <= 0 ? 0 : Math.min(6, raw);   // 0 = all (no filter); 1–6 strokes (2026-09-25)

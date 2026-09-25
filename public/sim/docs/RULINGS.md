@@ -904,12 +904,14 @@ How to use this file: find the heading for the area you are about to touch and r
   preset) and its DOOR, the one door that opens the engine's sheet, headed `GRAIN · voice` / `TAPE ·
   voice` with no preset name and no `del`. The rows under it are PRESETS: a press RECALLS one onto the
   live block (`applyVoice`); the row is a WORD alone — no dot, no half moon (Ek, that evening) —
-  and it is ON (a plain highlighted item — raised ground, bright text, no edge line) only while the live sliders ARE the
-  preset: move one off it and no row is on, Photoshop's rule for a modified preset (`_voiceEdited`,
-  string-compared on capture's own reads; `_refreshVoiceMarks` after every capture; `.edited` stays
-  on the row as the audit's hook); pressing it again puts the sliders back. The hand tile says the
-  same in a word: the preset's name while the sliders are on it, `custom` once they have moved off
-  (`_handVoiceWord`). **An edit never
+  and it is ON (a plain highlighted item — raised ground, bright text, no edge line) for the preset
+  you recalled, **and stays on when you move off it, its name wearing an asterisk** — `wash*`, the DAW
+  convention for "this preset, changed" (Ek, 2026-09-25, reversing Photoshop's no-row-is-on rule and the
+  word `custom`: "usually i just screw with one or two settings it's still mostly from a preset like
+  Wash"). `_voiceEdited` string-compares capture's own reads; `_refreshVoiceMarks` rewrites the row and
+  the hand tile after every capture; `.edited` stays on the row as the audit's hook; the asterisk goes
+  the moment the sliders are back on the preset, and pressing the row puts them back. The hand tile
+  says the same word (`_handVoiceWord`). **An edit never
   writes into a preset** — Ableton's rule, reversing the voice half of "a tile is the preset" (the
   sheet's edits captured into the voice from 2026-09-21 to 09-24, which is what made them read as
   sheets). The edit is the ENGINE's and lives under its TOOL: `shapeSheetPids` is the whole block
@@ -931,8 +933,8 @@ How to use this file: find the heading for the area you are about to touch and r
   effect pedal … it gets baked in whatever that sheet reads. Cursor monitor read is read only. Audition
   should not change what's baked"). Three fixed points and one consequence. **The sheet is the pedal**:
   whatever it reads — a hand, a pot, a sensor mapping, OSC, a preset recall — is what a grain mark
-  bakes at its deposit (`voicingForCurrentBrushLive`, so a knob ridden mid-stroke bakes a gradient,
-  mark by mark) and what a tape take freezes at its release. **The cursor is the monitor, read only**:
+  bakes at its deposit (a knob ridden mid-stroke bakes a gradient, mark by mark — on each mark's
+  override since 2026-09-25, see "A knob ridden while painting rides on the marks") and what a tape take freezes at its release. **The cursor is the monitor, read only**:
   it plays baked values and never rewrites them. **Audition never changes what is baked.** So audition
   can only be a property of the MONITOR: `S.auditionMode` now means the cursor plays what it reads
   THROUGH the pedal — grain candidates post on voicing 0, the live block (`_voiceOf` in the bridge,
@@ -1948,7 +1950,7 @@ only `keydown` Enter, while every cabinet numbox commits on `change` (radiusVal)
 (kBigNum) — their Enter handler just calls `.blur()`, which does nothing on an element that was
 never focused, and the cabinet is in a `display:none` panel so it never is. It now dispatches all
 three. **And the radius applied by a preset was undone by the preset's own later rows**: the
-radius slider's `input` handler is throttled 50 ms, and `mode`, `fill`, `korder` and `rfade` are
+radius slider's `input` handler is throttled 50 ms, and `mode`, `fill`, `step` and `rfade` are
 applied after `radius` and each call `updatePlaybackControls` → `drawRadiusViz`, which re-syncs
 the slider FROM `S.searchRadiusDeg` — still the old degrees, because the throttle has not fired.
 So the new reach was written, overwritten three times, and then the throttle re-applied the old
@@ -1977,7 +1979,7 @@ measured flat at 0.19–0.25 ms per post from 1 to 16 voicings at 500 particles.
 **The split between brush and lens (#212, k half reversed by #233 on 2026-08-27).** A brush
 owns the SOUND; the LENS owns how the cursor reads. Lens/global: `searchRadiusDeg`,
 `nearestMode`, `recencyN`, the radius-fade pair, `spatialPanning`, and — since #233 — **`k`,
-`grainKAllMode` (fill) and `grainKSeqMode` (order)**. None of these may go back into a patch;
+`grainKAllMode` (fill) and `lensStep` (order)**. None of these may go back into a patch;
 their absence from `PARAM_REGISTRY` is what strips them out of old user patches on load. The
 #212 argument for brush-owned k ("vinyl at k=1 is character") predated **flow**: with the
 deposit clock a brush's density is painted into the material and visible, so how many marks the
@@ -1986,7 +1988,7 @@ preset (spot, k=1). Brush: everything in `resolveGrainParams()` — sound only. 
 code: `_selectPerVoicing()` in `grain.js` is a single global keep-k-smallest pass (the
 per-voicing group machinery is gone); **aperture is deleted** (`S.lensAperture`, its row and
 knob) — it existed only to cap k without touching the frozen brush, and with k on the lens it
-had no job; order reaches every cursor voice live via the message-level `kSeqMode` on the
+had no job; order reaches every cursor voice live via the message-level `lensStep` on the
 `cursorVoices` post, overriding whatever a frozen voicing carried. Voicings still freeze the
 sound — `cvActive`/`cvPeriods` in the worklet's `_diag` feedback are still how you tell whether
 a voice arrived. Covered by `pins-audit.js` § I.
@@ -2467,6 +2469,14 @@ documentation only. Nothing runs except on hover. Learn mode's own legend — th
 is unchanged. **A simple tip that would only repeat the screen is not shown** (the same night): learn off,
 no input learned, and the word already written at the control (its row label, its tile name, its own
 text) — nothing appears; a glyph-only control, or anything with a shortcut, still gets its tip.
+**Learn is ON at factory, on a `?` in the chrome left of the cog** (Ek, 2026-09-25, reversing 2026-09-22's
+default off: "a question mark glyph to toggle off and on learn mode. by default have it on"). It lights
+ember while on, as an open drawer's handle does; the key moved to `mubone_learn` so no profile's stored
+`off` from the old default survives. **A long tip says what the thing IS, then how to use it** (the same
+day: "there's the definition part of what that thing is, then how to GUI with it"): every sheet and tab
+parameter has one sentence in `PARAM_TIPS` (tiles.js), which `_applyParamTips` puts on the row's label
+and in front of each number's and track's how-to; a switch keeps its own state-and-click words, the
+definition sitting on its label. A new parameter gets a `PARAM_TIPS` line or it has no definition.
 
 ## Audition is a scratch voice, and off puts the real one back
 
@@ -2476,10 +2486,12 @@ audition ON snapshots BOTH engines' voice — every voice pid off the sheets, ta
 `S.triggerParams` (OSC, MIDI and the sensor mappings write there directly), and which preset each engine
 was on. While it is on the sheets are a scratch copy: presets can be tried on, anything moved, and
 nothing is saved — `captureTileParams` writes no tool store and `applyVoice` no preset mark, so a quit
-mid-audition wakes on the sound you had. The hand tile's word is `audition`. Turning it OFF restores the
+mid-audition wakes on the sound you had. The hand tile names the scratch as it names the real voice —
+`wash`, `wash*` (2026-09-25; it said `audition` until then): the headphones are the trial's sign, the name
+what it started from. Turning it OFF restores the
 snapshot, sliders and marks (`setAudition`, `_snapVoices` / `_restoreVoices`, tiles.js). **To keep an
 audition sound: `+` saves it as a preset, or a pin freezes it** — both happen before the revert and
-survive it. So `custom` means one thing only: not auditioning, and the sheet has moved off its preset.
+survive it.
 Painting during audition bakes the audition sound, as painting always bakes the sheet; a sensor riding a
 param writes the scratch copy and is carried back with it.
 **It is a compare button** (the same night: "if i turn back audition will it remember the last audition
@@ -2660,8 +2672,25 @@ move to the top, and it is kept last in the host so the lock's wash never dims i
 the spacing everything else is too squished."** The rail titles — Tools, Cursor, Pinned — are a 20px bold word in
 the one true white, sentence case, with no glyph, sitting on the bottom of a 52px bar with no hairline; the size is
 what divides the rail. A SECTION inside a region is its own card, beside the region's card and never inside it:
-Voice under the instrument's card, Grain selection under the cursor's, 8px between the two, each headed by a 40px
+Voice under the instrument's card, Grain Behaviour under the cursor's, 8px between the two, each headed by a 40px
 line — sentence case, semibold, over a hairline, the `+` and the door flush right. That reverses "one card per
 region, sections told apart by their captions" for these two. The preset rows are option B's (42px, the glyph,
 the name, the preset's own few numbers), built the same day.
+
+**A knob ridden while painting rides on the marks, not on a new voice** (Ek, 2026-09-25: "when i sweep or
+ride the params while recording … i dont want a new voice created … it's just like a guitar pedal with the
+knobs"; "very rare that i'll be sweeping params constantly, and usually it'll be just one or two"). A stroke
+keeps ONE voicing, the pedal as it stood at `recordStrokeStart`. A mark deposited after a knob moved stores
+only what moved, as a MARK OVERRIDE (`p._ov` → `S.markOverrides`, sparse absolute values interned on their
+contents, brush-voicing.js `markOverrideLive`); a knob moved and left stamps one id on every mark after it.
+The bridge carries the id on the candidate row (table word 7, `ov` on a message candidate) and sends each
+override to the worklet once; `_fireGrain` picks the mark FIRST and reads every param as the override's
+field over the voice's, and a mark that moved the period sets the NEXT onset on the voice's one clock
+(`_firePeriod`), so a period sweep is a density sweep and a swept stroke is exactly as dense as an unswept
+one. The peak offset is the pair's (`_peakOffsetForMark`). Audition ignores overrides (the cursor hears the
+pedal), and so does a cloud pinned under audition (its one frozen voicing is the sound). A piece writes
+`ov` per mark and `live.markOverrides`, and writes only the voicings a mark or a cloud still uses. It
+replaced a voicing per moved mark (2026-08-29): a sweep minted one per deposit, each its own worklet voice
+and clock — up to 16× the density under the cursor, the voice cap silencing an arbitrary rest, and
+`S.voicings` growing without end. `pins-audit` § S asserts one voicing, the overrides, one region, the round trip.
 

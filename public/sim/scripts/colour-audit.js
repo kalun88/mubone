@@ -96,15 +96,27 @@ const FAMILY = [
 
 // ── The bench, inside the renderer. Formant triples are the standard cardinal
 // values for a male voice; the noise bands are a breath, a `sh` and an `ss`.
-// Everything runs through S.inputGainNode, which is where a microphone lands,
-// so the whole chain under test is the real one.
+// Everything lands where a microphone lands, so the measuring half of the chain
+// is the real one. The MICROPHONE IS TAKEN OFF IT for the bench (2026-09-25):
+// the suite fed the live S.inputGainNode, which the input also feeds, so every
+// reading carried the room the machine sat in and the two room checks failed
+// on a different sound and axis most runs — it measured the room, not the code
+// (TODO Sep 15). The bench swaps in an input node of its own, at the trim's
+// value, and the floor it adds is the only floor.
 async function installBench(rig) {
   await rig.evaluate(async () => {
     const { S } = await import('./js/state.js');
     const A = await import('./js/audio.js');
     const AF = await import('./js/audio-features.js');
     const actx = A.ensureAudioContext();
-    const dest = S.inputGainNode;
+    const dest = actx.createGain();
+    dest.gain.value = S.inputGainNode.gain.value;
+    try { S.inputGainNode.disconnect(S.inputAnalyser); } catch (_) {}
+    dest.connect(S.inputAnalyser);
+    // …and it IS the input node now: the hue axis reads the loudness gate's
+    // 2048 analyser, which taps S.inputGainNode and re-taps a replaced one —
+    // the path a device change takes (audio-features.js _ensureGateAnalyser).
+    S.inputGainNode = dest;
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const peekBuf = new Uint8Array(128);
     // THE BUS KEEPS A TAIL. Stopping a source does not put the input bus back

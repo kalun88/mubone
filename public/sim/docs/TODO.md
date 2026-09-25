@@ -10,18 +10,9 @@
 
 ### Sep 25
 
-- [ ] **pins-audit Z2's first layer lands off the loop's top under a loaded run** (found at the 5.10 release). In a
-  fresh instance Z2 passes whole (phase 0, join error 0.0002 samples); after the rest of the pins suite the first
-  layer's phase0 reads 0.25–0.94 s, a different value each run. The master's `_startedAt` is the time its source
-  STARTED, which a busy main thread delays past the pin, while the layer is phased from the pin — so the layer
-  sits late by the start delay. Also true at 5.9 (the suite then failed earlier, on a take left running — fixed in
-  5.10). The fix is anchoring the seeded master's clock at the pin (start it with the offset it has missed).
-- [ ] **Sweeping a grain param while painting gives almost every mark its own voicing** (found 2026-09-25 in
-  the mapping review). `paint-ticker.js` `_refreshVoicing` re-interns before every deposit, and a continuous
-  source (a MIDI pot, now a sensor binding) changes the block every tick, so one stroke interns a voicing per
-  mark. `S.voicings` grows without bound and is persisted; the cursor plays at most 16 voicings
-  (`MAX_CURSOR_VOICES`) and within one stroke the survivors are arbitrary, so the rest go silent and the kept
-  ones each run their own clock (density ×N). Wants a step or a rate limit on re-interning, in brush-voicing.js.
+- [ ] **pins-audit § Z is flaky** (2026-09-25) — one run in two of the same tree failed "one that misses is not"
+  (a stroke 17° out pinned at 9.3°) and "a both-scoped cloud claims" (cursorPool 6, expected 0); the next run was
+  228/228. The section drives the pin with `sleep(80–150)` against a quiesced scheduler — suspect timing, unproven.
 - [ ] **A new hands-free — PAUSED, research only** (Ek, 2026-09-25: "not convinced about all this"). The old gate
   is removed (`24758c0`). Ek's constraints: sensors can be worn anywhere, there are several, foot pedals exist, keep
   it simple, **no sound as input**, and only the MOST CERTAIN signals; heading drifts, elevation does not.
@@ -63,19 +54,11 @@
   references), so an erased take costs its full float32 until a sweep. The worklet drops its reference on erase,
   so the main thread is free to compress and drop the SAB, re-inflating into a new one on undo. The cheaper
   first move may be a bound on how much erased audio undo keeps.
-- [ ] **PARAM_DEFS keys and cabinet ids still say `seed*` / `seq*`** (`param-registry.js` `key:` strings,
-  `seedAttackSlider`, `seedLoopModeSeg`, `commitOverflowSeg`'s siblings) — the S fields and the persisted
-  seed-settings keys were renamed 2026-09-16; these are the identifiers the engine page and `engine-audit`'s
-  cabinet list use, and a tile block may carry a param key, so they wait for a migration of their own.
-
 ### Sep 15
 
-- [ ] **`colour-audit` listens to the room and cries wolf** — its two room-sensitivity checks fail on a
-  different axis, a different sound and a different margin on almost every run, on a clean checkout too
-  (measured four runs, 2026-09-15: hue `breath` 0.066 / hue `click` 0.082 / saturation 0.31 / hue `breath`
-  0.073). It is measuring the live mic, so it reports the room rather than the code. Either give it a fixed
-  signal or widen the thresholds — until then a red `colour` says nothing. `§ J`'s perfMode check is
-  separately flaky: it reported `over 0 dots` once in three, because at 30° fov its test marks are off-screen.
+- [ ] **`colour-audit` § J's perfMode check is flaky** — it reported `over 0 dots` once in three
+  (2026-09-15), because at 30° fov its test marks are off-screen. (The room half of this item was fixed
+  2026-09-25: the bench swaps in its own input node, so the live mic no longer reaches the readings.)
 
 ### Sep 14
 

@@ -110,7 +110,7 @@ export function resolveGrainParams() {
     res:              ov.res              ?? base.res              ?? 0,
     filterFreqJitter: ov.filterFreqJitter ?? base.filterFreqJitter ?? 0,
     panSpread:        ov.panSpread        ?? base.panSpread        ?? 0,
-    // k (0 = all) and kSeqMode are deliberately NOT here (#233, reversing
+    // k (0 = all) and lensStep are deliberately NOT here (#233, reversing
     // #212's k half): how many marks the cursor reads, and in what order,
     // are LENS properties — live globals,
     // never frozen into a stroke. A voicing freezes only the SOUND. The lens
@@ -214,46 +214,107 @@ function _hand() {
   return S._handTile?.() ?? { id: S.brushKey ?? 'grain', label: '' };
 }
 
-// ── Re-freezing WHILE the stroke is being painted (Ek, 2026-08-29) ─────────
-// "If I'm painting a stroke and I have period go shorter, that's a committed
-// baked stroke." The visual half already worked — widen the head mid-stroke and
-// the particles visibly spread — and the sound has to behave the same way. It
-// matters most for gestures mapped to params, which move continuously as you
-// paint and never touch a knob the UI could notice.
+// ── A KNOB RIDDEN WHILE PAINTING RIDES ON THE MARKS (Ek, 2026-09-25) ──────
+// "when i sweep or ride the params while recording … i dont want a new voice
+// created … it's just like a guitar pedal with the knobs." A stroke keeps ONE
+// voicing, the pedal as it stood when the stroke began. A mark painted after
+// a knob moved stores only what moved — `{ cutoff: 1840 }` — as a MARK
+// OVERRIDE, and its grain plays with that on top of the stroke's voicing
+// (grain-engine.worklet.js `_fireGrain`). One stroke is one worklet voice and
+// one clock however far a knob travels; a period sweep reaches the clock too,
+// since the next onset is taken from the mark just played.
 //
-// The obstacle is the intern key: it is a JSON.stringify of 22 fields, which is
-// why the note above says "built once per STROKE — never per particle". So the
-// expensive path is gated behind a cheap one. `_scratch` is filled IN PLACE,
-// compared field-by-field against the last resolved block, and only a real
-// change pays for a stringify and a table lookup. Twenty-two numeric compares
-// and no allocation is nothing at deposit rate; an unchanged stroke costs
-// almost exactly what it cost before.
-let _liveKeys = null, _lastVo = 0, _lastTile = null, _lastSeen = null;
+// It replaced a voicing per changed mark (2026-08-29 → 09-25): a continuous
+// sweep minted one every deposit, and each ran its own clock — a swept
+// stroke played up to sixteen times as dense as the same stroke unswept, the
+// voice cap silenced an arbitrary rest, and `S.voicings` grew without end.
+//
+// An override is interned on its own contents (absolute values, not deltas),
+// so a knob moved and then left alone stamps one id on every mark after it.
+// Id 0 means none. The comparison against the stroke's voicing is gated
+// behind a cheap one against the last block seen, so a still pedal costs ~22
+// compares per deposit and no allocation.
+let _liveKeys = null, _lastSeen = null, _lastVo = -1, _lastOv = 0;
+let _ovByKey = new Map(), _ovById = new Map();
 
-export function resolveGrainParamsInto(out) {
-  const src = resolveGrainParams();
-  if (!_liveKeys) _liveKeys = Object.keys(src);
-  for (const k of _liveKeys) out[k] = src[k];
-  return out;
+export function ensureMarkOverrides() {
+  if (!Array.isArray(S.markOverrides)) { S.markOverrides = []; S.markOverrideSeq = 0; }
+  if (_ovById.size !== S.markOverrides.length) {
+    _ovByKey = new Map(); _ovById = new Map();
+    for (const o of S.markOverrides) { _ovByKey.set(o.key, o); _ovById.set(o.id, o); }
+  }
+  return S.markOverrides;
 }
 
-/** The voicing for the params live RIGHT NOW, cheap when nothing has moved.
- *  Call per deposit while painting; `voicingForCurrentBrush()` remains the
- *  once-per-stroke entry point. */
-export function voicingForCurrentBrushLive() {
-  const h  = _hand();
-  const p  = resolveGrainParams();
-  if (_lastSeen && h.id === _lastTile) {
+export function markOverrideById(id) {
+  if (!id) return null;
+  ensureMarkOverrides();
+  return _ovById.get(id) || null;
+}
+
+function _internOverride(params) {
+  ensureMarkOverrides();
+  const key = JSON.stringify(params);
+  const hit = _ovByKey.get(key);
+  if (hit) return hit.id;
+  const o = { id: ++S.markOverrideSeq, key, params };
+  S.markOverrides.push(o);
+  _ovByKey.set(key, o); _ovById.set(o.id, o);
+  return o.id;
+}
+
+/** The mark override for a deposit on a stroke voiced `vo`: what the pedal
+ *  has moved off that voicing since the stroke began, interned, or 0. */
+export function markOverrideLive(vo) {
+  const base = voicingById(vo)?.params;
+  if (!base) return 0;
+  const p = resolveGrainParams();
+  if (!_liveKeys) _liveKeys = Object.keys(p);
+  if (_lastSeen && vo === _lastVo) {
     let same = true;
     for (const k of _liveKeys) if (p[k] !== _lastSeen[k]) { same = false; break; }
-    if (same) return _lastVo;
+    if (same) return _lastOv;
   }
-  if (!_liveKeys) _liveKeys = Object.keys(p);
   _lastSeen = _lastSeen || {};
   for (const k of _liveKeys) _lastSeen[k] = p[k];
-  _lastTile = h.id;
-  _lastVo = voicingFor(h.id, h.label ?? '');
-  return _lastVo;
+  _lastVo = vo;
+  let diff = null;
+  for (const k of _liveKeys) {
+    if (p[k] !== base[k]) (diff || (diff = {}))[k] = p[k];
+  }
+  _lastOv = diff ? _internOverride(diff) : 0;
+  return _lastOv;
+}
+
+/** A stroke's voicing and one mark's override as one block — for the reader
+ *  that needs the whole of what a grain plays with (the peak offset, a glow). */
+export function markParams(vo, ov) {
+  const v = vo ? voicingById(vo) : null;
+  const base = v ? v.params : resolveGrainParams();
+  const o = ov ? markOverrideById(ov) : null;
+  return o ? { ...base, ...o.params } : base;
+}
+
+/** The overrides the marks in `particles` still point at, for a file. What
+ *  an erase left behind is not written. */
+export function exportMarkOverrides(particles) {
+  const used = new Set();
+  for (const p of particles ?? []) if (p?._ov) used.add(p._ov);
+  return ensureMarkOverrides().filter(o => used.has(o.id)).map(o => ({ id: o.id, params: o.params }));
+}
+
+export function restoreMarkOverrides(list) {
+  S.markOverrides = [];
+  S.markOverrideSeq = 0;
+  for (const o of Array.isArray(list) ? list : []) {
+    const id = Number(o?.id);
+    if (!(id > 0) || !o.params || typeof o.params !== 'object') continue;
+    S.markOverrides.push({ id, key: JSON.stringify(o.params), params: o.params });
+    if (id > S.markOverrideSeq) S.markOverrideSeq = id;
+  }
+  _ovById = new Map(); ensureMarkOverrides();
+  _lastSeen = null;
+  S.markOverrideGen = (S.markOverrideGen || 0) + 1;   // the bridge re-sends
 }
 
 /** Stamp the current brush's voicing onto a stroke. Returns the id. */
@@ -271,8 +332,8 @@ export function voicingForCurrentBrush() {
 // gone. With `S.auditionMode` on, the CURSOR posts every candidate on
 // voicing 0, the live block, and hears the pedal on whatever it reads; a
 // pinned cloud's own playback is untouched, and so is every mark.
-// (`voicingForCurrentBrushLive` above is still the per-deposit stamp: riding
-// a knob while painting bakes a gradient along the stroke, mark by mark.)
+// (Riding a knob while painting still bakes a gradient along the stroke,
+// mark by mark — on each mark's override, above.)
 /** One-shot key migrations for a stored grain block. Read old key → write new
  *  → delete old; never a fallback at read time, or the old name lives forever.
  *  v14 (2026-09-07): `filterQ` was one number for both corners and became
@@ -301,8 +362,9 @@ export function migrateBlockKeys(p) {
 // a voicing lazily, so a particle carrying an unknown id simply plays with the
 // live params until the table arrives. Restored early anyway, alongside them.
 
-export function exportVoicings() {
-  return { list: ensureVoicings().map(v => ({ id: v.id, tile: v.tile, label: v.label, params: v.params })),
+export function exportVoicings(used = null) {
+  return { list: ensureVoicings().filter(v => !used || used.has(v.id))
+             .map(v => ({ id: v.id, tile: v.tile, label: v.label, params: v.params })),
            seq: S.voicingSeq ?? LIVE_VOICING };
 }
 
@@ -371,5 +433,7 @@ export function voicingFromLegacyPatch(patch, label) {
 
 S._voicingForCurrentBrush = voicingForCurrentBrush;
 S._voicingById            = voicingById;
+S._markOverrideById       = markOverrideById;
+S._markParams             = markParams;
 S._peakOffsetForVoicing   = peakOffsetForVoicing;
 S._grainPeakOffsetS       = grainPeakOffsetS;

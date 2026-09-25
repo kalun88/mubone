@@ -66,7 +66,7 @@ let _postedOnce = false;
 // silent, which is how a raised cap would fail quietly (P4, 2026-09-06).
 const MAX_CURSOR_VOICES = 16;
 const MAX_SEED_VOICES = 64;
-const CT_ROWS = 8192, CT_WORDS = 7, CT_HEADER = 4, CT_REGIONS = 1 + MAX_CURSOR_VOICES;
+const CT_ROWS = 8192, CT_WORDS = 8, CT_HEADER = 4, CT_REGIONS = 1 + MAX_CURSOR_VOICES;
 const CT_HALF = CT_ROWS * CT_WORDS + CT_ROWS;
 const CT_REGION = CT_HEADER + 2 * CT_HALF;
 let _ctSab = null, _ctI = null, _ctF = null;
@@ -215,7 +215,9 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
             lastMs = v ? (v.params.duration ?? 0.1) * 1000 : liveMs;
             lastVo = vo;
           }
-          markGlow(p, lastMs, '#ffffff', now);
+          // A mark whose override moved the duration lights for its own.
+          const od = p._ov ? S._markOverrideById?.(p._ov)?.params.duration : undefined;
+          markGlow(p, od != null ? od * 1000 : lastMs, '#ffffff', now);
         }
       }
 
@@ -433,7 +435,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
   let _peakOffCache = new Map();
   let _peakOffFor = null;
   const _peakOffsetFor = (vo) => {
-    if (S.voicings !== _peakOffFor) { _peakOffCache = new Map(); _peakOffFor = S.voicings; }
+    if (S.voicings !== _peakOffFor) { _peakOffCache = new Map(); _peakOffOv.clear(); _peakOffFor = S.voicings; }
     let off = _peakOffCache.get(vo);
     if (off === undefined) {
       off = S._peakOffsetForVoicing?.(vo) ?? 0;
@@ -442,6 +444,40 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
     return off;
   };
   S._voicingChanged = (vo) => { if (vo) _peakOffCache.delete(vo); else _peakOffCache.clear(); };
+  // A mark whose override moved a field the peak depends on (duration, fade,
+  // pitch, direction) peaks at its own offset: the voicing's block with the
+  // override over it. Keyed on the pair; overrides never change once made.
+  const _peakOffOv = new Map();
+  const _peakOffsetForMark = (vo, ov) => {
+    if (!ov) return _peakOffsetFor(vo);
+    if (S.voicings !== _peakOffFor) _peakOffsetFor(vo);            // drops both caches on a swap
+    const k = vo * 1e7 + ov;
+    let off = _peakOffOv.get(k);
+    if (off === undefined) { off = S._grainPeakOffsetS?.(S._markParams?.(vo, ov)) ?? 0; _peakOffOv.set(k, off); }
+    return off;
+  };
+
+  // MARK OVERRIDES reach the worklet once each (brush-voicing.js): a row
+  // carries only the id, and the worklet keeps the table. Re-sent from empty
+  // when the node is rebuilt or a piece swaps the table (`markOverrideGen`).
+  const _ovSent = new Set();
+  let _ovNode = null, _ovGen = -1;
+  const _ovFor = (vo, p) => {
+    const ov = vo ? (p._ov | 0) : 0;
+    if (!ov) return 0;
+    if (_ovNode !== _workletNode || _ovGen !== S.markOverrideGen) {
+      _ovSent.clear(); _peakOffOv.clear();
+      _ovNode = _workletNode; _ovGen = S.markOverrideGen;
+      _workletNode.port.postMessage({ type: 'markOverridesReset' });
+    }
+    if (!_ovSent.has(ov)) {
+      const o = S._markOverrideById?.(ov);
+      if (!o) return 0;
+      _workletNode.port.postMessage({ type: 'markOverride', id: ov, params: o.params });
+      _ovSent.add(ov);
+    }
+    return ov;
+  };
 
   S._postWorkletCandidates = (pool, cursorLon, cursorLat) =>
     (_ctI ? _postCandidatesTable : _postCandidatesMsg)(pool, cursorLon, cursorLat);
@@ -509,7 +545,8 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       const c = _ctCount[region];
       if (c >= CT_ROWS) { _ctTruncated++; continue; }
       const bufLen = audioBuf.length;
-      const peakOff = vo ? _peakOffsetFor(vo) : offLive;
+      const ov = _ovFor(vo, p);
+      const peakOff = vo ? _peakOffsetForMark(vo, ov) : offLive;
       const offsetSamples = Math.max(0, Math.min(Math.round(((p.grainStart ?? 0) - peakOff) * sr), bufLen - 1));
       const sp = _spatialForParticle(p.lon, p.lat);
       let radiusFade = 1.0;
@@ -524,6 +561,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       ctF[w + 4] = sp.elBias;
       ctI[w + 5] = p._globalIdx ?? i;
       ctF[w + 6] = radiusFade;
+      ctI[w + 7] = ov;
       // IN THE ORDER IT WAS MADE: the stroke, then the mark's place on the
       // stroke's own clock (`takeT`, the path order a looping sample stroke
       // keeps; its grainStart rewinds at each seam). Offset alone ordered
@@ -534,11 +572,11 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
     }
     // Step mode needs the rows in the order they were made: a permutation per region,
     // sorted only when the lens asks for step (random reads the rows as is).
-    const kSeq = !!S.grainKSeqMode;
+    const stepOn = !!S.lensStep;
     for (let r = 0; r < CT_REGIONS; r++) {
       const hdr = r * CT_REGION, half = 1 - ctI[hdr], cnt = _ctCount[r];
       const base = hdr + CT_HEADER + half * CT_HALF;
-      if (kSeq && cnt > 1) {
+      if (stepOn && cnt > 1) {
         const perm = _ctPerm.subarray(0, cnt);
         for (let k = 0; k < cnt; k++) perm[k] = k;
         const ob = r * CT_ROWS;
@@ -561,7 +599,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       dlog('worklet', `all ${n} candidates filtered out`, { noBuf: skipNoBuf, noMap: skipNoMap, bufMapSize: _bufferMap.size });
     }
     if (!_postedOnce && (voices.length || _ctCount[0])) { _postedOnce = true; dlog('worklet', 'first candidates written to the tables', { regions: voices.length + (_ctCount[0] ? 1 : 0) }); }
-    _workletNode.port.postMessage({ type: 'cursorVoicesTab', voices, liveActive: _ctCount[0] > 0, kSeqMode: kSeq });
+    _workletNode.port.postMessage({ type: 'cursorVoicesTab', voices, liveActive: _ctCount[0] > 0, lensStep: stepOn });
   }
 
   /** The rows as objects, read back from the published halves — for the
@@ -574,7 +612,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       const base = hdr + CT_HEADER + half * CT_HALF;
       for (let k = 0; k < cnt; k++) {
         const w = base + k * CT_WORDS;
-        out.push({ region: r, bufIndex: _ctI[w], offset: _ctI[w + 1], length: _ctI[w + 2], azDeg: _ctF[w + 3], elBias: _ctF[w + 4], particleId: _ctI[w + 5], radiusFade: _ctF[w + 6],
+        out.push({ region: r, bufIndex: _ctI[w], offset: _ctI[w + 1], length: _ctI[w + 2], azDeg: _ctF[w + 3], elBias: _ctF[w + 4], particleId: _ctI[w + 5], radiusFade: _ctF[w + 6], ov: _ctI[w + 7],
                    // Where this row falls in step order (the region's permutation).
                    stepAt: Array.prototype.indexOf.call(_ctI.subarray(base + CT_ROWS * CT_WORDS, base + CT_ROWS * CT_WORDS + cnt), k) });
       }
@@ -618,7 +656,6 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       // Resolved up here because the peak offset below is the playing
       // voice's, not the painting one's.
       const vo = _voiceOf(p);
-      const peakOff = vo ? _peakOffsetFor(vo) : offLive;
 
       // Resolve the particle's AudioBuffer and map to worklet buffer index.
       // During active recording, slot.buffer is null — fall back to slot.liveBuffer
@@ -633,6 +670,8 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
       if (!audioBuf) { _skipNoBuf++; continue; }
       const bufIndex = _bufferMap.get(audioBuf);
       if (bufIndex === undefined) { _skipNoMap++; continue; }  // buffer not sent to worklet
+      const ov = _ovFor(vo, p);
+      const peakOff = vo ? _peakOffsetForMark(vo, ov) : offLive;
 
       // Use audioBuf.length for offset clamping (upper safety bound).
       // For live buffers (-2), don't clamp to _provisionalSentLen — the
@@ -665,6 +704,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
         elBias: sp.elBias,
         particleId:  p._globalIdx ?? i,
         radiusFade,
+        ov,
         ord: (p.strokeId | 0) * 1e6 + (p.takeT ?? p.grainStart ?? 0),   // step order — see _ctOrd
       };
       list.push(cand);
@@ -716,7 +756,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
     // Order (random | step) is the lens's, live — sent once per post and
     // applied to every cursor voice worklet-side, so frozen voicings never
     // pin it (#233).
-    _workletNode.port.postMessage({ type: 'cursorVoices', list: voices, kSeqMode: !!S.grainKSeqMode });
+    _workletNode.port.postMessage({ type: 'cursorVoices', list: voices, lensStep: !!S.lensStep });
   }
 
   // ── Register seed posting callback on S ────────────────────────────
@@ -747,7 +787,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
   const _sdSeen = new Set();        // keys posted this tick
   const DIR_MAP  = { fwd: 0, rev: 1, rand: 2, rnd: 2 };
   const CURVE_MAP = { hann: 0, tri: 1, rect: 2 };
-  const _seedVoiceParams = (gp, kSeqMode) => ({
+  const _seedVoiceParams = (gp, lensStep) => ({
     period:           gp.period ?? 0.050,
     duration:         gp.duration ?? 0.100,
     volume:           gp.volume ?? 0.8,
@@ -769,7 +809,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
     cutoff:           gp.cutoff ?? 1000,
     res:              gp.res ?? 0,
     filterFreqJitter: gp.filterFreqJitter ?? 0,
-    kSeqMode:         kSeqMode ?? false,
+    lensStep:         lensStep ?? false,
     panSpread:        gp.panSpread ?? 0,
   });
   S._postWorkletSeeds = (seeds) => {
@@ -808,7 +848,10 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
           // hearing, frozen. Otherwise a mark plays with its own.
           let vo = sd.voicing ?? (p._vo ?? 0);
           if (vo && !S._voicingById?.(vo)) vo = 0;
-          const peakOff = vo ? _peakOffsetFor(vo) : ownPeakOff;
+          // A mark's override rides into a cloud with it — unless the cloud
+          // was pinned under audition, whose one frozen voicing is the sound.
+          const ov = sd.voicing != null ? 0 : _ovFor(vo, p);
+          const peakOff = vo ? _peakOffsetForMark(vo, ov) : ownPeakOff;
           let audioBuf = null;
           if (p.source === 'live' && p.liveBufferIdx >= 0 && p.liveBufferIdx < S.liveRecBuffers.length) {
             const slot = S.liveRecBuffers[p.liveBufferIdx];
@@ -837,7 +880,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
           b.list.push({
             bufIndex, offset: offsetSamples, length: bufLen,
             azDeg: sp.azDeg, elBias: sp.elBias,
-            particleId: p._globalIdx ?? j, radiusFade: fade,
+            particleId: p._globalIdx ?? j, radiusFade: fade, ov,
             ord: (sid | 0) * 1e6 + (p.takeT ?? p.grainStart ?? 0),   // step order — see _ctOrd
           });
         }
@@ -864,7 +907,7 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
         list.push({
           index, active: true, gain: sd.gain ?? 1.0, slot, vo,
           candidates: b.list.slice(),
-          params: _seedVoiceParams(gp, sd.kSeqMode),
+          params: _seedVoiceParams(gp, sd.lensStep),
         });
       }
     }

@@ -250,7 +250,7 @@ about how much of the old model is still load-bearing.
 
 **Delete the aliases in the same commit.** `state.js` currently maps `MAX_SEEDS`, `MAX_SEQS`,
 `SEED_COLORS`, `SEQ_COLORS`, `MOVING_SEED_THRESHOLD_MS` onto the commit pool, and carries
-a getter/setter pair for `seqModeEnabled` (`commitLockEnabled` / `seedLockEnabled` went 2026-09-05). Renaming on
+a getter/setter pair for `pinMode` (`commitLockEnabled` / `seedLockEnabled` went 2026-09-05). Renaming on
 top of those produces **three live names for one field**, which is exactly how the current
 situation arose. The reasoning is already written in that file, on `AXIS_SOURCES`:
 

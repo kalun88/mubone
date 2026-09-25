@@ -427,7 +427,7 @@ export const ACC_DEFAULT_LO       = 0.33;   // schmitt lower threshold (normalis
 //   period > duration -> silence gap between grains (sparse/pulsed feel)
 //   period < duration -> grains overlap in time (dense/washy feel)
 export const DEFAULT_GRAIN = {
-  grainKSeqMode: false,
+  lensStep: false,
   k:             0,        // 0 = all: every mark in reach is in the pool
 
   duration:      0.589,
@@ -822,7 +822,7 @@ export const S = {
   // was made, and the glow says which ones can still move.
   auditionMode: false,
   grainWalk: false,
-  grainKSeqMode: false, // when true: step through candidates sequentially by grainStart order
+  lensStep: false, // when true: step through candidates sequentially by grainStart order
   radiusTooltipUntil: 0, // performance.now() -- show transient radius label until this time
 
   // ── Painting ───────────────────────────────────────────────────────────
@@ -919,16 +919,18 @@ export const S = {
   // A stroke freezes the brush that painted it. `voicings` is the interned
   // table of distinct resolved param blocks, `currentVoicing` is the id being
   // stamped on everything the current stroke deposits, and each particle keeps
-  // it as `_vo`. `currentVoicing` is set at recordStrokeStart and re-set per
-  // deposit when a param moves MID-STROKE (paint-ticker.js _refreshVoicing),
-  // so one strokeId can carry several voicings — the worklet buckets by
-  // particle, so a later sweep plays each section as it was painted. A LIVE
-  // brush's strokes all point at the one voicing its knobs edit in place
-  // (brush-voicing.js, "Auditioned paint"). id 0 means "follow the live params",
-  // which is what nothing paints as any more.
+  // it as `_vo`. `currentVoicing` is set at recordStrokeStart and held for the
+  // whole stroke: a param moved MID-STROKE rides on the mark instead, as
+  // `_ov` — an id into `markOverrides`, the sparse blocks of what moved
+  // (brush-voicing.js; `currentMarkOverride` is the one being stamped). id 0
+  // means "follow the live params" / "nothing moved".
   voicings: [],
   voicingSeq: 0,
   currentVoicing: 0,
+  markOverrides: [],
+  markOverrideSeq: 0,
+  markOverrideGen: 0,
+  currentMarkOverride: 0,
 
   // Which brush is selected in the brush library (js/brush.js), as a
   // 'grain' | 'tape' key.  The MATERIAL is derived from it and never set

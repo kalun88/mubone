@@ -81,6 +81,14 @@ const snapOf = (root, ctx) => {
   try {
   for (const e of root.querySelectorAll('*')) {
     if (!e.offsetParent) continue;
+    // THE TOOLTIP IS THE POINTER'S, like :hover (2026-09-25). ui-learn.js
+    // fills it after a 500 ms rest and hiding it only drops \`.visible\`, so
+    // its last word and keycaps stay in the DOM at opacity 0 — three rows that
+    // say where the pointer rested, not what the build is. The self-test's
+    // hover check went red on exactly that once the probe's own spawn outlasted
+    // the delay. The tip itself is position:fixed (no offsetParent); its
+    // children are what leaked.
+    if (e.closest('.learn-tooltip')) continue;
     const r = e.getBoundingClientRect();
     if (r.width === 0 && r.height === 0) continue;
     const c = getComputedStyle(e);

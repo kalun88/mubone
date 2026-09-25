@@ -101,7 +101,7 @@ profile → one localStorage. Full key inventory:
 | `mubone-sensor-prefs` | imu-setup.js:206 | Per-device prefs (by serial) — mostly OK since serials differ, but writes race. |
 | `mubone_custom_speaker_angles` | ui-audio-settings.js:469 | Shared speaker layout — fine if identical, racing writes if not. |
 | `mubone_key_map`, `mubone_midi_map` | midi.js | Shared bindings. |
-| `mubone_param_locks`, `mubone_staging`, `mubone_gesture_panel`, `mubone_osc_stream`, `mubone_radial_anchors`, `mubone_projector_layout_v2`, `mubone_panel_*`, `mubone_sec_*`, `mubone_panel_order`, `mubone_bufferSize`, `mubone-learn-mode` | various | All shared; racy but low-stakes. |
+| `mubone_param_locks`, `mubone_staging`, `mubone_gesture_panel`, `mubone_osc_stream`, `mubone_radial_anchors`, `mubone_projector_layout_v2`, `mubone_panel_*`, `mubone_sec_*`, `mubone_panel_order`, `mubone_bufferSize`, `mubone_learn` | various | All shared; racy but low-stakes. |
 
 Also: multiple Electron processes on one profile dir can contend for the
 LevelDB lock — persistence in instances 2/3 may silently fail. Everything in

@@ -63,7 +63,7 @@ const SNAP = `JSON.stringify({
    glink: S.grainLink,
   curve: S.grainCurveType, dir: S.grainDirection,
   r: S.searchRadiusDeg, n: S.recencyN, k: S.grainK,
-  kAll: (S.grainOverrides.k ?? S.grainParams.k) === 0, kSeq: S.grainKSeqMode, near: S.lensMode === 'nearest',
+  kAll: (S.grainOverrides.k ?? S.grainParams.k) === 0, stepOn: S.lensStep, near: S.lensMode === 'nearest',
   prob: S.grainProbability, flow: S.paintTicker && S.paintTicker.intervalMs,
   head: S.headWidthDeg, headEdge: S.headEdge,
   fade: S.radiusFadeEnabled, fadeC: S.radiusFadeCurve,
@@ -121,7 +121,7 @@ async function run(rig) {
       for (const eng of ['granular', 'tape']) {
         T.setInstrument(eng); T.render(); await wait(150);
         const row = [...document.querySelectorAll('#toolRail [data-voice]')]
-          .find(r => (r.querySelector('.tile-nm') || {}).textContent?.trim() === name);
+          .find(r => (r.querySelector('.tile-nm') || {}).textContent?.trim().replace(/\*$/, '') === name);
         if (!row) continue;
         row.click(); await wait(420);
         return true;
@@ -495,7 +495,7 @@ async function run(rig) {
     const block = () => JSON.stringify(BV.resolveGrainParams());
     const take = async name => { await window.__takeVoice(name); await wait(300); };
     const washRow = () => [...document.querySelectorAll('#toolRail [data-voice]')]
-      .find(r => (r.querySelector('.tile-nm') || {}).textContent?.trim() === 'wash');
+      .find(r => (r.querySelector('.tile-nm') || {}).textContent?.trim().replace(/\*$/, '') === 'wash');
     const storedWash = () => { try { const v = JSON.parse(localStorage.getItem('mubone_sounds') || '{}').v || {};
       return Object.values(v).find(x => x.name === 'wash')?.params?.pitch ?? null; } catch (_) { return null; } };
     const storedTool = () => { try { return JSON.parse(localStorage.getItem('mubone_tiles') || '{}').granular?.params?.pitch ?? null; } catch (_) { return null; } };

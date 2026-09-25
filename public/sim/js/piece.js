@@ -30,7 +30,7 @@ import { snapshotCurrentState } from './param-registry.js';
 import * as history from './history.js';
 import { restoreTrigger, stopTriggerAudio } from './trigger.js';
 import { exportGroups, restoreGroups, applyMix } from './pins.js';
-import { exportVoicings, restoreVoicings } from './brush-voicing.js';
+import { exportVoicings, restoreVoicings, exportMarkOverrides, restoreMarkOverrides } from './brush-voicing.js';
 import { setScanMuted } from './ui-meters.js';
 import {
   AudioTable, writePiece, readPiece,
@@ -136,6 +136,9 @@ function buildManifest(audio, { particleWitness = false } = {}) {
       // Which frozen brush voices this mark. Same "write only when set"
       // reasoning as `trig`: 0 means "follow the live params".
       ...(p._vo ? { vo: p._vo } : {}),
+      // What a knob ridden mid-stroke moved for this mark (brush-voicing.js),
+      // an id into `live.markOverrides`. Absent on nearly every mark.
+      ...(p._ov ? { ov: p._ov } : {}),
       // Path order for a looping sample trigger stroke (#247) — its grainStart
       // rewinds each pass, so without takeT the stroke re-meshes on open.
       ...(p.takeT !== undefined ? { takeT: p.takeT } : {}),
@@ -167,7 +170,7 @@ function buildManifest(audio, { particleWitness = false } = {}) {
           searchRadiusDeg:   slot.searchRadiusDeg,
           nearestMode:       slot.nearestMode,
           kAllMode:          slot.kAllMode,
-          kSeqMode:          slot.kSeqMode,
+          lensStep:          slot.lensStep,
           grainParams:       slot.grainParams,
           grainOverrides:    slot.grainOverrides,
           radiusFadeEnabled: slot.radiusFadeEnabled,
@@ -284,7 +287,7 @@ function buildManifest(audio, { particleWitness = false } = {}) {
       lensMode:         S.lensMode,
       lensReads:        S.lensReads,
       grainKAllMode:    S.grainKAllMode,
-      grainKSeqMode:    S.grainKSeqMode,
+      lensStep:    S.lensStep,
       grainOverrides:   { ...S.grainOverrides },
       grainProbability: S.grainProbability,
       scanFadeS:        S.scanFadeS,
@@ -302,7 +305,10 @@ function buildManifest(audio, { particleWitness = false } = {}) {
       pinGroups:        exportGroups(),
       // The interned voicing table. Read back early — step 4 needs it before
       // the particles that point at it exist.
-      voicings:         exportVoicings(),
+      // Only what a mark or a cloud still plays with: an erase, or a session
+      // of knob-turning between strokes, leaves rows nothing points at.
+      voicings:         exportVoicings(_voicingsInUse()),
+      markOverrides:    exportMarkOverrides(S.particles),
     },
   };
 }
@@ -311,6 +317,35 @@ function buildManifest(audio, { particleWitness = false } = {}) {
 // ═════════════════════════════════════════════════════════════════════════════
 // OPENING
 // ═════════════════════════════════════════════════════════════════════════════
+
+// THE SEED / SEQ NAMES WENT (2026-09-25). A piece saved before carries the
+// pin settings under their old registry keys, the lens's step as
+// `grainKSeqMode` and each cloud's as `kSeqMode`. Renamed in place on open —
+// the next save writes only the new names.
+const _PATCH_RENAMES = {
+  seqSlotCount: 'pinSlots', seqOverflow: 'pinOverflow', seqModeEnabled: 'pinMode',
+  seedMode: 'pinFollow', seedXfade: 'pinXfade', seedLoopMode: 'cloudPathDir',
+  seedAttack: 'cloudFadeIn', seedRelease: 'cloudFadeOut',
+  seqNextVolume: 'loopVolume', seqNextSpeed: 'loopSpeed',
+};
+function _renameKey(o, was, now) {
+  if (!o || typeof o !== 'object' || !(was in o)) return;
+  if (!(now in o)) o[now] = o[was];
+  delete o[was];
+}
+function _renameLegacyKeys(data) {
+  for (const [was, now] of Object.entries(_PATCH_RENAMES)) _renameKey(data.patch, was, now);
+  _renameKey(data.live, 'grainKSeqMode', 'lensStep');
+  for (const c of data.commits ?? []) _renameKey(c, 'kSeqMode', 'lensStep');
+}
+
+/** The voicing ids something still plays with — the marks' and the clouds'. */
+function _voicingsInUse() {
+  const used = new Set();
+  for (const p of S.particles) if (p._vo) used.add(p._vo);
+  for (const c of S.commitSlots || []) if (c?.voicing) used.add(c.voicing);
+  return used;
+}
 
 /**
  * Rebuild the session from a manifest and the audio members it names.
@@ -330,6 +365,7 @@ async function applyManifest(data, audio) {
   }
   // Opening mid-recording would swap liveRecBuffers out from under the recorder.
   if (S.isRecording) throw new Error('stop recording before opening a piece');
+  _renameLegacyKeys(data);
 
   const bufFor = (id) => (id ? audio.get(id) || null : null);
 
@@ -386,6 +422,7 @@ async function applyManifest(data, audio) {
   // resolve against THIS file's table, not the previous session's. Keeping every
   // restore in front of the things that reference it is the rule worth having.
   restoreVoicings(data.live?.voicings);
+  restoreMarkOverrides(data.live?.markOverrides);
 
   S.particles.length = 0;
   for (const p of (data.particles || [])) {
@@ -409,6 +446,7 @@ async function applyManifest(data, audio) {
     if (typeof p.takeT === 'number') particle.takeT = p.takeT;
     if (p.gap)                 particle._gapAfter = true;   // an erase hole follows
     particle._vo = typeof p.vo === 'number' ? p.vo : 0;
+    if (typeof p.ov === 'number' && p.ov > 0) particle._ov = p.ov;
     stampCartesian(particle);
     S.particles.push(particle);
   }
@@ -441,7 +479,7 @@ async function applyManifest(data, audio) {
         searchRadiusDeg:   c.searchRadiusDeg,
         nearestMode:       c.nearestMode,
         kAllMode:          c.kAllMode,
-        kSeqMode:          c.kSeqMode,
+        lensStep:          c.lensStep,
         grainParams:       c.grainParams,
         grainOverrides:    c.grainOverrides ?? {},
         morphT:            0.5,
@@ -596,7 +634,7 @@ function applyLiveState(live) {
   if (['area', 'nearest', 'stroke'].includes(live.lensMode)) S.lensMode = live.lensMode;
   if (['both', 'grains', 'tape'].includes(live.lensReads)) S.lensReads = live.lensReads;
   if (typeof live.grainKAllMode === 'boolean') S.grainKAllMode = live.grainKAllMode;
-  if (typeof live.grainKSeqMode === 'boolean') S.grainKSeqMode = live.grainKSeqMode;
+  if (typeof live.lensStep === 'boolean') S.lensStep = live.lensStep;
   if (live.grainOverrides && typeof live.grainOverrides === 'object') {
     S.grainOverrides = { ...live.grainOverrides };
   }

@@ -94,7 +94,7 @@ async function _startWorkletEngine(buf, opts = {}) {
     cutoff:           opts.cutoff           ?? ov.cutoff           ?? base.cutoff           ?? 1000,
     res:              opts.res              ?? ov.res              ?? base.res              ?? 0,
     filterFreqJitter: opts.filterFreqJitter ?? ov.filterFreqJitter ?? base.filterFreqJitter ?? 0,
-    kSeqMode:         S.grainKSeqMode ?? false,
+    lensStep:         S.lensStep ?? false,
   }, {
     numChannels: S.speakerBuses?.numChannels || S.audioCtx.destination.channelCount || 2,
     onFeedback: (data) => {

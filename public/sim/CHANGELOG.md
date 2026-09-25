@@ -7,6 +7,41 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.11 alpha — 2026-09-26
+
+**A knob ridden while painting is recorded into the stroke, tooltips say what things are, and P pins everything.**
+
+### Fixed
+- Riding a grain knob while painting (by hand, a MIDI pot or a sensor) no longer splits the stroke into a
+  voice per mark: a swept stroke plays at its own density instead of up to 16× it, and nothing drops out.
+- The k number (and radius, on its first drag) could not be dragged — the rail redrew under the pointer and
+  the drag selected text instead. Numbers now drag the whole way.
+- Erase's `from` pill: choosing `bottom` now shows it.
+- Stale tooltips rewritten across the chrome, palette, tabs and Keys + MIDI (shapes, drawers, "tool editor",
+  steer/surface, "whatever sits there", particles).
+
+### Added
+- **A ridden knob rides on the marks**: a stroke keeps the voice it started with; each mark stores only what
+  moved and its grain plays with it — a period sweep is a density sweep on the stroke's one clock. Pieces
+  save it.
+- **P — autopin as loop and cloud**, both engines at once (`/autopin`); each autopin row shows P unless it
+  has its own binding.
+- **Every sheet and tab parameter says what it is** before how to drag it, on its label and its controls.
+- **A `?` left of the cog** toggles learn mode, lit while on — and learn is ON at factory.
+- The cheat sheet rewritten for the app as it is, with new screenshots.
+
+### Changed
+- An edited preset reads **`wash*`** on the hand tile and its row (which stays lit), not `custom`; audition
+  shows the same names.
+- The pinned rail's count is at the title's size — the held count a readout, the max a visible field; both
+  rails' ≡ glyphs at the title's size.
+- "Grain selection" is **Grain Behaviour**.
+- Pieces, bindings and tool presets carry the renamed internals (`seed*` / `seq*` pin settings, the lens's
+  step) over once on open; OSC `/search/order` is now **`/search/step`**.
+- Saved pieces keep only the voicings a mark or a cloud still uses.
+
+---
+
 ## 5.10 alpha — 2026-09-25
 
 **Sensors bind like knobs, the Keys + MIDI table and LED page tell the truth again, and the rails were redesigned.**

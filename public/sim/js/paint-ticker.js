@@ -19,7 +19,7 @@ import { S, SAMPLE_PAINT_COLORS, gp, minGrainDurS } from './state.js';
 import { cursorLonLatNow } from './sphere.js';
 import { rand, stampCartesian } from './grain.js';
 import { getRecordingDuration } from './audio.js';
-import { voicingForCurrentBrushLive } from './brush-voicing.js';
+import { markOverrideLive } from './brush-voicing.js';
 import { snapshotInputFeatures, featuresFromBuffer, snapshotTimbre, consumeWindowLoudness, recordedWindowLoudness, featuresToColor } from './audio-features.js';
 
 // ── Defaults ────────────────────────────────────────────────────────────────
@@ -297,6 +297,9 @@ function _depositParticle() {
       // not resolved per particle — an int the scheduler reads directly, since
       // it is touched once per candidate per 20 ms tick.
       _vo:            S.currentVoicing ?? 0,
+      // What the pedal had moved off that voicing when this mark went down —
+      // 0 for none, which is nearly every mark (brush-voicing.js).
+      ...(S.currentMarkOverride ? { _ov: S.currentMarkOverride } : {}),
       grainDuration:  Math.max(minGrainDurS(), gpr.duration + durVariation),
       source:         'live',
       liveBufferIdx:  S.currentLiveBufferIdx,
@@ -351,6 +354,7 @@ function _depositParticle() {
       // not resolved per particle — an int the scheduler reads directly, since
       // it is touched once per candidate per 20 ms tick.
       _vo:            S.currentVoicing ?? 0,
+      ...(S.currentMarkOverride ? { _ov: S.currentMarkOverride } : {}),
       source:         'sample',
       sampleIndex:    S.samplerIndex,
       grainStart:     clampedStart,
@@ -410,12 +414,15 @@ function _depositParticle() {
 // ── Tick ─────────────────────────────────────────────────────────────────────
 // 200Hz poll — deposits when the fixed clock interval has elapsed.
 
-// Only a granular stroke has a voicing; a tape stroke would intern a row
-// nothing ever reads, and the voicing table is persisted.
+// The stroke keeps the voicing recordStrokeStart froze; what the pedal has
+// moved since rides on the mark as its override (brush-voicing.js). Only a
+// granular stroke has one — a tape stroke's marks are never granulated with
+// their own block, and the override table is persisted.
 function _refreshVoicing() {
+  S.currentMarkOverride = 0;
   if (!(S.currentStrokeId > 0)) return;
   if (S._currentMaterial?.() !== 'grain') return;
-  S.currentVoicing = voicingForCurrentBrushLive();
+  S.currentMarkOverride = markOverrideLive(S.currentVoicing);
 }
 
 function _tick() {
@@ -447,11 +454,10 @@ function _tick() {
 
   const interval = _intervalMs();
   if (nowMs - _lastDepositMs >= interval) {
-    // Re-freeze before depositing, so a param that moved since the last mark
-    // is what THIS mark bakes. A stroke can carry several voicings and nothing
-    // minds — the worklet buckets by particle, never by stroke — so a stroke
-    // painted while a gesture sweeps the period plays back with that sweep
-    // baked into it, the same way a widening head is baked into its spread.
+    // Read the pedal before depositing, so a param that moved since the last
+    // mark is what THIS mark bakes — on its override, never a new voicing — so
+    // a stroke painted while a sensor sweeps the period plays back with that
+    // sweep baked into it, the same way a widening head is baked into its spread.
     _refreshVoicing();
     _depositParticle();
     _lastDepositMs = nowMs;

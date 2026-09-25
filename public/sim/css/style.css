@@ -3738,7 +3738,7 @@ html.booting-reveal .main-layout {
     transform-box: view-box; transform-origin: 12px 12px;
   }
   .tc-icon > svg, .tc-readout > svg { stroke-width: calc(1.8 / var(--gk, 1)); }
-  #tcTools, #tcPinned, #tcMic { --gk: 0.887; }
+  #tcTools, #tcPinned, #tcMic, #tcLearn { --gk: 0.887; }
   #tcUndo, #tcRedo            { --gk: 1.140; }
   #tcSweep                    { --gk: 1.078; }
   #tcClear                    { --gk: 1.000; }   /* the reference */
@@ -4766,22 +4766,25 @@ html.booting-reveal .main-layout {
      --c is the pin's engine hue and the only colour a track wears: the slot
      colour (--m) left the rail on 2026-09-17 — Ek does not read it live. */
 
-  /* The header's right half: the count, and the settings door. The max is
-     typeable exactly as .grain-numbox is: transparent at rest, the tint on
-     focus, the colour lifting on hover. */
+  /* The header's right half: the count, and the settings door — at the
+     TITLE's size (Ek, 2026-09-25: "make it more obvious that you can edit the
+     8 and that the first number is a readout. make it bigger, as big as the
+     title"). The count is plain text, a readout; the max is a FIELD — the
+     settings kit's field in miniature: a ground, a hairline, the ember border
+     on focus — so the one number you can change looks like it. */
   .lyr-bar-r { display: flex; align-items: center; gap: var(--sp-5); }
-  .lyr-slots-n { display: flex; align-items: center; flex: none;
-    font-size: var(--fs-meta); font-weight: 500; font-variant-numeric: tabular-nums;
+  .lyr-slots-n { display: flex; align-items: baseline; flex: none;
+    font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums;
     line-height: 1; color: var(--text-secondary); }
-  #lyrSlotsFilled { font-weight: 500; color: var(--text-secondary); }
-  .lyr-slots-sep { color: var(--text-muted); margin: 0 var(--sp-0); }
-  .lyr-slots-max { width: 1.35rem; height: 1rem; padding: 0; margin: 0;
-    background: none; border: 0; border-radius: var(--r-1);
-    color: var(--text-light); font-family: var(--font-sans);
-    font-size: var(--fs-meta); font-weight: 500; font-variant-numeric: tabular-nums;
+  #lyrSlotsFilled { font-weight: 700; color: var(--text-secondary); }
+  .lyr-slots-sep { color: var(--text-muted); margin: 0 var(--sp-2); font-weight: 400; }
+  .lyr-slots-max { width: 2.25rem; height: var(--lyr-bar-btn-h); padding: 0; margin: 0; box-sizing: border-box;
+    background: var(--surface-1); border: 1px solid var(--border-soft); border-radius: var(--r-2);
+    color: var(--text-highlight); font-family: var(--font-sans);
+    font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums;
     line-height: 1; text-align: center; cursor: text; }
-  .lyr-slots-max:hover { color: var(--text-highlight); background: var(--surface-0); }
-  .lyr-slots-max:focus { outline: none; color: var(--text-highlight); background: var(--surface-0); }
+  .lyr-slots-max:hover { border-color: var(--border-strong); }
+  .lyr-slots-max:focus { outline: none; border-color: var(--accent-action); background: var(--surface-0); }
 
   /* ── The mode bar: blend · tether · sort · width ──────────────────────
      The four pin settings you switch mid-set, each a second door onto the S
@@ -5179,7 +5182,7 @@ html.booting-reveal .main-layout {
      lit in the engine hue while its sheet is up. */
   .tbx-lbl .trow-more { margin-left: 0.1rem; margin-top: -0.3rem; margin-bottom: -0.3rem; }
   /* THE RULED LABEL (Ek, 2026-09-25 — the rails canvas, option A): a section
-     title in the rail's cards — Voice, Grain selection — is sentence case at
+     title in the rail's cards — Voice, Grain Behaviour — is sentence case at
      the body size, semibold, and a hairline runs from it to the right edge;
      the `+` and the door sit at the rule's end. The engine titles keep the
      eyebrow. */
@@ -5192,7 +5195,7 @@ html.booting-reveal .main-layout {
   .tbx-lbl--sec .tbx-lbl-t { flex: 1 1 auto; }
   .tbx-lbl--sec .tbx-add { margin-left: 0; }
   /* THE CARDS (F): the instrument's, then the voice's under it; the cursor's,
-     then the grain selection's. 8 between the two halves of a region, 12 after. */
+     then the grain behaviour's. 8 between the two halves of a region, 12 after. */
   .tc-lrail .rail-card { background: var(--surface-1); border-radius: var(--r-hand); padding-bottom: var(--sp-5); }
   .tc-lrail .rail-card + .rail-card { margin-top: var(--sp-4); }
   .tc-lrail #voicePanel { margin-bottom: var(--sp-5); padding-bottom: var(--sp-3); }
@@ -5253,7 +5256,7 @@ html.booting-reveal .main-layout {
      gradient and no shadow (build sheet § 8.7), one token for the ground and
      one for the radius (§ 8.8). */
   /* (2026-09-25, the rails canvas, F: a SECTION is now a card of its own —
-     Voice under the instrument's card, Grain selection under the cursor's —
+     Voice under the instrument's card, Grain Behaviour under the cursor's —
      side by side, never nested. What follows is the older reading.)
      ONE CARD PER REGION, never a card inside a card. The INSTRUMENT is one —
      mode, its presets — and the things inside it are SECTIONS of that card,
@@ -5924,7 +5927,8 @@ html body .tc-icon.tc-danger:hover { color: var(--accent-danger); background: va
 /* An open drawer turns its handle ember and stops there. The first cut added a
    hairline under it as well; two cues for one bit of state is noise, and the
    colour was already carrying it (Ek). */
-html body .tc-drawer.on {
+html body .tc-drawer.on,
+html body #tcLearn.on {
   color: var(--accent-action);
   background: none;
 }
@@ -5973,6 +5977,11 @@ html body .lyr-bar button:hover { background: var(--surface-1); color: var(--tex
    exactly the class of thing this project keeps shipping by eye. */
 html body .lyr-bar .lyr-bar-set { padding: 0; width: var(--lyr-bar-btn-h); }
 html body .lyr-bar .lyr-bar-set svg { display: block; width: 11px; height: 11px; }
+/* The two rails' title bars carry their door at the TITLE's size (Ek,
+   2026-09-25: "same with the hamburger settings button for both pinned rail
+   and tool rail"): the glyph grows to the title's size inside the kit's 24px
+   square, and the pinned rail's max field shares that height. */
+html body .tc-rail > .lyr-bar .lyr-bar-set svg, html body .tc-lrail > .lyr-bar .lyr-bar-set svg { width: 18px; height: 18px; }
 /* The empty state sits on the RAIL's ramp, not the panel's: it is a caption in
    a 246px column, and --fs-body put it a step above the actions above it. */
 html body .lyr-empty { color: var(--text-muted); font-size: var(--fs-eyebrow); letter-spacing: var(--ls-uppercase); }

@@ -80,7 +80,7 @@
     <div class="top-bar-left">
       <div class="top-bar-brand">
         <span class="top-bar-logo">mubone</span>
-        <span class="top-bar-version">5.10 alpha</span>
+        <span class="top-bar-version">5.11 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="mu-btn--bare top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -109,9 +109,9 @@
         <div class="top-bar-seg-group">
           <span class="top-bar-seg-label">camera</span>
           <div class="grain-seg top-bar-seg" id="cameraModeSeg">
-            <button class="grain-seg-btn active" data-mode="steer" title="pull — mouse or trackpad steers the view from center. cursor follows the mouse. default mode. (camera DISTANCE is the pull-back slider in the viz panel, and applies to all three modes.)">pull</button>
-            <button class="grain-seg-btn" data-mode="surface" title="point — pointer lock captures the trackpad or mouse. swipe to rotate freely around the sphere. cursor hidden, paint target is center. Alt to unlock.">point</button>
-            <button class="grain-seg-btn" data-mode="sensor" title="sensor — the x-imu3 drives camera orientation. cursor hidden, paint target is center, mouse free for the UI.">sensor</button>
+            <button class="grain-seg-btn active" data-mode="steer" title="pull — the mouse or trackpad steers the view and the cursor follows it. How far back the camera sits is Visuals → pull-back, in every mode">pull</button>
+            <button class="grain-seg-btn" data-mode="surface" title="point — the trackpad or mouse is captured and swipes the sphere around you; the cursor sits at the centre. ⌥ lets the pointer go">point</button>
+            <button class="grain-seg-btn" data-mode="sensor" title="sensor — the sensor in your hand points the view; the cursor sits at the centre and the mouse is free for the UI">sensor</button>
           </div>
         </div>
       </div>
@@ -154,7 +154,7 @@
          of right-hand pills never said. -->
     <div class="tc-side tc-side-l">
       <span class="tc-grp">
-        <button type="button" class="tc-icon tc-drawer" id="tcTools" data-action="rail_tools" aria-pressed="false" title="tool editor — Tab shows and hides the rail. Click a shape or a voice and the tool it belongs to takes it: the spacebar's, or the eraser on the palette. The door at a row's edge opens its sheet; hold A to hear the tool the open tab is editing (Esc hides)">
+        <button type="button" class="tc-icon tc-drawer" id="tcTools" data-action="rail_tools" aria-pressed="false" title="tools — the rail on the left: a tab per instrument with its switches and voice presets, and the cursor at its foot (Tab shows and hides it, Esc hides)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.75" width="18" height="14.5" rx="2.4"/><path d="M9.4 4.75v14.5"/></svg>
         </button>
       </span>
@@ -221,7 +221,7 @@
          wordmark's own colour without 9KB of path data in this file. -->
     <div class="tc-brand">
       <img class="tc-mark" src="logo/mark-light.svg" alt="" aria-hidden="true" width="18" height="18">
-      <b>mubone</b> <i>5.10</i>
+      <b>mubone</b> <i>5.11</i>
       <!-- The open piece, in the version's own engraved lettering. The unsaved
            mark is a DOT that is there or is not (js/piece.js) — nothing here is
            dimmed to mean anything. Empty and hidden until there is a piece. -->
@@ -278,6 +278,14 @@
              drawer icon"). It used to trail the history cluster on the left,
              where a cog among four stroke actions read as a fifth thing you
              do to a stroke; the right is where you open things. -->
+        <!-- LEARN, LEFT OF THE COG (Ek, 2026-09-25): the ? lights ember while
+             learn is on — the long tooltip, instantly — as an open drawer's
+             handle does. ON at factory; js/ui-learn.js keeps it in step with
+             the cabinet's #learnModeBtn. -->
+        <button type="button" class="tc-icon" id="tcLearn" aria-pressed="true"
+                title="learn — on, every tooltip says what the control is and how to use it, at once; off, just its name and key after a moment">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.9-2.7 2.5-2.7 4.1"/><path d="M12 17.6h.01"/></svg>
+        </button>
         <button type="button" class="tc-icon" id="tcSettings" data-action="settings" title="settings — audio, pins, sensors, keys, visuals, export (Esc closes)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </button>
@@ -394,10 +402,10 @@
           <!-- The count, and the max made typeable — the same number Settings →
                Pins holds on a slider, through S.commitSlotCount. -->
           <span class="lyr-slots-n">
-            <b id="lyrSlotsFilled">0</b><span class="lyr-slots-sep">/</span><input
+            <b id="lyrSlotsFilled" title="pins held now">0</b><span class="lyr-slots-sep">/</span><input
               type="text" class="lyr-slots-max" id="lyrSlotsMax" value="8"
               inputmode="numeric" maxlength="2" spellcheck="false"
-              title="how many pins can be held at once (1–16)"
+              title="the most pins held at once — click to type 1–16, or ↑ ↓"
               aria-label="how many pins can be held at once">
           </span>
           <!-- The rest of the pin parameters — count, when full, what a new pin
@@ -650,7 +658,7 @@
                stays on as a hidden value carrier (exactly what the modal does
                with its own asPaintGateSlider) so the MIDI/OSC mirror pair and
                scripts/cc-mirror-audit.js keep working. -->
-          <div class="grain-row" title="paint gate — this gates PAINTING, not audio: below the threshold no particles are deposited. Nothing is attenuated. The bar is the same loudness the gate tests — max(rms, 0.7×peak), so a percussive onset reads at its true height rather than its average. Drag the meter to set the threshold; below is gated (red), above is open (teal). The scale is curved so the noise floor gets most of the meter. (double-click to reset)">
+          <div class="grain-row" title="paint gate — this gates PAINTING, not audio: below the threshold no marks are laid down. Nothing is attenuated. The bar is the same loudness the gate tests — max(rms, 0.7×peak), so a percussive onset reads at its true height rather than its average. Drag the meter to set the threshold; below is gated (red), above is open (teal). The scale is curved so the noise floor gets most of the meter. (double-click to reset)">
             <span class="grain-label">gate</span>
             <canvas id="apGateMeter" class="as-gate-meter ap-gate-meter" width="400" height="28" data-default="0.002"></canvas>
             <input type="text" class="grain-numbox" id="apPaintGateNum" value="0.002" readonly>
@@ -687,8 +695,8 @@
             <div class="grain-row" title="lens — how the cursor finds particles&#10;radius: plays within the radius, filtered by recency&#10;nearest: always plays the k closest on the whole sphere">
               <span class="grain-label">lens</span>
               <div class="grain-seg" id="snapToggleSeg">
-                <button class="grain-seg-btn active" data-mode="area" title="radius — select particles within the search radius&#10;filtered by recency">radius</button>
-                <button class="grain-seg-btn" data-mode="nearest" title="nearest — fire the k closest particles on the whole sphere&#10;radius and recency are bypassed">nearest</button>
+                <button class="grain-seg-btn active" data-mode="area" title="radius — the marks within the radius, as deep as depth reaches">radius</button>
+                <button class="grain-seg-btn" data-mode="nearest" title="nearest — the k closest marks anywhere on the sphere; radius and depth do not apply">nearest</button>
               </div>
             </div>
 
@@ -702,9 +710,9 @@
             </div>
             <div class="grain-row" title="order — how the next grain is chosen from the candidate pool&#10;random: pick randomly from candidates&#10;step: cycle through candidates in recording order">
               <span class="grain-label">order</span>
-              <div class="grain-seg" id="kSeqSeg">
-                <button class="grain-seg-btn active" data-kseq="off" title="random — pick randomly from candidates">random</button>
-                <button class="grain-seg-btn" data-kseq="on" title="step — play one particle at a time in recording order">step</button>
+              <div class="grain-seg" id="lensStepSeg">
+                <button class="grain-seg-btn active" data-step="off" title="random — pick randomly from candidates">random</button>
+                <button class="grain-seg-btn" data-step="on" title="step — play one particle at a time in recording order">step</button>
               </div>
             </div>
 
@@ -1145,8 +1153,8 @@
                   <span class="set-row-desc">How a pin comes up — on pin, and on unmute.</span>
                 </div>
                 <div class="set-ctl set-ctl--slider">
-                  <input class="grain-slider" type="range" id="seedAttackSlider" min="0" max="10" step="0.1" value="0">
-                  <input type="text" class="grain-numbox" id="seedAttackNum" value="0.0s" readonly>
+                  <input class="grain-slider" type="range" id="cloudFadeInSlider" min="0" max="10" step="0.1" value="0">
+                  <input type="text" class="grain-numbox" id="cloudFadeInNum" value="0.0s" readonly>
                 </div>
               </div>
 
@@ -1156,8 +1164,8 @@
                   <span class="set-row-desc">How a pin leaves — on unpin, and on mute. A loop never under its declick.</span>
                 </div>
                 <div class="set-ctl set-ctl--slider">
-                  <input class="grain-slider" type="range" id="seedReleaseSlider" min="0" max="10" step="0.1" value="0">
-                  <input type="text" class="grain-numbox" id="seedReleaseNum" value="0.0s" readonly>
+                  <input class="grain-slider" type="range" id="cloudFadeOutSlider" min="0" max="10" step="0.1" value="0">
+                  <input type="text" class="grain-numbox" id="cloudFadeOutNum" value="0.0s" readonly>
                 </div>
               </div>
 
@@ -1170,7 +1178,7 @@
                   <span class="set-row-desc">Which way a moving pin travels along its own path.</span>
                 </div>
                 <div class="set-ctl">
-                  <div class="grain-seg" id="seedLoopModeSeg">
+                  <div class="grain-seg" id="cloudPathDirSeg">
                     <button class="grain-seg-btn active" data-loopmode="pingpong">Ping-pong</button>
                     <button class="grain-seg-btn" data-loopmode="forward">Forward</button>
                     <button class="grain-seg-btn" data-loopmode="rev">Reverse</button>
@@ -1265,25 +1273,25 @@
               <div class="grain-row" title="dwell — what happens while the cursor STAYS on a trigger&#10;sweep past it and it fires either way; this is what stopping on it does&#10;once: nothing more — silent until you leave and return&#10;loop: keeps looping like a real looper for as long as you stay&#10;grain: the buffer opens up and granulates while you're on it — needs SCAN on to be heard&#10;switchable mid-set, and it reaches a trigger that's already ringing">
                 <span class="grain-label">dwell</span>
                 <div class="grain-seg" id="trigDwellSeg">
-                  <button class="grain-seg-btn" data-dwell="oneshot">once</button>
-                  <button class="grain-seg-btn active" data-dwell="loop">loop</button>
-                  <button class="grain-seg-btn" data-dwell="grain">grain</button>
+                  <button class="grain-seg-btn" data-dwell="oneshot" title="once — it plays through, then waits until you leave and come back">once</button>
+                  <button class="grain-seg-btn active" data-dwell="loop" title="loop — it keeps looping for as long as the cursor stays">loop</button>
+                  <button class="grain-seg-btn" data-dwell="grain" title="grain — it plays once, then its marks open to the cursor's grains while you stay">grain</button>
                 </div>
               </div>
               <div class="grain-row" title="start — where playback begins when a trigger fires&#10;top: always from the beginning of the recording, forwards&#10;touch: forwards from the point on the stroke the cursor actually reached — best with free movement, since a turntable only ever arrives at one end&#10;ends: direction follows the end you arrive at. reach the front half and it plays forwards from the top; reach the back half and it plays BACKWARDS from the very end. always in full, never from the contact point — so on a turntable, playback direction follows spin direction">
                 <span class="grain-label">start</span>
                 <div class="grain-seg" id="trigStartSeg">
-                  <button class="grain-seg-btn active" data-start="top">top</button>
-                  <button class="grain-seg-btn" data-start="touch">touch</button>
-                  <button class="grain-seg-btn" data-start="ends">ends</button>
+                  <button class="grain-seg-btn active" data-start="top" title="top — always from the beginning, forwards">top</button>
+                  <button class="grain-seg-btn" data-start="touch" title="touch — forwards from where the cursor reached the stroke">touch</button>
+                  <button class="grain-seg-btn" data-start="ends" title="ends — arrive at the front and it plays forwards; at the back, backwards from the end">ends</button>
                 </div>
               </div>
               <div class="grain-row" id="trigReleaseRow" title="release — how a looping trigger stops when the cursor leaves&#10;play→end: finishes the current pass&#10;fade: fades out over the loop fade time&#10;only applies to dwell 'loop' — 'once' always plays through">
                 <span class="grain-label">release</span>
                 <div class="grain-seg" id="trigReleaseSeg">
-                  <button class="grain-seg-btn active" data-trelease="play-to-end">play→end</button>
-                  <button class="grain-seg-btn" data-trelease="stop">stop</button>
-                  <button class="grain-seg-btn" data-trelease="fade">fade</button>
+                  <button class="grain-seg-btn active" data-trelease="play-to-end" title="play→end — finishes the pass it is on">play→end</button>
+                  <button class="grain-seg-btn" data-trelease="stop" title="stop — stops the moment the cursor leaves">stop</button>
+                  <button class="grain-seg-btn" data-trelease="fade" title="fade — fades out when the cursor leaves">fade</button>
                 </div>
               </div>
               <div class="grain-row" title="reach — a trigger fires when the cursor's search radius touches any part of its stroke&#10;there is no separate trigger radius: it's the same cursor, so it has one reach&#10;set it on the radius slider in the search panel">
@@ -1303,8 +1311,8 @@
               <div class="grain-row" title="retrigger — what happens when a trigger fires while its previous pass is still sounding&#10;cut: the old pass fades out and it restarts from the top&#10;layer: the old keeps ringing and the new one stacks on top, up to 8 voices&#10;a layered voice holds the position it was fired at, so hitting the same buffer at different bearings spreads the stack across the speakers">
                 <span class="grain-label">retrig</span>
                 <div class="grain-seg" id="trigRetrigSeg">
-                  <button class="grain-seg-btn active" data-retrig="cut">cut</button>
-                  <button class="grain-seg-btn" data-retrig="layer">layer</button>
+                  <button class="grain-seg-btn active" data-retrig="cut" title="cut — the pass sounding stops and it starts again">cut</button>
+                  <button class="grain-seg-btn" data-retrig="layer" title="layer — the pass sounding keeps ringing and a new one stacks on it">layer</button>
                 </div>
               </div>
               <div class="grain-row" title="rearm — minimum gap before the same trigger can fire again&#10;stops a sensor hovering on the edge of the radius from machine-gunning the sample">
@@ -1478,7 +1486,7 @@
          OSC drive; both are synced by syncAxisSourceUI. -->
     <div class="bottom-bar-cursor">
       <button type="button" class="bb-ax" id="tcZeroHeading" data-action="tare" title="zero heading (`) — face the audience and zero. Yaw only, about true vertical; it cannot disturb the mounting calibration"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 5.2 14 12l-2 6.8L10 12z"/></svg><i>zero</i></button>
-      <button type="button" class="bb-ax bb-ax-both" id="tcCursorLock" data-action="cursor_lock" title="cursor lock (⌥) — locks azimuth and elevation together. In steer and surface modes it also hands the pointer back so you can use the UI"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 6.85-.95"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 7 0v3.6"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><i>lock</i></button>
+      <button type="button" class="bb-ax bb-ax-both" id="tcCursorLock" data-action="cursor_lock" title="cursor lock (⌥) — locks azimuth and elevation together. In pull and point it also hands the pointer back so you can use the UI"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 6.85-.95"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 10.6V7a3.5 3.5 0 0 1 7 0v3.6"/><rect x="4.8" y="10.6" width="14.4" height="8.9" rx="2"/></svg><i>lock</i></button>
       <button type="button" class="bb-ax" id="tcAzCycle" data-action="az_source" data-axis="azSource" title="azimuth — click to lock or free. ⌥ locks it with elevation. It maps when something is bound to AZ · position in Keys + MIDI"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/><path d="M4.5 19.5 19.5 4.5"/></svg><svg class="ax-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-dasharray="3 2.6"><path d="M3.5 12h17M7 8.5 3.5 12 7 15.5M17 8.5l3.5 3.5L17 15.5"/></svg><i>az</i></button>
       <button type="button" class="bb-ax" id="tcElCycle" data-action="el_source" data-axis="elSource" title="elevation — click to lock or free. ⌥ locks it with azimuth. It maps when something is bound to EL · position in Keys + MIDI"><svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/></svg><svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/><path d="M4.5 19.5 19.5 4.5"/></svg><svg class="ax-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-dasharray="3 2.6"><path d="M12 3.5v17M8.5 7 12 3.5 15.5 7M8.5 17l3.5 3.5 3.5-3.5"/></svg><i>el</i></button>
     </div>
@@ -2726,7 +2734,7 @@
             <div class="set-meter-gated"></div>
             <div class="set-meter-fill"></div>
             <div class="set-meter-peak"></div>
-            <div class="set-meter-thresh" title="the paint gate: below this line no particles are deposited. Nothing is attenuated — it gates PAINTING, not audio."><span class="set-meter-thresh-val">&minus;&infin; dB</span></div>
+            <div class="set-meter-thresh" title="the paint gate: below this line no marks are laid down. Nothing is attenuated — it gates PAINTING, not audio."><span class="set-meter-thresh-val">&minus;&infin; dB</span></div>
           </div>
           <span class="set-meter-val"></span>
           <span class="set-meter-clip" id="asGateClip" title="the summed input reached full scale — pull a channel trim down"></span>

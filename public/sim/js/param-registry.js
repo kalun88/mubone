@@ -184,7 +184,7 @@ export const PARAM_REGISTRY = [
     fmt: v  => v,
     parse: s => AXIS_SOURCES.includes(s.trim()) ? s.trim() : null },
   // ── Commits — shared params (matches commits panel in main GUI) ──────────
-  { key: 'seqSlotCount', label: 'slots', group: 'commits', type: 'number',
+  { key: 'pinSlots', label: 'slots', group: 'commits', type: 'number',
     get: () => S.commitSlotCount,
     set: v  => {
       S.commitSlotCount = Math.max(1, Math.min(16, Math.round(v)));
@@ -192,7 +192,7 @@ export const PARAM_REGISTRY = [
     },
     fmt: v  => String(v),
     parse: s => { const v = parseInt(s, 10); return isNaN(v) ? null : Math.max(1, Math.min(16, v)); } },
-  { key: 'seqOverflow', label: 'overflow', group: 'commits', type: 'enum', options: ['off', 'oldest', 'nearest'],
+  { key: 'pinOverflow', label: 'overflow', group: 'commits', type: 'enum', options: ['off', 'oldest', 'nearest'],
     get: () => S.commitOverflow,
     set: v  => {
       S.commitOverflow = v;
@@ -203,7 +203,7 @@ export const PARAM_REGISTRY = [
     },
     fmt: v  => v,
     parse: s => ['off', 'oldest', 'nearest'].includes(s.trim()) ? s.trim() : null },
-  { key: 'seqModeEnabled', label: 'mode',    group: 'commits', type: 'enum', options: ['cloud', 'loop'],
+  { key: 'pinMode', label: 'mode',    group: 'commits', type: 'enum', options: ['cloud', 'loop'],
     get: () => S.commitMode,
     set: v  => { S.commitMode = v; S._syncCommitUI?.(); },
     fmt: v  => v,
@@ -215,43 +215,43 @@ export const PARAM_REGISTRY = [
     set: v  => { S.selectionMode = v; },
     fmt: v  => v,
     parse: s => ['nearest', 'farthest', 'oldest'].includes(s.trim()) ? s.trim() : null },
-  { key: 'seedMode',         label: 'follow',        group: 'commits', type: 'enum', options: ['all', 'focus'],
+  { key: 'pinFollow',         label: 'follow',        group: 'commits', type: 'enum', options: ['all', 'focus'],
     get: () => S.commitPlayback,
     set: v  => { S.commitPlayback = v; },
     fmt: v  => v,
     parse: s => ['all', 'focus'].includes(s.trim()) ? s.trim() : null },
-  { key: 'seedXfade',    label: 'xfade',      group: 'commits', type: 'number',
+  { key: 'pinXfade',    label: 'xfade',      group: 'commits', type: 'number',
     get: () => S.commitXfade,
     set: v  => { S.commitXfade = Math.max(0, Math.min(1, v)); },
     fmt: v  => Math.round(v * 100) + '%',
     parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
   // Cloud-only (2026-09-18): a pinned LOOP's direction is the tape's own
   // baked `reverse`; until then createSeqFromStroke read this for both.
-  { key: 'seedLoopMode',     label: 'path dir',       group: 'commits', type: 'enum', options: ['pingpong', 'forward', 'rev'],
+  { key: 'cloudPathDir',     label: 'path dir',       group: 'commits', type: 'enum', options: ['pingpong', 'forward', 'rev'],
     get: () => S.commitCloudLoopMode,
     set: v  => { S.commitCloudLoopMode = v; },
     fmt: v  => v,
     parse: s => ['pingpong', 'forward', 'rev'].includes(s.trim()) ? s.trim() : null },
 
   // ── Cloud params ─────────────────────────────────────────────────────────
-  { key: 'seedAttack',       label: 'fade in',         group: 'cloud', type: 'number',
+  { key: 'cloudFadeIn',       label: 'fade in',         group: 'cloud', type: 'number',
     get: () => S.commitAttack,
     set: v  => { S.commitAttack = Math.max(0, Math.min(10, v)); },
     fmt: v  => v.toFixed(1) + 's',
     parse: s => { const v = parseFloat(s.replace('s', '')); return isNaN(v) ? null : Math.max(0, Math.min(10, v)); } },
-  { key: 'seedRelease',      label: 'fade out',        group: 'cloud', type: 'number',
+  { key: 'cloudFadeOut',      label: 'fade out',        group: 'cloud', type: 'number',
     get: () => S.commitRelease,
     set: v  => { S.commitRelease = Math.max(0, Math.min(10, v)); },
     fmt: v  => v.toFixed(1) + 's',
     parse: s => { const v = parseFloat(s.replace('s', '')); return isNaN(v) ? null : Math.max(0, Math.min(10, v)); } },
 
   // ── Loop params ──────────────────────────────────────────────────────────
-  { key: 'seqNextVolume', label: 'volume',    group: 'loop', type: 'number',
+  { key: 'loopVolume', label: 'volume',    group: 'loop', type: 'number',
     get: () => S.commitLoopParams.volume,
     set: v  => { S.commitLoopParams.volume = Math.max(0, Math.min(1, v)); },
     fmt: v  => Math.round(v * 100) + '%',
     parse: s => { const v = parseFloat(s.replace('%', '')) / 100; return isNaN(v) ? null : Math.max(0, Math.min(1, v)); } },
-  { key: 'seqNextSpeed', label: 'speed',      group: 'loop', type: 'number',
+  { key: 'loopSpeed', label: 'speed',      group: 'loop', type: 'number',
     get: () => S.commitLoopParams.speed,
     set: v  => { S.commitLoopParams.speed = Math.max(0.25, Math.min(4, v)); },
     fmt: v  => '×' + v.toFixed(2),
@@ -301,7 +301,7 @@ export function snapshotCurrentState(keys) {
 const INLINE_HANDLED_KEYS = new Set([
   'duration', 'durJitter', 'durVar', 'fadeRatio', 'period', 'periodVar',
   'pitchJitter', 'pitchShift', 'panSpread', 'volume', 'k',
-  'direction', 'curveType', 'lensMode', 'grainKSeqMode',
+  'direction', 'curveType', 'lensMode', 'lensStep',
   'searchRadiusDeg', 'recencyN', 'probability', 'radiusFadeEnabled', 'radiusFadeCurve',
 ]);
 

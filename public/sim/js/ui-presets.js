@@ -93,13 +93,13 @@ export function setupPresets() {
   }
 
   // Order toggle — step / random
-  const kSeqSeg = document.getElementById('kSeqSeg');
-  if (kSeqSeg) {
-    kSeqSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+  const lensStepSeg = document.getElementById('lensStepSeg');
+  if (lensStepSeg) {
+    lensStepSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        S.grainKSeqMode = (btn.dataset.kseq === 'on');
+        S.lensStep = (btn.dataset.step === 'on');
         updatePlaybackControls();
-        S._updateWorkletParams?.({ kSeqMode: S.grainKSeqMode });
+        S._updateWorkletParams?.({ lensStep: S.lensStep });
       });
     });
   }
@@ -491,7 +491,7 @@ function _captureSeedFrame(startOverride) {
     grainParams:       mergedParams,
     searchRadiusDeg:   S.searchRadiusDeg,
     nearestMode:       S.lensMode === 'nearest',
-    kSeqMode:          S.grainKSeqMode,
+    lensStep:          S.lensStep,
     grainDirection:    S.grainDirection,
     grainCurveType:    S.grainCurveType,
     grainProbability:  S.grainProbability,
@@ -592,7 +592,7 @@ function _reserveCloud(lon, lat) {
     // tap is here; a held path is re-stamped at its END in finalizeSeedPlant.
     anchorLon: lon, anchorLat: lat,
     nearestMode: S.lensMode === 'nearest',
-    kSeqMode: S.grainKSeqMode,
+    lensStep: S.lensStep,
     _lastFiredAt:  0,
     _nextPeriodMs: 0,
     _plantedAt:    performance.now() / 1000,
@@ -678,7 +678,7 @@ export function pinWalkers() {
     const snap = {
       grainParams: slot.grainParams, searchRadiusDeg: slot.searchRadiusDeg,
       nearestMode: false,
-      kSeqMode: S.grainKSeqMode, grainDirection: S.grainDirection,
+      lensStep: S.lensStep, grainDirection: S.grainDirection,
       grainCurveType: S.grainCurveType, grainProbability: S.grainProbability,
       radiusFadeEnabled: slot.radiusFadeEnabled, radiusFadeCurve: slot.radiusFadeCurve,
     };
@@ -870,7 +870,7 @@ function _syncCommitUI() {
   if (drawBtn) drawBtn.title = 'draw ' + modeName + ' — hold D';
 
   // ── Dir seg — save/restore per-mode, disable ping-pong in loop mode ──
-  const dirSeg = document.getElementById('seedLoopModeSeg');
+  const dirSeg = document.getElementById('cloudPathDirSeg');
   if (dirSeg) {
     if (isLoop && prevMode !== 'loop') {
       // cloud → loop: save current cloud dir, fall back from ping-pong to fwd
@@ -2608,7 +2608,7 @@ export function applyPresetObject(preset) {
   //
   // `k` DOES belong to the brush: how many marks sound at once is character,
   // not geometry. wash at k=0 (all) and vinyl at k=1 are different instruments.
-  if ('grainKSeqMode' in preset && typeof preset.grainKSeqMode === 'boolean') S.grainKSeqMode = preset.grainKSeqMode;
+  if ('lensStep' in preset && typeof preset.lensStep === 'boolean') S.lensStep = preset.lensStep;
   if ('k' in preset && typeof preset.k === 'number') {
     if (typeof S.setSearchK === 'function') S.setSearchK(preset.k);
     else S.grainOverrides.k = preset.k;
@@ -2639,10 +2639,10 @@ export function updatePlaybackControls() {
   if (areaOnly) areaOnly.style.display = S.lensMode === 'nearest' ? 'none' : '';
 
   // Sync order segmented toggle (step / random)
-  const kSeqSeg = document.getElementById('kSeqSeg');
-  if (kSeqSeg) {
-    kSeqSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
-      btn.classList.toggle('active', (btn.dataset.kseq === 'on') === S.grainKSeqMode);
+  const lensStepSeg = document.getElementById('lensStepSeg');
+  if (lensStepSeg) {
+    lensStepSeg.querySelectorAll('.grain-seg-btn').forEach(btn => {
+      btn.classList.toggle('active', (btn.dataset.step === 'on') === S.lensStep);
     });
   }
   drawRadiusViz();
@@ -3259,9 +3259,9 @@ export function initGrainControls() {
     const snapSeg = document.getElementById('snapToggleSeg');
     if (snapSeg) snapSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
       b.classList.toggle('active', b.dataset.mode === S.lensMode));
-    const kSeqSeg = document.getElementById('kSeqSeg');
-    if (kSeqSeg) kSeqSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
-      b.classList.toggle('active', (b.dataset.kseq === 'on') === S.grainKSeqMode));
+    const lensStepSeg = document.getElementById('lensStepSeg');
+    if (lensStepSeg) lensStepSeg.querySelectorAll('.grain-seg-btn').forEach(b =>
+      b.classList.toggle('active', (b.dataset.step === 'on') === S.lensStep));
     updatePlaybackControls();
     drawRadiusViz();
     _syncWorkletParams();
@@ -3286,7 +3286,7 @@ export function initGrainControls() {
   const EXTRA_MORPH_SEGS = [
     { param: 'lensMode',         segId: 'snapToggleSeg' },
     { param: 'recencyN',         segId: 'recencySeg' },
-    { param: 'grainKSeqMode',    segId: 'kSeqSeg' },
+    { param: 'lensStep',    segId: 'lensStepSeg' },
     { param: 'radiusFadeEnabled', segId: 'radiusFadeSeg' },
     { param: 'direction',        segId: 'gcDirSeg' },
     { param: 'curveType',        segId: 'gcCurveSeg' },

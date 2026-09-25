@@ -1006,7 +1006,7 @@ function _scheduleWalkers(out) {
       gain: w.level,
       grainParams: cgp,
       overrides: hasOv ? ov : null,
-      kSeqMode: !!S.grainKSeqMode,
+      lensStep: !!S.lensStep,
       fadeOn:    !!S.radiusFadeEnabled && radDeg > 0,
       fadeRad:   rad,
       fadeCurve: S.radiusFadeCurve ?? 0.5,
@@ -1062,7 +1062,7 @@ function _interpolateMovingSeed(seed) {
   out.grainParams       = frac < 0.5 ? a.grainParams : b.grainParams;
   out.searchRadiusDeg   = a.searchRadiusDeg + (b.searchRadiusDeg - a.searchRadiusDeg) * frac;
   out.nearestMode       = frac < 0.5 ? a.nearestMode : b.nearestMode;
-  out.kSeqMode          = frac < 0.5 ? a.kSeqMode : b.kSeqMode;
+  out.lensStep          = frac < 0.5 ? a.lensStep : b.lensStep;
   out.grainDirection    = frac < 0.5 ? a.grainDirection : b.grainDirection;
   out.grainCurveType    = frac < 0.5 ? a.grainCurveType : b.grainCurveType;
   out.grainProbability  = a.grainProbability + (b.grainProbability - a.grainProbability) * frac;
@@ -1292,13 +1292,13 @@ export function scheduleGrains() {
           const periodMs = (ov.period ?? base.period ?? 0.050) * 1000;
           const durMs    = (ov.duration ?? base.duration ?? 0.100) * 1000;
           const prob     = S.grainProbability ?? 1.0;
-          const kSeq     = S.grainKSeqMode ?? false;
+          const stepOn     = S.lensStep ?? false;
           _mutedGlowAccum += GRAIN_SCHEDULER_INTERVAL_MS;
           while (_mutedGlowAccum >= periodMs) {
             _mutedGlowAccum -= periodMs;
             if (prob < 1.0 && Math.random() > prob) continue;
             let p;
-            if (kSeq) {
+            if (stepOn) {
               _mutedGlowSeqIdx = _mutedGlowSeqIdx % pool.length;
               p = pool[_mutedGlowSeqIdx++];
             } else {
@@ -1311,7 +1311,8 @@ export function scheduleGrains() {
             // GHOST: lit, not sounding. The renderer draws these faint and
             // everything else at full weight, so a pinned cloud playing under
             // a capped lens stays bright.
-            markGlow(p, v ? (v.params.duration ?? 0.1) * 1000 : durMs, '#ffffff', now, true);
+            const od = p._ov ? S._markOverrideById?.(p._ov)?.params.duration : undefined;
+            markGlow(p, od != null ? od * 1000 : v ? (v.params.duration ?? 0.1) * 1000 : durMs, '#ffffff', now, true);
           }
         }
       } else {
@@ -1545,7 +1546,7 @@ export function scheduleGrains() {
     // For moving seeds, use frame's modes; for stationary, use seed's snapshot.
     const cNearestMode = isMoving ? frame.nearestMode : seed.nearestMode;
     const cKAllMode    = (cgp.k ?? 0) === 0;   // k = 0 is all, frozen with the cloud's k
-    const cKSeqMode    = isMoving ? frame.kSeqMode    : seed.kSeqMode;
+    const cLensStep    = isMoving ? frame.lensStep    : seed.lensStep;
     const cSearchDeg   = isMoving ? frame.searchRadiusDeg : seed.searchRadiusDeg;
     const cFadeOn      = isMoving ? frame.radiusFadeEnabled : seed.radiusFadeEnabled;
     const cFadeCurve   = isMoving ? frame.radiusFadeCurve   : seed.radiusFadeCurve;
@@ -1660,7 +1661,7 @@ export function scheduleGrains() {
       grainParams: cgp,
       overrides: hasOverrides ? cgo : null,
       voicing: seed.voicing ?? null,     // a cloud pinned under audition: one frozen voicing for every mark
-      kSeqMode: cKSeqMode,
+      lensStep: cLensStep,
       // Radius fade is resolved live in the bridge from the per-slot angle
       // cache, so a moving cloud fades against where it is now rather than
       // where it was planted.

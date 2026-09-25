@@ -37,7 +37,7 @@
   .count.on { color: var(--ember); }
   .jump { display: none; gap: 2px; }
   @media (min-width: 900px) { .jump { display: flex; } }
-  .jump a { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--t-subtle); padding: 6px 8px; border-radius: 3px; }
+  .jump a { white-space: nowrap; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--t-subtle); padding: 6px 8px; border-radius: 3px; }
   .jump a:hover { color: var(--t-light); background: var(--s0); text-decoration: none; }
 
   .wrap { max-width: 720px; margin: 0 auto; padding: 40px 20px 120px; display: flex; flex-direction: column; gap: 72px; }
@@ -73,11 +73,6 @@
   .tile svg { width: 24px; height: 24px; }
   .tile.bang { border-radius: 999px; } .tile.mom { border-radius: 10px; } .tile.tog { border-radius: 10px 4px 10px 10px; }
   .tile.lit { background: rgba(242,86,158,0.2); border: 2px solid var(--tape); box-shadow: 0 0 20px rgba(242,86,158,0.45); }
-  /* The two corner stickers, as the app draws them: half outside the outline, each on its own
-     disc of the ground so the outline passes under it. Drop top-left, pin top-right. */
-  .tile .st { position: absolute; top: -5px; width: 18px; height: 18px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line-strong); display: grid; place-items: center; z-index: 2; }
-  .tile .st svg { width: 12px; height: 12px; }
-  .tile .st.wet { left: -5px; color: var(--grain); } .tile .st.pin { right: -5px; color: var(--grain); }
   .door { display: inline-grid; place-items: center; width: 18px; height: 18px; vertical-align: -4px; color: var(--grain); }
   .door svg { width: 15px; height: 15px; }
   .tile .leg { position: absolute; left: -4px; bottom: -8px; height: 18px; padding: 0 7px; border-radius: 999px; background: var(--bg); border: 1px solid var(--line-strong); color: var(--t-light); font-size: 11px; font-weight: 600; display: flex; align-items: center; }
@@ -124,9 +119,6 @@
 <svg width="0" height="0" style="position: absolute;" aria-hidden="true">
   <symbol id="g-dots" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="5" cy="4" r="2.1"></circle><circle cx="6.9" cy="12.7" r="2.1"></circle><circle cx="11.9" cy="18" r="2.1"></circle><circle cx="20" cy="20" r="2.1"></circle></g></symbol>
   <symbol id="g-line" viewBox="0 0 24 24"><path d="M3 16c3-7 6-9 9-5s6 2 9-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></symbol>
-  <symbol id="g-loop" viewBox="0 0 24 24"><path d="M19.25 8.62A8 8 0 1 1 15.38 4.75" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path></symbol>
-  <symbol id="g-dub" viewBox="0 0 24 24"><path d="M12 4a8 8 0 1 1-7.1 4.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path><path d="M12 8.5a3.5 3.5 0 1 1-3.1 1.8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></symbol>
-  <symbol id="g-trail" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="19" cy="12" r="2.1"></circle><circle cx="15.5" cy="18.06" r="2.1"></circle><circle cx="8.5" cy="18.06" r="2.1"></circle><circle cx="5" cy="12" r="2.1"></circle><circle cx="8.5" cy="5.94" r="2.1"></circle><circle cx="15.5" cy="5.94" r="2.1"></circle></g></symbol>
   <symbol id="g-erase" viewBox="0 0 24 24"><path d="M20 19H9l-4.2-4.2a1.6 1.6 0 010-2.3l7.5-7.5a1.6 1.6 0 012.3 0l4.6 4.6a1.6 1.6 0 010 2.3L13 19" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"></path></symbol>
   <symbol id="g-pin" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="5" fill="currentColor"></circle><path d="M12 13.5v7.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path></symbol>
   <symbol id="g-unpin" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.6"></circle><path d="M12 12.7v8.3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path><path d="M4.5 19.5l15-15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></symbol>
@@ -139,7 +131,7 @@
       <input id="q" type="search" placeholder="Search — a key, a word…" autocomplete="off" spellcheck="false" aria-label="Search">
     </label>
     <div class="count" id="count"></div>
-    <nav class="jump"><a href="#play">Play</a><a href="#layers">Scratch · pinned</a><a href="#palette">Palette</a><a href="#drawer">Drawer</a><a href="#pins">Pins</a><a href="#saving">Saving</a><a href="#keys">Shortcuts</a><a href="#gaps">Good to know</a><a href="#words">Glossary</a></nav>
+    <nav class="jump"><a href="#play">Play</a><a href="#layers">Layers</a><a href="#palette">Palette</a><a href="#rail">Rail</a><a href="#cursor">Cursor</a><a href="#pins">Pins</a><a href="#saving">Saving</a><a href="#keys">Keys</a><a href="#gaps">Notes</a><a href="#words">Words</a></nav>
   </div>
 </div>
 
@@ -147,19 +139,19 @@
   <div class="empty" id="empty">Nothing matches. Try one word, or a key.</div>
 
   <section id="play">
-    <p class="lead">Play into it. What you play is painted on the sphere; the cursor reads it back; what you pin keeps going while you play the next thing.<small>The app explains itself as you hover. This sheet is the rest.</small></p>
+    <p class="lead">Play into it. What you play is painted on the sphere; the cursor reads it back; what you pin keeps going while you play the next thing.<small>Hover anything in the app: with the <strong>?</strong> lit (top right, beside the cog) every tooltip says what the control is and how to use it. This sheet is the rest.</small></p>
     <h2>The first six moves</h2>
     <div class="list">
-      <div class="item" data-t="mic latency measure audio"><h3><span class="n">1</span>Let it hear you</h3><p>Mic button, top right. Set the paint gate in Settings → Audio so the room doesn't paint. If you'll loop, press <em>Measure</em> under Latency once — with the speakers reaching the mic.</p></div>
-      <div class="item" data-t="cursor steer option alt lock mouse"><h3><span class="n">2</span>Aim</h3><p>The mouse turns the sphere; the cursor is the centre. Over any panel the sphere stops. <kbd>⌥</kbd> freezes the cursor and gives you the pointer; <kbd>⌥</kbd> again takes it back.</p></div>
-      <div class="item" data-t="paint space dots hand"><h3><span class="n">3</span>Paint</h3><p>Hold <kbd>space</kbd> and play. The tool in hand — <strong>dots</strong> to start — lays a mark for each moment. Let go; they stay.</p></div>
-      <div class="item" data-t="listen lens reach radius cap S"><h3><span class="n">4</span>Listen back</h3><p>Pass the cursor over the marks: grains from whatever is in reach. <kbd>[</kbd> <kbd>]</kbd> set the reach. <kbd>S</kbd> caps the cursor — silence until you uncap.</p></div>
-      <div class="item" data-t="loop line 1 2 tape whole"><h3><span class="n">5</span>Play a phrase whole</h3><p><span class="it tog tape"><svg><use href="#g-loop"></use></svg><i>2</i></span>play, and again — it loops at once, pinned. <span class="it tog tape"><svg><use href="#g-line"></use></svg><i>1</i></span>play, and again — a <strong>line</strong>: a take that fires whole when the cursor touches it. The keys under the tiles are the factory ones.</p></div>
-      <div class="item" data-t="pin unpin arrows mixer shift tab save"><h3><span class="n">6</span>Pin and mix</h3><p><span class="it bang pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span>pins what the cursor is sounding. <kbd>⇧Tab</kbd> opens the mixer — a fader per pin. <span class="it bang pins"><svg><use href="#g-unpin"></use></svg><i>↑</i></span>unpins the top one. <kbd>⌘S</kbd> saves the piece; nothing saves itself.</p></div>
+      <div class="item" data-t="mic latency measure audio gate"><h3><span class="n">1</span>Let it hear you</h3><p>The mic, top right, says what the input is. Set the paint gate in Settings → Audio so the room doesn't paint. If you'll loop, press <em>Measure</em> under Latency once — with the speakers reaching the mic.</p></div>
+      <div class="item" data-t="cursor aim mouse steer option alt lock camera pull point sensor"><h3><span class="n">2</span>Aim</h3><p>The mouse steers the view and the cursor follows it. <kbd>⌥</kbd> holds the cursor where it is and gives you the pointer; <kbd>⌥</kbd> again lets it go. The camera button, top right, picks <em>pull</em>, <em>point</em> or <em>sensor</em>.</p></div>
+      <div class="item" data-t="record space press tape line take"><h3><span class="n">3</span>Record a phrase</h3><p><span class="it hand tape"><svg><use href="#g-line"></use></svg><i>␣</i></span>press <kbd>space</kbd> and play; press it again to stop. The take is a <strong>line</strong> on the sphere — tape, played whole when the cursor touches it.</p></div>
+      <div class="item" data-t="paint grain hold space marks"><h3><span class="n">4</span>Paint grains</h3><p><span class="it hand grain"><svg><use href="#g-dots"></use></svg><i>␣ —</i></span><strong>hold</strong> <kbd>space</kbd> and play: a mark for each moment, for as long as you hold. Pass the cursor over them and it granulates what is in reach. <kbd>[</kbd> <kbd>]</kbd> set the reach; <kbd>C</kbd> turns the cursor off and on.</p></div>
+      <div class="item" data-t="loop autopin P overdub O"><h3><span class="n">5</span>Loop it</h3><p><kbd>P</kbd> turns <strong>autopin</strong> on: every stroke pins itself when you let go — a tape take as a loop, a grain stroke as a cloud. <kbd>O</kbd> is <strong>overdub</strong>: the next take goes into the nearest loop as a layer.</p></div>
+      <div class="item" data-t="pin unpin arrows mixer shift tab save"><h3><span class="n">6</span>Pin and mix</h3><p><span class="it mom pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span>pins what the cursor is sounding. <kbd>⇧Tab</kbd> opens the mixer — a fader per pin. <span class="it bang pins"><svg><use href="#g-unpin"></use></svg><i>↑</i></span>unpins the selected one. <kbd>⌘S</kbd> saves the piece; nothing saves itself.</p></div>
     </div>
     <figure data-t="screen overview rails palette footer">
-      <img src="img/screen.jpg" alt="mubone with the tool rail on the left, the pinned rail on the right, the palette over the lower sphere and the audio footer." width="1600" height="969">
-      <figcaption>Left rail: every tool. Right rail: everything pinned. Bottom: the palette. Footer: levels and the cursor locks. <kbd>Tab</kbd> and <kbd>⇧Tab</kbd> show and hide the rails; the sphere never shrinks.</figcaption>
+      <img src="img/screen.jpg" alt="mubone with the tool rail on the left, the pinned rail on the right with a cloud and a loop, the palette over the lower sphere and the audio footer." width="1600" height="972">
+      <figcaption>Left: the tool rail — a tab per instrument, the cursor at its foot. Right: everything pinned. Bottom: the palette. Footer: levels and the cursor locks. <kbd>Tab</kbd> and <kbd>⇧Tab</kbd> show and hide the rails; the sphere never shrinks.</figcaption>
     </figure>
   </section>
 
@@ -167,59 +159,58 @@
     <h2>Scratch, and pinned</h2>
     <p class="lead">Everything on the sphere is one or the other. Scratch sounds only under the cursor. Pinned plays on its own.</p>
     <div class="list">
-      <div class="item" data-t="scratch layer cursor reads paint lens eraser sweep unpinned"><h3>Scratch is what the cursor reads</h3><p>Everything you paint lands here. It is silent until the cursor is on it: grain marks in reach are granulated, a line fires when touched. The cursor reads it, the eraser edits it, <kbd>S</kbd> caps it, sweep clears it.</p></div>
-      <div class="item" data-t="pinned layer plays on its own loop cloud mixer house rail"><h3>Pinned plays on its own</h3><p>A loop or a cloud. It has a track in the mixer, feeds the house, and keeps going wherever the cursor is. Sweep leaves it alone. Unpin is what stops it — and the material is scratch again, back under the lens.</p></div>
+      <div class="item" data-t="scratch layer cursor reads paint eraser sweep unpinned"><h3>Scratch is what the cursor reads</h3><p>Everything you paint lands here. It is silent until the cursor is on it: grain marks in reach are granulated, a line fires when touched. The cursor reads it, the eraser edits it, <kbd>C</kbd> turns the cursor off, sweep clears it.</p></div>
+      <div class="item" data-t="pinned layer plays on its own loop cloud mixer house rail"><h3>Pinned plays on its own</h3><p>A loop or a cloud. It has a track in the mixer, feeds the house, and keeps going wherever the cursor is. Sweep leaves it alone. Unpin is what stops it — and the material is scratch again, back under the cursor.</p></div>
       <div class="item" data-t="claim cloud owns marks never doubles loop stroke line touch fires"><h3>The pin is the line between them</h3><p>A pinned cloud owns its marks: the cursor will not granulate inside it, so pinning never doubles a sound — muted or not. A pinned loop's stroke is still a line: touch it and it fires on top of the loop.</p></div>
-      <div class="item" data-t="three ways pin now release hold key sticker looper grows"><h3>Three ways across</h3><p><strong>Now</strong> — <span class="it bang pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span>pins what the cursor is sounding, where you stand. <strong>On release</strong> — a tile wearing the pin sticker pins its own stroke the moment you let go: a tape tool as a loop, a grain tool as a moving cloud. <strong>While you paint</strong> — hold <span class="it bang pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span>during a tape stroke and it loops now and keeps growing until you let go.</p></div>
+      <div class="item" data-t="three ways pin now release autopin while recording overdub"><h3>Three ways across</h3><p><strong>Now</strong> — <span class="it mom pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span>every line the cursor is on becomes a loop, and the grains in reach a cloud; hold it and move to pin a cloud along a path. <strong>On release</strong> — with <em>autopin</em> on, a stroke pins itself the moment you let go. <strong>While you record</strong> — press <span class="it mom pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span>during a tape take and the phrase so far loops while you keep recording as an overdub on it; press again for the next layer.</p></div>
     </div>
   </section>
 
   <section id="palette">
     <h2>The palette</h2>
-    <div class="crop-scroll" data-t="palette strip"><div class="crop" style="width: 740px; height: 96px; background-image: url(img/screen.jpg); background-position: -432px -775px;"></div></div>
+    <div class="crop-scroll" data-t="palette strip"><div class="crop" style="width: 690px; height: 100px; background-image: url(img/screen.jpg); background-position: -455px -790px;"></div></div>
+    <p class="lead">Six tiles, always the same six. <strong>The mouse selects, the key plays</strong>: click a tile to open its tab, press its key to play it.</p>
     <div class="list">
-      <div class="item" data-t="hand space click first tile"><h3>The big tile is the hand</h3><p>What <kbd>space</kbd> and a click on the sphere play. Click any tool — in the rail or on the strip — to take it in hand. The verb comes with the tool: a strip tile brings its own, a rail row brings its engine's (tape latches, grain and erase are held). Right-click the hand tile to flip it.</p></div>
-      <div class="item" data-t="quick access keys digits tile"><h3>The rest are quick access</h3><p>Each fires its own tool with its own key, printed under it, without touching the hand — granulate with space while <span class="it tog tape"><svg><use href="#g-loop"></use></svg><i>2</i></span>drops a loop. Move a tile and its key goes with it.</p></div>
-      <div class="item" data-t="drag build rail nine remove"><h3>Build it by dragging</h3><p>Drag a row in from the left rail to place it. Drag a tile along to move it, off to remove it. Nine is full.</p></div>
+      <div class="item" data-t="cursor tile C on off eye headphones audition"><h3>The cursor</h3><p><kbd>C</kbd> turns it off — it reads nothing, the eye is struck through — and on again. It wears headphones while you audition.</p></div>
+      <div class="item" data-t="hand space click tape grain press hold two sides voice"><h3>Tape and grain are the hand</h3><p>Both on <kbd>space</kbd>, told apart by how long you press: a <strong>press</strong> plays tape and latches — press again to stop; a <strong>hold</strong> plays grain while you hold, and takes back whatever the press had started. A click on the sphere is the same as space. Each tile shows the voice it plays — <em>wash</em>, or <em>wash*</em> once you have moved a knob off it.</p></div>
+      <div class="item" data-t="erase E pin unpin arrows extra long unpin all"><h3>Erase, pin, unpin</h3><p><kbd>E</kbd> erases while held. <kbd>↓</kbd> pins, <kbd>↑</kbd> unpins the selected pin — hold <kbd>↑</kbd> extra long to unpin everything.</p></div>
     </div>
-    <div class="spec" data-t="bang momentary toggle shape circle plate right-click sticker lit">
-      <div><div class="tile bang"><svg viewBox="0 0 24 24" fill="none" stroke="var(--pins)" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v11M8 10l4 4 4-4M5 20h14"></path></svg><span class="leg">↓</span></div><span class="cap"><strong>bang</strong> — a circle. It happens once.</span></div>
-      <div><div class="tile mom"><svg viewBox="0 0 24 24" fill="var(--grain)"><circle cx="5" cy="17" r="2.2"></circle><circle cx="10" cy="11" r="2"></circle><circle cx="15" cy="15" r="1.8"></circle><circle cx="19" cy="7" r="1.6"></circle></svg><span class="leg">1 —</span></div><span class="cap"><strong>momentary</strong> — a plate. Runs while the key is down.</span></div>
-      <div><div class="tile tog"><svg viewBox="0 0 24 24" fill="none" stroke="var(--tape)" stroke-width="1.8" stroke-linecap="round"><path d="M3 15c3-7 6-9 9-4s6 2 9-5"></path></svg><span class="leg">1</span></div><span class="cap"><strong>toggle</strong> — a plate with one corner thrown. Latches: runs until pressed again.</span></div>
-      <div><div class="tile tog lit"><svg viewBox="0 0 24 24" fill="none" stroke="var(--tape)" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="7"></circle></svg><span class="leg">2</span></div><span class="cap"><strong>lit</strong> — filled in its engine's hue while it sounds.</span></div>
-      <div><span class="cap" style="padding-top: 18px;"><strong>Right-click a tile</strong> to change its verb — bang, momentary or toggle, whatever its kind allows.</span></div>
-    </div>
-    <h2 style="margin-top: 34px;">The three stickers</h2>
-    <div class="spec" data-t="sticker corner wet drop pin key three">
-      <div><div class="tile mom"><svg viewBox="0 0 24 24" fill="var(--grain)"><circle cx="5" cy="17" r="2.2"></circle><circle cx="10" cy="11" r="2"></circle><circle cx="15" cy="15" r="1.8"></circle><circle cx="19" cy="7" r="1.6"></circle></svg><span class="st wet"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.4C9.2 7.4 6.6 10.4 6.6 13.6a5.4 5.4 0 0 0 10.8 0c0-3.2-2.6-6.2-5.4-10.2z"></path></svg></span><span class="st pin"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="8.5" r="5"></circle><path d="M12 13.5v7.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path></svg></span><span class="leg">1 —</span></div><span class="cap">A tile can wear three. <strong>Top-left</strong> the drop, <strong>top-right</strong> the pin, <strong>bottom-left</strong> the key. Each is half off the tile, on its own disc.</span></div>
+    <div class="spec" data-t="bang momentary toggle shape circle plate right-click verb lit">
+      <div><div class="tile bang"><svg viewBox="0 0 24 24" fill="none" stroke="var(--pins)" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v11M8 10l4 4 4-4M5 20h14"></path></svg><span class="leg">↑</span></div><span class="cap"><strong>bang</strong> — a circle. It happens once.</span></div>
+      <div><div class="tile mom"><svg viewBox="0 0 24 24" fill="var(--grain)"><circle cx="5" cy="17" r="2.2"></circle><circle cx="10" cy="11" r="2"></circle><circle cx="15" cy="15" r="1.8"></circle><circle cx="19" cy="7" r="1.6"></circle></svg><span class="leg">␣ —</span></div><span class="cap"><strong>momentary</strong> — a plate. Runs while the key is down.</span></div>
+      <div><div class="tile tog"><svg viewBox="0 0 24 24" fill="none" stroke="var(--tape)" stroke-width="1.8" stroke-linecap="round"><path d="M3 15c3-7 6-9 9-4s6 2 9-5"></path></svg><span class="leg">␣</span></div><span class="cap"><strong>toggle</strong> — a plate with one corner thrown. Latches: runs until pressed again.</span></div>
+      <div><div class="tile tog lit"><svg viewBox="0 0 24 24" fill="none" stroke="var(--tape)" stroke-width="1.8" stroke-linecap="round"><path d="M3 15c3-7 6-9 9-4s6 2 9-5"></path></svg><span class="leg">␣</span></div><span class="cap"><strong>lit</strong> — filled in its engine's hue while it sounds.</span></div>
+      <div><span class="cap" style="padding-top: 18px;"><strong>Right-click a tile</strong> to change its verb — the hand's two sides, the cursor and erase. Pin and unpin keep theirs.</span></div>
     </div>
     <div class="list">
-      <div class="item" data-t="wet dry drop top-left grain tap flip outlined filled"><h3>The drop — wet or dry</h3><p>On every grain tile. Outlined is dry, filled is wet. <strong>Tap it</strong> to flip; it never takes the tool in hand. Tape, erase and lens tiles have none: only grain paint can be wet.</p></div>
-      <div class="item" data-t="pin sticker top-right pins on end release loop cloud rail row drawer on end switch dub always"><h3>The pin — pins on end</h3><p>Shows when the tile pins its stroke the moment you let go: a tape tool as a loop, a grain tool as a moving cloud. On the strip it is a mark, not a button. <strong>Flip it on the tool's row in the left rail</strong> — the pin beside its name — or the <em>on end</em> line in its drawer. Dub wears it always: its take can only go into a pinned loop.</p></div>
-      <div class="item" data-t="key sticker bottom-left binding click relearn right-click clear dash gesture tap long press note button"><h3>The key — its binding</h3><p>The key, button or note that fires this position. <strong>Click it, press the new one.</strong> Right-click clears it to a dash; the dash is still the cell, click it to bind again. A gesture rides inside the sticker — <em>tap</em>, <em>long</em>, <em>×2</em>. The hand's own sticker is the spacebar, and <em>click</em>.</p></div>
-    </div>
-    <h2 style="margin-top: 34px;">Wet paint</h2>
-    <div class="list">
-      <div class="item" data-t="dry stroke keeps sound painted with frozen knobs new strokes trustworthy"><h3>Dry: a stroke keeps the sound it was painted with</h3><p>Turn the knobs afterwards and only the next stroke changes. What you laid down an hour ago sounds as it did an hour ago. Every brush ships dry except the pen.</p></div>
-      <div class="item" data-t="wet every stroke follows knobs pitch whole wash moves marks stay"><h3>Wet: every stroke this brush painted follows its knobs</h3><p>Turn the pitch and the whole wash moves, wherever the cursor is — including inside a pinned cloud it painted. Only the sound moves: the marks never leave where they landed.</p></div>
-      <div class="item" data-t="dry again freeze where they sound re-wet"><h3>Drying freezes them where they sound</h3><p>Tap the drop off and the strokes keep the sound they have at that moment, for good. Tap it on again and only what you paint from now on is wet — the old strokes stay dry.</p></div>
-      <div class="item" data-t="wet where tile rail row drawer head ring"><h3>Where the switch is</h3><p>The drop on the tile, the same drop on the tool's row in the left rail, and the head of its drawer. All three are the one switch. While a wet brush is in hand its marks wear a ring in its hue.</p></div>
+      <div class="item" data-t="key sticker bottom-left binding click relearn right-click clear dash gesture long note button"><h3>The sticker is its key</h3><p>Bottom-left of every tile: the key, button or note that plays it. <strong>Click it, press the new one.</strong> Right-click clears it to a dash; click the dash to bind again. A gesture rides inside — <em>long</em>, <em>×2</em>. The same stickers sit on the rail's rows (<kbd>P</kbd>, <kbd>O</kbd>, <kbd>A</kbd>, <kbd>N</kbd>…) and learn the same way.</p></div>
     </div>
   </section>
 
-  <section id="drawer">
-    <h2>The drawer</h2>
-    <p class="lead">Every tool has one. It is where its sound is set, and it opens from the tool rail.</p>
-    <figure data-t="drawer rail door picture open beside">
-      <img src="img/drawer.jpg" alt="The tool rail on the left with every tool by engine, and the dots drawer open beside it: wet at the top, then the grain, pitch and filter lines." width="1000" height="1166">
-      <figcaption>The rail, and the dots drawer open beside it. On a row, right to left: the door <span class="door" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M14.5 5v14"></path></svg></span>, the pin, the drop. The sphere never shrinks.</figcaption>
+  <section id="rail">
+    <h2>The tool rail</h2>
+    <p class="lead"><kbd>Tab</kbd> shows it. A tab per instrument — tape, grain, erase — then the cursor at its foot. Its ≡ opens Settings → Tools, for what you set once.</p>
+    <figure data-t="rail tab voice sheet picture open beside presets">
+      <img src="img/sheet.jpg" alt="The tool rail on its grain tab — autopin, walk, deposit rate and width, the voice presets wash and glitch, the cursor section — with the grain voice sheet open beside it." width="1000" height="926">
+      <figcaption>The grain tab, and its voice sheet open beside it. The sphere never shrinks.</figcaption>
     </figure>
     <div class="list">
-      <div class="item" data-t="tab tool rail show hide left every tool engine"><h3>1 · <kbd>Tab</kbd> shows the tool rail</h3><p>Every tool, grouped by engine, down the left. Click one to take it in hand. <kbd>Tab</kbd> again hides it.</p></div>
-      <div class="item" data-t="door open drawer row right edge click again close"><h3>2 · Click the door on its row</h3><p>The <span class="door" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M14.5 5v14"></path></svg></span> at the row's right edge. The drawer opens beside the rail with that tool's name at its head. Click the door again to close it, or <kbd>esc</kbd> — once for the drawer, twice for the rail.</p></div>
-      <div class="item" data-t="in the drawer parameters lines type number double-click reset switch wet on end"><h3>3 · What's in it</h3><p>Every parameter of that tool, one line each. Drag a slider, or type into its number. Double-click a slider and it goes back to its tick. A switch is a yes or no — <em>wet</em> and <em>cloud on end</em> are the two you will use most. What you set here is that tool's sound from now on.</p></div>
-      <div class="item" data-t="plus new tool mint engine name del delete custom"><h3>The + and the DEL</h3><p>The <strong>+</strong> beside an engine's name in the rail mints a new tool from the sliders as they are, so a sound you like becomes its own tile. <strong>DEL</strong> at the head of a drawer deletes that tool — a factory one comes back with Settings → Reset.</p></div>
-      <div class="item" data-t="row drop pin buttons rail tap"><h3>The row's own two buttons</h3><p>The drop and the pin on a row are switches you can tap without opening anything: wet or dry, pins on end or not. The same two stickers the palette tile wears.</p></div>
+      <div class="item" data-t="tape tab autopin loop overdub slice dwell retrig switches"><h3>Tape — the switches you play with</h3><p><em>autopin as loop</em> — a take pins itself as a loop when you stop. <em>overdub</em> (<kbd>O</kbd>) — a take goes into the nearest pinned loop as a layer, in time; nothing pinned, the first take becomes the loop. <em>slice</em> — the next take is cut into a line per attack. <em>dwell</em> — what a line does while the cursor stays on it: once, loop, or grain. <em>retrig</em> — on, a line fired again cuts the pass that is sounding; off, the new one lays over it.</p></div>
+      <div class="item" data-t="grain tab autopin cloud walk deposit rate width"><h3>Grain</h3><p><em>autopin as cloud</em> — a stroke pins itself as a cloud on the path you drew. <em>walk</em> — a touch sets a walker going along the stroke you touched, at the pace you painted it, instead of the cursor reading what is in reach; its dwell and retrig sit under it. <em>deposit rate</em> — the time between marks. <em>deposit width</em> — how wide the marks scatter either side of the line.</p></div>
+      <div class="item" data-t="erase tab by stroke depth from"><h3>Erase</h3><p><em>by stroke</em> — an erase takes the whole stroke of any mark it touches. <em>depth</em> — how many layers it reaches, newest first. <em>from</em> — top (newest) or bottom (oldest) first.</p></div>
+      <div class="item" data-t="voice presets click wash asterisk edited plus new rename delete"><h3>Voice — the presets</h3><p>Each row is a preset, a few of its numbers on the right. Click one and it is the voice. Move a knob and its name wears an asterisk — <em>wash*</em> — until you click it again to go back. <strong>+</strong> saves the sound on the knobs as a new preset; double-click one of yours to rename it, <strong>×</strong> to delete it.</p></div>
+      <div class="item" data-t="voice sheet door every number drag type double-click reset esc"><h3>The voice sheet</h3><p>The <span class="door" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="M14.5 5v14"></path></svg></span> on the Voice line opens every number of the sound beside the rail. Drag a number, or click it and type; double-click puts it back. A band on a line is its spread — drag its edge. <kbd>esc</kbd> closes it.</p></div>
+      <div class="item" data-t="knob ride sweep while painting pedal recorded stroke frozen baked"><h3>Knobs are a pedal</h3><p>A stroke keeps the voice it was painted with — turn the knobs afterwards and only the next stroke changes. Ride a knob <strong>while</strong> painting and the sweep is recorded into that stroke, mark by mark, like playing through a pedal.</p></div>
+    </div>
+  </section>
+
+  <section id="cursor">
+    <h2>The cursor</h2>
+    <p class="lead">The foot of the tool rail, always there: how the cursor reads.</p>
+    <div class="list">
+      <div class="item" data-t="scope radius brackets both grains tape"><h3>scope · radius</h3><p><em>scope</em> — what it plays: grains, tape lines, or both. <em>radius</em> — how far it reaches; <kbd>[</kbd> <kbd>]</kbd> or scroll.</p></div>
+      <div class="item" data-t="audition A headphones live sheets preset try ab pin keeps"><h3>Audition — <kbd>A</kbd></h3><p>The cursor plays what it reads through the live voice sheets instead of as it was baked, so you can try a preset or a knob on what is already there. Nothing is rewritten. Turning it on opens the voice sheet; off puts your voice back, and on again brings the trial back — a compare button. Pin while auditioning and the pin keeps the sound you were hearing.</p></div>
+      <div class="item" data-t="grain behaviour mode N radius nearest depth k step fade"><h3>Grain Behaviour</h3><p>For grain marks only. <em>mode</em> (<kbd>N</kbd>) — everything within the radius, or the k nearest anywhere. <em>depth</em> — how many layers, newest first. <em>k</em> — how many of the marks in reach sound at once; the readout says how many are in reach and how many fire. <em>step</em> — marks in the order they were made instead of at random. <em>fade</em> — marks fade with distance from the centre.</p></div>
     </div>
   </section>
 
@@ -250,12 +241,12 @@
       </div>
     </div>
     <div class="list">
-      <div class="item" data-t="what a pin is loop cloud cursor decides"><h3>The cursor decides what a pin is</h3><p>Pin while on a stroke and it becomes a loop. Pin while granulating and the marks in reach become a cloud that keeps granulating there. Pin while painting a tape stroke and the loop grows until you let go. A tile can also pin for you on release — the pin sticker, above.</p></div>
-      <div class="item" data-t="unpin top track selected frame sort near far old"><h3>Unpin takes the top track</h3><p>The <strong>selected</strong> frame holds it, and the frame is always there — empty, it says so. <strong>sort</strong> says which is on top — nearest to the cursor, farthest, or oldest. <em>old</em> holds still while you play.</p></div>
-      <div class="item" data-t="follow focus violet faders move curve"><h3>Follow</h3><p><strong>follow</strong> on: the faders follow the cursor — nearest loudest, the rest handing over by distance — and their edges turn violet to say so. Off, every pin plays at full. <strong>curve</strong> is how gradual the handover is.</p></div>
-      <div class="item" data-t="number fold in out ramps fade"><h3>Press a number for its in / out</h3><p>Each pin's own ramps. <em>in</em>: pin and unmute. <em>out</em>: unpin and mute. Ten seconds on both and a cloud swells and dies slowly every time.</p></div>
-      <div class="item" data-t="busses clouds loops mute all acts"><h3>Under the tracks</h3><p><span class="hue" style="background: var(--grain);"></span>clouds and <span class="hue" style="background: var(--tape);"></span>loops, each with its own M and S, and under them <b>all</b>, the master: its M silences every pin and lets them back exactly as you left them. Unpin all is a button at the top, under when full. Pin and unpin are on the palette, on their own keys; a track's own M and S clear one at a time.</p></div>
-      <div class="item" data-t="3 / 8 count slots full type"><h3>3 / 8</h3><p>Held, of how many can be. Type the second number. What happens when they're all taken is on Settings → Pins.</p></div>
+      <div class="item" data-t="what a pin is loop cloud cursor decides"><h3>The cursor decides what a pin is</h3><p>Pin while on a line and it becomes a loop. Pin while granulating and the marks in reach become a cloud that keeps granulating there. Both at once, and one press makes both — one undo takes them back.</p></div>
+      <div class="item" data-t="unpin top track selected frame sort near far old"><h3>Unpin takes the selected track</h3><p>The <strong>selected</strong> frame holds it, and it is always the first row. <strong>sort</strong> says which that is — nearest to the cursor, farthest, or oldest. <em>old</em> holds still while you play.</p></div>
+      <div class="item" data-t="follow F faders move crossfade"><h3>Follow — <kbd>F</kbd></h3><p>On: the faders follow the cursor — nearest loudest, the rest handing over by distance. Off: every pin plays at its fader. How smooth the handover is lives in Settings → Pins.</p></div>
+      <div class="item" data-t="when full off old near unpin all"><h3>When full · unpin all</h3><p><em>when full</em> — with every slot taken, a new pin is refused (<em>off</em>), or the oldest or the nearest makes room. <em>unpin all</em> lets everything go (<kbd>↑</kbd> held extra long).</p></div>
+      <div class="item" data-t="busses clouds loops mute all master"><h3>Under the tracks</h3><p><span class="hue" style="background: var(--grain);"></span>clouds and <span class="hue" style="background: var(--tape);"></span>loops, each with its own M and S, and under them <b>all</b>, the master: its M silences every pin and lets them back exactly as you left them. A track's own M and S clear one at a time.</p></div>
+      <div class="item" data-t="2 / 8 count slots max type readout"><h3>2 / 8</h3><p>Next to the title. The first number is how many are held — a readout. The boxed one is the most there can be: click and type, or <kbd>↑</kbd> <kbd>↓</kbd>. The ≡ beside it opens Settings → Pins: how a pin comes in and goes out, and the crossfade.</p></div>
     </div>
   </section>
 
@@ -266,8 +257,8 @@
       <div class="item" data-t="save as copy new file shift command s"><h3>Save As</h3><p><kbd>⇧⌘S</kbd> always asks, and that file is the piece from then on. Use it to keep a version before you take a set somewhere else.</p></div>
       <div class="item" data-t="open recent replaces sphere command o n new"><h3>Open, and New</h3><p><kbd>⌘O</kbd> opens a piece and <strong>replaces what is on the sphere</strong> — save first. File → Open Recent holds the last eight; a double-clicked <em>.mubone</em> opens in mubone. <kbd>⌘N</kbd> is an empty piece. An opened piece plays: its loops and clouds come back sounding.</p></div>
       <div class="item warn" data-t="autosave none quit guard prompt close window"><h3>Nothing saves itself</h3><p>There is no autosave. Closing the window with unsaved work asks once; that prompt is the only net.</p></div>
-      <div class="item" data-t="persist settings remembered relaunch localstorage tiles palette bindings calibration"><h3>What the app remembers on its own</h3><p>The rig: your settings, every tool's drawer, the palette and its keys, bindings, the sensor calibration you saved, the window layout. All of it survives quitting and relaunching without you doing anything. It is not in the piece — open someone else's piece and your rig stays yours.</p></div>
-      <div class="item" data-t="export setup file carry another machine rig"><h3>Export</h3><p>Settings → Export · Import → <em>Export</em> writes that rig to a setup file you can carry to another machine or keep as a backup — devices, calibration, bindings, the palette, the layout. No music in it.</p></div>
+      <div class="item" data-t="persist settings remembered relaunch tools presets palette bindings calibration"><h3>What the app remembers on its own</h3><p>The rig: your settings, every tool's voice and presets, the palette's keys, bindings, the sensor calibration you saved, the window layout. All of it survives quitting and relaunching without you doing anything. It is not in the piece — open someone else's piece and your rig stays yours.</p></div>
+      <div class="item" data-t="export setup file carry another machine rig"><h3>Export</h3><p>Settings → Export · Import → <em>Export</em> writes that rig to a setup file you can carry to another machine or keep as a backup — devices, calibration, bindings, presets, the layout. No music in it.</p></div>
       <div class="item" data-t="import merges setup file"><h3>Import</h3><p>Reads a setup file back and <strong>merges</strong> it into what is here rather than replacing it: what the file names changes, what it doesn't leaves alone.</p></div>
       <div class="item" data-t="reset all selected factory"><h3>Reset</h3><p>Settings → Reset. <em>Reset all</em> puts every remembered setting back to factory, two clicks. <em>Reset selected</em> clears only the categories you switch on. Neither touches a saved piece or setup file.</p></div>
       <div class="item" data-t="browser demo forgets new build"><h3>The browser demo forgets</h3><p>mubone.org/sim starts from factory on every new build. Only the Electron app keeps a rig.</p></div>
@@ -277,47 +268,47 @@
   <section id="keys">
     <h2>Shortcuts</h2>
     <div class="keys">
-      <div data-t="space click play hand"><span><span class="it hand grain"><svg><use href="#g-dots"></use></svg><i>␣</i></span><kbd>space</kbd> · click</span><span>play the hand</span></div>
-      <div data-t="1 9 palette tiles digits line dots loop dub scrape"><span><span class="it tog tape"><svg><use href="#g-line"></use></svg><i>1</i></span><span class="it mom grain"><svg><use href="#g-dots"></use></svg><i>1 —</i></span><span class="it tog tape"><svg><use href="#g-loop"></use></svg><i>2</i></span><span class="it tog tape"><svg><use href="#g-dub"></use></svg><i>3</i></span><span class="it mom erase"><svg><use href="#g-erase"></use></svg><i>4</i></span></span><span>the palette — each tile's key is on its sticker</span></div>
-      <div data-t="pin unpin arrows"><span><span class="it bang pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span><span class="it bang pins"><svg><use href="#g-unpin"></use></svg><i>↑</i></span></span><span>pin · unpin</span></div>
-      <div data-t="cap lens S"><span><kbd>S</kbd></span><span>cap the cursor — it reads nothing</span></div>
-      <div data-t="nearest area N lens mode stroke"><span><kbd>N</kbd></span><span>cursor: nearest / radius — <em>stroke</em> is the third, on the sheet</span></div>
+      <div data-t="space click press tape hold grain hand"><span><span class="it hand tape"><svg><use href="#g-line"></use></svg><i>␣</i></span><span class="it hand grain"><svg><use href="#g-dots"></use></svg><i>␣ —</i></span></span><span>space (or a click on the sphere): a press plays tape, a hold plays grain</span></div>
+      <div data-t="cursor C off on eye"><span><kbd>C</kbd></span><span>the cursor off / on</span></div>
+      <div data-t="erase E"><span><span class="it mom erase"><svg><use href="#g-erase"></use></svg><i>E</i></span></span><span>erase, while held</span></div>
+      <div data-t="pin unpin arrows extra long all"><span><span class="it mom pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span><span class="it bang pins"><svg><use href="#g-unpin"></use></svg><i>↑</i></span></span><span>pin · unpin the selected — <kbd>↑</kbd> held extra long unpins all</span></div>
+      <div data-t="autopin P loop cloud"><span><kbd>P</kbd></span><span>autopin, tape and grain together — every stroke pins itself on release</span></div>
+      <div data-t="overdub O layer"><span><kbd>O</kbd></span><span>overdub — takes go into the nearest loop</span></div>
+      <div data-t="audition A headphones"><span><kbd>A</kbd></span><span>audition</span></div>
+      <div data-t="follow F faders"><span><kbd>F</kbd></span><span>follow — the faders follow the cursor</span></div>
+      <div data-t="nearest radius N mode"><span><kbd>N</kbd></span><span>cursor mode: radius / nearest</span></div>
       <div data-t="reach radius brackets scroll"><span><kbd>[</kbd> <kbd>]</kbd> · scroll</span><span>reach</span></div>
-      <div data-t="option alt cursor lock pointer"><span><kbd>⌥</kbd></span><span>freeze the cursor, get the pointer</span></div>
+      <div data-t="option alt cursor lock pointer"><span><kbd>⌥</kbd></span><span>hold the cursor, get the pointer</span></div>
       <div data-t="zero heading backtick tare forward"><span><kbd>`</kbd></span><span>zero — face the audience, press</span></div>
-      <div data-t="tab tool rail shift tab pinned rail"><span><kbd>Tab</kbd> · <kbd>⇧Tab</kbd></span><span>left rail · right rail</span></div>
+      <div data-t="tab tool rail shift tab pinned rail"><span><kbd>Tab</kbd> · <kbd>⇧Tab</kbd></span><span>tool rail · pinned rail</span></div>
       <div data-t="undo redo"><span><kbd>⌘Z</kbd> · <kbd>⇧⌘Z</kbd></span><span>undo · redo — a gesture at a time, to the top of the show</span></div>
       <div data-t="erase all backspace delete three"><span><kbd>⌫</kbd> ×3</span><span>erase all</span></div>
       <div data-t="mute M system"><span><kbd>M</kbd></span><span>mute everything</span></div>
       <div data-t="save open new piece command"><span><kbd>⌘S</kbd> · <kbd>⌘O</kbd> · <kbd>⌘N</kbd></span><span>save · open · new piece</span></div>
-      <div data-t="escape close drawer rail"><span><kbd>esc</kbd></span><span>close the drawer, then the rail, then the window</span></div>
-      <div data-t="double-click slider reset default"><span>double-click a slider</span><span>back to its default</span></div>
+      <div data-t="escape close sheet rail"><span><kbd>esc</kbd></span><span>close the voice sheet, then the rail</span></div>
+      <div data-t="double-click number slider reset default"><span>double-click a number</span><span>back to its default</span></div>
       <div data-t="shift scroll view span zoom"><span><kbd>⇧</kbd> + scroll</span><span>how much sphere the window shows</span></div>
-      <div data-t="looper gesture pin key tape take overdub layer"><span>tape take + <span class="it bang pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span></span><span>the phrase so far loops; you keep recording as an overdub on it — pin again for the next layer</span></div>
+      <div data-t="looper gesture pin key tape take overdub layer"><span>tape take + <span class="it mom pins"><svg><use href="#g-pin"></use></svg><i>↓</i></span></span><span>the phrase so far loops; you keep recording as an overdub on it — pin again for the next layer</span></div>
+      <div data-t="learn tooltip question mark help"><span><strong>?</strong> top right</span><span>learn — tooltips say what a thing is and how to use it</span></div>
     </div>
-    <p style="font-size: 13px; color: var(--t-tertiary);">Any of these can be moved in Settings → Keys + MIDI: click a cell, press the new key.</p>
+    <p style="font-size: 13px; color: var(--t-tertiary);">Any of these can be moved: click a sticker and press the new key, or use Settings → Keys + MIDI.</p>
   </section>
 
   <section id="gaps">
     <h2>Good to know</h2>
     <div class="list">
       <div class="item warn" data-t="sensor boot calibration mount zero heading every time forgets"><h3>The sensor forgets on every boot</h3><p>Two gestures before a set: the mount calibration (two poses, Settings → Sensors) and zero (<kbd>`</kbd>, facing the audience). Neither survives a power cycle.</p></div>
-      <div class="item warn" data-t="autosave save prompt close"><h3>No autosave</h3><p>Nothing is written unless you <kbd>⌘S</kbd>. The prompt when you close the window is the only net. The piece is the music; the rig — devices, keys, the palette — is a separate export.</p></div>
+      <div class="item warn" data-t="autosave save prompt close"><h3>No autosave</h3><p>Nothing is written unless you <kbd>⌘S</kbd>. The prompt when you close the window is the only net. The piece is the music; the rig — devices, keys, presets — is a separate export.</p></div>
       <div class="item" data-t="latency measure once interface loops in time"><h3>Measure latency once per interface</h3><p>Settings → Audio → Latency → Measure, with the output reaching the mic. Loops land in time because of this number; it's remembered per device pair.</p></div>
       <div class="item" data-t="paint gate threshold room noise paints"><h3>The paint gate gates painting, not sound</h3><p>Below the line on the gate meter nothing is painted. It never attenuates. Set it above the room and below your quietest playing.</p></div>
       <div class="item" data-t="sweep erase all difference broom bin pins keep"><h3>Sweep vs erase all</h3><p>Sweep (the broom) clears only what isn't pinned — pins keep sounding, and it frees recording memory. Erase all takes everything, pins included.</p></div>
       <div class="item" data-t="recording memory full refused new take"><h3>Recording memory fills</h3><p>The bar in the top bar. At full, a new take is refused until you sweep. Watch it in a long set.</p></div>
       <div class="item" data-t="dj mute playhead running unmute"><h3>A mute is a DJ mute</h3><p>The loop keeps running silently. Unmute and it's where it would have been — not at the top. Unpin is the thing that stops it.</p></div>
-      <div class="item" data-t="reverse pitch speed tape backwards baked frozen step semitone octave"><h3>A tape's speed, pitch and direction are frozen when you draw it</h3><p><em>speed</em>, <em>pitch</em> and <em>reverse</em> in a tape tool's drawer. Speed is tape — the pitch follows it. Pitch is a shift on top that leaves the length alone. <em>step</em> snaps both to semitones, or to octaves and fifths. Moving them changes the NEXT stroke, never one already on the sphere.</p></div>
-      <div class="item" data-t="ends reverse tail turntable approach direction"><h3>Arriving at the tail flips it</h3><p>With the lens on <em>start: ends</em>, entering a stroke at its back plays it backwards — and on a reversed tape, entering at the back plays it forwards. Approach is the control.</p></div>
-      <div class="item" data-t="stroke mode walker grain plays itself path pace lens third"><h3>Stroke mode — a grain stroke plays itself</h3><p>Set the cursor's <em>mode</em> to <strong>stroke</strong>. The cursor stops granulating on its own; touch a grain stroke and a reader launches from where you touched, retracing the stroke at the pace you painted it. <em>order</em> still chooses random or step inside it. Pin while it runs and it becomes a cloud on that path.</p></div>
-      <div class="item" data-t="dwell grain once open granulate after plays through"><h3>on dwell: grain — it plays, then opens</h3><p>A take plays through once, and only then does the cursor start granulating its material — until you move away. The same in stroke mode: the reader walks the stroke, then hands it to the cursor.</p></div>
-      <div class="item" data-t="trail cloud on end wash stays room"><h3>Trail stays in the room</h3><p>The <strong>trail</strong> tool pins itself as a cloud on the path you drew the moment you let go. Any grain tool can, with <em>cloud on end</em> in its drawer.</p></div>
-      <div class="item" data-t="dub overdub nearest loop layer phase cycle"><h3>Dub goes into the nearest loop</h3><p><span class="it tog tape"><svg><use href="#g-dub"></use></svg><i>3</i></span>play, release: the take joins the nearest pinned loop as a layer at the phase you played it, every cycle. Longer than the loop and it stacks. Nothing pinned, the first take becomes the loop.</p></div>
-      <div class="item" data-t="decay dub repeats old layers fade forget frippertronics"><h3>Dub decay — the loop forgets</h3><p><em>decay</em> in the dub's drawer, a percentage. While you dub, everything already in the loop steps down by it at every pass, so the loop is always the last few passes. Nothing fades in playback. At 0 the layers stack for ever.</p></div>
-      <div class="item" data-t="dub one shot bang verb single cycle prints"><h3>Dub as a one-shot</h3><p>Set the dub tile's verb to <strong>bang</strong> (right-click it on the strip): one press records exactly one cycle of the loop and lets go by itself. Toggle is the long overdub, momentary is a punch-in.</p></div>
-      <div class="item" data-t="eraser trims splits line trigger editor"><h3>The eraser is the editor</h3><p>Erase a line's tail to shorten it, its head to trim, its middle to split it in two. Hold an eraser 8 s for erase all.</p></div>
-      <div class="item" data-t="one tool at a time keys wait"><h3>One tool plays at a time</h3><p>While one runs, the other tool keys wait; its own key is what ends it. Pin and unpin always work.</p></div>
+      <div class="item" data-t="reverse pitch speed tape backwards baked frozen step semitone octave"><h3>A tape's speed, pitch and direction are frozen when you record it</h3><p><em>speed</em>, <em>pitch</em> and <em>reverse</em> on the tape voice sheet. Speed is tape — the pitch follows it. Pitch is a shift on top that leaves the length alone. <em>step</em> snaps both to semitones, or to octaves and fifths. Moving them changes the NEXT take, never one already on the sphere — audition is how you hear them on what is there.</p></div>
+      <div class="item" data-t="ends reverse tail turntable approach direction start"><h3>Arriving at the tail can flip it</h3><p>With tape's <em>start</em> on <em>ends</em> (Settings → Tools), entering a line at its back plays it backwards — and a reversed take, forwards. Approach is the control.</p></div>
+      <div class="item" data-t="dwell grain once open granulate after plays through"><h3>dwell: grain — it plays, then opens</h3><p>A take plays through once, and only then does the cursor start granulating its marks — until you move away.</p></div>
+      <div class="item" data-t="dub decay overdub repeats old layers fade forget frippertronics"><h3>Dub decay — the loop forgets</h3><p>Settings → Tools → <em>dub decay</em>, a percentage. While you overdub, everything already in the loop steps down by it at every pass, so the loop is always the last few passes. At 0 the layers stack for ever.</p></div>
+      <div class="item" data-t="eraser trims splits line trigger editor"><h3>The eraser is the editor</h3><p>Erase a line's tail to shorten it, its head to trim, its middle to split it in two.</p></div>
       <div class="item" data-t="phone demo browser stereo no sensor"><h3>The browser demo is a demo</h3><p>mubone.org/sim has no sensor and stereo only, and forgets everything on a new build. The instrument is the Electron app.</p></div>
     </div>
   </section>
@@ -325,30 +316,30 @@
   <section id="words">
     <h2>Glossary</h2>
     <div class="words">
-      <div data-t="mark stroke moment loud"><span>mark</span><span>one moment of what you played, painted where the cursor was. Size is loudness; a stroke is a run of them.</span></div>
-      <div data-t="scratch layer unpinned"><span>scratch</span><span>everything painted and not pinned — silent until the cursor is on it. What the lens reads, what sweep clears.</span></div>
+      <div data-t="mark stroke moment loud"><span>mark</span><span>one moment of what you played, painted where the cursor was. Size is loudness, colour its timbre; a stroke is a run of them.</span></div>
+      <div data-t="scratch layer unpinned"><span>scratch</span><span>everything painted and not pinned — silent until the cursor is on it. What sweep clears.</span></div>
       <div data-t="pinned plays on its own mixer"><span>pinned</span><span>a loop or a cloud playing on its own, with a track in the mixer. Unpin and it is scratch again.</span></div>
-      <div data-t="hand tool space"><span>the hand</span><span>the one tool space plays.</span></div>
-      <div data-t="engine source lens tape grain erase hue"><span>engine</span><span>what kind of tool: <span class="hue" style="background: var(--source);"></span>source · <span class="hue" style="background: var(--lens);"></span>cursor · <span class="hue" style="background: var(--tape);"></span>tape · <span class="hue" style="background: var(--grain);"></span>grain · <span class="hue" style="background: var(--erase);"></span>erase. One colour each, everywhere.</span></div>
-      <div data-t="tape whole take"><span>tape</span><span>a take played whole — line, slice, loop, dub.</span></div>
+      <div data-t="hand space press hold"><span>the hand</span><span>the two tools space plays: tape on a press, grain on a hold.</span></div>
+      <div data-t="engine tape grain erase cursor hue"><span>engine</span><span>what kind of thing: <span class="hue" style="background: var(--tape);"></span>tape · <span class="hue" style="background: var(--grain);"></span>grain · <span class="hue" style="background: var(--erase);"></span>erase · <span class="hue" style="background: var(--lens);"></span>cursor. One colour each, everywhere.</span></div>
+      <div data-t="tape whole take line loop overdub"><span>tape</span><span>a take played whole — a line, a loop, an overdub.</span></div>
       <div data-t="grain fragments granular"><span>grain</span><span>a take played in fragments, read from the marks in reach.</span></div>
-      <div data-t="cursor lens area nearest read scope"><span>cursor</span><span>how the cursor reads. The CURSOR section at the foot of the tool rail holds every setting: scope (grains, tape or both), radius and its fade, mode — radius (everything in reach) or nearest (the closest) — then, for grains, depth, k (0 is all) and step. Its tile on the strip turns the eye off and on.</span></div>
-      <div data-t="reach radius"><span>reach</span><span>how far the cursor reads, and how far the eraser and a line's trigger zone extend.</span></div>
-      <div data-t="line trigger fires whole touch"><span>line</span><span>a take that fires whole when the cursor touches its stroke.</span></div>
+      <div data-t="line trigger fires whole touch"><span>line</span><span>a tape take that fires whole when the cursor touches its stroke.</span></div>
       <div data-t="pin loop cloud keeps playing"><span>pin</span><span>material that keeps playing on its own: a loop, or a cloud.</span></div>
-      <div data-t="on end pins release sticker"><span>on end</span><span>what a stroke becomes when you let go: scratch, or pinned — a loop, a cloud. The pin sticker says which.</span></div>
-      <div data-t="wet dry brush strokes follow"><span>wet</span><span>a grain brush whose knobs keep moving every stroke it painted. Dry, a stroke is frozen as painted. The drop on the tile.</span></div>
-      <div data-t="sticker corner tile"><span>sticker</span><span>a mark on a tile's corner: the drop, the pin, the key.</span></div>
+      <div data-t="autopin release loop cloud P"><span>autopin</span><span>a stroke that pins itself when you let go — tape as a loop, grain as a cloud. <kbd>P</kbd> for both.</span></div>
+      <div data-t="overdub layer nearest loop O"><span>overdub</span><span>a take recorded into the nearest pinned loop as a layer, in time with it.</span></div>
+      <div data-t="voice preset sheet asterisk"><span>voice</span><span>the sound a tool plays — its sheet of numbers. A preset is a saved voice; an asterisk means you have moved off it.</span></div>
+      <div data-t="audition listen through live"><span>audition</span><span>the cursor heard through the live voice instead of as baked. Nothing is rewritten. <kbd>A</kbd>.</span></div>
+      <div data-t="walk walker stroke plays itself"><span>walk</span><span>a grain stroke played by a walker along its own path, at the pace it was painted.</span></div>
       <div data-t="cloud patch granulating"><span>cloud</span><span>a patch of marks granulating where it is. A moving cloud loops the path you drew.</span></div>
       <div data-t="bus clouds loops group"><span>bus</span><span>all the clouds, or all the loops, with one mute and one solo.</span></div>
-      <div data-t="cap lens off silence"><span>cap</span><span>the cursor turned off. <kbd>S</kbd>.</span></div>
+      <div data-t="sticker key tile corner"><span>sticker</span><span>the key on a tile or a row — click to relearn, right-click to clear.</span></div>
       <div data-t="dry input passthrough house"><span>dry</span><span>your live input passed straight to the house, spatialised, beside what the cursor makes of it.</span></div>
-      <div data-t="house monitor speakers headphones"><span>house · monitor</span><span>the audience's mix and yours. Pins feed the house; the cursor feeds your monitor, and the house unless capped.</span></div>
+      <div data-t="house monitor speakers headphones"><span>house · monitor</span><span>the audience's mix and yours. Pins feed the house; the cursor feeds your monitor, and the house unless it is off.</span></div>
       <div data-t="zero heading forward"><span>zero</span><span>which way is forward. Face the audience, <kbd>`</kbd>.</span></div>
     </div>
   </section>
 
-  <p class="end">mubone 5.2 alpha · the Electron build.</p>
+  <p class="end">mubone 5.11 alpha · the Electron build.</p>
 </div>
 
 <script>

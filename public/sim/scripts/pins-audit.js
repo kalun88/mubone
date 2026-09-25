@@ -554,7 +554,7 @@ async function run(rig) {
     const cur = SP.getCursorLonLat();
     const D = Math.PI / 180;
     const fr = (t, lon) => ({ t, lon, lat: cur.lat, grainParams: { ...S.grainParams }, searchRadiusDeg: 10,
-      nearestMode: false, kSeqMode: 'all', grainDirection: 'fwd', grainCurveType: 'sine',
+      nearestMode: false, lensStep: 'all', grainDirection: 'fwd', grainCurveType: 'sine',
       grainProbability: 1, radiusFadeEnabled: false, radiusFadeCurve: 0.5 });
 
     // 1. The REAL seal: a deferred path (the wash's road, and the held pin's)
@@ -1266,7 +1266,7 @@ async function run(rig) {
     S._particleVersion = (S._particleVersion || 0) + 1;
 
     const noK = !('k' in (BV.voicingById(voWide)?.params ?? {}))
-             && !('kSeqMode' in (BV.voicingById(voWide)?.params ?? {}));
+             && !('lensStep' in (BV.voicingById(voWide)?.params ?? {}));
 
     const total = (k, nearest) => G.__testCandidatePool(0, 0.005, { nearest, k }).length;
     const t8  = total(8, false);
@@ -1275,7 +1275,7 @@ async function run(rig) {
     const tAll = total(0, false);   // k = 0 is all (2026-09-24)
 
     const regClean = !PT.PARAM_REGISTRY.some(r =>
-      r.key === 'k' || r.key === 'grainKSeqMode');
+      r.key === 'k' || r.key === 'lensStep');
 
     S._handTile = savedHand;
     S.particles.length = 0; S.voicings = []; S.voicingSeq = 0;
@@ -1419,7 +1419,7 @@ async function run(rig) {
       liveBufferIdx: idx, grainStart: 0.1 + 0.05 * i, grainDuration: 0.1, color: '#fff', _vo: vo }); return out; };
     const pool = [...mk(5, w, 1), ...mk(4, d, 2), ...mk(3, 0, 3)];
     const own = { pitchShift: 300, period: 0.03, duration: 0.2 };
-    const seed = (slot, extra) => ({ slotIndex: slot, pool, gain: 1, grainParams: own, overrides: null, kSeqMode: false, ...extra });
+    const seed = (slot, extra) => ({ slotIndex: slot, pool, gain: 1, grainParams: own, overrides: null, lensStep: false, ...extra });
     const post = (seeds) => { S._postWorkletSeeds(seeds); return WB.getWorkletDiag().seeds.map(v => ({ index: v.index, slot: v.slot, vo: v.vo, n: v.candidates.length, pitch: v.params.pitchShift })); };
     const byVo = (list, slot, vo) => list.find(v => v.slot === slot && v.vo === vo);
 
@@ -2392,6 +2392,70 @@ async function run(rig) {
   check('a press with the cursor muted pins muted; unmuted, sounding',
         zs['muted over line'].loopMuted[0] === true && zs['plain over line'].loopMuted[0] === false, JSON.stringify([zs['muted over line'], zs['plain over line']]));
 
+  // ── A knob ridden while painting rides on the marks (2026-09-25) ─────────
+  // Ek: "when i sweep or ride the params while recording … i dont want a new
+  // voice created … it's just like a guitar pedal with the knobs." A voicing
+  // per moved mark gave a swept stroke up to 16 clocks under the cursor.
+  console.log('\n§ S. a knob ridden while painting rides on the marks — one stroke, one voice');
+  const sw = await rig.evaluate(async () => {
+    const { S } = await import('./js/state.js');
+    const A = await import('./js/audio.js');
+    const B = await import('./js/brush.js');
+    const G = await import('./js/grain.js');
+    const PC = await import('./js/piece.js');
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const actx = A.ensureAudioContext(); if (actx.state !== 'running') await actx.resume();
+    const osc = actx.createOscillator(); osc.frequency.value = 220; const og = actx.createGain(); og.gain.value = 0.3;
+    osc.connect(og); og.connect(S.inputGainNode); osc.start();
+    window._rtAudioInputListening = true;
+    const keep = { mic: S.mouseInCanvas, mx: S.mousePixelX, my: S.mousePixelY, brush: S.brushKey, cutoff: S.grainOverrides.cutoff,
+                   parts: S.particles, hist: S.strokeHistory, bufs: S.liveRecBuffers, trigs: S.triggers, slots: S.commitSlots };
+    S.particles = []; S.strokeHistory = []; S.triggers = []; S.commitSlots = new Array(S.commitSlotCount ?? 16).fill(null);
+    S._particleVersion = (S._particleVersion || 0) + 1;
+    S.mouseInCanvas = true; S.mousePixelX = S.canvas.width * 0.5; S.mousePixelY = S.canvas.height * 0.5;
+    const o = {};
+    try {
+      B.setBrush('granular');
+      const vBefore = (S.voicings || []).length;
+      B.gesturePress(); await sleep(300);
+      const sid = S.currentStrokeId;
+      for (let i = 0; i <= 20; i++) { S._dispatchAction('grain_cutoff', 20 + i * 5); await sleep(50); }
+      await sleep(400);
+      B.gestureEnd(); await sleep(600);
+      const marks = S.particles.filter(p => p.strokeId === sid);
+      o.marks = marks.length;
+      o.voicingsAdded = (S.voicings || []).length - vBefore;
+      o.vos = new Set(marks.map(p => p._vo)).size;
+      o.withOv = marks.filter(p => p._ov).length;
+      o.ovCutoffOnly = marks.filter(p => p._ov).every(p => Object.keys(S._markOverrideById(p._ov)?.params ?? { x: 1 }).join() === 'cutoff');
+      const tail = marks.slice(-4).map(p => p._ov);
+      o.heldOne = tail.every(v => v && v === tail[0]);
+      G.scheduleGrains(); await sleep(50);
+      const rows = S._readBackCandidates?.() || [];
+      o.regions = new Set(rows.map(x => x.region)).size;
+      o.rowsOv = rows.filter(x => x.ov).length;
+      const built = PC.__testBuildPiece();
+      const m = built.manifest;
+      o.fileOv = m.live.markOverrides.length > 0 && m.particles.filter(p => p.ov).length === o.withOv;
+      await PC.__testApplyPiece(JSON.parse(JSON.stringify(m)), built.audio);
+      const back = S.particles.filter(p => p.strokeId === sid);
+      o.back = back.filter(p => p._ov && S._markOverrideById(p._ov)?.params.cutoff != null).length === o.withOv;
+    } finally {
+      osc.stop();
+      S.mouseInCanvas = keep.mic; S.mousePixelX = keep.mx; S.mousePixelY = keep.my;
+      if (keep.brush) B.setBrush(keep.brush);
+      if (keep.cutoff === undefined) delete S.grainOverrides.cutoff; else S.grainOverrides.cutoff = keep.cutoff;
+      S.particles = keep.parts; S.strokeHistory = keep.hist; S.liveRecBuffers = keep.bufs; S.triggers = keep.trigs; S.commitSlots = keep.slots;
+      S._particleVersion = (S._particleVersion || 0) + 1;
+    }
+    return o;
+  });
+  check('a stroke painted while a knob sweeps keeps ONE voicing', sw.marks > 10 && sw.voicingsAdded <= 1 && sw.vos === 1, JSON.stringify(sw));
+  check('… the marks after the knob moved carry what moved, and only that', sw.withOv > 5 && sw.ovCutoffOnly, JSON.stringify({ withOv: sw.withOv, only: sw.ovCutoffOnly }));
+  check('… a knob left where it stopped stamps one override on every mark after', sw.heldOne, String(sw.heldOne));
+  check('… the cursor reads the stroke as one voice, the rows carrying the overrides', sw.regions === 1 && sw.rowsOv > 0, JSON.stringify({ regions: sw.regions, rowsOv: sw.rowsOv }));
+  check('… and a piece carries the overrides and gives them back', sw.fileOv && sw.back, JSON.stringify({ file: sw.fileOv, back: sw.back }));
+
   console.log('\n§ Z2. a pin during a tape take cuts it into a loop and an overdub, gaplessly');
   const sp = await rig.evaluate(async () => {
     const { S } = await import('./js/state.js');
@@ -2409,6 +2473,15 @@ async function run(rig) {
     const keepLat = S.latency; S.latency = { inS: 0.012, outS: 0.018, roundTripS: 0.03, source: 'measured', detail: 'test' };
     S.mouseInCanvas = true; S.mousePixelX = S.canvas.width * 0.5; S.mousePixelY = S.canvas.height * 0.5;
     UP.clearAllCommits(); await sleep(100);
+    // THE SCHEDULER RUNS for this one (2026-09-25). The suite quiesced it at
+    // boot, and a pinned loop's source is built by the scheduler tick — with
+    // none, the master never started, its clock stayed 0 and the first layer
+    // was phased against nothing: off by wherever the context clock stood.
+    // Green alone in a fresh instance, red after the suite, for that reason.
+    const G = await import('./js/grain.js');
+    const { GRAIN_SCHEDULER_INTERVAL_MS } = await import('./js/state.js');
+    const ownTick = !S._grainSchedulerId;
+    if (ownTick) S._grainSchedulerId = setInterval(G.scheduleGrains, GRAIN_SCHEDULER_INTERVAL_MS);
     const o = {};
     try {
       await S._startTriggerRecord(); const s0 = S.currentStrokeId, i0 = S.currentLiveBufferIdx;
@@ -2438,6 +2511,7 @@ async function run(rig) {
       o.lines = [s0, s1, s2].map(s => (S.triggers || []).some(t => t.strokeId === s));
     } finally {
       osc.stop(); S.latency = keepLat; UP.clearAllCommits();
+      if (ownTick) { clearInterval(S._grainSchedulerId); S._grainSchedulerId = null; }
     }
     return o;
   });

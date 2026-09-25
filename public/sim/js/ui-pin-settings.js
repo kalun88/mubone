@@ -23,7 +23,7 @@ export function initPinSettings() {
 
   // ── Commit path direction (ping-pong / fwd / rev) ────────────────────
   // Stamped at commit creation time — does not retroactively change existing commits.
-  const loopModeSeg = document.getElementById('seedLoopModeSeg');
+  const loopModeSeg = document.getElementById('cloudPathDirSeg');
   const syncLoopMode = () => loopModeSeg?.querySelectorAll('[data-loopmode]').forEach(b =>
     b.classList.toggle('active', b.dataset.loopmode === (S.commitCloudLoopMode ?? 'pingpong')));
   loopModeSeg?.querySelectorAll('[data-loopmode]').forEach(btn => {
@@ -31,10 +31,10 @@ export function initPinSettings() {
   });
 
   // ── Cloud envelope (fade in / fade out) ─────────────────────────────
-  const atkSlider = document.getElementById('seedAttackSlider');
-  const atkNum    = document.getElementById('seedAttackNum');
-  const relSlider = document.getElementById('seedReleaseSlider');
-  const relNum    = document.getElementById('seedReleaseNum');
+  const atkSlider = document.getElementById('cloudFadeInSlider');
+  const atkNum    = document.getElementById('cloudFadeInNum');
+  const relSlider = document.getElementById('cloudFadeOutSlider');
+  const relNum    = document.getElementById('cloudFadeOutNum');
 
   function fmtEnvTime(v) {
     return v < 1 ? (v * 1000).toFixed(0) + 'ms' : v.toFixed(1) + 's';

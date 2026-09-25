@@ -38,7 +38,7 @@ async function run(rig) {
     const D2R = Math.PI / 180;
     const o = {};
     // Probing writes what it reads: keep what the app had and put it back.
-    const KEEP = ['mouseInCanvas', 'eraseOldest', 'scanMuted', 'lensMode', 'lensReads', 'recencyN', 'grainKSeqMode', 'grainWalk',
+    const KEEP = ['mouseInCanvas', 'eraseOldest', 'scanMuted', 'lensMode', 'lensReads', 'recencyN', 'lensStep', 'grainWalk',
                   'searchRadiusDeg', 'radiusFadeEnabled', 'radiusFadeCurve', 'liveRecBuffers'];
     const kept = Object.fromEntries(KEEP.map(k => [k, S[k]]));
     const keptParts = S.particles.slice(), keptTrigs = S.triggers.slice(), keptDwell = S.triggerParams.dwell;
@@ -54,7 +54,7 @@ async function run(rig) {
       S.particles.length = 0; S.triggers.length = 0; S._openStrokes.clear();
       S.commitSlots = new Array(keptSlots.length).fill(null);
       S.scanMuted = false; S.lensMode = 'area'; S.lensReads = 'both'; S.recencyN = 0;
-      S.grainKSeqMode = false; S.grainWalk = false;
+      S.lensStep = false; S.grainWalk = false;
       S.searchRadiusDeg = 10; S.triggerParams.dwell = 'oneshot'; S.radiusFadeEnabled = false;
       S._particleVersion++;
     };
@@ -285,7 +285,7 @@ async function run(rig) {
     o.fadeOn = post().map(r => ({ ang: +(S.particles[r.particleId]._ang / D2R).toFixed(2), g: +r.radiusFade.toFixed(3) }));
     S.lensMode = 'nearest'; o.fadeNearest = post().map(r => +r.radiusFade.toFixed(3)); S.lensMode = 'area';
     S.radiusFadeEnabled = false;
-    S.grainKSeqMode = true;
+    S.lensStep = true;
     const rows = post().filter(r => r.region === 0).sort((a, b) => a.stepAt - b.stepAt);
     o.stepOrder = rows.map(r => S.particles[r.particleId].strokeId === older ? 'old' : 'new');
     o.stepIds = { older, newer };

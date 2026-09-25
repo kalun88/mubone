@@ -3826,3 +3826,31 @@ it began; git dates the commits Sep 21. The day is the same work either way.)*
   longer leaves a tape take running (events.js startTriggerRecord, found by pins-audit Z2); the audits caught up with
   the day: lens-audit's depth case sets depth 1, verify-action-ranges knows input/dry gain store linear, osc-audit
   reads a computed label, align-audit's rail invariants are F's (52 bars, no rules, the mode bar's four rows).
+- [x] **The three suites still red after 5.10** (2026-09-25) — all three were the audit, not the app. pins Z2 ran with
+  the scheduler quiesced, so its master never started and the layer phased against clock 0 (Z2 now ticks for itself);
+  colour-audit read the live mic under its bench (it now swaps in its own input node — two runs, 43/43); the probe
+  walk counted the hidden tooltip's leftover children after a hover rest (it skips `.learn-tooltip`, like :hover).
+- [x] **The seed / seq names went** (2026-09-25) — the pin settings' registry keys are `pinSlots` `pinOverflow`
+  `pinMode` `pinFollow` `pinXfade` `cloudPathDir` `cloudFadeIn/Out` `loopVolume` `loopSpeed`, their cabinet ids
+  `cloudFadeIn*` `cloudFadeOut*` `cloudPathDirSeg`; the lens's step is `S.lensStep` / `lensStep` everywhere
+  (seg `lensStepSeg`, pid `step`, action `lens_step`, OSC `/search/step`). One-shot renames: piece open
+  (piece.js `_renameLegacyKeys`), learned bindings (`_RENAMED_IDS`), tile pids (`_PID_RENAMES`).
+- [x] **An edited preset is `wash*`, not `custom`** (2026-09-25) — the hand tile and the preset row say the preset's
+  name with an asterisk once the sliders move off it; the row stays lit; audition names the scratch the same way
+  (the word `audition` left the tile). tiles.js `_voiceWord`; RULINGS "the rows under it are PRESETS" and the audition entry.
+- [x] **A knob ridden while painting rides on the marks** (2026-09-25) — a stroke keeps one voicing; a moved param
+  is a sparse mark override (`p._ov`, `S.markOverrides`, brush-voicing.js), read per grain in the worklet over the
+  voice's block, the period setting the next onset on the one clock. Table rows grew a word; a piece writes `ov`
+  and `live.markOverrides`, and only the voicings still in use. RULINGS "A knob ridden while painting…"; pins § S.
+- [x] **Rail round, evening** (2026-09-25) — `P` is autopin as loop AND cloud (new `autopin` action, `/autopin`),
+  its sticker on both autopin rows unless the engine's own row has a binding (`a|b` in data-binds); the pinned
+  count at the title's size, the max a visible field; both rail doors' glyph at the title's size; a dragged
+  number is no longer re-rendered under the hand (k from `all`); erase's `from` repaints; "Grain Behaviour".
+- [x] **Tooltip review, and learn on a `?`** (2026-09-25) — 250 tooltips read with learn on; every sheet/tab param
+  now says what it IS before how to drag it (`PARAM_TIPS`, `_applyParamTips`); stale ones rewritten (tools pill,
+  hand and palette tiles, instrument tabs, camera modes pull/point, reverse, particles→marks, palette positions).
+  Learn is ON at factory on a `?` left of the cog, lit ember; key `mubone_learn`. RULINGS "The tooltip is one word…".
+- [x] **The cheat sheet caught up with 5.10** (2026-09-26) — manual/index.html rewritten against the app: the fixed
+  six-tile palette, the hand's press/hold, the tool rail's tabs, voice presets and sheet (the drawer, wet paint, the
+  stickers, trail, dub and stroke mode are gone), the cursor section, the mixer as it is, P/O/A/F/C and the `?`.
+  New screenshots (img/screen.jpg, img/sheet.jpg; drawer.jpg removed), taken from a private instance.

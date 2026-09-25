@@ -45,7 +45,9 @@ const MAX_SEED_VOICES = 64;
 // painted it, so one sweep can cross material wanting different grain params.
 // DENSITY is why these have to be separate voices rather than per-grain data:
 // the onset period belongs to the clock, and one clock cannot produce two
-// densities. Separate from the seed pool on purpose — clouds must not compete
+// densities. (Within ONE stroke it can: a knob ridden while painting rides on
+// the marks as overrides, and the clock takes its next gap from the mark it
+// just played — `_firePeriod`, 2026-09-25. Two strokes are still two voices.) Separate from the seed pool on purpose — clouds must not compete
 // with brushes for polyphony.
 const MAX_CURSOR_VOICES = 16;
 
@@ -56,8 +58,9 @@ const MAX_CURSOR_VOICES = 16;
 // halves of CT_ROWS rows × CT_WORDS words followed by a CT_ROWS permutation
 // (row order as made, for step mode). The bridge writes the unpublished half
 // and flips; a fire reads the published half. Row words: bufIndex i32,
-// offset i32, length i32, azDeg f32, elBias f32, particleId i32, radiusFade f32.
-const CT_ROWS = 8192, CT_WORDS = 7, CT_HEADER = 4;
+// offset i32, length i32, azDeg f32, elBias f32, particleId i32, radiusFade f32,
+// mark override id i32 (0 = none).
+const CT_ROWS = 8192, CT_WORDS = 8, CT_HEADER = 4;
 const CT_HALF = CT_ROWS * CT_WORDS + CT_ROWS;
 const CT_REGION = CT_HEADER + 2 * CT_HALF;
 
@@ -164,12 +167,20 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     this._fadeMode        = 0;      // 0 = proportional (fadeRatio), 1 = absolute (fadeMs)
     this._fadeMs          = 0.020;  // absolute ramp length in SECONDS
     this._panSpread       = 0;      // spatial spread (0=point source, 1=full 360°)
-    this._kSeqMode        = false;  // sequential candidate stepping (vs random)
-    this._seqIdx          = 0;      // current sequential index into candidate list
+    this._lensStep        = false;  // sequential candidate stepping (vs random)
+    this._stepIdx          = 0;      // current sequential index into candidate list
+    // MARK OVERRIDES (brush-voicing.js, 2026-09-25): a knob ridden while a
+    // stroke was painted rides on its marks, not on a new voice. id → the
+    // moved fields in this thread's units, built once on arrival.
+    this._ovr = new Map();
+    // What the last _fireGrain's mark said about the NEXT onset: a period
+    // sweep is a density sweep on the one clock. 0 / −1 = the voice's own.
+    this._firePeriod = 0;
+    this._firePeriodVar = -1;
 
     // ── Candidate list (from main thread spatial search) ──────────────────
     // Each entry: { bufIndex, offset, length, azDeg, particleId, radiusFade }
-    // Sorted in the order made (stroke, then its clock) when kSeqMode is active.
+    // Sorted in the order made (stroke, then its clock) when lensStep is active.
     this._candidates = [];
     this._candidateCount = 0;
 
@@ -226,6 +237,16 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     if (!data) return;
 
     switch (data.type) {
+      case 'markOverride': {
+        const p = data.params || {}, sr = this._sr, o = {};
+        for (const k in p) o[k] = p[k];
+        if (p.period != null)   o.periodSamples   = Math.max(1, Math.round(p.period * sr));
+        if (p.duration != null) o.durationSamples = Math.max(1, Math.round(p.duration * sr));
+        if (p.filterType != null) o.filterType = p.filterType | 0;
+        this._ovr.set(data.id | 0, o);
+        break;
+      }
+      case 'markOverridesReset': this._ovr.clear(); break;
       case 'init': {
         // The pool size the app asked for (P2). Re-allocating here is free:
         // nothing is sounding yet.
@@ -294,10 +315,10 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
           v.candidateCount = 0;
           v.tabRegion = e.slot;
           if (e.params) this._applyVoiceParams(v, e.params);
-          if (data.kSeqMode != null) {
-            const was = v.kSeqMode;
-            v.kSeqMode = !!data.kSeqMode;
-            if (v.kSeqMode && !was) v.seqIdx = 0;
+          if (data.lensStep != null) {
+            const was = v.lensStep;
+            v.lensStep = !!data.lensStep;
+            if (v.lensStep && !was) v.stepIdx = 0;
           }
           if (v.nextOnset === 0 || !v.periodSamples) v.nextOnset = this._sampleClock;
         }
@@ -338,10 +359,10 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
           if (e.params) this._applyVoiceParams(v, e.params);
           // Order is the LENS's, live — the message-level flag overrides
           // whatever the frozen voicing block carried (#233).
-          if (data.kSeqMode != null) {
-            const was = v.kSeqMode;
-            v.kSeqMode = !!data.kSeqMode;
-            if (v.kSeqMode && !was) v.seqIdx = 0;
+          if (data.lensStep != null) {
+            const was = v.lensStep;
+            v.lensStep = !!data.lensStep;
+            if (v.lensStep && !was) v.stepIdx = 0;
           }
           if (v.nextOnset === 0 || !v.periodSamples) v.nextOnset = this._sampleClock;
         }
@@ -644,8 +665,8 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       res: 0,
       filterFreqJitter: 0,
       panSpread: 0,         // spatial spread (0–1)
-      kSeqMode: false,      // sequential candidate stepping
-      seqIdx: 0,            // current sequential index
+      lensStep: false,      // sequential candidate stepping
+      stepIdx: 0,            // current sequential index
       candidates: [],
       candidateCount: 0,
     };
@@ -674,10 +695,10 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     if (p.res != null)         v.res = p.res;
     if (p.filterFreqJitter != null) v.filterFreqJitter = p.filterFreqJitter;
     if (p.panSpread != null)   v.panSpread = p.panSpread;
-    if (p.kSeqMode != null) {
-      const was = v.kSeqMode;
-      v.kSeqMode = !!p.kSeqMode;
-      if (v.kSeqMode && !was) v.seqIdx = 0;
+    if (p.lensStep != null) {
+      const was = v.lensStep;
+      v.lensStep = !!p.lensStep;
+      if (v.lensStep && !was) v.stepIdx = 0;
     }
   }
 
@@ -725,10 +746,10 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       this._fadeMs = p.fadeMs;
     if (p.panSpread != null)
       this._panSpread = p.panSpread;
-    if (p.kSeqMode != null) {
-      const was = this._kSeqMode;
-      this._kSeqMode = !!p.kSeqMode;
-      if (this._kSeqMode && !was) this._seqIdx = 0;  // reset on toggle-on
+    if (p.lensStep != null) {
+      const was = this._lensStep;
+      this._lensStep = !!p.lensStep;
+      if (this._lensStep && !was) this._stepIdx = 0;  // reset on toggle-on
     }
   }
 
@@ -1053,15 +1074,8 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
   // ── Fire a new grain ──────────────────────────────────────────────────
   // seed: optional seed object for seed grains. If null, uses cursor params.
   _fireGrain(seed) {
-    // Read params from seed or cursor
-    const prob      = seed ? seed.probability   : this._probability;
-    const durSamp   = seed ? seed.durationSamples : this._durationSamples;
-    const vol       = seed ? seed.volume * seed.gain : this._volume;
-    const pShift    = seed ? seed.pitchShift    : this._pitchShift;
-    const pJitter   = seed ? seed.pitchJitter   : this._pitchJitter;
-    const dVar      = seed ? seed.durVar        : this._durVar;
-    const eShape    = seed ? seed.envShape      : this._envShape;
-    const dir       = seed ? seed.direction     : this._direction;
+    this._firePeriod = 0;
+    this._firePeriodVar = -1;
     const cands     = seed ? seed.candidates    : this._candidates;
     // A cursor voice on a table (R3): the count is the published half's.
     const tab = seed ? (seed.tabRegion ?? -1) : this._candTab;
@@ -1076,19 +1090,76 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     } else {
       candCount = seed ? seed.candidateCount : this._candidateCount;
     }
-    const fType     = seed ? (seed.filterType ?? 0)   : this._filterType;
-    const cutoff    = seed ? (seed.cutoff ?? 1000)    : this._cutoff;
-    const res       = seed ? (seed.res ?? 0)          : this._res;
-    const fJitter   = seed ? (seed.filterFreqJitter ?? 0) : this._filterFreqJitter;
-    const djitter   = seed ? (seed.durJitter ?? 0)     : this._durJitter;
-    const sJitter   = seed ? (seed.startJitter ?? 0)   : this._startJitter;
-    const fadeR     = seed ? (seed.fadeRatio ?? 0.5)   : this._fadeRatio;
-    const fMode     = seed ? (seed.fadeMode ?? 0)      : this._fadeMode;
-    const fMs       = seed ? (seed.fadeMs ?? 0.020)    : this._fadeMs;
-    const spread    = seed ? (seed.panSpread ?? 0)      : this._panSpread;
 
     // No candidates → nothing to play (radius mode with cursor outside range)
     if (candCount === 0) return;
+
+    // ── Pick the mark FIRST: its override decides the params ────────────
+    // k-seq mode: step through candidates in the order they were made (the bridge sorts).
+    // Random mode: pick a random candidate from the pool. The step index only
+    // advances once the grain is really played (below), as it always has.
+    const stepOn = seed ? seed.lensStep : this._lensStep;
+    let bufIndex = -1;     // -1 = main recBuf
+    let bufOffset = this._grainStart;
+    let bufLen = this._recLen;
+    let azDeg = 0;
+    let elBias = 0;        // elevation center-bias: 0=equator, 1=pole
+    let particleId = -1;
+    let radiusFade = 1.0;
+    let ovId = 0;
+    let ci;
+    if (stepOn) ci = (seed ? seed.stepIdx : this._stepIdx) % candCount;
+    else ci = (this._rand01() * candCount) | 0;
+    if (tab >= 0 && ctI) {
+      // Step mode walks the permutation (rows in the order made); random reads the row.
+      const row = stepOn ? ctI[tabBase + CT_ROWS * CT_WORDS + ci] : ci;
+      const w = tabBase + row * CT_WORDS;
+      bufIndex    = ctI[w];
+      bufOffset   = ctI[w + 1];
+      bufLen      = ctI[w + 2];
+      azDeg       = this._ctF[w + 3];
+      elBias      = this._ctF[w + 4];
+      particleId  = ctI[w + 5];
+      radiusFade  = this._ctF[w + 6];
+      ovId        = ctI[w + 7];
+    } else {
+      const c = cands[ci];
+      bufIndex    = c.bufIndex ?? -1;
+      bufOffset   = c.offset ?? 0;
+      bufLen      = c.length ?? this._recLen;
+      azDeg       = c.azDeg ?? 0;
+      elBias      = c.elBias ?? 0;
+      particleId  = c.particleId ?? -1;
+      radiusFade  = c.radiusFade ?? 1.0;
+      ovId        = c.ov | 0;
+    }
+    const o = ovId ? this._ovr.get(ovId) : undefined;
+
+    // Read params from the voice (seed or cursor), the mark's override over it.
+    const prob      = o && o.probability !== undefined ? o.probability : (seed ? seed.probability : this._probability);
+    const durSamp   = o && o.durationSamples !== undefined ? o.durationSamples : (seed ? seed.durationSamples : this._durationSamples);
+    const vol       = (o && o.volume !== undefined ? o.volume : (seed ? seed.volume : this._volume)) * (seed ? seed.gain : 1);
+    const pShift    = o && o.pitchShift !== undefined ? o.pitchShift : (seed ? seed.pitchShift : this._pitchShift);
+    const pJitter   = o && o.pitchJitter !== undefined ? o.pitchJitter : (seed ? seed.pitchJitter : this._pitchJitter);
+    const dVar      = o && o.durVar !== undefined ? o.durVar : (seed ? seed.durVar : this._durVar);
+    const eShape    = o && o.envShape !== undefined ? o.envShape : (seed ? seed.envShape : this._envShape);
+    const dir       = o && o.direction !== undefined ? o.direction : (seed ? seed.direction : this._direction);
+    const fType     = o && o.filterType !== undefined ? o.filterType : (seed ? (seed.filterType ?? 0) : this._filterType);
+    const cutoff    = o && o.cutoff !== undefined ? o.cutoff : (seed ? (seed.cutoff ?? 1000) : this._cutoff);
+    const res       = o && o.res !== undefined ? o.res : (seed ? (seed.res ?? 0) : this._res);
+    const fJitter   = o && o.filterFreqJitter !== undefined ? o.filterFreqJitter : (seed ? (seed.filterFreqJitter ?? 0) : this._filterFreqJitter);
+    const djitter   = o && o.durJitter !== undefined ? o.durJitter : (seed ? (seed.durJitter ?? 0) : this._durJitter);
+    const sJitter   = o && o.startJitter !== undefined ? o.startJitter : (seed ? (seed.startJitter ?? 0) : this._startJitter);
+    const fadeR     = o && o.fadeRatio !== undefined ? o.fadeRatio : (seed ? (seed.fadeRatio ?? 0.5) : this._fadeRatio);
+    const fMode     = o && o.fadeMode !== undefined ? o.fadeMode : (seed ? (seed.fadeMode ?? 0) : this._fadeMode);
+    const fMs       = o && o.fadeMs !== undefined ? o.fadeMs : (seed ? (seed.fadeMs ?? 0.020) : this._fadeMs);
+    const spread    = o && o.panSpread !== undefined ? o.panSpread : (seed ? (seed.panSpread ?? 0) : this._panSpread);
+    // The next onset follows this mark's period when it moved it — whether
+    // or not the grain itself survives the gates below.
+    if (o) {
+      if (o.periodSamples !== undefined) this._firePeriod = o.periodSamples;
+      if (o.periodVar !== undefined) this._firePeriodVar = o.periodVar;
+    }
 
     // Probability gate
     if (prob < 1.0 && this._rand01() > prob) return;
@@ -1097,55 +1168,9 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
     if (idx < 0) return;
     // A cursor VOICE is a cursor grain even though it arrives as `seed`.
     this._gIsCursor[idx] = (!seed || seed.isCursor) ? 1 : 0;
-
-    // ── Pick source: candidate list or default ──────────────────────────
-    let bufIndex = -1;     // -1 = main recBuf
-    let bufOffset = this._grainStart;
-    let bufLen = this._recLen;
-    let azDeg = 0;
-    let elBias = 0;        // elevation center-bias: 0=equator, 1=pole
-    let particleId = -1;
-    let radiusFade = 1.0;
-
-    // k-seq mode: step through candidates in the order they were made (the bridge sorts).
-    // Random mode: pick a random candidate from the pool.
-    const kSeq = seed ? seed.kSeqMode : this._kSeqMode;
-
-    if (candCount > 0) {
-      let ci;
-      if (kSeq) {
-        // Sequential: advance index, wrap around at end
-        if (seed) {
-          ci = seed.seqIdx % candCount;
-          seed.seqIdx = (seed.seqIdx + 1) % candCount;
-        } else {
-          ci = this._seqIdx % candCount;
-          this._seqIdx = (this._seqIdx + 1) % candCount;
-        }
-      } else {
-        ci = (this._rand01() * candCount) | 0;
-      }
-      if (tab >= 0 && ctI) {
-        // Step mode walks the permutation (rows in the order made); random reads the row.
-        const row = kSeq ? ctI[tabBase + CT_ROWS * CT_WORDS + ci] : ci;
-        const w = tabBase + row * CT_WORDS;
-        bufIndex    = ctI[w];
-        bufOffset   = ctI[w + 1];
-        bufLen      = ctI[w + 2];
-        azDeg       = this._ctF[w + 3];
-        elBias      = this._ctF[w + 4];
-        particleId  = ctI[w + 5];
-        radiusFade  = this._ctF[w + 6];
-      } else {
-        const c = cands[ci];
-        bufIndex    = c.bufIndex ?? -1;
-        bufOffset   = c.offset ?? 0;
-        bufLen      = c.length ?? this._recLen;
-        azDeg       = c.azDeg ?? 0;
-        elBias      = c.elBias ?? 0;
-        particleId  = c.particleId ?? -1;
-        radiusFade  = c.radiusFade ?? 1.0;
-      }
+    if (stepOn) {
+      if (seed) seed.stepIdx = (seed.stepIdx + 1) % candCount;
+      else this._stepIdx = (this._stepIdx + 1) % candCount;
     }
 
     // For live buffer grains: snapshot the worklet's current data extent.
@@ -1470,13 +1495,15 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
       // ── Fire cursor grain at onset ──────────────────────────────────
       // Guard: skip cursor grains until params are set (period starts at 0)
       if (this._periodSamples > 0 && this._sampleClock >= this._nextOnset) {
+        this._firePeriod = 0; this._firePeriodVar = -1;
         if (!underPressure || this._rand01() > skipProb) this._fireGrain();  // null seed = cursor grain
         else this._diagThrottled++;
 
-        // Schedule next onset with period jitter
-        let nextPeriod = this._periodSamples;
-        if (this._periodVar > 0) {
-          const varSamples = Math.round(this._periodVar * this._sr);
+        // Schedule next onset with period jitter — the played mark's, if it moved it
+        let nextPeriod = this._firePeriod || this._periodSamples;
+        const pVar = this._firePeriodVar >= 0 ? this._firePeriodVar : this._periodVar;
+        if (pVar > 0) {
+          const varSamples = Math.round(pVar * this._sr);
           nextPeriod = Math.max(1, nextPeriod + ((this._rand01() * 2 - 1) * varSamples) | 0);
         }
         this._nextOnset = this._sampleClock + nextPeriod;
@@ -1490,11 +1517,13 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         const v = this._cursorVoices[vi];
         if (!v.active || v.periodSamples <= 0) continue;
         if (this._sampleClock >= v.nextOnset) {
+          this._firePeriod = 0; this._firePeriodVar = -1;
           if (!underPressure || this._rand01() > skipProb) this._fireGrain(v);
           else this._diagThrottled++;
-          let nextPeriod = v.periodSamples;
-          if (v.periodVar > 0) {
-            const varSamples = Math.round(v.periodVar * this._sr);
+          let nextPeriod = this._firePeriod || v.periodSamples;
+          const pVar = this._firePeriodVar >= 0 ? this._firePeriodVar : v.periodVar;
+          if (pVar > 0) {
+            const varSamples = Math.round(pVar * this._sr);
             nextPeriod = Math.max(1, nextPeriod + ((this._rand01() * 2 - 1) * varSamples) | 0);
           }
           v.nextOnset = this._sampleClock + nextPeriod;
@@ -1506,13 +1535,15 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
         const seed = this._seeds[si];
         if (!seed.active || seed.periodSamples <= 0) continue;
         if (this._sampleClock >= seed.nextOnset) {
+          this._firePeriod = 0; this._firePeriodVar = -1;
           if (!underPressure || this._rand01() > skipProb) this._fireGrain(seed);
           else this._diagThrottled++;
 
-          // Schedule next seed onset with period jitter
-          let nextPeriod = seed.periodSamples;
-          if (seed.periodVar > 0) {
-            const varSamples = Math.round(seed.periodVar * this._sr);
+          // Schedule next seed onset with period jitter — the played mark's, if it moved it
+          let nextPeriod = this._firePeriod || seed.periodSamples;
+          const pVar = this._firePeriodVar >= 0 ? this._firePeriodVar : seed.periodVar;
+          if (pVar > 0) {
+            const varSamples = Math.round(pVar * this._sr);
             nextPeriod = Math.max(1, nextPeriod + ((this._rand01() * 2 - 1) * varSamples) | 0);
           }
           seed.nextOnset = this._sampleClock + nextPeriod;

@@ -51,6 +51,8 @@ const CATEGORY_IDS = new Set(CATEGORIES.map(c => c.id));
 // unregistered, and browser-audit's "every key is registered" check stays
 // honest. Add to this list in the same commit that stops writing the key.
 export const RETIRED_KEYS = [
+  // the learn switch's key before it defaulted ON (2026-09-25) — ui-learn.js
+  'mubone-learn-mode',
   // the patch bank, its table, param locks and cloud morph (2026-09-03, #325)
   'mubone_user_presets', 'mubone_preset_layout_v', 'mubone_active_patch', 'mubone_preset_view',
   'mubone_param_locks', 'mubone_radial_anchors', 'mubone_radial_pins', 'mubone_desktop_morph',
@@ -147,7 +149,7 @@ export const KEYS = [
   { key: 'mubone_uiScale',              cat: 'ui', note: 'also read pre-paint by the boot script in index.html' },
   { key: 'mubone_settings_section',     cat: 'ui', note: 'the settings door reopens on the section last open (ui-settings.js). Unregistered from c425c3e to 1.15: the reset page listed it as an orphan and probe-selftest read the orphan row as reload drift' },
   { key: 'mubone_fovDeg',               cat: 'ui' },
-  { key: 'mubone-learn-mode',           cat: 'ui' },
+  { key: 'mubone_learn',                cat: 'ui' },
   { key: 'mubone_build',                cat: 'ui', note: 'the service worker CACHE_VERSION the hosted demo last booted on (main.js _wipeOnNewBuild, 2026-09-12): a different one wipes the store and reloads — collaborators open every new build at factory. Electron and localhost never write it' },
   { key: 'mubone_sounds',               cat: 'ui', note: 'the VOICES (tiles.js, 2026-09-21): a sound per engine, each its own block of voice pids — a living preset every unpinned stroke follows' },
   { key: 'mubone_voice_seed',           cat: 'ui', note: 'one-shot stamp: the factory voices have been seeded from the engines\' factory blocks (tiles.js _seedVoices)' },

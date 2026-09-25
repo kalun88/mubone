@@ -230,10 +230,10 @@ export function patternRate(pattern) {
 export const LED_STATES = [
   { id: 'idle',         label: 'idle',                 tip: 'nothing happening — also what every non-cursor device shows' },
   { id: 'scan',         label: 'scan (cursor firing)',
-    tip: 'scan is on and there are particles under the cursor. Lowest priority — every other state overrides it. The only row that can take its colour from the audio: set its pattern to "timbre".' },
+    tip: 'the cursor is on and there are marks under it. Lowest priority — every other state overrides it. The only row that can take its colour from the audio: set its pattern to "timbre".' },
   { id: 'mute',         label: 'system muted',
     tip: 'master output muted. Beats scan (it explains the silence) but loses to recording and erasing — you already know you muted it, whereas the take is the thing you need confirmed.' },
-  { id: 'erase',        label: 'erasing',              tip: 'erase brush is down (held or latched). Destructive, so it outranks mute.' },
+  { id: 'erase',        label: 'erasing',              tip: 'the eraser is down (held or latched). Destructive, so it outranks mute.' },
   { id: 'trace',        label: 'recording',            tip: 'a take is running — tape, grain, an overdub or a sampler capture. Outranks mute so tracking into a muted rig still shows the take is running.' },
 ];
 

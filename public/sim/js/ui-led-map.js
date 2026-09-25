@@ -41,7 +41,7 @@ const WHEN = {
   idle:         'Nothing is happening.',
   scan:         'The cursor is granulating.',
   mute:         'The master output is muted.',
-  erase:        'The erase brush is down.',
+  erase:        'The eraser is down.',
   trace:        'A take is recording.',
   commit:       'A pin is made.',
   release:      'A pin is let go.',
