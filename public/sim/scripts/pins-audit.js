@@ -1793,13 +1793,20 @@ async function run(rig) {
       const mB = mkMaster(1, 1.2, 10, 1);
       S.commitSlots[2] = { type: 'cloud', slotIndex: 2, playing: true, lon: 0.05, lat: 0, color: '#fff', grainParams: {}, grainOverrides: {} };
 
-      // (a) nearest — loops only, no radius
-      out.nearA = G.nearestLoopPin(0.1, 0);
-      out.nearB = G.nearestLoopPin(1.1, 0);
-      const { lon: cl, lat: cla } = UP.getCursorPos();
-      out.begin = UP.beginOverdub();
-      out.beginSeq = S._overdubTake?.seq === S.commitSlots[G.nearestLoopPin(cl, cla)];
+      // (a) BY TOUCH (2026-09-26) — the loop whose marks are in the cursor's
+      //     reach, and nothing anywhere else; a cloud never counts. A mark per
+      //     master on the sphere, a 10° reach.
+      const keepR = S.searchRadiusDeg, keepReads = S.lensReads; S.searchRadiusDeg = 10; S.lensReads = 'both';
+      S.triggers = [];
+      for (const [sid, lon] of [[9000, 0.0], [9001, 1.2]]) S.particles.push({ lon, lat: 0, strokeId: sid, trig: true, source: 'live', liveBufferIdx: 0, grainStart: 0, grainDuration: 0.1 });
+      const slotAt = (lon, lat) => { const t = UP.dubTargetAt(lon, lat); return t?.slot ? S.commitSlots.indexOf(t.slot) : (t ? 'line' : -1); };
+      out.touchA = slotAt(0.02, 0); out.touchB = slotAt(1.18, 0); out.touchNone = slotAt(0.6, 0);
+      S.lensReads = 'grains'; out.touchGrainScope = slotAt(0.02, 0); S.lensReads = 'both';
+      out.begin = UP.beginDubByTouch(0.02, 0);
+      out.beginSeq = S._overdubTake?.seq === mA;
+      out.beginNone = UP.beginDubByTouch(0.6, 0) === false && S._overdubTake === null && !S._overdubSeed;
       S._overdubTake = null;
+      S.searchRadiusDeg = keepR; S.lensReads = keepReads;
 
       // (b) the master's clock: 13 s in at 1× on a 10 s loop is phase 3;
       //     at ½× the same 13 s is 13 of a 20 s cycle.
@@ -1894,7 +1901,7 @@ async function run(rig) {
       for (let k = 0; k < 2; k++) { const p = { lon: 2.0 + 0.01 * k, lat: 0, strokeId: 5151, trig: true, source: 'live', liveBufferIdx: 0,
         grainStart: 0.2 * k, grainDuration: 0.1, color: '#fff' }; G.stampCartesian(p); S.particles.push(p); }
       S.liveRecBuffers[0] = S.liveRecBuffers[0] || { buffer: take(1, 0.1), grainCursor: 0 };
-      const savedFx = S.brushFx, savedLoopOnEnd = S.triggerParams.loopOnEnd; S.brushFx = 'slice'; S.triggerParams.loopOnEnd = true;
+      const savedFx = S.brushFx; S.brushFx = 'slice';
       let hooked = 0; const savedHook = S._onTriggerStrokeArmed; S._onTriggerStrokeArmed = () => { hooked++; };
       const slotsBefore = S.commitSlots.filter(Boolean).length;
       UP.removeSeq(3, true);
@@ -1903,7 +1910,7 @@ async function run(rig) {
       out.stop = { live, stopped: !!ovC._src?._stopped || ovC._src === null, armed: armed.length, hooked,
         marksKept: S.particles.filter(p => p.strokeId === 5151).length, noNewPin: S.commitSlots.filter(Boolean).length === slotsBefore - 1,
         primed: armed[0] ? !!armed[0].inside || armed[0].audition === false || true : false };
-      S.brushFx = savedFx; S.triggerParams.loopOnEnd = savedLoopOnEnd; S._onTriggerStrokeArmed = savedHook;
+      S.brushFx = savedFx; S._onTriggerStrokeArmed = savedHook;
       // (g2) a self-killing master takes the family's paint with it
       const mD = mkMaster(4, 2.5, 4, 1);
       mD.overdubs = [{ strokeId: 6161, phase0: 0, buffer: take(1, 0.1), layer: UP.buildOverdubLayer(mD, take(1, 0.1), 0), _src: null }];
@@ -1931,19 +1938,17 @@ async function run(rig) {
       osc2.stop();
       out.gone = { hadProv, armedEarly, armed: (S.triggers || []).filter(t => t.strokeId === sid2).length, orphanLayers: mE.overdubs?.length | 0, cleared: S._overdubTake === null };
 
-      // (h) no master: the take SEEDS the loop (Ek, 2026-09-06) — the press
-      //     starts like any tape take, with no master held and the seed flag
-      //     up, so the looper hook pins it on release; the release clears
-      //     the flag whatever the take came to.
-      S.commitSlots = new Array(keepSlots.length).fill(null);
-      const savedIs = S._handIsOverdub; S._handIsOverdub = () => true;
-      const savedKey = S.brushKey; B.setBrush('tape');  // the overdub tile puts a tape brush in the hand
+      // (h) touching nothing: the press starts a PLAIN take — no master held,
+      //     no seed (2026-09-26; until then an overdub press with nothing
+      //     pinned seeded the loop) — and the release leaves nothing behind.
+      S.commitSlots = new Array(keepSlots.length).fill(null); S.triggers = [];
+      const savedKey = S.brushKey; B.setBrush('tape');
       B.gesturePress();
       out.seed = { active: B.gestureActive(), latched: !!S.paintLatched, seed: !!S._overdubSeed, take: S._overdubTake === null };
       B.gestureEnd();
       await new Promise(r => setTimeout(r, 80));
-      out.seed.clearedAfter = !S._overdubSeed;
-      S._handIsOverdub = savedIs; B.setBrush(savedKey);
+      out.seed.clearedAfter = !S._overdubSeed && S._overdubTake === null;
+      B.setBrush(savedKey);
     } finally {
       for (const c of S.commitSlots) if (c?.type === 'loop') G.releaseSeqNodes(c);
       S.commitSlots = keepSlots; S.particles = keepParts; S.liveRecBuffers = keepBufs; S.strokeHistory = keepHist; S.triggers = keepTrig;
@@ -1952,8 +1957,11 @@ async function run(rig) {
     }
     return out;
   });
-  check('the nearest pinned LOOP is the master — a nearer cloud does not count', od.nearA === 0 && od.nearB === 1, JSON.stringify([od.nearA, od.nearB]));
-  check('beginOverdub holds the nearest loop at the press', od.begin === true && od.beginSeq === true, JSON.stringify([od.begin, od.beginSeq]));
+  check('a take joins the loop the cursor is ON — each in its own reach, none between, a nearer cloud never',
+        od.touchA === 0 && od.touchB === 1 && od.touchNone === -1, JSON.stringify([od.touchA, od.touchB, od.touchNone]));
+  check('…and a cursor scoped to grains touches no tape', od.touchGrainScope === -1, String(od.touchGrainScope));
+  check('beginDubByTouch holds the touched loop at the press, and holds nothing off every loop',
+        od.begin === true && od.beginSeq === true && od.beginNone === true, JSON.stringify([od.begin, od.beginSeq, od.beginNone]));
   check('13 s into a 10 s loop at 1× is phase 3', Math.abs(od.phase1 - 3) < 0.02, String(od.phase1));
   check('… and at ½× it is 13 of a 20 s cycle — the playhead is the master\'s', Math.abs(od.phaseHalf - 13) < 0.02, String(od.phaseHalf));
   check('a 2 s take at phase 3 lands at 3.5 and 4.5 in a 10 s layer', od.lay1.dur === 10 && JSON.stringify(od.lay1.hits) === '[[3.5,1],[4.5,1]]', JSON.stringify(od.lay1));
@@ -1977,8 +1985,8 @@ async function run(rig) {
   check('… and hands each overdub back as ONE plain line: armed once, marks kept, no slice under a slice tool, no looper hook, no new pin',
         od.stop.armed === 1 && od.stop.marksKept === 2 && od.stop.hooked === 0 && od.stop.noNewPin, JSON.stringify(od.stop));
   check('a self-killing master takes the family\'s paint with it, arming nothing', od.kill.marks === 0 && od.kill.armed === 0, JSON.stringify(od.kill));
-  check('no loop pinned: the press starts a take with no master and the seed flag up — the looper hook will pin it — and the release clears the flag',
-        od.seed.active && od.seed.seed && od.seed.take && od.seed.clearedAfter, JSON.stringify(od.seed));
+  check('touching nothing: the press starts a plain take — no master, no seed — and the release leaves nothing held',
+        od.seed.active && !od.seed.seed && od.seed.take && od.seed.clearedAfter, JSON.stringify(od.seed));
 
   // ── M2. Erase reaches the overdub, and its head is drawn (Ek, 2026-09-05) ─
   // "If I erase an overdub … that part of the overdub stroke I erased should
@@ -2165,13 +2173,19 @@ async function run(rig) {
     const { S } = await import('./js/state.js');
     const R = await import('./js/renderer.js');
     const sleep = ms => new Promise(r => setTimeout(r, ms));
-    const ctx = S.ctx, realStroke = ctx.stroke.bind(ctx);
+    // Since 2026-09-26 the frame is a closed 1px ROUNDED SQUARE in the bone
+    // (renderer.js _drawFocusBox), not four 1.6px brackets — and the cursor's
+    // line to it is 1px bone too, so the count is of bone strokes whose path
+    // is a roundRect: the frame and nothing else.
+    const ctx = S.ctx, realStroke = ctx.stroke.bind(ctx), realRR = ctx.roundRect.bind(ctx), realBP = ctx.beginPath.bind(ctx);
     const ink = getComputedStyle(document.body).getPropertyValue('--eng-pins').trim().toLowerCase();
-    const count = () => { let n = 0;
+    const count = () => { let n = 0, rr = false;
+      ctx.beginPath = (...a) => { rr = false; return realBP(...a); };
+      ctx.roundRect = (...a) => { rr = true; return realRR(...a); };
       ctx.stroke = (...a) => { const sc = String(ctx.strokeStyle).toLowerCase();
-        if ((sc === ink || sc === 'rgb(207, 199, 188)') && Math.abs(ctx.lineWidth - 1.6) < 0.01) n++;
+        if (rr && (sc === ink || sc === 'rgb(207, 199, 188)') && Math.abs(ctx.lineWidth - 1) < 0.01) n++;
         return realStroke(...a); };
-      try { R.drawFrame(); } finally { ctx.stroke = realStroke; }
+      try { R.drawFrame(); } finally { ctx.stroke = realStroke; ctx.roundRect = realRR; ctx.beginPath = realBP; }
       return n; };
     // SWAP THE ARRAY, never clear it: clearAllCommits DESTROYS the pins, and
     // § K below needs the ones this suite already made (it read 775 → 775 and
@@ -2276,7 +2290,7 @@ async function run(rig) {
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     const W = S.canvas.width, Hh = S.canvas.height;
     const keep = { parts: S.particles, slots: S.commitSlots.slice(), hist: S.strokeHistory, trigs: S.triggers, mode: S.traceMode,
-      r: S.searchRadiusDeg, muted: S.scanMuted, reads: S.lensReads, auto: S.triggerParams.loopOnEnd, live: S.liveRecBuffers.slice(), mic: S.mouseInCanvas, mx: S.mousePixelX, my: S.mousePixelY };
+      r: S.searchRadiusDeg, muted: S.scanMuted, reads: S.lensReads, live: S.liveRecBuffers.slice(), mic: S.mouseInCanvas, mx: S.mousePixelX, my: S.mousePixelY };
     const D = Math.PI / 180;
     const out = {};
     const reset = () => { UP.clearAllCommits(); TR.dropTriggersWhere?.(() => true); S.commitSlots = new Array(S.commitSlotCount ?? 16).fill(null); S.particles = []; S.strokeHistory = []; S.triggers = []; };
@@ -2289,7 +2303,9 @@ async function run(rig) {
       return S.commitSlots.find(c => c && c.type === 'cloud');
     };
     // From outside the zone, grazing its top edge: lat 9° above the centre (radius 10°).
-    const paint = async (z, startDeg) => {
+    // `seed`: armed as take: loop's first take (the looper hook pins it) —
+    // `loopOnEnd`, every take its own loop, went 2026-09-26.
+    const paint = async (z, startDeg, seed = false) => {
       const buf = T.makeTake(new Float32Array(S.audioCtx.sampleRate * 2), S.audioCtx.sampleRate);
       S.liveRecBuffers.push({ buffer: buf, grainCursor: 0 });
       const idx = S.liveRecBuffers.length - 1;
@@ -2298,20 +2314,18 @@ async function run(rig) {
       for (let k = 0; k < 8; k++) S.particles.push({ lon: z.lon + (startDeg + k * 1.5) * D, lat: z.lat + 9 * D, strokeId: sid, source: 'live',
         liveBufferIdx: idx, grainStart: 0.1 * k, grainDuration: 0.1, color: '#fff', trig: true, _vo: S.currentVoicing });
       S._particleVersion++; S.currentStrokeId = -1;
-      TR.armTrigger(sid); await sleep(250);
+      TR.armTrigger(sid, { loop: seed }); await sleep(250);
       return sid;
     };
     const loopsOf = sid => S.commitSlots.filter(c => c && c.type === 'loop' && c.strokeId === sid);
     try {
-      S.traceMode = 'trace'; S.searchRadiusDeg = 10; S.triggerParams.loopOnEnd = false;
+      S.traceMode = 'trace'; S.searchRadiusDeg = 10;
       for (const [name, reads, muted, start, auto] of [
         ['both grazes', 'both', false, -12, false], ['misses', 'both', false, 15, false], ['grains scope', 'grains', false, -12, false],
-        ['tape scope', 'tape', false, -12, false], ['muted zone', 'both', true, -12, false], ['with autopin', 'both', false, -12, true]]) {
+        ['tape scope', 'tape', false, -12, false], ['muted zone', 'both', true, -12, false], ['as the loop seed', 'both', false, -12, true]]) {
         reset(); H.clear();
         const z = await zoneAt(reads, muted);
-        S.triggerParams.loopOnEnd = auto;
-        const sid = await paint(z, start);
-        S.triggerParams.loopOnEnd = false;
+        const sid = await paint(z, start, auto);
         const ls = loopsOf(sid);
         out[name] = { zone: [z?.reads, z?.mute], loops: ls.length, muted: ls.map(l => !!l.mute),
           anchorDeg: ls.map(l => +(G.angleBetweenSphere(l.anchorLon, l.anchorLat, z.lon, z.lat) / D).toFixed(1)), cloudStill: !!S.commitSlots.find(c => c && c.type === 'cloud'), undo: H.canUndo?.() };
@@ -2319,7 +2333,7 @@ async function run(rig) {
     } finally {
       reset(); H.clear();
       S.particles = keep.parts; S.commitSlots = keep.slots; S.strokeHistory = keep.hist; S.triggers = keep.trigs; S.traceMode = keep.mode;
-      S.searchRadiusDeg = keep.r; S.scanMuted = keep.muted; S.lensReads = keep.reads; S.triggerParams.loopOnEnd = keep.auto;
+      S.searchRadiusDeg = keep.r; S.scanMuted = keep.muted; S.lensReads = keep.reads;
       S.liveRecBuffers = keep.live; S.mouseInCanvas = keep.mic; S.mousePixelX = keep.mx; S.mousePixelY = keep.my;
     }
     return JSON.stringify(out);
@@ -2330,8 +2344,8 @@ async function run(rig) {
   check('a zone scoped to grains catches no tape; scoped to tape it does',
         zn['grains scope'].loops === 0 && zn['tape scope'].loops === 1, JSON.stringify([zn['grains scope'], zn['tape scope']]));
   check('a muted zone pins it muted', zn['muted zone'].loops === 1 && zn['muted zone'].muted[0] === true, JSON.stringify(zn['muted zone']));
-  check('with tape autopin on, the zone adds a second playhead at its touch point',
-        zn['with autopin'].loops === 2 && zn['with autopin'].anchorDeg.every(a => a < 10), JSON.stringify(zn['with autopin']));
+  check('a take: loop seed pinned by the looper, and the zone adds a second playhead at its touch point',
+        zn['as the loop seed'].loops === 2 && zn['as the loop seed'].anchorDeg.every(a => a < 10), JSON.stringify(zn['as the loop seed']));
   const zs = JSON.parse(await rig.evaluate(async () => {
     const T = await import('./js/take.js');
     const { S } = await import('./js/state.js');
@@ -2359,7 +2373,7 @@ async function run(rig) {
       return sid;
     };
     try {
-      S.traceMode = 'trace'; S.searchRadiusDeg = 10; S.triggerParams.loopOnEnd = false;
+      S.traceMode = 'trace'; S.searchRadiusDeg = 10;
       S.mouseInCanvas = true; S.mousePixelX = W * 0.5; S.mousePixelY = Hh * 0.5; await sleep(80);
       const c = SP.screenToLonLat(W * 0.5, Hh * 0.5);
       // 1. A tape-scoped zone over grain claims none of it; a both-scoped one does.

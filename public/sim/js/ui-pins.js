@@ -108,10 +108,12 @@ function _pinName(c) {
 function _selected() {
   return selectedPinSlot(S._frameCursorLon ?? 0, S._frameCursorLat ?? 0);
 }
-/** The loop an overdub take would join — grain.js nearestLoopPin, the same
- *  search the brush itself runs at the press. -1 when no loop is pinned. */
+/** The loop a take would join right now — the one the CURSOR IS ON (Ek,
+ *  2026-09-26: "it's not based on the 'nearest', … it's based on if the
+ *  cursor is on it"), the same answer the press reads (ui-presets.js
+ *  dubTargetAt). -1 when the cursor is on no loop. */
 function _dubMaster() {
-  return S._nearestLoopPin?.(S._frameCursorLon ?? 0, S._frameCursorLat ?? 0) ?? -1;
+  return S._dubTargetSlot?.() ?? -1;
 }
 
 // Cheap change signatures so the 6 Hz timer repaints only when something
@@ -460,6 +462,12 @@ function _layout(force) {
   box.style.minHeight = rows.length ? (SEL_ROOM + y - ROW_GAP + 2 * ROW_GAP) + 'px' : '';
 }
 
+// The selected frame, its word a real element so it can carry the
+// explanation (Ek, 2026-09-26: "tooltip for the Selected and how all that
+// works, and how selected changes based on sort"). The frame itself stays
+// pointer-transparent; only the word takes the hover.
+const SEL_FRAME = '<div class="lyr-sel"><span class="lyr-sel-l" title="selected — the pin in this frame is the one unpin (↑) takes, and the one a controller\'s pin mute, solo and level act on; the sphere highlights it too. Which pin it is follows sort, and the list is ordered the same way, so the top row is always the selected one. near: the pin closest to the cursor — it changes as you move. far: the pin farthest away, the one behind you. old: the first you placed — it stays put while you play">Selected</span></div>';
+
 export function renderPinsRail(selected) {
   const box = document.getElementById('lyrList');
   if (!box) return;
@@ -469,7 +477,7 @@ export function renderPinsRail(selected) {
   // drawn whether or not a pin is in it, labelled, and "nothing pinned" sits
   // inside it until there is a track to hold. style.css .lyr-sel says why.
   if (!held) {
-    box.innerHTML = '<div class="lyr-sel"></div><div class="lyr-empty">nothing pinned</div>';
+    box.innerHTML = SEL_FRAME + '<div class="lyr-empty">nothing pinned</div>';
     box.style.minHeight = (SEL_ROOM + BAR_H + 2 * ROW_GAP) + 'px';
     for (const c of S.commitSlots) if (c) c._railEl = null;
     _lastOrder = '';
@@ -477,7 +485,7 @@ export function renderPinsRail(selected) {
     return;
   }
 
-  let out = '<div class="lyr-sel"></div>';
+  let out = SEL_FRAME;
   for (const c of S.commitSlots) {
     if (!c) continue;
     const g = groupOf(c), nm = _pinName(c);

@@ -376,6 +376,62 @@ function tick() {
   S._refreshSourceTiles?.();
 }
 
+// ── THE ECHO (Ek, 2026-09-26: "a very simple readout of what was pressed,
+// regardless of where from osc, button, keyboard, so we have confidence and
+// also learning that something worked … include the button pressed and the
+// quality (like long x3)"). The footer's left side, after the cursor group:
+// what the action was and the state it left, then the input and its gesture —
+// `slice on  KEY 4 · LONG`. FLOATING ABOVE THE PALETTE, centred, and brief
+// (Ek, the same day: "put it floating above the palette bar, centered and maybe
+// disappear faster it's just a temp check that it worked"); it was two lines
+// in the footer for its first afternoon.
+// It is told by the one dispatch (midi.js `dispatchAction`), by the recogniser
+// for a gesture with nothing on it, and by osc.js for an address nothing
+// handles — those two say so in ochre, the kit's "watch this". Mouse clicks on
+// controls are not here: they call their controls directly, and you saw them.
+// It holds ECHO_HOLD_MS and fades on --m-decay. A continuous input (a CC, a
+// sensor binding) streams, so it never covers a discrete one still showing.
+// Written on the next frame, one write per frame whatever arrives.
+const ECHO_HOLD_MS = 1000;
+const _GESTURE_WORD = { press: 'press', tap: 'tap', long: 'long', xlong: 'extra long', double: '×2', triple: '×3' };
+let _echoEl = null, _echoWhat = null, _echoSrc = null;
+let _echoPending = null, _echoRaf = 0, _echoTimer = 0, _echoShown = null, _echoShownAt = 0;
+function _initEcho() {
+  _echoEl   = document.getElementById('tcEcho');
+  _echoWhat = document.getElementById('tcEchoWhat');
+  _echoSrc  = document.getElementById('tcEchoSrc');
+  if (!_echoEl) return;
+  S._echo = e => {
+    S._echoN = (S._echoN | 0) + 1;
+    const now = performance.now();
+    if (e.cont && _echoShown && !_echoShown.cont && now - _echoShownAt < ECHO_HOLD_MS) return;
+    _echoPending = e;
+    if (!_echoRaf) _echoRaf = requestAnimationFrame(_paintEcho);
+  };
+}
+function _paintEcho() {
+  _echoRaf = 0;
+  const e = _echoPending; _echoPending = null;
+  if (!e) return;
+  _echoShown = e; _echoShownAt = performance.now();
+  _echoWhat.textContent = e.miss ?? [e.what, e.state].filter(Boolean).join(' ');
+  _echoEl.classList.toggle('is-miss', !!e.miss);
+  const f = e.from;
+  // An OSC address keeps its case: `/tape/slice` is a thing you type, and the
+  // caption's capitals would make it a different one.
+  _echoSrc.replaceChildren();
+  if (f?.kind === 'osc') {
+    _echoSrc.append('osc ');
+    const a = document.createElement('span'); a.className = 'pal-echo-addr'; a.textContent = f.src;
+    _echoSrc.append(a);
+  } else if (f?.src) {
+    _echoSrc.textContent = f.g ? `${f.src} · ${_GESTURE_WORD[f.g] ?? f.g}` : f.src;
+  }
+  _echoEl.classList.add('on');
+  clearTimeout(_echoTimer);
+  _echoTimer = setTimeout(() => { _echoEl.classList.remove('on'); _echoShown = null; }, ECHO_HOLD_MS);
+}
+
 export function initTileLayout() {
   if (!document.getElementById('tcBar')) return;
 
@@ -383,6 +439,7 @@ export function initTileLayout() {
   // nothing, which is what a segmented control means (a button would toggle).
   _proxyClick('tcMute', 'muteBtn');
   _initAxisCycles();
+  _initEcho();
   // ── The two rig pills open the SETTINGS WINDOW ────────────────────────
   // Not the sensor modal, and not a mic toggle (Ek, 2026-08-30: "clicking the
   // sensor pill should open the entire settings window and point to the sensor
@@ -469,8 +526,8 @@ export function initTileLayout() {
   }
   document.getElementById('tcSensor')?.addEventListener('click', () => S._openSettings?.('sensors'));
   document.getElementById('tcMic')?.addEventListener('click',    () => S._openSettings?.('audio'));
-  document.getElementById('tcUndo')?.addEventListener('click', () => S._dispatchAction?.('undo', 127));
-  document.getElementById('tcRedo')?.addEventListener('click', () => S._dispatchAction?.('redo', 127));
+  document.getElementById('tcUndo')?.addEventListener('click', () => S._dispatchFrom?.({ src: 'click' }, 'undo', 127));
+  document.getElementById('tcRedo')?.addEventListener('click', () => S._dispatchFrom?.({ src: 'click' }, 'redo', 127));
   document.getElementById('tcTools')?.addEventListener('click', () => {
     // The pill HIDES; it does not take a grain filter off (#292). Painting
     // through a filter is the whole point of one, and the sheet covers the

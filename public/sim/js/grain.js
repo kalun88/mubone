@@ -755,24 +755,8 @@ export function findNearestSeedSlot(refLon, refLat, { skipReleasing = false } = 
 }
 
 
-/** The nearest pinned LOOP to a point — the overdub brush's master
- *  (docs/archive/OVERDUB-PLAN.md § 2: every loop pin is a master, nearest at the
- *  press, no radius). Skips a loop already on its way out. */
-export function nearestLoopPin(refLon, refLat) {
-  let best = -1, bestAng = Infinity;
-  for (let i = 0; i < S.commitSlots.length; i++) {
-    const c = S.commitSlots[i];
-    if (!c || c.type !== 'loop' || isPinLeaving(c)) continue;
-    const ang = angleBetweenSphere(c.anchorLon ?? 0, c.anchorLat ?? 0, refLon, refLat);
-    if (ang < bestAng) { bestAng = ang; best = i; }
-  }
-  return best;
-}
-// Read by the pins rail, which marks the master so you can see which loop a dub
-// would join before you press (Ek, 2026-09-15: "when there's both a cloud and a
-// loop pinned ... i don't know which one is the closest loop"). Through S rather
-// than an import: ui-pins.js already reaches the engine only this way.
-S._nearestLoopPin = nearestLoopPin;
+// (`nearestLoopPin` — the overdub master as the nearest loop anywhere — went
+//  2026-09-26: a take joins the loop the cursor is ON, ui-presets.js dubTargetAt.)
 
 // ── Overdub layers ──────────────────────────────────────────────────────────
 // An overdub is a take folded onto its master's cycle (ui-presets.js
@@ -1745,7 +1729,7 @@ export function scheduleGrains() {
       let vol = _loopGain(seq);
       // A self-killing loop steps down per pass (below); a fader move mid-life
       // must land on the stepped value, not reset the decay.
-      if (seq.passes > 0 && seq._wrapIdx > 0) vol *= 1 - seq._wrapIdx / seq.passes;
+      if (seq.passes > 0 && seq._passN > 0) vol *= 1 - seq._passN / seq.passes;
       if (seq._lastVol !== vol) {
         seq._lastVol = vol;
         try { seq._gainNode.gain.setTargetAtTime(vol, S.audioCtx.currentTime, 0.015); } catch (_) {}
@@ -2075,6 +2059,15 @@ export function scheduleGrains() {
         const wrapIdx = Math.floor(elapsed / loopLen);
         if (seq._wrapIdx === undefined) seq._wrapIdx = wrapIdx;
         else if (wrapIdx > seq._wrapIdx) {
+          // PASSES ARE COUNTED, NOT READ OFF THE CLOCK (Ek, 2026-09-26). The
+          // wrap index is `elapsed / loopLen` from `_startedAt`, which sits
+          // `offset` BUFFER seconds back — at speed above 1× a loop that
+          // started mid-cycle (a phase handover, an anchor) opened on wrap 1,
+          // so its fade began a step down and it played a pass short. And a
+          // rebuilt source (unmute, a recut) starts the index again, which
+          // gave a fading loop its passes back. `_passN` counts the edges
+          // this block sees and nothing resets it.
+          seq._passN = (seq._passN || 0) + (wrapIdx - seq._wrapIdx);
           seq._wrapIdx = wrapIdx;
           if (seq.trigger) {
             S._ledTriggerFire?.();
@@ -2099,10 +2092,10 @@ export function scheduleGrains() {
             // after the last releases the slot AND deletes its paint — the
             // loop was recorded promising to clean up after itself.
             const n = seq.passes | 0;
-            if (wrapIdx >= n) {
+            if (seq._passN >= n) {
               S._selfKillSlot?.(seq);
             } else if (seq._gainNode) {
-              const g = _loopGain(seq) * (1 - wrapIdx / n);
+              const g = _loopGain(seq) * (1 - seq._passN / n);
               seq._lastVol = g;
               try { seq._gainNode.gain.setTargetAtTime(g, actx.currentTime, 0.05); } catch (_) {}
             }

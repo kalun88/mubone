@@ -176,11 +176,14 @@ function _commitTraceStroke(strokeId) {
   // hand its master to the next stroke.
   const overdub = S._overdubTake;
   S._overdubTake = null;
-  // An overdub take with no master SEEDS one (ui-presets.js beginOverdub):
-  // read and cleared here for the same reason, and handed to armTrigger so
-  // the looper hook pins it whatever the tile's own `on end` says.
+  // A take with a SEED — a pin during a line take (pinSplitTake, below): the
+  // part before is pinned as the main loop by the looper hook. Read and
+  // cleared here for the same reason.
   const seed = !!S._overdubSeed;
   S._overdubSeed = false;
+  // A dub that pinned the line it touched (ui-presets.js beginDubByTouch):
+  // the pin and the take are one undo — both carry the press's tag.
+  const dubTag = S._dubTag; S._dubTag = null;
   if (!(strokeId > 0)) return;
   // An aborted gesture (brush.js gestureAbort): the take is thrown away once
   // it has sealed — particles, buffer slot, anything it pinned — through the
@@ -197,6 +200,7 @@ function _commitTraceStroke(strokeId) {
     whenSealed(() => { if (a) { a.undo(); a.dispose?.(); } S._pinsDirty = true; S._syncCommitUI?.(); });
     return;
   }
+  if (dubTag) history.mergeTagged(dubTag);
   // The take seals a few ms after stopLiveRecording(), when the recorder's
   // last bundle lands. Both commits read slot.buffer and would otherwise
   // fall back to the oversized live buffer (audio.js, sealing).

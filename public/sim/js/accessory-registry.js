@@ -207,8 +207,8 @@ function processChannel(ch, volts) {
     // button undoes twice per push.  midi.js draws the same line (it suppresses
     // note-off for triggers); this mirrors it so a button behaves identically
     // whether it's bound here or over MIDI.
-    if (next) S._dispatchAction?.(ch.actionId, 127);
-    else if (actionType(ch.actionId) === 'hold') S._dispatchAction?.(ch.actionId, 0);
+    if (next) _send(ch, 127);
+    else if (actionType(ch.actionId) === 'hold') _send(ch, 0);
     return;
   }
 
@@ -231,7 +231,12 @@ function processChannel(ch, volts) {
   ch._sent = out;
   if (!ch.actionId) return;
   const shaped = scaleControl(out, { curve: ch.curve, lo: ch.outLo, hi: ch.outHi });
-  S._dispatchAction?.(ch.actionId, shaped * 127);   // float — keeps 12-bit
+  _send(ch, shaped * 127);   // float — keeps 12-bit
+}
+// Through the echo (js/ui-echo.js): the footer names the pad that did it.
+function _send(ch, v) {
+  const from = { src: `pad ${_channels.indexOf(ch) + 1}` };
+  if (S._dispatchFrom) S._dispatchFrom(from, ch.actionId, v); else S._dispatchAction?.(ch.actionId, v);
 }
 
 // ── Staleness watchdog ──────────────────────────────────────────────────────

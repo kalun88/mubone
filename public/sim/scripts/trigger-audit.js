@@ -96,11 +96,12 @@ async function run(rig) {
   // before that — `layerGroup` went with the named pin groups on 2026-08-30,
   // a loop joins the loops group by being a loop. No radius: a trigger
   // follows the search radius.
-  check('triggerParams has all 16 fields',
+  check('triggerParams has all 15 fields',
     JSON.stringify(boot.params) === JSON.stringify(
       // `chop` / `chopOn` became `sliceOn` (2026-09-22, the slice switch);
       // `releaseMs` joined the same night (the release fade's own length).
-      ['dubDecay', 'dwell', 'hysteresis', 'loopOnEnd', 'passes', 'pitch',
+      // `loopOnEnd` went 2026-09-26 (take: loop is the looper).
+      ['dubDecay', 'dwell', 'hysteresis', 'passes', 'pitch',
        'rearmMs', 'release', 'releaseMs', 'retrig', 'reverse', 'sliceOn', 'speed', 'start', 'step', 'volume']),
     JSON.stringify(boot.params));
   check('no triggerDefaults — playback params are live, not baked in', boot.noDefaults);
@@ -914,7 +915,7 @@ async function run(rig) {
     const expected = [0, 1, 2, 3, 4, 5].map(k => 0.4 + k * 0.3);
     out.clicks = { found: +((LT.findClickDelayS(mkClicks(0.0273), sr, expected) ?? -1) * 1000).toFixed(2), none: LT.findClickDelayS(mkClicks(null), sr, expected) };
 
-    const keep = { lat: S.latency, gate: S.paintGateThreshold, loopOnEnd: S.triggerParams.loopOnEnd, fx: S.brushFx, slots: S.commitSlots.slice(),
+    const keep = { lat: S.latency, gate: S.paintGateThreshold, fx: S.brushFx, slots: S.commitSlots.slice(),
                    parts: S.particles.slice(), bufs: S.liveRecBuffers.slice(), hist: S.strokeHistory.slice(), trig: (S.triggers || []).slice() };
     if (!S.inputGainNode) S.inputGainNode = actx.createGain();
     if (!S.inputAnalyser) { S.inputAnalyser = actx.createAnalyser(); S.inputAnalyser.fftSize = 256; S.inputGainNode.connect(S.inputAnalyser); }
@@ -961,9 +962,12 @@ async function run(rig) {
       S.particles = S.particles.filter(p => p !== last); S._particleVersion++;
       S._refreshTriggers();
       out.trimmed = t ? { hi: +t.loopEnd.toFixed(3), back: t.loopEnd < sl.edges.endS - 0.02 } : null;
-      // (e) the looper: the first pass starts on the release
+      // (e) the looper: the first pass starts on the release. Take: loop with
+      //     nothing pinned SEEDS — the stroke's end reads `_overdubSeed`, which
+      //     the gesture's press sets (brush.js → beginOverdub); this drives
+      //     the recorder directly, so it sets it as that press would.
       S.paintGateThreshold = 0;
-      S.triggerParams.loopOnEnd = true;
+      S._overdubSeed = true;
       const lp = await recordHit(600);
       await new Promise(r => setTimeout(r, 200));            // the looper's 60 ms + the seal
       const seq = S.commitSlots.find(c => c && c.type === 'loop' && c.strokeId === lp.sid);
@@ -1007,7 +1011,7 @@ async function run(rig) {
         await LT.refreshLatency();
       }
       // (g) a press inside the hold cuts it: the old take seals, the new one starts
-      S.triggerParams.loopOnEnd = false;
+      S._overdubSeed = false;
       await S._startTriggerRecord(); const sidA = S.currentStrokeId; const idxA = S.currentLiveBufferIdx;
       await new Promise(r => setTimeout(r, 300));
       S._stopTriggerRecord();                                  // held open 30 ms …
@@ -1023,7 +1027,7 @@ async function run(rig) {
     } finally {
       osc.stop();
       for (const c of S.commitSlots) if (c?.type === 'loop') G.releaseSeqNodes(c);
-      S.latency = keep.lat; S.paintGateThreshold = keep.gate; S.triggerParams.loopOnEnd = keep.loopOnEnd; S.brushFx = keep.fx;
+      S.latency = keep.lat; S.paintGateThreshold = keep.gate; S._overdubSeed = false; S.brushFx = keep.fx;
       S.commitSlots = keep.slots; S.particles = keep.parts; S.liveRecBuffers = keep.bufs; S.strokeHistory = keep.hist; S.triggers = keep.trig;
       S._particleVersion++;
     }

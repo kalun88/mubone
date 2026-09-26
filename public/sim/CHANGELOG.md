@@ -7,6 +7,48 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.12 alpha — 2026-09-26
+
+**A take dubs onto whatever the cursor touches — no overdub mode — and an echo says what every input did.**
+
+### Fixed
+- A slice plays from its attack to just before the next one: soft slices no longer lose their attack, a
+  one-mark slice is no longer a 20 ms buzz, and a slice whose only mark sat just before the next attack now
+  plays at all.
+- Pinning a slice plays exactly what the cursor played, not a longer piece of the take; the pin's fallback no
+  longer pins lines the cursor can never fire (a slice's dropped pre-roll).
+- `fade out` (passes) works on a loop pinned by hand, not only on autopin; passes are counted at the loop's
+  wraps, so a loop at speed above 1× no longer starts a step quiet and a pass short, and a mute or recut no
+  longer hands a fading loop its passes back.
+
+### Added
+- **Dub by touch**: press record on a line (typically one looping under the cursor) and it is pinned there,
+  carrying on from what you hear, with your take layered onto it — one undo. On a pinned loop or any of its
+  layers, the take layers onto that loop; anywhere else it is a line. The pinned rail's ring marks the loop
+  the cursor is on. ↓ during a take still starts a loop in open space.
+- **The echo**: a pill above the palette for a second — what any key, button, pedal, pad, MIDI or OSC message
+  did, the state it left and how it was pressed (`slice on · KEY 4 · LONG`); ochre `not bound` / `not handled`
+  when it arrived and nothing is mapped.
+- Hover help on the pinned rail's words, its `Pinned` title and the `Selected` frame.
+
+### Changed
+- **`passes` is `fade out`**, on when it fades (`fade out [8 passes] ⏻`).
+- The cursor's radius `fade` is **soft edge**; Settings → Tools' release `Fade` rows are **Release Fade**.
+- Slice never dubs; it is the tape tab's one take switch.
+- **P** is grain's autopin (as cloud) only.
+- k reads `12 marks`, with an `all` switch beside the number; passes is back on the tape tab.
+- The selected pin wears the rail's frame on the sphere, its line ending at the pin; a tape playhead is the
+  glow mark with no box.
+- Rail beds, tabs and card heads have more contrast; the instrument tabs take the card head's shape; the
+  cursor card gets its top inset; a tooltip no longer covers the menu it opened.
+
+### Removed
+- The overdub switch and flag, tape's autopin as loop (every take its own loop, `loopOnEnd`), the
+  nearest-anywhere overdub master, the `O` key's overdub. OSC `/tape/autopin`, `/tape/overdub` and `/autopin`
+  are gone (`/tape/slice` and `/grain/autopin` remain); learned bindings on them are dropped, P moves to grain.
+
+---
+
 ## 5.11 alpha — 2026-09-26
 
 **A knob ridden while painting is recorded into the stroke, tooltips say what things are, and P pins everything.**

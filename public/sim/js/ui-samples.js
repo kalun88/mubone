@@ -77,6 +77,7 @@ function _strokeAction(entry) {
   return {
     kind: 'stroke',
     strokeId: entry.strokeId,
+    tag: S._dubTag ?? null,   // a dub-by-touch press: folded with the pin it made (events.js)
     // Still being painted and recorded: undo reaches past it.
     inProgress: () => entry.strokeId === S.currentStrokeId && S.isRecording && S.isPainting,
     undo() { saved = _undoStroke(entry); },

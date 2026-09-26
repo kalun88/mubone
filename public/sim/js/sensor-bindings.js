@@ -130,7 +130,8 @@ export function tickSensorBindings() {
     const last = _last.get(id);
     if (last != null && Math.abs(v - last) < SEND_EPS) continue;
     _last.set(id, v);
-    S._dispatchAction?.(id, v);
+    // The echo names the sensor that moved it (js/ui-echo.js).
+    if (S._dispatchFrom) S._dispatchFrom({ src: `sensor ${b.sensor} ${b.axis}` }, id, v); else S._dispatchAction?.(id, v);
   }
 }
 

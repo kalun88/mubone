@@ -153,8 +153,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | Address | Args | Description |
 |---|---|---|
 | `/audition` | `i` / *(bang)* | Audition — the cursor plays what it reads through the live tape and grain sheets instead of as baked; nothing is rewritten (1 on, 0 off, bang toggles) |
-| `/grain/autopin` | `i` / *(bang)* | A grain stroke pins itself as a cloud on release |
-| `/autopin` | `i` / *(bang)* | Both engines at once: autopin as loop and as cloud (1 on, 0 off, a bang turns both on unless both are); key `P` |
+| `/grain/autopin` | `i` / *(bang)* | A grain stroke pins itself as a cloud on release; key `P` (`/autopin` went 2026-09-26 — tape has no autopin, a take dubs by touch) |
 | `/grain/walk` | `i` / *(bang)* | A touch walks the stroke instead of reading what is in reach |
 | `/grain/dwell` | `s` / *(bang)* | Under walk: `oneshot` · `loop`; a bang toggles |
 | `/grain/retrig` | `s` / *(bang)* | Under walk: `cut` · `layer`; a bang toggles |
@@ -167,9 +166,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 
 | Address | Args | Description |
 |---|---|---|
-| `/tape/autopin` | `i` / *(bang)* | A tape stroke pins itself as a loop on release |
-| `/tape/overdub` | `i` / *(bang)* | A take records into the nearest pinned loop as a layer |
-| `/tape/slice` | `i` / *(bang)* | Slice — a take is cut into separate triggers at each attack; affects the next take (was `/trigger/chop`) |
+| `/tape/slice` | `i` / *(bang)* | Slice — the next take is cut into a line per attack and never dubs. Off, a take started on a loop or a line layers onto it (dub by touch; `/tape/autopin` and `/tape/overdub` are gone) |
 | `/tape/dwell` | `s` / *(bang)* | `oneshot` · `loop` · `grain`; a bang cycles |
 | `/tape/retrig` | `s` / *(bang)* | `cut` · `layer`; a bang toggles |
 | `/tape/voice` | `i` / *(bang)* | Take a tape voice by its row number on the tab; 127 or a bang = next |

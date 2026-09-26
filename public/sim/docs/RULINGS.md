@@ -2224,6 +2224,22 @@ playable period; the log scale keeps 1–10 fine. Gone with the switch: `grainKA
 row, `k_all` (`/search/fill`), the frames' and seeds' `kAllMode` (a cloud's k is in its frozen
 block). Nothing stored has to move: k and fill were the lens's, and the lens's block is session-only
 (a fresh boot reads the default). The `/search/k` address and the `grain_k` pot reach 0 the same way.
+**On the rail, all is a switch beside the number (Ek, 2026-09-26: "when k is 0 it's all … GUI wise
+it's awk").** The engine, OSC and the pot keep 0 = all; the ROW changes. `k [live] [n] all ⏻`: the
+number runs 1–100 and stops at 1 (`_knobRange('k')`), all on hides it behind an empty slot of the
+same width (never dimmed, nothing moves), and the switch remembers the last k (`_kLast`, 8 before
+there is one) so all off gives it back. Double-click on the number resets to the default, which is
+all. Ableton's Warp beside the BPM, Figma's Auto beside a width. The same evening it became one table,
+`ZERO_ROW` (tiles.js), and `passes` (0 = ∞) came back to the tape tab in that shape — `passes [n×] ∞ ⏻`
+— having had no surface since the piles round. k's number carries its unit, `12 marks`: "is it 4
+marks? 4 grain particles?" A row never repeats its label as a unit, so passes keeps `×`.
+**`passes` is FADE OUT, and on means it fades (Ek, 2026-09-26: "if it's on, that should mean the
+autofade … it's a special use so it should be turned on to use it").** The row reads `fade out
+[8 passes] ⏻`: the switch is on when the count is (`ZERO_ROW.passes.onAtZero: false`), off is 0 and
+the loop stays. Boss's RC loopers name the same stop FADE OUT. The engine, the piece and the
+param id keep `passes`. A loop pinned by hand takes it at the pin (`createSeqFromStroke`), not only
+autopin's, and the passes are COUNTED at the wrap edges (`seq._passN`), never read off the clock:
+the clock started a loop that began mid-cycle above 1× on wrap 1, and a rebuilt source restarted it.
 
 **GLOBAL MODES: every instrument's standing answers in one list, above the tool creator** (Ek,
 2026-09-22: "maybe the modes should be taken out completely and put under lenses as GLOBAL MODES …
@@ -2693,4 +2709,70 @@ pedal), and so does a cloud pinned under audition (its one frozen voicing is the
 replaced a voicing per moved mark (2026-08-29): a sweep minted one per deposit, each its own worklet voice
 and clock — up to 16× the density under the cursor, the voice cap silencing an arbitrary rest, and
 `S.voicings` growing without end. `pins-audit` § S asserts one voicing, the overrides, one region, the round trip.
+
+## The echo says what every input did
+
+**The footer's echo is the last thing any input did** (Ek, 2026-09-26: "a very simple readout of what
+was pressed, regardless of where from osc, button, keyboard … include the button pressed and the
+quality"). One pill floating centred above the palette, a second then gone (Ek, the same day: "a
+temp check that it worked"; it was two lines in the footer for an afternoon): the action and the
+state it left (`slice on`), then the input and its gesture (`KEY 4 · LONG`, `OSC /tape/slice`, `PAD 3`,
+`CC 7 CH1`). It is told at the ONE dispatch
+(`midi.js dispatchAction`, the state words in `ACTION_STATE`), the source by whoever called
+(`S._echoFrom`, `S._dispatchFrom`). A button or note with nothing bound, and an OSC address nothing
+handles, say so in ochre — "it did not work" is not "it never arrived". Mouse clicks on controls are
+not echoed (you saw them), nor keys with nothing bound (that would echo typing), nor a hold's
+release (it would cover its own press). A continuous input never covers a discrete one still
+showing. Painted by `tile-layout.js _initEcho`, one write per frame; it lives in `#paletteDock` beside
+the bed, which tiles.js replaces alone; `align-audit` holds it centred over the palette, 24 tall, 8 above.
+
+## Slice and the looper are exclusive
+
+**Slice, and tape's autopin and overdub, answer one question — what a take becomes when you let
+go — so each turns the other side off** (Ek, 2026-09-26: "slice makes a bunch of little strokes.
+should autopin and overdub be not possible?"). Slice makes a kit of pieces the cursor plays; autopin
+(loop) and overdub make one loop. Both on, the looper hook pinned the FIRST slice — or a dropped
+pre-roll — as the loop. Slice on takes tape's autopin and overdub off; either of those on takes slice
+off (`trigger.js setSliceOn`, `tiles.js setAutoPin` / `setOverdub`), Ableton's exclusive solo; the
+echo names what else moved (`slice on · autopin off`). Grain's autopin is untouched. `armTrigger`
+never cuts a take that becomes a loop, for a stored block that arrives both-on. Overdub with nothing
+pinned still lays the base loop: every looper pedal's first press on an empty looper records it.
+
+**…and on the screen they are ONE capsule, `take  line | slice | loop | dub`** (Ek, 2026-09-26: "is it
+worth trying to do a gui innovation to make the exclusivity clearer, like the scope in cursor?").
+Once slice excluded the other two there were four answers, not eight: autopin + overdub IS overdub
+(with a loop pinned the take layers and autopin never acts; with none the dub lays the base loop), so
+three switches became the kit's `which one` — the scope's shape. `tiles.js setTakeMode` is the one
+writer of the three engine flags underneath; `takeMode()` reads them in armTrigger's precedence
+(dub › loop › slice › line) and boot writes that answer back. The table is a segment per action —
+`take_line` · `take_slice` · `take_loop` · `take_dub` (O) — each selecting its mode and, pressed on it,
+going back to line, so a key stays two-state; `/tape/take s` sets by name. P is take: loop plus
+grain's cloud, and off returns take to line only from loop. The old ids migrate (`_RENAMED_IDS`).
+
+**…and loop IS the looper: three answers, not four** (Ek, the same evening: "4 options is a lot …
+loop mode means create a new base layer if none exists, or overdub to an existing nearest one").
+Loop and dub differed only with a loop already pinned — loop made each take a NEW loop, dub layered
+it onto the nearest — and every looper pedal answers dub's way. So `take  line | slice | loop`, loop
+being the overdub flag: nothing pinned, the take lays the loop; after that every take layers onto
+the NEAREST pinned loop, so pointing chooses — no screen needed. A new base loop is its own motion:
+record in line, pin it while you are on it. Autopin-as-loop — every take its own loop,
+`triggerParams.loopOnEnd`, the #244 looper contract — is RETIRED (Ek: "we should retire that
+option"): the flag, the tape tool's `onEnd` param and its sheet switch are gone, the looper hook pins
+only take: loop's seed, and a stored value is simply not read; `take_dub` migrates to
+`take_loop`, which **L** selects (Ek: "L should be the new O since we don't really use the term overdub
+ in the GUI anymore"): L flips loop and line, slice is clicked, and L's sticker sits after the row's
+label; the tape tile's flag wears loop's ring, not the O. Spacebar never reads the stroke under the
+cursor to decide this.
+
+**…and then there is no mode at all: a take DUBS BY TOUCH** (Ek, the same night: "if i'm listening
+to it loop, if i record again it automatically overdubs to that one … it puts a pin on that stroke
+automatically … touching for sure"; "there's no 'nearest' overdub selector … it's based on if the
+cursor is on it"). The press reads what the cursor is ON (`ui-presets.js dubTargetAt`): a pinned
+loop's own line or any of its layers' marks → the take layers onto that loop; an unpinned line (the
+gate's `_inside`, the pin key's own test) → it is pinned there, carrying the phase you hear, and the
+take layers onto it, pin and take one undo (`_dubTag`, folded at the release); nothing → a plain
+line. Scope `grains` touches no tape; slice on never dubs, so slice is a switch again and the take
+capsule, `L`, the overdub flag (`S.overdub`), `nearestLoopPin` and tape's autopin are gone — `P` is
+grain's autopin. The pinned rail's ring marks the loop the cursor is on. ↓ during a take in open
+space still makes the phrase so far a loop and dubs the rest (the one-press new loop).
 

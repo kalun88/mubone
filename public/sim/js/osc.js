@@ -67,7 +67,7 @@ function _bangOrOnOff(values) {
 // a bang flips. `/grain/filter` read the int before this list knew it, so
 // an explicit 0 there was dropped as a release edge and never turned it off.
 const _VALUED_TRIGGERS = new Set([
-  '/tape/slice', '/audition', '/autopin', '/tape/autopin', '/tape/overdub', '/tape/reverse',
+  '/tape/slice', '/audition', '/tape/reverse',
   '/grain/autopin', '/grain/walk', '/grain/link', '/grain/filter', '/erase/bystroke',
   '/pins/sel/mute', '/pins/sel/solo', '/pins/clouds/mute', '/pins/clouds/solo', '/pins/loops/mute', '/pins/loops/solo',
   '/rail/tools', '/rail/pins', '/settings', '/spatial/lock',
@@ -318,6 +318,28 @@ export function handleOSC(rawAddress, values) {
     }
   }
 
+  // THE ECHO (js/ui-echo.js, 2026-09-26): the message is the source of what it
+  // dispatches, and an address nothing handles says so — the difference between
+  // "it did not work" and "it never arrived". A handled address that sets its
+  // value directly rather than through an action echoes itself. The sensor
+  // streams returned above and never reach this.
+  const echoN = S._echoN | 0;
+  const prevFrom = S._echoFrom;
+  S._echoFrom = { kind: 'osc', src: address };
+  let handled;
+  try { handled = _route(address, values) !== false; }
+  finally { S._echoFrom = prevFrom; }
+  if (!handled) S._echo?.({ miss: 'not handled', from: { kind: 'osc', src: address } });
+  else if ((S._echoN | 0) === echoN) {
+    const v = values?.[0];
+    S._echo?.({ what: address.slice(1).split('/').join(' '),
+                state: typeof v === 'number' ? String(Math.round(v * 100) / 100) : (v != null ? String(v) : null),
+                from: { kind: 'osc', src: address }, cont: typeof v === 'number' });
+  }
+}
+
+/** The address namespace — returns false for an address nothing handles. */
+function _route(address, values) {
   // ── Grain parameters ───────────────────────────────────────────────────────
   // Writing to S.grainOverrides is picked up by grain.js on the next scheduler tick.
   // A null override means "use the preset value" — sending a param value sets the
@@ -495,9 +517,6 @@ export function handleOSC(rawAddress, values) {
     // A switch: int sets, bang flips. A capsule: string sets, bang cycles.
     case '/tape/slice':      S._dispatchAction?.('tape_slice', _bangOrOnOff(values)); break;
     case '/audition':        S._dispatchAction?.('audition', _bangOrOnOff(values)); break;
-    case '/autopin':         S._dispatchAction?.('autopin', _bangOrOnOff(values)); break;
-    case '/tape/autopin':    S._dispatchAction?.('tape_autopin', _bangOrOnOff(values)); break;
-    case '/tape/overdub':    S._dispatchAction?.('tape_overdub', _bangOrOnOff(values)); break;
     case '/tape/dwell':      S._dispatchAction?.('tape_dwell', _bangOrStr(values)); break;
     case '/tape/retrig':     S._dispatchAction?.('tape_retrig', _bangOrStr(values)); break;
     case '/tape/step':       S._dispatchAction?.('tape_step', _bangOrStr(values)); break;
@@ -697,6 +716,7 @@ export function handleOSC(rawAddress, values) {
 
     default: {
       DEBUG && console.log(`[osc] unhandled: ${address}`, values);
+      return false;
     }
   }
 }

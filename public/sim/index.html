@@ -80,7 +80,7 @@
     <div class="top-bar-left">
       <div class="top-bar-brand">
         <span class="top-bar-logo">mubone</span>
-        <span class="top-bar-version">5.11 alpha</span>
+        <span class="top-bar-version">5.12 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="mu-btn--bare top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -221,7 +221,7 @@
          wordmark's own colour without 9KB of path data in this file. -->
     <div class="tc-brand">
       <img class="tc-mark" src="logo/mark-light.svg" alt="" aria-hidden="true" width="18" height="18">
-      <b>mubone</b> <i>5.11</i>
+      <b>mubone</b> <i>5.12</i>
       <!-- The open piece, in the version's own engraved lettering. The unsaved
            mark is a DOT that is there or is not (js/piece.js) — nothing here is
            dimmed to mean anything. Empty and hidden until there is a piece. -->
@@ -397,7 +397,9 @@
          track listed") — only the typeable max survived, in the header. -->
     <aside class="tc-rail" id="tcRail" aria-label="pinned">
       <div class="lyr-bar">
-        <span class="lyr-title">Pinned</span>
+        <!-- What a pin IS, on the word (Ek, 2026-09-26: "hovering over pinned
+             should explain how pins work"). -->
+        <span class="lyr-title" title="pinned — a pin is a copy of the cursor, frozen where it stood: every line it was on becomes a loop, and the grains it was reading become a cloud, each playing on its own. What is pinned leaves the cursor: it no longer fires a pinned line or plays grains inside a pinned cloud, so nothing sounds twice — even while the pin is muted. Pin with ↓, unpin the selected (top) one with ↑">Pinned</span>
         <span class="lyr-bar-r">
           <!-- The count, and the max made typeable — the same number Settings →
                Pins holds on a slider, through S.commitSlotCount. -->
@@ -438,7 +440,7 @@
            of row. -->
       <div class="lyr-modes" id="lyrModes">
         <div class="mrow">
-          <span class="mrow-l">follow</span><span class="row-binds" data-binds="pins_follow"></span>
+          <span class="mrow-l" title="follow — the faders follow the cursor: the nearest pin is loudest and the rest hand over by distance; off, every pin plays at full">follow</span><span class="row-binds" data-binds="pins_follow"></span>
           <!-- The switch, in the SENSOR hue: what it turns on is the body driving
                the faders. -->
           <button type="button" class="ds-sw lyr-sw" id="lyrFollow" aria-pressed="false" style="--c:var(--accent-sensor)"
@@ -447,7 +449,7 @@
           </button>
         </div>
         <div class="mrow">
-          <span class="mrow-l">sort</span>
+          <span class="mrow-l" title="sort — the order of the tracks below, which is also which pin is selected: row one is the pin unpin (↑) takes">sort</span>
           <!-- Sort IS the selected pin (S.selectionMode): row one is what unpin takes.
                The sheet's capsule (`.opt .seg`, 24), the one the lens tab's rows
                wear — not the chrome's 28 `.seg-pill` (2026-09-22 night). -->
@@ -458,7 +460,7 @@
           </span></span>
         </div>
         <div class="mrow">
-          <span class="mrow-l">when full</span>
+          <span class="mrow-l" title="when full — what a new pin does when every slot is taken: refused, or the oldest or the nearest pin makes room">when full</span>
           <!-- WHEN FULL, moved here from Settings → Pins (Ek, 2026-09-25): what a
                pin does with every slot taken is a performance answer. Writes
                S.commitOverflow and the cabinet seg (ui-pins.js). -->
@@ -474,7 +476,7 @@
              row keeps its control — a rectangle, because it is an action. It was
              a row of its own at the rail's foot, under a PIN title. -->
         <div class="mrow">
-          <span class="mrow-l">unpin all</span><span class="row-binds" data-binds="commit_clear"></span>
+          <span class="mrow-l" title="unpin all — release every pin, clouds and loops; what they held goes back to the cursor">unpin all</span><span class="row-binds" data-binds="commit_clear"></span>
           <button type="button" class="mu-btn mu-btn--danger lyr-unpin" id="lyrUnpinAll" data-pin="unpinall"
                   title="unpin all — release every pin, clouds and loops"></button>
         </div>
@@ -494,7 +496,12 @@
          instrument, so it is on the instrument's surface rather than in the
          chrome; the dock itself is pointer-transparent so the gaps still
          paint. js/tiles.js renders it; the library is #tileBar. -->
-    <div class="palette-dock" id="paletteDock" data-zone="palette" aria-label="palette"></div>
+    <div class="palette-dock" id="paletteDock" data-zone="palette" aria-label="palette">
+      <!-- THE ECHO (js/tile-layout.js _initEcho): the last thing any input did,
+           floating centred above the palette for a moment. tiles.js replaces
+           only #paletteBed beside it, so it survives every palette render. -->
+      <div class="pal-echo" id="tcEcho" aria-hidden="true"><span class="pal-echo-what" id="tcEchoWhat"></span><span class="pal-echo-src" id="tcEchoSrc"></span></div>
+    </div>
 
     <!-- THE TOOL RAIL (#258) — Ableton's left browser, as the library.
          A LIST, not a strip: every tool the app has, grouped, one row each.
@@ -745,7 +752,7 @@
                    they belong alongside radius / recency / fill). IDs kept
                    so ui-search.js bindings continue to work. -->
               <div class="grain-row" title="radius fade — attenuate grains by distance from cursor centre&#10;ON: smooth volume fade at radius edge (no abrupt silence)&#10;OFF: all grains in radius play at full volume">
-                <span class="grain-label">fade</span>
+                <span class="grain-label">soft edge</span>
                 <div class="grain-seg" id="radiusFadeSeg">
                   <button class="grain-seg-btn" data-fade="on" title="on — volume fades with distance from cursor">on</button>
                   <button class="grain-seg-btn active" data-fade="off" title="off — all grains in radius at full volume">off</button>
@@ -1984,7 +1991,7 @@
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Falloff</span>
-          <span class="set-row-desc">With fade on, how steeply grains fade toward the radius's edge. 0% is linear.</span>
+          <span class="set-row-desc">With soft edge on, how steeply grains fade toward the radius's edge. 0% is linear.</span>
         </div>
         <div class="set-ctl set-ctl--slider"><span class="set-slot" id="setFadeCurveSlot"></span></div>
       </div>
@@ -2008,7 +2015,7 @@
       </div>
       <div class="set-row">
         <div class="set-row-text">
-          <span class="set-row-title">Fade</span>
+          <span class="set-row-title">Release Fade</span>
           <span class="set-row-desc">How long a take's fade takes, with release set to fade.</span>
         </div>
         <div class="set-ctl set-ctl--slider">
@@ -2074,7 +2081,7 @@
       </div>
       <div class="set-row">
         <div class="set-row-text">
-          <span class="set-row-title">Fade</span>
+          <span class="set-row-title">Release Fade</span>
           <span class="set-row-desc">How long a walker's fade takes, with release set to fade.</span>
         </div>
         <div class="set-ctl set-ctl--slider">

@@ -267,6 +267,7 @@ function buildManifest(audio, { particleWitness = false } = {}) {
       reverse:  !!t.reverse,
       pitch:    t.pitch ?? 0,
       endCap:   t.endCap,   // a slice's cut at the next onset; absent on a plain line
+      slice:    t.slice,    // its onsets and the marks they belong to (trigger.js _applyCluster)
     })),
 
     // ── Misc live state ──
@@ -655,13 +656,10 @@ function applyLiveState(live) {
     if (['cut', 'layer'].includes(f.retrig))            tp.retrig  = f.retrig;
     if (typeof f.chop === 'number')    tp.chop   = Math.max(0, Math.min(2000, f.chop));
     if (typeof f.chopOn === 'boolean') tp.chopOn = f.chopOn;
-    // These two were written into every piece and read back from none of it —
-    // the block's other nine were all here (2026-09-15). `passes` is the
-    // self-killing loop's count (#239) and `loopOnEnd` the looper CONTRACT
-    // (#244), so a piece saved with a tape tile set to loop-on-end reopened
-    // as a plain armed line. Same bounds the tile's own param carries.
+    // `passes` was written into every piece and read back from none of it
+    // (2026-09-15): the self-killing loop's count (#239). Same bounds the
+    // tile's own param carries. (`loopOnEnd` beside it went 2026-09-26.)
     if (typeof f.passes === 'number')     tp.passes    = Math.max(0, Math.min(8, Math.round(f.passes)));
-    if (typeof f.loopOnEnd === 'boolean') tp.loopOnEnd = f.loopOnEnd;
     if (typeof f.reverse === 'boolean')   tp.reverse   = f.reverse;
     if (typeof f.pitch === 'number')      tp.pitch     = Math.max(-2400, Math.min(2400, f.pitch));
     if (typeof f.dubDecay === 'number')   tp.dubDecay  = Math.max(0, Math.min(100, f.dubDecay));

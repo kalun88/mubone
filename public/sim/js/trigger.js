@@ -201,6 +201,20 @@ function _applyCluster(t, ps, buffer) {
   hi = Math.min(hi, buffer.duration);
   // A slice: stop short of the next onset, with room for the end fade.
   if (t.endCap != null) hi = Math.min(hi, t.endCap - SLICE_END_LEAD_S);
+  // …AND A SLICE IS ONSET TO ONSET, NOT MARK TO MARK (Ek, 2026-09-26: a slice
+  // that showed as a line was silent under the cursor and sounded once pinned;
+  // a dot looped fast and its pin played a longer piece). The paint gate
+  // leaves a soft slice one or two marks, so the marks made its region: the
+  // attack before the first mark was cut off, one mark was a 20 ms buzz, and
+  // a mark in the last 12 ms before the next onset left `hi <= lo` — no
+  // trigger at all. The onsets are the cut, the way `edges` are the button's
+  // below: an end the marks still reach (erase has not trimmed it) takes its
+  // onset.
+  const sl = t.slice;
+  if (sl) {
+    if (sl.lo != null && lo <= sl.marks[0] + 1e-6) lo = sl.lo;
+    if (sl.hi != null && hiMark >= sl.marks[1] - 1e-6) hi = sl.hi - SLICE_END_LEAD_S;
+  }
   // THE BUTTON, NOT THE MARKS (Ek, 2026-09-04: "the loop playback should
   // follow my human spacebar or click or button; the paint marks are just a
   // visual helper"). Marks sit on a 50 ms tick, so a region read off them is
@@ -312,6 +326,7 @@ function rebuildTrigger(t) {
     for (let r = 1; r < runs.length; r++) {
       const sib = _newTriggerShell(ids[r], /* audition */ false);
       sib.endCap = t.endCap;   // an upper clamp only: harmless below the cut, right at it
+      sib.slice  = t.slice;    // its tail still reaches the next onset; its head is marks
       if (_applyCluster(sib, runs[r], buffer)) S.triggers.push(sib);
     }
     S._syncTriggerUI?.();
@@ -513,31 +528,43 @@ function _sliceStroke(strokeId) {
   // trigger is a view over marks and a mark-less span is nothing to arm.
   const runs = [];
   const ends = [];   // per run: the onset that closed it (the next hit), or t1
+  const cuts = [];   // per run: { lo, hi } — the onsets on either side, null where there is none
   let oi = 0;
   let run = [];
   let prevGS = -Infinity;
+  // The onsets bounding the run the walker is in. Before the first onset
+  // (oi 0 with the mark ahead of it) the head is the take's, left to marks;
+  // after the last there is no next hit, and the tail is left to marks too.
+  const _cut = (i) => ({
+    lo: run[0].grainStart >= onsets[i] - 1e-6 ? onsets[i] : null,
+    hi: onsets[i + 1] ?? null,
+  });
   for (const p of ps) {
     // A grainStart rewind is a pass seam of a looping sample stroke (#247):
     // the new pass re-crosses every onset from the top, so close the run and
     // rewind the boundary walker — each drawn copy of an attack slices as
     // its own hit.
     if (p.grainStart < prevGS - 1e-6) {
-      if (run.length) { runs.push(run); ends.push(onsets[oi + 1] ?? t1); }
+      if (run.length) { runs.push(run); ends.push(onsets[oi + 1] ?? t1); cuts.push(_cut(oi)); }
       run = [];
       oi = 0;
     }
     prevGS = p.grainStart;
     while (oi + 1 < onsets.length && p.grainStart >= onsets[oi + 1]) {
-      if (run.length) { runs.push(run); ends.push(onsets[oi + 1]); }
+      if (run.length) { runs.push(run); ends.push(onsets[oi + 1]); cuts.push(_cut(oi)); }
       run = [];
       oi++;
     }
     run.push(p);
   }
-  if (run.length) { runs.push(run); ends.push(onsets[oi + 1] ?? t1); }
+  if (run.length) { runs.push(run); ends.push(onsets[oi + 1] ?? t1); cuts.push(_cut(oi)); }
   if (runs.length <= 1) return [strokeId];
   const ids = _assignSegmentIds(strokeId, runs);
-  _pendingEnds = new Map(ids.map((sid, r) => [sid, ends[r]]));
+  _pendingEnds = new Map(ids.map((sid, r) => [sid, {
+    end: ends[r],
+    slice: { lo: cuts[r].lo, hi: cuts[r].hi,
+             marks: [runs[r][0].grainStart, runs[r][runs[r].length - 1].grainStart] },
+  }]));
 
   // Pre-roll rule: the span before the FIRST onset is usually the player
   // pressing record before playing. If that leading run is ≥10 dB quieter
@@ -555,7 +582,12 @@ function _sliceStroke(strokeId) {
       return 20 * Math.log10(pk + 1e-6);
     };
     const leadEnd = runs[1][0].grainStart;
-    if (peakDb(runs[0][0].grainStart, leadEnd) < peakDb(t0, t1) - 12) return ids.slice(1);
+    if (peakDb(runs[0][0].grainStart, leadEnd) < peakDb(t0, t1) - 12) {
+      // Marked, so the pin key's fallback does not pin what no cursor can fire
+      // (ui-presets.js _nearestTrigParticle).
+      for (const p of runs[0]) p.preroll = true;
+      return ids.slice(1);
+    }
   }
   return ids;
 }
@@ -584,13 +616,14 @@ export function armTrigger(strokeId, { plain = false, loop = false } = {}) {
   // it is `triggerParams.sliceOn` now — a performance switch on the tape tab,
   // because cutting a take at its attacks is something you decide while playing
   // rather than a different tool you pick up.
-  const ids = plain || !tp.sliceOn ? [strokeId] : _sliceStroke(strokeId);
+  // A take that becomes a loop is never cut: `loop` is a pin-during-take seed.
+  const ids = plain || loop || !tp.sliceOn ? [strokeId] : _sliceStroke(strokeId);
 
   let first = null;
   for (const sid of ids) {
     const t = _newTriggerShell(sid, /* audition */ !plain);
-    const end = _pendingEnds?.get(sid);
-    if (end != null) t.endCap = end;   // a slice ends at the next onset
+    const cut = _pendingEnds?.get(sid);
+    if (cut) { t.endCap = cut.end; t.slice = cut.slice; }   // a slice ends at the next onset
     // A one-particle segment has no span worth playing; skip rather than make a
     // trigger that fires a click.
     if (!rebuildTrigger(t)) continue;
@@ -702,6 +735,7 @@ export function restoreTrigger(c) {
   t.direction = t.reverse ? -1 : 1;
   t.pitch  = c.pitch ?? d.pitch ?? 0;
   if (typeof c.endCap === 'number') t.endCap = c.endCap;   // a slice's cut
+  if (c.slice?.marks) t.slice = c.slice;                   // …and its onsets
   if (c.color) t.color = c.color;
   t.grainParams.volume = c.volume ?? d.volume ?? 1;
   if (!rebuildTrigger(t)) return null;
@@ -936,6 +970,15 @@ export function ledTriggerFire() {
  * Takes effect on the NEXT take recorded; cutting is a record-time act and does
  * not retroactively divide what is already on the sphere.
  */
+// SLICE AND THE LOOPER ARE EXCLUSIVE (Ek, 2026-09-26: "slice makes a bunch of
+// little strokes. should autopin and overdub be not possible? probably it's not
+// meant for that"). They answer one question — what a take becomes when you let
+// go: a kit of pieces the cursor plays, or one loop. With both on, the looper
+// hook pinned the FIRST slice (or a dropped pre-roll) and called it the loop.
+// Later the same evening there was no looper mode left to exclude: a take dubs by touch
+// (ui-presets.js beginDubByTouch), and slice on is simply the one case that
+// never dubs (brush.js asks only with slice off). armTrigger never cuts a
+// pin-during-take seed.
 export function setSliceOn(on) {
   const next = !!on;
   if (next === S.triggerParams.sliceOn) return;

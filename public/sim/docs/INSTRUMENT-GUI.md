@@ -197,7 +197,7 @@ playhead, the dB readout on a chip of the rail ground — then M and S (the 18px
 goes sits in the box, so the material never changes width; the bus lines use the same columns, so
 every box shares one left and one right edge, and every row, bus line and the mode bar's CARD
 another. **The mode bar sits on a card since 2026-09-22 night** — the tool rail's
-own `#instrPanel` design: `--surface-1`, `--r-hand`, 12 in from either rail edge, 12 of air on all
+own `#instrPanel` design: `--surface-3` (was `--surface-1` until 2026-09-26: "i barely notice it"), `--r-hand`, 12 in from either rail edge, 12 of air on all
 four sides inside, `--sp-6` under the bar — and its rows are the tool rail's `.mrow`: one setting
 per row (follow · sort; the curve went to Settings → Pins on 2026-09-23), 30 tall, the name in `.mrow-l` at card + 12, the control flush
 right, a yes/no the switch and a which-one the sheet's `.opt .seg` at 24 (not the chrome's 28

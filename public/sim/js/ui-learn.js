@@ -159,6 +159,16 @@
 
     let left = rect.left + rect.width / 2 - tipRect.width / 2;
     let top = rect.bottom + 6;
+    // A MENU ROW's tip goes BESIDE the menu, never under the row: under it, it
+    // covers the rows below — the ones you are about to pick from (Ek,
+    // 2026-09-26, the camera menu). Left of the menu, or right if no room.
+    const menu = el.closest('[role="menu"]');
+    if (menu) {
+      const m = menu.getBoundingClientRect();
+      left = m.left - tipRect.width - 6;
+      if (left < 4) left = m.right + 6;
+      top = rect.top + rect.height / 2 - tipRect.height / 2;
+    }
 
     // Keep on screen
     if (left < 4) left = 4;
@@ -180,10 +190,21 @@
   }
 
   // ── Delegated hover listeners ──────────────────────────────────────────
+  // A CLICK DISMISSES THE TIP, and it stays gone until the pointer leaves
+  // that control (Ek, 2026-09-26: the camera button's tip sat on the menu its
+  // click opened). The convention of every OS toolbar: once you act, the
+  // explanation is in the way. A control with its menu open shows none.
+  let pressed = null;
+  function onPointerDown(e) {
+    pressed = e.target.closest?.('[data-title]') ?? null;
+    hide();
+  }
+
   function onPointerOver(e) {
     const el = e.target.closest('[data-title]');
     if (!el) return;
     if (el === currentTarget) return;
+    if (el === pressed || el.getAttribute('aria-expanded') === 'true') return;
 
     hide(); // clear any pending
 
@@ -197,6 +218,7 @@
 
   function onPointerOut(e) {
     const el = e.target.closest('[data-title]');
+    if (el && el === pressed && !el.contains(e.relatedTarget)) pressed = null;
     if (el && el === currentTarget) hide();
     // Also clear pending timer if they left before delay
     if (el) { clearTimeout(hoverTimer); hoverTimer = null; }
@@ -204,6 +226,7 @@
 
   document.addEventListener('pointerover', onPointerOver);
   document.addEventListener('pointerout', onPointerOut);
+  document.addEventListener('pointerdown', onPointerDown, true);
 
   // ── Toggle ─────────────────────────────────────────────────────────────
   const btn = document.getElementById('learnModeBtn');

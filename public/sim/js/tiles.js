@@ -126,11 +126,9 @@ const G = {
   // top-right ("same width line as the line logo but a circle with a small
   // space in the circle's line"). Both are their engine's brush shape closed
   // into a ring: what they pin on release. The pin mark says the same thing.
-  // OVERDUB IS AN O (Ek, 2026-09-23: "make the symbol just a white circle,
-  // like an O for overdub"): a plain ring, the letter it stands for. It flags
-  // the tape tile, and the same ring circles the number of the loop a dub
-  // would join in the pinned rail (css .lyr-trk.dub .lyr-num).
-  overdub: '<circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2.2"/>',
+  // (OVERDUB'S O, and the take capsule's slice and loop glyphs, went
+  //  2026-09-26 with the modes they drew. The pinned rail still circles the
+  //  number of the loop a take would join — css .lyr-trk.dub .lyr-num.)
   // AUDITION (Ek, 2026-09-24): headphones — the monitor's own sign, what every
   // DAW draws for "cue this without committing it". It flags the CURSOR tile
   // while the switch is on, and the reticle on the sphere wears the same band
@@ -734,6 +732,44 @@ const _instruments = () => S.samplerEnabled ? INSTRUMENTS : INSTRUMENTS.filter(i
 S._samplerAvailChanged = () => render();
 const LS_INSTR = 'mubone_instrument';
 let _instr = 'tape';
+// ── ZERO IS ALL, AND THE ROW SAYS SO WITH A SWITCH (Ek, 2026-09-26) ──────
+// A param whose 0 means "no limit" — k (all marks), passes (off: the loop
+// stays) — keeps that 0 in the engine, OSC and files; on the rail its row is
+// the number beside a switch: `k [n marks] all ⏻`. The number runs from 1 and
+// never reaches 0, at 0 the number hides behind an empty slot of its width, and
+// the switch gives back `last` — the last value that was not 0, from any
+// source — or `fallback` before there is one. `cap` names what a click
+// captures into: the lens for k, the open tab's tool for passes.
+const ZERO_ROW = {
+  k: {
+    word: 'all', fallback: 8, last: null,
+    get: () => S.grainOverrides.k ?? gp().k,
+    set: v => S.setSearchK(v),
+    cap: () => LENS_ID,
+    tip: (on, n) => on
+      ? `ON — the cursor plays every mark in reach. Click to cap it at ${n} mark${n === 1 ? '' : 's'}`
+      : 'OFF — the cursor plays only the k marks nearest it. Click to play every mark in reach',
+  },
+  // FADE OUT IS ON WHEN IT FADES (Ek, 2026-09-26: "if it's on, that should
+  // mean the autofade, right now it's the other way around … it's a special
+  // use so it should be turned on to use it"). `onAtZero: false` flips the
+  // switch's reading: on is a count, off is 0 — the loop stays. Boss's RC
+  // loopers call the same stop `FADE OUT`.
+  passes: {
+    word: '', fallback: 8, last: null, onAtZero: false,
+    get: () => S.triggerParams.passes | 0,
+    set: v => { S.triggerParams.passes = v; },
+    cap: () => benchShape(),
+    tip: (on, n) => on
+      ? 'ON — a loop pinned now plays this many passes, each quieter, then unpins itself and its line goes. Click to keep loops until you unpin them'
+      : `OFF — a pinned loop stays until you unpin it. Click to let each loop pinned from now fade out over ${n} pass${n === 1 ? '' : 'es'}`,
+  },
+};
+function _zeroToggle(pid) {
+  const z = ZERO_ROW[pid], v = z.get();
+  if (v > 0) { z.last = v; z.set(0); } else z.set(z.last ?? z.fallback);
+  captureTileParams(z.cap());
+}
 try { const v = localStorage.getItem(LS_INSTR); if (INSTRUMENTS.some(i => i.id === v)) _instr = v; } catch (_) {}
 export function instrument() { return _instr; }
 export function setInstrument(id) {
@@ -1182,14 +1218,12 @@ function _playDown(i, id, momentary) {
   if (_held) { if (_held.latched && _held.i === i) slotEnd(i); return; }
   if (S._gestureActive?.()) return;   // another wire already has the hand
   // The dub's ONE-SHOT (the bang verb): a press that records exactly one
-  // cycle of its master and releases itself. It needs a master — a one-shot
-  // with nothing pinned has no length, so it refuses where the dub already
-  // refuses visibly.
-  const oneShot = engineOf(id) === 'tape' && S.overdub && i >= 0 && palette[i]?.verb === 'bang';
-  if (oneShot) {
-    if (!S._loopPinNear?.()) { _pinFlash('pin', i); return; }
-    momentary = true;
-  }
+  // cycle of its master and releases itself. Only a press that TOUCHES
+  // something to dub onto has a cycle (ui-presets.js dubTargetAt); anywhere
+  // else the bang is an ordinary take.
+  const oneShot = engineOf(id) === 'tape' && i >= 0 && palette[i]?.verb === 'bang' &&
+    !S.triggerParams.sliceOn && !!S._dubTargetNow?.();
+  if (oneShot) momentary = true;
   _held = { i, id, latched: false };
   // The engine last PLAYED — what AUDITION opens the drawer on (setAudition).
   { const pe = engineOf(id); if (pe === 'tape' || pe === 'granular') _lastPlayedEng = pe; }
@@ -1596,7 +1630,9 @@ async function unpinSelected() {
 // beat, after tape's own autopin, so a stroke both pin makes the zone's a
 // second playhead at the touch point — what a cursor standing there would do.
 S._onTriggerStrokeArmed = (strokeId, { loop = false, trigs = [] } = {}) => {
-  const auto = S.triggerParams.loopOnEnd || loop;    // the contract, not the tile id (#244)
+  // Only take: loop's first take pins itself now — the seed (`loop`); every
+  // take its own loop (`loopOnEnd`, #244) was retired 2026-09-26.
+  const auto = loop;
   const zoned = S.commitSlots.some(c => c && c.type === 'cloud');
   if (!auto && !zoned) return;
   setTimeout(async () => {
@@ -1618,7 +1654,6 @@ S._onTriggerStrokeArmed = (strokeId, { loop = false, trigs = [] } = {}) => {
         if (slot && slot !== before[i]) {
           slot.speed  = S.triggerParams.speed ?? slot.speed;
           slot.grainParams.volume = S.triggerParams.volume ?? slot.grainParams.volume;
-          slot.passes = S.triggerParams.passes | 0;
           slot.pitch  = S.triggerParams.pitch ?? slot.pitch ?? 0;
           // A pin's cut (events.js pinSplitTake): the take still recording is
           // this loop's overdub from here.
@@ -2165,19 +2200,9 @@ function tileStickers(id) {
       ` when you let go · the switch is MODE, in the tool editor">` +
       `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.pin}</svg></span>`
     : '';
-  // OVERDUB, the same way (Ek, 2026-09-22). Tape's alone, because only a take
-  // has a master to join — and it wears the O (G.overdub), in the tape hue like the pin (2026-09-25).
-  const dub = eng === 'tape' && overdubOn()
-    ? `<span class="tile-dub" data-word="overdub" title="overdub is on — this take joins the nearest pinned loop, at the phase` +
-      ` you played it · the switch is MODE, in the tool editor">` +
-      `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G.overdub}</svg></span>`
-    : '';
-  if (!pin && !dub) return '';
-  // BOTH FLAGS SHARE THE TOP-RIGHT, in a row: they are two answers to the same
-  // question — what happens when you let go — so they belong together rather
-  // than fighting for one corner. The top-left corner is empty.
-  const flags = pin || dub ? `<span class="tile-flags">${dub}${pin}</span>` : '';
-  return `<span class="tile-marks">${flags}</span>`;
+  // (The overdub flag beside it went 2026-09-26: a dub is by touch, not a mode.)
+  if (!pin) return '';
+  return `<span class="tile-marks"><span class="tile-flags">${pin}</span></span>`;
 }
 
 // ── THE BENCH, at the top of the editor ────────────────────────────────────
@@ -2457,9 +2482,12 @@ export function render() {
   const lensAt = palette.findIndex(e => isLensTile(e.id));
   const tiles = palette.map((e, i) => paletteTile(e, i + 1));
   const lensTile = lensAt >= 0 ? tiles.splice(lensAt, 1)[0] : '';
-  if (dock) dock.innerHTML =
+  // Only the BED is replaced: the echo floating above it (index.html,
+  // tile-layout.js) lives in the dock too and must survive every render.
+  if (dock) dock.querySelector('#paletteBed')?.remove();
+  if (dock) dock.insertAdjacentHTML('beforeend',
     `<div class="palette" id="paletteBed" title="the palette — the cursor, the hand, then quick access; each tile wears the key that fires it — click the sticker to relearn it, right-click to clear; right-click a tile for its verb">` +
-    lensTile + handTileHTML(ENGINE_HUE) + tiles.join('') + `</div>`;
+    lensTile + handTileHTML(ENGINE_HUE) + tiles.join('') + `</div>`);
   // The strip was just rebuilt: a tool sounding through it must not go dark
   // for a poll's worth of frames (the switch flipped, a lens cycled on `2`).
   refreshPlayingState();
@@ -2583,8 +2611,7 @@ export function render() {
   // Which param a MODE switch row is, by the hook it carries — so the row
   // names its pid and `_applyParamTips` can put the definition on its label
   // (Ek, 2026-09-25: the performance switches had no tooltip on their words).
-  const _SW_PID = [['data-autopin="tape"', 'onEnd'], ['data-autopin="granular"', 'gEnd'], ['data-overdub', 'overdub'],
-    ['data-swproxy="trigChopSeg"', 'tchop'], ['data-gwalk', 'walk'], ['data-escope', 'bystroke'], ['data-audition', 'audition']];
+  const _SW_PID = [['data-autopin="granular"', 'gEnd'], ['data-swproxy="trigChopSeg"', 'tchop'], ['data-gwalk', 'walk'], ['data-escope', 'bystroke'], ['data-audition', 'audition']];
   const swRow = (label, on, attr, title, c) =>
     `<div class="mrow"${(p => p ? ` data-pid="${p}"` : '')(_SW_PID.find(([k]) => attr.includes(k))?.[1])}><span class="mrow-l">${label}</span>` +
     `<button type="button" class="mrow-sw${on ? ' on' : ''}" ${attr} role="switch" aria-checked="${on}"` +
@@ -2607,7 +2634,7 @@ export function render() {
   // `tape autopin` was right in one list of five engines and is a stammer under
   // the tape tab, which has already said which instrument this is.
   let instrModeHTML = '';
-  for (const e of (_instr === 'tape' || _instr === 'granular' ? [_instr] : [])) {
+  for (const e of (_instr === 'granular' ? [_instr] : [])) {
     const ap = autoPinOn(e), kind = _AUTOPIN[e]?.on ?? '';
     // AUTOPIN NAMES WHAT IT MAKES (Ek, 2026-09-22: "rename autopin to autopin
     // as loop … rename autopin to autopin as cloud"). `autopin` alone said that
@@ -2621,26 +2648,18 @@ export function render() {
     instrModeHTML += _withBinds(swRow(`autopin as ${kind}`, ap, `data-autopin="${e}"`, ap
       ? `a ${GRP_LABEL_G[e]} stroke pins itself as a ${kind} when you let go — click for manual, where you pin by hand`
       : `a ${GRP_LABEL_G[e]} stroke stays scratch until you pin it — click to pin it as a ${kind} on release`,
-      ENGINE_HUE[e]), `${e === 'tape' ? 'tape_autopin' : 'grain_autopin'}|autopin`);
+      ENGINE_HUE[e]), 'grain_autopin');
   }
   if (_instr === 'tape') {
-    const od = overdubOn();
-    instrModeHTML += _withBinds(swRow('overdub', od, 'data-overdub', od
-      ? 'a take joins the nearest pinned loop, at the phase you played it — click for its own clock'
-      : 'a take runs on its own clock — click to join the nearest pinned loop', ENGINE_HUE.tape), 'tape_overdub');
-    // SLICE SITS WITH THE OTHER TWO (Ek, 2026-09-22: "move slice between
-    // overdub and dwell"). It was appended after the arrival rows because it
-    // arrived last, which put a SWITCH below two pills and broke the block in
-    // half: the three switches are tape's standing answers — how a stroke ends,
-    // what it joins, whether it is cut — and dwell and retrig are what happens
-    // when you TOUCH what those made. Shape sorted the rows before; now the
-    // question does, and the shapes agree with it.
-    instrModeHTML += swRow('slice', !!S.triggerParams.sliceOn,
+    // SLICE IS A SWITCH AGAIN (2026-09-26): with dub by touch there is no
+    // overdub mode and no `take` capsule, and slice was all that was left of
+    // it. On, the next take is cut at its attacks and never dubs.
+    instrModeHTML += _withBinds(swRow('slice', !!S.triggerParams.sliceOn,
       ' data-swproxy="trigChopSeg" data-swon="on" data-swoff="off"',
       S.triggerParams.sliceOn
-        ? 'the next take is cut into a trigger per ATTACK — click to keep it whole'
-        : 'the next take stays one take — click to cut it at every attack',
-      ENGINE_HUE.tape);
+        ? 'the next take is cut into a line per attack, and never layers onto a loop — click to keep it whole'
+        : 'the next take stays one take — on a loop or a line it layers onto it. Click to cut it at every attack',
+      ENGINE_HUE.tape), 'tape_slice');
   }
   if (_instr === 'granular') {
     const wk = !!S.grainWalk;
@@ -2742,6 +2761,29 @@ export function render() {
     // A readout in WORDS (`depth`: `last 3 strokes`) needs more than a
     // number's 3.5rem — measured, the default clipped it at `last 3 strok`.
     const wide = d.read ? ' mrow-num--words' : '';
+    // k's ALL IS A SWITCH ON THE ROW (Ek, 2026-09-26: "when k is 0 it's all …
+    // GUI wise it's awk. is there a UX gui design that can have a clear all
+    // toggle plus the numbers?"). The number beside a switch that overrides it
+    // — Ableton's Warp beside the BPM, Figma's Auto beside a width. The engine
+    // keeps k = 0 as all (OSC, the pot, a typed `all`); only the row changes:
+    // the number runs 1–100 and never reaches the bottom, and all on HIDES it
+    // (never dimmed) and remembers it, so all off brings your number back.
+    const z = ZERO_ROW[pid];
+    if (z) {
+      const v = z.get(), zero = !(v > 0), on = z.onAtZero === false ? !zero : zero;
+      if (!zero) z.last = v;
+      return `<div class="mrow"><span class="mrow-l">${lbl}</span>${live}` +
+        // At 0 the number's width stays as an empty slot, so the live count
+        // and the switch hold still when it flips.
+        (zero ? '<span class="mrow-num mrow-num--words" aria-hidden="true"></span>'
+            : `<input class="prow-v mrow-num mrow-num--words" data-pval="${pid}" value="${esc(_knobVal(pid).disp)}"` +
+              ` spellcheck="false" aria-label="${esc(lbl)}"` +
+              ` title="drag to set, or type a value and press Enter · double-click resets">`) +
+        `<span class="mrow-word">${z.word}</span>` +
+        `<button type="button" class="mrow-sw${on ? ' on' : ''}" data-zero="${pid}" role="switch" aria-checked="${on}"` +
+        ` style="--c:${ENGINE_HUE[e] ?? ENGINE_HUE.none}" title="${esc(z.tip(on, z.last ?? z.fallback))}">` +
+        `<span class="mrow-knob"></span></button></div>`;
+    }
     if (_knobFor(pid))
       return `<div class="mrow"><span class="mrow-l">${lbl}</span>${live}` +
         `<input class="prow-v mrow-num${wide}" data-pval="${pid}" value="${esc(_knobVal(pid).disp)}"` +
@@ -2755,7 +2797,9 @@ export function render() {
   // until 2026-09-23, the rail's lower half since). `ENGINES.lens`' order —
   // the order Ek named on 2026-09-23.
   const PERF_PIDS = {
-    tape:     ['dwell', 'retrig'],
+    // PASSES came back to the tab (Ek, 2026-09-26) — it had no surface since
+    // the piles round: how many times a pinned loop plays before it goes.
+    tape:     ['dwell', 'retrig', 'passes'],
     granular: ['gdwell', 'gretrig', 'flow', 'headW'],
     erase:    ['depth', 'efrom'],
     // FALLOFF LIVES IN SETTINGS → TOOLS (Ek, 2026-09-23): it is set once, not
@@ -3238,12 +3282,11 @@ const PARAM_DEFS = {
   // Self-killing loops (#239): a looper stroke plays N passes, fading each,
   // then deletes itself AND its paint. 0 = ∞ (a loop that stays). Baked at
   // record time — "a decision I make when I record the loop" (Ek).
-  passes:   { label: 'passes',  kind: 'tp', path: 'passes', min: 0, max: 8, step: 1,
-              fmt: v => (+v > 0 ? Math.round(v) + '×' : '∞'), sec: 'on end' },
-  // The looper contract as a param (#244): 'loop' = end the stroke and it
-  // loops immediately. Any loop tile — a custom one included —
-  // becomes a looper by flipping this; line/slice pin 'arm' by identity.
-  onEnd:    { label: 'loop',    kind: 'onend', sec: 'on end' },
+  passes:   { label: 'fade out', kind: 'tp', path: 'passes', min: 0, max: 8, step: 1,
+              fmt: v => (+v > 0 ? `${Math.round(v)} pass${Math.round(v) === 1 ? '' : 'es'}` : 'off'), sec: 'on end' },
+  // (`onEnd`, the looper contract as a param (#244) — every take its own loop —
+  //  was retired 2026-09-26: take's loop is the looper, and a new base loop is
+  //  a line pinned by hand. docs/RULINGS.md "Slice and the looper are exclusive".)
   // Read-time params — the LENS engine: how the cursor reads a stroke it
   // TOUCHES. One family for both readers (2026-09-18): a tape stroke fires its
   // take, a grain stroke under `mode: stroke` launches a WALKER (js/walker.js),
@@ -3342,7 +3385,10 @@ const PARAM_DEFS = {
   // The fade pair shapes the gain across the RADIUS, for grains only, and is
   // dead in nearest mode (the bridge's `fadeOn`) — so it lives with the other
   // grain rows and hides there, like every other dead row.
-  rfade:     { label: 'fade',    kind: 'seg', seg: 'radiusFadeSeg', bool: ['on', 'off'], sec: 'on grains',
+  // SOFT EDGE, not `fade` (Ek, 2026-09-26): beside tape's `fade out` and the
+  // release fades in Settings it read as another timed fade. It is a brush's
+  // soft edge — Photoshop's and Procreate's word — quieter toward the rim.
+  rfade:     { label: 'soft edge', kind: 'seg', seg: 'radiusFadeSeg', bool: ['on', 'off'], sec: 'on grains',
                tips: ['volume fades with distance from the cursor — click for full volume out to the edge',
                       'every mark in reach at full volume — click to fade it with distance'] },
   fadeCurve: { label: 'falloff', kind: 'fadecurve', el: 'radiusFadeCurveSlider', sec: 'on grains' },
@@ -3404,8 +3450,7 @@ const PARAM_TIPS = {
   tvol:     'the level of this tape voice',
   tchop:    'cuts the next take into a separate line at every attack',
   sliceMin: 'the shortest piece slice will cut — anything shorter joins its neighbour',
-  passes:   'how many times a pinned loop plays before it lets itself go — ∞ stays',
-  onEnd:    'what a tape stroke becomes when you let go — a line the cursor fires, or a loop pinned at once',
+  passes:   'fade out: a loop pinned while it is on plays this many passes, each quieter, then unpins itself and its line goes. Off, a loop stays until you unpin it. Set when you pin',
   dwell:    'what a line does while the cursor stays on it — plays once, loops, or plays once and then opens to the cursor\'s grains',
   gdwell:   'when walking a stroke, whether it plays once or loops while the cursor stays',
   gstart:   'where a walk starts — the stroke\'s top, where you touched it, or the nearer end',
@@ -3422,7 +3467,7 @@ const PARAM_TIPS = {
   depth:    'how many layers it reaches, newest first — 1 is the top stroke only, all reaches everything',
   k:        'how many of the marks in reach the cursor plays — all of them, or this many',
   step:     'the order marks are played in — picked at random, or one after another in the order they were made',
-  rfade:    'fades marks with distance from the cursor\'s centre',
+  rfade:    'a soft edge: marks get quieter the further they are from the cursor\'s centre — falloff, in Settings → Tools, sets how steeply',
   fadeCurve:'how the fade falls off toward the edge of the radius — a tight centre or an even ramp',
   overdub:  'a take records into the nearest pinned loop as a layer, in time with it; nothing pinned, the first take becomes the loop',
   walk:     'a touch sets a walker going along the stroke you touched, retracing it at the pace it was painted — instead of the cursor reading what is in reach',
@@ -3534,7 +3579,7 @@ const ENGINES = {
              // Output: the gate first — whether a grain sounds at all — then
              // how loud, then how wide (Ek, 2026-09-24: "prob, vol, spread").
              'prob', 'vol', 'pan'],
-  tape:     ['tspeed', 'tpitch', 'tstep', 'treverse', 'tvol', 'onEnd', 'passes', 'tchop', 'sliceMin',
+  tape:     ['tspeed', 'tpitch', 'tstep', 'treverse', 'tvol', 'passes', 'tchop', 'sliceMin',
              'decay'],
   // The lens sheet reads as: geometry, then what touching GRAINS does, then
   // what touching a STROKE does, then the edge fade (#236). Nothing about pins:
@@ -3619,7 +3664,7 @@ const VOICE_PIDS = {
 };
 const SWITCH_PIDS = {
   granular: ['gEnd'],
-  tape:     ['onEnd', 'passes'],
+  tape:     ['passes'],
   lens:     [],   // the eye's arrival rows are its SHAPE — see SHAPE_PIDS.lens
   erase:    [],   // an erase asks neither question
 };
@@ -4384,7 +4429,6 @@ function _readParam(pid) {
     case 'efrom':    return S.eraseOldest ? 'bottom' : 'top';
     case 'reads':    return S.lensReads ?? 'both';
     case 'fx': case 'tp': return String(_pStore(d)?.[d.path]);
-    case 'onend':    return S.triggerParams.loopOnEnd ? 'loop' : 'arm';
     case 'treverse': return S.triggerParams.reverse ? 'on' : 'off';
     case 'tstep':    return S.triggerParams.step ?? 'free';
     case 'gend':     return _GEND_OF[S.traceMode] ?? 'scratch';
@@ -4412,7 +4456,6 @@ function _applyParam(pid, v) {
     case 'efrom':    S.eraseOldest = v === 'bottom'; return;
     case 'reads':    S.lensReads = ['both', 'grains', 'tape'].includes(v) ? v : 'both'; return;
     case 'fx': case 'tp': { const o = _pStore(d); if (o && isFinite(+v)) o[d.path] = d.q ? d.q(+v) : +v; return; }
-    case 'onend':    S.triggerParams.loopOnEnd = v === 'loop'; return;
     case 'treverse': S.triggerParams.reverse = v === 'on'; return;
     case 'tstep':    S.triggerParams.step = TAPE_STEPS.includes(v) ? v : 'free'; return;
     case 'gend':     setGrainOnEnd(v); return;
@@ -4656,7 +4699,8 @@ export function refreshLensLive() {
 // numbers for as long as it exists; paint made by PLAYING freezes at the stroke,
 // and the pin is where it freezes. The mechanism and the argument are one file
 // over, in brush-voicing.js "Auditioned paint".
-const _AUTOPIN = { granular: { pid: 'gEnd', on: 'cloud', off: 'scratch' }, tape: { pid: 'onEnd', on: 'loop', off: 'arm' } };
+// Grain's alone since 2026-09-26: tape's pin-on-release is take: loop (setTakeMode).
+const _AUTOPIN = { granular: { pid: 'gEnd', on: 'cloud', off: 'scratch' } };
 /** Does a stroke of THIS instrument pin itself when you let go? */
 export function autoPinOn(engine) {
   const a = _AUTOPIN[engine]; if (!a) return false;
@@ -4669,11 +4713,13 @@ export function setAutoPin(engine, on) {
   if (propsOpen()) renderProps();
   return !!on;
 }
-/** OVERDUB — the word for what it is (Ek: "instead of calling cycle, we just
- *  call it what it is, overdub on or off"). On, a tape take joins the nearest
- *  pinned loop at the phase you played it; off, it runs on its own clock. */
-export function overdubOn() { return !!S.overdub; }
-export function setOverdub(on) { S.overdub = !!on; render(); return S.overdub; }
+// ── NO OVERDUB MODE, NO TAKE CAPSULE (Ek, 2026-09-26) ─────────────────────
+// A take dubs by TOUCH (ui-presets.js beginDubByTouch): started on a loop or a
+// line it layers onto it — pinning the line first — and anywhere else it is a
+// plain line. The overdub switch, then the `take  line | slice | loop | dub`
+// capsule and its `loop` (which was that switch), all went the same evening;
+// what is left of the question is slice, a switch again. docs/RULINGS.md
+// "Slice and the looper are exclusive" carries the whole walk.
 
 function _tileParam(id, pid) {
   const s = _sessionCfg[id]?.[pid]; if (s !== undefined) return s;
@@ -5288,11 +5334,9 @@ export function renderProps() {
     if (pid === 'octave') return octaveRow();
     if (pid === 'gEnd')   return swRow('cloud on end', _GEND_OF[S.traceMode] === 'cloud', ' data-sw="gend"',
       'on — the stroke is pinned as a moving cloud on the path you drew, and keeps playing; off — it stays scratch, read only by the cursor');
-    if (pid === 'onEnd')  return swRow('loop', !!S.triggerParams.loopOnEnd, ' data-sw="onend"',
-      'on — the stroke loops when it ends; off — it is armed, and the cursor fires it');
     if (pid === 'treverse') return swRow('reverse', !!S.triggerParams.reverse, ' data-sw="treverse"',
       !!S.triggerParams.reverse ? 'on — the take plays backwards; baked into the stroke when it ends' : 'off — the take plays forwards');
-    if (pid === 'rfade')  return swRow('fade', !!S.radiusFadeEnabled, ' data-swproxy="radiusFadeSeg" data-swon="on" data-swoff="off"',
+    if (pid === 'rfade')  return swRow('soft edge', !!S.radiusFadeEnabled, ' data-swproxy="radiusFadeSeg" data-swon="on" data-swoff="off"',
       'volume fades with distance from the cursor');
     if (pid === 'tchop')  return swRow('slice', !!S.triggerParams.sliceOn, ' data-swproxy="trigChopSeg" data-swon="on" data-swoff="off"',
       'on — the next take is cut into a trigger per ATTACK, measured against the room\'s own floor; off — it stays one take');
@@ -5449,11 +5493,14 @@ export function renderProps() {
 // knob can never disagree with the rig view.
 function _knobRange(pid) {
   const d = PARAM_DEFS[pid];
-  if (d.kind === 'fx' || d.kind === 'tp') return { min: d.min, max: d.max, step: d.step };
+  // A ZERO_ROW's 0 is its switch, so its number stops at 1.
+  if (d.kind === 'fx' || d.kind === 'tp') return { min: ZERO_ROW[pid] ? Math.max(1, d.min) : d.min, max: d.max, step: d.step };
   if (d.kind === 'flow')     return { min: 10, max: 200, step: 1 };
   if (d.kind === 'head')     return { min: 0, max: 30, step: 1 };
   const el = document.getElementById(d.el);
   if (!el) return null;
+  // k's position 0 is ALL, which is the row's switch now — the number stops at 1.
+  if (ZERO_ROW[pid]) return { min: Math.max(1, +el.min), max: +el.max, step: +el.step || 1 };
   return { min: +el.min, max: +el.max, step: +el.step || 1 };
 }
 function _knobVal(pid) {
@@ -5464,6 +5511,9 @@ function _knobVal(pid) {
   const el = document.getElementById(d.el);
   if (!el) return { raw: 0, disp: '' };
   if (d.read) return { raw: +el.value, disp: _readVal(d.read) };
+  // k in its UNIT (Ek, 2026-09-26: "is it 4 marks? 4 grain particles? … the
+  // unit should be there"): the marks the cursor spreads its grains over.
+  if (pid === 'k') { const k = ZERO_ROW.k.get(); return { raw: +el.value, disp: k > 0 ? `${k} mark${k === 1 ? '' : 's'}` : 'all' }; }
   const numId = _numFor(d);
   const num = numId && document.getElementById(numId);
   return { raw: +el.value, disp: num ? (num.value ?? num.textContent) : el.value };
@@ -5803,6 +5853,9 @@ function _wireKnobs(sheet, capId) {
       if (def == null) return;
       e.preventDefault(); e.stopPropagation();
       inp.blur();
+      // k's default is ALL, which its number cannot reach (1–100): the reset
+      // turns the row's switch on instead, and the number steps aside.
+      if (ZERO_ROW[pid] && !(def > 0)) { ZERO_ROW[pid].set(0); capture(); render(); return; }
       apply(pid, def);
     });
     const commit = () => {
@@ -6258,7 +6311,6 @@ function _wireOptions(box, capId) {
         const btn = seg && [...seg.querySelectorAll('button')].find(b => Object.values(b.dataset).includes(want));
         if (btn) btn.click();
       } else if (sw.dataset.sw === 'glink') { toggleGrainLink(); return; }
-      else if (sw.dataset.sw === 'onend')  { S.triggerParams.loopOnEnd = !S.triggerParams.loopOnEnd; }
       else if (sw.dataset.sw === 'treverse') { S.triggerParams.reverse = !S.triggerParams.reverse; }
       else if (sw.dataset.sw === 'gend')   { setGrainOnEnd(_GEND_OF[S.traceMode] === 'cloud' ? 'scratch' : 'cloud'); }
       cap();
@@ -6927,11 +6979,12 @@ export function initTiles() {
     }
     const a = e.target.closest('[data-autopin]');
     if (a) { e.preventDefault(); setAutoPin(a.dataset.autopin, !autoPinOn(a.dataset.autopin)); return; }
-    if (e.target.closest('[data-overdub]')) { e.preventDefault(); setOverdub(!overdubOn()); return; }
     if (e.target.closest('[data-gwalk]')) {
       e.preventDefault(); S.grainWalk = !S.grainWalk;
       render(); if (propsOpen()) renderProps(); return;
     }
+    const zs = e.target.closest('[data-zero]');
+    if (zs) { e.preventDefault(); _zeroToggle(zs.dataset.zero); render(); if (propsOpen()) renderProps(); return; }
     if (e.target.closest('[data-escope]')) {
       e.preventDefault(); S.eraseWholeStroke = !S.eraseWholeStroke;
       render(); if (propsOpen()) renderProps();
@@ -7097,7 +7150,6 @@ export function initTiles() {
   // leave the app in one state.
   S._setAudition   = setAudition;
   S._setAutoPin    = setAutoPin;
-  S._setOverdub    = setOverdub;
   S._setWalk       = on => { S.grainWalk = !!on; render(); if (propsOpen()) renderProps(); };
   S._setEraseScope = on => { S.eraseWholeStroke = !!on; render(); if (propsOpen()) renderProps(); };
   S._setLensReads  = v  => { S.lensReads = v; captureTileParams(LENS_ID); render(); };
@@ -7150,12 +7202,6 @@ S._handEngine = () => { const id = handTileId(); return id ? engineOf(id) : null
 // nothing is. The gesture layer needs this because an erase tile's gesture is
 // not a deposit (see brush.js).
 S._handKind    = () => tileById(handTileId())?.kind;
-// A take joins the master's cycle because the MODE says so — not because of
-// which tile is in the hand (Ek, 2026-09-21). The `overdub` tile still answers
-// true while it exists, so nothing that is stored or bound breaks on the way.
-// OVERDUB IS THE MODE, and only the mode: the `dub` tile that also forced it
-// was deleted on 2026-09-22 for being a second door onto this flag.
-S._handIsOverdub = () => !!S.overdub;
 // Visible refusal: the overdub tile flashes when nothing is pinned to overdub onto.
 // The keys page saved a binding: the palette's key legend reads the bindings
 // at render, so a repaint is the whole update.

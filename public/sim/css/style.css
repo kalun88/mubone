@@ -4811,7 +4811,7 @@ html.booting-reveal .main-layout {
      control flush right by the label's own flex-grow, no gap between rows. */
   .lyr-modes { display: flex; flex-direction: column;
     margin: var(--sp-6) var(--sp-5) var(--sp-5); padding: var(--sp-5) 0;
-    background: var(--surface-1); border-radius: var(--r-hand);
+    background: var(--surface-3); border-radius: var(--r-hand);
     --c: var(--eng-pins); }   /* the capsules' lit tint — the pins' own hue, bone */
   .tc-rail .mrow { height: 30px; padding-top: var(--sp-1); padding-bottom: var(--sp-1); }
   .lyr-sw { color: var(--text-dim); }
@@ -4844,7 +4844,7 @@ html.booting-reveal .main-layout {
   /* The label speaks the rail's new type (2026-09-25, the rails canvas F): the
      card heads' sentence case and weight at the small size, not the spaced
      capitals the rails have left behind. */
-  .lyr-sel::after { content: 'Selected'; position: absolute; right: var(--sp-3); top: -8px; /* geometry: half the label's line above the border */
+  .lyr-sel-l { position: absolute; pointer-events: auto; cursor: default; right: var(--sp-3); top: -8px; /* geometry: half the label's line above the border */
     padding: 0 var(--sp-2); line-height: 14px; background: var(--bg-app);
     font-size: var(--fs-body); font-weight: 600; letter-spacing: normal; text-transform: none; color: var(--eng-pins); }
   .lyr-trk { position: absolute; left: var(--sp-5); right: var(--sp-5); top: calc(var(--sp-3) + 8px);
@@ -4885,8 +4885,9 @@ html.booting-reveal .main-layout {
     display: grid; place-items: center;
     font-family: var(--font-sans); font-size: var(--fs-meta); font-weight: 600;
     font-variant-numeric: tabular-nums; line-height: 1; color: var(--c); }
-  /* THE O (Ek, 2026-09-23): the loop an overdub would join wears a white ring
-     round its number — the tape tile's overdub flag, the same O. */
+  /* THE RING (Ek, 2026-09-23; by touch since 2026-09-26): the loop a take
+     would join — the one the cursor is on — wears a white ring round its
+     number, so you can see what the spacebar is about to layer onto. */
   .lyr-trk.dub .lyr-num::before { content: ''; position: absolute; left: 50%; top: 50%;
     width: 20px; height: 20px; transform: translate(-50%, -50%); /* geometry: centred on the digit */
     border: 1.5px solid var(--text-light); border-radius: 50%; box-sizing: border-box; pointer-events: none; }
@@ -5070,6 +5071,28 @@ html.booting-reveal .main-layout {
        painting there must work. Tiles opt back in. */
     pointer-events: none;
   }
+  /* ── The echo, above the palette (2026-09-26) ──────────────────────────
+     One pill, centred on the dock (which is the palette's width), a --sp-4
+     above it: the action and its state in the chrome's light value at the
+     control size, the input in the footer's engraved caption. The kit's pill
+     — 24 tall, r999, the app ground and one hairline, like the stickers. A
+     miss is ochre. Opacity only; it holds a second (tile-layout.js). */
+  body .palette-dock { position: relative; }
+  .pal-echo { display: none; }
+  body .pal-echo {
+    position: absolute; left: 50%; bottom: calc(100% + var(--sp-4)); transform: translateX(-50%);
+    display: flex; align-items: center; gap: var(--sp-3);
+    height: 24px; box-sizing: border-box; padding: 0 var(--sp-4); max-width: 100%;
+    border-radius: 999px; background: var(--bg-app); border: 1px solid var(--border-subtle);
+    white-space: nowrap; pointer-events: none;
+    opacity: 0; transition: opacity var(--m-decay) var(--ease-out);
+  }
+  body .pal-echo.on { opacity: 1; transition-duration: var(--m-touch); }
+  body .pal-echo > span { overflow: hidden; text-overflow: ellipsis; line-height: 1; }
+  body .pal-echo-what { font-size: var(--fs-control); color: var(--text-light); font-variant-numeric: tabular-nums; }
+  body .pal-echo.is-miss .pal-echo-what { color: var(--accent-warn); }
+  body .pal-echo-src:empty { display: none; }
+  body .pal-echo-addr { text-transform: none; letter-spacing: 0; }
   /* FLAT (#257, Ek): the blur was the one material on screen that existed
      nowhere else, and a drop shadow under a panel on a black stage buys
      nothing. Opaque ground, one hairline, no shadow. */
@@ -5191,12 +5214,20 @@ html.booting-reveal .main-layout {
      hairline; the `+` and the door flush right. */
   .tc-lrail .tbx-lbl--sec { height: 40px; box-sizing: border-box; padding: 0 var(--sp-5); margin-bottom: var(--sp-2);
     font-size: var(--fs-control); font-weight: 600; letter-spacing: normal; text-transform: none;
-    color: var(--text-light); gap: var(--sp-4); border-bottom: 1px solid var(--border-faint); }
+    color: var(--text-highlight); gap: var(--sp-4); border-bottom: 1px solid var(--border-soft); }
   .tbx-lbl--sec .tbx-lbl-t { flex: 1 1 auto; }
   .tbx-lbl--sec .tbx-add { margin-left: 0; }
   /* THE CARDS (F): the instrument's, then the voice's under it; the cursor's,
      then the grain behaviour's. 8 between the two halves of a region, 12 after. */
-  .tc-lrail .rail-card { background: var(--surface-1); border-radius: var(--r-hand); padding-bottom: var(--sp-5); }
+  /* THE BEDS TWO STEPS UP THE RAMP (Ek, 2026-09-26: "make the rail beds higher
+     contrast i barely notice it"): --surface-1 (5 %) → --surface-3 (8.5 %), in
+     both rails, with the tabs moving by the same two steps so the chosen tab
+     is still the card and the closed ones still sit one level behind it. */
+  .tc-lrail .rail-card { background: var(--surface-3); border-radius: var(--r-hand); padding-bottom: var(--sp-5); }
+  /* A card that opens on a ROW gets the 12 it ends with above it too — the
+     pinned rail's mode card is the reference (Ek, 2026-09-26: the cursor
+     card's scope row sat on its top edge). Head- and tab-led cards keep 0. */
+  .tc-lrail .rail-card:has(> .mrow:first-child) { padding-top: var(--sp-5); }
   .tc-lrail .rail-card + .rail-card { margin-top: var(--sp-4); }
   .tc-lrail #voicePanel { margin-bottom: var(--sp-5); padding-bottom: var(--sp-3); }
   .tc-lrail #voicePanel .trow--voice:last-child { border-bottom: none; }
@@ -5359,8 +5390,8 @@ html.booting-reveal .main-layout {
      The closed three were bare glyphs on the rail's ground — the row read as
      one tab and three marks beside it, which is why "which of these is a tab?"
      kept being answered by the chosen one alone. They get the tab shape and a
-     ground of their own now: `--surface-0`, one step under the card's
-     `--surface-1`, so the row reads front-to-back — open tab at the card's
+     ground of their own now: `--surface-1`, two steps under the card's
+     `--surface-3` (2026-09-26; it was 0 under 1), so the row reads front-to-back — open tab at the card's
      level, closed tabs behind it, rail ground behind them. The 1px `gap` on
      the pill is what separates them, and it is the rail showing through. */
   .instr-tabs .grain-seg-btn {
@@ -5368,17 +5399,23 @@ html.booting-reveal .main-layout {
     display: inline-flex; align-items: center; justify-content: center;
     position: relative;
     border-radius: var(--r-hand) var(--r-hand) 0 0;
-    background: var(--surface-0);
-    color: var(--text-dim);
+    background: var(--surface-1);
+    color: var(--text-subtle);
   }
-  .instr-tabs .grain-seg-btn:hover { color: var(--text-bright); background: var(--surface-2); }
+  .instr-tabs .grain-seg-btn:hover { color: var(--text-bright); background: var(--surface-4); }
   /* The glyph is the tile's own 1.05rem, so a tab and a row read as the same
      mark at the same size. `.seg-glyph`'s 20px is the FOOTER's density, and
      this pill sits over a rail of 1.05rem rows. */
   /* CENTRED, now that there is nothing under it to leave room for: the padding
      was `0 --sp-3 --sp-4`, and that bottom 8px was the rule's clearance, not
      spacing — it pushed every glyph 4px above the middle of its own 32px box. */
-  .instr-tabs .seg-glyph .grain-seg-btn { height: 32px; padding: 0 var(--sp-3); }
+  /* 40 TALL OVER A RULE, THE CARD HEAD'S OWN SHAPE (Ek, 2026-09-26: "the tabs
+     should be the same height as the subtitles (voice/grain behaviour)… add
+     that divider line like they have… it's not clear the tabs"). The row is
+     the `.tbx-lbl--sec` box — 40 with the rule inside it, --border-soft — so
+     a tab strip and a card head read as the same kind of top edge. */
+  .instr-tabs .seg-pill { height: 40px; box-sizing: border-box; border-bottom: 1px solid var(--border-soft); }
+  .instr-tabs .seg-glyph .grain-seg-btn { height: 100%; padding: 0 var(--sp-3); }
   .instr-tabs .seg-glyph .grain-seg-btn svg { width: 1.05rem; height: 1.05rem; display: block; }
   /* THE CHOSEN TAB CARRIES THE INSTRUMENT'S NAME (2026-09-22, evening), and it
      is the ONE that does: four equal glyphs said which of four you had picked
@@ -5400,7 +5437,7 @@ html.booting-reveal .main-layout {
   /* THE CHOSEN TAB IS THE CARD: same ground, square at the bottom, so the seam
      between them disappears. Its glyph takes the instrument's hue. */
   .instr-tabs .grain-seg-btn.active {
-    background: var(--surface-1);
+    background: var(--surface-3);
     color: var(--c, var(--eng-none));
   }
   /* (A short hue rule sat under the chosen glyph until 2026-09-22, evening. It
@@ -5429,6 +5466,10 @@ html.booting-reveal .main-layout {
   .mrow { height: 24px; box-sizing: border-box; display: flex; align-items: center;
     gap: var(--sp-4); padding: 0 var(--sp-5); }
   .mrow-l { flex-grow: 1; font-size: var(--fs-control); color: var(--text-secondary); }
+  /* A switch's own word when the row's label names something else — k's `all`
+     (2026-09-26). The label's type, not growing: it sits against its switch, a step
+     further from the number than the row gap so "12 all" does not read as one. */
+  .mrow-word { flex: none; margin-left: var(--sp-4); font-size: var(--fs-control); color: var(--text-secondary); }
   /* The switch: 32 × 18, knob 14, 2px inset. Flat, no border — the kit's. */
   .mrow-sw { flex: none; width: 32px; height: 18px; padding: var(--sp-0); box-sizing: border-box;
     border: 0; border-radius: 999px; background: var(--border-soft); cursor: pointer;
@@ -5761,6 +5802,7 @@ html body .tc-stats,
 html body .bottom-bar-label,
 html body #tcAudioSlot .grain-label,
 html body .bb-ax i,
+html body .pal-echo-src,
 html body .bb-mute i {
   font-size: var(--fs-eyebrow);
   letter-spacing: var(--ls-widest);
@@ -5774,6 +5816,7 @@ html body .bb-mute i {
    cut put them three steps down at 2.06:1, which is a mark, not a word. */
 html body .bottom-bar-label,
 html body .bb-ax i,
+html body .pal-echo-src,
 html body .bb-mute i { color: var(--text-tertiary); font-weight: 400; }
 
 /* Mute takes its name, so it and DRY read as the pair they are (Ek). The
@@ -6961,25 +7004,20 @@ html body .trow .tile-pin--fixed:hover { background: none; }
    right of the tile and the wet on the top left"): the wrapper lays nothing
    out; each sticker is placed on its own corner. */
 html body .palette .tile .tile-marks { display: contents; }
-html body .palette .tile .tile-marks .tile-wet, html body .palette .tile .tile-marks .tile-pin,
-html body .palette .tile .tile-marks .tile-dub { position: absolute; top: -5px; z-index: 2;
+html body .palette .tile .tile-marks .tile-wet, html body .palette .tile .tile-marks .tile-pin { position: absolute; top: -5px; z-index: 2;
   display: flex; align-items: center; justify-content: center;
   width: 1.15rem; height: 1.15rem; border-radius: 999px; background: var(--bg-app); color: var(--c);
   border: 1px solid var(--border-medium); box-sizing: border-box; }   /* the sticker's edge — the tile's own hairline */
 html body .palette .tile .tile-marks .tile-wet { left: -5px; right: auto; }
 html body .palette .tile .tile-marks .tile-pin { right: -5px; left: auto; }
-html body .palette .tile .tile-marks .tile-wet svg, html body .palette .tile .tile-marks .tile-pin svg,
-html body .palette .tile .tile-marks .tile-dub svg { width: 0.75rem; height: 0.75rem; }
-/* TWO FLAGS, ONE CORNER (2026-09-22): autopin and overdub are both answers to
-   "what happens when you let go", so they share the top-right in a ROW rather
-   than fighting for the same five pixels. The row is what is positioned; the
-   stickers inside it go static and keep only their shape. Overdub sits to the
-   LEFT of the pin, in the order the stroke answers them: it joins a master
-   first, and it is pinned at the end. */
+html body .palette .tile .tile-marks .tile-wet svg, html body .palette .tile .tile-marks .tile-pin svg { width: 0.75rem; height: 0.75rem; }
+/* THE FLAGS' ROW (2026-09-22): the top-right corner is a ROW the stickers
+   sit in, static, keeping only their shape — the pin, and audition on the
+   cursor tile. (Overdub's flag shared it until 2026-09-26, when overdub
+   stopped being a mode.) */
 html body .palette .tile .tile-marks .tile-flags { position: absolute; top: -5px; right: -5px; z-index: 2;
   display: flex; align-items: center; gap: var(--sp-0); }
 html body .palette .tile .tile-marks .tile-flags .tile-pin,
-html body .palette .tile .tile-marks .tile-flags .tile-dub,
 html body .palette .tile .tile-marks .tile-flags .tile-aud { position: static; right: auto; left: auto; top: auto; }
 /* AUDITION on the cursor tile (2026-09-24): the same sticker disc as the pin,
    the headphones in the eye's white; the reticle wears the same shape. */
@@ -6991,9 +7029,6 @@ html body .palette .tile .tile-marks .tile-aud svg { width: 0.75rem; height: 0.7
    unpin slash — while the tile is not lit. On, the slash is not drawn. */
 html body .palette .tile--lens .lens-slash { display: none; }
 html body .palette .tile--lens:not(.on) .lens-slash { display: block; }
-/* The overdub flag wears the TAPE hue like the tile's other flags (Ek,
-   2026-09-25: "should also be pink like the other tape flags"); it was a white
-   O from 2026-09-23. `.palette .tile svg` already paints it in --c. */
 /* The drop on a grain tile is a BUTTON (Ek, 2026-09-14: "the wet icon should
    be clickable in the palette tile … all grain tools should have the wet/dry
    toggle on the palette tile"), so every grain tile wears one — outlined dry,

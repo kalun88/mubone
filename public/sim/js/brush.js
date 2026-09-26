@@ -101,10 +101,10 @@ function _toolDown() {
   if (S._handKind?.() === 'edit') { S._startEraseStroke?.(); return true; }
   const mat = currentMaterial();
   if (mat === 'tape') {
-    // The overdub brush: a tape take that joins the nearest pinned loop as a
-    // layer — or, with nothing pinned, SEEDS the loop it will join next time
-    // (ui-presets.js beginOverdub). A false return is the tool refusing.
-    if (S._handIsOverdub?.() && !S._beginOverdub?.()) return false;
+    // DUB BY TOUCH (ui-presets.js beginDubByTouch): a take started on a loop
+    // or a line layers onto it — pinning the line first — and anywhere else
+    // is a plain line. Slice takes never dub. Nothing refuses.
+    if (!S.triggerParams.sliceOn) S._beginDubByTouch?.();
     // tape + sampler = the old stamp's fires-on-touch: the sampler stroke is
     // recorded as a trigger and armed on release (#247).
     if (S.sourceKind === 'sampler') { S._samplerTrace?.(true, { trigger: true }); return true; }
@@ -124,7 +124,7 @@ function _toolUp() {
   // The overdub's press-time flags are read by the stroke's commit inside
   // stopTriggerRecord; a press that never recorded (no take started) would
   // otherwise hand them to the next stroke.
-  S._overdubTake = null; S._overdubSeed = false;
+  S._overdubTake = null; S._overdubSeed = false; S._dubTag = null;
   S._stopPaintStroke?.();
 }
 

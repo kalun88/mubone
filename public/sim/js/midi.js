@@ -93,17 +93,13 @@ const ACTIONS = [
   // to be key bindable"). `audition` is one flag for both instruments.
   { id: 'audition',     label: 'audition (toggle)',         key: 'a', osc: '/audition',      fmt: 'bang=toggle, int 0|1', type: 'trigger',
     tip: 'the cursor plays what it reads through the live tape and grain sheets instead of as baked — the switch in the CURSOR section. Nothing is rewritten' },
-  // BOTH AT ONCE on P (Ek, 2026-09-25): one key for "whatever I play pins
-  // itself". A binding learned onto either engine's own row still works, and
-  // the rail shows it in place of P on that row.
-  { id: 'autopin',      label: 'autopin as loop and cloud (toggle)', key: 'p', osc: '/autopin', fmt: 'bang=toggle, int 0|1', type: 'trigger',
-    tip: 'both at once — a tape stroke pins itself as a loop and a grain stroke as a cloud on release; on unless both already are' },
-  { id: 'tape_autopin', label: 'autopin as loop (toggle)',  key: '—', osc: '/tape/autopin',  fmt: 'bang=toggle, int 0|1', type: 'trigger',
-    tip: 'a tape stroke pins itself as a loop on release' },
-  { id: 'tape_overdub', label: 'overdub (toggle)',          key: 'o', osc: '/tape/overdub',  fmt: 'bang=toggle, int 0|1', type: 'trigger',
-    tip: 'a take records into the nearest pinned loop as a layer; nothing pinned, the first take is the loop' },
+  // SLICE (the tape tab's switch). With dub by touch (2026-09-26) it is the
+  // one standing answer tape has left about a take: on, the next take is cut
+  // at its attacks and never layers onto a loop. (`autopin` — P on both
+  // engines — and the `take_*` capsule actions went the same evening: tape's
+  // pin-on-release is gone, so P is grain's autopin.)
   { id: 'tape_slice',   label: 'slice (toggle)',            key: '—', osc: '/tape/slice',    fmt: 'bang=toggle, int 0|1', type: 'trigger',
-    tip: 'the tape tab\'s slice switch — on, a take is cut into separate lines at each attack. Affects the NEXT take recorded' },
+    tip: 'the next take is cut into a line per attack, and never layers onto a loop; off, a take started on a loop or a line layers onto it' },
   { id: 'tape_dwell',   label: 'dwell (cycle)',             key: '—', osc: '/tape/dwell',    fmt: 'bang=cycle, str=set (oneshot|loop|grain)', type: 'trigger',
     tip: 'what dwelling on a take does — once: it plays through / loop: it loops while you stay / grain: it plays once, then opens to the cursor. Cycles once → loop → grain' },
   { id: 'tape_retrig',  label: 'retrig · cut / layer (toggle)', key: '—', osc: '/tape/retrig', fmt: 'bang=toggle, str=set (cut|layer)', type: 'trigger',
@@ -288,7 +284,7 @@ const ACTIONS = [
     ccFn: v => { const k = v <= 0 ? 0 : Math.round(1 + Math.min(1, (v - 1) / 126) * (K_MAX - 1)); if (typeof S.setSearchK === 'function') S.setSearchK(k); else S.grainOverrides.k = k; } },
   { id: 'lens_step',        label: 'step (toggle)',       key: '—',                 osc: '/search/step',   fmt: 'bang=toggle, int 0|1',          type: 'trigger',
     tip: 'the foot\'s step switch — on: candidates in recording order, one at a time / off: random' },
-  { id: 'radius_fade',  label: 'fade (toggle)',        key: '—',                 osc: '/cursor/radiusfade', fmt: 'bang=toggle, int 0|1',          type: 'trigger',
+  { id: 'radius_fade',  label: 'soft edge (toggle)',   key: '—',                 osc: '/cursor/radiusfade', fmt: 'bang=toggle, int 0|1',          type: 'trigger',
     tip: 'the foot\'s fade switch — grains attenuate by distance from the cursor\'s centre' },
   { id: 'tare',         label: 'zero heading',                   key: '`',                 osc: '/cursor/tare',       fmt: 'bang',             type: 'trigger',
     tip: 'zero the cursor — in sensor mode the current heading becomes the centre; in pull and point the camera goes back to the front. The footer\'s ZERO button' },
@@ -508,6 +504,9 @@ const _RENAMED_IDS = {
   // lens tile's toggle. A binding learned onto any of them lands where the
   // screen has it.
   trigger_chop: 'tape_slice',
+  // 2026-09-26: the take capsule came and went in one evening — its slice is
+  // the switch again, and P is grain's autopin (tape has none: a dub is by touch).
+  take_slice: 'tape_slice', autopin: 'grain_autopin',
   commit_drop: 'palette_3', commit_draw: 'palette_3', commit_release: 'palette_4',
   scan_toggle: 'palette_1',
 };
@@ -519,7 +518,9 @@ const _RENAMED_IDS = {
 // `grain_durjit` wrote a param no sheet shows any more (2026-09-25): unseen and
 // unresettable. `loop_release_mode` / `loop_fade_time` went the same day: the
 // tape tab's autopin switch replaced what a loop does at its end (Ek).
-const _RETIRED_IDS = ['grain_durjit', 'loop_release_mode', 'loop_fade_time', 'handsfree', 'belt_1', 'erase_toggle', 'k_all', 'trace_trigger', 'commit_mode', 'commit_volume', 'commit_speed', 'perf', 'perfmode', 'darkmode', 'projector', 'spatial_panning', 'commit_tether', 'pins_unmute_all',
+// `tape_overdub`, `tape_autopin` and the take capsule's `take_line`,
+// `take_loop`, `take_dub`, `tape_take` went 2026-09-26: a dub is by touch.
+const _RETIRED_IDS = ['tape_overdub', 'tape_autopin', 'take_line', 'take_loop', 'take_dub', 'tape_take', 'grain_durjit', 'loop_release_mode', 'loop_fade_time', 'handsfree', 'belt_1', 'erase_toggle', 'k_all', 'trace_trigger', 'commit_mode', 'commit_volume', 'commit_speed', 'perf', 'perfmode', 'darkmode', 'projector', 'spatial_panning', 'commit_tether', 'pins_unmute_all',
   'palette_5', 'palette_6', 'palette_7', 'palette_8', 'palette_9'];
 function _migrateIds(map) {
   let n = 0;
@@ -955,6 +956,7 @@ const keySource  = km => `key:${km.code}${km.shift ? '+shift' : ''}${km.ctrl ? '
 const noteSource = mm => `note:${mm.channel}:${mm.number}`;
 const keySourceOf = e => keySource({ code: e.code, shift: e.shiftKey, ctrl: e.ctrlKey, meta: e.metaKey });
 function sourceLabel(src) {
+  if (src === SPACE_TWIN) return 'click';
   if (src.startsWith('btn:')) return `button ${src.slice(4)}`;
   if (src.startsWith('note:')) { const [, ch, n] = src.split(':'); return `note ${n} ch${ch}`; }
   const km = Object.values(keyMappings).find(m => m && m.type === 'key' && keySource(m) === src);
@@ -979,10 +981,9 @@ const HAND_FACTORY_KEYS = {
   hand_press: { type: 'key', key: ' ', code: 'Space', shift: false, ctrl: false, meta: false, g: 'press' },
   hand_long:  { type: 'key', key: ' ', code: 'Space', shift: false, ctrl: false, meta: false, g: 'long' },
   audition:   { type: 'key', key: 'a', code: 'KeyA',  shift: false, ctrl: false, meta: false, g: 'press' },
-  // O for OVERDUB (Ek, 2026-09-24) — the letter its tile flag already draws.
-  tape_overdub: { type: 'key', key: 'o', code: 'KeyO', shift: false, ctrl: false, meta: false, g: 'press' },
-  // P for PIN ITSELF — autopin on both engines at once (Ek, 2026-09-25).
-  autopin:      { type: 'key', key: 'p', code: 'KeyP', shift: false, ctrl: false, meta: false, g: 'press' },
+  // P for PIN ITSELF (Ek, 2026-09-25) — grain's autopin as cloud since
+  // 2026-09-26, when tape stopped having one (a dub is by touch).
+  grain_autopin: { type: 'key', key: 'p', code: 'KeyP', shift: false, ctrl: false, meta: false, g: 'press' },
   // F for FOLLOW, the pinned rail's switch (Ek, 2026-09-25).
   pins_follow:  { type: 'key', key: 'f', code: 'KeyF', shift: false, ctrl: false, meta: false, g: 'press' },
   // N and [ ] were HARDCODED in events.js until 2026-09-25 — a key nothing could
@@ -1093,9 +1094,10 @@ function _fireGesture(src, g, down) {
   // button, a key, a note), the gesture as read, and the action it landed
   // on (or none).
   window.dispatchEvent(new CustomEvent('button-gesture', { detail: { btn: src.startsWith('btn:') ? Number(src.slice(4)) : null, src, srcLabel: sourceLabel(src), g, down, id: action ? id : null, label: actionLabel(action) || null } }));
-  if (!action) return null;
-  if (action.type === 'hold') { dispatchAction(id, down ? 127 : 0); return down ? g : null; }
-  if (down) dispatchAction(id, 127);
+  const from = { src: sourceLabel(src), g };
+  if (!action) { if (down) S._echo?.({ miss: 'not bound', from }); return null; }
+  if (action.type === 'hold') { _withEchoFrom(from, () => dispatchAction(id, down ? 127 : 0)); return down ? g : null; }
+  if (down) _withEchoFrom(from, () => dispatchAction(id, 127));
   return null;
 }
 
@@ -1163,6 +1165,11 @@ function dispatchGesture(btn, down) {
   const learning = _learningFor(btn) !== null;
   const bound = learning ? new Set(BUTTON_GESTURES) : _bindingsOnSource(btn);
   const counting = learning || bound.has('double') || bound.has('triple');
+
+  // A button or a note with nothing on it says so in the echo — the case the
+  // performer cannot tell from a dead cable. Keys never arrive here unbound
+  // (events.js asks first), so typing is not echoed.
+  if (down && !learning && !bound.size) S._echo?.({ miss: 'not bound', from: { src: sourceLabel(btn), g: 'press' } });
 
   if (down) {
     st.downAt = performance.now();
@@ -1311,21 +1318,20 @@ const PID_ACTION = {
   cutoff: 'grain_cutoff', res: 'grain_res', fltJit: 'grain_fltjit', vol: 'grain_vol', pan: 'grain_pan', prob: 'grain_prob',
   flow: 'grain_flow', headW: 'grain_head', gEnd: 'grain_autopin',
   tspeed: 'tape_speed', tpitch: 'tape_pitch', tstep: 'tape_step', treverse: 'tape_reverse', tvol: 'tape_vol',
-  tchop: 'tape_slice', onEnd: 'tape_autopin',
+  tchop: 'tape_slice',
   // A row can answer to several actions — radius is a pot AND two keys.
   radius: ['radius_cc', 'radius_inc', 'radius_dec'], mode: 'snap', depth: 'recency_cc', k: 'grain_k', step: 'lens_step',
   rfade: 'radius_fade', reads: 'lens_reads',
 };
 const HOOK_ACTION = {
   'data-audition': () => 'audition',
-  'data-autopin':  v  => v === 'tape' ? 'tape_autopin' : 'grain_autopin',
-  'data-overdub':  () => 'tape_overdub',
+  'data-autopin':  () => 'grain_autopin',
   'data-gwalk':    () => 'grain_walk',
   'data-escope':   () => 'erase_bystroke',
   'data-gsw':      v  => ({ dwell: 'grain_dwell', retrig: 'grain_retrig' })[v] ?? null,
   'data-swproxy':  v  => ({ trigChopSeg: 'tape_slice', radiusFadeSeg: 'radius_fade', trigDwellSeg: 'tape_dwell',
                             trigRetrigSeg: 'tape_retrig', gcFilterOnSeg: 'grain_filter' })[v] ?? null,
-  'data-sw':       v  => ({ glink: 'grain_link', gend: 'grain_autopin', treverse: 'tape_reverse', onend: 'tape_autopin' })[v] ?? null,
+  'data-sw':       v  => ({ glink: 'grain_link', gend: 'grain_autopin', treverse: 'tape_reverse' })[v] ?? null,
   'data-reads':    () => 'lens_reads',
 };
 function actionOfElement(el) {
@@ -1572,7 +1578,7 @@ function handleMidiMessage(event) {
       // dispatchAction's domain is not integer-only, so the shaped float
       // survives all the way into the ccFn.
       const out = action.type === 'cc' ? scaleControl(val / 127, mapScale(mapping)) * 127 : val;
-      dispatchAction(action.id, out);
+      _withEchoFrom({ src: `CC ${num} ch${channel}` }, () => dispatchAction(action.id, out));
     }
   }
 }
@@ -1628,7 +1634,82 @@ function _pickVoice(engine, midiVal) {
   S._applyVoice?.(ids[i]);
 }
 
+// ── THE ECHO (Ek, 2026-09-26: "it's not always the case i'll see the button
+// light up in the gui … a very simple readout of what was pressed, regardless
+// of where from osc, button, keyboard, so we have confidence and also learning
+// that something worked"). Every input reaches the engine through this one
+// function, so the footer's readout (js/ui-echo.js) is told here: the action,
+// the state it left, and `S._echoFrom` — the input and gesture that carried it,
+// set by whoever called (the recogniser below, a CC, osc.js, a pad, a click).
+// A hold's release is not echoed: it would replace its own press at once.
 function dispatchAction(id, midiVal) {
+  _runAction(id, midiVal);
+  const action = ACTIONS.find(a => a.id === id);
+  if (!action || (action.type === 'hold' && !(midiVal > 0))) return;
+  S._echo?.({ what: _echoWord(actionLabel(action)), state: _stateOf(id), from: S._echoFrom ?? null, cont: action.type === 'cc' });
+}
+/** A label as the echo says it: `slice (toggle)` → `slice`, and a row that
+ *  lists its options (`sort · near / far / old`) drops the list, because the
+ *  state beside it names the one that is on. */
+function _echoWord(label) {
+  return String(label || '').replace(/\s*\((toggle|cycle)\)$/, '').replace(/\s*·[^·]*\/.*$/, '');
+}
+const _onWord = v => (v ? 'on' : 'off');
+const _AXIS_WORD = { sensor: 'free', locked: 'held', mapped: 'mapped' };
+/** What a toggle or a cycle left, in its own words — the part of an action a
+ *  glance at the screen may not show. Actions not here echo their name alone. */
+const ACTION_STATE = {
+  mute:             () => _onWord(S.isMuted),
+  dry_mute:         () => S.dryMonitorMode,
+  audition:         () => _onWord(S.auditionMode),
+  tape_slice:       () => _onWord(S.triggerParams.sliceOn),
+  tape_dwell:       () => (S.triggerParams.dwell === 'oneshot' ? 'once' : S.triggerParams.dwell),
+  tape_retrig:      () => S.triggerParams.retrig,
+  tape_step:        () => S.triggerParams.step,
+  tape_reverse:     () => _onWord(S.triggerParams.reverse),
+  grain_autopin:    () => _onWord(S.traceMode === 'trace+cloud'),
+  grain_walk:       () => _onWord(S.grainWalk),
+  grain_dwell:      () => (S.grainTrigger.dwell === 'oneshot' ? 'once' : S.grainTrigger.dwell),
+  grain_retrig:     () => S.grainTrigger.retrig,
+  grain_link:       () => _onWord(S.grainLink?.on),
+  grain_curve:      () => S.grainCurveType,
+  grain_dir:        () => S.grainDirection,
+  grain_filter:     () => _onWord(S.grainOverrides.filterOn ?? gp().filterOn),
+  grain_filtertype: () => S.grainOverrides.filterMode ?? gp().filterMode,
+  erase_bystroke:   () => _onWord(S.eraseWholeStroke),
+  erase_from:       () => (S.eraseOldest ? 'bottom' : 'top'),
+  lens_reads:       () => S.lensReads ?? 'both',
+  snap:             () => S.lensMode,
+  lens_step:        () => _onWord(S.lensStep),
+  radius_fade:      () => _onWord(S.radiusFadeEnabled),
+  cursor_lock:      () => _onWord(S.azSource === 'locked' && S.elSource === 'locked'),
+  az_source:        () => _AXIS_WORD[S.azSource] ?? S.azSource,
+  el_source:        () => _AXIS_WORD[S.elSource] ?? S.elSource,
+  pins_follow:      () => _onWord(S.commitPlayback === 'focus'),
+  commit_selection: () => S.selectionMode,
+  commit_overflow:  () => S.commitOverflow || 'off',
+  commit_dir:       () => S.commitCloudLoopMode,
+  pin_mute:         () => { const c = _selectedPin(); return c ? _onWord(c.mute) : 'no pin'; },
+  pin_solo:         () => { const c = _selectedPin(); return c ? _onWord(c.solo) : 'no pin'; },
+  bus_cloud_mute:   () => _onWord(GROUPS.find(x => x.key === 'cloud')?.muted),
+  bus_cloud_solo:   () => _onWord(GROUPS.find(x => x.key === 'cloud')?.solo),
+  bus_loop_mute:    () => _onWord(GROUPS.find(x => x.key === 'loop')?.muted),
+  bus_loop_solo:    () => _onWord(GROUPS.find(x => x.key === 'loop')?.solo),
+  pins_mute:        () => _onWord(S._pinsAllMuted?.()),
+  rail_tools:       () => (S._toolRailOpen?.() ? 'open' : 'shut'),
+  rail_pins:        () => (S._pinnedRailOpen?.() ? 'open' : 'shut'),
+  settings:         () => (S._settingsOpen?.() ? 'open' : 'shut'),
+  camera_mode:      () => S.cameraMode,
+};
+function _stateOf(id) { try { return ACTION_STATE[id]?.() ?? null; } catch (_) { return null; } }
+/** Run `fn` with the echo's source set to `from`, putting back what was there —
+ *  a gesture can dispatch while an OSC message is being handled. */
+function _withEchoFrom(from, fn) {
+  const prev = S._echoFrom; S._echoFrom = from;
+  try { return fn(); } finally { S._echoFrom = prev; }
+}
+
+function _runAction(id, midiVal) {
   switch(id) {
     case 'mute': {
       // A key or a note flips; the OSC int sets (1 muted, 0 not) — it said
@@ -1704,13 +1785,6 @@ function dispatchAction(id, midiVal) {
     // else (a bang, a key, a note) to flip: `_onOff`. Every capsule takes a
     // string to set and a bang to cycle: `_strMode` + `_cycle`.
     case 'audition':      S._setAudition?.(_onOff(midiVal, S.auditionMode)); break;
-    case 'autopin': {
-      // One state for both: a toggle turns both on unless both already are.
-      const on = _onOff(midiVal, !!S.triggerParams.loopOnEnd && S.traceMode === 'trace+cloud');
-      S._setAutoPin?.('tape', on); S._setAutoPin?.('granular', on); break;
-    }
-    case 'tape_autopin':  S._setAutoPin?.('tape', _onOff(midiVal, S.triggerParams.loopOnEnd)); break;
-    case 'tape_overdub':  S._setOverdub?.(_onOff(midiVal, S.overdub)); break;
     case 'tape_slice':    S._setChopOn?.(_onOff(midiVal, S.triggerParams.sliceOn)); break;
     case 'tape_dwell':
       S.triggerParams.dwell = _strMode(midiVal, ['oneshot', 'loop', 'grain'], { once: 'oneshot' }) ?? _cycle(['oneshot', 'loop', 'grain'], S.triggerParams.dwell);
@@ -2973,6 +3047,7 @@ export function setupMappingModal() {
   S._buttonMappings = buttonMappings;   // the same object, for the audits — a removed tile takes its buttons with it
   S._actions        = ACTIONS;
   S._dispatchAction = dispatchAction;
+  S._dispatchFrom   = (from, id, v) => _withEchoFrom(from, () => dispatchAction(id, v));   // the echo's source, then the action
   S._dispatchButton = dispatchButton;   // the instrument's buttons, sygaldry.js
   // Keys through the same recogniser (events.js): the source a key event is,
   // whether anything is bound on it, and its edge.

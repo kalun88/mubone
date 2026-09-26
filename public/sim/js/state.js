@@ -968,7 +968,8 @@ export const S = {
   // (ui-presets.js beginOverdub). Read once at the stroke's end by
   // attachOverdub and cleared. Null when the hand is not the overdub brush.
   _overdubTake:      null,
-  _overdubSeed:      false,   // an overdub press with nothing pinned: this take is pinned as the main loop on release (ui-presets.js, events.js)
+  _overdubSeed:      false,   // a pin during a line take: the part before is pinned as the main loop on release (events.js pinSplitTake)
+  _dubTag:           null,    // a dub-by-touch press that pinned its line: the pin and the take fold into one undo (ui-presets.js, events.js)
   // What the app knows about the time between a sound and its sample, and
   // between a scheduled sample and its sound (js/latency.js). `inS` moves a
   // loop's edges and `roundTripS` moves an overdub's phase; `source` is
@@ -1048,11 +1049,8 @@ export const S = {
                                // steps down by this at every wrap; nothing
                                // fades in playback. Held as `wear` on each
                                // family member (never written into audio).
-    loopOnEnd:  false,         // the looper CONTRACT as a param (#244): end
-                               // the stroke and it loops immediately into its
-                               // group. line/slice fix 'arm' via
-                               // FACTORY_PARAMS; any custom loop tile can
-                               // flip it and become a looper with intention.
+    // (`loopOnEnd`, the looper contract #244 — every take its own loop — was
+    //  retired 2026-09-26: take: loop is the looper, tiles.js setTakeMode.)
   },
 
   // ── Source (#247 — what the brush inks from) ───────────────────────────
@@ -1306,14 +1304,10 @@ export const S = {
   //           same night: a pin is never gated by the lens radius.)
   commitPlayback:  'all',    // 'all' | 'focus'
   commitXfade:     0.5,      // 0.0 = hard snap (follow only), 1.0 = full crossfade (distance blend)
-  // ── MODE — per instrument, and mostly DERIVED (Ek, 2026-09-21 → 22) ──────
-  // `autopin` is NOT stored: it IS the engine's own end flag (grain's
-  // `traceMode`, tape's `loopOnEnd`), read through `_AUTOPIN` in tiles.js. The
-  // one real bit is this, and it is named for what it does rather than for the
-  // shape of the question: "instead of calling cycle, we just call it what it
-  // is, overdub on or off." On, a tape take joins the nearest pinned loop at
-  // the phase you played it; off, it runs on its own clock.
-  overdub:         false,
+  // ── MODE — per instrument, and DERIVED (Ek, 2026-09-21 → 22) ─────────────
+  // `autopin` is NOT stored: it IS grain's own end flag (`traceMode`), read
+  // through `_AUTOPIN` in tiles.js. (`overdub`, the one stored bit, went
+  // 2026-09-26: a take dubs by TOUCH — ui-presets.js beginDubByTouch.)
 
   // ── Monitor / House bus split (Phase 1 — Improv Mode) ─────────────────
   // monitorBus:  cursor grains route here (private monitoring, always on)

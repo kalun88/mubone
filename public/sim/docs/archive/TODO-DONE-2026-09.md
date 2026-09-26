@@ -3854,3 +3854,82 @@ it began; git dates the commits Sep 21. The day is the same work either way.)*
   six-tile palette, the hand's press/hold, the tool rail's tabs, voice presets and sheet (the drawer, wet paint, the
   stickers, trail, dub and stroke mode are gone), the cursor section, the mixer as it is, P/O/A/F/C and the `?`.
   New screenshots (img/screen.jpg, img/sheet.jpg; drawer.jpg removed), taken from a private instance.
+- [x] **The pinned rail says what it is on hover** (2026-09-26) — the `Pinned` title explains a pin (a frozen copy of
+  the cursor; its lines become loops, its grains a cloud; what is pinned leaves the cursor, muted or not; ↓ / ↑), and
+  the follow · sort · when full · unpin all labels carry their definitions. Static titles in index.html only.
+- [x] **Selected explains itself** (2026-09-26) — the rail's `Selected` word was a CSS `::after` (no hover); it is a
+  real `.lyr-sel-l` span now, same look, carrying what selected means (unpin, a controller's pin mute/solo/level, the
+  sphere's highlight) and how sort picks it: near moves with you, far is behind you, old stays put.
+- [x] **A tooltip stays out of the menu it opened** (2026-09-26) — ui-learn.js: a pointerdown hides the tip and keeps
+  that control's tip off until the pointer leaves it; a control with `aria-expanded="true"` shows none; a menu row's
+  tip sits beside the menu (left, else right), not under the row. Found on the camera button in the chrome.
+- [x] **The cursor card's top inset** (2026-09-26) — `.rail-card` had padding-bottom only, so the cursor card (no
+  head) put its scope row on its top edge: 0 above, 12 below. A card opening on a `.mrow` now gets 12 on top too,
+  as the pinned rail's mode card does; head-led cards (voice, grain behaviour) measured unchanged at 0.
+- [x] **Rail beds, tabs and card heads up in contrast** (2026-09-26) — both rails' cards `--surface-1` → `--surface-3`;
+  the chosen tab follows the card, closed tabs `--surface-0` → `--surface-1` with the glyph `--text-dim` →
+  `--text-subtle`, hover `--surface-4`; card heads (Voice, Grain Behaviour) `--text-highlight` over a `--border-soft`
+  rule. All existing ramp tokens; INSTRUMENT-GUI's mode-card line updated.
+- [x] **The instrument tabs take the card head's shape** (2026-09-26) — the tab strip is 40 tall with a `--border-soft`
+  rule inside it, the `.tbx-lbl--sec` box (Voice, Grain Behaviour); tabs fill it (39 + the rule). Measured: strip 40,
+  head 40, 12 from the rule to the first row.
+- [x] **k's all is a switch** (2026-09-26) — the cursor section's k row is `k [live] [1–100] all ⏻`: the number
+  stops at 1, all on hides it (slot kept, nothing moves) and the switch gives back the last k (8 before any).
+  Engine, OSC and the pot keep 0 = all. `passes` has no surface, so it was left. RULINGS under "k is one slider".
+- [x] **passes is back, and k says marks** (2026-09-26) — `ZERO_ROW` (tiles.js) is the switch-beside-number row for
+  any 0-means-no-limit param: k (`all`, the lens) and passes (`∞`, the tape tab's last row, captured into the tool).
+  k's number reads `12 marks`; passes keeps `2×`. Checked on a private instance: round-trips, `100 marks` fits.
+- [x] **The selected pin wears the rail's frame on the sphere** (2026-09-26) — renderer.js: the corner brackets are a
+  closed 1px bone square at r-3 (`_drawFocusBox`), full strength; the cursor's line goes to the SELECTED pin
+  (`_selectedMark`, was the follow law's `_dominantSeedSlot`), 1px solid bone, ending at the frame's edge.
+- [x] **A tape playhead is the glow mark** (2026-09-26) — `_drawPlayheadSquare` → `_drawPlayheadMark`: the glow map's
+  one mark (white, `max(3.2, base × GLOW_CORE)`, GLOW_ALPHA, depth moves size not alpha), no square — for the loop
+  head, trigger heads (and every retrig voice) and overdub heads alike.
+- [x] **A slice plays onset to onset, and its pin plays the same** (2026-09-26) — a slice's region came from its marks
+  (the paint gate leaves a soft one a mark or two: attack cut, a 20 ms buzz, or no trigger when the mark sat in the
+  last 12 ms). `t.slice` {lo, hi, marks} snaps an untrimmed end to its onset (`_applyCluster`); `buildLoopPayload`
+  takes an armed stroke's trigger region; the pin fallback skips unarmed lines (the pre-roll). Rig suites not run.
+- [x] **passes works on a hand pin** (2026-09-26) — only the autopin hook (tiles.js) stamped `slot.passes`, so a loop
+  pinned with the pin key looped for ever. `createSeqFromStroke` reads `triggerParams.passes` at the pin (the
+  tooltip's "set when you pin"); the hook's own stamp went. Extra playheads on a looping stroke still loop for ever.
+- [x] **passes is FADE OUT, on when it fades** (2026-09-26) — the tape tab's row reads `fade out [8 passes] ⏻`
+  (`ZERO_ROW.passes.onAtZero: false`, fallback 8); engine/piece/param id keep `passes`. Passes are counted at the
+  wrap edges (`seq._passN`, grain.js): above 1× a mid-cycle start opened on wrap 1, and a rebuilt source restarted
+  the count. RULINGS under "k is one slider". Not checked on screen — Ek's app runs without the dev bridge.
+- [x] **The cursor's fade is SOFT EDGE; Settings' Fade rows are Release Fade** (2026-09-26) — `rfade`'s label on the
+  rail, the sheet and the cabinet; Settings → Tools' tape and grain `Fade` (the release's time) → `Release Fade`.
+  Ids, OSC and files unchanged. Manual: soft edge + falloff's door, and a fade out item. Not checked on screen.
+- [x] **The echo: the footer says what every input did** (2026-09-26) — `slice on` over `KEY 4 · LONG`, left of the
+  meters in the axis buttons' box. Told at `midi.js dispatchAction` (+ `ACTION_STATE`), sources via `S._echoFrom` /
+  `S._dispatchFrom` (recogniser, CC, osc.js `_route`, pads, sensor bindings); ochre for not bound / not handled.
+  align-audit's footer lists include it (14 captions, 7 glyphs, 0.04px). `radius_fade`'s label → soft edge.
+- [x] **Slice and the looper are exclusive** (2026-09-26) — slice on turns tape's autopin and overdub off, either of
+  them on turns slice off (`setSliceOn`, `setAutoPin`, `setOverdub`; the sheet's onend switch now goes through
+  setAutoPin); `armTrigger` never slices a loop take. The echo says what else moved. Checked on a private instance.
+- [x] **take: line | slice | loop | dub** (2026-09-26) — the tape tab's autopin / overdub / slice switches are one
+  capsule in the scope's shape (`tiles.js setTakeMode`/`takeMode`, flags unchanged underneath). Actions `take_line`
+  … `take_dub` (O), `/tape/take s` + `/tape/take/<mode>`; old ids migrate. P = take loop + grain cloud. Measured:
+  30px row, seg right edge 295 = scope's; clicks, O, P and OSC all leave one mode. osc wiring green.
+- [x] **Take's O sits on dub** (2026-09-26) — each take segment wears its own sticker, bound ones only
+  (`data-bound-only` in `_fillRowBinds`); the sticker passes its click to the segment. Measured: 18px kbd centred in
+  the 24px segment, capsule still ends at x 295 with the scope's. align-audit: the same three failures as HEAD.
+- [x] **Take wears glyphs** (2026-09-26) — line · slice (the line twice) · loop (the gapped ring) · dub (the O), all
+  marks the file already gave these ideas, restored from history into `G`. 28.6px icon segments, capsule still ends at
+  x 295. Open: dub's O beside the O key reads doubled — Ek to choose.
+- [x] **Loop is the looper: take is line | slice | loop** (2026-09-26) — dub folded into loop (the overdub flag):
+  nothing pinned the take lays the loop, then layers onto the nearest. `loopOnEnd` held off, a stored one read as loop;
+  `take_dub` → `take_loop` (O). New base loop = record in line, pin it. Debt: the autopin-as-loop path is now
+  unreachable (onEnd param, `_AUTOPIN.tape`, the hook's `loopOnEnd` branch) — sketch its removal for Ek.
+- [x] **L is loop** (2026-09-26) — `take_loop`'s factory key O → L (an untouched factory O moves once, in
+  `seedHandKeysIfAbsent`); L flips loop and line, slice is clicked; L's sticker sits after the take row's label; the
+  tape tile's flag wears loop's ring, not the O (`G.overdub` removed). Checked with an old profile's O planted.
+- [x] **Every-take-its-own-loop is retired** (2026-09-26) — `triggerParams.loopOnEnd` (#244), the tape tool's
+  `onEnd` param/sheet switch, `_AUTOPIN.tape`, piece load, the hook's branch: gone; the hook pins only the seed.
+  trigger-audit (e) seeds via `_overdubSeed`, pins-audit's zone case arms `{ loop: true }`. Rig suites not run.
+- [x] **A take dubs by touch; no overdub mode** (2026-09-26) — press on a loop/its layers → layer onto it; on an
+  unpinned line → pin it (phase carried) + layer, one undo (`_dubTag`); elsewhere → a line (`dubTargetAt`,
+  `beginDubByTouch`). Slice never dubs and is a switch again; take capsule, L, `S.overdub`, `nearestLoopPin`, tape
+  autopin, `/autopin` gone; P = grain autopin; rail ring = touch target. pins-audit (a)/(h) rewritten, not run.
+- [x] **The echo floats above the palette** (2026-09-26) — one pill in `#paletteDock` (tiles.js now replaces only
+  `#paletteBed`), centred, 24 tall, 8 above, 1 s then the decay fade; out of the footer. align-audit: the footer
+  lists back as they were, a new invariant for the pill (measured centre off 0.00, gap 8.00).

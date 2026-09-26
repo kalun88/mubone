@@ -129,11 +129,21 @@ const TRAIL_MIN_RAD = 0.001;
 // r 30, not 22: a loop pin already stacks a 4px core, a 14px anchor ring and a
 // playhead square whose half-size reaches 20 at the near depth, and a frame at
 // 22 landed inside that pile (measured on a rig, 2026-09-13). 30 clears all
-// three, so the corners read as a frame AROUND the pin rather than another
-// ring in it. Arms 8, so each corner is a quarter of its side and the gaps
-// stay wide enough that it never closes into a square.
+// three, so the frame reads as AROUND the pin rather than another ring in it.
+//
+// THE RAIL'S SELECTED FRAME, DRAWN ON THE SPHERE (Ek, 2026-09-26: "make the
+// bracket also same thickness, and also rounded edge design, full square not
+// just bracket … to mirror the selected design in the pinned rail"). The four
+// corners are a closed square now: 1px, bone, the rail frame's r-3 (4px)
+// corners — `.lyr-sel` is 1px `--eng-pins` at `--r-3`, and the canvas draws
+// in CSS pixels, so these are the same numbers. The corners' argument above
+// (a new shape, not a fifth ring) still holds: nothing else on the sphere is
+// a rounded square. What it gives up — "it does not close" — is what makes
+// it the rail's shape, which is the point: one sign for "selected" in both
+// places. Drawn at full strength, as the rail's frame is: the pin inside it
+// keeps its own depth fade, the selection does not fade with it.
 const FOCUS_R   = 30;
-const FOCUS_ARM = 8;          // the length of each leg of a corner
+const FOCUS_RAD = 4;          // --r-3, the rail frame's corner
 // Read once, not per frame: this runs inside the render loop and a
 // getComputedStyle there is exactly the kind of per-frame cost CLAUDE.md's
 // render-path rules exist to keep out.
@@ -160,21 +170,40 @@ function _tok(name, fallback) {
 // Nothing flushes the cache: the canvas has one theme (Ek, 2026-09-15), so a
 // token resolves once and stays resolved.
 
-function _drawFocusBracket(x, y, r, alpha, color) {
+function _drawFocusBox(x, y, r, alpha, color) {
   const c = S.ctx;
   c.save();
   c.globalAlpha = alpha;
   c.strokeStyle = color;
-  c.lineWidth = 1.6;
-  c.lineCap = 'round';
+  c.lineWidth = 1;
   c.beginPath();
-  for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-    const cx = x + sx * r, cy = y + sy * r;
-    c.moveTo(cx - sx * FOCUS_ARM, cy); c.lineTo(cx, cy);      // the horizontal leg
-    c.lineTo(cx, cy - sy * FOCUS_ARM);                        // the vertical leg
-  }
+  // Half-pixel aligned so a 1px line is one pixel, not two at half strength.
+  c.roundRect(Math.round(x - r) + 0.5, Math.round(y - r) + 0.5, 2 * r, 2 * r, FOCUS_RAD);
   c.stroke();
   c.restore();
+}
+
+/** Where the selected pin's NUMBER MARK is on screen — the same point the
+ *  anchor passes draw it at (a loop: its anchor, else its first mark; a moving
+ *  cloud: the end of its path; a still cloud: where it sits). Null when it is
+ *  off screen. For the line from the cursor, which is
+ *  drawn before either pass runs. */
+const _selLL = [0, 0], _selW = [0, 0, 0], _selC = [0, 0, 0];
+function _selectedMark() {
+  const i = S._selectedPinSlot?.(S._frameCursorLon ?? 0, S._frameCursorLat ?? 0) ?? -1;
+  const c = i >= 0 ? S.commitSlots?.[i] : null;
+  if (!c) return null;
+  if (c.type === 'loop') {
+    _selLL[0] = c.anchorLon ?? c.particles?.[0]?.lon; _selLL[1] = c.anchorLat ?? c.particles?.[0]?.lat;
+    if (_selLL[0] == null || _selLL[1] == null) return null;
+  } else if (c.frames) {
+    if (!pinAnchorInto(c, _selLL)) return null;
+  } else { _selLL[0] = c.lon; _selLL[1] = c.lat; }
+  spherePointInto(_selLL[0], _selLL[1], _selW);
+  cameraTransformInto(_selW[0], _selW[1], _selW[2], _selC);
+  const p = project(_selC[0], _selC[1], _selC[2]);
+  if (!p) return null;
+  return { x: p.sx, y: p.sy };
 }
 
 function _drawAnchorMark(x, y, color, alpha, label, paused) {
@@ -389,7 +418,7 @@ export function drawSeeds() {
         if (ax != null) {
           const aAlpha = (isNearest ? 1 : 0.6) * envG * (0.35 + 0.65 * adf);
           _drawAnchorMark(ax, ay, seed.color, aAlpha, i + 1, held);
-          if (isNearest) _drawFocusBracket(ax, ay, FOCUS_R, aAlpha * 0.85, FOCUS_INK());
+          if (isNearest) _drawFocusBox(ax, ay, FOCUS_R, 1, FOCUS_INK());
         }
       }
     }
@@ -1161,7 +1190,7 @@ function updateDepthRamp() {
 // full size, full brightness — where depthFactor(mag) gives 0.4. The playheads,
 // the anchor marks and the overdub heads therefore stayed at maximum across the
 // whole far side while the paint under them receded, which is exactly what the
-// note above _drawPlayheadSquare says that layer must not do: the marker
+// note above _drawPlayheadMark says that layer must not do: the marker
 // detached from its own material.
 function rampDepth(cx, cy, cz, z) {
   return _dfPulled ? Math.sqrt(cx * cx + cy * cy + cz * cz) : z;
@@ -1878,9 +1907,9 @@ export function drawParticles() {
       const entry = activeGrainMap.get(particle);
       // A loop or trigger tags its playhead mark in the loop's own colour
       // (grain.js, seq block) so the paint pass can brighten it as the head
-      // passes. That head already wears the SQUARE (_drawPlayheadSquare); a
-      // circle here as well drew both markers on one mark (Ek, 2026-09-02).
-      // The circle is for grains — white tags, cursor and cloud alike.
+      // passes. That head draws its own mark (_drawPlayheadMark — this same
+      // white dot since 2026-09-26); drawing it here as well would lay two on
+      // one mark. This pass is for grains — white tags, cursor and cloud alike.
       if (!entry || entry.glowColor !== '#ffffff') continue;
       const df   = Math.max(0, depthFactor(depth));
       const base = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df;
@@ -1905,9 +1934,9 @@ export function drawParticles() {
     if (!proj) continue;
     // depthFactor, not the raw 2R formulas — see the trigger playhead note.
     const df = Math.max(0, depthFactor(rampDepth(_arcC[0], _arcC[1], _arcC[2], proj.depth)));
-    // The same square as the trigger playhead — a held loop is the same kind
-    // of time; alpha floored like the particle pass.
-    _drawPlayheadSquare(proj.sx, proj.sy, df, 0.9 * (0.35 + 0.65 * df));
+    // The same mark as the trigger playhead and every grain in flight — a
+    // held loop is sounding too.
+    _drawPlayheadMark(proj.sx, proj.sy, df);
     if (seq.overdubs?.length && S.audioCtx) _drawOverdubHeads(seq, proj.sx, proj.sy);
   }
 
@@ -1931,7 +1960,7 @@ export function drawParticles() {
     const df = Math.max(0, depthFactor(rampDepth(_arcC[0], _arcC[1], _arcC[2], proj.depth)));
     const a = (seq.playing ? 0.9 : 0.4) * (0.35 + 0.65 * df);
     _drawAnchorMark(proj.sx, proj.sy, seq.color, a, si + 1, !seq.playing);
-    if (si === selLoop) _drawFocusBracket(proj.sx, proj.sy, FOCUS_R, a * 0.85, FOCUS_INK());
+    if (si === selLoop) _drawFocusBox(proj.sx, proj.sy, FOCUS_R, 1, FOCUS_INK());
     _drawLayerMarks(seq, si);
   }
 
@@ -1986,8 +2015,8 @@ const _trigProj = [0, 0, 0];
 // An overdub's head (Ek, 2026-09-05: "I should see a playhead on the overdub
 // as well, tethered to the main loop playhead"). Where the master's phase
 // falls in the take (grain.js overdubHeads — one head per stacked pass), the
-// mark of the overdub's stroke nearest that moment wears the same square at
-// a lower alpha, and a thin line runs to the master's head: the layer has no
+// mark of the overdub's stroke nearest that moment wears the same glow mark
+// as every other sounding head, and a thin line runs to the master's head: the layer has no
 // clock of its own, and the line says so. The stroke's marks are cached on
 // the overdub, sorted by take time, and dropped when the particle set
 // changes (an erase) — a per-frame filter over S.particles would not do.
@@ -2034,34 +2063,28 @@ function _drawOverdubHeads(seq, mx, my) {
       S.ctx.lineWidth   = 1;
       S.ctx.beginPath(); S.ctx.moveTo(mx, my); S.ctx.lineTo(_ovProj[0], _ovProj[1]); S.ctx.stroke();
       S.ctx.restore();
-      _drawPlayheadSquare(_ovProj[0], _ovProj[1], df, 0.6 * a);
+      _drawPlayheadMark(_ovProj[0], _ovProj[1], df);
     }
   }
 }
 
-// A loop's playhead is a SQUARE — the granulation marker's core + outline, in
-// ink, at the granulation marker's size, but square (Ek, 2026-09-02). Shape is
-// the whole difference between "a grain is sounding here" (circle) and "a
-// loop's head is here" (square); the loop's own colour lives on its anchor
-// marker and its rail chip, not on the head. The tangent-oriented rectangle
-// this replaces was smaller than the circle and read as a third thing.
-// Axis-aligned on purpose: a square that turns with the path stops being a
-// square at a glance. Same floored depth fade as the particles.
+// A TAPE PLAYHEAD IS THE GLOW MARK (Ek, 2026-09-26: "the tape loop playhead
+// cursor should match. that glow represents everything sounding in flight so
+// it should be the same … instead of the square box around the moving
+// playhead … just don't have any bounding thing"). It was a small core inside
+// a square outline (2026-09-02) — shape telling "a loop's head" from "a grain
+// sounding". The glow map is everything sounding, and a tape head IS sounding,
+// so it wears the glow map's one mark: white, `max(3.2, base × GLOW_CORE)` on
+// the marker layer's own size scale, at GLOW_ALPHA. Depth moves its size as it
+// moves a glow dot's, and not its alpha — the glow pass's own rule. No box.
 const _tickProj = [0, 0, 0];   // scratch for the trigger outline below
 
-function _drawPlayheadSquare(x, y, df, alpha) {
+function _drawPlayheadMark(x, y, df) {
   const base = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df;
-  const core = Math.max(1.6, base * 0.42);
-  const half = Math.max(6,   base * 1.5);
-  const ink  = '#ffffff';
   S.ctx.save();
-  S.ctx.globalAlpha = alpha;
-  S.ctx.fillStyle   = ink;
-  S.ctx.beginPath(); S.ctx.arc(x, y, core, 0, Math.PI * 2); S.ctx.fill();
-  S.ctx.globalAlpha = alpha * 0.8;
-  S.ctx.strokeStyle = ink;
-  S.ctx.lineWidth   = 1.1;
-  S.ctx.strokeRect(x - half, y - half, half * 2, half * 2);
+  S.ctx.globalAlpha = GLOW_ALPHA;
+  S.ctx.fillStyle   = '#ffffff';
+  S.ctx.beginPath(); S.ctx.arc(x, y, Math.max(3.2, base * GLOW_CORE), 0, Math.PI * 2); S.ctx.fill();
   S.ctx.restore();
 }
 
@@ -2189,7 +2212,7 @@ function drawTriggers() {
     // sphere's far surface (depth ≈ offZ + R, df ≈ 0), and a bare ·df there
     // multiplied the marker to 0.001 alpha. Same lesson as the 2R cull above.
     const df = Math.max(0, depthFactor(rampDepth(_arcC[0], _arcC[1], _arcC[2], _trigProj[2])));
-    _drawPlayheadSquare(_trigProj[0], _trigProj[1], df, 0.95 * (0.35 + 0.65 * df));
+    _drawPlayheadMark(_trigProj[0], _trigProj[1], df);
   };
   for (let i = 0; i < trigs.length; i++) {
     const t = trigs[i];
@@ -2197,7 +2220,7 @@ function drawTriggers() {
     if (t.playing) { const php = t.particles[t.playheadIndex]; if (php) mark(php); }
     // …the play-to-end tail…
     else if (t._tail && S.audioCtx) { const php = tailMark(t, t._tail); if (php) mark(php); }
-    // …and every voice still ringing under retrig: layer — one square each,
+    // …and every voice still ringing under retrig: layer — one mark each,
     // so a stack of three shows three playheads on the stroke.
     if (t._voices?.length && S.audioCtx)
       for (const v of t._voices) { if (v.tail && !v.src?._stopped) { const php = tailMark(t, v.tail); if (php) mark(php); } }
@@ -2921,33 +2944,30 @@ export function drawCursor() {
   // once, in the rail, and the sphere speaks it back.
   // (The cap arc that used to be drawn here is gone — see _rStroke above.)
 
-  // ─── The line to the nearest pin ────────────────────────────────────
-  // One dashed hairline from the cursor to the pin the focus law calls
-  // nearest (grain.js publishes S._dominantSeedSlot), in that pin's colour,
-  // brighter as its share grows. This replaced the pin COMPASS — a short arc
-  // per pin in reach on a ring outside the reach ring, its opacity the pin's
-  // share (Ek, 2026-09-05: "now that we have the one-line selector we can
-  // remove those indicators"). The line says which pin, the rail's mark says
-  // which is selected, and the mix is heard rather than drawn.
-  const _dom = S._dominantSeedSlot;
-  const _pw = S._pinWeights;
-  if (_dom >= 0 && _pw && S.commitSlots && S.commitSlots[_dom]) {
-    const slot = S.commitSlots[_dom];
-    const w = _pw[_dom] || 0;
-    if (pinAnchorInto(slot, _anchorR)) {
-      const pr = _pinScreen(_anchorR[0], _anchorR[1]);
-      if (pr) {
+  // ─── The line to the SELECTED pin ─────────────────────────────────
+  // From the cursor to the frame round the selected pin's number mark — the
+  // pin the rail frames and unpin takes (Ek, 2026-09-26: "make that faint
+  // pointed line the same thickness and white of the selected box in the
+  // pinned rail … the pointing line should point to the pin number dot").
+  // It was a dashed hairline in the pin's colour to `_dominantSeedSlot`, the
+  // follow law's loudest pin, ending at the pin's anchor: a second answer to
+  // "which one", and one the rail never showed. Now it is the rail's frame
+  // line — 1px, bone, solid — aimed at the number mark's centre and stopping
+  // at the frame's edge, so the line and the box read as one callout. Nothing
+  // is drawn while the cursor is inside the frame.
+  {
+    const m = _selectedMark();
+    if (m) {
+      const dx = mx - m.x, dy = my - m.y, far = Math.max(Math.abs(dx), Math.abs(dy));
+      if (far > FOCUS_R) {
+        const k = FOCUS_R / far;               // where the ray leaves the square
         S.ctx.save();
-        S.ctx.globalAlpha = 0.45 + 0.35 * Math.min(1, w);
-        S.ctx.strokeStyle = slot.color || _tok('--accent-lock', '#7fa8ae');
-        S.ctx.lineWidth = 1.5;
-        S.ctx.lineCap = 'round';
-        S.ctx.setLineDash([2, 4]);
+        S.ctx.strokeStyle = FOCUS_INK();
+        S.ctx.lineWidth = 1;
         S.ctx.beginPath();
         S.ctx.moveTo(mx, my);
-        S.ctx.lineTo(pr.sx, pr.sy);
+        S.ctx.lineTo(m.x + dx * k, m.y + dy * k);
         S.ctx.stroke();
-        S.ctx.setLineDash([]);
         S.ctx.restore();
       }
     }

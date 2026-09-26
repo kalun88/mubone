@@ -9,11 +9,11 @@ import {
   gp, minGrainDurS, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, K_MAX
 } from './state.js';
 import { resolveGrainParams, voicingFor } from './brush-voicing.js';
-import { angleBetweenSphere, findNearestSeedSlot, nearestLoopPin, masterPhaseWall, startOverdubLayer, swapOverdubLayer, stopOverdubLayers, releaseSeqNodes } from './grain.js';
+import { angleBetweenSphere, findNearestSeedSlot, masterPhaseWall, startOverdubLayer, swapOverdubLayer, stopOverdubLayers, releaseSeqNodes } from './grain.js';
 import { ensureAudioContext, requestMicAccess, setMicBtnLabel } from './audio.js';
 import { screenToLonLat, getCursorLonLat } from './sphere.js';
 import { applySparsePreset, syncAllUI } from './param-registry.js';
-import { pinAnchorInto, pinFadeOut } from './pins.js';
+import { pinAnchorInto, pinFadeOut, isPinLeaving } from './pins.js';
 import * as history from './history.js';
 import { clearWalkers } from './walker.js';
 import { lineTouchIndex } from './trigger.js';
@@ -1014,6 +1014,16 @@ export function buildLoopPayload(strokeId, anchorParticle) {
       minStart <= takeSlot.markSpan[0] + 1e-6 && maxStart >= takeSlot.markSpan[1] - 1e-6) {
     loopStart = takeSlot.edges.startS; loopEnd = takeSlot.edges.endS;
   }
+  // THE PIN PLAYS WHAT THE CURSOR PLAYED (Ek, 2026-09-26: a slice's pin
+  // "takes another section of that loop, a longer one"). An armed stroke's
+  // region is its trigger's — the slice's onsets, the erase trims, the
+  // button's edges, all resolved in _applyCluster — and re-deriving it here
+  // from the marks lost the slice cut and, on a one-mark slice, fell back to
+  // the granular grain length as the tail.
+  const _armed = p0.trig ? S.triggers?.find(t => t.strokeId === strokeId) : null;
+  if (_armed && _armed.loopEnd > _armed.loopStart) {
+    loopStart = _armed.loopStart; loopEnd = _armed.loopEnd;
+  }
 
   // ── Build a crossfaded loop buffer ─────────────────────────────────────
   // Extract the loop region into a standalone buffer with a crossfade
@@ -1094,17 +1104,77 @@ export function buildLoopPayload(strokeId, anchorParticle) {
 // sphere as their own stroke (tape material, never armed as a trigger), so
 // the cursor can erase and undo them; the layer is the pin's.
 
-/** The press: pick the master — the nearest pinned loop, no radius — and
- *  hold it for the whole take. Nothing pinned, and the take SEEDS (Ek,
- *  2026-09-06): it runs as an ordinary tape take with `S._overdubSeed` set,
- *  and events.js arms it with `loop: true`, so the looper hook pins it on
- *  release — the first press lays the main loop, the second overdubs onto
- *  it. Nothing refuses any more; the hook it flashed is gone with it. */
-export function beginOverdub() {
-  const { lon, lat } = getCursorPos();
-  const i = nearestLoopPin(lon, lat);
-  if (i < 0) { S._overdubSeed = true; S._overdubTake = null; return true; }
-  const seq = S.commitSlots[i];
+/** DUB BY TOUCH (Ek, 2026-09-26: "if i'm listening to it loop, if i record
+ *  again it automatically overdubs to that one. and as a result it means it
+ *  puts a pin on that stroke automatically … touching for sure"; and "there's
+ *  no 'nearest' overdub selector … it's based on if the cursor is on it").
+ *  There is no overdub MODE any more and no nearest-anywhere master: a take
+ *  joins what the cursor is ON when you press, and only that —
+ *    • a pinned loop's own line, or one of its layers' marks → that loop;
+ *    • an unpinned line (the gate says the cursor is inside it, the same test
+ *      the pin key reads) → it is pinned there, carrying the phase you hear
+ *      (createSeqFromStroke's handover), and the take layers onto it;
+ *    • nothing → the take is a plain line.
+ *  Slice takes never dub (brush.js asks only when slice is off), and a
+ *  cursor scoped to grains reads no tape, so it touches none. Where several
+ *  are in reach the nearest wins. Returns `{ slot }`, `{ trigger }` or null.
+ *  The pinned rail reads the same answer for its ring (ui-pins.js). */
+export function dubTargetAt(lon, lat) {
+  if (S.lensReads === 'grains') return null;
+  let best = null, bestD = Infinity;
+  const rad = (S.searchRadiusDeg || 0) * Math.PI / 180;
+  // Pinned loops by their marks — the master's stroke and every layer's — by
+  // distance: a claimed stroke's trigger may be mid-deferred-rebuild, and a
+  // layer's marks are never armed at all.
+  const loopOf = new Map();
+  for (const c of S.commitSlots) {
+    if (!c || c.type !== 'loop' || isPinLeaving(c) || !(c.strokeId > 0)) continue;
+    if (!loopOf.has(c.strokeId)) loopOf.set(c.strokeId, c);
+    for (const ov of c.overdubs || []) if (ov.strokeId > 0 && !loopOf.has(ov.strokeId)) loopOf.set(ov.strokeId, c);
+  }
+  if (loopOf.size) {
+    for (const p of S.particles) {
+      const c = loopOf.get(p.strokeId); if (!c) continue;
+      const a = angleBetweenSphere(p.lon, p.lat, lon, lat);
+      if (a < rad && a < bestD) { bestD = a; best = { slot: c }; }
+    }
+  }
+  // Unpinned lines by the gate's own verdict, as the pin key reads them.
+  for (const t of S.triggers || []) {
+    if (!t?.trigger?._inside || loopOf.has(t.strokeId) || !(t.strokeId > 0)) continue;
+    const a = Math.acos(Math.max(-1, Math.min(1, t._nearestDot ?? -1)));
+    if (a < bestD) { bestD = a; best = { trigger: t }; }
+  }
+  return best;
+}
+/** The loop a take would join right now — the rail's ring. -1 for none, and
+ *  for an unpinned line (it has no row until the press pins it). */
+S._dubTargetSlot = () => {
+  const t = dubTargetAt(S._frameCursorLon ?? 0, S._frameCursorLat ?? 0);
+  return t?.slot ? S.commitSlots.indexOf(t.slot) : -1;
+};
+S._dubTargetNow = () => { const { lon, lat } = getCursorPos(); return !!dubTargetAt(lon, lat); };
+let _dubPress = 0;
+/** The press (brush.js _toolDown, a tape take with slice off): hold the
+ *  master for the whole take, pinning it first if it is a line. The pin and
+ *  the take are ONE undo — tagged here, folded at the release (events.js). */
+export function beginDubByTouch(lon, lat) {
+  if (lon == null) ({ lon, lat } = getCursorPos());
+  S._overdubTake = null; S._overdubSeed = false; S._dubTag = null;
+  const tgt = dubTargetAt(lon, lat);
+  if (!tgt) return false;
+  let seq = tgt.slot;
+  if (!seq) {
+    const t = tgt.trigger;
+    const i = Math.max(0, Math.min(t.particles.length - 1, t._nearestIdx | 0));
+    const tag = `dub${++_dubPress}`;
+    const prev = S._pinPressTag; S._pinPressTag = tag;
+    try { seq = _pinTargets([{ strokeId: t.strokeId, anchor: t.particles[i] }], !!S.scanMuted)[0] ?? null; }
+    finally { S._pinPressTag = prev; }
+    if (!seq) return false;            // the pool was full and would not evict: a plain line
+    S._dubTag = tag;
+    S._pinsDirty = true;
+  }
   seq._ovdWrap = undefined;            // the wrap counter starts with the take
   S._overdubTake = {
     seq, ov: null,                     // `ov` is the provisional layer once the first wrap has passed
@@ -1154,11 +1224,8 @@ export function continueOverdub(prev) {
   return { seq: prev.seq, ov: null, at: { lon, lat }, decay: prev.decay, oneShot: false, wearBefore: _wearsOf(prev.seq) };
 }
 
-/** Is there a pinned loop for a dub to join at the cursor? The bang verb
- *  asks before it presses — a one-shot with no cycle has no length. */
 S._pendingOverdub  = pendingOverdub;
 S._continueOverdub = continueOverdub;
-S._loopPinNear = () => { const { lon, lat } = getCursorPos(); return nearestLoopPin(lon, lat) >= 0; };
 
 /** The family's wear, member by member — the master and each layer. */
 function _wearsOf(seq) {
@@ -1363,7 +1430,7 @@ export function removeOverdubByStrokeId(strokeId) {
   if (n) { S._pinsDirty = true; S._syncCommitUI?.(); }
   return n;
 }
-S._beginOverdub  = beginOverdub;
+S._beginDubByTouch = beginDubByTouch;
 S._attachOverdub = attachOverdub;
 
 export function createSeqFromStroke(strokeId, anchorParticle) {
@@ -1439,6 +1506,11 @@ export function createSeqFromStroke(strokeId, anchorParticle) {
     direction:      (_trig?.reverse ?? S.triggerParams.reverse) ? -1 : 1,
     pitch:          _trig?.pitch ?? S.triggerParams.pitch ?? 0,
     speed:          _trig?.speed ?? S.triggerParams.speed ?? S.commitLoopParams.speed ?? 1.0,
+    // PASSES ARE READ AT THE PIN (Ek, 2026-09-26: "it says it's for pins but it
+    // doesnt seem to work"). Only the autopin hook (tiles.js) stamped them, so
+    // a loop pinned by hand looped for ever whatever the row said. The tape
+    // tab's row is set, then the pin takes it — the tooltip's contract.
+    passes:         S.triggerParams.passes | 0,
     playing:        true,
     color,
     anchorLon:      payload.anchorLon,  // position used for distance/nearest calcs
@@ -2085,9 +2157,15 @@ function _nearestTrigParticle() {
   const { lon, lat } = getCursorPos();
   const searchRad = S.searchRadiusDeg * Math.PI / 180;
   let nearest = null, nearestAng = Infinity;
+  // …AND NOT A SLICE'S PRE-ROLL (Ek, 2026-09-26: "put my cursor on it, don't
+  // hear anything, but then when i drop a pin, i do hear it"): it keeps its
+  // marks and arms no trigger, so no cursor can fire it (trigger.js marks it
+  // `preroll`). Only that — a first cut refused every unarmed stroke, and the
+  // pins suite's fixtures, which paint takes without arming them, showed the
+  // fallback's reach is wider than the pre-roll (release 5.12 run).
   for (let i = 0; i < S.particles.length; i++) {
     const p = S.particles[i];
-    if (!p.trig || p.strokeId == null || p.strokeId < 0) continue;
+    if (!p.trig || p.preroll || p.strokeId == null || p.strokeId < 0) continue;
     const ang = angleBetweenSphere(p.lon, p.lat, lon, lat);
     // THE RADIUS IS THE TAPE GATE IN EVERY MODE. `nearest` reads the k closest
     // GRAIN marks anywhere; a line still fires only inside the radius

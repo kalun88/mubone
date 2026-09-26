@@ -135,6 +135,16 @@ if (bar) {
   ).map(n => ({ t: n.textContent.trim().slice(0, 10), ...box(n) }));
   out.footer.glyphs = all('.bottom-bar .bb-ax > svg, .bottom-bar .bb-mute > svg')
     .map(n => ({ t: n.parentElement.id || 'ax', ...box(n) }));
+  // THE ECHO over the palette (2026-09-26). Empty until an input arrives, so
+  // it is filled for the read and put back — an empty pill is a coverage gap.
+  const _ew = document.getElementById('tcEchoWhat'), _es = document.getElementById('tcEchoSrc');
+  const _eb = document.getElementById('paletteBed'), _ee = document.getElementById('tcEcho');
+  if (_ew && _es && _eb && _ee) {
+    const fill = !_ew.textContent;
+    if (fill) { _ew.textContent = 'slice on'; _es.textContent = 'key 4 · long'; }
+    out.echo = { pill: box(_ee), bed: box(_eb) };
+    if (fill) { _ew.textContent = ''; _es.textContent = ''; }
+  }
   // A GROUP is a top-level child of the bar. They must not overlap on x, and
   // each must have the same air above and below it.
   out.footer.groups = [...bar.children].filter(vis).map(n => ({
@@ -1392,6 +1402,14 @@ function collapses(label, items, key) {
     for (let i = 1; i < gs.length; i++) if (gs[i].x < gs[i - 1].r - TOLERANCE)
       laps.push(`${gs[i - 1].t}↔${gs[i].t} by ${(gs[i - 1].r - gs[i].x).toFixed(1)}px`);
     check(laps.length === 0, 'no two footer groups overlap', laps.join(', ') || 'clear');
+
+    // The echo floats centred over the palette, the kit's pill height, a --sp-4 above it.
+    if (!d.echo) check(false, 'the echo pill is present over the palette');
+    else {
+      const p = d.echo.pill, b = d.echo.bed, dx = Math.abs((p.x + p.w / 2) - (b.x + b.w / 2)), gap = b.y - p.b;
+      check(dx < 0.5 && p.h === 24 && Math.abs(gap - 8) < 0.5, 'the echo is centred over the palette, 24 tall, 8 above it',
+        `centre off ${dx.toFixed(2)}px · h ${p.h} · gap ${gap.toFixed(2)}`);
+    }
 
     // The stacked level rows are one column.
     // The audio group is NESTED inside .bb-side-r, so the group check above
