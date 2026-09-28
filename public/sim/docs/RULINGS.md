@@ -1144,6 +1144,12 @@ How to use this file: find the heading for the area you are about to touch and r
   selector we can remove those indicators") — the line says which pin, the rail's mark which is
   selected, and the mix is heard, not drawn.
   Covered by `pins-audit.js` § C.
+- **An erase-like action puts back only what it changed** (2026-09-27, Ek: "make sure the edge cases
+  work when i'm in the middle of recording"). Undo reaches past a take still recording, so an erase,
+  sweep or erase-all can be undone with a take running — and a whole-board snapshot swap destroyed it.
+  `applyMaterial(target, other, undo)` restores the target and carries what is newer than the action;
+  recordings are matched by OBJECT (indices move under sweep and take undo) and each mark's stroke is
+  restored from the snapshot, so an erase-split undone is one line again. Covered by `pins-audit.js` § R.
 
 ---
 
@@ -2670,6 +2676,61 @@ take a key or a button, so its sensor cell spans those two columns under the hea
 sixth column took Action from 256px to 94 at the page's 928px cap. The menu behind the cell is the sensor,
 axis, input range in degrees, the `|x|` fold, a live reading, the output window and γ, and Learn: every axis
 of every sensor is followed (unwrapped across ±180) and the widest sweep is taken with the range it swept.
+
+## Two sensors: the hand is the cursor, the camera is the view, and they are independent
+
+**2026-09-27, Ek: "if i move my frame/body and keep my hand/cursor pointing north, i should see the screen move
+… then i can still move my cursor off screen like behind me. they should be independent."** A second sensor
+takes the `camera` role (the word stays — "camera is the right term"): it PANS and TILTS the view and never
+rolls it (`getCameraQ` recomposes the forward axis's azimuth and elevation; the full rotation used to roll the
+view 20° for a 20° sideways lean). The cursor stays in world coordinates, so it can leave the screen. Head-locked
+panning turns the whole sound field with the camera sensor — that is how the field is spun. The `frame` role
+(the cursor read relative to a body sensor, the sphere glued to the body) is deleted: it was staging's posture
+reference, and it did the opposite of this. Zero heading zeroes every sensor holding a role, and a new sensor
+takes the cursor only when it is free.
+
+## Sensor code is three layers, and each knows one thing
+
+**2026-09-27, Ek: "clean up the code so … it's super clear and makes things simpler for someone else."**
+A LINK knows its wire (`sygaldry.js`, `ximu3.js`, `osc.js`); the SENSOR layer (`sensors.js`) knows what is
+connected, whether it is live and which role the page gave it; the SLOT (`sensor-registry.js`) knows
+calibration and role and hands the renderer one `readSensorPose()`; the maths is pure (`sensor-math.js`) so
+the audit tests the app's own functions. A role is stored once, in the slot. An x-imu3-only field never goes
+on `Sensor`; a formula never goes anywhere but `sensor-math.js`; nothing but `renderer.js applySensorPose`
+writes the cursor or the view from a sensor. A reading shown to a person (`attitude`: the page, a
+binding) is in a person's terms — tipping up is positive pitch — whatever sign the sphere's maths uses. An
+x-imu3 reaches the app by ONE path in every build: `ximu3.js`; `proxy.js` only carries its UDP to a browser.
+
+## A sensor's role is two things: what it does now, and what the player chose
+
+**2026-09-27, after two review rounds on the multi-sensor work.** One persisted field did both jobs, so every
+rule broke a case: restoring it stole the cursor from a live instrument when a backup powered on; guarding the
+restore let a sensor saved as "none" take the cursor at boot and then overwrite the instrument's choice on
+disk. Now `quatRole` is RUNTIME and `wantRole` is the CHOICE (persisted as `role`; `'unmapped'` is "none", null
+is no choice). A choice is honoured when its sensor connects and whenever it wakes from silence — it takes
+the role from a holder that has it only by default or has gone silent, never from another sensor chosen for
+it and playing. A sensor with no choice takes the cursor only if nobody playing holds it. Choosing a role
+drops anyone else's standing choice of it, on disk too. Disconnecting lets go of the runtime role (a
+disconnected sensor used to keep steering the screen with its last pose) and keeps the choice for the
+reconnect. `sensor-rig-audit` has each case, including the boot order the review reproduced.
+
+## The reverb is one insert on every output channel
+
+**2026-09-27, Ek, after three builds in a day.** A live-input SEND with its tail at the cursor ("it sounded
+cooler in my head … i shouldn't be able to smear the reverb tail around"), then the send placed at the cursor
+into one reverb per speaker, then: **"i just want a master reverb on and off setting, nothing complicated. the
+reverb is per speaker, and pre speaker so … anything that is spatialized there will reverb the amount i expect,
+loops, grains, cursor wet. i dont get why we need a seperate cursor and tool-stroke reverb method."** He was
+right: the split came from the SEND shape, whose return lands on the bus it was copied from and would feed
+itself. An INSERT copies nothing back. So `js/master-reverb.js` is one N-channel `reverb.worklet.js` between
+the speaker merger and the ceiling (the stereo master in the browser): `out[i] = in[i] + wet·reverb_i(in[i])`,
+a sound rings out on its own speaker and stays there, whatever put it there. The headphone pair is two of the
+N. Controls: VERB on/off, amount (wet 2·a²), space, tone, freeze; on and freeze boot off, the dials persist.
+Off passes straight through and lets a tail finish; then every reverb idles. MUTE clears the tails — mute
+zeroes the buses, which sit before the insert, so a tail rang on through a muted rig until `setMuted` told it.
+Never recorded: takes come from the input. The MOTU UltraLite-mk4's own reverb was considered and cannot do
+this: its manual says "a single, independent unit that provides stereo reverb", everything sent merged into it.
+Consequence: live playing is reverbed only when it reaches the speakers — the dry monitor on.
 
 ## The stage says muted
 

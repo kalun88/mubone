@@ -230,6 +230,9 @@ const NOISE = /^camQ\.|^cursorQ\.|^gazeTrail\.|Until$|^perf\.|^fps/;
 // gets seeded.
 const NEEDS_STATE = new Map([
   ['/cursor/tare',      'needs a connected sensor'],
+  // Freeze holds a tail only while the reverb is ON — off ends a freeze, so on
+  // a clean rig (VERB boots off) the toggle is refused (master-reverb.js).
+  ['/reverb/freeze',    'needs the reverb on (VERB boots off)'],
   // THE STRIP IS A FIXED TOOLBAR OF FOUR POSITIONS (2026-09-22: cursor ·
   // erase · pin · unpin; the hand's two tiles are the spacebar's, not
   // positions) AND THE TABLE ADVERTISES NINE: every `palette_N` row exists
@@ -396,6 +399,7 @@ const VALUES = {
   '/monitor/volume': [0.5], '/house/volume': [1.4], '/mixdown/cursor': [0.6], '/mixdown/house': [0.4],
   '/master/volume': [-12], '/paint/gate': [0.02], '/dry/gain': [-6],
   '/cursor/radiusfadecurve': [0.7], '/cursor/azimuth': [30], '/cursor/elevation': [20],
+  '/reverb/amount': [0.7], '/reverb/space': [0.8], '/reverb/tone': [0.3],
 };
 
 function plan() {

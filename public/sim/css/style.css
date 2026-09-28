@@ -246,35 +246,6 @@
      teal at 80% alpha — a colour nobody chose. The intent is the lock accent
      (this is the sensor reading CONNECTED), and that has a token. */
   .sensor-group:not(.no-sensor) .sensor-group-status { color: var(--accent-lock); }
-  /* ── Quick-switch sensor buttons ──────────────────────────────────────── */
-  .sensor-switch-btns {
-    display: inline-flex;
-    gap: var(--sp-1);
-    margin-left: 4px;
-    vertical-align: middle;
-  }
-  .sensor-switch-btn {
-    font: var(--fs-nano)/1 var(--font-mono);
-    color: var(--text-secondary);
-    background: var(--surface-3);
-    border: 1px solid var(--surface-6);
-    padding: var(--sp-0) var(--sp-3);
-    border-radius: var(--r-2);
-    cursor: pointer;
-    min-width: 18px;
-    text-align: center;
-  }
-  .sensor-switch-btn:hover {
-    color: var(--accent-lock);
-    border-color: var(--tint-lock-border);
-    background: var(--tint-lock-soft);
-  }
-  .sensor-switch-btn.active {
-    color: var(--accent-lock);
-    border-color: var(--tint-lock-strong);
-    background: var(--tint-lock-medium);
-    font-weight: 700;
-  }
   /* ── Action buttons — amber toggle style (cursor zero, sensor on/off, tare) */
   .top-bar-btn.action-btn {
     color: var(--text-dim);
@@ -3758,6 +3729,7 @@ html.booting-reveal .main-layout {
   }
   .bb-ax > svg, .bb-mute > svg, .bb-dry > svg { stroke-width: calc(1.5 / var(--gk, 1)); }
   #tcDryCycle                    { --gk: 0.739; }
+  #tcReverb                      { --gk: 0.782; }   /* 17.0 → 13.3, measured by align-audit */
   #tcMute .bb-mute-live          { --gk: 0.796; }
   #tcMute .bb-mute-off           { --gk: 0.719; }
   #tcZeroHeading, #tcCursorLock  { --gk: 0.831; }
@@ -4352,7 +4324,7 @@ html.booting-reveal .main-layout {
      rule. The glyph is ash until the row is on, then the engine's hue. */
   /* The row's height is a named box (`--row-preset`), stated once — the way the
      footer's buttons fill --footer-row — so the kit audit reads the token. */
-  .tc-lrail { --row-preset: 42px; }
+  .tc-lrail { --row-preset: 42px; --card-head: 40px; }   /* --card-head: a card's top edge — its head, or the tab strip — stated once */
   .trow--voice { height: var(--row-preset); gap: var(--sp-5); font-size: var(--fs-md); font-weight: 600;
     color: var(--text-hover); border-bottom: 1px solid var(--border-faint); }
   .trow--voice .trow-g { width: 16px; height: 16px; color: var(--text-dimmer); }
@@ -5088,6 +5060,10 @@ html.booting-reveal .main-layout {
     opacity: 0; transition: opacity var(--m-decay) var(--ease-out);
   }
   body .pal-echo.on { opacity: 1; transition-duration: var(--m-touch); }
+  /* Each discrete press fades in again from nothing, so a repeat of the same
+     words still reads as a new press (tile-layout.js restarts it). */
+  body .pal-echo.on.is-again { animation: pal-echo-again var(--m-state) var(--ease-out); }
+  @keyframes pal-echo-again { from { opacity: 0; } to { opacity: 1; } }
   body .pal-echo > span { overflow: hidden; text-overflow: ellipsis; line-height: 1; }
   body .pal-echo-what { font-size: var(--fs-control); color: var(--text-light); font-variant-numeric: tabular-nums; }
   body .pal-echo.is-miss .pal-echo-what { color: var(--accent-warn); }
@@ -5212,7 +5188,7 @@ html.booting-reveal .main-layout {
   /* A CARD'S HEAD (the rails canvas, F): each section is its own card and
      this is its top — 40 tall, sentence case, semibold, light, over a
      hairline; the `+` and the door flush right. */
-  .tc-lrail .tbx-lbl--sec { height: 40px; box-sizing: border-box; padding: 0 var(--sp-5); margin-bottom: var(--sp-2);
+  .tc-lrail .tbx-lbl--sec { height: var(--card-head); box-sizing: border-box; padding: 0 var(--sp-5); margin-bottom: var(--sp-2);
     font-size: var(--fs-control); font-weight: 600; letter-spacing: normal; text-transform: none;
     color: var(--text-highlight); gap: var(--sp-4); border-bottom: 1px solid var(--border-soft); }
   .tbx-lbl--sec .tbx-lbl-t { flex: 1 1 auto; }
@@ -5294,8 +5270,12 @@ html.booting-reveal .main-layout {
      told apart by their captions, not by grounds of their own. A box drawn
      around boxes is the thing this replaced. (`#lensBar` was a card until
      2026-09-22 night; the lens is a tab of the instrument card.) */
+  /* --surface-3 with the other beds (2026-09-26): the contrast round moved
+     `.rail-card` and the chosen tab two steps and missed this one, so the
+     instrument's card sat at 0.05 under a chosen tab at 0.086 — the tab no
+     longer WAS its card. align-audit's mode-card check caught it at release. */
   .tc-lrail #globalModes, .tc-lrail #instrPanel {
-    background: var(--surface-1);
+    background: var(--surface-3);
     border-radius: var(--r-hand);
   }
   /* ONE GAP BETWEEN BANDS, and it is the same `--sp-5` as the gutter either
@@ -5414,7 +5394,13 @@ html.booting-reveal .main-layout {
      that divider line like they have… it's not clear the tabs"). The row is
      the `.tbx-lbl--sec` box — 40 with the rule inside it, --border-soft — so
      a tab strip and a card head read as the same kind of top edge. */
-  .instr-tabs .seg-pill { height: 40px; box-sizing: border-box; border-bottom: 1px solid var(--border-soft); }
+  /* The rule is drawn OVER the foot of the box, not as its border, so the
+     tabs fill all 40 — the box they fill is the size they are (the build
+     sheet's rule; as a border they came out 39, off the kit, and align-audit's
+     R6 said so at the 5.12 release). Same pixels on screen. */
+  .instr-tabs .seg-pill { height: var(--card-head); box-sizing: border-box; position: relative; }
+  .instr-tabs .seg-pill::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+    background: var(--border-soft); pointer-events: none; }
   .instr-tabs .seg-glyph .grain-seg-btn { height: 100%; padding: 0 var(--sp-3); }
   .instr-tabs .seg-glyph .grain-seg-btn svg { width: 1.05rem; height: 1.05rem; display: block; }
   /* THE CHOSEN TAB CARRIES THE INSTRUMENT'S NAME (2026-09-22, evening), and it
@@ -5874,8 +5860,8 @@ html body .bottom-bar .grain-numbox {
 
 /* A muted send is worth saying, but ember made it the brightest object in the
    footer — brighter than the meters, which are the thing you actually watch. */
-html body .bb-dry.is-mute { color: var(--accent-warn); opacity: 0.82; }
-html body .bb-dry.is-mute:hover { opacity: 1; }
+html body .bb-dry.is-mute, html body .bb-rev.is-mute { color: var(--accent-warn); opacity: 0.82; }
+html body .bb-dry.is-mute:hover, html body .bb-rev.is-mute:hover { opacity: 1; }
 
 /* The sensor block is a button now (see ui-sensor click wiring): it should look
    like one on hover without becoming a box at rest. */

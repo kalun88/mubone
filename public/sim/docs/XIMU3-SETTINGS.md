@@ -33,7 +33,7 @@ Every connect writes all of this, sends `apply`, then reads it back. Source: `js
 |---|---|---|---|
 | `ahrs_message_type` | `0` | 11.1.67 | Quaternion. Also what keeps Euler off the wire. |
 | `ahrs_message_rate_divisor` | `4` | 11.1.70 | 400 Hz / 4 = 100 msg/s. Above the paint ticker's 200 Hz consumption, and §9.3 means each message is the **average** of the 4 most recent samples — free anti-aliasing. Divisor 1 buys nothing at 4× the bandwidth. |
-| `ahrs_axes_convention` | `0` | 11.1.61 | NWU. Every Euler transform in `imu-setup.js` assumes it. ENU or NED breaks the cursor silently. |
+| `ahrs_axes_convention` | `0` | 11.1.61 | NWU. Every Euler transform in `ximu3.js` assumes it. ENU or NED breaks the cursor silently. |
 | `ahrs_gain` | `0.5` | 11.1.62 | Accelerometer correction strength, pinned so feel can't drift with the GUI. **This is the number to change if the cursor feels sluggish or twitchy.** |
 | `ahrs_ignore_magnetometer` | `true` | 11.1.63 | Mag is unusable next to speakers, laptops, stage metal. Yaw drifts instead; tare and heading-zero handle it. |
 | `ahrs_acceleration_rejection_enabled` | `true` | 11.1.64 | Fast playing can't corrupt pitch/roll. |
@@ -101,14 +101,14 @@ There is a 400 ms gap between `apply` and the read sweep so the write echoes dra
 
 ## Where enforcement lives — one place, deliberately
 
-`js/ximu-settings.js` has **no imports**. That's load-bearing: it's consumed by `js/imu-setup.js` as a browser ES module and was previously duplicated in `proxy.js` (Node). Adding an import breaks the Node side.
+`js/ximu-settings.js` has **no imports**. That's load-bearing: it's consumed by `js/ximu3.js` as a browser ES module and was previously duplicated in `proxy.js` (Node). Adding an import breaks the Node side.
 
 Before 2026-08-01 the same enforcement block was copy-pasted into four places — UDP connect, WebSerial connect, Electron serial connect, and `proxy.js`. They drifted, exactly as you'd expect:
 
-- `proxy.js` wrote `ahrs_message_rate_divisor: 1` (400 Hz) while `imu-setup.js` wrote `4` (100 Hz)
+- `proxy.js` wrote `ahrs_message_rate_divisor: 1` (400 Hz) while the app wrote `4` (100 Hz)
 - `proxy.js` never wrote `binary_mode_enabled` or `axes_alignment`
 
-So the same physical sensor was configured differently depending on whether you launched Electron or browser mode. The fix was structural, not a re-sync: **`proxy.js` no longer enforces anything.** It's a transport — it owns the sockets and relays commands. `imu-setup.js` runs one enforcement pass for every transport, routing browser-mode UDP commands through the proxy's `{ type: 'command' }` relay. The LED handshake blink moved with it, so it goes through `ximu-led-feedback.js` in browser mode too.
+So the same physical sensor was configured differently depending on whether you launched Electron or browser mode. The fix was structural, not a re-sync: **`proxy.js` no longer enforces anything.** It's a transport — it owns the sockets and relays commands. `ximu3.js` runs one enforcement pass for every transport, routing browser-mode UDP commands through the proxy's `{ type: 'command' }` relay. The LED handshake blink moved with it, so it goes through `ximu-led-feedback.js` in browser mode too.
 
 ## Known conflict: patches that write settings
 

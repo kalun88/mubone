@@ -13,7 +13,7 @@
 
 import { handleOSC } from './osc.js';
 import { S } from './state.js';
-import { declareSensorKind } from './imu-setup.js';
+import { declareSensorKind, forgetOscSensor } from './sensors.js';
 import { encodeOSC, decodePacket, slipEncode, SlipDecoder } from './sygaldry-osc.js';
 
 // ── What the browser can and cannot do ───────────────────────────────────────
@@ -167,7 +167,13 @@ export class SygaldryLink {
     }
 
     if (address === '/WiFi/device_name' && args[0]) {
-      if (args[0] !== this.name) { this.name = args[0]; this._notify('name'); }
+      if (args[0] !== this.name) {
+        // Named AFTER playing under the placeholder (the 10 s wait ran out):
+        // the placeholder's sensor goes, or it held the cursor, frozen, and
+        // the real one came up as kind `osc` with no role (review, 2026-09-27).
+        if (this._kindDeclared) { forgetOscSensor(this.name); this._kindDeclared = false; }
+        this.name = args[0]; this._notify('name');
+      }
       // Resolved HERE, not only on a name change: a link made from a remembered
       // record already carries the name, so no 'name' event fires, and without
       // this the newest link only became primary on the change after next.
@@ -687,7 +693,9 @@ export async function dropLink(l) {
 
 /** The link an app-side sensor name belongs to, or null. */
 export function linkForSensor(name) {
-  return _links.find((l) => l.connected && l.name === name) || null;
+  // A link that is retrying counts: Disconnect on a wifi-dropped instrument
+  // must stop the retry, or the instrument walks back in when it succeeds.
+  return _links.find((l) => (l.connected || l.retrying) && l.name === name) || null;
 }
 
 // ── USB identity ─────────────────────────────────────────────────────────────

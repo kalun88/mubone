@@ -7,6 +7,46 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.13 alpha — 2026-09-28
+
+**A master reverb on every speaker, and a second sensor that moves the view while the hand keeps pointing.**
+
+### Added
+- **The reverb**: one master insert after the speaker mix — everything spatialized (loops, grains, dry) rings
+  out on its own speaker, never recorded. A diffused, modulated 8-line network with three knobs: amount,
+  space (0.8 s room → 12 s cloud) and tone, plus freeze. Footer `DRY · VERB · MUTE`; Settings → Audio →
+  Output → Reverb; the signal-path diagram shows `reverb ×n`. OSC `/reverb`, `/reverb/freeze`,
+  `/reverb/amount` · `space` · `tone`. It boots off; mute silences the tails.
+- The role menu gains `none`; with more than one sensor, each row in the Sensors list has a Cursor button.
+
+### Fixed
+- Undo and erase in the middle of a take keep the take: undoing an erase with a take running no longer
+  destroys the take or cuts it back and loses its trigger.
+- Undoing a sliced take takes every segment with it, and redo brings them all back.
+- A direct x-imu3 (UDP or serial) feeds the cursor on connect — it drove nothing until its role was changed.
+- A new sensor no longer steals the cursor from the one playing; a saved role never takes it from a live
+  sensor; a dead sensor lets its role go; a sensor set to `none` stays none across restarts.
+- Zero heading zeroes every live sensor holding a role, not only the cursor.
+- Tipping up reads as up: the page's pitch and Elevation bindings follow the hand (old bindings migrate with
+  identical sound). A folded Elevation binding keeps its range.
+- In a browser with proxy.js, one x-imu3 is one row and one feed; the proxy's connection survives a reload.
+- The sensors' raw readout shows values for quaternion sensors (it showed `—`).
+- The erase fill follows the reach ring; a repeated press fades the echo in again.
+- Undo no longer logs a warning for every stroke that was never pinned.
+
+### Changed
+- **The camera sensor pans and tilts, never rolls**: moving the body moves the view while the hand keeps
+  pointing at the same spot (and can still point off screen).
+- Sensor code in layers — link (`sygaldry.js`, `ximu3.js`, `osc.js`), `sensors.js`, `sensor-registry.js`,
+  and the maths in `sensor-math.js`; `imu-setup.js` → `ximu3.js` + `sensors.js`, `ui-imu-setup.js` →
+  `ui-sensors.js`. A sensor's role is stored once, per slot.
+
+### Removed
+- The `frame` sensor role (a saved `frame` reads as no role).
+- The proxy's 8080 OSC conversion of x-imu3 lines; 8080 stays the browser's OSC input for other senders.
+
+---
+
 ## 5.12 alpha — 2026-09-26
 
 **A take dubs onto whatever the cursor touches — no overdub mode — and an echo says what every input did.**
@@ -20,6 +60,8 @@ Format: newest version first. Entries written at the end of each working session
 - `fade out` (passes) works on a loop pinned by hand, not only on autopin; passes are counted at the loop's
   wraps, so a loop at speed above 1× no longer starts a step quiet and a pass short, and a mute or recut no
   longer hands a fading loop its passes back.
+- The instrument card under the tool rail's tabs takes the beds' raised contrast with the others (it was left
+  a step darker, under a chosen tab that is meant to be the card); the tabs fill the card head's 40 exactly.
 
 ### Added
 - **Dub by touch**: press record on a line (typically one looping under the cursor) and it is pinned there,

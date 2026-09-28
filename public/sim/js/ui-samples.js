@@ -85,41 +85,57 @@ function _strokeAction(entry) {
   };
 }
 
-/** Take a stroke out — everything it made. Returns what redo needs. */
+/** The stroke and every segment cut from it — a slice at the seal, or an
+ *  erase-split — by the `from` link _assignSegmentIds leaves (trigger.js). */
+function _familyOf(sid) {
+  const fam = new Set([sid]);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const h of S.strokeHistory) if (h.from != null && fam.has(h.from) && !fam.has(h.strokeId)) { fam.add(h.strokeId); grew = true; }
+  }
+  return fam;
+}
+
+/** Take a stroke out — everything it made, its segments included. Returns
+ *  what redo needs. */
 function _undoStroke(entry) {
   const sid = entry.strokeId;
+  const fam = _familyOf(sid);
   const hi = S.strokeHistory.indexOf(entry);
   if (hi >= 0) S.strokeHistory.splice(hi, 1);
-  console.log(`[undo] sid=${sid} type=${entry.type} bufIdx=${entry.liveBufferIndex} | isRec=${S.isRecording} isPaint=${S.isPainting} | parts=${S.particles.length} bufs=${S.liveRecBuffers.length} curLiveIdx=${S.currentLiveBufferIdx} slots=${S.commitSlots.filter(Boolean).length} | traceMode=${S.traceMode}`);
+  const segs = S.strokeHistory.filter(h => h !== entry && fam.has(h.strokeId));
+  S.strokeHistory = S.strokeHistory.filter(h => !segs.includes(h));
+  console.log(`[undo] sid=${sid} type=${entry.type} bufIdx=${entry.liveBufferIndex} segs=${segs.length} | isRec=${S.isRecording} isPaint=${S.isPainting} | parts=${S.particles.length} bufs=${S.liveRecBuffers.length} curLiveIdx=${S.currentLiveBufferIdx} slots=${S.commitSlots.filter(Boolean).length} | traceMode=${S.traceMode}`);
   // Everything this undo is about to destroy: the particles as they stand
   // (their liveBufferIdx is rewritten on redo), the buffer slot for a live
-  // stroke, the trigger's arm-time snapshot, the pins the gesture made from
+  // stroke, each trigger's arm-time snapshot, the pins the gesture made from
   // the stroke (the looper's loop, the wash's cloud) and an overdub take's
   // layer on its master — the objects themselves, put back by redo.
   const saved = {
-    particles: S.particles.filter(p => p.strokeId === sid),
-    bufferSlot: null, trig: null,
-    slots: S.commitSlots.filter(c => c && c.strokeId === sid),
+    particles: S.particles.filter(p => fam.has(p.strokeId)),
+    bufferSlot: null, trigs: [], segs,
+    slots: S.commitSlots.filter(c => c && fam.has(c.strokeId)),
     layers: []
   };
   for (const c of S.commitSlots) {
     if (!c?.overdubs) continue;
-    for (const ov of c.overdubs) if (ov.strokeId === sid) saved.layers.push({ master: c, ov });
+    for (const ov of c.overdubs) if (fam.has(ov.strokeId)) saved.layers.push({ master: c, ov });
   }
-  const trigOf = (S.triggers || []).find(t => t.strokeId === sid);
-  if (trigOf) saved.trig = { color: trigOf.color, speed: trigOf.speed,
-    volume: trigOf.grainParams?.volume, passes: trigOf.passes, reverse: trigOf.reverse, pitch: trigOf.pitch };
+  for (const t of (S.triggers || [])) {
+    if (!fam.has(t.strokeId)) continue;
+    saved.trigs.push({ strokeId: t.strokeId, color: t.color, speed: t.speed, volume: t.grainParams?.volume,
+      passes: t.passes, reverse: t.reverse, pitch: t.pitch, endCap: t.endCap, slice: t.slice });
+  }
   // Stop and remove any loop or cloud spawned from this stroke — and, for an
   // overdub take, its layer on the master (the master stays).
-  removeSeqByStrokeId(sid);
-  removeOverdubByStrokeId(sid);
+  for (const f of fam) { removeSeqByStrokeId(f); removeOverdubByStrokeId(f); }
   // A dub's decay wore the family at every wrap; undoing the dub gives that
   // back (the wears as they stood at the press).
   for (const { master, ov } of saved.layers) if (ov.wearBefore) S._applyWears?.(master, ov.wearBefore);
   // No cursor-grain flush: the next scheduler tick (≤20 ms) rebuilds the pool
   // without these particles, and grains already in flight finish their own
   // envelopes — the same tail as lifting the pen. A flush faded the whole scan.
-  S.particles = S.particles.filter(p => p.strokeId !== sid);
+  S.particles = S.particles.filter(p => !fam.has(p.strokeId));
   S._particleVersion++;
   if (entry.type === 'live' && entry.liveBufferIndex >= 0) {
     const idx = entry.liveBufferIndex;
@@ -140,7 +156,7 @@ function _undoStroke(entry) {
 }
 
 /** The inverse: the buffer first (the exact inverse of undo's splice-out),
- *  then the marks, the trigger, and the pins and layers the gesture made. */
+ *  then the marks, the triggers, and the pins and layers the gesture made. */
 function _redoStroke(entry, saved) {
   let bufIdx = -1;
   if (entry.type === 'live' && saved.bufferSlot) {
@@ -158,17 +174,19 @@ function _redoStroke(entry, saved) {
   S._particleVersion++;
   entry.liveBufferIndex = bufIdx;
   S.strokeHistory.push(entry);
+  for (const h of saved.segs || []) { if (entry.type === 'live') h.liveBufferIndex = bufIdx; S.strokeHistory.push(h); }
   // A trigger stroke comes back ARMED, silently — restoreTrigger primes it
-  // inside like a session import, so redo makes no noise on its own.
-  if (saved.trig && !(S.triggers || []).some(t => t.strokeId === entry.strokeId)) {
-    restoreTrigger({ strokeId: entry.strokeId, color: saved.trig.color,
-      speed: saved.trig.speed, volume: saved.trig.volume, passes: saved.trig.passes,
-      reverse: saved.trig.reverse, pitch: saved.trig.pitch });
-    S._syncTriggerUI?.();
+  // inside like a session import, so redo makes no noise on its own. Each
+  // segment keeps its own cut (endCap, slice).
+  let armed = false;
+  for (const tr of saved.trigs || []) {
+    if ((S.triggers || []).some(t => t.strokeId === tr.strokeId)) continue;
+    restoreTrigger(tr); armed = true;
   }
+  if (armed) S._syncTriggerUI?.();
   for (const slot of saved.slots) S._restorePinSlot?.(slot);
   for (const { master, ov } of saved.layers) { S._reattachOverdub?.(master, ov); if (ov.wearAfter) S._applyWears?.(master, ov.wearAfter); }
-  console.log(`[redo] sid=${entry.strokeId} type=${entry.type} bufIdx=${bufIdx} | parts=${S.particles.length} bufs=${S.liveRecBuffers.length} slots=${saved.slots.length} layers=${saved.layers.length}`);
+  console.log(`[redo] sid=${entry.strokeId} type=${entry.type} bufIdx=${bufIdx} segs=${(saved.segs || []).length} | parts=${S.particles.length} bufs=${S.liveRecBuffers.length} slots=${saved.slots.length} layers=${saved.layers.length}`);
 }
 
 /** Undo the last thing the performer did — whatever kind of thing it was. */

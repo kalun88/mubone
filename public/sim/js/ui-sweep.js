@@ -23,12 +23,38 @@ import * as history from './history.js';
 // to any depth: the one-slot `S._sweepSnapshot` with its 30-second auto-commit
 // is gone (2026-09-05), and with it the rule that a second erase could never
 // be undone and the first not after half a minute.
+//
+// AN ACTION PUTS BACK ONLY WHAT IT CHANGED (Ek, 2026-09-27: "make sure the
+// edge cases work when i'm in the middle of recording"). Applying a snapshot
+// used to swap the whole board back to it, so anything made SINCE was lost —
+// and history.undo() reaches past a take still being recorded, so undo in the
+// middle of a take, with an erase before it, destroyed the take: its marks,
+// its recording, its history entry. Erasing during a take and undoing later
+// cut the take back to its marks at the erase and dropped its trigger. Now
+// `applyMaterial(target, other)` restores the target and CARRIES everything
+// that is in neither snapshot of the action — a take in progress, the marks
+// it laid since, the trigger it armed at release, a pin it made.
+//
+// Two things are held by IDENTITY rather than read back from the objects,
+// because other code rewrites them in place after the snapshot:
+//  - the recording each mark and history entry reads (`liveBufferIdx` is an
+//    index, and sweep compacts the list, undo of a take splices it);
+//  - the stroke each mark belongs to: the erase-split re-ids the cut-off
+//    segment in place (trigger.js _assignSegmentIds), so undoing an erase
+//    used to leave that piece as a stroke of its own with no trigger — a line
+//    that never fired. A stroke being recorded at the snapshot is left as it
+//    is: its segments (a slice at the seal) are newer than the action.
 export function snapshotMaterial() {
+  const bufs = S.liveRecBuffers ? [...S.liveRecBuffers] : [];
+  const particles = [...S.particles];
   return {
-    particles:            [...S.particles],
-    liveRecBuffers:       S.liveRecBuffers ? [...S.liveRecBuffers] : [],
-    currentLiveBufferIdx: S.currentLiveBufferIdx,
+    particles,
+    sids:                 particles.map(p => p.strokeId),
+    slotOf:               particles.map(p => p.source === 'live' ? (bufs[p.liveBufferIdx] ?? null) : null),
+    liveRecBuffers:       bufs,
     strokeHistory:        [...S.strokeHistory],
+    histSlot:             S.strokeHistory.map(h => h.type === 'live' ? (bufs[h.liveBufferIndex] ?? null) : null),
+    recordingSid:         S.isPainting ? S.currentStrokeId : -1,
     commitSlots:          S.commitSlots.map(c => c),
     overdubs:             S.commitSlots.map(c => c?.overdubs ? [...c.overdubs] : null),
     // Trigger entries keep their own settings (radius, dwell, start); their
@@ -38,31 +64,82 @@ export function snapshotMaterial() {
   };
 }
 
-export function applyMaterial(snap) {
+/** Restore `target`, keeping what is newer than the action. `other` is the
+ *  action's opposite snapshot, and `undo` says which way round: undoing, what
+ *  is not in the BEFORE is newer — the marks a take laid while the erase was
+ *  held are in the after, and must stay; redoing, what is in neither is. An
+ *  erase makes no objects of its own but the split's entries and triggers,
+ *  which `keepCarried` drops once their marks are theirs no longer. */
+export function applyMaterial(target, other = null, undo = true) {
   flushWorkletGrains();
-  S.particles            = [...snap.particles];
-  S.liveRecBuffers       = [...snap.liveRecBuffers];
-  S.currentLiveBufferIdx = snap.currentLiveBufferIdx;
-  S.strokeHistory        = [...snap.strokeHistory];
-  for (const p of S.particles) if (p._gapAfter) p._gapAfter = undefined;
+  const snaps = other && !undo ? [target, other] : [target];
+  const known = key => new Set(snaps.flatMap(s => s[key]));
+  const kParts = known('particles'), kHist = known('strokeHistory'), kTrig = known('triggers');
+  const kSlots = new Set(snaps.flatMap(s => s.commitSlots).filter(Boolean));
+  const kLayers = new Set(snaps.flatMap(s => s.overdubs.flatMap(o => o || [])));
+  const liveSids = new Set([target, other].filter(Boolean).map(s => s.recordingSid).concat(S.isPainting ? [S.currentStrokeId] : []).filter(x => x >= 0));
+
+  // ── Recordings: the target's, then any made since (the take recording now) ─
+  const nowBufs = S.liveRecBuffers || [];
+  const bufs = [...target.liveRecBuffers];
+  const kBufs = new Set(snaps.flatMap(s => s.liveRecBuffers));
+  for (const b of nowBufs) if (b && !kBufs.has(b) && !bufs.includes(b)) bufs.push(b);
+  // The recording still open — or sealing: the seal reads the index — stays,
+  // even when the target predates it (an erase-all moved the take to a fresh slot).
+  const recSlot = S.currentLiveBufferIdx >= 0 ? nowBufs[S.currentLiveBufferIdx] : null;
+  if (recSlot && !recSlot.buffer && !bufs.includes(recSlot)) bufs.push(recSlot);
+  const idxOf = new Map(bufs.map((b, i) => [b, i]));
+
+  // ── Marks: the target's with their stroke and recording, then the newer ────
+  const carried = S.particles.filter(p => !kParts.has(p));
+  const carriedSlot = carried.map(p => p.source === 'live' ? (nowBufs[p.liveBufferIdx] ?? null) : null);
+  target.particles.forEach((p, i) => {
+    if (!liveSids.has(p.strokeId) && !liveSids.has(target.sids[i])) p.strokeId = target.sids[i];
+    const b = target.slotOf[i];
+    if (b) p.liveBufferIdx = idxOf.get(b) ?? -1;
+    if (p._gapAfter) p._gapAfter = undefined;
+  });
+  carried.forEach((p, i) => { const b = carriedSlot[i]; if (b) p.liveBufferIdx = idxOf.get(b) ?? -1; });
+  S.particles = [...target.particles, ...carried];
   S._particleVersion++;
+  const alive = new Set(S.particles.map(p => p.strokeId));
+  // A carried stroke with no marks left is a split the target undoes: its
+  // entry and its trigger go. The stroke being recorded may have none yet.
+  const keepCarried = sid => alive.has(sid) || liveSids.has(sid);
+
+  // ── Stroke history, by the same rule ─────────────────────────────────────
+  const carriedHist = S.strokeHistory.filter(h => !kHist.has(h) && keepCarried(h.strokeId));
+  const carriedHistSlot = carriedHist.map(h => h.type === 'live' ? (nowBufs[h.liveBufferIndex] ?? null) : null);
+  target.strokeHistory.forEach((h, i) => { const b = target.histSlot[i]; if (b) h.liveBufferIndex = idxOf.get(b) ?? -1; });
+  carriedHist.forEach((h, i) => { const b = carriedHistSlot[i]; if (b) h.liveBufferIndex = idxOf.get(b) ?? -1; });
+  S.strokeHistory = [...target.strokeHistory, ...carriedHist];
+
+  S.liveRecBuffers = bufs;
+  S.currentLiveBufferIdx = recSlot && idxOf.has(recSlot) ? idxOf.get(recSlot) : -1;
+
+  // ── Pins: the target's, and any pinned since stay where they are ──────────
+  const displaced = [];
   for (let i = 0; i < S.commitSlots.length; i++) {
-    const want = snap.commitSlots[i] ?? null, have = S.commitSlots[i];
+    const want = target.commitSlots[i] ?? null, have = S.commitSlots[i];
     if (want === have) {
-      // The same pin, but an erase may have taken layers off it.
-      if (want && snap.overdubs[i]) {
-        const keep = snap.overdubs[i];
-        want.overdubs = [...keep];
-        for (const ov of keep) S._reattachOverdub?.(want, ov);
+      // The same pin, but an erase may have taken layers off it — and a take
+      // since may have laid one on (a dub by touch), which stays.
+      if (want && target.overdubs[i]) {
+        const now = want.overdubs || [];
+        const back = target.overdubs[i].filter(ov => !now.includes(ov));
+        want.overdubs = [...target.overdubs[i], ...now.filter(ov => !kLayers.has(ov))];
+        for (const ov of back) S._reattachOverdub?.(want, ov);
       }
       continue;
     }
-    if (have) S._removePinSlot?.(have);
+    if (have && kSlots.has(have)) S._removePinSlot?.(have);
     if (want) {
-      if (snap.overdubs[i]) want.overdubs = [...snap.overdubs[i]];
-      S._restorePinSlot?.(want, i);
+      if (target.overdubs[i]) want.overdubs = [...target.overdubs[i]];
+      if (S.commitSlots[i]) displaced.push(want);   // a pin made since holds this place
+      else S._restorePinSlot?.(want, i);
     }
   }
+  for (const want of displaced) S._restorePinSlot?.(want);
   if (S.triggers) {
     // A trigger COMING BACK starts outside (2026-09-24, Ek: erase a looping
     // take under the cursor, undo, and "it should start looping since i'm
@@ -76,8 +153,9 @@ export function applyMaterial(snap) {
     // board through the action is sounding under the cursor and must not be
     // re-entered, which would refire it.
     const stayed = new Set(S.triggers);
+    const carriedTrig = S.triggers.filter(t => !kTrig.has(t) && keepCarried(t.strokeId));
     S.triggers.length = 0;
-    for (const t of snap.triggers) {
+    for (const t of [...target.triggers, ...carriedTrig]) {
       t._builtAt = -1;
       if (!stayed.has(t) && t.trigger) { t.trigger._inside = false; t.playing = false; }
       S.triggers.push(t);
@@ -92,7 +170,7 @@ export function applyMaterial(snap) {
 
 /** One erase-like action: `kind` names it on the stack. */
 export function materialAction(kind, before, after) {
-  return { kind, undo() { applyMaterial(before); }, redo() { applyMaterial(after); } };
+  return { kind, undo() { applyMaterial(before, after, true); }, redo() { applyMaterial(after, before, false); } };
 }
 
 /**

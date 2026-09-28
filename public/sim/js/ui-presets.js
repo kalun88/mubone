@@ -3,7 +3,7 @@
 // ============================================================================
 
 import {
-  S, perf,
+  S, perf, DEBUG,
   COMMIT_COLORS, MAX_COMMITS,
   SEED_COLORS, MAX_SEEDS, COMMIT_DRAW_THRESHOLD_MS, MOVING_SEED_THRESHOLD_MS,
   gp, minGrainDurS, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, K_MAX
@@ -1683,8 +1683,10 @@ export function removeSeqByStrokeId(strokeId) {
     }
     S._syncTriggerUI?.();
   }
-  if (!found) {
-    console.warn(`[undo] no commit slot found for strokeId=${strokeId}. Slots:`,
+  // Most strokes were never pinned, and every undo asks — so this is the
+  // ordinary case, not a warning (it filled the console on a run of undos).
+  if (!found && DEBUG) {
+    console.log(`[undo] no commit slot for strokeId=${strokeId}. Slots:`,
       S.commitSlots.map((s, i) => s ? `${i}:${s.type}(sid=${s.strokeId})` : null).filter(Boolean));
   }
 }

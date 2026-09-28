@@ -38,8 +38,7 @@ function check(ok, label, detail) {
 // Adding a name here is a claim that the module is meant to be loaded from the
 // DevTools console — not a way to silence the check.
 const KNOWN_ORPHANS = {
-  // empty since 2026-09-05: ui-trace.js, the last entry, was deleted. Adding a
-  // name here is a claim, not a silencer — see the note above.
+  // Adding a name here is a claim, not a silencer — see the note above.
 };
 
 const STATUSES = ['CURRENT', 'DESIGN INTENT', 'HISTORICAL', 'PROPOSAL', 'MIXED', 'ARCHIVED'];

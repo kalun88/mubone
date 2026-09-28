@@ -229,6 +229,10 @@ function _flushSettled(force = false) {
 /** Push the settled mark, sized `rms`. Returns true if it landed. */
 function _materialise(pend, rms) {
   const particle = pend.particle;
+  if (pend.slot) {
+    const i = S.liveRecBuffers.indexOf(pend.slot);
+    if (i >= 0) particle.liveBufferIdx = i;
+  }
   // TAPE material is never gated (Ek, 2026-09-04): a line is a path you swipe
   // across to fire it, and a gap in the path is a place it cannot be fired
   // from. The marks are the drawing; the take is the material, whole. The
@@ -322,7 +326,10 @@ function _depositParticle() {
       noise:          timbre?.noise ?? 0,
     };
     if (S._recordingTrigger) p.trig = true;
-    _pending = { particle: p, c };
+    // The RECORDING, not its index: the mark lands a tick or two later, and an
+    // undo in between (history reaches past the take being recorded) can
+    // splice liveRecBuffers — the index would then name a neighbour.
+    _pending = { particle: p, c, slot: S.liveRecBuffers[S.currentLiveBufferIdx] };
     return settled;
   } else if (S.sourceKind === 'sampler' && S.samples[S.samplerIndex]?.buffer) {
     const s         = S.samples[S.samplerIndex];

@@ -58,7 +58,7 @@ export function qRotateVecInto(q, vx, vy, vz, out) {
   out[2] = vz + qw * tz + (qx * ty - qy * tx);
 }
 
-// Pre-compute fused camera quaternion: conj(camQ) * frameQ (or just conj(camQ)).
+// Pre-compute fused camera quaternion: conj(camQ) * cameraSensorQ (or just conj(camQ)).
 // Call once per frame; cameraTransformInto then does a single rotation per point.
 const _fusedCamQ = [0, 0, 0, 1];
 // Camera pull-back, in world units, cached per frame beside the fused quaternion.
@@ -70,8 +70,8 @@ export function camOffsetZ() { return _camOffZ; }
 export function updateFusedCamQ() {
   _camOffZ = (S.camPull || 0) * SPHERE_RADIUS;
   const cx = -S.camQ[0], cy = -S.camQ[1], cz = -S.camQ[2], cw = S.camQ[3];
-  if (S.frameQ) {
-    const fx = S.frameQ[0], fy = S.frameQ[1], fz = S.frameQ[2], fw = S.frameQ[3];
+  if (S.cameraSensorQ) {
+    const fx = S.cameraSensorQ[0], fy = S.cameraSensorQ[1], fz = S.cameraSensorQ[2], fw = S.cameraSensorQ[3];
     _fusedCamQ[0] = cw*fx + cx*fw + cy*fz - cz*fy;
     _fusedCamQ[1] = cw*fy - cx*fz + cy*fw + cz*fx;
     _fusedCamQ[2] = cw*fz + cx*fy - cy*fx + cz*fw;
@@ -238,13 +238,13 @@ export function getCursorLonLat() {
   const q = S.cursorQ || S.camQ;
   const forward = qRotateVec(q, [0, 0, 1]);
   // Detethered (cursorQ set): cursorQ is in tare/world space, which IS
-  // sphere-local — no un-rotation needed.  frameQ only matters for display
+  // sphere-local — no un-rotation needed.  cameraSensorQ only matters for display
   // (cameraTransform) and for screen-ray conversion (screenToLonLat).
   //
-  // Non-detethered with frameQ: camQ forward is camera-relative and must
-  // be converted back to sphere-local via the inverse of frameQ.
-  const w = (!S.cursorQ && S.frameQ)
-    ? qRotateVec(qConjugate(S.frameQ), forward)
+  // Non-detethered with cameraSensorQ: camQ forward is camera-relative and must
+  // be converted back to sphere-local via the inverse of cameraSensorQ.
+  const w = (!S.cursorQ && S.cameraSensorQ)
+    ? qRotateVec(qConjugate(S.cameraSensorQ), forward)
     : forward;
   return {
     lon: Math.atan2(w[0], w[2]),
@@ -313,7 +313,7 @@ export function screenToLonLat(px, py) {
       hz = Math.cos(th) * R;
     }
     const world0 = qRotateVec(S.camQ, [hx, hy, hz]);
-    const w0 = S.frameQ ? qRotateVec(qConjugate(S.frameQ), world0) : world0;
+    const w0 = S.cameraSensorQ ? qRotateVec(qConjugate(S.cameraSensorQ), world0) : world0;
     const wm0 = Math.sqrt(w0[0]*w0[0] + w0[1]*w0[1] + w0[2]*w0[2]) || 1;
     return {
       lon: Math.atan2(w0[0], w0[2]),
@@ -367,8 +367,8 @@ export function screenToLonLat(px, py) {
 
   // Camera space → sphere-local, then normalise before asin (|h| is R, not 1).
   const world = qRotateVec(S.camQ, [hx, hy, hz]);
-  // Un-rotate from frame space back to sphere-local coordinates
-  const w = S.frameQ ? qRotateVec(qConjugate(S.frameQ), world) : world;
+  // Un-rotate from the camera sensor's space back to sphere-local coordinates
+  const w = S.cameraSensorQ ? qRotateVec(qConjugate(S.cameraSensorQ), world) : world;
   const wm = Math.sqrt(w[0]*w[0] + w[1]*w[1] + w[2]*w[2]) || 1;
   return {
     lon: Math.atan2(w[0], w[2]),

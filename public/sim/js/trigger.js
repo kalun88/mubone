@@ -444,6 +444,10 @@ function _assignSegmentIds(strokeId, runs) {
       strokeId: sid,
       type: origin?.type ?? 'live',
       liveBufferIndex: origin?.liveBufferIndex ?? (runs[r][0].liveBufferIdx ?? -1),
+      // The stroke this segment was cut from: undoing that stroke takes its
+      // segments with it (ui-samples.js _undoStroke) — a slice left behind
+      // read a recording the undo had spliced out.
+      from: strokeId,
     });
     ids.push(sid);
   }

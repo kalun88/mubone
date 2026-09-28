@@ -1157,6 +1157,137 @@ async function run(rig) {
   check('between the radius and 1.5× it the press plants a ghost cloud — never nothing', db.band?.kinds === 'cloud', JSON.stringify(db.band));
   check('beyond 1.5× the radius the press plants a ghost cloud', db.beyond?.kinds === 'cloud', JSON.stringify(db.beyond));
 
+  // ── R. Undo and erase in the middle of a take ────────────────────────────
+  // An erase, sweep or erase-all puts back only what IT changed (ui-sweep.js
+  // applyMaterial, 2026-09-27). It used to swap the whole board back to its
+  // snapshot, and undo reaches past a take still recording — so undo mid-take
+  // with an erase before it destroyed the take (marks, recording, history),
+  // and an erase during a take, undone after it, cut the take back to its
+  // marks at the erase and lost its trigger. And the erase-split re-ids the
+  // cut-off piece in place, which undo left behind as a trigger-less stroke.
+  // A take is stood in for by its state (the audit profile's input is
+  // silent): an open slot, the stroke's action, the recording flags, marks.
+  console.log('\n§ R. undo and erase mid-take — a take in progress survives both');
+  const mid = await rig.evaluate(async () => {
+    const T = await import('./js/take.js');
+    const { S } = await import('./js/state.js');
+    const H = await import('./js/history.js');
+    const US = await import('./js/ui-samples.js');
+    const SW = await import('./js/ui-sweep.js');
+    const keep = { parts: S.particles, bufs: S.liveRecBuffers, hist: S.strokeHistory, cur: S.currentLiveBufferIdx, trig: S.triggers };
+    S.particles = []; S.liveRecBuffers = []; S.strokeHistory = []; S.triggers = []; H.clear();
+    const actx = S.audioCtx;
+    let lon = 0;
+    const marks = (sid, idx, n) => { for (let k = 0; k < n; k++) S.particles.push({ lon: (lon += 0.01), lat: 0.3, strokeId: sid, source: 'live', trig: true,
+      liveBufferIdx: idx, grainStart: 0.05 * k, grainDuration: 0.05, color: '#fff', _vo: 0 }); S._particleVersion++; };
+    const sealed = () => { S.liveRecBuffers.push({ buffer: T.makeTake(new Float32Array(actx.sampleRate), actx.sampleRate), grainCursor: 0 }); return S.liveRecBuffers.length - 1; };
+    const takeStart = () => { S.liveRecBuffers.push({ buffer: null, grainCursor: 0 }); const idx = S.liveRecBuffers.length - 1;
+      S.currentLiveBufferIdx = idx; US.recordStrokeStart('live', idx); S.isRecording = true; S.isPainting = true; return { sid: S.currentStrokeId, slot: S.liveRecBuffers[idx] }; };
+    const takeEnd = tk => { S.isRecording = false; S.isPainting = false; S.currentStrokeId = -1; S.currentLiveBufferIdx = -1;
+      tk.slot.buffer = T.makeTake(new Float32Array(actx.sampleRate), actx.sampleRate); };
+    // An erase through the middle of A, splitting it: the tail re-id'd in place,
+    // with its own history entry — what trigger.js _assignSegmentIds does.
+    const eraseMiddle = sid => {
+      const before = SW.snapshotMaterial();
+      const ps = S.particles.filter(p => p.strokeId === sid);
+      const gone = new Set(ps.slice(4, 8));
+      S.particles = S.particles.filter(p => !gone.has(p)); S._particleVersion++;
+      const tail = ++S.strokeIdCounter;
+      for (const p of ps.slice(8)) p.strokeId = tail;
+      S.strokeHistory.push({ strokeId: tail, type: 'live', liveBufferIndex: ps[0].liveBufferIdx });
+      H.push(SW.materialAction('erase', before, SW.snapshotMaterial()));
+      return tail;
+    };
+    const ofSid = sid => S.particles.filter(p => p.strokeId === sid);
+    const readsOwn = (sid, slot) => ofSid(sid).every(p => S.liveRecBuffers[p.liveBufferIdx] === slot);
+    const out = {};
+
+    // 1. erase, then a take, undo in the middle of it
+    const aIdx = sealed(); US.recordStrokeStart('live', aIdx); const a = S.currentStrokeId; S.currentStrokeId = -1; marks(a, aIdx, 12);
+    const aSlot = S.liveRecBuffers[aIdx];
+    const tail = eraseMiddle(a);
+    let tk = takeStart(); marks(tk.sid, S.currentLiveBufferIdx, 5);
+    US.undoLastStroke();
+    out.undoMid = { a: ofSid(a).length, tail: ofSid(tail).length, tailEntry: S.strokeHistory.some(h => h.strokeId === tail),
+      take: ofSid(tk.sid).length, entry: S.strokeHistory.some(h => h.strokeId === tk.sid),
+      recording: S.liveRecBuffers[S.currentLiveBufferIdx] === tk.slot, aReads: readsOwn(a, aSlot) };
+    marks(tk.sid, S.currentLiveBufferIdx, 5); takeEnd(tk);
+    out.undoMidEnd = { take: ofSid(tk.sid).length, reads: readsOwn(tk.sid, tk.slot), stack: H.entries().join('>') };
+
+    // 2. a take, an erase during it, the take ends, then the erase is undone
+    S.particles = []; S.liveRecBuffers = []; S.strokeHistory = []; S.triggers = []; H.clear();
+    const bIdx = sealed(); US.recordStrokeStart('live', bIdx); const b = S.currentStrokeId; S.currentStrokeId = -1; marks(b, bIdx, 12);
+    tk = takeStart(); marks(tk.sid, S.currentLiveBufferIdx, 5);
+    eraseMiddle(b);
+    marks(tk.sid, S.currentLiveBufferIdx, 5); takeEnd(tk);
+    US.undoLastStroke();
+    out.eraseDuring = { b: ofSid(b).length, take: ofSid(tk.sid).length, reads: readsOwn(tk.sid, tk.slot), stack: H.entries().join('>') };
+    US.redoLastStroke();
+    out.eraseDuringRedo = { b: ofSid(b).length, take: ofSid(tk.sid).length };
+
+    // 3. erase-all, then a take, undo in the middle of it
+    S.particles = []; S.liveRecBuffers = []; S.strokeHistory = []; S.triggers = []; H.clear();
+    const cIdx = sealed(); US.recordStrokeStart('live', cIdx); const c = S.currentStrokeId; S.currentStrokeId = -1; marks(c, cIdx, 6);
+    const cSlot = S.liveRecBuffers[cIdx];
+    const before = SW.snapshotMaterial();
+    S.particles = []; S.liveRecBuffers = []; S.strokeHistory = []; S._particleVersion++;
+    H.push(SW.materialAction('erase-all', before, SW.snapshotMaterial()));
+    tk = takeStart(); marks(tk.sid, S.currentLiveBufferIdx, 5);
+    US.undoLastStroke();
+    out.undoAll = { c: ofSid(c).length, cReads: readsOwn(c, cSlot), take: ofSid(tk.sid).length, reads: readsOwn(tk.sid, tk.slot),
+      recording: S.liveRecBuffers[S.currentLiveBufferIdx] === tk.slot };
+    takeEnd(tk);
+
+    H.clear();
+    S.particles = keep.parts; S.liveRecBuffers = keep.bufs; S.strokeHistory = keep.hist; S.currentLiveBufferIdx = keep.cur; S.triggers = keep.trig; S._particleVersion++;
+    return out;
+  });
+  check('undo mid-take reaches the erase and the line comes back whole — one stroke, no trigger-less piece',
+    mid.undoMid.a === 12 && mid.undoMid.tail === 0 && !mid.undoMid.tailEntry && mid.undoMid.aReads, JSON.stringify(mid.undoMid));
+  check('…and the take being recorded survives it: its marks, its entry, its recording',
+    mid.undoMid.take === 5 && mid.undoMid.entry && mid.undoMid.recording, JSON.stringify(mid.undoMid));
+  check('…and ends whole, every mark reading its own recording', mid.undoMidEnd.take === 10 && mid.undoMidEnd.reads, JSON.stringify(mid.undoMidEnd));
+  check('an erase during a take, undone after it, leaves the take whole', mid.eraseDuring.b === 12 && mid.eraseDuring.take === 10 && mid.eraseDuring.reads, JSON.stringify(mid.eraseDuring));
+  check('…and redone, cuts the line again and still leaves the take', mid.eraseDuringRedo.b === 4 && mid.eraseDuringRedo.take === 10, JSON.stringify(mid.eraseDuringRedo));
+  check('undo mid-take past an erase-all brings the board back and keeps the take recording',
+    mid.undoAll.c === 6 && mid.undoAll.cReads && mid.undoAll.take === 5 && mid.undoAll.reads && mid.undoAll.recording, JSON.stringify(mid.undoAll));
+
+  // A take SLICE cut into segments is undone whole (2026-09-27). The undo
+  // took the first segment only; the rest stayed, reading a recording it had
+  // spliced out, and redo left them pointing at the wrong one. Four bursts
+  // make four onsets, so the slice has something to cut.
+  const sl = await rig.evaluate(async () => {
+    const T = await import('./js/take.js');
+    const { S } = await import('./js/state.js');
+    const H = await import('./js/history.js');
+    const US = await import('./js/ui-samples.js');
+    const TR = await import('./js/trigger.js');
+    const keep = { parts: S.particles, bufs: S.liveRecBuffers, hist: S.strokeHistory, trig: S.triggers, slice: S.triggerParams.sliceOn };
+    S.particles = []; S.liveRecBuffers = []; S.strokeHistory = []; S.triggers = []; H.clear();
+    const sr = S.audioCtx.sampleRate, a = new Float32Array(sr * 2);
+    for (const t0 of [0.1, 0.6, 1.1, 1.6]) { const i0 = Math.round(t0 * sr); for (let i = 0; i < sr * 0.25; i++) a[i0 + i] = Math.sin(i * 0.05) * 0.8 * Math.exp(-i / (sr * 0.08)); }
+    // A take before it, so the sliced one's recording is not at index 0.
+    S.liveRecBuffers.push({ buffer: T.makeTake(new Float32Array(sr), sr), grainCursor: 0 });
+    US.recordStrokeStart('live', 0); const first = S.currentStrokeId;
+    for (let k = 0; k < 6; k++) S.particles.push({ lon: 0.5 + k * 0.01, lat: -0.3, strokeId: first, source: 'live', trig: true, liveBufferIdx: 0, grainStart: 0.1 * k, grainDuration: 0.05, color: '#fff', _vo: 0 });
+    S.liveRecBuffers.push({ buffer: T.makeTake(a, sr), grainCursor: 0 });
+    US.recordStrokeStart('live', 1); const sid = S.currentStrokeId;
+    for (let k = 0; k < 40; k++) S.particles.push({ lon: k * 0.01, lat: 0.3, strokeId: sid, source: 'live', trig: true, liveBufferIdx: 1, grainStart: 0.05 * k, grainDuration: 0.05, color: '#fff', _vo: 0 });
+    S.currentStrokeId = -1; S._particleVersion++;
+    S.triggerParams.sliceOn = true;
+    TR.armTrigger(sid);
+    const st = () => ({ strokes: new Set(S.particles.map(p => p.strokeId)).size, trig: S.triggers.length, hist: S.strokeHistory.length,
+      bad: S.particles.filter(p => !S.liveRecBuffers[p.liveBufferIdx]?.buffer).length, caps: S.triggers.filter(t => t.endCap != null).length });
+    const out = { armed: st() };
+    US.undoLastStroke(); out.undo = st();
+    US.redoLastStroke(); out.redo = st();
+    H.clear();
+    S.particles = keep.parts; S.liveRecBuffers = keep.bufs; S.strokeHistory = keep.hist; S.triggers = keep.trig; S.triggerParams.sliceOn = keep.slice; S._particleVersion++;
+    return out;
+  });
+  check('a sliced take undone takes every segment with it', sl.armed.trig >= 3 && sl.undo.strokes === 1 && sl.undo.trig === 0 && sl.undo.hist === 1 && sl.undo.bad === 0, JSON.stringify(sl));
+  check('…and redone, every segment comes back armed with its cut, reading its own take', sl.redo.strokes === sl.armed.strokes && sl.redo.trig === sl.armed.trig && sl.redo.caps === sl.armed.caps && sl.redo.bad === 0, JSON.stringify(sl));
+
   // ── H. Frozen brushes ─────────────────────────────────────────────────────
   // docs/archive/BRUSH-MODEL.md step 3. A stroke freezes the brush that painted it, so
   // going back over old material plays it with the settings it was painted

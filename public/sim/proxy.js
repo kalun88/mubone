@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 // ============================================================================
-// proxy.js — x-IMU3 UDP → WebSocket proxy for browser mode
+// proxy.js — the x-IMU3's UDP, for a browser (which cannot open UDP sockets)
 //
-// Replaces Max/MSP bridge for sensor data in browser mode (no Electron needed).
 // Requires only Node.js + ws package:  npm install ws
 //
-// Two WebSocket interfaces:
-//   Port 8080 — data channel: same { address, values } JSON as Max bridge.
-//               Works with existing osc.js without changes.
-//   Port 8081 — control channel: discovery list, connect/disconnect, commands.
-//               Consumed by imu-setup.js browser-mode transport.
+// ONE WebSocket, port 8081: discovery, connect/disconnect, commands, and every
+// data line raw — js/ximu3.js parses them exactly as it does in Electron, so a
+// unit is the same Sensor, with the same settings handshake, either way.
+//
+// It used to ALSO convert the lines to /sensor/{name}/quaternion on port 8080,
+// the browser's OSC input. With the direct connect feeding too (2026-09-27),
+// one unit became two rows and two feeds, so the conversion — and the 8080
+// server, which then carried nothing — went. Port 8080 is still the browser's
+// OSC input for any other relay (osc.js).
 //
 // Launch:  node proxy.js
 // ============================================================================
@@ -22,8 +25,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const DISCOVERY_PORT = 10000;
 const DATA_PORT_DEFAULT = 8000;
 const CMD_PORT_DEFAULT  = 9000;
-const WS_DATA_PORT    = 8080;   // same as Max bridge — drop-in replacement
-const WS_CONTROL_PORT = 8081;   // new control channel for discovery/commands
+const WS_CONTROL_PORT = 8081;   // discovery, commands, data lines
 
 // ── State ────────────────────────────────────────────────────────────────────
 
@@ -46,19 +48,9 @@ const dataBufs = new Map();
 
 // ── WebSocket servers ────────────────────────────────────────────────────────
 
-const wssData = new WebSocketServer({ port: WS_DATA_PORT });
 const wssControl = new WebSocketServer({ port: WS_CONTROL_PORT });
 
-console.log(`[proxy] data WebSocket on ws://localhost:${WS_DATA_PORT} (osc.js compatible)`);
-console.log(`[proxy] control WebSocket on ws://localhost:${WS_CONTROL_PORT} (discovery/commands)`);
-
-// Broadcast to all connected WS clients
-function broadcastData(obj) {
-  const msg = JSON.stringify(obj);
-  for (const ws of wssData.clients) {
-    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
-  }
-}
+console.log(`[proxy] WebSocket on ws://localhost:${WS_CONTROL_PORT} (discovery, commands, data)`);
 
 function broadcastControl(obj) {
   const msg = JSON.stringify(obj);
@@ -135,7 +127,6 @@ function startDataListener(port) {
           broadcastControl({ type: 'command-response', data: json, sourceIP });
         } catch (_) {}
       } else {
-        // Data message — convert to OSC-compatible format for osc.js
         routeDataLine(line, sourceIP);
       }
     }
@@ -160,88 +151,17 @@ function stopDataListener() {
   }
 }
 
-// ── Route x-IMU3 ASCII data → OSC-compatible WebSocket messages ──────────────
-// Converts x-IMU3 ASCII lines to /sensor/{name}/quaternion and /sensor/{name}/inertial
-// messages so osc.js can consume them without changes.
+// ── Relay a data line ────────────────────────────────────────────────────────
+// Raw, with its source IP: ximu3.js routes it to the unit and parses it.
+// Battery (B) and RSSI (W) also go out as a status for the discovery list.
 
 function routeDataLine(line, sourceIP) {
-  // Find which connected device this data belongs to
-  let dev = null;
-  for (const d of connected.values()) {
-    if (d.ip === sourceIP) { dev = d; break; }
+  const type = line[0];
+  if (type === 'B' || type === 'W') {
+    let dev = null;
+    for (const d of connected.values()) if (d.ip === sourceIP) { dev = d; break; }
+    if (dev) broadcastControl({ type: 'sensor-status', sn: dev.sn, line, sourceIP });
   }
-  if (!dev) {
-    // Fallback: first connected device
-    dev = connected.values().next().value;
-  }
-  if (!dev) return;
-
-  const sensorName = dev.name || dev.sn;
-  const parts = line.split(',');
-  if (parts.length < 3) return;
-
-  const type = parts[0];
-
-  switch (type) {
-    case 'Q': { // Quaternion: timestamp, w, x, y, z
-      if (parts.length >= 6) {
-        const w = parseFloat(parts[2]);
-        const x = parseFloat(parts[3]);
-        const y = parseFloat(parts[4]);
-        const z = parseFloat(parts[5]);
-        // osc.js expects /sensor/{name}/quaternion with [qx, qy, qz, qw]
-        broadcastData({
-          address: `/sensor/${sensorName}/quaternion`,
-          values: [x, y, z, w],
-        });
-      }
-      break;
-    }
-    case 'I': { // Inertial: timestamp, gx, gy, gz, ax, ay, az
-      if (parts.length >= 8) {
-        broadcastData({
-          address: `/sensor/${sensorName}/inertial`,
-          values: [
-            parseFloat(parts[2]), parseFloat(parts[3]), parseFloat(parts[4]),
-            parseFloat(parts[5]), parseFloat(parts[6]), parseFloat(parts[7]),
-          ],
-        });
-      }
-      break;
-    }
-    case 'A': { // Euler: timestamp, roll, pitch, yaw
-      // Also relay as quaternion for osc.js compatibility
-      if (parts.length >= 5) {
-        const roll  = parseFloat(parts[2]) * Math.PI / 180;
-        const pitch = parseFloat(parts[3]) * Math.PI / 180;
-        const yaw   = parseFloat(parts[4]) * Math.PI / 180;
-        // ZYX Euler → quaternion
-        const cr = Math.cos(roll/2), sr = Math.sin(roll/2);
-        const cp = Math.cos(pitch/2), sp = Math.sin(pitch/2);
-        const cy = Math.cos(yaw/2), sy = Math.sin(yaw/2);
-        const qx = sr*cp*cy - cr*sp*sy;
-        const qy = cr*sp*cy + sr*cp*sy;
-        const qz = cr*cp*sy - sr*sp*cy;
-        const qw = cr*cp*cy + sr*sp*sy;
-        broadcastData({
-          address: `/sensor/${sensorName}/quaternion`,
-          values: [qx, qy, qz, qw],
-        });
-      }
-      break;
-    }
-    // B (battery) and W (RSSI) are forwarded on control channel
-    case 'B':
-    case 'W':
-      broadcastControl({ type: 'sensor-status', sn: dev.sn, line, sourceIP });
-      break;
-
-    // No case for 'S' (serial accessory) on purpose.  The raw-line forward
-    // below already carries it to imu-setup.parseDataLine, which owns the
-    // accessory hook — adding a case here would double-deliver it.
-  }
-
-  // Also forward raw line on control channel for imu-setup.js browser mode
   broadcastControl({ type: 'data', line, sourceIP });
 }
 
@@ -317,7 +237,7 @@ function handleControlMessage(msg) {
 
       // Settings enforcement and the LED handshake deliberately do NOT happen
       // here.  The proxy is a transport: it owns the sockets and relays
-      // commands, nothing more.  imu-setup.js runs the same enforcement pass
+      // commands, nothing more.  ximu3.js runs the same enforcement pass
       // for browser mode as it does for Electron, sending through the
       // { type: 'command' } relay below, so there is exactly one copy of the
       // settings table (js/ximu-settings.js) rather than two that drift.
@@ -367,19 +287,6 @@ function handleControlMessage(msg) {
   }
 }
 
-// ── Data channel (port 8080) — also accept outbound OSC from browser ─────────
-
-wssData.on('connection', (ws) => {
-  console.log('[proxy] data client connected');
-  ws.on('message', (raw) => {
-    // Browser might send OSC messages back (e.g. sendOSC in osc.js)
-    // Currently no-op — we don't relay browser→Max. Could be added later.
-  });
-  ws.on('close', () => {
-    console.log('[proxy] data client disconnected');
-  });
-});
-
 // ── Cleanup stale discoveries ────────────────────────────────────────────────
 
 setInterval(() => {
@@ -399,7 +306,6 @@ process.on('SIGINT', () => {
   if (discoverySock) try { discoverySock.close(); } catch (_) {}
   if (dataSock)      try { dataSock.close(); } catch (_) {}
   if (cmdSock)       try { cmdSock.close(); } catch (_) {}
-  wssData.close();
   wssControl.close();
   process.exit(0);
 });

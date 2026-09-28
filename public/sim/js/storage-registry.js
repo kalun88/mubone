@@ -73,6 +73,9 @@ export const RETIRED_KEYS = [
   'mubone_projector_layout', 'mubone_projector_layout_v2', 'mubone_panel_order', 'mubone_tile_layout',
   'muboneSygaldryAddress', 'muboneSygaldrySsid',
   'mubone_sensor_cal_v',
+  // A sensor's role was saved twice — here, per serial, and in mubone_sensor_cal
+  // per slot — and the two could disagree. The slot's is the one (2026-09-27).
+  'mubone-sensor-prefs',
   // Settings → Mapping (2026-09-25): its rows, its OSC defaults, its selection.
   // Sensors bind onto the Keys + MIDI table's rows instead.
   'mubone_sensorMappings', 'mubone_mappingTransportGlobal', 'mubone_settings_mapping',
@@ -117,7 +120,8 @@ export const KEYS = [
   { key: 'mubone_key_map',           cat: 'bindings' },
   { key: 'mubone_button_map',        cat: 'bindings', note: 'the instrument\'s buttons: action → { btn, g }' },
   { key: 'mubone_button_timing',     cat: 'bindings', note: 'long-press and tap window, ms' },
-  { key: 'mubone_sensor_bindings',   cat: 'bindings', note: 'the Keys + MIDI table\'s sensor column (sensor-bindings.js)' },
+  { key: 'mubone_sensor_bindings',   cat: 'bindings', note: 'LEGACY: the sensor column before 2026-09-27, when Elevation read upside down. Registered so an older setup file\'s bindings import at all; sensor-bindings.js migrates them into mubone_sensor_axis_bindings on load and removes this key' },
+  { key: 'mubone_sensor_axis_bindings', cat: 'bindings', note: 'the Keys + MIDI table\'s sensor column (sensor-bindings.js)' },
   { key: 'mubone_midi_map',          cat: 'bindings' },
   { key: 'mubone_latency_cal',       cat: 'audio', note: 'the loopback measurements (2026-09-04), keyed input device × output device × rate → { deviceS, measuredS, modelS, at }: the DEVICES\' own share — measured minus what the app added — so the buffer and the cushion can move without measuring again; js/latency.js. The first day\'s total-keyed entries are dropped on load' },
   { key: 'mubone_midi_input',        cat: 'bindings', note: 'last selected MIDI input port' },
@@ -133,14 +137,14 @@ export const KEYS = [
   { key: 'mubone_audio_defaults',         cat: 'audio' },
   { key: 'mubone_seed_settings',          cat: 'audio', note: 'split out of mubone_audio_defaults 2026-08-01' },
   { key: 'mubone_bufferSize',             cat: 'audio' },
+  { key: 'mubone_reverb',                 cat: 'audio', note: 'the master reverb\'s amount, space and tone (js/master-reverb.js, 2026-09-27). Never on or freeze: like the dry monitor, a rig never boots into a surprise' },
   { key: 'mubone_max_grains',             cat: 'audio', note: 'the grain pool and the glow ring (P2, 2026-09-06): how many grains may sound at once — 256 / 512 / 1024, Settings → Audio' },
   { key: 'mubone_audio_cushion',          cat: 'audio', note: 'the stall cushion in ms (2026-09-04, #333): the output credit window and the input ring\'s target fill; js/audio.js applyAudioCushion' },
   { key: 'mubone_custom_speaker_angles',  cat: 'audio' },
 
   // ── sensor ──
   { key: 'mubone_sensor_cal',    cat: 'sensor' },
-  { key: 'mubone_settings_sensor', cat: 'ui', note: 'which sensor Settings → Sensor shows (ui-imu-setup.js _SEL_KEY) — unregistered until 2026-09-16' },
-  { key: 'mubone-sensor-prefs',  cat: 'sensor', note: 'per-serial axis signs and role' },
+  { key: 'mubone_settings_sensor', cat: 'ui', note: 'which sensor Settings → Sensor shows (ui-sensors.js _SEL_KEY) — unregistered until 2026-09-16' },
   { key: 'mubone_sygaldry_known', cat: 'sensor',
     note: 'per-instrument { ssid, address } keyed by the name the instrument reports; '
         + 'replaced muboneSygaldryAddress / muboneSygaldrySsid, which described only one' },

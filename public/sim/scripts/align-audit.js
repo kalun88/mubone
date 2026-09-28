@@ -1241,7 +1241,10 @@ const sweep = () => {
     const box = (kc.contains('bb-ax') || kc.contains('bb-mute')) && el.closest('.bottom-bar')
       ? { token: '--footer-row', host: el.closest('.bottom-bar') }
       // A preset row fills the rail's --row-preset (2026-09-25, the rails canvas).
-      : kc.contains('trow--voice') ? { token: '--row-preset', host: el } : null;
+      : kc.contains('trow--voice') ? { token: '--row-preset', host: el }
+      // An instrument tab fills the card head's --card-head (2026-09-26: the
+      // tabs take the card head's shape, 40 over a rule drawn inside it).
+      : kc.contains('grain-seg-btn') && el.closest('.instr-tabs') ? { token: '--card-head', host: el } : null;
     const kind = box ? 'box'
                // A box that STATES it is sized by its text. Its own kind, not
                // folded into 'bare': --bare is a SHAPE (a button with no box),
@@ -1647,7 +1650,7 @@ function collapses(label, items, key) {
   console.log('\n── sensors round ten ──');
   const RT_PROBE = `(async () => {
     const { S } = await import('./js/state.js');
-    const IMU = await import('./js/imu-setup.js');
+    const IMU = await import('./js/sensors.js');
     // A synthesized OSC sensor: the page must be probed WITH a selected card,
     // or every card rule is vacuously green (the test-the-gesture lesson).
     const q = [0.1, 0.2, 0.05, Math.sqrt(1 - 0.0525)];
@@ -1663,7 +1666,7 @@ function collapses(label, items, key) {
       rowsAtRest: card ? card.querySelectorAll(':scope > .set-row:not(.set-row--disclose)').length : -1,
       discloseN: card ? card.querySelectorAll(':scope > .set-row--disclose').length : -1,
       instDoorInTemplate: /js-grp-inst/.test(document.querySelector('#imuSetupSelectedBody')?.innerHTML || '') ||
-                          true /* the door renders only with storage; template carries it in ui-imu-setup.js */,
+                          true /* the door renders only with storage; template carries it in ui-sensors.js */,
     };
     // R9/S4: both readouts (glyph + dot since 2026-09-09), offsetWidth across the states, driven not read.
     const sens = document.getElementById('tcSensor');
@@ -1684,11 +1687,11 @@ function collapses(label, items, key) {
     out.sensorWidths = [...w.sensor]; out.inputWidths = [...w.input];
     // The synthetic sensor LEAVES. Until 2026-09-09 it stayed: in the device
     // map (the header read "up · osc" on a rig with nothing connected), and
-    // in both storage keys with the cursor role, where it could take the role
+    // in storage with the cursor role, where it could take the role
     // off the real instrument at the next boot.
     IMU.forgetOscSensor('__rt10__');
-    out.rt10Gone = !IMU.getDevices().has('osc-__rt10__') &&
-      !/__rt10__/.test((localStorage.getItem('mubone_sensor_cal') || '') + (localStorage.getItem('mubone-sensor-prefs') || ''));
+    out.rt10Gone = !IMU.getSensors().has('osc-__rt10__') &&
+      !/__rt10__/.test(localStorage.getItem('mubone_sensor_cal') || '');
     if (!wasOpen) document.querySelector('#settingsModal.open .close-btn, #settingsClose')?.click();
     return out;
   })()`;

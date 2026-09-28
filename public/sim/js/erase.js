@@ -18,9 +18,9 @@
 // for the rest of the stroke (_strokeFate), so the revealed layer stays
 // audible — release and press again to dig deeper into recording history.
 //
-// Undo: one level via the existing sweep-snapshot machinery.  A snapshot is
-// stashed at stroke start; ⌘Z within the undo window restores it (30s
-// auto-commit closes the window and frees the snapshot arrays).
+// Undo: one erase stroke is one action on the history stack, a before and an
+// after snapshot (ui-sweep.js materialAction). Undo puts back only what the
+// erase took, so a take recorded during or after it is left alone.
 //
 // Deliberately NOT done here:
 //  - No killAllGrains/flush — in-flight grains ring out through their

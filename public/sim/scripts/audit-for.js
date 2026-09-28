@@ -76,9 +76,15 @@ const MAP = [
   [/^js\/osc\.js$/,
     'AUDIT_ONLY=wiring node scripts/osc-audit.js',
     'static cross-check of ACTIONS against the dispatch switch — instant; the full sweep is release-only'],
-  [/^js\/(sensor-registry|imu-setup|ximu-settings)\.js$/,
+  [/^js\/(sensor-registry|sensor-math|sensors|ximu3|ximu-settings)\.js$/,
     'npm run audit:sensor',
     'calibration maths, pure, under a second'],
+  [/^js\/(reverb|master-reverb)\.js$|^js\/worklets\/reverb\.worklet\.js$/,
+    { rig: ['reverb'] },
+    'the master reverb in the running app: off is a straight wire and idle, a sound on one speaker rings on that speaker only, amount, off-while-ringing trails, freeze, mute silences tails, a take stays dry, the footer / OSC / diagram'],
+  [/^js\/(sensor-registry|sensor-math|sensors|ui-sensors|sygaldry)\.js$/,
+    { rig: ['sensors'] },
+    'two synthetic sensors through the real dispatch: who gets the cursor, cursor + camera independent, no view roll, zero heading, roles across a reload'],
   // index.html IS routed — to rig-audit engine, which checks that every engine
   // row still writes through its cabinet element. What it was never routed to
   // is the ALIGNMENT suite, and a new GUI element is markup in this file. So on
@@ -90,7 +96,7 @@ const MAP = [
   [/^docs\/|^CLAUDE\.md$|^README\.md$|^INSTALL\.md$|^sw\.js$|^package\.json$|^js\/[^/]+\.js$|^scripts\/audit-for\.js$/,
     'node scripts/docs-audit.js',
     'banners, table rows, versions, orphans, dead script references, CLAUDE.md size, no [x] in TODO.md'],
-  [/^js\/[^/]+\.test\.mjs$|^js\/sygaldry[^/]*\.js$|^js\/worklets\/grain-engine/,
+  [/^js\/[^/]+\.test\.mjs$|^js\/sygaldry[^/]*\.js$|^js\/reverb\.js$|^js\/worklets\/grain-engine/,
     'npm test',
     'the node unit tests — sub-second, no app'],
   [/^js\/main\.js$|^sw\.js$/,

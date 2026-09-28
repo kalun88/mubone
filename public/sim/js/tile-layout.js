@@ -392,6 +392,10 @@ function tick() {
 // It holds ECHO_HOLD_MS and fades on --m-decay. A continuous input (a CC, a
 // sensor binding) streams, so it never covers a discrete one still showing.
 // Written on the next frame, one write per frame whatever arrives.
+// Every DISCRETE echo fades in from nothing (Ek, 2026-09-27: "firing the same
+// key … it just shows the same thing"): the same press twice writes the same
+// words, so without the fade a repeat was invisible. A stream does not, or a
+// CC would strobe.
 const ECHO_HOLD_MS = 1000;
 const _GESTURE_WORD = { press: 'press', tap: 'tap', long: 'long', xlong: 'extra long', double: '×2', triple: '×3' };
 let _echoEl = null, _echoWhat = null, _echoSrc = null;
@@ -428,6 +432,12 @@ function _paintEcho() {
     _echoSrc.textContent = f.g ? `${f.src} · ${_GESTURE_WORD[f.g] ?? f.g}` : f.src;
   }
   _echoEl.classList.add('on');
+  if (!e.cont) {
+    // Restart the animation: off, a style read so the removal lands, on again.
+    _echoEl.classList.remove('is-again');
+    void _echoEl.offsetWidth;
+    _echoEl.classList.add('is-again');
+  }
   clearTimeout(_echoTimer);
   _echoTimer = setTimeout(() => { _echoEl.classList.remove('on'); _echoShown = null; }, ECHO_HOLD_MS);
 }

@@ -604,9 +604,12 @@ export function perfTick() {
   // audio: the worklet's own load over its last feedback window, of the
   // block budget. The throttle's two thresholds are the bar's: thinning from
   // 70%, everything skipped at 95% (grain-engine.worklet.js LOAD_SOFT/HARD).
+  // The master reverb (js/master-reverb.js) runs on the same thread in a worklet
+  // of its own, so its share is added — the bar is the THREAD's load.
   const wd = S._lastWorkletDiag;
-  if (wd?.loadPct != null) setBar('pmLoadBar', 'pmLoadVal', wd.loadPct,
-    `${wd.loadPct}%${wd.throttled ? ' thin' : ''}`, 70, 95);
+  const rv = S.reverbDiag?.loadPct || 0;
+  if (wd?.loadPct != null) setBar('pmLoadBar', 'pmLoadVal', wd.loadPct + rv,
+    `${Math.round((wd.loadPct + rv) * 10) / 10}%${wd.throttled ? ' thin' : ''}`, 70, 95);
 
   // draw: what one frame costs the main thread, against the 33 ms a 30 fps
   // frame has. It is the scheduler's thread too, so the warning comes early.
@@ -742,6 +745,10 @@ export const S = {
   // reader is gone and the name stopped being true — single-IMU mode sets
   // cursorQ now.)
   cursorQ: null,
+  // [x,y,z,w] | null — conj(pan-tilt) of the CAMERA-role sensor; sphere.js
+  // cameraTransform rotates every world point by it. Null with no camera
+  // sensor. Written by renderer.js applySensorPose only.
+  cameraSensorQ: null,
   mouseX: 0,
   mouseY: 0,
   mousePixelX: 0,
@@ -767,7 +774,6 @@ export const S = {
   // the camera at all — applyAxisSources composes yaw·pitch only — and a
   // snapshot for a channel that no longer exists is exactly the kind of
   // leftover the next session mistakes for a mechanism.)
-  _rawCursorQ:          null, // the cursor-role quat while a frame sensor holds the view (two-sensor mode)
   altFrozenMousePixelX: 0,
   altFrozenMousePixelY: 0,
 
@@ -1394,6 +1400,13 @@ export const S = {
   dryVBAPGains:        null,  // [GainNode, ...] — one per speaker bus (Electron multi-ch)
   dryPanner:           null,  // StereoPanner — stereo path (browser / 2-ch)
   dryMixdownInputs:    null,  // [GainNode L, GainNode R] — dry → headphone mixdown (Electron)
+  // ── The master reverb (js/master-reverb.js, 2026-09-27) ────────────────
+  // An insert on every output channel, before the ceiling: whatever plays on a
+  // speaker rings out on that speaker. ON and FREEZE always boot OFF, like the
+  // dry monitor — a rig never boots into a surprise; the dials persist
+  // (`mubone_reverb`). amount → wet level 2·a², so 1 is +6 dB over the dry.
+  reverb: { on: false, freeze: false, amount: 0.4, space: 0.5, tone: 0.5 },
+
 
   // ── Output gain + mute ─────────────────────────────────────────────────
   outputGainValue: MASTER_DEFAULT_GAIN,  // linear; -6 dB. Single source: MASTER_DEFAULT_DB above

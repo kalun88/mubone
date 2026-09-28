@@ -7,9 +7,10 @@
 //   Electron  — electronBridge.onOSC (IPC from main process, UDP 7500)
 //   Browser   — { address, values } JSON over ws://localhost:8080
 //
-// The WebSocket port is a published interface. proxy.js in this repo (x-IMU3
-// UDP → WebSocket) is the implementation mubone maintains; mubone-joycon-gui
-// ships another. Nothing here knows which is on the other end.
+// The WebSocket port is a published interface: mubone-joycon-gui is one
+// relay, anything speaking the JSON another. Nothing here knows which is on
+// the other end. (proxy.js is not one: it carries the x-imu3 on 8081, to
+// ximu3.js, since 2026-09-27.)
 //
 // Hosted origins skip the WebSocket entirely — see _bridgeReachable() — so the
 // demo at mubone.org/sim has no OSC input at all, by design. With no relay
@@ -19,9 +20,7 @@
 import { quantPitch, quantSpeed } from './tape-pitch.js';
 import { S, DEBUG, SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP, GATE_METER_MAX } from './state.js';
 import { getOrCreateSlot } from './sensor-registry.js';
-import {
-  handleOSCSensorQuaternion, handleOSCSensorInertial,
-} from './imu-setup.js';
+import { handleOSCSensorQuaternion, handleOSCSensorInertial } from './sensors.js';
 import { updateGestureMorph } from './seed-morph.js';
 import { setMixdownCursorGain, setMixdownHouseGain } from './ui-meters.js';
 
@@ -72,6 +71,7 @@ const _VALUED_TRIGGERS = new Set([
   '/pins/sel/mute', '/pins/sel/solo', '/pins/clouds/mute', '/pins/clouds/solo', '/pins/loops/mute', '/pins/loops/solo',
   '/rail/tools', '/rail/pins', '/settings', '/spatial/lock',
   '/mute', '/search/mode', '/search/step', '/cursor/radiusfade', '/pins/mute',
+  '/reverb', '/reverb/freeze',
 ]);
 
 // The one bang address with no ACTIONS row, so the registry can't classify it.
@@ -162,8 +162,7 @@ export function initOSC() {
   connectWebSocket();
 }
 
-// Any relay on this port listens on localhost (proxy.js, a joycon GUI, an
-// example Max patch), so it is only reachable when mubone is itself being
+// Any relay on this port listens on localhost (a joycon GUI, an OSC sender), so it is only reachable when mubone is itself being
 // served from this machine.
 export function _bridgeReachable() {
   const h = location.hostname;
@@ -293,7 +292,7 @@ export function handleOSC(rawAddress, values) {
   // ── Generic sensor dispatch ─────────────────────────────────────────────────
   // New convention: /sensor/{name}/quaternion  (4 floats)
   //                 /sensor/{name}/inertial    (6 floats)
-  // Routed through imu-setup for unified calibration + UI card.
+  // Routed through sensors.js, the same path as every other sensor.
   {
     const parts = address.split('/');   // ["", "sensor", name, type]
     if (parts[1] === 'sensor' && parts.length === 4) {
@@ -307,7 +306,7 @@ export function handleOSC(rawAddress, values) {
       if (type === 'inertial' && values.length >= 6) {
         handleOSCSensorInertial(name, values);
         // If this slot's inertial is gesture source, run downstream. The slot
-        // is the device's (`osc-<name>`, imu-setup.js) — asking for the bare
+        // is the sensor's (`osc-<name>`, sensors.js) — asking for the bare
         // name minted a second, empty slot per OSC sensor (2026-09-16).
         const slot = getOrCreateSlot('osc-' + name);
         if (slot.inertialRole === 'gesture') {
@@ -714,6 +713,13 @@ function _route(address, values) {
       break;
     }
 
+    // ── The master reverb (js/master-reverb.js) — the dials 0–1 ─────────────
+    case '/reverb':          S._dispatchAction?.('reverb',        _bangOrOnOff(values)); break;
+    case '/reverb/freeze':   S._dispatchAction?.('reverb_freeze', _bangOrOnOff(values)); break;
+    case '/reverb/amount':   S._setReverb?.({ amount: clamp(values[0], 0, 1) }); break;
+    case '/reverb/space':    S._setReverb?.({ space:  clamp(values[0], 0, 1) }); break;
+    case '/reverb/tone':     S._setReverb?.({ tone:   clamp(values[0], 0, 1) }); break;
+
     default: {
       DEBUG && console.log(`[osc] unhandled: ${address}`, values);
       return false;
@@ -725,9 +731,8 @@ function _route(address, values) {
 // Sends an OSC-style message out. Transport depends on runtime:
 //   Electron — IPC to main, which forwards over UDP 7501 to the relay.
 //              The relay rebroadcasts to its WS peers (e.g. the joycon GUI).
-//   Browser  — the same WebSocket we use for inbound. proxy.js drops what a
-//              browser sends it (only the relay it was written for fanned it
-//              out). Silently dropped when the WS isn't open.
+//   Browser  — the same WebSocket we use for inbound. Silently dropped when
+//              the WS isn't open.
 // Used by js/status-publisher.js to push /status/* messages so the joycon GUI
 // can drive LED/rumble feedback in response to app state.
 // Usage: sendOSC('/my/address', [1, 2, 3])

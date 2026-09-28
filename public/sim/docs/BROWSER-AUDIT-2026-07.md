@@ -42,7 +42,7 @@ Feature-by-feature, the 1.10/1.11 work is browser-capable:
 | Sensor over USB | works — WebSerial, incl. the `serial_mode` read-back |
 | Serial accessory A8 (#147) | works — shares `parseDataLine`, so `case 'S'` is reached over WebSerial too |
 | x-IMU3 LED feedback | works — commands go out over WebSerial |
-| Sensor over WiFi | works **locally** via `node proxy.js` (ws 8081 control + ws 8080 data) |
+| Sensor over WiFi | works **locally** via `node proxy.js` (ws 8081: control and raw data lines — 8080 dropped 2026-09-27) |
 | MIDI | works — Web MIDI, secure context |
 | Multichannel / VBAP >2ch | Electron only — browser is stereo, by design |
 | Native fullscreen | browser uses the Fullscreen API instead — fine |

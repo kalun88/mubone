@@ -561,6 +561,10 @@ html body .settings-head .as-btn:hover { background: var(--surface-1); color: va
 .settings-host .set-device-mark.set-device-ok { color: var(--status-ok); }
 .settings-host .set-device-text {
   display: flex; flex-direction: column; gap: 2px; min-width: 0;
+  /* Takes the slack, so the row's buttons stand in one column down the list
+     rather than each one after its own name (2026-09-27: Cursor and Blink sat
+     39px apart between two rows). */
+  flex: 1 1 auto;
 }
 .settings-host .set-device-meta { font-size: var(--fs-set-hint); }
 /* The wire as a mark (2026-09-09): 14px on the sub-line, sat on the text's
@@ -573,7 +577,9 @@ html body .settings-head .as-btn:hover { background: var(--surface-1); color: va
   color: var(--text-dim);
 }
 .settings-host .set-device-more-ico { width: 16px; height: 16px; display: block; }
-.settings-host .in-settings .set-device-more[aria-pressed="true"] {
+/* The cursor quick-switch lights the same way on the sensor that IS the cursor. */
+.settings-host .in-settings .set-device-more[aria-pressed="true"],
+.settings-host .in-settings .set-device-cursor[aria-pressed="true"] {
   color: var(--text-light); border-color: var(--border-soft); background: var(--surface-2);
 }
 /* An empty list is empty INSIDE the box — the kit's empty state carries its own

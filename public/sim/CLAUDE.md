@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for Cowork / Claude Code
 
-> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-26 (5.12 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
+> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-28 (5.13 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
 
 > **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative — no paragraph here per change. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`.
 
@@ -33,7 +33,7 @@ Ek is the only user of mubone. This shapes how we approach changes:
 - Vanilla HTML/JS/CSS — ES6 modules, no build step, no framework
 - Web Audio API for all synthesis and processing
 - Optional Electron wrapper for multi-channel audio output
-- OSC in: binary OSC on UDP 7500 (Electron); `proxy.js` relays the x-imu3 into the browser over WebSocket 8080
+- OSC in: binary OSC on UDP 7500 (Electron), `{ address, values }` JSON on WebSocket 8080 (browser); `proxy.js` carries the x-imu3's UDP to a browser on 8081
 - Python HTTPS server for local dev (`./serve.py` → https://localhost:4443; `--port` and
   `--host` to move it). Needs a `localhost.pem` / `localhost-key.pem` pair — gitignored as
   machine-specific, so generate them once with mkcert; the server says how if they are missing.
@@ -80,9 +80,8 @@ about either is specific to Max.
 - **UDP 7500** — binary OSC, Electron only. Received in `electron-main.js`, dispatched by
   `js/osc.js`. This is the show path. Status goes back out on 7501; per-station ports come from
   `--osc-port` (`docs/MULTI-INSTANCE-PLAN.md`).
-- **`ws://localhost:8080`** — `{ address, values }` JSON, browser only. `proxy.js` (x-IMU3 UDP →
-  WebSocket) is the implementation this repo maintains and ships; mubone-joycon-gui has its own,
-  and the example Max patches (git history) a third.
+- **`ws://localhost:8080`** — `{ address, values }` JSON, browser only (mubone-joycon-gui is one
+  sender). `proxy.js` is not an OSC relay: it carries the x-imu3's UDP on 8081 to `ximu3.js`.
 
 The address namespace is the dispatch `switch` in `js/osc.js` — an address not in there is not
 handled, whatever a patch or a doc says. `README.md` tabulates it.
@@ -138,7 +137,7 @@ words — read that entry before touching the area, and put a new ruling there, 
 
 - **Shared state object `S`** (`state.js`): all modules read/write `S`; callback hooks (`S._funcName = handler`) avoid circular imports.
 - **AudioWorklet grain engine** (`js/worklets/grain-engine.worklet.js`): synthesis on the audio thread; the 10 ms main-thread scheduler (`grain.js`) only does spatial search and writes candidates into shared tables through `grain-worklet-bridge.js`; **a take is ONE SharedArrayBuffer** (`js/take.js`) both threads read, never held twice.
-- **Sensor registry** (`sensor-registry.js`): sensors self-register from `/sensor/{name}/{type}`; roles (cursor / frame / gesture) per stream; the mubone instrument is primary, the x-imu3 the backup.
+- **Sensors: link → sensor → slot** (`sensor-registry.js` header): `sygaldry.js`/`ximu3.js`/`osc.js` → `sensors.js` → `sensor-registry.js`, maths in `sensor-math.js`.
 - **Accessory registry** (`accessory-registry.js`; its table UI was sunset 2026-08-28, git history): the x-IMU3-SA-A8's 8 channels (pad numbers 1–8, not indices) bind to the shared `ACTIONS` registry (`S._actions` / `S._dispatchAction`). Accessory, MIDI, keys and OSC all dispatch through ONE table — never add a parallel mapping system. Device settings are read on connect, never written automatically.
 - **VBAP** spatial panning: pre-computed lookup, O(1) per grain, any speaker count. Head-locked vs world-locked modes.
 - **A tile is the preset**: every grain tile owns and persists its whole block (`mubone_tiles`); the patch bank was sunset 2026-09-03 (git history).
@@ -178,7 +177,7 @@ A module mature enough to always load is wired into `main.js`; otherwise it stay
 
 ## Versioning — releases are explicit, never automatic
 
-Current version: **5.12 alpha** (`5.12.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
+Current version: **5.13 alpha** (`5.13.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
 
 1. **`index.html`** — BOTH version strings: the `<span class="top-bar-version">` (cabinet, hidden) and the chrome brand `<b>mubone</b> <i>1.14</i>`, which is the one the player sees
 2. **`package.json`** line 3 — the `"version"` field (semver, e.g. `"1.10.0-alpha"`)

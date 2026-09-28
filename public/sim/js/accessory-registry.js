@@ -1,7 +1,7 @@
 // ============================================================================
 // accessory-registry.js — x-IMU3 serial accessory channels
 //
-// Turns serial-accessory payloads (relayed from imu-setup.js via the
+// Turns serial-accessory payloads (relayed from ximu3.js via the
 // S._onAccessoryData hook) into control values.
 //
 // The only accessory type today is the x-IMU3-SA-A8: 8 analogue inputs,
@@ -35,7 +35,8 @@ import {
   ACC_CHANNEL_COUNT, ACC_RAIL_VOLTS, ACC_STALE_MS, ACC_WATCHDOG_MS, ACC_RATE_WINDOW_MS,
   ACC_DEFAULT_SMOOTH, ACC_DEFAULT_DEADBAND, ACC_DEFAULT_HI, ACC_DEFAULT_LO,
 } from './state.js';
-import { getDevices, sendCommandTo } from './imu-setup.js';
+import { getSensors } from './sensors.js';
+import { sendCommandTo } from './ximu3.js';
 import { scaleControl, GAMMA_LIMITS } from './scale.js';
 
 // ── Tuning ──────────────────────────────────────────────────────────────────
@@ -416,10 +417,10 @@ export function endCalibration(pad) {
 }
 
 // ── Serial mode ─────────────────────────────────────────────────────────────
-// Read on connect by imu-setup; only ever written by explicit user action.
+// Read on connect by ximu3.js; only ever written by explicit user action.
 
 export function getSerialMode() {
-  return _lastDev?.serialMode ?? [...getDevices().values()][0]?.serialMode ?? null;
+  return _lastDev?.serialMode ?? [...getSensors().values()][0]?.serialMode ?? null;
 }
 
 export function isAccessoryModeSet() {
@@ -437,8 +438,8 @@ export function isAccessoryModeSet() {
 // Pass a serial number to target one:  acc.setAccessoryMode(true, 'A1B2C3')
 export function setAccessoryMode(on = true, sn = null) {
   const devs = sn
-    ? [getDevices().get(sn)].filter(Boolean)
-    : [...getDevices().values()].filter(d => d.transport !== 'osc');
+    ? [getSensors().get(sn)].filter(Boolean)
+    : [...getSensors().values()].filter(d => d.transport !== 'osc');
 
   if (!devs.length) {
     console.warn(sn ? `[accessory] no connected device ${sn}` : '[accessory] no connected devices');

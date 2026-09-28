@@ -45,6 +45,8 @@ const SUITES = [
   { name: 'mark align',    mod: './mark-align-audit.js' },
   { name: 'palette',          mod: './palette-audit.js' },
   { name: 'colour',        mod: './colour-audit.js' },
+  { name: 'sensors',       mod: './sensor-rig-audit.js' },
+  { name: 'reverb',        mod: './reverb-rig-audit.js' },
   // Last on purpose: it is the only suite that IMPORTS a session, which
   // replaces S.particles, S.commitSlots and the layer set wholesale. It hands
   // back a clean commit pool, but running it ahead of the others would still

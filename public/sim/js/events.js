@@ -1133,6 +1133,8 @@ export function setupEvents() {
       const busTarget = muted ? 0 : (S.outputGainValue ?? MASTER_DEFAULT_GAIN);
       S.speakerBuses.forEach(({ bus }) => bus.gain.setTargetAtTime(busTarget, t, 0.01));
     }
+    // The master reverb sits after the buses: its tails are silenced here too.
+    S._muteReverb?.(muted);
     if (muteBtn) {
       muteBtn.classList.toggle('muted', S.isMuted);
       const span = muteBtn.querySelector('span:last-child');

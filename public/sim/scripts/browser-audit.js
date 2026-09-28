@@ -425,7 +425,7 @@ async function auditReset(browser) {
     'mubone-accessory-a8':     '{"ch":1}',       // accessory
     'mubone-ximu-led-map':     '{"led":1}',      // accessory
     'mubone_tile_order':       '["pen"]',      // ui
-    'mubone-sensor-prefs':     '{"x":1}',        // sensor
+    'mubone_sygaldry_known':   '{}',             // sensor
   };
   await page.evaluate(d => { for (const [k, v] of Object.entries(d)) localStorage.setItem(k, v); }, DIRT);
 
@@ -463,7 +463,7 @@ async function auditReset(browser) {
   check(partial['mubone-accessory-a8'] === null && partial['mubone-ximu-led-map'] === null,
     'partial reset cleared the accessory category');
   check(partial['mubone_tile_order'] === DIRT['mubone_tile_order'] &&
-        partial['mubone-sensor-prefs'] === DIRT['mubone-sensor-prefs'],
+        partial['mubone_sygaldry_known'] === DIRT['mubone_sygaldry_known'],
     'partial reset left every other category alone',
     Object.entries(partial).filter(([, v]) => v === null).map(([k]) => k).join(', '));
 

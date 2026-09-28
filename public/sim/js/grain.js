@@ -1115,7 +1115,7 @@ function _cursorSounds() {
 
 export function scheduleGrains() {
   // Refresh the fused camera quaternion so headlocked panning in the worklet
-  // uses the latest camQ/frameQ even if the scheduler fires between frames.
+  // uses the latest camQ/cameraSensorQ even if the scheduler fires between frames.
   updateFusedCamQ();
 
   // Prune stale glow-map entries BEFORE the AudioContext guard so entries

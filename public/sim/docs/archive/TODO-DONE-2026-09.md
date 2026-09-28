@@ -2,6 +2,53 @@
 
 > **Status: ARCHIVED** · done items moved out of `docs/TODO.md` on 2026-09-05, verbatim, so the open list stays short enough to read every session. Record only: entries describe the code the day they closed and may use superseded terminology. `git log` and `CHANGELOG.md` are the other two records.
 
+### Sep 27
+
+- [x] **A second review round (2026-09-27)** — sensors: role split into runtime `quatRole` and chosen `wantRole`
+  (fixes "none" not sticking and a lost cursor choice at boot, a silent takeover erasing a choice, a disconnected
+  sensor steering on); serial role before rekey, placeholder instrument rename, retrying Disconnect, legacy
+  bindings import, feed only Q/A, response routing. Reverb: mute holds it for the whole mute, rebuild-while-
+  frozen, pitch-warping glides capped, frozen silence idles, debounced saves, NaN guard, the sweep dry.
+
+- [x] **A review of the day's changes (2026-09-27)** — ten bugs fixed: folded elevation bindings, a saved or dead
+  cursor role, a leaked reverb worklet, freeze stuck through off / mute, the browser x-imu3 after a reload and
+  its unknown-source fallback, a serial rekey collision, verification keyed by a changing serial, zero-heading
+  counting nothing, the dry pan cache after a rebuild. Guarded in `sensor-rig-audit`; commit has each.
+
+- [x] **The reverb is one master insert (Ek, 2026-09-27)** — `js/master-reverb.js` replaces the live send
+  (`reverb-send.js`, S.liveTap, send/tail, the cursor placement layer): one reverb per output channel between the
+  speaker merger and the ceiling, VERB · amount · space · tone · freeze; mute clears tails. `rig-audit.js reverb`
+  rewritten for it. RULINGS "The reverb is one insert on every output channel".
+
+- [x] **The live reverb, wired in (Ek, 2026-09-27)** — `js/reverb-send.js` + `js/worklets/reverb.worklet.js`: a send off
+  a new `S.liveTap` (before the dry switch), the tail placed at the cursor by the same rule as dry (audio.js's
+  placement is now one function over layers), never recorded. Footer SEND · TAIL, Settings → Audio → Monitor →
+  Reverb, 7 actions + OSC, the signal-path lane, load in the meter. `scripts/reverb-rig-audit.js`. Commit has why.
+
+- [x] **A standalone reverb to audition (Ek, 2026-09-27)** — `js/reverb.js` (diffusers → modulated 8-line FDN with
+  Jot damping, N decorrelated outs, freeze, idle skip), `js/reverb.test.mjs` (10 measured faults, ~0.6 % of a block),
+  `scripts/reverb-render.mjs` (WAVs to `reverb-renders/`, gitignored). Not wired in; the open item is in `docs/TODO.md`.
+
+- [x] **Tipping up reads up; one x-imu3 is one row (Ek, 2026-09-27)** — `sensor-math.js attitude` returns pitch
+  positive-up (the page, Elevation bindings); old elevation bindings move to `mubone_sensor_axis_bindings` with
+  their range negated, sounding the same. `proxy.js` no longer converts to `/sensor/…` on 8080 (the server went):
+  raw lines on 8081 to `ximu3.js` only. Both guarded in `sensor-rig-audit.js`.
+
+- [x] **Sensor code in three layers (Ek, 2026-09-27)** — `imu-setup.js` split into `ximu3.js` (the link) and
+  `sensors.js` (every sensor, any kind); `ui-imu-setup.js` → `ui-sensors.js`; maths pure in `sensor-math.js`, which
+  `sensor-audit.js` now imports; one `readSensorPose` → `applySensorPose`; axis map → three signs; one role store;
+  quick-switch onto the Sensors list; `scripts/sensor-rig-audit.js` (`rig-audit.js sensors`). Commit message has why.
+
+- [x] **The frame role is gone; the camera sensor pans and tilts, never rolls (Ek, 2026-09-27)** — `frame`
+  deleted from `QUAT_ROLES`, the registry, the renderer and the role menu; `S.frameQ` → `S.cameraSensorQ`;
+  `getCameraQ` recomposes yaw + pitch. `sensor-registry.js`, `renderer.js`, `sphere.js`, `main.js`, the imu
+  files, five docs. RULINGS "Two sensors: the hand is the cursor, the camera is the view".
+
+- [x] **Multi-sensor check (Ek, 2026-09-27)** — a direct x-imu3 (UDP, serial) now feeds on connect (nothing had
+  since 09-01); a new sensor takes the cursor only if it is free, instead of stealing it; zero heading zeroes every
+  sensor holding a role, so frame mode re-centres; role menu gains `none`. `js/imu-setup.js`, `js/ui-imu-setup.js`.
+  Proved with two simulated OSC sensors in a private instance; the commit message has the numbers.
+
 ### Sep 24
 
 - [x] **The registry is the screen** (Ek, 2026-09-24) — `ACTIONS` regrouped in screen order (palette · hand ·
@@ -3933,3 +3980,20 @@ it began; git dates the commits Sep 21. The day is the same work either way.)*
 - [x] **The echo floats above the palette** (2026-09-26) — one pill in `#paletteDock` (tiles.js now replaces only
   `#paletteBed`), centred, 24 tall, 8 above, 1 s then the decay fade; out of the footer. align-audit: the footer
   lists back as they were, a new invariant for the pill (measured centre off 0.00, gap 8.00).
+- [x] **Release 5.12 run** (2026-09-26) — engine-audit threw on `/\*$/` inside a template string (a comment opener)
+  since 5.11: fixed. pins-audit's selected-pin frame check follows the 1px rounded square. The pin fallback skips
+  only a slice's `preroll` marks (refusing every unarmed stroke broke the suite's fixtures). `#instrPanel` joined the
+  beds at --surface-3; the tabs fill `--card-head`. Z2's phase check still fails only inside the full run, as at 5.11.
+- [x] **A repeated press re-fades the echo** (2026-09-27) — every discrete echo restarts a `pal-echo-again` fade
+  from opacity 0 over --m-state, so the same key twice reads as two presses; streams (CC, sensor) skip it.
+- [x] **The erase fill follows the ring** (2026-09-27) — at rest the sweep band's zero-length round cap drew a flat
+  brushR circle over the projected ellipse, doubling the purple off true. No band under 1px of travel; the band is
+  clipped out of the ring so inside it the ring's fill is the one purple. Not checked on screen by the session.
+- [x] **Undo and erase mid-take keep the take** (2026-09-27) — `applyMaterial` restores what the action changed
+  and carries the newer (a take in progress, its later marks, its trigger, a pin); recordings matched by object,
+  marks' strokes restored (an undone erase-split is one line). A pending paint mark finds its recording by object.
+  pins-audit § R (6 checks, fail on HEAD, pass now); pins 235 ok, trigger 135 ok. Five real-mic rig scenarios green.
+- [x] **Undoing a sliced take takes every segment** (2026-09-27) — `_assignSegmentIds` links a segment to its
+  stroke (`from`); `_undoStroke` takes the family (marks, entries, triggers with their cut, pins), redo puts all
+  back on the take. pins-audit § R +2 (fail on HEAD: 3 segments and 28 marks left on a missing take).
+  trigger-audit's latency loopback check flaked once in five runs — unrelated (latency.js).

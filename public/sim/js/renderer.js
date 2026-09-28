@@ -11,6 +11,7 @@ import {
   SENSOR_CAM_SWING_DEG_S, SENSOR_CAM_OVERSHOOT_DEG, SENSOR_CAM_TELEPORT_DEG
 } from './state.js';
 import { tickSensorBindings } from './sensor-bindings.js';
+import { readSensorPose } from './sensor-registry.js';
 import { project, projectInto, updateProjectionCache, cursorLonLatNow, screenToLonLat, updateFusedCamQ, cameraTransformInto, spherePointInto, camOffsetZ } from './sphere.js';
 import { syncParticleMarks } from './composer.js';
 import { pinAnchorInto } from './pins.js';
@@ -2871,11 +2872,28 @@ export function drawCursor() {
           pts.push(p);
         }
       } else { pts.push(va, vb); }
-      if (pts.length > 1) {
+      // A band shorter than a pixel is a hand at rest: draw nothing, and let
+      // the reach ring's own fill be the brush. The round cap of a zero-length
+      // stroke is a FLAT circle of brushR, while the ring is the projected
+      // ellipse — so at rest the two purples sat on top of each other slightly
+      // out of true, the doubled one visibly off the ring (Ek, 2026-09-27: "the
+      // purple fill in the cursor doesn't follow the radius exactly").
+      const p0 = pts[0], pN = pts[pts.length - 1];
+      const moved = pts.length > 2 || Math.hypot(pN.sx - p0.sx, pN.sy - p0.sy) >= 1;
+      if (pts.length > 1 && moved) {
         // A round-capped, round-joined stroke of width 2r IS the swept capsule
         // — the same shape the old arc/lineTo built by hand, for any number of
         // segments, and it cannot disagree with itself at the joins.
         S.ctx.save();
+        // Clipped OUT of the ring: inside it the ring's fill is the one purple,
+        // so the band neither doubles the alpha there nor shows its flat end
+        // cap through the projected ellipse. Even-odd over a canvas-sized rect.
+        if (reach) {
+          const clip = new Path2D();
+          clip.rect(0, 0, S.ctx.canvas.width, S.ctx.canvas.height);
+          clip.addPath(reach);
+          S.ctx.clip(clip, 'evenodd');
+        }
         S.ctx.strokeStyle = _rFill;
         S.ctx.lineWidth = brushR * 2;
         S.ctx.lineCap = 'round';
@@ -3214,59 +3232,8 @@ export function animate() {
   // in this frame rather than the next.
   tickSensorBindings();
 
-  // ── Sensor (x-imu3) override ───────────────────────────────────────────────
-  // Always uses the absolute path via getSensorCamQ() → applyAxisMapQuat().
-  // applyAxisMapQuat already has a pole-safe forward-vector path for when
-  // roll is muted — no need for a second delta-tracking layer here.
-  if (S.cameraMode === 'sensor' && typeof S._getSensorCamQ === 'function') {
-    const sq = S._getSensorCamQ();
-    if (sq) {
-      // Single-IMU: the sensor drives the CURSOR, and the camera is derived —
-      // identical to camQ below the pitch clamp (reticle at centre, as ever),
-      // holding level past it while the reticle climbs to the pole.
-      const pq = applyAxisSources(sq);
-      S.cursorQ = pq;
-      S.camQ = cameraFromPointing(pq);
-    }
-
-    // ── Detethered cursor — two-IMU mode ──────────────────────────────────
-    // When frame-role sensor is active, getSensorCamQ returns null (handled
-    // above — sq is null, camQ untouched). Cursor-role drives cursorQ instead.
-    // camQ stays at identity so frameQ alone provides the viewport.
-    let cq = typeof S._getSensorCursorQ === 'function' ? S._getSensorCursorQ() : null;
-    if (cq) {
-      S._rawCursorQ = cq;
-      S.cursorQ = applyAxisSources(cq);
-      // Camera at identity — frame provides the view
-      S.camQ = [0, 0, 0, 1];
-    } else {
-      S._rawCursorQ = null;
-      // Single IMU: cursorQ and camQ already set above (when a sensor is
-      // feeding — with none, cursorQ stays wherever the last packet left it,
-      // so clear it and let the mouse fallback take the cursor).
-      if (!sq) S.cursorQ = null;
-    }
-  } else {
-    // Non-sensor modes: ensure cursorQ is cleared
-    S.cursorQ = null;
-  }
-
-  // ── Camera sensor — world rotation (projector-aim) ─────────────────────────
-  // A 'camera' role sensor rotates the virtual sphere, producing projector-
-  // aim behaviour: turning the sensor pans the viewport while the world stays
-  // in world coords.  Stored on S.frameQ; sphere.js applies it per-point in
-  // cameraTransform / getCursorLonLat / screenToLonLat.  Only active in
-  // sensor mode — surface and steer are mouse/trackpad only.
-  //
-  // A 'frame' role sensor (body-reference) does NOT go here — that mode feeds
-  // the delta quat directly into S.cursorQ via getSensorCursorQ(), and leaves
-  // S.frameQ null so cameraTransform skips world rotation.  Result: rotating
-  // cursor + frame together leaves both the cursor AND the grid visually
-  // stationary, attaching the whole granular field to the performer's body.
-  // See sensor-registry.getSensorCursorQ() for the dispatch.
-  S.frameQ = (S.cameraMode === 'sensor' && typeof S._getCameraQ === 'function')
-    ? S._getCameraQ()
-    : null;
+  // ── Sensor → cursor and camera ────────────────────────────────────────────
+  applySensorPose();
 
   // Particle deposits are handled by paint-ticker.js (200Hz setInterval),
   // independent of the render loop and input source.
@@ -3341,6 +3308,31 @@ export function applyAxisSources(q) {
                              '_axisLockFrozenPitch', livePitch, true);
 
   return _qNorm(_qMul(_qFromAA(0, 1, 0, yaw), _qFromAA(1, 0, 0, pitch)));
+}
+
+// ── Sensor → screen: the ONE place the sensors reach S.cursorQ and S.camQ ──
+// Called every render frame and on every cursor packet (up to 400 Hz, main.js
+// S._onCursorQuatArrival) so the paint ticker reads a fresh cursor. It used to
+// be two copies, and the 400 Hz one skipped the axis locks, undoing the render
+// loop's result every packet — roll lock never worked (Ek, 2026-08-31).
+//
+//   one sensor    the cursor is the pointing and the camera FOLLOWS it
+//                 (cameraFromPointing), so the reticle sits at view centre.
+//   + a camera    the camera sensor pans and tilts the view (S.cameraSensorQ,
+//                 applied per point by sphere.js cameraTransform), camQ holds
+//                 identity, and the cursor roams in world coords — off screen
+//                 included. The two are independent (Ek, 2026-09-27).
+//   no cursor     S.cursorQ null; the mouse takes the cursor.
+// Sensor mode only — steer and surface are the mouse and trackpad.
+const _IDENT_Q = [0, 0, 0, 1];
+export function applySensorPose() {
+  if (S.cameraMode !== 'sensor') { S.cursorQ = null; S.cameraSensorQ = null; return; }
+  const { cursorQ, cameraQ } = readSensorPose();
+  S.cameraSensorQ = cameraQ;
+  if (!cursorQ) { S.cursorQ = null; return; }
+  const pq = applyAxisSources(cursorQ);
+  S.cursorQ = pq;
+  S.camQ = cameraQ ? _IDENT_Q : cameraFromPointing(pq);
 }
 
 // ── The camera, derived from pointing ───────────────────────────────────────

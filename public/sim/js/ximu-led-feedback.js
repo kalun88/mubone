@@ -52,7 +52,8 @@
 // ============================================================================
 
 import { S } from './state.js';
-import { getDevices, sendCommandTo } from './imu-setup.js';
+import { getSensors } from './sensors.js';
+import { sendCommandTo } from './ximu3.js';
 import { linkForSensor, links, onLinksChanged } from './sygaldry.js';
 import { hexToChannels } from './sygaldry-led.js';
 import { featuresToColor, normaliseCentroid } from './audio-features.js';
@@ -125,7 +126,7 @@ export const LED_PALETTE = [
 //
 // It reaches the device map by a different road. It is not an x-IMU3 and has no
 // JSON command channel; sygaldry.js republishes its orientation as
-// /sensor/<name>/quaternion, which imu-setup auto-discovers as an `osc` device
+// /sensor/<name>/quaternion, which sensors.js auto-discovers as an `osc` device
 // keyed `osc-<name>`. Any other OSC sender's sensors have no LED at all —
 // hence the identity check rather than a transport check.
 //
@@ -530,7 +531,7 @@ export function timbreStatus() {
 
 // ── Device helpers ─────────────────────────────────────────────────────────
 function* _allLedDevices() {
-  for (const dev of getDevices().values()) {
+  for (const dev of getSensors().values()) {
     // Every x-IMU3 transport carries a colour command, and so does a mubone
     // instrument, over OSC — any number of them. Every other OSC sensor is a
     // bridge feed with no LED behind it.
@@ -770,7 +771,7 @@ function _onLedEvent(e) {
 
 // ── Cursor tracking ────────────────────────────────────────────────────────
 // A mubone instrument's `identify` (2026-09-25). An x-IMU3 fires its blink
-// from imu-setup.js's connect paths; the instrument connects through
+// from ximu3.js's connect paths; the instrument connects through
 // sygaldry.js, which never did, so the row said "on connect" and the primary
 // sensor never blinked. Fired the first time an instrument with an LED is
 // seen feeding, and again after it has been gone.

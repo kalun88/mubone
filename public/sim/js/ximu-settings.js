@@ -6,7 +6,7 @@
 // warns about anything that didn't take.  See docs/XIMU3-SETTINGS.md.
 //
 // THIS FILE MUST NOT IMPORT ANYTHING.  It is loaded two ways:
-//   - js/imu-setup.js       — browser ES module, static import
+//   - js/ximu3.js           — browser ES module, static import
 //   - proxy.js              — Node CommonJS, dynamic await import()
 // Adding an import (even ./state.js) breaks the Node side.
 //
@@ -39,7 +39,7 @@ export const ENFORCED_SETTINGS = {
   // anti-aliasing.  Divisor 1 (400 Hz) buys nothing and costs 4× the WiFi.
   ahrs_message_rate_divisor: 4,
 
-  // §11.1.61 — 0 = NWU (North-West-Up).  Every Euler transform in imu-setup.js
+  // §11.1.61 — 0 = NWU (North-West-Up).  Every Euler transform in ximu3.js
   // assumes NWU.  Left unenforced, an ENU or NED setting from the GUI breaks
   // the cursor silently, with no error anywhere.
   ahrs_axes_convention: 0,
@@ -122,7 +122,7 @@ export function settingsFor(transport) {
 
 // Data message type letters mubone tolerates.  Anything else arriving on a
 // direct transport means enforcement did not take — see the unexpected-type
-// counter in imu-setup.js parseDataLine().
+// counter in ximu3.js parseDataLine().
 //
 //   Q  quaternion       — the cursor
 //   S  serial accessory — SA-A8

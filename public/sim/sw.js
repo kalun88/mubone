@@ -18,7 +18,7 @@
 // visitors still get the full app from cache.
 // ============================================================================
 
-const CACHE_VERSION = 'mubone-5.12.0-alpha';
+const CACHE_VERSION = 'mubone-5.13.0-alpha';
 
 // Extensions served network-first. Everything else (fonts, images, audio) is
 // cache-first — those are content-addressed by name and rarely change.
@@ -72,11 +72,15 @@ const APP_SHELL = [
   './js/renderer.js',
   './js/sphere.js',
   './js/events.js',
-  './js/imu-setup.js',
+  './js/ximu3.js',
+  './js/sensors.js',
   './js/latency.js',
   './js/ximu-settings.js',
-  './js/ui-imu-setup.js',
+  './js/ui-sensors.js',
   './js/sensor-registry.js',
+  './js/sensor-math.js',
+  './js/reverb.js',
+  './js/master-reverb.js',
   './js/sygaldry.js',
   './js/sygaldry-osc.js',
   './js/sygaldry-led.js',
@@ -111,6 +115,7 @@ const APP_SHELL = [
   './js/worklets/input-meter.worklet.js',
   './js/worklets/grain-engine.worklet.js',
   './js/worklets/ceiling.worklet.js',
+  './js/worklets/reverb.worklet.js',
 ];
 
 // — Install: pre-cache the entire app shell

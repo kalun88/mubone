@@ -15,9 +15,9 @@ import { setupMappingModal, initMidi } from './midi.js';
 import { initAccessory } from './accessory-registry.js';
 import { initMobileMode } from './mobile.js';
 import { initQuadBuses, initSpeakerBuses, requestMicAccess } from './audio.js';
-import { resizeCanvas, animate, applyAxisSources, cameraFromPointing } from './renderer.js';
+import { resizeCanvas, animate, applySensorPose } from './renderer.js';
 import { startMainMetering, rebuildMainOutputMeters, initScanToggle, initRadiusFade, initSeqMode, initMixdownGains, initDryMonitorGains, initAudioPanel, setScanMuted, initGateMeter } from './ui-meters.js';
-import { initSensor, getSensorCamQ, getSensorCursorQ, getFrameQ, getCameraQ, assignQuatRole, getRegistry as getSensorRegistry } from './sensor-registry.js';
+import { initSensor, getRegistry as getSensorRegistry } from './sensor-registry.js';
 import { initOSC, _bridgeReachable } from './osc.js';
 import { initStatusPublisher } from './status-publisher.js';
 import { initXimuLedFeedback } from './ximu-led-feedback.js';
@@ -35,7 +35,8 @@ import { initSourceTiles } from './ui-source.js';   // the source tiles (#247)
 import { initSettings, openSettings } from './ui-settings.js';   // the one settings door (#255)
 import { initTileLayout } from './tile-layout.js';
 import { initExportImport } from './ui-export.js';
-import { initIMUSetupUI } from './ui-imu-setup.js';
+import { initSensorsUI } from './ui-sensors.js';
+import { initMasterReverb } from './master-reverb.js';
 import { initSygaldryUI } from './ui-sygaldry.js';
 import { initDiagnostics } from './ui-diagnostics.js';
 import { initDiag } from './diag.js';
@@ -205,7 +206,7 @@ function init() {
     }
     // …and which station this window is.
     // Browser mode has no UDP listener at all — OSC arrives over the WebSocket
-    // bridge (proxy.js) on 8080, so quoting a UDP port here would send people
+    // on 8080, so quoting a UDP port here would send people
     // to a socket nothing is listening on.
     const st = document.getElementById('oscStationInline');
     if (st) {
@@ -250,48 +251,20 @@ function init() {
   if (S.isMobile) initMobileMode();
 
   // Sensor + OSC + audio settings
+  initMasterReverb();
   initSensor();
   initOSC();   // connects Electron IPC or browser WebSocket transport
   initStatusPublisher();  // publishes /status/* so joycon GUI etc. can mirror app state on LEDs/rumble
   initXimuLedFeedback();  // RGB LED engine — drives the cursor-assigned x-IMU3 from the LED mapping table
   initLedMapUI();         // the mapping table modal itself (top-bar LED button)
-  S._getSensorCamQ    = getSensorCamQ;       // hook renderer without a circular import
-  S._getSensorCursorQ = getSensorCursorQ;    // cursor quat (multi-IMU: world in camera mode, delta in frame mode)
-  S._getCameraQ       = getCameraQ;          // projector-aim: rotates the viewport (camera-role sensor)
-  S._getFrameQ        = getFrameQ;           // body-reference: attaches sphere to body (frame-role sensor) — staging + new main path
   // (Recenter — a drift-offset quaternion composed onto the sensor — was
   // deleted 2026-09-05 (#170, #76): no caller since 2026-08-01, and the drift
   // there is, in yaw, is what zero heading corrects.)
 
-  // ── IMU-driven cursor freshness ──────────────────────────────────────────
-  // On every cursor-role quaternion arrival (up to 400Hz), update S.cursorQ
-  // so the paint ticker's 200Hz poll reads a fresh position.
-  S._onCursorQuatArrival = () => {
-    if (S.cameraMode !== 'sensor') return;
-
-    // Same transforms as the render loop: drift correction + axis locks.
-    // Idempotent — the render loop will overwrite at 30fps for visuals.
-    const cq = getSensorCursorQ();   // non-null in detethered two-IMU mode
-    const sq = getSensorCamQ();      // non-null in single-IMU mode
-
-    // ONE owner of the axis-hold rule, imported from the renderer. This used to
-    // be a second copy that checked only azSource and elSource — so every
-    // sensor packet (up to 400 Hz) overwrote S.camQ with an un-gated
-    // quaternion, undoing the renderer's 30 fps result. Roll lock therefore
-    // never worked, through several rewrites of the thing it was blamed on
-    // (Ek, 2026-08-31). A rule with two implementations has one that is wrong.
-    if (cq) {
-      S.cursorQ = applyAxisSources(cq);
-    } else if (sq) {
-      const q = sq;
-      // Single-IMU: cursor gets the pointing, camera is derived — the same
-      // two writes the render loop makes, so the 400 Hz path and the 30 fps
-      // path can never disagree about either quat.
-      const pq = applyAxisSources(q);
-      S.cursorQ = pq;
-      S.camQ = cameraFromPointing(pq);
-    }
-  };
+  // Every cursor packet (up to 400 Hz) re-resolves the cursor, so the paint
+  // ticker's 200 Hz poll reads a fresh position. Same function as the render
+  // loop — renderer.js applySensorPose.
+  S._onCursorQuatArrival = () => { if (S.cameraMode === 'sensor') applySensorPose(); };
 
   // Paint ticker: single 200Hz timer polls cursor position and deposits
   // particles via adaptive angular spacing. Works identically for all modes.
@@ -316,7 +289,7 @@ function init() {
     slider.dispatchEvent(new Event('change', { bubbles: true }));
   });
 
-  initIMUSetupUI();
+  initSensorsUI();
   initSygaldryUI();
   initDiagnostics();
   // The crash log, ⇧D and the console helpers (window.dlog, window.diagReport).
@@ -554,7 +527,7 @@ function init() {
       // it back never does — data-title is the honest field.
       if (btn.dataset.mode === 'sensor') {
         const state = S.cameraMode === 'sensor'
-          ? (S._rawCursorQ ? '\ncurrently: 2 sensors — cursor free, frame holds the view'
+          ? (S.cameraSensorQ ? '\ncurrently: 2 sensors — cursor free, the camera sensor holds the view'
                            : '\ncurrently: 1 sensor — camera follows it, held level past ±70°')
           : (S._sensorLive?.() ? '' : '\nno sensor connected — the pill stays where it is until one speaks');
         btn.setAttribute('data-title', _camTips.get(btn) + state);
@@ -741,7 +714,7 @@ function init() {
   }
 
   // ── Sensor group — dim when no sensor connected ─────────────────────────
-  // Reacts to OSC bridge status AND imu-setup device status (serial, WiFi, OSC).
+  // Reacts to OSC bridge status AND sensors.js device status (serial, WiFi, OSC).
   // Any connected device = "sensor connected" in the top bar.
   const _sensorGroupEl  = document.getElementById('sensorGroup');
   const _sensorStatusEl = document.getElementById('sensorGroupStatus');
@@ -843,46 +816,9 @@ function init() {
       _sensorDetail = e.detail;
       window._sensorConnected = e.detail?.connected;
       _updateSensorGroup();
-      _rebuildSwitchBtns(e.detail);
     });
-
-    // ── Quick-switch sensor buttons ──────────────────────────────────────
-    // One button per connected+feeding sensor. Click = assign as cursor.
-    const _switchBtnsEl = document.getElementById('sensorSwitchBtns');
-    const _rebuildSwitchBtns = (detail) => {
-      if (!_switchBtnsEl) return;
-      const devices = detail?.devices;
-      if (!devices || devices.length === 0) {
-        _switchBtnsEl.innerHTML = '';
-        return;
-      }
-      // Only show buttons for feeding devices (connected to sphere)
-      const feedingDevs = devices.filter(d => d.feeding);
-      if (feedingDevs.length < 1) {
-        // No feeding sensors — nothing to show
-        _switchBtnsEl.innerHTML = '';
-        return;
-      }
-      // Build one button per feeding device
-      // Use short label: device name, or number if names are identical
-      const names = feedingDevs.map(d => d.name);
-      const allSameName = names.every(n => n === names[0]);
-      _switchBtnsEl.innerHTML = '';
-      feedingDevs.forEach((d, i) => {
-        const btn = document.createElement('button');
-        btn.className = 'sensor-switch-btn';
-        if (d.role === 'cursor') btn.classList.add('active');
-        const label = allSameName
-          ? `${i + 1}`
-          : d.name.replace(/^x-IMU3\s*/i, '').trim() || `${i + 1}`;
-        btn.textContent = label;
-        btn.title = `${d.name} (${d.sn}) — click to make cursor`;
-        btn.addEventListener('click', () => {
-          assignQuatRole(d.slotName, 'cursor');
-        });
-        _switchBtnsEl.appendChild(btn);
-      });
-    };
+    // (The cursor quick-switch that lived here moved to the Sensors page's
+    // list, 2026-09-27 — in the hidden cabinet nobody could reach it.)
   }
 
   // The first-run "get started" overlay is GONE (2026-08-30, Ek: "the get
@@ -992,7 +928,7 @@ function init() {
       // 10 ms. The main process is the browser thread, for the record.
       const holders = (list) => (list || []).map(([n, ms, c]) => `${n} ${ms} ms${c ? ` (${c}× over 10)` : ''}`).join(', ') || 'nothing over 2 ms';
       console.log(`wg: audio host — longest event-loop gap ${td.hostGapMaxMs} ms, gaps over 10 ms ${td.hostGaps10}, over 20 ms ${td.hostGaps20}, GC longest ${td.hostGcMaxMs} ms · holders — ${holders(td.hostSlow)}`);
-      console.log(`wg: audio thread — load ${wd.loadPct ?? '?'}%, longest block ${wd.procMaxMs ?? '?'} ms, live chunks allocated ${wd.chunkAllocs ?? '?'} (last second)`);
+      console.log(`wg: audio thread — load ${wd.loadPct ?? '?'}% grain engine + ${S.reverbDiag?.loadPct ?? 0}% reverb (${S.reverbDiag?.idlePct ?? 100}% of its blocks idle), longest block ${wd.procMaxMs ?? '?'} ms, live chunks allocated ${wd.chunkAllocs ?? '?'} (last second)`);
       console.log(`wg: main process (browser thread) — longest gap ${td.mainGapMaxMs} ms, over 10 ms ${td.mainGaps10}, over 20 ms ${td.mainGaps20} · holders — ${holders(td.mainSlow)}`);
     },
     diag: () => getWorkletDiag(),

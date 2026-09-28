@@ -74,7 +74,7 @@ The console object `window.wg` exposes worklet-engine control (`wg.start()`, `wg
 | **Head-locked** | Headphones, browser, demos | View-relative — panning is computed in camera space. Rotating your view rotates the sound world with you. | Stereo |
 | **World-locked** (default) | Live performance, installation | World-space — grain positions are absolute. Speakers are fixed in the room; rotating the camera does not move the audio. | 2 – N channels |
 
-Switch modes in Audio Settings. In world-locked mode the x-imu3 sensor (Electron only) drives both the visual camera and the paint cursor. With two sensors, the cursor detethers from the viewport center — the frame sensor controls the camera and the cursor sensor roams freely.
+Switch modes in Audio Settings. In world-locked mode the x-imu3 sensor (Electron only) drives both the visual camera and the paint cursor. With two sensors, the cursor detethers from the viewport center — the camera sensor pans and tilts the view and the cursor sensor roams freely, off screen included. In head-locked mode the camera sensor turns the sound field with it.
 
 ---
 
@@ -105,8 +105,9 @@ sender.
 | Electron | UDP | binary OSC to `127.0.0.1:7500`, received via `dgram`. The show path |
 | Browser | WebSocket | `{ address, values }` JSON on `ws://localhost:8080` |
 
-`proxy.js` in this repo is the WebSocket implementation mubone maintains — it bridges x-IMU3 UDP
-into browser mode (`node proxy.js`, needs `npm install ws`). The hosted demo at mubone.org/sim
+`proxy.js` in this repo gives a browser the x-IMU3's UDP (`node proxy.js`, needs `npm install ws`) —
+discovery, commands and raw data lines on `ws://localhost:8081`, parsed by the same code as in
+Electron; it sends nothing to 8080. The hosted demo at mubone.org/sim
 never opens the socket at all, so it has no OSC input by design.
 
 **Max is a prototyping tool, not part of the app.** Ek keeps a Max patch to test custom OSC mappings and to try a control on the fly; anything that sends OSC — Max, Pd, TouchOSC, a script, a MIDI→OSC bridge — drives mubone the same way, and no code assumes any of them. The old example patches and their `bridge.js` relay are git history (`docs/archive/SANDBOX.md`). `proxy.js` above is the browser-mode relay this repo maintains.
@@ -119,7 +120,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 
 | Address | Args | Description |
 |---|---|---|
-| `/sensor/{name}/quaternion` | `f f f f` | Sensor quaternion `[qx, qy, qz, qw]` — slot registers on first receipt, role (cursor / frame / gesture) assigned on the Sensors page |
+| `/sensor/{name}/quaternion` | `f f f f` | Sensor quaternion `[qx, qy, qz, qw]` — slot registers on first receipt, role (cursor / camera / gesture) assigned on the Sensors page |
 | `/sensor/{name}/inertial` | `f f f f f f` | Sensor gyro + accel `[gx, gy, gz, ax, ay, az]` |
 
 **Grain parameters** — all write to `S.grainOverrides`; scheduler picks up next tick
@@ -266,6 +267,10 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/mixdown/cursor` | `f` | Headphone mixdown cursor gain (0–1) |
 | `/mixdown/house` | `f` | Headphone mixdown house gain (0–1) |
 | `/dry/gain` | `f` | Spatialized live-input gain in the house mix, dB (-60 to +18) |
+| `/reverb` | *(bang)* / `i` | The master reverb — everything a speaker plays rings out on that speaker (bang flips, 1 on, 0 off). Off, a ringing tail finishes |
+| `/reverb/freeze` | *(bang)* / `i` | Hold every tail as it is |
+| `/reverb/amount` | `f` | 0–1: how much reverb over the dry (1 is the tail +6 dB over the dry) |
+| `/reverb/space` · `/reverb/tone` | `f` | 0–1: a small room to a 12 s cloud · dark to a clear front |
 | `/paint/gate` | `f` | Paint gate threshold, 0–1. Gates whether particles are PAINTED — it does not attenuate audio. Compared against `max(rms, 0.7·peak)`, not plain RMS |
 
 **Mapping module — external inputs**
@@ -348,6 +353,8 @@ js/
   param-registry.js     — the sparse parameter registry a session's patch applies through
   piece.js              — the document: save, save as, open; a piece is the music
   mubone-file.js        — the .mubone container: a zip of manifest + float32 audio members
+  reverb.js             — an algorithmic reverb (diffused, modulated 8-line FDN) and its two knobs, space and tone
+  master-reverb.js      — the master reverb: an insert on every output channel, before the ceiling — a sound rings out on its own speaker
   take.js               — a take: samples in ONE SharedArrayBuffer, read by both threads
   storage-registry.js   — the one authoritative map of persisted keys → category
 
@@ -360,9 +367,11 @@ js/
   tiles.js              — the palette and the toolbox; a tile is the preset
   tile-layout.js        — the one screen: chrome, sphere, rails, palette, footer
 
-  sensor-registry.js    — sensor slot registry (cursor, frame, gesture roles)
+  sensor-registry.js    — sensor slots: calibration, roles, what the cursor and camera read (the three-layer map is its header)
+  sensor-math.js        — every piece of sensor maths, pure (the audit imports it)
+  sensors.js            — every connected sensor, any kind: liveness, roles, the sensor-status event
   sensor-bindings.js    — a sensor axis bound onto a cc row of the action table, like a knob
-  imu-setup.js          — direct x-imu3 connection (WiFi/USB)
+  ximu3.js              — the x-imu3: discovery, WiFi/USB transports, protocol, settings handshake
   ximu-settings.js      — the x-imu3's own device settings
   ximu-led-feedback.js  — x-imu3 onboard LED feedback
   sygaldry.js           — talk to a first-party mubone instrument
@@ -389,7 +398,7 @@ js/
   ui-learn.js           — learning mode tooltips
   ui-export.js          — the RIG as one JSON file: setup export/import
   ui-diagnostics.js     — measurements you run, and verdicts you read
-  ui-imu-setup.js       — x-imu3 connection UI
+  ui-sensors.js         — the Sensors page
   ui-led-map.js         — the x-IMU3 LED mapping modal
   ui-sygaldry.js        — the sygaldry instrument's panel
 

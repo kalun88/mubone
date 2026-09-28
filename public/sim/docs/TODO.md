@@ -8,6 +8,19 @@
 
 ## Open — by date found
 
+### Sep 27
+
+- [ ] **Mute does not mute the headphone pair (found 2026-09-27, older than the reverb)** — `setMuted` ramps
+  `S.speakerBuses` only; the stereo mixdown's cursor and dry inputs feed `monitorSpeakerBuses` and keep sounding.
+  The reverb is held silent through mute on every channel (`{ muted }`), but the dry phones signal is not.
+- [ ] **The meters read before the reverb (2026-09-27)** — in Electron the output meters tap the speaker buses,
+  which sit before the reverb insert; at a high amount the ceiling can limit with the meters not showing why.
+  Move the tap after the insert, or add a post-reverb peak.
+- [ ] **Tune the master reverb by ear (2026-09-27)** — `js/master-reverb.js`, one insert per output channel,
+  built and measured (`rig-audit.js reverb`). The knob ranges, and freeze (holds, and rose slightly over 3 s on
+  a tone in the suite — worth a listen). Hearing only the tail of live playing, with dry off, went with the send
+  design; bring it back only if missed.
+
 ### Sep 25
 
 - [ ] **pins-audit § Z is flaky** (2026-09-25) — one run in two of the same tree failed "one that misses is not"

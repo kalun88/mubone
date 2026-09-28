@@ -571,7 +571,7 @@ S._redrawSignalPath = () => renderSignalPath();
 // Geometry. One row pitch for the channels, one baseline for the chain, and
 // two lanes under it for the branches that leave it.
 const SP = { rowH: 18, chX: 12, triX: 30, busX: 84, sumX: 112, lvlX: 148,
-             engX: 190, engW: 78, outX: 300, ceilX: 372, ceilW: 56, ifX: 468 };
+             engX: 190, engW: 78, outX: 300, verbX: 350, verbW: 60, ceilX: 424, ceilW: 56, ifX: 520 };
 
 /** An amplifier: the triangle every block diagram uses for a gain stage —
  *  a trim, a fader, a level. Points the way the signal goes. */
@@ -587,9 +587,9 @@ function spSum(x, y, n) {
        + `<title>${n} channel${n === 1 ? '' : 's'} summed to mono</title>`;
 }
 /** A processing block. `strong` is the instrument itself. */
-function spBox(x, y, w, label, strong) {
-  return `<rect class="sp-box${strong ? ' sp-box--strong' : ''}" x="${x}" y="${y - 11}" width="${w}" height="22" rx="2"/>`
-       + `<text class="sp-txt${strong ? ' sp-txt--strong' : ''}" x="${x + w / 2}" y="${y + 4}">${label}</text>`;
+function spBox(x, y, w, label, strong, dim) {
+  return `<rect class="sp-box${strong ? ' sp-box--strong' : ''}${dim ? ' sp-off' : ''}" x="${x}" y="${y - 11}" width="${w}" height="22" rx="2"/>`
+       + `<text class="sp-txt${strong ? ' sp-txt--strong' : ''}${dim ? ' sp-off' : ''}" x="${x + w / 2}" y="${y + 4}">${label}</text>`;
 }
 /** A bus of N channels: the slash and the count, which is how a multi-channel
  *  run is written on a block diagram rather than drawing N lines. */
@@ -709,7 +709,19 @@ function renderSignalPath() {
   g += spWire(SP.outX, midY, SP.outX + 26, midY);
   g += spBus(SP.outX + 14, midY, nHouse);
   g += spAmp(SP.outX + 26, midY, 'master');
-  g += spWire(SP.outX + 39, midY, SP.ceilX, midY);
+  // THE MASTER REVERB (js/master-reverb.js): an insert, one reverb per output
+  // channel (the ×n) before the ceiling — whatever a speaker plays rings out
+  // there. Off, it passes the signal straight through, so the wire is whole
+  // and the box is drawn off.
+  const R = S.reverb;
+  // ×n is what RUNS: one reverb per interface channel, the headphone pair
+  // and unrouted outputs included (an idle one costs nothing).
+  const nRev = S.speakerBuses?.numChannels ?? nHouse;
+  const verbLbl = n2 => (n2 ? `reverb ×${n2}` : 'reverb');
+  g += spWire(SP.outX + 39, midY, SP.verbX, midY);
+  g += spBox(SP.verbX, midY, SP.verbW, verbLbl(nRev), false, !R.on);
+  g += `<text class="sp-cap${R.on ? '' : ' sp-off'}" x="${SP.verbX + SP.verbW / 2}" y="${midY + 23}" text-anchor="middle">${R.on ? `space ${Math.round(R.space * 100)} · tone ${Math.round(R.tone * 100)}${R.freeze ? ' · ❄' : ''}` : 'off'}</text>`;
+  g += spWire(SP.verbX + SP.verbW, midY, SP.ceilX, midY);
   g += spBox(SP.ceilX, midY, SP.ceilW, 'ceiling');
   g += spWire(SP.ceilX + SP.ceilW, midY, SP.ifX - 8, midY);
   g += spBus(SP.ceilX + SP.ceilW + 14, midY, nHouse);
@@ -721,16 +733,18 @@ function renderSignalPath() {
   // drawn as the separate run it is.
   if (nMon) {
     const hy = midY - 26;
-    g += `<path class="sp-wire" d="M${SP.outX} ${midY} V${hy} H${SP.ceilX}"/>`;
+    g += `<path class="sp-wire" d="M${SP.outX} ${midY} V${hy} H${SP.verbX}"/>`;
     g += spBus(SP.outX + 14, hy, nMon);
+    g += spBox(SP.verbX, hy, SP.verbW, verbLbl(0), false, !R.on);
+    g += spWire(SP.verbX + SP.verbW, hy, SP.ceilX, hy);
     g += spBox(SP.ceilX, hy, SP.ceilW, 'ceiling');
     g += spWire(SP.ceilX + SP.ceilW, hy, SP.ifX - 8, hy);
     g += spArrow(SP.ifX - 8, hy);
     g += `<text class="sp-cap" x="${SP.ifX + 4}" y="${hy + 4}">phones</text>`;
   }
 
-  el.innerHTML = `<svg viewBox="0 0 560 ${H}" width="100%" height="${H}" preserveAspectRatio="xMidYMid meet" role="img"
-    aria-label="signal path: ${sends.length} of ${n} hardware channels summed to mono, into the instrument; dry monitor ${dry}; ${nHouse} channels out through master and the ceiling${nMon ? `, plus a ${nMon}-channel headphone run` : ''}">${g}</svg>`;
+  el.innerHTML = `<svg viewBox="0 0 612 ${H}" width="100%" height="${H}" preserveAspectRatio="xMidYMid meet" role="img"
+    aria-label="signal path: ${sends.length} of ${n} hardware channels summed to mono, into the instrument; dry monitor ${dry}; ${nHouse} channels out through master, the reverb (${R.on ? 'on' : 'off'}${R.freeze ? ', frozen' : ''}) and the ceiling${nMon ? `, plus a ${nMon}-channel headphone run` : ''}">${g}</svg>`;
 
   // …then centre what was actually DRAWN. Centring the viewBox is not the
   // same thing: the ink ran x≈12 to x≈512 inside a 560-wide box, so the
@@ -992,7 +1006,8 @@ function updateMaxGrainsLive() {
   // The worklet's own feedback, already arriving 30×/s — no new gauge.
   const d = S._lastWorkletDiag || {};
   const alive = S._grainSourceCount | 0;
-  const load = d.loadPct != null ? `${d.loadPct}% load` : '';
+  const rv = S.reverbDiag?.loadPct || 0;   // the reverb's worklet shares the thread
+  const load = d.loadPct != null ? `${Math.round((d.loadPct + rv) * 10) / 10}% load` : '';
   const thin = d.throttled ? ' · thinning' : '';
   el.textContent = (alive || load) ? `${alive} alive${load ? ' · ' + load : ''}${thin}` : '';
 }

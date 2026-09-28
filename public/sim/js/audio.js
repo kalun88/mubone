@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { S, DEBUG, SPHERE_RADIUS, perf, LIVE_REBUILD_INTERVAL_MS, MASTER_DEFAULT_GAIN, MAX_SAMPLES } from './state.js';
+import { makeReverbInsert, bypassReverb } from './master-reverb.js';
 import { dlog } from './diag.js';
 import { makeTake } from './take.js';
 import { settleTakeTimbre, resetTimbreHold } from './audio-features.js';
@@ -133,19 +134,25 @@ export function ensureAudioContext() {
     // The node may be null until its module has loaded (see makeCeilingNode);
     // the chain is then master → analyser, which is what it was before the
     // ceiling existed, and it is rebuilt on the next context.
-    if (ceilingNode) { masterGain.connect(ceilingNode); ceilingNode.connect(S.masterAnalyser); S._masterCeiling = ceilingNode; }
+    // THE MASTER REVERB (js/master-reverb.js) is an insert just before the
+    // ceiling. In the browser that is here, on the stereo master; in Electron
+    // this chain reaches no speaker (RtAudio plays the merged speaker buses,
+    // initSpeakerBuses), so the insert goes there instead and none is made here.
+    const preCeil = window.electronBridge ? masterGain
+      : (() => { const ins = makeReverbInsert(S.audioCtx, 2, 'master'); masterGain.connect(ins.input); return ins.output; })();
+    if (ceilingNode) { preCeil.connect(ceilingNode); ceilingNode.connect(S.masterAnalyser); S._masterCeiling = ceilingNode; }
     else {
       // First context of the session: the module has not registered yet, so
       // run master → analyser and splice the ceiling in when it lands. A
       // context replaced meanwhile drops the result on the floor.
-      masterGain.connect(S.masterAnalyser);
+      preCeil.connect(S.masterAnalyser);
       const ctx = S.audioCtx;
       ceilingReady(ctx).then(() => {
         if (S.audioCtx !== ctx) return;
         const node = makeCeilingNode(ctx, 2);
         if (!node) return;
-        try { masterGain.disconnect(S.masterAnalyser); } catch (_) {}
-        masterGain.connect(node); node.connect(S.masterAnalyser);
+        try { preCeil.disconnect(S.masterAnalyser); } catch (_) {}
+        preCeil.connect(node); node.connect(S.masterAnalyser);
         S._masterCeiling = node;
       }).catch(e => console.warn('[audio] ceiling:', e.message));
     }
@@ -1395,9 +1402,16 @@ export async function initSpeakerBuses(numChannels = 2) {
     if (hpPhysL >= 0 && hpPhysL < n) ceilGroups[hpPhysL] = 1;
     if (hpPhysR >= 0 && hpPhysR < n) ceilGroups[hpPhysR] = 1;
   }
+  // THE MASTER REVERB (js/master-reverb.js): an insert on every output
+  // channel, between the merger and the ceiling — whatever a speaker is about
+  // to play rings out on that speaker. The headphone pair is two of the N, so
+  // the phones hear what the room hears. A straight wire until its worklet
+  // has loaded, and a straight wire (plus any tail finishing) while it is off.
+  const verb = makeReverbInsert(actx, n, 'speakers');
+  _merger.connect(verb.input);
   const ceil = makeCeilingNode(actx, n, ceilGroups);
-  if (ceil) { _merger.connect(ceil); ceil.connect(_captureNode); S._outputCeiling = ceil; }
-  else { _merger.connect(_captureNode); console.warn('[audio] ceiling node unavailable — output runs unprotected'); }
+  if (ceil) { verb.output.connect(ceil); ceil.connect(_captureNode); S._outputCeiling = ceil; }
+  else { verb.output.connect(_captureNode); console.warn('[audio] ceiling node unavailable — output runs unprotected'); }
 
   // Main regulates the queue to the cushion (electron-main.js); this side
   // tells it the cushion, and polls the depth and the faults once a second.
@@ -1516,13 +1530,45 @@ function _wireDryVBAPInput() {
 // allocations, no scheduler interaction.  Uses cursor position → spatial mapping.
 const _dryW = new Float32Array(3);  // scratch: world coords
 const _dryC = new Float32Array(3);  // scratch: camera coords
-// Cache last-written VBAP targets so we skip redundant setTargetAtTime calls.
-// Without this, 30 ramps/sec with 30ms time constant stack up under frame
-// jitter, causing zipper/granulation noise on the dry monitor signal.
-let _dryLastTargets = null;  // Float32Array(n) for VBAP, or null
-let _dryLastPanL = -999, _dryLastPanR = -999;  // for mixdown
-let _dryLastStereoPan = -999;  // for browser stereo path
+// A layer placed at the cursor — today the dry monitor — gets its placement
+// computed once a frame here and applied to its own nodes: per-speaker gains
+// (`vbap`) and a headphone pair (`mix`) on the multichannel path, a stereo
+// panner (`panner`) in the browser. Each layer caches what it last wrote, so a
+// target that has not moved schedules nothing — 30 ramps a second stacking
+// under frame jitter was audible zipper noise on the dry signal.
 const _DRY_EPSILON = 0.005;  // threshold below which we skip updates
+const _dryLayer = { vbap: null, mix: null, panner: null, last: null, lastL: -999, lastR: -999, lastPan: -999 };
+const _place = { n: 0, idxA: 0, idxB: 0, wA: 0, wB: 0, elevBias: 0, eqGain: 0, mixL: 0, mixR: 0, stereoPan: 0 };
+
+function _applyPlacement(L, t, RAMP) {
+  const P = _place;
+  if (L.vbap?.length) {
+    const n = L.vbap.length;
+    if (!L.last || L.last.length !== n) { L.last = new Float32Array(n); L.last.fill(-1); }  // force first update
+    for (let i = 0; i < n; i++) {
+      let target;
+      if (i === P.idxA)       target = P.wA;
+      else if (i === P.idxB)  target = P.wB;
+      else                    target = P.elevBias > 0.01 ? P.eqGain * P.elevBias : 0;
+      if (Math.abs(target - L.last[i]) > _DRY_EPSILON) {
+        L.vbap[i].gain.setTargetAtTime(target, t, RAMP);
+        L.last[i] = target;
+      }
+    }
+    if (L.mix) {
+      if (Math.abs(P.mixL - L.lastL) > _DRY_EPSILON || Math.abs(P.mixR - L.lastR) > _DRY_EPSILON) {
+        L.mix[0].gain.setTargetAtTime(P.mixL, t, RAMP);
+        L.mix[1].gain.setTargetAtTime(P.mixR, t, RAMP);
+        L.lastL = P.mixL; L.lastR = P.mixR;
+      }
+    }
+  } else if (L.panner) {
+    if (Math.abs(P.stereoPan - L.lastPan) > _DRY_EPSILON) {
+      L.panner.pan.setTargetAtTime(P.stereoPan, t, RAMP);
+      L.lastPan = P.stereoPan;
+    }
+  }
+}
 
 export function updateDryMonitorPanning() {
   if (!S.dryMonitorEnabled) return;
@@ -1543,10 +1589,12 @@ export function updateDryMonitorPanning() {
 
   const t = S.audioCtx.currentTime;
   const RAMP = 0.03; // 30ms smooth transition to avoid zippering
+  const P = _place;
+  const rawPan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
 
-  // ── Multi-channel VBAP path ──────────────────────────────────────────────
-  if (S.dryVBAPGains?.length) {
-    const n = S.dryVBAPGains.length;
+  // ── Multi-channel VBAP placement ─────────────────────────────────────────
+  const n = S.speakerBuses?.length || 0;
+  if (n) {
     const rawAz  = Math.atan2(cx, cz);
     const TWO_PI = 2 * Math.PI;
     const az     = ((rawAz % TWO_PI) + TWO_PI) % TWO_PI;
@@ -1555,8 +1603,8 @@ export function updateDryMonitorPanning() {
     const lut = queryVBAPLookup(azDeg);
     let wA = lut ? lut.wA : 0.707;
     let wB = lut ? lut.wB : 0.707;
-    const idxA = lut ? lut.idxA : 0;
-    const idxB = lut ? lut.idxB : Math.min(1, n - 1);
+    P.idxA = lut ? lut.idxA : 0;
+    P.idxB = lut ? lut.idxB : Math.min(1, n - 1);
 
     // Elevation-dependent center bias: with a horizontal speaker ring,
     // sources near the poles have ambiguous azimuth.  Blend ALL speakers
@@ -1569,52 +1617,25 @@ export function updateDryMonitorPanning() {
       wA = wA + (eqGain - wA) * elevBias;
       wB = wB + (eqGain - wB) * elevBias;
     }
-
-    // Set per-speaker gains: bracketing pair gets blended VBAP weights,
-    // all other speakers fade in toward eqGain as elevation increases.
-    // Skip speakers whose target hasn't changed meaningfully — prevents
-    // stacking 30 overlapping ramps/sec that cause zipper noise.
-    if (!_dryLastTargets || _dryLastTargets.length !== n) {
-      _dryLastTargets = new Float32Array(n);
-      _dryLastTargets.fill(-1); // force first update
-    }
-    for (let i = 0; i < n; i++) {
-      let target;
-      if (i === idxA)       target = wA;
-      else if (i === idxB)  target = wB;
-      else                  target = elevBias > 0.01 ? eqGain * elevBias : 0;
-      if (Math.abs(target - _dryLastTargets[i]) > _DRY_EPSILON) {
-        S.dryVBAPGains[i].gain.setTargetAtTime(target, t, RAMP);
-        _dryLastTargets[i] = target;
-      }
-    }
-
-    // Update headphone mixdown L/R panning for dry signal
-    // Apply elevation center-bias to the stereo image too
-    if (S.dryMixdownInputs) {
-      const rawPan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
-      const pan = rawPan * (1 - elevBias);  // collapse toward center at poles
-      const lW  = Math.cos((pan + 1) * Math.PI / 4);
-      const rW  = Math.sin((pan + 1) * Math.PI / 4);
-      if (Math.abs(lW - _dryLastPanL) > _DRY_EPSILON || Math.abs(rW - _dryLastPanR) > _DRY_EPSILON) {
-        S.dryMixdownInputs[0].gain.setTargetAtTime(lW, t, RAMP);
-        S.dryMixdownInputs[1].gain.setTargetAtTime(rW, t, RAMP);
-        _dryLastPanL = lW;
-        _dryLastPanR = rW;
-      }
-    }
-
-  // ── Stereo path (browser) ───────────────────────────────────────────────
-  } else if (S.dryPanner) {
-    const rawPan = cz !== 0 ? Math.max(-1, Math.min(1, cx / Math.abs(cz))) : 0;
-    // Elevation center-bias: collapse toward center at poles (worldlocked only)
-    const dryElF = S.spatialPanning === 'worldlocked' ? Math.abs(cy) * (1 / SPHERE_RADIUS) : 0;
-    const dryPan = rawPan * (1 - dryElF * dryElF);
-    if (Math.abs(dryPan - _dryLastStereoPan) > _DRY_EPSILON) {
-      S.dryPanner.pan.setTargetAtTime(dryPan, t, RAMP);
-      _dryLastStereoPan = dryPan;
-    }
+    P.n = n; P.wA = wA; P.wB = wB; P.elevBias = elevBias; P.eqGain = eqGain;
+    // Headphone mixdown L/R, with the same elevation center-bias
+    const pan = rawPan * (1 - elevBias);  // collapse toward center at poles
+    P.mixL = Math.cos((pan + 1) * Math.PI / 4);
+    P.mixR = Math.sin((pan + 1) * Math.PI / 4);
   }
+  // ── Stereo placement (browser) ────────────────────────────────────────────
+  // Elevation center-bias: collapse toward center at poles (worldlocked only)
+  const dryElF = S.spatialPanning === 'worldlocked' ? Math.abs(cy) * (1 / SPHERE_RADIUS) : 0;
+  P.stereoPan = rawPan * (1 - dryElF * dryElF);
+
+  // New nodes (a rebuilt speaker layout) start at gain 0 whatever the cache
+  // remembers writing to the old ones — forget it, or a still cursor leaves
+  // the dry layer unpanned after a device change.
+  if (_dryLayer.vbap !== S.dryVBAPGains) _dryLayer.last = null;
+  if (_dryLayer.mix !== S.dryMixdownInputs) { _dryLayer.lastL = -999; _dryLayer.lastR = -999; }
+  if (_dryLayer.panner !== S.dryPanner) _dryLayer.lastPan = -999;
+  _dryLayer.vbap = S.dryVBAPGains; _dryLayer.mix = S.dryMixdownInputs; _dryLayer.panner = S.dryPanner;
+  _applyPlacement(_dryLayer, t, RAMP);
 }
 
 // ── Dry monitor gain control ─────────────────────────────────────────────────
@@ -1752,6 +1773,7 @@ export function playSweepChannel(chIndex, durationMs = 600, fadeMs = 40, vol = 0
 
   src.connect(gain);
   gain.connect(_merger, 0, chIndex);
+  bypassReverb(true);   // the sweep is heard dry — a tail would blur which speaker it is
 
   // Also connect into the matching speakerAnalyser so meters show the sweep.
   // Reverse-lookup: find which bus (or mixdown pair) maps to this physical channel.
@@ -1776,6 +1798,7 @@ export function playSweepChannel(chIndex, durationMs = 600, fadeMs = 40, vol = 0
   return new Promise(resolve => setTimeout(() => {
     try { src.stop(); src.disconnect(); gain.disconnect(_merger, 0, chIndex); } catch(_) {}
     try { if (analyserConn) gain.disconnect(analyserConn); } catch(_) {}
+    bypassReverb(false);
     resolve();
   }, durationMs));
 }

@@ -29,7 +29,7 @@
 |---|---|---|---|
 | UDP 7500 (`OSC_PORT`) | in | electron-main.js:35, bound 127.0.0.1, **no reuseAddr** | First instance wins; others log EADDRINUSE warning and receive no OSC. |
 | UDP 7501 (`OSC_OUT_PORT`) | out | electron-main.js:43 | Fine — client-side sockets, no bind. All instances send to the same relay, unlabelled (see 1.7). |
-| UDP 10000 (x-imu3 discovery) | in | electron-main.js:192, `reuseAddr: true` | Broadcasts reach **all** instances — every instance sees all 3 device cards. OK because connect is manual (ui-imu-setup.js → `connectDevice`). |
+| UDP 10000 (x-imu3 discovery) | in | electron-main.js:192, `reuseAddr: true` | Broadcasts reach **all** instances — every instance sees all 3 device cards. OK because connect is manual (ui-sensors.js → `connectDevice`). |
 | UDP 8000+ (x-imu3 data) | in | electron-main.js:227, per-port, `reuseAddr: true` | **Danger zone** — see 1.2. |
 | UDP 9000+ (x-imu3 commands) | out | electron-main.js:298 | Fine — ephemeral client socket. |
 | WS 8080 (browser relay, `proxy.js`) | out-connect | osc.js:32 | Browser mode only; not in the Electron show path. |
@@ -43,7 +43,7 @@ three IMUs keep the factory send port (8000):
 
 - All three instances bind 8000; each packet reaches only one process.
 - Two instances see frozen cursors, or worse, intermittent theft.
-- Compounding it: imu-setup.js:586–598 routes inbound lines by source IP, but
+- Compounding it: ximu3.js `onXIMU3Data` routes inbound lines by source IP, but
   has a fallback — *"if no IP match, use first UDP device"*. A packet from a
   foreign IMU arriving on a listening instance gets attributed to that
   instance's own device → two quaternion streams fighting over one cursor.
@@ -98,7 +98,7 @@ profile → one localStorage. Full key inventory:
 |---|---|---|
 | `mubone_audio_defaults` | ui-audio-settings.js:1370 | **Worst one.** Stores `inputDeviceId`, `mainInputChannel`, `outputDeviceId`, gains, buffer size. Station B saving defaults overwrites Station A's input channel → wrong mic on next launch. |
 | `mubone_sensor_cal` (+ `_version`) | sensor-registry.js:1011 | Per-slot tare/axis-map shared across stations. |
-| `mubone-sensor-prefs` | imu-setup.js:206 | Per-device prefs (by serial) — mostly OK since serials differ, but writes race. |
+| ~~`mubone-sensor-prefs`~~ | — | Retired 2026-09-27: the role lives only in `mubone_sensor_cal`. |
 | `mubone_custom_speaker_angles` | ui-audio-settings.js:469 | Shared speaker layout — fine if identical, racing writes if not. |
 | `mubone_key_map`, `mubone_midi_map` | midi.js | Shared bindings. |
 | `mubone_param_locks`, `mubone_staging`, `mubone_gesture_panel`, `mubone_osc_stream`, `mubone_radial_anchors`, `mubone_projector_layout_v2`, `mubone_panel_*`, `mubone_sec_*`, `mubone_panel_order`, `mubone_bufferSize`, `mubone_learn` | various | All shared; racy but low-stakes. |
@@ -219,7 +219,7 @@ result:
 
 ### Phase 2 — hardening
 
-5. **Data-routing guard** (imu-setup.js) — **implemented.** Fallback to
+5. **Data-routing guard** (ximu3.js) — **implemented.** Fallback to
    first-UDP-device only when exactly one device is connected; otherwise
    unknown-IP lines are dropped and counted (`?debug` warns every 400).
 6. **Instance badge in-app** — **implemented.** Instance name rides

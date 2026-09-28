@@ -55,6 +55,9 @@ The AHRS message rate is configurable via `ahrs_message_rate_divisor` (400 Hz ÷
 > left gravity-referenced. So the "with Euler input" column below describes
 > current behaviour for tare, not a proposal — the remaining open items are the
 > `/euler` OSC input path and wrapping (#83–#87).
+>
+> **⚠ Superseded again (Aug 31):** the Euler tare is gone too. Calibration is a
+> quaternion mount (two poses) and heading, `conj(H) · q · conj(B)` — `js/sensor-math.js`.
 
 **With Euler input:** Tare becomes simpler — capture `(tareRoll, tarePitch, tareYaw)` and subtract. No conjugate multiplication, no decomposition order dependency, no roll-offset special case. Gravity alignment is already baked in by the AHRS.
 
@@ -104,7 +107,7 @@ The current Euler path (path 2, all three axes active) already handles poles wel
   → apply tare (subtract + angle-wrap)
   → axis remap (simple viz assignment, sign flip)
   → convert tared/remapped euler to quaternion
-  → feed into existing S.camQ / S.frameQ pipeline
+  → feed into existing S.camQ / S.cameraSensorQ pipeline
 ```
 
 Everything downstream of the euler→quat conversion stays exactly the same. The renderer, sphere, grain scheduler, frame cancellation — all unchanged.
@@ -119,7 +122,7 @@ Everything downstream of the euler→quat conversion stays exactly the same. The
 
 ### What stays the same
 
-- `getSensorCamQ()`, `getSensorRawCursorQ()`, `getFrameQ()` — all still return quaternions.
+- `getSensorCamQ()`, `getSensorRawCursorQ()`, `getCameraQ()` — all still return quaternions.
 - Renderer, sphere.js, grain.js — no changes.
 - Frame/cursor cancellation — still quaternion multiply.
 - Delta rotation path — still uses raw quaternion (for sensors that send quat).

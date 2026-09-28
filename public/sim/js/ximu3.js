@@ -1,29 +1,60 @@
 // ============================================================================
-// imu-setup.js — x-IMU3 direct connection & full sensor calibration
+// ximu3.js — the x-imu3 LINK: finding one, connecting, talking to it
 //
-// This module replaces the sensor panel's calibration role for x-IMU3 devices.
-// It owns: device discovery, connection (WiFi UDP or serial), hardware config
-// (axes alignment).  Software calibration lives in sensor-registry.js.
-//
-// Output: the sensor's raw quaternion → sensor-registry, which owns the
-// calibration (mount, heading, axis signs) and applies it in one place.
+// A LINK in the three layers (sensor-registry.js's header has the map). Owns
+// everything that is true of the x-imu3 and nothing else: wifi discovery, the
+// UDP and serial transports (Electron IPC, or WebSerial + proxy.js in a
+// browser), the ASCII protocol, the settings handshake (ximu-settings.js),
+// the LED blink, the hardware axes alignment. A connected unit becomes a
+// Sensor (sensors.js) keyed by its serial number, slot `ximu3-<sn>`; its
+// quaternions go to sensors.feed(). Calibration and role are not here.
 //
 // Protocol reference: x-IMU3 User Manual v1.11, sections 8–11.
 // ============================================================================
 
 import { S, DEBUG } from './state.js';
 import {
-  getOrCreateSlot, handleSlotQuaternion, handleSlotInertial, assignQuatRole, forgetSlot,
-  saveCalibration, quatToEulerDeg,
-  captureMountPose1 as regMountPose1,
-  captureMountPose2 as regMountPose2,
-  cancelMountCapture as regCancelMount,
-  captureHeading as regCaptureHeading,
-  clearMount as regClearMount,
-} from './sensor-registry.js';
+  Sensor, getSensors, getSensor, addSensor, removeSensor, rekeySensor, startFeeding,
+  feed, stampSeen, notifyData, notifyUpdated, syncSensorStatus, initSensors,
+  onRoleChanged, setFoundCounter, clearMountCal,
+} from './sensors.js';
 import {
   settingsFor, EXPECTED_MESSAGE_TYPES, VERIFY_TIMEOUT_MS, VERIFY_DELAY_MS,
 } from './ximu-settings.js';
+
+// A Sensor plus what only an x-imu3 has. Transport 'udp' carries ip / send
+// (the port it sends data TO — we listen there) / receive (the port it
+// listens on); 'serial' carries serialPath.
+function _newXimu3(sn, name, transport, conn) {
+  const dev = new Sensor(sn, name, { transport, kind: 'x-imu3' });
+  Object.assign(dev, {
+    ip: null, send: 0, receive: 0, serialPath: null, ...conn,
+    axesAlignment: 0,             // hardware, stored on the device
+    // Wifi, queried on connect. AP vs client is a boot state, not a setting;
+    // RSSI is -1 in AP mode, so the mode is inferred from it.
+    wifiApChannel: null, wifiApSsid: null, wifiClientChannel: null, wifiClientSsid: null,
+    wifiRegion: null,             // 1=US, 2=EU, 3=JP
+    // Serial accessory (x-IMU3-SA-A8): serialMode is read on connect, never
+    // written. An accessory is observed from data, not configuration — the
+    // adapter hot-plugs, so lastAccessoryAt going stale IS the unplug.
+    serialMode: null, lastAccessoryAt: 0,
+    settingsVerify: null,         // { ok, mismatched, unanswered, at } — verifySettings
+    unexpectedTypes: new Map(),   // message letters seen that mubone does not consume
+  });
+  return dev;
+}
+
+// Discovery forgets: a unit not heard from in DISCOVERY_STALE_MS leaves the
+// list (proxy.js prunes the same way; Electron never did, so "N more found"
+// counted a powered-off sensor for the whole set — 2026-09-16).
+function _forgetStaleDiscoveries() {
+  const cutoff = Date.now() - DISCOVERY_STALE_MS;
+  let forgot = false;
+  for (const [sn, e] of _discovered) {
+    if (!getSensor(sn) && e.lastSeen < cutoff) { _discovered.delete(sn); forgot = true; }
+  }
+  if (forgot) { _onDeviceDiscovered?.(null); syncSensorStatus(); }
+}
 
 // ── Axes alignment table ────────────────────────────────────────────────────
 // From x-IMU3 User Manual Table 42.  Each entry: [value, label, description].
@@ -79,165 +110,9 @@ function eulerDegToQuat(rollDeg, pitchDeg, yawDeg) {
 }
 
 
-// ── Per-device state ────────────────────────────────────────────────────────
-// Each connected device has its own calibration.  Keyed by serial number.
-
-class DeviceState {
-  constructor(sn, name, { transport, ip, send, receive, serialPath, kind }) {
-    this.sn      = sn;
-    this.name    = name;
-
-    // Transport: 'udp', 'serial', or 'osc'
-    this.transport  = transport || 'udp';
-
-    // KIND is what the thing IS; transport is how the app reaches it. They are
-    // not the same question and nothing on the wire answers the first one: an
-    // 'osc' transport is any peer sending /sensor/{name}/… — a proxy, an OSC
-    // sender of any kind, or a first-party mubone instrument on its own cable.
-    // Whoever owns the connection declares it — see declareSensorKind().
-    //   'x-imu3' — the third-party unit; settings enforcement, LED, accessory
-    //   'mubone'  — first-party instrument (js/sygaldry.js)
-    //   'osc'     — anything else on the wire; we know nothing about it
-    this.kind = kind || (this.transport === 'osc' ? 'osc' : 'x-imu3');
-
-    // How it is reached, in a word, when 'osc' would be a lie — a cabled
-    // instrument arrives as OSC but is not an OSC peer. Null falls back to the
-    // transport's own word.
-    this.via = null;
-
-    // UDP-specific
-    this.ip      = ip || null;
-    this.send    = send || 0;     // port device sends data TO (we listen here)
-    this.receive = receive || 0;  // port device listens ON (we send commands here)
-
-    // Serial-specific
-    this.serialPath = serialPath || null;
-
-    // Hardware config (stored on the device)
-    this.axesAlignment = 0;
-
-    // WiFi info (queried on connect for UDP devices)
-    // AP = device's own hotspot config; client = router the device joined.
-    // The x-IMU3 has no wi_fi_mode setting — AP vs client is a boot state (LED colour,
-    // cyan=client, magenta=AP). But we can infer mode reliably from RSSI: the manual
-    // states RSSI is -1 in AP mode and a valid percentage in client mode.
-    this.wifiApChannel     = null;
-    this.wifiApSsid        = null;
-    this.wifiClientChannel = null;
-    this.wifiClientSsid    = null;
-    this.wifiRegion        = null;   // 1=US, 2=EU, 3=JP
-
-    // Software calibration lives in the REGISTRY, not here (2026-08-31).
-    // `tareEuler`, `polarity` and `rollMute` were removed: all three were
-    // applied in getCalibratedQuat(), i.e. UPSTREAM of the registry's own
-    // calibration, so setting any of them changed the very quaternion the
-    // registry's mount rotation had been captured against — the two composed
-    // instead of one replacing the other. Signs and mute now live in
-    // `slot.quatCal.axisMap`, which is applied downstream of the mount and
-    // heading rotations and cannot disturb them.
-    // Convention note: x-IMU3 outputs NWU (X=West, Y=North, Z=Up).
-    // The sphere expects right-handed graphics coords (X=right, Y=up, Z=forward),
-    // which the axis map's signs express.
-
-    // Latest raw data from this device
-    this.rawQuat  = { w: 1, x: 0, y: 0, z: 0 };
-    this.rawEuler = { roll: 0, pitch: 0, yaw: 0 };
-    this.rawInertial = { gx: 0, gy: 0, gz: 0, ax: 0, ay: 0, az: 0 };
-    this.lastMsgType = null;
-    this.lastTimestamp = 0;      // the DEVICE's clock — an x-imu3 stamps µs since boot
-    this.lastSeenAt = 0;         // OUR clock — Date.now() of the last packet, any stream
-    this.live = false;           // packets within LIVE_MS; the connection state (Ek, 2026-09-09)
-
-    // Serial accessory (x-IMU3-SA-A8 etc).  serialMode is read back from the
-    // device on connect — never written automatically.  2 = Accessory.
-    // Presence of an accessory is observed from data flow, not configuration:
-    // the adapter hot-plugs, so lastAccessoryAt going stale IS the unplug event.
-    this.serialMode      = null;
-    this.lastAccessoryAt = 0;
-
-    // Settings enforcement result, filled in by verifySettings() after connect.
-    // null = never verified (OSC devices, or a connect still in flight).
-    // { ok, mismatched: [{ key, want, got }], unanswered: [key], at }
-    this.settingsVerify = null;
-
-    // Data message types seen that mubone does not consume.  A non-empty map
-    // after connect means enforcement did not take — the device is still
-    // streaming something the app throws away.  Keyed by type letter.
-    this.unexpectedTypes = new Map();
-
-    // Registry integration
-    // OSC devices keep their original slot name (e.g. 'cursor')
-    // so the sender's slot name flows through unchanged.
-    this.slotName   = transport === 'osc' ? sn : `ximu3-${sn}`;
-    this.role       = 'cursor';     // default role — user can change
-    this.feeding    = false;        // whether data is being pushed to registry
-  }
-
-  // Raw Euler, straight from the quaternion. The device layer no longer
-  // calibrates: the registry owns tare, signs and mute, and applies them in
-  // one place where they cannot fight each other.
-  getRawEuler() {
-    return quatToEulerDeg(this.rawQuat.x, this.rawQuat.y, this.rawQuat.z, this.rawQuat.w);
-  }
-
-  // What gets fed to the registry: the sensor's own quaternion, untouched.
-  getFeedQuat() {
-    return [this.rawQuat.x, this.rawQuat.y, this.rawQuat.z, this.rawQuat.w];
-  }
-}
-
-
-// ── Per-device preferences (persisted in localStorage) ─────────────────────
-// Keyed by serial number.  Stores the ROLE only — signs, mute and tare moved
-// to the registry's per-slot calibration (`mubone_sensor_cal`), which is the
-// one place quaternion calibration lives now.
-const _LS_DEVICE_PREFS_KEY = 'mubone-sensor-prefs';
-
 // Data lines dropped because their source IP matched no connected device
 // while >1 UDP device was connected (misrouted / foreign-instance traffic).
 let _unknownSourceDrops = 0;
-
-function _loadDevicePrefs() {
-  try {
-    const raw = localStorage.getItem(_LS_DEVICE_PREFS_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch (_) { return {}; }
-}
-
-// A serial device is keyed `serial-<path>` until it answers with its real
-// serial number. An x-imu3 answers within a second; anything else never does,
-// so the temp key becomes permanent — keyed on a tty path that is not even
-// stable across reboots. This function has always CLAIMED to skip those and
-// never did, which is how a BNO connected once through the wrong door left a
-// phantom x-imu3 in the prefs forever. `osc-<name>` is NOT a temp key: that
-// name is the sensor's own and is what it will be called next time.
-function _isTempKey(sn) { return sn.startsWith('serial-'); }
-
-function _saveDevicePrefs() {
-  const prefs = {};
-  for (const [sn, dev] of _devices) {
-    if (_isTempKey(sn)) continue;
-    prefs[sn] = {
-
-      role:     dev.role,
-    };
-  }
-  // Merge with existing prefs so disconnected devices keep their settings
-  const existing = _loadDevicePrefs();
-  Object.assign(existing, prefs);
-  // One-shot prune of what the missing filter already wrote.
-  for (const sn of Object.keys(existing)) if (_isTempKey(sn)) delete existing[sn];
-  try {
-    localStorage.setItem(_LS_DEVICE_PREFS_KEY, JSON.stringify(existing));
-  } catch (_) {}
-}
-
-function _applyDevicePrefs(dev) {
-  const all = _loadDevicePrefs();
-  const p = all[dev.sn];
-  if (!p) return;
-  if (p.role) dev.role = p.role;
-}
 
 // ── Global state ────────────────────────────────────────────────────────────
 
@@ -249,17 +124,12 @@ const _discovered = new Map();
 // Each entry: { path, manufacturer, serialNumber, vendorId, productId }
 let _serialPortList = [];
 
-// Connected devices, keyed by serial number (both UDP and serial).
-const _devices = new Map();
-
-// Reverse lookup: serial port path → DeviceState  (for routing serial data)
+// Reverse lookup: serial port path → Sensor  (for routing serial data)
 const _serialPathToDevice = new Map();
 
 // Callbacks for UI updates
 let _onDeviceDiscovered = null;
 let _onSerialPortsChanged = null;
-let _onDeviceUpdated    = null;   // fired when a device's identity changes (SN re-key)
-let _onDataReceived     = null;
 let _onCommandResponse  = null;
 let _onCommandSent      = null;   // fired when a command is sent to a device
 
@@ -267,13 +137,9 @@ let _onCommandSent      = null;   // fired when a command is sent to a device
 
 export function getDiscovered()       { return _discovered; }
 export function getSerialPorts()      { return _serialPortList; }
-export function getDevices()          { return _devices; }
-export function getDevice(sn)         { return _devices.get(sn); }
 
 export function setOnDeviceDiscovered(cb)  { _onDeviceDiscovered = cb; }
 export function setOnSerialPortsChanged(cb){ _onSerialPortsChanged = cb; }
-export function setOnDeviceUpdated(cb)     { _onDeviceUpdated = cb; }
-export function setOnDataReceived(cb)      { _onDataReceived = cb; }
 export function setOnCommandResponse(cb)   { _onCommandResponse = cb; }
 export function setOnCommandSent(cb)       { _onCommandSent = cb; }
 
@@ -304,14 +170,14 @@ function _initBrowserTransport() {
   if (h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '') {
     _connectProxyControl();
   } else {
-    DEBUG && console.log('[imu-setup] hosted origin — skipping local proxy control channel');
+    DEBUG && console.log('[ximu3] hosted origin — skipping local proxy control channel');
   }
 
   // WebSerial is available — serial scanning handled on demand via scanSerialPorts()
   if (navigator.serial) {
-    DEBUG && console.log('[imu-setup] WebSerial API available');
+    DEBUG && console.log('[ximu3] WebSerial API available');
   } else {
-    DEBUG && console.log('[imu-setup] WebSerial API not available in this browser');
+    DEBUG && console.log('[ximu3] WebSerial API not available in this browser');
   }
 }
 
@@ -331,7 +197,7 @@ function _connectProxyControl() {
   _proxyWs.onopen = () => {
     _proxyEverConnected = true;
     _proxyRetryCount = 0;
-    DEBUG && console.log('[imu-setup] proxy control channel connected');
+    DEBUG && console.log('[ximu3] proxy control channel connected');
     clearTimeout(_proxyRetryTimer);
   };
 
@@ -377,7 +243,7 @@ function _handleProxyMessage(msg) {
         lastSeen: Date.now(),
       };
       _discovered.set(d.sn, entry);
-      const dev = _devices.get(d.sn);
+      const dev = getSensor(d.sn);
       if (dev) { dev.ip = entry.ip; dev.send = entry.send; dev.receive = entry.receive; }
       _onDeviceDiscovered?.(entry);
       break;
@@ -386,24 +252,35 @@ function _handleProxyMessage(msg) {
       _discovered.delete(msg.sn);
       _onDeviceDiscovered?.(null);
       break;
+    // The proxy tells a new page what it is ALREADY connected to — after a
+    // reload, say. The page's Sensor went with the reload; the proxy's link did
+    // not, so the unit is taken back as it is, and feeds. (Before 2026-09-27
+    // the proxy also relayed it as /sensor/… OSC, which registered it by
+    // itself; that relay was a second path for the same unit and went.)
+    case 'connected': {
+      const d = msg.data;
+      if (!d?.sn || getSensor(d.sn)) break;
+      const dev = addSensor(_newXimu3(d.sn, d.name || 'x-IMU3', 'udp', { ip: d.ip, send: d.send, receive: d.receive }));
+      startFeeding(dev);
+      break;
+    }
     case 'data': {
-      // Raw data line from proxy (for direct-connected WiFi devices in browser mode)
-      // In browser mode, WiFi data also flows through osc.js via port 8080,
-      // but this path feeds imu-setup device cards for calibrated readout.
+      // Raw data line from the proxy, for a wifi unit in browser mode — the
+      // same parser as Electron's. Routed by source IP; the fallback only when
+      // exactly ONE unit is connected, as in Electron: with several, a line
+      // from an unknown source must never land on an arbitrary one.
       if (!msg.line || !msg.sourceIP) break;
-      let dev = null;
-      for (const d of _devices.values()) {
-        if (d.transport === 'udp' && d.ip === msg.sourceIP) { dev = d; break; }
+      let dev = null, udp = [];
+      for (const d of getSensors().values()) {
+        if (d.transport !== 'udp') continue;
+        udp.push(d);
+        if (d.ip === msg.sourceIP) { dev = d; break; }
       }
-      if (!dev) {
-        for (const d of _devices.values()) {
-          if (d.transport === 'udp') { dev = d; break; }
-        }
-      }
+      if (!dev && udp.length === 1) dev = udp[0];
       if (dev) {
         parseDataLine(dev, msg.line);
-        _onDataReceived?.(dev);
-        if (dev.feeding && dev.rawQuat) feedToRegistry(dev);
+        notifyData(dev);
+        feed(dev);
       }
       break;
     }
@@ -411,15 +288,11 @@ function _handleProxyMessage(msg) {
       const json = msg.data;
       let matched = null;
       if (msg.sourceIP) {
-        for (const d of _devices.values()) {
+        for (const d of getSensors().values()) {
           if (d.transport === 'udp' && d.ip === msg.sourceIP) { matched = d; break; }
         }
       }
-      if (!matched) {
-        for (const d of _devices.values()) {
-          if (d.transport === 'udp') { matched = d; break; }
-        }
-      }
+      if (!matched) matched = _onlyUdp();   // with several units, an unknown source matches none
       if (matched) {
         _applyResponseFields(matched, json);
       }
@@ -475,28 +348,20 @@ async function _webSerialOpen(port) {
               // Handle device info responses
               if (json.device_name !== undefined) dev.name = json.device_name;
               if (json.serial_number !== undefined) {
-                const oldSn = dev.sn;
-                if (oldSn !== json.serial_number && oldSn.startsWith('serial-')) {
-                  _devices.delete(oldSn);
-                  dev.sn = json.serial_number;
-                  dev.slotName = `ximu3-${dev.sn}`;
-                  _devices.set(dev.sn, dev);
-                  _applyDevicePrefs(dev);  // re-apply with real SN
-                  _onDeviceUpdated?.(dev);
-                }
+                if (json.serial_number !== dev.sn && _isTempKey(dev.sn)) _adoptSerialNumber(dev, json.serial_number);
               }
               _applyResponseFields(dev, json);
               _onCommandResponse?.(json);
             } catch (_) {}
           } else {
             parseDataLine(dev, line);
-            _onDataReceived?.(dev);
-            if (dev.feeding && dev.rawQuat) feedToRegistry(dev);
+            notifyData(dev);
+            feed(dev);
           }
         }
       }
     } catch (e) {
-      if (running) console.warn(`[imu-setup] WebSerial read error: ${e.message}`);
+      if (running) console.warn(`[ximu3] WebSerial read error: ${e.message}`);
     }
   })();
 
@@ -524,7 +389,7 @@ async function _webSerialClose(portId) {
 
   // 4. Now port streams are unlocked — safe to close and reopen later
   try { await entry.port.close(); } catch (e) {
-    DEBUG && console.warn(`[imu-setup] WebSerial port.close() error: ${e.message}`);
+    DEBUG && console.warn(`[ximu3] WebSerial port.close() error: ${e.message}`);
   }
   _webSerialPorts.delete(portId);
 }
@@ -534,7 +399,7 @@ async function _webSerialSend(portId, str) {
   if (!entry) return;
   const payload = str.endsWith('\n') ? str : str + '\n';
   try { await entry.writer.write(payload); } catch (e) {
-    console.warn(`[imu-setup] WebSerial write error: ${e.message}`);
+    console.warn(`[ximu3] WebSerial write error: ${e.message}`);
   }
 }
 
@@ -552,16 +417,19 @@ function _webSerialPortId(port) {
 
 // ── Init (called once from main.js) ─────────────────────────────────────────
 
-export function initIMUSetup() {
-  _installRoleChangeListener();
-  // The falling edge of liveness has no event to ride; both modes tick it.
-  setInterval(_liveTick, 500);
+export function initXimu3() {
+  initSensors();
+  // The unit that just became the cursor blinks three times — which one it is,
+  // in your hand.
+  onRoleChanged(dev => { if (dev.role === 'cursor') blinkDevice(dev, 3, 150); });
+  setFoundCounter(() => { let n = 0; for (const sn of _discovered.keys()) if (!getSensor(sn)) n++; return n; });
+  setInterval(_forgetStaleDiscoveries, 500);
 
   const bridge = window.electronBridge;
 
   if (!bridge?.isElectron) {
     // Browser mode — use WebSerial + proxy control channel
-    DEBUG && console.log('[imu-setup] browser mode — WebSerial + proxy for WiFi');
+    DEBUG && console.log('[ximu3] browser mode — WebSerial + proxy for WiFi');
     _initBrowserTransport();
     return;
   }
@@ -584,7 +452,7 @@ export function initIMUSetup() {
     };
     _discovered.set(sn, entry);
     // Update connection info if already connected (IP/port may change)
-    const dev = _devices.get(sn);
+    const dev = getSensor(sn);
     if (dev) {
       dev.ip = entry.ip;
       dev.send = entry.send;
@@ -596,7 +464,7 @@ export function initIMUSetup() {
   // Listen for data messages — route by source IP to the correct device
   bridge.onXIMU3Data((line, sourceIP) => {
     let dev = null, udpCount = 0, firstUdp = null;
-    for (const d of _devices.values()) {
+    for (const d of getSensors().values()) {
       if (d.transport !== 'udp') continue;
       udpCount++;
       if (!firstUdp) firstUdp = d;
@@ -612,7 +480,7 @@ export function initIMUSetup() {
       } else {
         _unknownSourceDrops++;
         if (DEBUG && (_unknownSourceDrops === 1 || _unknownSourceDrops % 400 === 0)) {
-          console.warn(`[imu-setup] dropped ${_unknownSourceDrops} data lines from unknown source ${sourceIP} — is another device sending to this port?`);
+          console.warn(`[ximu3] dropped ${_unknownSourceDrops} data lines from unknown source ${sourceIP} — is another device sending to this port?`);
         }
         return;
       }
@@ -620,28 +488,24 @@ export function initIMUSetup() {
     if (!dev) return;
 
     parseDataLine(dev, line);
-    _onDataReceived?.(dev);
+    notifyData(dev);
 
-    if (dev.feeding && dev.rawQuat) {
-      feedToRegistry(dev);
-    }
+    feed(dev);
   });
 
   // Listen for command responses (UDP) — route by source IP
   bridge.onXIMU3CommandResponse?.((json, sourceIP) => {
-    DEBUG && console.log('[imu-setup] UDP command response:', json, sourceIP);
+    DEBUG && console.log('[ximu3] UDP command response:', json, sourceIP);
     let matched = null;
     if (sourceIP) {
-      for (const dev of _devices.values()) {
+      for (const dev of getSensors().values()) {
         if (dev.transport === 'udp' && dev.ip === sourceIP) { matched = dev; break; }
       }
     }
-    // Fallback: first UDP device
-    if (!matched) {
-      for (const dev of _devices.values()) {
-        if (dev.transport === 'udp') { matched = dev; break; }
-      }
-    }
+    // An unknown source goes to the one UDP unit if there is exactly one —
+    // with several, a response must not land on an arbitrary unit, where it
+    // would corrupt that unit's settings read-back (as the data path, :470).
+    if (!matched) matched = _onlyUdp();
     if (matched) {
       _applyResponseFields(matched, json);
     }
@@ -656,15 +520,13 @@ export function initIMUSetup() {
     if (!dev) return;
 
     parseDataLine(dev, line);
-    _onDataReceived?.(dev);
+    notifyData(dev);
 
-    if (dev.feeding && dev.rawQuat) {
-      feedToRegistry(dev);
-    }
+    feed(dev);
   });
 
   bridge.onSerialResponse?.((portPath, json) => {
-    DEBUG && console.log(`[imu-setup] serial response from ${portPath}:`, json);
+    DEBUG && console.log(`[ximu3] serial response from ${portPath}:`, json);
     const dev = _serialPathToDevice.get(portPath);
     if (!dev) return;
 
@@ -672,22 +534,14 @@ export function initIMUSetup() {
     if (json.device_name !== undefined) dev.name = json.device_name;
     if (json.serial_number !== undefined) {
       // Re-key device if serial number was unknown (connected before query returned)
-      const oldSn = dev.sn;
-      if (oldSn !== json.serial_number && oldSn.startsWith('serial-')) {
-        _devices.delete(oldSn);
-        dev.sn = json.serial_number;
-        dev.slotName = `ximu3-${dev.sn}`;
-        _devices.set(dev.sn, dev);
-        _applyDevicePrefs(dev);  // re-apply with real SN
-        _onDeviceUpdated?.(dev);
-      }
+      if (json.serial_number !== dev.sn && _isTempKey(dev.sn)) _adoptSerialNumber(dev, json.serial_number);
     }
     _applyResponseFields(dev, json);
 
     _onCommandResponse?.(json);
   });
 
-  DEBUG && console.log('[imu-setup] initialized — listening for x-IMU3 discovery + serial');
+  DEBUG && console.log('[ximu3] initialized — listening for x-IMU3 discovery + serial');
 }
 
 // ── Serial port scanning ────────────────────────────────────────────────────
@@ -699,7 +553,7 @@ export async function scanSerialPorts() {
   if (bridge?.serialListPorts) {
     _serialPortList = await bridge.serialListPorts();
     _onSerialPortsChanged?.(_serialPortList);
-    DEBUG && console.log(`[imu-setup] found ${_serialPortList.length} serial ports`);
+    DEBUG && console.log(`[ximu3] found ${_serialPortList.length} serial ports`);
     return _serialPortList;
   }
 
@@ -721,10 +575,10 @@ export async function scanSerialPorts() {
         };
       });
       _onSerialPortsChanged?.(_serialPortList);
-      DEBUG && console.log(`[imu-setup] WebSerial: ${_serialPortList.length} previously-granted ports`);
+      DEBUG && console.log(`[ximu3] WebSerial: ${_serialPortList.length} previously-granted ports`);
       return _serialPortList;
     } catch (e) {
-      DEBUG && console.warn(`[imu-setup] WebSerial getPorts error: ${e.message}`);
+      DEBUG && console.warn(`[ximu3] WebSerial getPorts error: ${e.message}`);
     }
   }
 
@@ -740,7 +594,7 @@ export async function requestSerialPort() {
     await scanSerialPorts();
     return port;
   } catch (e) {
-    DEBUG && console.log(`[imu-setup] WebSerial port request cancelled or failed: ${e.message}`);
+    DEBUG && console.log(`[ximu3] WebSerial port request cancelled or failed: ${e.message}`);
     return null;
   }
 }
@@ -754,17 +608,13 @@ export async function connectDevice(sn) {
 
   const bridge = window.electronBridge;
 
-  const dev = new DeviceState(sn, info.name, {
-    transport: 'udp',
-    ip:       info.ip,
-    send:     info.send,
-    receive:  info.receive,
-  });
-  _devices.set(sn, dev);
-  _applyDevicePrefs(dev);  // restore role from previous session
-
-  // Notify main page immediately — don't wait for handshake
-  _syncSensorStatus();
+  const dev = addSensor(_newXimu3(sn, info.name, 'udp', {
+    ip: info.ip, send: info.send, receive: info.receive,
+  }));
+  // Feeding is implied by being connected. Nothing set it on this path after
+  // the "feeds the sphere" toggle went (2026-09-01), so a direct x-imu3 drove
+  // nothing until its role dropdown was changed by hand (2026-09-27).
+  startFeeding(dev);
 
   // Bring the UDP data listener up.  Command responses arrive on the same
   // socket as data, so nothing can be read back until this is running.
@@ -796,8 +646,8 @@ export async function connectDevice(sn) {
   // our grey idle — the module flashes red/black instead).
   await blinkDevice(dev, 5, 200);
 
-  _syncSensorStatus();
-  DEBUG && console.log(`[imu-setup] UDP connected to ${info.name} (${sn}) at ${info.ip}`);
+  syncSensorStatus();
+  DEBUG && console.log(`[ximu3] UDP connected to ${info.name} (${sn}) at ${info.ip}`);
   return true;
 }
 
@@ -817,7 +667,7 @@ export async function connectSerialDevice(portPathOrObj) {
       if (found?._webSerialPort) {
         wsPort = found._webSerialPort;
       } else {
-        DEBUG && console.warn(`[imu-setup] WebSerial port not found: ${portPathOrObj}`);
+        DEBUG && console.warn(`[ximu3] WebSerial port not found: ${portPathOrObj}`);
         return false;
       }
     }
@@ -825,21 +675,14 @@ export async function connectSerialDevice(portPathOrObj) {
     try {
       portId = await _webSerialOpen(wsPort);
     } catch (e) {
-      DEBUG && console.warn(`[imu-setup] WebSerial open failed: ${e.message}`);
+      DEBUG && console.warn(`[ximu3] WebSerial open failed: ${e.message}`);
       return false;
     }
 
     const tempSn = 'serial-' + portId.replace(/[^a-zA-Z0-9]/g, '');
-    const dev = new DeviceState(tempSn, portId, {
-      transport:  'serial',
-      serialPath: portId,
-    });
-    _devices.set(tempSn, dev);
+    const dev = addSensor(_newXimu3(tempSn, portId, 'serial', { serialPath: portId, pendingKey: true }));
     _serialPathToDevice.set(portId, dev);
-
-    // Notify main page immediately — don't wait for handshake blinks
-    _syncSensorStatus();
-    DEBUG && console.log(`[imu-setup] WebSerial connected on ${portId}`);
+    DEBUG && console.log(`[ximu3] WebSerial connected on ${portId}`);
 
     await _delay(500);
 
@@ -854,6 +697,7 @@ export async function connectSerialDevice(portPathOrObj) {
 
     // LED handshake — route through blinkDevice() so LED-feedback module handles it
     await blinkDevice(dev, 5, 200);
+    _feedWhenKeyed(dev);
     return true;
   }
 
@@ -865,16 +709,9 @@ export async function connectSerialDevice(portPathOrObj) {
   if (!result?.ok) return false;
 
   const tempSn = 'serial-' + portPath.replace(/[^a-zA-Z0-9]/g, '');
-  const dev = new DeviceState(tempSn, portPath, {
-    transport:  'serial',
-    serialPath: portPath,
-  });
-  _devices.set(tempSn, dev);
+  const dev = addSensor(_newXimu3(tempSn, portPath, 'serial', { serialPath: portPath, pendingKey: true }));
   _serialPathToDevice.set(portPath, dev);
-
-  // Notify main page immediately — don't wait for handshake blinks
-  _syncSensorStatus();
-  DEBUG && console.log(`[imu-setup] serial connected on ${portPath}`);
+  DEBUG && console.log(`[ximu3] serial connected on ${portPath}`);
 
   await _delay(500);
 
@@ -889,22 +726,52 @@ export async function connectSerialDevice(portPathOrObj) {
 
   // LED handshake — route through blinkDevice() so LED-feedback module handles it
   await blinkDevice(dev, 5, 200);
+  _feedWhenKeyed(dev);
   return true;
+}
+
+// The one UDP unit, or null when there are none or several.
+function _onlyUdp() {
+  let one = null;
+  for (const d of getSensors().values()) {
+    if (d.transport !== 'udp') continue;
+    if (one) return null;
+    one = d;
+  }
+  return one;
+}
+
+// A serial device feeds once it has its real serial number: its slot is named
+// from it, and a slot minted under the tty path would keep a role and a
+// calibration for a sensor that is renamed a second later. Anything that never
+// answers is not an x-imu3 and never feeds.
+function _feedWhenKeyed(dev) {
+  if (!_isTempKey(dev.sn)) startFeeding(dev);
+  else dev._feedOnKey = true;
+}
+
+// A serial device is keyed `serial-<path>` until it answers with its serial
+// number; an x-imu3 answers within a second, anything else never does.
+function _isTempKey(sn) { return sn.startsWith('serial-'); }
+
+function _adoptSerialNumber(dev, sn) {
+  if (!rekeySensor(dev, sn)) return;   // already connected another way — that link feeds
+  dev.pendingKey = false;
+  if (dev._feedOnKey) { dev._feedOnKey = false; startFeeding(dev); }
 }
 
 // Let a connected sensor go: its transport closes and the device leaves the
 // list, and NOTHING ELSE — its registry slot keeps its mounting calibration,
 // its role and its saved prefs, so a reconnect is the same sensor (a forget is
 // forgetOscSensor). A wifi x-imu3 keeps announcing itself, so it is back in
-// the list as a Connect row within a second; a cable is back on Rescan. A
-// mubone instrument's link is sygaldry's to close (ui-sygaldry sygDisconnect)
-// and it calls this afterwards to drop the device row.
+// the list as a Connect row within a second; a cable is back on Rescan. (A
+// mubone instrument's link is sygaldry's to close — ui-sygaldry sygDisconnect,
+// then sensors.removeSensor for the row.)
 export async function disconnectDevice(sn) {
-  const dev = _devices.get(sn);
+  const dev = getSensor(sn);
   if (!dev) return false;
   const bridge = window.electronBridge;
-  dev.feeding = false;
-  _devices.delete(sn);
+  removeSensor(sn);
   if (dev.transport === 'udp') {
     if (bridge?.isElectron) await bridge.ximu3StopData(dev.send);
     else _sendProxyControl({ type: 'disconnect', sn });
@@ -913,9 +780,7 @@ export async function disconnectDevice(sn) {
     if (bridge?.isElectron) await bridge.serialClose(dev.serialPath);
     else await _webSerialClose(dev.serialPath);
   }
-  _onDeviceUpdated?.(dev);
-  _syncSensorStatus();
-  DEBUG && console.log(`[imu-setup] disconnected ${dev.name} (${sn})`);
+  DEBUG && console.log(`[ximu3] disconnected ${dev.name} (${sn})`);
   return true;
 }
 
@@ -979,14 +844,14 @@ export async function enforceSettings(dev) {
 // responses can simply be dropped, and treating that as a failed setting would
 // cry wolf before every show.
 
-const _verifyPending = new Map();   // dev.sn → { want, got }
+const _verifyPending = new Map();   // Sensor → { want, got } — the object, not its sn: a serial unit's sn changes mid-sweep
 
 export async function verifySettings(dev) {
   if (!dev || dev.transport === 'osc') return null;
 
   const want = settingsFor(dev.transport);
   const state = { want, got: {} };
-  _verifyPending.set(dev.sn, state);
+  _verifyPending.set(dev, state);
 
   // Let the write echoes drain first, or they'd be counted as read responses.
   // (They carry the desired value, so they could only ever mask a failure.)
@@ -997,7 +862,7 @@ export async function verifySettings(dev) {
   }
 
   await _delay(VERIFY_TIMEOUT_MS);
-  _verifyPending.delete(dev.sn);
+  _verifyPending.delete(dev);
 
   const mismatched = [];
   const unanswered = [];
@@ -1016,7 +881,7 @@ export async function verifySettings(dev) {
 
   if (mismatched.length) {
     console.warn(
-      `[imu-setup] ${dev.name} (${dev.sn}): ${mismatched.length} setting(s) did not take —`,
+      `[ximu3] ${dev.name} (${dev.sn}): ${mismatched.length} setting(s) did not take —`,
       mismatched.map(m => `${m.key}: wanted ${m.want}, device reports ${m.got}`).join('; ')
     );
     // serial_mode failing is the one that bites silently.  SA-A8s get swapped on
@@ -1024,7 +889,7 @@ export async function verifySettings(dev) {
     // to one that simply has nothing plugged in right now.
     if (mismatched.some(m => m.key === 'serial_mode')) {
       console.warn(
-        `[imu-setup] ${dev.name} (${dev.sn}) is not in serial Accessory mode — it cannot receive an SA-A8, ` +
+        `[ximu3] ${dev.name} (${dev.sn}) is not in serial Accessory mode — it cannot receive an SA-A8, ` +
         `whether or not one is attached now.  Try:  acc.setAccessoryMode(true, '${dev.sn}')  (writes with save)`
       );
     }
@@ -1032,20 +897,20 @@ export async function verifySettings(dev) {
 
   if (unanswered.length) {
     DEBUG && console.warn(
-      `[imu-setup] ${dev.name} (${dev.sn}): no read-back for ${unanswered.length} key(s) — ${unanswered.join(', ')}`
+      `[ximu3] ${dev.name} (${dev.sn}): no read-back for ${unanswered.length} key(s) — ${unanswered.join(', ')}`
     );
   }
   if (result.ok && !unanswered.length) {
-    DEBUG && console.log(`[imu-setup] ${dev.name} (${dev.sn}): all settings verified`);
+    DEBUG && console.log(`[ximu3] ${dev.name} (${dev.sn}): all settings verified`);
   }
 
-  _onDeviceUpdated?.(dev);
+  notifyUpdated(dev);
   return result;
 }
 
 // Called from _applyResponseFields for every command response.
 function _noteVerifyResponse(dev, json) {
-  const state = _verifyPending.get(dev.sn);
+  const state = _verifyPending.get(dev);
   if (!state) return;
   for (const key of Object.keys(json)) {
     if (key in state.want) state.got[key] = json[key];
@@ -1095,141 +960,11 @@ export function setAxesAlignment(dev, value) {
   setTimeout(() => sendCommandTo(dev, { apply: null }), 100);
 }
 
-// ── Axis signs and mute — thin wrappers over the slot's axis map ────────────
-// These used to write DeviceState.polarity, which was applied upstream of the
-// registry's mount rotation and therefore silently invalidated it. They now
-// write the map itself, which is applied downstream and cannot.
-
-function _slotFor(dev) {
-  return dev?.feeding ? getOrCreateSlot(dev.slotName) : null;
-}
-
-function _entryFor(slot, viz) {
-  if (!slot?.quatCal?.axisMap) return null;
-  return Object.values(slot.quatCal.axisMap).find(a => a.viz === viz) || null;
-}
-
-export function togglePolarity(dev, axis) {
-  const e = _entryFor(_slotFor(dev), axis);
-  if (!e) return 1;
-  e.sign = -e.sign;
-  saveCalibration();
-  return e.sign;
-}
-
-export function getPolarity(dev, axis) {
-  return _entryFor(_slotFor(dev), axis)?.sign ?? 1;
-}
-
-// The calibrated euler as the sensors card displays it — the slot's
-// zeroEuler (post-cal, post-axis-map), renamed into viz terms. Null while the
-// sensor is not feeding; the card prints "—".
-// (toggleRollMute/getRollMute lived here until 2026-09-01 — the Mute column
-// left the axes table with the footer's RO button.)
-export function getCalibratedEuler(dev) {
-  const e = _slotFor(dev)?.zeroEuler;
-  return e ? { roll: e.x, pitch: e.y, yaw: e.z } : null;
-}
-
-// ── Calibration — two gestures, both in the registry ────────────────────────
-// Mount calibration is SETUP and takes TWO poses — neutral/forward, then
-// pointing down — because one pose leaves the strap's own twist about vertical
-// indistinguishable from the performer's heading. captureHeading is
-// PERFORMANCE: face the stage, as often as you like, and it cannot disturb the
-// mounting.
-
-// Two poses, because one cannot determine a mounting — see sensor-registry.js.
-// Pose 1 is neutral/forward, pose 2 is pointing down at the earth.
-export function captureMountPose1(dev, quat = null) {
-  const slot = _slotFor(dev);
-  return slot ? regMountPose1(slot, quat) : null;
-}
-
-export function captureMountPose2(dev, quat = null) {
-  const slot = _slotFor(dev);
-  if (!slot) return null;
-  const r = regMountPose2(slot, quat);
-  DEBUG && console.log(`[imu-setup] mount ${r ? 'calibrated' : 'REJECTED (poses too close)'} for ${dev.sn}`);
-  return r;
-}
-
-export function cancelMountCapture(dev) {
-  const slot = _slotFor(dev);
-  if (slot) regCancelMount(slot);
-}
-
-// The live quaternion, for the UI's stillness detector.
-export function slotQuat(dev) {
-  return _slotFor(dev)?.quat || null;
-}
-
-export function captureHeading(dev) {
-  const slot = _slotFor(dev);
-  if (!slot) return null;
-  const r = regCaptureHeading(slot);
-  DEBUG && console.log(`[imu-setup] heading zeroed for ${dev.sn}`);
-  return r;
-}
-
-export function clearMountCal(dev) {
-  const slot = _slotFor(dev);
-  if (slot) regClearMount(slot);
-}
-
-export function hasMountCal(dev) {
-  return !!_slotFor(dev)?.quatCal?.mountQuat;
-}
-
 // ── AHRS message type ───────────────────────────────────────────────────────
 
 export function requestEulerMode(dev) {
   sendCommandTo(dev, { ahrs_message_type: 2 });
   setTimeout(() => sendCommandTo(dev, { apply: null }), 100);
-}
-
-// ── Feed to registry ────────────────────────────────────────────────────────
-
-export function setFeeding(dev, enabled) {
-  dev.feeding = enabled;
-  if (enabled) {
-    // The slot keeps whatever calibration it restored from localStorage.
-    // This used to reset it to identity on every connect, on the old rule that
-    // "imu-setup owns calibration" — which meant a mounting calibration did
-    // not survive a reload, or even a feeding toggle. The registry owns it now.
-    getOrCreateSlot(dev.slotName);
-    assignQuatRole(dev.slotName, dev.role);
-  }
-  _syncSensorStatus();
-}
-
-export function setRole(dev, role) {
-  dev.role = role;
-  _saveDevicePrefs();
-  // Ek, 2026-09-01: "when you've selected the drop down it should just work."
-  // Feeding is implied by having a role — the separate toggle is gone.
-  if (!dev.feeding) setFeeding(dev, true);
-  else assignQuatRole(dev.slotName, role);
-}
-
-// ── Sync DeviceState.role when registry roles change externally ─────────────
-// Called when assignQuatRole() is invoked directly (e.g. quick-switch buttons).
-// Keeps DeviceState.role in sync with the registry slot's quatRole.
-// Installed by initIMUSetup() to ensure _devices map is available.
-function _installRoleChangeListener() {
-  S._onSensorRoleChanged = (slot) => {
-    for (const dev of _devices.values()) {
-      if (dev.slotName === slot.name) {
-        dev.role = slot.quatRole;
-        _saveDevicePrefs();
-        // Blink the device that just became cursor — 3× fast blink
-        if (slot.quatRole === 'cursor') {
-          blinkDevice(dev, 3, 150);
-        }
-        break;
-      }
-    }
-    _syncSensorStatus();  // rebuild switch buttons via sensor-status event
-  };
 }
 
 // ── ASCII data parser ───────────────────────────────────────────────────────
@@ -1240,35 +975,20 @@ function parseDataLine(dev, line) {
 
   const type = parts[0];
   const timestamp = parseInt(parts[1], 10);
-  dev.lastTimestamp = timestamp;
   dev.lastMsgType = type;
-  _stampSeen(dev);
+  stampSeen(dev);
 
   switch (type) {
-    case 'A': { // Euler angles: roll, pitch, yaw (degrees)
+    case 'A': { // Euler angles: roll, pitch, yaw (degrees) — requestEulerMode only
       if (parts.length >= 5) {
-        const r = parseFloat(parts[2]);
-        const p = parseFloat(parts[3]);
-        const y = parseFloat(parts[4]);
-        // Whole-object replacement, not field-by-field — see the note in
-        // handleOSCSensorQuaternion. A partial write is a pose nothing measured.
-        dev.rawEuler = { roll: r, pitch: p, yaw: y };
-        // Cross-populate quaternion so getCalibratedEuler/Quat always works
-        const q = eulerDegToQuat(r, p, y);
-        dev.rawQuat = { x: q[0], y: q[1], z: q[2], w: q[3] };
+        dev.setQuat(...eulerDegToQuat(parseFloat(parts[2]), parseFloat(parts[3]), parseFloat(parts[4])));
       }
       break;
     }
 
     case 'Q': { // Quaternion: w, x, y, z
       if (parts.length >= 6) {
-        const w = parseFloat(parts[2]);
-        const x = parseFloat(parts[3]);
-        const y = parseFloat(parts[4]);
-        const z = parseFloat(parts[5]);
-        dev.rawQuat  = { x, y, z, w };
-        // Cross-populate Euler so raw readout always works
-        dev.rawEuler = quatToEulerDeg(x, y, z, w);
+        dev.setQuat(parseFloat(parts[3]), parseFloat(parts[4]), parseFloat(parts[5]), parseFloat(parts[2]));
       }
       break;
     }
@@ -1304,143 +1024,11 @@ function _noteUnexpectedType(dev, type) {
   dev.unexpectedTypes.set(type, n);
   if (n === _UNEXPECTED_GRACE) {
     console.warn(
-      `[imu-setup] ${dev.name} (${dev.sn}) is streaming '${type}' messages that mubone does not consume — ` +
+      `[ximu3] ${dev.name} (${dev.sn}) is streaming '${type}' messages that mubone does not consume — ` +
       `settings enforcement did not take.  Check the console for setting mismatches, and check whether a ` +
       `the x-IMU3 GUI or another host has written a message rate divisor since.`
     );
   }
-}
-
-// ── Feed pre-calibrated quaternion to sensor-registry ───────────────────────
-
-function feedToRegistry(dev) {
-  // The sensor's own quaternion, uncalibrated. Everything — mount, heading,
-  // signs, mute — is applied once, inside the registry, in a fixed order.
-  const q = dev.getFeedQuat();
-  handleSlotQuaternion(getOrCreateSlot(dev.slotName), q);
-}
-
-// ── OSC sensor intake ───────────────────────────────────────────────────────
-// Called by osc.js when a /sensor/{name}/quaternion or /sensor/{name}/inertial
-// message arrives.  Auto-creates a DeviceState on first contact, runs
-// calibration, and feeds to registry — same pipeline as WiFi/serial devices.
-
-// A sensor that arrives over OSC is anonymous by construction — the address
-// namespace carries a name, never a make. So the module that owns the
-// connection says what it is, once, as soon as it knows: sygaldry.js calls this
-// when the instrument reports its own name. Without it a first-party instrument
-// is indistinguishable from any OSC relay, which is exactly how one came to be
-// listed as "x-imu3 · osc" while sitting on a USB cable.
-export function declareSensorKind(name, kind, via = null) {
-  const dev = _devices.get('osc-' + name);
-  if (!dev) return null;
-  if (dev.kind === kind && dev.via === via) return dev;   // nothing to repaint
-  dev.kind = kind;
-  dev.via  = via;
-  _onDeviceUpdated?.(dev);
-  // The wire word just changed — S.rig and the pill derive from the
-  // sensor-status event, and the last one was dispatched before this
-  // declaration existed (the pill read "osc" for a wifi instrument, Ek).
-  _syncSensorStatus();
-  return dev;
-}
-
-// Forget an OSC sensor entirely: the device, its registry slot, its saved
-// calibration and its saved role. An OSC sensor is auto-discovered by its
-// first packet and, until this existed, could never be un-discovered — the
-// prefs and the calibration table both MERGE on save, so a name seen once
-// was kept for good. The align audit's `__rt10__` probe is the case that
-// found it; a renamed instrument is the other.
-export function forgetOscSensor(name) {
-  const sn = 'osc-' + name;
-  const dev = _devices.get(sn);
-  if (dev) { dev.feeding = false; _devices.delete(sn); }
-  forgetSlot(sn);
-  const prefs = _loadDevicePrefs();
-  if (sn in prefs) {
-    delete prefs[sn];
-    try { localStorage.setItem(_LS_DEVICE_PREFS_KEY, JSON.stringify(prefs)); } catch (_) {}
-  }
-  if (dev) { _onDeviceUpdated?.(dev); _syncSensorStatus(); }
-  return !!dev;
-}
-
-export function handleOSCSensorQuaternion(name, values) {
-  let dev = _devices.get('osc-' + name);
-  if (!dev) {
-    dev = new DeviceState('osc-' + name, name, { transport: 'osc' });
-    _applyDevicePrefs(dev);
-    dev.feeding = true;  // auto-feed — OSC sensors are always live
-    _devices.set('osc-' + name, dev);
-    _initOscSlot(dev);
-    _onDeviceUpdated?.(dev);
-    _syncSensorStatus();
-    DEBUG && console.log(`[imu-setup] OSC sensor auto-discovered: ${name} (role: ${dev.role})`);
-  }
-
-  // Store raw quaternion — the wire convention is [qx, qy, qz, qw], the same
-  // as sphere.js; nothing here reorders.
-  //
-  // Replaced whole, never field by field. Four separate assignments leave the
-  // object briefly holding two packets at once, and any async reader — a rAF
-  // readout, a probe — can sample the seam and see a quaternion that was never
-  // measured. Observed as 1°+ spikes on a sensor sitting still (2026-08-31).
-  // The engine never saw them (feedToRegistry runs synchronously below), but
-  // "never" should not depend on who happens to read it.
-  dev.rawQuat = { x: values[0], y: values[1], z: values[2], w: values[3] };
-  dev.lastMsgType = 'Q';
-  dev.lastTimestamp = Date.now();
-  _stampSeen(dev);
-
-  // Cross-populate Euler — replaced whole, for the reason above.
-  dev.rawEuler = quatToEulerDeg(values[0], values[1], values[2], values[3]);
-
-  _onDataReceived?.(dev);
-
-  if (dev.feeding) {
-    feedToRegistry(dev);
-  }
-}
-
-export function handleOSCSensorInertial(name, values) {
-  let dev = _devices.get('osc-' + name);
-  if (!dev) {
-    dev = new DeviceState('osc-' + name, name, { transport: 'osc' });
-    _applyDevicePrefs(dev);
-    dev.feeding = true;
-    _devices.set('osc-' + name, dev);
-    _initOscSlot(dev);
-    _onDeviceUpdated?.(dev);
-    _syncSensorStatus();
-    DEBUG && console.log(`[imu-setup] OSC sensor auto-discovered (inertial): ${name}`);
-  }
-
-  dev.rawInertial = { gx: values[0], gy: values[1], gz: values[2],
-                      ax: values[3], ay: values[4], az: values[5] };
-  dev.lastMsgType = 'I';
-  // Liveness is per DEVICE, not per stream: a peer sending only /inertial is
-  // as connected as one sending only /quaternion, and the sources badge greys
-  // on this field. Stamped here too or such a peer reads as silent forever.
-  dev.lastTimestamp = Date.now();
-  _stampSeen(dev);
-
-  _onDataReceived?.(dev);
-
-  // Inertial goes straight to registry (no calibration transform for gyro/accel)
-  if (dev.feeding) {
-    const slot = getOrCreateSlot(dev.slotName);
-    handleSlotInertial(slot, values);
-  }
-}
-
-function _initOscSlot(dev) {
-  // getOrCreateSlot() primes a NEW slot from saved calibration, so this must
-  // not overwrite it. Wiping here is what made a calibration last exactly
-  // until the next reload: the first OSC packet arrives, the slot is created
-  // with its saved mount and heading, and the old code nulled both on the
-  // very next line (2026-08-31).
-  getOrCreateSlot(dev.slotName);
-  assignQuatRole(dev.slotName, dev.role);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -1456,103 +1044,17 @@ function _applyResponseFields(dev, json) {
   if (json.wi_fi_client_channel !== undefined) dev.wifiClientChannel  = json.wi_fi_client_channel;
   if (json.wi_fi_client_ssid    !== undefined) dev.wifiClientSsid     = json.wi_fi_client_ssid;
   if (json.wi_fi_region         !== undefined) dev.wifiRegion         = json.wi_fi_region;
-  if (json.serial_mode          !== undefined) { dev.serialMode = json.serial_mode; _onDeviceUpdated?.(dev); }
-  if (json.device_name          !== undefined) { dev.name = json.device_name; _onDeviceUpdated?.(dev); }
-  if (json.serial_number        !== undefined) { _onDeviceUpdated?.(dev); }
+  if (json.serial_mode          !== undefined) { dev.serialMode = json.serial_mode; notifyUpdated(dev); }
+  if (json.device_name          !== undefined) { dev.name = json.device_name; notifyUpdated(dev); }
+  if (json.serial_number        !== undefined) { notifyUpdated(dev); }
   // WiFi info triggers a card refresh so channel/SSID can display
   if (json.wi_fi_ap_channel     !== undefined || json.wi_fi_ap_ssid    !== undefined ||
       json.wi_fi_client_channel !== undefined || json.wi_fi_client_ssid !== undefined) {
-    _onDeviceUpdated?.(dev);
+    notifyUpdated(dev);
   }
 }
 
-// ── Liveness: the connection state IS packets arriving (Ek, 2026-09-09) ────
-// "when i disconnected the usb the header icon and the sensor page still
-// show connected. it's clearly sending 0 hz." A device in the map is one that
-// has been seen, not one that is here: an OSC device has no socket to close,
-// a cable pulled mid-set closes nothing on our side, and the link object's own
-// loss detection never reached the map. So a device is UP while a packet has
-// arrived within LIVE_MS, on OUR clock (lastSeenAt — never lastTimestamp,
-// which for an x-imu3 is its own µs-since-boot), and everything that says
-// "connected" — the header readout, S.rig, the list's badge and count — reads
-// that. Two seconds is well clear of the slowest stream that matters and
-// short enough that a pulled cable is seen before anyone finishes looking.
-// The rising edge is immediate (first packet); the falling edge is the tick.
-export const LIVE_MS = 2000;
-export function isLive(dev) {
-  return !!dev.lastSeenAt && (Date.now() - dev.lastSeenAt) < LIVE_MS;
-}
-function _stampSeen(dev) {
-  dev.lastSeenAt = Date.now();
-  if (!dev.live) { dev.live = true; _onDeviceUpdated?.(dev); _syncSensorStatus(); }
-}
-function _liveTick() {
-  let changed = false;
-  for (const dev of _devices.values()) {
-    const now = isLive(dev);
-    if (now === dev.live) continue;
-    dev.live = now; changed = true;
-    _onDeviceUpdated?.(dev);
-  }
-  // Discovery forgets: a sensor not heard from in DISCOVERY_STALE_MS leaves the
-  // list (proxy.js prunes the same way; Electron never did, so "N more found"
-  // counted a powered-off sensor for the whole set — 2026-09-16).
-  const cutoff = Date.now() - DISCOVERY_STALE_MS;
-  let forgot = false;
-  for (const [sn, e] of _discovered) {
-    if (!_devices.has(sn) && e.lastSeen < cutoff) { _discovered.delete(sn); forgot = true; }
-  }
-  if (forgot) { _onDeviceDiscovered?.(null); changed = true; }
-  if (changed) _syncSensorStatus();
-}
 const DISCOVERY_STALE_MS = 15000;
-
-// Notify the rest of the app that sensor connection state changed.
-// A device is "connected" while it is LIVE — see isLive.
-function _syncSensorStatus() {
-  const devs = [..._devices.values()];
-  const live = devs.filter(d => d.live);
-  const hasFeeding = live.some(d => d.feeding);
-  const hasAny     = live.length > 0;
-
-  // Build transport summary for the main-page indicator — live devices only
-  const transports = new Set();
-  let count = 0;
-  for (const d of live) {
-    count++;
-    // A sygaldry instrument is FILED under transport 'osc' whatever the wire
-    // was; `via` carries the real one ('wifi' / 'cable'). Every word shown to
-    // a person derives from via first — an instrument on wifi is a wifi
-    // sensor, and OSC is the rare case, not the default answer (Ek).
-    const wire = d.via === 'cable' ? 'serial' : (d.via || d.transport);
-    if (wire === 'serial')    transports.add('serial');
-    else if (wire === 'udp' || wire === 'wifi') transports.add('wifi');
-    else if (wire === 'osc')  transports.add('osc');
-  }
-
-  // Announcing but not connected — the pill's 'found' state (R9).
-  let found = 0;
-  for (const sn of _discovered.keys()) if (!_devices.has(sn)) found++;
-  window.dispatchEvent(new CustomEvent('sensor-status', {
-    detail: {
-      connected: hasAny,
-      feeding:   hasFeeding,
-      found,
-      count,
-      transports: [...transports],
-      devices: devs.map(d => ({
-        sn: d.sn,
-        name: d.name,
-        slotName: d.slotName,
-        role: d.role,
-        feeding: d.feeding,
-        live: d.live,
-        transport: d.transport,
-        via: d.via || null,
-      })),
-    },
-  }));
-}
 
 function _delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 

@@ -1,11 +1,13 @@
 // ============================================================================
-// ui-imu-setup.js — x-IMU3 mounting setup modal (per-device cards)
+// ui-sensors.js — the Sensors page (Settings → Sensors)
 //
-// Builds dynamic device cards for each connected x-IMU3.  Each card shows:
+// The page for the SENSOR layer (sensors.js; sensor-registry.js's header has
+// the three-layer map). Three parts: the sources, one list of every sensor —
+// connected or connectable, any kind — and the selected sensor's block:
 //   • axes alignment dropdown (hardware — sent to sensor)
-//   • raw Euler readout, the axis map's flip buttons, calibrated output
+//   • raw Euler readout, the three sign buttons, calibrated output
 //   • the two calibration gestures (mount, heading) and their clear
-//   • role dropdown (cursor / camera / frame; gesture for the inertial stream)
+//   • role menu (cursor / camera / none — the gesture role has no menu)
 //
 // Discovery list at the top shows all visible devices with connect; a
 // connected row that was connected from here carries Disconnect (2026-09-18).
@@ -13,21 +15,22 @@
 // ============================================================================
 
 import { S, DEBUG } from './state.js';
+import { DEFAULT_SIGNS } from './sensor-math.js';
 import { sygOffers, sygConnectKnown, sygForgetKnown, sygConnectSerial, sygDisconnect } from './ui-sygaldry.js';
 import {
-  initIMUSetup,
-  getDiscovered, getSerialPorts, getDevices, getDevice,
-  connectDevice, connectSerialDevice, disconnectDevice, scanSerialPorts, requestSerialPort,
-  setAxesAlignment, togglePolarity,
+  getSensors, getSensor, removeSensor, setRole, zeroAllHeadings,
   captureMountPose1, captureMountPose2, cancelMountCapture, slotQuat,
-  captureHeading, clearMountCal, hasMountCal, getPolarity, getCalibratedEuler,
-  setRole,
-  setOnDeviceDiscovered, setOnSerialPortsChanged, setOnDeviceUpdated,
-  setOnDataReceived, setOnCommandResponse, setOnCommandSent,
-  sendCommandTo, blinkDevice,
-  AXES_ALIGNMENTS,
-  getAlignmentLabel
-} from './imu-setup.js';
+  captureHeading, clearMountCal, hasMountCal, getPolarity, togglePolarity, getCalibratedEuler,
+  setOnDeviceUpdated, setOnDataReceived,
+} from './sensors.js';
+import {
+  initXimu3,
+  getDiscovered, getSerialPorts,
+  connectDevice, connectSerialDevice, disconnectDevice, scanSerialPorts, requestSerialPort,
+  setAxesAlignment, setOnDeviceDiscovered, setOnSerialPortsChanged,
+  setOnCommandResponse, setOnCommandSent, sendCommandTo, blinkDevice,
+  AXES_ALIGNMENTS, getAlignmentLabel,
+} from './ximu3.js';
 
 let _modal        = null;
 let _rafId        = null;
@@ -113,8 +116,8 @@ function _wifiInfoText(dev) {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-export function initIMUSetupUI() {
-  initIMUSetup();
+export function initSensorsUI() {
+  initXimu3();
 
   _modal = document.getElementById('imuSetupModal');
   if (!_modal) return;
@@ -227,7 +230,7 @@ export function initIMUSetupUI() {
   let _lastDeviceCount = 0;
   setOnDataReceived((dev) => {
     noteMessage(dev);
-    const count = getDevices().size;
+    const count = getSensors().size;
     if (count !== _lastDeviceCount) {
       _lastDeviceCount = count;
       if (_visible()) {
@@ -260,28 +263,23 @@ export function initIMUSetupUI() {
   // the LED dispatch below follows, since a silent no-op is exactly the case
   // you need to know about mid-set.
   const tareCursorFn = () => {
-    let tared = false;
-    for (const dev of getDevices().values()) {
-      if (dev.role === 'cursor' && dev.feeding) {
-        captureHeading(dev);
-        // Dispatch from inside the loop, not from a wrapper: the top-bar button
-        // binds this function directly, so a wrapper would only cover the
-        // key/MIDI/OSC paths. Also means no LED when there's no cursor sensor
-        // to tare, which is the honest signal.
-        window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'tare' } }));
-        // Update card tare UI if modal is open
-        if (_visible()) {
-          const card = document.querySelector(`.imu-setup-card[data-sn="${dev.sn}"]`);
-          if (card) {
-            const tareStatus = card.querySelector('.js-tare-status');
-            if (tareStatus) tareStatus.textContent +=
-              ` · heading zeroed ${new Date().toTimeString().slice(0, 5)}`;
-          }
+    // Every sensor holding a role, not only the cursor (sensors.js zeroAllHeadings).
+    const zeroed = zeroAllHeadings();
+    const tared = zeroed.length > 0;
+    for (const dev of zeroed) {
+      if (_visible()) {
+        const card = document.querySelector(`.imu-setup-card[data-sn="${dev.sn}"]`);
+        if (card) {
+          const tareStatus = card.querySelector('.js-tare-status');
+          if (tareStatus) tareStatus.textContent +=
+            ` · heading zeroed ${new Date().toTimeString().slice(0, 5)}`;
         }
-        tared = true;
-        break;
       }
     }
+    // Here, not in a wrapper: the top-bar button binds this function directly,
+    // so a wrapper would only cover the key/MIDI/OSC paths. No LED when there
+    // was no sensor to zero, which is the honest signal.
+    if (tared) window.dispatchEvent(new CustomEvent('mubone-led', { detail: { id: 'tare' } }));
     // Steer and surface (Ek, 2026-09-03: "when I zero in sweep and surface
     // mode, it should also zero the cursor"): there the cursor is the camera's
     // forward, driven by the mouse, so zero puts the camera back to the front
@@ -306,7 +304,7 @@ export function initIMUSetupUI() {
   document.getElementById('cursorTareBtn')?.addEventListener('click', tareCursorFn);
 
   _initialized = true;
-  DEBUG && console.log('[ui-imu-setup] initialized');
+  DEBUG && console.log('[ui-sensors] initialized');
 }
 
 // ── Modal lifecycle ─────────────────────────────────────────────────────────
@@ -349,7 +347,7 @@ let _selectedSn = null;
 try { _selectedSn = localStorage.getItem(_SEL_KEY); } catch (_) {}
 
 function _resolveSelection() {
-  const devices = getDevices();
+  const devices = getSensors();
   if (_selectedSn && devices.has(_selectedSn)) return _selectedSn;
   let want = null;
   for (const [sn, d] of devices) if (d.role === 'cursor') { want = sn; break; }
@@ -363,7 +361,7 @@ function _resolveSelection() {
 }
 
 function selectSensor(sn) {
-  if (!getDevices().has(sn) || _selectedSn === sn) return;
+  if (!getSensors().has(sn) || _selectedSn === sn) return;
   _selectedSn = sn;
   try { localStorage.setItem(_SEL_KEY, sn); } catch (_) {}
   renderSensors();
@@ -518,7 +516,7 @@ function _finish(ok, msg) {
 
 // (The page's own _isLive is gone, 2026-09-09: it read lastTimestamp, which
 // for an x-imu3 is the device's µs-since-boot clock, and nothing called it.
-// Liveness is imu-setup's `dev.live` now — one clock, one rule, every reader.)
+// Liveness is sensors.js's `dev.live` now — one clock, one rule, every reader.)
 
 function _badge(el, text, ok) {
   if (!el) return;
@@ -532,7 +530,7 @@ function renderSources() {
   // survives as the empty state, the only moment it tells anyone anything.
   const line = document.getElementById('imuSetupSummary');
   if (!line) return;
-  const devices    = getDevices();
+  const devices    = getSensors();
   const discovered = getDiscovered();
   const byWord = { wifi: 0, usb: 0, osc: 0 };
   for (const d of devices.values()) {
@@ -550,7 +548,7 @@ function renderSources() {
 }
 
 // Kept under its old name: the discovery / serial / OSC / device-update
-// callbacks in initIMUSetupUI() all call it, and there is one list now.
+// callbacks in initSensorsUI() all call it, and there is one list now.
 function updateTransportStatus() { renderSources(); }
 
 // ── Part 2: one sensor list ────────────────────────────────────────────────
@@ -612,7 +610,7 @@ const _hasUsbIdentity = info => _usbVendor(info) !== '';
 // DeviceState's `kind`, which is what the hardware is. A connected mubone
 // instrument is cat 'connected', kind 'mubone'.
 function _entries() {
-  const devices    = getDevices();
+  const devices    = getSensors();
   const discovered = getDiscovered();
   const out = [];
   for (const [sn, dev] of devices) out.push({ cat: 'connected', sn, dev });
@@ -683,7 +681,7 @@ function renderSensors() {
     if (isConnected) {
       const d = e.dev;
       const via = d.via || _TRANSPORT_WORD[d.transport] || d.transport;
-      meta = _wireMark(via) + ' ' + [`<span class="js-row-rate">${_fmtRate(_msgRate.get(d.sn))}</span>`, esc(d.role)].join(' · ');
+      meta = _wireMark(via) + ' ' + [`<span class="js-row-rate">${_fmtRate(_msgRate.get(d.sn))}</span>`, esc(d.role === 'unmapped' ? 'none' : d.role)].join(' · ');
       name = d.name;
       title = d.sn.startsWith('osc-') ? d.kind : `${d.kind} ${d.sn}`;
       row.dataset.sn = d.sn;
@@ -718,6 +716,16 @@ function renderSensors() {
       // Blink identifies one among several; with one sensor it has nothing
       // to tell apart and takes no room.
       if (connected > 1) {
+        // The cursor quick-switch (moved here from the hidden cabinet,
+        // 2026-09-27): which of several sensors the hand is, in one click.
+        // Lit on the one that is.
+        const cu = document.createElement('button');
+        cu.className = 'set-btn set-btn--sm set-device-cursor';
+        cu.textContent = 'Cursor';
+        cu.setAttribute('aria-pressed', String(e.dev.role === 'cursor'));
+        cu.title = e.dev.role === 'cursor' ? 'this sensor is the cursor' : 'make this sensor the cursor';
+        cu.addEventListener('click', ev => { ev.stopPropagation(); setRole(e.dev, 'cursor'); renderSensors(); renderSelected(); });
+        row.appendChild(cu);
         const bl = document.createElement('button');
         bl.className = 'set-btn set-btn--sm js-blink';
         bl.textContent = 'Blink';
@@ -726,7 +734,7 @@ function renderSensors() {
         row.appendChild(bl);
       }
       // Connected while packets arrive; NO SIGNAL the moment they stop
-      // (dev.live, imu-setup.js) — the kit's brick badge. The row stays,
+      // (dev.live, sensors.js) — the kit's brick badge. The row stays,
       // because the sensor may come back and its block is still its block.
       const b = document.createElement('span');
       b.className = 'set-badge set-device-id ' + (e.dev.live ? 'set-badge--ok' : 'set-badge--err');
@@ -743,8 +751,8 @@ function renderSensors() {
         x.title = 'let this sensor go — its mounting and role are kept for the next connect';
         x.addEventListener('click', async ev => {
           ev.stopPropagation(); x.disabled = true;
-          if (d.kind === 'mubone') await sygDisconnect(d.sn.replace(/^osc-/, ''));
-          await disconnectDevice(d.sn);
+          if (d.kind === 'mubone') { await sygDisconnect(d.sn.replace(/^osc-/, '')); removeSensor(d.sn); }
+          else await disconnectDevice(d.sn);
           renderSensors(); renderSelected();
         });
         row.appendChild(x);
@@ -836,7 +844,7 @@ function renderSelected() {
   if (!sec || !body) return;
 
   const sn  = _resolveSelection();
-  const dev = sn ? getDevice(sn) : null;
+  const dev = sn ? getSensor(sn) : null;
   if (!dev) { body.innerHTML = ''; sec.hidden = true; return; }
   sec.hidden = false;
 
@@ -868,13 +876,13 @@ function renderSelected() {
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Role</span>
-          <span class="set-row-desc">Cursor drives the grain cursor, camera aims the viewport, frame anchors the sphere to your body.</span>
+          <span class="set-row-desc">Cursor drives the grain cursor, camera pans and tilts the view, none leaves it connected and idle.</span>
         </div>
         <div class="set-ctl">
           <select class="imu-setup-select imu-setup-role-select js-role">
             <option value="cursor">cursor</option>
             <option value="camera">camera</option>
-            <option value="frame">frame</option>
+            <option value="unmapped">none</option>
           </select>
         </div>
       </div>
@@ -1057,8 +1065,8 @@ function wireSelected(card, dev) {
   }
   updateAxisMapLabels(card, dev.axesAlignment);
 
-  // ── Polarity buttons — these write the slot's axis map now, so they are
-  // applied AFTER the mount and heading rotations and cannot invalidate them.
+  // ── Polarity buttons — the slot's three signs, applied AFTER the mount and
+  // heading rotations, so they cannot invalidate them.
   for (const axis of ['roll', 'pitch', 'yaw']) {
     const btn = card.querySelector(`.js-pol-${axis}`);
     updatePolBtn(btn, getPolarity(dev, axis), axis);
@@ -1066,11 +1074,6 @@ function wireSelected(card, dev) {
       updatePolBtn(btn, togglePolarity(dev, axis), axis);
     });
   }
-
-  // (The roll Mute button left the table 2026-09-01 with the footer's RO —
-  // the camera takes no roll and the mapping page toggles rows itself, so a
-  // third mute had no reader left. A stale mute:true in an old saved cal is
-  // still honoured by findForwardAxis; nothing can set a new one.)
 
   // ── Tare + heading
   // ── Mount calibration + heading zero
@@ -1140,18 +1143,17 @@ function updateAxisMapLabels(card, alignValue) {
   if (elU) elU.textContent = u;
 }
 
-// The convention defaults, mirroring defaultQuatAxisMap() in sensor-registry:
-// pitch and yaw map through −1 for EVERY sensor — that is the device-euler →
+// The convention defaults (sensor-math.js DEFAULT_SIGNS): pitch and yaw map
+// through −1 for EVERY sensor — that is the device-euler →
 // viz handedness conversion, not a user edit. The amber "changed" face marks
 // only a sign that DIFFERS from this default: for months the buttons marked
 // sign < 0 instead, so a untouched sensor showed pitch and yaw burning amber
 // and read as manual flips left behind (Ek, 2026-09-01: "the polarity of the
 // pitch and yaw keep persisting" — measured: his stored signs were
 // byte-identical to a fresh slot's defaults; nothing had persisted).
-const DEFAULT_VIZ_SIGN = { roll: 1, pitch: -1, yaw: -1 };
 function updatePolBtn(btn, sign, axis) {
   btn.textContent = sign > 0 ? '+' : '−';
-  btn.classList.toggle('reversed', sign !== DEFAULT_VIZ_SIGN[axis]);
+  btn.classList.toggle('reversed', sign !== DEFAULT_SIGNS[axis]);
 }
 
 // The feed control is a toggle (SETTINGS-GUI § 3), so its STATE is the switch
@@ -1200,7 +1202,7 @@ function updateAllReadouts() {
 
   for (const card of container.children) {
     const sn = card.dataset.sn;
-    const dev = getDevice(sn);
+    const dev = getSensor(sn);
     if (!dev) continue;
 
     // Raw Euler
@@ -1211,11 +1213,7 @@ function updateAllReadouts() {
     _turnDial(card, 'raw', 'pitch', dev.rawEuler.pitch);
     _turnDial(card, 'raw', 'yaw',   dev.rawEuler.yaw);
 
-    // Calibrated euler — the slot's zeroEuler, i.e. post-cal post-axis-map.
-    // This called dev.getCalibratedEuler(), a method that stopped existing in
-    // the 2026-08-31 calibration rewrite — every repaint of a live card threw
-    // and died here, which is why this column showed "—" forever and the rate
-    // badge below never updated (#308).
+    // Calibrated — the slot's attitude: after mount, heading and signs.
     const cal = getCalibratedEuler(dev);
     card.querySelector('.js-cal-roll').textContent  = fmtDeg(cal?.roll);
     card.querySelector('.js-cal-pitch').textContent = fmtDeg(cal?.pitch);

@@ -12,7 +12,7 @@
 // A binding is  { sensor, axis, inLo, inHi, fold, curve?, outLo?, outHi? }
 // keyed by action id. `sensor` is a slot NAME (`/sensor/{name}/…`), not a
 // role, so any sensor on the rig can drive a row — not only the cursor's.
-// The axis is read from the slot's `zeroEuler` (post-calibration, the same
+// The axis is read from the slot's `attitude` (post-calibration, the same
 // reading the old mapping rows used): elevation, roll, azimuth. Azimuth is
 // heading and drifts with the magnetometer off; elevation and roll are
 // gravity-referenced and do not.
@@ -26,12 +26,12 @@ import { S } from './state.js';
 import { getRegistry, getByRole } from './sensor-registry.js';
 import { scaleControl } from './scale.js';
 
-const STORAGE_KEY = 'mubone_sensor_bindings';
+const STORAGE_KEY = 'mubone_sensor_axis_bindings';
 
 export const SENSOR_AXES = [
-  { id: 'elevation', label: 'Elevation', read: e => e.y },
-  { id: 'roll',      label: 'Roll',      read: e => e.x },
-  { id: 'azimuth',   label: 'Azimuth',   read: e => e.z, note: 'heading — drifts with the magnetometer off' },
+  { id: 'elevation', label: 'Elevation', read: e => e.pitch },
+  { id: 'roll',      label: 'Roll',      read: e => e.roll },
+  { id: 'azimuth',   label: 'Azimuth',   read: e => e.yaw, note: 'heading — drifts with the magnetometer off' },
 ];
 const _AXIS = Object.fromEntries(SENSOR_AXES.map(a => [a.id, a]));
 
@@ -47,9 +47,45 @@ let _bindings = {};
 const _last = new Map();   // action id → last dispatched value
 
 try {
-  const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  // The old key wins when it is there: it only reappears when an older setup
+  // file is imported, and then it is the newer truth (review, 2026-09-27).
+  const raw = _fromOldKey() ?? JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
   if (raw && typeof raw === 'object') _bindings = raw;
+  _repairFolded();
 } catch (_) { _bindings = {}; }
+
+// ONE-SHOT, 2026-09-27: Elevation used to read NEGATIVE as the hand rose
+// (sensor-math.js attitude). Under the old key every elevation row's range was
+// taken on that scale, so it is negated once — both ends, which keeps the
+// mapping identical: the row sounds exactly as it did, and its numbers now
+// read the way the hand moves. Old key read, new key written, old key removed.
+function _fromOldKey() {
+  const OLD = 'mubone_sensor_bindings';
+  const old = JSON.parse(localStorage.getItem(OLD) || 'null');
+  if (!old || typeof old !== 'object') return null;
+  for (const b of Object.values(old)) {
+    // A FOLDED row reads |x|, the same under either sign — its range stays.
+    if (b?.axis !== 'elevation' || b.fold) continue;
+    if (Number.isFinite(b.inLo)) b.inLo = -b.inLo;
+    if (Number.isFinite(b.inHi)) b.inHi = -b.inHi;
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(old));
+  localStorage.removeItem(OLD);
+  return old;
+}
+
+// A folded row reads |x| ≥ 0, so a range entirely below zero can never be
+// reached: the row sticks at one end. The first build of the migration above
+// negated folded rows too (2026-09-27, caught in review) — put them back. A
+// sanity rule, not a migration: such a range is wrong whatever made it.
+function _repairFolded() {
+  let fixed = false;
+  for (const b of Object.values(_bindings)) {
+    if (!b?.fold || !Number.isFinite(b.inLo) || !Number.isFinite(b.inHi)) continue;
+    if (b.inLo <= 0 && b.inHi <= 0 && (b.inLo < 0 || b.inHi < 0)) { b.inLo = -b.inLo; b.inHi = -b.inHi; fixed = true; }
+  }
+  if (fixed) localStorage.setItem(STORAGE_KEY, JSON.stringify(_bindings));
+}
 
 function _save() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_bindings)); } catch (_) {}
@@ -101,7 +137,7 @@ export function sensorNames() {
 
 /** One axis of one sensor, in degrees, or null while it is not sending. */
 export function readSensorAxis(sensor, axis, fold = false) {
-  const e = getRegistry().get(sensor)?.zeroEuler;
+  const e = getRegistry().get(sensor)?.attitude;
   const a = _AXIS[axis];
   if (!e || !a) return null;
   const v = a.read(e);

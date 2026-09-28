@@ -27,85 +27,29 @@
 //      near-inverted mount — because H was the swing-twist, not the yaw read
 // ============================================================================
 
-import { readFileSync } from 'node:fs';
+// The APP'S functions — not a copy. Until 2026-09-27 this file re-typed them
+// "to match sensor-registry.js exactly", which is a promise, not a test: a
+// copy can pass while the app is wrong. sensor-math.js is pure so it can be
+// imported here.
+import {
+  qMul, qConj, twistAboutZ, headingAboutZ, applyCal, mountFromPoses, MOUNT_POSE_MIN_DEG,
+  quatToEulerDeg, DEFAULT_SIGNS, attitude, orientation, panTilt,
+} from '../js/sensor-math.js';
 
-// ── quaternion helpers, matching sensor-registry.js exactly ─────────────────
-const qMul = (a, b) => [
-  a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1],
-  a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0],
-  a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3],
-  a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2],
-];
-const qConj = (q) => [-q[0], -q[1], -q[2], q[3]];
+// ── test-only helpers ───────────────────────────────────────────────────────
 const axisAngle = (x, y, z, deg) => {
   const n = Math.hypot(x, y, z) || 1, h = (deg * Math.PI / 180) / 2, s = Math.sin(h);
   return [x/n*s, y/n*s, z/n*s, Math.cos(h)];
 };
-const TWIST_EPS = 1e-6;
-const twistAboutZ = (q) => {
-  const n = Math.hypot(q[2], q[3]);
-  if (n < TWIST_EPS) return [0, 0, 0, 1];
-  return [0, 0, q[2]/n, q[3]/n];
-};
-const applyCal = (q, cal) => {
-  let o = q;
-  if (cal.mountQuat)   o = qMul(o, qConj(cal.mountQuat));
-  if (cal.headingQuat) o = qMul(qConj(cal.headingQuat), o);
-  return o;
-};
-const v3n = (v) => { const n = Math.hypot(v[0],v[1],v[2]) || 1; return [v[0]/n, v[1]/n, v[2]/n]; };
-const v3x = (a,b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
-const v3d = (a,b) => a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
-const toBody = (q,v) => { const t=[2*(q[1]*v[2]-q[2]*v[1]),2*(q[2]*v[0]-q[0]*v[2]),2*(q[0]*v[1]-q[1]*v[0])];
-  return [v[0]-q[3]*t[0]+(q[1]*t[2]-q[2]*t[1]), v[1]-q[3]*t[1]+(q[2]*t[0]-q[0]*t[2]),
-          v[2]-q[3]*t[2]+(q[0]*t[1]-q[1]*t[0])]; };
-function quatFromCols(cx, cy, cz) {
-  const m=[[cx[0],cy[0],cz[0]],[cx[1],cy[1],cz[1]],[cx[2],cy[2],cz[2]]];
-  const tr=m[0][0]+m[1][1]+m[2][2]; let x,y,z,w,s;
-  if (tr>0){s=Math.sqrt(tr+1)*2;w=0.25*s;x=(m[2][1]-m[1][2])/s;y=(m[0][2]-m[2][0])/s;z=(m[1][0]-m[0][1])/s;}
-  else if(m[0][0]>m[1][1]&&m[0][0]>m[2][2]){s=Math.sqrt(1+m[0][0]-m[1][1]-m[2][2])*2;w=(m[2][1]-m[1][2])/s;x=0.25*s;y=(m[0][1]+m[1][0])/s;z=(m[0][2]+m[2][0])/s;}
-  else if(m[1][1]>m[2][2]){s=Math.sqrt(1+m[1][1]-m[0][0]-m[2][2])*2;w=(m[0][2]-m[2][0])/s;x=(m[0][1]+m[1][0])/s;y=0.25*s;z=(m[1][2]+m[2][1])/s;}
-  else{s=Math.sqrt(1+m[2][2]-m[0][0]-m[1][1])*2;w=(m[1][0]-m[0][1])/s;x=(m[0][2]+m[2][0])/s;y=(m[1][2]+m[2][1])/s;z=0.25*s;}
-  return [x,y,z,w];
-}
-const MOUNT_POSE_MIN_DEG = 20;
-// TWO poses. One is not enough — see § H.
-const mountFromPoses = (q1, q2) => {
-  const up = v3n(toBody(q1, [0,0,1]));
-  const d = qMul(qConj(q1), q2);
-  const sg = d[3] < 0 ? -1 : 1;
-  let ax = [d[0]*sg, d[1]*sg, d[2]*sg];
-  const len = Math.hypot(ax[0], ax[1], ax[2]);
-  if (2*Math.atan2(len, Math.abs(d[3]))*180/Math.PI < MOUNT_POSE_MIN_DEG) return null;
-  ax = v3n(ax);
-  let yp = [-ax[0], -ax[1], -ax[2]];
-  const al = v3d(yp, up);
-  yp = v3n([yp[0]-al*up[0], yp[1]-al*up[1], yp[2]-al*up[2]]);
-  if (!Number.isFinite(yp[0]) || Math.hypot(yp[0],yp[1],yp[2]) < 0.5) return null;
-  const B = qConj(quatFromCols(v3x(yp, up), yp, up));
-  return { mountQuat: B, headingQuat: twistAboutZ(qMul(q1, qConj(B))) };
-};
 // the calibration gesture: neutral, then pointing down 60°
 const captureMount = (rest) => mountFromPoses(rest, qMul(rest, qMul(qConj(rest),
   qMul(qMul(twistAboutZ(rest), axisAngle(0,1,0,-60)), qMul(qConj(twistAboutZ(rest)), rest)))));
-// H is the yaw the app READS (body-X azimuth, quatToEulerDeg's yaw) as a pure
-// Z rotation — not the swing-twist, which is only the heading at a level pose.
-const headingAboutZ = ([x, y, z, w]) => {
-  const yaw = Math.atan2(2*(w*z + x*y), 1 - 2*(y*y + z*z));
-  return [0, 0, Math.sin(yaw/2), Math.cos(yaw/2)];
-};
+// sensor-registry's captureHeading, on a bare cal instead of a slot
 const captureHeading = (q, cal) => {
   const turned = cal.mountQuat ? qMul(q, qConj(cal.mountQuat)) : q;
   return { ...cal, headingQuat: headingAboutZ(turned) };
 };
-// ZYX Tait-Bryan, byte-for-byte the app's quatToEulerDeg
-const toEuler = (x, y, z, w) => {
-  const roll = Math.atan2(2*(w*x + y*z), 1 - 2*(x*x + y*y)) * 180/Math.PI;
-  const sp = 2*(w*y - z*x);
-  const pitch = Math.abs(sp) >= 1 ? Math.sign(sp)*90 : Math.asin(sp)*180/Math.PI;
-  const yaw = Math.atan2(2*(w*z + x*y), 1 - 2*(y*y + z*z)) * 180/Math.PI;
-  return { roll, pitch, yaw };
-};
+const toEuler = (x, y, z, w) => { const e = quatToEulerDeg(x, y, z, w); return { roll: e.x, pitch: e.y, yaw: e.z }; };
 const angBetween = (a, b) => {
   const d = Math.abs(a[0]*b[0] + a[1]*b[1] + a[2]*b[2] + a[3]*b[3]);
   return 2 * Math.acos(Math.min(1, d)) * 180/Math.PI;
@@ -314,12 +258,6 @@ section('F. persisted schema');
   const round = JSON.parse(JSON.stringify({ mountQuat: cal.mountQuat, headingQuat: cal.headingQuat }));
   check(angBetween(applyCal(mount, round), IDENT) < 1e-4,
         'calibration survives a JSON round-trip', 'localStorage-safe');
-  // v1 → v2: a stored tareQuat was the whole orientation, which is what
-  // captureMount now splits. Migrating must not change behaviour.
-  const legacy = mount;
-  const migrated = { mountQuat: legacy, headingQuat: null };
-  check(angBetween(applyCal(legacy, migrated), IDENT) < 1e-4,
-        'a v1 tareQuat migrates to the same behaviour', 'no silent re-zero on upgrade');
 }
 
 // ── G. a turn is yaw at EVERY mounting angle ───────────────────────────────
@@ -420,24 +358,70 @@ section('H. performer pitch and roll, mounts with strap twist');
 }
 
 // ── I. the default axis map carries the convention offset ─────────────────
-// applyAxisMapQuat decomposes Z-up (quatToEulerDeg, yaw about Z) and recomposes
+// orientation() decomposes Z-up (quatToEulerDeg, yaw about Z) and recomposes
 // Y-up graphics (yaw about (0,1,0), pitch about (1,0,0), roll about (0,0,1)).
 // That relabelling is fixed and mount-independent, so its correction lives in
-// the DEFAULT map. Reset these to +1 and every freshly calibrated mounting
+// the DEFAULT signs. Reset these to +1 and every freshly calibrated mounting
 // needs the same two manual flips — which is what happened across four
 // different mountings on 2026-08-31 before the cause was found.
-section('I. default axis map convention');
+section('I. default axis signs');
 {
-  const src = readFileSync(new URL('../js/sensor-registry.js', import.meta.url), 'utf8');
-  const body = src.slice(src.indexOf('function defaultQuatAxisMap()'),
-                         src.indexOf('function defaultInertialAxisMap()'));
-  const signOf = (viz) => {
-    const m = body.match(new RegExp(`viz: '${viz}',\\s*sign:\\s*(-?1)`));
-    return m ? Number(m[1]) : null;
-  };
+  const signOf = (axis) => DEFAULT_SIGNS[axis];
   check(signOf('roll') === 1,   'default roll sign is +1',  `got ${signOf('roll')}`);
   check(signOf('pitch') === -1, 'default pitch sign is -1', `got ${signOf('pitch')} — the Z-up→Y-up relabelling`);
   check(signOf('yaw') === -1,   'default yaw sign is -1',   `got ${signOf('yaw')} — the Z-up→Y-up relabelling`);
+}
+
+// ── J. the relabelling to the sphere: what the cursor does ─────────────────
+// orientation() is the one crossing from the sensor's Z-up to the sphere's
+// Y-up. With the default signs, on a calibrated mount: tipping up raises the
+// cursor, a turn moves only its azimuth and by exactly the turn, and a roll
+// does not move it at all (the cursor is a direction, not an attitude).
+section('J. the cursor on the sphere');
+{
+  const fwd = (q) => { const [x,y,z,w] = q; return [2*(x*z+w*y), 2*(y*z-w*x), 1-2*(x*x+y*y)]; };
+  const mount = qMul(axisAngle(0,0,1,-45), axisAngle(1,0,0,90));   // vertical, on a back
+  const cal = { ...captureMount(mount), signs: { ...DEFAULT_SIGNS } };
+  const pose = (att) => qMul(cal.headingQuat, qMul(att, cal.mountQuat));
+  const f0 = fwd(orientation(pose(axisAngle(1,0,0,0)), cal));
+  const up = fwd(orientation(pose(axisAngle(0,1,0,25)), cal));
+  check(Math.abs(f0[1]) < 1e-9 && Math.abs(f0[2] - 1) < 1e-9, 'at the calibrated pose the cursor is dead ahead', `[${f0.map(v => v.toFixed(3))}]`);
+  check(up[1] > 0.4, 'tipping up raises the cursor', `forward y ${up[1].toFixed(3)} (sin 25° = 0.423)`);
+  const t = fwd(orientation(pose(axisAngle(0,0,1,30)), cal));
+  const az = Math.atan2(t[0], t[2]) * 180 / Math.PI;
+  check(Math.abs(t[1]) < 1e-9 && Math.abs(Math.abs(az) - 30) < 1e-6, 'a 30° turn moves only azimuth, by 30°', `az ${az.toFixed(3)}°, y ${t[1].toExponential(1)}`);
+  const at = attitude(pose(axisAngle(0,0,1,30)), cal);
+  check(Math.abs(at.yaw - az) < 1e-6, "the page's yaw is the cursor's azimuth", `yaw ${at.yaw.toFixed(3)}°, az ${az.toFixed(3)}°`);
+  const r = fwd(orientation(pose(axisAngle(1,0,0,40)), cal));
+  check(Math.hypot(r[0], r[1], r[2] - 1) < 1e-9, 'a roll does not move the cursor', `[${r.map(v => v.toFixed(3))}]`);
+  const flipped = { ...cal, signs: { ...DEFAULT_SIGNS, pitch: -DEFAULT_SIGNS.pitch } };
+  const down = fwd(orientation(pose(axisAngle(0,1,0,25)), flipped));
+  check(down[1] < -0.4, 'the pitch polarity button inverts it', `forward y ${down[1].toFixed(3)}`);
+  const a = attitude(pose(axisAngle(0,1,0,25)), cal);
+  check(Math.abs(a.pitch - 25) < 1e-6 && Math.abs(a.roll) < 1e-6 && Math.abs(a.yaw) < 1e-6,
+        'the page reads that tip as +25° pitch, and nothing else', `roll ${a.roll.toFixed(3)} pitch ${a.pitch.toFixed(3)} yaw ${a.yaw.toFixed(3)}`);
+}
+
+// ── K. the camera sensor pans and tilts, never rolls ───────────────────────
+// Ek, 2026-09-01: roll never reaches the sphere. The camera role passed the
+// whole rotation through until 2026-09-27, and a body sensor leaning 20°
+// sideways rolled the view 20°.
+section('K. camera: pan and tilt, no roll');
+{
+  const rot = (q, v) => { const [x,y,z,w] = q, t = [2*(y*v[2]-z*v[1]), 2*(z*v[0]-x*v[2]), 2*(x*v[1]-y*v[0])];
+    return [v[0]+w*t[0]+y*t[2]-z*t[1], v[1]+w*t[1]+z*t[0]-x*t[2], v[2]+w*t[2]+x*t[1]-y*t[0]]; };
+  let worstRoll = 0, worstFwd = 0;
+  for (let i = 0; i < 300; i++) {
+    const q = randomQuat();
+    const f = rot(q, [0,0,1]);
+    if (Math.abs(f[1]) > 0.98) continue;          // straight up or down: no azimuth to keep
+    const v = panTilt(q);
+    const vf = rot(v, [0,0,1]), vr = rot(v, [1,0,0]);
+    worstFwd  = Math.max(worstFwd, Math.hypot(vf[0]-f[0], vf[1]-f[1], vf[2]-f[2]));
+    worstRoll = Math.max(worstRoll, Math.abs(vr[1]));   // the view's right axis stays level
+  }
+  check(worstFwd < 1e-9, 'the view looks exactly where the sensor points', `300 attitudes, worst ${worstFwd.toExponential(1)}`);
+  check(worstRoll < 1e-9, 'the horizon never tilts', `worst right-axis rise ${worstRoll.toExponential(1)}`);
 }
 
 console.log(`\n${fail === 0 ? 'All sensor calibration invariants hold.' : `${fail} FAILED`}  (${pass} checks)`);

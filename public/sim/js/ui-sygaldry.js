@@ -17,6 +17,7 @@
 // ============================================================================
 
 import { S } from './state.js';
+import { removeSensor } from './sensors.js';
 import {
   links, addLink, dropLink, linkForSensor, onLinksChanged, unsupportedReason,
   knownInstruments, rememberedFor, rememberInstrument, forgetInstrument,
@@ -258,7 +259,11 @@ function bindBlock(link, block) {
   const q = (cls) => block.querySelector('.js-' + cls);
 
   q('sygDisconnect')?.addEventListener('click', async () => {
+    const name = link.name;
     await dropLink(link);
+    // …and the row, as the Sensors list's own Disconnect does — one verb, one
+    // outcome; this one left a "No signal" row behind (review, 2026-09-27).
+    removeSensor('osc-' + name);
     render();
   });
 
@@ -423,7 +428,7 @@ function blockFor(dev) {
 // ── Known instruments are DEVICE LIST rows, not buttons in Sources ─────────
 // (Ek, 2026-09-01: "if it's able to say connect amber-blenny that means it
 // sees amber-blenny — that should be shown in the list of devices i can
-// connect to.") The offers are served as data; ui-imu-setup renders them as
+// connect to.") The offers are served as data; ui-sensors renders them as
 // rows of the one sensor list and calls back into the two verbs below.
 export function sygOffers() {
   const liveNames = new Set(links().filter(l => l.name).map(l => l.name));
@@ -438,7 +443,7 @@ export function sygForgetKnown(name) {
   S._refreshSensorList?.();
 }
 // Close a connected instrument's link — the sensor list's Disconnect, for a
-// row whose kind is mubone. The row itself is imu-setup's to drop.
+// row whose kind is mubone. The row itself is sensors.js's to drop.
 export async function sygDisconnect(name) {
   const link = linkForSensor(name);
   if (link) await dropLink(link);

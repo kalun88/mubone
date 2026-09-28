@@ -80,7 +80,7 @@
     <div class="top-bar-left">
       <div class="top-bar-brand">
         <span class="top-bar-logo">mubone</span>
-        <span class="top-bar-version">5.12 alpha</span>
+        <span class="top-bar-version">5.13 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="mu-btn--bare top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -221,7 +221,7 @@
          wordmark's own colour without 9KB of path data in this file. -->
     <div class="tc-brand">
       <img class="tc-mark" src="logo/mark-light.svg" alt="" aria-hidden="true" width="18" height="18">
-      <b>mubone</b> <i>5.12</i>
+      <b>mubone</b> <i>5.13</i>
       <!-- The open piece, in the version's own engraved lettering. The unsaved
            mark is a DOT that is there or is not (js/piece.js) — nothing here is
            dimmed to mean anything. Empty and hidden until there is a piece. -->
@@ -1445,6 +1445,14 @@
       <svg class="ax-map" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h5M16 12h5"/><circle cx="12" cy="12" r="3.4"/><circle cx="18.6" cy="5.6" r="1.7" fill="currentColor" stroke="none"/></svg>
       <i>dry</i>
     </button>
+    <!-- The master reverb's switch (js/master-reverb.js): everything a
+         speaker plays rings out on that speaker. Same shape as dry: one icon,
+         slashed when off. Its dials are in Settings → Audio → Output. -->
+    <button type="button" class="bb-ax bb-rev" id="tcReverb" data-action="reverb" aria-pressed="false" title="reverb — everything a speaker plays rings out there">
+      <svg class="ax-free" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h2.5M10 8.5a5 5 0 0 1 0 7M13.5 6a8.5 8.5 0 0 1 0 12M17 3.5a12 12 0 0 1 0 17"/></svg>
+      <svg class="ax-mute" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h2.5M10 8.5a5 5 0 0 1 0 7M13.5 6a8.5 8.5 0 0 1 0 12M17 3.5a12 12 0 0 1 0 17"/><path d="M4.5 19.5 19.5 4.5"/></svg>
+      <i>verb</i>
+    </button>
     <!-- One icon with two states, not a two-segment capsule: mute is the one
          control on this screen you hit without reading it, and a capsule asks
          to be read before it can be used. No border for the same reason the
@@ -1503,17 +1511,16 @@
 
          It stays in the DOM because it is still the OWNER of that state:
          main.js resolves "is the sensor there" here — OSC bridge, plus any
-         imu-setup transport — and the pill MIRRORS what this block resolved.
+         sensor (sensors.js) — and the pill MIRRORS what this block resolved.
          Deleting the markup would mean re-implementing the resolution in
-         tile-layout.js, which is how one fact ends up with two answers. The
-         switch buttons inside it are likewise still written to by the sensor
-         registry. So: one owner, off screen; one display, up top. -->
+         tile-layout.js, which is how one fact ends up with two answers. So:
+         one owner, off screen; one display, up top. (Its cursor quick-switch
+         moved to the Sensors page's list, 2026-09-27.) -->
     <div class="bottom-bar-right sensor-group no-sensor is-headless" id="sensorGroup" hidden>
       <span class="bb-cap">sensor</span>
       <span class="osc-indicator" id="oscIndicator" title="OSC active — a peer is sending">● OSC</span>
       <span class="sensor-group-label">sensor</span>
       <span class="sensor-group-status" id="sensorGroupStatus"></span>
-      <span class="sensor-switch-btns" id="sensorSwitchBtns"></span>
       <button id="imuSetupBtn" class="mu-btn--bare top-bar-btn" title="sensor setup — the x-IMU3 over WiFi or USB, other OSC sensors, the mount calibration and zero heading">⚙ sensors</button>
       <button id="ximuLedBtn" class="mu-btn--bare top-bar-btn" title="LED feedback — off. click to open it.">○ feedback</button>
     </div>
@@ -2936,6 +2943,51 @@
           <input type="range" id="asOutputGain" class="as-slider"
                  min="-60" max="18" step="0.1" value="-6" data-default="-6">
           <span class="as-val" id="asOutputGainVal">−6.0 dB</span>
+        </div>
+      </div>
+
+      <!-- ── Reverb (js/master-reverb.js) — an insert on every output channel,
+           after master and before the ceiling: whatever a speaker plays rings
+           out on that speaker. The footer's VERB switches it; these are what
+           you set. Never recorded. ── -->
+      <div class="as-meter-group-label">Reverb</div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Amount</span>
+          <span class="set-row-desc">How much reverb over the dry, on every speaker; the footer's verb switches it.</span>
+        </div>
+        <div class="set-ctl set-ctl--slider">
+          <input type="range" id="reverbAmount" class="as-slider" min="0" max="1" step="0.01" value="0.4" data-default="0.4">
+          <span class="as-val" id="reverbAmountNum">40%</span>
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Space</span>
+          <span class="set-row-desc">A small clear room to a twelve-second cloud.</span>
+        </div>
+        <div class="set-ctl set-ctl--slider">
+          <input type="range" id="reverbSpace" class="as-slider" min="0" max="1" step="0.01" value="0.5" data-default="0.5">
+          <span class="as-val" id="reverbSpaceNum">50%</span>
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Tone</span>
+          <span class="set-row-desc">Dark and soft to a clear front over a dark tail.</span>
+        </div>
+        <div class="set-ctl set-ctl--slider">
+          <input type="range" id="reverbTone" class="as-slider" min="0" max="1" step="0.01" value="0.5" data-default="0.5">
+          <span class="as-val" id="reverbToneNum">50%</span>
+        </div>
+      </div>
+      <div class="set-row">
+        <div class="set-row-text">
+          <span class="set-row-title">Freeze</span>
+          <span class="set-row-desc">Holds every tail as it is: nothing new goes in, nothing decays.</span>
+        </div>
+        <div class="set-ctl">
+          <input type="checkbox" class="set-toggle" id="reverbFreeze">
         </div>
       </div>
 

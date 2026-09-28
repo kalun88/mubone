@@ -378,6 +378,24 @@ const ACTIONS = [
     tip: 'the footer\'s dry vol — the spatialized live input in the house mix, −60 to +18 dB, curved toward the top like master',
     range: { min: -60, max: 18, unit: 'dB', curve: 'pow', gamma: LEVEL_FADER_GAMMA },
     ccFn: v => { const db = -60 + Math.pow(v / 127, LEVEL_FADER_GAMMA) * 78; S._setDryMonitorGain?.(db <= -60 ? 0 : Math.pow(10, db / 20)); } },
+  // ── The master reverb (js/master-reverb.js, 2026-09-27): an insert on
+  // every output channel — whatever plays on a speaker rings out there.
+  { id: 'reverb',        label: 'reverb (toggle)',        key: '—', osc: '/reverb',        fmt: 'bang=toggle, int 0|1', type: 'trigger',
+    tip: 'the master reverb — everything a speaker plays rings out on that speaker: loops, grains, the cursor, dry. Off, a ringing tail finishes. The footer\'s VERB' },
+  { id: 'reverb_freeze', label: 'reverb freeze (toggle)', key: '—', osc: '/reverb/freeze', fmt: 'bang=toggle, int 0|1', type: 'trigger',
+    tip: 'hold every tail as it is — nothing new goes in, nothing decays' },
+  { id: 'reverb_amount', label: 'reverb amount', key: '—', osc: '/reverb/amount', type: 'cc',
+    tip: 'how much reverb over the dry, 0–1 (1 is the tail +6 dB over the dry)',
+    range: { min: 0, max: 1 },
+    ccFn: v => { S._setReverb?.({ amount: v / 127 }); } },
+  { id: 'reverb_space',  label: 'reverb space',  key: '—', osc: '/reverb/space', type: 'cc',
+    tip: 'a small clear room (0.8 s) to a cloud (12 s) — decay, size and predelay together',
+    range: { min: 0, max: 1 },
+    ccFn: v => { S._setReverb?.({ space: v / 127 }); } },
+  { id: 'reverb_tone',   label: 'reverb tone',   key: '—', osc: '/reverb/tone',  type: 'cc',
+    tip: 'dark and soft to a clear front over a dark tail',
+    range: { min: 0, max: 1 },
+    ccFn: v => { S._setReverb?.({ tone: v / 127 }); } },
   // dB is already a log scale, so linear IN dB used to be the whole story — but
   // that spends half the throw under −20 dB. The curve is applied to the throw,
   // not to the dB, so the range stays declared in dB and carries the exponent.
@@ -1661,6 +1679,8 @@ const _AXIS_WORD = { sensor: 'free', locked: 'held', mapped: 'mapped' };
 const ACTION_STATE = {
   mute:             () => _onWord(S.isMuted),
   dry_mute:         () => S.dryMonitorMode,
+  reverb:           () => _onWord(S.reverb.on),
+  reverb_freeze:    () => _onWord(S.reverb.freeze),
   audition:         () => _onWord(S.auditionMode),
   tape_slice:       () => _onWord(S.triggerParams.sliceOn),
   tape_dwell:       () => (S.triggerParams.dwell === 'oneshot' ? 'once' : S.triggerParams.dwell),
@@ -1726,6 +1746,8 @@ function _runAction(id, midiVal) {
       else S._setDryMonitorMode?.(S._dryModeBeforeMute || 'on');
       break;
     }
+    case 'reverb':        S._setReverb?.({ on:       _onOff(midiVal, S.reverb.on) });       break;
+    case 'reverb_freeze': S._setReverb?.({ freeze:   _onOff(midiVal, S.reverb.freeze) });   break;
     case 'dry_mute_hold': {
       const on = midiVal > 0;
       if (on) {
