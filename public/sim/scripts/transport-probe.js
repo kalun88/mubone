@@ -65,7 +65,6 @@ function stopFlood() { clearInterval(floodTimer); floodTimer = null; try { flood
       const idx = S.samples.length - 1;
       await S._ensureWorkletForSample?.(buf);
       B.hotSwapSample(buf);
-      S.samplerIndex = idx;
       S._paletteTap?.(2);
       S._setWet?.(true);
       S.scanMuted = false; S.lensMode = 'area'; S.searchRadiusDeg = 12; S.recencyN = 0;

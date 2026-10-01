@@ -273,8 +273,6 @@ function buildManifest(audio, { particleWitness = false } = {}) {
     // ── Misc live state ──
     currentStrokeId: S.currentStrokeId,
     strokeIdCounter: S.strokeIdCounter,
-    sourceKind:      S.sourceKind,
-    samplerIndex:    S.samplerIndex,
     liveColorIndex:  S.liveColorIndex,
 
     // ── Live performance state ──
@@ -352,7 +350,7 @@ function _voicingsInUse() {
  * Rebuild the session from a manifest and the audio members it names.
  * `audio` is a Map of id → take (js/take.js), as readPiece returns it.
  */
-async function applyManifest(data, audio) {
+async function applyManifest(data, audio, { keepSamples = false } = {}) {
   // 0a. Validate shape BEFORE touching any state — a truncated or hand-edited
   // file must not leave a half-cleared session behind.
   if (data?._magic !== PIECE_MAGIC) throw new Error('not a mubone piece');
@@ -386,9 +384,10 @@ async function applyManifest(data, audio) {
   }
   S.strokeHistory = [];
 
-  // 1. Samples
-  S.samples.length = 0;
-  for (const s of (data.samples || [])) {
+  // 1. Samples — the piece's become the KIT (sample-kit.js); a new piece
+  // keeps the kit it had.
+  if (!keepSamples) S.samples.length = 0;
+  for (const s of (keepSamples ? [] : (data.samples || []))) {
     const buf = bufFor(s.audio);
     S.samples.push({
       buffer:      buf,
@@ -597,8 +596,6 @@ async function applyManifest(data, audio) {
 
   // 5. Misc state
   if (typeof data.currentStrokeId === 'number') S.currentStrokeId = data.currentStrokeId;
-  if (data.sourceKind === 'live' || data.sourceKind === 'sampler') S.sourceKind = data.sourceKind;
-  if (typeof data.samplerIndex === 'number' && data.samplerIndex >= 0) S.samplerIndex = data.samplerIndex;
   if (typeof data.liveColorIndex === 'number') S.liveColorIndex = data.liveColorIndex;
 
   // 5a. Stroke-id continuity. Recency ranks by strokeId and undo filters by it
@@ -811,13 +808,14 @@ export function quickSignature() {
 }
 
 /**
- * Is there anything in the document at all — a take, a sample, a mark, a pin?
+ * Is there anything in the document at all — a take, a mark, a pin?
  * A patch is not material: every knob has a value at all times, so a session
- * that has never been played is not half a piece, it is no piece.
+ * that has never been played is not half a piece, it is no piece. Nor are the
+ * samples alone (2026-09-30): they are the kit, which keeps itself
+ * (sample-kit.js) — an untitled session holding only the kit loses nothing.
  */
 function hasMaterial() {
   return S.particles.length > 0
-    || S.samples.length > 0
     || (S.liveRecBuffers || []).some(b => b && (b.buffer || b.liveBuffer))
     || (S.commitSlots || []).some(Boolean);
 }
@@ -1051,7 +1049,8 @@ export async function openPieceAt(path, statusFn) {
  */
 export async function newPiece() {
   if (!(await mayLetGoOfPiece())) return false;
-  await applyManifest({ _magic: PIECE_MAGIC, _version: PIECE_VERSION }, new Map());
+  // The samples stay: they are the kit, not this piece's (sample-kit.js).
+  await applyManifest({ _magic: PIECE_MAGIC, _version: PIECE_VERSION }, new Map(), { keepSamples: true });
   S.doc.path = null;
   S.doc.name = null;
   markSaved();

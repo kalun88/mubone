@@ -14,10 +14,9 @@
 //            material: #183's rule ("the player knows before pressing
 //            record") with the decision moved onto the brush.
 //
-// The stamp material is gone (#247): a loaded sample is a SOURCE, not a
-// brush — S.sourceKind decides where the ink comes from, and sampler.js owns
-// that half. The same gesture deposits granular or struck material depending
-// on the brush, from whichever source is on.
+// The stamp material is gone (#247). A loaded sample is a PAD on the input
+// since 2026-09-30 (sampler.js): the same gesture records whatever is sounding
+// into it — the mic, a pad, or both.
 // ============================================================================
 
 import { S, GESTURE_LONG_MS } from './state.js';
@@ -105,12 +104,8 @@ function _toolDown() {
     // or a line layers onto it — pinning the line first — and anywhere else
     // is a plain line. Slice takes never dub. Nothing refuses.
     if (!S.triggerParams.sliceOn) S._beginDubByTouch?.();
-    // tape + sampler = the old stamp's fires-on-touch: the sampler stroke is
-    // recorded as a trigger and armed on release (#247).
-    if (S.sourceKind === 'sampler') { S._samplerTrace?.(true, { trigger: true }); return true; }
     S._startTriggerRecord?.(); return true;
   }
-  if (S.sourceKind === 'sampler') { S._samplerTrace?.(true); return true; }
   S._startPaintStroke?.();
   return true;
 }
@@ -119,7 +114,6 @@ function _toolUp() {
   // moved under a gesture (it cannot — tiles.js holds it — but a session
   // import can) ends whatever IS running rather than nothing.
   S._stopEraseStroke?.();
-  if (S.sourceKind === 'sampler') S._samplerTrace?.(false);
   S._stopTriggerRecord?.();
   // The overdub's press-time flags are read by the stroke's commit inside
   // stopTriggerRecord; a press that never recorded (no take started) would

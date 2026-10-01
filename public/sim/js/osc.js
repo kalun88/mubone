@@ -614,14 +614,20 @@ function _route(address, values) {
     // and stopped "the tool in the hand", and arming is gone — a play names
     // the POSITION it plays, so the address is `/palette/N` and nothing else
     // (the `/hold` and `/toggle` pair went the same evening, with the verb).
-    // ── Source / sampler (#247) ────────────────────────────────────────────
-    // /source/live | /source/sampler — bang selects what the brush inks from
-    case '/source/live':    S._dispatchAction?.('source_live', 127);    break;
-    case '/source/sampler': S._dispatchAction?.('source_sampler', 127); break;
-    // /sampler/sample int — 1..10 = slot, anything else = next loaded
-    case '/sampler/sample': S._dispatchAction?.('sampler_sample', values[0] || 127); break;
+    // ── Sampler ────────────────────────────────────────────────────────
+    // /sampler/play int [int] — slot 1..10 into the input, as its key does;
+    // the second int is the key's edge (1 down, 0 up — the up ends its loop),
+    // and a bare slot is a down.
+    case '/sampler/play': {
+      const n = Math.round(Number(values[0]));
+      const down = values.length < 2 || Number(values[1]) > 0;
+      if (n >= 1 && n <= 10) S._dispatchAction?.(`sampler_play_${n}`, down ? 127 : 0);
+      break;
+    }
     // /sampler/record int — 1 = start capture into next free slot, 0 = stop
     case '/sampler/record': S._dispatchAction?.('sampler_record', values[0] ? 127 : 0); break;
+    // /sampler/resample int — the same, from what mubone plays (not the input)
+    case '/sampler/resample': S._dispatchAction?.('sampler_resample', values[0] ? 127 : 0); break;
 
     // ── Cursor lock (hold) ──────────────────────────────────────────────────
     // Held az + el, and in steer/surface the pointer handed back. This used to

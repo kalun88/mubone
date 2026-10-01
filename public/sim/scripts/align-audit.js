@@ -1672,18 +1672,18 @@ function collapses(label, items, key) {
     const sens = document.getElementById('tcSensor');
     const mic  = document.getElementById('tcMic');
     const lbl  = document.querySelector('#micEnableBtn span:last-child');
-    const keepRig = S.rig, keepSrc = S.sourceKind, keepLbl = lbl ? lbl.textContent : null;
+    const keepRig = S.rig, keepLbl = lbl ? lbl.textContent : null;
     const w = { sensor: new Set(), input: new Set() };
     const states = [ {}, { found: 1 }, { up: true, cursorVia: 'wifi', count: 1 },
                      { up: true, cursorVia: 'usb', count: 2 }, { lost: true } ];
     for (const st of states) { S.rig = st; await new Promise(r => setTimeout(r, 230)); w.sensor.add(sens.offsetWidth); }
     if (lbl) {
-      for (const [l, sk] of [['enable mic','live'], ['mic ready','live'], ['mic ready','sampler']]) {
-        lbl.textContent = l; S.sourceKind = sk; await new Promise(r => setTimeout(r, 230)); w.input.add(mic.offsetWidth);
+      for (const l of ['enable mic', 'mic ready']) {
+        lbl.textContent = l; await new Promise(r => setTimeout(r, 230)); w.input.add(mic.offsetWidth);
       }
       lbl.textContent = keepLbl;
     }
-    S.rig = keepRig; S.sourceKind = keepSrc;
+    S.rig = keepRig;
     out.sensorWidths = [...w.sensor]; out.inputWidths = [...w.input];
     // The synthetic sensor LEAVES. Until 2026-09-09 it stayed: in the device
     // map (the header read "up · osc" on a rig with nothing connected), and
@@ -1867,8 +1867,7 @@ function collapses(label, items, key) {
     const { S } = await import('./js/state.js');
     const wait = ms => new Promise(r => setTimeout(r, ms));
     const wasOpen = T.propsOpen(), sheetWas = document.body.classList.contains('prail-open');
-    const armedWas = T.selectedTile()?.id, lensWas = document.querySelector('#toolRail [data-lens].on')?.dataset.lens,
-          srcWas = S.sourceKind;
+    const armedWas = T.selectedTile()?.id, lensWas = document.querySelector('#toolRail [data-lens].on')?.dataset.lens;
     if (!wasOpen) { T.setPropsOpen(true); await wait(300); }
     const out = [];
     // Lines, not pixels: a pill is 22px tall at a 10px face because of its
@@ -1904,8 +1903,7 @@ function collapses(label, items, key) {
     await open('#toolRail [data-tile="pen"]', true);
     // (the lens's sheet was opened here until 2026-09-22 night — it has none now)
     await open('#toolRail .src-sampler', false);
-    // Put the rig back: source, lens, armed tool, and the drawer as found.
-    if (srcWas !== 'sampler') S._samplerSelectSource?.(srcWas);
+    // Put the rig back: lens, armed tool, and the drawer as found.
     if (armedWas) { document.querySelector('#toolRail [data-tile="' + armedWas + '"]')?.click(); await wait(200); }
     if (!sheetWas) T.closeProps?.();
     if (!wasOpen) T.setPropsOpen(false);

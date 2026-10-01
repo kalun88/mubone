@@ -66,8 +66,8 @@
 //           brushClaimsTrace() records a trigger. Loop-on-touch is
 //           triggerParams.dwell, surfaced in the options bar.
 //   pen — a grain brush + the position press → the normal granular trace.
-//           What it inks from is the SOURCE (S.sourceKind, #247) — live
-//           input or the sampler — not a property of any tile.
+//           It records whatever is sounding into the input — the mic, a
+//           sampler pad, or both (audio.js connectInputTap).
 //   scrape top / scrape bottom / scrape all — an erase stroke through the
 //           position press. The three differ only in the
 //           depth and direction they preset; erase already reads the global
@@ -487,15 +487,12 @@ const ACT_TILES = {
   // now that mute is a toggle that keeps the per-pin flags. M and S clear one
   // at a time.)
   mute:      { g: 'muteAll',   action: 'pins_mute',       label: 'mute',       tip: 'silence every pin, and let it back on the next press — your per-pin mutes and solos survive the round trip. Hold it instead for a cut: set the tile momentary in its drawer' },
-  // THE SAMPLER IS A TILE (Ek, 2026-09-22: "make the sampler a legit bench tile
-  // as well"). It was a row in a panel and nothing else — the one thing in the
-  // rails you could not put under a key. What it does is swap the MATERIAL the
-  // brush inks from, which is a press like any other: hold it and this stroke
-  // comes off the file, toggle it and the next few do. It is an ACT and not a
-  // tool because it has no shape and no voice — it changes what the tools read,
-  // the way a lens changes what the cursor sees.
-  sampler: { g: 'sampler', action: 'source_sampler', label: 'sampler', hue: 'source',
-             tip: 'paint from a file instead of the mic — any brush inks from the current take. Hold it for one stroke, or toggle it and it stays' },
+  // THE SAMPLER'S TAB has an act's identity — no shape, no voice — and is
+  // never on the fixed strip. It was the palette tile that swapped the brush
+  // onto a file (2026-09-22); since 2026-09-30 a sample is a pad with its own
+  // key (sampler.js), so there is nothing for this entry to press.
+  sampler: { g: 'sampler', action: null, label: 'sampler', hue: 'source',
+             tip: 'sound files, each a pad on its own key, played into the input' },
 };
 function isActTile(id) { return Object.prototype.hasOwnProperty.call(ACT_TILES, id); }
 /** A tool you play — a brush or an eraser, not a ghost. Custom tiles qualify. */
@@ -722,14 +719,12 @@ const INSTRUMENTS = [
   { id: 'tape',     label: 'tape',    g: 'line',    tip: 'plays a take whole — its switches, how the cursor fires a line, its voice presets' },
   { id: 'granular', label: 'grain',   g: 'dots',    tip: 'plays a take in fragments — its switches, how marks are laid down, its voice presets' },
   { id: 'erase',    label: 'erase',   g: 'erase',   tip: 'takes marks off the sphere — how deep it reaches, and which layer first' },
-  { id: 'sampler',  label: 'sampler', g: 'sampler', tip: 'the file the brushes ink from' },
+  { id: 'sampler',  label: 'sampler', g: 'sampler', tip: 'sound files, each a pad on its own key, played into the input' },
 ];
 // The one that is not in `G`: the lens's own reach rings.
 const INSTR_G = { lens: LENS_G };
-// The sampler is PARKED unless Settings › Tools switches it in (sampler.js):
-// off, its tab is not in the row and nothing can select it.
-const _instruments = () => S.samplerEnabled ? INSTRUMENTS : INSTRUMENTS.filter(i => i.id !== 'sampler');
-S._samplerAvailChanged = () => render();
+// (The sampler was parked behind a Settings switch 2026-09-23 → 09-30; its
+//  tab is always in the row now that a sample is a pad.)
 const LS_INSTR = 'mubone_instrument';
 let _instr = 'tape';
 // ── ZERO IS ALL, AND THE ROW SAYS SO WITH A SWITCH (Ek, 2026-09-26) ──────
@@ -773,7 +768,7 @@ function _zeroToggle(pid) {
 try { const v = localStorage.getItem(LS_INSTR); if (INSTRUMENTS.some(i => i.id === v)) _instr = v; } catch (_) {}
 export function instrument() { return _instr; }
 export function setInstrument(id) {
-  if (!_instruments().some(i => i.id === id) || id === _instr) return false;
+  if (!INSTRUMENTS.some(i => i.id === id) || id === _instr) return false;
   _instr = id;
   try { localStorage.setItem(LS_INSTR, id); } catch (_) {}
   // The tab swaps the bench, so the SHEET follows it — the same rule a row
@@ -1357,8 +1352,14 @@ function handUp(which) {
 let _pressPlay = null;     // the play this press started, for its abort
 let _pressStopped = null;  // the side this press ended
 let _longIsOff = false;    // set by the abort, read by the long in the same tick
+// THE HOLD DECIDES THE MIC ONCE (2026-09-30). Whether a sampler pad was sounding
+// is read at the physical press: a long that takes back the press restarts the
+// recording GESTURE_LONG_MS later, when a pad played in between would otherwise
+// make it a sample stroke with the mic out (audio.js startLiveRecording).
+let _pressPad = -1;
 S._handPress = () => {
   _pressPlay = null; _pressStopped = null;
+  _pressPad = S._soundingPad?.() ?? -1;
   if (_held && _held.i === HAND_POS) {
     const side = _held.side;
     if (side !== 'long') { if (_held.latched) { slotEnd(HAND_POS); _pressStopped = 'press'; } return; }
@@ -1379,7 +1380,8 @@ S._handPress = () => {
 S._handPressAbort = () => {
   const play = _pressPlay; _pressPlay = null;
   _longIsOff = _pressStopped === 'long'; _pressStopped = null;
-  queueMicrotask(() => { _longIsOff = false; });   // only the gesture firing now may read it
+  S._strokePadAtPress = _pressPad;                 // the long's take is decided as the press's was
+  queueMicrotask(() => { _longIsOff = false; S._strokePadAtPress = undefined; });   // only the gesture firing now may read it
   if (!play || _held !== play) return;
   S._gestureAbort?.();
   slotEnd(HAND_POS);                               // the take is gone; let go of the play
@@ -1993,19 +1995,6 @@ let _pinPathPos = null;     // palette index drawing a pin path (toggle or momen
 // to the toggle above them. `allMuted()` is the one answer, and it is correct
 // now that it counts only the groups holding pins.
 const muteOn = () => !!S._pinsAllMuted?.();
-/** THE SAMPLER'S STATE IS DERIVED, like the mute above it: `S.sourceKind` is
- *  the one truth and the tile reads it, so the tile agrees however it was
- *  changed — the panel row, an OSC address, a pad. */
-const samplerOn = () => S.sourceKind === 'sampler';
-/** One door for every press of it: the palette's two verbs and the bench's A.
- *  `want` false is the LIVE input, which is what "off" means here. */
-function _samplerSet(want, pos) {
-  if (want === samplerOn()) return;
-  S._samplerSelectSource?.(want ? 'sampler' : 'live');
-  // selectSource refuses mid-stroke, so read the state back rather than
-  // lighting what we asked for.
-  _pinLit('sampler', samplerOn(), pos);
-}
 S._paletteFire = (i, down = true) => {
   const e = palAt(i); if (!e) return;
   const { id, verb } = e;
@@ -2034,13 +2023,6 @@ S._paletteFire = (i, down = true) => {
       const want = verb === 'momentary' ? down : !muteOn();
       if (verb === 'momentary' ? down === muteOn() : !down) return;
       S._pinsSetAllMuted?.(want); _pinLit('mute', muteOn(), i);
-      return;
-    }
-    // THE SAMPLER, in the mute's shape: a momentary holds the file under the
-    // brush for as long as you hold, a toggle leaves it there.
-    if (id === 'sampler') {
-      if (verb === 'momentary') _samplerSet(down, i);
-      else if (down) _samplerSet(!samplerOn(), i);
       return;
     }
     if (id !== 'pin') { if (down) { _pinFlash('unpin'); unpinSelected(); } return; }
@@ -2312,8 +2294,6 @@ function _scrubEnd() {
 
 export function render() {
   if (_scrubbing) { _renderAfterScrub = true; return; }
-  // A stored `sampler` tab, or the switch just turned off: back to tape.
-  if (_instr === 'sampler' && !S.samplerEnabled) { _instr = 'tape'; try { localStorage.setItem(LS_INSTR, _instr); } catch (_) {} }
   // The hue table is resolved from CSS here, so the published hand hue is
   // refreshed with it — a dark-mode flip changes both.
   _publishHandHue();
@@ -2469,7 +2449,7 @@ export function render() {
     // An act tile's hue is its own when it names one: the pins share theirs
     // because they are one group, and the sampler is not in it.
     const ac = ENGINE_HUE[a.hue ?? 'pins'] ?? ENGINE_HUE.pins;
-    return `<button type="button" class="tile tile--act${id === 'sampler' && samplerOn() ? ' fired' : ''}" style="--c:${ac};--eng:${ac};${SHAPE(verb)}" data-act="${a.action}" data-pal="${id}"${pos} title="${esc(id === 'pin' || id === 'unpin' ? a.tip : `${a.tip} — ${verbWord(id, verb) ?? verb}`)}">` +
+    return `<button type="button" class="tile tile--act" style="--c:${ac};--eng:${ac};${SHAPE(verb)}" data-act="${a.action}" data-pal="${id}"${pos} title="${esc(id === 'pin' || id === 'unpin' ? a.tip : `${a.tip} — ${verbWord(id, verb) ?? verb}`)}">` +
       `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${G[a.g]}</svg>${LEG(n)}</button>`;
   };
   const dock = document.getElementById('paletteDock');
@@ -3002,7 +2982,7 @@ export function render() {
         (on ? `<span class="itab-nm">${i.label}</span>` : '') + `</button>`;
     };
     tabs.innerHTML = `<span class="seg-pill seg-glyph" role="group" aria-label="instrument">` +
-      `${_instruments().map(one).join('')}</span>`;
+      `${INSTRUMENTS.map(one).join('')}</span>`;
   }
 
   renderOptions();
@@ -3104,8 +3084,7 @@ export function renderPinChrome() {
 function _pinEls(kind, pos) {
   if (kind === 'all') kind = 'unpinall';   // midi.js's commit_clear says `all`
   const act = { pin: 'commit_drop', unpin: 'commit_release', unpinall: 'commit_clear',
-                mute: 'pins_mute',
-                sampler: 'source_sampler' }[kind];
+                mute: 'pins_mute' }[kind];
   const rail = document.querySelector(`#lyrModes [data-pin="${kind}"]`);
   const tiles = pos == null
     ? (act ? [...document.querySelectorAll(`#paletteDock [data-act="${act}"]`)] : [])
@@ -5081,7 +5060,7 @@ export function propsOpen() { return _propsOn; }
  *  the dwell pills already cost a day. */
 function openTilePage(id) {
   const instr = instrOf(id);
-  if (instr && _instruments().some(i => i.id === instr)) setInstrument(instr);
+  if (instr && INSTRUMENTS.some(i => i.id === instr)) setInstrument(instr);
   if (!propsOpen()) setPropsOpen(true); else { render(); renderProps(); }
 }
 
@@ -5817,6 +5796,16 @@ function _wireKnobs(sheet, capId) {
       moved = false;
       _scrubStart();
       try { inp.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    // A cell not being edited takes no focus and no text selection on the
+    // press: the mousedown default focused the field and started a native
+    // drag-select, so every scrub painted a highlight across the digits — the
+    // narrow ± cells worst (Ek, 2026-09-30). Cancelling `pointerdown` does not
+    // stop either in Chromium; `mousedown` does. The click still opens the
+    // edit (focus + select the digits, below), and a cell already being edited
+    // keeps its native press so the caret lands where the hand puts it.
+    inp.addEventListener('mousedown', e => {
+      if (e.button === 0 && document.activeElement !== inp) e.preventDefault();
     });
     inp.addEventListener('click', e => {
       if (e.detail > 1 || moved || wasEditing) return;

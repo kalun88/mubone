@@ -5,7 +5,7 @@
 import {
   S, gp, FILTER_MODES, K_MAX,
   SEARCH_RADIUS_MIN, SEARCH_RADIUS_MAX, SEARCH_RADIUS_STEP,
-  DEBUG, AXIS_SOURCES, axisHeld,
+  DEBUG, AXIS_SOURCES, axisHeld, MAX_SAMPLES,
   GATE_METER_MAX, GATE_METER_GAMMA, LEVEL_FADER_GAMMA
 } from './state.js';
 import { TAPE_STEPS, PITCH_MAX_CENTS, quantPitch, quantSpeed } from './tape-pitch.js';
@@ -439,17 +439,17 @@ const ACTIONS = [
     tip: 'paint gate threshold — below this no mark is laid down, so that moment cannot be granulated or fired. it does NOT attenuate audio. the throw is curved toward zero, where the noise floor lives',
     range: { min: 0, max: GATE_METER_MAX, unit: 'RMS', curve: 'pow', gamma: GATE_METER_GAMMA },
     ccFn: v => { S._setPaintGateThreshold?.(gateFracToRms(v / 127)); } },
-  // The sampler is parked (2026-09-23): these do nothing until Settings ›
-  // Tools › Sampler is on, and the group says so.
-  { id: null, group: 'sampler — off unless Settings › Tools' },
-  { id: 'source_live',    label: 'source: live input',      key: '—',                 osc: '/source/live',    fmt: 'bang',             type: 'trigger',
-    tip: 'painting records from the live input (Settings → Audio says which channels)' },
-  { id: 'source_sampler', label: 'source: sampler',         key: '—',                 osc: '/source/sampler', fmt: 'bang',             type: 'trigger',
-    tip: 'painting reads from the sampler\'s current sample instead of the input' },
-  { id: 'sampler_sample', label: 'sampler: select sample',  key: '—',                 osc: '/sampler/sample', fmt: 'int 1..10 = slot, 127 = next loaded', type: 'trigger',
-    tip: 'set the sampler’s current sample — explicit slot number, or cycle the loaded ones' },
+  // THE SAMPLER'S PADS (Ek, 2026-09-30): one action per slot, so a key, a
+  // note, a button or OSC plays it through the one table. A pad plays into
+  // the input the mic feeds; the hand records it (sampler.js playPad).
+  { id: null, group: 'sampler' },
+  ...Array.from({ length: MAX_SAMPLES }, (_, i) => (
+    { id: `sampler_play_${i + 1}`, label: `sample ${i + 1}`, key: '—', osc: '/sampler/play', fmt: `int ${i + 1}, int 1|0`, type: 'hold',
+      tip: `play sample ${i + 1} from its top, into the input — held past its end it loops, and the pass playing at the release plays out. A stroke started while it sounds records it without the mic; one already running takes it on top` })),
   { id: 'sampler_record', label: 'sampler: record (momentary)',  key: '—',                 osc: '/sampler/record', fmt: 'int 0|1',          type: 'hold',
     tip: 'capture the live input into the next free sampler slot — refused while a take is recording' },
+  { id: 'sampler_resample', label: 'sampler: resample (momentary)', key: '—',           osc: '/sampler/resample', fmt: 'int 0|1',        type: 'hold',
+    tip: 'capture what mubone itself plays — grains, loops, lines, pads; not the dry mic, not the reverb — into the next free sampler slot, in mono' },
 ];
 
 // Derive the format column for every cc action from its range, so the modal and
@@ -538,7 +538,7 @@ const _RENAMED_IDS = {
 // tape tab's autopin switch replaced what a loop does at its end (Ek).
 // `tape_overdub`, `tape_autopin` and the take capsule's `take_line`,
 // `take_loop`, `take_dub`, `tape_take` went 2026-09-26: a dub is by touch.
-const _RETIRED_IDS = ['tape_overdub', 'tape_autopin', 'take_line', 'take_loop', 'take_dub', 'tape_take', 'grain_durjit', 'loop_release_mode', 'loop_fade_time', 'handsfree', 'belt_1', 'erase_toggle', 'k_all', 'trace_trigger', 'commit_mode', 'commit_volume', 'commit_speed', 'perf', 'perfmode', 'darkmode', 'projector', 'spatial_panning', 'commit_tether', 'pins_unmute_all',
+const _RETIRED_IDS = ['source_live', 'source_sampler', 'sampler_sample', 'tape_overdub', 'tape_autopin', 'take_line', 'take_loop', 'take_dub', 'tape_take', 'grain_durjit', 'loop_release_mode', 'loop_fade_time', 'handsfree', 'belt_1', 'erase_toggle', 'k_all', 'trace_trigger', 'commit_mode', 'commit_volume', 'commit_speed', 'perf', 'perfmode', 'darkmode', 'projector', 'spatial_panning', 'commit_tether', 'pins_unmute_all',
   'palette_5', 'palette_6', 'palette_7', 'palette_8', 'palette_9'];
 function _migrateIds(map) {
   let n = 0;
@@ -737,6 +737,20 @@ function seedHandKeysIfAbsent() {
     if (!(id in keyMappings)) { keyMappings[id] = { ...km }; dirty = true; }
   if (dirty) saveKeyMappings();
 }
+/** A SAMPLE LANDS ON ITS KEY (Ek, 2026-09-30: "auto assign 1 - 0 as i drop
+ *  files in"). Slot n takes digit n (slot 10 takes 0) the moment it fills —
+ *  unless the slot's pad already has a key, or the digit is already doing
+ *  something else (a learned key stays where it was put). The sticker on the
+ *  sheet's row shows it and relearns it. */
+function seedSamplerKey(n) {
+  const id = `sampler_play_${n}`;
+  if (!(n >= 1 && n <= 10) || id in keyMappings) return;
+  const km = _digitRow(n % 10);
+  if (Object.values(keyMappings).some(m => _sameKey(m, km))) return;
+  keyMappings[id] = km;
+  saveKeyMappings();
+}
+S._seedSamplerKey = seedSamplerKey;
 function seedPaletteDigitsOnce() {
   let stamp = null;
   try { stamp = localStorage.getItem(_PALETTE_DIGITS_KEY); } catch (_) {}
@@ -1730,6 +1744,8 @@ function _withEchoFrom(from, fn) {
 }
 
 function _runAction(id, midiVal) {
+  const pad = /^sampler_play_(\d+)$/.exec(id);
+  if (pad) { S._samplerPad?.(Number(pad[1]), midiVal > 0); return; }
   switch(id) {
     case 'mute': {
       // A key or a note flips; the OSC int sets (1 muted, 0 not) — it said
@@ -2006,17 +2022,11 @@ function _runAction(id, midiVal) {
       S.searchRadiusDeg = Math.min(SEARCH_RADIUS_MAX, S.searchRadiusDeg + SEARCH_RADIUS_STEP);
       updatePlaybackControls(); flashRadiusTooltip();
       break;
-    case 'source_live':
-      if (midiVal > 0) S._samplerSelectSource?.('live');
-      break;
-    case 'source_sampler':
-      if (midiVal > 0) S._samplerSelectSource?.('sampler');
-      break;
-    case 'sampler_sample':
-      if (midiVal > 0) S._samplerSelectSample?.(midiVal);
-      break;
     case 'sampler_record':
-      S._samplerCaptureHold?.(midiVal > 0);
+      S._samplerCaptureHold?.(midiVal > 0, 'input');
+      break;
+    case 'sampler_resample':
+      S._samplerCaptureHold?.(midiVal > 0, 'app');
       break;
     default:
       // CC actions and any other actions dispatched via ccFn

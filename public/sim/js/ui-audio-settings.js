@@ -7,7 +7,7 @@
 
 import { S, DEBUG, MASTER_DEFAULT_DB, MASTER_DEFAULT_GAIN, REC_LIMIT_SECONDS_DEFAULT } from './state.js';
 import { dlog } from './diag.js';
-import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, playSweepChannel, warmUpAudioEngine, applyAudioCushion, outputQueueDepthMs, requestAudioPort } from './audio.js';
+import { initSpeakerBuses, recreateAudioContext, rewireChannelMerger, rewireMonitorChannels, ensureAudioContext, setMicBtnLabel, getMasterBus, connectInputTap, playSweepChannel, warmUpAudioEngine, applyAudioCushion, outputQueueDepthMs, requestAudioPort } from './audio.js';
 import { renderMeters, tickMeters, rebuildMainOutputMeters,
          renderSetMeters, setMeterSources, clearSetMeters,
          startSetMeters, stopSetMeters, initSetGateMeter } from './ui-meters.js';
@@ -217,8 +217,8 @@ function rewireRtAudioRecordingChannel(chIndex, nCh) {
     S.inputAnalyser = actx.createAnalyser();
     S.inputAnalyser.fftSize = 256;
     S.inputAnalyser.smoothingTimeConstant = 0.6;
-    S.inputGainNode.connect(S.inputAnalyser);
   }
+  connectInputTap();
 
   // The routing gains come from the SEND SET and the per-channel trims, in
   // one place (applyInputRouting). `chIndex` still arrives from the old
@@ -310,8 +310,8 @@ function buildInputGraph(channel) {
     S.inputAnalyser = ctx.createAnalyser();
     S.inputAnalyser.fftSize = 256;
     S.inputAnalyser.smoothingTimeConstant = 0.6;
-    S.inputGainNode.connect(S.inputAnalyser);
   }
+  connectInputTap();
 
   // Disconnect any previous splitter→inputGain connection before re-tapping
   try { as.splitterNode.disconnect(S.inputGainNode); } catch(_) {}
@@ -1538,7 +1538,7 @@ async function applyInputDevice() {
     S.inputAnalyser.smoothingTimeConstant = 0.6;
 
     monitorSrc.connect(S.inputGainNode);
-    S.inputGainNode.connect(S.inputAnalyser);
+    connectInputTap();
     // Reconnect dry monitor chain to the new inputGainNode
     if (S.dryGainNode) S.inputGainNode.connect(S.dryGainNode);
     window._micMonitorSrc = monitorSrc;

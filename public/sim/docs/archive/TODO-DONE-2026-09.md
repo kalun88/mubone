@@ -3997,3 +3997,43 @@ it began; git dates the commits Sep 21. The day is the same work either way.)*
   stroke (`from`); `_undoStroke` takes the family (marks, entries, triggers with their cut, pins), redo puts all
   back on the take. pins-audit § R +2 (fail on HEAD: 3 segments and 28 marks left on a missing take).
   trigger-audit's latency loopback check flaked once in five runs — unrelated (latency.js).
+- [x] **A number cell scrubs without highlighting** (2026-09-30) — the engine page's `[data-pval]` cells (the ±
+  spread cells worst) took focus and a native drag-select on mousedown, so every scrub painted a highlight. A cell
+  not being edited now cancels `mousedown` (cancelling `pointerdown` does not stop it in Chromium); the click still
+  focuses and selects the digits, an edited cell keeps its caret press. Not checked on screen by the session.
+- [x] **The sample ▶ plays again** (2026-09-30) — `toggleSamplePreview` handed the take (shared memory, since
+  afe4d4f) to `source.buffer`, which takes an AudioBuffer only, so every ▶ threw and was silent. It copies the crop
+  out as the sampler's monitor does. The copy checked in Ek's live app against a dropped sample; the button not
+  pressed by the session (the running app holds the old module until a reload).
+- [x] **The sampler's head is its switch** (2026-09-30) — since the fixed palette nothing on screen put the file
+  under the brush (Ek picked a take, played, heard the mic). `#srcUseBtn` in the sheet head flips `S.sourceKind`,
+  source hue, reads S back; the line is `file` / `mic`; the rail tile's stale "hold A" tooltip fixed. Checked in a
+  private instance: off→on→off, track in the source hue, switch centre 1.5px below the text's. align/ui-shots not run.
+- [x] **Samples are pads on the input** (2026-09-30) — `sampler_play_N` on digits 1–0 as slots fill, a row sticker on
+  the sheet; a pad plays into `S.inputAnalyser` beside the gated mic (audio.js connectInputTap), so a stroke started
+  while one sounds records it without the mic and pads layer into a mic stroke. sourceKind, the park switch,
+  samplerTrace, samplerIndex, /source/* and /sampler/sample gone; /sampler/play i added. Private-instance checks:
+  keys seeded, key→voice, sample stroke (mic out, 12 marks), mic stroke + pad (mic stays in across the long). Rig suites not run.
+- [x] **A tape head is a hollow ring** (2026-09-30) — `_drawPlayheadMark` (loops, overdub heads, line triggers)
+  strokes a ring of the glow dot's size, white at GLOW_ALPHA, instead of filling the dot, so a head travelling a
+  line reads apart from a cloud's or the cursor's grains. Seen in a private instance on a pinned loop; nothing else changed.
+- [x] **The sampler resamples the app** (2026-09-30) — an `app` button beside `rec`, `sampler_resample`,
+  `/sampler/resample`: captures `audio.js resampleBus`, a mono sum of the grain engine's outputs, every tape voice
+  (after its pin gain) and the pads — no dry, no reverb, pre-fader. Private instance: a pad resampled (peak 0.72, key
+  4 dealt) and the cursor's grains resampled with nothing else playing (peak 1.18 — it can exceed 1). Rig suites not run.
+- [x] **A held sample key loops** (2026-09-30) — `sampler_play_N` is a hold: the voice starts with `loop` on and
+  the up turns it off, so the pass under way plays out (tap = one-shot, hold = loop, no window). `/sampler/play n
+  [1|0]` carries the edge; the sheet's playhead wraps. Private instance: a tap ended after one 2.4 s pass, a 5.5 s
+  hold was still looping, and after the up it played out its pass and stopped.
+- [x] **The samples persist as a kit** (2026-09-30) — `js/sample-kit.js`: IndexedDB, audio written once per
+  sample, a manifest per change; loaded at boot. Opening a piece makes its samples the kit, a new piece keeps it,
+  samples alone are not unsaved material. Private instance, across two reloads: names, a crop and keys survived,
+  a new piece kept the kit, a delete stuck, never dirty. Rig suites not run.
+- [x] **A pad shuts the mic during a mic stroke** (2026-09-30) — the house's copy of a pad was recorded under the
+  clean one. While any pad sounds in a mic stroke the mic gate closes (a round trip after the pad starts) and opens
+  a round trip + 150 ms after the last ends. Private instance: gate 1 → 0 during a tapped pluck → 1 after; untouched
+  outside a stroke. Not heard against a real room.
+- [x] **A pad in a grain take stays out of the house** (2026-09-30) — when the dry monitor is ducked for a granular
+  recording, a pad played into it has its heard gain at 0 (still recorded, mic open); it returns to level when the
+  take ends. Tape takes unchanged. Private instance (dry auto): grain — pad silent, gate 1, take peak 0.76; tape —
+  pad heard, gate 0.

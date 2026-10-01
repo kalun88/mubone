@@ -1861,6 +1861,10 @@ export function scheduleGrains() {
       pinG.gain.value = 1;
       mute.connect(pinG);
       seq._pinGain = pinG;
+      // …and into the sampler's app capture, mono, beside its route (audio.js
+      // resampleBus) — every tape voice, its overdub layers included.
+      const rs = S._resampleBus?.();
+      if (rs) pinG.connect(rs);
 
       // ── Spatialize looper — dynamic pan follows playhead ────────────────
       // Create persistent panning nodes that get updated each tick as the

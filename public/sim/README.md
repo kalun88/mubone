@@ -248,10 +248,9 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 | `/mute/hold` | `i` | Momentary mute (1 = mute, 0 = restore the pre-press state) |
 | `/dry/mute` | *(bang)* | Dry monitor mute toggle — off is the mute; unmuting returns to the mode it left, on or auto |
 | `/dry/mute/hold` | `i` | Momentary dry monitor mute (1 = off, 0 = restore the mode at the press) |
-| `/source/live` | *(bang)* | The brush inks from the live input channel |
-| `/source/sampler` | *(bang)* | The brush inks from the sampler's current sample — refused while the sampler is parked (Settings › Tools, off by default) |
-| `/sampler/sample` | `i` | Set the sampler's current sample (1–10 = slot, anything else = next loaded) |
+| `/sampler/play` | `i` `[i]` | Play sample `i` (1–10) from its top into the input, as its key does — a stroke started while it sounds records it without the mic. The second int is the key's edge: `1` (or absent) down, `0` up; between them it loops, and the pass under way at the up plays out |
 | `/sampler/record` | `i` | Capture live input into the next free sampler slot (1 = start, 0 = stop) |
+| `/sampler/resample` | `i` | Capture what mubone plays — grains, loops, lines, pads; no dry mic, no reverb — into the next free sampler slot, mono (1 = start, 0 = stop) |
 | `/sweep` | *(bang)* | Session sweep |
 | `/undo` | *(bang)* | Undo the last action — a stroke, a pin, an unpin, an erase |
 | `/redo` | *(bang)* | Redo the last undone action |
@@ -333,7 +332,8 @@ js/
   audio-features.js     — real-time audio analysis (RMS, centroid, ZCR)
   onsets.js             — noise-floor-adaptive onset detection, for the slice tool
   latency.js            — the time between a sound and its sample, and back
-  sampler.js            — the sample instrument, an INPUT rather than a brush
+  sampler.js            — the sample instrument: pads on keys, played into the input
+  sample-kit.js         — the loaded samples kept across restarts (IndexedDB)
 
   grain.js              — grain scheduling, spatial search, candidate posting
   grain-worklet-bridge.js — main-thread ↔ worklet communication layer

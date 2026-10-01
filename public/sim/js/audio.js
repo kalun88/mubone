@@ -480,8 +480,8 @@ export async function requestMicAccess() {
       S.inputAnalyser = actx.createAnalyser();
       S.inputAnalyser.fftSize = 256;
       S.inputAnalyser.smoothingTimeConstant = 0.3;
-      S.inputGainNode.connect(S.inputAnalyser);
     }
+    connectInputTap();
 
     // Wire inputGainNode → dryGainNode for the dry monitor layer.
     // dryGainNode is created in ensureAudioContext; this connect is idempotent
@@ -575,13 +575,114 @@ export async function requestMicAccess() {
 let _recRawPool = null;
 let _recRawPoolRate = 0;
 
+// ── The input tap: the mic through its gate, and the sample pads ────────────
+// EVERYTHING THAT RECORDS READS S.inputAnalyser — the recorder worklet, the
+// grain worklet's live buffer, the paint gate's loudness, the timbre — so what
+// sums into it is what a take is made of. Two things do (Ek, 2026-09-30):
+//   the MIC, through a gate (inputGain → micGate → analyser), and
+//   the SAMPLE PADS (padBus → analyser): a sample key is a second instrument
+//   plugged into the same input, so the hand records it like it records you.
+// The gate is decided at the stroke's start (startLiveRecording): a pad still
+// sounding when the hand goes down makes it a SAMPLE stroke and the mic stays
+// out of it; otherwise it is a mic stroke, and pads played during it layer on
+// top. It opens again when the take is sealed. The dry monitor is fed from
+// inputGain ahead of the gate, so the player always hears themself.
+// Every site that builds or rebuilds the analyser calls connectInputTap().
+let _micGate = null;
+let _padBus  = null;
+export function connectInputTap() {
+  const actx = S.audioCtx;
+  if (!actx) return;
+  if (!_micGate || _micGate.context !== actx) {
+    _micGate = actx.createGain();
+    _padBus  = actx.createGain();
+  }
+  try { _micGate.disconnect(); } catch (_) {}
+  try { _padBus.disconnect(); }  catch (_) {}
+  if (!S.inputAnalyser) return;
+  if (S.inputGainNode) S.inputGainNode.connect(_micGate);   // idempotent
+  _micGate.connect(S.inputAnalyser);
+  _padBus.connect(S.inputAnalyser);
+}
+/** Where a sample pad's voice goes to be recorded (ui-samples.js). */
+export function samplePadBus() {
+  if (!_padBus || _padBus.context !== S.audioCtx) connectInputTap();
+  return _padBus;
+}
+// ── The resample bus: what the app plays, in mono (Ek, 2026-09-30) ─────────
+// "record directly from the audio that's playing out of the app … not
+// including the wet … it'll record it into mono and create a new sample."
+// Everything mubone PLAYS taps in here beside its own route, so the sampler's
+// app capture reads the instrument and nothing else: the grain engine's two
+// outputs, summed per channel (grain-worklet-bridge.js), every tape voice —
+// loop, line trigger and their overdub layers — after its pin gain (grain.js),
+// and the sample pads (ui-samples.js). NOT the dry monitor (it joins at
+// dryGain, which nothing here taps) and NOT the reverb (an insert after the
+// master, downstream of every tap), and before the master fader and mute.
+let _resampleBus = null;
+export function resampleBus() {
+  const actx = S.audioCtx;
+  if (!actx) return null;
+  if (!_resampleBus || _resampleBus.context !== actx) {
+    _resampleBus = actx.createGain();
+    _resampleBus.channelCount = 1;
+    _resampleBus.channelCountMode = 'explicit';
+    _resampleBus.channelInterpretation = 'speakers';
+  }
+  return _resampleBus;
+}
+S._resampleBus = resampleBus;
+
+function _setMicInTake(on) {
+  const actx = S.audioCtx;
+  if (!_micGate || !actx) return;
+  // 5 ms, not a step: the gate moves under a sounding mic. Cancel first — a
+  // pad's duck (below) may have a reopen scheduled.
+  const g = _micGate.gain, t = actx.currentTime;
+  g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
+  g.setTargetAtTime(on ? 1 : 0, t, 0.005);
+  S.micInTake = !!on;
+}
+
+// ── A PAD SHUTS THE MIC WHILE IT SOUNDS (Ek, 2026-09-30) ──────────────────
+// During a MIC stroke the house plays the pad and the mic hears it, so the
+// take got it twice — clean from the pad bus and again from the room, late
+// and coloured — and the loop played back smeared. Ek, of the four ways out:
+// "3 is interesting. it's kinda an override that shuts off the mic when the
+// sample is playing". So while any pad sounds the mic is out of the take; the
+// pad is in it once, clean. The player's own sound is out for that long too —
+// that is the override.
+// Timed on the audio clock for where the bleed actually lands: what the gate
+// sees now left the speakers a round trip ago (S.latency). It shuts a round
+// trip after the pad starts, and opens a round trip plus the room's tail after
+// the last pad ends, with a short ramp each way.
+const PAD_TAIL_S = 0.15;
+function _padStarted() {
+  const actx = S.audioCtx;
+  if (!S.isRecording || !S.micInTake || !_micGate || !actx) return;
+  const g = _micGate.gain, t = actx.currentTime, rt = S.latency?.roundTripS ?? 0.03;
+  g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
+  g.setTargetAtTime(0, t + Math.max(0, rt - 0.01), 0.003);
+}
+function _padsEnded() {
+  const actx = S.audioCtx;
+  if (!S.isRecording || !S.micInTake || !_micGate || !actx) return;
+  const g = _micGate.gain, t = actx.currentTime, rt = S.latency?.roundTripS ?? 0.03;
+  g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
+  g.setTargetAtTime(1, t + rt + PAD_TAIL_S, 0.01);
+}
+/** The gate's gain now — for a probe; nothing in the app reads it. */
+export function micGateGain() { return _micGate ? _micGate.gain.value : null; }
+S._padStarted = _padStarted;
+S._padsEnded  = _padsEnded;
+
 // ── Generic capture core (#247) ─────────────────────────────────────────────
 // The machinery shared by a live paint stroke and a sampler take: pool
 // acquire, worklet node + PCM writer, and the finalize/declick that turns
 // the raw ring into an AudioBuffer. Uses the module singletons — ONE capture
 // at a time, enforced by the callers' isRecording / isSamplerCapturing
 // guards. The wrappers own everything stroke- or sampler-shaped.
-function _captureStart(actx) {
+function _captureStart(actx, src = S.inputAnalyser) {
   S.recordingSampleRate = actx.sampleRate;
   // Reuse the persistent pool (perf audit H1) — see comment above.
   if (!_recRawPool || _recRawPoolRate !== S.recordingSampleRate) {
@@ -611,9 +712,12 @@ function _captureStart(actx) {
   // Tell worklet to start capturing
   S.recordingNode.port.postMessage({ type: 'init', batchSize: 16 });
 
-  // Chain: (persistent) inputGain -> inputAnalyser -> worklet (pure sink)
-  S.inputAnalyser.connect(S.recordingNode);
+  // Chain: (persistent) inputGain -> inputAnalyser -> worklet (pure sink),
+  // or the resample bus for an app capture.
+  src.connect(S.recordingNode);
+  _captureSrc = src;
 }
+let _captureSrc = null;   // what the running capture reads, for the stop
 
 // One PCM bundle from the recorder worklet, appended to the raw pool. Guard:
 // the worklet may post after the take is sealed and S.recordingRaw nulled.
@@ -671,7 +775,7 @@ function _captureStop(onSealed) {
   // inputGainNode and inputAnalyser are persistent (created in requestMicAccess)
   // so the meter and knob stay active between recordings.
   const node        = S.recordingNode;
-  const analyserRef = S.inputAnalyser;
+  const analyserRef = _captureSrc;
   S.recordingNode = null;
 
   let timer = 0;
@@ -770,6 +874,11 @@ export function startLiveRecording() {
     return;
   }
 
+  // A pad still sounding makes this a SAMPLE stroke: the mic stays out (see
+  // the input tap above). Decided once, here, for the whole take.
+  // (A hold's long reads the pad as it was at the press — tiles.js.)
+  S._lastStrokePad = S._strokePadAtPress ?? S._soundingPad?.() ?? -1;
+  _setMicInTake(S._lastStrokePad < 0);
   _captureStart(actx);
   S.liveBufferSampleCount = 0;
 
@@ -963,6 +1072,7 @@ export function stopLiveRecording() {
     S.recordingWritePos    = 0;
     S.liveBufferSampleCount = 0;
     S.currentLiveBufferIdx = -1;
+    _setMicInTake(true);
     S.updateLiveRecUI?.();
   });
 }
@@ -974,24 +1084,27 @@ export function stopLiveRecording() {
 // bounded by MAX_SAMPLES, and sweep never touches sample slots).
 // One rule: while either recording family runs, the other refuses.
 // sampler.js turns the returned AudioBuffer into a sample slot.
-export function startSamplerCapture() {
+/** `from` 'input' records the live input; 'app' records what mubone plays
+ *  (the resample bus above) — the sheet's two record buttons. */
+export function startSamplerCapture(from = 'input') {
   if (S.isSamplerCapturing) return false;
   if (S.isRecording || S.isPainting) { S._samplerRefused?.('a stroke is recording'); return false; }
   if (S.samples.length >= MAX_SAMPLES) { S._samplerRefused?.('all sampler slots full'); return false; }
   const hasRtAudioInput = window.electronBridge?.isElectron && window._rtAudioInputListening;
-  if (!S.recordingStream && !hasRtAudioInput) { S._samplerRefused?.('no live input'); return false; }
+  if (from !== 'app' && !S.recordingStream && !hasRtAudioInput) { S._samplerRefused?.('no live input'); return false; }
 
   const actx = ensureAudioContext();
   if (!_recWorkletReady) {
     actx.audioWorklet.addModule('js/worklets/recording-capture.worklet.js')
-      .then(() => { _recWorkletReady = true; startSamplerCapture(); })
+      .then(() => { _recWorkletReady = true; startSamplerCapture(from); })
       .catch(e => console.error('Failed to load recording worklet:', e));
     return false;
   }
   if (_sealPending) _sealPending.finish();   // a re-press inside the seal window
 
-  _captureStart(actx);
+  _captureStart(actx, from === 'app' ? resampleBus() : S.inputAnalyser);
   S.isSamplerCapturing = true;
+  S.samplerCaptureFrom = from;
   dlog('audio', 'sampler capture started', { sampleRate: S.recordingSampleRate });
   S._renderSourceUI?.();
   return true;
@@ -1688,6 +1801,7 @@ let _dryAutoDucked = false;
 export function setDryMonitorMode(mode) {
   if (mode !== 'off' && mode !== 'on' && mode !== 'auto') return;
   S.dryMonitorMode = mode;
+  if (_dryAutoDucked) S._padsUnsilence?.();   // the duck is dropped: so is the pads'
   _dryAutoDucked = false;
   setDryMonitorEnabled(mode === 'on' || mode === 'auto');
   // The signal-path drawing shows this branch and its switch, so it is
@@ -1725,6 +1839,7 @@ function _dryMonitorRecordEnd() {
   if (!_dryAutoDucked) return;
   _dryAutoDucked = false;
   if (S.dryMonitorMode === 'auto') setDryMonitorEnabled(true);
+  S._padsUnsilence?.();   // pads played into the grain take step back in (ui-samples.js)
 }
 S._setDryMonitorMode = setDryMonitorMode;
 

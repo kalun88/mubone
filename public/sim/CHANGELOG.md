@@ -7,6 +7,40 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.14 alpha — 2026-09-30
+
+**The sampler is an instrument: each sample a pad on its own key, played into the input the mic feeds.**
+
+### Added
+- **Sample pads.** Every loaded sample plays from its own key — digits 1–0, dealt as samples load unless the
+  key is taken — shown as a keycap on its row in the sampler sheet (click relearns, right-click clears). A tap
+  plays it once; hold it and it loops, and the pass playing at the release plays out. Learnable like any
+  binding; OSC `/sampler/play n [1|0]`.
+- **Strokes record the pads.** A pad sounding when the hand goes down makes a sample stroke with the mic left
+  out; pads played during a mic stroke layer into it. In a tape take the pad is heard whole and the mic steps
+  out while it sounds (no room copy under the clean one); in a grain take (dry monitor on auto) the pad stays
+  out of the house, is heard as grains, and the mic stays open. The cursor dot wears a sounding pad's colour.
+- **Resample.** The sheet's `app` button records what mubone itself plays — grains, loops, lines, pads; no dry
+  mic, no reverb — into a new sample, in mono. Action `sampler_resample`, OSC `/sampler/resample`.
+- **The samples persist** as a kit across restarts. A piece still carries its samples: opening one makes them
+  the kit, a new piece keeps it, and the kit alone is not unsaved work.
+
+### Fixed
+- A sample's ▶ plays again (silent since samples became shared memory in 5.3).
+- Dragging an engine number cell scrubs without highlighting its text.
+- The sampler sheet's rows fit the rail — `del` sat past its edge — and their columns line up.
+
+### Changed
+- **A tape head is a hollow ring**, so a loop or line's playhead reads apart from a cloud's grains.
+- The sampler tab is always shown; the sheet's head is `rec · app · test`.
+
+### Removed
+- The sampler as a source switched in place of the mic: the Settings › Tools › Sampler switch, the current
+  sample, the stroke that built its take from the crop, and OSC `/source/live`, `/source/sampler`,
+  `/sampler/sample` (with their actions).
+
+---
+
 ## 5.13 alpha — 2026-09-28
 
 **A master reverb on every speaker, and a second sensor that moves the view while the hand keeps pointing.**

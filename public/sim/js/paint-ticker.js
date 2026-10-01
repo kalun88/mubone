@@ -15,12 +15,12 @@
 // — see "Deposit one tick behind" below.
 // ============================================================================
 
-import { S, SAMPLE_PAINT_COLORS, gp, minGrainDurS } from './state.js';
+import { S, gp, minGrainDurS } from './state.js';
 import { cursorLonLatNow } from './sphere.js';
 import { rand, stampCartesian } from './grain.js';
 import { getRecordingDuration } from './audio.js';
 import { markOverrideLive } from './brush-voicing.js';
-import { snapshotInputFeatures, featuresFromBuffer, snapshotTimbre, consumeWindowLoudness, recordedWindowLoudness, featuresToColor } from './audio-features.js';
+import { snapshotInputFeatures, snapshotTimbre, consumeWindowLoudness, recordedWindowLoudness, featuresToColor } from './audio-features.js';
 
 // ── Defaults ────────────────────────────────────────────────────────────────
 
@@ -56,10 +56,6 @@ let _intervalId     = null;
 // first mark after silence is gone with it: the mark whose window holds the
 // transient already starts before it.
 let _pending = null;   // { particle, c } — the live mark captured at the last tick
-// The sampler trigger stroke's own clock (see the takeT stamp in _deposit):
-// zeroed at the first deposit of each stroke.
-let _trigT0 = 0;
-let _trigT0Stroke = -1;
 
 // ── Read configured interval ────────────────────────────────────────────────
 
@@ -286,8 +282,6 @@ function _depositParticle() {
   const gpr = gp();
   const durVariation = rand(-gpr.durJitter * 0.5, gpr.durJitter * 0.5);
 
-  let particle = null;
-
   if (S.isRecording && S.currentLiveBufferIdx >= 0) {
     // Settle the mark captured last tick — its window ends now, at THIS mark's
     // moment — THEN capture this one, so the next window starts at this instant.
@@ -331,90 +325,9 @@ function _depositParticle() {
     // splice liveRecBuffers — the index would then name a neighbour.
     _pending = { particle: p, c, slot: S.liveRecBuffers[S.currentLiveBufferIdx] };
     return settled;
-  } else if (S.sourceKind === 'sampler' && S.samples[S.samplerIndex]?.buffer) {
-    const s         = S.samples[S.samplerIndex];
-    const cropStart = s.cropStart * s.duration;
-    const cropEnd   = s.cropEnd   * s.duration;
-    const cropLen   = cropEnd - cropStart;
-    let rawStart    = s.grainCursor;
-    if (cropLen > 0) rawStart = cropStart + ((rawStart - cropStart) % cropLen + cropLen) % cropLen;
-    let clampedStart = Math.max(cropStart, Math.min(rawStart, cropEnd - 0.01));
-    let grainDur     = Math.max(minGrainDurS(), gpr.duration + durVariation);
-    // A grain that doesn't fit the remaining tail starts the NEXT pass
-    // instead of being squeezed against cropEnd — the old clamp shrank the
-    // per-pass boundary grain toward the 10 ms floor, baking a click into
-    // the material at every wrap of a long grain stroke. When the crop is shorter
-    // than one grain the same rule degenerates cleanly: every grain lands
-    // at the top and IS the whole crop, uniform rather than rump-sized.
-    // Trigger strokes keep the clamp (one-pass rule above; region playback
-    // ignores mark durations).
-    if (!S._recordingTrigger && clampedStart + grainDur > cropEnd) {
-      clampedStart  = cropStart;
-      s.grainCursor = cropStart;
-    }
-    grainDur = Math.max(minGrainDurS(), Math.min(grainDur, cropEnd - clampedStart));
-
-    particle = {
-      lon, lat,
-      strokeId:       S.currentStrokeId,
-        // Which frozen brush setting plays this mark. Stamped from the stroke,
-      // not resolved per particle — an int the scheduler reads directly, since
-      // it is touched once per candidate per 20 ms tick.
-      _vo:            S.currentVoicing ?? 0,
-      ...(S.currentMarkOverride ? { _ov: S.currentMarkOverride } : {}),
-      source:         'sample',
-      sampleIndex:    S.samplerIndex,
-      grainStart:     clampedStart,
-      grainDuration:  grainDur,
-      color:          SAMPLE_PAINT_COLORS[S.samplerIndex % SAMPLE_PAINT_COLORS.length]
-    };
-    // A tape stroke outliving the sample LOOPS it (Ek, 2026-08-28):
-    // grainStart wraps at the crop seam, so it cannot order the path — a
-    // grainStart-sorted outline interleaved the passes and drew as a mesh of
-    // chords. takeT is the stroke's own clock (elapsed hold time, the exact
-    // analogue of a live stroke's grainStart), monotonic across passes;
-    // trigger.js orders and segments by it and keeps grainStart for audio.
-    if (S._recordingTrigger) {
-      if (_trigT0Stroke !== S.currentStrokeId) {
-        _trigT0Stroke = S.currentStrokeId;
-        _trigT0 = performance.now();
-      }
-      particle.takeT = (performance.now() - _trigT0) / 1000;
-    }
-    const feat = featuresFromBuffer(s.buffer, clampedStart);
-    if (feat) {
-      particle.rms = feat.rms; particle.centroid = feat.centroid; particle.zcr = feat.zcr;
-      // featuresFromBuffer carries the two colour axes now, so a sampler mark
-      // is hued by the same rule as a live one instead of by the legacy
-      // centroid fallback (which the LED did not share).
-      particle.tilt = feat.tilt; particle.noise = feat.noise;
-    }
-
-    // A tape stroke hears the sample "playing in" at 1× — the cursor
-    // advances one tick of sample time per tick of real time, so the marks'
-    // positions and features match the take the stroke materializes on
-    // release (sampler.js). A GRAIN stroke keeps the grain-period stride: its
-    // cursor is a grain-stream read head, not a playback head.
-    const stride = S._recordingTrigger
-      ? (S.paintTicker?.intervalMs ?? 50) / 1000
-      : gpr.period * rand(0.8, 1.2);
-    s.grainCursor += stride;
-    if (s.grainCursor > cropEnd) s.grainCursor = cropStart + ((s.grainCursor - cropStart) % cropLen);
   }
-
-  if (particle) {
-    // Trigger-vs-granular is decided before recording starts and is stamped
-    // onto the material itself, not held in app state: whenever the cursor
-    // touches this particle it does what it was recorded as. The granular
-    // candidate-pool builders skip `trig` particles — never both.
-    if (S._recordingTrigger) particle.trig = true;
-    stampCartesian(particle);
-    S.particles.push(particle);
-    S._particleVersion++;
-    // The comb re-arranges the stroke-so-far along the drawn path — after
-    // the push, so the new mark takes part in its own layout.
-    return true;
-  }
+  // (A sampler-sourced mark was built here until 2026-09-30: a sample is a
+  //  pad on the input now, and its stroke is recorded like any other.)
   return false;
 }
 

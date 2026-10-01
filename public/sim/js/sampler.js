@@ -1,14 +1,11 @@
 // ============================================================================
-// sampler.js — the sample instrument is an INPUT, not a brush (#247)
+// sampler.js — the sample instrument: pads on the input (Ek, 2026-09-30)
 //
-// BRUSH-MODEL § 1g: the chain is source → brush → lens. This module owns the
-// source half — which input the brush inks from (S.sourceKind) and the
-// sampler's current sample (S.samplerIndex, sampler-internal, never -1).
-//
-// samplerTrace() is the ported body of the old paint1–paint10 actions: the
-// primary gesture reaches it through brush.js `_toolDown` when the sampler is
-// the source, so ANY brush paints from the current sample. The old actions'
-// per-slot press/release (and their transient activeSampleIndex) are gone.
+// Each loaded sample is a PAD on its own key (`sampler_play_N`, dealt 1–0 as
+// slots fill — midi.js seedSamplerKey). The pads play into the same input the
+// mic feeds, so the hand records them; see playPad below and audio.js
+// connectInputTap. (Until 2026-09-30 a sample was a SOURCE the brush inked
+// from, switched in place of the mic — #247.)
 //
 // Capture (record-into-sampler) is prep-time and gesture-free — a MIDI press
 // or a button, never the sensor. The start/stop cores live in audio.js (they
@@ -17,236 +14,40 @@
 // — one rule, easy to trust.
 // ============================================================================
 
-import { S, MAX_SAMPLES, DEBUG, perf, gp } from './state.js';
-import { ensureAudioContext, getPreviewSinks, startSamplerCapture, stopSamplerCapture } from './audio.js';
+import { S, MAX_SAMPLES, DEBUG } from './state.js';
+import { ensureAudioContext, startSamplerCapture, stopSamplerCapture } from './audio.js';
 import { makeTake } from './take.js';
-import { recordStrokeStart, rebuildSampleListUI } from './ui-samples.js';
-import { createSeqFromStroke } from './ui-presets.js';
-import { setScanMuted } from './ui-meters.js';
+import { rebuildSampleListUI } from './ui-samples.js';
 import { hotSwapSample } from './grain-worklet-bridge.js';
-import { armTrigger } from './trigger.js';
 
 function _refuse(why) {
   DEBUG && console.log('[sampler] refused:', why);
   S._samplerRefused?.(why);   // UI flash, wired by the source tiles
 }
 
-// ── Parked (Ek, 2026-09-23) ─────────────────────────────────────────────────
-// The sampler is switched OUT by factory: not sunset — it is kept whole for
-// the day it gets its own round — but with the switch off nothing reaches it.
-// The tab leaves the rail, and `selectSource` and capture refuse, so the
-// source_sampler / sampler_record actions, a key, a pad or OSC all meet the
-// same door.
-const LS_SAMPLER_ON = 'mubone_sampler_on';
-try { S.samplerEnabled = localStorage.getItem(LS_SAMPLER_ON) === '1'; } catch (_) {}
-if (!S.samplerEnabled) S.sourceKind = 'live';
+// ── A sample is a PAD (Ek, 2026-09-30) ─────────────────────────────────────
+// "if the mic is on, each sample can have a key assigned so it's like playing
+// a sampler instrument." A key plays its slot once through, into the input the
+// mic feeds (audio.js connectInputTap), so the hand records it like it records
+// the player: a pad still sounding when the hand goes down makes a sample
+// stroke with the mic out; a pad played during a mic stroke layers onto it.
+// There is no source to switch — that was the park switch, `S.sourceKind`,
+// the sheet's file/mic switch and a stroke of its own that built its take from
+// the crop (samplerTrace), all gone the same day. The voice is ui-samples.js
+// playSample, the same one the sheet's ▶ starts.
 
-/** Settings › Tools › Sampler. Turning it off hands the brush back to the mic. */
-export function setSamplerEnabled(on) {
-  S.samplerEnabled = !!on;
-  try { localStorage.setItem(LS_SAMPLER_ON, on ? '1' : '0'); } catch (_) {}
-  if (!on) {
-    if (S.isSamplerCapturing) _finishCapture();
-    if (S.sourceKind === 'sampler') selectSource('live');
-  }
-  S._samplerAvailChanged?.();
-  S._renderSourceUI?.();
-}
-
-/** Which input the brush inks from. Refused mid-stroke — switching the source
- *  under a live recording would orphan the capture path's singletons. */
-export function selectSource(kind) {
-  if (kind !== 'live' && kind !== 'sampler') return;
-  if (kind === 'sampler' && !S.samplerEnabled) { _refuse('sampler is off — Settings › Tools'); return; }
-  if (S.sourceKind === kind) return;
-  if (S.isPainting || S.isRecording || S.isSamplerCapturing) { _refuse('mid-stroke'); return; }
-  S.sourceKind = kind;
-  S._renderSourceUI?.();
-}
-
-/** Set the sampler's current sample. v = 1..MAX_SAMPLES picks that slot
- *  (refused if empty — honest, not helpful), anything else cycles to the
- *  next loaded slot. */
-export function selectSample(v) {
-  const n = Math.round(v);
-  if (n >= 1 && n <= MAX_SAMPLES) {
-    const idx = n - 1;
-    if (!S.samples[idx]?.buffer) { _refuse('slot ' + n + ' empty'); return; }
-    S.samplerIndex = idx;
-  } else {
-    const len = S.samples.length;
-    if (!len) { _refuse('no samples loaded'); return; }
-    for (let i = 1; i <= len; i++) {
-      const idx = (S.samplerIndex + i) % len;
-      if (S.samples[idx]?.buffer) { S.samplerIndex = idx; break; }
-    }
-  }
-  S._renderSourceUI?.();
-}
-
-// ── Monitor voice — hear the sample playing in (Ek, 2026-08-28) ─────────────
-// A tape stroke mutes the scan (below), which is right for a live
-// source: the instrument is acoustic, you hear it anyway, and the take is
-// what you played. The sampler's "instrument" is a buffer — with the scan
-// off nothing plays it, so a line or slice from the sampler was silent
-// until release. This voice is the dry monitor's analogue for the sampler:
-// the crop looped audibly for exactly the held duration, the same audio the
-// take materializes (_materializeSamplerTake reads crop[i % cropLen] from
-// the stroke's t=0), routed where the sample preview goes. Granular strokes
-// deliberately get none of this — there you hear the grains forming, not
-// the sample doubled.
-let _monitor = null;   // { source, gain } while a tape stroke is held
-
-function _startMonitor(s) {
-  _stopMonitor();
-  const actx    = ensureAudioContext();
-  const crop0   = s.cropStart * s.duration;
-  const cropLen = Math.max(0.01, (s.cropEnd - s.cropStart) * s.duration);
-  // A source node reads an AudioBuffer only, so the crop is copied out of the
-  // take (shared memory, js/take.js) for as long as the pedal is held.
-  const sr = s.buffer.sampleRate;
-  const c0 = Math.min(s.buffer.length - 1, Math.floor(crop0 * sr));
-  const cN = Math.max(1, Math.min(s.buffer.length - c0, Math.floor(cropLen * sr)));
-  const crop = actx.createBuffer(1, cN, sr);
-  crop.getChannelData(0).set(s.buffer.data.subarray(c0, c0 + cN));
-  const source  = actx.createBufferSource();
-  source.buffer    = crop;
-  source.loop      = true;
-  source.loopStart = 0;
-  source.loopEnd   = cN / sr;
-  const gain = actx.createGain();
-  gain.gain.value = gp().volume;
-  source.connect(gain);
-  for (const sink of getPreviewSinks()) gain.connect(sink);
-  source.start(actx.currentTime);
-  _monitor = { source, gain };
-}
-
-function _stopMonitor() {
-  if (!_monitor) return;
-  const { source, gain } = _monitor;
-  _monitor = null;
-  const actx = S.audioCtx;
-  const t = actx?.currentTime ?? 0;
-  // Short release rather than a hard stop — the loop is mid-waveform.
-  try {
-    gain.gain.setTargetAtTime(0, t, 0.01);
-    source.stop(t + 0.06);
-  } catch (_) { try { source.stop(); } catch (_) {} }
-  source.onended = () => { try { source.disconnect(); gain.disconnect(); } catch (_) {} };
-}
-
-// ── Take materialization — "the sampler is audio playing in" (Ek) ──────────
-// A tape stroke held past its sample LOOPS it, and the take is the
-// LOOPED AUDIO for exactly as long as the hold: on release the stroke gets
-// its own buffer — the crop repeated for the held duration — and converts to
-// an ordinary live-style stroke (source 'live', its own liveRecBuffers slot,
-// grainStart = the stroke's clock). One playhead travels the whole line, the
-// audio is the loop repeating, and slice/erase/undo/export all behave exactly
-// as they do for a real recording, because from here on it IS one. The
-// reference model (marks pointing into the shared sample) stays for the pen,
-// where a mark is an onset and the distinction is inaudible.
-function _materializeSamplerTake(strokeId) {
-  const marks = S.particles.filter(p => p.strokeId === strokeId && p.source === 'sample');
-  if (!marks.length) return false;
-  const s = S.samples[marks[0].sampleIndex];
-  if (!s?.buffer) return false;
-
-  const sr    = s.buffer.sampleRate;
-  const crop0 = s.cropStart * s.duration;
-  const cropLen = Math.max(0.01, (s.cropEnd - s.cropStart) * s.duration);
-  const tick  = (S.paintTicker?.intervalMs ?? 50) / 1000;
-  let takeDur = Math.max(...marks.map(p => p.takeT ?? 0)) + tick;
-  // Same memory ceiling as a live recording — a held pedal must not
-  // silently allocate minutes of audio.
-  const budget = Math.max(1, (S.recLimitSeconds ?? 180) - (perf.recTotalSec ?? 0));
-  if (takeDur > budget) { takeDur = budget; _refuse('rec limit — take clipped'); }
-
-  const dst = new Float32Array(Math.max(1, Math.ceil(takeDur * sr)));
-  const src = s.buffer.data;
-  const c0  = Math.floor(crop0 * sr);
-  const cN  = Math.max(1, Math.floor(cropLen * sr));
-  for (let i = 0; i < dst.length; i++) dst[i] = src[c0 + (i % cN)] ?? 0;
-  const out = makeTake(dst, sr);
-
-  const idx = S.liveRecBuffers.length;
-  S.liveRecBuffers.push({ buffer: out, grainCursor: 0 });
-  for (const p of marks) {
-    p.source        = 'live';
-    p.liveBufferIdx = idx;
-    p.grainStart    = Math.min(p.takeT ?? 0, Math.max(0, takeDur - 0.01));
-    if (p.grainStart + p.grainDuration > takeDur) {
-      p.grainDuration = Math.max(0.01, takeDur - p.grainStart);
-    }
-    delete p.sampleIndex;
-    delete p.takeT;
-  }
-  // The undo entry was recorded as a bufferless 'sample' stroke — point it at
-  // the slot so undo/redo treat the take like any live recording.
-  for (let i = S.strokeHistory.length - 1; i >= 0; i--) {
-    if (S.strokeHistory[i].strokeId === strokeId) {
-      S.strokeHistory[i].type = 'live';
-      S.strokeHistory[i].liveBufferIndex = idx;
-      break;
-    }
-  }
-  hotSwapSample(out);   // a running engine can read the take (dwell 'grain', clouds)
-  S._particleVersion++;
-  DEBUG && console.log(`[sampler] materialized ${takeDur.toFixed(2)}s take (slot ${idx})`);
-  return true;
-}
-
-/** The primary gesture, sampler-sourced — the ported paint-action body.
- *  Reached from the main button (brush.js `_toolDown`); press starts a sample-paint stroke from
- *  the current sample, release ends it (making a loop under seq mode, same
- *  as a live stroke).
- *
- *  opts.trigger — a tape brush over the sampler source: the same stroke,
- *  but deposits are stamped `trig` (paint-ticker is source-agnostic there)
- *  and release ARMS the stroke instead of looping it — the old stamp's
- *  fires-on-touch, rebuilt as tape + sampler (#247 step 10). trigger.js
- *  already resolves sample-sourced particles (`bufferForParticle`). */
-export function samplerTrace(pressed, opts) {
-  if (pressed) {
-    if (S.isPainting) return;
-    const s = S.samples[S.samplerIndex];
-    if (!s?.buffer) { _refuse('no sample in current slot'); return; }
-    ensureAudioContext();
-    // A tape stroke mutes the scan so the cursor does not granulate over the
-    // take. This used to be `S._setMuted?.(false) || setScanMuted?.(true)` —
-    // setMuted returns nothing, so BOTH ran and a sampler stroke silently
-    // cleared the master mute (2026-09-16).
-    if ((S.commitMode === 'loop') && !S.scanMuted) setScanMuted?.(true);
-    s.grainCursor = s.cropStart * s.duration;
-    if (opts?.trigger) { S._recordingTrigger = true; _startMonitor(s); }
-    recordStrokeStart('sample');
-    S.isPainting = true;
-    // Cold-start worklet if not yet running (e.g. sample paint as first action)
-    S._ensureWorkletForSample?.(s.buffer);
-    S._syncTriggerRecUI?.();
-  } else {
-    if (!S.isPainting) return;
-    const strokeId   = S.currentStrokeId;
-    const wasTrigger = S._recordingTrigger;
-    S._recordingTrigger = false;
-    _stopMonitor();
-    S.isPainting = false;
-    S.currentStrokeId = -1;
-    // Same precedence as _commitTraceStroke: a trigger stroke arms; only a
-    // plain stroke loops under seq mode.
-    if (wasTrigger && strokeId > 0) {
-      // The take is the looped audio for the held duration — see
-      // _materializeSamplerTake. Arm AFTER conversion so the trigger builds
-      // over the take, not the crop.
-      try { _materializeSamplerTake(strokeId); } catch (e) { DEBUG && console.warn('[sampler] materialize failed', e); }
-      try { armTrigger(strokeId); } catch (_) {}
-    } else if ((S.commitMode === 'loop') && strokeId > 0) {
-      try { createSeqFromStroke(strokeId); } catch (_) {}
-    }
-    S._syncTriggerRecUI?.();
-  }
-  const btn = document.getElementById('paintIndicatorBtn');
-  if (btn) btn.classList.toggle('painting', S.isPainting);
+/** The `sampler_play_N` action (a hold): slot n (1-based) from its top. A
+ *  press restarts a slot already playing, like a drum pad. HELD, IT LOOPS (Ek,
+ *  2026-09-30: "if i hold down the sample key shouldnt it keep playing on
+ *  loop?"): the voice starts looping and the release stops the looping, so the
+ *  pass under way plays out to its end. A tap is therefore a one-shot and a
+ *  hold a loop, with no window deciding which — the release does the same
+ *  thing either way. */
+export function playPad(n, down = true) {
+  const idx = Math.round(n) - 1;
+  if (!down) { S._releaseSample?.(idx); return; }
+  if (!S.samples[idx]?.buffer) { _refuse('slot ' + n + ' empty'); return; }
+  S._playSample?.(idx, { restart: true, loop: true });
 }
 
 let _takeCounter = 0;
@@ -256,18 +57,20 @@ let _takeCounter = 0;
 function _finishCapture() {
   // The buffer arrives a few ms after the stop, once the recorder's last
   // bundle has landed (audio.js, sealing).
+  const fromApp = S.samplerCaptureFrom === 'app';
   stopSamplerCapture((buffer) => {
     if (!buffer) return;
     _takeCounter++;
     S.samples.push({
       buffer,
-      name:       `take ${_takeCounter} — ${buffer.duration.toFixed(1)}s`,
+      // A RESAMPLE says so: it is the instrument's own sound, not the input.
+      name:       `${fromApp ? 'resample' : 'take'} ${_takeCounter} — ${buffer.duration.toFixed(1)}s`,
       duration:   buffer.duration,
       grainCursor: 0,
       cropStart:  0,
       cropEnd:    1,
     });
-    S.samplerIndex = S.samples.length - 1;   // the fresh take is current
+    S._seedSamplerKey?.(S.samples.length);
     hotSwapSample(buffer);
     rebuildSampleListUI();
     S._renderSourceUI?.();
@@ -351,44 +154,39 @@ function _synthTestBuffers(actx) {
 }
 
 /** Load the three synthesized test sounds into free slots (skips any already
- *  loaded by name) and make the first of them current. */
+ *  loaded by name), each on its slot's key. */
 export function loadTestSamples() {
   const actx = ensureAudioContext();
   const have = new Set(S.samples.map(s => s.name));
-  let firstNew = -1;
   for (const t of _synthTestBuffers(actx)) {
     if (have.has(t.name)) continue;
     if (S.samples.length >= MAX_SAMPLES) { _refuse('all sampler slots full'); break; }
     S.samples.push({ buffer: t.buffer, name: t.name, duration: t.buffer.duration,
                      grainCursor: 0, cropStart: 0, cropEnd: 1 });
     hotSwapSample(t.buffer);
-    if (firstNew < 0) firstNew = S.samples.length - 1;
+    S._seedSamplerKey?.(S.samples.length);
   }
-  if (firstNew >= 0) S.samplerIndex = firstNew;
   rebuildSampleListUI();
   S._renderSourceUI?.();
 }
 
-/** The sampler_record action (type 'hold'): press starts, release stops. */
-export function captureHold(pressed) {
-  if (pressed && !S.samplerEnabled) { _refuse('sampler is off'); return; }
-  if (pressed) startSamplerCapture();
-  else if (S.isSamplerCapturing) _finishCapture();
+/** The sampler_record / sampler_resample actions (type 'hold'): press
+ *  starts, release stops. `from` 'input' is the live input, 'app' what
+ *  mubone plays (audio.js resampleBus). One capture at a time, either kind. */
+export function captureHold(pressed, from = 'input') {
+  if (pressed) startSamplerCapture(from);
+  else if (S.isSamplerCapturing && S.samplerCaptureFrom === from) _finishCapture();
 }
 
-/** The UI record button: one click starts, the next stops. */
-export function captureToggle() {
+/** The sheet's two record buttons: one click starts, the next stops — a
+ *  click on either stops whichever capture is running. */
+export function captureToggle(from = 'input') {
   if (S.isSamplerCapturing) _finishCapture();
-  else if (!S.samplerEnabled) _refuse('sampler is off');
-  else startSamplerCapture();
+  else startSamplerCapture(from);
 }
 
-// House pattern: dispatch (midi.js/osc.js) and the gesture path (brush.js)
-// reach us through S, not imports.
-S._samplerSelectSource = selectSource;
-S._setSamplerEnabled   = setSamplerEnabled;
-S._samplerSelectSample = selectSample;
-S._samplerTrace        = samplerTrace;
+// House pattern: dispatch (midi.js/osc.js) reaches us through S, not imports.
+S._samplerPad          = playPad;
 S._samplerCaptureHold  = captureHold;
 S._samplerCaptureToggle = captureToggle;
 S._samplerLoadTestSamples = loadTestSamples;

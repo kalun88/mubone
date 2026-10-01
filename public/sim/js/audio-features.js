@@ -33,11 +33,14 @@ let _gateAnalyser = null;
 let _gateSource   = null;   // node we tapped — used to detect a graph rebuild
 
 function _ensureGateAnalyser() {
-  const src = S.inputGainNode;
+  // The analyser's OUTPUT, not inputGain: the gate reads what is recorded —
+  // the mic through its gate plus the sample pads (audio.js connectInputTap),
+  // or a sample stroke with the mic out would lay no marks at all.
+  const src = S.inputAnalyser;
   const ctx = S.audioCtx;
   if (!src || !ctx) return null;
   if (_gateAnalyser && _gateSource === src) return _gateAnalyser;
-  // Device change / graph rebuild replaces inputGainNode — drop the stale tap.
+  // Device change / graph rebuild replaces the analyser — drop the stale tap.
   if (_gateAnalyser && _gateSource) {
     try { _gateSource.disconnect(_gateAnalyser); } catch (_) {}
   }

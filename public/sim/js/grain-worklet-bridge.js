@@ -24,6 +24,7 @@ let _sabAudioBuffer = null;   // reference to the AudioBuffer currently in SAB
 let _registered = false;
 let _feedbackCallback = null;
 let _workletSplitters = null;   // ChannelSplitters for multi-channel routing
+let _resampleTaps = null;       // the two outputs summed into audio.js resampleBus
 
 // ── Spatial helpers ────────────────────────────────────────────────────────
 // Compute azimuth and elevation center-bias for a particle.
@@ -327,6 +328,26 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
     // No bus system (shouldn't happen in normal startup, but safe fallback)
     _workletNode.connect(actx.destination);
     _workletSplitters = null;
+  }
+
+  // ── The sampler's app capture (audio.js resampleBus) ────────────────
+  // Both outputs, every channel, summed to mono beside the speaker routing.
+  // A split, not a direct connect: a mono-explicit input would read only
+  // channel 0 of an N-channel output it cannot down-mix by speaker layout.
+  // 0.707 per channel: an equal-power centre lands at unity, not +3 dB.
+  {
+    const rs = S._resampleBus?.();
+    if (rs) {
+      const trim = actx.createGain(); trim.gain.value = Math.SQRT1_2;
+      trim.connect(rs);
+      _resampleTaps = [trim];
+      for (const out of [0, 1]) {
+        const sp = actx.createChannelSplitter(numChannels);
+        _workletNode.connect(sp, out);
+        for (let ch = 0; ch < numChannels; ch++) sp.connect(trim, ch);
+        _resampleTaps.push(sp);
+      }
+    }
   }
 
   // ── Send VBAP lookup table to worklet (if multi-channel) ────────────
@@ -1300,6 +1321,10 @@ export function stopWorkletGrain() {
     if (_workletSplitters) {
       _workletSplitters.forEach(s => { try { s.disconnect(); } catch (_) {} });
       _workletSplitters = null;
+    }
+    if (_resampleTaps) {
+      _resampleTaps.forEach(n => { try { n.disconnect(); } catch (_) {} });
+      _resampleTaps = null;
     }
     _workletNode = null;
     _feedbackCallback = null;

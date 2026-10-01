@@ -1059,20 +1059,13 @@ export const S = {
     //  retired 2026-09-26: take: loop is the looper, tiles.js setTakeMode.)
   },
 
-  // ── Source (#247 — what the brush inks from) ───────────────────────────
-  // The chain is source → brush → lens (BRUSH-MODEL § 1g). Exactly one
-  // source is on: 'live' (the input channel in S.mainInputChannel) or
-  // 'sampler' (the sample instrument). Persistent, unlike the old
-  // activeSampleIndex which doubled as transient per-stroke paint state.
-  sourceKind: 'live',
-  // THE SAMPLER CAN BE SWITCHED OUT (Ek, 2026-09-23: "we won't use it and i'll
-  // spend time later to work on it" — parked, not sunset). Off: no sampler tab,
-  // and nothing can make it the source. Off by factory; Settings › Tools, stored
-  // in `mubone_sampler_on` (sampler.js).
-  samplerEnabled: false,
-  // samplerIndex: the sampler's current sample. Sampler-internal, 0-based,
-  // never -1 — the sampler always has a "current" slot, loaded or not.
-  samplerIndex: 0,
+  // ── The sampler (Ek, 2026-09-30) ──────────────────────────────────────
+  // A sample is played from its key like a pad, into the same input the mic
+  // feeds (audio.js connectInputTap), so the hand records it. There is no
+  // source to switch: whether the mic is in a take is decided at the stroke's
+  // start — `micInTake` false while a SAMPLE stroke records (a pad was still
+  // sounding when the hand went down).
+  micInTake: true,
   // Each slot: { buffer, name, duration, grainCursor, cropStart, cropEnd }
   samples: [],
   // True while sampler capture (record-into-sampler) holds the shared

@@ -7,7 +7,7 @@ import {
   MAX_SAMPLES, SAMPLE_PAINT_COLORS, LIVE_PAINT_COLORS, DEBUG,
   gp, perf
 } from './state.js';
-import { ensureAudioContext, getPreviewSinks } from './audio.js';
+import { ensureAudioContext, getPreviewSinks, samplePadBus, isDryMonitorDucked } from './audio.js';
 import { removeSeqByStrokeId, removeOverdubByStrokeId } from './ui-presets.js';
 import { hotSwapSample } from './grain-worklet-bridge.js';
 import { takeFromAudioBuffer } from './take.js';
@@ -36,6 +36,8 @@ export async function loadAudioFile(file) {
   // silent until restart (#247 — no-op when the worklet isn't up yet).
   hotSwapSample(take);
 
+  // A dropped file lands on its slot's key, 1–0, unless that slot has one.
+  S._seedSamplerKey?.(sampleIdx + 1);
   rebuildSampleListUI();
   // Keep the source tiles + the open design sheet honest about the new slot —
   // a file dropped while the sampler sheet is up must appear in it (#247).
@@ -227,6 +229,7 @@ export function initUndoBtn() {
 // ============================================================================
 
 export function rebuildSampleListUI() {
+  S._kitChanged?.();                 // every change to the list passes here: the kit saves (sample-kit.js)
   teardownCropListeners();           // remove stale document-level crop handlers
   const list = document.getElementById('sampleList');
   S.waveformOverlays = [];
@@ -239,8 +242,7 @@ export function rebuildSampleListUI() {
     const s        = i < S.samples.length ? S.samples[i] : null;
     const isLoaded = s !== null;
     const color    = SAMPLE_PAINT_COLORS[i % SAMPLE_PAINT_COLORS.length];
-    // 'painting' now marks the sampler's CURRENT slot (#247), not a live stroke
-    const isCurrentSlot = (i === S.samplerIndex) && isLoaded;
+    const isCurrentSlot = false;   // no current slot since the pads (2026-09-30)
 
     const slot = document.createElement('div');
     slot.className =
@@ -363,10 +365,6 @@ export function deleteSample(index) {
     else if (p.sampleIndex > index)    p.sampleIndex--;
   });
 
-  // samplerIndex is never -1 (#247): deleting the current slot clamps to 0
-  if (S.samplerIndex === index)          S.samplerIndex = 0;
-  else if (S.samplerIndex > index)       S.samplerIndex--;
-
   rebuildSampleListUI();
 }
 
@@ -387,13 +385,6 @@ export function reorderSample(fromIdx, toIdx) {
       if (p.sampleIndex >= targetIdx && p.sampleIndex < fromIdx)  p.sampleIndex++;
     }
   });
-
-  if (S.samplerIndex === fromIdx)          S.samplerIndex = targetIdx;
-  else if (fromIdx < targetIdx) {
-    if (S.samplerIndex > fromIdx && S.samplerIndex <= targetIdx) S.samplerIndex--;
-  } else {
-    if (S.samplerIndex >= targetIdx && S.samplerIndex < fromIdx) S.samplerIndex++;
-  }
 
   rebuildSampleListUI();
 }
@@ -565,6 +556,7 @@ export function setupCropInteraction(waveDiv, cropCanvas, slotIdx) {
     waveDiv.classList.remove('near-handle');
     const s = S.samples[slotIdx];
     if (s) s.grainCursor = s.cropStart * s.duration;
+    S._kitChanged?.();
   }, { signal });
 }
 
@@ -577,8 +569,19 @@ export function updateCropDuration(slotIdx) {
 
 // ── Sample preview playback ──────────────────────────────────────────────────
 
-export function toggleSamplePreview(slotIdx, btn) {
+export function toggleSamplePreview(slotIdx) {
   if (S.samplePreviews[slotIdx]) { stopSamplePreview(slotIdx); return; }
+  playSample(slotIdx);
+}
+
+/** A sample's VOICE — the sheet's ▶ and its pad key both start this (Ek,
+ *  2026-09-30). It is heard where the preview always went, and it ALSO plays
+ *  into the input (audio.js samplePadBus), at the file's own level, so a
+ *  stroke records it: a voice still sounding when the hand goes down makes a
+ *  sample stroke with the mic out. `restart` is the pad's press — a slot
+ *  already playing starts again from its top. */
+export function playSample(slotIdx, { restart = false, loop = false } = {}) {
+  if (S.samplePreviews[slotIdx]) { if (!restart) return; stopSamplePreview(slotIdx); }
   const s = S.samples[slotIdx];
   if (!s || !s.buffer) return;
 
@@ -587,16 +590,38 @@ export function toggleSamplePreview(slotIdx, btn) {
   const endSec   = s.cropEnd   * s.duration;
   const dur      = endSec - startSec;
 
+  // A sample is a take (shared memory, js/take.js) and a source node plays an
+  // AudioBuffer only — handing it the take threw, so ▶ was silent since the
+  // take landed (2026-09-17). Copy the crop out, as the sampler's monitor did.
+  const sr = s.buffer.sampleRate;
+  const c0 = Math.min(s.buffer.length - 1, Math.floor(startSec * sr));
+  const cN = Math.max(1, Math.min(s.buffer.length - c0, Math.floor(dur * sr)));
+  const crop = actx.createBuffer(1, cN, sr);
+  crop.getChannelData(0).set(s.buffer.data.subarray(c0, c0 + cN));
   const source = actx.createBufferSource();
-  source.buffer = s.buffer;
+  source.buffer = crop;
+  source.loop   = loop;   // a held pad: releaseSample lets the pass play out
   const gain = actx.createGain();
-  gain.gain.value = gp().volume;
+  // OUT OF THE HOUSE IN A GRAIN TAKE (Ek, 2026-09-30). When the dry monitor
+  // has stepped out for a granular recording (auto, #245), a pad played into
+  // it steps out too: it goes into the take — the pad bus below is not this
+  // gain — and is heard as the grains the cursor makes of it, the way the
+  // player's own sound is. Nothing reaches the room, so the mic stays open.
+  // A tape take, or a dry monitor left on, hears it whole (and the mic steps
+  // out instead — audio.js _padStarted). Back to its level when the take ends.
+  const silent = S.isRecording && isDryMonitorDucked();
+  gain.gain.value = silent ? 0 : gp().volume;
   source.connect(gain);
   for (const sink of getPreviewSinks()) gain.connect(sink);
-  source.start(actx.currentTime, startSec, dur);
+  const rs = S._resampleBus?.();   // and the app capture, at the level it is heard
+  if (rs) gain.connect(rs);
+  const pad = samplePadBus();
+  if (pad) source.connect(pad);
+  source.start(actx.currentTime);
 
-  const preview = { source, gain, startTimePerfNow: performance.now(), startSec, duration: dur, slotIdx };
+  const preview = { source, gain, startTimePerfNow: performance.now(), startSec, duration: dur, slotIdx, silent };
   S.samplePreviews[slotIdx] = preview;
+  _lastPad = slotIdx;
 
   S.activeGrains.push({
     sampleIndex:   slotIdx,
@@ -606,16 +631,58 @@ export function toggleSamplePreview(slotIdx, btn) {
     totalDuration: dur
   });
 
-  btn.textContent = '■';
-  btn.classList.add('playing');
+  _paintPlayButtons(slotIdx, true);
+  S._samplerVoiceStarted?.();
+  if (!silent) S._padStarted?.();   // a mic stroke's mic steps out while it sounds (audio.js)
 
   source.onended = () => {
     if (S.samplePreviews[slotIdx] === preview) {
       delete S.samplePreviews[slotIdx];
-      btn.textContent = '▶';
-      btn.classList.remove('playing');
+      _paintPlayButtons(slotIdx, false);
+      if (soundingPad() < 0) S._padsEnded?.();
     }
+    try { source.disconnect(); gain.disconnect(); } catch (_) {}
   };
+}
+
+/** A held pad's key came up: it stops looping, and the pass under way plays
+ *  to its end (the voice's onended then clears it). */
+export function releaseSample(slotIdx) {
+  const v = S.samplePreviews[slotIdx];
+  if (v) v.source.loop = false;
+}
+S._releaseSample = releaseSample;
+
+/** The grain take that silenced pads has ended: a pad still sounding (held,
+ *  looping) comes back to its level. */
+S._padsUnsilence = () => {
+  const actx = S.audioCtx;
+  for (const v of Object.values(S.samplePreviews)) {
+    if (!v.silent) continue;
+    v.silent = false;
+    if (actx) v.gain.gain.setTargetAtTime(gp().volume, actx.currentTime, 0.01);
+  }
+};
+
+let _lastPad = -1;
+/** The slot a stroke started now would record — the latest voice still
+ *  sounding — or -1 when none is, and the stroke is the mic's. */
+export function soundingPad() {
+  if (_lastPad >= 0 && S.samplePreviews[_lastPad]) return _lastPad;
+  const k = Object.keys(S.samplePreviews);
+  return k.length ? Number(k[k.length - 1]) : -1;
+}
+S._soundingPad = soundingPad;
+S._playSample = playSample;
+
+// Every surface's play button for a slot — the modal row and the sampler
+// sheet (#247), whichever started it: a key now starts the same voice.
+function _paintPlayButtons(slotIdx, playing) {
+  for (const sel of [`.sample-slot[data-index="${slotIdx}"] .slot-play`,
+                     `[data-src-play="${slotIdx}"]`]) {
+    const btn = document.querySelector(sel);
+    if (btn) { btn.textContent = playing ? '\u25a0' : '\u25b6'; btn.classList.toggle('playing', playing); }
+  }
 }
 
 export function stopSamplePreview(slotIdx) {
@@ -623,14 +690,10 @@ export function stopSamplePreview(slotIdx) {
   if (!preview) return;
   try { preview.source.stop(); } catch (e) {}
   delete S.samplePreviews[slotIdx];
-  // Reset every surface's play button for this slot — the modal row and the
-  // sampler design sheet (#247). onended can't do it: the preview entry is
-  // already deleted, so its identity guard misses on an explicit stop.
-  for (const sel of [`.sample-slot[data-index="${slotIdx}"] .slot-play`,
-                     `[data-src-play="${slotIdx}"]`]) {
-    const btn = document.querySelector(sel);
-    if (btn) { btn.textContent = '▶'; btn.classList.remove('playing'); }
-  }
+  if (soundingPad() < 0) S._padsEnded?.();
+  // onended can't reset the buttons: the entry is already deleted, so its
+  // identity guard misses on an explicit stop.
+  _paintPlayButtons(slotIdx, false);
 }
 
 // ── Waveform playhead overlay ─────────────────────────────────────────────────

@@ -51,6 +51,9 @@ const CATEGORY_IDS = new Set(CATEGORIES.map(c => c.id));
 // unregistered, and browser-audit's "every key is registered" check stays
 // honest. Add to this list in the same commit that stops writing the key.
 export const RETIRED_KEYS = [
+  // the sampler's park switch (2026-09-23 → 09-30): the sampler is pads on the
+  // input now, always there, with nothing to switch in
+  'mubone_sampler_on',
   // the learn switch's key before it defaulted ON (2026-09-25) — ui-learn.js
   'mubone-learn-mode',
   // the patch bank, its table, param locks and cloud morph (2026-09-03, #325)
@@ -102,7 +105,6 @@ export function purgeRetiredKeys() {
 
 export const KEYS = [
   // ── bindings ──
-  { key: 'mubone_sampler_on',        cat: 'ui', note: "the sampler's park switch, Settings › Tools (2026-09-23): '1' shows its tab and lets the brush ink from a file; absent or '0' — the factory — parks it (js/sampler.js)" },
   { key: 'mubone_pinned_rail',       cat: 'ui', note: 'whether the pinned rail is open (tile-layout.js LS_PINNED) — written since #291, unregistered until browser-audit ran on macOS 2026-09-05' },
   { key: 'mubone_tile_order',        cat: 'ui', note: 'tile row order; position is the key — see js/tiles.js' },
   { key: 'mubone_tiles_gone',        cat: 'ui', note: 'factory tools the player DELETED (2026-09-10) — ids that tileDef answers for as if they never existed; a reset of this category brings the originals back. Lens ids (`wide` · `spot`) are swept out on boot since 2026-09-22 night: there is one lens and it is not deletable' },

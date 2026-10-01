@@ -259,7 +259,8 @@ function tick() {
     const realMic = document.getElementById('micEnableBtn');
     if (mic && realMic) {
       const label = realMic.querySelector('span:last-child')?.textContent ?? '';
-      if (S.sourceKind === 'sampler')      _pill(mic, 'on',   'file');
+      // A sample stroke records with the mic out (audio.js connectInputTap).
+      if (S.isRecording && !S.micInTake)   _pill(mic, 'on',   'sample');
       else if (S.isRecording)              _pill(mic, 'live', 'live');
       else if (/ready/i.test(label))       _pill(mic, 'on',   'mic');
       else                                 _pill(mic, '',     '—');

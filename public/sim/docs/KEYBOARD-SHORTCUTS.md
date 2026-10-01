@@ -199,6 +199,13 @@ arrange lens.
 and the patch bank itself went on 2026-09-03 (#325, `sandbox/sunset-2026-09-03/`) — a grain
 tile owns its whole block, so there is nothing for a bank to hold.
 
+**Digits `1`–`0` play the sampler's pads** (2026-09-30). A sample lands on its slot's digit as it
+loads — dropped, recorded or a test sound — unless that pad already has a key or the digit is
+bound to something else. Each is an ordinary learnable row (`sampler_play_N`): the sticker on the
+sample's row in the sampler sheet shows it, click relearns, right-click clears. Tap it and the
+sample plays once; hold it and it loops, and the pass playing when you let go plays out. A pad plays into
+the input the mic feeds, so a stroke records it — see the sampler in `docs/RULINGS.md`.
+
 Every play is one funnel, decided once in `js/brush.js` (`gesturePress`) and only then handed to
 the brush that started it, to say what it deposits (`_toolDown`). Two doors press it: a POSITION
 (a quick-access key, in the tile's verb) and THE HAND (space, the sphere's click, the hand tile, in

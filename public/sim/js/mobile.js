@@ -4,7 +4,7 @@
 
 import { S } from './state.js';
 import { qFromAxisAngle, qNormalize, qMul } from './sphere.js';
-import { ensureAudioContext, requestMicAccess } from './audio.js';
+import { ensureAudioContext, requestMicAccess, connectInputTap } from './audio.js';
 
 // ── Orientation state (module-private) ───────────────────────────────────────
 let orientationYawAxis   = 'beta';
@@ -267,7 +267,7 @@ function setupMobileSettings() {
       S.inputGainNode = S.inputGainNode || (() => { const g = actx.createGain(); g.gain.value = S.inputGainValue; return g; })();
       S.inputAnalyser = S.inputAnalyser || (() => { const a = actx.createAnalyser(); a.fftSize = 256; a.smoothingTimeConstant = 0.6; return a; })();
       monSrc.connect(S.inputGainNode);
-      S.inputGainNode.connect(S.inputAnalyser);
+      connectInputTap();
       window._micMonitorSrc = monSrc;
       devStatus.textContent = 'mic ready ✓';
     } catch(e) {

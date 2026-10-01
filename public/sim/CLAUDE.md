@@ -1,6 +1,6 @@
 # CLAUDE.md — Project Context for Cowork / Claude Code
 
-> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-28 (5.13 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
+> **Status: CURRENT — this file is authoritative.** Last verified against the code 2026-09-28 (5.14 alpha). Read this first on every new session, then ONLY the docs the table below marks as relevant to the task *and* CURRENT. If this file disagrees with a doc, this file wins; if it disagrees with the code, **the code wins** — and fix the doc.
 
 > **This file stays under 32 KB** (`docs-audit.js` fails past it) and holds rules and pointers, not narrative — no paragraph here per change. Rulings go in `docs/RULINGS.md`, audit reasoning in `docs/AUDITS.md`, finished items in `docs/archive/TODO-DONE-<month>.md`.
 
@@ -147,7 +147,7 @@ words — read that entry before touching the area, and put a new ruling there, 
 - **A tool is a SHAPE and a VOICE, and each HAND SIDE has its own verb** (2026-09-22, reversing "the press is the verb"; RULINGS has the six): two hand tiles, **each with its OWN tool** — `hand_press` · `hand_long`, reserved on `key:Space` and `mouse:0`, told apart by the RECOGNISER, so a long takes back what the press started. **The recogniser picks the SIDE, the side's verb says what it does** (press toggles, hold momentary; no `bang` — the hand has no palette entry). **MODE** (`autopin`, `cycle`) is asked once, so no tool wears a pin icon. The EDITOR writes the SLOT. **Every learned key and note is a button** — one recogniser.
 - **Overdub** (a tape MODE) records into the NEAREST pinned loop as a phase-locked layer on the master's gain nodes, pass by pass; nothing pinned, the first take IS the main loop, pinned on release. **Wash is a MODE**: grain's `autopin` switch IS `gEnd` — a stroke pins itself as a cloud on release (`S.traceMode`: `trace` / `trace+cloud`). `docs/archive/OVERDUB-PLAN.md`.
 - **Shape encodes affordance** (rectangle = action, switch = yes/no, capsule = which one), **one hue per engine** (`--eng-*`), **never dim to mean anything**, flat surfaces. A true boolean on an engine sheet is the SWITCH, not an `on | off` capsule (2026-09-07). `docs/INSTRUMENT-GUI.md`.
-- **A piece is the music, the rig is an export** (`js/piece.js`; `.mubone` is a zip of manifest + float32 audio, `js/mubone-file.js`): ⌘S · ⇧⌘S · ⌘O, a File menu, a quit guard, no autosave.
+- **A piece is the music, the rig is an export** (`js/piece.js`; `.mubone` is a zip of manifest + float32 audio, `js/mubone-file.js`): ⌘S · ⇧⌘S · ⌘O, a File menu, a quit guard, no autosave but the sample kit (`js/sample-kit.js`).
 - **One settings door** (`#settingsModal`, `js/ui-settings.js`): a section's body is the REAL modal's `.mu-dialog` moved in and moved back on close — never a copy, and anything borrowed must be returned. A setting with no nav item has no way in.
 - **The engine page** (`renderProps`): one line per parameter, every number typeable, double-click resets to the tick. A `slider` param's raw value is its POSITION (the grain sliders are log-mapped) — typed values go through the numbox's `fromDisplay`, never a re-derived one.
 - **Two left rails** (`#toolRail`, `#propRail`) overlay the stage, never resizing the sphere. The left is TOOLS — a tab per instrument, its card the PERFORMANCE block (switches, rows), then VOICE + presets — over **CURSOR**, the rail's foot, always shown, **AUDITION** in it. No tool rows: one tool per instrument, so the TABS are the list. **A param lives with the TOOL it works on**; a standing answer lives in ITS tab. Rows are pitch 30.
@@ -177,7 +177,7 @@ A module mature enough to always load is wired into `main.js`; otherwise it stay
 
 ## Versioning — releases are explicit, never automatic
 
-Current version: **5.13 alpha** (`5.13.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
+Current version: **5.14 alpha** (`5.14.0-alpha` in `package.json`; the chrome shows the minor) **Do not bump the version, touch `CHANGELOG.md`, or push as part of a normal change** (see How we work together). A release is a separate, explicit action Ek initiates ("release" / "bump" / "push", ideally via a release skill). Only then do these five updates apply:
 
 1. **`index.html`** — BOTH version strings: the `<span class="top-bar-version">` (cabinet, hidden) and the chrome brand `<b>mubone</b> <i>1.14</i>`, which is the one the player sees
 2. **`package.json`** line 3 — the `"version"` field (semver, e.g. `"1.10.0-alpha"`)

@@ -277,9 +277,7 @@ const NEEDS_STATE = new Map([
   // and reaches localStorage on a 10 Hz poll, so the S snapshot cannot see it;
   // palette-audit § G is where wet is actually proven.
   ['/palette/wet',      'wet is tiles.js state (_tileCfg), not on S — proven by palette-audit'],
-  ['/source/sampler',   'select-only; painting from it needs a loaded sample'],
-  ['/source/live',      'the boot default — selecting it again moves nothing'],
-  ['/sampler/sample',   'needs a loaded sample'],
+  ['/sampler/play',     'needs a loaded sample; a voice is audio, not state on S'],
   ['/sampler/record',   'needs a live input to capture'],
   ['/redo',             'needs an undone stroke to reinstate (#246)'],
   ['/composer/allon',   'needs a commit to exist'],

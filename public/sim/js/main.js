@@ -8,6 +8,7 @@ import { scheduleGrains } from './grain.js';
 import { makeTake } from './take.js';
 import { setupEvents, setupDragDrop } from './events.js';
 import { rebuildSampleListUI, initUndoBtn } from './ui-samples.js';
+import { loadKit } from './sample-kit.js';
 import {
   setupPresets, initGrainControls, updatePlaybackControls,
 } from './ui-presets.js';
@@ -30,7 +31,7 @@ import { initVizUI } from './ui-viz.js';
 import { initSessionPanel } from './ui-sweep.js';
 import { initEraseUI } from './erase.js';
 import './brush.js';   // registers S._currentBrush and the main button (S._gesturePress …)
-import './sampler.js'; // registers S._samplerSelectSource / _samplerTrace / capture (#247)
+import './sampler.js'; // registers S._samplerPad / capture — a sample is a pad on the input
 import { initSourceTiles } from './ui-source.js';   // the source tiles (#247)
 import { initSettings, openSettings } from './ui-settings.js';   // the one settings door (#255)
 import { initTileLayout } from './tile-layout.js';
@@ -232,6 +233,7 @@ function init() {
   purgeRetiredKeys();    // one-shot: keys of sunset features (the patch bank, locks, cloud morph)
   loadAudioDefaults();   // restore saved settings before any UI init
   rebuildSampleListUI();
+  loadKit();             // the samples from last time (async; IndexedDB)
   S.updateLiveRecUI?.();
   setupPresets();
   initGrainControls();

@@ -768,8 +768,8 @@ export function setupEvents() {
     // tiles by position, Q W E are layers. The patch bank's digits and the
     // Q–P sample-paint row lost their default keys in the same pass the tile
     // row landed. The preset actions stay bindable via MIDI/OSC; the
-    // paint1–10 actions died with the stamp brush (#247) — the sampler is a
-    // SOURCE now (/source/sampler + /sampler/sample), painted by any brush.
+    // paint1–10 actions died with the stamp brush (#247); since 2026-09-30 a
+    // sample is a pad on its own learnable key (sampler_play_N, dealt 1–0).
 
     // (p / ⇧P — the perf monitor and high-perf render — and ⇧F, the projector,
     // lost their keys 2026-09-09: all three are set on their settings pages.)

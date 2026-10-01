@@ -1908,9 +1908,9 @@ export function drawParticles() {
       const entry = activeGrainMap.get(particle);
       // A loop or trigger tags its playhead mark in the loop's own colour
       // (grain.js, seq block) so the paint pass can brighten it as the head
-      // passes. That head draws its own mark (_drawPlayheadMark — this same
-      // white dot since 2026-09-26); drawing it here as well would lay two on
-      // one mark. This pass is for grains — white tags, cursor and cloud alike.
+      // passes. That head draws its own mark (_drawPlayheadMark — a hollow
+      // ring of this dot's size since 2026-09-30); drawing it here as well
+      // would lay two on one mark. This pass is for grains — white tags, cursor and cloud alike.
       if (!entry || entry.glowColor !== '#ffffff') continue;
       const df   = Math.max(0, depthFactor(depth));
       const base = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df;
@@ -2078,14 +2078,24 @@ function _drawOverdubHeads(seq, mx, my) {
 // so it wears the glow map's one mark: white, `max(3.2, base × GLOW_CORE)` on
 // the marker layer's own size scale, at GLOW_ALPHA. Depth moves its size as it
 // moves a glow dot's, and not its alpha — the glow pass's own rule. No box.
+//
+// AND IT IS HOLLOW (Ek, 2026-09-30: "change the loop playhead to be a hollow
+// circle to differentiate between a line stroke or loop and a cloud or
+// particle"). Same size, white and alpha as a glow dot, so it still reads as
+// sounding; the RING says it is a tape head travelling a line, the filled dot
+// a grain of a cloud or the cursor. The stroke sits inside the dot's radius so
+// the ring's outer edge is the dot's.
 const _tickProj = [0, 0, 0];   // scratch for the trigger outline below
 
 function _drawPlayheadMark(x, y, df) {
   const base = PARTICLE_BASE_SIZE + (PARTICLE_MAX_SIZE - PARTICLE_BASE_SIZE) * df;
+  const r  = Math.max(3.2, base * GLOW_CORE);
+  const lw = Math.max(1.25, r * 0.32);
   S.ctx.save();
   S.ctx.globalAlpha = GLOW_ALPHA;
-  S.ctx.fillStyle   = '#ffffff';
-  S.ctx.beginPath(); S.ctx.arc(x, y, Math.max(3.2, base * GLOW_CORE), 0, Math.PI * 2); S.ctx.fill();
+  S.ctx.strokeStyle = '#ffffff';
+  S.ctx.lineWidth   = lw;
+  S.ctx.beginPath(); S.ctx.arc(x, y, r - lw / 2, 0, Math.PI * 2); S.ctx.stroke();
   S.ctx.restore();
 }
 
@@ -2753,8 +2763,10 @@ export function drawCursor() {
   const painting    = S.isPainting;
   const scanOff = S.scanMuted;
   const recording   = S.isRecording;
-  // THE DOT SAYS WHAT YOU INK FROM (Ek, 2026-09-14). From a loaded sample it is
-  // that sample's colour; from the mic it is the mic's, which the top bar
+  // THE DOT SAYS WHAT YOU INK FROM (Ek, 2026-09-14). While a sample pad is
+  // sounding — so a stroke started now records it, without the mic (2026-09-30,
+  // audio.js connectInputTap) — it is that sample's colour, and through a
+  // sample stroke too; from the mic it is the mic's, which the top bar
   // already uses to say the mic is live. NOT --accent-danger — that one means
   // "it will not come back".
   //
@@ -2765,10 +2777,10 @@ export function drawCursor() {
   // were painting. That is why this is not a hue preference: the dot was
   // ambiguous about the only fact it carries.
   //
-  // Recording lands here too, and should: recording IS the mic. It stays
-  // unmistakable because it also takes the 2.4x dot and the ring.
-  const color = (!recording && S.sourceKind === 'sampler')
-    ? SAMPLE_PAINT_COLORS[S.samplerIndex % SAMPLE_PAINT_COLORS.length]
+  // A recording takes the 2.4x dot and the ring on top of either colour.
+  const pad = recording ? (S.micInTake ? -1 : (S._lastStrokePad ?? -1)) : (S._soundingPad?.() ?? -1);
+  const color = pad >= 0
+    ? SAMPLE_PAINT_COLORS[pad % SAMPLE_PAINT_COLORS.length]
     : _tok('--mic-live-border', '#d25e3e');
 
   // ─── ZONE 3: Radius circle ─────────────────────────────────────────────

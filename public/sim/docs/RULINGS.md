@@ -2337,6 +2337,55 @@ on "under the brush" / "the mic is live". A second mark in that gutter is the in
 the same morning for the same reason. The sampler's glyph moved into `G` on the way — it had been
 copied in `SRC_G` and `INSTR_G`, "kept identical on purpose", which is two copies and a promise.
 
+**A sample is a PAD on the input, and the stroke's start decides the mic** (Ek, 2026-09-30,
+superseding the same morning's file/mic switch). *"if the mic is on, each sample can have a key
+assigned so it's like playing a sampler instrument … if the sample is playing and i press the
+spacebar … it'll be smart and not use the mic but the sample. if i already started recording a mic
+hand stroke and press the 1 2 3 it should also layer with my mic."* So a pad is a second instrument
+plugged into the input: its voice is heard where the preview goes AND summed into
+`S.inputAnalyser`, which everything that records reads (the recorder, the grain worklet's live
+buffer, the paint gate, the timbre); the mic reaches it through a gate (`audio.js
+connectInputTap`). ONE RULE: a pad still sounding when the stroke starts makes a SAMPLE stroke and
+the gate shuts the mic out of it; otherwise it is a mic stroke and pads layer on top. A hold's long
+reads the pad as it was at the press (tiles.js `_pressPad`), or a pad played inside the recogniser's
+window would flip a mic stroke. A pad plays from its top and a press restarts it (a drum pad); HELD
+it loops, and the release only stops the looping, so the pass under way plays out — a tap is a
+one-shot and a hold a loop with no window telling them apart (Ek, same day: "if i hold down the
+sample key shouldnt it keep playing on loop?"). It "sounds" until it ends, so tap `1` then the hand. Keys are `sampler_play_N`, dealt digit N (10 → 0)
+as a slot fills unless the pad or the digit is taken, worn as the row sticker on the sheet. Gone the
+same day: `S.sourceKind`, the park switch, `samplerIndex`, `samplerTrace` and the take it built from
+the crop, `/source/*` and `/sampler/sample`. **During a mic stroke a pad shuts the mic while it
+sounds** (Ek, same day, after hearing the house's copy of a pad recorded under the clean one —
+smeared on playback): the pad is in the take once, clean, and the player is out of it for that long
+— "kinda an override". Of the four ways out, echo cancellation was "way too complicated" and
+monitor-only pads need monitors Ek rarely has. Timed for where the bleed lands: shut a round trip
+(`S.latency`) after the pad starts, open a round trip plus 150 ms of room after the last one ends
+(`audio.js _padStarted` / `_padsEnded`). Outside a stroke a pad leaves the gate alone. **In a GRAIN
+take a pad stays out of the house instead** (Ek, same day): when the dry monitor has stepped out for a
+granular recording (auto, #245), a pad played into it is silent in the room, recorded clean, and heard
+as the grains the cursor makes of it — the player's own rule — so nothing bleeds and the mic stays
+open. A tape take, or the dry monitor left on, hears the pad whole and shuts the mic instead. A pad
+still sounding when the grain take ends comes back to its level.
+
+**The sampler resamples the instrument, not the room** (Ek, 2026-09-30: *"record directly from
+the audio that's playing out of the app … not including the wet … into mono"*, then: what mubone
+plays, no reverb, no dry). `audio.js resampleBus` is a mono sum every PLAYING voice taps beside its
+own route — the grain engine's two outputs split and summed per channel at −3 dB each (an
+equal-power centre lands at unity), every tape voice after its pin gain, the pads at their heard
+level. The dry monitor and the reverb are left out by where the taps are, not by a switch: dry joins
+at `dryGain`, the reverb is an insert after the master. Taps are pre-fader and pre-mute, so a muted
+rig still resamples. The sheet's `app` button and `sampler_resample` (`/sampler/resample`) drive it
+through the same capture core as `rec`; one capture at a time. A dense resample can peak over 1.
+
+**The loaded samples are a KIT and keep themselves** (Ek, 2026-09-30). The pad keys persist, so the
+samples behind them must, or a restart leaves keycaps on empty slots. `js/sample-kit.js` keeps them
+in IndexedDB — one audio record per sample, written once and keyed by `kitId`, and a manifest of
+order, names and crops rewritten on every change (`rebuildSampleListUI`, a rename, a crop) — and
+loads them at boot. It is the one thing that saves itself; the piece still has no autosave. A piece
+still CARRIES its samples: opening one makes them the kit, a new piece keeps the kit, and samples
+alone are not unsaved material (`hasMaterial`), so the quit guard does not ask about the kit. A
+key belongs to its SLOT, not its sample: a delete shifts the samples below it up onto the keys above.
+
 **MODE stays autopin and overdub; the arrival family is CURSOR BEHAVIOUR and belongs on the sheet**
 (2026-09-22). Ek, on the sections the round had produced: *"since the modes autopin and overdub are
 part of the tool editor they are technically tool-specific. but now at least they're not buried into

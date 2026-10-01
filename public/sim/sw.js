@@ -18,7 +18,7 @@
 // visitors still get the full app from cache.
 // ============================================================================
 
-const CACHE_VERSION = 'mubone-5.13.0-alpha';
+const CACHE_VERSION = 'mubone-5.14.0-alpha';
 
 // Extensions served network-first. Everything else (fonts, images, audio) is
 // cache-first — those are content-addressed by name and rarely change.
@@ -51,6 +51,7 @@ const APP_SHELL = [
   './js/grain-worklet-bridge.js',
   './js/brush.js',
   './js/sampler.js',
+  './js/sample-kit.js',
   './js/ui-settings.js',
   './js/ui-source.js',
   './js/onsets.js',

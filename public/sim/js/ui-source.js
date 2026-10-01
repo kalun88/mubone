@@ -1,21 +1,9 @@
 // ============================================================================
-// ui-source.js — the source tiles (#247)
+// ui-source.js — the sampler's rail row and its sheet (#247)
 //
-// BRUSH-MODEL § 1g: the chain is source → brush → lens, and the source must
-// be performance-visible. This renders the grouped source section at the
-// left end of the tile row — one tile per live input channel, each tile
-// doubling as that channel's level meter, plus one sampler tile — and the
-// sampler's design sheet (library + record) when design view is open.
-//
-// The meters ride the existing machinery: tiles carry canvases named for
-// tickMeters' cache (`srcBar-cv-<i>`), and ui-meters' tickMainMeters ticks
-// them in the SAME 30 fps pass that used to draw the bottom bar's input
-// column (hidden under tile layout — never two reads of one analyser).
-//
-// Clicking a live tile routes through the one owner of the channel-change
-// path — the hidden #asInputChannel select (ui-audio-settings.js) — so the
-// modal, the mapping table and the engine all stay honest; the source flip
-// itself goes through sampler.js selectSource().
+// One rail row (the sampler tile, which opens the library) and the sheet: one
+// row per sample with its pad key, a waveform, ▶, delete, and the record and
+// test buttons. What a sample DOES is sampler.js's: a pad on the input.
 // ============================================================================
 
 import { S, SAMPLE_PAINT_COLORS } from './state.js';
@@ -30,12 +18,11 @@ const SRC_G = {
 };
 
 
+// How many pads are loaded — there is no current sample since the pads
+// (2026-09-30), so the row names the library, not one file in it.
 function _samplerLabel() {
-  const s = S.samples[S.samplerIndex];
-  if (!s) return 'sampler';
-  // No hard cut: the row's .tile-nm ellipsizes, and a cut at nine characters
-  // showed "test pluc" with no sign anything was missing (2026-09-03).
-  return (s.name || 'sample').replace(/\.[^.]+$/, '').slice(0, 24);
+  const n = S.samples.length;
+  return n ? `${n} sample${n === 1 ? '' : 's'}` : 'sampler';
 }
 
 // Full rebuild. One row, so this is cheap; selection, the take's name and the
@@ -48,27 +35,16 @@ export function renderSourceTiles() {
   // already a setting in the header the mic"). One `in N` row per live channel
   // was this panel's whole left half, and it asked a question the chrome's own
   // input control already owns — two doors onto one setting, and this one was
-  // filed under a tab about a FILE. So the panel is the SAMPLER's now, and the
-  // live input is simply what you get when the sampler is off.
+  // filed under a tab about a FILE. So the panel is the SAMPLER's now.
   //
-  // AND THE SAMPLER IS A TILE (Ek, 2026-09-22: "make the sampler a legit bench
-  // tile as well"), so this row obeys the rail's one rule: a click BENCHES it
-  // and opens its sheet, it does not perform it. Swapping the material the
-  // brush inks from is a PRESS — hold it for one stroke, toggle it for a few —
-  // and a press belongs under a key, which means the palette. `A` on the bench
-  // holds it while you are looking at the library.
-  //
-  // The half moon is the BENCH's, like every other row in this rail, and it is
-  // the ONLY mark: whether the file is under the brush right now is performance
-  // state, and it is read where performance lives — the palette tile lights,
-  // and this sheet's head says it in words. A second mark in this gutter is the
-  // in-hand line, deleted the same morning for the same reason.
+  // This row obeys the rail's one rule: a click opens its sheet, it does not
+  // perform. A sample is played from its own key (sampler.js, 2026-09-30).
   const benched = !!S._benchIs?.('sampler');
   const html = `<button class="trow trow--radio src-tile src-sampler${benched ? ' on' : ''}"` +
           ` data-src="sampler" data-sel="radio"` +
           ` style="--c:${SRC_HUE};--eng:${SRC_HUE}" aria-pressed="${benched}"` +
-          ` title="the sampler — paint from a file instead of the mic; any brush inks from the current take` +
-          ` · click to open its library · hold A to try it` +
+          ` title="the sampler — each sample is a pad on its own key, played into the input the mic feeds` +
+          ` · click to open its library` +
           ` · the input itself is chosen in the header">` +
           `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${SRC_G.sampler}</svg>` +
           `<span class="tile-nm src-sampler-lbl"></span></button>`;
@@ -80,9 +56,6 @@ export function renderSourceTiles() {
 // In-place refresh: the switch, the take's name, the capture state. Cheap
 // (class toggles + one text write) — safe on the chrome's 5 Hz tick.
 export function refreshSourceTiles() {
-  // The park switch follows S whoever set it (Settings › Tools › Sampler).
-  const park = document.getElementById('setSamplerOn');
-  if (park) park.checked = !!S.samplerEnabled;
   const bar = document.getElementById('srcBar');
   if (!bar) return;
   const smp = bar.querySelector('.src-sampler');
@@ -111,20 +84,29 @@ export function renderSamplerSheet() {
   if (!sheet) return;
   const rows = S.samples.map((s, i) => {
     const color = SAMPLE_PAINT_COLORS[i % SAMPLE_PAINT_COLORS.length];
-    const cur   = i === S.samplerIndex;
-    return `<div class="src-row ${cur ? 'current' : ''}" data-src-row="${i}">` +
+    // THE ROW WEARS ITS PAD'S KEY (Ek, 2026-09-30: "have that key bind glyph so
+    // i see the assignment and so i can change it") — the row sticker every
+    // keyed control wears (tiles.js rowBindHTML): click relearns, right-click
+    // clears. Filled by S._fillRowBinds after the sheet is drawn.
+    return `<div class="src-row" data-src-row="${i}">` +
            `<span class="src-dot" style="background:${color}"></span>` +
            `<span class="src-row-name" data-src-name="${i}" title="double-click to rename">` +
            `${(s.name || 'sample ' + (i + 1)).slice(0, 24)}</span>` +
+           `<span class="row-binds" data-binds="sampler_play_${i + 1}"></span>` +
            `<span class="src-row-wavewrap"><canvas class="src-row-wave" data-src-wave="${i}"></canvas>` +
            `<span class="src-row-ph" data-ph="${i}"></span></span>` +
            `<span class="src-row-dur">${s.duration.toFixed(1)}s</span>` +
-           `<button class="src-row-play" data-src-play="${i}" title="preview">\u25b6</button>` +
+           `<button class="src-row-play" data-src-play="${i}" title="play — as its key does, into the input: press the hand while it sounds and the stroke records it without the mic; during a mic stroke it layers on top">\u25b6</button>` +
            // `del`, not `\u00d7` — the sheet's own close control is an \u2715 and one
            // glyph cannot mean both "close this" and "destroy this" (#284).
            `<span class="src-row-del" data-src-del="${i}" role="button" tabindex="-1"` +
            ` title="delete this take">del</span></div>`;
   }).join('');
+  const capBtn = (id, from, word, tip) => {
+    const on = S.isSamplerCapturing && S.samplerCaptureFrom === from;
+    return `<button type="button" class="ds-editbtn ${on ? 'on' : ''}" id="${id}"` +
+      ` title="${on ? 'stop recording' : tip}">${on ? '\u25a0 stop' : '\u25cf ' + word}</button>`;
+  };
   sheet.innerHTML =
     // The same head as every engine page (#288): name, ONE LINE saying what
     // this is, actions on the right. It had its own markup and therefore its
@@ -139,32 +121,32 @@ export function renderSamplerSheet() {
     // left rail"). The rail, the tab, the bench tile and the palette tile all
     // read `--eng-source`; this was the one surface still speaking for itself.
     `<div class="ds-head"><b style="color:var(--eng-source)">sampler</b>` +
-    // WHAT IS UNDER THE BRUSH, in words — the one line every engine page has,
-    // spent on the fact the rail row stopped claiming (2026-09-22).
-    `<span title="press the sampler tile — from the palette, or hold A while it is on the bench — to swap what the brush inks from">` +
-    `${S.sourceKind === 'sampler' ? 'under the brush' : 'the mic is live'}</span>` +
-    `<button type="button" class="ds-editbtn ${S.isSamplerCapturing ? 'on' : ''}" id="srcRecBtn"` +
-    ` title="${S.isSamplerCapturing ? 'stop recording' : 'record the input into a new take'}">` +
-    `${S.isSamplerCapturing ? '\u25a0 stop' : '\u25cf rec'}</button>` +
+    // NO LINE HERE (2026-09-30): three pills fill a 351px head — "keys play
+    // them" ellipsized to "key…" beside rec · app · test. The span stays empty
+    // to push the pills right; how a pad plays is in its ▶ and sticker titles.
+    // (A file/mic switch sat here for an afternoon, the same day, before a
+    // sample became a pad and the switch had nothing left to choose.)
+    `<span></span>` +
+    // TWO WAYS TO RECORD A SAMPLE (Ek, 2026-09-30): `rec` takes the input,
+    // `app` RESAMPLES — what mubone itself plays, mono, without the dry mic
+    // or the reverb (audio.js resampleBus). One capture at a time; whichever
+    // is running is the one that says stop.
+    capBtn('srcRecBtn', 'input', 'rec', 'record the input into a new sample') +
+    capBtn('srcResampleBtn', 'app', 'app', 'resample — record what mubone plays (grains, loops, lines, pads; no dry mic, no reverb) into a new sample, in mono') +
     `<button type="button" class="ds-editbtn" id="srcTestBtn" title="load three synthesized test sounds — pluck, pad, bass">test</button></div>` +
     `<div class="src-sheet" data-sheet="sampler">` +
     (rows || `<div class="src-empty">no takes — drag audio files anywhere, record the input, or load the test sounds</div>`) +
     `</div>`;
 
-  sheet.querySelector('#srcRecBtn')?.addEventListener('click', () => {
-    S._samplerCaptureToggle?.();
-    renderSamplerSheet(); refreshSourceTiles();
-  });
+  for (const [id, from] of [['srcRecBtn', 'input'], ['srcResampleBtn', 'app']]) {
+    sheet.querySelector('#' + id)?.addEventListener('click', () => {
+      S._samplerCaptureToggle?.(from);
+      renderSamplerSheet(); refreshSourceTiles();
+    });
+  }
   sheet.querySelector('#srcTestBtn')?.addEventListener('click', () => {
     S._samplerLoadTestSamples?.();
     renderSamplerSheet(); refreshSourceTiles();
-  });
-  sheet.querySelectorAll('[data-src-row]').forEach(el => {
-    el.addEventListener('click', e => {
-      if (e.target.closest('[data-src-del]') || e.target.closest('.src-rn')) return;
-      S._samplerSelectSample?.(parseInt(el.dataset.srcRow, 10) + 1);
-      renderSamplerSheet();
-    });
   });
   // Double-click the name to rename the take (#288). Unlike the tool rail,
   // this row is not rebuilt by its own click, so the native `dblclick` does
@@ -184,7 +166,7 @@ export function renderSamplerSheet() {
       let done = false;
       const finish = keep => {
         if (done) return; done = true;
-        if (keep) { const v = inp.value.trim().slice(0, 32); if (v) smp.name = v; }
+        if (keep) { const v = inp.value.trim().slice(0, 32); if (v) { smp.name = v; S._kitChanged?.(); } }
         renderSamplerSheet(); refreshSourceTiles();
       };
       inp.addEventListener('blur', () => finish(true));
@@ -200,11 +182,11 @@ export function renderSamplerSheet() {
   sheet.querySelectorAll('[data-src-play]').forEach(el => {
     el.addEventListener('click', e => {
       e.stopPropagation();
-      toggleSamplePreview(parseInt(el.dataset.srcPlay, 10), el);
-      _armPlayheads();
+      toggleSamplePreview(parseInt(el.dataset.srcPlay, 10));
     });
   });
   _armPlayheads();   // a re-render mid-preview must not orphan the ticker
+  S._fillRowBinds?.();
   sheet.querySelectorAll('[data-src-del]').forEach(el => {
     el.addEventListener('click', e => {
       e.stopPropagation();
@@ -239,7 +221,9 @@ function _tickPlayheads() {
     const s = S.samples[i];
     if (prev && s?.duration) {
       any = true;
-      const elapsed = Math.min((performance.now() - prev.startTimePerfNow) / 1000, prev.duration);
+      // Modulo, not a clamp: a held pad loops, and its head comes round.
+      const t = (performance.now() - prev.startTimePerfNow) / 1000;
+      const elapsed = prev.duration > 0 ? t % prev.duration : 0;
       ph.style.left    = (prev.startSec / s.duration * 100) + '%';
       ph.style.width   = (elapsed / s.duration * 100) + '%';
       ph.style.opacity = '1';
@@ -263,9 +247,8 @@ export function initSourceTiles() {
   bar.addEventListener('click', e => {
     const smp = e.target.closest('.src-sampler');
     if (!smp) return;
-    // SELECTING IS NOT PERFORMING. The click benches the tile and opens the
-    // library; what is under the brush does not change, and nothing here can
-    // be refused mid-stroke because nothing here touches the engine.
+    // SELECTING IS NOT PERFORMING: the click opens the library and touches
+    // nothing in the engine.
     S._setBench?.('sampler');
     S._openProps?.('sampler', 'source');
     renderSamplerSheet();
@@ -280,12 +263,8 @@ export function initSourceTiles() {
     if (!document.body.classList.contains('props-open')) return;
     if (document.querySelector('#propRail .src-sheet')) renderSamplerSheet(); };
   S._refreshSourceTiles = refreshSourceTiles;
-  // Settings › Tools › Sampler — the park switch (sampler.js setSamplerEnabled).
-  const on = document.getElementById('setSamplerOn');
-  if (on) {
-    on.checked = !!S.samplerEnabled;
-    on.addEventListener('change', () => { S._setSamplerEnabled?.(on.checked); on.checked = !!S.samplerEnabled; });
-  }
+  // A voice started anywhere — its key, OSC, ▶ — runs the sheet's playhead.
+  S._samplerVoiceStarted = _armPlayheads;
   // Visible refusal: flash the strip.
   S._samplerRefused = () => {
     bar.classList.remove('flash'); void bar.offsetWidth; bar.classList.add('flash');
