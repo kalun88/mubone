@@ -115,6 +115,7 @@ There was a third operation, **recenter**: a drift-offset quaternion composed on
 
 - **Cursor sensor:** both operations apply, plus recenter. This is the primary use case.
 - **Camera sensor:** both apply. Zero heading zeroes it together with the cursor (every sensor holding a role, 2026-09-27) — the two drift apart on their own, and "face the audience" is true of both.
+- **Frame sensor:** both apply, and the mounting matters most here: the cursor is read relative to the frame's WHOLE calibrated rotation, so an uncalibrated frame's tilt lands in the cursor. Zero heading zeroes it with the cursor (every sensor holding a role), which makes the *relative* heading zero — body and hand facing the audience put the cursor at front centre. A frame silent for 2 s drops out and the cursor is the world one.
 - **Gesture sensor:** mount calibration applies. Heading is meaningless for a stream that feeds the processing chain rather than a spatial view, and recenter does not apply either.
 
 Calibration is **per slot**, keyed by slot name in `mubone_sensor_cal`, so two sensors on one rig are calibrated independently — which is the point when one is on a wrist and the other on a music stand.

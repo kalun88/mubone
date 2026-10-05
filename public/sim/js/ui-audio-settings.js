@@ -547,11 +547,22 @@ function stopMetering() {
 // its strip.
 /** Slide the viewBox so the DRAWN ink sits centred in the column. Re-runs on
  *  the next frame if the element has no layout yet — a hidden page measures
- *  as zero and a correction from zero is no correction. */
+ *  as zero and a correction from zero is no correction.
+ *
+ *  ONLY WHILE THE PAGE IS UP, and one retry at a time. It retried whenever it
+ *  measured zero, and a CLOSED page always measures zero: every redraw with
+ *  Settings shut (boot, a device, the reverb, the dry mode — which moves on
+ *  every ducked take) left a requestAnimationFrame chain running for the rest
+ *  of the session, and they stacked. Measured 2026-10-04 in a rehearsal-shaped
+ *  run: the largest single cost on the main thread, 1.7 %, and growing. A
+ *  closed page stops here; opening it redraws (startMetering). */
 function _spCentre(el, H) {
   const svg = el?.firstElementChild;
   if (!svg) return;
-  if (!el.clientWidth) { requestAnimationFrame(() => _spCentre(el, H)); return; }
+  if (!el.clientWidth) {
+    if (_visible() && !el._spRetry) el._spRetry = requestAnimationFrame(() => { el._spRetry = 0; _spCentre(el, H); });
+    return;
+  }
   const kids = [...svg.children].map(k => k.getBoundingClientRect()).filter(r => r.width || r.height);
   if (!kids.length) return;
   const box = svg.getBoundingClientRect();

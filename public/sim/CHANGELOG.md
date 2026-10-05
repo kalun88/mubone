@@ -7,6 +7,68 @@ Format: newest version first. Entries written at the end of each working session
 
 ---
 
+## 5.16 alpha — 2026-10-04
+
+**Several players, one instrument: listeners that play like the cursor, each with its own settings, and the frame role back.**
+
+### Changed
+- **The listen cursor is Travis's** (PR #5), replacing 5.15's. A sensor on the `listen` role (Settings › Sensors,
+  Role menu; up to four, sensor camera mode) granulates the shared material and **works like the cursor**: it fires
+  tape lines and walk strokes, hears what dwell opened and what is being painted, and stays out of pinned clouds.
+  Its grains leave on the cursor's output. It never records, pins, erases or takes keys.
+- **More cursors on a stroke, more voices.** Each cursor has its own gate on every line: arriving where another's
+  take sounds stacks a second voice, and each cursor's leave releases only its own.
+- **The chrome's sensor icon is one chip per sensor** — the device with its number, `C` for the sensor holding the
+  cursor — matching the Sensors page's row numbers. A click opens Settings › Sensors on that sensor. The broadcast
+  mark is now the camera's `sensor` mode only.
+
+### Added
+- **Frame role** (PR #4), beside camera: the cursor read in a frame sensor's coordinates (`conj(F)·C`), for a body
+  or a turntable; silent, the cursor falls back to world.
+- **Listeners' own settings.** The Cursor card's `for` row picks whose settings it shows (`cursor · 2 · 3`). A
+  listener follows the cursor until its first edit, which gives it its own scope, radius and grain behaviour,
+  copied from the cursor's; `own settings` switches back. Kept with the sensor. Its ring, nearest diamond and
+  tape gates follow its own radius and mode.
+
+### Fixed
+- A take laid under a resting listener plays at once, as a pinned zone catches it, including when the cursor lands
+  on it the same instant (they merged into one voice). Imports stay silent, a pinned line is not doubled, and
+  unpinning under a listener hands it the line.
+- Sensors page: two descriptions over the row limit (the tare status is its own line), and the alignment audit
+  measuring the instrument rows outside the sensor's card.
+
+---
+
+## 5.15 alpha — 2026-10-04
+
+**More than one sensor plays one instance: the main sensor records and controls, the others listen.**
+
+### Added
+- **Listen cursors.** A sensor can take the role `listen` (Settings › Sensors: the Role menu, or the Listen
+  button beside Cursor on each row). Any number may hold it. A listen cursor granulates where it points and
+  reads the way the cursor's lens does (radius, k, depth, nearest, fade), with each mark in its own sound,
+  and stays out of pinned clouds. It never records, paints, erases, pins, presses a button or moves the
+  camera. It is drawn as a solid reach ring in the sensor accent with its own reach lines, and has no reticle.
+
+### Fixed
+- **Narrow windows.** `npm run stations` tiles 480–570px windows (three or four across one screen), and both
+  bars overlapped themselves: the brand ran into the left group, the meters into the level sliders. Each bar
+  now gives way in tiers. The footer takes a second, then a third row. The brand shrinks, then goes. The
+  right side of the chrome takes a second row. The tape and grain tiles go two wide, glyph only. Checked
+  from 1440 down to 420px; below about 410px the palette still overflows.
+- **The signal-path diagram stopped polling with Settings closed.** Every redraw made with the page shut
+  started a frame loop that never ended, and these loops stacked for the whole session.
+- **The x-imu3 LED's timbre colour** weights marks by their distance to the cursor. It was reading the
+  distance to whichever pinned cloud, walker or listener had stamped them last.
+
+### Changed
+- The cabinet's hidden pin-bank display no longer redraws every frame; it runs again when it is on screen or
+  the projector popup is open.
+- A listen cursor skips the exact-angle maths outside its radius: 2.5 → 0.52 ms a tick for three listeners
+  at 10,000 marks.
+
+---
+
 ## 5.14 alpha — 2026-09-30
 
 **The sampler is an instrument: each sample a pad on its own key, played into the input the mic feeds.**

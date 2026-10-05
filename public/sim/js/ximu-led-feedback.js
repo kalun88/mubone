@@ -414,10 +414,17 @@ const POOL_MAX      = 96;    // cap the walk; strided beyond this
 // because the material there is yellow, not because of which 5 ms grain
 // happened to fire at the instant we looked.
 //
-// Weighting is proximity × RMS. `p._ang` is the angular distance the pool build
-// already computed, so the spotlight falloff is free — particles at the centre
-// of the radius dominate, which makes small movements read immediately instead
-// of waiting for the pool membership to turn over.
+// Weighting is proximity × RMS. `p._cursorAng` is the angular distance the pool
+// build already computed, so the spotlight falloff is free — particles at the
+// centre of the radius dominate, which makes small movements read immediately
+// instead of waiting for the pool membership to turn over.
+//
+// `_cursorAng`, NOT `_ang` (2026-10-04): `_ang` is the scratch angle every
+// reader of the tick overwrites — each pinned cloud, walker and listen cursor
+// stamps its OWN distance after the cursor's — and this runs on its own timer,
+// after all of them. So with a cloud pinned the light was weighted by the
+// distance to the cloud. `_cursorAng` is the cursor's, and only the cursor
+// writes it.
 function _sampleCursorTimbre() {
   const pool = S._cursorPool;
   const age  = performance.now() - (S._cursorPoolAt ?? 0);
@@ -435,7 +442,7 @@ function _sampleCursorTimbre() {
     const rms = p.rms ?? 0;
     if (rms <= 0) continue;
     // Cosine-ish falloff on angle: 1 at the cursor, 0 at the radius edge.
-    const prox = Math.max(0, 1 - (p._ang ?? 0) / radRad);
+    const prox = Math.max(0, 1 - (p._cursorAng ?? 0) / radRad);
     const w = rms * (0.15 + 0.85 * prox * prox);
     wSum += w;
     // THE SCREEN'S FALLBACK, NOT A BARE ZERO (2026-09-13). `p.tilt ?? 0` gave a

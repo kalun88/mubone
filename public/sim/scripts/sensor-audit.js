@@ -33,7 +33,7 @@
 // imported here.
 import {
   qMul, qConj, twistAboutZ, headingAboutZ, applyCal, mountFromPoses, MOUNT_POSE_MIN_DEG,
-  quatToEulerDeg, DEFAULT_SIGNS, attitude, orientation, panTilt,
+  quatToEulerDeg, DEFAULT_SIGNS, attitude, orientation, panTilt, inFrame,
 } from '../js/sensor-math.js';
 
 // ── test-only helpers ───────────────────────────────────────────────────────
@@ -422,6 +422,50 @@ section('K. camera: pan and tilt, no roll');
   }
   check(worstFwd < 1e-9, 'the view looks exactly where the sensor points', `300 attitudes, worst ${worstFwd.toExponential(1)}`);
   check(worstRoll < 1e-9, 'the horizon never tilts', `worst right-axis rise ${worstRoll.toExponential(1)}`);
+}
+
+// ── L. the cursor read in a frame sensor's coordinates ──────────────────────
+// Ek, 2026-10-04: a frame sensor (a body, a turntable) — turn it with the hand
+// fixed to it and the cursor keeps its spot. Every pose below is built as the
+// rig sees it: raw = H · T · B for a sensor whose mount is B and heading H, so
+// T is its calibrated pose in the shared stage frame, and each sensor gets its
+// OWN random mount and heading — two sensors never agree on either.
+section('L. frame: the cursor relative to a frame sensor');
+{
+  const rot = (q, v) => { const [x,y,z,w] = q, t = [2*(y*v[2]-z*v[1]), 2*(z*v[0]-x*v[2]), 2*(x*v[1]-y*v[0])];
+    return [v[0]+w*t[0]+y*t[2]-z*t[1], v[1]+w*t[1]+z*t[0]-x*t[2], v[2]+w*t[2]+x*t[1]-y*t[0]]; };
+  const az = q => { const f = rot(q, [0,0,1]); return Math.atan2(f[0], f[2]) * 180 / Math.PI; };
+  const randomCal = () => ({ mountQuat: randomQuat(), headingQuat: axisAngle(0,0,1, rnd()*360 - 180), signs: { ...DEFAULT_SIGNS } });
+  const raw = (T, cal) => qMul(qMul(cal.headingQuat, T), cal.mountQuat);
+  let worstId = 0, worstTogether = 0, worstAlone = 0, n = 0;
+  for (let i = 0; i < 300; i++) {
+    const cc = randomCal(), fc = randomCal();
+    const Tc = randomQuat(), Tf = randomQuat(), R = randomQuat();
+    const C = orientation(raw(Tc, cc), cc);
+    // frame at identity: zeroed and mounted → the cursor as it was
+    worstId = Math.max(worstId, angBetween(inFrame(C, orientation(raw(IDENT, fc), fc)), C));
+    // the same rotation R applied to both, in the stage frame → nothing moves
+    const before = inFrame(C, orientation(raw(Tf, fc), fc));
+    const after  = inFrame(orientation(raw(qMul(R, Tc), cc), cc), orientation(raw(qMul(R, Tf), fc), fc));
+    worstTogether = Math.max(worstTogether, angBetween(before, after));
+    // and composing in the sphere equals composing the calibrated poses
+    worstAlone = Math.max(worstAlone, angBetween(before, orientation(qMul(qConj(Tf), Tc), null)));
+    n++;
+  }
+  check(worstId < 1e-4, 'a frame at identity leaves the cursor unchanged', `${n} poses, worst ${worstId.toExponential(1)}°`);
+  check(worstTogether < 1e-4, 'frame and hand turned or tipped TOGETHER: the cursor does not move', `${n} poses × random R, worst ${worstTogether.toExponential(1)}°`);
+  check(worstAlone < 1e-4, 'the result is conj(F)·C of the calibrated poses — the frame\'s WHOLE rotation counts', `worst ${worstAlone.toExponential(1)}°`);
+  // the frame alone turns 60°, the hand still: the cursor moves by the inverse
+  const cc = randomCal(), fc = randomCal();
+  const still = orientation(raw(IDENT, cc), cc);
+  const handTurned = az(orientation(raw(axisAngle(0,0,1,60), cc), cc));
+  const frameTurned = az(inFrame(still, orientation(raw(axisAngle(0,0,1,60), fc), fc)));
+  check(Math.abs(handTurned) > 59.9 && Math.abs(frameTurned + handTurned) < 1e-6,
+    'the frame turns 60° alone: the cursor moves 60° the OTHER way', `hand alone ${handTurned.toFixed(3)}°, frame alone ${frameTurned.toFixed(3)}°`);
+  const tipped = rot(inFrame(still, orientation(raw(axisAngle(0,1,0,25), fc), fc)), [0,0,1]);
+  check(tipped[1] < -0.4, 'the frame tips up 25° alone: the cursor drops relative to it', `forward y ${tipped[1].toFixed(3)}`);
+  // the frame lost (none, or silent — the registry passes null): the world cursor
+  check(inFrame(still, null) === still, 'no frame: the cursor is the world cursor, untouched', 'identity of reference');
 }
 
 console.log(`\n${fail === 0 ? 'All sensor calibration invariants hold.' : `${fail} FAILED`}  (${pass} checks)`);

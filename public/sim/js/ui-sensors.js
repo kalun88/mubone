@@ -7,7 +7,7 @@
 //   • axes alignment dropdown (hardware — sent to sensor)
 //   • raw Euler readout, the three sign buttons, calibrated output
 //   • the two calibration gestures (mount, heading) and their clear
-//   • role menu (cursor / camera / none — the gesture role has no menu)
+//   • role menu (cursor / camera / listen / frame / none — the gesture role has no menu)
 //
 // Discovery list at the top shows all visible devices with connect; a
 // connected row that was connected from here carries Disconnect (2026-09-18).
@@ -21,7 +21,7 @@ import {
   getSensors, getSensor, removeSensor, setRole, zeroAllHeadings,
   captureMountPose1, captureMountPose2, cancelMountCapture, slotQuat,
   captureHeading, clearMountCal, hasMountCal, getPolarity, togglePolarity, getCalibratedEuler,
-  setOnDeviceUpdated, setOnDataReceived,
+  setOnDeviceUpdated, setOnDataReceived, sensorNumber,
 } from './sensors.js';
 import {
   initXimu3,
@@ -360,6 +360,8 @@ function _resolveSelection() {
   return want;
 }
 
+// The chrome's sensor chips open the page ON their sensor (tile-layout.js).
+S._selectSensor = sn => selectSensor(sn);
 function selectSensor(sn) {
   if (!getSensors().has(sn) || _selectedSn === sn) return;
   _selectedSn = sn;
@@ -700,7 +702,7 @@ function renderSensors() {
     }
 
     row.innerHTML =
-      `<span class="set-device-n">${i + 1}</span>` +
+      `<span class="set-device-n">${isConnected ? (e.dev.role === 'cursor' ? 'C' : sensorNumber(e.sn)) : i + 1}</span>` +   // the chrome chip's label: C for the cursor, else its number
       `<span class="set-device-mark${isConnected && e.dev.live ? ' set-device-ok' : ''}">${isConnected && e.dev.live ? '✓' : '•'}</span>` +
       `<span class="set-device-text"><span class="set-device-name"></span>` +
       `<span class="set-device-meta">${meta}</span></span>`;
@@ -876,12 +878,14 @@ function renderSelected() {
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Role</span>
-          <span class="set-row-desc">Cursor drives the grain cursor, camera pans and tilts the view, none leaves it connected and idle.</span>
+          <span class="set-row-desc">Cursor plays and records, listen only hears, camera pans the view, frame carries the cursor.</span>
         </div>
         <div class="set-ctl">
           <select class="imu-setup-select imu-setup-role-select js-role">
             <option value="cursor">cursor</option>
             <option value="camera">camera</option>
+            <option value="listen">listen</option>
+            <option value="frame">frame</option>
             <option value="unmapped">none</option>
           </select>
         </div>
@@ -890,7 +894,8 @@ function renderSelected() {
       <div class="set-row">
         <div class="set-row-text">
           <span class="set-row-title">Mounting and heading</span>
-          <span class="set-row-desc">Mounting once per strap: aim it as you play, then bow forwards. Heading before each set: face the audience. <span class="js-tare-status">Not calibrated</span></span>
+          <span class="set-row-desc">Mounting once per strap: aim it as you play, then bow forwards. Heading: face the audience.</span>
+          <span class="set-row-status js-tare-status">Not calibrated</span>
         </div>
         <div class="set-ctl">
           <button class="set-btn set-btn--sm set-btn--primary js-tare-capture" title="Set once per mounting. Aim it as you play, then bow it forwards — the rotation is the measurement. Gravity alone gives only 'up', so bowing forwards is the only way mubone can learn which way is forward. Held in mubone; the sensor is not written to.">Set mounting</button>
@@ -905,7 +910,7 @@ function renderSelected() {
       <div class="set-row set-row--head">
         <div class="set-row-text">
           <span class="set-row-title">Axes</span>
-          <span class="set-row-desc">Raw is what the sensor sends. Calibrated is after mounting, heading and the flips — what drives the cursor. Flip an axis that turns the wrong way. + − − is the default, not a flip: the sensor counts pitch and yaw about its Z-up, the sphere about Y-up, and those two signs are the difference; a button is marked only when it differs from that.</span>
+          <span class="set-row-desc" title="Raw is what the sensor sends; calibrated is after mounting, heading and the flips. + − − is the default, not a flip: the sensor counts pitch and yaw about its Z-up, the sphere about Y-up, and those two signs are the difference; a button is marked only when it differs from that.">Calibrated drives the cursor. Flip an axis that turns the wrong way; + − − is normal.</span>
         </div>
       </div>
       <!-- A small dial beside each number (Ek, 2026-09-09: "i should have a

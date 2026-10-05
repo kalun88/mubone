@@ -120,7 +120,7 @@ Every case in this table is a real handler in `js/osc.js`. "bang" means the hand
 
 | Address | Args | Description |
 |---|---|---|
-| `/sensor/{name}/quaternion` | `f f f f` | Sensor quaternion `[qx, qy, qz, qw]` — slot registers on first receipt, role (cursor / camera / gesture) assigned on the Sensors page |
+| `/sensor/{name}/quaternion` | `f f f f` | Sensor quaternion `[qx, qy, qz, qw]` — slot registers on first receipt, role (cursor / camera / listen / frame / gesture) assigned on the Sensors page |
 | `/sensor/{name}/inertial` | `f f f f f f` | Sensor gyro + accel `[gx, gy, gz, ax, ay, az]` |
 
 **Grain parameters** — all write to `S.grainOverrides`; scheduler picks up next tick

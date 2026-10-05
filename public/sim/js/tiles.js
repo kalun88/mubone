@@ -91,6 +91,7 @@ import { S, perf, gp , HAND_TAP_MS, FILTER_Q_FLAT, FILTER_Q_PEAK } from './state
 import { setBrush } from './brush.js';
 import { resolveGrainParams, filterFromCorners } from './brush-voicing.js';
 import * as HIST from './history.js';
+import { getRegistry, listenCfgOf, setListenOwn, setListenParam } from './sensor-registry.js';
 import { fmtPitch, quantPitch, quantSpeed, PITCH_MAX_CENTS, TAPE_STEPS } from './tape-pitch.js';
 
 const LS_ORDER = 'mubone_tile_order';
@@ -2939,10 +2940,34 @@ export function render() {
       const na = lensNA(pid);
       return head + (na ? `<div class="ds-na" title="${esc(na)}">${row}</div>` : row) + (pid === 'radius' ? auRow : '');
     }).join('');
-    curBox.innerHTML = `<div class="tbx-grp tbx-grp--bare" data-grp="perf" data-half="perf"><div class="rail-card">${curHTML}</div></div>`;
+    // WHOSE CURSOR (Ek, 2026-10-04: "each cursor (listeners) should be able to
+    // have their own cursor setting"). With a listener connected the card
+    // opens on a row choosing whose settings it shows — `cursor`, then each
+    // listener by its sensor's NUMBER (the Sensors page's row, the chrome's
+    // chip). Choosing only chooses what the card shows, as a tile's click
+    // opens its page; it never changes what plays. A listener's card is its
+    // own: `own settings` off and it follows the cursor (shown, greyed);
+    // on, and it starts from a COPY of the cursor's and its rows write to it.
+    const lsts = _listenerSlots();
+    if (_curPick && !lsts.some(x => x.name === _curPick)) _curPick = '';
+    const pickRow = lsts.length
+      ? `<div class="mrow" data-lpicker="" style="--c:${ENGINE_HUE.lens ?? ENGINE_HUE.none}"><span class="mrow-l">for</span><span class="opt"><i>for</i><span class="seg">` +
+        // THE CURSOR, not "main" (Ek, 2026-10-04: "1 is not main really, 1 is THE
+        // cursor, it's the one assigned cursor in the dropdown of the sensor"):
+        // the role's own word, as the Sensors page's Role menu and the chrome
+        // chip's tooltip say it. The row is "for", so it reads "for cursor · 2".
+        `<span class="${_curPick ? '' : 'on'}" data-lpick="" title="the cursor — the sensor (or mouse) holding the cursor role; its settings, as always">cursor</span>` +
+        lsts.map(x => `<span class="${_curPick === x.name ? 'on' : ''}" data-lpick="${esc(x.name)}" title="listener on sensor ${x.n} (Settings › Sensors, row ${x.n}) — ${x.own ? 'its own settings' : 'following the cursor'}">${x.n}</span>`).join('') +
+        `</span></span></div>`
+      : '';
+    const body = _curPick ? _listenCardHTML(_curPick, swRow, esc, secLbl, ENGINE_HUE.lens ?? ENGINE_HUE.none) : curHTML;
+    curBox.innerHTML = `<div class="tbx-grp tbx-grp--bare" data-grp="perf" data-half="perf"><div class="rail-card">${pickRow}${body}</div></div>`;
     curBox.style.setProperty('--eng', ENGINE_HUE.lens ?? ENGINE_HUE.none);
+    _wireListenCard(curBox);
+    if (!_curPick) {
     _wireOptions(curBox, () => LENS_ID);
     _wireKnobs(curBox, () => LENS_ID);
+    }
     // What the section was drawn UNDER — `_syncLensTab` redraws when it moves.
     curBox.dataset.lensKey = `${nearest ? 'n' : 'a'}${uncapped ? 'A' : 'k'}${reads}`;
     refreshLensLive();
@@ -4398,6 +4423,139 @@ export function setGrainOnEnd(v) {
   S._syncCommitUI?.();
 }
 
+// ── A LISTENER'S CURSOR CARD (Ek, 2026-10-04) ───────────────────────────────
+// The cursor section's other face: one listener's scope, reach and grain
+// behaviour, written to its sensor slot (sensor-registry.js `listenCfg`)
+// instead of the cabinet — so nothing here can move the cursor in your hand.
+// The rows are the cursor card's own, drawn from the same pieces and in the
+// same order; keys, MIDI and OSC stay the cursor's (no binding stickers).
+let _curPick = '';        // '' = the cursor; else a listener's slot name
+function _mainLensCfg() {
+  return { reads: S.lensReads ?? 'both', radius: S.searchRadiusDeg, mode: S.lensMode, depth: S.recencyN,
+           k: S.grainOverrides.k ?? gp().k ?? 0, step: !!S.lensStep, rfade: !!S.radiusFadeEnabled,
+           fadeCurve: S.radiusFadeCurve ?? 0.5 };
+}
+/** The listen slots, with their sensors' numbers, in number order. */
+function _listenerSlots() {
+  const out = [];
+  for (const slot of getRegistry().values()) {
+    if (slot.quatRole !== 'listen') continue;
+    const dev = S._sensorOfSlot?.(slot.name);
+    const n = dev ? (S._sensorNumber?.(dev.sn) || 0) : 0;
+    if (!n) continue;
+    out.push({ name: slot.name, n, own: !!slot.listenCfg });
+  }
+  return out.sort((a, b) => a.n - b.n);
+}
+const _RADIUS_MIN = 1, _RADIUS_MAX = 180, _K_MAX = 100;
+function _listenCardHTML(name, swRow, esc, secLbl, c) {
+  const own = listenCfgOf(name);
+  const v = own ?? _mainLensCfg();
+  const seg = (key, opts) => `<span class="seg">` + opts.map(([val, label, tip, ico]) =>
+    `<span class="${v[key] === val ? 'on' : ''}${ico ? ' seg-ico' : ''}" data-lset="${key}" data-val="${val}"${tip ? ` title="${esc(tip)}"` : ''}>` +
+    (ico ? `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${ico}</svg>` : label) + `</span>`).join('') + `</span>`;
+  const segRow = (key, label, opts) =>
+    `<div class="mrow" data-lpid="${key}" style="--c:${c}"><span class="mrow-l">${label}</span><span class="opt"><i>${label}</i>${seg(key, opts)}</span></div>`;
+  const num = (key, disp, words) =>
+    `<input class="prow-v mrow-num${words ? ' mrow-num--words' : ''}" data-lnum="${key}" value="${esc(disp)}" spellcheck="false" aria-label="${key}"` +
+    ` title="drag to set, or type a value and press Enter · double-click takes the cursor's">`;
+  const nearest = v.mode === 'nearest';
+  const na = key =>
+    v.reads === 'tape' && ['mode', 'depth', 'k', 'step', 'rfade'].includes(key)
+      ? 'scope is tape — a take fires when the listener comes within the radius; this only shapes how grains are read'
+    : nearest && ['depth', 'rfade'].includes(key)
+      ? 'nearest reads the k closest anywhere, so this has nothing to act on — switch mode to radius to use it'
+    : null;
+  const rows = [
+    segRow('reads', 'scope', [['both', 'both', 'grains and tape'], ['grains', '', 'grains only — tape strokes do not fire', G.dots], ['tape', '', 'tape only — no granulation', G.line]]),
+    `<div class="mrow" data-lpid="radius"><span class="mrow-l">radius</span>${num('radius', `${Math.round(v.radius)}°`)}</div>`,
+    `</div><div class="rail-card">` + secLbl('grain Behaviour', 'lens'),
+    segRow('mode', 'mode', [['area', 'radius'], ['nearest', 'nearest']]),
+    segRow('depth', 'depth', [[1, '1'], [2, '2'], [3, '3'], [4, '4'], [5, '5'], [6, '6'], [0, 'all']]),
+    (() => { const all = !(v.k > 0);
+      return `<div class="mrow" data-lpid="k"><span class="mrow-l">k</span>` +
+        (all ? '<span class="mrow-num mrow-num--words" aria-hidden="true"></span>' : num('k', `${v.k} mark${v.k === 1 ? '' : 's'}`, true)) +
+        `<span class="mrow-word">all</span><button type="button" class="mrow-sw${all ? ' on' : ''}" data-ltog="kall" role="switch" aria-checked="${all}" style="--c:${c}"` +
+        ` title="${all ? 'ON — this listener plays every mark in reach. Click to cap it' : 'OFF — it plays only the k marks nearest it. Click to play every mark in reach'}"><span class="mrow-knob"></span></button></div>`; })(),
+    swRow('step', !!v.step, 'data-ltog="step"', v.step ? 'ON — the listener steps through its marks in the order they were made' : 'OFF — it picks among its marks at random', c),
+    swRow('soft edge', !!v.rfade, 'data-ltog="rfade"', v.rfade ? 'ON — grains fade toward the edge of its radius' : 'OFF — every mark in its radius at full level', c),
+  ].map(r => {
+    const key = (r.match(/data-lpid="(\w+)"/) || r.match(/data-ltog="(\w+)"/) || [])[1];
+    // Following, the rows still TAKE a hand: the first edit gives the listener
+    // its own settings, copied from the cursor's (Ek, testing: dragging its
+    // radius changed both, because nothing had made it its own).
+    const why = key && na(key === 'kall' ? 'k' : key);
+    return why && !r.startsWith('</div>') ? `<div class="ds-na" title="${esc(why)}">${r}</div>` : r;
+  }).join('');
+  return swRow('own settings', !!own, 'data-lown=""', own
+    ? 'ON — this listener reads with its own scope, radius and grain behaviour. Click to follow the cursor again'
+    : 'OFF — this listener follows the cursor’s settings. Change any row below, or click here, to give it its own, starting from the cursor’s', c) + rows;
+}
+/** One delegated set of handlers on the cursor panel — it outlives render(). */
+function _wireListenCard(box) {
+  if (box._lsWired) return;
+  box._lsWired = true;
+  // COPY ON WRITE: a following listener's first edit makes it its own.
+  const ensureOwn = () => { if (!listenCfgOf(_curPick)) setListenOwn(_curPick, _mainLensCfg()); return listenCfgOf(_curPick); };
+  const set = (key, val) => { ensureOwn(); setListenParam(_curPick, key, val); render(); };
+  box.addEventListener('click', e => {
+    const pick = e.target.closest('[data-lpick]');
+    if (pick) { _curPick = pick.dataset.lpick; render(); return; }
+    if (!_curPick) return;
+    if (e.target.closest('[data-lown]')) { setListenOwn(_curPick, listenCfgOf(_curPick) ? null : _mainLensCfg()); render(); return; }
+    const sg = e.target.closest('[data-lset]');
+    if (sg) { const k = sg.dataset.lset, raw = sg.dataset.val;
+      set(k, k === 'depth' ? +raw : raw); return; }
+    const tg = e.target.closest('[data-ltog]');
+    if (tg) { const c = ensureOwn(); if (!c) return;
+      if (tg.dataset.ltog === 'kall') set('k', c.k > 0 ? 0 : (c._kLast || 8));
+      else set(tg.dataset.ltog, !c[tg.dataset.ltog]);
+      return; }
+  });
+  // The two numbers: drag sideways to set, type and Enter, double-click for
+  // the cursor's value — the numbox's own three gestures.
+  const clampV = (key, x) => key === 'radius' ? Math.max(_RADIUS_MIN, Math.min(_RADIUS_MAX, Math.round(x)))
+                                             : Math.max(1, Math.min(_K_MAX, Math.round(x)));
+  const disp = (key, x) => key === 'radius' ? `${x}°` : `${x} mark${x === 1 ? '' : 's'}`;
+  let drag = null;
+  box.addEventListener('pointerdown', e => {
+    const inp = e.target.closest('[data-lnum]'); if (!inp || !_curPick) return;
+    drag = { inp, key: inp.dataset.lnum, x0: e.clientX, v0: (listenCfgOf(_curPick) ?? _mainLensCfg())[inp.dataset.lnum], moved: false };
+    try { inp.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  box.addEventListener('pointermove', e => {
+    if (!drag || !e.buttons) return;
+    const dx = e.clientX - drag.x0;
+    if (!drag.moved && Math.abs(dx) < 3) return;
+    if (!drag.moved) { drag.moved = true; drag.inp.blur(); ensureOwn(); }
+    e.preventDefault();
+    const x = clampV(drag.key, drag.v0 + dx / (e.shiftKey ? 16 : 4));
+    setListenParam(_curPick, drag.key, x);
+    if (drag.key === 'k') listenCfgOf(_curPick)._kLast = x;
+    drag.inp.value = disp(drag.key, x);
+  });
+  box.addEventListener('pointerup', () => { if (drag?.moved) render(); drag = null; });
+  const commit = inp => {
+    const key = inp.dataset.lnum, n = parseFloat(inp.value);
+    if (!isFinite(n)) { render(); return; }
+    const x = clampV(key, n);
+    if (x === (listenCfgOf(_curPick) ?? _mainLensCfg())[key]) return;   // nothing typed: nothing changes, nothing becomes its own
+    set(key, x);
+    if (key === 'k') listenCfgOf(_curPick)._kLast = x; };
+  box.addEventListener('keydown', e => {
+    const inp = e.target.closest('[data-lnum]'); if (!inp) return;
+    if (e.key === 'Enter') { e.preventDefault(); commit(inp); }
+    else if (e.key === 'Escape') { e.preventDefault(); render(); }
+    e.stopPropagation();   // typing a number is not playing the instrument
+  });
+  box.addEventListener('focusout', e => { const inp = e.target.closest?.('[data-lnum]'); if (inp && !drag) commit(inp); });
+  box.addEventListener('dblclick', e => {
+    const inp = e.target.closest('[data-lnum]'); if (!inp || !_curPick) return;
+    const m = _mainLensCfg()[inp.dataset.lnum];
+    set(inp.dataset.lnum, inp.dataset.lnum === 'k' && !(m > 0) ? (listenCfgOf(_curPick)._kLast || 8) : m);
+  });
+}
+
 function _readParam(pid) {
   const d = PARAM_DEFS[pid];
   if (!d) return undefined;
@@ -4655,8 +4813,14 @@ function _pollLiveBlock() {
  *  `hot` is the whole point of the pair (Ek): taken === k means the ceiling
  *  is what is limiting the cursor, not the material — which is the one thing
  *  a ceiling has to be able to tell you. */
+let _lsSig = null;
 export function refreshLensLive() {
   if (!_propsOn) return;
+  // A listener arriving or leaving, or renumbered, redraws the cursor card's
+  // picker (5 Hz; one short string compared). Not while a number is being typed.
+  const sig = _listenerSlots().map(x => `${x.name}:${x.n}:${x.own}`).join('|');
+  if (_lsSig !== null && sig !== _lsSig && !document.activeElement?.closest?.('#cursorPanel')) { _lsSig = sig; render(); return; }
+  _lsSig = sig;
   const bar = document.getElementById('cursorPanel');
   const kEl = bar && bar.querySelector('[data-klive]');
   if (!kEl) return;

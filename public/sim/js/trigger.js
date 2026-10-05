@@ -702,6 +702,13 @@ function _newTriggerShell(strokeId, audition) {
     grainParams:   { volume: d.volume ?? 1.0 },
     trigger: {
       _inside:     !audition,
+      // The listeners' gates (`_inL[id]`) are born the same way: a fresh take
+      // is OUTSIDE for every cursor, so a listener resting where the line was
+      // laid is its enter edge and plays it at once, as a pinned zone catches
+      // a take (ui-presets.js pinStrokeInZones). An edit or an import is
+      // primed inside for them too, and makes no noise.
+      _inL:        null,
+      _bornInL:    !audition,
       // -Infinity, not 0: the audition must never be suppressed by the rearm
       // window. Zero only worked because the rearm guard at _onEnter compares
       // against the wall clock, which is always larger than rearmMs by the time
@@ -766,10 +773,12 @@ export function clearAllTriggers() {
  * Node references are detached up front so the seq block builds a fresh source
  * on its next tick; the old subgraph disconnects itself on 'ended'.
  */
-export function stopTriggerAudio(t, mode = 'fade', fadeSec = null) {
+export function stopTriggerAudio(t, mode = 'fade', fadeSec = null, keepVoices = false) {
   // Stacked voices go with it — muting, erasing or clearing a trigger that has
-  // layers ringing must silence all of them, not just the newest.
-  _stopAllVoices(t, fadeSec);
+  // layers ringing must silence all of them, not just the newest. Except a
+  // cursor's leave (_onExit, `keepVoices`): the voices stacked under the one it
+  // is releasing are other cursors', and theirs to release.
+  if (!keepVoices) _stopAllVoices(t, fadeSec);
   const src    = t._sourceNode;
   const gain   = t._gainNode;
   const extras = t._extraNodes;
@@ -892,7 +901,9 @@ function _detachVoice(t) {
 
   if (!src || src._stopped) { _disconnectAll(gain, extras); return; }
 
-  const voice = { src, gain, extras, tail };
+  // Whose it was: the cursor that started it (0, or a listener's id + 1) —
+  // that cursor's leave is what releases it (_onExit).
+  const voice = { src, gain, extras, tail, owner: t._owner ?? 0 };
   if (!t._voices) t._voices = [];
   t._voices.push(voice);
   src.addEventListener('ended', () => {
@@ -1019,6 +1030,16 @@ export function silenceTriggers() {
 let _gwX = 0, _gwY = 0, _gwZ = 0, _gwAt = 0;
 const _gSubX = new Float64Array(21), _gSubY = new Float64Array(21), _gSubZ = new Float64Array(21);
 let _gSubN = 0;
+// The live listeners this tick (updateTriggerGates): unit vectors and their
+// stable ids (grain.js listener `idx`). Sized for state.js MAX_LISTENERS with
+// room to spare; past it a listener is not read.
+const _lsX = new Float64Array(8), _lsY = new Float64Array(8), _lsZ = new Float64Array(8);
+const _lsId = new Int32Array(8);
+// …and what each reads with (grain.js `l.v`: its own settings or the
+// cursor's): its enter and exit chords², and its scope.
+const _lsEn = new Float64Array(8), _lsEx = new Float64Array(8);
+const _lsReads = new Array(8);
+let _lsN = 0;
 
 // Squared minimum distance between segments (Ericson §5.1.9) — for the swept
 // crossing against the stroke's drawn segments. Chords on the unit sphere.
@@ -1151,6 +1172,7 @@ function refreshWalkGates() {
       g = _newTriggerShell(sid, false);
       g.walk = true;
       g.trigger._inside = false;      // a gate starts OUTSIDE — the first touch is the enter edge
+      g.trigger._bornInL = false;     // …for every cursor
       g.trigger._lastFireAt = -Infinity;
     }
     if (rebuildTrigger(g)) { _walkGates.set(sid, g); changed = true; }
@@ -1247,6 +1269,29 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
   if (_gwAt === 0 || _gwX * rx + _gwY * ry + _gwZ * rz < 0.99996) {
     _gwX = rx; _gwY = ry; _gwZ = rz; _gwAt = nowMs;
   }
+  // EVERY CURSOR PLAYS WHAT IT TOUCHES (Ek, 2026-10-04: "if there's more
+  // cursors on it it should be louder because there are more cursors"). Each
+  // live listener (grain.js _scheduleListeners keeps S._listeners, read this
+  // same tick) has a gate of its OWN on every stroke — `tg._inL[id]`, beside
+  // cursor 0's `tg._inside` — and its own voice: arriving where another
+  // cursor's voice is sounding stacks a second voice on it (the retrig:'layer'
+  // machinery, `_detachVoice`) rather than cutting it, and each cursor's leave
+  // releases only the voice it started. Walkers likewise, one per cursor. The
+  // swept crossing (a flick's strum) and `_nearestIdx` (the pin's anchor) stay
+  // cursor 0's, as everything that WRITES does.
+  _lsN = 0;
+  const _ls = S._listeners;
+  if (_ls) for (const l of _ls) {
+    if (!l._seen || _lsN >= _lsX.length) continue;
+    const cl = Math.cos(l.lat);
+    _lsX[_lsN] = cl * Math.sin(l.lon); _lsY[_lsN] = Math.sin(l.lat); _lsZ[_lsN] = cl * Math.cos(l.lon);
+    _lsId[_lsN] = l.idx;
+    const lr = (l.v?.radius ?? S.searchRadiusDeg) * DEG2RAD;
+    _lsEn[_lsN] = Math.pow(2 * Math.sin(lr / 2), 2);
+    _lsEx[_lsN] = Math.pow(2 * Math.sin(Math.min(Math.PI, lr * (tp.hysteresis || 1)) / 2), 2);
+    _lsReads[_lsN] = l.v?.reads ?? S.lensReads;
+    _lsN++;
+  }
   for (let li = 0; li < 2; li++) {
   const list = li === 0 ? trigs : walks;
   if (!list || !list.length) continue;
@@ -1300,10 +1345,68 @@ export function updateTriggerGates(cursorLon, cursorLat, nowMs) {
       stopTriggerAudio(t, 'immediate', 0.02);
     }
 
+    // An arrival that waited for another cursor's voice to be built (_onEnter):
+    // replayed now, if that cursor is still on the stroke.
+    if (t._deferEnter) {
+      const d = t._deferEnter; t._deferEnter = null;
+      for (const [dc, di] of d) if (dc === 0 ? tg._inside : tg._inL?.[dc - 1]) _onEnter(t, di, nowMs, dc);
+    }
+
+    // 0. The LISTENERS' gates, each its own (see above). Before cursor 0's,
+    //    whose cap reject ends this stroke's turn. Every edge cursor 0's gate
+    //    answers, a listener's answers the same way: arriving (a take laid
+    //    under a resting listener is its arrival — the gate is born outside),
+    //    leaving, a claim lifting while it rests on the stroke, and under a
+    //    looping dwell the eye opening or shutting and dwell turning to loop.
+    //    A claimed stroke (a pin plays it) is tracked but never fired.
+    const capGate = Math.cos(Math.min(Math.PI, tg._capRad + exitRad));
+    if (_lsN || tg._inL) {
+      const inL = tg._inL || (tg._inL = []);
+      const liveWas = tg._liveL || (tg._liveL = []);
+      for (let j = 0; j < _lsN; j++) {
+        const id = _lsId[j];
+        const was = inL[id] ?? !!tg._bornInL;   // first sight: as the gate was born
+        // ITS OWN SCOPE AND REACH (grain.js `l.v`): the eye switch is the
+        // cursor's, the scope and the radius are the listener's.
+        const rd = _lsReads[j];
+        const liveJ = !S.scanMuted && (li === 0 ? rd !== 'grains' : rd !== 'tape');
+        const wasLiveJ = liveWas[id] ?? liveJ;
+        liveWas[id] = liveJ;
+        const wentDeadJ = _eyeEdges && wasLiveJ && !liveJ;
+        const wentLiveJ = _eyeEdges && !wasLiveJ && liveJ;
+        const readableL = liveJ && !_isClaimed;
+        const exitJ = Math.sqrt(_lsEx[j]);   // chord → its angle's cap reach
+        const capJ = Math.cos(Math.min(Math.PI, tg._capRad + 2 * Math.asin(Math.min(1, exitJ / 2))));
+        let now = false, idx = 0;
+        if (tg._capX * _lsX[j] + tg._capY * _lsY[j] + tg._capZ * _lsZ[j] >= capJ) {
+          const d2 = _nearestOnLine(t.particles, _lsX[j], _lsY[j], _lsZ[j], segGapS);
+          now = d2 < (was ? _lsEx[j] : _lsEn[j]); idx = _nlIdx;
+        }
+        if (now && !was) { inL[id] = true; if (readableL) _onEnter(t, idx, nowMs, id + 1); }
+        else if (now && was) {
+          inL[id] = true;
+          if ((_released || wentLiveJ || _dwellToLoop) && readableL) _onEnter(t, idx, nowMs, id + 1);
+          else if (wentDeadJ && !_isClaimed) _onExit(t, id + 1);
+        }
+        else if (!now && was) { inL[id] = false; if (!_isClaimed) _onExit(t, id + 1); }
+        else inL[id] = false;
+      }
+      // A listener gone since the last tick (its sensor silent, its role
+      // changed) has left every stroke it was on.
+      for (let id = 0; id < inL.length; id++) {
+        if (!inL[id]) continue;
+        let here = false;
+        for (let j = 0; j < _lsN; j++) if (_lsId[j] === id) { here = true; break; }
+        if (!here) { inL[id] = false; if (!_isClaimed) _onExit(t, id + 1); }
+      }
+    }
+    // Primed applies to the listeners there when the gate was made; one that
+    // turns up later is arriving, as the cursor would be.
+    tg._bornInL = false;
+
     // 1. Bounding-cap reject — outside the stroke's cap plus the exit radius,
     //    no particle can be in range.
     const capDot  = tg._capX * rx + tg._capY * ry + tg._capZ * rz;
-    const capGate = Math.cos(Math.min(Math.PI, tg._capRad + exitRad));
     if (capDot < capGate) {
       if (tg._inside) {
         tg._inside = false;
@@ -1509,30 +1612,75 @@ function _applyAudition(t, tp, claimed) {
   }
   t._wasLive = live;
 }
-function _onEnter(t, nearestIdx, nowMs) {
+/** Is ANY cursor on this stroke — the cursor (`_inside`) or a listener (`_inL`)? */
+function _anyInside(tg) {
+  if (!tg) return false;
+  if (tg._inside) return true;
+  if (tg._inL) for (const v of tg._inL) if (v) return true;
+  return false;
+}
+
+/** A cursor left: release the stacked voices it started, exactly as its leave
+ *  always treated them — fade or stop by tape's release, and under
+ *  play-to-end the ones stacked over a loop cut at the loop fade, one-shots
+ *  left to ring out. */
+function _releaseVoicesOf(t, c) {
+  const rel = S.triggerParams.release;
+  for (const v of t._voices.slice()) {
+    if ((v.owner ?? 0) !== c || !v.src || v.src._stopped) continue;
+    if (rel === 'fade') _fadeVoice(v, (S.triggerParams.releaseMs ?? 250) / 1000);
+    else if (rel === 'stop') _fadeVoice(v, RETRIGGER_FADE_S);
+    else if (S.triggerParams.dwell === 'loop') _fadeVoice(v);
+  }
+}
+
+// `c` is WHICH CURSOR: 0 is the cursor, a listener is its id + 1 (see
+// updateTriggerGates). Each has its own rearm window and its own voice.
+function _onEnter(t, nearestIdx, nowMs, c = 0) {
   const tg = t.trigger;
   // WHOSE ARRIVAL RULES (2026-09-22). A walking grain stroke answers grain's,
   // a tape take answers tape's. `t.walk` is the whole test — it is what the
   // gate was built as — and it covers the rearm window below as well as the
   // walker's own start, retrig and release.
   const tp = t.walk ? S.grainTrigger : S.triggerParams;
+  // ANOTHER CURSOR'S VOICE IS ON ITS WAY: it fired this tick, or a tick ago,
+  // and the seq block has not built its source yet. There is nothing to stack
+  // on, and firing now would only move that pass — two cursors arriving
+  // together (the cursor releasing a take whose path runs under a listener)
+  // were heard as one. This arrival waits for the source and stacks on it next
+  // tick (updateTriggerGates replays it while the cursor is still there).
+  if (!t.walk && t.playing && !(t._sourceNode && !t._sourceNode._stopped) && (t._owner ?? 0) !== c) {
+    const d = t._deferEnter || (t._deferEnter = []);
+    if (!d.some(e => e[0] === c)) d.push([c, nearestIdx]);
+    return;
+  }
   // Rearm window — suppress a refire that lands too soon after the last.
-  if (nowMs - tp.rearmMs < tg._lastFireAt) return;
-  tg._lastFireAt = nowMs;
+  if (c === 0) {
+    if (nowMs - tp.rearmMs < tg._lastFireAt) return;
+    tg._lastFireAt = nowMs;
+  } else {
+    const lf = tg._lastFireL || (tg._lastFireL = []);
+    if (nowMs - tp.rearmMs < (lf[c] ?? -Infinity)) return;
+    lf[c] = nowMs;
+  }
   // A grain stroke's gate launches a walker; everything below is tape.
-  if (t.walk) { startWalker(t, nearestIdx, tp); return; }
+  if (t.walk) { startWalker(t, nearestIdx, tp, c); return; }
 
-  // What a refire does to the pass already sounding.
+  // What a refire does to the pass already sounding. ANOTHER cursor's pass is
+  // never cut: it rings on as a stacked voice, so two cursors on one take are
+  // two voices — louder, as two players would be. The cursor's OWN refire
+  // follows retrig.
   if (t._sourceNode && !t._sourceNode._stopped) {
-    if (tp.retrig === 'layer') _detachVoice(t);      // let it ring, stack on top
+    if (tp.retrig === 'layer' || (t._owner ?? 0) !== c) _detachVoice(t);      // let it ring, stack on top
     else stopTriggerAudio(t, 'immediate', RETRIGGER_FADE_S);   // fade and restart
   }
+  t._owner = c;
 
   // The tape's own direction, baked when it was drawn. Every branch below
   // starts from it; `ends` is the one that flips it.
   const base = t.reverse ? -1 : 1;
   const lastIdx = Math.max(0, t.particles.length - 1);
-  if (tg._audition) {
+  if (tg._audition && c === 0) {
     // The one playback you get on releasing the record button: always the whole
     // thing from the top, so you hear what you captured — a reversed tape's
     // top is its tail. See _audition in armTrigger for why `start: 'touch'`
@@ -1596,10 +1744,16 @@ function _onEnter(t, nearestIdx, nowMs) {
   ledTriggerFire();
 }
 
-function _onExit(t) {
-  // Off the stroke: its material closes again, whichever reader opened it.
-  if (t.strokeId > 0) S._openStrokes.delete(t.strokeId);
-  if (t.walk) { exitWalker(t, S.grainTrigger); return; }
+function _onExit(t, c = 0) {
+  // Off the stroke: its material closes again, whichever reader opened it —
+  // once NO cursor is on it.
+  if (t.strokeId > 0 && !_anyInside(t.trigger)) S._openStrokes.delete(t.strokeId);
+  if (t.walk) { exitWalker(t, S.grainTrigger, c); return; }
+  // The voices this cursor started and that another's arrival stacked under
+  // (`_detachVoice`): its leave releases them by the same rule as below.
+  if (t._voices?.length) _releaseVoicesOf(t, c);
+  // The current voice is another cursor's: this leave is not its release.
+  if ((t._owner ?? 0) !== c) return;
   // RELEASE READS ON EVERY DWELL (Ek, 2026-09-23: "testing the fade for tape,
   // doesn't seem to work either" — it read under `loop` alone, so with the
   // default dwell the row did nothing, the same gap the walker had). `fade`
@@ -1612,15 +1766,15 @@ function _onExit(t) {
   // sample played once, and the granulation it opened falls out of the radius
   // by itself.
   const rel = S.triggerParams.release;
-  if (rel === 'fade') { stopTriggerAudio(t, 'fade', (S.triggerParams.releaseMs ?? 250) / 1000); return; }
+  if (rel === 'fade') { stopTriggerAudio(t, 'fade', (S.triggerParams.releaseMs ?? 250) / 1000, true); return; }
   // STOP (Ek, 2026-09-23: "one of the release options should just be stop
   // immediately"): the same 8 ms declick a refire on `cut` uses — silent at
   // once, never a click. Tape only: a take is one long buffer that keeps
   // playing on its own, while a walker with a stop is walk off with an extra
   // step, so grain keeps its two.
-  if (rel === 'stop') { stopTriggerAudio(t, 'immediate', RETRIGGER_FADE_S); return; }
+  if (rel === 'stop') { stopTriggerAudio(t, 'immediate', RETRIGGER_FADE_S, true); return; }
   if (S.triggerParams.dwell !== 'loop') return;
-  stopTriggerAudio(t, 'play-to-end');
+  stopTriggerAudio(t, 'play-to-end', null, true);
 }
 
 /** Called from the seq block's 'ended' handler when a one-shot finishes, so the
@@ -1640,7 +1794,7 @@ export function onTriggerSourceEnded(t, src) {
   // THE TAKE HAS PLAYED. Under `grain` that is what opens its material to the
   // cursor — not the arrival (state.js `_openStrokes`). Still on it, or the
   // exit already closed it.
-  if (S.triggerParams.dwell === 'grain' && t.trigger?._inside && t.strokeId > 0) {
+  if (S.triggerParams.dwell === 'grain' && _anyInside(t.trigger) && t.strokeId > 0) {
     S._openStrokes.add(t.strokeId);
   }
 }
@@ -1650,9 +1804,9 @@ export function onTriggerSourceEnded(t, src) {
  *  must not re-open material the exit closed. */
 export function gateInside(strokeId) {
   const g = _walkGates.get(strokeId);
-  if (g) return !!g.trigger?._inside;
+  if (g) return _anyInside(g.trigger);
   const t = (S.triggers || []).find(x => x.strokeId === strokeId);
-  return !!t?.trigger?._inside;
+  return _anyInside(t?.trigger);
 }
 S._gateInside = gateInside;
 

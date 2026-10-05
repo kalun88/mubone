@@ -80,7 +80,7 @@
     <div class="top-bar-left">
       <div class="top-bar-brand">
         <span class="top-bar-logo">mubone</span>
-        <span class="top-bar-version">5.14 alpha</span>
+        <span class="top-bar-version">5.16 alpha</span>
       </div>
       <div class="top-bar-row">
         <button id="fullscreenBtn2" class="mu-btn--bare top-bar-btn" title="toggle fullscreen mode">⛶ fullscreen</button>
@@ -111,7 +111,7 @@
           <div class="grain-seg top-bar-seg" id="cameraModeSeg">
             <button class="grain-seg-btn active" data-mode="steer" title="pull — the mouse or trackpad steers the view and the cursor follows it. How far back the camera sits is Visuals → pull-back, in every mode">pull</button>
             <button class="grain-seg-btn" data-mode="surface" title="point — the trackpad or mouse is captured and swipes the sphere around you; the cursor sits at the centre. ⌥ lets the pointer go">point</button>
-            <button class="grain-seg-btn" data-mode="sensor" title="sensor — the sensor in your hand points the view; the cursor sits at the centre and the mouse is free for the UI">sensor</button>
+            <button class="grain-seg-btn" data-mode="sensor" title="sensor — the sensor in your hand points the view; the cursor sits at the centre and the mouse is free for the UI. A listen sensor's cursor roams on its own and only hears">sensor</button>
           </div>
         </div>
       </div>
@@ -221,7 +221,7 @@
          wordmark's own colour without 9KB of path data in this file. -->
     <div class="tc-brand">
       <img class="tc-mark" src="logo/mark-light.svg" alt="" aria-hidden="true" width="18" height="18">
-      <b>mubone</b> <i>5.14</i>
+      <b>mubone</b> <i>5.16</i>
       <!-- The open piece, in the version's own engraved lettering. The unsaved
            mark is a DOT that is there or is not (js/piece.js) — nothing here is
            dimmed to mean anything. Empty and hidden until there is a piece. -->
@@ -260,7 +260,17 @@
              title, written by tile-layout.js. Same four dot colours as
              before; the shape is the bar's own 32px glyph so the right side
              is glyphs end to end like the left. -->
-        <button type="button" class="tc-readout" id="tcSensor" title="sensor — click to open sensor setup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2.2"/><path d="M7.8 7.8a5.9 5.9 0 0 0 0 8.4M16.2 7.8a5.9 5.9 0 0 1 0 8.4"/><path d="M5 5a9.9 9.9 0 0 0 0 14M19 5a9.9 9.9 0 0 1 0 14"/></svg><i></i></button>
+        <!-- ONE CHIP PER SENSOR (Ek, 2026-10-04: "the sensor icon should be the
+             tile/object that represents the sensor, not do double duty as the
+             interaction mode … for each sensor connected, use a new glyph for
+             each sensor, pressing it opening its settings, with the number").
+             The glyph is the DEVICE — the body of the thing in your hand — and
+             its number is the Sensors page's row and the cursor section's
+             chip. The broadcast mark is the camera's `sensor` MODE alone now.
+             #tcSensor is the first chip, or the empty one when nothing is
+             connected (its LED dot, no number); tile-layout.js adds the rest
+             beside it. -->
+        <button type="button" class="tc-readout tc-sens" id="tcSensor" title="sensor — none connected — click to open sensor setup"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="3" width="13" height="18" rx="3.6"/><circle cx="12" cy="7.4" r="0.9" fill="currentColor" stroke="none"/></svg><i></i></button>
         <!-- THE CAMERA, LEFT OF THE COG (Ek, 2026-09-14). It was reachable
              only from Settings → Camera + display, a page you open between
              sets, for a choice you make DURING one — the mouse steers, the

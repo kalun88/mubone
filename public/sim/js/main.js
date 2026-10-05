@@ -528,9 +528,15 @@ function init() {
       // moves any title it sees, so setting title here would work but reading
       // it back never does — data-title is the honest field.
       if (btn.dataset.mode === 'sensor') {
+        // Read from the roles of the sensors speaking now, not from S: this
+        // runs on sensor-status (below) too, before the next frame has
+        // written S.cameraSensorQ / S.sensorFramed.
+        const cam = liveRole('camera'), frm = liveRole('frame');
+        const rel = frm ? 'the cursor read relative to the frame sensor' : 'cursor free';
         const state = S.cameraMode === 'sensor'
-          ? (S.cameraSensorQ ? '\ncurrently: 2 sensors — cursor free, the camera sensor holds the view'
-                           : '\ncurrently: 1 sensor — camera follows it, held level past ±70°')
+          ? (cam ? `\ncurrently: ${frm ? 3 : 2} sensors — ${rel}, the camera sensor holds the view`
+                 : frm ? `\ncurrently: 2 sensors — ${rel}; the camera follows it, held level past ±70°`
+                       : '\ncurrently: 1 sensor — camera follows it, held level past ±70°')
           : (S._sensorLive?.() ? '' : '\nno sensor connected — the pill stays where it is until one speaks');
         btn.setAttribute('data-title', _camTips.get(btn) + state);
       }
@@ -546,6 +552,9 @@ function init() {
   // (found on the 2026-09-16 long run, where the driver's switch was refused).
   const sensorLive = () => [...(getSensorRegistry()?.values() || [])].some(sl => sl && Date.now() - (sl.lastSeenQuat || 0) < SENSOR_LIVE_MS);
   S._sensorLive = sensorLive;
+  const liveRole = (role) => [...(getSensorRegistry()?.values() || [])].some(sl => sl?.quatRole === role && Date.now() - (sl.lastSeenQuat || 0) < SENSOR_LIVE_MS);
+  // Roles and liveness change under the chip; its tooltip follows them.
+  window.addEventListener('sensor-status', updateCameraModeBtn);
 
   function applyCameraMode(mode) {
     // The pill is never on SENSOR without a sensor (Ek, 2026-09-12): a click

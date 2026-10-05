@@ -78,6 +78,23 @@ const _sensors = new Map();   // sn → Sensor
 
 export function getSensors()   { return _sensors; }
 export function getSensor(sn)  { return _sensors.get(sn); }
+// A connected sensor's NUMBER (Ek, 2026-10-04): its place in this list, from
+// 1 — the Sensors page's row number, the chrome's sensor chip and the cursor
+// section's listener chip all say the same one. 0 when it is not connected.
+export function sensorNumber(sn) {
+  let i = 0;
+  for (const k of _sensors.keys()) { i++; if (k === sn) return i; }
+  return 0;
+}
+// For the chrome's chips (tile-layout.js) and the cursor section's (tiles.js),
+// which must not import this module's graph: the sensors, in number order.
+S._sensorList   = () => _sensors.values();
+S._sensorNumber = sn => sensorNumber(sn);
+S._sensorOfSlot = slotName => sensorOfSlot(slotName);
+export function sensorOfSlot(slotName) {
+  for (const d of _sensors.values()) if (d.slotName === slotName) return d;
+  return null;
+}
 
 // ── Callbacks (the Sensors page) ────────────────────────────────────────────
 

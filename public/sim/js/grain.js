@@ -1,4 +1,5 @@
-import { S, MAX_SEEDS, GRAIN_SCHEDULER_INTERVAL_MS, SPHERE_RADIUS, perf, gp } from './state.js';
+import { S, MAX_SEEDS, MAX_LISTENERS, LISTEN_RELEASE_MS, GRAIN_SCHEDULER_INTERVAL_MS, SPHERE_RADIUS, perf, gp } from './state.js';
+import { readListenerPoses, listenCfgOf } from './sensor-registry.js';
 import { ensureAudioContext, getMasterBus } from './audio.js';
 import { cursorLonLatNow, cameraRotateInto, spherePointInto, updateFusedCamQ } from './sphere.js';
 import { tickSeedRecording } from './ui-presets.js';
@@ -588,7 +589,9 @@ const _voSelBuf = [];            // the survivors — reused, no per-tick alloc
  *                               otherwise granulate whenever it was closest.
  */
 let _voEligible = 0;
-function _selectPerVoicing(pool, k, trigFilter) {
+// `out` is a LISTENER's (_scheduleListeners): its own buffer, so
+// S._cursorPool (which IS _voSelBuf) survives the pass.
+function _selectPerVoicing(pool, k, trigFilter, out = _voSelBuf) {
   const trigRad = trigFilter ? S.searchRadiusDeg * Math.PI / 180 : 0;
   // k = 0 is ALL — no cap, in both modes (2026-09-24; the `fill` switch it
   // replaces was a radius answer, forced off under nearest).
@@ -597,10 +600,11 @@ function _selectPerVoicing(pool, k, trigFilter) {
   // has to happen here too — _buildCandidatePoolRadius never sees those
   // particles. In radius mode the pool arrives already filtered and this costs
   // one integer test per candidate. No `forCursor` flag needed: unlike the
-  // radius builder, this pass has exactly one caller and it is the cursor.
+  // radius builder, this pass is only ever a cursor's — cursor 0's or a
+  // listener's, and both skip what a pinned cloud owns.
   const pinned = _claimsOn;
 
-  _voSelBuf.length = 0;
+  out.length = 0;
   _voEligible = 0;
   let maxAng = 0, maxIdx = 0;
   for (let i = 0; i < pool.length; i++) {
@@ -614,21 +618,21 @@ function _selectPerVoicing(pool, k, trigFilter) {
     _voEligible++;
 
     // fill:'all' means no cap — take everything the geometry gave us.
-    if (all || _voSelBuf.length < k) {
-      _voSelBuf.push(p);
-      if (!all && (p._ang > maxAng || _voSelBuf.length === 1)) {
-        maxAng = p._ang; maxIdx = _voSelBuf.length - 1;
+    if (all || out.length < k) {
+      out.push(p);
+      if (!all && (p._ang > maxAng || out.length === 1)) {
+        maxAng = p._ang; maxIdx = out.length - 1;
       }
     } else if (p._ang < maxAng) {
-      _voSelBuf[maxIdx] = p;
+      out[maxIdx] = p;
       // Rescan for the new max. k is small, so this stays cheaper than a heap.
       maxAng = 0; maxIdx = 0;
-      for (let j = 0; j < _voSelBuf.length; j++) {
-        if (_voSelBuf[j]._ang > maxAng) { maxAng = _voSelBuf[j]._ang; maxIdx = j; }
+      for (let j = 0; j < out.length; j++) {
+        if (out[j]._ang > maxAng) { maxAng = out[j]._ang; maxIdx = j; }
       }
     }
   }
-  return _voSelBuf;
+  return out;
 }
 
 // Build candidate pool for radius mode: filter by _ang < radiusRad.
@@ -672,7 +676,8 @@ function _buildCandidatePoolRadius(particles, radiusRad, forCursor = false, only
   // granulated as it goes down, so its marks (`p.trig`) stay out.
   const wet = forCursor && S.isPainting && S.isRecording && !S._recordingTrigger ? S.currentStrokeId : -1;
   // Default false: the seed path shares this builder, and a cloud must read the
-  // material it claims. Only the cursor's call passes true.
+  // material it claims. Only a cursor's call passes true — cursor 0's or a
+  // listener's.
   const pinned = forCursor && _claimsOn;
   _recBufRec.clear();
   for (let i = 0; i < particles.length; i++) {
@@ -956,6 +961,17 @@ let _schedTickCount = 0;  // for periodic dlog snapshot
 // `spot` lens reads as AREA while it walks. Nothing is refused and nothing is
 // silently wrong — `nearest` has no meaning for a point that is moving along a
 // path, so the walk takes the only reading it can.
+/** The LIVE grain block — the brush's params with the morph's overrides over
+ *  them — as a walker and a listener read it. Allocates only when an override
+ *  is set. `_liveHasOv` says whether one was. */
+let _liveHasOv = false;
+function _liveBlock() {
+  const base = gp(), ov = S.grainOverrides;
+  _liveHasOv = false;
+  for (const key in ov) if (ov[key] !== null && ov[key] !== undefined) { _liveHasOv = true; break; }
+  return _liveHasOv ? Object.assign(Object.create(base), Object.fromEntries(Object.entries(ov).filter(([, v]) => v !== null && v !== undefined))) : base;
+}
+
 function _scheduleWalkers(out) {
   const ws = S._walkers;
   if (!ws || !ws.length) return;
@@ -963,10 +979,8 @@ function _scheduleWalkers(out) {
   if (!ws.length) return;
   const cParts = S.particles, cLen = cParts.length;
   if (!cLen) return;
-  const base = gp(), ov = S.grainOverrides;
-  let hasOv = false;
-  for (const key in ov) if (ov[key] !== null && ov[key] !== undefined) { hasOv = true; break; }
-  const cgp = hasOv ? Object.assign(Object.create(base), Object.fromEntries(Object.entries(ov).filter(([, v]) => v !== null && v !== undefined))) : base;
+  const ov = S.grainOverrides;
+  const cgp = _liveBlock(), hasOv = _liveHasOv;
   const k = cgp.k ?? 0, all = k === 0;
   const radDeg = S.searchRadiusDeg, rad = radDeg * Math.PI / 180;
   for (const w of ws) {
@@ -999,6 +1013,162 @@ function _scheduleWalkers(out) {
     perf.seedsPosted++;
     if (pool.some(p => p.source === 'live')) S.liveGranulatingThisFrame = true;
   }
+}
+
+// ── The LISTENERS (sensor role `listen`, 2026-10-04) ─────────────────────────
+// A second performer's cursor on the same sphere: it GRANULATES the shared
+// corpus where its sensor points and does nothing else — no recording, pins,
+// erasing, buttons or tape. Everything that writes stays cursor 0's.
+//
+// It reads exactly as cursor 0 reads: the same lens (radius, k / all, depth,
+// nearest, step, fade, scope, the scan switch), the same grain block (the
+// live one, or the marks' own voicings — audition included), and the same
+// pinned-cloud claims. It skips tape material outright: dwell and the trigger
+// gates are cursor 0's, so a take is never opened for a listener, and walk
+// (which launches walkers from cursor 0's touches) is not a listener's either.
+//
+// It is POSTED as a moving cloud is — a seed voice per voicing under it, keyed
+// by a negative slot so it never meets a pin's (0..15) or a walker's (1000+),
+// with `cursorBus` so its grains leave on cursor 0's output (the monitor bus,
+// the scan mute) rather than the pins'. So it draws from the same grain pool
+// and load throttle as everything else, and costs what one moving cloud costs.
+//
+// Its angles live under its own key (`_lAng<i>`), never `_cursorAng`, so
+// cursor 0's cache, fade and LED readout are untouched; `p._ang` is scratch,
+// as every seed pass already treats it. The dirty cache is cursor 0's: a
+// listener that has not moved and a corpus that has not changed copy, not
+// recompute. Sensor camera mode only, like every sensor role.
+const _lsPoses = [];                 // readListenerPoses' scratch
+const _lsFree  = [];                 // free listener indices
+for (let i = MAX_LISTENERS - 1; i >= 0; i--) _lsFree.push(i);
+// The readers, for the renderer too (drawListeners): { name, idx, lon, lat,
+// level, _reach, _reachAt }. A reader outlives its sensor by LISTEN_RELEASE_MS.
+S._listeners = [];
+
+/** What a listener reads with: its own settings, or the cursor's. Reused per
+ *  listener, so the tick allocates nothing. */
+function _listenView(l, cgp) {
+  const c = listenCfgOf(l.name);
+  const v = l.v || (l.v = {});
+  v.own       = !!c;
+  v.reads     = c?.reads     ?? S.lensReads ?? 'both';
+  v.radius    = c?.radius    ?? S.searchRadiusDeg;
+  v.mode      = c?.mode      ?? S.lensMode;
+  v.depth     = c?.depth     ?? S.recencyN;
+  v.k         = c?.k         ?? cgp.k ?? 0;
+  v.step      = c?.step      ?? !!S.lensStep;
+  v.rfade     = c?.rfade     ?? !!S.radiusFadeEnabled;
+  v.fadeCurve = c?.fadeCurve ?? S.radiusFadeCurve ?? 0.5;
+  return v;
+}
+
+function _scheduleListeners(out, now) {
+  const ls = S._listeners;
+  const n = S.cameraMode === 'sensor' ? readListenerPoses(_lsPoses, MAX_LISTENERS) : 0;
+  if (!n && !ls.length) return;
+  for (const l of ls) l._seen = false;
+  for (let i = 0; i < n; i++) {
+    const ps = _lsPoses[i];
+    let l = null;
+    for (const c of ls) if (c.name === ps.name) { l = c; break; }
+    if (!l) {
+      const idx = _lsFree.pop();
+      if (idx === undefined) continue;
+      l = { name: ps.name, idx, angKey: `_lAng${idx}`, lon: 0, lat: 0, level: 1, _releaseAt: 0,
+            _cLon: NaN, _cLat: NaN, _cVer: -1, _cRad: NaN, _near: [], _sel: [], _reach: null, _reachAt: 0, _seen: false };
+      ls.push(l);
+    }
+    l._seen = true; l.lon = ps.lon; l.lat = ps.lat; l.level = 1; l._releaseAt = 0;
+  }
+  // Not read this tick — its sensor went silent, its role went, sensor mode
+  // was left: it fades where it stood, then gives its index back. The grains
+  // already sounding finish on their own envelopes, so nothing clicks.
+  for (let i = ls.length - 1; i >= 0; i--) {
+    const l = ls[i];
+    if (l._seen) continue;
+    if (!l._releaseAt) l._releaseAt = now;
+    l.level = 1 - (now - l._releaseAt) / LISTEN_RELEASE_MS;
+    if (l.level <= 0) { ls.splice(i, 1); _lsFree.push(l.idx); }
+  }
+  const parts = S.particles, pLen = parts.length;
+  // A LISTENER READS AS CURSOR 0 DOES (Ek, 2026-10-04: "the listen cursor
+  // should just work like the regular cursor — for now"): the same geometry
+  // rule (_cursorGeometry) and the same silence (_cursorSounds). So it hears a
+  // take that dwell opened, the stroke being painted, and under walk or a
+  // tape-only lens only what is open; it touches tape lines and walk strokes
+  // through the gates (trigger.js updateTriggerGates). What stays cursor 0's
+  // is everything that WRITES: recording, pins, erase, the buttons.
+  // WITH ITS OWN SETTINGS, OR THE CURSOR'S (Ek, 2026-10-04: "each cursor
+  // (listeners) should be able to have their own cursor setting: scope radius
+  // (not audition), grain behaviour"). `l.v` is what this listener reads with
+  // this tick — its slot's `listenCfg` when it has one, the cursor's otherwise
+  // — and the gates and the renderer read the same object.
+  const cgp = _liveBlock();
+  for (const l of ls) l.v = _listenView(l, cgp);
+  if (!ls.length || !pLen || S.scanMuted) { for (const l of ls) l._reach = null; return; }
+  const ver = S._particleVersion;
+  const elig = _voEligible;   // the cursor's counter, read by the test seam
+  for (const l of ls) {
+    const v = l.v;
+    // `_cursorSounds`, with this listener's scope.
+    if (v.reads === 'tape' && !_openAny()) { l._reach = null; continue; }
+    const onlyOpen = S.grainWalk || v.reads === 'tape';
+    const nearest = v.mode === 'nearest' && !onlyOpen;
+    const radDeg = v.radius, rad = radDeg * Math.PI / 180;
+    // AREA reads only what is inside the radius, so only that gets an acos and
+    // a write: the rest is one dot product against cos(r). The pass gathers
+    // the in-radius marks (`_near`), so the radius builder — whose depth
+    // ranking is local to the radius anyway — walks those, not the corpus.
+    // Writing every mark's angle under a computed key was the expensive part
+    // (2026-10-04, 4000 marks: ~1.0 ms a tick on a loaded machine, ~0.4 ms
+    // this way). NEAREST reads the whole sphere, so it pays for every angle,
+    // as cursor 0 does. The cache key carries the radius and the mode.
+    const cosR = Math.cos(rad), cacheR = nearest ? -1 : rad;
+    const key = l.angKey, near = l._near;
+    if (l.lon !== l._cLon || l.lat !== l._cLat || ver !== l._cVer || cacheR !== l._cRad) {
+      const cl = Math.cos(l.lat);
+      const rx = cl * Math.sin(l.lon), ry = Math.sin(l.lat), rz = cl * Math.cos(l.lon);
+      near.length = 0;
+      for (let pi = 0; pi < pLen; pi++) {
+        const p = parts[pi];
+        if (p._cx === undefined) stampCartesian(p);
+        const d = p._cx * rx + p._cy * ry + p._cz * rz;
+        if (!nearest && d < cosR) continue;   // outside: nothing reads it, nothing is written
+        const a = Math.acos(d > 1 ? 1 : d < -1 ? -1 : d);
+        p[key] = a; p._ang = a;
+        near.push(p);
+      }
+      l._cLon = l.lon; l._cLat = l.lat; l._cVer = ver; l._cRad = cacheR;
+    } else {
+      for (let i = 0; i < near.length; i++) { const p = near[i]; p._ang = p[key]; }
+    }
+    // Its depth, as a pinned cloud carries its own (`_depthFor`).
+    _depthFor = v.depth;
+    let pool;
+    try {
+      // Nearest hands the selection the whole sphere, as cursor 0's does.
+      const geo = nearest ? parts : _buildCandidatePoolRadius(near, rad, true, onlyOpen);
+      pool = _selectPerVoicing(geo, v.k, nearest, l._sel);
+    } finally { _depthFor = null; }
+    l._reach = pool; l._reachAt = now;
+    if (!pool.length) continue;
+    out.push({
+      slotIndex: -1 - l.idx,
+      pool,
+      gain: l.level,
+      grainParams: cgp,
+      overrides: null,                         // cursor 0's voices take no morph over a frozen block either
+      voicing: S.auditionMode ? 0 : null,      // audition: every mark on the live block, as cursor 0 hears it — audition is the cursor's
+      lensStep: !!v.step,
+      fadeOn:    !!v.rfade && !nearest && radDeg > 0,
+      fadeRad:   rad,
+      fadeCurve: v.fadeCurve ?? 0.5,
+      angKey:    key,
+      cursorBus: true,
+    });
+    if (pool.some(p => p.source === 'live')) S.liveGranulatingThisFrame = true;
+  }
+  _voEligible = elig;
 }
 
 // ── Moving seed helpers ────────────────────────────────────────────────────
@@ -1661,6 +1831,8 @@ export function scheduleGrains() {
   // The walkers (js/walker.js): the cursor's own readers under `mode:
   // stroke`, packed as seed voices beside the pinned clouds.
   _scheduleWalkers(_workletSeedData);
+  // The listeners, last: clouds and walkers take seed voices first.
+  _scheduleListeners(_workletSeedData, now);
 
   // ── Post collected seed data to worklet ─────────────────────────────────
   // Always post — even an empty list must reach the worklet so it deactivates

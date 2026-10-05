@@ -157,7 +157,7 @@ export function applyMaterial(target, other = null, undo = true) {
     S.triggers.length = 0;
     for (const t of [...target.triggers, ...carriedTrig]) {
       t._builtAt = -1;
-      if (!stayed.has(t) && t.trigger) { t.trigger._inside = false; t.playing = false; }
+      if (!stayed.has(t) && t.trigger) { t.trigger._inside = false; t.trigger._inL = null; t.trigger._bornInL = false; t.playing = false; }
       S.triggers.push(t);
     }
     S._syncTriggerUI?.();

@@ -35,7 +35,10 @@ S._walkers = [];
 /** Launch a walker from a grain-stroke gate `t` (a trigger shell with
  *  `walk: true`, its particles the stroke's marks in order). `nearestIdx` is
  *  the mark touched; `tp` the live `cursor behaviour` params. */
-export function startWalker(t, nearestIdx, tp) {
+// `owner` is the cursor that touched it (trigger.js: 0, or a listener's id + 1):
+// a refire or a leave reaches only that cursor's walkers, so two cursors on a
+// stroke walk it twice.
+export function startWalker(t, nearestIdx, tp, owner = 0) {
   const ps = t.particles;
   if (!ps || ps.length < 2) return null;
   const t0 = ps[0].grainStart ?? 0;
@@ -49,7 +52,7 @@ export function startWalker(t, nearestIdx, tp) {
   // A refire over a walker still running on this stroke: `cut` restarts it,
   // `layer` lets the old one finish its pass on its own.
   for (const w of S._walkers) {
-    if (w.strokeId !== t.strokeId || w._detached || w._dead) continue;
+    if (w.strokeId !== t.strokeId || w._detached || w._dead || (w.owner ?? 0) !== owner) continue;
     if (tp.retrig === 'layer') { w._detached = true; w._ending = true; }
     else w._dead = true;
   }
@@ -58,7 +61,7 @@ export function startWalker(t, nearestIdx, tp) {
   if (tp.start === 'ends') { if (touchT / duration >= 0.5) loopMode = 'rev'; }   // arrived at the tail: run it backwards
   else if (tp.start === 'touch') pos = touchT;
   const w = {
-    strokeId: t.strokeId, frames, duration, loopMode,
+    strokeId: t.strokeId, owner, frames, duration, loopMode,
     // `grain` is play once THEN open (state.js `_openStrokes`): when this walk
     // ends, the stroke becomes the cursor's to granulate, area-style, until
     // the cursor leaves it.
@@ -81,9 +84,9 @@ export function startWalker(t, nearestIdx, tp) {
  *  exit — so with dwell on once, the default, the release row did nothing at
  *  all. `play-to-end` IS what a once walker does anyway; `fade` now means
  *  what it says whichever dwell is on: the cursor leaves, the walk fades. */
-export function exitWalker(t, tp) {
+export function exitWalker(t, tp, owner = 0) {
   for (const w of S._walkers) {
-    if (w.strokeId !== t.strokeId || w._detached || w._dead) continue;
+    if (w.strokeId !== t.strokeId || w._detached || w._dead || (w.owner ?? 0) !== owner) continue;
     if (tp.release === 'fade') { if (!w._fadeAt) w._fadeAt = performance.now(); }
     else w._ending = true;                                   // play-to-end: finish this pass
   }

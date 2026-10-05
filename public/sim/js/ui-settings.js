@@ -68,7 +68,8 @@ const ICON = {
   // The chrome's own sensor glyph (#tcSensor), its 24 box drawn at the nav's
   // 16 (Ek, 2026-09-25: "the sensor logo should be the same as the sensor
   // logo in the chrome"). It was a diamond — a second picture of one thing.
-  sensors:  '<circle cx="8" cy="8" r="1.5"/><path d="M5.2 5.2a3.93 3.93 0 0 0 0 5.6M10.8 5.2a3.93 3.93 0 0 1 0 5.6"/><path d="M3.33 3.33a6.6 6.6 0 0 0 0 9.33M12.67 3.33a6.6 6.6 0 0 1 0 9.33"/>',
+  // The DEVICE since 2026-10-04: the broadcast mark is the camera's sensor mode.
+  sensors:  '<rect x="3.67" y="2" width="8.67" height="12" rx="2.4"/><circle cx="8" cy="4.93" r="0.6"/>',
   feedback: '<circle cx="8" cy="8" r="5.2"/><circle cx="8" cy="8" r="1.5"/>',
   viz:      '<rect x="2.5" y="2.5" width="11" height="11" rx="1.6"/><circle cx="8" cy="8" r="2.6"/>',
   view:     '<rect x="2" y="3.5" width="12" height="9" rx="2"/><path d="M2 6.6h12"/>',

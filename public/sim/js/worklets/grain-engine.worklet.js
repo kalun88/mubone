@@ -381,6 +381,9 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
           if (si < 0 || si >= MAX_SEED_VOICES) continue;
           const seed = this._seeds[si];
           seed.active = true;
+          // A listener's voice (cursorBus) mixes to output 0 with the cursor's
+          // grains; a cloud's to output 1. Set per post: indices are reused.
+          seed.isCursor = !!sd.cursorBus;
           seed.gain = sd.gain ?? 1.0;
           seed.candidates = sd.candidates || [];
           seed.candidateCount = seed.candidates.length;
@@ -1714,6 +1717,8 @@ class GrainEngineProcessor extends AudioWorkletProcessor {
           // Seed voices sounding — more than the clouds when a cloud reads
           // marks of more than one voicing.
           sdActive: this._seeds.reduce((n, v) => n + (v.active ? 1 : 0), 0),
+          // Of those, the listeners' (sensor role `listen`) — on the cursor bus.
+          lsActive: this._seeds.reduce((n, v) => n + (v.active && v.isCursor ? 1 : 0), 0),
           freePtr: this._freePtr,
           nextOnset: this._nextOnset,
           clock: this._sampleClock,

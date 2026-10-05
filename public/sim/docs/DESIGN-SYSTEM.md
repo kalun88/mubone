@@ -177,7 +177,8 @@ so tokenising it would change the rendered value and it is left alone deliberate
 
 ## 5. The grids and contracts
 
-**The footer is one row.** Every group — the meter columns, the axis buttons and the ⌥ lock,
+**The footer is one row** — down to 1160px; narrower, it gives way in tiers (`docs/RULINGS.md` "A narrow
+window gives way in tiers"). Every group — the meter columns, the axis buttons and the ⌥ lock,
 dry/mute, and the two-row level group — is `--footer-row: 40px` tall and bottom-aligned, so the bar's inset
 (`--footer-inset: 1.15rem`) is the only air in the footer, above and below, for everything in it.
 Balancing the *bar* does not fix an imbalance *between groups*; one row height does. The meter

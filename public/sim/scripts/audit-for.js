@@ -84,7 +84,7 @@ const MAP = [
     'the master reverb in the running app: off is a straight wire and idle, a sound on one speaker rings on that speaker only, amount, off-while-ringing trails, freeze, mute silences tails, a take stays dry, the footer / OSC / diagram'],
   [/^js\/(sensor-registry|sensor-math|sensors|ui-sensors|sygaldry)\.js$/,
     { rig: ['sensors'] },
-    'two synthetic sensors through the real dispatch: who gets the cursor, cursor + camera independent, no view roll, zero heading, roles across a reload'],
+    'two synthetic sensors through the real dispatch: who gets the cursor, cursor + camera independent, no view roll, the cursor relative to a frame sensor, zero heading, roles across a reload, two listeners reading, each firing its own voice on a tape line, one on its own settings, and fading'],
   // index.html IS routed — to rig-audit engine, which checks that every engine
   // row still writes through its cabinet element. What it was never routed to
   // is the ALIGNMENT suite, and a new GUI element is markup in this file. So on

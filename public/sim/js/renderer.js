@@ -68,6 +68,7 @@ export function drawFrame() {
     drawGridLines();         // respects perfMode internally — equator + meridian only
     drawParticlesMinimal();
     drawSeedAnchorsMinimal();
+    drawListeners();
     drawCursor();
     S.updateSeedBanksUI?.();
     return;
@@ -77,6 +78,7 @@ export function drawFrame() {
   drawParticles();
   drawTetherLine();
   drawGazeTrail();          // under the cursor, over the particles
+  drawListeners();          // under cursor 0
   drawCursor();
   drawSeeds();
   drawRadiusTooltip();
@@ -293,6 +295,91 @@ function drawWalkers() {
     S.ctx.beginPath();
     S.ctx.arc(proj.sx, proj.sy, Math.max(10, screenR), 0, Math.PI * 2);
     S.ctx.stroke();
+    S.ctx.restore();
+  }
+}
+
+/** The LISTENERS (sensor role `listen`, grain.js _scheduleListeners): a
+ *  second performer's cursor, which hears and does nothing else. Drawn with
+ *  cursor 0's own parts at its own spot — the projected reach ring (solid at
+ *  k = all, dashed under k), the tip ring and dot at the reticle's sizes, and
+ *  the reach fan of what it read this tick — all in `--accent-sensor` ("the
+ *  body is driving it"): a cursor, and visibly not the one in your hand. No
+ *  fill and no arms, because nothing in it is a tool. Off screen it is not
+ *  drawn, as cursor 0 is not; the camera never follows it. The fans SHARE
+ *  REACH_MAX — two listeners draw at most one cursor's ceiling between them —
+ *  and perf mode draws no fan. Under drawCursor, so cursor 0 stays on top. */
+const _lsP = [0, 0, 0];
+function drawListeners() {
+  const ls = S._listeners;
+  if (!ls?.length || !S.ctx) return;
+  const col = _tok('--accent-sensor', '#a793c0');
+  const W = S.canvas.width, H = S.canvas.height;
+  const kAll0 = (S.grainOverrides.k ?? S.grainParams.k) === 0;
+  const now = performance.now();
+  const ceil = Math.max(1, Math.floor(REACH_MAX / ls.length));
+  const tipR = 5;
+  for (const l of ls) {
+    const pr = _pinScreen(l.lon, l.lat);
+    if (!pr || pr.sx < 0 || pr.sx > W || pr.sy < 0 || pr.sy > H) continue;
+    const a = Math.max(0, Math.min(1, l.level));
+    const sx = pr.sx, sy = pr.sy;
+    S.ctx.save();
+    const pool = l._reach;
+    if (!S.perfMode && pool?.length && now - (l._reachAt || 0) < 120) {
+      const stride = pool.length > ceil ? Math.ceil(pool.length / ceil) : 1;
+      let n = 0;
+      S.ctx.beginPath();
+      for (let i = 0; i < pool.length; i += stride) {
+        const p = pool[i];
+        spherePointInto(p.lon, p.lat, _arcW);
+        cameraTransformInto(_arcW[0], _arcW[1], _arcW[2], _arcC);
+        if (!projectInto(_arcC[0], _arcC[1], _arcC[2], _lsP)) continue;
+        S.ctx.moveTo(sx, sy);
+        S.ctx.lineTo(_lsP[0], _lsP[1]);
+        n++;
+      }
+      if (n) {
+        const dens = Math.min(1, (n * stride) / 64);   // cursor 0's density ramp
+        S.ctx.strokeStyle = col;
+        S.ctx.lineWidth   = 1;
+        S.ctx.globalAlpha = 0.5 * (1 - 0.5 * dens) * a;
+        S.ctx.stroke();
+      }
+    }
+    S.ctx.strokeStyle = col;
+    S.ctx.fillStyle   = col;
+    S.ctx.lineWidth   = 1.5;
+    S.ctx.globalAlpha = 0.62 * a;
+    // ITS OWN REACH (grain.js `l.v`): a listener on its own settings draws its
+    // own radius, and its own k decides the dash.
+    const reach = _reachPath(sx, sy, l.v?.radius ?? S.searchRadiusDeg);
+    const kAll = l.v ? l.v.k === 0 : kAll0;
+    if (reach) {
+      if (!kAll) S.ctx.setLineDash([5, 5]);
+      S.ctx.stroke(reach);
+      S.ctx.setLineDash([]);
+    }
+    // NEAREST wears the cursor's diamond over the ring (Ek, 2026-10-04: "the
+    // viz doesn't show the diamond like in the main cursor"): the same 40px,
+    // dashed under k and solid at all, in the listener's colour and without
+    // the cursor's fill — a listener's marks are outlines throughout. Flat
+    // screen geometry, as a pinned cloud's diamond is: the cursor's reticle
+    // frame is the cursor's own.
+    if ((l.v?.mode ?? S.lensMode) === 'nearest') {
+      const d = 40;
+      S.ctx.beginPath();
+      S.ctx.moveTo(sx, sy - d); S.ctx.lineTo(sx + d, sy);
+      S.ctx.lineTo(sx, sy + d); S.ctx.lineTo(sx - d, sy);
+      S.ctx.closePath();
+      if (!kAll) S.ctx.setLineDash([5, 5]);
+      S.ctx.stroke();
+      S.ctx.setLineDash([]);
+    }
+    S.ctx.globalAlpha = 0.85 * a;
+    S.ctx.lineWidth   = 2;
+    S.ctx.beginPath(); S.ctx.arc(sx, sy, tipR, 0, Math.PI * 2); S.ctx.stroke();
+    S.ctx.beginPath(); S.ctx.arc(sx, sy, tipR * 0.65, 0, Math.PI * 2); S.ctx.fill();
     S.ctx.restore();
   }
 }
@@ -2539,9 +2626,9 @@ function _cursorFrame(mx, my) {
   return true;
 }
 
-function _reachPath(mx, my) {
+function _reachPath(mx, my, radDeg = S.searchRadiusDeg) {
   if (!_cursorFrame(mx, my)) return null;
-  const r = S.searchRadiusDeg * Math.PI / 180;
+  const r = radDeg * Math.PI / 180;
   const nx  = _cfN[0],  ny  = _cfN[1],  nz  = _cfN[2];
   const e1x = _cfE1[0], e1y = _cfE1[1], e1z = _cfE1[2];
   const e2x = _cfE2[0], e2y = _cfE2[1], e2z = _cfE2[2];
@@ -3334,13 +3421,18 @@ export function applyAxisSources(q) {
 //                 applied per point by sphere.js cameraTransform), camQ holds
 //                 identity, and the cursor roams in world coords — off screen
 //                 included. The two are independent (Ek, 2026-09-27).
+//   + a frame     the cursor is read in the frame sensor's coordinates
+//                 (readSensorPose), and everything above applies to THAT
+//                 cursor — alone, the camera follows it; with a camera sensor
+//                 too, the view stays the camera's. S.sensorFramed says so.
 //   no cursor     S.cursorQ null; the mouse takes the cursor.
 // Sensor mode only — steer and surface are the mouse and trackpad.
 const _IDENT_Q = [0, 0, 0, 1];
 export function applySensorPose() {
-  if (S.cameraMode !== 'sensor') { S.cursorQ = null; S.cameraSensorQ = null; return; }
-  const { cursorQ, cameraQ } = readSensorPose();
+  if (S.cameraMode !== 'sensor') { S.cursorQ = null; S.cameraSensorQ = null; S.sensorFramed = false; return; }
+  const { cursorQ, cameraQ, framed } = readSensorPose();
   S.cameraSensorQ = cameraQ;
+  S.sensorFramed = framed;
   if (!cursorQ) { S.cursorQ = null; return; }
   const pq = applyAxisSources(cursorQ);
   S.cursorQ = pq;

@@ -224,6 +224,56 @@ function _proxyClick(fromId, toId) {
   });
 }
 
+// ── The sensor chips (Ek, 2026-10-04) ──────────────────────────────────────
+// One per connected sensor, numbered as the Sensors page numbers them; the
+// click opens that page ON the sensor. With none connected, #tcSensor alone,
+// numberless, opens the page. Rebuilt only when the set changes; the dot and
+// the tooltip are written every tick.
+const _SENS_BODY = '<rect x="5.5" y="3" width="13" height="18" rx="3.6"/>';
+const _sensSvg = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${_SENS_BODY}` +
+  (n ? `<text x="12" y="16.1" text-anchor="middle" font-size="10.5" font-weight="600" fill="currentColor" stroke="none">${n}</text>`
+     : '<circle cx="12" cy="7.4" r="0.9" fill="currentColor" stroke="none"/>') + '</svg>';
+let _sensSig = '';
+const _ROLE_WORD = { cursor: 'the cursor', camera: 'the camera', listen: 'a listener', frame: 'the frame', unmapped: 'no role' };
+function _syncSensorChips(pill) {
+  const first = document.getElementById('tcSensor');
+  if (!first) return;
+  const devs = [...(S._sensorList?.() ?? [])];
+  // THE CURSOR'S CHIP SAYS C (Ek, 2026-10-04: "the chrome cursor icon still
+  // says 1 instead of cursor, or maybe use C so the size is the same"): the
+  // sensor holding the cursor role wears C, every other one its number — the
+  // number never shifts when the cursor moves, so 2 is still 2.
+  const lbl = (d, i) => d.role === 'cursor' ? 'C' : i + 1;
+  const sig = devs.map((d, i) => d.sn + ':' + lbl(d, i)).join('|');
+  if (sig !== _sensSig) {
+    _sensSig = sig;
+    for (const x of first.parentElement.querySelectorAll('.tc-sens[data-sn]')) if (x !== first) x.remove();
+    first.innerHTML = _sensSvg(devs.length ? lbl(devs[0], 0) : 0) + '<i></i>';
+    first.dataset.sn = devs[0]?.sn ?? '';
+    let after = first;
+    devs.slice(1).forEach((d, i) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'tc-readout tc-sens'; b.dataset.sn = d.sn;
+      b.innerHTML = _sensSvg(lbl(d, i + 1)) + '<i></i>';
+      after.after(b); after = b;
+    });
+  }
+  const chips = [first, ...first.parentElement.querySelectorAll('.tc-sens[data-sn]:not(#tcSensor)')];
+  if (!devs.length) {
+    const r = S.rig || {};
+    pill(first, r.found ? 'found' : '', '—');
+    return;
+  }
+  chips.forEach((el, i) => {
+    const d = devs[i]; if (!d) return;
+    el.classList.remove('on', 'live', 'found', 'lost');
+    el.classList.add(d.live ? 'on' : 'lost');
+    const who = d.role === 'cursor' ? 'the cursor' : `sensor ${i + 1} · ${_ROLE_WORD[d.role] ?? d.role}`;
+    const t = `${who} · ${d.name || d.sn}${d.live ? '' : ' · no signal'} — click to open its settings`;
+    if (el.getAttribute('data-title') !== t) el.setAttribute('data-title', t);
+  });
+}
+
 /** 5 Hz chrome readouts — a handful of reads and text writes, never in the
  *  render loop (render-path note in CLAUDE.md). */
 function tick() {
@@ -298,14 +348,7 @@ function tick() {
         if (row.dataset.cam === 'sensor' && row.disabled === sensorUp) row.disabled = !sensorUp;
       }
     }
-    const sens = document.getElementById('tcSensor');
-    if (sens) {
-      const r = S.rig || {};
-      if (r.up) _pill(sens, 'on', (r.cursorVia || '—') + (r.count > 1 ? ' ' + r.count : ''));
-      else if (r.lost)  _pill(sens, 'lost',  'lost');
-      else if (r.found) _pill(sens, 'found', 'found');
-      else              _pill(sens, '',      '—');
-    }
+    _syncSensorChips(_pill);
   }
   // Redo is live only while the redo stack holds something — the pill greys
   // out the moment a new stroke or erase forks history.
@@ -535,7 +578,13 @@ export function initTileLayout() {
       closeCam();
     });
   }
-  document.getElementById('tcSensor')?.addEventListener('click', () => S._openSettings?.('sensors'));
+  // A sensor chip opens the Sensors page on ITS sensor; the empty one, on the page.
+  document.getElementById('tcSensor')?.parentElement?.addEventListener('click', e => {
+    const chip = e.target.closest('.tc-sens');
+    if (!chip) return;
+    if (chip.dataset.sn) S._selectSensor?.(chip.dataset.sn);
+    S._openSettings?.('sensors');
+  });
   document.getElementById('tcMic')?.addEventListener('click',    () => S._openSettings?.('audio'));
   document.getElementById('tcUndo')?.addEventListener('click', () => S._dispatchFrom?.({ src: 'click' }, 'undo', 127));
   document.getElementById('tcRedo')?.addEventListener('click', () => S._dispatchFrom?.({ src: 'click' }, 'redo', 127));

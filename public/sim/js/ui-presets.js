@@ -2306,7 +2306,23 @@ export function pinStrokeInZones(trigs) {
  * Max 8 per row; wraps to 2 rows when commitSlotCount > 8.
  * Called from the render loop (replaces separate updateSeqBanksUI + updateSeedBanksUI).
  */
+// All three of its targets live in the rig cabinet (`.top-bar` / `.right-panel`,
+// permanently display:none), and it ran every frame anyway: three filters, a
+// canvas redraw of every pin and a forced layout read (getBoundingClientRect),
+// into nothing — 0.6 % of the main thread with eight pins (measured
+// 2026-10-04). Asked once a second whether anything of it is on screen; the
+// day one is shown again it draws within that second. The projector popup's
+// HUD copies the dots every frame (events.js _syncProjectorHUD), so while it
+// is open the dots are on screen wherever they live.
+let _banksSeenAt = -Infinity, _banksSeen = false;
 export function updateCommitBanksUI() {
+  const now = performance.now();
+  if (now - _banksSeenAt > 1000) {
+    _banksSeenAt = now;
+    _banksSeen = ['commitSlotsCanvas', 'vmCommitDots', 'commitCountLabel']
+      .some(id => document.getElementById(id)?.checkVisibility?.() ?? true);
+  }
+  if (!_banksSeen && !S.projectorPopup) return;
   const total = S.commitSlotCount;
   const filled = S.commitSlots.filter((s, i) => i < total && s !== null).length;
   const clouds = S.commitSlots.filter((s, i) => i < total && s !== null && s.type === 'cloud' && !(s._releasingAt > 0)).length;

@@ -403,7 +403,12 @@ const buildTemplateCard = () => {
   const holder = document.createElement('div');
   holder.dataset.auditStandIn = '1';
   holder.appendChild(node);
-  host.appendChild(holder);
+  // WHERE THE APP PUTS IT: ui-sygaldry.js lends the instrument's rows to the
+  // selected sensor's card. Appended to the page instead, the stand-in sat
+  // outside the card's 16px inset, and with any sensor connected (so a card
+  // exists) the page read as a 17px ragged edge between two blocks that are
+  // never side by side in the app (2026-10-04). No card, no inset: the page.
+  (host.querySelector('.imu-setup-card') || host).appendChild(holder);
   return holder;
 };
 for (const nav of [...document.querySelectorAll('.set-nav-item[data-sec]')]) {
@@ -2131,6 +2136,46 @@ function collapses(label, items, key) {
       check(off.length === 0, 'every engine title\'s + is centred on its caps',
         off.length ? off.map(x => `${x.grp} ${x.delta > 0 ? '+' : ''}${x.delta}px`).join(' · ')
                    : pl.map(x => `${x.grp} ${x.delta > 0 ? '+' : ''}${x.delta}`).join(' · ') + ' — ink against ink');
+    }
+  }
+
+  // ── Narrow windows: nothing in the two bars or the strip collides ────────
+  // The stations tile three windows on one screen, 480–570 wide (2026-10-04).
+  // Shipped broken: at 570 the brand sat 91px into the left group and the
+  // meters 250px into the level sliders, because both bars were `1fr auto 1fr`
+  // and nothing gave. Resizes the window through the widths the tiers change
+  // at, asserts no two groups overlap and nothing leaves the window, and puts
+  // the size back.
+  console.log('\n── narrow windows ──');
+  {
+    const NARROW_PROBE = `(async () => {
+  const w0 = outerWidth, h0 = outerHeight, out = [];
+  const groups = ['.tc-side-l', '.tc-brand', '.tc-side-r', '.bb-side-l', '.bottom-bar-levels',
+    '#tcAudioGroup', '#tcDryCycle', '#tcReverb', '#tcMute'];
+  for (const W of [1440, 1150, 960, 800, 640, 570, 480, 420]) {
+    window.resizeTo(W, 900);
+    await new Promise(r => setTimeout(r, 350));
+    const box = q => { const e = document.querySelector(q); if (!e || getComputedStyle(e).display === 'none') return null;
+      const b = e.getBoundingClientRect(); return b.width ? b : null; };
+    const hit = [];
+    for (let i = 0; i < groups.length; i++) for (let j = i + 1; j < groups.length; j++) {
+      const a = box(groups[i]), b = box(groups[j]); if (!a || !b) continue;
+      const x = Math.min(a.right, b.right) - Math.max(a.left, b.left), y = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      if (x > 0.5 && y > 0.5) hit.push(groups[i] + ' × ' + groups[j] + ' ' + Math.round(x) + 'px');
+    }
+    const outside = [...groups, '#paletteBed'].filter(q => { const b = box(q); return b && (b.left < -0.5 || b.right > innerWidth + 0.5); });
+    out.push({ W: innerWidth, hit, outside, scroll: document.documentElement.scrollWidth - innerWidth });
+  }
+  window.resizeTo(w0, h0);
+  return out;
+})()`;
+    const nw = await evalInApp(NARROW_PROBE, 'narrow_' + Date.now().toString(36));
+    if (!nw || nw.length < 8) skipped('narrow windows', 'the window did not resize', 1);
+    else {
+      const bad = nw.filter(r => r.hit.length || r.outside.length || r.scroll > 0);
+      check(bad.length === 0, 'no chrome or footer group overlaps another, and nothing leaves the window, 1440 → 420',
+        bad.length ? bad.map(r => `${r.W}: ${[...r.hit, ...r.outside.map(q => q + ' outside'), r.scroll > 0 ? 'scrolls ' + r.scroll : ''].filter(Boolean).join(', ')}`).join(' · ')
+                   : nw.map(r => r.W).join(' · ') + ' — clean');
     }
   }
 

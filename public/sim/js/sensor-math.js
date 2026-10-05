@@ -16,7 +16,8 @@
 // The pipeline, for one sensor:
 //   q (raw) ──applyCal──▶ calibrated, Z-up ──orientation──▶ sphere, Y-up
 //                                          └─attitude────▶ {roll, pitch, yaw}° (up is +pitch)
-// and for the camera role, panTilt() then drops the roll.
+// and for the camera role, panTilt() then drops the roll; for a frame role,
+// inFrame() reads the cursor in the frame sensor's coordinates.
 // ============================================================================
 
 // ── Quaternion basics ───────────────────────────────────────────────────────
@@ -219,4 +220,19 @@ export function panTilt(q) {
   const yaw   = Math.atan2(fx, fz);
   const pitch = Math.asin(Math.max(-1, Math.min(1, -fy)));
   return qMul(qFromAxisAngle(0, 1, 0, yaw), qFromAxisAngle(1, 0, 0, pitch));
+}
+
+// The cursor read in a FRAME sensor's coordinates: conj(F) · C, both sphere
+// orientations from orientation(). The frame gives its WHOLE rotation — a
+// leaning body carries the cursor with it, unlike the camera's pan and tilt —
+// so turning or tipping body and hand together leaves the cursor where it is
+// on the sphere. Composed here, after each sensor's own calibration and signs,
+// because only here are both in ONE frame: each heading zero brings its own
+// sensor to "the stage", and each sensor's signs correct its own polarity.
+// With the default signs orientation() is a fixed change of axes, so this
+// equals composing in the calibrated Z-up frame (audit § L checks it). A
+// frame at identity (zeroed and mounted) leaves the cursor as it was; no
+// frame (null — none assigned, or gone silent) is the world cursor.
+export function inFrame(cursor, frame) {
+  return frame ? qMul(qConj(frame), cursor) : cursor;
 }

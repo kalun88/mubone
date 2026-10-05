@@ -2738,6 +2738,34 @@ panning turns the whole sound field with the camera sensor — that is how the f
 reference, and it did the opposite of this. Zero heading zeroes every sensor holding a role, and a new sensor
 takes the cursor only when it is free.
 
+## A narrow window gives way in tiers
+
+**2026-10-04, testing `npm run stations` (Ek: "right now there's only one display").** Three windows on one
+screen are 480–570 wide, and both bars were `1fr auto 1fr` with nothing that gave: at 570 the brand sat 91px
+into the left group and the meters 250px into the level sliders. Each bar now gives way at the width it
+measurably collides ("NARROW WINDOWS", end of `style.css`). Footer: ≤ 1160 the meters sit between the sides
+rather than on the window's centre; ≤ 960 they take a second row; ≤ 640 the level sliders take a third.
+Chrome: ≤ 800 the brand is a container sized by what the sides leave, and it drops the wordmark and version,
+then the piece name, then the mark; ≤ 600 the right side takes a second row. Palette: ≤ 580 the hand tiles go
+two wide and show their glyph only, because at that width the binding sticker covered whatever sat on the
+left; ≤ 470 the strip's gap and padding drop to `--sp-3`. Nothing that does something is hidden. Below about
+410px the strip is still wider than the window. `align-audit` "narrow windows" resizes through the tiers.
+
+## Frame returns, beside camera: the cursor read in a sensor's coordinates
+
+**2026-10-04, Ek, during two-instrument QA:** a sensor can take the role **frame** of reference, so the cursor
+moves with respect to THAT sensor rather than the room — on the body, or a lazy-susan surface: turn it with the
+hand fixed to it and the cursor keeps its spot, so sounds are placed and found in the frame's coordinates. It is a
+FOURTH quat role beside cursor / camera / none, not a reversal of the camera ruling above: camera moves the view,
+frame moves the cursor's reference, and all three at once work (cursor relative to frame, view the camera's).
+**The rule:** `cursor = conj(F) · C` of the two calibrated sphere orientations (`sensor-math.js` `inFrame`, in
+`readSensorPose`) — the frame's WHOLE rotation, so a leaning body carries the cursor with it (unlike the camera's
+pan and tilt); composed after each sensor's own heading and signs because only there are both in one frame
+(with the default signs it equals composing the calibrated Z-up poses — audit § L). A frame at identity changes
+nothing; with no camera sensor the camera follows the RELATIVE cursor; a frame silent for 2 s drops out and the
+cursor is the world one. Zero heading already zeroes every role, so it zeroes the relative heading too. The cost:
+a frame worn upright needs its mount calibration, or its tilt lands in the cursor.
+
 ## Sensor code is three layers, and each knows one thing
 
 **2026-09-27, Ek: "clean up the code so … it's super clear and makes things simpler for someone else."**
@@ -2762,6 +2790,49 @@ it and playing. A sensor with no choice takes the cursor only if nobody playing 
 drops anyone else's standing choice of it, on disk too. Disconnecting lets go of the runtime role (a
 disconnected sensor used to keep steering the screen with its last pose) and keeps the choice for the
 reconnect. `sensor-rig-audit` has each case, including the boot order the review reproduced.
+
+## A listen sensor is a cursor that only hears
+
+**2026-10-04, Ek's request during two-instrument QA: two performers hearing one corpus with two cursors.** A
+sensor given the `listen` role GRANULATES the shared corpus where it points and does nothing else: it records,
+pins, erases and presses nothing, and every action stays with cursor 0, which is unchanged. Any number of
+sensors may hold `listen` (up to `MAX_LISTENERS`, the one role that displaces nobody); sensor camera mode only,
+and the camera never follows a listener, so it roams in world coordinates and can leave the screen. It reads
+with cursor 0's lens and grain block — radius, k, depth, nearest, step, fade, scope, the scan switch, audition
+— and cursor 0's pinned-cloud claims. **It reads as cursor 0 does** (Ek, same day: "the listen cursor should
+just work like the regular cursor — for now"): it touches tape lines and walk strokes through gates of its own
+(`trigger.js updateTriggerGates`, `tg._inL`), and **every cursor on a stroke is its own voice** (Ek: "if there's
+more cursors on it it should be louder"): a cursor arriving where another's voice sounds stacks a second voice
+rather than cutting it, and each cursor's leave releases only the voices it started. **A take laid under a resting
+listener plays at once**, as a pinned zone catches it (Ek: "like if it was a pinned empty cloud"): a fresh gate is
+born OUTSIDE for every cursor, an edit or an import primed inside for the listeners there (silent), a line a pin
+plays is tracked and never doubled, and the pin lifting under a listener is its arrival; the audition stays the
+cursor's. Two cursors arriving on the same tick — the cursor releasing a take whose path runs under a listener —
+used to merge into one voice: the second waits a tick for the first's source and stacks (`t._deferEnter`). Its pool is cursor 0's geometry — opened takes, wet paint, only
+what is open under walk or a tape-only lens. The swept-crossing strum and `_nearestIdx` (the pin's anchor) stay
+cursor 0's. It is posted as a moving cloud is (`grain.js _scheduleListeners`, a seed voice per voicing, negative slot
+keys) but on cursor 0's OUTPUT, so its grains pan by their marks and leave on the monitor bus, and it shares
+the grain pool, the seed voices and the load throttle: no budget of its own. Its angles live under its own key,
+never `_cursorAng`. The scheduler reads it (`readListenerPoses`), not the renderer, so it keeps the 10 ms clock;
+a silent listener sensor is not read, and its reader fades out over `LISTEN_RELEASE_MS` where it stood. Drawn
+as cursor 0's ring, tip and fan in `--accent-sensor`, fans sharing `REACH_MAX`.
+
+## Each listener can read with its own settings; every sensor has a numbered chip
+
+**2026-10-04, Ek: "each cursor (listeners) should be able to have their own cursor setting: scope radius (not
+audition), grain behaviour … numbers for now as long as it has the reference in the sensor page … copy."** The
+CURSOR card opens, while a listener is connected, on a `for` row choosing whose settings it shows — `cursor`, then
+each listener by its sensor's NUMBER. Choosing only chooses what the card shows; it never changes what plays. A
+listener's card is its own: `own settings` off and it follows the cursor; its FIRST EDIT (or the switch) makes it its
+own, starting from a COPY of the cursor's (Ek, testing: "it still changes both"), and its rows — scope, radius, mode, depth, k, step, soft edge — write to its sensor slot
+(`sensor-registry.js listenCfg`, persisted with the slot like its calibration: it is the rig). Audition, the lens
+switch and the tools' settings stay the cursor's; keys, MIDI and OSC always address the cursor. The engine reads one
+object per listener per tick (`grain.js _listenView` → `l.v`), and so do the gates (its radius and scope) and the
+renderer (its ring). **The sensor's NUMBER** is its place in the connected list (`sensors.js sensorNumber`): the
+Sensors page's row, the chrome's chip and the cursor card's chip say the same one. **The chrome has one chip per
+sensor** — the DEVICE glyph with its number (C for the sensor holding the cursor, here and on the Sensors page's
+row; the others keep their numbers when the cursor moves), the dot its signal, the click opening the Sensors page on it — and the
+broadcast mark is the camera's `sensor` mode alone; the empty chip (no number, an LED dot) opens the page.
 
 ## The reverb is one insert on every output channel
 

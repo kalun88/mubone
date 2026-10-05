@@ -222,6 +222,14 @@ export function livePaintColor(index = 0) {
 export const MAX_COMMITS = 16;
 // Legacy aliases — kept so existing code compiles during transition
 export const MAX_SEEDS = MAX_COMMITS;
+// Listen-only cursors (sensor role `listen`, 2026-10-04): how many sensors may
+// granulate the corpus beside cursor 0 at once. Each is one moving reader in
+// the seed voices (grain.js _scheduleListeners), so the cost is a pinned
+// cloud's, and they share the worklet's grain pool and load throttle.
+export const MAX_LISTENERS = 4;
+// Their release: a listener whose sensor falls silent fades its level to zero
+// over this, holding its last spot, rather than cutting its grains off.
+export const LISTEN_RELEASE_MS = 250;
 // Sixteen slot identities. These DO circle the whole wheel — a slot colour's
 // only job is to be tellable from the other fifteen at a glance, and hue
 // separation is the only budget that buys that. What changed on 2026-08-29 is
@@ -749,6 +757,9 @@ export const S = {
   // cameraTransform rotates every world point by it. Null with no camera
   // sensor. Written by renderer.js applySensorPose only.
   cameraSensorQ: null,
+  // true while the cursor is read relative to a live FRAME-role sensor
+  // (sensor-math.js inFrame). Written by renderer.js applySensorPose only.
+  sensorFramed: false,
   mouseX: 0,
   mouseY: 0,
   mousePixelX: 0,

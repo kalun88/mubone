@@ -21,20 +21,34 @@
 //            turn it with the hand still and the view moves while the cursor
 //            stays on its spot of the sphere, and can leave the screen. With
 //            head-locked panning the sound field turns with it too.
+//   listen   a cursor that only HEARS (2026-10-04): it granulates the shared
+//            corpus where it points, with cursor 0's lens and grain block, and
+//            records, pins, erases and presses nothing. The camera never
+//            follows it. Any number of slots may hold it (MULTI_ROLES); the
+//            scheduler reads them through readListenerPoses, not the renderer.
 //   gesture  the inertial stream (gyro + accel) — seed-morph.js. Assigned to
 //            the first sensor that sends one; no menu.
-// One slot per role, at most. A 'frame' role (the cursor read relative to a
-// body sensor) was staging's and went with it, 2026-09-27; git history.
+//   frame    a sensor the cursor is read RELATIVE to — on the body, or a
+//            lazy-susan surface: turn it with the hand fixed to it and the
+//            cursor keeps its spot on the sphere, so sounds are placed and
+//            found in the frame's coordinates. Its whole rotation counts
+//            (sensor-math.js inFrame). Silent, it stops counting and the
+//            cursor is the world one. Deleted 2026-09-27 when camera came in,
+//            back 2026-10-04 BESIDE camera (Ek) — RULINGS "frame returns".
+// One slot per role, at most — but listen.
 // ============================================================================
 
 import { S, DEBUG } from './state.js';
 import {
   applyCal, attitude, orientation, panTilt, mountFromPoses, headingAboutZ,
-  qMul, qConj, DEFAULT_SIGNS,
+  qMul, qConj, inFrame, DEFAULT_SIGNS,
 } from './sensor-math.js';
 
-export const QUAT_ROLES     = ['cursor', 'camera', 'unmapped'];
+export const QUAT_ROLES     = ['cursor', 'camera', 'listen', 'frame', 'unmapped'];
 export const INERTIAL_ROLES = ['gesture', 'unmapped'];
+// Roles any number of slots hold at once: taking one displaces nobody, and
+// choosing one drops nobody else's choice.
+const MULTI_ROLES = new Set(['listen']);
 
 // ── Slots ───────────────────────────────────────────────────────────────────
 
@@ -42,7 +56,7 @@ function makeSensorSlot(name) {
   return {
     name,
     quatRole:     'unmapped',   // what it does NOW
-    wantRole:     null,         // what the player CHOSE — 'cursor' | 'camera' | 'unmapped' (none) | null (never chose). Persisted
+    wantRole:     null,         // what the player CHOSE — 'cursor' | 'camera' | 'listen' | 'frame' | 'unmapped' (none) | null (never chose). Persisted
     inertialRole: 'unmapped',
     hasQuat:      false,   // true from the first packet of each stream
     hasInertial:  false,
@@ -50,6 +64,11 @@ function makeSensorSlot(name) {
     quat:     null,        // [x, y, z, w] raw, Z-up
     attitude: null,        // { roll, pitch, yaw }° — calibrated, signs applied
     inertial: null,        // { gx, gy, gz, ax, ay, az, gyroMag, accelDynMag }
+    // A listener's OWN cursor settings (Ek, 2026-10-04), or null: it follows
+    // the cursor's. { reads, radius, mode, depth, k, step, rfade, fadeCurve } —
+    // the cursor's scope, reach and grain behaviour, nothing that is a tool's
+    // or audition. Persisted with the slot, like its calibration: it is the rig.
+    listenCfg: null,
 
     // output = conj(headingQuat) · q · conj(mountQuat), then the signs —
     // sensor-math.js has why. Mount is setup, heading is performance.
@@ -125,7 +144,7 @@ export function chooseQuatRole(slotName, role) {
   if (!QUAT_ROLES.includes(role)) return;
   const slot = _registry.get(slotName);
   if (!slot) return;
-  if (role !== 'unmapped') {
+  if (role !== 'unmapped' && !MULTI_ROLES.has(role)) {
     for (const other of _registry.values()) if (other !== slot && other.wantRole === role) other.wantRole = null;
     loadSavedCal();
     for (const [name, saved] of Object.entries(_savedCal || {})) if (name !== slotName && saved?.role === role) saved.role = null;
@@ -139,7 +158,7 @@ export function chooseQuatRole(slotName, role) {
 export function settleRole(slot) {
   const want = slot?.wantRole;
   if (!want || slot.quatRole === want) return;
-  if (want === 'unmapped') { assignQuatRole(slot.name, 'unmapped'); return; }
+  if (want === 'unmapped' || MULTI_ROLES.has(want)) { assignQuatRole(slot.name, want); return; }
   const h = getByRole(want);
   if (!h || !isSlotLive(h) || h.wantRole !== want) assignQuatRole(slot.name, want);
 }
@@ -150,7 +169,7 @@ function assignInertialRole(slotName, role) {
 
 function _assign(slotName, role, field, allowed) {
   if (!allowed.includes(role)) return;
-  if (role !== 'unmapped') {
+  if (role !== 'unmapped' && !MULTI_ROLES.has(role)) {
     for (const slot of _registry.values()) {
       if (slot.name !== slotName && slot[field] === role) {
         slot[field] = 'unmapped';
@@ -200,7 +219,10 @@ export function handleSlotInertial(slot, values) {
 // ── What the renderer reads ─────────────────────────────────────────────────
 // The whole sensor → screen contract, in one call (renderer.js
 // applySensorPose is the only reader):
-//   cursorQ  the cursor sensor's orientation on the sphere, or null
+//   cursorQ  the cursor sensor's orientation on the sphere, or null — read
+//            in the frame sensor's coordinates while one is LIVE (inFrame);
+//            a frame gone silent drops out, it does not freeze the cursor
+//   framed   true when it was
 //   cameraQ  conj(pan-tilt) of the camera sensor, or null. Conjugated because
 //            cameraTransform applies it directly where it conjugates camQ;
 //            without it the camera sensor gimbal-locks (pitch→roll at 90° yaw)
@@ -209,9 +231,53 @@ export function handleSlotInertial(slot, values) {
 export function readSensorPose() {
   const cur = getByRole('cursor');
   const cam = getByRole('camera');
-  const cursorQ = cur?.quat ? orientation(cur.quat, cur.quatCal) : null;
+  const frm = getByRole('frame');
+  const frameQ  = frm?.quat && isSlotLive(frm) ? orientation(frm.quat, frm.quatCal) : null;
+  const cursorQ = cur?.quat ? inFrame(orientation(cur.quat, cur.quatCal), frameQ) : null;
   const cameraQ = cam?.quat ? qConj(panTilt(orientation(cam.quat, cam.quatCal))) : null;
-  return { cursorQ, cameraQ };
+  return { cursorQ, cameraQ, framed: !!(cursorQ && frameQ) };
+}
+
+// The LISTENERS, for the grain scheduler (grain.js _scheduleListeners) — read
+// there at 100 Hz rather than through the renderer, so a listener granulates
+// on the scheduler's clock even when frames are late. Fills `out` with
+// { name, lon, lat } (reused objects) and returns how many. A listener whose
+// sensor has gone silent (isSlotLive) is not read: its grains drop out, and a
+// frozen pose never keeps sounding. The direction is cursor 0's formula
+// (sphere.js getCursorLonLat) without cursor 0's axis locks, which are its own.
+export function readListenerPoses(out, max) {
+  let n = 0;
+  for (const slot of _registry.values()) {
+    if (n >= max) break;
+    if (slot.quatRole !== 'listen' || !slot.quat || !isSlotLive(slot)) continue;
+    const [x, y, z, w] = orientation(slot.quat, slot.quatCal);
+    // forward = q · (0, 0, 1) · q*
+    const fx = 2 * (x * z + w * y), fy = 2 * (y * z - w * x), fz = 1 - 2 * (x * x + y * y);
+    const e = out[n] || (out[n] = { name: '', lon: 0, lat: 0 });
+    e.name = slot.name;
+    e.lon  = Math.atan2(fx, fz);
+    e.lat  = Math.asin(Math.max(-1, Math.min(1, fy)));
+    n++;
+  }
+  return n;
+}
+
+// ── A listener's own cursor settings ────────────────────────────────────────
+// null is "follows the cursor". Turning own settings on COPIES the cursor's
+// as they stand (Ek: "copy"), so nothing jumps; from then the listener's rows
+// write here. The keys are tiles.js's lens pids (LISTEN_KEYS there).
+export function listenCfgOf(slotName) { return _registry.get(slotName)?.listenCfg ?? null; }
+export function setListenOwn(slotName, snapshot) {
+  const slot = _registry.get(slotName);
+  if (!slot) return;
+  slot.listenCfg = snapshot ? { ...snapshot } : null;
+  saveCalibration();
+}
+export function setListenParam(slotName, key, value) {
+  const c = _registry.get(slotName)?.listenCfg;
+  if (!c) return;
+  c[key] = value;
+  saveCalibration();
 }
 
 // ── Calibration gestures ────────────────────────────────────────────────────
@@ -282,6 +348,7 @@ let _savedCalLoaded = false;     // distinct from "loaded and empty"
 function slotToJSON(slot) {
   return {
     role:         slot.wantRole,
+    listenCfg:    slot.listenCfg,
     inertialRole: slot.inertialRole,
     quatCal: {
       mountQuat:   slot.quatCal.mountQuat,
@@ -346,6 +413,7 @@ function applySavedCal(slot) {
   if (c?.signs)       slot.quatCal.signs       = { ...DEFAULT_SIGNS, ...c.signs };
   // The choice comes back, and is honoured by the rule in the Roles note.
   if (QUAT_ROLES.includes(saved.role)) slot.wantRole = saved.role;
+  if (saved.listenCfg && typeof saved.listenCfg === 'object') slot.listenCfg = { ...saved.listenCfg };
   _restoring = true;
   settleRole(slot);
   const h = saved.inertialRole && saved.inertialRole !== 'unmapped' ? getByRole(saved.inertialRole) : null;

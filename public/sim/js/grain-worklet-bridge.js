@@ -927,6 +927,9 @@ export async function startWorkletGrain(actx, take, params = {}, options = {}) {
         if (sd.overrides) gp = Object.assign(Object.create(gp), sd.overrides);
         list.push({
           index, active: true, gain: sd.gain ?? 1.0, slot, vo,
+          // A LISTENER (grain.js _scheduleListeners) is a cursor, so its grains
+          // leave on the cursor's output — the monitor bus and the scan mute.
+          cursorBus: !!sd.cursorBus,
           candidates: b.list.slice(),
           params: _seedVoiceParams(gp, sd.lensStep),
         });

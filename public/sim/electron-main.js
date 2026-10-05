@@ -87,8 +87,8 @@ const BACKGROUND = process.env.MUBONE_RIG_BACKGROUND === '1';
 
 // Multi-station tiling: when the launcher passes --station-count=N, each
 // instance sizes itself to 1/N of the display and parks in its own column
-// (a leftmost). At 3-across on a laptop each column lands under the 700px
-// breakpoint, so windows come up already in narrow mode. Ignored for solo use.
+// (a leftmost). At 3-across on a laptop each column lands in the narrow
+// tiers (style.css "NARROW WINDOWS"). Ignored for solo use.
 const STATION_NAMES = 'abcdefghi';
 const STATION_COUNT = parseInt(argValue('station-count') || '', 10) || 0;
 const STATION_INDEX = INSTANCE ? STATION_NAMES.indexOf(INSTANCE) : -1;
@@ -907,8 +907,8 @@ function createWindow() {
     ...(tile || {}),
     width:     tile ? tile.width  : 1440,
     height:    tile ? tile.height : 900,
-    // Narrow enough for the multi-station side-by-side layout (CSS flips to
-    // a stacked column below 700px — see NARROW-WINDOW MODE in style.css)
+    // Narrow enough for the multi-station side-by-side layout (the bars and
+    // the strip give way in tiers — "NARROW WINDOWS" at the end of style.css)
     minWidth:  380,
     minHeight: 500,
     title:     INSTANCE ? `mubone [${INSTANCE}]` : 'mubone',

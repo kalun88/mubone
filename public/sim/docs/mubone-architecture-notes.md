@@ -122,7 +122,7 @@ When a cursor-role and a camera-role sensor are both assigned, the cursor deteth
 
 **Placements** (same code): a tripod-mounted projector (a periscope onto the sphere), or the performer's body or head (the view follows where they face).
 
-**Removed 2026-09-27:** the `frame` role — the cursor read relative to a body sensor, the sphere glued to the body. It was the posture reference for staging, sunset 2026-08-29; git history has it.
+**The frame role** (removed 2026-09-27, back 2026-10-04 beside camera): a sensor the cursor is READ RELATIVE to — a body or a turntable. `readSensorPose` composes `inFrame(C, F) = conj(F)·C` of the two sphere orientations (`sensor-math.js`), the frame's whole rotation, so turning or tipping both together leaves the cursor on its spot. Everything above then applies to that relative cursor: alone, the camera follows it (`cameraFromPointing`); with a camera sensor too, the view stays the camera's. A frame silent for 2 s (`isSlotLive`) drops out and the cursor is the world one. `S.sensorFramed` says which.
 
 Key files: `sensor-registry.js` (`getSensorCursorQ`, `getCameraQ`), `renderer.js` (camera update block, `drawCursor()`), `sphere.js` (`getCursorLonLat`, `cameraTransform`).
 
@@ -180,7 +180,7 @@ x-IMU3 in a browser (not OSC): UDP → proxy.js → ws://localhost:8081 raw line
 
 The browser tries `ws://localhost:8080` on load and retries every 3 seconds — a no-op if no relay is running, and hosted origins never try (`_bridgeReachable()`). The `● OSC` indicator lights on the first message received on either transport.
 
-**Sensor path:** `handleOSC` routes `/sensor/{name}/quaternion` with 4 floats through the sensor registry (`sensor-registry.js`), which auto-creates the slot on first receipt, applies tare + axis map, and dispatches to the assigned role (cursor / camera / gesture). This works identically in both contexts.
+**Sensor path:** `handleOSC` routes `/sensor/{name}/quaternion` with 4 floats through the sensor registry (`sensor-registry.js`), which auto-creates the slot on first receipt, applies tare + axis map, and dispatches to the assigned role (cursor / camera / listen / frame / gesture). This works identically in both contexts.
 
 **Grain params:** Written directly to `S.grainOverrides`, which `grain.js` reads on each scheduler tick. OSC changes also call `scheduleUISync()` to flush updated values back to the panel sliders and controls in the next animation frame.
 
@@ -217,7 +217,7 @@ When speaker buses are active, `audio.js` also wires a stereo headphone downmix:
 | `js/audio.js` | `ensureAudioContext` (48000 Hz default), `initSpeakerBuses(N)` (builds N-channel Web Audio graph + headphone downmix + meter tap), `recreateAudioContext` (sample rate change), `rewireChannelMerger` (apply `S.channelRouting` without full rebuild). |
 | `js/grain.js` | `playGrain` — VBAP routing when `S.speakerBuses` is set, stereo panner fallback otherwise. |
 | `js/osc.js` | `initOSC()` selects transport (Electron IPC or browser WebSocket). `handleOSC(address, values)` dispatches all incoming OSC to sensor, grain params, preset, etc. |
-| `js/sensor-registry.js` | Sensor SLOTS: calibration and role per slot name (persisted in `mubone_sensor_cal`), and `readSensorPose()` — the cursor and camera quaternions the renderer reads. Its header maps the three layers (link → sensor → slot). The maths is `js/sensor-math.js`, pure; the connected sensors are `js/sensors.js`; the x-imu3 link is `js/ximu3.js`. |
+| `js/sensor-registry.js` | Sensor SLOTS: calibration and role per slot name (persisted in `mubone_sensor_cal`), and `readSensorPose()` — the cursor and camera quaternions the renderer reads — and `readListenerPoses()`, where each `listen` sensor points, for the grain scheduler. Its header maps the three layers (link → sensor → slot). The maths is `js/sensor-math.js`, pure; the connected sensors are `js/sensors.js`; the x-imu3 link is `js/ximu3.js`. |
 | `js/sphere.js` | 3D math — `getCursorLonLat()`, `screenToLonLat()`, `cameraTransform()`, `qRotateVec`, quaternion helpers. |
 | `proxy.js` | The x-IMU3's UDP for a browser (`node proxy.js`): discovery, commands and raw data lines on ws 8081, parsed by `ximu3.js`. Not an OSC relay since 2026-09-27. |
 | `js/worklets/quad-capture.worklet.js` | Batches N-channel audio into an interleaved Float32Array and posts it straight to the main process over the port transferred in (`{ type: 'port' }`). N and batchSize configured at runtime via `{ type: 'init', numChannels: N, batchSize: B }`. batchSize = bufferFrames / 128 so each post is exactly one audify write. |

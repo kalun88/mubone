@@ -3713,7 +3713,7 @@ html.booting-reveal .main-layout {
   #tcUndo, #tcRedo            { --gk: 1.140; }
   #tcSweep                    { --gk: 1.078; }
   #tcClear                    { --gk: 1.000; }   /* the reference */
-  #tcSensor                   { --gk: 0.806; }
+  .tc-sens                    { --gk: 0.887; }   /* every sensor chip (tile-layout.js adds them beside #tcSensor): the device body is 18 units tall → 13.3px */
   #tcSettings                 { --gk: 0.725; }
   /* The camera button wears whichever mode is on, and the three glyphs are
      13.8 / 16.8 / 19.8 units wide — so the factor is the GLYPH's, not the
@@ -6901,6 +6901,20 @@ html body { --rail-w: 20rem; --pal-tile: 53px; --pal-gap: 11px; --pal-pad: 13px;
    value and its breakpoint together is what makes that impossible to get wrong
    twice (it was wrong once, 2026-09-22: the strip shrank and the bench did not). */
 @media (max-width: 820px) { html body { --pal-tile: 44px; } }
+/* The STATIONS (2026-10-04): three windows on one screen are 480–570 wide, and
+   the strip at 44 is 567. The spacebar gives first: two tiles wide, the glyph
+   alone and centred. The NAMES go, not the glyph — the binding sticker sits on
+   the tile's lower-left corner, and at two tiles wide it covered whichever of
+   the three was on the left (measured, both ways). Centred, the glyph meets the
+   sticker exactly as it does at three wide. The voice is still the rail tab's.
+   Under 470 the strip's air tightens to the next step down, holding it to 410. */
+@media (max-width: 580px) {
+  html body { --hand-tile-w: calc(2 * var(--pal-tile) + var(--pal-gap)); }
+  html body .palette .tile.tile--hand .tile-nm { display: none; }   /* .tile: the name's own rule is later in the file */
+}
+@media (max-width: 470px) {
+  html body { --pal-gap: var(--sp-3); --pal-pad: var(--sp-3); }
+}
 html body .palette {
   align-items: center; flex-wrap: nowrap; gap: var(--pal-gap); padding: var(--pal-pad); border-radius: var(--r-card); }
 /* 71px: 8 pad + 1 border + 53 tile + 8 pad + 1 border (§ 11.4). The ledger's
@@ -7177,3 +7191,71 @@ html body .palette .tile .tile-bind.learning { color: var(--accent-action); bord
 /* On a rail action row (unpin all), the sticker follows the name as on a .mrow. */
 .trow .tile-nm:has(+ .row-binds) { flex: none; }
 .trow .row-binds { margin-right: auto; }
+
+/* ═══ NARROW WINDOWS — the chrome and the footer give way, in tiers ═════════
+   The stations (`npm run stations`) tile three windows across one screen, 570px
+   each on the 15" laptop and 480 on a 1440 display (Ek, 2026-10-04: one display
+   for now). Every rule above lays both bars out as `1fr auto 1fr` — the centre
+   dead centre — and nothing gave when the window was narrower than its
+   contents: measured at 570, the brand sat 91px into the left group and the
+   meters 250px into the level sliders. The old NARROW-WINDOW MODE (max-width
+   700, above) styles the cabinet's .top-bar, which nobody sees.
+
+   Nothing is hidden that does something: only the NAME goes, which is what
+   § 2 says a performer never needed, and the piece's name stays as long as it
+   fits. Measured collision widths, which are the breakpoints:
+     footer  levels × audio below 1150   → the centre column takes what is left
+     footer  one row cannot hold 956px   → the meters drop to their own row
+     footer  cursor + audio + mute 638   → the level sliders take a third row
+     chrome  brand × left group below ~780 → the brand shrinks to fit, then goes
+     chrome  the two sides need ~580     → the right side takes a second row  */
+
+/* ── The footer ─────────────────────────────────────────────────────────── */
+@media (max-width: 1160px) {
+  /* The meters stay between the sides instead of on the window's centre line. */
+  html body .bottom-bar { grid-template-columns: auto minmax(0, 1fr) auto; }
+  html body .bottom-bar > .bottom-bar-levels { justify-self: center; }
+}
+@media (max-width: 960px) {
+  /* A row of air between the rows: each group is exactly its 40px row, so
+     without it the meters' bars start on the axis captions' line. */
+  html body .bottom-bar { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--sp-5); }
+  html body .bb-side-l { grid-row: 1; grid-column: 1; }
+  html body .bb-side-r { grid-row: 1; grid-column: 2; }
+  html body .bottom-bar > .bottom-bar-levels { grid-row: 2; grid-column: 1 / -1; }
+}
+@media (max-width: 640px) {
+  /* The right side's own children join the grid, so the level sliders can
+     leave the mute's row; the mute keeps its place at the far right. */
+  html body .bottom-bar { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+  html body .bb-side-r { display: contents; }
+  html body .bb-side-r > #tcDryCycle { grid-row: 1; grid-column: 2; }
+  html body .bb-side-r > #tcReverb   { grid-row: 1; grid-column: 3; }
+  html body .bb-side-r > #tcMute     { grid-row: 1; grid-column: 4; }
+  html body .bb-side-r > #tcAudioGroup { grid-row: 3; grid-column: 1 / -1; justify-self: center; }
+}
+
+/* ── The chrome ─────────────────────────────────────────────────────────── */
+@media (max-width: 800px) {
+  /* The middle column is what the sides leave, and the brand is sized by it:
+     a container, so what it shows is decided by the room it actually has. */
+  html body .tc-bar { grid-template-columns: auto minmax(0, 1fr) auto; }
+  html body .tc-brand {
+    justify-self: stretch; justify-content: center; min-width: 0; overflow: hidden;
+    container-type: inline-size;
+  }
+  html body .tc-brand b, html body .tc-brand i { display: none; }
+  html body .tc-doc { min-width: 0; flex: 0 1 auto; }
+}
+@container (max-width: 90px) { html body .tc-doc { display: none; } }
+@container (max-width: 24px) { html body .tc-mark { display: none; } }
+@media (max-width: 600px) {
+  /* The two sides no longer fit one row: the right side takes the second,
+     flush right, under the brand. */
+  html body .tc-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+    row-gap: var(--sp-4);
+    padding-top: var(--sp-5); padding-bottom: var(--sp-5);
+  }
+  html body .tc-side-r { grid-row: 2; grid-column: 1 / -1; }
+}
